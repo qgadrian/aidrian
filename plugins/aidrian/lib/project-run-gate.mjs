@@ -39,7 +39,7 @@
 // back and halts the run with a `halt` row.
 
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 
 import { baseBranchTip, machineSwitch } from './config.mjs';
@@ -51,6 +51,7 @@ import { claimBusy, dropClaim, readContainedBrief, readStarted, SESSION_ID } fro
 import { detectHost, sessionIdentity } from './hosts/index.mjs';
 import { branchPolicies, defaultBranch, soloOn } from './pr-auto-merge.mjs';
 import { checkedLimit, limitEndRows, limitRecorded, pausedTime, pauseOf, pauseRow, recordedPauseRuns } from './project-limit.mjs';
+import { closeVerdict, confineCheck, prepareConfine } from './project-confine.mjs';
 import { cacheVars, registryHosts } from './project-registries.mjs';
 import { afterFailure, cleanText, CAPS, DROP_FILE, ingestDrops, RESULT_CAP, validateResult, writeDrop } from './project-result.mjs';
 import { writeIssueFile } from './project-issue-text.mjs';
@@ -60,7 +61,7 @@ import { accessProblem, guardedFolders, haltAnswer, hostStartProblem, linkTripwi
 import { ancestorProblem, pushProblem, repositoryProblem, trustProblem } from './project-trust.mjs';
 import { signoffFolder, signoffFolders } from './review/signoff-store.mjs';
 import { safely, startHeld } from './session-start-gate.mjs';
-import { markDriver, PENDING_AGE, readBeacon, readUnattendedMark } from './unattended-mark.mjs';
+import { markDriver, markUnattended, PENDING_AGE, readBeacon, readUnattendedMark } from './unattended-mark.mjs';
 
 export { cleanText, ISSUE_ATTEMPTS, RESULT_CAP, validateResult };
 export { DECISION_CLASSES, RESULT_STATUSES } from './project-result.mjs';
@@ -175,9 +176,11 @@ function machineProblem(project, policy) {
 // installed autopilot skill by its absolute path, and never starts with a slash or a dash. It asks for no handoff: an
 // issue's session starts no continuation, and records its result instead.
 // After an attempt a usage or rate limit ended (`afterLimit`), it says the branch holds that attempt's pushed work.
-export function projectPrompt({ run, key, attempt, branch, clone, skill = SKILL, note = null, afterLimit = false, issueFile = null }) {
+// On a host that proves each start's sandbox (`confine`), its first step is the exact `aidrian project confine`.
+export function projectPrompt({ run, key, attempt, branch, clone, skill = SKILL, note = null, afterLimit = false, issueFile = null, confine = false }) {
   return [
     `Project run ${run}, issue ${key}, attempt ${attempt}: this session works one issue of a project run, started in the background by the run's driver session, with no Human attending.`,
+    ...(confine ? [`Before anything else, as this session's first tool call, run exactly \`aidrian project confine ${run} ${key}\` with the Bash tool, alone: it proves this session's sandbox holds, and every other call is refused until the start has confirmed it, a few seconds after it passes.`] : []),
     ...(afterLimit ? [`Attempt ${attempt - 1} stopped when the host met a usage or rate limit: the branch ${branch} on the forge holds the work it pushed, and a pull request from that branch is this issue's own; go on from there.`] : []),
     `Read the autopilot skill at ${skill} and follow it on the task ${key}, in the attempt's clone ${clone} on the branch ${branch}, which this session starts in.`,
     `Merge only through the pr-auto-merge skill, when \`aidrian pr auto-merge <number>\` exits 0. Push only with a full refspec: \`git push origin HEAD:refs/heads/${branch}\`.`,
@@ -315,7 +318,7 @@ function startContext(given) {
   const { state, found, store } = opened;
   const held = custody({ found, store, session, now: given.now });
   if (held.problem) return plain(held.problem);
-  if (endedIn(found.rows)) return plain(`the run ${run} ended, and starts no issue`);
+  if (endedIn(found)) return plain(`the run ${run} ended, and starts no issue`);
   const halted = haltOf(found);
   if (halted) return { answer: haltAnswer(`the run is halted: ${halted}`, { lift: RESUME(run) }) };
   const paused = pauseOf(found, given.now);
@@ -377,7 +380,8 @@ function startPlace(context) {
 // Whether attempt `attempt` of issue `key` ended on a usage or rate limit, as the run `found` records it.
 const endedOnLimit = (found, key, attempt) => found.rows.some((row) => row.event === 'ended' && row.key === key && row.attempt === attempt && row.reason === 'limit');
 
-// The attempt's fresh clone, checked, and the folders it may write: { cwd, git, grants, drop, vars, main, mainGit }, or
+// The attempt's fresh clone, checked, and the folders it may write: { folder, cwd, git, grants, drop, cache, vars, main,
+// mainGit }, or
 // { halt } or { problem }. A clone the host says would run a command outside its sandbox (`cloneProblem`) halts, and so
 // does one whose origin pushes to another URL than `pushUrl`, the one the host's access check read, as a pushInsteadOf
 // of the user's git config would make it. Last, the host's placeholders go in (placeHolders).
@@ -414,7 +418,7 @@ function confinedRoom({ project, state, run, key, branch, attempt, tip, env, hom
   // The issue's text the driver kept at init, for the session to read instead of the tracker (lib/project-issue-text.mjs).
   const issueFile = issueFileFor(state, run, key, clone.folder);
   if (issueFile?.problem) return { problem: issueFile.problem };
-  return { cwd: clone.work, git: clone.git, grants: [clone.git, clone.drop, clone.cache, ...folders.folders], drop: clone.drop, vars, main: resolvedPath(main) ?? main, mainGit, issueFile: issueFile?.file ?? null };
+  return { folder: clone.folder, cwd: clone.work, git: clone.git, grants: [clone.git, clone.drop, clone.cache, ...folders.folders], drop: clone.drop, cache: clone.cache, vars, main: resolvedPath(main) ?? main, mainGit, issueFile: issueFile?.file ?? null };
 }
 
 // Writes `<attempt>/issue.md` from `<run>/issues/<KEY>.json`, read as untrusted: { file }, null when the run kept no text
@@ -437,39 +441,79 @@ function issueFileFor(state, run, key, folder) {
 }
 
 // The start itself, held by startHeld, with its write-ahead row and its one settling row: the answer of the start.
+// On a host that proves each start's sandbox from inside the session (capabilities.projectStart.confineProof), the start
+// first writes the proof's plan and runs its localhost listener (lib/project-confine.mjs prepareConfine), and the host's
+// start holds the session only once `confined` confirms the proof, which files it in the session's mark.
 function launchStart(context, place) {
   const { run, key, env, home, session, store, cap, spawn, wait, state, held, noted } = context;
-  const { attempt, branch, cwd, git, grants, drop, vars, log, main, mainGit, afterLimit, issueFile } = place;
+  const { folder, attempt, branch, cwd, git, grants, drop, cache, vars, log, main, mainGit, afterLimit, issueFile } = place;
   // The forge's hosts, and the registries the team lists (projectRun.registries).
   const domains = [...forgeDomains(context.found.init.repository), ...registryHosts(context.policy.registries)];
+  const proving = cap.confineProof === true;
+  let confine = null;
+  if (proving) {
+    // The unlisted host must be outside the domains the user's and the organization's settings add too.
+    const added = safely(() => cap.confineDomains?.({ env, home, platform: context.platform }));
+    confine = prepareConfine({
+      folder, run, key, attempt, work: cwd, git, drop, cache, domains: [...domains, ...(Array.isArray(added) ? added : [])], main, mainGit, env, home,
+      ...(context.listen ? { listen: context.listen } : {}), reads: safely(() => cap.confineReads?.({ env, home })) ?? [],
+    });
+    if (confine.problem) {
+      safely(() => rmSync(folder, { recursive: true, force: true }));
+      return noted({ exitCode: 1, out: place.orphans, err: [`aidrian project start: the sandbox proof cannot be prepared: ${confine.problem}`] });
+    }
+  }
+  const tags = { project: run, issue: key, ...(proving ? { confine: true } : {}) };
+  // The session whose proof was last read, so a failed or missing proof is filed in its mark.
+  let proved = null;
+  const fileProof = (own, result) => safely(() => markUnattended(own, { root: context.main, cwd: resolvedPath(cwd) ?? cwd, env, tags: { ...tags, confine: result } }));
+  const confined = proving ? (own) => {
+    proved = own;
+    const answer = confineCheck({ folder, session: own, prints: confine.prints });
+    if (answer === null) return null;
+    const filed = fileProof(own, answer.pass ? 'passed' : 'failed');
+    if (!answer.pass) {
+      closeVerdict(folder);
+      return { problem: answer.problem };
+    }
+    return filed ? true : { problem: 'the start could not file the passed proof in the session\'s mark' };
+  } : undefined;
   const name = sessionName(run, key, attempt);
-  const prompt = projectPrompt({ run, key, attempt, branch, clone: cwd, afterLimit, issueFile, note: safely(() => cap.sessionNote?.({ work: cwd, branch })) });
+  const prompt = projectPrompt({ run, key, attempt, branch, clone: cwd, afterLimit, issueFile, confine: proving, note: safely(() => cap.sessionNote?.({ work: cwd, branch })) });
   const base = { event: 'start', key, attempt, session, name, cwd, branch, ...(drop ? { drop } : {}) };
   let proof = null;
   const since = Date.now();
-  const result = startHeld({
-    session,
-    launch: (hold, identify) => {
-      const started = cap.start({
-        session, cwd, name, prompt, env, hold, identify, run: spawn, wait, log, git, grants, domains, cacheVars: vars, main, mainGit, tokens: forgeTokenVars(),
-        // The sign-off store, which a merge no Human asks for reads as the Human's word: no confined session writes it.
-        guarded: guardedStore({ env, home }),
-        mcp: context.policy.mcpServers, home, platform: context.platform, beacon: (id) => readBeacon(id, { env, home, since }),
-      });
-      if (started?.proof && started.uncertain === false) proof = started.problem;
-      return started;
-    },
-    stop: (id) => cap.stop({ id, env, run: spawn }),
-    ended: (earlier) => chainEnded({ cap, store, id: earlier.id, session: earlier.session, env, spawn, now: Date.now() }),
-    intent: () => writeAhead({ state, run, base, held, session, now: Date.now(), found: context.found, env }),
-    store,
-    root: context.main,
-    floor: { slug: `project-${run}`, chain: 0, brief: null, route: 'background' },
-    record: { sha256: null, brief: null, slug: `project-${run}`, chain: 0, project: { run, issue: key, attempt } },
-    tags: { project: run, issue: key },
-    env,
-    now: context.now,
-  });
+  let result;
+  try {
+    result = startHeld({
+      session,
+      launch: (hold, identify) => {
+        const started = cap.start({
+          session, cwd, name, prompt, env, hold, identify, run: spawn, wait, log, git, grants, domains, cacheVars: vars, main, mainGit, tokens: forgeTokenVars(),
+          // The sign-off store, which a merge no Human asks for reads as the Human's word: no confined session writes it.
+          guarded: guardedStore({ env, home }),
+          mcp: context.policy.mcpServers, home, platform: context.platform, beacon: (id) => readBeacon(id, { env, home, since }), confined,
+        });
+        // A failed proof halts the run whatever came of stopping its session (startLines).
+        if (started?.proof) proof = started.problem;
+        return started;
+      },
+      stop: (id) => cap.stop({ id, env, run: spawn }),
+      ended: (earlier) => chainEnded({ cap, store, id: earlier.id, session: earlier.session, env, spawn, now: Date.now() }),
+      intent: () => writeAhead({ state, run, base, held, session, now: Date.now(), found: context.found, env }),
+      store,
+      root: context.main,
+      floor: { slug: `project-${run}`, chain: 0, brief: null, route: 'background' },
+      record: { sha256: null, brief: null, slug: `project-${run}`, chain: 0, project: { run, issue: key, attempt } },
+      tags,
+      env,
+      now: context.now,
+    });
+  } finally {
+    confine?.listener.stop();
+  }
+  // A session the start stopped for its proof keeps a failed proof in its mark, so the hook refuses its every call.
+  if (proving && proved && result.outcome !== 'started') fileProof(proved, 'failed');
   return noted(startLines({ result, state, run, key, attempt, session, base, proof, cap, orphans: place.orphans, now: context.now }));
 }
 
@@ -528,11 +572,13 @@ export function forgeBase(project, repository, forge, env = process.env) {
 function startLines({ result, state, run, key, attempt, session, base, proof, cap, orphans, now }) {
   const at = iso(now);
   let rows = [];
+  const halt = proof ? [{ event: 'halt', cause: cleanText(`the start of ${key} attempt ${attempt} failed its proof: ${proof}`, CAPS.stop), key, attempt, at }] : [];
+  // A session whose stop is unknown stays for settleOrphans, and a failed proof halts the run all the same.
   if (result.intended && result.outcome === 'started') rows = [{ ...base, at, outcome: 'started', id: result.marker.id, child: result.marker.session ?? null }];
   else if (result.intended && (result.outcome === 'uncertain' || (result.outcome === 'unheld' && !result.stopped))) {
-    rows = [{ ...base, at, outcome: result.outcome === 'uncertain' ? 'uncertain' : 'unheld', stopped: false }];
+    rows = [{ ...base, at, outcome: result.outcome === 'uncertain' ? 'uncertain' : 'unheld', stopped: false, ...(proof ? { proof: true } : {}) }, ...halt];
   } else if (result.intended) {
-    rows = [{ ...base, at, outcome: 'void', ...(proof ? { proof: true } : {}) }, { event: 'issue', key, state: 'open', at }, ...(proof ? [{ event: 'halt', cause: cleanText(`the start of ${key} attempt ${attempt} failed its proof: ${proof}`, CAPS.stop), key, attempt, at }] : [])];
+    rows = [{ ...base, at, outcome: 'void', ...(proof ? { proof: true } : {}) }, { event: 'issue', key, state: 'open', at }, ...halt];
   }
   const settle = (fresh) => (driverOf(fresh).session === session ? { rows } : { problem: 'custody of the run moved while the session started' });
   const written = rows.length ? safely(() => appendToRun(state, run, settle)) : null;
@@ -541,7 +587,7 @@ function startLines({ result, state, run, key, attempt, session, base, proof, ca
     const look = cap.attachLine?.({ id: result.marker.id, name: result.marker.name }) ?? `its id is ${result.marker.id}`;
     return { exitCode: 0, out: [...orphans, `started ${key} attempt ${attempt} session ${result.marker.id}`, `worktree: ${base.cwd}`, `branch: ${base.branch}`, `say: The issue ${key} runs in the background session ${result.marker.id}: ${look}.`], err: [] };
   }
-  if (proof && result.outcome === 'none') return haltAnswer(`the start of ${key} attempt ${attempt} failed its proof: ${proof}`, { lines: orphans, lift: RESUME(run) });
+  if (proof && result.outcome !== 'started') return haltAnswer(`the start of ${key} attempt ${attempt} failed its proof: ${proof}`, { lines: orphans, lift: RESUME(run) });
   const why = {
     refused: result.busy ? `the start claim of this session is busy (${result.busy}); a start from it may still run` : `this session's earlier start, ${result.earlier?.id}, has not ended as the host lists it`,
     none: `no session started: ${result.problem}`,
@@ -778,7 +824,7 @@ export function endRun({ project, config, run, env = process.env, home, now = Da
   const opened = openRun(project, config, run, { env, home });
   if (opened.problem) return refuse(opened.problem);
   const { state, found, store } = opened;
-  if (endedIn(found.rows)) return refuse(`the run ${run} ended already`);
+  if (endedIn(found)) return refuse(`the run ${run} ended already`);
   const held = custody({ found, store, session, now });
   if (held.problem) return refuse(held.problem);
   // An issue that still runs has a session the run still answers for: end only once none does.

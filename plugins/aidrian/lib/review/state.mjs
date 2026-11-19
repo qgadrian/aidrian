@@ -22,7 +22,7 @@
 // repository (isTrustedCommenter, summaryComment): a stranger's comment never supplies a record.
 
 import { randomBytes } from 'node:crypto';
-import { closeSync, constants, fstatSync, mkdirSync, openSync, readdirSync, readSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, mkdirSync, opendirSync, openSync, readSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { brotliCompressSync, brotliDecompressSync } from 'node:zlib';
 
@@ -327,18 +327,17 @@ function readFile(target, pr) {
 
 // Why this machine's record files of pull request `pr` cannot all be read as records, or null: more than
 // RECORD_FILES_CAP of them, or more than RECORD_TOTAL_CAP bytes in all, in every folder of this project's records
-// (recordFolders), or one that recordText refuses. Nothing is parsed. A reader that holds a session no Human attends to
-// the record, such as the merge guard, refuses the merge on it, before it reads the record: a record it cannot read may
-// be one planted to read as no record, or to spend the hook's time. `pastDeadline()` stops the walk.
+// (recordFolders), one that recordText refuses, or a folder past RECORD_LIST_CAP entries, each read one at a time
+// (recordNames). Nothing is parsed. A reader that holds a session no Human attends to the record, such as the merge
+// guard, refuses the merge on it, before it reads the record: a record it cannot read may be one planted to read as no
+// record, or to spend the hook's time. `pastDeadline()` stops the walk.
 export function recordProblem(project, pr, { pastDeadline = () => false } = {}) {
   let count = 0;
   let total = 0;
   for (const dir of recordFolders(project)) {
-    let names = [];
-    try {
-      names = readdirSync(dir).filter((name) => name === `pr-${pr}-review.json` || (name.startsWith(`pr-${pr}-review-`) && name.endsWith('.json')));
-    } catch {}
-    for (const name of names) {
+    const listed = recordNames(dir, pr, { pastDeadline });
+    if (listed.problem) return listed.problem;
+    for (const name of listed.names) {
       if (pastDeadline()) return `the review record files of #${pr} could not all be checked in time`;
       count += 1;
       if (count > RECORD_FILES_CAP) return `this machine holds more than ${RECORD_FILES_CAP} review record files of #${pr}, more than any review writes`;
@@ -373,13 +372,47 @@ export function recordFolders(project) {
   return [folder(project), ...others];
 }
 
-// Every record file of number `pr` in `dir`: { file, state }.
-function filesIn(dir, pr) {
-  let names = [];
+// The most entries of a records folder a listing reads: far more than a project's records take (about one entry a pull
+// request), so a folder a confined session filled with planted entries never holds a reader, such as the merge guard,
+// past its hook's time. The merge guard refuses an unattended merge past it (recordProblem).
+export const RECORD_LIST_CAP = 20_000;
+
+// The record files of number `pr` in `dir`, read one entry at a time: { names }, or { problem, names } past
+// RECORD_LIST_CAP entries, past `pastDeadline()`, when the folder is there and cannot be opened, or when its listing
+// fails partway, with the names read until then. A folder that is not there holds none. `opendir` is a test's.
+export function recordNames(dir, pr, { pastDeadline = () => false, opendir = opendirSync } = {}) {
+  const names = [];
+  let handle;
   try {
-    names = readdirSync(dir).filter((name) => name === `pr-${pr}-review.json` || (name.startsWith(`pr-${pr}-review-`) && name.endsWith('.json')));
-  } catch {}
-  return names.map((name) => ({ file: path.join(dir, name), state: readFile(path.join(dir, name), pr) })).filter((each) => each.state);
+    handle = opendir(dir);
+  } catch (error) {
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return { names };
+    return { names, problem: `the review records folder ${dir} cannot be listed (${error.code ?? 'no code'})` };
+  }
+  try {
+    for (let seen = 0; ; seen += 1) {
+      const entry = handle.readSync();
+      if (entry === null) return { names };
+      if (seen >= RECORD_LIST_CAP) return { names, problem: `the review records folder ${dir} holds more than ${RECORD_LIST_CAP} entries, more than any project's records take` };
+      if (seen % 256 === 0 && pastDeadline()) return { names, problem: `the review records folder ${dir} could not be listed in time` };
+      const { name } = entry;
+      if (name === `pr-${pr}-review.json` || (name.startsWith(`pr-${pr}-review-`) && name.endsWith('.json'))) names.push(name);
+    }
+  } catch (error) {
+    return { names, problem: `the listing of the review records folder ${dir} failed partway (${error.code ?? 'no code'})` };
+  } finally {
+    try {
+      handle.closeSync();
+    } catch {
+      // Closed already.
+    }
+  }
+}
+
+// Every record file of number `pr` in `dir`: { file, state }. Past RECORD_LIST_CAP entries, only those among the
+// entries read: the merge guard refuses an unattended merge on such a folder before it reads any (recordProblem).
+function filesIn(dir, pr) {
+  return recordNames(dir, pr).names.map((name) => ({ file: path.join(dir, name), state: readFile(path.join(dir, name), pr) })).filter((each) => each.state);
 }
 
 // Every record this machine holds of number `pr`, whatever its repository, in every folder of this project's records

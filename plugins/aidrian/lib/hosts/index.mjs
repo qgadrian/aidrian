@@ -113,9 +113,31 @@ export const isFileEditTool = (tool) => HOSTS.some((host) => host.fileEditTools.
 //   edit      { file, edits, newText, replaceAll }: replacements in a file
 //   notebook  { file }: a cell of a notebook
 //   patch     { text, files: [{ file, added }] }: a patch naming its files, whose text is never known here
+// Every path in it is as the host's file tool resolves it (hostPath), as a leading `~` the host expands: the one resolver
+// every guard of a file tool reads it through.
 export function fileEditOf({ tool_name: tool, tool_input: given }) {
   const host = HOSTS.find((each) => each.fileEditTools.includes(tool));
-  return host ? host.fileEdit(tool, given ?? {}) : null;
+  const edit = host ? host.fileEdit(tool, given ?? {}) : null;
+  if (!edit) return edit;
+  const resolve = (file) => hostPath(host, file);
+  return {
+    ...edit,
+    ...(edit.file === undefined ? {} : { file: resolve(edit.file) }),
+    ...(Array.isArray(edit.files) ? { files: edit.files.map((each) => ({ ...each, file: resolve(each.file) })) } : {}),
+    targets: (edit.targets ?? []).map(resolve),
+  };
+}
+
+// A path a file tool of `host` names, as the host resolves it: its `filePath`, such as Claude Code's expansion of a
+// leading `~`, or the path as it is.
+const hostPath = (host, file) => (typeof file === 'string' && typeof host.filePath === 'function' ? host.filePath(file) : file);
+
+// The paths a file-tool read in a tool call names, as the tool names them, a null one standing for the call's folder,
+// or null when the tool reads no file through the host's own file tools: a host lists its read tools in
+// `fileReadTools` and names their paths with `fileRead(tool, input)`. A host whose reads all run in its shell lists none.
+export function fileReadOf({ tool_name: tool, tool_input: given }) {
+  const host = HOSTS.find((each) => (each.fileReadTools ?? []).includes(tool));
+  return host ? host.fileRead(tool, given ?? {}).map((file) => hostPath(host, file)) : null;
 }
 
 // The folders a project keeps `kind` (skills or agents) in, on every host that reads them.

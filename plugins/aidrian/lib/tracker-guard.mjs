@@ -3,12 +3,12 @@
 // value comes from the config, which config-merge.mjs `checkTracker` has already validated.
 
 import { createHash } from 'node:crypto';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { nameMatches } from './agent-gates.mjs';
 import { textProblem } from './clean-text.mjs';
 import { UNKNOWN_HOST } from './hosts/index.mjs';
+import { hookCountsFolder } from './project.mjs';
 import { knownServers, TRACKERS, trackerById, writeToolsOf } from './trackers/index.mjs';
 
 // An issue key, <KEY>-<n>. The prefix follows config-types.mjs `teamKey`: no hyphen and no whitespace.
@@ -88,10 +88,18 @@ function inputWorkspaceRefusal({ workspace, workspaceInput }, input, human) {
   return refused(`${workspaceInput} is ${JSON.stringify(value)}, and tracker.workspace.expect is ${expect}`, `Write to that workspace, or ask ${human} whether tracker.workspace.expect is wrong, and do not edit the key`);
 }
 
-// The file a routine refusal leaves for the end of its session, or null when the session id cannot name one. A refusal
-// alone cannot tell a session about to read from one whose read cannot succeed; hook-session-end.mjs can.
-export const refusalMarker = (session) =>
-  (typeof session === 'string' && /^[\w-]{1,128}$/u.test(session) ? path.join(tmpdir(), `aidrian-tracker-refused-${session}`) : null);
+// The file a routine refusal leaves for the end of its session, in the hooks' counts folder, or null when the session id
+// cannot name one. A refusal alone cannot tell a session about to read from one whose read cannot succeed;
+// hook-session-end.mjs can. It is written and read only as this user's own regular file (fs.mjs writeOwnText,
+// readOwnText).
+export function refusalMarker(session, { env = process.env } = {}) {
+  if (typeof session !== 'string' || !/^[\w-]{1,128}$/u.test(session)) return null;
+  try {
+    return path.join(hookCountsFolder(env), `aidrian-tracker-refused-${session}`);
+  } catch {
+    return null;
+  }
+}
 
 // The cause on the `hook_deny` row of a session that ended that way.
 export const NO_READ_LANDED = 'this session was refused for no read of the connected workspace, and no read landed';

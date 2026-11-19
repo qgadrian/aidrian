@@ -22,16 +22,14 @@
 // `stop_hook_active` is true on the stop this hook caused, and a payload without it (a host that does not send it) is never
 // sent back, so nothing can loop: each stop sends back at most once, for one of the four.
 
-import { writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
 
 import { loadConfig } from '../lib/config.mjs';
+import { readOwnText, writeOwnText } from '../lib/fs.mjs';
 import { deny, runHook } from '../lib/hook-io.mjs';
 import { detectHost } from '../lib/hosts/index.mjs';
 import { findProject } from '../lib/project.mjs';
 import { resultHoldReason } from '../lib/project-run-guard.mjs';
-import { continuation, stopReminder } from '../lib/session-length.mjs';
+import { continuation, sessionLengthMarker, stopReminder } from '../lib/session-length.mjs';
 import { announcedWork, QUESTION_TOOL } from '../lib/stop-announce.mjs';
 import { handBack } from '../lib/stop-handback.mjs';
 import { readText } from '../lib/transcript.mjs';
@@ -56,11 +54,11 @@ await runHook(async (input) => {
   if (typeof input.session_id !== 'string' || !/^[\w-]+$/.test(input.session_id)) return;
   const { handoff } = session;
   if (handoff.mode === 'off' || !text) return;
-  const marker = path.join(tmpdir(), `aidrian-session-length-${input.session_id}`);
-  const earlier = readText(marker);
+  const marker = sessionLengthMarker(input.session_id);
+  const earlier = marker ? readOwnText(marker) : null;
   // The route is read only on a stop that fires: on the background route it asks git for the base branch's config.
   if (!stopReminder(text, handoff, earlier)) return;
   const reminder = stopReminder(text, handoff, earlier, await continuation(handoff, host, project, config));
-  writeFileSync(marker, `${JSON.stringify(reminder.marker)}\n`);
+  if (marker) writeOwnText(marker, `${JSON.stringify(reminder.marker)}\n`);
   deny(reminder.reason);
 });

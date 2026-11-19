@@ -17,7 +17,7 @@
 import { accessSync, constants, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { isObject } from '../lib/fs.mjs';
+import { isObject, writeOwnText } from '../lib/fs.mjs';
 import { loadConfig } from '../lib/config.mjs';
 import { snapshotPath } from '../lib/gate-snapshot.mjs';
 import { baseReader } from '../lib/handoff-guard.mjs';
@@ -87,11 +87,9 @@ function heldSession(session) {
 // Leaves what the row at the session's end needs, which the SessionEnd payload lacks. The first refusal of a session keeps
 // its marker. Never throws: a marker that cannot be written costs that row, never the refusal.
 function markRefusal({ session_id: session, tool_name: tool, agent_type: agent, cwd }) {
-  try {
-    writeFileSync(refusalMarker(session), JSON.stringify({ tool, agent_type: agent, cwd }), { flag: 'wx' });
-  } catch {
-    // Already marked, or the temporary folder cannot be written.
-  }
+  const marker = refusalMarker(session);
+  // Already marked, or the counts folder cannot be written: nothing is written.
+  if (marker) writeOwnText(marker, JSON.stringify({ tool, agent_type: agent, cwd }), { exclusive: true });
 }
 
 // Whether hook-tracker-post.mjs could save `file`: the nearest folder above it that exists can be written, so it could

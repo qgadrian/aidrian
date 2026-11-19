@@ -1302,7 +1302,9 @@ The guard reads the review record bounded for every session: a record file that 
 link, or is larger than 2 MiB (ten times the largest record in use) reads as no record at once, and each file is parsed
 once a call. For a session no Human attends, or a project run's driver, it first checks the pull request's record
 files without parsing them, and refuses the merge when one fails those checks, or there are more than 8, or more than
-8 MiB in all.
+8 MiB in all, or a records folder holds more than 20,000 entries or cannot be listed within the hook's time: the
+folder, which a confined session may write, is read one entry at a time, so entries planted to fill it never stall
+the guard past its hook's time. An attended reader past 20,000 entries reads only the records among the first ones.
 Attended reads are unchanged: the review step still reads the record's sign-offs, from this machine or the pull
 request's comment, and a merge the Human asks for still takes the record's outcome. The trust model's residuals: the
 user's gh token stays readable to a confined session, so it can merge through the API outside every hook; a bot whose

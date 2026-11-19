@@ -71,7 +71,8 @@ context, with a 60,000-token baseline near 208,000.
 their cost. It fires on its own, whatever `r` is, at `maxTokens` and then at each doubling of it:
 `maxTokens × 2^n` after `n` firings. Its message names the context only, with no `r` or `N`.
 
-**Re-arming.** A marker in the system's temporary folder, `aidrian-session-length-<session id>`, holds
+**Re-arming.** A marker in the hooks' counts folder, `<state root>/hook-counts/aidrian-session-length-<session id>`,
+read and written only as the user's own regular file, never through a link or a FIFO, holds
 `{"lastRatio": r, "tokens": n, "compactions": n}`: the cost ratio at the last cost firing (0 for none), how often the
 ceiling fired, and the compactions seen. A firing changes only what its own trigger holds: a cost firing records its
 ratio, and a ceiling firing raises its count past every doubling the context already reached, so a jump of two

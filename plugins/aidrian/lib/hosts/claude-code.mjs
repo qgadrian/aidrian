@@ -8,7 +8,7 @@ import path from 'node:path';
 import { attachLine, findLine, findSessions, sessionEnded, sessionFinished, startBackground, startProject, stopBackground, stopLine } from './claude-code-background.mjs';
 import modelPrices from './claude-code-prices.mjs';
 import { transcriptLimit } from './claude-code-limit.mjs';
-import { accessProblem, cloneProblem, limitContinueProblem, nestedProtected, PLACEHOLDERS, PROTECTED_PATHS, sessionNote, writeEnvFile } from './claude-code-sandbox.mjs';
+import { accessProblem, cloneProblem, confineDomains, confineReads, limitContinueProblem, nestedProtected, PLACEHOLDERS, PROTECTED_PATHS, sessionNote, writeEnvFile } from './claude-code-sandbox.mjs';
 import { responseObjects } from './response.mjs';
 
 const MODEL_CHOICES = { model: ['sonnet', 'opus', 'haiku', 'fable'], effort: ['low', 'medium', 'high', 'xhigh', 'max'] };
@@ -89,6 +89,40 @@ function localSettingsProblem(value) {
   return null;
 }
 
+// The standard names of a hook payload (hookInput), before its sandbox escape is read.
+function mapInput(input) {
+  if (shellCommand(input)) return { ...input, tool_name: 'Bash', raw_tool_name: input.tool_name };
+  if (shellWatch(input)) return { ...input, permission_tool_name: 'Bash' };
+  const name = toolName(input.tool_name);
+  return name === input.tool_name ? input : { ...input, tool_name: name, raw_tool_name: input.tool_name };
+}
+
+// Its file tools that read, and the path each names (code.claude.com/docs/en/tools-reference): Read's `file_path`, Grep's
+// and Glob's `path`, the call's folder when unset, and Glob's `pattern` when it is absolute, up to its first glob
+// character. They run outside the sandbox, so the agent gate hook holds a confined session's reads (lib/confine-guard.mjs).
+export const READ_TOOLS = Object.freeze(['Read', 'Grep', 'Glob', 'NotebookRead', 'LS']);
+function fileRead(tool, given) {
+  if (tool === 'Read' || tool === 'NotebookRead') return [given.file_path ?? given.notebook_path ?? null];
+  const base = typeof given.path === 'string' ? given.path : null;
+  const named = [base];
+  if (tool === 'Glob' && typeof given.pattern === 'string') {
+    // The pattern's literal folder: up to the last `/` before its first glob character, `..` included, from its `path`
+    // or the call's folder when it is relative.
+    const at = given.pattern.search(/[*?[{]/u);
+    const literal = at < 0 ? given.pattern : given.pattern.slice(0, given.pattern.lastIndexOf('/', at) + 1);
+    const expanded = filePath(literal);
+    named.push(path.isAbsolute(expanded) || base === null ? expanded || null : path.join(filePath(base), expanded));
+  }
+  return named;
+}
+
+// A path its file tools name, as they resolve it: a leading `~` or `~/` is the home folder of the user the host runs as
+// (live check 23). Every other path is as it is, relative ones from the call's folder.
+function filePath(file) {
+  if (typeof file !== 'string') return file;
+  return file === '~' || file.startsWith('~/') ? path.join(homedir(), file.slice(1)) : file;
+}
+
 const startsSession = (args) => {
   const [first, second] = args.map((token) => (token.dynamic ? null : token.text));
   if (first === undefined) return true;
@@ -124,12 +158,13 @@ export default {
   rawToolName: (standard) => standard,
   toolResponse: responseObjects,
   // `raw_tool_name` keeps what Claude Code sent, so a pattern a project wrote in that form still matches (lib/hosts/index.mjs toolNames),
-  // as `Monitor` in an agent gate does for a Monitor call read as Bash.
+  // as `Monitor` in an agent gate does for a Monitor call read as Bash. A shell call's `dangerouslyDisableSandbox`, its ask
+  // to run outside the sandbox (code.claude.com/docs/en/sandboxing), with any value but false or null, reads as the
+  // standard `sandbox_escape: true`, failing closed on a value the host may read as true.
   hookInput(input) {
-    if (shellCommand(input)) return { ...input, tool_name: 'Bash', raw_tool_name: input.tool_name };
-    if (shellWatch(input)) return { ...input, permission_tool_name: 'Bash' };
-    const name = toolName(input.tool_name);
-    return name === input.tool_name ? input : { ...input, tool_name: name, raw_tool_name: input.tool_name };
+    const mapped = mapInput(input);
+    const escape = input?.tool_input?.dangerouslyDisableSandbox;
+    return escape === undefined || escape === null || escape === false ? mapped : { ...mapped, sandbox_escape: true };
   },
   opaqueShellTools: OPAQUE_SHELL_TOOLS,
   sessionStart: { programs: ['claude'], starts: startsSession },
@@ -141,6 +176,9 @@ export default {
     subcommands: [['mcp', 'add'], ['mcp', 'add-json'], ['mcp', 'add-from-claude-desktop'], ['mcp', 'remove'], ['config', 'set'], ['config', 'add'], ['config', 'remove'], ['plugin', 'install'], ['plugin', 'marketplace', 'add']],
     valueOptions: ['--settings', '--setting-sources', '--model', '--fallback-model', '--add-dir', '--mcp-config', '--permission-mode', '--agents', '--agent', '--session-id', '--append-system-prompt', '--system-prompt', '--allowedTools', '--allowed-tools', '--disallowedTools', '--disallowed-tools', '--output-format', '--input-format', '--plugin-dir', '-r', '--resume', '-n', '--name'],
   },
+  fileReadTools: READ_TOOLS,
+  fileRead,
+  filePath,
   fileEditTools: ['Edit', 'Write', 'NotebookEdit'],
   fileEdit(tool, given) {
     const targets = [given.file_path ?? given.notebook_path];
@@ -218,7 +256,8 @@ export default {
     // host's sandbox would let it write, and starts with `claude --bg --setting-sources user --settings <sandbox>
     // --strict-mcp-config --mcp-config <servers>` (hosts/claude-code-sandbox.mjs, claude-code-background.mjs), under the
     // name `<run> · <issue> · <attempt>`, with no agent and the driver session's permission mode and effort. A start holds
-    // the session only once the agent gate hook's beacon shows the plugin's hooks run for it. `access` halts on user
+    // the session only once the agent gate hook's beacon shows the plugin's hooks run for it, and the session's own
+    // `aidrian project confine` showed, from inside it, that the sandbox refuses what it must (confineProof). `access` halts on user
     // settings that would weaken the sandbox or run a command outside it, this plugin not enabled for the user, any other
     // plugin, a user skill, agent, or command with frontmatter hooks or MCP servers, an SSH origin, git's `store` helper,
     // and a Linux without bubblewrap or socat; `cloneProblem` on such a skill, agent, or command of the clone at any
@@ -241,8 +280,15 @@ export default {
       // The package managers' caches reach the session's sandboxed commands alone: the SessionStart hook appends them to
       // the file the host sources before each Bash command, never the settings' `env`, which its hooks and MCP servers get.
       shellEnv: ({ env, vars }) => writeEnvFile(env.CLAUDE_ENV_FILE, vars),
-      start: ({ session, cwd, name, prompt, env, hold, identify, beacon, git, grants, domains, main, mainGit, tokens, guarded, mcp, home, platform, run, wait }) => startProject({
-        session, cwd, name, prompt, env, hold, identify, beacon, sandbox: { git, grants, domains, main, mainGit, tokens, guarded }, mcp, home, platform, run, wait, effort: effort(env), efforts: MODEL_CHOICES.effort,
+      // Each start proves, from inside the session, that the sandbox holds (lib/project-confine.mjs): its first call runs
+      // `aidrian project confine`, which tries what the sandbox must refuse, and the start holds the session only once the
+      // gate confirmed the verdict (`confined`). `confineReads` are the credential stores the proof tries to read.
+      confineProof: true,
+      confineReads: ({ env, home }) => confineReads({ env, home }),
+      // The allowedDomains the user's and the organization's settings add, which the proof's unlisted host stays outside.
+      confineDomains: ({ env, home, platform }) => confineDomains({ env, home, platform }),
+      start: ({ session, cwd, name, prompt, env, hold, identify, beacon, confined, git, grants, domains, main, mainGit, tokens, guarded, mcp, home, platform, run, wait }) => startProject({
+        session, cwd, name, prompt, env, hold, identify, beacon, confined, sandbox: { git, grants, domains, main, mainGit, tokens, guarded }, mcp, home, platform, run, wait, effort: effort(env), efforts: MODEL_CHOICES.effort,
       }),
       stop: ({ id, env, run }) => stopBackground({ id, env, run }),
       ended: ({ id, session, env, run }) => sessionFinished({ id, session, env, run }),

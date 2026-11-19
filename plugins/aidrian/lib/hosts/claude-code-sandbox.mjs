@@ -13,8 +13,9 @@
 // 2026-11-18; no live run has checked them, and a value that fails validation in a session no Human attends is silently
 // ignored. It reads no file when loaded: hooks load every adapter.
 
-import { closeSync, constants, fstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync, writeSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { spawnSync } from 'node:child_process';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync, writeSync } from 'node:fs';
+import { homedir, userInfo } from 'node:os';
 import path from 'node:path';
 
 import { ATTEMPT_KEEP, KEPT_FOLDERS } from '../attempt-clone.mjs';
@@ -136,6 +137,14 @@ const FRONT_KEY = /(?:^|[\s{,])["']?(?:hooks|mcpServers)["']?\s*:/u;
 const COMPONENTS = Object.freeze(['skills', 'agents', 'commands']);
 
 const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
+// The name of the user this process runs as, or null.
+const userName = () => {
+  try {
+    return userInfo().username;
+  } catch {
+    return null;
+  }
+};
 const within = (folder, file) => file === folder || file.startsWith(`${folder}${path.sep}`);
 // Whether the folders `one` and `other` are one, or one holds the other.
 const meets = (one, other) => within(one, other) || within(other, one);
@@ -195,6 +204,13 @@ export function sandboxSettings({ work, git, grants, domains, temp, home, config
     autoContinueAtUsageLimit: true,
   };
 }
+
+// The credential stores the sandbox denies reading for the user whose home is `home`, under `env`, which the per-start
+// sandbox proof tries to read from inside the session (lib/project-confine.mjs): the proof reads the ones there.
+export const confineReads = ({ env, home }) => {
+  const user = home ?? homedir();
+  return [...new Set([...credentialStores(user, configFolder(env, user)), ...npmGlobalConfigs(env)])];
+};
 
 // The npm config files a sandboxed command could read a registry token from beside ~/.npmrc: the user and global config
 // files the driver's environment names (npm_config_userconfig and npm_config_globalconfig, in either case), and
@@ -393,17 +409,22 @@ function grantedRoots(settings, { home }) {
 // The first key below the user's `sandbox` settings `value` that USER_SANDBOX does not let stand, as its dotted path,
 // or null; `prefix` is the path walked so far. A key set to null is unset. A credentials entry that does not hide
 // (mode deny or mask) counts as the key that holds it.
-function sandboxKeyProblem(value, prefix = '') {
+function sandboxKeyProblem(value, prefix = '', strict = null) {
   if (!isObject(value)) return null;
   for (const [key, entry] of Object.entries(value)) {
     const dotted = `${prefix}${key}`;
     if (entry === null || entry === undefined) continue;
+    // A source that ranks above --settings keeps an overridden scalar only at the value the session's own settings set.
+    if (strict && OVERRIDDEN.includes(dotted)) {
+      if (!(strict[dotted] ?? []).includes(entry)) return dotted;
+      continue;
+    }
     if (USER_SANDBOX.has(dotted)) {
       if (dotted.startsWith('credentials.') && !(Array.isArray(entry) && entry.every((each) => isObject(each) && HIDING.has(each.mode)))) return dotted;
       continue;
     }
     if (isObject(entry) && [...USER_SANDBOX].some((each) => each.startsWith(`${dotted}.`))) {
-      const below = sandboxKeyProblem(entry, `${dotted}.`);
+      const below = sandboxKeyProblem(entry, `${dotted}.`, strict);
       if (below) return below;
       continue;
     }
@@ -415,17 +436,112 @@ function sandboxKeyProblem(value, prefix = '') {
 // What the user's settings, which still load under --setting-sources user, would do to the sandbox: a reason, or null.
 // Any `sandbox` key outside USER_SANDBOX halts; so does a permission grant whose folder holds, is, or lies in a guarded
 // one, or that the gate cannot place.
-function weakenedProblem(settings, { home, guarded }) {
-  if (isSet(settings.sandbox) && !isObject(settings.sandbox)) return 'the host\'s user settings set sandbox to a value that is not an object, so what it does to the sandbox of a session no Human attends cannot be told';
-  const key = sandboxKeyProblem(settings.sandbox);
-  if (key) return `the host's user settings set sandbox.${key}, which does not only narrow the sandbox of a session no Human attends; such a session starts only with the sandbox keys that narrow it, and network.allowedDomains (docs/providers/claude-code.md#project-start)`;
+function weakenedProblem(settings, { home, guarded, label = 'the host\'s user settings', strict = null }) {
+  if (isSet(settings.sandbox) && !isObject(settings.sandbox)) return `${label} set sandbox to a value that is not an object, so what it does to the sandbox of a session no Human attends cannot be told`;
+  const key = sandboxKeyProblem(settings.sandbox, '', strict);
+  if (key) return `${label} set sandbox.${key}, which does not only narrow the sandbox of a session no Human attends; such a session starts only with the sandbox keys that narrow it, and network.allowedDomains (docs/providers/claude-code.md#project-start)`;
   for (const { spelled, file } of grantedRoots(settings, { home })) {
-    if (file === null) return `the host's user settings grant ${String(spelled).slice(0, 200)}, a path the gate cannot place, so whether a session could write a folder the run guards cannot be told`;
+    if (file === null) return `${label} grant ${String(spelled).slice(0, 200)}, a path the gate cannot place, so whether a session could write a folder the run guards cannot be told`;
     const real = realOf(file);
     const reaches = guarded.find((each) => meets(real, each));
-    if (reaches) return `the host's user settings grant ${String(spelled).slice(0, 200)}, which reaches ${reaches}, a folder a session no Human attends must not write`;
+    if (reaches) return `${label} grant ${String(spelled).slice(0, 200)}, which reaches ${reaches}, a folder a session no Human attends must not write`;
   }
   return null;
+}
+
+// The values of each overridden sandbox scalar a managed source may set, which ranks above --settings: those the
+// session's own settings set (sandboxSettings), and, for autoAllowBashIfSandboxed, either, since false only asks more.
+const strictScalars = (platform) => ({
+  enabled: [true], failIfUnavailable: [true], allowUnsandboxedCommands: [false], autoAllowBashIfSandboxed: [true, false], enableWeakerNestedSandbox: [false],
+  enableWeakerNetworkIsolation: platform === 'darwin' ? [true, false] : [false], allowAppleEvents: [false], allowNestedUserNamespaces: [false],
+  'network.strictAllowlist': [true], 'network.allowAllUnixSockets': [false], 'network.allowLocalBinding': [false],
+});
+
+// The system folder of the host's managed settings files, and the macOS managed preferences files of its policy domain,
+// for `user` (code.claude.com/docs/en/managed-settings, delivery mechanisms). The host ranks each above --settings.
+const MANAGED_DIRS = Object.freeze({ darwin: '/Library/Application Support/ClaudeCode', linux: '/etc/claude-code' });
+const PLIST_DOMAIN = 'com.anthropic.claudecode';
+export const managedPlists = (user) => [`/Library/Managed Preferences/${PLIST_DOMAIN}.plist`, ...(user ? [`/Library/Managed Preferences/${user}/${PLIST_DOMAIN}.plist`] : [])];
+
+// The managed settings documents the host reads on `platform`, lowest rank first: `managed-settings.json` and each
+// `managed-settings.d/*.json` in the system folder, by name, then on macOS the managed preferences of the host's
+// policy domain, read through plutil. { documents: [{ source, value }] }, or { problem } when a source is there and
+// cannot be read, or the platform's sources are unknown. `managed` is a test's, { dir, plists }; `run` spawnSync's shape.
+export function managedSettings({ platform, managed = null, user = null, run = spawnSync }) {
+  const dir = managed?.dir ?? MANAGED_DIRS[platform];
+  if (!dir) return { problem: `the host's managed settings on ${platform} are not ones the start can read, and they rank above the session's own settings` };
+  const documents = [];
+  const take = (source, read) => {
+    if (read.missing) return null;
+    if (read.problem) return `the host's managed settings ${source} cannot be read: ${read.problem}, and they rank above the session's own settings`;
+    if (!isObject(read.value)) return `the host's managed settings ${source} are not a JSON object`;
+    documents.push({ source, value: read.value });
+    return null;
+  };
+  const main = take(path.join(dir, 'managed-settings.json'), readJson(path.join(dir, 'managed-settings.json')));
+  if (main) return { problem: main };
+  const drops = path.join(dir, 'managed-settings.d');
+  let names = [];
+  try {
+    names = readdirSync(drops).filter((name) => !name.startsWith('.') && name.endsWith('.json')).sort();
+  } catch (error) {
+    if (error.code !== 'ENOENT') return { problem: `the host's managed settings folder ${drops} cannot be listed (${error.code ?? 'no code'}), and its files rank above the session's own settings` };
+  }
+  for (const name of names) {
+    const problem = take(path.join(drops, name), readJson(path.join(drops, name)));
+    if (problem) return { problem };
+  }
+  const plists = managed?.plists ?? (platform === 'darwin' ? managedPlists(user) : []);
+  for (const file of plists) {
+    try {
+      lstatSync(file);
+    } catch (error) {
+      if (error.code === 'ENOENT') continue;
+      return { problem: `the host's managed preferences ${file} cannot be read (${error.code ?? 'no code'})` };
+    }
+    const read = run('/usr/bin/plutil', ['-convert', 'json', '-o', '-', '--', file], { encoding: 'utf8', timeout: 10_000 });
+    let value;
+    try {
+      value = read.status === 0 ? JSON.parse(read.stdout) : undefined;
+    } catch {
+      value = undefined;
+    }
+    const problem = take(file, value === undefined ? { problem: 'plutil cannot convert it to JSON' } : { value });
+    if (problem) return { problem };
+  }
+  return { documents };
+}
+
+// Why the managed settings `documents` would weaken the session's sandbox, run a command outside it, or grant a guarded
+// folder, under the user settings' rules, with an overridden sandbox scalar kept only at the session's own value; or null.
+function managedProblem(documents, { home, guarded, platform, allowed }) {
+  const named = new Set(allowed);
+  for (const { source, value } of documents) {
+    const label = `the host's managed settings ${source}`;
+    const weakened = weakenedProblem(value, { home, guarded, label, strict: strictScalars(platform) });
+    if (weakened) return weakened;
+    const key = COMMAND_KEYS.find((each) => isSet(at(value, each)) && !named.has(each));
+    if (key) return `${label} set ${key}, a command the host runs outside the sandbox of a session no Human attends; the team names it in projectRun.outsideSandbox, or the organization removes it`;
+    // The host then drops the session's own permission rules, which hold its file tools from the credential stores.
+    if (value.allowManagedPermissionRulesOnly === true) return `${label} set allowManagedPermissionRulesOnly, so the host drops the permission rules the session's own settings pass, which keep its file tools from the stores its sandbox hides`;
+  }
+  return null;
+}
+
+// The user's settings with the plugin switches of the managed `documents` over theirs, as the host ranks them.
+const withManagedPlugins = (settings, documents) => ({
+  ...settings,
+  enabledPlugins: Object.assign({}, isObject(settings.enabledPlugins) ? settings.enabledPlugins : {}, ...documents.map(({ value }) => (isObject(value.enabledPlugins) ? value.enabledPlugins : {}))),
+});
+
+// The network hosts the user's and the organization's settings add to the session's allowedDomains, which lists merge:
+// the sandbox proof names a host outside them (lib/project-confine.mjs). Unreadable settings add none; the start halts
+// on them anyway.
+export function confineDomains({ env, home, platform = process.platform, managed = null }) {
+  const user = home ?? env.HOME ?? homedir();
+  const settings = userSettings(configFolder(env, user));
+  const documents = managedSettings({ platform, managed, user: userName() }).documents ?? [];
+  return [settings.value ?? {}, ...documents.map((each) => each.value)].flatMap((value) => listAt(value, 'sandbox.network.allowedDomains')).filter((each) => typeof each === 'string');
 }
 
 // Whether `url`, a push URL, goes over SSH: `ssh://`, `git+ssh://`, or the scp form `[user@]host:path`.
@@ -440,18 +556,23 @@ const storeHelper = (value) => /^\s*(?:store\b|!?\S*git-credential-store\b)/u.te
 // projectRun.outsideSandbox. The checks, in order: the user's settings read; their sandbox keys and grants; this plugin
 // enabled; their command keys and other plugins; the user's own skills, agents, and commands; then origin, git's
 // credential helper, and bubblewrap and socat on Linux.
-export function accessProblem({ env, home, guarded = [], pushUrl, platform, allowed = [], helpers = [] }) {
+export function accessProblem({ env, home, guarded = [], pushUrl, platform, allowed = [], helpers = [], managed = null }) {
   const user = home ?? env.HOME ?? homedir();
   const folder = configFolder(env, user);
   const settings = userSettings(folder);
   if (settings.problem) return settings.problem;
   const weakened = weakenedProblem(settings.value, { home: user, guarded });
   if (weakened) return weakened;
+  const read = managedSettings({ platform, managed, user: userName() });
+  if (read.problem) return read.problem;
+  const ranked = managedProblem(read.documents, { home: user, guarded, platform, allowed });
+  if (ranked) return ranked;
+  const effective = withManagedPlugins(settings.value, read.documents);
   const installed = installedPlugins(folder);
   if (installed.problem) return `${installed.problem}, so whether this plugin loads cannot be told`;
-  const own = ownPluginProblem(settings.value, folder, installed);
+  const own = ownPluginProblem(effective, folder, installed);
   if (own) return own;
-  const command = userSettingsProblem(settings.value, { folder, allowed });
+  const command = userSettingsProblem(effective, { folder, allowed });
   if (command) return command;
   const components = componentsProblem({ root: folder, folders: [folder], label: '~/.claude/', where: ', in the host\'s user config folder,', allowed });
   if (components) return components;

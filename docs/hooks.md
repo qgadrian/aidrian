@@ -601,7 +601,8 @@ run's driver is held the same way, from its driver mark. Its `gh pr merge --auto
 (`graphql`, `/graphql`, `graphql/`, `graphql?x=1`, or an absolute URL whose path is GraphQL's, or an endpoint the
 shell builds) whose query is in a file it names or the shell builds, and fed text naming one, are refused: each leaves
 the merge to GitHub. Before any record is parsed, its pull request's record files are checked: more than 8, more than
-8 MiB in all, or one that is a link, a FIFO, a hard link, or over 2 MiB refuses. Every other merge such a
+8 MiB in all, or one that is a link, a FIFO, a hard link, or over 2 MiB refuses, and so does a records folder past
+20,000 entries, or one the guard cannot list within its time, each folder read one entry at a time. Every other merge such a
 session makes that the checks above let through, with a record or none, the Human's answer, or a waiver, must also:
 name its number and its full 40-character head (`--match-head-commit`, `sha=`, the merge tool's `sha`, or the GitHub MCP
 server's `expectedHeadSha`, which its merge passes to GitHub), in the repository the session is pinned to, its project
@@ -960,6 +961,19 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   first call, `beacon.<session id>.json` in the folder the gate files marks in, once: a host adapter that cannot
   otherwise tell whether its host runs this plugin's hooks for the session it started, as Codex's under `codex exec`,
   waits on it ([Project start](providers/codex.md#project-start)). A beacon lapses with the pending mark.
+- A session whose start proves its sandbox from inside it, as every Claude Code issue session's does
+  ([The sandbox proof](providers/claude-code.md#the-sandbox-proof)), runs only the exact
+  `aidrian project confine <run> <issue>` of its own issue, alone, on one line, in Bash, and only while no verdict is in
+  the drop folder, until the start files the passed proof in its mark; a call it makes before then is refused,
+  wherever it runs. A session with no readable mark of its own, whichever pending mark it reads, is held the same way
+  whenever its call runs in an attempt's clone whose start wrote the proof's plan. Once the mark or the verdict in the
+  drop folder says the proof failed, or the mark's proof state cannot be read, every call is refused, the confine
+  command too. Before and after the proof, a file-tool read (Read, Grep, Glob, or LS, as the host's adapter names its
+  read tools) that reaches a store the plan lists as hidden, or a folder that holds one, is refused. The hook also refuses the confine command, and writes a failed verdict, when
+  its own environment, the host process's, holds a variable whose value names the attempt's `cache` folder. Only that
+  issue's session may run the confine command (`lib/project-run-guard.mjs`). A session with no proof in its mark
+  and no plan beside its clone, as Codex's, is not held so. And a session an unattended mark holds never runs a call
+  that asks the host to run it outside its sandbox (`sandbox_escape`, Claude Code's `dangerouslyDisableSandbox`).
 - With or without gates or a project, a subagent, and a main session the background handoff route started, may not
   write in the unattended marks' folder, nor change the mode or owner of it or of the state root, by a path, a glob
   that may reach it, a link already on disk, or, where the folder is unknown, a part named `unattended`.
@@ -1329,7 +1343,9 @@ and repeat the call until the task ends, or stop it with `TaskStop` when it shou
 One send-back did not hold. A foreground wait that outlives its timeout is moved to the background, so at the next stop it
 is one more running task, and some agents answered the send-back by arming a Monitor, another task, and ending the turn.
 Claude Code marks every stop after the first send-back of a turn with `stop_hook_active: true`, so that flag cannot count
-the rounds. The hook counts them instead, in a file per agent in the temporary folder (`lib/child-send-backs.mjs`):
+the rounds. The hook counts them instead, in a file per agent in the hooks' counts folder, `<state root>/hook-counts`,
+which no confined session's sandbox may write (`lib/child-send-backs.mjs`), opened without following a link or waiting
+on a FIFO, and only as a regular file of the user with one link:
 it sends the subagent back at each stop while its task runs, up to 5 times in a row, and says which round it is.
 A stop with none of its own tasks running clears the count, and a turn no stop hook started counts from zero.
 The stop the cap lets end with the task still running is an occurrence of an [automatic lesson](lessons.md#automatic-lessons)
@@ -1410,7 +1426,8 @@ Two hooks weigh what continuing the main session costs against a fresh session s
   for one more turn, with the ratio and the calls a handoff needs to pay back. The agent judges first whether a handoff
   is worth it, and may end the turn without a word; otherwise it asks the Human (`ask`) or writes the brief (`auto`).
   It fires once, then again once the ratio doubles in `ask` mode, or climbs a step of `max(costRatio − 1, 1)` in `auto`:
-  a marker in the system's temporary folder holds the ratio of the last firing, and a compaction resets it.
+  a marker in the hooks' counts folder, `<state root>/hook-counts`, holds the ratio of the last firing, and a compaction
+  resets it.
 - When the Human approves a plan (Claude Code's `ExitPlanMode`), the plan hook tells the agent to offer the same handoff
   before its first build step, from halfway to `costRatio`: a cost ratio of 1.5 by default.
 - Both word the handoff for the [continue route](handoff.md#continue) the session's host can do. With `clear`, `auto`

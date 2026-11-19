@@ -14,6 +14,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
+import { attemptOf } from './attempt-clone.mjs';
 import { bashCall, opaqueTexts } from './config-guard.mjs';
 import { loadConfig } from './config.mjs';
 import { BACKGROUND_HOPS } from './handoff-continue.mjs';
@@ -24,7 +25,7 @@ import { opaqueShellCommand } from './hosts/index.mjs';
 import { findProject } from './project.mjs';
 import { activeRuns, attendedProblem, ISSUE_KEY, readRun, RUN_ID, runPlace } from './project-run.mjs';
 import { aidrianArgs, walkCommands } from './shell-lex.mjs';
-import { endedIn, runDriver } from './run-driver.mjs';
+import { driverAfter, endedIn, runDriver } from './run-driver.mjs';
 import { marksNaming, readUnattendedMark } from './unattended-mark.mjs';
 
 // The file a confined session hands its result over in, in its drop folder: project-result.mjs's DROP_FILE, which
@@ -50,7 +51,6 @@ const SUBAGENT_MAY = new Set(['next']);
 // start ahead, as `uncertain` with `pending: true`, before the host starts anything, then once more when it knows.
 export const START_OUTCOMES = Object.freeze(['started', 'uncertain', 'unheld', 'void']);
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
-const SHA256 = /^[0-9a-f]{64}$/u;
 
 const isSession = (value) => typeof value === 'string' && SESSION_ID.test(value);
 // The time of a row's `at`, or NaN when it is not a timestamp as toISOString writes it.
@@ -58,15 +58,7 @@ export const timeOf = (row) => (typeof row?.at === 'string' && ISO.test(row.at) 
 
 // The driver of the run `found` (readRun) holds: { session, since }, the session and when the row that made it driver
 // was written: the init row, or the latest `driver` row that moved custody from the driver before it.
-export function driverOf(found) {
-  let driver = { session: found.init.session, since: Date.parse(found.init.at) };
-  for (const row of found.rows) {
-    if (row.event !== 'driver' || !isSession(row.session) || row.from !== driver.session || !SHA256.test(row.sha256 ?? '')) continue;
-    const at = timeOf(row);
-    if (Number.isFinite(at) && at >= driver.since) driver = { session: row.session, since: at };
-  }
-  return driver;
-}
+export const driverOf = (found) => driverAfter(found.init, found.rows);
 
 // Whether `project` has a project run under way: a run that has not ended (project-run.mjs activeRuns) in any state
 // folder its runs may be kept in (handoff-guard.mjs stateFolders, which takes `base`, the hook call's baseReader, and
@@ -91,7 +83,7 @@ export function currentDriver(session, options = {}) {
   const driver = runDriver(session, options);
   if (!driver?.run || !driver.project || !driver.state) return null;
   const found = readRun(driver.state, driver.run);
-  if (found.problem || endedIn(found.rows) || driverOf(found).session !== session) return null;
+  if (found.problem || endedIn(found) || driverOf(found).session !== session) return null;
   return { run: driver.run, project: driver.project, state: driver.state, found };
 }
 
@@ -381,6 +373,23 @@ const RULES = Object.freeze({
   recorded: driverOnly,
   // Reads every check a start would make, and starts nothing.
   preflight: readOnly,
+  // Proves the sandbox of the issue's own session from inside it (lib/project-confine.mjs): only the session the run
+  // started for the issue, by its own mark, or, before the gate files that, by the pending mark that starts it in the
+  // issue's clone, where the call runs.
+  confine: ({ found, key, session, home, input }) => {
+    let mark = null;
+    try {
+      mark = readUnattendedMark(session, home ? { home } : {});
+    } catch {
+      mark = { root: null };
+    }
+    const run = found.init.run;
+    if (mark && !mark.pending && mark.project === run && mark.issue === key) return null;
+    const at = typeof input?.cwd === 'string' ? attemptOf(input.cwd) : null;
+    const clone = mark?.pending && typeof mark.cwd === 'string' ? resolvedPath(mark.cwd) : null;
+    if (at && clone && at.run === run && at.key === key && at.work === clone) return null;
+    return `\`aidrian project confine\` proves the sandbox of the session the run started for the issue ${key}, and this session is not that one`;
+  },
   result: ({ found, store, key, session, home }) => {
     let mark = null;
     try {
@@ -419,7 +428,7 @@ function authorize({ input, sub, rest, folder, home, rule }) {
   if (typeof run !== 'string' || !RUN_ID.test(run)) return null;
   const found = readRun(place.state, run);
   if (found.problem) return null;
-  return rule({ sub, found, store: runStore(project, config, place.state), key, session, home });
+  return rule({ sub, found, store: runStore(project, config, place.state), key, session, home, input });
 }
 
 // The reason a session that works an issue of a project run is sent back once when it stops, or null: its unattended

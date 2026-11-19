@@ -31,6 +31,7 @@ import { looseFolder, openStore, SESSION_ID } from './handoff-markers.mjs';
 import { appendRow, withLocks } from './jsonl.mjs';
 import { committedConfigFile, defaultStateDir, stateDir, stateRoot } from './project.mjs';
 import { issueTextsOf, TEXT_BYTES, writeIssueTexts } from './project-issue-text.mjs';
+import { endedIn } from './run-driver.mjs';
 import { MARK_FOLDER, markDriver, readUnattendedMark } from './unattended-mark.mjs';
 
 // A run id: lower-case letters, digits, and dashes, starting with a letter or digit.
@@ -575,8 +576,9 @@ export function activeRuns(state, { except } = {}) {
   return names.filter((name) => RUN_ID.test(name) && name !== except).filter((name) => {
     const found = readRun(state, name);
     if (found.problem) return true;
-    // A run whose ledger records its end (`aidrian project end`) is over, whatever its issues.
-    if (found.rows.some((row) => row?.event === 'end')) return false;
+    // A run whose ledger records its end (`aidrian project end`), by the driver of that moment, is over, whatever its
+    // issues (run-driver.mjs endedIn).
+    if (endedIn(found)) return false;
     return planRun(found.snapshot, found.states).verdict !== 'done';
   }).map((run) => ({ run }));
 }

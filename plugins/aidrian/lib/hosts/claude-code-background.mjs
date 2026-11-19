@@ -6,7 +6,8 @@
 // the handoff's wrapper of the same launch, which takes the folder, name, and mode from the handing-off session, and
 // `startProject` a project run's, which starts in the attempt's clone under the driver session's permission mode, under
 // the host's sandbox (lib/hosts/claude-code-sandbox.mjs), and holds the session only once the plugin's agent gate hook
-// files its beacon on the session's first tool call.
+// files its beacon on the session's first tool call, and the session proved from inside its sandbox that the sandbox
+// holds (`confined`, the gate's reading of `aidrian project confine`'s verdict).
 // Every call goes through `run`, spawnSync's shape, which a test replaces, so no test starts a real session. `claude` is
 // found on the absolute folders of PATH alone: an empty or relative entry would run whatever `claude` the folder holds.
 
@@ -54,6 +55,9 @@ const NO_CLAUDE = '`claude` is not on PATH, in an absolute folder';
 // before this wait (IDENTIFY_CAP; test/project-start-sandbox.test.mjs holds the two apart).
 export const BEACON_WAIT = 180_000;
 const BEACON_STEP = 1_000;
+// How long a project start waits, after the beacon, for the session's sandbox proof (lib/project-confine.mjs): its first
+// call runs `aidrian project confine`, whose probes take a few seconds.
+export const CONFINE_WAIT = 180_000;
 export const IDENTIFY_CAP = START_TIMEOUT + LIST_TRIES * (LIST_TIMEOUT + LIST_PAUSE) + LIST_TIMEOUT;
 // A network host the sandbox's allowlist takes: a host name, or `*.` and a host name.
 const DOMAIN = /^(?:\*\.)?[a-z0-9.-]+$/iu;
@@ -234,7 +238,7 @@ function ownMode({ session, list, env, readMode }) {
 // `beacon(session)`, the agent gate hook's beacon, shows the plugin's hooks run for it, within BEACON_WAIT: else the
 // session is stopped, and the answer names the failed proof (`proof`). Returns startIn's answer, or { problem,
 // uncertain, proof }. `hold`, `run`, `wait`, and `resolve` are startBackground's.
-export function startProject({ session, cwd, prompt, name, effort, efforts = [], env, hold, identify, beacon, sandbox, mcp, home, platform = process.platform, run = runCommand, wait = pause, resolve = claudeOnPath, readMode = sessionMode }) {
+export function startProject({ session, cwd, prompt, name, effort, efforts = [], env, hold, identify, beacon, confined, sandbox, mcp, home, platform = process.platform, run = runCommand, wait = pause, resolve = claudeOnPath, readMode = sessionMode }) {
   const box = sandboxInputs(sandbox);
   if (box.problem) return { problem: box.problem };
   if (typeof beacon !== 'function') return { problem: 'the gate gave no way to read the agent gate hook\'s beacon' };
@@ -257,7 +261,7 @@ export function startProject({ session, cwd, prompt, name, effort, efforts = [],
   const settings = sandboxSettings({ ...box, work, temp: tempFolders(), home: user, config: configFolder(env, user), platform, secrets: secretVars(env, box.tokens), stores: npmGlobalConfigs(env) });
   const started = startIn({ cwd: work, prompt, name, mode: read.mode, effort, efforts, settings, mcp: mcpConfig(mcp), env, hold, run, wait, resolve: () => claude });
   if (started.problem) return REFUSED.test(started.problem) && started.uncertain === false ? { ...started, problem: `${started.problem}; ${trustStep(work)}` } : started;
-  return proveHooks({ started, identify, beacon, env, run, wait, claude });
+  return proveHooks({ started, identify, beacon, confined, env, run, wait, claude });
 }
 
 const within = (folder, file) => file === folder || file.startsWith(`${folder}${path.sep}`);
@@ -311,11 +315,13 @@ function tempFolders() {
   return [...new Set(folders)];
 }
 
-// The proofs of a started project session: its full id, its floor and mark, then the beacon of the plugin's hooks. The
-// session `started` names is stopped when one fails.
-function proveHooks({ started, identify, beacon, env, run, wait, claude }) {
+// The proofs of a started project session: its full id, its floor and mark, the beacon of the plugin's hooks, then,
+// when the gate gives `confined`, its sandbox proof: `confined(session)` answers true once the proof passed and the
+// gate filed it in the session's mark, { problem } once it failed, and null while no verdict is there. The session
+// `started` names is stopped when one fails, or the proof does not come within CONFINE_WAIT.
+function proveHooks({ started, identify, beacon, confined, env, run, wait, claude }) {
   const stopped = (why, proof = null) => {
-    if (!stopBackground({ id: started.id, env, run, resolve: () => claude })) return { problem: `${why}, and the session ${started.id} could not be stopped`, uncertain: true };
+    if (!stopBackground({ id: started.id, env, run, resolve: () => claude })) return { problem: `${why}, and the session ${started.id} could not be stopped`, uncertain: true, ...(proof ? { proof } : {}) };
     return { problem: `${why}; the session was stopped`, uncertain: false, ...(proof ? { proof } : {}) };
   };
   const own = started.session;
@@ -329,9 +335,26 @@ function proveHooks({ started, identify, beacon, env, run, wait, claude }) {
     } catch {
       seen = false;
     }
-    if (seen) return started;
+    if (seen) return typeof confined === 'function' ? proveSandbox({ started, own, confined, wait, stopped }) : started;
   }
   return stopped(`the plugin's agent gate hook did not run on the session's first tool call within ${BEACON_WAIT / 1000} seconds, so the host may not run the plugin's hooks under --setting-sources user`, 'beacon');
+}
+
+// Waits for the sandbox proof of the session `own`, which `started` named (proveHooks): `started` once `confined`
+// confirms it, else what `stopped` answers for the proof `confine`.
+function proveSandbox({ started, own, confined, wait, stopped }) {
+  for (let step = 0; step <= CONFINE_WAIT / BEACON_STEP; step += 1) {
+    if (step > 0) wait(BEACON_STEP);
+    let answer;
+    try {
+      answer = confined(own);
+    } catch (error) {
+      answer = { problem: `its verdict could not be read (${String(error?.message ?? error).split('\n')[0]})` };
+    }
+    if (answer === true) return started;
+    if (answer && typeof answer.problem === 'string') return stopped(`the session's sandbox proof failed: ${answer.problem}`, 'confine');
+  }
+  return stopped(`the session did not prove its sandbox with \`aidrian project confine\` within ${CONFINE_WAIT / 1000} seconds of its first tool call`, 'confine');
 }
 
 // The background sessions `claude agents --json --all` lists in the folder `cwd` under the exact name `name`, as [{ id,

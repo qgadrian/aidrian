@@ -60,11 +60,11 @@ const defaultRead = () => undefined;
 // At the repository root: the marketplace manifests that install the plugin.
 const GUARDED_LIB = [
   'agent-gates', 'agent-models', 'attempt-clone', 'attribution', 'audit-import', 'audits', 'banned-terms', 'bounded-regexp', 'child-send-backs', 'clean-text', 'cli', 'closing-words', 'code-words', 'config', 'config-committed', 'config-defaults',
-  'config-guard', 'config-local', 'config-merge', 'config-schema', 'config-tracker', 'config-types', 'config-version',
+  'config-guard', 'config-local', 'config-merge', 'config-schema', 'config-tracker', 'config-types', 'config-version', 'confine-guard',
   'deadline', 'decisions', 'delivery-check', 'dispatch-log', 'dispatch-rows', 'feedback-record', 'finding-disposition', 'foreground-dispatch', 'fs', 'gate-snapshot', 'git', 'glob-links',
   'handoff-continue', 'handoff-guard', 'handoff-markers', 'handoff-sections', 'hook-deny', 'hook-io', 'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits',
   'markdown-prose', 'markdown-sections', 'markdown-wrap', 'model-prices', 'names', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review',
-  'pr-checks', 'pr-product-feedback', 'pr-resolve', 'project', 'project-issue-text', 'project-limit', 'project-registries', 'project-report', 'project-result', 'project-run', 'project-run-cli', 'project-run-gate', 'project-run-guard', 'project-start', 'project-stops', 'project-trust', 'remotes', 'review-gate', 'run-driver', 'session-length',
+  'pr-checks', 'pr-product-feedback', 'pr-resolve', 'project', 'project-confine', 'project-issue-text', 'project-limit', 'project-registries', 'project-report', 'project-result', 'project-run', 'project-run-cli', 'project-run-gate', 'project-run-guard', 'project-start', 'project-stops', 'project-trust', 'remotes', 'review-gate', 'run-driver', 'session-length',
   'session-start-gate', 'shell-lex', 'solo',
   'stop-announce', 'stop-history', 'stop-handback', 'terms', 'tracker-check', 'tracker-guard', 'transcript', 'unattended-mark', 'unattended-shell', 'unattended-write', 'usage',
 ].join('|');
@@ -571,6 +571,12 @@ export const recordsFolder = (state) => path.join(state, 'reviews');
 // the user's real home folder, outside the temporary folder and the run's test state folder, is refused: a test that
 // reached it would write fixture lessons and state folders into the developer's own inbox. scripts/test-state.mjs gives
 // every test its own root.
+// The folder of the hooks' counts and markers: the block counts, a subagent's send-backs, the session-length marker, and
+// a tracker refusal's marker. It lies in the state root, which no sandbox of a session the plugin confines may write,
+// never in the temporary folder, which one may: a FIFO planted there would stall a hook past its time, after which the
+// host runs the call it was refusing, and a link would lead the hook's write outside the sandbox.
+export const hookCountsFolder = (env = process.env) => path.join(stateRoot(env), 'hook-counts');
+
 export function stateRoot(env = process.env) {
   const base = path.isAbsolute(env.XDG_STATE_HOME ?? '') ? env.XDG_STATE_HOME : path.join(homedir(), '.local/state');
   const root = path.join(base, 'aidrian');

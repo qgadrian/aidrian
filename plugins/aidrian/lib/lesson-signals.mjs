@@ -5,15 +5,15 @@
 // turns all of them off. Rows hold names, counts, paths, and ids; never a prompt, a command, or tool output.
 // A signal with target `plugin` lands in the plugin's inbox, as `aidrian lesson add --target plugin` does.
 
-import { appendFileSync, closeSync, mkdirSync, openSync, rmSync, statSync, unlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { closeSync, constants, fstatSync, lstatSync, opendirSync, openSync, rmSync, unlinkSync, writeSync } from 'node:fs';
 import path from 'node:path';
 
 import { loadConfig } from './config.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { appendRow, withLocks } from './jsonl.mjs';
 import { addRow, homeInbox } from './lesson-inbox.mjs';
-import { findProject } from './project.mjs';
+import { openOwnFile, ownFolderSync } from './fs.mjs';
+import { findProject, hookCountsFolder } from './project.mjs';
 
 // One block is a guard doing its job; this many of the same rule in one session is an agent fighting it.
 export const REPEATED_DENIALS = 3;
@@ -131,9 +131,12 @@ export function roundLimitSignal({ repo, pr, maxRounds, rounds, session = null, 
 
 // A session id or rule name that may name a file.
 const FILE_NAME_PART = /^[\w-]+$/;
-// The temporary folder of one session's block counts, `<prefix><session>`, holds a `<rule>` file per rule,
-// `<rule>.recorded` after one that fired, and `<tool>.noted` per tool noted (noteUnlistedTool). One folder per session lets
-// the session's end delete them by path alone.
+// The folder of the hooks' counts (project.mjs hookCountsFolder), which no confined session may write.
+export { hookCountsFolder };
+// The folder of one session's block counts, `<prefix><session>`, holds a `<rule>` file per rule, `<rule>.recorded` after
+// one that fired, and `<tool>.noted` per tool noted (noteUnlistedTool). One folder per session lets the session's end
+// delete them by path alone. Every count is opened without following a link and without waiting (fs.mjs openOwnFile),
+// in folders of this user that are no links.
 const DENIALS_PREFIX = 'aidrian-denials-';
 const denialsDir = (dir, session) => path.join(dir, `${DENIALS_PREFIX}${session}`);
 const agentOf = (input, env) => (typeof input.agent_type === 'string' && input.agent_type ? input.agent_type : sessionIdentity(env).agent);
@@ -141,16 +144,26 @@ const agentOf = (input, env) => (typeof input.agent_type === 'string' && input.a
 // Counts one block by `rule` for the hook payload's session, and records the signal once the count reaches
 // REPEATED_DENIALS, once per session and rule. Parallel subagents share their parent's session and may block at once,
 // so the count is the size of a file in the temporary folder that each block appends one byte to, and the block that
-// creates the `.recorded` marker first is the one that records. Never throws.
-export function noteDenial(input, rule, { dir = tmpdir(), env = process.env, now = new Date() } = {}) {
+// creates the `.recorded` marker first is the one that records. A count whose file or folder is not a plain one of this
+// user counts nothing. Never throws.
+export function noteDenial(input, rule, { dir, env = process.env, now = new Date() } = {}) {
   try {
     const session = input.session_id;
     if (typeof session !== 'string' || !FILE_NAME_PART.test(session) || !FILE_NAME_PART.test(rule)) return null;
-    const folder = denialsDir(dir, session);
-    mkdirSync(folder, { recursive: true });
+    const root = dir ?? hookCountsFolder(env);
+    const folder = denialsDir(root, session);
+    if (!ownFolderSync(root) || !ownFolderSync(folder)) return null;
     const file = path.join(folder, rule);
-    appendFileSync(file, '.');
-    if (statSync(file).size < REPEATED_DENIALS) return null;
+    const fd = openOwnFile(file, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT);
+    if (fd === null) return null;
+    let size;
+    try {
+      writeSync(fd, '.');
+      size = fstatSync(fd).size;
+    } finally {
+      closeSync(fd);
+    }
+    if (size < REPEATED_DENIALS) return null;
     try {
       closeSync(openSync(`${file}.recorded`, 'wx'));
     } catch {
@@ -170,12 +183,13 @@ export function noteDenial(input, rule, { dir = tmpdir(), env = process.env, now
 // Records the signal of the unlisted tool in the hook payload, once per session and tool: the hook runs on every call of the
 // tool, and the `<tool>.noted` marker keeps the inbox from growing a row per call. Parallel subagents share their parent's
 // session, so the call that creates the marker first is the one that records. Never throws.
-export function noteUnlistedTool(input, project, config, { dir = tmpdir(), env = process.env, now = new Date() } = {}) {
+export function noteUnlistedTool(input, project, config, { dir, env = process.env, now = new Date() } = {}) {
   try {
     const { session_id: session, tool_name: tool } = input;
     if (!config.lessons.auto || typeof session !== 'string' || !FILE_NAME_PART.test(session) || !FILE_NAME_PART.test(tool)) return null;
-    const folder = denialsDir(dir, session);
-    mkdirSync(folder, { recursive: true });
+    const root = dir ?? hookCountsFolder(env);
+    const folder = denialsDir(root, session);
+    if (!ownFolderSync(root) || !ownFolderSync(folder)) return null;
     const marker = path.join(folder, `${tool}.noted`);
     try {
       closeSync(openSync(marker, 'wx'));
@@ -191,13 +205,45 @@ export function noteUnlistedTool(input, project, config, { dir = tmpdir(), env =
   }
 }
 
-// Deletes the block counts of `session`, when it ends, by path: the temporary folder can hold more than a hundred
-// thousand entries, and listing it would eat the session-end hook's time budget. Never throws.
-export function forgetDenials(session, { dir = tmpdir() } = {}) {
+// Deletes the block counts of `session`, when it ends, by path, never by a listing. Never throws.
+export function forgetDenials(session, { dir, env = process.env } = {}) {
   if (typeof session !== 'string' || !FILE_NAME_PART.test(session)) return;
   try {
-    rmSync(denialsDir(dir, session), { recursive: true, force: true });
+    rmSync(denialsDir(dir ?? hookCountsFolder(env), session), { recursive: true, force: true });
   } catch {
     // The temporary folder clears them in time.
+  }
+}
+
+// How long an entry of the hooks' counts folder lives, and the most entries one sweep reads.
+export const HOOK_COUNTS_AGE = 7 * 24 * 60 * 60 * 1000;
+const SWEEP_CAP = 2000;
+
+// Removes the entries of the hooks' counts folder older than HOOK_COUNTS_AGE, as a session that never ended leaves them,
+// reading at most SWEEP_CAP entries a call, one at a time, so the session-end hook that runs it stays inside its time.
+// Never throws.
+export function sweepHookCounts({ dir, env = process.env, now = Date.now() } = {}) {
+  let handle;
+  try {
+    const folder = dir ?? hookCountsFolder(env);
+    handle = opendirSync(folder);
+    for (let seen = 0; seen < SWEEP_CAP; seen += 1) {
+      const entry = handle.readSync();
+      if (entry === null) break;
+      const file = path.join(folder, entry.name);
+      try {
+        if (now - lstatSync(file).mtimeMs > HOOK_COUNTS_AGE) rmSync(file, { recursive: true, force: true });
+      } catch {
+        // Gone already.
+      }
+    }
+  } catch {
+    // No folder yet, or one this user cannot read.
+  } finally {
+    try {
+      handle?.closeSync();
+    } catch {
+      // Closed already.
+    }
   }
 }

@@ -326,6 +326,9 @@ ignored, so the live checks below must show each one holds.
   call, within 180 seconds, as on Codex: it shows the plugin's hooks still load under `--setting-sources user`. The
   session's floor and mark are filed first, as soon as the host lists its id. A session whose beacon never comes is
   stopped, gives its attempt back, and halts the run until an attended `aidrian project resume`.
+- The beacon proves only that the hooks run. Before the start holds the session, the session proves from inside its
+  sandbox that the sandbox is in force ([The sandbox proof](#the-sandbox-proof)): its first call must be `aidrian
+  project confine <run> <issue>`, and nothing else runs until the start confirmed it.
 - An issue's session starts no continuation: `aidrian handoff continue` from it prints `continue: none`, and
   `aidrian handoff route` `route: none`, before any store or mark write. It pushes its work and records its result.
 - A usage or rate limit is read from the session's transcript alone (`lib/hosts/claude-code-limit.mjs`): its last
@@ -462,7 +465,11 @@ Residual risks, each known and left for a later change:
   commands; merge trust that rests on the forge alone closes that for the merge.
 - A subagent's handoff file can be overwritten after that subagent stopped.
 - For a few seconds between the launch and the session's own mark, only the pending mark holds it.
-- No start proves itself beyond the beacon: no per-start proof that the sandbox holds.
+- On Linux the host masks a path it denies with an empty mount, so a read probe opens and sees nothing; the proof
+  judges a read by the target's fingerprint the start took outside the sandbox, never by whether it opened.
+- The sandbox proof runs once, at the start: a sandbox that weakens later in the session is not caught. Its network
+  probes count a host that gives no answer within 3 seconds as refused, so on a machine with no network they prove
+  nothing of the network; its write and read probes still do.
 - The product quorum parks in a confined session, which starts no other session.
 - The agent gate hook refuses a confined session's write to any `SKILL.md` in its clone, and to any glob that may name
   one, such as `docs/*.md`; a session edits such a file with a literal path, and a skill with the Edit tool only where
@@ -481,13 +488,22 @@ Before `verified` changes, a live Claude Code must show every one of these, each
    `.claude/settings*.json`, a skill, `.mcp.json`, and the same under a nested `.claude` folder and a nested
    `SKILL.md`, through the `**` globs, and making a nested `.claude` folder or link; each such path absent at launch,
    on Linux; and git status, commit, fetch, and push work in the clone on both platforms with the `commondir`
-   placeholder denied.
+   placeholder denied. The denial of `commondir` stays whatever this shows: should git die on the host's own empty
+   placeholder for a denied absent file on Linux, the start's placeholder, which names the git folder itself, is
+   there before the launch, checked to hold exactly that and to have a single link. The denial goes only when the
+   trace of live check 21 shows the host makes no git call mid-session.
 6. A `settings.local.json` put in the clone mid-session changes none of 2 to 5.
 7. An HTTPS push, `gh api user`, and `gh pr create` work on macOS and on Linux, with `~/Library/Keychains` denied on
-   macOS; an unlisted host is refused with no prompt in every permission mode.
+   macOS; an unlisted host is refused with no prompt in every permission mode. Should a push or `gh pr create` fail
+   for the keychain, `~/Library/Keychains` is not opened again: the start passes the forge token through the forge
+   CLI's token variable, which `secretVars` keeps, the planned token scoped to the repository.
 8. The same from a subagent, a background Bash command, and Monitor.
 9. With no `bwrap`, nothing runs.
-10. An invalid `--settings` value: what the host does with it.
+10. An invalid `--settings` value: what the host does with it. And each key the start passes that no earlier check
+    covers is accepted, on a named host version, on macOS and on Linux: `denyWrite` entries with `**` globs,
+    `filesystem.allowRead`, `credentials.envVars` entries as `{ name, mode }` objects, the top-level
+    `disableClaudeAiConnectors`, `allowAppleEvents`, and `allowNestedUserNamespaces`. The sandbox proof halts a start
+    whose settings the host dropped whole; this check shows which single key it would drop.
 11. `claude --bg` or `claude -p` from inside the sandbox starts nothing outside it.
 12. The plugin's hooks still run under `--setting-sources user`, with the plugin installed at user scope.
 13. A sandboxed process cannot connect to a localhost listener outside the sandbox, on macOS with
@@ -513,6 +529,95 @@ Before `verified` changes, a live Claude Code must show every one of these, each
     `claude agents --json --all` then lists the session in, so `lib/hosts/claude-code-limit.mjs` reads the real record;
     and whether a `claude --bg` session started with `autoContinueAtUsageLimit` in `--settings` continues on its own
     once the limit resets: the host's code reads the key, and may honor it only from the user's own settings.
+20. The sandbox proof in a live session, on macOS and on Linux: `aidrian project confine` runs as the session's first
+    call and every probe is refused; the Bash tool's environment names the session in `CLAUDE_CODE_SESSION_ID`, as
+    the verdict's session; the sandbox's proxy variables, when set, name an HTTP proxy that refuses the unlisted host;
+    the localhost listener sees no connection; the cache variables are in force in the shell and absent from the hook's
+    own environment; a line the SessionStart hook appends to `CLAUDE_ENV_FILE` runs inside the sandbox only, as a
+    probe line whose write outside the sandbox does not land; on Linux, the read probes of a masked folder and file see
+    nothing of the fingerprints; and the session's next call runs once the start confirmed the proof. With the
+    sandbox turned off by a user setting the start does not check, the proof fails and the run halts. Once the Bash
+    tool's environment is shown to name the session, the verdict's session becomes mandatory. A background Bash
+    command and Monitor run under the same sandbox (live check 8).
+21. A trace of the host's own git calls in a background session after its launch, on both platforms, as with a
+    `git` wrapper first on PATH that logs each call. Should any run mid-session, they are hardened through the inline
+    settings' `env` (`GIT_CONFIG_COUNT` with `core.fsmonitor=false`, `submodule.recurse=false`,
+    `diff.ignoreSubmodules=dirty`, and `protocol.ext.allow=never`, never `core.hooksPath`), and `denyWrite` gains the
+    config and hooks of every nested `.git` folder by pattern. Until the trace, neither is passed: the settings'
+    `env` reaches the hooks and MCP servers too.
+22. Managed settings: a `managed-settings.json` and a `managed-settings.d/` file with `sandbox.allowUnsandboxedCommands:
+    true` halt the start on macOS and on Linux; a macOS configuration profile in the `com.anthropic.claudecode` domain
+    does too; and whether server-managed settings, which the start does not read, leave a local cache a later check
+    could read.
+23. Claude Code's file tools expand a leading `~` and `~/` to the home folder of the user the host runs as, as the
+    adapter's `filePath` does for every guard of a file tool; and a Glob pattern's `..` reaches above its path.
+
+### The sandbox proof
+
+A beacon proves only that the plugin's hooks run, and the host ignores a sandbox setting it does not validate in a
+session no Human attends. So each start proves, from inside the session, that its sandbox holds, before it holds the
+session (`lib/project-confine.mjs`); the adapter declares it with `confineProof: true`. Codex starts no such proof:
+its start stays as [its page](codex.md#project-start) says.
+
+1. Before the launch, the start writes `confine-plan.json` in the attempt's folder, which no confined session writes,
+   and runs a localhost listener outside the sandbox, a `node` process that notes each connection in that folder.
+   The plan names every probe, the listener's port and process, a host outside every allowed domain (the session's,
+   and those the user's and the organization's `sandbox.network.allowedDomains` add) and every registry's host, a
+   nonce that names each probe path, and the stores the sandbox hides. What each read target holds, its fingerprint,
+   stays in the start's memory: for a folder, one entry the sandbox does not open again (for the main checkout, any
+   but its git folder); for a file, its first bytes. An empty target is not probed.
+2. The session's prompt makes `aidrian project confine <run> <issue>` its first call. Until the start confirms the
+   proof, the agent gate hook refuses that session every call but that exact command, alone, on one line, in Bash,
+   and only while no verdict is there: while its mark says the proof is owed, and, with no readable mark of its own,
+   whenever its call runs in an attempt's clone with a plan, whichever pending mark it reads
+   ([hooks](../hooks.md#agent-gates)). The hook also refuses the confine command, and fails the proof, when its own
+   environment, which is the host process's, holds a cache variable of the session: those reach the session's
+   sandboxed commands alone. Before and after the proof, the hook refuses a Read, Grep, Glob, or LS that reaches a store
+   the plan lists as hidden, a folder that holds one included, since the file tools run outside the sandbox.
+3. `aidrian project confine` runs once a start, under a lock in the drop folder, in the session's sandboxed shell, and
+   tries: to make a file in each unattended mark folder, in the attempt's folder, and in the home folder, one there
+   already counting as made; to open the clone's git `config` and `.claude/settings.json` for writing; to remove the
+   keep file of `cache` and of `drop`; to move each folder away, or else to put a link beside it, and to write through
+   the link; to read each store in the plan; to connect to the unlisted host, directly and through each HTTP proxy the
+   shell's environment names; and to connect to the listener. It also checks that each cache variable is in force in
+   the shell with the value the start wrote. Any write, removal, move, link, or connection that succeeds is undone and
+   fails the proof, and so does one whose target is not there. A read that opens is not yet a landed read: on Linux
+   the host masks a denied folder with an empty one and a denied file with an empty one, so the proof hands what each
+   read saw, salted with the nonce, to the start. It writes the verdict, `confine.json`, in the drop folder.
+4. The start, outside the sandbox, reads the verdict once the beacon came, for at most 180 seconds: one of its own
+   plan that passed, names no other session, holds no read that saw a target's fingerprint, with the listener the
+   start ran alive on its recorded port and pid, no zombie, and no connection on it, no probe path left, and `cache`
+   and `drop` plain folders that keep their keep files, passes. The start reads its listener's state from
+   `/proc/<pid>/stat` on Linux and from `/bin/ps` elsewhere, and a start that can read neither refuses before its
+   launch. It then files `confine: "passed"` in the session's mark, and the hook lets the session's calls through to
+   the other guards. Any other verdict, or none in time, stops the session, files `confine: "failed"`, rewrites the
+   verdict without what its reads saw, gives the attempt back, and halts the run until an attended
+   `aidrian project resume`; when the stop itself fails, the start stays for `wait` to settle, and the run halts all
+   the same. The hook refuses that session every later call. The listener stops when the start ends.
+
+A start whose proof cannot be prepared refuses with `the sandbox proof cannot be prepared`, records nothing, and leaves
+no attempt folder; [Project run](../config.md#project-run) names each cause and its fix.
+
+The hook also refuses, to every session an unattended mark holds, a Bash call that sets `dangerouslyDisableSandbox`,
+the host's ask to run outside the sandbox, which the adapter reads as the standard `sandbox_escape`; with
+`allowUnsandboxedCommands: false` the host ignores it, so this is a second wall.
+
+### Managed settings
+
+The host ranks the organization's managed settings above `--settings`, so a managed value can undo the session's own
+sandbox. Before a start, the start reads each managed source the host documents on this machine
+(code.claude.com/docs/en/managed-settings, read on 2026-11-19), lowest rank first: `managed-settings.json` and each
+`*.json` in `managed-settings.d/` beside it, in `/Library/Application Support/ClaudeCode/` on macOS and
+`/etc/claude-code/` on Linux and WSL, then on macOS the managed preferences of the `com.anthropic.claudecode` domain,
+`/Library/Managed Preferences/com.anthropic.claudecode.plist` and the same under the user's own folder there, read
+through `plutil`. Each is judged by the user settings' rules for `sandbox` keys, granted folders, and commands, with
+one more: a scalar the session's own settings set, such as `allowUnsandboxedCommands`, passes only at the session's
+value, and `allowManagedPermissionRulesOnly` halts, since the host then drops the session's own permission rules that
+keep its file tools from the stores its sandbox hides. Its `enabledPlugins` switches count over the user's for the plugin checks. A source that is there and cannot
+be read halts the start; a platform with no documented sources halts it too.
+
+Server-managed settings, which the host fetches from the claude.ai console and caches where its docs do not say, are
+not read: a residual, which live check 22 covers.
 
 ### Dependency installs
 

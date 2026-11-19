@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, truncateSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, truncateSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -12,13 +12,13 @@ import { sandboxSettings } from '../plugins/aidrian/lib/hosts/claude-code-sandbo
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
-import { initRun, recordIssue } from '../plugins/aidrian/lib/project-run.mjs';
-import { drivesRun, runDriver } from '../plugins/aidrian/lib/project-run-guard.mjs';
+import { activeRuns, initRun, recordIssue } from '../plugins/aidrian/lib/project-run.mjs';
+import { currentDriver, drivesRun, endedIn, runDriver } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { stateWorkFolders } from '../plugins/aidrian/lib/project-start.mjs';
 import { runSignoff } from '../plugins/aidrian/lib/review-gate.mjs';
 import { botProblem, flowsFloor, NO_BOT, readHumanSignoffs, recordHumanSignoff, signoffFile, signoffFolder, signoffFolders } from '../plugins/aidrian/lib/review/merge-trust.mjs';
 import { recordSignoff } from '../plugins/aidrian/lib/review/run.mjs';
-import { emptyState, readLocalState, recordFile, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
+import { emptyState, readLocalState, RECORD_LIST_CAP, recordFile, recordNames, recordProblem, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { check, checkMcp, endpointOf, MERGE_MUTATIONS } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 import { markDriver, markFolder, markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { check as signoffCheck, UNATTENDED_REASON } from '../plugins/aidrian/lib/rules/review-signoff.mjs';
@@ -599,6 +599,24 @@ test('`aidrian project init` marks its session the run`s driver, held as one no 
   assert.match(fx.cmd(['start', 'launch', 'ENG-1']).err.join('\n'), /ended/u, 'a run that ended starts no issue');
 });
 
+test('an end row a session other than the run`s driver wrote releases nothing: the driver stays held and the run active', (t) => {
+  const fx = runFixture(t);
+  const seen = { env: fx.env, home: fx.home };
+  const ledger = path.join(fx.state, 'runs', 'launch', 'ledger.jsonl');
+  // A stray end row, as a session that may write the ledger by mistake, or a planted one, would leave it.
+  appendFileSync(ledger, `${JSON.stringify({ event: 'end', session: OTHER, at: new Date().toISOString() })}\n`);
+  assert.equal(endedIn(fx.run()), false);
+  assert.equal(runDriver(DRIVER, seen)?.run, 'launch', 'the driver is still held');
+  assert.equal(currentDriver(DRIVER, seen)?.run, 'launch', 'and still the run`s driver');
+  assert.deepEqual(activeRuns(fx.state), [{ run: 'launch' }], 'the run is still under way');
+  assert.doesNotMatch(fx.cmd(['start', 'launch', 'ENG-1']).err.join('\n'), /ended/u, 'a stray end row ends no run');
+  // The driver's own end row, by custody, releases it.
+  assert.equal(fx.cmd(['end', 'launch']).exitCode, 0);
+  assert.equal(endedIn(fx.run()), true);
+  assert.equal(runDriver(DRIVER, seen), null);
+  assert.deepEqual(activeRuns(fx.state), []);
+});
+
 test('`aidrian project init` refuses when it cannot file the driver mark, before any row', (t) => {
   const fx = runFixture(t, { init: false });
   const folder = path.join(fx.env.XDG_STATE_HOME, 'aidrian', 'unattended');
@@ -651,6 +669,48 @@ test('many planted record files, or too many bytes of them, refuse an unattended
   }
   assert.match(merge(r, MERGE) ?? '', /hold more than 8388608 bytes/u);
   assert.match(mcp(r, { owner: 'acme', repo: 'notes', pullNumber: 7, sha: HEAD }) ?? '', /hold more than/u);
+});
+
+test('a records folder a confined session filled with planted entries refuses an unattended merge inside the hook`s time', (t) => {
+  const r = repo(t);
+  r.record(forged());
+  const folder = path.dirname(recordFile(r.project, 7, 'acme/notes'));
+  // Entries of another number: no record file of #7 among them, so only the listing itself could stall the guard.
+  for (let i = 0; i <= RECORD_LIST_CAP; i += 1) writeFileSync(path.join(folder, `pr-9${i}-x.json`), '');
+  const started = Date.now();
+  assert.match(merge(r, MERGE) ?? '', new RegExp(`holds more than ${RECORD_LIST_CAP} entries`, 'u'));
+  assert.match(mcp(r, { owner: 'acme', repo: 'notes', pullNumber: 7, sha: HEAD }) ?? '', /holds more than/u);
+  assert.ok(Date.now() - started < 2500, `inside the agent gate hook's budget: ${Date.now() - started} ms`);
+  // Past the hook's deadline, the walk stops and refuses too.
+  assert.match(recordProblem(r.project, 7, { pastDeadline: () => true }) ?? '', /could not be listed in time/u);
+  assert.ok(RECORD_LIST_CAP >= 10_000, 'far above what a project`s records take');
+});
+
+test('a records folder that cannot be opened, or whose listing fails partway, refuses an unattended merge', (t) => {
+  const r = repo(t);
+  r.record(forged());
+  const folder = path.dirname(recordFile(r.project, 7, 'acme/notes'));
+  const failing = (code, after = 0) => () => {
+    if (after < 0) throw Object.assign(new Error(code), { code });
+    let read = 0;
+    return { readSync: () => {
+      if (read >= after) throw Object.assign(new Error(code), { code });
+      read += 1;
+      return { name: `pr-7-review-x${read}--y.json` };
+    }, closeSync() {} };
+  };
+  assert.match(recordNames(folder, 7, { opendir: failing('EACCES', -1) }).problem, /cannot be listed \(EACCES\)/u);
+  assert.deepEqual(recordNames(folder, 7, { opendir: failing('ENOENT', -1) }), { names: [] }, 'a folder that is not there holds none');
+  const partway = recordNames(folder, 7, { opendir: failing('EIO', 3) });
+  assert.match(partway.problem, /failed partway \(EIO\)/u);
+  assert.equal(partway.names.length, 3);
+  // Through the guard: a folder it cannot open refuses the merge.
+  chmodSync(folder, 0o000);
+  try {
+    assert.match(merge(r, MERGE) ?? '', /cannot be listed/u);
+  } finally {
+    chmodSync(folder, 0o700);
+  }
 });
 
 test('a merge mutation is read in every `gh api` call, whatever the endpoint`s spelling', (t) => {

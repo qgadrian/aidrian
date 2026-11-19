@@ -506,6 +506,7 @@ function project(t, settings = { version: 1, tracker }) {
     base,
     dir,
     temp,
+    counts: path.join(state, 'aidrian', 'hook-counts'),
     state,
     session,
     env,
@@ -787,7 +788,7 @@ const NO_READ_LANDED = 'this session was refused for no read of the connected wo
 const denyRows = ({ log }) => log().filter((row) => row.event === 'hook_deny');
 
 test('a batch of first writes is refused with its reason, adds no row and no block count, and files no lesson', (t) => {
-  const { inbox, log, session, temp, write } = project(t, TELEMETRY);
+  const { inbox, log, session, state, write } = project(t, TELEMETRY);
   for (let call = 0; call < 5; call += 1) {
     const refused = write();
     assert.equal(refused.status, 2);
@@ -795,15 +796,15 @@ test('a batch of first writes is refused with its reason, adds no row and no blo
     assert.match(refused.stderr, /Call mcp__x__get_workspace, then write again/);
   }
   assert.deepEqual(log().filter((row) => row.event === 'hook_deny'), []);
-  assert.equal(existsSync(path.join(temp, `aidrian-denials-${session}`)), false);
+  assert.equal(existsSync(path.join(state, 'aidrian', 'hook-counts', `aidrian-denials-${session}`)), false);
   assert.deepEqual(inbox(), []);
 });
 
 test('a session refused for no read whose read never lands writes one row at its end, and cleans up', (t) => {
   const refused = project(t, TELEMETRY);
-  const { end, inbox, session, temp, write } = refused;
+  const { counts, end, inbox, session, write } = refused;
   for (let call = 0; call < 3; call += 1) assert.equal(write({}, { agent_type: 'worker' }).status, 2);
-  const marker = path.join(temp, `aidrian-tracker-refused-${session}`);
+  const marker = path.join(counts, `aidrian-tracker-refused-${session}`);
   assert.equal(existsSync(marker), true);
   assert.deepEqual(denyRows(refused), [], 'nothing counts before the end');
 
@@ -812,7 +813,7 @@ test('a session refused for no read whose read never lands writes one row at its
   assert.deepEqual(rows.map((row) => [row.rule, row.tool, row.agent_type, row.session_id, row.reason]), [['tracker-guard', WRITE, 'worker', session, NO_READ_LANDED]]);
   assert.ok(NO_READ_LANDED.length <= 120);
   assert.equal(existsSync(marker), false);
-  assert.equal(existsSync(path.join(temp, `aidrian-denials-${session}`)), false, 'the recorder\'s count goes with the session');
+  assert.equal(existsSync(path.join(counts, `aidrian-denials-${session}`)), false, 'the recorder\'s count goes with the session');
   assert.deepEqual(inbox(), [], 'one block is no lesson');
 
   assertRuns(end());
@@ -849,7 +850,7 @@ test('a session with a recorded read writes no row at its end, whatever the read
     const before = denyRows(session).length;
     assertRuns(session.end());
     assert.equal(denyRows(session).length, before);
-    assert.equal(existsSync(path.join(session.temp, `aidrian-tracker-refused-${session.session}`)), false);
+    assert.equal(existsSync(path.join(session.counts, `aidrian-tracker-refused-${session.session}`)), false);
   }
 });
 
@@ -859,7 +860,7 @@ test('the row at a session\'s end respects the switches and goes to the project 
     assert.equal(off.write().status, 2);
     assertRuns(off.end());
     assert.deepEqual(denyRows(off), []);
-    assert.equal(existsSync(path.join(off.temp, `aidrian-tracker-refused-${off.session}`)), false);
+    assert.equal(existsSync(path.join(off.counts, `aidrian-tracker-refused-${off.session}`)), false);
   }
   const moved = project(t, TELEMETRY);
   assert.equal(moved.write().status, 2);
@@ -868,8 +869,9 @@ test('the row at a session\'s end respects the switches and goes to the project 
 });
 
 test('a refusal whose marker cannot be written is still refused', (t) => {
-  const { temp, write } = project(t, TELEMETRY);
-  rmSync(temp, { recursive: true });
+  const { counts, write } = project(t, TELEMETRY);
+  mkdirSync(path.dirname(counts), { recursive: true });
+  writeFileSync(counts, 'a plain file where the counts folder goes');
   const refused = write();
   assert.equal(refused.status, 2);
   assert.match(refused.stderr, /has not read the connected workspace/);
@@ -877,18 +879,19 @@ test('a refusal whose marker cannot be written is still refused', (t) => {
 
 test('session end still deletes and hands off when the refusal cannot be settled', async (t) => {
   const failures = [
-    ['a marker that cannot be read', ({ session, temp }) => {
-      const marker = path.join(temp, `aidrian-tracker-refused-${session}`);
+    ['a marker that cannot be read', ({ session, counts }) => {
+      const marker = path.join(counts, `aidrian-tracker-refused-${session}`);
       mkdirSync(marker);
       writeFileSync(path.join(marker, 'held'), '');
     }],
-    ['a marker that is no record', ({ session, temp }) => writeFileSync(path.join(temp, `aidrian-tracker-refused-${session}`), 'not json')],
+    ['a marker that is no record', ({ session, counts }) => writeFileSync(path.join(counts, `aidrian-tracker-refused-${session}`), 'not json')],
   ];
   for (const [label, arrange] of failures) {
     const failing = project(t, TELEMETRY);
-    const { base, end, log, session, temp } = failing;
+    const { base, counts, end, log, session } = failing;
+    mkdirSync(counts, { recursive: true });
     arrange(failing);
-    const length = path.join(temp, `aidrian-session-length-${session}`);
+    const length = path.join(counts, `aidrian-session-length-${session}`);
     writeFileSync(length, '{}\n');
     const transcript = path.join(base, 'transcript.jsonl');
     writeFileSync(transcript, JSON.stringify({ type: 'assistant', timestamp: '2026-11-04T10:00:00Z', message: { id: 'm1', model: 'claude-opus-5-5', usage: { input_tokens: 10, output_tokens: 5 }, content: [] } }));
@@ -901,14 +904,17 @@ test('session end still deletes and hands off when the refusal cannot be settled
 });
 
 test('a row that cannot be written at session end costs nothing else', (t) => {
-  const { end, session, state, temp, write } = project(t, TELEMETRY);
+  const { counts, end, session, state, write } = project(t, TELEMETRY);
   assert.equal(write().status, 2);
-  const length = path.join(temp, `aidrian-session-length-${session}`);
+  const length = path.join(counts, `aidrian-session-length-${session}`);
   writeFileSync(length, '{}\n');
-  writeFileSync(state, 'a plain file, so no state folder can be made under it');
+  // A plain file where the projects' state folders go, so no state folder can be made under it.
+  const projects = path.join(state, 'aidrian', 'projects');
+  rmSync(projects, { recursive: true, force: true });
+  writeFileSync(projects, 'a plain file, so no state folder can be made under it');
   assertRuns(end());
   assert.equal(existsSync(length), false);
-  assert.equal(existsSync(path.join(temp, `aidrian-tracker-refused-${session}`)), false);
+  assert.equal(existsSync(path.join(counts, `aidrian-tracker-refused-${session}`)), false);
 });
 
 test('every refusal but the routine one still counts: its rows, and the lesson at three in a session', (t) => {
@@ -1039,9 +1045,9 @@ test('a note that cannot be saved lets the call run, and a later call in the ses
 });
 
 test('session end forgets which tools the session noted', (t) => {
-  const { end, run, session, temp } = project(t);
+  const { end, run, session, state } = project(t);
   assertRuns(run(POST, { tool_name: UNLISTED }));
-  const folder = path.join(temp, `aidrian-denials-${session}`);
+  const folder = path.join(state, 'aidrian', 'hook-counts', `aidrian-denials-${session}`);
   assert.equal(existsSync(path.join(folder, `${UNLISTED}.noted`)), true);
   assertRuns(end());
   assert.equal(existsSync(folder), false);
@@ -1077,11 +1083,12 @@ test('session end deletes the record, of this session only, tracker on or off', 
 });
 
 test('a record session end cannot delete skips nothing: the session-length marker goes and the session row lands', async (t) => {
-  const { base, end, file, log, session, temp } = project(t, { version: 1, tracker, telemetry: { enabled: true } });
+  const { base, counts, end, file, log, session } = project(t, { version: 1, tracker, telemetry: { enabled: true } });
+  mkdirSync(counts, { recursive: true });
   // A folder at the record's path with a file in it: rmSync refuses that under any uid.
   mkdirSync(file(), { recursive: true });
   writeFileSync(path.join(file(), 'held'), '');
-  const marker = path.join(temp, `aidrian-session-length-${session}`);
+  const marker = path.join(counts, `aidrian-session-length-${session}`);
   writeFileSync(marker, '{}\n');
   const transcript = path.join(base, 'transcript.jsonl');
   writeFileSync(transcript, JSON.stringify({ type: 'assistant', timestamp: '2026-11-04T10:00:00Z', message: { id: 'm1', model: 'claude-opus-5-5', usage: { input_tokens: 10, output_tokens: 5 }, content: [] } }));

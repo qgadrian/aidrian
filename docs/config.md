@@ -1750,7 +1750,7 @@ of the local dispatch log, so the values may reach it, cut to 120 characters. Th
 
 The refusal of rule 1 that names a read to call is the guard's normal flow: a session that writes meets it once, reads, and goes on.
 When it happens it writes no `hook_deny` row and adds no block count, so healthy sessions and a batch of first writes read as no hot spot.
-It leaves a marker in the system's temporary folder instead, and the session's end settles it.
+It leaves a marker in the hooks' counts folder, `<state root>/hook-counts`, instead, and the session's end settles it.
 A session that ends with no read recorded writes one `hook_deny` row, whichever way the read was lost: failing, renamed upstream, or never tried.
 Over several sessions those rows raise the usual hot spot in `aidrian report health`, and the row counts once toward the session's block count.
 With `telemetry.enabled` or `telemetry.hookDenies` off, a session stuck on this refusal leaves no row and no lesson,
@@ -1779,10 +1779,19 @@ The run's files are in `<state>/runs/RUN/`, where `<state>` is the project's sta
 | `projectRun.mcpServers` | `{}` | The MCP servers a confined session loads, as the host's `mcpServers` object takes them, each name to its definition. The session starts with only these: a project's `.mcp.json`, the user's own servers, and the host's claude.ai connectors never load. Each listed server, and the helper command it starts, runs outside the sandbox with the user's full access, so list only a server the team trusts with that; its definition travels in the session's command line, which any process of the user can read in the process list, so it holds no secret. Only the servers both the forge and the local ref define alike count. |
 | `projectRun.registries` | `[]` | The package registries a confined session may reach to install the project's dependencies, by ecosystem name, each once: `npm` (`registry.npmjs.org`, and `registry.yarnpkg.com`, yarn's default), `pypi` (`pypi.org` and `files.pythonhosted.org`), `crates` (`index.crates.io` and `static.crates.io`), `go` (`proxy.golang.org` and `sum.golang.org`), and `rubygems` (`index.rubygems.org` and `rubygems.org`). The hosts are fixed in `lib/project-registries.mjs`: no name of a host, and no other domain, is ever accepted. A team opts in; a project with no code yet lists the ecosystems of the stack it will scaffold. Install scripts a package runs, such as npm's `postinstall`, run inside the session's sandbox, under its write and network limits, which is why letting a session install is acceptable. Every listed registry but `pypi` and `crates` gives a channel a sandboxed command can send data out on that an attacker can read, `go` the widest, since its proxy fetches from any host a module path names; each is accepted because the forge channel gives one already, and narrowing the forge token reopens that ruling ([Dependency installs](providers/claude-code.md#dependency-installs) names each one's path). With `npm` listed, corepack downloads pnpm and yarn from it too. Every session, whatever this lists, keeps its package managers' caches in its attempt's `cache` folder, and the home folder stays as it is. Codex holds a session to the same hosts through its network proxy, which no live run has checked yet ([Codex](providers/codex.md#project-start)). Only the names both the default branch on the forge and the local ref list count. |
 
+On a host whose start proves its sandbox ([Claude Code](providers/claude-code.md#the-sandbox-proof)), a start refuses
+with `the sandbox proof cannot be prepared`, records nothing, and leaves no attempt folder, for one of three causes:
+every host the proof can name as unlisted (`example.com`, `example.net`, `example.org`) is an allowed domain, as a
+`"*"` or an example domain in the user's or the organization's `sandbox.network.allowedDomains` makes it, so remove
+it; no unattended mark folder exists to probe, which `aidrian project init` makes, so start the run again from its
+init; or the localhost listener does not start within 5 seconds, or the plan cannot be written in the attempt's
+folder, so check that `node` runs and the state folder is writable, then start again.
+
 A start that cannot go on safely halts: `aidrian project start` exits 1, its first line is `halt <cause>`, and no issue
 is parked. Most halts record nothing, such as a user the forge does not let push, a sandbox with no network, or a
 repository whose git config could run a program; fix the cause and start again. A start whose proof failed, as a
-session that never named itself or whose hooks never ran, gives its attempt back (a `void` start row, the issue open
+session that never named itself, whose hooks never ran, or whose sandbox proof failed
+([Claude Code](providers/claude-code.md#the-sandbox-proof)), gives its attempt back (a `void` start row, the issue open
 again) and writes a `halt` row: every later start refuses, however long ago it was written, until the Human's own shell,
 or another session a person attends that never drove the run, runs `aidrian project resume RUN`, which writes a `resume`
 row. The driver never runs it, and the hooks and the command refuse it to every session of the run's custody. `next` prints `halted <cause>` first, and `--json` adds `halt`.
@@ -1820,7 +1829,8 @@ a link or waiting on a FIFO, and must be a regular file of this user with one li
 row the command did not write, parks. `stop-action` exits 1 when it refuses, such as for another session or a pull
 request that is not the issue's own: the session then records `pr_open` with that line as its stop.
 
-At the end of its loop the driver runs `aidrian project end RUN`, which writes an `end` row: the run is over, starts no
+At the end of its loop the driver runs `aidrian project end RUN`, which writes an `end` row: an end row counts only when
+the session that wrote it was the run's driver, by custody, at that row, and then the run is over, starts no
 issue, and no longer counts as active, and its driver mark stops holding the driver session
 ([hooks.md](hooks.md#agent-gates)). A run whose issues are all done or parked holds its driver until that row: its
 parked issues may still owe the Human's sign-offs, which come from a separate session the Human attends.

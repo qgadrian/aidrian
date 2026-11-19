@@ -36,8 +36,11 @@
 // An unattended run's judge verdict (`aidrian pr waive`, lib/review/waiver.mjs) waives it in that answer's place, only
 // for `round_limit` on the merge's own head, nothing owed, and only under both switches:
 // `github.unattendedWaiver.allow` on the default and base branches, read from GitHub, and the main checkout's local switch.
+// It never stands in for the review bot: it waives only this machine's reviewers' findings, each of medium severity or
+// lower and none a security finding, and only once the bot passed exactly that head on the forge.
 // A verdict counts only for a merge that names its head. Those reads are made only when the switch is on and the denial
-// is waivable: the view when the guard's own lacks the base, git's project folder, then up to five forge reads.
+// is waivable: the view when the guard's own lacks the base, git's project folder, then the review trail (and, for a
+// pointer to another folder, up to five REST reads), which merge trust then reads no second time.
 // All share one clock from the hook's start (`startedAt`, for the whole command), the guard's own head lookup included:
 // none begins at 4 s, the waiver's first only within 1.5 s (checked once, before it; its later reads and the head lookup
 // have only the 4 s), and each is stopped with SIGKILL at 1 s (3 s for a view) or at 4 s if sooner.
@@ -65,7 +68,7 @@ import { baseProblem, boundedReads, recourse } from '../../review/in-force.mjs';
 import { readHumanSignoffs, sameBot, trustProblem } from '../../review/merge-trust.mjs';
 import { emptyState, FINISHED, owed, owedElsewhere, readLocalState, recordProblem, recordRepos, sameCommit, withRecordMemo } from '../../review/state.mjs';
 // A cycle (waiver.mjs → pr-auto-merge.mjs → this file), benign while neither uses the other's exports as it loads.
-import { budgetedForge, guardWaiver, READ_TIMEOUT_MS, WAIVER_DEADLINE_MS } from '../../review/waiver.mjs';
+import { budgetedForge, guardWaiver, READ_TIMEOUT_MS, trailKey, WAIVER_DEADLINE_MS } from '../../review/waiver.mjs';
 import { walkCommands } from '../../shell-lex.mjs';
 import { driverHold } from '../../run-driver.mjs';
 import { readUnattendedMark } from '../../unattended-mark.mjs';
@@ -485,7 +488,8 @@ export function policyProblem({ trail, head, policies, base, prefix, docs, home 
 // pinned one (pinnedFor), passed to every forge read, and a merge naming another is refused. Then git's project folder,
 // and one forge read, the review trail, which also gives both branches' policy files and the knowledge folder; only a
 // pointer to another folder reads branchPolicies and startDocs as well, through the policies the waiver read when it read
-// them (`memo`). It then asks policyProblem and merge-trust.mjs trustProblem. Every read is on budgetedForge's clock, the
+// them (`memo`). A trail the waiver read for the same repository, host, pull request, and folder (`memo.trail`) is not
+// read again. It then asks policyProblem and merge-trust.mjs trustProblem. Every read is on budgetedForge's clock, the
 // waiver's: none begins at WAIVER_DEADLINE_MS from `startedAt`; one that fails or runs out of time keeps the merge
 // refused. `forge` is budgetedForge's `make`, the test seam.
 export function unattendedProblem({ project, home = project, merge, mark, forge = null, startedAt, now = Date.now, memo = {}, planted = null }) {
@@ -513,7 +517,9 @@ export function unattendedProblem({ project, home = project, merge, mark, forge 
     const left = Math.floor(deadline - now());
     const prefix = left > 0 ? knownPrefix(project.root, { timeout: Math.min(READ_TIMEOUT_MS, left) }) : null;
     if (prefix === null) return deny('git could not give the project\'s folder in the repository in time; running the merge once more is safe');
-    const trail = reads.reviewTrail(repo, pr, { host: pinned.host, paths: trailPaths(prefix) });
+    // The waiver's read of the same trail, when it made one this command (waiver.mjs readWaiver): read once.
+    const kept = memo.trail?.key === trailKey(repo, pinned.host, pr, prefix) ? memo.trail.value : null;
+    const trail = kept ?? reads.reviewTrail(repo, pr, { host: pinned.host, paths: trailPaths(prefix) });
     const base = typeof trail?.base === 'string' && trail.base !== '' ? trail.base : null;
     const target = { repo, host: pinned.host, base };
     const remembered = memo.policies?.key === `${repo}|${base}|${prefix}` ? memo.policies.value : null;

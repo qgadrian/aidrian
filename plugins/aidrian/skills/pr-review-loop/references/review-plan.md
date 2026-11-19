@@ -151,8 +151,8 @@ Never cite an engine post, a finding's, the review summary, or the product feedb
 - `round_limit`: the round cap, `github.maxReviewRounds` as the base branch commits it. Its last round always runs
   the final stage. `extension` says why no extra round: `off`, the ceiling, the judge, or the Human. A red flag
   never stops it alone: it goes to the judge. With `unreviewed_head: true`, the head is a fix no round reviewed: say so when reporting
-  the stop, so the Human does not merge it as reviewed. A session the Human told to merge, and then left, reads
-  § At the cap: a judge's waiver before it reports the stop.
+  the stop, so the Human does not merge it as reviewed. A session the Human told to merge, and then left, and a run
+  under `autopilot`, read § At the cap: a judge's waiver before reporting the stop.
 
 ## Out of quota: `blocked_quota`
 
@@ -192,15 +192,20 @@ With `github.extraRounds` on, the cap first checks whether one more round is wor
 
 ## At the cap: a judge's waiver
 
-Only for a session the Human told to merge and then left, when the step returned `round_limit` on the pull request's
-current head and the merge guard's denial names `aidrian pr waive`, which it does only while the team's
-`github.unattendedWaiver.allow` and this machine's switch are both on. Not under `autopilot`: it merges only through the
-`pr-auto-merge` skill, and `aidrian pr auto-merge` reads no verdict. A head pushed after the last review step gets no
-waiver: run the step again on it.
+For a session the Human told to merge and then left, and for a run under `autopilot`, when the step returned
+`round_limit` on the pull request's current head. A head pushed after the last review step gets no waiver: run the
+step again on it.
 
+- First run `aidrian pr waive <n> --gate`. Only exit 0 lets a judge rule. It reads the team's
+  `github.unattendedWaiver.allow` on the default and base branches through the forge, and this machine's switch,
+  and checks that every finding open at the cap is this machine's reviewers' own, of medium severity or lower, and
+  no security finding; that the review bot passed exactly this head on the forge; that no judge ruled on this head
+  yet; and, in a project run, that the run has not spent its waived merges. Exit 1: report the stop with the line it
+  prints. A verdict never stands in for the review bot.
 - Dispatch a fresh `code-reviewer` as the waiver's judge, read-only, as `extension_check` dispatches its judge: never
   the agent that wrote the change, and never one that reviewed a round of this pull request. One judge per head:
-  never dispatch another to get a different verdict. Brief it with the pull request, the head, the step's result, and:
+  never dispatch another to get a different verdict. Keep the agent id the host returns for it. Brief it with the
+  pull request, the head, the step's result, and:
 
   > Read-only. Decide whether pull request `<n>` may merge at head `<sha>`, whose review stopped at the round cap.
   > Read every finding still open on the head, at the head's code, and its verdict from `aidrian pr disposition`.
@@ -209,11 +214,13 @@ waiver: run the step again on it.
   > is not failing; otherwise `refuse`. Return the verdict and the evidence for each open finding: `path:line` at the
   > head, the round that raised it, and its disposition.
 
-- Record the verdict the judge gave, and only that one:
-  `aidrian pr waive <n> --verdict <the judge's verdict> --reason "<the judge's evidence>" --head <sha>`.
+- Record the verdict the judge gave, and only that one, naming the judge:
+  `aidrian pr waive <n> --verdict <the judge's verdict> --reason "<the judge's evidence>" --head <sha> --judge <agent id>`.
   The session never writes a verdict the judge did not give, and never turns the judge's `refuse` into `waive`.
-- On `waive`, merge naming the head, as the command's `next` says: `gh pr merge <n> --match-head-commit <sha>`.
-  On `refuse`, report the stop with the judge's evidence: the Human merges, or answers the merge guard's question with "Merge with the findings filed".
+- On `waive`: under `autopilot`, merge only through the `pr-auto-merge` skill; `aidrian pr auto-merge` takes the
+  verdict for that head alone. Otherwise merge naming the head, as the command's `next` says:
+  `gh pr merge <n> --match-head-commit <sha>`. On `refuse`, report the stop with the judge's evidence: the Human
+  merges, or answers the merge guard's question with "Merge with the findings filed".
 
 ## Owed reviews
 

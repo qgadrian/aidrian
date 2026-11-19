@@ -700,3 +700,29 @@ test('an in-process sign-off is refused to a session with an unattended mark or 
   await sign('abcd1234-0000-4000-8000-00000000e0e2');
   assert.equal(readHumanSignoffs({ repo: 'acme/notes', pr: 7 }).flows.payments.head, r.commit, 'a session the Human attends');
 });
+
+test('a session no Human attends merging on a judge`s verdict at the round cap: the guard reads the review trail once, and still asks merge trust', (t) => {
+  const config = configOf({ github: { ...CHECKS, autoMerge: TEAM, unattendedWaiver: { allow: true } } });
+  const r = repo(t, config);
+  // The machine opts in to the waiver beside auto-merge, which repo() turned on.
+  const local = path.join(r.dir, '.aidrian.local.json');
+  writeFileSync(local, JSON.stringify({ github: { ...JSON.parse(readFileSync(local, 'utf8')).github, unattendedWaiver: 'on' } }));
+  r.record((state) => {
+    state.outcome = { status: 'round_limit', head: HEAD, at: '2026-11-18T09:00:00.000Z' };
+    state.waivers = [{ head: HEAD, kind: 'round_cap', verdict: 'waive', reason: 'nits', judge: 'unknown', at: '2026-11-18T09:30:00.000Z' }];
+  });
+  const text = JSON.stringify(config);
+  const run = (trail) => {
+    const calls = [];
+    const forge = () => ({ ...guardForge(text, trail, calls)(), change: (ref) => (calls.push(['change', ref]), { number: 7, headRefOid: HEAD, baseRefName: 'main', url: 'https://github.com/acme/notes/pull/7' }) });
+    const reason = check(MERGE, { cwd: r.dir, env: {}, input: { session_id: 'unattended-1' }, viewPr: viewer, unattendedMark: () => ({ root: r.dir }), waiverForge: forge, trustForge: forge });
+    return { reason, trails: calls.filter(([name]) => name === 'reviewTrail').length, rest: calls.filter(([name]) => name === 'repository' || name === 'contents').length };
+  };
+  assert.deepEqual(run(trailOf(text)), { reason: null, trails: 1, rest: 0 }, 'the waiver`s trail serves merge trust, and no policy is read over REST');
+  // Merge trust still holds the waived merge: a draft is refused on the same trail.
+  const draft = run(trailOf(text, { draft: true }));
+  assert.match(draft.reason ?? '', /^Blocked: no Human attends this session, .* it is a draft/u);
+  assert.equal(draft.trails, 1);
+  // With no bot pass, the verdict does not stand, and the guard's own denial names why.
+  assert.match(run(noBot(r)).reason ?? '', /is `round_limit`.*stands only once the review bot passed this head/su);
+});

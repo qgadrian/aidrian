@@ -13,7 +13,11 @@ import { commands } from '../plugins/aidrian/lib/pr.mjs';
 import { findProject, projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { baseProblem } from '../plugins/aidrian/lib/review/in-force.mjs';
 import { emptyState, owed, readLocalState, refreshSummary, stateFromComment, summaryBody, WAIVER_HEADING, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
-import { guardWaiver, MAX_REASON, parseWaive, runWaive, WAIVER_DEADLINE_MS, waiverFor, waiverKind } from '../plugins/aidrian/lib/review/waiver.mjs';
+import { capProblem, guardWaiver, MAX_REASON, parseWaive, runWaive, WAIVER_DEADLINE_MS, waiverFor, waiverKind } from '../plugins/aidrian/lib/review/waiver.mjs';
+import { budgetProblem, runOf, WAIVED_MERGES } from '../plugins/aidrian/lib/review/waiver-stand.mjs';
+import { logPath } from '../plugins/aidrian/lib/dispatch-log.mjs';
+import { appendToRun } from '../plugins/aidrian/lib/project-run.mjs';
+import { runFixture } from './project-start-fixture.mjs';
 import { check, checkMcp, UNREAD_REASON } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -61,15 +65,34 @@ function repo(t, { config = {}, local = null } = {}) {
 const ON = { github: { unattendedWaiver: { enabled: true } } };
 const encode = (value) => ({ type: 'file', encoding: 'base64', content: Buffer.from(JSON.stringify(value)).toString('base64') });
 
+// The review bot's status card on `sha`, as the forge's review trail gives a comment: the default reviewer's, every edit
+// its own, saying its review of that commit completed and found nothing.
+const BOT = 'chatgpt-codex-connector';
+const card = (sha = HEAD) => ({
+  id: 9, login: BOT, bot: true, association: 'NONE', at: '2026-11-03T14:30:00Z', editors: [BOT], editsComplete: true,
+  body: `<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1 ${JSON.stringify({ code_review: { commit_sha: sha, has_any_findings: false, has_unresolved_findings: false, status: 'completed' } })} -->`,
+});
+
 // The waiver's forge seam, budgetedForge's `make`: the pull request is on `base` at `head`, the default branch is `main`,
-// and `branches` maps a branch to its config.json. Every call is counted with the options it was built with, so a test can
-// say none was made, or what each was bounded at. `tick` is how long each call takes on a test clock.
-function teamForge(branches = { main: ALLOW }, { base = 'main', head = HEAD, view = {}, clock = null, tick = 0 } = {}) {
+// and `branches` maps a branch to its config.json. The review trail gives both branches' config.json and, with `bot`,
+// the review bot's card passing `head` (or the commit `bot` names); `rest: true` leaves the base out of it, so the policies are read over REST.
+// Every call is counted with the options it was built with, so a test can say none was made, or what each was bounded
+// at. `tick` is how long each call takes on a test clock.
+function teamForge(branches = { main: ALLOW }, { base = 'main', head = HEAD, view = {}, clock = null, tick = 0, bot = true, rest = false } = {}) {
   const calls = [];
   const options = [];
   const step = () => clock && (clock.now += tick);
+  const text = (branch) => (Object.hasOwn(branches, branch) ? JSON.stringify(branches[branch]) : null);
   const facade = {
     change: (ref, fields, given) => (calls.push(['change', ref, fields, given?.repo ?? null]), step(), { number: Number(ref), headRefOid: head, baseRefName: base, url: URL, ...view }),
+    reviewTrail: (name, n, given) => {
+      calls.push(['reviewTrail', name, n, given?.host, given?.paths]);
+      step();
+      return {
+        head, base, reviews: [], reviewsComplete: true, comments: bot === false ? [] : [card(bot === true ? head : bot)], commentsComplete: true,
+        branches: { default: { name: 'main', pointer: null, config: text('main'), knowledge: null }, base: rest ? null : { name: base, pointer: null, config: text(base) } },
+      };
+    },
     repository: (name, given) => (calls.push(['repository', name, given?.host]), step(), { default_branch: 'main' }),
     contents: (name, file, ref, given) => {
       calls.push(['contents', name, file, ref, given?.host]);
@@ -368,7 +391,7 @@ test('a reason cannot carry a record marker into the summary comment', () => {
 });
 
 test('aidrian --help lists the waive action', () => {
-  assert.match(commands.pr.usage, /\| waive PR --verdict waive\|refuse --reason TEXT \[--head SHA\] \|/u);
+  assert.match(commands.pr.usage, /\| waive PR --verdict waive\|refuse --reason TEXT \[--head SHA\] \[--judge AGENT_ID\] \| waive PR --gate \[--json\] \|/u);
 });
 
 // ---- the guard (AC8, AC9, AC10)
@@ -378,13 +401,8 @@ test('both switches on and a waive entry: the merge guard lets round_limit on th
   r.record(5, (state) => (roundLimit(state), waiver(state)));
   const forge = teamForge();
   assert.equal(merge(r, `gh pr merge 5 --squash --match-head-commit ${HEAD}`, { forge }), null, 'round cap');
-  assert.deepEqual(forge.calls.map(([name, , file, ref]) => (name === 'contents' ? [name, file, ref] : [name])), [
-    ['change'],
-    ['repository'],
-    ['contents', '.aidrian.json', 'refs/heads/main'],
-    ['contents', '.aidrian/config.json', 'refs/heads/main'],
-  ], 'the view, then the default branch, which is the base: read once');
-  assert.ok(forge.calls.slice(1).every((call) => call.at(-1) === 'github.com'), 'every team read names the pull request\'s host');
+  assert.deepEqual(forge.calls.map(([name]) => name), ['change', 'reviewTrail'], 'the view, then one review trail, which gives both branches\' policy files and the bot\'s verdict');
+  assert.deepEqual(forge.calls[1].slice(1), ['acme/notes', 5, 'github.com', { pointer: '.aidrian.json', config: '.aidrian/config.json', knowledge: '.aidrian/knowledge' }], 'the trail names the pull request\'s repository, host, and the policy paths');
   assert.ok(forge.options.every((each) => each.killSignal === 'SIGKILL' && Number.isInteger(each.timeoutMs)), 'every call is bounded and killed');
   assert.equal(merge(r, `gh api -X PUT repos/acme/notes/pulls/5/merge -f sha=${HEAD}`), null, 'gh api naming the head');
   // The MCP merge tool takes it the same way.
@@ -412,9 +430,9 @@ test('a clock that crosses the deadline, or a read that throws outside the forge
   r.record(5, (state) => (roundLimit(state), waiver(state)));
   const project = r.project();
   const state = readLocalState(project, 5);
-  // Each reading of the clock moves it 900 ms: the start check passes, and the deadline falls between the reads.
+  // Each reading of the clock moves it 1400 ms: the start check passes, and the deadline falls before the trail's read.
   let tick = 0;
-  const advancing = () => (tick += 900) - 900;
+  const advancing = () => (tick += 1400) - 1400;
   const out = guardWaiver({ project, state, pr: 5, head: HEAD, named: true, forge: teamForge(), startedAt: 0, now: advancing });
   assert.deepEqual([out.allow, out.note, out.route], [false, ', and the team\'s github.unattendedWaiver could not be read in time', '']);
   // A clock that fails on its third reading, the time left after the view, where no forge call's catch is: the throw is
@@ -501,12 +519,18 @@ test('the team refuses on the default or the base branch: today\'s denial, and n
     assert.match(reason ?? '', /Or the Human merges in their own shell\.$/u, name);
     assert.doesNotMatch(reason, /aidrian pr waive|could not be read|recorded verdict/u, name);
   }
-  // Allowed on both: the base's config is read after the default branch's.
+  // Allowed on both: the trail gives the base's config beside the default branch's, so nothing is read over REST.
   const r = repo(t, { local: ON });
   r.record(5, (state) => (roundLimit(state), waiver(state)));
   const forge = teamForge({ main: ALLOW, release: ALLOW }, { base: 'release' });
   assert.equal(merge(r, `gh pr merge 5 --match-head-commit ${HEAD}`, { forge }), null);
-  assert.deepEqual(forge.calls.filter(([name]) => name === 'contents').map((call) => call[3]), ['refs/heads/main', 'refs/heads/main', 'refs/heads/release', 'refs/heads/release']);
+  assert.deepEqual(forge.calls.map(([name]) => name), ['change', 'reviewTrail']);
+  // A trail that does not give the base's files: the policies are read over REST, the default branch first, then the base.
+  const fallback = teamForge({ main: ALLOW, release: ALLOW }, { base: 'release', rest: true });
+  assert.equal(merge(r, `gh pr merge 5 --match-head-commit ${HEAD}`, { forge: fallback }), null);
+  assert.deepEqual(fallback.calls.filter(([name]) => name === 'contents').map((call) => call[3]), ['refs/heads/main', 'refs/heads/main', 'refs/heads/release', 'refs/heads/release']);
+  const refused = teamForge({ main: ALLOW, release: { version: 1 } }, { base: 'release', rest: true });
+  assert.doesNotMatch(merge(r, `gh pr merge 5 --match-head-commit ${HEAD}`, { forge: refused }) ?? '', /aidrian pr waive|recorded verdict/u, 'the base read over REST refuses too');
 });
 
 test('a team it cannot read keeps the denial, and says so', (t) => {
@@ -514,7 +538,7 @@ test('a team it cannot read keeps the denial, and says so', (t) => {
   r.record(5, (state) => (roundLimit(state), waiver(state)));
   const unread = /is `round_limit`: stopped at its round limit, and not running, and the team's github\.unattendedWaiver could not be read in time\. Only the Human/u;
   const command = `gh pr merge 5 --match-head-commit ${HEAD}`;
-  const failing = Object.assign(() => ({ change: () => ({ number: 5, headRefOid: HEAD, baseRefName: 'main', url: URL }), repository: () => { throw new Error('gh: HTTP 502'); }, contents: () => assert.fail('no read after a failure') }), {});
+  const failing = Object.assign(() => ({ change: () => ({ number: 5, headRefOid: HEAD, baseRefName: 'main', url: URL }), reviewTrail: () => { throw new Error('gh: HTTP 502'); }, repository: () => assert.fail('no read after a failure'), contents: () => assert.fail('no read after a failure') }), {});
   assert.match(merge(r, command, { forge: failing }) ?? '', unread, 'a failed read');
   assert.match(merge(r, command, { forge: teamForge(undefined, { view: { baseRefName: undefined, url: undefined } }) }) ?? '', unread, 'a view without the base or URL');
   const reason = merge(r, command, { forge: Object.assign(() => ({ change: () => { throw new Error('gh: timed out'); } }), {}) });
@@ -530,21 +554,22 @@ test('the hook budget: one clock from the hook\'s start for the whole command, a
   const late = teamForge();
   assert.match(merge(r, `gh pr merge 5 --match-head-commit ${HEAD}`, { forge: late, startedAt: Date.now() - 2000 }) ?? '', /could not be read in time/u);
   assert.deepEqual(late.calls, [], 'too late to begin');
-  // Each call takes 1.3 s on the test clock: the view gets 3 s, each read 1 s, the one begun at 3.9 s the 0.1 s left, and
-  // none begins at 4 s.
+  // Each call takes 1.3 s on the test clock, and the trail leaves out the base, so the policies are read over REST too:
+  // the view gets 3 s, the trail the 2.7 s left, each REST read 1 s, the one begun at 3.9 s the 0.1 s left, and none
+  // begins at 4 s.
   const clock = { now: 0 };
-  const slow = teamForge({ main: ALLOW, release: ALLOW }, { base: 'release', clock, tick: 1300 });
+  const slow = teamForge({ main: ALLOW, release: ALLOW }, { base: 'release', clock, tick: 1300, rest: true });
   const project = r.project();
   const out = guardWaiver({ project, state: readLocalState(project, 5), pr: 5, head: HEAD, named: true, forge: slow, startedAt: 0, now: () => clock.now });
   assert.deepEqual([out.allow, out.note], [false, ', and the team\'s github.unattendedWaiver could not be read in time']);
-  assert.deepEqual(slow.options.map((each) => each.timeoutMs), [3000, 1000, 1000, 100]);
+  assert.deepEqual(slow.options.map((each) => each.timeoutMs), [3000, 2700, 1000, 100]);
   assert.ok(clock.now <= WAIVER_DEADLINE_MS + 1300, 'the last call began before the deadline');
   // Two waivable merges in one command: the first spends the time, so the second reads nothing and is denied.
   const shared = { now: 0 };
-  const forge = teamForge(undefined, { clock: shared, tick: 600 });
+  const forge = teamForge(undefined, { clock: shared, tick: 800 });
   const reason = merge(r, `gh pr merge 5 --match-head-commit ${HEAD} && gh pr merge 6 --match-head-commit ${NEXT}`, { forge, startedAt: 0, now: () => shared.now });
   assert.match(reason ?? '', /pull request #6 at 1234567, and the review of head 1234567 is `round_limit`.*could not be read in time/su);
-  assert.equal(forge.calls.length, 4, 'only the first merge read anything');
+  assert.equal(forge.calls.length, 2, 'only the first merge read anything');
   assert.ok(shared.now <= WAIVER_DEADLINE_MS);
 });
 
@@ -607,14 +632,14 @@ test('the guard\'s own head lookup shares the deadline: past it, a merge that na
   const r = repo(t, { local: ON });
   r.record(5, (state) => (roundLimit(state), waiver(state)));
   r.record(6, (state) => roundLimit(state, NEXT));
-  // The waived merge's four reads, 1 s each, bring the clock to 4 s; the next merge names no head.
+  // The waived merge's two reads, 2 s each, bring the clock to 4 s; the next merge names no head.
   const clock = { now: 0 };
-  const forge = teamForge(undefined, { clock, tick: 1000 });
+  const forge = teamForge(undefined, { clock, tick: 2000 });
   const views = [];
   const reason = check(`gh pr merge 5 --match-head-commit ${HEAD} && gh pr merge 6 --squash`, {
     cwd: r.dir, env: {}, input: { transcript_path: r.transcript }, viewPr: viewer(views), waiverForge: forge, startedAt: 0, now: () => clock.now,
   });
-  assert.equal(forge.calls.length, 4, 'the first merge was waived');
+  assert.equal(forge.calls.length, 2, 'the first merge was waived');
   assert.equal(clock.now, WAIVER_DEADLINE_MS);
   assert.match(reason ?? '', /^Blocked: this merges pull request #6, and the merge guard could not read its head commit in time to check its review\. Name both: `gh pr merge <PR> --match-head-commit <sha>`/u);
   assert.deepEqual(views, [], 'no lookup made');
@@ -670,6 +695,186 @@ test('waiverKind and waiverFor: the one kind a verdict covers, and the entry tha
   assert.equal(waiverFor(state, NEXT, 'round_cap'), null, 'an entry for another head');
   state.outcome.at = 'not a time';
   assert.equal(waiverFor(state, HEAD, 'round_cap'), null, 'an outcome time that cannot be read lets none stand');
+});
+
+// ---- under autopilot: the bot, the findings at the cap, the gate, and the judge (S7)
+
+// An open finding of the record's index, a local reviewer's by default.
+const openFinding = (id, extra = {}) => ({ id, title: { 'R1-1': 'the loop retries forever', 'R1-2': 'a name shadows the import' }[id] ?? `finding ${id}`, file: `src/${id}.js`, state: 'open', severity: 'medium', stage: 'local', reviewer: 'self', pass: 'self:0', ...extra });
+
+test('a verdict never stands in for the review bot: no card, a card of another head, or no reviewer set keeps the denial, and says why', (t) => {
+  const r = repo(t, { local: ON });
+  r.record(5, (state) => (roundLimit(state), waiver(state)));
+  const command = `gh pr merge 5 --match-head-commit ${HEAD}`;
+  for (const [name, forge, why] of [
+    ['no card', teamForge(undefined, { bot: false }), /chatgpt-codex-connector\[bot\] has not passed head abcdef1 on the forge/u],
+    ['a card of the head before', teamForge(undefined, { bot: NEXT }), /has not passed head abcdef1 on the forge/u],
+    ['no reviewer set', teamForge({ main: { version: 1, github: { unattendedWaiver: { allow: true }, reviewer: null } } }), /no review bot is set/u],
+  ]) {
+    const reason = merge(r, command, { forge }) ?? '';
+    assert.match(reason, /the review of head abcdef1 is `round_limit`/u, name);
+    assert.match(reason, /A judge's recorded verdict waives only this machine's reviewers' findings, and stands only once the review bot passed this head: /u, name);
+    assert.match(reason, why, name);
+    assert.deepEqual(forge.calls.map(([call]) => call), ['change', 'reviewTrail'], `${name}: one trail read`);
+  }
+  assert.equal(merge(r, command, { forge: teamForge() }), null, 'the bot passed this head: the verdict stands');
+});
+
+test('a verdict waives only medium-or-lower findings of this machine\'s reviewers: a high, security, bot, unweighed, or uncounted one keeps the denial', (t) => {
+  const r = repo(t, { local: ON });
+  const command = `gh pr merge 5 --match-head-commit ${HEAD}`;
+  for (const [name, index, rounds, pattern] of [
+    ['a high finding', [openFinding('R1-1', { severity: 'high' })], [], /finding R1-1 is high, above medium/u],
+    ['a critical one by a synonym', [openFinding('R1-1', { severity: 'blocker' })], [], /finding R1-1 is critical, above medium/u],
+    ['a marked medium finding', [openFinding('R1-1', { security: true })], [], /finding R1-1 is a security finding/u],
+    ['the security reviewer\'s low finding', [openFinding('R1-1', { severity: 'low', reviewer: 'agent:security-engineer' })], [], /finding R1-1 is a security finding/u],
+    ['the bot\'s low finding', [openFinding('R1-1', { severity: 'low', stage: 'remote', reviewer: 'pr-bot' })], [], /finding R1-1 is the review bot's/u],
+    ['a severity the table does not know', [openFinding('R1-1', { severity: 'dire' })], [], /finding R1-1 is of no known severity/u],
+    ['more open findings counted than named', [openFinding('R1-1')], [{ head: HEAD, open: 2 }], /the last round counts 2 open findings, and the record names 1 of them/u],
+  ]) {
+    r.record(5, (state) => {
+      roundLimit(state);
+      waiver(state);
+      state.index = Object.fromEntries(index.map((entry) => [entry.id, entry]));
+      state.rounds = rounds;
+    });
+    const reason = merge(r, command) ?? '';
+    assert.match(reason, /A judge's verdict cannot stand for this head: /u, name);
+    assert.match(reason, pattern, name);
+  }
+  // Medium and low local findings, a closed high one, and the count the round gives: the verdict stands.
+  r.record(5, (state) => {
+    roundLimit(state);
+    waiver(state);
+    state.index = { 'R1-1': openFinding('R1-1'), 'R1-2': openFinding('R1-2', { severity: 'minor', stage: 'independent', reviewer: 'codex-local' }), 'R1-3': openFinding('R1-3', { title: 'the token leaks into the log', file: 'src/log.js', severity: 'high', state: 'fixed' }) };
+    state.rounds = [{ head: HEAD, open: 2 }];
+  });
+  assert.equal(merge(r, command), null);
+  // An accepted residual above low on a pass record holds it for the Human, as it holds auto-merge.
+  const held = emptyState(5, 'acme/notes');
+  roundLimit(held);
+  held.passes = { 'self:0': { head: HEAD, ruled: [{ title: 't', file: 'a.js', severity: 'medium', residual: 'the retry has no cap' }] } };
+  assert.match(capProblem(held, HEAD) ?? '', /an accepted residual waived a finding above low severity/u);
+});
+
+// The gate's forge, the facade itself: teamForge's, for the pull request #5 on `base`.
+const gateForge = (branches, options) => teamForge(branches, options)({});
+
+// `aidrian pr waive 5 --gate --json` as the CLI runs it, over `forge`, with `run` the session's project run.
+async function gate(t, r, { forge = gateForge(), run = undefined, args = ['--json'] } = {}) {
+  const out = [];
+  const err = [];
+  t.mock.method(console, 'log', (line) => out.push(line));
+  t.mock.method(console, 'error', (line) => err.push(line));
+  try {
+    const project = r.project();
+    const code = await runWaive(['5', '--gate', ...args], project, loadConfig(project).config, { forge, gate: { run: () => run } });
+    return { code, out, err, result: out.length && args.includes('--json') ? JSON.parse(out.at(-1)) : null };
+  } finally {
+    t.mock.restoreAll();
+  }
+}
+
+test('aidrian pr waive --gate exits 0 only when the waiver may run: the round cap on the head, the team and machine on, the findings waivable, the bot passed', async (t) => {
+  const r = repo(t, { local: ON });
+  r.record(5, roundLimit);
+  const on = await gate(t, r);
+  assert.equal(on.code, 0, on.err.join('\n'));
+  assert.deepEqual(on.result, { may: true, why: null, pr: 5, head: HEAD, repo: 'acme/notes', base: 'main' });
+  const plain = await gate(t, r, { args: [] });
+  assert.equal(plain.code, 0);
+  assert.equal(plain.out.at(-1), `waiver may run for #5 at abcdef1: dispatch one fresh judge, and record its verdict with --head ${HEAD}`);
+  const off = async (name, forge, pattern, { local = ON, edit = roundLimit } = {}) => {
+    const each = repo(t, local ? { local } : {});
+    each.record(5, edit);
+    const result = await gate(t, each, { forge });
+    assert.equal(result.code, 1, name);
+    assert.equal(result.result.may, false, name);
+    assert.match(result.result.why, pattern, name);
+  };
+  await off('the default branch does not allow it', gateForge({ main: { version: 1 } }), /the team does not allow it \(github\.unattendedWaiver\.allow on acme\/notes main\)/u);
+  await off('the base does not allow it', gateForge({ main: ALLOW, release: { version: 1 } }, { base: 'release' }), /github\.unattendedWaiver\.allow on acme\/notes release/u);
+  await off('this machine has not opted in', gateForge(), /this machine has not opted in/u, { local: null });
+  await off('a received review', gateForge(), /is received: a verdict covers only round_limit/u, { edit: received });
+  await off('a head pushed after the cap', gateForge(undefined, { head: NEXT }), /the last review step covered abcdef1, not head 1234567/u);
+  await off('a high finding open', gateForge(), /finding R1-1 is high/u, { edit: (state) => (roundLimit(state), (state.index = { 'R1-1': openFinding('R1-1', { severity: 'high' }) })) });
+  await off('the bot has not passed the head', gateForge(undefined, { bot: false }), /stands only once the review bot passed the head: chatgpt-codex-connector\[bot\] has not passed head abcdef1/u);
+  await off('a judge already ruled on the head', gateForge(), /a judge already gave its verdict on head abcdef1 \(refuse\): one judge rules per head/u, { edit: (state) => (roundLimit(state), waiver(state, { verdict: 'refuse' })) });
+  // The forge's view fails: an error, exit 3.
+  const failed = await gate(t, r, { forge: { change: () => { throw new Error('gh: HTTP 502'); } } });
+  assert.equal(failed.code, 3);
+  assert.match(failed.err.join('\n'), /^aidrian pr waive: could not read pull request #5 \(gh: HTTP 502\)$/u);
+  assert.throws(() => parseWaive(['5', '--gate', '--verdict', 'waive']), /--gate takes only --json, not --verdict/u);
+});
+
+test('aidrian pr waive --gate reads the team\'s switch through the forge, never the working copy', async (t) => {
+  // The working copy allows it, GitHub's default branch does not: off.
+  const allowed = repo(t, { local: ON, config: { github: { unattendedWaiver: { allow: true } } } });
+  allowed.record(5, roundLimit);
+  const off = await gate(t, allowed, { forge: gateForge({ main: { version: 1 } }) });
+  assert.deepEqual([off.code, off.result.may], [1, false]);
+  assert.match(off.result.why, /the team does not allow it/u);
+  // The working copy says nothing, GitHub allows it on both branches: on.
+  const silent = repo(t, { local: ON });
+  silent.record(5, roundLimit);
+  assert.equal((await gate(t, silent, { forge: gateForge({ main: ALLOW }) })).code, 0);
+});
+
+test('a project run counts the pull requests it merged on a verdict: at WAIVED_MERGES no verdict may run, and the issue is parked', (t) => {
+  const fx = runFixture(t);
+  const { owner, name } = fx.run().init.repository;
+  const repoOf = `${owner}/${name}`;
+  const recordWaived = (n, verdict = 'waive') => {
+    const state = emptyState(n, repoOf);
+    roundLimit(state);
+    waiver(state, { verdict });
+    writeLocalState(fx.project, state);
+  };
+  const merged = (...prs) => appendToRun(fx.state, 'launch', () => ({ rows: prs.map((pr) => ({ event: 'result', key: 'WID-1', attempt: 1, session: 'child', via: 'drop', status: 'merged', pr, verified: true, at: new Date().toISOString() })) }));
+  const budget = (pr = 9) => budgetProblem({ project: fx.project, config: fx.config, run: 'launch', pr });
+  assert.equal(budget(), null, 'no merges yet');
+  for (const n of [1, 2]) recordWaived(n);
+  recordWaived(3, 'refuse');
+  merged(1, 2, 3);
+  assert.equal(budget(), null, 'two waived merges, and a third merged on a refuse, which is no waiver');
+  recordWaived(4);
+  merged(4);
+  assert.equal(WAIVED_MERGES, 3);
+  assert.match(budget() ?? '', /project run launch merged 3 pull requests on a judge's verdict already, its most \(3\): park the issue for the Human/u);
+  assert.equal(budget(4), null, 'the pull request itself is not counted against itself');
+  assert.match(budgetProblem({ project: fx.project, config: fx.config, run: null, pr: 9 }) ?? '', /names a project run that cannot be read/u);
+  assert.match(budgetProblem({ project: fx.project, config: fx.config, run: 'gone', pr: 9 }) ?? '', /the ledger of project run gone cannot be read/u);
+  assert.equal(budgetProblem({ project: fx.project, config: fx.config, run: undefined, pr: 9 }), null, 'no run: no budget');
+  // runOf reads the run off a mark: none, the run, or a mark whose tags cannot be read.
+  assert.deepEqual([runOf(null), runOf({ root: '/x' }), runOf({ root: '/x', project: 'launch', issue: 'WID-1' }), runOf({ root: '/x', project: null, issue: null })], [undefined, undefined, 'launch', null]);
+});
+
+test('aidrian pr waive --judge keeps the judge\'s agent id and the session, and refuses one this session\'s dispatch log does not show', async (t) => {
+  const r = repo(t, { local: ON });
+  r.record(5, roundLimit);
+  const project = r.project();
+  const config = loadConfig(project).config;
+  const log = logPath(project, config);
+  mkdirSync(path.dirname(log), { recursive: true });
+  const row = (extra = {}) => JSON.stringify({ event: 'dispatch', ts: '2026-11-03T14:30:00.000Z', session_id: 'sess-1', dispatcher: 'main', agent_id: 'judge-1', agent_type: 'aidrian:code-reviewer', ...extra });
+  writeFileSync(log, `${[row({ agent_id: 'judge-2', agent_type: 'aidrian:explorer' }), row({ agent_id: 'judge-3', session_id: 'other' }), row({ agent_id: 'judge-4', ts: '2026-11-03T13:00:00.000Z' })].join('\n')}\n`);
+  const record = (judge) => {
+    const forge = {
+      change: (ref, fields) => (fields === 'baseRefName' ? { baseRefName: r.git('branch', '--show-current') } : { number: 5, headRefOid: HEAD, url: URL }),
+      conversationComments: () => [],
+    };
+    t.mock.method(console, 'log', () => {});
+    return runWaive(['5', '--verdict', 'waive', '--reason', 'nits', '--judge', judge], project, { ...config, review: { ...config.review, record: 'local' } }, { forge, repo: 'acme/notes', env: { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 'sess-1' } }).finally(() => t.mock.restoreAll());
+  };
+  for (const [judge, why] of [['judge-1', 'no row'], ['judge-2', 'an explorer, not a code-reviewer'], ['judge-3', 'another session'], ['judge-4', 'dispatched before the cap']]) {
+    await assert.rejects(record(judge), /the dispatch log holds no dispatch of the code-reviewer judge-\d by session sess-1 between the cap and the verdict/u, why);
+  }
+  assert.equal(readLocalState(project, 5).waivers, undefined, 'nothing written');
+  writeFileSync(log, `${row()}\n`, { flag: 'a' });
+  assert.equal(await record('judge-1'), 0);
+  const [entry] = readLocalState(project, 5).waivers;
+  assert.deepEqual([entry.judge_id, entry.session, entry.verdict], ['judge-1', 'sess-1', 'waive']);
+  assert.throws(() => parseWaive(['5', '--verdict', 'waive', '--reason', 'x', '--judge', '$(id)']), /--judge must be the judge's agent id/u);
 });
 
 // ---- the config guard and aidrian check (AC12)

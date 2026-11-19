@@ -8,8 +8,17 @@
 // status (`blocked_quota`, `error`, `stuck`, `running`, `fix_required`, ...), a head or merge text the guard cannot
 // read, or a record with no outcome. An entry of any other kind counts for nothing.
 //
-// `aidrian pr auto-merge`'s review gate reads no verdict: it still needs `received` on the head. The waiver is for a
-// session the Human told to merge, not for the auto-merge path.
+// A verdict never stands in for the review bot. It waives only the findings of this machine's own reviewers, the local
+// and independent stages, open at the cap, and only when every one of them is of medium severity or lower, none is a
+// security finding (critical or high, or marked, or the security reviewer's), no accepted residual above low holds the
+// record (settled.mjs heldWaiver), and the review bot (the default branch's `github.reviewer`) passed exactly the head on
+// the forge (merge-trust.mjs botProblem), read from the review trail, which also gives both branches' policy files, so
+// the gate below reads no policy of its own. The record, the judge's verdict, and the dispatch log are all in folders a
+// project run's confined session can write: the bot's pass is the part of the waiver no such session writes.
+// `aidrian pr auto-merge` takes a standing verdict for `round_limit` too, and `aidrian pr waive --gate` says whether a
+// judge may be dispatched at all (waiver-stand.mjs): each also needs the judge in this session's dispatch log and holds a
+// project run to WAIVED_MERGES. A merge no Human attends still meets every merge-trust check; the waiver lifts only the
+// `round_limit` stop.
 //
 // The guard honors a verdict only while both switches are on: `github.unattendedWaiver.allow` true in config.json on both
 // the repository's default branch and the pull request's base, read from GitHub as each branch commits it now, never
@@ -31,16 +40,22 @@ import { knownPrefix } from '../git.mjs';
 import { sessionIdentity } from '../hosts/index.mjs';
 // A cycle: pr-auto-merge.mjs imports merge-review.mjs, which imports this file. It is benign while each module uses the
 // other's exports only inside functions, never while it loads: keep it that way.
-import { branchPolicies, refusingBranches, soloOn } from '../pr-auto-merge.mjs';
+import { branchPolicies, refusingBranches, soloOn, trailPaths, trailPolicies } from '../pr-auto-merge.mjs';
+import { isObject } from '../fs.mjs';
 import { mayFollowTeamDefault } from '../project.mjs';
 import { hostOf } from '../remotes.mjs';
 import { originRepo, repoName } from '../review-gate.mjs';
 import { localRefSolo, viewSolo } from '../solo.mjs';
+import { noHigher, severityOf } from './findings.mjs';
 import { boundedReads, holdToBase } from './in-force.mjs';
+import { botProblem } from './merge-trust.mjs';
 import { postContext, readReading } from './dispatch.mjs';
+import { heldWaiver } from './settled.mjs';
 import { heldMessage, mergePending, owed, publishState, readLocalState, readRecord, sameCommit, SHA_REF, writeLocalState } from './state.mjs';
 
 export const VERDICTS = Object.freeze(['waive', 'refuse']);
+// A judge's agent id as `--judge` takes it.
+export const JUDGE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u;
 // The longest reason a verdict keeps: the summary comment shows the first 300 characters of it.
 export const MAX_REASON = 2000;
 
@@ -57,24 +72,31 @@ export const READ_TIMEOUT_MS = 1000;
 export const VIEW_TIMEOUT_MS = 3000;
 const VIEW_FIELDS = 'number,headRefOid,baseRefName,url';
 
-// `aidrian pr waive <PR> --verdict waive|refuse --reason TEXT [--head SHA]`: { pr, verdict, reason, head }.
+// `aidrian pr waive <PR> --verdict waive|refuse --reason TEXT [--head SHA] [--judge AGENT_ID]`: { pr, verdict, reason,
+// head, judge }; or `aidrian pr waive <PR> --gate [--json]`: { pr, gate: true, json }.
 export function parseWaive(args) {
   const [ref, ...rest] = args;
   const match = /^#?(\d+)$/u.exec(ref ?? '') ?? /\/pull\/(\d+)/u.exec(ref ?? '');
   if (!match) throw new Error('waive needs a pull request number');
+  if (rest.includes('--gate')) {
+    const extra = rest.find((arg) => arg !== '--gate' && arg !== '--json');
+    if (extra !== undefined) throw new Error(`--gate takes only --json, not ${extra}`);
+    return { pr: Number(match[1]), gate: true, json: rest.includes('--json') };
+  }
   const flags = {};
   for (let i = 0; i < rest.length; i += 1) {
     const flag = rest[i];
-    if (!['--verdict', '--reason', '--head'].includes(flag)) throw new Error(`unknown argument: ${flag}`);
+    if (!['--verdict', '--reason', '--head', '--judge'].includes(flag)) throw new Error(`unknown argument: ${flag}`);
     const value = rest[++i];
     if (value === undefined || value.startsWith('--')) throw new Error(`${flag} needs a value`);
     flags[flag.slice(2)] = value;
   }
+  if (flags.judge !== undefined && !JUDGE_ID.test(flags.judge)) throw new Error('--judge must be the judge\'s agent id, as the host returned it when the judge was dispatched');
   if (!VERDICTS.includes(flags.verdict)) throw new Error('--verdict must be waive or refuse');
   if (!flags.reason?.trim()) throw new Error('--verdict needs --reason with the evidence');
   if (flags.reason.trim().length > MAX_REASON) throw new Error(`--reason is longer than ${MAX_REASON} characters: give the evidence, and link the rest`);
   if (flags.head !== undefined && !SHA_REF.test(flags.head)) throw new Error('--head must be a commit SHA');
-  return { pr: Number(match[1]), verdict: flags.verdict, reason: flags.reason.trim(), head: flags.head ?? null };
+  return { pr: Number(match[1]), verdict: flags.verdict, reason: flags.reason.trim(), head: flags.head ?? null, judge: flags.judge ?? null };
 }
 
 // The kind of denial a verdict may waive for a merge of `head`, or null when none may: `round_cap` when nothing is owed
@@ -86,8 +108,34 @@ export function waiverKind(state, head) {
   return sameCommit(outcome.head, head) && outcome.status === 'round_limit' ? 'round_cap' : null;
 }
 
-// Why no verdict may be recorded for `head`, for runWaive's error.
-function notWaivable(state, head, pr) {
+// The highest severity of a finding open at the cap that a verdict may waive.
+export const WAIVER_CEILING = 'medium';
+// A reviewer of the security stage, by the name a plan or a pass result gives it.
+const SECURITY_REVIEWER = /security-engineer/iu;
+
+// Why the findings open at the cap keep a judge's verdict from standing for `head`, or null. Read from the record's
+// finding index: every open entry must be a local reviewer's (the local or independent stage, never the review bot's
+// `remote` stage or `pr-bot`), of a severity the disposition table knows and no higher than WAIVER_CEILING, and no
+// security finding: marked (findings.mjs tieTwins marks critical, high, and their twins) or from the security reviewer.
+// A last round on `head` that counts more open findings than the index holds cannot be read one by one, so it refuses;
+// so does an accepted residual above low on any pass record (settled.mjs heldWaiver), which only the Human lets merge.
+export function capProblem(state, head) {
+  if (heldWaiver(state)) return 'an accepted residual waived a finding above low severity, and only the Human lets that merge';
+  const open = Object.values(isObject(state?.index) ? state.index : {}).filter((entry) => isObject(entry) && entry.state === 'open');
+  const last = Array.isArray(state?.rounds) ? state.rounds.at(-1) : null;
+  const counted = isObject(last) && sameCommit(last.head, head) && Number.isInteger(last.open) ? last.open : 0;
+  if (counted > open.length) return `the last round counts ${counted} open findings, and the record names ${open.length} of them, so each one's severity cannot be told`;
+  for (const entry of open) {
+    const id = typeof entry.id === 'string' ? entry.id : 'with no id';
+    if (entry.stage === 'remote' || entry.reviewer === 'pr-bot') return `finding ${id} is the review bot's, and a verdict waives only this machine's reviewers' findings`;
+    if (!noHigher(entry.severity, WAIVER_CEILING)) return `finding ${id} is ${severityOf(entry.severity) ?? 'of no known severity'}, above ${WAIVER_CEILING}, which only the Human lets merge`;
+    if (entry.security === true || SECURITY_REVIEWER.test(String(entry.reviewer ?? '')) || SECURITY_REVIEWER.test(String(entry.pass ?? ''))) return `finding ${id} is a security finding, which only the Human lets merge`;
+  }
+  return null;
+}
+
+// Why no verdict may be recorded for `head`, for runWaive's error and the gate's.
+export function notWaivable(state, head, pr) {
   const sha7 = String(head).slice(0, 7);
   const owing = owed(state);
   if (owing.length) return `${owing.length} review ${owing.length === 1 ? 'entry is' : 'entries are'} still owed on #${pr}: a verdict never covers an owed review`;
@@ -133,16 +181,19 @@ export function budgetedForge(make, deadline, now = Date.now) {
 // unset follows the team's `solo` from the same reads, once the default branch's local ref says so too and the local
 // file is no tracked one (config-local.mjs machineSwitch). `localSolo` is that local answer when the caller read it
 // already, inside its own deadline, as the merge guard does (readWaiver); null reads it here, for a command.
-export function waiverGate({ project, forge, repo, host, base, prefix, localSolo = null, memo = null }) {
+// `policies`, branchPolicies' answer the caller read already (from a review trail, or for auto-merge's own team check),
+// is taken as it is, and then nothing is read from the forge here.
+export function waiverGate({ project, forge, repo, host, base, prefix, localSolo = null, memo = null, policies = null }) {
   const local = project.localUnattendedWaiver;
   const notIn = { on: false, reason: 'local', refusing: [], why: `this machine has not opted in (github.unattendedWaiver in ${project.paths.local})` };
   if (local !== 'on' && local !== 'unset') return notIn;
   if (!repo || !host || !base || prefix === null) return { on: false, reason: 'unread', refusing: [], why: 'the pull request\'s repository, host, base, or the project\'s folder could not be read' };
-  let policies;
-  try {
-    policies = branchPolicies(forge, { repo, host, base }, prefix);
-  } catch (error) {
-    return { on: false, reason: 'unread', refusing: [], why: error.message };
+  if (!policies) {
+    try {
+      policies = branchPolicies(forge, { repo, host, base }, prefix);
+    } catch (error) {
+      return { on: false, reason: 'unread', refusing: [], why: error.message };
+    }
   }
   // The merge guard's trust check for a session no Human attends reuses them (merge-review.mjs unattendedProblem).
   if (memo) memo.policies = { key: `${repo}|${base}|${prefix}`, value: policies };
@@ -150,10 +201,14 @@ export function waiverGate({ project, forge, repo, host, base, prefix, localSolo
   const allow = refusing.length === 0;
   const machine = allow ? machineSwitch(local, () => soloOn(policies) && (localSolo ?? localRefSolo(project)), project, localSolo ?? undefined) : local;
   const { effective, reason } = resolveUnattendedWaiver({ unattendedWaiver: { allow } }, machine);
-  return { on: effective, reason, refusing, why: reason === 'team' ? `the team does not allow it (github.unattendedWaiver.allow on ${repo} ${refusing.join(' and ')})` : null };
+  const why = reason === 'team' ? `the team does not allow it (github.unattendedWaiver.allow on ${repo} ${refusing.join(' and ')})` : reason === 'local' ? notIn.why : null;
+  return { on: effective, reason, refusing, why };
 }
 
 const UNREAD_NOTE = ', and the team\'s github.unattendedWaiver could not be read in time';
+
+// The key of a review trail kept in the merge guard's `memo`, so merge trust reads it only when the waiver did not.
+export const trailKey = (repo, host, pr, prefix) => `${String(repo).toLowerCase()}|${String(host).toLowerCase()}|${pr}|${prefix}`;
 
 // What the merge guard makes of a verdict for a denial it is about to give: { allow, note, route }. Asked only after the
 // Human's answer did not waive it. Nothing is read, from the network or git, unless the record holds an outcome with
@@ -163,7 +218,10 @@ const UNREAD_NOTE = ', and the team\'s github.unattendedWaiver could not be read
 // `sha`), the only merge a verdict counts for, since gh would otherwise merge whatever head the branch has by then.
 // `view` is the guard's earlier view, null when it made none. `forge` is budgetedForge's `make`, the test seam;
 // `startedAt` when the hook's process started, by `now`, the one clock for every merge of one command. `memo`, when given,
-// keeps the policies the gate read, for the merge guard's trust check.
+// keeps the review trail and the policies the gate read, for the merge guard's trust check.
+// The forge reads, after the view: the review trail, one GraphQL call, which gives both branches' policy files (only a
+// pointer to another folder reads them over REST too) and the review bot's verdict. With the gate on, a verdict stands
+// only when capProblem passes and the bot passed exactly the head (merge-trust.mjs botProblem).
 // Any throw, from a read or the clock, is the `unread` denial: the hook's own catch would let the merge run.
 export function guardWaiver(args) {
   try {
@@ -210,10 +268,29 @@ function readWaiver({ project, state, pr, head, named = false, repo = null, view
   const home = typeof seen?.url === 'string' ? repoName(seen.url) : null;
   if (!base || !host || !home) return unread;
   const rest = Math.floor(deadline - now());
-  const gate = waiverGate({ project, forge: reads, repo: home, host, base, prefix: rest > 0 ? knownPrefix(project.root, { timeout: Math.min(READ_TIMEOUT_MS, rest) }) : null, localSolo, memo });
+  const prefix = rest > 0 ? knownPrefix(project.root, { timeout: Math.min(READ_TIMEOUT_MS, rest) }) : null;
+  if (prefix === null) return unread;
+  // One read gives both branches' policy files and the review bot's verdict: the review trail, which merge trust reads
+  // too (merge-review.mjs unattendedProblem takes it from `memo`). Only a pointer to another folder reads the policies
+  // over REST as well.
+  let trail;
+  let policies;
+  try {
+    trail = reads.reviewTrail(home, pr, { host, paths: trailPaths(prefix) });
+    policies = trailPolicies(trail, { repo: home, base }, prefix) ?? branchPolicies(reads, { repo: home, host, base }, prefix);
+  } catch {
+    return unread;
+  }
+  if (memo) memo.trail = { key: trailKey(home, host, pr, prefix), value: trail };
+  const gate = waiverGate({ project, forge: reads, repo: home, host, base, prefix, localSolo, memo, policies });
   if (gate.reason === 'unread') return unread;
   if (!gate.on) return none;
+  const cap = capProblem(state, head);
+  if (cap) return { ...none, route: ` A judge's verdict cannot stand for this head: ${cap}.` };
   const verdict = waiverFor(state, head, kind);
+  // A verdict never stands in for the review bot: it stands only once the bot passed exactly this head.
+  const bot = verdict ? botProblem(trail, head, policies.policy.github.reviewer) : null;
+  if (bot) return { ...none, route: ` A judge's recorded verdict waives only this machine's reviewers' findings, and stands only once the review bot passed this head: ${bot}.` };
   if (verdict && named) return { allow: true, note: '', route: '' };
   if (verdict) {
     return { ...none, route: ` A judge's recorded verdict waives this head, but only for a merge that names it: merge with \`gh pr merge ${pr} --match-head-commit ${head}\`, or give the merge tool its \`sha\`.` };
@@ -236,6 +313,7 @@ const nextStep = (entry, pr, local) => (entry.verdict === 'waive'
 // postComment, editComment, viewer), `deps.repo` the origin, and `deps.env` the environment, in tests.
 export async function runWaive(args, project, config, deps = {}) {
   const opts = parseWaive(args);
+  if (opts.gate) return (await import('./waiver-stand.mjs')).runWaiveGate(opts, project, { config, ...(deps.forge ? { forge: deps.forge } : {}), ...(deps.gate ?? {}) });
   const machine = project.localUnattendedWaiver;
   const switchOff = () => new Error(`this machine's github.unattendedWaiver is not on in ${project.paths.local}, so the merge guard would not take a waive verdict; --verdict refuse is still recorded`);
   if (opts.verdict === 'waive' && machine !== 'on' && machine !== 'unset') throw switchOff();
@@ -274,7 +352,15 @@ export async function runWaive(args, project, config, deps = {}) {
   const kind = waiverKind(state, current);
   if (kind === null) throw new Error(notWaivable(state, current, opts.pr));
   const env = deps.env ?? process.env;
-  const entry = { head: current, kind, verdict: opts.verdict, reason: opts.reason, judge: sessionIdentity(env).agent ?? 'unknown', at: new Date().toISOString() };
+  const identity = sessionIdentity(env);
+  // `--judge` names the judge's agent id, and the entry keeps it with this session's id, so auto-merge can find the
+  // judge's dispatch in this session's dispatch log; one the log does not show is refused here already.
+  const named = opts.judge === null ? {} : { judge_id: opts.judge, session: identity.session ?? null };
+  const entry = { head: current, kind, verdict: opts.verdict, reason: opts.reason, judge: identity.agent ?? 'unknown', ...named, at: new Date().toISOString() };
+  if (opts.judge !== null) {
+    const unseen = (await import('./waiver-stand.mjs')).judgeProblem({ project, config, state, entry });
+    if (unseen) throw new Error(unseen);
+  }
   state.waivers = [...(Array.isArray(state.waivers) ? state.waivers : []), entry];
   // A request or a review step written since the read would be lost under this write: refused, and nothing written.
   const again = readLocalState(project, opts.pr, repo);

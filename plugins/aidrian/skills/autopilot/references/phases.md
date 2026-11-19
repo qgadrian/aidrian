@@ -92,15 +92,19 @@ The loop ends at the first of these:
   A round that pushes a fix moves the head, and no review has seen the new one: run the next round on it.
   The code comment an `accepted_residual` gets is not a fix.
 - **The cap**: the last round ends with `fix_now` findings open, or with fixes pushed that no review has seen.
-  List both in the report, and start no further round. Dispatch no waiver judge: the loop's `references/review-plan.md`
-  § At the cap: a judge's waiver is for a session told to merge, and this run merges only through the auto-merge step
-  below, whose `aidrian pr auto-merge` reads no verdict.
+  List both in the report, and start no further round. When the review step returned `round_limit` on the current
+  head, follow the loop's `references/review-plan.md` § At the cap: a judge's waiver: run `aidrian pr waive <n> --gate`,
+  and only on exit 0 dispatch its one judge and record the verdict with `--judge`. A `waive` ends the loop as a
+  sign-off does for step 1 below, and `aidrian pr auto-merge` takes it for that head alone; any later push needs a new
+  review. Exit 1 or a `refuse`: report the gate's line or the judge's evidence, and park the merge as a Decision for
+  the Human.
 - **A stop** from `SKILL.md` § Stop.
 
 Then:
 
 1. Leave the pull request a draft. Mark it ready only when config.json `github.markReady` is `"auto"`,
-   the default, or the Human asked for that at launch, the loop ended at sign-off, and `aidrian pr checks <n>` says ready.
+   the default, or the Human asked for that at launch, the loop ended at sign-off or on a judge's `waive`, and
+   `aidrian pr checks <n>` says ready.
    Then run `aidrian pr product-feedback status <n>`, and the re-check when only that is owed, by that file's
    § Before `gh pr ready`. On exit 0, mark it ready with `gh pr ready <n>`.
    Pending, failing, or any other exit: leave it a draft and say why. The report lists each owed item with its command,

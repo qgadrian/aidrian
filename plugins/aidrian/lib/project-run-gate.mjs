@@ -44,6 +44,7 @@ import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 
 import { baseBranchTip, machineSwitch } from './config.mjs';
+import { DEFAULTS } from './config-defaults.mjs';
 import { pauseSync, resolvedPath } from './fs.mjs';
 import { forgeDomains, forgeFor, forgeTokenVars } from './forges/index.mjs';
 import { gateGit, knownPrefix } from './git.mjs';
@@ -634,7 +635,7 @@ function startLines({ result, state, run, key, attempt, session, base, proof, ca
   if (rows.length && (!written || written.problem)) return { exitCode: 1, out: orphans, err: [`aidrian project start: the session's start could not be recorded in the ledger: ${written?.problem ?? 'the write failed'}`] };
   if (result.outcome === 'started') {
     const look = cap.attachLine?.({ id: result.marker.id, name: result.marker.name }) ?? `its id is ${result.marker.id}`;
-    return { exitCode: 0, out: [...orphans, `started ${key} attempt ${attempt} session ${result.marker.id}`, `worktree: ${base.cwd}`, `branch: ${base.branch}`, `say: The issue ${key} runs in the background session ${result.marker.id}: ${look}.`], err: [] };
+    return { exitCode: 0, out: [...orphans, `started ${key} attempt ${attempt} session ${result.marker.id}`, `clone: ${base.cwd}`, `branch: ${base.branch}`, `say: The issue ${key} runs in the background session ${result.marker.id}: ${look}.`], err: [] };
   }
   if (proof && result.outcome !== 'started') return haltAnswer(`the start of ${key} attempt ${attempt} failed its proof: ${proof}`, { lines: orphans, lift: RESUME(run) });
   const why = {
@@ -658,6 +659,9 @@ function startLines({ result, state, run, key, attempt, session, base, proof, ca
 // It returns once any issue settles, none runs, none runs on, and the run is not paused, or the time is up, with a line
 // for each: `settled KEY STATE`, `result KEY STATUS -> STATE`, `ended KEY REASON -> STATE`, `orphan ...`, `running KEY`,
 // `lingering KEY attempt N`, `paused until TIME` while a pause lasts, or `idle` when none runs or runs on.
+// `wait` starts nothing. A team policy the forge no longer confirms, such as projectRun.allow turned off on the default
+// branch while the run's sessions run, refuses no wait: it settles under settlePolicy, with a first `note policy:` line,
+// so the driver's halt wait still stops overdue sessions, takes in results, and reaches `idle`.
 // `pause` is a test's stand-in for the wait between reads.
 export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = process.env, home, now = Date.now(), forge = null, spawn, pause = pauseSync, clock = Date.now }) {
   const refuse = (why) => ({ exitCode: 1, out: [], err: [`aidrian project wait: ${why}`] });
@@ -670,9 +674,9 @@ export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = pr
   const held = custody({ found: opened.found, store, session, now });
   if (held.problem) return refuse(held.problem);
   const facade = forge ?? forgeFor(project.root);
-  const policy = teamPolicy(project, opened.found.init.repository, facade);
-  if (policy.transient) return retryAnswer('wait', policy.problem);
-  if (policy.problem) return refuse(policy.problem);
+  const team = teamPolicy(project, opened.found.init.repository, facade);
+  if (team.transient) return retryAnswer('wait', team.problem);
+  const { policy, note } = settlePolicy(project, team);
   const cap = detectHost({ env }).capabilities.projectStart;
   if (!cap) return refuse('this host declares no way to read a project run\'s sessions (capabilities.projectStart)');
   if (held.role === 'successor') {
@@ -700,11 +704,23 @@ export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = pr
     // An idle run waits out its pause with the driver, up to the deadline, and returns once the pause is over; a session
     // that runs on after its issue settled is waited on as an issue that runs is.
     if (lines.length || (!busy && !paused) || time() >= until) {
-      return { exitCode: 0, out: [...lines, ...running.map((key) => `running ${key}`), ...lingering.map(lingerLine), ...(paused ? [`paused until ${paused.until}`] : []), ...(busy ? [] : ['idle'])], err: [] };
+      return { exitCode: 0, out: [...note, ...lines, ...running.map((key) => `running ${key}`), ...lingering.map(lingerLine), ...(paused ? [`paused until ${paused.until}`] : []), ...(busy ? [] : ['idle'])], err: [] };
     }
     const pauseLeft = paused && !busy ? Date.parse(paused.until) - time() : WAIT_STEP;
     pause(Math.max(0, Math.min(WAIT_STEP, pauseLeft, until - time())));
   }
+}
+
+// The policy `wait` settles a run's issues under, from the team's policy `team` (teamPolicy): { policy, note }, where
+// `note` holds the line to print first, if any. A policy the forge confirms stands. One it no longer confirms leaves
+// only issueHours, which every running session is held to: the base branch's own, as this checkout's git holds it, or
+// the default when that cannot be read, within CEILINGS. Nothing here lets a session start: start reads teamPolicy itself.
+function settlePolicy(project, team) {
+  if (!team.problem) return { policy: team, note: [] };
+  const read = safely(() => baseBranchConfig(project, 'projectRun').config?.projectRun?.issueHours);
+  const hours = Number.isFinite(read) && read > 0 ? read : DEFAULTS.projectRun.issueHours;
+  const issueHours = Math.min(hours, CEILINGS.issueHours);
+  return { policy: { issueHours }, note: [`note policy: ${team.problem}; wait starts nothing and settles the issues that run, stopping any past projectRun.issueHours, ${issueHours}`] };
 }
 
 // One read of `wait`: orphans, handed-over results, ended sessions, then sessions that run on after their issue

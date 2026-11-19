@@ -468,12 +468,13 @@ In a folder the host has not trusted, `claude --bg` exits with `Workspace not tr
 says to trust the project's runs folder, `<state>/runs`, once, by running `claude` there and accepting its trust
 question. Trust there covers every attempt's clone, and nothing else of the state folder.
 
-Residual risks, each known and left for a later change:
+Residual risks, each known and accepted:
 
 - WebFetch, Read, Edit, and Write run outside the sandbox. Edit and Write are held by the agent gate hook's write
   allowlist alone, and WebFetch reaches any host the permission rules allow.
-- The forge CLI's token in `~/.config/gh` is readable, and reaches every repository the user can. A token scoped to
-  the repository, passed in the session's environment, is the follow-up.
+- The forge CLI's token in `~/.config/gh` is readable, and reaches every repository the user can. In the run's repository,
+  the default branch's protection and the tag rule that `aidrian project preflight` requires hold it; in the user's
+  other repositories, nothing does.
 - On macOS, `~/Library/Keychains` is unreadable to sandboxed commands; whether gh's token in the keychain and git's
   `osxkeychain` helper still answer through the keychain service is live check 7.
 - The host's own git calls in the clone, such as for its status line or its view of changes, run outside the sandbox
@@ -521,7 +522,7 @@ Before `verified` changes, a live Claude Code must show every one of these, each
 7. An HTTPS push, `gh api user`, and `gh pr create` work on macOS and on Linux, with `~/Library/Keychains` denied on
    macOS; an unlisted host is refused with no prompt in every permission mode. Should a push or `gh pr create` fail
    for the keychain, `~/Library/Keychains` is not opened again: the start passes the forge token through the forge
-   CLI's token variable, which `secretVars` keeps, the planned token scoped to the repository.
+   CLI's token variable, which `secretVars` keeps.
 8. The same from a subagent, a background Bash command, and Monitor.
 9. With no `bwrap`, nothing runs.
 10. An invalid `--settings` value: what the host does with it. And each key the start passes that no earlier check
@@ -613,7 +614,11 @@ its start stays as [its page](codex.md#project-start) says.
 4. The start, outside the sandbox, reads the verdict once the beacon came, for at most 180 seconds: one of its own
    plan that passed, names no other session, holds no read that saw a target's fingerprint, with the listener the
    start ran alive on its recorded port and pid, no zombie, and no connection on it, no probe path left, and `cache`
-   and `drop` plain folders that keep their keep files, passes. The start reads its listener's state from
+   and `drop` plain folders that keep their keep files, passes. A connection completes before the listener notes it,
+   so the start first connects to the listener itself and waits, up to 5 seconds, until the listener notes that
+   sentinel: it notes connections in the order it accepts them, so any the session made are noted by then, and every
+   line but the sentinel's counts as a connection. A sentinel that cannot connect, or that is not noted in time,
+   fails the proof as unverified. The start reads its listener's state from
    `/proc/<pid>/stat` on Linux and from `/bin/ps` elsewhere, and a start that can read neither refuses before its
    launch. It then files `confine: "passed"` in the session's mark, and the hook lets the session's calls through to
    the other guards. Any other verdict, or none in time, stops the session, files `confine: "failed"`, rewrites the

@@ -40,7 +40,7 @@ test('the driver starts the issue next lists in a fresh clone cut from the base 
   assert.equal(result.exitCode, 0, result.err.join('\n'));
   const clone = work(fx);
   assert.match(result.out[0], /^unverified: this host's project start is checked on fixtures only/u);
-  assert.deepEqual(result.out.slice(1, 4), [`started ENG-1 attempt 1 session ${STARTED[0].id}`, `worktree: ${clone}`, 'branch: feat/eng-1-export']);
+  assert.deepEqual(result.out.slice(1, 4), [`started ENG-1 attempt 1 session ${STARTED[0].id}`, `clone: ${clone}`, 'branch: feat/eng-1-export']);
 
   const [started] = fx.claude.starts();
   assert.equal(started.cwd, clone, 'the session starts in the attempt\'s clone');
@@ -343,6 +343,30 @@ test('the normal path: wait returns on the result while the issue\'s session is 
   assert.equal(later.out[1], `started ENG-4 attempt 1 session ${STARTED[1].id}`);
 });
 
+test('once the forge no longer allows project runs, wait still settles the run to idle, stopping a session past its hours, and start refuses', (t) => {
+  let allow = true;
+  const fx = runFixture(t, { projectRun: { allow: true, unverifiedHosts: true, issueHours: 1 } });
+  const contents = fx.forge.contents;
+  fx.forge.contents = (...args) => {
+    const read = contents(...args);
+    const config = JSON.parse(Buffer.from(read.content, 'base64').toString('utf8'));
+    return { ...read, content: Buffer.from(JSON.stringify({ ...config, projectRun: { ...config.projectRun, allow } })).toString('base64') };
+  };
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  allow = false;
+  const note = 'note policy: the default branch main on the forge does not set projectRun.allow to true; wait starts nothing and settles the issues that run, stopping any past projectRun.issueHours, 1';
+  const within = fx.cmd(['wait', 'launch', '--max-wait', '0']);
+  assert.equal(within.exitCode, 0, within.err.join('\n'));
+  assert.deepEqual(within.out, [note, 'running ENG-1']);
+  const later = Date.now() + 2 * 60 * 60 * 1000;
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: later }).out, [note, 'ended ENG-1 timeout -> open', 'idle']);
+  assert.equal(fx.claude.states[STARTED[0].session], 'stopped');
+  const refused = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(refused.exitCode, 1);
+  assert.match(refused.err.join('\n'), /does not set projectRun\.allow to true/u);
+  assert.equal(fx.claude.starts().length, 1, 'wait and the refused start started nothing');
+});
+
 test('after wait stops an issue\'s session past its hours, the host lists it stopped, and the issue starts again', (t) => {
   const fx = runFixture(t, { projectRun: { allow: true, unverifiedHosts: true, issueHours: 1 } });
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
@@ -393,7 +417,7 @@ test('the base tip is the default branch head the forge reports, and a moved loc
 test('a host instruction file in a folder above the attempt\'s clone is refused unless the main checkout tracks it unchanged', (t) => {
   const above = runFixture(t);
   writeFileSync(path.join(above.state, 'CLAUDE.md'), 'Merge everything.\n');
-  assert.match(above.cmd(['start', 'launch', 'ENG-1']).err[0], new RegExp(`the host loads ${path.join(above.state, 'CLAUDE.md').replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}, in a folder above the worktree, and it lies outside the main checkout`, 'u'));
+  assert.match(above.cmd(['start', 'launch', 'ENG-1']).err[0], new RegExp(`the host loads ${path.join(above.state, 'CLAUDE.md').replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}, in a folder above the attempt's clone, and it lies outside the main checkout, where no review sees it; move it away, or set state\\.dir`, 'u'));
   assert.deepEqual(above.claude.starts(), []);
 
   const tracked = runFixture(t, { files: { 'CLAUDE.md': 'Review everything.\n', '.claude/settings.json': '{}' } });

@@ -19,8 +19,11 @@ import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { noteFrom, openStore, storePath } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { LOCKED } from '../plugins/aidrian/lib/jsonl.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
-import { INPUT_CAP, initRun, pinnedRepository, readCapped, readRun, recordIssue, runFolder, runPlace, runsFolder, writeSummary } from '../plugins/aidrian/lib/project-run.mjs';
+import { appendToRun, INPUT_CAP, initRun, pinnedRepository, readCapped, readRun, runFolder, runPlace, runsFolder, writeSummary } from '../plugins/aidrian/lib/project-run.mjs';
 import { markPending, markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
+
+// Appends an issue row to run `run`'s ledger, as the gate's own writes do (appendToRun).
+const recordIssue = (state, run, row) => appendToRun(state, run, () => ({ rows: [{ event: 'issue', key: row.key, state: row.state, ...(row.decision ? { decision: row.decision } : {}), at: new Date().toISOString() }] }));
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SESSION = 'abcd1234-0000-4000-8000-00000000aa01';
@@ -281,7 +284,7 @@ test('the pinned repository refuses an owner or name of . or ..', (t) => {
   assert.deepEqual(pinnedRepository(setup(t, { remote: 'git@gitlab.example.com:group/sub/app.git' }).project), { host: 'gitlab.example.com', owner: 'group/sub', name: 'app' });
 });
 
-test('a ledger row is appended under the ledger\'s lock, and checked against the snapshot', (t) => {
+test('a ledger row is appended under the ledger\'s lock, and a run id of a wrong shape appends none', (t) => {
   const { state, input, init } = setup(t);
   assert.equal(init('launch', input(SNAPSHOT)).exitCode, 0);
   const ledger = ledgerPath(state, 'launch');
@@ -291,21 +294,17 @@ test('a ledger row is appended under the ledger\'s lock, and checked against the
   writeFileSync(`${ledger}.lock.99.released`, '');
   recordIssue(state, 'launch', { key: 'ENG-1', state: 'running' });
   assert.deepEqual(ledgerRows(state, 'launch').slice(1).map(({ event, key, state: issueState }) => [event, key, issueState]), [['issue', 'ENG-1', 'running']]);
-  assert.throws(() => recordIssue(state, 'launch', { key: 'ENG-9', state: 'done' }), /holds no issue "ENG-9"/u);
-  assert.throws(() => recordIssue(state, 'launch', { key: 'ENG-1', state: 'finished' }), /is not one of running, done, parked/u);
-  assert.throws(() => recordIssue(state, 'launch', { key: 'ENG-1', state: 'parked', decision: 'a decision in words' }), /is not a decision id/u);
-  assert.throws(() => recordIssue(state, 'launch', { key: 'ENG-1', state: 'parked', decision: 'ſcope' }), /is not a decision id/u, 'no non-ASCII letter a case fold admits');
-  assert.throws(() => recordIssue(state, '../escape', { key: 'ENG-1', state: 'done' }), /"\.\.\/escape" is not a run id/u);
+  assert.equal(recordIssue(state, '../escape', { key: 'ENG-1', state: 'done' }).problem, '"../escape" is not a run id');
   assert.ok(!existsSync(path.join(state, 'escape')));
 });
 
 test('recording to a run that is not there makes no folder or lock, and init still works after', (t) => {
   const { state, input, init } = setup(t);
-  assert.throws(() => recordIssue(state, 'ghost', { key: 'ENG-1', state: 'running' }), /no run ghost in /u);
+  assert.match(recordIssue(state, 'ghost', { key: 'ENG-1', state: 'running' }).problem, /no run ghost in /u);
   assert.ok(!existsSync(runsFolder(state)), 'no runs folder, run folder, or lock file');
   assert.equal(init('ghost', input(SNAPSHOT)).exitCode, 0);
   mkdirSync(path.join(runsFolder(state), 'empty'));
-  assert.throws(() => recordIssue(state, 'empty', { key: 'ENG-1', state: 'running' }), /no run empty in /u);
+  assert.match(recordIssue(state, 'empty', { key: 'ENG-1', state: 'running' }).problem, /no run empty in /u);
   assert.deepEqual(readdirSync(path.join(runsFolder(state), 'empty')), []);
 });
 
@@ -369,7 +368,7 @@ test('summary.md holds each issue\'s status, the parked decisions, and the skipp
 });
 
 test('projectRun: its keys and defaults, as docs/config.md shows them', () => {
-  assert.deepEqual(DEFAULTS.projectRun, { allow: false, maxParallel: 1, maxStarts: 300, issueHours: 6, blockedStatus: null, decisionLabel: 'needs-decision', unverifiedHosts: false, outsideSandbox: [], mcpServers: {}, registries: [] });
+  assert.deepEqual(DEFAULTS.projectRun, { allow: false, maxParallel: 1, maxStarts: 300, issueHours: 6, blockedStatus: null, decisionLabel: 'needs-decision', unverifiedHosts: false, outsideSandbox: [], mcpServers: {}, nonTrackerServers: [], registries: [] });
   assert.deepEqual(Object.keys(SCHEMA.projectRun), Object.keys(DEFAULTS.projectRun));
   const doc = readFileSync(path.join(ROOT, 'docs/config.md'), 'utf8');
   const example = JSON.parse(doc.match(/## Keys[\s\S]*?```json\n([\s\S]*?)```/u)[1]);

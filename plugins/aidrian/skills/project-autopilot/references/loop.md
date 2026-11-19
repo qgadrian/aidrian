@@ -83,7 +83,8 @@ Any other refusal, such as a cap, a policy the forge no longer confirms, or cust
 report the refusal as the cause, with what its line says fixes it, and each session step 2 left running by its issue,
 its attempt, and its session id from its `could not be stopped` line, or else its `started` line, with how the Human
 stops it and takes the run up, as § Halt step 4 says. Never retry
-a refused start to see whether it passes.
+a refused start to see whether it passes. Once the forge no longer confirms the policy, `wait` still settles the run,
+after a first `note policy:` line that names the cause; it starts nothing.
 
 ## Finish
 

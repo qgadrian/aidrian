@@ -944,9 +944,8 @@ export function projectRunWriteDenial(input, project, { names: { human }, state:
 
 // Why the call in `input` may not run because it writes a main-checkout path a session in a linked worktree reads, or
 // null: { match, reason }. Each host declares those paths (lib/hosts/index.mjs mainCheckoutPaths), such as Claude Code's
-// .claude/settings.local.json and its skills, agents, and commands folders, under the main checkout of `project`. A
-// project run starts an issue's session only under files there a review saw or a settings file its host's check takes
-// (lib/project-trust.mjs mainCheckoutProblem), so a session `unattended()` says no Human attends, and any subagent while
+// .claude/settings.local.json and its skills, agents, and commands folders, under the main checkout of `project`. Every
+// worktree session of the project loads them, so a session `unattended()` says no Human attends, and any subagent while
 // `runSession()` says the project has a run under way (project-run-guard.mjs projectRunActive), may not write them:
 // entries there come from a session the Human attends. In a project with no run, a subagent may. A call reaches them as the store guard's reaches
 // the store: a target in one or a folder that holds one, a glob that may reach one, or a change of mode or owner. A

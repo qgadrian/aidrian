@@ -84,14 +84,16 @@ It writes nothing at all when a symlink would take a write outside the project, 
   and `github.autoMerge`, the machine's auto-merge choice: `{ "enabled": true }` or `{ "enabled": false }`, or the older `"on"` or `"off"`.
   Unset follows the team's `github.autoMerge.default`. When it turns auto-merge on and config.json `github.autoMerge.allow` is false, check prints
   `warning: auto-merge is on locally but the team does not allow it`, and does not fail.
-  `github.unattendedWaiver`, the machine's [unattended waiver](config.md#unattended-waiver) choice, takes the same shapes, and unset is off.
+  `github.unattendedWaiver`, the machine's [unattended waiver](config.md#unattended-waiver) choice, takes the same shapes, and unset is off,
+  unless the team sets [`solo`](config.md#solo).
   When it is on and config.json `github.unattendedWaiver.allow` is false, check prints
   `warning: unattended waiver is on locally but the team does not allow it`, and does not fail.
   These two are the only `github` keys the file takes; an error in that group reads both `"off"`.
   `reviewApprovals`, the machine's [review approvals](review.md#sign-off-by-the-human) choice, must be `"on"` or `"off"`;
   anything else is an error, and it reads `"off"`.
   `handoff`, the machine's [background handoff](handoff.md#the-background-route) choice, takes only `background`,
-  `"on"` or `"off"`; anything else is an error, and it reads `"off"`. Unset is off.
+  `"on"` or `"off"`; anything else is an error, and it reads `"off"`. Unset is off, unless the team sets
+  [`solo`](config.md#solo).
   When git tracks `.aidrian.local.json`, in any case, a branch could carry it,
   so `github.autoMerge`, `github.unattendedWaiver`, `reviewApprovals`, and `handoff.background` read `"off"` and check names the
   error, with the fix `git rm --cached .aidrian.local.json`. So does a checkout where git cannot say whether it tracks the file.
@@ -153,7 +155,13 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── audits/               persona-audit reports, each with its JSON sidecar and the screenshots it cites,
 │                         and triage.json, the decision on each finding (personas.md#triage)
 ├── product-feedback/     one record.json per pull request, at <owner>/<name>/pr-<n>/ (config.md#product-feedback)
-├── runs/                 project runs, one folder per run: snapshot.json, ledger.jsonl, summary.md (config.md#project-run)
+├── runs/                 project runs, one folder per run (config.md#project-run)
+│   └── <run>/            snapshot.json, ledger.jsonl, summary.md, and these folders:
+│       ├── attempts/     one folder per attempt, <issue>.<attempt>/: the clone (work/), its git folder (git/), drop/, and cache/
+│       ├── results/      each issue's result, as wait took it in
+│       ├── issues/       each issue's text, as the tracker's answer gave it, which a start writes to the attempt's issue.md
+│       ├── stops/        each issue's archived stop actions (stop-history.mjs)
+│       └── logs/         each attempt's session log, <issue>.<attempt>.jsonl
 ├── lessons/inbox.jsonl   the lesson inbox, and its inbox.jsonl.lock.<n> lock files
 ├── sessions/<session id>/  what aidrian session snapshot caches for one session, and its pull request ledger, for its user alone:
 │   ├── usage.json            the transcript read so far, as the handoff numbers fold it, and a hash of its first and last 64 KiB, saved step by step
@@ -172,7 +180,10 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 - Beside `projects/`, the state root `$XDG_STATE_HOME/aidrian/` holds what no config.json moves: `sessions/`, the gates
   each session started with ([hooks.md](hooks.md#agent-gates)), `unattended/`, the marks of the sessions the
   [background handoff route](handoff.md#the-background-route) started, owner-only, kept 30 days, with each project run
-  driver's `driver.<session id>.json` ([hooks.md](hooks.md#agent-gates)), and `signoffs/`, the
+  driver's `driver.<session id>.json` ([hooks.md](hooks.md#agent-gates)) and `issue-reads/<session id>/`, the issue texts
+  a tracker read answered a session, which a [project run](config.md#project-run) keeps, swept after a day, `hook-counts/`,
+  the hooks' counts folder, which holds their block counts and markers, such as the
+  [session-length reminder](handoff.md#the-reminder)'s, and `signoffs/`, the
   [sign-off store](review.md#merge-trust), `<owner>/<name>/<PR>.json`, owner-only, which only `aidrian pr signoff` in a
   session the Human attends writes,
   and `handoff-terminals/`, the record a shell reads to open the session a handoff replaced its own with, owner-only, valid

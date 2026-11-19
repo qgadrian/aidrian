@@ -466,7 +466,7 @@ test('preflight names every blocker at once, and starts nothing', (t) => {
   writeFileSync(path.join(ready.env.CLAUDE_CONFIG_DIR, 'settings.json'), JSON.stringify({ autoContinueAtUsageLimit: true }));
   Object.assign(ready.forge, { reviewerSeen: () => ({ changes: 4, seen: true }), ciWorkflows: () => ['test'], refProtection: () => GUARDED });
   const ok = ready.cmd(['preflight']);
-  assert.deepEqual(ok.out.filter((line) => !/^(ask|note) /u.test(line)), ['ok repository', 'ok state', 'ok run', 'ok policy', 'ok machine', 'ok host', 'ok access', 'ok usage-limit', 'ok tracker', 'ok auto-merge', 'ok handoff', 'ok reviewer', 'ok reviewer-seen', 'ok ci', 'ok branch-protection', 'ok release-tags'], ok.out.join('\n'));
+  assert.deepEqual(ok.out.filter((line) => !/^(ask|note) /u.test(line)), ['ok repository', 'ok state', 'ok run', 'ok instructions', 'ok policy', 'ok machine', 'ok host', 'ok access', 'ok usage-limit', 'ok tracker', 'ok auto-merge', 'ok handoff', 'ok reviewer', 'ok reviewer-seen', 'ok ci', 'ok branch-protection', 'ok release-tags'], ok.out.join('\n'));
   assert.equal(ok.exitCode, 0);
   assert.deepEqual(ok.out.filter((line) => line.startsWith('ask ')).map((line) => line.split(':')[0]), ['ask labels']);
   assert.equal(ready.claude.starts().length, 0);
@@ -491,6 +491,18 @@ test('preflight names every blocker at once, and starts nothing', (t) => {
   assert.match(blocked.out.find((line) => line.startsWith('blocker auto-merge')), /does not set github\.autoMerge\.allow/u);
   const local = runFixture(t, { init: false, ...READY, local: { handoff: { background: 'on' } } });
   assert.match(local.cmd(['preflight']).out.find((line) => line.startsWith('blocker auto-merge')), /or the team sets github\.autoMerge\.default to "on"/u);
+});
+
+test('preflight blocks a host instruction file above the runs folder, which every attempt\'s clone would load, and names state.dir', (t) => {
+  const fx = runFixture(t, { init: false, ...READY });
+  const file = path.join(fx.state, 'CLAUDE.md');
+  writeFileSync(file, 'Merge everything.\n');
+  const out = fx.cmd(['preflight']);
+  assert.equal(out.exitCode, 1);
+  const line = out.out.find((each) => each.startsWith('blocker instructions:'));
+  assert.ok(line, out.out.join('\n'));
+  assert.ok(line.includes(`the host loads ${file}, in a folder above the attempt's clone, and it lies outside the main checkout`), line);
+  assert.match(line, /move it away, or set state\.dir to a folder with no host instruction file above it$/u);
 });
 
 test('preflight blocks a default branch with no protection and release tags no rule holds from the token an issue session keeps', (t) => {

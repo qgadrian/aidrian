@@ -415,7 +415,7 @@ export function initRun({ project, config, run, file, session, input = {}, env =
     // The run keeps its own copy now: the session's recorded reads are not kept past it.
     dropIssueReads(session, { env, ...(home ? { home } : {}) });
     const row = { event: 'init', run, at: new Date(now).toISOString(), session, repository, main, issues: read.snapshot.issues.length, sha256: sha256(Buffer.from(text)) };
-    // The runs lock covers this first row: no other writer appends to a run whose ledger has no init row (recordIssue).
+    // The runs lock covers this first row: no other writer appends to a run whose ledger has no init row (appendToRun).
     appendRow(ledgerFile(state, run), row);
     const teams = teamsNote(read.snapshot);
     return {
@@ -520,29 +520,9 @@ export function haltOf(found) {
   return halt;
 }
 
-// Records in the ledger of run `run` that issue `key` is now `issueState`, one of ISSUE_STATES, with `decision`, the id
-// of the decision a parked issue waits on. Before it takes the ledger's lock, the run's folder must be a folder holding
-// snapshot.json, so a missing run gets no folder or lock file; under the lock it reads the run whole and appends. It throws
-// on a key the snapshot does not hold or a value of a wrong shape.
-export function recordIssue(state, run, { key, state: issueState, decision = null }, { now = Date.now() } = {}) {
-  if (typeof run !== 'string' || !RUN_ID.test(run)) throw new Error(`${quote(run)} is not a run id`);
-  if (!ISSUE_STATES.includes(issueState)) throw new Error(`${quote(issueState)} is not one of ${ISSUE_STATES.join(', ')}`);
-  if (decision !== null && (typeof decision !== 'string' || !DECISION_ID.test(decision))) throw new Error(`${quote(decision)} is not a decision id`);
-  if (!entryAt(runFolder(state, run))?.isDirectory() || !entryAt(snapshotFile(state, run))?.isFile()) throw new Error(`no run ${run} in ${runsFolder(state)}`);
-  const file = ledgerFile(state, run);
-  return withLocks([file], () => {
-    const found = readRun(state, run);
-    if (found.problem) throw new Error(found.problem);
-    if (!found.snapshot.issues.some((issue) => issue.key === key)) throw new Error(`run ${run} holds no issue ${quote(key)}`);
-    const row = { event: 'issue', key, state: issueState, ...(decision ? { decision } : {}), at: new Date(now).toISOString() };
-    appendRow(file, row);
-    return row;
-  });
-}
-
 // Appends to the ledger of run `run`, under its lock, the rows `build(found)` returns for the run as readRun reads it under
 // that lock: { rows } appended in order, or { problem } appending none, which is what it returns. The run's folder must
-// hold snapshot.json before the lock is taken, as recordIssue's. Throws jsonl.mjs's LOCKED when another holds the lock
+// hold snapshot.json before the lock is taken, so a missing run gets no folder or lock file. Throws jsonl.mjs's LOCKED when another holds the lock
 // past `waitMs`, jsonl.mjs's wait by default.
 export function appendToRun(state, run, build, { waitMs } = {}) {
   if (typeof run !== 'string' || !RUN_ID.test(run)) return { problem: `${quote(run)} is not a run id` };

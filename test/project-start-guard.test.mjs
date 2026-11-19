@@ -337,11 +337,6 @@ test('each host declares the main-checkout paths its worktree sessions read, and
   assert.deepEqual(codex.mainCheckoutPaths, { folders: [], settings: [] });
   const { folders, settings } = mainCheckoutPaths();
   assert.deepEqual([folders, settings.map((each) => each.file)], [claudeCode.mainCheckoutPaths.folders, ['.claude/settings.local.json']]);
-  const [{ problem }] = settings;
-  assert.equal(problem({ permissions: { allow: ['Read'], ask: [], deny: [] } }), null);
-  for (const key of ['apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport', 'otelHeadersHelper', 'statusLine', 'enabledPlugins', 'extraKnownMarketplaces', 'enableAllProjectMcpServers', 'enabledMcpjsonServers', 'sandbox', 'model', 'anything']) {
-    assert.equal(problem({ [key]: 'x' }), `it sets "${key}"`, key);
-  }
   assert.deepEqual(claudeCode.instructionFiles.files, ['CLAUDE.md', 'CLAUDE.local.md', '.claude/CLAUDE.md']);
   assert.deepEqual(codex.instructionFiles.files, ['AGENTS.md', 'AGENTS.override.md']);
 });

@@ -74,25 +74,26 @@ function print(result) {
 const blocked = (phase, reason, nextStep) => Object.assign(new Error(reason), { phase, nextStep });
 
 // The raw result of a command; `status` is 1 when it could not start. git runs hardened, as every plugin git call does
-// (lib/git.mjs hardenedArgs), and not at all in a project run's attempt clone that runGit would refuse, in the call's
-// folder or the one `-C` names (lib/attempt-clone.mjs cloneGitProblem).
-function run(command, args, options = {}) {
+// (lib/git.mjs hardenedArgs), but for a call that passes `repositoryHooks: true`, which runs as the person's own git
+// would, with the repository's hooks and config. git runs not at all in a project run's attempt clone that runGit would
+// refuse, in the call's folder or the one `-C` names (lib/attempt-clone.mjs cloneGitProblem).
+function run(command, args, { repositoryHooks = false, ...options } = {}) {
   if (command === 'git') {
     const folder = path.resolve(options.cwd ?? process.cwd(), args[0] === '-C' ? args[1] : '.');
     const refused = cloneGitProblem(folder);
     if (refused) return { status: 1, stdout: '', stderr: refused };
   }
-  const hardened = command === 'git' ? { args: hardenedArgs(args), env: { ...(options.env ?? process.env), GIT_NO_REPLACE_OBJECTS: '1' } } : { args, env: options.env };
-  const result = spawnSync(command, hardened.args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...options, ...(hardened.env ? { env: hardened.env } : {}) });
+  const hardened = command === 'git' && !repositoryHooks;
+  const spawned = hardened ? { args: hardenedArgs(args), env: { ...(options.env ?? process.env), GIT_NO_REPLACE_OBJECTS: '1' } } : { args, env: options.env };
+  const result = spawnSync(command, spawned.args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...options, ...(spawned.env ? { env: spawned.env } : {}) });
   return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? result.error?.message ?? '' };
 }
 
-const gitIn = (root, args, options) => run('git', ['-C', root, ...args], options);
-const git = gitIn;
+const git = (root, args, options) => run('git', ['-C', root, ...args], options);
 const failure = (result) => result.stderr.trim() || result.stdout.trim() || `exited ${result.status}`;
 
 // The repository context every step needs: the main checkout, the current checkout, the config, and the base ref.
-function context(cwd, git = gitIn) {
+function context(cwd) {
   const roots = checkoutRoots(cwd);
   if (!roots) throw blocked('preconditions', `${cwd} is not inside a git repository`);
   const project = projectAt(cwd);
@@ -115,11 +116,12 @@ function projectConfig(project) {
 
 // Plans or creates the worktree for `branch`. A new branch starts at `base` (origin/<defaultBranch>, or the local
 // default branch without one) with no upstream, so a bare `git push` cannot target the default branch. An existing
-// local or remote branch is reused only with `reuseExisting`, after a person approved the plan that named it. `git`,
-// `(root, args)` in spawnSync's shape, runs its git calls: a caller with git settings of its own, as a project run's
-// start gate (lib/git.mjs gateGit), passes it.
-export function createWorktree({ branch, slug, base, fetch = false, plan = false, reuseExisting = false }, { cwd = process.cwd(), git = gitIn } = {}) {
-  const ctx = context(cwd, git);
+// local or remote branch is reused only with `reuseExisting`, after a person approved the plan that named it.
+// `git worktree add` runs with the repository's hooks, as it would by hand, so a post-checkout hook a project's setup
+// relies on (husky, pre-commit, git-lfs) runs in the new worktree; the attended person runs it, never a project run,
+// whose attempt clones lib/project-start.mjs makes with hardened git.
+export function createWorktree({ branch, slug, base, fetch = false, plan = false, reuseExisting = false }, { cwd = process.cwd() } = {}) {
+  const ctx = context(cwd);
   if (run('git', ['check-ref-format', '--branch', branch]).status !== 0) throw blocked('validate', `invalid branch name: ${branch}`);
   const name = slug ?? branch.split('/').pop();
   if (!SLUG.test(name)) throw blocked('validate', `invalid worktree folder name: ${name}`, 'Pass --slug with letters, digits, ".", "_", "+", or "-".');
@@ -168,7 +170,7 @@ export function createWorktree({ branch, slug, base, fetch = false, plan = false
     const fetched = git(ctx.main, ['fetch', 'origin', `refs/heads/${branch}:refs/remotes/origin/${branch}`]);
     if (fetched.status !== 0) throw blocked('fetch-branch', failure(fetched), `Fetch ${branch} from origin, then run again.`);
   }
-  const added = git(ctx.main, addArgs);
+  const added = git(ctx.main, addArgs, { repositoryHooks: true });
   if (added.status !== 0) throw blocked('create', failure(added), 'Fix the git error and run again; nothing was removed.');
   if (ctx.config.git.worktrees.bootstrap) {
     const setup = run('sh', ['-c', ctx.config.git.worktrees.bootstrap], { cwd: dir });

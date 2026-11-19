@@ -1900,6 +1900,11 @@ clone under its host's sandbox, and a host that is not halts the start. The sess
 result over in its attempt's `drop` folder, and `wait` records it as a `result` row with `via: "drop"`, or ends the
 attempt `bad_result`, as it does at once for a pull request the forge says it does not have; a result the forge cannot
 confirm yet waits for the next `wait`, until `issueHours`, when its sessions are stopped and it ends `bad_result`.
+The Stop hook holds the result: when the newest session of a running issue's chain ends a turn before it handed its
+result over, it is sent back once, before any other Stop check, to run `aidrian project result`, or to go on with the
+work (`lib/project-run-guard.mjs resultHoldReason`, run by `scripts/hook-stop.mjs`); a session that handed the work on,
+or whose mark, run, or ledger cannot be read, stops. It runs on Claude Code, the host whose project start is confined;
+Codex runs the same Stop hook, [not verified live](providers/codex.md#hooks).
 A session that meets a usage or rate limit pauses the run (`lib/project-limit.mjs`). `wait` asks the host adapter
 whether the session's last record is the host's own limit error, never a tool's output or the model's text, and writes
 a `limit` row whose `until` is the reset time the host named, read against the record's own time and held to between
@@ -1990,7 +1995,8 @@ An issue the ledger records parked, or a canceled one, is never started, and eve
 is skipped and names it. `--json` prints the whole plan, with the `maxParallel` it read.
 
 `preflight [RUN]` runs, at once, every check a start would refuse or halt on, and starts nothing: the repository, the
-state folder and any other active run but `RUN`, `projectRun.allow` through the forge, the machine's switch, the host's
+state folder and any other active run but `RUN`, a host instruction file, such as a `CLAUDE.md`, in a folder above the
+runs folder, which every attempt's clone would load, `projectRun.allow` through the forge, the machine's switch, the host's
 start and its `projectRun.unverifiedHosts`, the host's access check (push rights, an HTTPS origin, nothing outside the
 sandbox that `projectRun.outsideSandbox` does not name), and whether the host carries on by itself after a usage limit
 (in Claude Code, `"autoContinueAtUsageLimit": true` in the user's own settings, the only place the host reads it), since
@@ -2051,7 +2057,11 @@ The write-ahead row of a start asks the ledger again under its lock, so no start
 `resume RUN`, from a session a person attends, also takes custody of a run whose driver's sessions the host lists as
 ended, so that session drives on: a `driver` row moves custody, and the session's driver mark is filed.
 A command whose ledger another process holds locked, and a `start` or `wait` whose read of the team's policy the forge
-cannot answer now, exit 75 with a `retry:` line, a refusal that may pass; a policy the forge answers and refuses exits 1.
+cannot answer now, exit 75 with a `retry:` line, a refusal that may pass. A policy the forge answers and refuses, such
+as `projectRun.allow` turned off on the default branch while the run's sessions run, makes `start` exit 1, but not
+`wait`, which starts nothing: it prints a first `note policy: <why>` line and settles the run as before, stopping each
+session past `projectRun.issueHours` as the base branch's local ref sets it, or the default, within its ceiling of 24,
+so the driver's halt wait reaches `idle` and `end` can follow.
 `resume` names a driver it cannot read as an ended background session, such as the first one the Human ran: the Human
 resumes that same host session, which keeps its id and custody.
 

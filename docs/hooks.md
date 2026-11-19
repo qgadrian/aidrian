@@ -34,7 +34,7 @@ the tracker write guard, and the question names check also record each block: se
 | Before compaction | A checklist of what the summary must keep | Claude Code, Codex | no |
 | The Human approves a plan | The [plan handoff offer](#session-length), when the main session already costs more per call | Claude Code | no |
 | After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code | no |
-| The main session ends a turn | The [announce check](#announced-work), the [hand-back check](#hand-back-check), the [terminal hand-over](handoff.md#replacing-the-terminal) of a session whose background handoff asked to end itself, which skips the reminder, then the [session-length reminder](#session-length) | Claude Code; the announce and hand-back checks also Codex ([not live](providers/codex.md#hooks)); the hand-over not verified live ([provider page](providers/claude-code.md#replacing-the-terminal)) | once per stop; the reminder once, then at each doubling of the cost ratio (`ask`) or each step of it (`auto`) |
+| The main session ends a turn | The [result hold](config.md#project-run) of a project run's issue session that has not handed its result over, first, then the [announce check](#announced-work), the [hand-back check](#hand-back-check), the [terminal hand-over](handoff.md#replacing-the-terminal) of a session whose background handoff asked to end itself, which skips the reminder, then the [session-length reminder](#session-length) | Claude Code; the result hold, announce, and hand-back checks also Codex ([not live](providers/codex.md#hooks)); the hand-over not verified live ([provider page](providers/claude-code.md#replacing-the-terminal)) | once per stop; the reminder once, then at each doubling of the cost ratio (`ask`) or each step of it (`auto`) |
 | A subagent stops | A `stop` row, then the [delivery check](#delivery-check), the [background check](#background-check), and the [evidence check](#check-runs) | Claude Code | once |
 | A session ends | The main session's recorded issue reads for a [project run](config.md#project-run) removed. When the clear command ends a main session, its armed [handoff continuation](handoff.md#the-clear-route) made ready for the session the clear starts, bound to the host process; then a `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code; the continuation Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 
@@ -1105,8 +1105,10 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   selector's reads (`lib/review/content.mjs`), and `aidrian worktree` (`lib/worktree.mjs`), each through
   `lib/attempt-clone.mjs cloneGitProblem`; while it fails, the call runs no git and answers as git failing. Every git
   call of the plugin runs with `core.fsmonitor`, `core.hooksPath`, submodule recursion, the `ext::` transport, and
-  signature display turned off (`lib/git.mjs`); another `commondir` would lead git to a config those settings do not
-  cover.
+  signature display turned off (`lib/git.mjs`), the start gate's that make each attempt clone among them; another
+  `commondir` would lead git to a config those settings do not cover. One call runs as the person's own git would:
+  `aidrian worktree new`'s `git worktree add`, which an attended person runs, so a repository's post-checkout hook,
+  such as husky's, pre-commit's, or git-lfs's, runs in the new worktree as it does by hand.
 - An attempt clone stands linked to its run's main checkout only for the session whose unattended mark names that run,
   that issue, and that main checkout, or, before the gate files that mark, whose pending mark names that main checkout
   and that clone as the folder it starts the session in. A hook reads the session from its payload's id; a command

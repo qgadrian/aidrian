@@ -171,12 +171,12 @@ export function instructionNames(env = process.env, hosts = HOSTS) {
 }
 
 // The main checkout's paths every host reads from a session in a linked worktree, as { folders, settings }: the
-// folders, from the checkout's root, and the settings files, each { file, problem(value) }, the host's check of its JSON.
+// folders, from the checkout's root, and the settings files, each { file }.
 export function mainCheckoutPaths(hosts = HOSTS) {
   const declared = hosts.map((host) => host.mainCheckoutPaths).filter(Boolean);
   return {
     folders: [...new Set(declared.flatMap((each) => each.folders ?? []))],
-    settings: declared.flatMap((each) => each.settings ?? []).filter((each) => typeof each?.file === 'string' && typeof each.problem === 'function'),
+    settings: declared.flatMap((each) => each.settings ?? []).filter((each) => typeof each?.file === 'string'),
   };
 }
 

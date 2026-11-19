@@ -1,6 +1,6 @@
 // The held start of a session no Human attends, shared by every gate that starts one: the background route of
 // `aidrian handoff continue` (lib/handoff-continue.mjs), and `aidrian project start` (lib/project-run-gate.mjs), which
-// starts a session for one issue of a project run in that issue's worktree.
+// starts a session for one issue of a project run in that attempt's clone.
 // The sequence is hold, start, floor, mark, record, and stop when unheld (docs/handoff.md#the-background-route):
 // 1. hold: before the host starts anything, the adapter calls `hold` with the start folder and the ids of the sessions
 //    the host lists. The hold first takes the claim of `session` on a start, a file made only when none is there

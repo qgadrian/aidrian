@@ -94,6 +94,7 @@ export const SCHEMA = {
   },
   review: 'review',
   docs: { wrapLimit: 'zeroOrMore' },
+  testing: { fullSuite: 'texts', changedCommand: 'textOrNull', pushFirstMinutes: 'zeroOrMore' },
   terms: { file: 'textOrNull' },
   knowledge: { budgets: { alwaysBytes: 'positive', taggedDocBytes: 'positive', untaggedDocBytes: 'positiveOrNull', enforce: 'budgetEnforce', baseline: 'docBytes' }, defaults: { codeStyle: 'boolean' } },
   skills: { descriptionChars: 'positive', listingBytes: 'positive' },

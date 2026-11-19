@@ -414,10 +414,12 @@ test('the sweep deletes a reservation only when it is a regular file', { skip: !
   assert.equal(lstatSync(linked).isSymbolicLink(), true);
 });
 
-test('appendSessionFile appends the ledger in place, within its cap, and only the ledger', { skip: !POSIX }, () => {
+test('appendSessionFile appends the ledger and the check-run record in place, within its cap, and nothing else', { skip: !POSIX }, () => {
   const { state } = stateWithSessions();
   const folder = sessionFolder(state, 'appender', NONE);
-  assert.deepEqual(APPENDED_FILES, ['prs.jsonl', 'links.jsonl']);
+  assert.deepEqual(APPENDED_FILES, ['prs.jsonl', 'links.jsonl', 'checks.jsonl']);
+  assert.ok(SESSION_FILES.includes('checks.jsonl'), 'the sweep deletes the check-run record too');
+  assert.equal(appendSessionFile(folder, 'checks.jsonl', 'r\n', { maxBytes: 10 }), true);
   assert.ok(SESSION_FILES.includes('prs.jsonl'), 'the sweep deletes it too');
   assert.equal(appendSessionFile(folder, 'prs.jsonl', 'a\n', { maxBytes: 10 }), true);
   assert.equal(appendSessionFile(folder, 'prs.jsonl', 'b\n', { maxBytes: 10 }), true);

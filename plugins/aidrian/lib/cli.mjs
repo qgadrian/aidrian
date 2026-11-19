@@ -24,6 +24,7 @@ const COMMANDS = {
   decisions: './decisions-cli.mjs',
   report: './report.mjs',
   'shell-init': './shell-init.mjs',
+  test: './test-changed.mjs',
 };
 
 const [command, ...args] = process.argv.slice(2);

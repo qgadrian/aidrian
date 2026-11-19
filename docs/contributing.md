@@ -17,9 +17,11 @@ npm run check    # what CI runs on the pushed head
 
 Push a change once its touched tests pass, and let CI run `npm run check`: a full local run on a loaded machine once
 held a fix back for two hours. Run it locally only when CI cannot, once, before marking ready.
-This repository's config does not yet opt into [push first](hooks.md#push-first): an older plugin rejects the
-`testing` keys, and every session here runs the installed one. Issue #386
-sets `"testing": { "fullSuite": ["npm run check"], "pushFirstMinutes": 5 }` and raises `requires.aidrian` once a release ships them.
+This repository opts into [push first](hooks.md#push-first) and the [check-run record](hooks.md#check-runs):
+`.aidrian/config.json` sets `"testing": { "fullSuite": ["npm run check"], "pushFirstMinutes": 5 }`, so a session's
+`npm run check` is refused while the pushed branch lacks a commit older than 5 minutes, and a `## Tests run` line that
+says `npm run check` passed needs a finished run of it. Its `requires.aidrian` asks for 0.73.1, the first release whose
+config check knows the `testing` keys; an older installed plugin rejects them.
 
 `make` lists the same tasks.
 

@@ -451,7 +451,9 @@ function judgeEvidence(body, call, { config, project, folder, readRuns, listOpen
 
 // Whether the body is for the branch checked out in `folder`, as { body }: the pull request's current body on an edit
 // the open list holds, else null. Null when it is for another branch, or an edit of a pull request the list cannot
-// show: a `--head` that names another branch, or a pull request whose head is another branch.
+// show: a `--head` that names another branch, or a pull request whose head is another branch. An edit names its pull
+// request by number, URL, branch name (`gh pr edit feat/x`, or `owner:feat/x`), or nothing, which is the checked-out
+// branch's; a branch name is matched against each open pull request's `headRefName`.
 function ownBranch(call, folder, listOpenPrs) {
   const read = runGit(['symbolic-ref', '--quiet', '--short', 'HEAD'], folder);
   const branch = read.status === 0 ? read.stdout.trim() : null;
@@ -463,19 +465,23 @@ function ownBranch(call, folder, listOpenPrs) {
   }
   const text = call.target?.dynamic ? null : call.target?.text ?? '';
   if (text === null) return null;
-  const number = /^#?\d+$/u.test(text) ? Number(text.replace('#', '')) : Number(/\/pull\/(\d+)(?:[/?#]|$)/u.exec(text)?.[1] ?? Number.NaN);
+  // A URL only as gh reads one (targetUrl): `team/pull/3` is a branch name.
+  const url = targetUrl(call)?.text ?? '';
+  const number = /^#?\d+$/u.test(text) ? Number(text.replace('#', '')) : Number(/\/pull\/(\d+)(?:[/?#]|$)/u.exec(url)?.[1] ?? Number.NaN);
   let open = null;
   try {
     open = listOpenPrs(call.repo?.text ?? null);
   } catch {
     open = null;
   }
+  // The branch an edit names when it names no number: none names the checked-out one.
+  const head = Number.isNaN(number) ? (text === '' ? branch : text.replace(/^[^:/]+:/u, '')) : null;
   const pull = Array.isArray(open)
-    ? open.find((pr) => (text === '' ? pr?.headRefName === branch : pr?.number === number))
+    ? open.find((pr) => (head === null ? pr?.number === number : pr?.headRefName === head))
     : undefined;
   if (pull) return pull.headRefName === branch ? { body: typeof pull.body === 'string' ? pull.body : null } : null;
   // No list, or no such open pull request: an edit of this branch's own pull request is still this branch's.
-  return text === '' || text === branch ? { body: null } : null;
+  return head === branch ? { body: null } : null;
 }
 
 // The check-run rows of the session `input` names, through its session folder, or null when it has none.

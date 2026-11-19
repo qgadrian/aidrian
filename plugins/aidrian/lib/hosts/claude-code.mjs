@@ -101,13 +101,17 @@ export default {
   // A Bash call's response, `{ stdout, stderr, interrupted, … }`, as `{ output, interrupted }`: its stdout, or null when the
   // response holds none (test/fixtures/hosts/claude-code/bash-post.json).
   shellOutput: (response) => ({ output: typeof response?.stdout === 'string' ? response.stdout : null, interrupted: response?.interrupted === true }),
-  // A finished Bash call, as the check-run record reads it (lib/check-runs.mjs): `{ output, finished, exitZero }`, its
-  // stdout then stderr; `finished` false for a call stopped, or one started in or moved to the background, whose end no
-  // hook sees (`backgroundTaskId`); `exitZero` true, since Claude Code runs PostToolUse only for a call that exited 0.
+  // A finished Bash call, as the check-run record reads it (lib/check-runs.mjs): `{ output, persisted, finished, exitZero }`,
+  // `output` its stdout then stderr; `persisted`, for a stdout too long for the payload, `{ file, after }`: the file
+  // Claude Code kept the whole stdout in (`persistedOutputPath`), whose head alone `stdout` holds, and the stderr after
+  // it, else null; `finished` false for a call stopped, or one started in or moved to the background, whose end no hook
+  // sees (`backgroundTaskId`); `exitZero` true, since Claude Code runs PostToolUse only for a call that exited 0.
   shellRun: (response) => {
     const parts = [response?.stdout, response?.stderr].filter((part) => typeof part === 'string');
     const finished = parts.length > 0 && response?.interrupted !== true && !response?.backgroundTaskId;
-    return { output: parts.length ? parts.join('\n') : null, finished, exitZero: true };
+    const file = response?.persistedOutputPath;
+    const persisted = typeof file === 'string' && path.isAbsolute(file) ? { file, after: typeof response?.stderr === 'string' ? response.stderr : '' } : null;
+    return { output: parts.length ? parts.join('\n') : null, persisted, finished, exitZero: true };
   },
   // `raw_tool_name` keeps what Claude Code sent, so a pattern a project wrote in that form still matches (lib/hosts/index.mjs toolNames),
   // as `Monitor` in an agent gate does for a Monitor call read as Bash.

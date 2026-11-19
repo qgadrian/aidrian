@@ -1416,10 +1416,15 @@ passed there: an accepted limit until a host sends an exit status.
 The counts come from one family of summary lines, summed over every line of it and never added to another family's,
 since a script or a monorepo tool prints one summary a runner: the first of node's runner summary (`ℹ pass 12`,
 `# fail 0`); `Tests` lines, as vitest and jest print them, also behind a task prefix such as turbo's `web:test: `;
-cargo's `test result:` lines, one a test binary and the doc-tests; any other line with "N passed" or "N failed", as
-pytest's and Playwright's; rspec's and mix's "12 examples, 0 failures". A family that names passes and no failure counts
-0 failures. Unless node's runner counted, whose fail count stands, a line that is only "N failed" above 0, colours
-stripped, as Playwright's own `1 failed` line, makes the run failed; a test named "lists 2 failed payments" never does.
+cargo's `test result:` lines, one a test binary and the doc-tests; `go test -v`'s `--- PASS: TestX` and
+`--- FAIL: TestX` lines, one a top-level test, subtests left out; else, since go test prints no pass count, its package
+lines, `ok  <package>  0.01s` and `FAIL  <package>  0.01s`, one a package; any other line with "N passed" or
+"N failed", as pytest's and Playwright's; rspec's and mix's "12 examples, 0 failures". A family that names passes and
+no failure counts 0 failures. Unless node's runner counted, whose fail count stands, a line that is only "N failed"
+above 0, colours stripped, as Playwright's own `1 failed` line, makes the run failed; a test named
+"lists 2 failed payments" never does. The counts read the last 64 KB of the output. When Claude Code keeps a stdout too
+long for the payload in a file (`persistedOutputPath`), and sends only its head, the counts read the last 64 KB of that
+file, opened without following a symlink, then the stderr; a file it cannot read leaves the head.
 The record keeps its newest rows within 64 KB.
 
 Two checks read it:
@@ -1435,10 +1440,13 @@ Two checks read it:
   A clause that names a failure, "not finished", or CI is not a pass claim: a CI result is quoted from the checks the
   forge shows, such as `gh pr checks` on GitHub. A session whose record cannot be read is not judged. The record is this
   checkout's, so a body for another branch is not judged: a `--head` that names another branch, or an edit of a pull
-  request whose head is another branch or that the open list cannot show. An edit judges only the clauses its pull
-  request's current body does not already hold.
+  request whose head is another branch or that the open list cannot show. An edit names its pull request by number,
+  URL, branch name, or nothing for the checked-out branch's; a branch name is matched against each open pull request's
+  `headRefName`. An edit judges only the clauses its pull request's current body does not already hold.
 - The evidence check of the subagent stop hook reads the subagent's final report the same way, at any tree, against its
-  own rows since its run started: a run of the session or of another agent is that one's to report. It sends the
+  own rows since its run started: a run of the session or of another agent is that one's to report. What the report
+  quotes is not its claim: a block quote line, a span in double quotes, and a clause that gives the claim to another
+  source, such as "the pull request body says `npm test` passed" or "according to the reviewer". It sends the
   subagent back once, on the first stop of its turn, to quote the output a finished run returned or to call the run "not finished".
 
 `aidrian test changed` with nothing to run prints a summary of 0 tests, so its row shows no test passed and supports no claim.
@@ -1448,8 +1456,9 @@ forges evidence the checks accept. The checks stop the mistake seen live, a repo
 not a session set on lying; a forged row is itself a fabrication, and the rows name the agent and time of each run.
 
 Where it is verified: on Claude Code, `test/check-runs.test.mjs` runs the hooks on the Bash payload shape of the
-[session ledger](#session-ledger)'s recorded fixture; no live hook has run it. On Codex, the record reads the shell
-output the source sends, as the session ledger does, and no hook has run there.
+[session ledger](#session-ledger)'s recorded fixture, and the persisted output on the `persistedOutputPath` and
+`persistedOutputSize` fields Claude Code 2.1.317 to 2.1.327 recorded in transcripts for long Bash results; no live hook
+has run it. On Codex, the record reads the shell output the source sends, as the session ledger does, and no hook has run there.
 
 ## Push first
 

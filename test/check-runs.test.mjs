@@ -6,13 +6,14 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
 
 import {
-  appendCheckRuns, checkRows, commandKey, isFullSuite, mayRunTests, passClaims, readCheckRuns, runCounts, runStatus, testRuns, unsupportedClaims, workingTree,
+  appendCheckRuns, checkRows, commandKey, fileTail, isFullSuite, mayRunTests, outputText, passClaims, readCheckRuns, runCounts, runStatus, testRuns, unsupportedClaims,
+  workingTree,
 } from '../plugins/aidrian/lib/check-runs.mjs';
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
 import { detectHost, HOSTS } from '../plugins/aidrian/lib/hosts/index.mjs';
@@ -136,6 +137,26 @@ test('counts come from one summary: node\'s, else the Tests line, else the last 
   assert.equal(runStatus({ pass: null, fail: null }, false), 'unjudged', 'no exit status and no counts is no verdict');
 });
 
+// go test's output: `-v` names each test, and without it only each package's line says how it went.
+const GO_VERBOSE = '=== RUN   TestA\n--- PASS: TestA (0.00s)\n=== RUN   TestB\n=== RUN   TestB/one\n    --- PASS: TestB/one (0.00s)\n' +
+  '--- PASS: TestB (0.00s)\nPASS\nok  \texample.test/pkg\t0.012s\n=== RUN   TestC\n--- PASS: TestC (0.00s)\nPASS\nok  \texample.test/other\t(cached)\n';
+const GO_VERBOSE_FAIL = '=== RUN   TestA\n--- PASS: TestA (0.00s)\n=== RUN   TestB\n    sum_test.go:9: got 3, want 4\n--- FAIL: TestB (0.00s)\n' +
+  'FAIL\nFAIL\texample.test/pkg\t0.010s\nFAIL\n';
+const GO_PACKAGES = 'ok  \texample.test/pkg\t0.012s\nok  \texample.test/other\t(cached)\n?   \texample.test/cmd\t[no test files]\n';
+const GO_PACKAGES_FAIL = '--- FAIL: TestB (0.00s)\n    sum_test.go:9: got 3, want 4\nFAIL\nFAIL\texample.test/pkg\t0.010s\n' +
+  'ok  \texample.test/other\t0.004s\nFAIL\texample.test/broken [build failed]\nFAIL\n';
+
+test('go test counts its tests with -v, else its packages', () => {
+  assert.deepEqual(runCounts(GO_VERBOSE), { pass: 3, fail: 0 }, 'top-level tests, not subtests or packages');
+  assert.deepEqual(runCounts(GO_VERBOSE_FAIL), { pass: 1, fail: 1 });
+  assert.deepEqual(runCounts(GO_PACKAGES), { pass: 2, fail: 0 }, 'a package with no test files is neither');
+  assert.deepEqual(runCounts(GO_PACKAGES_FAIL), { pass: 0, fail: 1 }, 'a failing test\'s line names the failure');
+  assert.deepEqual(runCounts('ok  \texample.test/other\t0.004s\nFAIL\texample.test/broken [build failed]\n'), { pass: 1, fail: 1 }, 'a package that did not build');
+  for (const output of [GO_VERBOSE, GO_PACKAGES]) assert.equal(runStatus(runCounts(output), false), 'passed', output);
+  for (const output of [GO_VERBOSE_FAIL, GO_PACKAGES_FAIL]) assert.equal(runStatus(runCounts(output), false), 'failed', output);
+  assert.deepEqual(runCounts('ok 1 - adds\nok 2 - subtracts\n'), { pass: null, fail: null }, 'a TAP line is no go package');
+});
+
 test('the working trees count uncommitted files, with and without the untracked ones, and match the commit that holds them', () => {
   const { dir, git } = repo();
   writeFileSync(path.join(dir, 'README.md'), 'changed\n');
@@ -194,6 +215,25 @@ test('a pass claim names a test command and a pass, and never a failure, an unfi
   assert.deepEqual(passClaims('`npm test` at 056c3c2 passed, 1234567 of them', { section: null })[0].commits, ['056c3c2'], 'a count is no commit id');
   assert.equal(passClaims('`git status` is clean and `npm run lint` passed', { section: null }).length, 0, 'no test command');
   assert.deepEqual(passClaims('`npm test` on Node 22 pass', { section: null })[0].counts, [], 'a number after a word is a name');
+});
+
+test('a report\'s own claims leave out what it quotes from another source', () => {
+  const report = [
+    'Read the pull request.',
+    '',
+    '> `npm run check`: 4071/4071 pass',
+    '',
+    'The pull request body says `npm test` passed, which the record does not show.',
+    'According to the reviewer, `npm test` passed.',
+    'PR #383 claimed `node --test test/a.test.mjs` passed; the backend-developer handoff reported `vitest run` passed.',
+    'Earlier it read "`npm test` passed" in a comment.',
+    'The output says `pytest` passed, 12 passed.',
+  ].join('\n');
+  const own = passClaims(report, { section: null, ownOnly: true });
+  assert.deepEqual(own.map(({ key, counts }) => ({ key, counts })), [{ key: 'pytest', counts: [12] }], 'the writer\'s own run alone');
+  const all = passClaims(report, { section: null }).map(({ key }) => key);
+  assert.deepEqual(all, ['npm test', 'npm test', 'node --test test/a.test.mjs', 'vitest run', 'npm test', 'pytest'], 'a pull request body reads every line');
+  assert.equal(passClaims('> `npm test` passed\n`npm test` passed', { section: null, ownOnly: true }).length, 1, 'a line after a block quote is the writer\'s');
 });
 
 test('a claim needs a run of its command that passed, at the tree, with the count it states', () => {
@@ -264,10 +304,39 @@ test('the PostToolUse hook records a finished run, and nothing for one stopped o
   assert.deepEqual(recorded('rec-2'), [], 'a run in the background or stopped records nothing');
 });
 
+test('a call whose output Claude Code kept in a file is counted from that file\'s tail', () => {
+  const { dir, git } = repo();
+  const tree = git('rev-parse', 'HEAD^{tree}');
+  // Claude Code keeps a long stdout whole in a file, and sends only its head in the payload.
+  const lines = Array.from({ length: 2000 }, (_, index) => `✔ case ${index} (0.1ms)`).join('\n');
+  const whole = `${lines}\nℹ tests 2000\nℹ pass 2000\nℹ fail 0\n`;
+  assert.ok(Buffer.byteLength(whole) > 30_000);
+  const file = path.join(ROOT, `persisted-${made}.txt`);
+  writeFileSync(file, whole);
+  const response = { stdout: whole.slice(0, 30_000), stderr: '', interrupted: false, isImage: false, noOutputExpected: false, persistedOutputPath: file, persistedOutputSize: whole.length };
+  const claude = detectHost({ env: { CLAUDECODE: '1' } });
+  assert.deepEqual(claude.shellRun(response).persisted, { file, after: '' });
+  assert.equal(claude.shellRun({ stdout: 'o', stderr: '' }).persisted, null);
+  runScript('hook-bash-post.mjs', postPayload('npm run check', { cwd: dir, session: 'persist-1', response }));
+  assert.deepEqual(recorded('persist-1').map(({ status, pass, fail, tree: at }) => ({ status, pass, fail, at })), [{ status: 'passed', pass: 2000, fail: 0, at: tree }]);
+
+  // Bounded as the payload's text is: only the last 64 KB is read, so a summary at the end of a larger file still counts.
+  const big = path.join(ROOT, `persisted-big-${made}.txt`);
+  writeFileSync(big, `ℹ pass 1\n${'x'.repeat(200 * 1024)}\nℹ pass 9\nℹ fail 0\n`);
+  assert.deepEqual(runCounts(outputText('head', { file: big, after: '' })), { pass: 9, fail: 0 }, 'the head\'s count is beyond the tail');
+  assert.equal(Buffer.byteLength(fileTail(big)), 64 * 1024);
+  assert.deepEqual(runCounts(outputText('ℹ pass 3', { file: path.join(ROOT, 'none.txt'), after: '' })), { pass: 3, fail: null }, 'no file: the payload\'s text');
+  const link = path.join(ROOT, `persisted-link-${made}.txt`);
+  symlinkSync(file, link);
+  assert.equal(fileTail(link), null, 'a symlink is never read');
+  assert.equal(fileTail('relative.txt'), null);
+  assert.equal(outputText('out', { file, after: 'warning\nℹ fail 1' }).endsWith('ℹ fail 0\n\nwarning\nℹ fail 1'), true, 'the stderr after it');
+});
+
 test('the shell adapters say whether a call finished and whether its exit status is known', () => {
   const claude = detectHost({ env: { CLAUDECODE: '1' } });
   assert.equal(claude.id, 'claude-code');
-  assert.deepEqual(claude.shellRun({ stdout: 'o', stderr: 'e', interrupted: false }), { output: 'o\ne', finished: true, exitZero: true });
+  assert.deepEqual(claude.shellRun({ stdout: 'o', stderr: 'e', interrupted: false }), { output: 'o\ne', persisted: null, finished: true, exitZero: true });
   assert.equal(claude.shellRun({ stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'b' }).finished, false);
   const codex = HOSTS.find((host) => host.id === 'codex');
   assert.equal(codex.id, 'codex');
@@ -328,6 +397,14 @@ test('the pull request body rule refuses a pass the session record does not supp
   assert.equal(judge(['- `npm test`: 3 passed'], [], { command: `gh pr edit 8 --body-file ${bodyFile}`, open }), null, 'another branch\'s pull request');
   assert.equal(judge(['- `npm test`: 3 passed'], [], { command: `gh pr edit 9 --body-file ${bodyFile}`, open }), null, 'a pull request the list cannot show');
   assert.match(judge(['- `npm test`: 3 passed'], [], { command: `gh pr edit --body-file ${bodyFile}`, open: null }) ?? '', /^Blocked/u, 'this branch\'s pull request, no list');
+  // An edit that names its pull request by branch name reads that pull request's body, matched by its head.
+  const byBranch = `gh pr edit feat/x --body-file ${bodyFile}`;
+  assert.equal(judge([claim, '- more text'], [], { command: byBranch, open }), null, 'a line the branch\'s body already held');
+  assert.equal(judge([claim], [], { command: `gh pr edit acme:feat/x --body-file ${bodyFile}`, open }), null, 'with its owner too');
+  assert.match(judge([claim, '- `npm test`: 3 passed'], [], { command: byBranch, open }) ?? '', /says `npm test` passed/u, 'a new line');
+  assert.equal(judge(['- `npm test`: 3 passed'], [], { command: `gh pr edit other --body-file ${bodyFile}`, open }), null, 'another branch\'s pull request');
+  const slashed = [{ number: 3, headRefName: 'feat/x', body: BODY([claim]) }];
+  assert.equal(judge(['- `npm test`: 3 passed'], [], { command: `gh pr edit team/pull/3 --body-file ${bodyFile}`, open: slashed }), null, 'a branch named like a URL path is a branch');
 });
 
 test('the subagent stop hook sends back once a report that claims a pass its own finished run does not show', () => {
@@ -343,6 +420,8 @@ test('the subagent stop hook sends back once a report that claims a pass its own
   assert.match(sent.stderr, /Your report says `npm run check` passed, but no run of it/u);
   assert.equal(stop('ev-1', claim, true).status, 0, 'the second stop ends');
   assert.equal(stop('ev-1', 'Done. `npm run check`: not finished; I stopped it.').status, 0);
+  assert.equal(stop('ev-1', 'Done. The pull request body says `npm run check`: 4071/4071 pass, which no run here shows.').status, 0, 'a claim it quotes from another source');
+  assert.equal(stop('ev-1', 'Done. The reviewer wrote:\n\n> `npm run check`: 4071/4071 pass\n').status, 0, 'a block quote');
   runScript('hook-bash-post.mjs', postPayload('npm run check', { cwd: dir, session: 'ev-2', stdout: 'ℹ pass 4071\nℹ fail 0\n' }));
   assert.equal(stop('ev-2', claim).status, 2, 'the parent\'s run is not the subagent\'s');
   runScript('hook-bash-post.mjs', postPayload('npm run check', { cwd: dir, session: 'ev-2', stdout: 'ℹ pass 4071\nℹ fail 0\n', agent: 'a1' }));

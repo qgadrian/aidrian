@@ -12,9 +12,10 @@
 // call that exited 0, as Claude Code's, a run whose status is the line's own (only `&&` before and after it) passed unless
 // its counts show a failure. Any other run, and every run on a host that sends the hook failed calls too, as Codex, is
 // judged by its counts alone: passed with a pass count above 0 and a fail count of 0, failed with a fail count above 0,
-// and `unjudged` when it printed no count, since its exit status is unknown.
+// and `unjudged` when it printed no count, since its exit status is unknown. A call whose output the host kept in a file,
+// as Claude Code does with one too long for the payload, is read from the tail of that file (outputText).
 
-import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { closeSync, constants, copyFileSync, fstatSync, mkdtempSync, openSync, readSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -27,8 +28,9 @@ import { aidrianArgs, lexPipeline, readInvocation, walkCommands } from './shell-
 // would pass it keeps the newest rows within half of it.
 export const CHECK_RUNS = 'checks.jsonl';
 export const CHECK_RUNS_MAX_BYTES = 64 * 1024;
-// How much of a call's output is read, from its end, for the counts.
+// How much of a call's output is read, from its end, for the counts: of its text, or of the file the host kept it in.
 const OUTPUT_TAIL = 64 * 1024;
+const READ_FILE = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 const COMMAND_MAX = 300;
 
 // Programs that run a command given after them: `npx vitest`, `pnpm exec jest`, `python -m pytest`, `bundle exec rspec`.
@@ -138,8 +140,11 @@ export function testRuns(command, cwd, testing = {}) {
 // 2. `Tests` lines, as vitest (`Tests  1 failed | 11 passed (12)`) and jest (`Tests:  1 failed, 11 passed, 12 total`)
 //    print them, also behind a task prefix such as turbo's `web:test: `;
 // 3. cargo's `test result: ok. 12 passed; 0 failed; ...`, one a test binary and the doc-tests;
-// 4. any other line with "N passed" or "N failed", as pytest's `=== 12 passed in 0.5s ===` and Playwright's own lines;
-// 5. rspec's and mix's `12 examples, 0 failures`.
+// 4. go test's: with `-v`, the `--- PASS: TestX` and `--- FAIL: TestX` lines at the start of a line, one a top-level
+//    test, subtests left out; else, since go test prints no pass count, the `ok  <package>  0.01s` and
+//    `FAIL  <package>  0.01s` lines, one a package;
+// 5. any other line with "N passed" or "N failed", as pytest's `=== 12 passed in 0.5s ===` and Playwright's own lines;
+// 6. rspec's and mix's `12 examples, 0 failures`.
 // A family that names passes and no failure counts 0 failures. Unless node's runner counted, whose fail count stands, a
 // line that is only "N failed" above 0, ANSI colours stripped, as Playwright's standalone `  1 failed` line, makes the
 // fail count at least N. A test's name, such as `✔ lists 2 failed payments`, is never such a line.
@@ -149,6 +154,8 @@ const TESTS_LINE = new RegExp(String.raw`^\s*${TASK_PREFIX}Tests:?\s+\d`, 'u');
 const CARGO_LINE = /\btest result:\s+\w+\.\s+\d+\s+passed;/u;
 const WORDS_LINE = /\b\d+\s+(?:passed|failed)\b/u;
 const EXAMPLES_LINE = /\b(\d+)\s+(?:examples?|tests?),\s+(\d+)\s+failures?\b/u;
+const GO_TESTS = { pass: /^--- PASS: \S/u, fail: /^--- FAIL: \S/u };
+const GO_PACKAGES = { pass: /^ok\s+\S+\s+(?:\d+(?:\.\d+)?s|\(cached\))/u, fail: /^FAIL\s+\S+\s+(?:\d+(?:\.\d+)?s|\[(?:build|setup) failed\])/u };
 const BARE_FAILED = /^\s*([1-9]\d*)\s+failed\s*$/gmu;
 // An ANSI colour code, which a runner wraps its summary in.
 const ANSI = /\u001b\[[0-9;]*m/gu;
@@ -170,9 +177,16 @@ export function runCounts(output) {
   return failed > (counts.fail ?? 0) ? { pass: counts.pass, fail: failed } : counts;
 }
 
-// The counts of the first family of summary lines in `lines` (runCounts, families 2 to 5).
+// The counts of the first family of summary lines in `lines` (runCounts, families 2 to 6).
 function familyCounts(lines) {
-  for (const family of [TESTS_LINE, CARGO_LINE, WORDS_LINE]) {
+  for (const family of [TESTS_LINE, CARGO_LINE, GO_TESTS, GO_PACKAGES, WORDS_LINE]) {
+    if (!(family instanceof RegExp)) {
+      // A go family counts its lines, one a test or a package.
+      const pass = lines.filter((line) => family.pass.test(line)).length;
+      const fail = lines.filter((line) => family.fail.test(line)).length;
+      if (pass + fail > 0) return { pass, fail };
+      continue;
+    }
     const held = lines.filter((line) => family.test(line));
     if (!held.length) continue;
     const pass = lineSum(held, /\b(\d+)\s+passed\b/u);
@@ -234,13 +248,43 @@ export function workingTree(cwd, read = runGit) {
   }
 }
 
+// The last `maxBytes` of the file at `file`, an absolute path, as text, or null when it is no regular file this process
+// can read. It is opened no-follow, so a symlink is never read.
+export function fileTail(file, maxBytes = OUTPUT_TAIL) {
+  if (typeof file !== 'string' || !path.isAbsolute(file)) return null;
+  let fd;
+  try {
+    fd = openSync(file, READ_FILE);
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) return null;
+    const bytes = Buffer.alloc(Math.min(stat.size, maxBytes));
+    const start = stat.size - bytes.length;
+    let read = 0;
+    for (let n = 1; n > 0 && read < bytes.length; read += n) n = readSync(fd, bytes, read, bytes.length - read, start + read);
+    return bytes.subarray(0, read).toString('utf8');
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+// The text a call's counts are read from: `output`, or, when the host kept the call's whole output in a file,
+// `persisted` as `{ file, after }`, the last OUTPUT_TAIL bytes of that file and then `after`, the text the host shows
+// after it, such as stderr. A file it cannot read leaves `output`, which then holds only the head the host kept.
+export function outputText(output, persisted = null) {
+  const tail = persisted ? fileTail(persisted.file) : null;
+  if (tail === null) return output;
+  return typeof persisted.after === 'string' && persisted.after !== '' ? `${tail}\n${persisted.after}` : tail;
+}
+
 // The rows a finished shell call adds, one a test run on its top level: `exitZero` as runStatus takes it, before the
-// line's own reach. `tree` reads a folder's trees (workingTree), once a folder; a row whose trees git cannot give keeps
-// them null, so a claim it cannot support names why.
-export function checkRows({ command, cwd, output, exitZero, testing = {}, agentId = null, at = new Date().toISOString(), tree = workingTree }) {
+// line's own reach, and `persisted` as outputText takes it. `tree` reads a folder's trees (workingTree), once a folder;
+// a row whose trees git cannot give keeps them null, so a claim it cannot support names why.
+export function checkRows({ command, cwd, output, persisted = null, exitZero, testing = {}, agentId = null, at = new Date().toISOString(), tree = workingTree }) {
   const runs = testRuns(command, cwd, testing);
   if (!runs.length) return [];
-  const counts = runCounts(output);
+  const counts = runCounts(outputText(output, persisted));
   const trees = new Map();
   return runs.map(({ key, folder, carries }) => {
     const where = folder ?? cwd;
@@ -297,6 +341,15 @@ const PASS_WORD = /\b(?:pass(?:es|ed|ing)?|green|succeed(?:s|ed)?|all\s+\d+\s+te
 const FAIL_WORD = /\bnot\s+finished\b|\b(?:failed|failing|red|timed\s+out|stopped|interrupted)\b|\b[1-9]\d*\s+(?:fail(?:s|ed|ures?)?)\b|\bfail(?:s|ures?)?\s*:?\s*[1-9]/iu;
 // A clause about CI, which the record cannot see: its results are quoted from the forge.
 const CI_WORD = /\bCI\b|\bpipeline\b|\bworkflow\b/u;
+// A clause that gives the claim to another source, as "the pull request body says `npm test` passed" or "according to
+// the reviewer": a source, at most two words, then a verb of saying. "The output says" is the writer's own run.
+const SOURCE = String.raw`(?:pull\s+request|PR|body|description|reviewer|review|agent|subagent|dispatcher|issue|ticket|comment|thread|handoff|report|brief|author|commit\s+message|bot)`;
+const SAYS = String.raw`(?:says?|said|claim(?:s|ed)?|states?|stated|reports?|reported|writes|wrote|lists?|listed|quotes?|quoted|asserts?|asserted)`;
+const ATTRIBUTED = new RegExp(String.raw`\b${SOURCE}(?:'s)?\s+(?:\S+\s+){0,2}?${SAYS}\b|\baccording\s+to\b`, 'iu');
+// A span in double quotes, straight or curly: words quoted from another.
+const QUOTED_SPAN = /"[^"\n]*"|“[^”\n]*”/gu;
+// A Markdown block quote line.
+const BLOCK_QUOTE = /^\s{0,3}>/u;
 // A commit id a clause names: 7 to 40 hex digits with at least one letter, so no count reads as one.
 const COMMIT_ID = /\b(?=[0-9]*[a-f])[0-9a-f]{7,40}\b/gu;
 // The pass counts a clause states: "4071/4071", "12 pass", "pass 12", "12 tests passed". A number after a word, as in
@@ -309,12 +362,19 @@ const PASS_COUNT = /(?<!\b(?!all\b|only\b)[A-Za-z]+\s)\b(\d+)\s*\/\s*\d+\b|(?<!\
 // `testing.fullSuite` command, also as plain words.
 // Each is { clause, key, counts, commits }: `key` the command's (commandKey), `counts` the pass counts it states, and
 // `commits` the commit ids it names, such as "at 056c3c2", which the pull request body rule reads the tree of.
-export function passClaims(body, { section = 'Tests run', testing = {} } = {}) {
-  const lines = section === null ? [...unfencedLines(body)] : sectionLines(body, section);
+// `ownOnly` leaves out what the text quotes: block quote lines, spans in double quotes, and a clause that gives its
+// claim to another source (ATTRIBUTED). A subagent's report quotes other agents and pull request bodies; a pull request
+// body's `## Tests run` section is its author's own, so that rule reads every line of it.
+export function passClaims(body, { section = 'Tests run', testing = {}, ownOnly = false } = {}) {
+  let lines = section === null ? [...unfencedLines(body)] : sectionLines(body, section);
+  // A block quote line ends its paragraph, as a blank line does.
+  if (ownOnly) lines = lines?.map((line) => (BLOCK_QUOTE.test(line) ? '' : line));
   const suites = (testing.fullSuite ?? []).map(keyOfText).filter(Boolean);
   const claims = [];
   for (const unit of units(lines ?? [])) {
-    for (const clause of unit.split(/;\s+|\.\s+(?=[A-Z`])/u)) {
+    for (const written of unit.split(/;\s+|\.\s+(?=[A-Z`])/u)) {
+      if (ownOnly && ATTRIBUTED.test(written)) continue;
+      const clause = ownOnly ? written.replace(QUOTED_SPAN, ' ') : written;
       if (!PASS_WORD.test(clause) || FAIL_WORD.test(clause) || CI_WORD.test(clause)) continue;
       const keys = [...clause.matchAll(/`([^`\n]+)`/gu)].flatMap(([, code]) => {
         const [segment] = lexPipeline(code).segments.filter((each) => !CHANGES_DIRECTORY.has(readInvocation(each).program));

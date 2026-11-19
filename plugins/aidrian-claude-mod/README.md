@@ -8,7 +8,7 @@ It needs the `aidrian` plugin installed and enabled for the folder, and draws on
 🪐 Opus 5.5 xhigh · ctx 48% ━━━━──── · ♨️ cache 5m · 5h 26% ↻3h09m · 7d 15%
    ⧉  feature-band · ABC-12 In Progress · ◐ 2 agents
    2.3x · handoff due, pays back in ~24 calls · armed 1/3 · 📥 1 P1 · 🧹 1 worktree
-   PRs #4012, #4019, #4023, #4031, #4036, +2 · ✓5 ✗1 ⏳1
+   PRs ✓5 ✗1 ⏳1 · #4012, #4019, #4023, #4031, #4036, +2
 ```
 
 ## What it shows
@@ -17,7 +17,7 @@ It needs the `aidrian` plugin installed and enabled for the folder, and draws on
   Code reports it), the branch or worktree,
   the ticket key with its title and state, and running subagents.
 - From `aidrian session snapshot`: the handoff verdict the Stop hook would give, the pull requests the session
-  touched on a row of their own (the first five numbers, colored by their checks, then `+N`), and the harness signals to act on: P1 lessons, provisional decisions, merged worktrees to
+  touched on a row of their own (the check counts, then the first five numbers colored by their checks, then `+N`), and the harness signals to act on: P1 lessons, provisional decisions, merged worktrees to
   clean, and untriaged persona findings. Each part shows only when it holds something.
 - `/aidrian-mod`: the same data in a pane, with one row per pull request and a link to it, the ticket's link, and one
   row per subagent. `/aidrian-mod hide` closes it. When the snapshot cannot be read, the pane says why.

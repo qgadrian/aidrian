@@ -13,7 +13,7 @@ gives the snapshot's line without it.
 🪐 Opus 5.5 xhigh · ctx 48% ━━━━──── · ♨️ cache 5m · 5h 26% ↻3h09m · 7d 15%
    ⧉  feature-band · ABC-12 In Progress · ◐ 2 agents
    2.3x · handoff due, pays back in ~24 calls · armed 1/3 · 📥 1 P1 · 🧹 1 worktree
-   PRs #4012, #4019, #4023, #4031, #4036, +2 · ✓5 ✗1 ⏳1
+   PRs ✓5 ✗1 ⏳1 · #4012, #4019, #4023, #4031, #4036, +2
 ```
 
 - **The band.** The model and effort, context use, the prompt cache time left, the 5-hour and 7-day limits (each only
@@ -22,7 +22,8 @@ gives the snapshot's line without it.
   subagents. Two rows below them are `aidrian session snapshot` ([The snapshot](handoff.md#the-snapshot)): first the handoff verdict the Stop hook would give
   and the harness signals to act on, P1 lessons, provisional decisions, merged worktrees to clean, and untriaged
   persona findings; then, on a row of their own so a long list never cuts the signals off, the pull requests the
-  session touched: the first five numbers, each in the color of its checks, `+N` for the rest, and the check counts.
+  session touched: the check counts first, so a narrow terminal cuts numbers and never a failure, then the first five
+  numbers, each in the color of its checks (`web#12` when they span repositories), and `+N` for the rest.
   At 70% context or more, a context
   alert row follows it. Each part shows only when it holds something, in the words of the snapshot's `--line`, but
   for three: an armed chain above its limit draws `armed <n>` with no fraction; a `maxChain` of `unlimited` draws

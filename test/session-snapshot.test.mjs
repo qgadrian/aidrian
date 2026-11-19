@@ -926,7 +926,7 @@ test('prs: a pushed and a created row of one pull request give one entry and 1 P
   assert.equal(call.cwd, env.dir, 'the forge runs in the session`s folder, never in one a ledger row names');
   assert.equal(existsSync(madeUp), false);
   assert.deepEqual(JSON.parse(call.input).variables, { o0: 'acme', n0: 'notes', b0: 'feat/y', o1: 'acme', n1: 'notes', p1: 7, o2: 'acme', n2: 'notes', b2: 'feat/x' });
-  assert.match(env.run(['--session', ID, '--transcript', transcript, '--line']).stdout, /^\d\.\dx · PR #7 · ✓1 ✗0 ⏳0\n$/u);
+  assert.match(env.run(['--session', ID, '--transcript', transcript, '--line']).stdout, /^\d\.\dx · PR ✓1 ✗0 ⏳0 · #7\n$/u);
   assert.equal(env.calls().length, 1, 'the second snapshot reads the cache');
   for (const name of [PRS_CACHE.name, 'usage.json']) assert.equal(statSync(path.join(env.folder, name)).mode & 0o777, 0o600, name);
   assert.deepEqual(readdirSync(env.folder).filter((name) => name.endsWith('.tmp')), [], 'written by a temporary file and a rename');
@@ -957,7 +957,7 @@ test('prs: rows on gitlab.com or a made-up host show as unsupported, with no gh 
   const unknown = { title: null, url: null, isDraft: null, state: null, mergeable: null, reviewDecision: null, unresolvedThreads: null, checks: null, unsupported: true, inherited: false };
   assert.deepEqual(json.prs, [{ host: 'git.example.test', repo: 'team/sub/notes', number: null, ...unknown }, { host: 'gitlab.com', repo: 'acme/notes', number: 3, ...unknown }]);
   assert.deepEqual([json.errors, env.calls()], [[], []]);
-  assert.equal(env.run(['--session', ID, '--line']).stdout, 'PRs #3, +1 · ✓0 ✗0 ⏳0\n');
+  assert.equal(env.run(['--session', ID, '--line']).stdout, 'PRs ✓0 ✗0 ⏳0 · #3, +1\n');
 });
 
 test('prs: a forge title and check state holding control, bidi, zero-width, and tag characters reach neither --json nor --line', { skip: !POSIX }, (t) => {
@@ -969,7 +969,7 @@ test('prs: a forge title and check state holding control, bidi, zero-width, and 
   const json = env.run(['--session', ID]);
   const line = env.run(['--session', ID, '--line']);
   assert.equal(json.json.prs[0].title, 'Fix ]52;c;eA==[2Jit');
-  assert.equal(line.stdout, 'PR #7 · ✓0 ✗1 ⏳0\n');
+  assert.equal(line.stdout, 'PR ✓0 ✗1 ⏳0 · #7\n');
   for (const out of [json.stdout, line.stdout]) {
     assert.match(out, CLEAN);
     assert.doesNotMatch(out, /[\u202e\u200f\u200b\u2060\ufeff\u2028]|\u{E0041}/u);

@@ -97,29 +97,39 @@ function summaryWords(rows) {
 // How many change numbers the summary lists before it counts the rest as `+N`.
 export const LISTED_CHANGES = 5;
 
-// The changes summary, `PRs #12, #34, +1 · ✓2 ✗0 ⏳1`: the noun, the first LISTED_CHANGES numbers, each in the color
-// of its checks, and `+N` for the rest and any row with no number; then the counts of changes, not checks: a change
-// with no check counts in none. With no number to list, `3 PRs`.
+// A change's label in the summary: `#12`, or `web#12` when the listed changes span repositories, so the same number
+// in two of them never reads as one change.
+const changeLabel = (row, qualify) => {
+  const name = qualify && typeof row.repo === 'string' ? displayText(row.repo.split('/').pop() ?? '', DISPLAY_CAPS.name) : '';
+  return `${name}#${row.number}`;
+};
+export const spansRepositories = (rows) => new Set(rows.map((row) => `${row.host}/${String(row.repo).toLowerCase()}`)).size > 1;
+
+// The changes summary, `PRs ✓2 ✗0 ⏳1 · #12, #34, +1`: the noun, the counts of changes, not checks (a change with no
+// check counts in none), then the first LISTED_CHANGES numbers, each in the color of its checks, and `+N` for the rest
+// and any row with no number. The counts come first so a narrow terminal cuts numbers, never a failure. With no
+// number to list, `3 PRs · ✓2 ✗0 ⏳1`.
 export function changesParts(prs) {
   const rows = changeRowsOf(prs);
   if (rows.length === 0) return [];
   const words = summaryWords(rows);
   const states = rows.map((row) => checksState(row.checks));
   const count = (state) => states.filter((each) => each === state).length;
-  const numbered = rows.map((row, index) => ({ number: row.number, state: states[index] })).filter(({ number }) => Number.isSafeInteger(number) && number > 0);
+  const numbered = rows.map((row, index) => ({ row, state: states[index] })).filter(({ row }) => Number.isSafeInteger(row.number) && row.number > 0);
   const listed = numbered.slice(0, LISTED_CHANGES);
+  const qualify = spansRepositories(listed.map(({ row }) => row));
   const rest = rows.length - listed.length;
   const noun = rows.length === 1 ? words.one : words.many;
-  const head = listed.length === 0 ? [part(`${rows.length} ${noun}`)] : [
-    part(`${noun} `),
-    ...listed.flatMap(({ number, state }, index) => [...(index ? [part(', ')] : []), part(`#${number}`, state === null ? COLORS.text : COLORS[state])]),
-    ...(rest > 0 ? [part(`, +${rest}`)] : []),
-  ];
-  return [
-    ...head, part(SEPARATOR),
+  const counts = [
     part(`✓${count('passed')}`, COLORS.passed), part(' '),
     part(`✗${count('failed')}`, COLORS.failed), part(' '),
     part(`⏳${count('pending')}`, COLORS.pending),
+  ];
+  if (listed.length === 0) return [part(`${rows.length} ${noun}${SEPARATOR}`), ...counts];
+  return [
+    part(`${noun} `), ...counts, part(SEPARATOR),
+    ...listed.flatMap(({ row, state }, index) => [...(index ? [part(', ')] : []), part(changeLabel(row, qualify), state === null ? COLORS.text : COLORS[state])]),
+    ...(rest > 0 ? [part(`, +${rest}`)] : []),
   ];
 }
 

@@ -196,6 +196,6 @@ test('the summary counts pull requests: failed, then pending, then passed or ski
   assert.equal(changesSummary(prs), '5 PRs · ✓1 ✗1 ⏳1', 'no number to list');
   assert.equal(changesSummary([pr({ passed: 1, failed: 0, pending: 0, skipped: 0 })]), '1 PR · ✓1 ✗0 ⏳0');
   const numbered = [1, 2, 3, 4, 5, 6].map((number) => ({ number, checks: null }));
-  assert.equal(changesSummary(numbered), 'PRs #1, #2, #3, #4, #5, +1 · ✓0 ✗0 ⏳0');
-  assert.equal(changesSummary([{ number: 7, checks: null }, { checks: null }]), 'PRs #7, +1 · ✓0 ✗0 ⏳0', 'one with no number counts in the rest');
+  assert.equal(changesSummary(numbered), 'PRs ✓0 ✗0 ⏳0 · #1, #2, #3, #4, #5, +1');
+  assert.equal(changesSummary([{ number: 7, checks: null }, { checks: null }]), 'PRs ✓0 ✗0 ⏳0 · #7, +1', 'one with no number counts in the rest');
 });

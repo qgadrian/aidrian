@@ -473,9 +473,10 @@ export const isChangeCache = (value) => value !== null && typeof value === 'obje
 // How many pull request numbers the summary lists before it counts the rest as `+N`.
 export const LISTED_CHANGES = 5;
 
-// The pull request summary of a status line: `PRs #12, #34, +1`, the first LISTED_CHANGES numbers and `+N` for the
-// rest and any with no number (`3 PRs` with none to list), then how many have a failed check, a pending one and none
-// failed, or only passed or skipped ones. One with no check counts in none.
+// The pull request summary of a status line: `PRs ✓2 ✗0 ⏳1 · #12, #34, +1`, the counts first, then the first
+// LISTED_CHANGES numbers (`web#12` when they span repositories) and `+N` for the rest and any with no number; with
+// no number to list, `3 PRs · ✓2 ✗0 ⏳1`. A count is of pull requests: one with a failed check, one with a pending
+// check and none failed, or one with only passed or skipped checks. One with no check counts in none.
 export function changesSummary(prs) {
   const states = prs.map(({ checks }) => {
     if (!checks) return null;
@@ -484,9 +485,12 @@ export function changesSummary(prs) {
     return checks.passed + checks.skipped > 0 ? 'passed' : null;
   });
   const count = (state) => states.filter((each) => each === state).length;
+  const counts = `✓${count('passed')} ✗${count('failed')} ⏳${count('pending')}`;
   const noun = `PR${prs.length === 1 ? '' : 's'}`;
-  const listed = prs.map(({ number }) => number).filter((number) => Number.isSafeInteger(number) && number > 0).slice(0, LISTED_CHANGES);
+  const listed = prs.filter(({ number }) => Number.isSafeInteger(number) && number > 0).slice(0, LISTED_CHANGES);
+  if (listed.length === 0) return `${prs.length} ${noun} · ${counts}`;
+  const qualify = new Set(listed.map(({ host, repo }) => `${host}/${String(repo).toLowerCase()}`)).size > 1;
+  const label = ({ repo, number }) => `${qualify && typeof repo === 'string' ? repo.split('/').pop() : ''}#${number}`;
   const rest = prs.length - listed.length;
-  const head = listed.length === 0 ? `${prs.length} ${noun}` : `${noun} ${listed.map((number) => `#${number}`).join(', ')}${rest > 0 ? `, +${rest}` : ''}`;
-  return `${head} · ✓${count('passed')} ✗${count('failed')} ⏳${count('pending')}`;
+  return `${noun} ${counts} · ${listed.map(label).join(', ')}${rest > 0 ? `, +${rest}` : ''}`;
 }

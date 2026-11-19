@@ -557,16 +557,26 @@ for that answer, for one denial only: `round_limit` on the merge's own head, wit
 last review step, whatever its outcome, is never waived, and its denial names no `aidrian pr waive` route: the review
 can still run on it. Every other denial keeps its reason. A verdict counts only for
 a merge that names its head, `--match-head-commit <sha>`, `sha=` in a `gh api` merge, or the merge tool's `sha`; for
-any other, the denial says to name it. The waiver is for a session the Human told to merge: `aidrian pr auto-merge`'s
-review gate does not read waivers. The guard reads the waiver only when the denial is that one and this
+any other, the denial says to name it. It never stands in for the review bot: it stands only when the review bot
+passed exactly that head in the review trail, open findings of this machine's own reviewers, each of `medium`
+severity or lower and no security finding, are the whole cause of the cap the record keeps, no sign-off of the Human's
+is owed on the head in the sign-off store, and, for a project run's session, the run has not spent its budget of
+waived merges; otherwise the denial says which, and offers no route to record a verdict. The store and the run's
+ledger and records are read only before the deadline below: past it, the denial says the team's value could not be
+read in time. The ledger is read through the main checkout and its config, as the pinned repository is, and the count
+stops at the budget, each record read checked against the deadline. Any `aidrian pr auto-merge`
+under these switches takes a verdict too, with the judge's dispatch checked as well. The guard reads the waiver only when the denial is that one and this
 machine's `github.unattendedWaiver` switch is on, or unset under the team's [`solo`](config.md#solo), so with the
 switch off it makes no network call it did not make before. With the switch unset it reads git first, once, each
 read held to the deadline below: the default branch's local ref, and whether git tracks the local file. It reads the
 network only when the local ref says solo and git tracks no local file.
 It then reads `github.unattendedWaiver.allow`, and `solo` with it, at the default branch and the pull request's base on GitHub,
-after the pull request's view: its own when it made one with the base, else one more, and git's project folder.
+after the pull request's view: its own when it made one with the base, else one more, and git's project folder. One
+GraphQL read, the review trail, gives both branches' policy files and the bot's verdict, as merge trust reads it; only
+a pointer to another folder reads the policies over REST too. For a session no Human attends, merge trust then takes
+that trail and reads it no second time.
 Every one of these calls shares one deadline for the whole command, counted from when the hook's process started:
-none begins once 4 seconds have gone, and each is stopped with SIGKILL after 1 second (3 for the view), or at the
+none begins once 4 seconds have gone, and each is stopped with SIGKILL after 1 second (3 for the view and the trail), or at the
 deadline if that comes first. The waiver starts reading only when at most 1.5 seconds have gone: it checks that once,
 before its first read, and its later reads are held to the deadline alone. The guard's own head lookup above is not
 held to 1.5 seconds, only to the deadline: once it has passed, the lookup is not made, and a merge that names no head

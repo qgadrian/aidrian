@@ -293,3 +293,6 @@ Codex residuals, each open until the live checks hold:
   So `install-agents.mjs` writes no sandbox into a role.
 - A read-only agent is told so in its instructions, and nothing on Codex enforces it.
 - The session's own sandbox binds every agent in it, such as `codex --sandbox read-only`.
+- No hook writes a `dispatch` row with the agent id of a subagent Codex spawns, so the adapter declares no
+  `capabilities.judgeDispatch`: under the [unattended waiver](../config.md#unattended-waiver), no judge's verdict stands
+  for `aidrian pr auto-merge` on Codex, and `aidrian pr waive --gate` exits 1 and says so.

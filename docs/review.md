@@ -1231,10 +1231,19 @@ shows, such as a waiver's reason, has `<!--` and `-->` escaped, so no text can c
   writes, so a request recorded while a reviewer ran survives the step's write. Both live in the state folder: another
   machine does not see them.
 - **Waivers.** `waivers` lists the judge verdicts `aidrian pr waive` recorded, each `{ head, kind, verdict, reason, judge, at }`,
-  where `kind` is `round_cap` and `verdict` is `waive` or `refuse`. Each binds to one head and one kind.
-  The summary comment shows them under **Merge guard waivers**, each marked an audit entry, not proof.
-  A record without the list has none. The [merge guard](hooks.md#merge-guard) reads them only while the team's
-  `github.unattendedWaiver.allow` and this machine's switch are both on: [Unattended waiver](config.md#unattended-waiver).
+  where `kind` is `round_cap` and `verdict` is `waive` or `refuse`, and, with `--judge`, `judge_id` and `session`: the
+  judge's agent id and the recording session, which auto-merge finds in the dispatch log. A `round_limit` outcome also
+  keeps `cap`, what stopped the review (`plugins/aidrian/lib/review/run.mjs` capCause): the open findings by pass and
+  stage, whether each is listed, the flows left unsigned, deleted flow tests, failing flow checks, passes that never
+  reviewed the head, the bot's own round limit, and the flows the Human signs off with no sign-off kept. Its flows are
+  every flow of the plan not all held, whichever stage answers for it. The cause of a reviewed head is kept on its
+  round too (`rounds[].cap`), which a later cap on a head no round reviewed reads. The posted copy keeps no `cap`,
+  on the outcome or a round, and no waiver's `judge_id` and `session`. Each binds to one head and
+  one kind. The summary comment shows them under **Merge guard waivers**, each marked an audit entry, not proof; the
+  posted copy keeps no `judge_id` or `session`.
+  A record without the list has none. The [merge guard](hooks.md#merge-guard) and `aidrian pr auto-merge` read them only
+  while the team's `github.unattendedWaiver.allow` and this machine's switch are both on, and only once the review bot
+  passed the head: [Unattended waiver](config.md#unattended-waiver).
 
 ### Merge trust
 
@@ -1244,8 +1253,13 @@ session no Human attends never rests on the record alone. Such a session is one 
 [unattended mark](handoff.md#the-background-route), a pending or unreadable one included, read by the session id its
 host gives, or a project run's driver, by its driver mark ([hooks.md](hooks.md#agent-gates)). For it, `aidrian pr auto-merge` and the [merge guard](hooks.md#merge-guard), on Claude Code and Codex alike,
 also ask for two things no such session writes (`plugins/aidrian/lib/review/merge-trust.mjs`); the guard first asks the
-team's auto-merge policy of the forge too, as `aidrian pr auto-merge` does. A merge in a session the Human attends is
-unchanged: neither reads anything more.
+team's auto-merge policy of the forge too, as `aidrian pr auto-merge` does. A merge in a session the Human attends
+reads nothing more, except a judge's verdict: under the unattended waiver, the guard and auto-merge read the review
+trail for the bot's pass, and the sign-off store, before one stands, attended or not. A judge's verdict at the round cap
+([Unattended waiver](config.md#unattended-waiver)) changes only the record's `round_limit` stop: it never stands in for
+the review bot, waives only this machine's reviewers' findings of `medium` severity or lower, and stands only once the
+bot passed the head, so a waived merge meets both checks below as any other does. The guard reads the review trail once
+for both: the waiver's read serves merge trust.
 
 1. **The review bot's verdict, on the forge.** The default branch's `github.reviewer`, read from GitHub, a bot account,
    passed exactly the merge's head: an approving review of that commit, or its own status card saying its code review of

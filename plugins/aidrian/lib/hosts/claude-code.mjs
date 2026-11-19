@@ -182,6 +182,10 @@ export default {
       path.join(root, '.claude/settings.json'),
       path.join(env.CLAUDE_CONFIG_DIR || path.join(homedir(), '.claude'), 'settings.json'),
     ],
+    // Its PostToolUse hook on the Agent tool writes a `dispatch` row with the agent id the tool returned for each subagent
+    // (lib/dispatch-rows.mjs dispatchRow), so a waiver's judge can be confirmed in the dispatch log
+    // (lib/review/waiver-stand.mjs judgeHostProblem).
+    judgeDispatch: true,
     // Every MCP call reaches its hooks with no step by a person.
     trackerGuard: { verified: 'live', evidence: 'The PostToolUse payload of a real get_workspace call on Claude Code 2.1.318', unguardedRoutes: [] },
     // How a session goes on after its handoff (session.handoff.continue). A clear keeps the same process, so the hook's parent,

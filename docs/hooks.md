@@ -34,7 +34,7 @@ the tracker write guard, and the question names check also record each block: se
 | Before compaction | A checklist of what the summary must keep | Claude Code, Codex | no |
 | The Human approves a plan | The [plan handoff offer](#session-length), when the main session already costs more per call | Claude Code | no |
 | After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code | no |
-| The main session ends a turn | The [announce check](#announced-work), the [review-loop check](#review-loop-check), the [merge hand-back check](#merge-hand-back-check), the [hand-back check](#hand-back-check), the [terminal hand-over](handoff.md#replacing-the-terminal) of a session whose background handoff asked to end itself, which skips the reminder, then the [session-length reminder](#session-length) | Claude Code; the announce and hand-back checks also Codex ([not live](providers/codex.md#hooks)), the review-loop and merge hand-back checks Claude Code only; the hand-over not verified live ([provider page](providers/claude-code.md#replacing-the-terminal)) | once per stop; the reminder once, then at each doubling of the cost ratio (`ask`) or each step of it (`auto`) |
+| The main session ends a turn | The [announce check](#announced-work), the [review-loop check](#review-loop-check), the [merge hand-back check](#merge-hand-back-check), the [hand-back check](#hand-back-check), the [terminal hand-over](handoff.md#replacing-the-terminal) of a session whose background handoff asked to end itself, which skips the reminder, then the [session-length reminder](#session-length) | Claude Code; the announce and hand-back checks also Codex ([not live](providers/codex.md#hooks)), the review-loop and merge hand-back checks Claude Code only; the hand-over not verified live ([provider page](providers/claude-code.md#replacing-the-terminal)) | once per stop, and each check once per turn ([send-backs](#send-backs-per-turn)); the reminder once, then at each doubling of the cost ratio (`ask`) or each step of it (`auto`) |
 | A subagent stops | A `stop` row, then the [delivery check](#delivery-check), the [background check](#background-check), and the [evidence check](#check-runs) | Claude Code | once |
 | A session ends | When the clear command ends a main session, its armed [handoff continuation](handoff.md#the-clear-route) made ready for the session the clear starts, bound to the host process; then a `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code; the continuation Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 
@@ -1184,7 +1184,7 @@ When the main session ends a turn on a message whose last paragraph announces wo
 not start it, the Stop hook sends it back once: nothing wakes the session until the Human writes, so the Human would wait
 on work that never begins. The agent does the work, asks the Human with the question tool when it needs a decision first,
 or ends the turn again when the message only reports work done or work that something else wakes it for.
-Its second stop always ends.
+It sends a turn back at most once, as each Stop check does ([Send-backs per turn](#send-backs-per-turn)).
 
 These phrases count, in any case, where the AI is its name from [names](config.md#names), "I", or "we":
 
@@ -1215,7 +1215,9 @@ A direct run of a skill such as `issue-implement` ends at the draft and its repo
 review loop, marking the draft ready, and [auto-merge](config.md#auto-merge) undone. The agent runs the `pr-review-loop`
 skill on the pull request as the session's own step, or ends the turn again when a skill or agent that runs its own loop
 owns the pull request, when none was opened or updated, when the run is stopped on a question only the Human can answer,
-or when the Human asked the run to stop at the draft. Its second stop always ends.
+or when the Human asked the run to stop at the draft. It sends a turn back at most once, and the stop that ends the
+continuation still runs the checks that have not sent it back: the merge hand-back check on a refusal there, and the
+hand-back check on the report ([Send-backs per turn](#send-backs-per-turn)).
 
 - The turn is what the transcript holds since the Human's last prompt: a `user` entry that is a prompt, not `isMeta`,
   `isSidechain`, or `isCompactSummary`, with no `origin` or `origin.kind` `"human"`, or a message the Human typed while
@@ -1247,7 +1249,10 @@ sends it back once (`lib/stop-handback.mjs` `mergeHandBack`). The gate stopped a
 comment, and review checks, so the pull request waits for the Human's review and merge, and a report that ended on
 "ready, not merged" left the Human to find that out. The agent adds the item the `pr-auto-merge` skill's step 2 gives,
 `needs your review and merge: #<n> touches <path>, which auto-merge never merges`, with the Human's name in place of
-"your", and a rating. Its second stop always ends.
+"your", and a rating. It sends a turn back at most once ([Send-backs per turn](#send-backs-per-turn)).
+It runs on the stop that ends a continuation another check started too, such as the review loop a direct run runs after
+the review-loop check sends it back, where `pr-auto-merge` refuses the pull request; a refusal that send-back held off,
+earlier in the turn, is read there as well.
 
 - A refusal counts when the gate's line reads `auto-merge off for #<n>: it changes "<path>", …`, or its `--json` object
   has `effective` false, `reason` `"paths"`, and a `why` of that shape: a guarded path, a policy file, a file the gate
@@ -1279,7 +1284,8 @@ comment, and review checks, so the pull request waits for the Human's review and
 - A subagent's calls are not read, so a gate an `orchestrator` runs is its own report's to hand over.
 
 It reads Claude Code transcripts only (`lib/transcript.mjs` `turnActions`); on Codex, whose rollout is not read, it is silent.
-It runs after the review-loop check and before the hand-back check, since its item carries the rating that check asks for.
+It runs after the review-loop check and before the hand-back check, since its item carries the rating that check asks for;
+the hand-back check still reads the report that adds the item.
 
 ## Hand-back check
 
@@ -1287,7 +1293,7 @@ When the main session ends a turn on a message that lists items for the Human an
 it is, the Stop hook sends it back once (`lib/stop-handback.mjs`). Such a list once handed the Human work no agent had
 tried. The agent tries each item first, through its owner, and keeps only real blocks that only the Human can clear,
 such as a permission, a credential, or a product decision. Each block that stays says what is needed, why no agent can
-do it, and how critical it is. Its second stop always ends.
+do it, and how critical it is. It sends a turn back at most once ([Send-backs per turn](#send-backs-per-turn)).
 
 - A list counts when a label addressed to the Human comes before it: a heading, a bold line, or a line that ends in a colon,
   such as "For Adrian", "Needs the Human", "Open items for the user", "Waiting on Adrian", or "Adrian's to-do", where the
@@ -1298,7 +1304,22 @@ do it, and how critical it is. Its second stop always ends.
   a Markdown example the message quotes is not work handed back, and a code block inside an item does not end its list.
 - An item counts as rated when it holds one of blocking, blocker, critical, high, medium, or low, in any case.
 
-The announce, review-loop, and merge hand-back checks run first; a stop any of them sends back is not checked here.
+The announce, review-loop, and merge hand-back checks run first; a stop any of them sends back is checked here at the
+stop that ends its continuation, unless this check sent the turn back already.
+
+## Send-backs per turn
+
+The announce, review-loop, merge hand-back, and hand-back checks each send a turn back at most once.
+Claude Code marks every stop after a turn's first send-back with `stop_hook_active: true`, and writes each send-back's
+reason into the transcript as a `user` entry marked `isMeta` whose text starts `Stop hook feedback:`
+(`lib/transcript.mjs` `turnActions`). On such a stop the hook runs the checks that have not sent the turn back yet,
+known by their reasons, when the turn's last send-back is one of theirs. So the stop that ends the continuation one check
+started still checks its report: after the review-loop check sends a direct run back to run `pr-review-loop`, a path
+refusal by `aidrian pr auto-merge` that the continuation's report leaves out is sent back, and so is an unrated item for
+the Human; after the announce check, a draft the continuation opens with no review is sent back.
+A stop whose last send-back is another hook's or the session-length reminder's, a transcript that shows none, a payload
+without `stop_hook_active`, and Codex, whose rollout is not read, run none. Each send-back is in the transcript by the
+next stop, so a chain of stops gets at most four from these checks, and nothing can loop.
 
 ## Session length
 

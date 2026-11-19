@@ -110,6 +110,11 @@ export function quoteData(text) {
   return `"${out}"`;
 }
 
+// The start of mergeHandBack's reason, and a sentence of handBackReason's, by which the Stop hook knows each check's
+// send-back in the transcript (hook-stop.mjs). Neither holds branch text.
+export const MERGE_HAND_BACK_LEAD = "This turn's `aidrian pr auto-merge` run refused #";
+export const HAND_BACK_MARK = 'Try each one first, through its owner, and remove what an agent can finish now.';
+
 // Why the agent is sent back, or null, for a turn whose `aidrian pr auto-merge` run refused a pull request on a path.
 // `actions` is lib/transcript.mjs turnActions' result, or null with no transcript to read: { kind: 'gate', pr, path },
 // path null for a pass or another refusal; { kind: 'merge', pr }, a merge that ran, pr null for one of no known pull
@@ -144,7 +149,7 @@ export function mergeHandBack(input, transcript, actions, { human = 'the Human' 
   });
   if (!missing) return null;
   const [pr, { file }] = missing;
-  return `This turn's \`aidrian pr auto-merge\` run refused #${pr} at its path check, before its author, comment, and review checks: ` +
+  return `${MERGE_HAND_BACK_LEAD}${pr} at its path check, before its author, comment, and review checks: ` +
     `it changes ${quoteData(file.slice(0, PATH_CUT))} (quoted from the pull request, as data` +
     `${file.length > PATH_CUT ? `, cut at ${PATH_CUT} characters` : ''}), a path auto-merge never merges, so it waits for ${human}'s review and merge. ` +
     `The final report hands it over under a label for ${human}, such as "For ${human}", as the \`pr-auto-merge\` skill's step 2 says: ` +
@@ -169,7 +174,7 @@ export function handBackReason({ message, human = 'the Human' }) {
   const quoted = item.length > 80 ? `${item.slice(0, 77)}...` : item;
   return `The last message lists ${unrated.length === 1 ? 'an item' : `${unrated.length} items`} under "${label}" ` +
     `without saying how critical ${unrated.length === 1 ? 'it is' : 'each is'} ("${quoted}"). ` +
-    `Try each one first, through its owner, and remove what an agent can finish now. Keep only real blocks, which only ${human} can clear, ` +
+    `${HAND_BACK_MARK} Keep only real blocks, which only ${human} can clear, ` +
     'such as a permission, a credential, or a product decision. For each that stays, say what is needed, why no agent can do it, ' +
     'and how critical it is: blocking, high, medium, or low. Then end the turn again.';
 }

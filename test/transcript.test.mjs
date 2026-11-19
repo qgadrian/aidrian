@@ -12,7 +12,7 @@ import { priceFor } from '../plugins/aidrian/lib/model-prices.mjs';
 import { EXIT } from '../plugins/aidrian/lib/review/run.mjs';
 import { pathsProblem } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import {
-  aggregateUsage, estimateCostUsd, filesRead, gateVerdicts, partOf, REVIEW_OUTPUT_STATUSES, sessionActions, subagentTranscripts, sumTokens, launchedTaskIds, turnActions,
+  aggregateUsage, estimateCostUsd, filesRead, gateVerdicts, partOf, REVIEW_OUTPUT_STATUSES, SENT_BACK, sessionActions, subagentTranscripts, sumTokens, launchedTaskIds, turnActions,
 } from '../plugins/aidrian/lib/transcript.mjs';
 
 // One transcript line: an assistant message with usage, as Claude Code writes it.
@@ -302,6 +302,20 @@ test('turnActions: only the Human`s prompt starts the turn, and a typed slash co
   const sideCall = JSON.stringify({ type: 'assistant', isSidechain: true, message: { role: 'assistant', content: [{ type: 'tool_use', id: 's1', name: 'Bash', input: { command: 'gh pr create --draft --fill' } }] } });
   const sideResult = JSON.stringify({ type: 'user', isSidechain: true, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 's1', content: 'https://github.com/acme/notes/pull/41' }] } });
   assert.deepEqual(kinds(turn.human('go'), sideCall, sideResult), [], 'a subagent`s call is not the main session`s');
+});
+
+test('turnActions lists each Stop hook send-back of the turn, as the isMeta entry Claude Code writes, and no other entry', () => {
+  const feedback = (reason, extra = {}) => JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: `${SENT_BACK}\n[node "/p/scripts/hook-stop.mjs"]: ${reason}` }, ...extra });
+  const sentBacks = (...lines) => turnActions(lines.flat().join('\n')).filter((action) => action.kind === 'sent-back').map((action) => action.text);
+  assert.deepEqual(kinds(turn.human('go'), draftOpened('d1'), feedback('Run the loop.'), loopRan('k1')), ['draft', 'sent-back', 'review'], 'in transcript order');
+  assert.deepEqual(sentBacks(turn.human('go'), feedback('Run the loop.')), [`${SENT_BACK}\n[node "/p/scripts/hook-stop.mjs"]: Run the loop.`], 'its whole text');
+  const blocks = JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: [{ type: 'text', text: `${SENT_BACK}\n[x]: Add the item.` }] } });
+  assert.deepEqual(sentBacks(turn.human('go'), blocks), [`${SENT_BACK}\n[x]: Add the item.`], 'a content array of text blocks');
+  assert.deepEqual(kinds(turn.human('go'), feedback('Run the loop.'), turn.human('thanks')), [], 'a send-back before the Human`s last prompt');
+  assert.deepEqual(kinds(turn.human('go'), turn.human(`${SENT_BACK}\n[x]: typed by the Human`)), [], 'the Human`s prompt, with no isMeta, starts the turn and is no send-back');
+  assert.deepEqual(kinds(turn.human('go'), turn.human('Base directory for this skill: /p/skills/pr-write', { isMeta: true })), [], 'another isMeta entry');
+  assert.deepEqual(kinds(turn.human('go'), feedback('Run the loop.', { isSidechain: true })), [], 'a subagent`s send-back');
+  assert.deepEqual(kinds(turn.human('go'), turn.result('t1', `${SENT_BACK}\n[x]: quoted`)), [], 'a tool result that quotes one');
 });
 
 test('turnActions counts a call only by its result: refused, unanswered, URL-less, and non-draft creates count nowhere', () => {

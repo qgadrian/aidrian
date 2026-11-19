@@ -59,6 +59,55 @@ test('a turn that opened a draft and ran no review is sent back once, and the st
   assert.deepEqual(stop([human('implement #400'), DRAFT, DONE], { stop_hook_active: true }), QUIET, 'the stop this hook caused');
 });
 
+// The entry Claude Code writes into the transcript when a Stop hook sends the turn back: the hook's stderr, as a `user`
+// entry marked isMeta. The tests build it from the stderr the hook printed, so the hook reads its own reasons.
+const sentBack = (stderr, command = 'node "/p/aidrian/scripts/hook-stop.mjs"') =>
+  ({ type: 'user', isMeta: true, message: { role: 'user', content: `Stop hook feedback:\n[${command}]: ${stderr.trim()}` } });
+const REFUSED = [call('g1', 'Bash', { command: 'aidrian pr auto-merge 40' }),
+  result('g1', 'Exit code 1\nauto-merge off for #40: it changes "AGENTS.md", which instructs AI sessions, or decides CI\'s verdict or auto-merge', true)];
+const NOT_MERGED = said('The loop signed off and #40 is ready, not merged.');
+const MERGE_SENT = /^This turn's `aidrian pr auto-merge` run refused #40 at its path check/u;
+
+test('after the review-loop send-back, the stop that ends the loop still checks its report, once per check', (t) => {
+  const { stop, dir } = setup(t);
+  const first = [human('implement #400'), skillRun('p1', 'aidrian:pr-write'), DRAFT, DONE];
+  const one = stop(first);
+  assert.equal(one.status, 2);
+  assert.match(one.stderr, /^This turn opened or updated a draft pull request and ran no review after it\./u);
+  const ready = [call('y1', 'Bash', { command: 'gh pr ready 40' }), result('y1', 'ok')];
+  const loop = [...first, sentBack(one.stderr), skillRun('k1', 'aidrian:pr-review-loop'), ready, skillRun('m1', 'aidrian:pr-auto-merge'), REFUSED];
+  const two = stop([...loop, NOT_MERGED], { stop_hook_active: true });
+  assert.equal(two.status, 2, 'the continuation leaves the path refusal out of its report');
+  assert.match(two.stderr, MERGE_SENT);
+  assert.deepEqual(stop([...loop, NOT_MERGED, sentBack(two.stderr), said('Still ready, not merged.')], { stop_hook_active: true }), QUIET,
+    'the merge hand-back check sent this turn back already');
+  const item = said("**For Adrian**\n- High: needs Adrian's review and merge: #40 touches `AGENTS.md`, which auto-merge never merges.");
+  assert.deepEqual(stop([...loop, item], { stop_hook_active: true }), QUIET, 'the report holds the item');
+  assert.deepEqual(stop([...first, sentBack(one.stderr), said('Adrian asked the run to stop at the draft.')], { stop_hook_active: true }), QUIET,
+    'the review-loop check sent this turn back already');
+  assert.deepEqual(stop([...loop, sentBack('Run the linter first.', 'node other-hook.mjs'), NOT_MERGED], { stop_hook_active: true }), QUIET,
+    'the last send-back is another hook\'s');
+  assert.deepEqual(stop([...first, skillRun('k1', 'aidrian:pr-review-loop'), ready, REFUSED, NOT_MERGED], { stop_hook_active: true }), QUIET,
+    'no send-back the transcript shows');
+  assert.deepEqual(stop([...loop, NOT_MERGED], { stop_hook_active: undefined }), QUIET, 'a payload without stop_hook_active');
+  const codex = { session_id: '019a-codex', turn_id: 'turn-7', model: 'gpt-5.5', permission_mode: 'default', cwd: dir, stop_hook_active: true };
+  assert.deepEqual(stop([...loop, NOT_MERGED], codex), QUIET, 'a Codex payload: its rollout is not read');
+});
+
+test('after the announce send-back, a continuation that opens a draft and runs no review is sent back', (t) => {
+  const { stop } = setup(t);
+  const first = [human('implement #400'), said('HAL9K will now implement #400, unless Adrian says otherwise.')];
+  const one = stop(first);
+  assert.equal(one.status, 2);
+  assert.match(one.stderr, /^The last message announces work and ends the turn without doing it/u);
+  const draft = [...first, sentBack(one.stderr), skillRun('p1', 'aidrian:pr-write'), DRAFT, DONE];
+  const two = stop(draft, { stop_hook_active: true });
+  assert.equal(two.status, 2);
+  assert.match(two.stderr, /^This turn opened or updated a draft pull request and ran no review after it\./u);
+  assert.deepEqual(stop([...draft, sentBack(two.stderr), said('Adrian asked the run to stop at the draft.')], { stop_hook_active: true }), QUIET,
+    'each check sent this turn back once');
+});
+
 test('the review-loop check passes under "ask", after a review run, and with no pull request opened', (t) => {
   const { stop } = setup(t);
   const { stop: asking } = setup(t, { github: { reviewLoop: 'ask' } });

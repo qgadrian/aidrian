@@ -26,8 +26,12 @@
 //   the background route in `auto` mode a Human who is not watching is no reason to skip the handoff. The marker's path
 //   is stopMarkerPath's, which `aidrian session snapshot` reads too; it is read no-follow, capped, and only when this user
 //   owns it, and written as a new temporary file, mode 0600, renamed over it, so no write follows a symlink there.
-// `stop_hook_active` is true on the stop this hook caused, and a payload without it (a host that does not send it) is never
-// sent back, so nothing can loop: each stop sends back at most once, for one of the five.
+// Each check sends a turn back at most once (checkReason). `stop_hook_active` is true on every stop after a turn's first
+// send-back, so on such a stop the checks run only when the turn's last send-back is one of theirs, as the transcript
+// shows it (lib/transcript.mjs SENT_BACK), and only those that have not sent the turn back yet: the stop that ends a
+// direct run's review loop, after the review-loop check sent it back, still checks its report. A payload without
+// `stop_hook_active` (a host that does not send it) is never sent back, so nothing can loop: each stop sends back at
+// most once, for one of the five, and a chain of stops this hook caused at most once per check.
 // - The terminal hand-over (lib/terminal-replace.mjs endAfterTurn): on a stop no check sends back, sent back before or
 //   not, a session whose handoff gate asked to end itself once its turn ends does, so the terminal that ran it, or
 //   follows it, opens the background session that took the work; a background session no terminal follows only stops
@@ -44,40 +48,32 @@ import { detectHost } from '../lib/hosts/index.mjs';
 import { findProject } from '../lib/project.mjs';
 import { continuation, stopMarkerPath, stopReminder } from '../lib/session-length.mjs';
 import { announcedWork, QUESTION_TOOL } from '../lib/stop-announce.mjs';
-import { handBack, mergeHandBack } from '../lib/stop-handback.mjs';
-import { reviewLoopOwed } from '../lib/stop-review-loop.mjs';
-import { readText, turnActions } from '../lib/transcript.mjs';
+import { HAND_BACK_MARK, handBack, MERGE_HAND_BACK_LEAD, mergeHandBack } from '../lib/stop-handback.mjs';
+import { REVIEW_LOOP_LEAD, reviewLoopOwed } from '../lib/stop-review-loop.mjs';
+import { readText, SENT_BACK, turnActions } from '../lib/transcript.mjs';
 
 // A refusal as the transcript holds the gate's output: its plain line, or its --json object's reason, whose quotes the
 // transcript's own JSON escapes (lib/transcript.mjs gateVerdicts reads both).
 const GATE_REFUSAL = ['auto-merge off for #', '\\"reason\\":\\"paths\\"'];
 
+// The start of the announce check's reason (lib/stop-announce.mjs announceReason), by which its send-back is known.
+const ANNOUNCE_LEAD = 'The last message announces work and ends the turn without doing it';
+// What each check's send-back holds (sentBack).
+const MARKS = [ANNOUNCE_LEAD, REVIEW_LOOP_LEAD, MERGE_HAND_BACK_LEAD, HAND_BACK_MARK];
+
 await runHook(async (input) => {
   const settled = input.stop_hook_active === false;
+  const caused = input.stop_hook_active === true;
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (!project) return;
   const { config } = loadConfig(project);
-  const { names, session } = config;
+  const { session } = config;
   const host = detectHost({ input });
-  // Only a stop no hook sent back reads the transcript: the checks and the reminder are its only readers.
-  const text = settled && typeof input.transcript_path === 'string' ? readText(input.transcript_path) : null;
-  if (settled) {
-    const transcriptText = host.capabilities.transcripts === false ? null : text;
-    const announced = announcedWork(input, transcriptText, {
-      ai: names.ai ?? host.ai, human: names.human, questionTool: host.nativeToolName(QUESTION_TOOL),
-    });
-    if (announced) deny(announced);
-    // The transcript is parsed once, for both checks that read the turn, and only when one can fire: under "auto", or
-    // when it holds a refusal as the gate prints it (GATE_REFUSAL). The parse is their whole cost on a long session.
-    const { reviewLoop } = config.github;
-    const parse = typeof transcriptText === 'string' && (reviewLoop === 'auto' || GATE_REFUSAL.some((form) => transcriptText.includes(form)));
-    const actions = parse ? turnActions(transcriptText) : null;
-    const owed = reviewLoopOwed(input, actions, { reviewLoop, human: names.human });
-    if (owed) deny(owed);
-    const merge = mergeHandBack(input, transcriptText, actions, { human: names.human });
-    if (merge) deny(merge);
-    const handedBack = handBack(input, transcriptText, { human: names.human });
-    if (handedBack) deny(handedBack);
+  // A stop no hook sent back reads the transcript for the checks and the reminder, and a stop a hook caused for the checks.
+  const text = (settled || caused) && typeof input.transcript_path === 'string' ? readText(input.transcript_path) : null;
+  if (settled || caused) {
+    const reason = checkReason(input, host.capabilities.transcripts === false ? null : text, config, host);
+    if (reason) deny(reason);
   }
   const marker = stopMarkerPath(input.session_id);
   if (marker === null) return;
@@ -92,6 +88,50 @@ await runHook(async (input) => {
   writeMarker(marker, `${JSON.stringify(reminder.marker)}\n`);
   deny(reminder.reason);
 });
+
+// The reason of the first of the four checks that sends this stop back, or null. On a stop a hook caused, a check runs
+// only when sentBack lets it. `transcript` is null on a host whose transcripts lib/transcript.mjs cannot read.
+function checkReason(input, transcript, config, host) {
+  const { names } = config;
+  const { reviewLoop } = config.github;
+  const settled = input.stop_hook_active === false;
+  // The transcript is parsed once, for the checks that read the turn, and only when one can fire: under "auto", or when
+  // it holds a refusal as the gate prints it (GATE_REFUSAL), or on a stop a hook caused, when it holds a send-back. The
+  // parse is their whole cost on a long session.
+  let actions;
+  const turn = () => {
+    if (actions !== undefined) return actions;
+    const parse = typeof transcript === 'string' && (settled
+      ? reviewLoop === 'auto' || GATE_REFUSAL.some((form) => transcript.includes(form))
+      : transcript.includes(SENT_BACK));
+    actions = parse ? turnActions(transcript) : null;
+    return actions;
+  };
+  const spent = settled ? new Set() : sentBack(turn());
+  if (spent === null) return null;
+  const checks = [
+    [ANNOUNCE_LEAD, () => announcedWork(input, transcript, { ai: names.ai ?? host.ai, human: names.human, questionTool: host.nativeToolName(QUESTION_TOOL) })],
+    [REVIEW_LOOP_LEAD, () => reviewLoopOwed(input, turn(), { reviewLoop, human: names.human })],
+    [MERGE_HAND_BACK_LEAD, () => mergeHandBack(input, transcript, turn(), { human: names.human })],
+    [HAND_BACK_MARK, () => handBack(input, transcript, { human: names.human })],
+  ];
+  for (const [mark, check] of checks) {
+    const reason = spent.has(mark) ? null : check();
+    if (reason) return reason;
+  }
+  return null;
+}
+
+// The marks of the checks that already sent this turn back, read from the send-backs turnActions found, on a stop a hook
+// caused; null, so no check runs, when the turn's last send-back holds none of them: one by another hook, by the
+// session-length reminder, or none the transcript shows, as on a host that writes none. Each send-back a check makes is
+// then in the transcript at the next stop, so it runs at most once a turn: nothing can loop.
+function sentBack(actions) {
+  const texts = (actions ?? []).filter((action) => action?.kind === 'sent-back').map((action) => action.text);
+  const marked = (text) => MARKS.filter((mark) => text.includes(mark));
+  if (!texts.length || !marked(texts.at(-1)).length) return null;
+  return new Set(texts.flatMap(marked));
+}
 
 // Whether this stop ends the session `id` so its terminal opens the background session it handed off to. The modules
 // load only on a host that can replace a terminal.

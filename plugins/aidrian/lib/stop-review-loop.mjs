@@ -9,6 +9,9 @@
 
 import { backgroundRunning } from './stop-announce.mjs';
 
+// The reason's first sentence, by which the Stop hook knows its send-back in the transcript (hook-stop.mjs).
+export const REVIEW_LOOP_LEAD = 'This turn opened or updated a draft pull request and ran no review after it.';
+
 // Why the agent is sent back, or null. `actions` is turnActions' result, or null with no transcript to read; `reviewLoop`
 // is config.json `github.reviewLoop`; `human` the name config.json `names` gives (docs/config.md#names). Null unless the
 // loop is "auto", no background task still runs, and the turn's last draft action has no review action after it.
@@ -18,7 +21,7 @@ export function reviewLoopOwed(input, actions, { reviewLoop, human = 'the Human'
   if (reviewLoop !== 'auto' || !Array.isArray(actions) || backgroundRunning(input)) return null;
   const lastDraft = actions.findLastIndex((action) => action?.kind === 'draft');
   if (lastDraft === -1 || actions.findLastIndex((action) => action?.kind === 'review') > lastDraft) return null;
-  return 'This turn opened or updated a draft pull request and ran no review after it. ' +
+  return `${REVIEW_LOOP_LEAD} ` +
     'config.json `github.reviewLoop` is "auto", so run the `pr-review-loop` skill on it now, as the session\'s own step and not ' +
     'as a step of the skill that opened it: its last step marks the draft ready as `github.markReady` says and runs ' +
     '`pr-auto-merge`, which merges only when `aidrian pr auto-merge <n>` exits 0. ' +

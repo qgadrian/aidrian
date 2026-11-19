@@ -111,6 +111,60 @@ test('the Stop hook sends the report back once, by the names config.json gives, 
   assert.equal(stop({ last_assistant_message: 'Done. All 812 tests pass.' }).status, 0);
 });
 
+test('the Stop hook checks the report that ends a continuation another check started, and sends each check back once', (t) => {
+  const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-stop-handback-chain-')));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const dir = path.join(base, 'project');
+  mkdirSync(path.join(dir, '.aidrian'), { recursive: true });
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, names: { human: 'Adrian', ai: 'HAL9K' } }));
+  const temp = path.join(base, 'tmp');
+  mkdirSync(temp);
+  const env = { ...process.env, TMPDIR: temp };
+  delete env.AIDRIAN_SHELL_PID;
+  const line = (entry) => JSON.stringify(entry);
+  const said = (text) => line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text }] } });
+  // The entry Claude Code writes when a Stop hook sends the turn back, from the stderr the hook printed.
+  const sentBack = (stderr) => line({ type: 'user', isMeta: true, message: { role: 'user', content: `Stop hook feedback:\n[node "/p/scripts/hook-stop.mjs"]: ${stderr.trim()}` } });
+  const bash = (id, command, output, isError = false) => [
+    line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }] } }),
+    line({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: output, is_error: isError }] } }),
+  ];
+  let count = 0;
+  const stop = (entries, fields = {}) => {
+    count += 1;
+    const transcript = path.join(base, `session-${count}.jsonl`);
+    writeFileSync(transcript, `${entries.flat().join('\n')}\n`);
+    const input = { hook_event_name: 'Stop', session_id: 'abc-123', transcript_path: transcript, cwd: dir, stop_hook_active: false, ...fields };
+    const { status, stderr } = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd: dir, encoding: 'utf8', env });
+    return { status, stderr };
+  };
+  const QUIET = { status: 0, stderr: '' };
+  const human = line({ type: 'user', origin: { kind: 'human' }, message: { role: 'user', content: 'implement #401' } });
+  const draft = bash('d1', 'gh pr create --draft --title t --body-file b.md', 'https://github.com/acme/notes/pull/401');
+  const first = [human, draft, said('Draft #401 is open.')];
+  const one = stop(first);
+  assert.match(one.stderr, /^This turn opened or updated a draft pull request/u);
+  const loop = [...first, sentBack(one.stderr), bash('k1', 'aidrian pr review 401', '{\n  "status": "received",\n  "pr": 401\n}')];
+  const two = stop([...loop, said(HANDED_BACK)], { stop_hook_active: true });
+  assert.equal(two.status, 2, 'the continuation hands back unrated items');
+  assert.match(two.stderr, /^The last message lists 3 items under "For Adrian"/u);
+  assert.deepEqual(stop([...loop, said(HANDED_BACK), sentBack(two.stderr), said(HANDED_BACK)], { stop_hook_active: true }), QUIET,
+    'the hand-back check sent this turn back already');
+
+  // A refusal the review-loop send-back held off: the merge hand-back check sends it back, then the hand-back check
+  // reads the report that adds the item.
+  const refused = bash('g1', 'aidrian pr auto-merge 401', `Exit code 1\nauto-merge off for #401: ${GATE_WHY}`, true);
+  const both = [human, draft, refused, said('Draft #401 is open, not merged.')];
+  const held = stop(both);
+  assert.match(held.stderr, /^This turn opened or updated a draft pull request/u, 'the review-loop check comes first');
+  const merge = stop([...both, sentBack(held.stderr), said('The loop is next.')], { stop_hook_active: true });
+  assert.match(merge.stderr, /^This turn's `aidrian pr auto-merge` run refused #401/u, 'the refusal before the send-back');
+  const rated = `${ITEM}\n- The advisory on the parser dependency.`;
+  const last = stop([...both, sentBack(held.stderr), said('The loop is next.'), sentBack(merge.stderr), said(rated)], { stop_hook_active: true });
+  assert.equal(last.status, 2, 'the report that adds the item lists another, unrated');
+  assert.match(last.stderr, /^The last message lists an item under "For Adrian"/u);
+});
+
 // The merge hand-back check: a protected-path refusal by `aidrian pr auto-merge` that the turn's reports do not hand to
 // the Human, rated, under a label addressed to them.
 const GATE_WHY = 'it changes "plugins/aidrian/lib/rules/process-kill.mjs", which instructs AI sessions, or decides CI\'s verdict or auto-merge';

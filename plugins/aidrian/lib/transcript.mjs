@@ -487,8 +487,13 @@ const humanPrompt = (entry) => {
     && (entry.origin?.kind ?? 'human') === 'human' && isPrompt(entry.message?.content);
 };
 
+// The start of the text Claude Code writes into the transcript when a Stop hook sends a turn back: a `user` entry marked
+// isMeta, `Stop hook feedback:` then each blocking hook's command in brackets and its reason.
+export const SENT_BACK = 'Stop hook feedback:';
+
 // What the main session did since the Human's last prompt, in transcript order: [{ kind: 'draft' | 'review' }],
-// { kind: 'gate', pr, path }, { kind: 'merge', pr } (pr null: a merge of no known pull request), and { kind: 'reply', text }, or the whole transcript's with no such
+// { kind: 'gate', pr, path }, { kind: 'merge', pr } (pr null: a merge of no known pull request), { kind: 'reply', text },
+// and { kind: 'sent-back', text }, or the whole transcript's with no such
 // prompt. A draft is a draft create that opened a
 // pull request, or a `gh pr edit` that ran after a pr-write run (a Skill call that ran, or a typed command) with no
 // review earlier in the turn: a pr-write run that published nothing, such as one stopped on a failed check, is none,
@@ -497,9 +502,11 @@ const humanPrompt = (entry) => {
 // counts only by its result, as there. A gate is one verdict an `aidrian pr auto-merge` call printed (settleCalls): a
 // call that printed none, such as an error exit, is none. A merge is a pull request a `gh pr merge` call that ran merged.
 // A reply is the text of an assistant message, for the merge hand-back check to find an item an earlier report of the
-// turn gave. A subagent's entries are skipped. The stop hook's review-loop check reads it (stop-review-loop.mjs), and its
-// merge hand-back check the gates, merges, and replies (stop-handback.mjs mergeHandBack). It is read in the hook only:
-// the replies are the session's own text, and no caller writes them anywhere.
+// turn gave. A sent-back is the text of a Stop hook's send-back (SENT_BACK), for the stop hook to tell which of its
+// checks already sent the turn back. A subagent's entries are skipped. The stop hook's review-loop check reads it
+// (stop-review-loop.mjs), its merge hand-back check the gates, merges, and replies (stop-handback.mjs mergeHandBack), and
+// the hook the send-backs. It is read in the hook only: the replies and send-backs are the session's own text, and no
+// caller writes them anywhere.
 export function turnActions(text) {
   const entries = text.split('\n').map(parseLine).filter((entry) => entry && entry.isSidechain !== true);
   const start = Math.max(entries.findLastIndex(humanPrompt), 0);
@@ -512,6 +519,10 @@ export function turnActions(text) {
     reviewed = true;
   };
   for (const entry of entries.slice(start)) {
+    if (entry.type === 'user' && entry.isMeta === true) {
+      const text = resultText(entry.message?.content);
+      if (text.startsWith(SENT_BACK)) actions.push({ kind: 'sent-back', text });
+    }
     if (entry.type === 'assistant' && Array.isArray(entry.message?.content)) {
       for (const block of entry.message.content) {
         if (block?.type === 'text' && typeof block.text === 'string' && block.text.trim()) actions.push({ kind: 'reply', text: block.text });

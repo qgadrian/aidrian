@@ -110,10 +110,10 @@ export function quoteData(text) {
   return `"${out}"`;
 }
 
-// The start of mergeHandBack's reason, and a sentence of handBackReason's, by which the Stop hook knows each check's
-// send-back in the transcript (hook-stop.mjs). Neither holds branch text.
+// The start of mergeHandBack's reason and of handBackReason's, by which the Stop hook knows each check's send-back in
+// the transcript (hook-stop.mjs). Neither holds branch text.
 export const MERGE_HAND_BACK_LEAD = "This turn's `aidrian pr auto-merge` run refused #";
-export const HAND_BACK_MARK = 'Try each one first, through its owner, and remove what an agent can finish now.';
+export const HAND_BACK_LEAD = 'The last message lists ';
 
 // Why the agent is sent back, or null, for a turn whose `aidrian pr auto-merge` run refused a pull request on a path.
 // `actions` is lib/transcript.mjs turnActions' result, or null with no transcript to read: { kind: 'gate', pr, path },
@@ -175,9 +175,10 @@ export function handBackReason({ message, human = 'the Human' }) {
   if (!unrated.length) return null;
   const [{ label, item }] = unrated;
   const quoted = item.length > 80 ? `${item.slice(0, 77)}...` : item;
-  return `The last message lists ${unrated.length === 1 ? 'an item' : `${unrated.length} items`} under "${label}" ` +
+  return `${HAND_BACK_LEAD}${unrated.length === 1 ? 'an item' : `${unrated.length} items`} under "${label}" ` +
     `without saying how critical ${unrated.length === 1 ? 'it is' : 'each is'} ("${quoted}"). ` +
-    `${HAND_BACK_MARK} Keep only real blocks, which only ${human} can clear, ` +
+    'Try each one first, through its owner, and remove what an agent can finish now. ' +
+    `Keep only real blocks, which only ${human} can clear, ` +
     'such as a permission, a credential, or a product decision. For each that stays, say what is needed, why no agent can do it, ' +
     'and how critical it is: blocking, high, medium, or low. Then end the turn again.';
 }

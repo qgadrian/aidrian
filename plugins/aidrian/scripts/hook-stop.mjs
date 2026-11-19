@@ -47,8 +47,8 @@ import { deny, runHook } from '../lib/hook-io.mjs';
 import { detectHost } from '../lib/hosts/index.mjs';
 import { findProject } from '../lib/project.mjs';
 import { continuation, stopMarkerPath, stopReminder } from '../lib/session-length.mjs';
-import { announcedWork, QUESTION_TOOL } from '../lib/stop-announce.mjs';
-import { HAND_BACK_MARK, handBack, MERGE_HAND_BACK_LEAD, mergeHandBack } from '../lib/stop-handback.mjs';
+import { ANNOUNCE_LEAD, announcedWork, QUESTION_TOOL } from '../lib/stop-announce.mjs';
+import { HAND_BACK_LEAD, handBack, MERGE_HAND_BACK_LEAD, mergeHandBack } from '../lib/stop-handback.mjs';
 import { REVIEW_LOOP_LEAD, reviewLoopOwed } from '../lib/stop-review-loop.mjs';
 import { readText, SENT_BACK, turnActions } from '../lib/transcript.mjs';
 
@@ -56,10 +56,10 @@ import { readText, SENT_BACK, turnActions } from '../lib/transcript.mjs';
 // transcript's own JSON escapes (lib/transcript.mjs gateVerdicts reads both).
 const GATE_REFUSAL = ['auto-merge off for #', '\\"reason\\":\\"paths\\"'];
 
-// The start of the announce check's reason (lib/stop-announce.mjs announceReason), by which its send-back is known.
-const ANNOUNCE_LEAD = 'The last message announces work and ends the turn without doing it';
-// What each check's send-back holds (sentBack).
-const MARKS = [ANNOUNCE_LEAD, REVIEW_LOOP_LEAD, MERGE_HAND_BACK_LEAD, HAND_BACK_MARK];
+// The start of each check's reason, by which its send-back is known (sentBack).
+const MARKS = [ANNOUNCE_LEAD, REVIEW_LOOP_LEAD, MERGE_HAND_BACK_LEAD, HAND_BACK_LEAD];
+// What the host writes before a hook's reason in a send-back: the hook's command in brackets (marked).
+const HOOK_PREFIX = /^\[.*?\]: /u;
 
 await runHook(async (input) => {
   const settled = input.stop_hook_active === false;
@@ -113,7 +113,7 @@ function checkReason(input, transcript, config, host) {
     [ANNOUNCE_LEAD, () => announcedWork(input, transcript, { ai: names.ai ?? host.ai, human: names.human, questionTool: host.nativeToolName(QUESTION_TOOL) })],
     [REVIEW_LOOP_LEAD, () => reviewLoopOwed(input, turn(), { reviewLoop, human: names.human })],
     [MERGE_HAND_BACK_LEAD, () => mergeHandBack(input, transcript, turn(), { human: names.human })],
-    [HAND_BACK_MARK, () => handBack(input, transcript, { human: names.human })],
+    [HAND_BACK_LEAD, () => handBack(input, transcript, { human: names.human })],
   ];
   for (const [mark, check] of checks) {
     const reason = spent.has(mark) ? null : check();
@@ -128,9 +128,19 @@ function checkReason(input, transcript, config, host) {
 // then in the transcript at the next stop, so it runs at most once a turn: nothing can loop.
 function sentBack(actions) {
   const texts = (actions ?? []).filter((action) => action?.kind === 'sent-back').map((action) => action.text);
-  const marked = (text) => MARKS.filter((mark) => text.includes(mark));
   if (!texts.length || !marked(texts.at(-1)).length) return null;
   return new Set(texts.flatMap(marked));
+}
+
+// The marks a send-back's text holds, each only as the start of a reason: at the start of a line, after `Stop hook
+// feedback:` on its first line and after the `[<command>]: ` the host writes before a hook's reason, when it does.
+// A mark inside a reason, as in a path the merge hand-back reason quotes or report text the hand-back reason quotes, is
+// data and marks nothing: each quotes it on the reason's one line.
+function marked(text) {
+  return text.split('\n').flatMap((line) => {
+    const reason = (line.startsWith(SENT_BACK) ? line.slice(SENT_BACK.length).trimStart() : line).replace(HOOK_PREFIX, '');
+    return MARKS.filter((mark) => reason.startsWith(mark));
+  });
 }
 
 // Whether this stop ends the session `id` so its terminal opens the background session it handed off to. The modules

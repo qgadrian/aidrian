@@ -1324,7 +1324,10 @@ The announce, review-loop, merge hand-back, and hand-back checks each send a tur
 Claude Code marks every stop after a turn's first send-back with `stop_hook_active: true`, and writes each send-back's
 reason into the transcript as a `user` entry marked `isMeta` whose text starts `Stop hook feedback:`
 (`lib/transcript.mjs` `turnActions`). On such a stop the hook runs the checks that have not sent the turn back yet,
-known by their reasons, when the turn's last send-back is one of theirs. So the stop that ends the continuation one check
+when the turn's last send-back is one of theirs. A send-back is a check's when a line of it starts with that check's
+reason's fixed opening, after `Stop hook feedback:` or the `[<command>]: ` the host writes before a reason, when it
+writes one. Text a reason quotes, such as a pull request's path or an item of the report, sits inside its one line,
+so it marks no check. So the stop that ends the continuation one check
 started still checks its report: after the review-loop check sends a direct run back to run `pr-review-loop`, a path
 refusal by `aidrian pr auto-merge` that the continuation's report leaves out is sent back, and so is an unrated item for
 the Human; after the announce check, a draft the continuation opens with no review is sent back.

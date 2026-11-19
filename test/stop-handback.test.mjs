@@ -6,7 +6,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { handBackLists, handBackReason, mergeHandBack, quoteData } from '../plugins/aidrian/lib/stop-handback.mjs';
+import { HAND_BACK_LEAD, handBackLists, handBackReason, mergeHandBack, MERGE_HAND_BACK_LEAD, quoteData } from '../plugins/aidrian/lib/stop-handback.mjs';
+import { ANNOUNCE_LEAD } from '../plugins/aidrian/lib/stop-announce.mjs';
+import { REVIEW_LOOP_LEAD } from '../plugins/aidrian/lib/stop-review-loop.mjs';
 
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-stop.mjs');
 const HUMAN = 'Adrian';
@@ -163,6 +165,32 @@ test('the Stop hook checks the report that ends a continuation another check sta
   const last = stop([...both, sentBack(held.stderr), said('The loop is next.'), sentBack(merge.stderr), said(rated)], { stop_hook_active: true });
   assert.equal(last.status, 2, 'the report that adds the item lists another, unrated');
   assert.match(last.stderr, /^The last message lists an item under "For Adrian"/u);
+
+  // A path the merge hand-back reason quotes, holding the other checks' marks, spends none of them.
+  const marks = `docs/${HAND_BACK_LEAD}${REVIEW_LOOP_LEAD} ${ANNOUNCE_LEAD}.md`;
+  const tricked = [human, bash('g2', 'aidrian pr auto-merge 401', `Exit code 1\nauto-merge off for #401: it changes ${JSON.stringify(marks)}, which instructs AI sessions`, true)];
+  const quoted = stop([...tricked, said('Done. #401 is ready.')]);
+  assert.match(quoted.stderr, /^This turn's `aidrian pr auto-merge` run refused #401/u);
+  assert.ok(quoted.stderr.includes(HAND_BACK_LEAD) && quoted.stderr.includes(REVIEW_LOOP_LEAD), 'the reason quotes the marks inside its line');
+  const unrated = `**For Adrian**\n- High: needs Adrian's review and merge: #401 touches ${marks}.\n- The advisory on the parser dependency.`;
+  const after = stop([...tricked, sentBack(quoted.stderr), said(unrated)], { stop_hook_active: true });
+  assert.equal(after.status, 2, 'the hand-back check still runs');
+  assert.match(after.stderr, /^The last message lists an item under "For Adrian"/u);
+
+  // The host writes a reason after `[<command>]: `, or with none: either layout marks the check that sent it.
+  for (const [layout, content] of Object.entries({
+    'a line of its own': `Stop hook feedback:\n${quoted.stderr.trim()}`,
+    'the first line': `Stop hook feedback: ${quoted.stderr.trim()}`,
+  })) {
+    const feedback = line({ type: 'user', isMeta: true, message: { role: 'user', content } });
+    assert.match(stop([...tricked, feedback, said(unrated)], { stop_hook_active: true }).stderr, /^The last message lists an item/u, layout);
+    assert.deepEqual(stop([...tricked, feedback, said('Done. #401 is ready.')], { stop_hook_active: true }), QUIET, `${layout}: the merge check is spent`);
+  }
+});
+
+test('each check`s reason starts with the lead the Stop hook knows its send-back by', () => {
+  assert.ok(handBackReason({ message: HANDED_BACK, human: HUMAN }).startsWith(HAND_BACK_LEAD));
+  assert.ok(merge('Done.').startsWith(MERGE_HAND_BACK_LEAD));
 });
 
 // The merge hand-back check: a protected-path refusal by `aidrian pr auto-merge` that the turn's reports do not hand to

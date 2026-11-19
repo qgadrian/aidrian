@@ -44,6 +44,9 @@ function announcePatterns(actor) {
 // What the Human still has to do before the work starts: "once the Human approves", "waits for the Human".
 const waitsOn = (human) => new RegExp(`\\b(?:once|after|when|if|until|wait(?:s|ing)?\\s+(?:for|on)|awaiting)\\s+(?:${human})(?![\\p{L}\\p{N}_])`, 'iu');
 
+// The start of announceReason's reason, by which the Stop hook knows its send-back in the transcript (hook-stop.mjs).
+export const ANNOUNCE_LEAD = 'The last message announces work and ends the turn without doing it';
+
 // Why the agent is sent back, or null. `message` is the final assistant message; `ai` and `human` the names config.json `names` gives (docs/config.md#names); `running`
 // whether a background task still runs, whose end wakes the main session on its own; `questionTool` what the host's
 // model calls the question tool (lib/hosts/ nativeToolName), for the reason to name.
@@ -56,7 +59,9 @@ export function announceReason({ message, ai = null, human = 'the Human', runnin
   // The earliest phrase is the one quoted back.
   const [match] = announcePatterns(actor).map((pattern) => pattern.exec(paragraph)).filter(Boolean).sort((a, b) => a.index - b.index);
   if (!match) return null;
-  return `The last message announces work and ends the turn without doing it ("${match[0]}"). ` +
+  // The phrase may span lines; quoted on one, no line of the reason starts with message text.
+  const phrase = match[0].replace(/\s+/gu, ' ');
+  return `${ANNOUNCE_LEAD} ("${phrase}"). ` +
     `Nothing wakes this session until ${human} writes again, so the announced work would not start. Do it now. ` +
     `If it needs a decision from ${human} first, ask with the question tool (${questionTool}) instead of announcing a default. ` +
     'If the message only reports work already done, or work that waits on something that wakes this session, ' +

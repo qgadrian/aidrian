@@ -12,7 +12,8 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { HOSTS } from '../plugins/aidrian/lib/hosts/index.mjs';
-import { BEGIN, commands, END, functionLines, install, rcBlock, WRAP_REFUSED, WRAP_REFUSED_SHELLS, wrapProblem, wrapsOf } from '../plugins/aidrian/lib/shell-init.mjs';
+import { SHELL_NAMES } from '../plugins/aidrian/lib/rules/shell-init-install.mjs';
+import { BEGIN, commands, END, functionLines, install, rcBlock, WRAP_REFUSED, wrapProblem, wrapsOf } from '../plugins/aidrian/lib/shell-init.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
 const START = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-session-start.mjs');
@@ -214,7 +215,7 @@ function sessionStart(t, env, { local = { handoff: { background: 'on' } }, hando
 
 // The session start's `Handoff terminal:` lines in `out`.
 const terminalLines = (out) => out.split('\n').filter((line) => line.startsWith('Handoff terminal:'));
-const PAST = (shell) => new RegExp(`^Handoff terminal: this session's \`claude\` was started past the aidrian shell function, such as by a launcher, an editor command, or a terminal opened before the function was installed, so this terminal will not switch at a background handoff\\. A new terminal settles the last\\. For a launcher on PATH that ends in \`exec claude\`, this session hands "the Human" \`! aidrian shell-init ${shell} --install --wrap <launcher>\`, with the launcher's own name in place of \`<launcher>\`, and never runs it itself, since it writes "the Human"'s shell startup file\\.$`, 'u');
+const PAST = (shell) => new RegExp(`^Handoff terminal: this session's \`claude\` was started past the aidrian shell function, such as by a launcher, an editor command, or a terminal opened before the function was installed, so this terminal will not switch at a background handoff\\. A new terminal settles the last\\. For a launcher on PATH that ends in \`exec claude\`, this session hands "the Human" \`! aidrian shell-init ${shell} --install --wrap <launcher>\`, with the launcher's own name in place of \`<launcher>\`, and never runs it itself, since it writes "the Human"'s shell startup file\\. A copy of the plugin older than this one refuses \`--wrap\` as an unknown option: the plugin is updated first, with \`claude plugin update aidrian@aidrian-harness\`\\.$`, 'u');
 const STALE_ZSH = /^Handoff terminal: the aidrian shell function block in .*\.zshrc differs from this plugin's, so a handoff may not replace the terminal as this version does\. This session hands "the Human" the command `! aidrian shell-init zsh --install`, which replaces the block, and never runs it or edits the file itself\.$/u;
 const staleBlock = (shell) => rcBlock(shell).replace('|| rc=$?', '; rc=$?');
 
@@ -382,9 +383,11 @@ test('wrapProblem refuses the functions a shell runs as hooks, any TRAP or zle- 
 });
 
 test('a shell\'s own name is refused as a wrapped launcher, and --install --wrap zsh exits 2 and writes nothing', (t) => {
-  const shells = ['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'fish', 'tcsh', 'csh'];
-  assert.deepEqual([...WRAP_REFUSED_SHELLS].sort(), [...shells].sort());
-  for (const name of shells) assert.match(wrapProblem(name) ?? '', /shell's own name/u, name);
+  // The one list of shell names the install rule reads too, each refused: the shells the rule's walk reads, and those it
+  // treats as a program that runs a string it is given.
+  const shells = ['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'fish', 'tcsh', 'csh', 'yash', 'nu', 'elvish', 'xonsh', 'pwsh', 'powershell'];
+  assert.deepEqual([...SHELL_NAMES].sort(), [...shells].sort());
+  for (const name of SHELL_NAMES) assert.match(wrapProblem(name) ?? '', /shell's own name/u, name);
   for (const name of ['zsh-work', 'bashful', 'shx']) assert.equal(wrapProblem(name), null, `${name}: only the exact names are refused`);
 
   const home = folder(t, 'aidrian-home-');

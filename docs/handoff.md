@@ -350,8 +350,9 @@ to another folder falls back to the clear route with that reason; committing `st
    ends, before the same words ([Replacing the terminal](#replacing-the-terminal)).
    In `auto` mode, a session a Human attends that the function did not start, as with a launcher, an editor command,
    or a terminal opened before `aidrian shell-init <shell> --install` wrote the function, adds one line on why its
-   terminal stays: start the next session in a new terminal, with a launcher wrapped by `--install --wrap` when one
-   starts it.
+   terminal stays: start the next session in a new terminal. For a launcher on PATH that ends in `exec` of the host's
+   program, the line gives the whole command the Human runs once, `aidrian shell-init zsh --install --wrap <launcher>`
+   (or bash), with the launcher's own name in place of `<launcher>`, so a session that launcher starts follows too.
    The skill tells the Human that line and ends the turn; the old session does nothing more.
 7. A prompt in the old session in the next 24 hours adds one line that names the background session that owns the
    work, so the old session does not take up the same work unasked.
@@ -495,14 +496,17 @@ each name, `function claude-work`, whose first run is `command claude-work "$@"`
 alias check that accepts an alias whose value starts with `claude-work` or `claude`. Every later hop opens with
 `command claude attach <id>`, in the shell's own environment, never through the launcher. A name is 1 to 32 letters,
 digits, `_`, or `-`, starting with a letter. The command refuses a host's own program, such as `claude`; a shell's own
-name, `sh`, `bash`, `zsh`, `dash`, `ksh`, `mksh`, `fish`, `tcsh`, or `csh`, since its function would run the host's
+name, `sh`, `bash`, `zsh`, `dash`, `ksh`, `mksh`, `fish`, `csh`, `tcsh`, `yash`, `nu`, `elvish`, `xonsh`, `pwsh`, or
+`powershell`, the same list the `shell-init-install` Bash rule reads, since its function would run the host's
 attach flow each time that shell exits; every reserved
 word and builtin of zsh and bash, such as `if`, `local`, `trap`, `setopt`, or `mapfile`, from a fixed list, so no shell
 runs at install; a function a shell runs by its name as a hook, such as `preexec`, `precmd`, `chpwd`, or
 `command_not_found_handler`, and any name that starts with `TRAP` or `zle-`; a core tool the block runs or a function
-would shadow, such as `rm`, `date`, or `od`; and a ninth name in one block. A refusal exits 2, writes nothing, and names
-the refused `--wrap` by its position, never its value; `--wrap` without `--install` exits 2 too. The block records its
-names on its third line, `# Wrapped launchers: claude-play claude-work`, sorted.
+would shadow, such as `rm`, `date`, or `od`; and a ninth name in one block. Such a refusal exits 2, writes nothing, and
+names the refused `--wrap` by its position, never its value; `--wrap` without `--install` exits 2 too. A `--wrap` with
+no value, or one whose value starts with `-`, such as `--wrap -x`, is refused before that, by the argument parser: it
+exits 1, writes nothing, and prints the usage and the parser's own message, which never repeats the value.
+The block records its names on its third line, `# Wrapped launchers: claude-play claude-work`, sorted.
 A re-install keeps them, and a later `--wrap` adds to them and never drops one; to wrap fewer, `--uninstall`, then
 `--install` with a `--wrap` for each name to keep.
 `--uninstall` removes them with the block. A record line the command did not write, such as one naming `claude`, counts
@@ -534,7 +538,8 @@ It runs only where every switch of the background route is on, and `session.hand
    session was started past the function, such as by a launcher, an editor command, or a terminal opened before the
    install. The line names all three, since the session start reads no process to tell them apart; says a new
    terminal settles the last; and names `aidrian shell-init <shell> --install --wrap <launcher>` for a launcher on PATH
-   that ends in `exec claude`.
+   that ends in `exec claude`, after updating a copy of the plugin older than this one, which refuses `--wrap` as an
+   unknown option, with the host's update command.
 2. When the turn ends, the Stop hook takes that request, once, within 30 minutes. It checks the request again against
    its own environment: the shell's pid, the host process, a Human attending, and no unattended mark. Then it writes the
    shell's record, valid for 60 seconds, notes in the store, `follow-<new session>.json`, that the shell's terminal now

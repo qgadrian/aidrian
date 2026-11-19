@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import test from 'node:test';
 
-import { check, REASON } from '../plugins/aidrian/lib/rules/shell-init-install.mjs';
+import { check, REASON, SHELL_NAMES } from '../plugins/aidrian/lib/rules/shell-init-install.mjs';
 
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-bash.mjs');
 const deny = (command) => assert.equal(check(command), REASON, `expected deny: ${command}`);
@@ -42,6 +42,16 @@ test('denies the command carried by a program that runs its arguments or a strin
   allow('xargs -n1 echo < files');
   allow('find . -name "*.md" -exec grep -l "shell-init zsh --install" {} +');
   allow("watch 'aidrian shell-init zsh'");
+});
+
+test('each shell of the shared list runs the command in its -c string, and a shell the walk does not read carries its text', () => {
+  const walked = ['sh', 'bash', 'zsh', 'dash', 'ksh'];
+  for (const shell of SHELL_NAMES) {
+    deny(`${shell} -c 'aidrian shell-init zsh --install'`);
+    const printed = `${shell} -c 'echo aidrian shell-init zsh --install'`;
+    if (walked.includes(shell)) allow(printed);
+    else deny(printed);
+  }
 });
 
 test('allows printing the function, other aidrian commands, and text that only names the command', () => {

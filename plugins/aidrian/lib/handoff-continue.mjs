@@ -425,7 +425,7 @@ function safely(act) {
 }
 
 // Why the terminal did not switch, for a session its shell's function did not start (docs/handoff.md#replacing-the-terminal).
-export const UNHOOKED = 'This terminal stays on this session because the aidrian shell function did not start it, as with a launcher, an editor command, or a terminal opened before `aidrian shell-init zsh --install` (or bash) wrote the function; start the next session in a new terminal, with a launcher wrapped by `--install --wrap` when one starts it, and its handoff switches the terminal.';
+export const UNHOOKED = 'This terminal stays on this session because the aidrian shell function did not start it, as with a launcher, an editor command, or a terminal opened before `aidrian shell-init zsh --install` (or bash) wrote the function; start the next session in a new terminal, and its handoff switches the terminal. For a launcher on PATH that ends in `exec` of the host\'s program, the Human runs `aidrian shell-init zsh --install --wrap <launcher>` (or bash) once, with the launcher\'s own name in place of `<launcher>`, and a session the launcher starts follows too.';
 
 // The lines of a background start, `marker` as noteStarted records it. The say line ends on what becomes of this session,
 // as `ending` (handTerminal) says: `switch`, its terminal switches to the new one once the turn ends, with nothing to

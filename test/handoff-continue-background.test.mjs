@@ -1133,7 +1133,7 @@ test('in auto mode, an attended session its shell function did not start says wh
 });
 
 test('the line on why the terminal stays names each way past the shell function, and the launcher wrap', () => {
-  for (const words of ['a launcher', 'an editor command', 'a terminal opened before `aidrian shell-init zsh --install`', '`--install --wrap`', 'start the next session in a new terminal']) {
+  for (const words of ['a launcher', 'an editor command', 'a terminal opened before `aidrian shell-init zsh --install`', '`aidrian shell-init zsh --install --wrap <launcher>` (or bash)', 'the launcher\'s own name in place of `<launcher>`', 'start the next session in a new terminal']) {
     assert.ok(UNHOOKED.includes(words), words);
   }
   assert.doesNotMatch(UNHOOKED, /had not loaded|reloading/u);

@@ -11,11 +11,14 @@
 // in `exec` of the host's program. A name is untrusted text that becomes shell code, so wrapProblem checks it on every
 // path to the block: 1 to 32 letters, digits, `_`, or `-`, starting with a letter; not a host's own program; not in
 // WRAP_REFUSED, every reserved word and builtin of zsh and bash, the functions a shell runs as hooks, and core tools;
-// not in WRAP_REFUSED_SHELLS, a shell's own name, such as `zsh`; not starting with `TRAP` or `zle-`; at most MAX_WRAPS
+// not in SHELL_NAMES, a shell's own name, such as `zsh`; not starting with `TRAP` or `zle-`; at most MAX_WRAPS
 // in one block. The block records its names on its third line,
 // `# Wrapped launchers: <names>`, sorted and space-separated, so a re-install keeps them and a later `--wrap` adds to them.
 // A shell function of a wrapped name that the shell already has when it reads the block, other than the block's own
 // wrapper, stays: no fixed list knows the hooks a Human's setup defines, so the block checks (wrapGuard).
+// The file holds four parts, the wrap names it accepts, the shell code, the install and uninstall of the startup file,
+// and the session start's line, past the usual length: each writes, reads, or checks the one block format, so the
+// format's contract stays in one file.
 
 import { randomBytes } from 'node:crypto';
 import { appendFileSync, chmodSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -24,6 +27,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { HOSTS } from './hosts/index.mjs';
+import { SHELL_NAMES } from './rules/shell-init-install.mjs';
 import { FOLLOWS_PREFIX, NAME_BYTES, NEXT_MARGIN, NEXT_WINDOW, OPEN_ID, replacer, shellPid, SHELL_VAR, TERMINAL_FOLDER } from './terminal-replace.mjs';
 
 export const SHELLS = ['zsh', 'bash'];
@@ -73,14 +77,13 @@ export const WRAP_REFUSED = Object.freeze([...new Set([
 ])]);
 // The prefixes of the names zsh runs as hooks too: a trap, `TRAPZERR`, and a widget of the line editor, `zle-line-init`.
 export const WRAP_REFUSED_PREFIX = /^(?:TRAP|zle-)/u;
-// The shells' own names: a function of such a name would run the host's attach flow each time that shell exits.
-export const WRAP_REFUSED_SHELLS = Object.freeze(['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'fish', 'tcsh', 'csh']);
 
 // Why `name` cannot be a wrapped launcher, or null when it can. The reason never repeats the name.
 export function wrapProblem(name) {
   if (typeof name !== 'string' || !WRAP_SHAPE.test(name)) return 'is not 1 to 32 letters, digits, `_`, or `-` that start with a letter';
   if (HOSTS.map(replacer).some((replace) => replace?.program === name)) return 'is a host\'s own program, which the block already wraps';
-  if (WRAP_REFUSED_SHELLS.includes(name)) return 'is a shell\'s own name, which the block would replace with a function that runs the host\'s attach flow after that shell exits';
+  // A function of a shell's own name would run the host's attach flow each time that shell exits.
+  if (SHELL_NAMES.includes(name)) return 'is a shell\'s own name, which the block would replace with a function that runs the host\'s attach flow after that shell exits';
   if (WRAP_REFUSED.includes(name) || WRAP_REFUSED_PREFIX.test(name)) return 'is a reserved word or builtin of zsh or bash, a function a shell runs as a hook, or a core tool the block runs or a function of that name would shadow';
   return null;
 }
@@ -96,6 +99,8 @@ export function functionLines(shell, hosts = HOSTS, wraps = []) {
   }
   const own = replacers.flatMap(({ program, attach }) => [...shellFunction(shell, program, program, attach), ...aliasCheck(program, program)]);
   if (wraps.length === 0) return own;
+  // SHORTCUT: a wrap runs the one host's program, as wrapNote names it, which is enough while one host declares
+  // replaceTerminal. A second host would need a wrap record that names each launcher's host program.
   if (replacers.length !== 1) throw new Error(`a wrapped launcher needs exactly one host that replaces a terminal, not ${replacers.length}`);
   const refused = wraps.findIndex((name) => wrapProblem(name) !== null);
   if (refused !== -1) throw new Error(`--wrap name ${refused + 1} of ${wraps.length} ${wrapProblem(wraps[refused])}`);
@@ -413,7 +418,7 @@ export function terminalLine({ host, background, handoff, env = process.env, hum
   if (handoff?.mode !== 'auto' || handoff?.continue !== 'background') return null;
   if (shellPid(env) !== null || !replace.attended(env)) return null;
   const holder = files.find(({ current }) => current);
-  return holder ? pastLine(replace.program, holder.shell, human) : installLine(replace, human);
+  return holder ? pastLine(replace, holder.shell, human) : installLine(replace, human);
 }
 
 // The line for the startup files `stale` names, { shell, file } each: one file keeps the singular wording.
@@ -431,21 +436,26 @@ function staleLine(stale, human) {
 
 // The current block is installed, yet the function did not start the session: a launcher, an editor command, or a
 // terminal opened before the install started it. A launcher on PATH opts in with `--wrap`; the session cannot tell
-// which of the three it was without reading processes, so the line names all three.
-function pastLine(program, shell, human) {
+// which of the three it was without reading processes, so the line names all three. A copy of the plugin older than this
+// one, first on PATH, refuses `--wrap`, so the line says to update it first.
+function pastLine(replace, shell, human) {
+  const { program } = replace;
   return `Handoff terminal: this session's \`${program}\` was started past the aidrian shell function, such as by a launcher, an editor command, or a terminal opened before the function was installed, so this terminal will not switch at a background handoff. ` +
     `A new terminal settles the last. For a launcher on PATH that ends in \`exec ${program}\`, this session hands ${human} ${handCommand(shell, '--install --wrap <launcher>')}, ` +
-    `with the launcher's own name in place of \`<launcher>\`, and never runs it itself, since it writes ${human}'s shell startup file.`;
+    `with the launcher's own name in place of \`<launcher>\`, and never runs it itself, since it writes ${human}'s shell startup file. ` +
+    `A copy of the plugin older than this one refuses \`--wrap\` as an unknown option: the plugin is updated first${updateWith(replace)}.`;
 }
 
 // No startup file holds a block: the install command for either shell, after an update when the copy is older.
 function installLine(replace, human) {
-  const update = typeof replace.updateCommand === 'string' ? `, with \`${replace.updateCommand}\`` : '';
   return `Handoff terminal: this machine's background handoff route is on, but the aidrian shell function did not start this session's \`${replace.program}\`, ` +
     `so after a background handoff this terminal stays on the old session beside the new one. For it to follow, this session hands ${human} ` +
     `${handCommand('zsh')}, or ${handCommand('bash')} for bash, to run once before opening a new terminal, and never runs it itself, since it writes ${human}'s shell startup file. ` +
-    `A copy of the plugin older than this one answers \`unknown command: shell-init\`: the plugin is updated first${update}.`;
+    `A copy of the plugin older than this one answers \`unknown command: shell-init\`: the plugin is updated first${updateWith(replace)}.`;
 }
+
+// The host's update command, as the end of a sentence that says to update the plugin, or nothing when it declares none.
+const updateWith = (replace) => (typeof replace.updateCommand === 'string' ? `, with \`${replace.updateCommand}\`` : '');
 
 export const commands = {
   'shell-init': {

@@ -457,10 +457,16 @@ const DECISIONS = new Set(['approved', 'changes_requested', 'review_required']);
 const CHECKS = ['passed', 'failed', 'pending', 'skipped'];
 const isCount = (value) => Number.isSafeInteger(value) && value >= 0;
 const isText = (value) => typeof value === 'string' && value.length <= PATH_MAX_BYTES;
+// A row's `closes`: absent, as a cache an older plugin wrote holds it, or at most MAX_CLOSES entries, each a forge's own
+// issue number `#<n>` or a tracker-shaped key, so a tampered cache names no other text.
+const MAX_CLOSES = 10;
+const CLOSES_ENTRY = /^(?:#[1-9][0-9]{0,9}|[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9})$/u;
+const isCloses = (row) => !Object.hasOwn(row, 'closes')
+  || (Array.isArray(row.closes) && row.closes.length <= MAX_CLOSES && row.closes.every((entry) => typeof entry === 'string' && CLOSES_ENTRY.test(entry)));
 
 // Whether `row` has the forge-neutral shape of a change request (docs/providers/adding-a-host.md#adding-a-forge), as a
 // row the forge answers, or a cached one, must before it is shown.
-export const isChangeRow = (row) => row !== null && typeof row === 'object' && isText(row.forge) && isText(row.host) && isText(row.repo)
+export const isChangeRow = (row) => row !== null && typeof row === 'object' && isCloses(row) && isText(row.forge) && isText(row.host) && isText(row.repo)
   && Number.isSafeInteger(row.number) && row.number > 0 && isText(row.title) && (row.url === null || isText(row.url))
   && typeof row.isDraft === 'boolean' && STATES.has(row.state) && [true, false, null].includes(row.mergeable)
   && (row.reviewDecision === null || DECISIONS.has(row.reviewDecision)) && isCount(row.unresolvedThreads)

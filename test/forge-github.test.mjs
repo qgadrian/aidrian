@@ -12,6 +12,7 @@ import * as facade from '../plugins/aidrian/lib/forges/index.mjs';
 import { forgeFor } from '../plugins/aidrian/lib/forges/index.mjs';
 import { isRefName } from '../plugins/aidrian/lib/git.mjs';
 import { computeVerdict } from '../plugins/aidrian/lib/pr-checks.mjs';
+import { isChangeRow } from '../plugins/aidrian/lib/session-prs.mjs';
 import * as reviewState from '../plugins/aidrian/lib/review/state.mjs';
 import { listForge, openPrBodies } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
 import { viewForge, viewPrAt } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
@@ -879,7 +880,9 @@ test('runGh hands a request body to a real gh child on its stdin, and gives a ca
 // changesState's batched read. test/fixtures/forges/github/changes-state.json records one answer GitHub gave to it,
 // read-only, against public repositories, on 2026-11-18, with the query that ranks by viewerDidAuthor and
 // authorAssociation and reads no root field: gh exited 1 on it, since one alias did not resolve. It was recorded before
-// the query asked for pageInfo, so its pages hold none and read as whole.
+// the query asked for pageInfo, so its pages hold none and read as whole. It also predates bodyText and
+// closingIssuesReferences, so its rows give `closes: []`; the closes tests replay hand-built nodes for those two fields,
+// which a read-only call on github.com answered on 2026-11-19.
 const RECORDED = JSON.parse(readFileSync(new URL('./fixtures/forges/github/changes-state.json', import.meta.url), 'utf8'));
 const replay = (answer, status = 0) => recorded(() => {
   if (status === 0) return JSON.stringify(answer);
@@ -905,6 +908,11 @@ test('changesState sends one query operation, its aliases from indexes, every va
   assert.equal(query, bodyOf(plain).query, 'the query text is the same whatever the values');
   assert.match(query, /^query changes\(/u);
   assert.doesNotMatch(query, /mutation|@\/etc|\{owner\}|x"\)/u);
+  // The closing references and the body text are read in the same operation: one `query changes(`, no other operation.
+  assert.equal(query.match(/\bquery\b/gu).length, 1, 'one operation');
+  assert.equal(query.match(/query changes\(/gu).length, 1);
+  assert.match(query, /\bbodyText\b/u);
+  assert.match(query, /\bclosingIssuesReferences\(first: 10\) \{ nodes \{ number repository \{ name owner \{ login \} \} \} \}/u);
   // The ranking's fields, read on each pull request, and no root field: a non-null root one a token cannot resolve, such
   // as an app installation token's viewer, would null the whole answer.
   assert.match(query, /\bviewerDidAuthor\b/u);
@@ -955,7 +963,8 @@ test('changesState on recorded answers: a branch with none gives no row, a numbe
   assert.equal(rows[4], null, 'a null alias gives no row; the others still come');
   assert.ok(RECORDED.answer.errors.length > 0 && RECORDED.status !== 0, 'gh exited non-zero on an answer that holds errors');
   for (const each of rows.filter(Boolean)) {
-    assert.deepEqual(Object.keys(each), ['forge', 'host', 'repo', 'number', 'title', 'url', 'isDraft', 'state', 'mergeable', 'reviewDecision', 'unresolvedThreads', 'checks']);
+    assert.deepEqual(Object.keys(each), ['forge', 'host', 'repo', 'number', 'title', 'url', 'isDraft', 'state', 'mergeable', 'reviewDecision', 'unresolvedThreads', 'checks', 'closes']);
+    assert.deepEqual(each.closes, [], 'the recorded answer predates bodyText and closingIssuesReferences');
     assert.ok(!JSON.stringify(each).includes('Could not resolve'), 'no error text');
   }
 });
@@ -1057,7 +1066,7 @@ test('changesState fills the forge-neutral row: its values, and every check coun
   const row = one({ ...PR_NODE, repository: { name: 'notes', owner: { login: 'Acme' } }, url: 'https://github.com/Acme/notes/pull/7', commits: { nodes: [{ commit: { statusCheckRollup: { contexts: rollup } } }] } });
   assert.deepEqual(row, {
     forge: 'github', host: 'github.com', repo: 'acme/notes', number: 7, title: 'Add notes', url: 'https://github.com/Acme/notes/pull/7', isDraft: true,
-    state: 'open', mergeable: false, reviewDecision: 'changes_requested', unresolvedThreads: 2, checks: { passed: 121, failed: 5, pending: 18, skipped: 7 },
+    state: 'open', mergeable: false, reviewDecision: 'changes_requested', unresolvedThreads: 2, checks: { passed: 121, failed: 5, pending: 18, skipped: 7 }, closes: [],
   });
   assert.equal(Object.values(row.checks).reduce((sum, n) => sum + n, 0), 151, 'a pull request with more than 100 checks is counted whole');
   const states = [['MERGED', 'MERGEABLE', 'APPROVED'], ['CLOSED', 'UNKNOWN', 'REVIEW_REQUIRED'], ['OPEN', null, null]];
@@ -1077,6 +1086,88 @@ test('changesState: url is built from what GitHub answered, and GitHub`s own kep
     assert.equal(one({ ...PR_NODE, repository }), null, JSON.stringify(repository));
   }
   assert.equal(one({ ...PR_NODE, state: 'DRAFT' }), null, 'a state outside open, closed, and merged');
+});
+
+const closing = (...pairs) => ({ nodes: pairs.map(([path, number]) => ({ number, repository: { name: path.split('/')[1], owner: { login: path.split('/')[0] } } })) });
+// One pull request whose author belongs to the repository, so its body's keys count (closesOf), through changesState; every
+// row it gives passes the row check shared code applies (isChangeRow), so the adapter's bounds and the check's stay in step.
+const keyed = (fields) => {
+  const row = one({ ...PR_NODE, authorAssociation: 'MEMBER', ...fields });
+  assert.ok(isChangeRow(row), `the row check takes what the adapter gives: ${JSON.stringify(row.closes)}`);
+  return row;
+};
+
+test('changesState: closes holds the forge`s closing references of the pull request`s own repository, then the keys after a closing keyword', () => {
+  const row = keyed({ closingIssuesReferences: closing(['acme/notes', 12], ['other/repo', 5]), bodyText: 'Fixes ABC-12 and closes: xy-3. See DEF-9. Resolved  GH-4x' });
+  assert.deepEqual(row.closes, ['#12', 'ABC-12', 'xy-3']);
+  assert.deepEqual(keyed({ closingIssuesReferences: closing(['ACME/Notes', 12]) }).closes, ['#12'], 'the own repository, ignoring letter case');
+  const words = ['close', 'closes', 'closed', 'fix', 'fixes', 'fixed', 'resolve', 'resolves', 'resolved', 'FIXES', 'Closed'];
+  for (const word of words) assert.deepEqual(keyed({ bodyText: `${word} ABC-1` }).closes, ['ABC-1'], word);
+  assert.deepEqual(keyed({ bodyText: 'Fixes:\tABC-1\nfixed        ABC-2' }).closes, ['ABC-1', 'ABC-2'], 'a colon, a tab, and up to 8 spaces');
+  for (const bodyText of ['Fixes         ABC-1', 'Fixes\nABC-1', 'Fixes ABC-1', 'Fixing ABC-1', 'Refs ABC-1', 'unresolved ABC-1', 'Fixes 1BC-1', 'Fixes ABCDEFGHIJKLMNOPQ-1']) {
+    assert.deepEqual(keyed({ bodyText }).closes, [], JSON.stringify(bodyText));
+  }
+  assert.ok(!JSON.stringify(row).includes('See DEF-9'), 'no body text in the row');
+  assert.ok(!('bodyText' in row) && !('closingIssuesReferences' in row));
+});
+
+test('changesState: the body`s keys count only from the token`s user or a member of the repository; GitHub`s own references from anyone', () => {
+  const fields = { closingIssuesReferences: closing(['acme/notes', 12]), bodyText: 'Fixes ABC-1' };
+  for (const authorAssociation of ['OWNER', 'MEMBER', 'COLLABORATOR']) {
+    assert.deepEqual(keyed({ ...fields, authorAssociation }).closes, ['#12', 'ABC-1'], authorAssociation);
+  }
+  assert.deepEqual(keyed({ ...fields, authorAssociation: 'NONE', viewerDidAuthor: true }).closes, ['#12', 'ABC-1'], 'the token`s user`s own');
+  const outsiders = [
+    { authorAssociation: 'NONE' }, { authorAssociation: 'CONTRIBUTOR' }, { authorAssociation: 'FIRST_TIME_CONTRIBUTOR' }, { authorAssociation: 'FIRST_TIMER' },
+    { authorAssociation: 'MANNEQUIN' }, { authorAssociation: 'member' }, { authorAssociation: null }, { authorAssociation: undefined },
+    { authorAssociation: 'NONE', viewerDidAuthor: 'true' }, { authorAssociation: 'NONE', viewerDidAuthor: 1 },
+  ];
+  for (const author of outsiders) assert.deepEqual(keyed({ ...fields, ...author }).closes, ['#12'], `an outsider: ${JSON.stringify(author)}`);
+  assert.deepEqual(keyed({ bodyText: 'Fixes ABC-1', authorAssociation: 'NONE' }).closes, [], 'an outsider`s "Fixes ABC-1" gives no key');
+  assert.deepEqual(keyed({ bodyText: 'Fixes ABC-1', authorAssociation: 'MEMBER' }).closes, ['ABC-1'], 'a member`s gives ABC-1');
+});
+
+test('changesState: closes is bounded', () => {
+  const many = Array.from({ length: 30 }, (_, i) => `Fixes ABC-${i + 1}`).join('\n');
+  assert.deepEqual(keyed({ bodyText: many }).closes, Array.from({ length: 10 }, (_, i) => `ABC-${i + 1}`), '30 keyworded keys give 10');
+  const refs = closing(...Array.from({ length: 10 }, (_, i) => ['acme/notes', i + 1]));
+  assert.deepEqual(keyed({ closingIssuesReferences: refs, bodyText: 'Fixes ABC-1' }).closes, Array.from({ length: 10 }, (_, i) => `#${i + 1}`), 'references first, 10 in all');
+  assert.deepEqual(keyed({ closingIssuesReferences: closing(['acme/notes', 4], ['acme/notes', 4]), bodyText: 'Fixes ABC-12. Closes ABC-12' }).closes, ['#4', 'ABC-12'], 'a repeat once');
+  // The longest shapes the adapter keeps are the longest the row check takes: GraphQL's largest Int as a number, and a key
+  // of 16 characters before its `-` and 9 digits after it, 10 of them at once.
+  const longest = Array.from({ length: 9 }, (_, i) => `Fixes ${String.fromCharCode(65 + i)}${'b'.repeat(15)}-${'9'.repeat(9)}`).join('\n');
+  assert.deepEqual(keyed({ closingIssuesReferences: closing(['acme/notes', 2_147_483_647]), bodyText: longest }).closes,
+    ['#2147483647', ...Array.from({ length: 9 }, (_, i) => `${String.fromCharCode(65 + i)}${'b'.repeat(15)}-${'9'.repeat(9)}`)], 'the longest shapes, 10 in all');
+  const none = [
+    { closingIssuesReferences: null }, {}, { closingIssuesReferences: { nodes: null } }, { closingIssuesReferences: { nodes: [{ number: 3 }, null, { number: 3, repository: null }] } },
+    { closingIssuesReferences: closing(['acme/notes', 0], ['acme/notes', -2], ['acme/notes', 1.5], ['acme/notes', '7'], ['acme/notes', 2_147_483_648], ['acme/notes', 12_345_678_901]) },
+    { bodyText: null }, { bodyText: 42 }, { bodyText: ['Fixes ABC-1'] }, { bodyText: { toString: () => 'Fixes ABC-1' } },
+    { bodyText: 'prefixes ABC-12' }, { bodyText: 'Fixes ABC-12345678901' }, { bodyText: 'Fixes ABC-0x1' },
+  ];
+  for (const fields of none) assert.deepEqual(keyed(fields).closes, [], JSON.stringify(fields));
+  assert.deepEqual(keyed({ bodyText: 'Fixes ABC-12, ABC-13' }).closes, ['ABC-12'], 'each key needs its own keyword');
+  assert.deepEqual(keyed({ bodyText: `${' '.repeat(65_536 - 10)}Fixes ABC-1 Fixes ABC-2` }).closes, [], 'only the first 65,536 characters are read');
+  assert.deepEqual(keyed({ bodyText: `${' '.repeat(65_536 - 11)}Fixes ABC-1` }).closes, ['ABC-1'], 'a key that ends at the end of a body of the limit`s length is read');
+  // A longer body is cut at the limit, and a key that ends at the cut may be the start of a longer one: it is dropped.
+  const cut = `${' '.repeat(65_537 - 12)}Fixes ABC-12`;
+  assert.equal(cut.length, 65_537);
+  assert.deepEqual(keyed({ bodyText: cut }).closes, [], 'no ABC-1 from a cut ABC-12');
+  assert.deepEqual(keyed({ bodyText: `Fixes ABC-3 ${cut.slice(12)}` }).closes, ['ABC-3'], 'the keys before the cut still count');
+  const started = process.hrtime.bigint();
+  const bodies = [
+    `${'fixes '.repeat(10_922)}fix`, `Fixes ${'A1'.repeat(32_000)}`, 'a'.repeat(65_536), 'a'.repeat(70_000), `Fixes ${'a'.repeat(65_530)}`, `Fixes${' '.repeat(65_531)}`,
+    `Fixes:${'\t'.repeat(65_530)}`, `Fixes A-${'1'.repeat(65_528)}`, `Fixes ${'a'.repeat(32_000)}-${'1'.repeat(32_000)}`, 'a-'.repeat(32_768), 'fix a'.repeat(13_107),
+  ];
+  for (const bodyText of bodies) keyed({ bodyText });
+  assert.ok(Number(process.hrtime.bigint() - started) / 1e6 < 500, 'the scan stays linear on a body built to backtrack');
+});
+
+test('changesState: no hidden character of a body reaches closes', () => {
+  const hostile = '\u001b]52;c;eA==\u0007\u001b[2J‮‏​⁠﻿\u{E0041}\u0085 ';
+  const bodyText = [`Fixes ${hostile}ABC-1`, `Fixes AB${hostile}C-2`, `Fixes ABC-${hostile}3`, `Fixes ABC-4${hostile}`, `${hostile}closes DEF-5`, `Fixes ſBC-6`, `Fixes KBC-7`, `Fixes ＡBC-8`].join('\n');
+  const row = keyed({ bodyText, closingIssuesReferences: { nodes: [{ number: 9, repository: { name: `notes${hostile}`, owner: { login: 'acme' } } }] } });
+  assert.deepEqual(row.closes, ['ABC-4', 'DEF-5']);
+  for (const entry of row.closes) assert.match(entry, /^(?:#[1-9][0-9]{0,9}|[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9})$/u);
 });
 
 test('changesState: an answer that does not parse, or holds no data, throws; so does a gh that stopped with no answer', () => {

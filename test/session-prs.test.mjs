@@ -175,6 +175,22 @@ test('resolveChanges sends the refs in one batched read, and rows of one pull re
   assert.deepEqual(resolveChanges(createGithubForge({ cwd: ROOT, run: () => '{"data":{"r0":{"pullRequests":{"nodes":[]},"parent":null}}}' }), refs.slice(2)), [], 'a branch with none: no row');
 });
 
+test('isChangeRow takes a row with no closes or a valid one, and refuses any other', () => {
+  const base = {
+    forge: 'github', host: 'github.com', repo: 'acme/notes', number: 7, title: 'Add notes', url: null, isDraft: false, state: 'open', mergeable: null,
+    reviewDecision: null, unresolvedThreads: 0, checks: { passed: 0, failed: 0, pending: 0, skipped: 0 },
+  };
+  assert.ok(isChangeRow(base), 'no closes: a cache an older plugin wrote');
+  assert.ok(isChangeRow({ ...base, closes: [] }));
+  assert.ok(isChangeRow({ ...base, closes: ['#12', 'ABC-12'] }));
+  assert.ok(isChangeRow({ ...base, closes: ['#9999999999', `A${'b'.repeat(15)}-123456789`, ...Array.from({ length: 8 }, (_, i) => `xy-${i}`)] }), '10 entries at the longest shapes');
+  const refused = [
+    Array.from({ length: 11 }, (_, i) => `ABC-${i + 1}`), ['ABC-12‮'], [`A${'b'.repeat(29)}-1234567890`], ['#0'], ['#12345678901'], ['#01'], ['ABC-1234567890'],
+    ['1BC-1'], ['ABC12'], ['abc-'], [''], [42], [null], [['ABC-1']], 42, 'ABC-12', null, { 0: 'ABC-12', length: 1 },
+  ];
+  for (const closes of refused) assert.equal(isChangeRow({ ...base, closes }), false, JSON.stringify(closes));
+});
+
 test('a reused branch resolves as its newest row`s call did: a touched one to the open pull request, as gh looks it up; a pushed one to the user`s own', () => {
   const node = (number, state, createdAt, mine) => ({
     number, title: `t${number}`, url: `https://github.com/acme/notes/pull/${number}`, isDraft: false, state, mergeable: 'MERGEABLE', reviewDecision: null,

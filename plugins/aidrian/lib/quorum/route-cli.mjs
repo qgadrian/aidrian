@@ -6,7 +6,9 @@ import { parseArgs } from 'node:util';
 
 import { commandConfig } from '../config.mjs';
 import { answers as reversibleAnswers, resolveQuestion, reversibleProblem } from '../decisions-cli.mjs';
+import { sessionIdentity } from '../hosts/index.mjs';
 import { projectAt } from '../project.mjs';
+import { issueHeld, readUnattendedMark } from '../unattended-mark.mjs';
 import { reader, shown } from './citations.mjs';
 import { modeOf } from './ledger.mjs';
 import { checkProductLedger, productStops } from './product-check.mjs';
@@ -19,9 +21,23 @@ const LEDGER_TAKES_NO = ['class', 'reversible', 'hard', 'doc', 'runs'];
 const ROUTE_USAGE = 'route --domain D --class C [--reversible A,B,C,D] [--hard A,B,C,D,E] [--doc PATH]... [--runs N] | route --ledger LEDGER --domain D';
 const PROVISIONAL_USAGE = 'provisional LEDGER --plan PLAN --marker ID';
 
+// The route `routed` gives, for the session `env` names: a quorum route of a project run's issue session
+// (unattended-mark.mjs issueHeld) is the Human's instead, since such a session writes no quorum ledger, which a later
+// session would reuse, and parks the call with its issue. A mark that cannot be read counts.
+function issueRoute(routed, env, home) {
+  if (routed.route !== 'quorum') return routed;
+  let mark;
+  try {
+    mark = readUnattendedMark(sessionIdentity(env).session, { env, ...(home ? { home } : {}) });
+  } catch {
+    mark = { root: null };
+  }
+  return issueHeld(mark) ? { route: 'human', wait: true, reason: 'this session works one issue of a project run, which runs no quorum: it parks the call with the issue, for the Human' } : routed;
+}
+
 // `aidrian quorum route`: one JSON line, and exit 0; a bad argument exits 3 with nothing on stdout, and an invalid
-// config.json stops it on every path, as it stops every command.
-function routeCommand(args, { cwd, print }) {
+// config.json stops it on every path, as it stops every command. A project run's issue session is routed to the Human.
+function routeCommand(args, { cwd, print, env = process.env, home }) {
   const project = projectAt(cwd);
   commandConfig(project);
   const bad = (problem) => {
@@ -57,7 +73,7 @@ function routeCommand(args, { cwd, print }) {
   if (values.runs !== undefined && !/^\d+$/u.test(values.runs)) return bad(`--runs takes a whole number, 0 or more, not "${shown(values.runs)}"`);
   const answer = resolveQuestion(project, { domain: values.domain, class: values.class, reversible, docs: values.doc ?? [] });
   const call = { hard: !isClearCall(values.hard), runs: Number(values.runs ?? 0), domain: values.domain };
-  const { route, wait, reason } = routeFor(productInForce(project, answer.base), call, answer);
+  const { route, wait, reason } = issueRoute(routeFor(productInForce(project, answer.base), call, answer), env, home);
   print(JSON.stringify({ route, wait, reason, resolve: answer }));
   return 0;
 }

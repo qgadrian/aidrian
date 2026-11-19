@@ -1123,7 +1123,14 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     quorum runs under auto decisions; in `reviews`, only a review manifest, `pr-<n>.json` or a temporary copy of it,
     and a capture under `pr-<n>/captures/`; and in `dispatch`, only a subagent's handoff file, a `.json` file directly
     in it. A confined host is granted `plans`, `reviews`, `tmp`, and `dispatch` for the programs it runs, such as the
-    review commands, which write the records there;
+    review commands, which write the records there. A project run's issue session, one whose mark names an issue, or
+    whose mark cannot be read, is held tighter there: it writes no `handoffs`, since it asks for no handoff and a brief
+    there could become a driver's prior ([handoff.md](handoff.md#the-check)), and no `quorum`, whose hard calls it
+    parks for the Human (`aidrian quorum route` routes them to `human`); in `plans` and `tmp`, only an entry named for
+    its own issue, the key itself or the key followed by `-` or `.` in any case, such as `plans/eng-1-implementation.md`
+    or `tmp/eng-1/`; and in `dispatch`, only a handoff file named for its own branch, each `/` a `-`, such as
+    `feat-eng-1-export-S1-explorer.json`. Its issue and branch are the run snapshot's, read while the ledger names its
+    issue running (`lib/project-run-guard.mjs ownIssue`); with none, it writes none of them;
   - the temporary folder, this process's `TMPDIR` and `/tmp`;
   - `/dev/null`, `/dev/stdout`, `/dev/stderr`, `/dev/tty`, and `/dev/fd/<n>`, by the path a command spells.
 
@@ -1145,7 +1152,7 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   by the real path's parts, by the path as written past each leading part that resolves into the clone, so a write
   through a `.claude` link counts as one to that host file, and by the parts past each link git's index lists whose own
   path is such a host file, so a write to the folder `pkg/.claude -> ../shared` leads to counts as one under
-  `pkg/.claude` (git lists only the index entries named `.claude`, below one, or `SKILL.md`, and a clone whose links git cannot list then refuses); and any other dot file or folder of the home folder, such as a host's user-level
+  `pkg/.claude` (git lists only the index entries named `.claude`, below one, or `SKILL.md`, and a clone whose links git cannot list then refuses); for a project run's issue session, the forge's workflow folders of its worktree and its attempt's clone, which the forge adapter names (`forgeWorkflowFolders`: `.github/workflows` and `.github/actions` on GitHub), since the forge runs their files with the repository's secrets on a push of any branch, before any review, so an issue that needs such a change is parked for the Human; and any other dot file or folder of the home folder, such as a host's user-level
   settings and instruction files, unless it lies in the session's own worktree, a state folder above, or its attempt
   folders. A repository under a dot folder, such as `~/.dotfiles`, still writes itself when it is the session's worktree.
   A write through a hard link to a refused file counts as one to it, and a link a command makes (`ln`, `ln -s`,
@@ -1212,7 +1219,46 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   see a write by `xargs`, `eval` of a built string, `tar -C`, `curl -o`, or another program's own output option; by a
   program or script the session wrote, or one of the project's own scripts; or by an MCP tool that writes files. An
   unsandboxed Claude Code issue session can still write anywhere through a program it runs. A ledger a session forges in
-  the `quorum` folder, which it may write, could shape a later quorum run on the same plan.
+  the `quorum` folder, which it may write, could shape a later quorum run on the same plan. The sandbox grants a
+  confined session the whole `plans`, `reviews`, `tmp`, and `dispatch` folders, which every session of the project
+  shares, so a program or script it runs can still write another session's plan, scratch files, handoff, or review
+  manifest there; the hook holds only what it writes by hand, and the review gate trusts no manifest, only the records
+  the review commands write. A review manifest or capture is named for a pull request, whose number the hook cannot tie
+  to the session, so any session may still write any manifest by hand, as before.
+
+- **What a project run's issue session asks of the forge** (`lib/issue-forge-guard.mjs`, asked through the write
+  allowlist above, for the same sessions and their subagents). The session keeps the forge token in its sandbox, so
+  the hook holds what it runs with it:
+  - `git push` only as `git push origin HEAD:refs/heads/<branch>`, `<branch>` the one the run's snapshot names for its
+    issue, from its own worktree or attempt clone, with `+`, `--force`, or `--force-with-lease` (bare, or naming that
+    branch) and the switches `-u`, `-q`, `-v`, `-n`, `--set-upstream`, `--quiet`, `--verbose`, `--progress`,
+    `--porcelain`, `--dry-run`, and `--force-if-includes`. Refused: a tag, `--tags`, `--follow-tags`, `--mirror`,
+    `--all`, `--delete`, `-d`, a `:ref` delete, any other ref or a second refspec, a URL or another remote, `--repo`,
+    `-o`, `--no-verify`, any other option, a word built at run time, a git `-c`, `--git-dir`, or `--work-tree`, a
+    variable that moves git's repository or config (`GIT_DIR`, `GIT_CONFIG_*`, `HOME`, `XDG_CONFIG_HOME`) on the line,
+    a push from any other folder, and every push while no running start of its issue names a branch. `git send-pack`,
+    `git http-push`, and a git subcommand that is no command of git's own but an alias, set on the line or in a config
+    git reads, are refused.
+  - The forge CLI's subcommands its adapter declares (`forgeRefCommands`: on GitHub, `gh release create`, `delete`,
+    `edit`, `upload`, and `delete-asset`, `gh workflow run`, `enable`, and `disable`, `gh run rerun`, `cancel`, and
+    `delete`, `gh secret` and `gh variable` `set` and `delete`, `gh repo edit`, `delete`, `rename`, `archive`,
+    `unarchive`, `sync`, and `deploy-key add` and `delete`, `gh cache delete`, and `gh ssh-key` and `gpg-key` `add` and
+    `delete`), and a subcommand word built at run time. The read forms, such as `gh release list`, pass.
+  - A raw API call the adapter reads as a write the session never makes (`forgeApiWrite`): on GitHub, `gh api` with a
+    writing method, or a field (`-f`, `-F`, `--input`) and no `-X`, which makes it a POST, to any REST route but its
+    pull requests' and issues' own (comments, reviews, replies, labels, reactions, requested reviewers, and
+    `update-branch`; never `pulls/<n>/merge`), so git refs, tags, releases, dispatches, contents, statuses, Actions'
+    secrets and variables, rulesets, and the repository's settings are refused; a GraphQL mutation other than those on
+    review threads, comments, reviews, reactions, labels, requested reviewers, and draft state; and a GraphQL document
+    read from a file or the input, or built at run time.
+  - A shell the lexer cannot read, or a command word built at run time, whose text names a push, a release, a workflow,
+    or the API.
+
+  An attended session, a run's driver, and a session a pending mark holds are not held by it. Its residual: a script or
+  program the session runs, or `curl` with the token, can still push or call the forge; the forge itself holds that,
+  so `aidrian project preflight` blocks a run whose default branch has no protection, or whose release tags no tag rule
+  the signed-in user cannot bypass holds ([review.md](review.md)). The block is [recorded](#recorded-blocks) as
+  `config-guard`.
 
 - A subagent, and a main session the background route started, may not write in the session folders,
   `<state>/sessions/`, read as the continuation store is: a target in them, a folder that holds them and no checkout,

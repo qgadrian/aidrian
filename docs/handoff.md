@@ -467,7 +467,8 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   once, each also under the base branch's `projectRun.maxStarts` and `maxParallel`, 200 starts a day for a project,
   and 3 attempts an issue.
 - **An issue's session starts no continuation.** Every host starts it confined, in a fresh clone under its sandbox,
-  and a continuation would start outside both. `aidrian handoff route` prints `route: none` for it, and
+  and a continuation would start outside both. It writes no brief either: the agent gate hook refuses it the handoffs
+  folder ([hooks.md](hooks.md#agent-gates)). `aidrian handoff route` prints `route: none` for it, and
   `aidrian handoff continue` answers `continue: none`, before any floor, mark, or start record, with the line
   `a confined issue session starts no continuation; push the work and hand the result over` ([The gate](#the-gate),
   step 3). So the cap of 5, `maxChain`, and the chain floor never come into play for it: it pushes its work and records
@@ -968,6 +969,11 @@ A project that adopts the group sets `requires.aidrian` to the release that ship
   snapshot in `<state>/handoffs/.prior/<name>` that `aidrian handoff snapshot` took before a refresh, else the newest
   other brief of the same slug. A passing check keeps the brief that passed as that snapshot, so the next check of the
   file compares with what last passed; a copy the disk refuses changes neither the output nor the exit code.
+  A project run's driver brief, `<date>-project-<run>.md` right in the handoffs folder of a state folder that keeps the
+  run `<run>`, takes as its prior only a brief whose sha256 a handoff row of the run's ledger records
+  (`aidrian project handoff`): the snapshot first, then each other brief of the slug, newest first, and none when no
+  such brief is left. Another session may have written a file there, and the check would ask the driver to carry its
+  steps; so a refresh compares with the last brief the driver handed off, and `--prior` still names any other.
   A `--prior` that is the brief itself exits 2 for both `check` and `snapshot`: its earlier text is gone. Same file
   means the same device and inode, so a symlink, a hard link, and a letter-case variant on a case-insensitive disk count.
   A header that names this same file, with no snapshot to compare, is a finding the session tells the Human.

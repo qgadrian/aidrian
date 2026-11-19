@@ -154,6 +154,7 @@ Exit 3, or any other non-zero exit, waits for the Human.
 With `autoStart` off, `as-today` keeps `unattended` as ever, on a hard call too: the five answers change nothing there.
 With `autoStart` on, only the small, clear row follows `unattended`; every other route is the stricter path, so a hard call takes no `safe-default`.
 Under `resolve`'s `ask` or `approval: "first"`, `wait` is true, and the quorum only recommends.
+In a project run's issue session, `route` answers `human` where it would answer `quorum`: that session writes no quorum ledger, and parks the call with its issue.
 
 **Who runs a quorum.** The main session, or a subagent coordinator such as `orchestrator`.
 A coordinator that is itself a subagent stays running while it waits, never ends its turn to wait,

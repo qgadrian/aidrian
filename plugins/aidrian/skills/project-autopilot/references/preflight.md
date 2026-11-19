@@ -27,9 +27,13 @@ Each line is `ok <name>`, `blocker <name>: <why and fix>`, `note <name>: <what>`
 | `handoff` | the base branch's `session.handoff.continue` is `"background"`, so the driver can hand itself on; `"clear"` needs a person, so it blocks | set it on the default branch |
 | `reviewer`, `reviewer-seen` | `github.reviewer` is set, and the bot reviewed a recent pull request | install the bot and request one review; with no pull request yet, a `note`: the first one proves it, and the merge's trust check holds every merge until then |
 | `ci` | the repository has an active CI workflow | merge one before the run |
+| `branch-protection` | the default branch is protected on the forge, asking for a pull request | protect it before the run |
+| `release-tags` | an active tag rule restricts creating a tag, and the signed-in user, whose token an issue's session keeps, can never bypass it | a tag ruleset over `refs/tags/*`, or the release pattern, with no bypass for that user |
 
 Answer each `ask` line with the tool it names, or the forge's and tracker's own tools; a `no` is a blocker.
 A `note mcp-servers` line names servers the run rule maps to no tracker: each must be no tracker connection.
+A `note workflows` line says the forge runs a pushed branch's workflow files with the repository's secrets: keep release
+and deploy secrets in environments limited to protected branches and tags.
 `ask labels` names the tracker's label and status reads: the decision label, and `projectRun.blockedStatus` when set,
 must exist in the team.
 

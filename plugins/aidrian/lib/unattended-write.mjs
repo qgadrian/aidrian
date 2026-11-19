@@ -21,12 +21,16 @@ import { ATTEMPT_KEEP, KEPT_FOLDERS } from './attempt-clone.mjs';
 import { bashCall, writeTargets } from './config-guard.mjs';
 import { checkDeadline, PastDeadline, remainingMs } from './deadline.mjs';
 import { isManifestPath } from './finding-disposition.mjs';
+import { forgeWorkflowFolders } from './forges/index.mjs';
 import { foldCase, isWithin } from './fs.mjs';
 import { gitConfigFiles, gitFolders, runGit } from './git.mjs';
 import { GLOB_WORD, sameFile } from './glob-links.mjs';
 import { globPaths, globReaches, modeTargets, stateFolders } from './handoff-guard.mjs';
 import { fileEditOf, nestedProtected, opaqueShellCommand, protectedPaths } from './hosts/index.mjs';
+import { issueForgeDenial } from './issue-forge-guard.mjs';
+import { ownIssue } from './project-run-guard.mjs';
 import { canonical } from './rules/main-checkout.mjs';
+import { issueHeld } from './unattended-mark.mjs';
 import { shellWrites } from './unattended-shell.mjs';
 
 // The state folders a confined host is granted besides its attempt's (lib/project-start.mjs): the plans, reviews, and
@@ -37,6 +41,10 @@ export const WORK_FOLDERS = Object.freeze(['plans', 'reviews', 'tmp', 'dispatch'
 // continuation store inside stays held by its own guard), and the quorum folder, where decisions.md's product quorum
 // runs under auto decisions. In `reviews`, only a manifest or a capture (reviewAllows).
 const HAND_FOLDERS = Object.freeze(['plans', 'tmp', 'handoffs', 'quorum']);
+// The state folders a project run's issue session writes by hand (unattended-mark.mjs issueHeld), and in each only the
+// entries named for its own issue (issueNamed): it asks for no handoff, so it writes no brief a driver's check would
+// resolve as its prior, and runs no quorum, whose ledger a later session reuses (lib/quorum/route.mjs).
+const ISSUE_FOLDERS = Object.freeze(['plans', 'tmp']);
 // The shell startup files in the home folder, and in ZDOTDIR for zsh, which every later shell of the user runs.
 const STARTUP = Object.freeze(['.profile', '.login', '.logout', '.bashrc', '.bash_profile', '.bash_login', '.bash_logout', '.kshrc', '.cshrc', '.tcshrc', '.inputrc']);
 const ZSH_STARTUP = Object.freeze(['.zshrc', '.zshenv', '.zprofile', '.zlogin', '.zlogout']);
@@ -67,6 +75,21 @@ const real = (file) => {
   checkDeadline();
   return foldCase(canonical(file));
 };
+// Whether the first part of `target`, below `folder`, is named for the issue `issue` ({ key }): the key itself, or the
+// key and then a dash or a dot, in any case, as `<key>-implementation.md` or `tmp/<key>/`.
+const issueNamed = (issue) => (target, folder) => {
+  if (!issue) return false;
+  const [first = ''] = path.relative(folder, target).split(path.sep);
+  const name = first.toLowerCase();
+  const key = issue.key.toLowerCase();
+  return name === key || name.startsWith(`${key}-`) || name.startsWith(`${key}.`);
+};
+// Whether `target`, inside the dispatch folder `folder`, is a handoff file named for the branch of the issue `issue`
+// ({ branch }): `<branch>-<slice>-<agent>.json`, each `/` of the branch a `-`.
+const issueHandoff = (issue) => (target, folder) => {
+  const name = path.relative(folder, target);
+  return Boolean(issue) && HANDOFF.test(name) && name.toLowerCase().startsWith(`${issue.branch.replaceAll('/', '-').toLowerCase()}-`);
+};
 const absolute = (each) => typeof each === 'string' && path.isAbsolute(each);
 // The time a git call may take: what the guards' budget leaves, or git's own default outside one.
 const gitBudget = () => (Number.isFinite(remainingMs()) ? { timeout: Math.max(1, Math.floor(remainingMs())) } : undefined);
@@ -93,7 +116,7 @@ export function unattendedPlaces({ cwd, mark, project, config, base, own = null,
   if (!limited && !project) return null;
   try {
     const user = home ?? userInfo().homedir;
-    const places = { limited, pending: mark.pending === true, specific: [], reviews: [], worktree: null, temp: [], refused: [], nested: [], home: real(user) };
+    const places = { limited, pending: mark.pending === true, specific: [], reviews: [], worktree: null, temp: [], refused: [], nested: [], home: real(user), issue: null, issueHeld: issueHeld(mark) };
     const refuse = refuser(places.refused);
     userRefused(refuse, user, env);
     let named;
@@ -154,10 +177,12 @@ function ownPlaces(places, { mark, project, config, base, own, home, temp }, ref
   if (repo) gitRefused(refuse, repo);
   checkDeadline();
   const start = repo && absolute(mark.cwd) ? gitFolders(mark.cwd, gitBudget()) : null;
+  if (places.issueHeld) places.issue = ownIssue(project, config, mark, stateOptions(base, home));
   if (start && real(start.common) === real(repo.common)) {
     places.worktree = real(start.top);
     gitRefused(refuse, start);
     hostRefused(refuse, start.top);
+    if (places.issueHeld) workflowRefused(refuse, start.top);
   }
   const attempt = typeof own === 'function' ? own() : null;
   if (attempt) {
@@ -170,6 +195,7 @@ function ownPlaces(places, { mark, project, config, base, own, home, temp }, ref
     }
     for (const name of KEPT_FOLDERS) refuse(path.join(attempt, name, ATTEMPT_KEEP), 'the keep file of an attempt\'s folder, which holds the folder in place');
     hostRefused(refuse, path.join(attempt, 'work'));
+    if (places.issueHeld) workflowRefused(refuse, path.join(attempt, 'work'));
     places.nested.push({ root: real(path.join(attempt, 'work')), work: path.join(attempt, 'work'), links: null });
     refuse(path.join(attempt, 'git', 'config'), 'the attempt clone\'s git config');
     refuse(path.join(attempt, 'git', 'hooks'), 'the attempt clone\'s git hooks', true);
@@ -178,6 +204,13 @@ function ownPlaces(places, { mark, project, config, base, own, home, temp }, ref
   }
   stateWork(places, { project, config, base, home }, refuse);
   places.temp = (temp ?? [tmpdir(), '/tmp']).filter(absolute).map(real);
+}
+
+// The forge's workflow folders of the checkout at `top` (forges/index.mjs forgeWorkflowFolders), refused to a project
+// run's issue session: the forge runs their files with the repository's secrets on a push of any branch, so one the
+// session wrote would run before any review. An issue that needs such a change is parked for the Human.
+function workflowRefused(refuse, top) {
+  for (const each of forgeWorkflowFolders()) refuse(path.join(top, ...each.split('/')), 'the forge\'s workflow files, which the forge runs with the repository\'s secrets on a push of any branch, before any review', true);
 }
 
 // The host files of the checkout at `top` every host protects (hosts/index.mjs protectedPaths): the settings, skills,
@@ -320,13 +353,33 @@ function stateWork(places, { project, config, base, home }, refuse) {
     const root = canonical(state);
     // A folder that is a link, as `tmp -> ~`, could lead anywhere: it is no place of the session's.
     const plain = (name) => canonical(path.join(root, name)) === path.join(root, name);
-    for (const name of HAND_FOLDERS.filter(plain)) places.specific.push(foldCase(path.join(root, name)));
+    if (places.issueHeld) issueWork(places, root, plain, refuse);
+    else {
+      for (const name of HAND_FOLDERS.filter(plain)) places.specific.push(foldCase(path.join(root, name)));
+      refuse(path.join(root, 'dispatch'), 'the dispatch records, where a session writes only its handoff file', true, dispatchAllows);
+    }
     refuse(path.join(root, 'reviews'), 'the review and attest records, which only the review commands write', true, reviewAllows);
     if (plain('reviews')) places.reviews.push(foldCase(path.join(root, 'reviews')));
-    refuse(path.join(root, 'dispatch'), 'the dispatch records, where a session writes only its handoff file', true, dispatchAllows);
     if (plain('dispatch')) places.reviews.push(foldCase(path.join(root, 'dispatch')));
     refuse(path.join(root, 'dispatch-log.jsonl'), 'the dispatch log, which only the plugin writes');
   }
+}
+
+// The state work of a project run's issue session in the state folder `root` (stateWork): it shares the plans, tmp, and
+// dispatch folders with every other session of the project, so it writes there only what is named for its own issue
+// (`places.issue`, project-run-guard.mjs ownIssue) and never rewrites another's plan, scratch files, or handoff. With
+// no running start of its issue to name them, it writes none of them.
+function issueWork(places, root, plain, refuse) {
+  const { issue } = places;
+  for (const name of ISSUE_FOLDERS) {
+    const what = issue
+      ? `a file of the shared ${name} folder not named for this session's issue ${issue.key}, which another session may work from; an issue session writes only ${name}/${issue.key.toLowerCase()}-... there`
+      : `the shared ${name} folder, where an issue session whose running start cannot be read writes nothing`;
+    refuse(path.join(root, name), what, true, issueNamed(issue));
+    if (plain(name)) places.reviews.push(foldCase(path.join(root, name)));
+  }
+  const handoff = issue ? `, ${issue.branch.replaceAll('/', '-')}-<slice>-<agent>.json` : '';
+  refuse(path.join(root, 'dispatch'), `the dispatch records, where an issue session writes only a handoff file named for its own branch${handoff}`, true, issueHandoff(issue));
 }
 
 // Whether `target` inside the reviews folder `folder` is one a session writes by hand: a review manifest, or a temporary
@@ -470,6 +523,10 @@ export function unattendedWriteDenial(input, { names: { human } }, { mark = null
   const modes = modeTargets(input);
   const command = bashCall(input) && typeof input.tool_input?.command === 'string' ? input.tool_input.command : null;
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
+  // A project run's issue session pushes only its own branch, and asks the forge for nothing else it never asks, a
+  // call with no file write included (lib/issue-forge-guard.mjs).
+  const forge = issueForgeDenial(input, { names: { human } }, { mark, cwd, fold: real, issue: () => places()?.issue ?? null, roots: () => pushRoots(places()) });
+  if (forge) return forge;
   const shell = command === null ? null : shellWrites(command, cwd, env);
   const any = [files, names, globs, modes, shell?.dynamic ?? [], shell?.links ?? [], shell?.programs ?? [], shell?.removed ?? []].some((list) => list.length > 0);
   if (!any) return null;
@@ -490,6 +547,10 @@ export function unattendedWriteDenial(input, { names: { human } }, { mark = null
     ?? nameDenial(texts, found, say);
 }
 
+// The folders a project run's issue session pushes from, as `places` (unattendedPlaces) give them: its own worktree and
+// its attempt's clone.
+const pushRoots = (places) => (places ? [places.worktree, ...(places.nested ?? []).map((each) => each.root)].filter(Boolean) : []);
+
 // The denials of unattendedWriteDenial, which say what the call does, to whom, and why.
 function sayer(input, human, opaque) {
   const verb = opaque ? 'may change' : 'writes';
@@ -502,6 +563,7 @@ function sayer(input, human, opaque) {
       if (found.pending) suffix = '; a project start is in progress, and until the gate files the new session\'s own mark, every session it did not list before the start is held this way';
       else if (found.limited) suffix = '; its unattended mark cannot be read, so it is held this way';
       if (found.limited) list = 'anywhere but the entries refused wherever they lie';
+      else if (found.issueHeld) list = 'its own worktree or its attempt\'s folders but the forge\'s workflow files, the files of the plans and tmp state folders named for its own issue, a dispatch handoff named for its own branch, a review manifest or capture, and the temporary folder';
     },
     unknown: () => deny('unattended write with no known places', `it ${verb} a file, and the places this session may write cannot be told: its unattended mark names no main checkout or project that can be read, and no Human attends this session, so it writes nothing until they can`),
     refused: (entry, shown) => deny(`unattended write to ${entry.what}`, `it ${verb} ${shown}, ${entry.what}, which a session no Human attends never changes; only ${human} does`),

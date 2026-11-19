@@ -8,8 +8,12 @@
 // carries on by itself after a usage limit, which stops the driver too. Then the base branch's reviewer bot. A check whose input a failed one gives is still run where it can be, on what the base branch says alone,
 // so one pass names every blocker. Then what the run needs to finish with no one: the tracker's server among the
 // team's projectRun.mcpServers, each tracker server there mapped so the run rule can hold it, auto-merge on with
-// required checks, a handoff route for the driver, and, through the forge, the reviewer bot seen and CI workflows.
-// A read the forge or the tracker lacks becomes an `ask` line, which the driver answers with its own tools.
+// required checks, a handoff route for the driver, and, through the forge, the reviewer bot seen, CI workflows, a
+// protected default branch, and a tag rule the forge's signed-in user cannot bypass that stops a tag being created, since
+// an issue's session keeps that user's token: the agent gate hook refuses its tag pushes and releases, and the forge
+// holds what a script it runs does with the token. A note says the forge runs a branch's workflow files with the
+// repository's secrets on every push. A read the forge or the tracker lacks becomes an `ask` line, which the driver
+// answers with its own tools.
 
 import { baseBranchTip, machineSwitch } from './config.mjs';
 import { resolveAutoMerge } from './config-local.mjs';
@@ -93,6 +97,7 @@ export function preflightCommand({ project, config, run = null, env = process.en
   const reviewer = base.config?.github?.reviewer;
   check('reviewer', base.why ? `the base branch's config.json cannot be read (${base.why})` : NO_REVIEWER.has(reviewer) ? 'the base branch sets no github.reviewer, so no bot reviews an issue\'s pull request before an unattended merge' : null);
   forgeLines({ facade, repository, reviewer, lines, check, asks });
+  protectionLines({ facade, repository, lines, check, asks });
   if (tracker.adapter?.run?.labelRead) {
     const status = base.config?.projectRun?.blockedStatus;
     asks.push(`ask labels: confirm with ${tracker.adapter.run.labelRead} that the team has the label ${JSON.stringify(base.config?.projectRun?.decisionLabel)}${typeof status === 'string' ? `, and with ${tracker.adapter.run.statusRead} the status ${JSON.stringify(status)}` : ''}; a missing one is a blocker`);
@@ -170,6 +175,30 @@ function forgeLines({ facade, repository, reviewer, lines, check, asks }) {
       check('ci', `the forge cannot list CI workflows (${String(error.message).split('\n')[0]})`);
     }
   } else asks.push('ask ci: confirm the default branch runs CI on pull requests');
+}
+
+// What guards the default branch and the release tags from the token an issue's session keeps, through the forge's own
+// read (refProtection), or `ask` lines for a forge with none: a blocker when the default branch has no protection, or
+// when no active tag rule the signed-in user may never bypass restricts creating a tag. Then the note on workflows.
+function protectionLines({ facade, repository, lines, check, asks }) {
+  const named = repository ? `${repository.owner}/${repository.name}` : null;
+  if (typeof facade.refProtection === 'function' && named) {
+    let read;
+    try {
+      read = facade.refProtection(named, { host: repository.host });
+    } catch (error) {
+      const why = `the forge cannot say what guards the default branch and the tags (${String(error.message).split('\n')[0]})`;
+      check('branch-protection', why);
+      check('release-tags', why);
+      read = null;
+    }
+    if (read) {
+      check('branch-protection', read.protected ? null : `the default branch ${read.branch} has no protection on the forge, so the token an issue's session keeps could push to it; protect it, asking for a pull request, before the run`);
+      const held = read.tags.filter((rule) => rule.creation && rule.refs.length > 0 && rule.bypass === 'never');
+      check('release-tags', held.length ? null : 'no active tag rule on the forge stops a tag being created by the signed-in user, whose token an issue\'s session keeps, so a script it runs could push a release tag; add a tag ruleset that restricts creations over refs/tags/*, or the release pattern, with no bypass for that user, before the run');
+    }
+  } else asks.push('ask protection: confirm on the forge that the default branch is protected, and that a tag rule the signed-in user cannot bypass stops a release tag being created; a missing one is a blocker');
+  lines.push('note workflows: the forge runs a branch\'s own workflow files with the repository\'s secrets on every push, and an issue\'s session pushes its branch: keep release and deploy secrets in environments limited to protected branches and tags; the hook refuses an issue session\'s writes to the workflow files, and a script it runs is the residual');
 }
 
 // `aidrian project init RUN --file PATH --check`: the input's checks, as init makes them, and the order, with no run

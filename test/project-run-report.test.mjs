@@ -418,12 +418,16 @@ test('from another project\'s folder, the first driver is still held from its ru
   for (const [what, file] of targets) assert.equal(gates(fx, OTHER, 'Write', { file_path: file, content: '{}' }, elsewhere).status, 0, `${what}: an attended session`);
 });
 
+// What the forge says guards a repository whose default branch is protected and whose release tags a rule the signed-in
+// user cannot bypass holds.
+const GUARDED = { branch: 'main', protected: true, tags: [{ name: 'releases', refs: ['refs/tags/v*'], creation: true, bypass: 'never' }] };
+
 test('preflight names every blocker at once, and starts nothing', (t) => {
   const ready = runFixture(t, { init: false, ...READY });
   writeFileSync(path.join(ready.env.CLAUDE_CONFIG_DIR, 'settings.json'), JSON.stringify({ autoContinueAtUsageLimit: true }));
-  Object.assign(ready.forge, { reviewerSeen: () => ({ changes: 4, seen: true }), ciWorkflows: () => ['test'] });
+  Object.assign(ready.forge, { reviewerSeen: () => ({ changes: 4, seen: true }), ciWorkflows: () => ['test'], refProtection: () => GUARDED });
   const ok = ready.cmd(['preflight']);
-  assert.deepEqual(ok.out.filter((line) => !/^(ask|note) /u.test(line)), ['ok repository', 'ok state', 'ok run', 'ok policy', 'ok machine', 'ok host', 'ok access', 'ok usage-limit', 'ok tracker', 'ok auto-merge', 'ok handoff', 'ok reviewer', 'ok reviewer-seen', 'ok ci'], ok.out.join('\n'));
+  assert.deepEqual(ok.out.filter((line) => !/^(ask|note) /u.test(line)), ['ok repository', 'ok state', 'ok run', 'ok policy', 'ok machine', 'ok host', 'ok access', 'ok usage-limit', 'ok tracker', 'ok auto-merge', 'ok handoff', 'ok reviewer', 'ok reviewer-seen', 'ok ci', 'ok branch-protection', 'ok release-tags'], ok.out.join('\n'));
   assert.equal(ok.exitCode, 0);
   assert.deepEqual(ok.out.filter((line) => line.startsWith('ask ')).map((line) => line.split(':')[0]), ['ask labels']);
   assert.equal(ready.claude.starts().length, 0);
@@ -433,7 +437,8 @@ test('preflight names every blocker at once, and starts nothing', (t) => {
   assert.match(fresh.out.find((line) => line.startsWith('blocker ci')), /no active CI workflow/u);
   delete ready.forge.reviewerSeen;
   delete ready.forge.ciWorkflows;
-  assert.deepEqual(ready.cmd(['preflight']).out.filter((line) => line.startsWith('ask ')).map((line) => line.split(':')[0]), ['ask reviewer-seen', 'ask ci', 'ask labels'], 'a forge with no such read');
+  delete ready.forge.refProtection;
+  assert.deepEqual(ready.cmd(['preflight']).out.filter((line) => line.startsWith('ask ')).map((line) => line.split(':')[0]), ['ask reviewer-seen', 'ask ci', 'ask protection', 'ask labels'], 'a forge with no such read');
   const off = runFixture(t, { projectRun: { allow: false }, local: null, config: { github: { reviewer: 'none' } } });
   execFileSync('git', ['-C', off.dir, 'remote', 'set-url', 'origin', 'git@github.com:acme/widgets.git']);
   const blocked = off.cmd(['preflight']);
@@ -447,6 +452,31 @@ test('preflight names every blocker at once, and starts nothing', (t) => {
   assert.match(blocked.out.find((line) => line.startsWith('blocker auto-merge')), /does not set github\.autoMerge\.allow/u);
   const local = runFixture(t, { init: false, ...READY, local: { handoff: { background: 'on' } } });
   assert.match(local.cmd(['preflight']).out.find((line) => line.startsWith('blocker auto-merge')), /or the team sets github\.autoMerge\.default to "on"/u);
+});
+
+test('preflight blocks a default branch with no protection and release tags no rule holds from the token an issue session keeps', (t) => {
+  const fx = runFixture(t, { init: false, ...READY });
+  Object.assign(fx.forge, { reviewerSeen: () => ({ changes: 4, seen: true }), ciWorkflows: () => ['test'] });
+  const lines = (protection) => {
+    fx.forge.refProtection = typeof protection === 'function' ? protection : () => protection;
+    return fx.cmd(['preflight']).out;
+  };
+  const blocker = (out, name) => out.find((line) => line.startsWith(`blocker ${name}:`)) ?? null;
+  const open = lines({ branch: 'main', protected: false, tags: [] });
+  assert.match(blocker(open, 'branch-protection'), /the default branch main has no protection on the forge, so the token an issue's session keeps could push to it/u);
+  assert.match(blocker(open, 'release-tags'), /no active tag rule on the forge stops a tag being created by the signed-in user/u);
+  for (const tags of [
+    [{ ...GUARDED.tags[0], bypass: 'always' }], [{ ...GUARDED.tags[0], bypass: 'pull_requests_only' }], [{ ...GUARDED.tags[0], bypass: null }],
+    [{ ...GUARDED.tags[0], creation: false }], [{ ...GUARDED.tags[0], refs: [] }],
+  ]) assert.ok(blocker(lines({ ...GUARDED, tags }), 'release-tags'), JSON.stringify(tags));
+  const held = lines(GUARDED);
+  assert.deepEqual([blocker(held, 'branch-protection'), blocker(held, 'release-tags')], [null, null]);
+  assert.match(held.find((line) => line.startsWith('note workflows:')), /keep release and deploy secrets in environments limited to protected branches and tags/u);
+  const failed = lines(() => {
+    throw new Error('gh: Not Found (HTTP 404)');
+  });
+  assert.match(blocker(failed, 'release-tags'), /the forge cannot say what guards the default branch and the tags \(gh: Not Found \(HTTP 404\)\)/u);
+  assert.ok(blocker(failed, 'branch-protection'));
 });
 
 test('preflight notes a run with no tracker server, blocks a tracker-named server it cannot map, and no required checks', (t) => {

@@ -94,16 +94,29 @@ function summaryWords(rows) {
   return forges.size === 1 ? [...forges][0] : NO_FORGE;
 }
 
-// The changes summary, `3 PRs · ✓2 ✗0 ⏳1`, counting changes, not checks: a change with no check counts in none.
+// How many change numbers the summary lists before it counts the rest as `+N`.
+export const LISTED_CHANGES = 5;
+
+// The changes summary, `PRs #12, #34, +1 · ✓2 ✗0 ⏳1`: the noun, the first LISTED_CHANGES numbers, each in the color
+// of its checks, and `+N` for the rest and any row with no number; then the counts of changes, not checks: a change
+// with no check counts in none. With no number to list, `3 PRs`.
 export function changesParts(prs) {
   const rows = changeRowsOf(prs);
   if (rows.length === 0) return [];
   const words = summaryWords(rows);
   const states = rows.map((row) => checksState(row.checks));
   const count = (state) => states.filter((each) => each === state).length;
+  const numbered = rows.map((row, index) => ({ number: row.number, state: states[index] })).filter(({ number }) => Number.isSafeInteger(number) && number > 0);
+  const listed = numbered.slice(0, LISTED_CHANGES);
+  const rest = rows.length - listed.length;
   const noun = rows.length === 1 ? words.one : words.many;
+  const head = listed.length === 0 ? [part(`${rows.length} ${noun}`)] : [
+    part(`${noun} `),
+    ...listed.flatMap(({ number, state }, index) => [...(index ? [part(', ')] : []), part(`#${number}`, state === null ? COLORS.text : COLORS[state])]),
+    ...(rest > 0 ? [part(`, +${rest}`)] : []),
+  ];
   return [
-    part(`${rows.length} ${noun}${SEPARATOR}`),
+    ...head, part(SEPARATOR),
     part(`✓${count('passed')}`, COLORS.passed), part(' '),
     part(`✗${count('failed')}`, COLORS.failed), part(' '),
     part(`⏳${count('pending')}`, COLORS.pending),

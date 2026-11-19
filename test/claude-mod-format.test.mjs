@@ -102,21 +102,32 @@ test('the summary counts pull requests, not checks', () => {
     pull(4, { checks: { passed: 0, failed: 0, pending: 0, skipped: 0 } }),
     pull(5, { checks: null }),
   ];
-  assert.equal(textsOf(changesParts(rows)), '5 PRs · ✓1 ✗1 ⏳1');
-  assert.equal(textsOf(changesParts([rows[0]])), '1 PR · ✓0 ✗1 ⏳0', 'a failed and a pending check: counted as failed');
+  assert.equal(textsOf(changesParts(rows)), 'PRs #1, #2, #3, #4, #5 · ✓1 ✗1 ⏳1');
+  assert.equal(textsOf(changesParts([rows[0]])), 'PR #1 · ✓0 ✗1 ⏳0', 'a failed and a pending check: counted as failed');
   assert.equal(plainText(bandSegments(snap({ prs: rows }))), snapshotLine(snap({ prs: rows })));
   const colors = changesParts(rows).filter((each) => /[✓✗⏳]/u.test(each.text)).map((each) => each.color);
   assert.deepEqual(colors, [COLORS.passed, COLORS.failed, COLORS.pending]);
 });
 
+test('the summary lists the first five numbers, each in the color of its checks, and counts the rest', () => {
+  const rows = [1, 2, 3, 4, 5, 6, 7].map((number) => pull(number));
+  rows[1] = pull(2, { checks: { passed: 0, failed: 1, pending: 0, skipped: 0 } });
+  rows.push(pull(8, { number: null }));
+  assert.equal(textsOf(changesParts(rows)), 'PRs #1, #2, #3, #4, #5, +3 · ✓7 ✗1 ⏳0', 'two past the five, and one with no number');
+  assert.equal(changesParts(rows).find((each) => each.text === '#2').color, COLORS.failed);
+  assert.equal(changesParts(rows).find((each) => each.text === '#1').color, COLORS.passed);
+  assert.equal(plainText(bandSegments(snap({ prs: rows }))), snapshotLine(snap({ prs: rows })));
+  assert.equal(textsOf(changesParts([pull(1, { number: null }), pull(2, { number: 0 })])), '2 PRs · ✓2 ✗0 ⏳0', 'no number to list');
+});
+
 test('the words of a change come from the forge table', () => {
   assert.deepEqual(Object.keys(FORGES), ['github']);
-  assert.equal(textsOf(changesParts([pull(1)])), '1 PR · ✓1 ✗0 ⏳0');
-  assert.equal(textsOf(changesParts([pull(1), pull(2), pull(3)])), '3 PRs · ✓3 ✗0 ⏳0');
+  assert.equal(textsOf(changesParts([pull(1)])), 'PR #1 · ✓1 ✗0 ⏳0');
+  assert.equal(textsOf(changesParts([pull(1), pull(2), pull(3)])), 'PRs #1, #2, #3 · ✓3 ✗0 ⏳0');
   const elsewhere = pull(7, { forge: 'gitlab' });
-  assert.match(textsOf(changesParts([elsewhere])), /^1 change · /u);
-  assert.match(textsOf(changesParts([pull(1), elsewhere])), /^2 changes · /u, 'rows of two forges');
-  assert.match(textsOf(changesParts([pull(1), FIXTURE_ROWS[4]])), /^2 changes · /u, 'a forge row and an unsupported one');
+  assert.match(textsOf(changesParts([elsewhere])), /^change #7 · /u);
+  assert.match(textsOf(changesParts([pull(1), elsewhere])), /^changes #1, #7 · /u, 'rows of two forges');
+  assert.match(textsOf(changesParts([pull(1), FIXTURE_ROWS[4]])), /^changes #1/u, 'a forge row and an unsupported one');
   const [row] = changeRows([elsewhere]);
   assert.match(rowText(row), /^change #7/u);
   assert.equal(row.link, null, 'a forge with no entry gets no link, though its url is a github.com pull request');

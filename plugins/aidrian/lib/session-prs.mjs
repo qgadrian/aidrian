@@ -470,8 +470,12 @@ export const isChangeCache = (value) => value !== null && typeof value === 'obje
   && value.refs.length === value.rows.length && value.refs.length <= MAX_REFS
   && value.refs.every((key) => typeof key === 'string' && key.length <= REF_KEY_MAX_BYTES) && value.rows.every((row) => row === null || isChangeRow(row));
 
-// The pull request summary of a status line: how many, then how many have a failed check, a pending one and none failed,
-// or only passed or skipped ones. One with no check counts in none.
+// How many pull request numbers the summary lists before it counts the rest as `+N`.
+export const LISTED_CHANGES = 5;
+
+// The pull request summary of a status line: `PRs #12, #34, +1`, the first LISTED_CHANGES numbers and `+N` for the
+// rest and any with no number (`3 PRs` with none to list), then how many have a failed check, a pending one and none
+// failed, or only passed or skipped ones. One with no check counts in none.
 export function changesSummary(prs) {
   const states = prs.map(({ checks }) => {
     if (!checks) return null;
@@ -480,5 +484,9 @@ export function changesSummary(prs) {
     return checks.passed + checks.skipped > 0 ? 'passed' : null;
   });
   const count = (state) => states.filter((each) => each === state).length;
-  return `${prs.length} PR${prs.length === 1 ? '' : 's'} · ✓${count('passed')} ✗${count('failed')} ⏳${count('pending')}`;
+  const noun = `PR${prs.length === 1 ? '' : 's'}`;
+  const listed = prs.map(({ number }) => number).filter((number) => Number.isSafeInteger(number) && number > 0).slice(0, LISTED_CHANGES);
+  const rest = prs.length - listed.length;
+  const head = listed.length === 0 ? `${prs.length} ${noun}` : `${noun} ${listed.map((number) => `#${number}`).join(', ')}${rest > 0 ? `, +${rest}` : ''}`;
+  return `${head} · ✓${count('passed')} ✗${count('failed')} ⏳${count('pending')}`;
 }

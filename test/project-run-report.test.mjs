@@ -771,6 +771,10 @@ test('a forge that cannot answer the team\'s policy now makes start exit 75 with
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0, 'once the forge answers');
   const refusing = runFixture(t, { forgeConfig: { version: 1, projectRun: { allow: false } } });
   assert.equal(refusing.cmd(['start', 'launch', 'ENG-1']).exitCode, 1, 'a policy the forge answers and refuses');
+  // A refusal the forge answers prints `note policy:`, never `note outage:`, so the driver tells them apart by the line.
+  const refused = refusing.cmd(['wait', 'launch', '--max-wait', '0']);
+  assert.equal(refused.exitCode, 0, refused.err.join('\n'));
+  assert.match(refused.out[0], /^note policy: the default branch main on the forge does not set projectRun\.allow to true; wait starts nothing/u);
 });
 
 // The post-call tracker hook, run as the host runs it, for `session` in the fixture's project, after a call of the
@@ -947,9 +951,10 @@ test('the driver\'s halt wait ends once only sessions it could not stop are left
   const stop = text.slice(text.indexOf('## Stop'), text.indexOf('## Finish'));
   assert.ok(!halt.includes('aidrian project end') && !stop.includes('aidrian project end'), 'no end for the Human');
   assert.match(text, /## Hand off .*A run left with no driver is taken up by the Human:/u, 'the list Halt points to');
-  // wait's first `note policy:` line, on a policy the forge withdrew or cannot answer, sends the driver to § Stop.
+  // wait's first line tells an outage from a refusal: `note outage:` goes on, `note policy:` sends the driver to § Stop.
   const wait = text.slice(text.indexOf('3. `aidrian project wait <run> --max-wait 150`:'), text.indexOf('4. `aidrian project report'));
-  assert.ok(wait.includes('- `note policy: <why>`: the run may start nothing more; § Stop (wait still settles the run). A `<why>` that says the forge\'s copy cannot be read is an outage, not a refusal: go on by the other lines; `start`\'s exit 75 goes to § Retry.'), 'the note line');
+  assert.ok(wait.includes('- `note outage: <why>`: the forge cannot answer now; not a refusal. Go on by the other lines; `start`\'s exit 75 goes to § Retry.'), 'the outage line');
+  assert.ok(wait.includes('- `note policy: <why>`: the forge withdrew the policy; the run may start nothing more. § Stop (wait still settles the run).'), 'the policy line');
 });
 
 test('autopilot under a project run reads its issue from the file and makes its tracker writes optional', () => {

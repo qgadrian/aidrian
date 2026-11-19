@@ -27,8 +27,8 @@ named and go on from that output as step 2 says.
    - exit 75, `retry: <why>`: § Retry. A session that runs on after its issue settled gives this too: a wait.
    - any other exit 1: § Stop, with its stderr line as the cause.
 3. `aidrian project wait <run> --max-wait 150`:
-   - `note policy: <why>`: the run may start nothing more; § Stop (wait still settles the run). A `<why>` that says the
-     forge's copy cannot be read is an outage, not a refusal: go on by the other lines; `start`'s exit 75 goes to § Retry.
+   - `note outage: <why>`: the forge cannot answer now; not a refusal. Go on by the other lines; `start`'s exit 75 goes to § Retry.
+   - `note policy: <why>`: the forge withdrew the policy; the run may start nothing more. § Stop (wait still settles the run).
    - `result <key> ...`, `ended <key> ...`, `settled <key> ...`, or `orphan ...`: an issue settled; step 4.
    - `limit <key> <kind> until <time> -> open`, or `limit <key> <kind> halt -> open`: the issue's attempt ended on a
      usage or rate limit; step 1, whose `next` says whether the run is paused or halted.

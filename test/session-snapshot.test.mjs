@@ -54,14 +54,24 @@ const ghSpawned = (log) => (existsSync(`${log}.spawns`) ? readFileSync(`${log}.s
 const ghSpawns = (log) => ghSpawned(log).length;
 
 // A fake gh that logs each call's arguments to `log`, waits `delay` ms, then prints `answer` and exits with `status`. With
-// `trap`, it ignores SIGTERM, as a gh stuck in its own cleanup may, and appends to `<log>.beat` every 25 ms while it lives,
-// so the beat file's mtime is when it was last alive.
+// `trap`, it ignores SIGTERM, as a gh stuck in its own cleanup may.
 function fakeGh(bin, { log, delay = 0, answer = '[]', trap = false, status = 0 }) {
-  const beat = `${log}.beat`;
   ghWrapper(bin, `const fs = require('node:fs');\nfs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + '\\n');\n` +
-    (trap ? `fs.appendFileSync(${JSON.stringify(beat)}, '.');\nconst beat = setInterval(() => fs.appendFileSync(${JSON.stringify(beat)}, '.'), 25);\n` : '') +
-    `setTimeout(() => { ${trap ? 'clearInterval(beat); ' : ''}process.stdout.write(${JSON.stringify(answer)}); process.exitCode = ${status}; }, ${delay});\n`, { trap });
+    `setTimeout(() => { process.stdout.write(${JSON.stringify(answer)}); process.exitCode = ${status}; }, ${delay});\n`, { trap });
 }
+
+// A fake gh that is a shell script alone, for a test of how gh is stopped: it ignores SIGTERM, writes `marker` once, then
+// appends a line to `beat` every 0.1 s for about 6 s, a gh that would outlive any budget. No node runs in it, so a kill that
+// lands before a write leaves that file missing and nothing else.
+function shellGh(bin, { marker, beat }) {
+  mkdirSync(bin, { recursive: true });
+  const file = path.join(bin, 'gh');
+  writeFileSync(file, `#!/bin/sh\ntrap '' TERM\necho x >> ${shellQuoted(marker)}\n` +
+    `i=0\nwhile [ "$i" -lt 60 ]; do echo x >> ${shellQuoted(beat)}; sleep 0.1; i=$((i + 1)); done\n`);
+  chmodSync(file, 0o755);
+}
+// The size of `file`, 0 when it is missing.
+const sizeOf = (file) => (existsSync(file) ? statSync(file).size : 0);
 const ghCalls = (log) => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []);
 
 // A project in a git repository of its own, on `branch`, with its own state root, temporary folder, and fake gh.
@@ -495,20 +505,27 @@ test('a Stop marker past its 64 KiB cap is not read: the handoff section fails',
 });
 
 test('a gh that ignores SIGTERM is killed at the deadline', (t) => {
-  const env = withWorktree(t, { gh: { delay: 6000, trap: true } });
+  const env = withWorktree(t);
+  const marker = path.join(env.base, 'gh.started');
+  const beat = path.join(env.base, 'gh.beat');
+  shellGh(path.join(env.base, 'bin'), { marker, beat });
   const { json, endedAt, status } = env.run(['--session', ID, '--deadline-ms', '1500']);
   assert.equal(status, 0);
   // What the snapshot asked of gh, recorded in its own process before the spawn: the 1500 ms it was given, not the 4000 ms
   // default, and SIGKILL, which the shell's `trap '' TERM` cannot ignore. Load cannot change what is asked.
-  assert.deepEqual(ghSpawned(env.log).map(({ timeout, killSignal }) => ({ timeout, killSignal })), [{ timeout: 1500, killSignal: 'SIGKILL' }]);
-  assert.equal(ghCalls(env.log).length, 1, 'gh started, and set its trap long before the deadline');
-  // Times from gh's start, its log line's mtime, so the node and git startups a loaded machine slows come before it. The
-  // 1500 ms deadline runs from gh's spawn: gh's own lifetime, to its last beat, stays under the 4000 ms default budget,
-  // and load can only shorten it.
-  const started = statSync(env.log).mtimeMs;
-  const lived = statSync(`${env.log}.beat`).mtimeMs - started;
-  assert.ok(lived < 2750, `gh lived ${lived} ms: stopped at the 1500 ms deadline, not the 4000 ms default`);
-  const ms = endedAt - started;
+  const spawned = ghSpawned(env.log);
+  assert.deepEqual(spawned.map(({ timeout, killSignal }) => ({ timeout, killSignal })), [{ timeout: 1500, killSignal: 'SIGKILL' }]);
+  const spawnedAt = spawned[0].at;
+  // gh's lifetime, from its spawn to its last heartbeat, stays under the 4000 ms default budget, and load can only shorten
+  // it. A file the kill beat to its first write is missing: gh was stopped before it wrote, inside any bound.
+  const lastBeat = existsSync(beat) ? statSync(beat).mtimeMs : spawnedAt;
+  assert.ok(lastBeat - spawnedAt < 2750, `gh lived ${lastBeat - spawnedAt} ms: stopped at the 1500 ms deadline, not the 4000 ms default`);
+  assert.ok(!existsSync(beat) || existsSync(marker), 'gh beats only after it marks its start');
+  // Dead, not left behind: no heartbeat once the snapshot has exited.
+  const beats = sizeOf(beat);
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);
+  assert.equal(sizeOf(beat), beats, 'gh beat on after the snapshot exited');
+  const ms = endedAt - spawnedAt;
   assert.ok(ms < 4500, `${ms} ms`);
   assert.equal(json.worktrees.mergedNotCleaned, null);
   assert.ok(json.errors.includes('worktrees'), 'a read that failed with no cache is a failure');

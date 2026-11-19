@@ -543,16 +543,32 @@ function loopedPulls(printed, targets) {
   return [onePull(targets)];
 }
 
-// The verdicts of a gate call that count, read from its output without the lines that quote the command, error or not,
-// since a refusal exits 1. With every gate's pull request known, a verdict for another one, which another command
-// printed, is dropped, and the rest count when no pull request has two: a verdict line another command printed for the
-// same pull request leaves none. Fewer verdicts than gates count, as in `aidrian pr auto-merge 57 && aidrian pr
-// auto-merge 58`, where the first refusal exits 1 and the second gate never runs. A call with a gate given no pull
-// request counts only when it printed one verdict per gate command. A path that quotes the command drops its line.
+// The verdicts of a gate call that count, in order, read from its output without the lines that quote the command, error
+// or not, since a refusal exits 1. A gate prints at most one verdict, and the gates run in the order the call names them,
+// so each verdict belongs to the next gate that could print it: one given its pull request, or one given none, which
+// reads the current branch's. Gates that never ran print none, as in `aidrian pr auto-merge 57 && aidrian pr
+// auto-merge 58`, where the first refusal exits 1 and the second gate never runs: fewer verdicts than gates count, and
+// a refusal is never dropped for the gates after it. Two gates on one pull request, a retry, print two verdicts, and the
+// later one stands where they are read. A verdict no gate is left for is another command's: one for a pull request no
+// gate names is dropped alone; one a gate could have printed leaves which is genuine unknown, so that pull request's
+// verdicts are dropped, and with a gate given none, every verdict is. A path that quotes the command drops its line.
 function callVerdicts(read, gates) {
-  if (gates.includes(null)) return read.length === gates.length ? read : [];
-  const verdicts = read.filter(({ pr }) => gates.includes(pr));
-  return new Set(verdicts.map(({ pr }) => pr)).size === verdicts.length ? verdicts : [];
+  const counted = [];
+  const extra = [];
+  let next = 0;
+  for (const verdict of read) {
+    const at = gates.findIndex((target, index) => index >= next && (target === null || target === verdict.pr));
+    if (at === -1) {
+      extra.push(verdict);
+      continue;
+    }
+    counted.push(verdict);
+    next = at + 1;
+  }
+  if (!extra.length) return counted;
+  if (gates.includes(null)) return [];
+  const unknown = new Set(extra.map(({ pr }) => pr).filter((pr) => gates.includes(pr)));
+  return counted.filter(({ pr }) => !unknown.has(pr));
 }
 
 // The skills whose run opens or updates a pull request through a draft create or `gh pr edit`.

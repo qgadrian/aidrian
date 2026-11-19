@@ -1264,14 +1264,15 @@ earlier in the turn, is read there as well.
   has `effective` false, `reason` `"paths"`, and a `why` of that shape: a guarded path, a policy file, a file the gate
   reads its policy from, the release script, a knowledge doc the start hook loads, or a file outside the project's folder.
   A refusal for a rename, a file count, or any other reason names no path and does not count.
-- The gate counts only as a Bash call that runs `aidrian pr auto-merge`, by any path to aidrian. When each gate command
-  of the call was given a pull request, its verdicts for those pull requests count, at most one each: fewer verdicts
-  than gate commands count, as in `aidrian pr auto-merge 57 && aidrian pr auto-merge 58`, where the first refusal
-  exits 1 and the second gate never runs. A call with a gate given no pull request counts only with one verdict per
-  gate command. It is read after the lines that quote the command are dropped, as a refusal quoting it shows: a line
-  holding the whole command or its first line, or equal, trimmed, to another of its lines. An `echo` of the line, an
-  error exit with no verdict, a second verdict line for one pull request, and a path that holds the command text count
-  as no gate run.
+- The gate counts only as a Bash call that runs `aidrian pr auto-merge`, by any path to aidrian. Its verdicts are read
+  in order, each for the next gate command that could print it: one given that pull request, or one given none, which
+  reads the current branch's. Fewer verdicts than gate commands count, as in `aidrian pr auto-merge && aidrian pr
+  auto-merge 58`, where the first refusal exits 1 and the second gate never runs. Two gates on one pull request, a
+  retry, print two verdicts, and the later one stands. A verdict no gate is left for is another command's: one for a
+  pull request no gate names is dropped; one a gate could have printed drops that pull request's verdicts, or every
+  verdict when a gate was given none. It is read after the lines that quote the command are dropped, as a refusal
+  quoting it shows: a line holding the whole command or its first line, or equal, trimmed, to another of its lines.
+  An `echo` of the line, an error exit with no verdict, and a path that holds the command text count as no gate run.
 - The last gate run or merge of each pull request in the turn counts: a later run that passed, or refused for another
   reason, and a `gh pr merge` of that pull request whose result is no error clear an earlier refusal. `gh pr merge` with
   `--help`, `-h`, `--auto`, or `--disable-auto` merges nothing and clears nothing. A merge with no target, or one this

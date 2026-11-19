@@ -438,8 +438,22 @@ test('turnActions counts a gate call only when it printed one verdict per gate i
     [{ kind: 'gate', pr: 57, path: 'AGENTS.md' }], 'the first gate of an && chain refused and exited 1, so the second never ran');
   assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge 57 && aidrian pr auto-merge 58', `Exit code 1\n${gateLine(57, why)}\n${gateLine(57, why)}`)), [],
     'two verdicts for one gate');
-  assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge && aidrian pr auto-merge 58', `Exit code 1\n${gateLine(57, why)}`)), [],
-    'a gate given no pull request keeps one verdict per gate command');
+  assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge && aidrian pr auto-merge 58', `Exit code 1\n${gateLine(57, why)}`)),
+    [{ kind: 'gate', pr: 57, path: 'AGENTS.md' }], 'the first gate, on the current branch`s pull request, refused, so the second never ran');
+  assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge && aidrian pr auto-merge --json', `Exit code 1\n${gateLine(57, why)}`)),
+    [{ kind: 'gate', pr: 57, path: 'AGENTS.md' }], 'two gates with no target, the first refused');
+  assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge; gh pr view 99', `${gateLine(57, why)}\n${gateLine(99, why)}`)), [],
+    'a gate with no target and a second verdict line: which one it printed cannot be told');
+
+  // A retry after a refusal: two gates on one pull request print two verdicts, in order, and the last one stands.
+  const pass = 'auto-merge on for #57 at abc1234: squash, delete the branch, keep the worktree';
+  const retry = 'aidrian pr auto-merge 57; aidrian pr auto-merge 57';
+  assert.deepEqual(actions(turn.human('go'), gate('g1', retry, `${gateLine(57, why)}\n${pass}`)),
+    [{ kind: 'gate', pr: 57, path: 'AGENTS.md' }, { kind: 'gate', pr: 57, path: null }], 'refused, then passed');
+  assert.deepEqual(actions(turn.human('go'), gate('g1', retry, `${pass}\n${gateLine(57, why)}`)),
+    [{ kind: 'gate', pr: 57, path: null }, { kind: 'gate', pr: 57, path: 'AGENTS.md' }], 'passed, then refused');
+  assert.deepEqual(actions(turn.human('go'), gate('g1', retry, `${pass}\n${gateLine(57, why)}\n${pass}`)), [],
+    'more verdicts for a pull request than gates ran for it');
   const command = 'aidrian pr auto-merge 57';
   const holding = `x/${command}auto-merge on for #57 at a: y`;
   assert.deepEqual(actions(turn.human('go'), gate('g1', command, `Exit code 1\n${gateLine(57, pathsProblem(changed(holding), '', { startDocs: { docs: [holding], folder: null } }))}`)), [],

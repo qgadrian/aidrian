@@ -127,7 +127,7 @@ In a group such as `github`, set only the keys you change; the others keep their
     "triage": { "issueCreation": "confirm", "labels": ["persona-audit", "persona:{persona}", "severity:{severity}"] }
   },
   "tracker": { "enabled": false, "workspace": null, "readTools": [], "writeTools": [], "team": null, "project": null },
-  "projectRun": { "allow": false, "maxParallel": 1, "maxStarts": 300, "issueHours": 6, "blockedStatus": null, "decisionLabel": "needs-decision", "unverifiedHosts": false, "outsideSandbox": [], "mcpServers": {}, "nonTrackerServers": [], "registries": [] }
+  "projectRun": { "allow": false, "maxParallel": 1, "maxStarts": 300, "issueHours": 6, "blockedStatus": null, "decisionLabel": "needs-decision", "unverifiedHosts": false, "workflowSecretsAccepted": false, "outsideSandbox": [], "mcpServers": {}, "nonTrackerServers": [], "registries": [] }
 }
 ```
 
@@ -1794,7 +1794,8 @@ the first hook files an [automatic lesson](lessons.md#automatic-lessons), `track
 It never refuses the call. The lesson asks for the tool in `writeTools` when it writes.
 A tool that only reads is told apart by its name's first word:
 `get`, `list`, `search`, `read`, `find`, `fetch`, `query`, `view`, `show`, `describe`, or `whoami`.
-That has two limits. A write tool named that way, such as `get_or_create_item`, is not noted.
+That has two limits. A write tool named that way, such as `get_or_create_item`, is not noted
+(the [project run rule](#project-run) reads names stricter).
 A read tool named otherwise is noted, and rejecting its lesson ends that, since the same tool never reopens it.
 A tool on a server neither list names is not noted, so a connection under another server name stays out of sight.
 
@@ -1832,6 +1833,7 @@ allows project runs.
 | `projectRun.blockedStatus` | `null` | The tracker status a blocked issue moves to; `null` moves none. |
 | `projectRun.decisionLabel` | `"needs-decision"` | The label an issue parked on a decision gets. |
 | `projectRun.unverifiedHosts` | `false` | Whether a run starts sessions on a host whose project start no live run has verified, which today is both hosts, Claude Code and Codex: setting it opts into a sandbox boundary no live run has checked ([Claude Code](providers/claude-code.md#project-start), [Codex](providers/codex.md#project-start)). Read from the default branch on the forge; a local ref only refuses. Each such start prints an `unverified:` line. |
+| `projectRun.workflowSecretsAccepted` | `false` | Whether the team accepts that a branch an issue's session pushes runs the repository's workflows with its CI secrets. Without it, `aidrian project preflight` blocks a run whose repository or organization gives its workflows a secret while the signed-in token may push a change to a workflow file (GitHub's `workflow` scope, or a token that names no scopes): the agent gate hook refuses an issue session's own workflow writes and pushes that carry them, and a script the session runs is the residual. Sign the forge CLI in with a token without that scope, or keep the secrets in environments limited to protected branches, before setting it. Read from the default branch on the forge and the local ref; both must set it. Never set by a recipe. |
 | `projectRun.outsideSandbox` | `[]` | The names a confined session may still run outside its host's sandbox, each one the team has reviewed: a key of the user's host settings that runs a command, such as `hooks`, `statusLine`, or `apiKeyHelper`; any plugin other than this one that is installed or enabled, by its id, such as `name@marketplace`, since a plugin's hooks, MCP and LSP servers, and monitors all run outside the sandbox; a skill, agent, or command of the user's config folder whose frontmatter declares hooks or MCP servers, by its path spelled from `~/.claude/`, such as `~/.claude/skills/deploy/SKILL.md`; or one of the repository's, at any depth, by its path, such as `.claude/skills/deploy/SKILL.md`, or a link under a skills, agents, or commands folder that leads out of it, such as `.claude/skills/foo`. Any other such command halts the start. It never lifts a halt on the user's `sandbox` settings. Only the names both the default branch on the forge and the local ref list count. |
 | `projectRun.mcpServers` | `{}` | The MCP servers a confined session loads, as the host's `mcpServers` object takes them, each name to its definition. The session starts with only these: a project's `.mcp.json`, the user's own servers, and the host's claude.ai connectors never load. Each listed server, and the helper command it starts, runs outside the sandbox with the user's full access, so list only a server the team trusts with that; its definition travels in the session's command line, which any process of the user can read in the process list, so it holds no secret. Only the servers both the forge and the local ref define alike count. |
 | `projectRun.nonTrackerServers` | `[]` | The servers of `projectRun.mcpServers` that reach no tracker, by name, such as a docs server. The [project run rule](#tracker) holds an issue's session and the driver, on every server that list names and no tracker adapter maps, to calls whose name says they read, since it cannot tell a write there from a tracker write; a server named here is free of that. A server an adapter maps by its name or endpoint stays held whatever this lists. Read from the base branch. |
@@ -2006,11 +2008,16 @@ the base branch's tracker, with no server in `projectRun.mcpServers` named like 
 lists the servers the run rule maps to no tracker, each of which must be no tracker connection); auto-merge allowed on
 the forge's default branch with `github.requiredChecks` listed and this machine's switch on; `session.handoff.continue`
 set to `"background"`, since `"clear"` waits on a person; `github.reviewer`, with the bot seen on a recent
-pull request and an active CI workflow, read through the forge; and, through the forge too, a protected default branch
-and an active tag rule that restricts creating a tag and that the signed-in user, whose token an issue's session keeps,
-can never bypass (`branch-protection`, `release-tags`), with a `note workflows` line: the forge runs a pushed branch's
-workflow files with the repository's secrets, so release and deploy secrets belong in environments limited to protected
-branches and tags. It prints `ok NAME`, `blocker NAME: WHY`, `note NAME: WHAT`,
+pull request and an active CI workflow, read through the forge; and, through the forge too, a rule on the default branch
+that asks the signed-in user, whose token an issue's session keeps, for a pull request, administrator or not, with no
+bypass for that user (`branch-protection`; an `ask` when the forge shows the branch protection's settings only to an
+administrator), an active tag rule that names every tag, `~ALL` or `refs/tags/*` with no exclusion, restricts creating
+and updating a tag, and that user can never bypass (`release-tags`), and no CI secret the repository's or its
+organization's workflows see while that token may push a workflow file, unless the team sets
+`projectRun.workflowSecretsAccepted` (`workflow-secrets`); with a `note workflows` line: the forge runs a pushed
+branch's workflow files with the repository's secrets, so release and deploy secrets belong in environments limited to
+protected branches and tags, and a `note triggers` line for other services that act on a push or a comment, such as
+preview deploys and ChatOps bots. It prints `ok NAME`, `blocker NAME: WHY`, `note NAME: WHAT`,
 or `ask NAME: WHAT` for a read the forge or tracker lacks, such as the decision label's existence, and exits 1 on any
 blocker. `init RUN --file PATH --check` checks the input as `init` would, prints its blockers
 (problems, cycles, issues started outside the run, and, when `projectRun.mcpServers` holds no tracker server, each issue
@@ -2081,7 +2088,11 @@ names. A server `projectRun.mcpServers` lists that no adapter maps, such as Line
 under a name of the team's choosing, may be a tracker connection the rule cannot screen: on it, both are refused every
 call whose name does not say it reads (`get_`, `list_`, `search_`, `read_`, and the other read verbs of the
 [first-word check](#how-a-write-is-judged)), unless `projectRun.nonTrackerServers` names it as reaching no tracker.
-`aidrian project preflight` notes each such server. When the base branch's config cannot be read, or the mark names no
+To this rule a name says it reads only with a read verb other than `query`, which may run any statement, first, and no
+write verb after it, such as `create`, `update`, `delete`, `add`, `set`, or `save`, in any of its words, so
+`get_or_create_item`, `list_and_update`, and `getOrCreate` are writes. The driver runs with the user's own servers, not
+`projectRun.mcpServers` alone, so it is held so on every server no adapter maps that `projectRun.nonTrackerServers`
+does not name. `aidrian project preflight` notes each such server. When the base branch's config cannot be read, or the mark names no
 project, which servers reach a tracker cannot be told, so both are refused that on every server no adapter maps; a held
 session, which reads no base branch, always is. The rule runs under the [agent gate hook's time budget](hooks.md#agent-gates):
 a call it cannot judge in time is refused to a marked, held, or driving session unless its name says it reads.

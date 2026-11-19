@@ -9,7 +9,7 @@ import test from 'node:test';
 import { nameMatches } from '../plugins/aidrian/lib/agent-gates.mjs';
 import { TRACKERS } from '../plugins/aidrian/lib/trackers/index.mjs';
 import { fold } from '../plugins/aidrian/lib/lesson-inbox.mjs';
-import { bodyHash, judgeTrackerWrite, readTrackerValue, runCallKind, runWriteRefusal, trackerOfEndpoint, trackerOfTool, unlistedTool } from '../plugins/aidrian/lib/tracker-guard.mjs';
+import { bodyHash, judgeTrackerWrite, readsByName, readTrackerValue, runCallKind, runWriteRefusal, trackerOfEndpoint, trackerOfTool, unlistedTool } from '../plugins/aidrian/lib/tracker-guard.mjs';
 
 const PLUGIN = path.resolve(import.meta.dirname, '../plugins/aidrian');
 const MODULE = path.join(PLUGIN, 'lib/tracker-guard.mjs');
@@ -1230,12 +1230,34 @@ test('a listed server no tracker maps holds an issue\'s session, the driver, and
     assert.equal(judge(writer, 'mcp__issues__get_issue'), null, `${writer.role}: a read by its name`);
     assert.equal(judge(writer, 'mcp__issues__save_issue', { otherServers: ['issues'] }), null, `${writer.role}: declared to reach no tracker`);
     assert.match(judge(writer, 'mcp__issues__save_issue', { otherServers: ['docs'] }), /issues, a server projectRun\.mcpServers lists/u, `${writer.role}: another server's declaration`);
-    assert.equal(judge(writer, 'mcp__unlisted__save_issue'), null, `${writer.role}: a server the run never listed`);
   }
+  // The child loads projectRun.mcpServers alone; the driver runs with the user's own servers, so it is held on any server
+  // projectRun.nonTrackerServers does not name.
+  assert.equal(judge({ role: 'child', run: 'launch', issue: 'ENG-1' }, 'mcp__unlisted__save_issue'), null, 'child: a server the run never listed');
+  assert.match(judge(driver, 'mcp__unlisted__save_issue'), /save_issue does not say by its name that it reads, and unlisted, a server of this session projectRun\.nonTrackerServers does not name, maps to no tracker/u, 'driver: a server the run never listed');
+  assert.equal(judge(driver, 'mcp__unlisted__get_issue'), null, 'driver: a read by its name there');
+  assert.equal(judge(driver, 'mcp__unlisted__save_issue', { otherServers: ['unlisted'] }), null, 'driver: a server declared to reach no tracker');
   assert.match(judge({ role: 'held', why: 'x' }, 'mcp__issues__save_issue'), /because x/u);
   assert.equal(judge({ role: 'unattended' }, 'mcp__issues__save_issue'), null, 'unattended outside a run');
   assert.equal(judge(null, 'mcp__issues__save_issue'), null, 'attended');
   assert.equal(runWriteRefusal({ writer: { role: 'child', run: 'launch', issue: 'ENG-1' }, tool: 'mcp__issues__merge_pr', input: {}, mcpServers })?.reason.includes('named like a tool that merges'), true, 'a merge name keeps its own refusal');
+});
+
+test('to a role the run rule holds, a write verb anywhere in a name makes it a write, and query is no read', () => {
+  const mcpServers = { issues: { command: 'npx', args: ['-y', 'linear-mcp'] } };
+  const strict = (short) => runCallKind({ tool: `mcp__issues__${short}`, mcpServers, strict: true })?.write ?? false;
+  for (const short of ['get_or_create_item', 'list_and_update', 'getOrCreateItem', 'findOrCreate', 'fetch-and-delete', 'search_then_add_label', 'query', 'query_issues', 'read.and.save']) {
+    assert.equal(strict(short), true, short);
+    assert.equal(readsByName(`mcp__issues__${short}`), false, `${short}: past the hook's time budget too`);
+    assert.match(runWriteRefusal({ writer: { role: 'child', run: 'launch', issue: 'ENG-1' }, tool: `mcp__issues__${short}`, input: {}, mcpServers })?.reason ?? '', /does not say by its name that it reads/u, short);
+  }
+  for (const short of ['get_issue', 'list_issues', 'getIssue', 'search_documentation', 'list_comments', 'get_issue_status', 'list_issue_labels', 'whoami', 'get_settings', 'list_closed_issues']) {
+    assert.equal(strict(short), false, short);
+    assert.equal(readsByName(`mcp__issues__${short}`), true, short);
+  }
+  // A tracker's own server keeps its adapter's read verbs, and the note for an attended session keeps its looser read.
+  assert.equal(runCallKind({ tool: 'mcp__ticketbox__get_or_create_ticket', trackers: [runTracker], strict: true }).write, true, 'on a tracker server');
+  assert.equal(runCallKind({ tool: 'mcp__ticketbox__get_ticket', trackers: [runTracker], strict: true }), null);
 });
 
 test('with the base branch unread, an issue\'s session and the driver are refused every call no tracker maps unless it reads, and a held session always', () => {
@@ -1244,8 +1266,9 @@ test('with the base branch unread, an issue\'s session and the driver are refuse
   for (const writer of [child, driver]) {
     assert.match(runWriteRefusal({ writer, tool: 'mcp__issues__save_issue', input: { id: 'ENG-2' }, unread })?.reason ?? '', /save_issue does not say by its name that it reads, and the run rule cannot tell which servers reach a tracker, since the base branch's config could not be read/u, writer.role);
     assert.equal(runWriteRefusal({ writer, tool: 'mcp__issues__list_issues', input: {}, unread }), null, `${writer.role}: a read`);
-    assert.equal(runWriteRefusal({ writer, tool: 'mcp__issues__save_issue', input: { id: 'ENG-2' } }), null, `${writer.role}: read, and no list names it`);
   }
+  assert.equal(runWriteRefusal({ writer: child, tool: 'mcp__issues__save_issue', input: { id: 'ENG-2' } }), null, 'child: read, and no list names it');
+  assert.ok(runWriteRefusal({ writer: driver, tool: 'mcp__issues__save_issue', input: { id: 'ENG-2' } }), 'driver: read, and no list names it, on a server the user loads');
   assert.match(runWriteRefusal({ writer: child, tool: 'mcp__linear__save_issue', input: { id: 'ENG-2', state: 'started' }, unread })?.reason ?? '', /id is "ENG-2"/u, 'a known tracker server keeps its own rule');
   assert.match(runWriteRefusal({ writer: { role: 'held', why: 'held here' }, tool: 'mcp__anything__send', input: {} })?.reason ?? '', /because held here/u, 'a held session reads no base branch');
   assert.equal(runWriteRefusal({ writer: { role: 'held', why: 'held here' }, tool: 'mcp__anything__search', input: {} }), null);

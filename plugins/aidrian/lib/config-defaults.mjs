@@ -157,7 +157,7 @@ export const DEFAULTS = deepFreeze({
   // The keys of a project run (docs/config.md#project-run), read from the base branch, through the forge and this
   // checkout's git alike, never a working copy (lib/project-run-gate.mjs teamPolicy); `next` names up to maxParallel
   // issues to start.
-  projectRun: { allow: false, maxParallel: 1, maxStarts: 300, issueHours: 6, blockedStatus: null, decisionLabel: 'needs-decision', unverifiedHosts: false, outsideSandbox: [], mcpServers: {}, nonTrackerServers: [], registries: [] },
+  projectRun: { allow: false, maxParallel: 1, maxStarts: 300, issueHours: 6, blockedStatus: null, decisionLabel: 'needs-decision', unverifiedHosts: false, workflowSecretsAccepted: false, outsideSandbox: [], mcpServers: {}, nonTrackerServers: [], registries: [] },
   reviewEngine: 'auto',
   reviewVisual: { baseUrl: null },
 });

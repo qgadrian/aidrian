@@ -288,11 +288,14 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   closing-word check ([config.md](../config.md#when-it-is-on)).
 - A project run's preflight (`lib/project-preflight.mjs`): `reviewerSeen(repo, login, { host, limit })`, whether the
   reviewer reviewed any of the repository's last `limit` pull requests, as `{ changes, seen }`, a bot's login compared
-  with or without its `[bot]` suffix; `ciWorkflows(repo, { host })`, the names of its active CI workflows; and
-  `refProtection(repo, { host })`, `{ branch, protected, tags }`: the default branch's name, whether branch protection
-  or an active ruleset that asks for a pull request holds it, and each active tag rule as `{ name, refs, creation,
-  bypass }`, its ref patterns, whether it restricts creating a tag, and whether the signed-in user may bypass it
-  (`never` is the only answer the preflight accepts).
+  with or without its `[bot]` suffix; `ciWorkflows(repo, { host })`, the names of its active CI workflows;
+  `refProtection(repo, { host })`, `{ branch, protected, why, tags }`: the default branch's name, whether a rule that
+  asks for a pull request there binds the signed-in user (true; false; null when the forge shows the rule's settings
+  only to an administrator, which the preflight asks of the driver), why not, and each active tag rule as `{ name, all,
+  creation, update, bypass }`: whether it names every tag and excludes none, whether it restricts creating and updating
+  a tag, and whether the signed-in user may bypass it (`never` is the only answer the preflight accepts); and
+  `workflowSecrets(repo, { host })`, `{ secrets, workflowPush }`: how many CI secrets the repository's workflows see,
+  and whether the signed-in token may push a change to a workflow file (null when the token does not say).
 - Links: `compareUrl(repo, from, to)`, the web link that shows the commits from `from` to `to`, which the review
   summary's findings table gives a finding's closing range. It is built only from two full-hex SHAs and the forge's own
   identity of the repository, never from pull request content: GitHub's adapter reads the repository's `html_url` once,

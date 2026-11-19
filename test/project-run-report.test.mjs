@@ -457,16 +457,18 @@ test('from another project\'s folder, the first driver is still held from its ru
   for (const [what, file] of targets) assert.equal(gates(fx, OTHER, 'Write', { file_path: file, content: '{}' }, elsewhere).status, 0, `${what}: an attended session`);
 });
 
-// What the forge says guards a repository whose default branch is protected and whose release tags a rule the signed-in
-// user cannot bypass holds.
-const GUARDED = { branch: 'main', protected: true, tags: [{ name: 'releases', refs: ['refs/tags/v*'], creation: true, bypass: 'never' }] };
+// What the forge says guards a repository whose default branch a rule holds the signed-in user to a pull request on,
+// and whose tags a rule that user cannot bypass holds, all of them, against creation and update; and a repository whose
+// workflows see no CI secret.
+const GUARDED = { branch: 'main', protected: true, why: null, tags: [{ name: 'tags', all: true, creation: true, update: true, bypass: 'never' }] };
+const NO_SECRETS = { secrets: 0, workflowPush: true };
 
 test('preflight names every blocker at once, and starts nothing', (t) => {
   const ready = runFixture(t, { init: false, ...READY });
   writeFileSync(path.join(ready.env.CLAUDE_CONFIG_DIR, 'settings.json'), JSON.stringify({ autoContinueAtUsageLimit: true }));
-  Object.assign(ready.forge, { reviewerSeen: () => ({ changes: 4, seen: true }), ciWorkflows: () => ['test'], refProtection: () => GUARDED });
+  Object.assign(ready.forge, { reviewerSeen: () => ({ changes: 4, seen: true }), ciWorkflows: () => ['test'], refProtection: () => GUARDED, workflowSecrets: () => NO_SECRETS });
   const ok = ready.cmd(['preflight']);
-  assert.deepEqual(ok.out.filter((line) => !/^(ask|note) /u.test(line)), ['ok repository', 'ok state', 'ok run', 'ok instructions', 'ok policy', 'ok machine', 'ok host', 'ok access', 'ok usage-limit', 'ok tracker', 'ok auto-merge', 'ok handoff', 'ok reviewer', 'ok reviewer-seen', 'ok ci', 'ok branch-protection', 'ok release-tags'], ok.out.join('\n'));
+  assert.deepEqual(ok.out.filter((line) => !/^(ask|note) /u.test(line)), ['ok repository', 'ok state', 'ok run', 'ok instructions', 'ok policy', 'ok machine', 'ok host', 'ok access', 'ok usage-limit', 'ok tracker', 'ok auto-merge', 'ok handoff', 'ok reviewer', 'ok reviewer-seen', 'ok ci', 'ok branch-protection', 'ok release-tags', 'ok workflow-secrets'], ok.out.join('\n'));
   assert.equal(ok.exitCode, 0);
   assert.deepEqual(ok.out.filter((line) => line.startsWith('ask ')).map((line) => line.split(':')[0]), ['ask labels']);
   assert.equal(ready.claude.starts().length, 0);
@@ -477,7 +479,8 @@ test('preflight names every blocker at once, and starts nothing', (t) => {
   delete ready.forge.reviewerSeen;
   delete ready.forge.ciWorkflows;
   delete ready.forge.refProtection;
-  assert.deepEqual(ready.cmd(['preflight']).out.filter((line) => line.startsWith('ask ')).map((line) => line.split(':')[0]), ['ask reviewer-seen', 'ask ci', 'ask protection', 'ask labels'], 'a forge with no such read');
+  delete ready.forge.workflowSecrets;
+  assert.deepEqual(ready.cmd(['preflight']).out.filter((line) => line.startsWith('ask ')).map((line) => line.split(':')[0]), ['ask reviewer-seen', 'ask ci', 'ask protection', 'ask workflow-secrets', 'ask labels'], 'a forge with no such read');
   const off = runFixture(t, { projectRun: { allow: false }, local: null, config: { github: { reviewer: 'none' } } });
   execFileSync('git', ['-C', off.dir, 'remote', 'set-url', 'origin', 'git@github.com:acme/widgets.git']);
   const blocked = off.cmd(['preflight']);
@@ -505,29 +508,66 @@ test('preflight blocks a host instruction file above the runs folder, which ever
   assert.match(line, /move it away, or set state\.dir to a folder with no host instruction file above it$/u);
 });
 
-test('preflight blocks a default branch with no protection and release tags no rule holds from the token an issue session keeps', (t) => {
+test('preflight blocks a default branch no rule holds the signed-in user to, release tags no rule holds from the token an issue session keeps, and workflow secrets that token may reach', (t) => {
   const fx = runFixture(t, { init: false, ...READY });
-  Object.assign(fx.forge, { reviewerSeen: () => ({ changes: 4, seen: true }), ciWorkflows: () => ['test'] });
+  Object.assign(fx.forge, { reviewerSeen: () => ({ changes: 4, seen: true }), ciWorkflows: () => ['test'], workflowSecrets: () => NO_SECRETS });
   const lines = (protection) => {
     fx.forge.refProtection = typeof protection === 'function' ? protection : () => protection;
     return fx.cmd(['preflight']).out;
   };
   const blocker = (out, name) => out.find((line) => line.startsWith(`blocker ${name}:`)) ?? null;
-  const open = lines({ branch: 'main', protected: false, tags: [] });
-  assert.match(blocker(open, 'branch-protection'), /the default branch main has no protection on the forge, so the token an issue's session keeps could push to it/u);
-  assert.match(blocker(open, 'release-tags'), /no active tag rule on the forge stops a tag being created by the signed-in user/u);
+  const open = lines({ branch: 'main', protected: false, why: 'it has no branch protection', tags: [] });
+  assert.match(blocker(open, 'branch-protection'), /no rule on the forge holds the signed-in user, whose token an issue's session keeps, to a pull request on the default branch main \(it has no branch protection\)/u);
+  assert.match(blocker(open, 'release-tags'), /no active tag rule on the forge names every tag and stops the signed-in user/u);
+  // An administrator a protection lets past, or a ruleset that user may bypass, is no protection.
+  for (const why of ['its branch protection does not include administrators, and the signed-in user is one', 'the ruleset "main" asks for a pull request, and lets the signed-in user bypass it (always); it has no branch protection']) {
+    assert.ok(blocker(lines({ ...GUARDED, protected: false, why }), 'branch-protection').includes(why), why);
+  }
+  // A protection only an administrator can read is asked of the driver.
+  const hidden = lines({ ...GUARDED, protected: null, why: 'GitHub shows the settings of its branch protection only to an administrator' });
+  assert.equal(blocker(hidden, 'branch-protection'), null);
+  assert.match(hidden.find((line) => line.startsWith('ask branch-protection:')), /confirm on the forge that the default branch main asks for a pull request of the signed-in user too/u);
   for (const tags of [
     [{ ...GUARDED.tags[0], bypass: 'always' }], [{ ...GUARDED.tags[0], bypass: 'pull_requests_only' }], [{ ...GUARDED.tags[0], bypass: null }],
-    [{ ...GUARDED.tags[0], creation: false }], [{ ...GUARDED.tags[0], refs: [] }],
+    [{ ...GUARDED.tags[0], creation: false }], [{ ...GUARDED.tags[0], update: false }], [{ ...GUARDED.tags[0], all: false }],
   ]) assert.ok(blocker(lines({ ...GUARDED, tags }), 'release-tags'), JSON.stringify(tags));
   const held = lines(GUARDED);
-  assert.deepEqual([blocker(held, 'branch-protection'), blocker(held, 'release-tags')], [null, null]);
-  assert.match(held.find((line) => line.startsWith('note workflows:')), /keep release and deploy secrets in environments limited to protected branches and tags/u);
+  assert.deepEqual([blocker(held, 'branch-protection'), blocker(held, 'release-tags'), blocker(held, 'workflow-secrets')], [null, null, null]);
+  assert.match(held.find((line) => line.startsWith('note workflows:')), /keep release and deploy secrets in environments limited to protected branches and tags; the hook refuses an issue session's writes to the workflow files and a push whose commits change them/u);
+  assert.match(held.find((line) => line.startsWith('note triggers:')), /preview deploys and ChatOps bots/u);
   const failed = lines(() => {
     throw new Error('gh: Not Found (HTTP 404)');
   });
   assert.match(blocker(failed, 'release-tags'), /the forge cannot say what guards the default branch and the tags \(gh: Not Found \(HTTP 404\)\)/u);
   assert.ok(blocker(failed, 'branch-protection'));
+  // Workflow secrets: a blocker while the token may push a workflow file, or does not say.
+  const secrets = (read) => {
+    fx.forge.workflowSecrets = typeof read === 'function' ? read : () => read;
+    return blocker(lines(GUARDED), 'workflow-secrets');
+  };
+  assert.match(secrets({ secrets: 3, workflowPush: true }), /the repository's workflows see 3 CI secrets, and the signed-in token's scopes include workflow, so it may push a change to a workflow file.*projectRun\.workflowSecretsAccepted/u);
+  assert.match(secrets({ secrets: 1, workflowPush: null }), /the signed-in token names no scopes, so it may push/u);
+  assert.equal(secrets({ secrets: 3, workflowPush: false }), null, 'a token that cannot push a workflow file');
+  assert.match(secrets(() => {
+    throw new Error('gh: Forbidden (HTTP 403)');
+  }), /the forge cannot say which CI secrets the repository's workflows see \(gh: Forbidden \(HTTP 403\)\)/u);
+});
+
+test('preflight takes the team\'s acceptance of workflow secrets only when the default branch sets it on the forge and the local ref', (t) => {
+  const exposed = { secrets: 3, workflowPush: true };
+  const blocked = (options) => {
+    const fx = runFixture(t, { init: false, ...READY, ...options });
+    Object.assign(fx.forge, { reviewerSeen: () => ({ changes: 4, seen: true }), ciWorkflows: () => ['test'], refProtection: () => GUARDED, workflowSecrets: () => exposed });
+    const { out } = fx.cmd(['preflight']);
+    assert.ok(out.includes('ok policy'), out.join('\n'));
+    return out.find((line) => line.startsWith('blocker workflow-secrets:')) ?? null;
+  };
+  const accepted = { ...READY.projectRun, workflowSecretsAccepted: true };
+  assert.equal(blocked({ projectRun: accepted }), null, 'set on both');
+  const committed = { version: 1, ...READY.config, projectRun: READY.projectRun };
+  assert.ok(blocked({ projectRun: accepted, forgeConfig: committed }), 'the local ref alone');
+  assert.ok(blocked({ forgeConfig: { ...committed, projectRun: accepted } }), 'the forge alone');
+  assert.ok(blocked({}), 'set on neither');
 });
 
 test('preflight notes a run with no tracker server, blocks a tracker-named server it cannot map, and no required checks', (t) => {

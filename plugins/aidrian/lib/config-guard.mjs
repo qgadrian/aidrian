@@ -323,8 +323,10 @@ const isSubagent = (input) => typeof input.agent_id === 'string' && input.agent_
 // null for a call they let run: a subagent's; a main session's `unattended()` says no Human attends; and a main session's
 // `drove()` says has driven a project run (run-driver.mjs droveRun), held from the run's stores, the marks, and the
 // sign-off store from its first call (scripts/hook-agent-gates.mjs), which a call the guards cannot read whole may reach.
-function onlyMain(input, unattended, drove) {
+// `issue()` says the session works an issue of a project run (unattended-mark.mjs issueHeld), which its reason names.
+function onlyMain(input, { unattended, drove, issue }) {
   if (isSubagent(input)) return 'only the main session may change';
+  if (issue()) return 'only a session a Human attends may change, and this session works an issue of a project run, which no Human attends';
   if (unattended()) return 'only a main session a Human attends may change, and the background handoff route started this one, with no Human';
   if (drove()) return 'only a main session a Human attends may change, and this session has driven a project run, whose driver mark holds it as one no Human attends';
   return null;
@@ -334,12 +336,12 @@ function onlyMain(input, unattended, drove) {
 // guards resolve (OPAQUE_WORDS), or null: { match, reason }. Past that many, a guarded file may hide in the rest. It holds
 // for a subagent, and for a main session `unattended()` says no Human attends or `drove()` says has driven a project run
 // (onlyMain), asked last.
-export function opaqueLimitDenial(input, { names: { human } }, { unattended = () => false, drove = () => false } = {}) {
+export function opaqueLimitDenial(input, { names: { human } }, { unattended = () => false, drove = () => false, issue = () => false } = {}) {
   const opaque = opaqueShellCommand(input);
   if (opaque === null) return null;
   const count = opaqueWords(opaque).length;
   if (count <= OPAQUE_WORDS) return null;
-  const who = onlyMain(input, unattended, drove);
+  const who = onlyMain(input, { unattended, drove, issue });
   if (who === null) return null;
   const why = `its command has ${count} words, counting each case, and the guards read at most ${OPAQUE_WORDS} in a shell command they cannot parse, so it may change a file ${who}`;
   return { match: `more than ${OPAQUE_WORDS} words`, reason: projectRuleReason(input, why, human, 'that the command is longer than the guards read, or run it as shorter commands') };
@@ -347,12 +349,12 @@ export function opaqueLimitDenial(input, { names: { human } }, { unattended = ()
 
 // Why the Bash call in `input` may not run because it writes more targets than the guards resolve (WRITE_TARGETS), or
 // null: { match, reason }. Past that many, a guarded file may hide in the rest. It holds as opaqueLimitDenial does.
-export function writeLimitDenial(input, { names: { human } }, { unattended = () => false, drove = () => false } = {}) {
+export function writeLimitDenial(input, { names: { human } }, { unattended = () => false, drove = () => false, issue = () => false } = {}) {
   if (!bashCall(input)) return null;
   const { files, names, globs } = writeTargets(input);
   const count = files.length + names.length + globs.length;
   if (count <= WRITE_TARGETS) return null;
-  const who = onlyMain(input, unattended, drove);
+  const who = onlyMain(input, { unattended, drove, issue });
   if (who === null) return null;
   const why = `its command writes ${count} targets, counting each folder a path may be in, and the guards read at most ${WRITE_TARGETS} in one call, so it may change a file ${who}`;
   return { match: `more than ${WRITE_TARGETS} write targets`, reason: projectRuleReason(input, why, human, 'that the command writes more files than the guards read, or run it as shorter commands') };
@@ -373,9 +375,9 @@ export function writesNothing(input) {
 // run (onlyMain): the guards it could not finish hold a run's driver from the run's stores, the marks, and the sign-off
 // store. A call that writes nothing (writesNothing), which no guard refuses, runs for every session, so a loaded machine
 // never stalls a session the guards hold on its reads; a shell call, such as a driver's `aidrian project wait`, is held.
-export function deadlineDenial(input, { names: { human } }, { unattended = () => false, drove = () => false } = {}) {
+export function deadlineDenial(input, { names: { human } }, { unattended = () => false, drove = () => false, issue = () => false } = {}) {
   if (writesNothing(input)) return null;
-  const who = onlyMain(input, unattended, drove);
+  const who = onlyMain(input, { unattended, drove, issue });
   if (who === null) return null;
   const why = `the guards could not finish reading this command in time, so it may change a file ${who}`;
   return { match: 'past the guards\' time budget', reason: projectRuleReason(input, why, human, 'that the command takes the guards longer than they have, or run it as shorter commands') };

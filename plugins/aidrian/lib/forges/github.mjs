@@ -200,7 +200,8 @@ export const CONFIG_COMMANDS = Object.freeze([
 
 // The forge CLI's subcommands that change what the forge releases or runs, or the repository's own settings, which the
 // agent gate hook refuses to a project run's issue session (lib/issue-forge-guard.mjs): with the token its sandbox
-// keeps, one would publish a release, start a workflow with the repository's secrets, or rerun a deploy. Each is
+// keeps, one would publish a release, start a workflow with the repository's secrets, rerun a deploy, or make a
+// repository or gist to push the work to. Each is
 // { programs, subcommands, valueOptions, what }, as CONFIG_COMMANDS; the forms that only read, such as `gh release
 // list`, pass.
 export const REF_COMMANDS = Object.freeze([
@@ -210,6 +211,7 @@ export const REF_COMMANDS = Object.freeze([
   { programs: ['gh'], subcommands: [['secret', 'set'], ['secret', 'delete'], ['secret', 'remove'], ['variable', 'set'], ['variable', 'delete']], valueOptions: GH_VALUES, what: 'the repository\'s secrets or variables' },
   { programs: ['gh'], subcommands: [['repo', 'edit'], ['repo', 'delete'], ['repo', 'rename'], ['repo', 'archive'], ['repo', 'unarchive'], ['repo', 'sync'], ['repo', 'deploy-key', 'add'], ['repo', 'deploy-key', 'delete'], ['cache', 'delete']], valueOptions: GH_VALUES, what: 'the repository\'s settings, keys, or caches' },
   { programs: ['gh'], subcommands: [['ssh-key', 'add'], ['ssh-key', 'delete'], ['gpg-key', 'add'], ['gpg-key', 'delete']], valueOptions: GH_VALUES, what: 'the keys of the forge account' },
+  { programs: ['gh'], subcommands: [['repo', 'create'], ['repo', 'fork'], ['gist', 'create']], valueOptions: GH_VALUES, what: 'a new repository, fork, or gist on the forge, where the token it keeps could copy the work and push anything' },
 ]);
 
 // The folders of a repository whose files the forge runs, with the repository's secrets, on a push to any branch:
@@ -535,6 +537,52 @@ function workflowIds(rows, listRuns) {
   return rows;
 }
 
+// The tag rule patterns that name every tag: GitHub's own `~ALL`, and every name under refs/tags/.
+const ALL_TAGS = new Set(['~ALL', 'refs/tags/*', 'refs/tags/**']);
+
+// One tag ruleset, as GitHub answers it, in the preflight's shape: { name, all, creation, update, bypass }: whether it
+// names every tag and excludes none, whether it restricts creating and updating a matching tag, and whether the
+// signed-in user may bypass it ('never', 'pull_requests_only', 'always', or 'exempt', as GitHub answers; null when it
+// says nothing).
+function tagRule(ruleset) {
+  const names = (key) => (Array.isArray(ruleset?.conditions?.ref_name?.[key]) ? ruleset.conditions.ref_name[key].map(String) : []);
+  const types = new Set((Array.isArray(ruleset?.rules) ? ruleset.rules : []).map((rule) => rule?.type));
+  return {
+    name: String(ruleset?.name ?? ''),
+    all: names('include').some((pattern) => ALL_TAGS.has(pattern)) && names('exclude').length === 0,
+    creation: types.has('creation'),
+    update: types.has('update'),
+    bypass: typeof ruleset?.current_user_can_bypass === 'string' ? ruleset.current_user_can_bypass : null,
+  };
+}
+
+// Whether the default branch's protection (not a ruleset) holds the signed-in user to a pull request: { held, why },
+// `held` true, false, or null when GitHub would not show its settings, `why` the reason it is not true. `read(route)`
+// reads a route under the branch; `admin` is whether that user administers the repository, which GitHub's default lets
+// past a protection that does not include administrators; `viewer()` gives the user's login. A protection that lets
+// named people skip its pull request holds only when that user is not one of them and no team or app is named, since a
+// team may hold that user.
+function branchHold(read, admin, viewer) {
+  if (read('')?.protected !== true) return { held: false, why: 'it has no branch protection' };
+  let rules;
+  try {
+    rules = read('/protection');
+  } catch (error) {
+    if (clientError(error)) return { held: null, why: 'GitHub shows the settings of its branch protection only to an administrator' };
+    throw error;
+  }
+  const reviews = rules?.required_pull_request_reviews;
+  if (!reviews) return { held: false, why: 'its branch protection does not ask for a pull request' };
+  if (admin && rules?.enforce_admins?.enabled !== true) return { held: false, why: 'its branch protection does not include administrators, and the signed-in user is one' };
+  const skip = reviews.bypass_pull_request_allowances ?? {};
+  const named = (key) => (Array.isArray(skip[key]) ? skip[key] : []);
+  if (named('teams').length > 0) return { held: false, why: 'its branch protection lets a team skip the pull request, which may hold the signed-in user' };
+  if (named('users').length > 0 && named('users').some((user) => String(user?.login ?? '').toLowerCase() === String(viewer() ?? '').toLowerCase())) {
+    return { held: false, why: 'its branch protection lets the signed-in user skip the pull request' };
+  }
+  return { held: true, why: null };
+}
+
 // The adapter for the repository at `cwd`. `run` is gh, the test seam: the adapter's methods call it, and it stays in
 // this closure, so no caller of the facade gets a raw gh. Every method returns GitHub's payload, parsed, and throws
 // what gh throws. A method that names no `repo` reads gh's default repository for `cwd`.
@@ -705,26 +753,56 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // The names of the repository's active CI workflows, for a project run's preflight.
     ciWorkflows: (repo, { host } = {}) => (rest(`repos/${repo}/actions/workflows`, { host })?.workflows ?? [])
       .filter((workflow) => workflow?.state === 'active').map((workflow) => String(workflow.name)),
-    // What guards the default branch and the tags of `repo`, for a project run's preflight: { branch, protected, tags },
-    // `branch` the default branch's name, `protected` whether branch protection or an active ruleset that asks for a pull
-    // request holds it, and `tags` each active tag ruleset, { name, refs, creation, bypass }: the ref patterns it
-    // includes, whether it restricts creating a matching tag, and whether the signed-in user may bypass it ('never',
-    // 'pull_requests_only', 'always', or 'exempt', as GitHub answers; null when it says nothing).
+    // What guards the default branch and the tags of `repo` from the signed-in user, whose token a project run's issue
+    // session keeps, for the run's preflight: { branch, protected, why, tags }. `branch` is the default branch's name;
+    // `protected` true when an active ruleset that asks for a pull request there may never be bypassed by that user, or
+    // branch protection asks for one and binds that user (branchHold), false when neither does, and null when only branch
+    // protection could hold and GitHub shows its settings to admins alone; `why` says why it is not true. `tags` holds
+    // each active tag ruleset (tagRule).
     refProtection: (repo, { host } = {}) => {
-      const branch = rest(`repos/${repo}`, { host })?.default_branch;
+      const about = rest(`repos/${repo}`, { host });
+      const branch = about?.default_branch;
       if (typeof branch !== 'string' || branch === '') throw new Error('GitHub named no default branch');
-      const classic = rest(`repos/${repo}/branches/${encodeURIComponent(branch)}`, { host })?.protected === true;
-      const rules = list(`repos/${repo}/rules/branches/${encodeURIComponent(branch)}`, { host });
+      const rulesets = new Map();
+      const ruleset = (id) => {
+        if (!rulesets.has(id)) rulesets.set(id, rest(`repos/${repo}/rulesets/${id}`, { host }));
+        return rulesets.get(id);
+      };
+      const asks = list(`repos/${repo}/rules/branches/${encodeURIComponent(branch)}`, { host })
+        .filter((rule) => rule?.type === 'pull_request' && Number.isSafeInteger(rule.ruleset_id));
+      const ruled = [...new Set(asks.map((rule) => rule.ruleset_id))].map(ruleset).filter((each) => each?.enforcement === 'active');
       const tags = list(`repos/${repo}/rulesets?targets=tag&includes_parents=true`, { host })
         .filter((each) => each?.enforcement === 'active' && each?.target === 'tag' && Number.isSafeInteger(each?.id))
-        .map((each) => rest(`repos/${repo}/rulesets/${each.id}`, { host }))
-        .map((each) => ({
-          name: String(each?.name ?? ''),
-          refs: (Array.isArray(each?.conditions?.ref_name?.include) ? each.conditions.ref_name.include : []).map(String),
-          creation: (each?.rules ?? []).some((rule) => rule?.type === 'creation'),
-          bypass: typeof each?.current_user_can_bypass === 'string' ? each.current_user_can_bypass : null,
-        }));
-      return { branch, protected: classic || rules.some((rule) => rule?.type === 'pull_request'), tags };
+        .map((each) => ruleset(each.id)).filter((each) => each?.enforcement === 'active').map(tagRule);
+      if (ruled.some((each) => each.current_user_can_bypass === 'never')) return { branch, protected: true, why: null, tags };
+      const read = (route) => rest(`repos/${repo}/branches/${encodeURIComponent(branch)}${route}`, { host });
+      const classic = branchHold(read, about?.permissions?.admin !== false, () => rest('user', { host })?.login);
+      const bypassed = ruled.map((each) => `the ruleset ${JSON.stringify(String(each.name ?? each.id))} asks for a pull request, and lets the signed-in user bypass it (${String(each.current_user_can_bypass ?? 'not said')})`);
+      const why = classic.held === true ? null : [...bypassed, classic.why].filter(Boolean).join('; ');
+      return { branch, protected: classic.held, why, tags };
+    },
+    // What a project run's issue session's token could run with the repository's secrets, for the run's preflight:
+    // { secrets, workflowPush }. `secrets` counts the Actions secrets of the repository and those its organization
+    // shares with it (none for a repository with no organization); `workflowPush` is whether the signed-in token's
+    // scopes include `workflow`, which GitHub asks of a push that changes a workflow file, or null for a token that
+    // names no scopes, as a fine-grained one.
+    workflowSecrets: (repo, { host } = {}) => {
+      const count = (route) => {
+        const total = rest(route, { host })?.total_count;
+        if (!Number.isSafeInteger(total)) throw new Error('GitHub answered no count of secrets');
+        return total;
+      };
+      let shared = 0;
+      try {
+        shared = count(`repos/${repo}/actions/organization-secrets`);
+      } catch (error) {
+        if (!notFound(error)) throw error;
+      }
+      const secrets = count(`repos/${repo}/actions/secrets`) + shared;
+      const answer = gh(['api', '--include', ...(host ? ['--hostname', host] : []), 'user']);
+      const line = String(answer).split(/\r?\n/u).find((each) => /^x-oauth-scopes:/iu.test(each));
+      const scopes = line === undefined ? null : line.slice(line.indexOf(':') + 1).split(',').map((each) => each.trim());
+      return { secrets, workflowPush: scopes === null ? null : scopes.includes('workflow') };
     },
     // The commit the branch `branch` of `repo` points to now, as a full SHA, or null when the answer names none.
     branchHead: (repo, branch, { host } = {}) => {

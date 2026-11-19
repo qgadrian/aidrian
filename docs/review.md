@@ -1401,10 +1401,12 @@ The agent gate hook holds what an issue session runs with that token by name: it
 outside its own pull request and issues ([hooks.md](hooks.md#agent-gates)). A script or program the session runs, or
 `curl` with the token, is outside every hook and can still push a tag, cut a release, start a workflow, or push another
 branch: that is an accepted residual, which only the forge closes. So `aidrian project preflight` blocks a run whose
-default branch has no protection, or whose release tags no tag rule holds that restricts creating a tag and that the
-signed-in user can never bypass. The forge also runs a branch's own workflow files, with the repository's secrets, on
-every push: release and deploy secrets belong in environments limited to protected branches and tags, never in
-repository secrets a pushed branch's workflow can read, and the preflight notes it.
+default branch asks the signed-in user, administrator or not, for no pull request, or whose tags no tag rule holds that
+names every tag, restricts creating and updating one, and that the signed-in user can never bypass. The forge also runs
+a branch's own workflow files, with the repository's secrets, on every push: the hook refuses an issue session's push
+whose commits change them, release and deploy secrets belong in environments limited to protected branches and tags,
+never in repository secrets a pushed branch's workflow can read, and the preflight blocks a run whose workflows see CI
+secrets while the token may push a workflow file, unless the team sets `projectRun.workflowSecretsAccepted`.
 
 ### Finding ids
 

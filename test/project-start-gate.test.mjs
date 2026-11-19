@@ -40,7 +40,7 @@ test('the driver starts the issue next lists in a fresh clone cut from the base 
   assert.equal(result.exitCode, 0, result.err.join('\n'));
   const clone = work(fx);
   assert.match(result.out[0], /^unverified: this host's project start is checked on fixtures only/u);
-  assert.deepEqual(result.out.slice(1, 4), [`started ENG-1 attempt 1 session ${STARTED[0].id}`, `worktree: ${clone}`, 'branch: feat/eng-1-export']);
+  assert.deepEqual(result.out.slice(1, 4), [`started ENG-1 attempt 1 session ${STARTED[0].id}`, `clone: ${clone}`, 'branch: feat/eng-1-export']);
 
   const [started] = fx.claude.starts();
   assert.equal(started.cwd, clone, 'the session starts in the attempt\'s clone');

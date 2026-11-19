@@ -13,7 +13,7 @@ import { sandboxSettings } from '../plugins/aidrian/lib/hosts/claude-code-sandbo
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
-import { activeRuns, appendToRun, initRun, recordIssue } from '../plugins/aidrian/lib/project-run.mjs';
+import { activeRuns, appendToRun, initRun } from '../plugins/aidrian/lib/project-run.mjs';
 import { currentDriver, driverHold, drivesRun, endedIn, runDriver } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { stateWorkFolders } from '../plugins/aidrian/lib/project-start.mjs';
 import { runSignoff } from '../plugins/aidrian/lib/review-gate.mjs';
@@ -36,6 +36,9 @@ const TEAM = { allow: true, strategy: 'squash', deleteBranch: true, deleteWorktr
 const CHECKS = { requiredChecks: ['e2e'], conditionalChecks: [], ignoreCancelledChecks: [] };
 const PAYMENTS = { files: ['src/pay/**'], signoff: 'human', invariants: [{ id: 'p1', text: 'a payment is never charged twice' }] };
 const configOf = (extra = {}) => ({ version: 1, state: { dir: '../state' }, github: { ...CHECKS, autoMerge: TEAM }, ...extra });
+
+// Appends an issue row to run `run`'s ledger, as the gate's own writes do (appendToRun).
+const recordIssue = (state, run, row) => appendToRun(state, run, () => ({ rows: [{ event: 'issue', key: row.key, state: row.state, ...(row.decision ? { decision: row.decision } : {}), at: new Date().toISOString() }] }));
 
 // The bot's status card, as the forge's reviewTrail gives a comment: by the bot, every edit the bot's.
 const card = (sha = HEAD, { unresolved = false, any = unresolved, ...extra } = {}) => ({

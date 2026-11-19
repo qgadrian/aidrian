@@ -11,7 +11,8 @@
 //   aidrian project wait RUN [--max-wait S] # the driver waits for an issue's session to settle, at most S seconds
 //   aidrian project result RUN ISSUE --file PATH   # the issue's own session records how it ended
 //   aidrian project handoff RUN BRIEF      # the driver records the brief its background continuation starts from
-//   aidrian project resume RUN             # an attended session lifts the halt a failed start proof put on the run
+//   aidrian project resume RUN             # an attended session lifts the run's halt, such as a failed start proof's or a
+//                                          # limit's, or takes custody of a run whose driver's sessions ended
 //   aidrian project report RUN [--json]    # the driver: the status, label, and comment the run owes each settled issue
 //   aidrian project recorded RUN ISSUE     # the driver: closes the report on ISSUE once it wrote it (lib/project-report.mjs)
 //   aidrian project preflight [RUN]        # every check a start would refuse or halt on, before init (lib/project-preflight.mjs)
@@ -56,8 +57,8 @@ export const commands = {
   project: {
     usage: USAGE,
     about: 'keep the record of a project run that works through a tracker project: init validates the snapshot input the driver session wrote from the tracker and starts run RUN, from the attended main session only; next prints the issue or issues to start, by blockers, then priority, then key, or done; summary writes the run\'s summary.md from its ledger; ' +
-      'start, for the run\'s driver, starts the issue\'s own session in the background in its worktree, under the caps; wait waits for an issue\'s session to end or record its result; result records it, from that session only; handoff records the brief the driver\'s background continuation takes the run on with; ' +
-      'resume, from an attended session only, lifts the halt a failed start proof put on the run; end, for the run\'s driver at the end of its loop, records the run\'s end, which releases the driver\'s hold; ' +
+      'start, for the run\'s driver, starts the issue\'s own session in the background in a fresh clone of its own, under the caps; wait waits for an issue\'s session to end or record its result; result records it, from that session only; handoff records the brief the driver\'s background continuation takes the run on with; ' +
+      'resume, from an attended session only, lifts the run\'s halt, such as a failed start proof\'s or a usage limit\'s, or takes custody of a run whose driver\'s sessions ended; end, for the run\'s driver at the end of its loop, records the run\'s end, which releases the driver\'s hold; ' +
       'report, for the driver, prints the status, label, and comment the run owes each settled issue, and recorded closes one once written; preflight runs every check a start would refuse or halt on, before init; ' +
       'stop-action, for the issue\'s own session only, prints the one action for an issue whose pull request did not merge, takes the forge\'s part of it, and records it against its cap; ' +
       'confine, the first call of an issue\'s session on a host that proves its sandbox per start, tries from inside the sandbox what it must refuse, and hands the verdict to the start',

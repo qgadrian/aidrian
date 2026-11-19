@@ -74,7 +74,6 @@ function capped(history, head, action, scope, why, { spent = null, ...extra } = 
   return { action, why, cap, used: used + 1, scope, ...extra };
 }
 
-// A wait on a read or an action that failed, on head `head`.
 // A wait on a read or an action that failed, in attempt `attempt`: recorded as `retry`, and counted per attempt, apart
 // from the waits on pending checks, so a forge outage neither spends their budget nor parks the issue for good.
 export function transientWait(history, attempt, why) {

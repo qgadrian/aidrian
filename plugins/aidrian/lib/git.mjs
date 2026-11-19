@@ -159,13 +159,6 @@ export function gitConfigFiles({ env = process.env, ...options } = {}) {
   return { user: named('GIT_CONFIG_GLOBAL'), system: named('GIT_CONFIG_SYSTEM') };
 }
 
-// Every worktree of the repository `cwd` is in, the main checkout first, from `git worktree list`; none outside git.
-export function worktreePaths(cwd) {
-  const { status, stdout } = runGit(['worktree', 'list', '--porcelain'], cwd);
-  if (status !== 0) return [];
-  return stdout.split('\n').filter((line) => line.startsWith('worktree ')).map((line) => line.slice('worktree '.length));
-}
-
 // The top folder of every checkout of the repository `cwd` is in: the checkout `cwd` is in, then each one `git worktree
 // list` names that holds a work tree, so a bare entry, as a git folder kept apart lists itself, and a worktree whose
 // folder is gone are dropped. Each listed path is exactly as git prints it. [] only when `cwd` is outside any repository:

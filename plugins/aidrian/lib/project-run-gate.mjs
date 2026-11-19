@@ -635,7 +635,7 @@ function startLines({ result, state, run, key, attempt, session, base, proof, ca
   if (rows.length && (!written || written.problem)) return { exitCode: 1, out: orphans, err: [`aidrian project start: the session's start could not be recorded in the ledger: ${written?.problem ?? 'the write failed'}`] };
   if (result.outcome === 'started') {
     const look = cap.attachLine?.({ id: result.marker.id, name: result.marker.name }) ?? `its id is ${result.marker.id}`;
-    return { exitCode: 0, out: [...orphans, `started ${key} attempt ${attempt} session ${result.marker.id}`, `worktree: ${base.cwd}`, `branch: ${base.branch}`, `say: The issue ${key} runs in the background session ${result.marker.id}: ${look}.`], err: [] };
+    return { exitCode: 0, out: [...orphans, `started ${key} attempt ${attempt} session ${result.marker.id}`, `clone: ${base.cwd}`, `branch: ${base.branch}`, `say: The issue ${key} runs in the background session ${result.marker.id}: ${look}.`], err: [] };
   }
   if (proof && result.outcome !== 'started') return haltAnswer(`the start of ${key} attempt ${attempt} failed its proof: ${proof}`, { lines: orphans, lift: RESUME(run) });
   const why = {

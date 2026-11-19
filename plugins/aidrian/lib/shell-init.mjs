@@ -443,8 +443,12 @@ function pastLine(replace, shell, human) {
   return `Handoff terminal: this session's \`${program}\` was started past the aidrian shell function, such as by a launcher, an editor command, or a terminal opened before the function was installed, so this terminal will not switch at a background handoff. ` +
     `A new terminal settles the last. For a launcher on PATH that ends in \`exec ${program}\`, this session hands ${human} ${handCommand(shell, '--install --wrap <launcher>')}, ` +
     `with the launcher's own name in place of \`<launcher>\`, and never runs it itself, since it writes ${human}'s shell startup file. ` +
-    `A copy of the plugin older than this one refuses \`--wrap\` as an unknown option: the plugin is updated first${updateWith(replace)}.`;
+    olderWrap(replace);
 }
+
+// The sentence for a copy of the plugin older than `--wrap`, with the update command of `replace`, the host's terminal
+// replacer, when it declares one. The handoff's line for a terminal the function did not start ends on it too.
+export const olderWrap = (replace) => `A copy of the plugin older than this one refuses \`--wrap\` as an unknown option: the plugin is updated first${updateWith(replace)}.`;
 
 // No startup file holds a block: the install command for either shell, after an update when the copy is older.
 function installLine(replace, human) {

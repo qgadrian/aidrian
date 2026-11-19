@@ -353,6 +353,8 @@ to another folder falls back to the clear route with that reason; committing `st
    terminal stays: start the next session in a new terminal. For a launcher on PATH that ends in `exec` of the host's
    program, the line gives the whole command the Human runs once, `aidrian shell-init zsh --install --wrap <launcher>`
    (or bash), with the launcher's own name in place of `<launcher>`, so a session that launcher starts follows too.
+   It ends by saying a copy of the plugin older than this one refuses `--wrap` as an unknown option, so the plugin is
+   updated first, with the host's update command when the host declares one.
    The skill tells the Human that line and ends the turn; the old session does nothing more.
 7. A prompt in the old session in the next 24 hours adds one line that names the background session that owns the
    work, so the old session does not take up the same work unasked.
@@ -503,8 +505,9 @@ word and builtin of zsh and bash, such as `if`, `local`, `trap`, `setopt`, or `m
 runs at install; a function a shell runs by its name as a hook, such as `preexec`, `precmd`, `chpwd`, or
 `command_not_found_handler`, and any name that starts with `TRAP` or `zle-`; a core tool the block runs or a function
 would shadow, such as `rm`, `date`, or `od`; and a ninth name in one block. Such a refusal exits 2, writes nothing, and
-names the refused `--wrap` by its position, never its value; `--wrap` without `--install` exits 2 too. A `--wrap` with
-no value, or one whose value starts with `-`, such as `--wrap -x`, is refused before that, by the argument parser: it
+names the refused `--wrap` by its position, never its value; `--wrap` without `--install` exits 2 too, and so does a
+value joined by `=` that starts with `-`, such as `--wrap=-x`, which fails the name's shape. A `--wrap` with no value,
+or a separate value that starts with `-`, such as `--wrap -x`, is refused before that, by the argument parser: it
 exits 1, writes nothing, and prints the usage and the parser's own message, which never repeats the value.
 The block records its names on its third line, `# Wrapped launchers: claude-play claude-work`, sorted.
 A re-install keeps them, and a later `--wrap` adds to them and never drops one; to wrap fewer, `--uninstall`, then

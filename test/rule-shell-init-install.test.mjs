@@ -54,6 +54,12 @@ test('each shell of the shared list runs the command in its -c string, and a she
   }
 });
 
+// Written out, not read from SHELL_NAMES: a shorter shared list would otherwise shrink this check with it.
+test('each of the fifteen shells, as a literal list, runs the command in its -c string and is denied', () => {
+  const shells = ['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'fish', 'csh', 'tcsh', 'yash', 'nu', 'elvish', 'xonsh', 'pwsh', 'powershell'];
+  for (const shell of shells) deny(`${shell} -c 'aidrian shell-init zsh --install'`);
+});
+
 test('allows printing the function, other aidrian commands, and text that only names the command', () => {
   allow('aidrian shell-init zsh');
   allow('eval "$(aidrian shell-init zsh)"');

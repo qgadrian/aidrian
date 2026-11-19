@@ -549,11 +549,20 @@ test('--install refuses each --wrap name the rule refuses, by its position, neve
   const empty = folder(t, 'aidrian-home-');
   assert.equal(shellInit(empty, 'zsh', '--install', '--wrap', 'x;y').status, 2);
   assert.equal(existsSync(startup(empty, 'zsh')), false, 'no startup file is created');
-  for (const args of [['--wrap', '-x'], ['--wrap']]) {
+  // A separate value that starts with `-`, or none, stops at the argument parser, whose message never repeats the value.
+  for (const args of [['--wrap', '-SECRETVALUE'], ['--wrap']]) {
     const result = shellInit(home, 'zsh', '--install', ...args);
     assert.equal(result.status, 1, args.join(' '));
+    assert.match(result.stderr, /^usage: aidrian /u, 'the usage');
+    assert.doesNotMatch(result.stderr, /SECRETVALUE/u, `the value is never echoed: ${result.stderr}`);
     assert.equal(read(rc), 'alias g=git\n');
   }
+  // Joined by `=`, it passes the parser and fails the name's shape: refused by its position.
+  const joined = shellInit(home, 'zsh', '--install', '--wrap=-SECRETVALUE');
+  assert.equal(joined.status, 2, joined.stderr);
+  assert.match(joined.stderr, /--wrap name 1 of 1 /u);
+  assert.doesNotMatch(joined.stderr, /SECRETVALUE/u, `the value is never echoed: ${joined.stderr}`);
+  assert.equal(read(rc), 'alias g=git\n');
 });
 
 test('a line of the Human\'s own that runs aidrian shell-init, and no block, refuses --wrap and changes nothing', (t) => {

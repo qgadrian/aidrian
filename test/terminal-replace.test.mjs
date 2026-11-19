@@ -318,6 +318,7 @@ test('a request names one way to end, and the store says which shell follows a s
   assert.equal(readFollow(store, BG_SESSION), null);
   assert.ok(noteFollow(store, 'abcd1234', { shell: 4242 }));
   assert.deepEqual(readFollow(store, BG_SESSION), { shell: 4242, id: 'abcd1234' }, 'a short id the session starts with');
+  assert.equal(readFollow(store, BG_SESSION, { live: () => false }), null, 'none whose shell runs no client');
   assert.equal(readFollow(store, 'abcd9999-0000'), null, 'another session');
   assert.equal(noteFollow(store, BG_SESSION, { shell: 1 }), null);
 
@@ -383,6 +384,10 @@ test('the shell function records the session it opens by a plain id, typed or fr
 
     const flagged = inShell(t, { shell, script: 'claude --skip-something attach abcd1234' });
     assert.deepEqual(flagged.follows, ['abcd1234'], `${shell}: typed through an alias that adds an option`);
+    const valued = inShell(t, { shell, script: 'claude --model sonnet --x=1 attach abcd1234' });
+    assert.deepEqual(valued.follows, ['abcd1234'], `${shell}: past options with values`);
+    const prompt = inShell(t, { shell, script: 'claude --model sonnet hello attach abcd1234' });
+    assert.deepEqual(prompt.follows, [''], `${shell}: not past a word that is no option value`);
 
     const stale = inShell(t, { shell, script: 'd="$XDG_STATE_HOME/aidrian/handoff-terminals"; mkdir -p "$d"; echo "abcd1234 1" > "$d/follows-$$"; claude --resume x' });
     assert.deepEqual(stale.follows, [''], `${shell}: a record an earlier run left is gone before a plain run starts`);

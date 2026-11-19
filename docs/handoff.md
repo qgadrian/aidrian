@@ -447,7 +447,7 @@ With no record, or one it refuses, it returns the exit code of the last program 
 but that id. Each exit is caught, and every variable is set before it is read, so a shell with `set -e` or `set -u`
 still reaches the record.
 
-Each time the function opens a session by a plain id, typed as `claude attach <id>`, after any options an alias adds,
+Each time the function opens a session by a plain id, typed as `claude attach <id>`, after any options an alias adds, each with at most one value,
 or from the record, it first writes `follows-<shell pid>` beside the record, `<id> <epoch seconds>`, owner-only, in a
 folder that is a real one the user owns, made 0700 first, and deletes it once that program exits. Each run first
 deletes a record an earlier run left, so a terminal killed mid-run never follows a session it no longer shows. The gate

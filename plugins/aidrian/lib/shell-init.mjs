@@ -55,7 +55,7 @@ export function shellInit(shell, hosts = HOSTS) {
 // but that id. Each exit is caught with `||`, and every variable is set before it is read, so a shell that runs with
 // `set -e` or `set -u` goes on to the record. zsh and bash read the same body; zsh first resets its options for the
 // function, so a setting such as RE_MATCH_PCRE cannot change the patterns.
-// Each time it opens a session by a plain id, typed as `program attach <id>`, after any options an alias adds, or from
+// Each time it opens a session by a plain id, typed as `program attach <id>`, after any options an alias adds, each with at most one value, or from
 // the record, it first writes `follows-<shell pid>` beside the record, `<id> <epoch seconds>`, owner-only, and deletes
 // it once that program exits: the gate of that session, run in the background, reads it to know this terminal follows
 // it (terminal-replace.mjs readFollows). A write it cannot make is skipped.
@@ -68,11 +68,13 @@ function shellFunction(shell, program, attach) {
     `  local dir="$base/aidrian/${TERMINAL_FOLDER}"`,
     `  local next="$dir/$$" follows="$dir/${FOLLOWS_PREFIX}$$"`,
     '  command rm -f -- "$follows" 2>/dev/null || :',
-    "  local arg='' want=0",
+    "  local arg='' want=0 value=0",
     '  for arg in "$@"; do',
     '    if (( want )); then [[ $arg =~ $pattern ]] && id=$arg; break; fi',
     `    [[ $arg == ${attach} ]] && { want=1; continue; }`,
-    '    [[ $arg == -* ]] || break',
+    '    if [[ $arg == -* ]]; then [[ $arg == *=* ]] && value=0 || value=1; continue; fi',
+    '    (( value )) || break',
+    '    value=0',
     '  done',
     ...followsWrite('  '),
     `  ${SHELL_VAR}=$$ command ${program} "$@" || rc=$?`,

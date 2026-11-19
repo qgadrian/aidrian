@@ -12,6 +12,7 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -27,7 +28,7 @@ import { accessProblem, confineDomains, managedPlists, managedSettings } from '.
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { fileReadOf } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { childSendBacks, storeChildSendBacks } from '../plugins/aidrian/lib/child-send-backs.mjs';
-import { alive, CONFINE_PLAN, CONFINE_VERDICT, confineCheck, confineDenial, hostVarsProblem, isConfineCall, LISTENER_START, prepareConfine, runConfine, SHELL_VARS, shellVarsProblem, startListener, unlistedHost, watchProblem } from '../plugins/aidrian/lib/project-confine.mjs';
+import { alive, CONFINE_PLAN, CONFINE_VERDICT, confineCheck, confineDenial, hostVarsProblem, isConfineCall, LISTENER_START, prepareConfine, runConfine, sentinelHits, SHELL_VARS, shellVarsProblem, startListener, unlistedHost, watchProblem } from '../plugins/aidrian/lib/project-confine.mjs';
 import { ACTIONS, projectCommand } from '../plugins/aidrian/lib/project-run-cli.mjs';
 import { projectPrompt } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { projectCommandDenial } from '../plugins/aidrian/lib/project-run-guard.mjs';
@@ -69,7 +70,9 @@ function attempt(t, { vars = null } = {}) {
   return { root, folder, work, git, drop, cache, home, env, secret, keys, vars: shell };
 }
 
-// A listener the test stands in for: this process, on a closed port, with the port file the start's listener writes.
+// A listener the test stands in for: this process, on a closed port, with the port file the start's listener writes,
+// and the start's sentinel connection to it, which it notes with no other connection.
+const noHits = () => ({ others: 0 });
 const fakeListen = (folder) => {
   writeFileSync(path.join(folder, 'confine-listener.json'), JSON.stringify({ port: 9, pid: process.pid }));
   return { port: 9, pid: process.pid, stop() {} };
@@ -178,7 +181,7 @@ test('on Linux the host masks a hidden store with an empty one: a read that open
   writeFileSync(at.secret, '');
   await runConfine({ run: 'launch', key: 'ENG-1', cwd: at.work, env: at.vars });
   writeVerdict(at, { ...passVerdict(made.plan, SESSION), reads: verdictAt(at).reads });
-  assert.deepEqual(confineCheck({ folder: at.folder, session: SESSION, prints: made.prints }), { pass: true });
+  assert.deepEqual(confineCheck({ folder: at.folder, session: SESSION, prints: made.prints, sentinel: noHits }), { pass: true });
   // An empty store is not probed: it cannot tell a masked read from a real one.
   const empty = attempt(t);
   const none = path.join(empty.home, 'empty-store');
@@ -202,7 +205,7 @@ test('the main checkout is fingerprinted by an entry other than its git folder, 
 test('the start holds the session only on a verdict of its own plan, with its listener alive and nothing left behind', (t) => {
   const at = attempt(t);
   const { plan: made, prints } = plan(at);
-  const check = (more = {}) => confineCheck({ folder: at.folder, session: SESSION, prints, ...more });
+  const check = (more = {}) => confineCheck({ folder: at.folder, session: SESSION, prints, sentinel: noHits, ...more });
   assert.equal(check(), null, 'no verdict yet');
   writeVerdict(at, passVerdict(made, SESSION));
   assert.deepEqual(check(), { pass: true });
@@ -230,6 +233,38 @@ test('the start holds the session only on a verdict of its own plan, with its li
   rmSync(path.join(at.home, `confine-probe-${made.nonce}`));
   rmSync(path.join(at.cache, ATTEMPT_KEEP), { force: true });
   assert.match(check().problem, /cache folder or its keep file/u);
+});
+
+// A listener that notes each connection, and closes it, only a second after it accepts it, as one under load does.
+const SLOW_LISTENER = [
+  "const net = require('node:net'); const fs = require('node:fs');",
+  'const [hits, portFile, life] = process.argv.slice(1);',
+  "const server = net.createServer((socket) => setTimeout(() => { fs.appendFileSync(hits, `hit ${socket.remotePort}\\n`); socket.destroy(); }, 1000));",
+  "server.listen(0, '127.0.0.1', () => fs.writeFileSync(portFile, JSON.stringify({ port: server.address().port, pid: process.pid })));",
+  'setTimeout(() => process.exit(0), Number(life));',
+].join('\n');
+
+test('a connection the listener notes only after the verdict is read still fails the proof, through the start\'s own sentinel', async (t) => {
+  const at = attempt(t);
+  const listener = startListener(at.folder, { run: (exec, args, options) => spawn(exec, ['-e', SLOW_LISTENER, ...args.slice(2)], options) });
+  assert.equal(listener.problem, undefined, listener.problem);
+  t.after(() => listener.stop());
+  const made = plan(at, { listen: () => listener });
+  writeVerdict(at, passVerdict(made.plan, SESSION));
+  assert.deepEqual(confineCheck({ folder: at.folder, session: SESSION, prints: made.prints }), { pass: true }, 'no connection: the sentinel alone');
+  rmSync(path.join(at.folder, 'confine-hits'));
+  // The session's connection completes at the handshake, before the listener notes it.
+  await new Promise((resolve, reject) => {
+    const socket = net.connect({ host: '127.0.0.1', port: listener.port });
+    socket.once('connect', () => resolve(socket));
+    socket.once('error', reject);
+  });
+  assert.equal(existsSync(path.join(at.folder, 'confine-hits')), false, 'not noted yet');
+  assert.match(confineCheck({ folder: at.folder, session: SESSION, prints: made.prints }).problem, /reached the localhost listener/u);
+  // A listener that never notes the sentinel leaves the proof unverified, and so failed.
+  const deaf = sentinelHits({ folder: at.folder, host: '127.0.0.1', port: listener.port, wait: 200, run: () => ({ stdout: '40000' }), pause: () => {} });
+  assert.match(deaf.problem, /was not noted within 0\.2 seconds, so whether a connection reached it cannot be told/u);
+  assert.match(sentinelHits({ folder: at.folder, host: '127.0.0.1', port: 9 }).problem, /the start's own connection .* failed/u, 'a closed port');
 });
 
 test('a probe file there already counts as a write that landed', { skip: process.getuid?.() === 0 }, async (t) => {

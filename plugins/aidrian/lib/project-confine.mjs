@@ -12,7 +12,8 @@
 //     CONFINE_VERDICT, in the drop folder. Any write, removal, move, link, or connection that succeeds fails the proof;
 //     what each read saw goes to the verdict, salted, for the start to judge.
 //   - confineCheck, the start, outside the sandbox: reads the verdict, judges each read against its fingerprints, and
-//     checks the listener is the one it started, alive, with no connection, and that no probe left a path.
+//     checks the listener is the one it started, alive, with no connection but the start's own sentinel
+//     (sentinelHits), and that no probe left a path.
 // The probes: create a file in each unattended mark folder, the attempt's folder, and the home folder; open the clone's
 // git config and its `.claude/settings.json` for writing; remove the keep file of `cache` and `drop`; move each away,
 // put a link in its place, and write through it; read each credential store and the main checkout; connect to a host
@@ -46,6 +47,8 @@ export const LISTENER_LIFE = 15 * 60 * 1000;
 export const LISTENER_START = 5000;
 // How long a network probe waits for an answer; one with none counts as refused, while the listener is alive.
 const NET_TIMEOUT = 3000;
+// How long the start waits for the listener to note its own sentinel connection before it counts the proof unverified.
+export const SENTINEL_WAIT = 5000;
 // The most credential stores read, besides the main checkout; the first bytes of a file a read compares; the most entries
 // of a folder a read reports.
 const READ_CAP = 16;
@@ -58,17 +61,30 @@ const UNLISTED = Object.freeze(['example.com', 'example.net', 'example.org']);
 const PROXY_VARS = Object.freeze(['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy']);
 const NO_FOLLOW = constants.O_NOFOLLOW ?? 0;
 
-// The listener, run by `node -e` outside the sandbox: it notes each connection in the hits file, then closes it.
+// The listener, run by `node -e` outside the sandbox: it notes each connection in the hits file, `hit <the peer's
+// port>` a line, in the order it accepts them, then closes it.
 const LISTENER = [
   "const net = require('node:net'); const fs = require('node:fs');",
   'const [hits, portFile, life] = process.argv.slice(1);',
-  "const server = net.createServer((socket) => { try { fs.appendFileSync(hits, 'hit\\n'); } catch {} socket.destroy(); });",
+  "const server = net.createServer((socket) => { try { fs.appendFileSync(hits, `hit ${socket.remotePort}\\n`); } catch {} socket.destroy(); });",
   "server.listen(0, '127.0.0.1', () => fs.writeFileSync(portFile, JSON.stringify({ port: server.address().port, pid: process.pid })));",
   'setTimeout(() => process.exit(0), Number(life));',
 ].join('\n');
 
 // What a read saw, salted with the plan's nonce, so the verdict names no entry and holds no byte of a store.
 const salted = (nonce, bytes) => createHash('sha256').update(`${nonce}\0`).update(bytes).digest('hex');
+
+// The start's own connection to the listener, run by `node -e`: it prints the connection's local port once connected,
+// then waits for the listener to close it, which it does only after noting it, and exits 1 on an error or past its time.
+const SENTINEL = [
+  "const net = require('node:net');",
+  'const [host, port, wait] = process.argv.slice(1);',
+  'const socket = net.connect({ host, port: Number(port) });',
+  "socket.once('connect', () => process.stdout.write(String(socket.localPort)));",
+  "socket.once('close', (failed) => process.exit(failed ? 1 : 0));",
+  "socket.once('error', () => process.exit(1));",
+  'setTimeout(() => process.exit(1), Number(wait));',
+].join('\n');
 
 // Whether the allowed domain `pattern`, a host, `*.` and a host, or `*`, covers `host`.
 const covers = (pattern, host) => pattern === '*' || (pattern.startsWith('*.') ? host === pattern.slice(2) || host.endsWith(pattern.slice(1)) : pattern === host);
@@ -453,8 +469,10 @@ export function alive(pid, watch = WATCH) {
 // session it started, with `prints` the fingerprints prepareConfine kept: null while no verdict is there; { pass: true };
 // or { pass: false, problem }. A pass needs the verdict of this plan, naming no other session, every probe but the reads
 // refused, no read whose sight matches its fingerprint, the listener the start runs alive on its port with no
-// connection, no probe path left, and `cache` and `drop` plain folders with their keep files.
-export function confineCheck({ folder, session, prints = {}, isAlive = alive }) {
+// connection, no probe path left, and `cache` and `drop` plain folders with their keep files. It reads the listener's
+// connections once a verdict is there, through sentinelHits, which adds one connection of its own, so it is asked once
+// a verdict: a later call counts the earlier sentinel as a hit, and fails. `isAlive` and `sentinel` are a test's.
+export function confineCheck({ folder, session, prints = {}, isAlive = alive, sentinel = sentinelHits }) {
   const plan = readSmallJson(path.join(folder, CONFINE_PLAN));
   if (!plan || !NONCE.test(plan.nonce ?? '')) return { pass: false, problem: `the sandbox proof's plan in ${folder} cannot be read` };
   const verdict = readSmallJson(path.join(folder, 'drop', CONFINE_VERDICT), VERDICT_CAP);
@@ -468,11 +486,9 @@ export function confineCheck({ folder, session, prints = {}, isAlive = alive }) 
   if (landed) return { pass: false, problem: `read ${landed[0]}, which the sandbox should hide` };
   const listener = readSmallJson(path.join(folder, LISTENER_FILE));
   if (!listener || listener.port !== plan.local?.port || listener.pid !== plan.local?.pid || !isAlive(plan.local?.pid)) return { pass: false, problem: 'the localhost listener outside the sandbox is not the one the start ran, alive on its port, so a refused connection to it proves nothing' };
-  try {
-    if (lstatSync(path.join(folder, HITS_FILE)).size > 0) return { pass: false, problem: 'a connection reached the localhost listener outside the sandbox' };
-  } catch {
-    // No hit.
-  }
+  const hits = sentinel({ folder, host: plan.local.host, port: plan.local.port });
+  if (hits.problem) return { pass: false, problem: hits.problem };
+  if (hits.others > 0) return { pass: false, problem: 'a connection reached the localhost listener outside the sandbox' };
   const paths = probePaths({ ...plan, folder });
   const left = [...paths.creates, ...paths.moves.flatMap((each) => [each.to, each.link])].find(exists);
   if (left) return { pass: false, problem: `a probe left ${left}, so a write the sandbox should refuse landed` };
@@ -486,4 +502,27 @@ export function confineCheck({ folder, session, prints = {}, isAlive = alive }) 
     if (!stat?.isDirectory() || !exists(path.join(folder, name, ATTEMPT_KEEP))) return { pass: false, problem: `the attempt's ${name} folder or its keep file is no longer as the start made it` };
   }
   return { pass: true };
+}
+
+// The connections the listener at `host`:`port`, whose hits file is in the attempt's folder `folder`, noted besides the
+// start's own: { others } or { problem }. A session's connection completes at the handshake, before the listener's
+// process notes it, so the file read alone may miss one. The start first connects itself, the sentinel, and waits up to
+// `wait` for the listener to note it: the listener accepts and notes connections in order, so every one made before
+// the sentinel is noted by then. Every line but the sentinel's counts, one noted after it too. A sentinel that cannot
+// connect, or that the listener never notes in time, leaves the proof unverified: a problem, which fails it.
+// `pause` and `run` (spawnSync's shape) are a test's.
+export function sentinelHits({ folder, host, port, wait = SENTINEL_WAIT, pause = pauseSync, run = spawnSync }) {
+  const unverified = (why) => ({ problem: `the start's own connection to the localhost listener outside the sandbox ${why}, so whether a connection reached it cannot be told` });
+  const connected = run(process.execPath, ['-e', SENTINEL, String(host), String(port), String(wait)], { encoding: 'utf8', timeout: wait + 2000 });
+  const own = String(connected.stdout ?? '').trim();
+  if (!/^[1-9][0-9]{0,4}$/u.test(own)) return unverified('failed');
+  const line = `hit ${own}`;
+  for (let waited = 0; ; waited += 50) {
+    const read = readOnce(path.join(folder, HITS_FILE), 1024 * 1024);
+    if (read.problem) return unverified(`was not noted: its hits file ${read.problem}`);
+    const lines = (read.text ?? '').split('\n').filter(Boolean);
+    if (lines.includes(line)) return { others: lines.length - 1 };
+    if (waited >= wait) return unverified(`was not noted within ${wait / 1000} seconds`);
+    pause(50);
+  }
 }

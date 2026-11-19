@@ -613,7 +613,11 @@ its start stays as [its page](codex.md#project-start) says.
 4. The start, outside the sandbox, reads the verdict once the beacon came, for at most 180 seconds: one of its own
    plan that passed, names no other session, holds no read that saw a target's fingerprint, with the listener the
    start ran alive on its recorded port and pid, no zombie, and no connection on it, no probe path left, and `cache`
-   and `drop` plain folders that keep their keep files, passes. The start reads its listener's state from
+   and `drop` plain folders that keep their keep files, passes. A connection completes before the listener notes it,
+   so the start first connects to the listener itself and waits, up to 5 seconds, until the listener notes that
+   sentinel: it notes connections in the order it accepts them, so any the session made are noted by then, and every
+   line but the sentinel's counts as a connection. A sentinel that cannot connect, or that is not noted in time,
+   fails the proof as unverified. The start reads its listener's state from
    `/proc/<pid>/stat` on Linux and from `/bin/ps` elsewhere, and a start that can read neither refuses before its
    launch. It then files `confine: "passed"` in the session's mark, and the hook lets the session's calls through to
    the other guards. Any other verdict, or none in time, stops the session, files `confine: "failed"`, rewrites the

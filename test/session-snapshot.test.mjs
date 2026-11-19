@@ -43,9 +43,11 @@ function ghWrapper(bin, body, { trap = false } = {}) {
   const script = path.join(bin, 'gh.cjs');
   writeFileSync(script, body);
   const file = path.join(bin, 'gh');
-  writeFileSync(file, `#!/bin/sh\n${trap ? "trap '' TERM\n" : ''}exec '${process.execPath}' '${script}' "$@"\n`);
+  writeFileSync(file, `#!/bin/sh\n${trap ? "trap '' TERM\n" : ''}exec ${shellQuoted(process.execPath)} ${shellQuoted(script)} "$@"\n`);
   chmodSync(file, 0o755);
 }
+// `text` as one single-quoted shell word: each `'` closes the quote, adds an escaped one, and opens it again.
+const shellQuoted = (text) => `'${String(text).replaceAll("'", "'\\''")}'`;
 // Each gh call the snapshot made, as the GH_SPAWNS preload recorded it in the snapshot's process before the spawn:
 // { args, timeout, killSignal, at }. A gh that a short deadline stops before its node starts is still here.
 const ghSpawned = (log) => (existsSync(`${log}.spawns`) ? readFileSync(`${log}.spawns`, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []);
@@ -385,6 +387,19 @@ function withWorktree(t, { origin = 'https://github.com/acme/notes.git', gh = {}
   fakeGh(path.join(env.base, 'bin'), { log: env.log, answer, ...gh });
   return { ...env, tree, head };
 }
+
+test('the fake gh runs from a folder whose path holds an apostrophe, with and without its TERM trap', (t) => {
+  const base = path.join(scratch(), "o'brien's");
+  t.after(() => rmSync(path.dirname(base), { recursive: true, force: true }));
+  for (const trap of [false, true]) {
+    const log = path.join(base, `gh-${trap}.log`);
+    fakeGh(path.join(base, 'bin'), { log, answer: '[1]', trap });
+    const out = spawnSync(path.join(base, 'bin', 'gh'), ['pr', 'list'], { encoding: 'utf8', timeout: 30_000 });
+    assert.equal(out.status, 0, `trap ${trap}: ${out.stderr}`);
+    assert.equal(out.stdout, '[1]');
+    assert.deepEqual(ghCalls(log), [['pr', 'list']]);
+  }
+});
 
 test('worktrees counts the owned and the merged ones, and reads merged heads once a window', (t) => {
   const env = withWorktree(t);

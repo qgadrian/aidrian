@@ -1105,8 +1105,10 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   selector's reads (`lib/review/content.mjs`), and `aidrian worktree` (`lib/worktree.mjs`), each through
   `lib/attempt-clone.mjs cloneGitProblem`; while it fails, the call runs no git and answers as git failing. Every git
   call of the plugin runs with `core.fsmonitor`, `core.hooksPath`, submodule recursion, the `ext::` transport, and
-  signature display turned off (`lib/git.mjs`); another `commondir` would lead git to a config those settings do not
-  cover.
+  signature display turned off (`lib/git.mjs`), the start gate's that make each attempt clone among them; another
+  `commondir` would lead git to a config those settings do not cover. One call runs as the person's own git would:
+  `aidrian worktree new`'s `git worktree add`, which an attended person runs, so a repository's post-checkout hook,
+  such as husky's, pre-commit's, or git-lfs's, runs in the new worktree as it does by hand.
 - An attempt clone stands linked to its run's main checkout only for the session whose unattended mark names that run,
   that issue, and that main checkout, or, before the gate files that mark, whose pending mark names that main checkout
   and that clone as the folder it starts the session in. A hook reads the session from its payload's id; a command

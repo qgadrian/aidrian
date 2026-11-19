@@ -79,6 +79,15 @@ test('create adds the branch with no upstream and runs the bootstrap inside the 
   assert.equal(git('status', '--porcelain'), '', 'the main checkout stays clean');
 });
 
+test('create runs the repository\'s post-checkout hook in the new worktree, as git worktree add by hand does', (t) => {
+  const { repo, create } = fixture(t);
+  const hook = path.join(repo, '.git/hooks/post-checkout');
+  writeFileSync(hook, '#!/bin/sh\npwd > checked-out.txt\n', { mode: 0o755 });
+  const dir = path.join(repo, '.worktrees/x');
+  assert.equal(create({ branch: 'feat/x' }).status, 'created');
+  assert.equal(realpathSync(readFileSync(path.join(dir, 'checked-out.txt'), 'utf8').trim()), dir, 'the hook ran, in the new worktree');
+});
+
 test('an existing local or remote branch is reused only after approval, and the remote one tracks origin', (t) => {
   const { repo, git, create, blocked } = fixture(t);
   git('branch', 'feat/local');

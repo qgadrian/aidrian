@@ -1047,7 +1047,7 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     folder with the main checkout the mark names; never the call's folder, so another worktree of the same repository
     is outside. A mark filed before the start folder was recorded names no worktree;
   - its issue's running attempt folders `work`, `drop`, and `cache`, under `<state>/runs/<run>/attempts/`, each only
-    while it is a plain folder: one replaced by a link is refused, and so is the keep file `.aidrian-keep` in `drop`
+    while it is a plain folder: one replaced by a link is refused, and so is the keep file `.keep-attempt` in `drop`
     and `cache`;
   - the state folders it writes by hand, each when it is no link, of every state folder of the project its mark names:
     `plans`, `tmp`, `handoffs` (the continuation store in it stays refused, as above), and `quorum`, where the product

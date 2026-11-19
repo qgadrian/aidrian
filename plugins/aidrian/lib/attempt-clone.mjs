@@ -30,7 +30,7 @@ const ATTEMPT = /^(.+)\/runs\/([a-z0-9][a-z0-9-]{0,63})\/attempts\/((?:[A-Z][A-Z
 // file each holds from the start, whose write the host's sandbox denies where it can (lib/hosts/claude-code-sandbox.mjs),
 // so the folder can be neither emptied nor removed, and a link put in its place.
 export const KEPT_FOLDERS = Object.freeze(['drop', 'cache']);
-export const ATTEMPT_KEEP = '.aidrian-keep';
+export const ATTEMPT_KEEP = '.keep-attempt';
 // The largest ledger read for a clone's link.
 const LEDGER_CAP = 16 * 1024 * 1024;
 

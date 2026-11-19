@@ -361,7 +361,7 @@ test('an attempt\'s work, drop, or cache folder replaced by a link is no place o
   const fx = fixture(t);
   const own = () => fx.attempt;
   for (const name of ['drop', 'cache']) {
-    const keep = path.join(fx.attempt, name, '.aidrian-keep');
+    const keep = path.join(fx.attempt, name, '.keep-attempt');
     for (const input of [write(keep), bash(`rm -f ${keep}`)]) assert.match(fx.ask(input, { own })?.reason ?? '', /the keep file of an attempt's folder/u, `${input.tool_name} ${keep}`);
   }
 });

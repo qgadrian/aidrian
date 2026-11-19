@@ -108,7 +108,7 @@ test('the sandbox settings are pinned whole: the sandbox on and required, writes
         allowWrite: ['/s/g', '/s/d', '/st/plans', '/private/tmp'],
         denyWrite: [
           '/s/w/.git', '/s/g/config', '/s/g/hooks', '/s/g/commondir', '/s/g/config.worktree', ...PROTECTED_PATHS.map((each) => `/s/w/${each}`),
-          ...nested, '/s/w/**/.claude/settings*.json', '/s/w/**/SKILL.md', '/s/drop/.aidrian-keep', '/s/cache/.aidrian-keep',
+          ...nested, '/s/w/**/.claude/settings*.json', '/s/w/**/SKILL.md', '/s/drop/.keep-attempt', '/s/cache/.keep-attempt',
         ],
         denyRead: unread,
         allowRead: ['/m/.git'],
@@ -384,13 +384,13 @@ test('a start on Claude Code reaches the registries both reads of the default br
   assert.doesNotMatch(text, /npm_config_cache|GOMODCACHE|PNPM_HOME/u);
   assert.ok(settings.sandbox.filesystem.allowWrite.includes(realpathSync(cache)), 'the cache folder is writable');
   assert.equal(lstatSync(cache).mode & 0o777, 0o700, 'owner-only');
-  assert.deepEqual(readdirSync(cache).sort(), ['.aidrian-keep', 'npm-global.npmrc', 'npm-user.npmrc']);
+  assert.deepEqual(readdirSync(cache).sort(), ['.keep-attempt', 'npm-global.npmrc', 'npm-user.npmrc']);
   for (const name of ['npm-global.npmrc', 'npm-user.npmrc']) assert.equal(readFileSync(path.join(cache, name), 'utf8'), '', `${name} is empty`);
   // The keep files of drop and cache, there before the launch, whose write the sandbox denies.
   for (const name of ['drop', 'cache']) {
-    const keep = path.join(attempt, name, '.aidrian-keep');
+    const keep = path.join(attempt, name, '.keep-attempt');
     assert.equal(lstatSync(keep).isFile(), true, keep);
-    assert.ok(settings.sandbox.filesystem.denyWrite.includes(path.join(realpathSync(attempt), name, '.aidrian-keep')), keep);
+    assert.ok(settings.sandbox.filesystem.denyWrite.includes(path.join(realpathSync(attempt), name, '.keep-attempt')), keep);
   }
   // The variables wait in the attempt's folder, which no confined session writes, for the SessionStart hook.
   assert.deepEqual(JSON.parse(readFileSync(path.join(attempt, SHELL_VARS), 'utf8')), cacheVars(cache, fx.env, { registries: ['npm', 'pypi'] }));

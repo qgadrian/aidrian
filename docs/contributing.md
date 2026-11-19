@@ -34,6 +34,9 @@ the [Claude mod](claude-mod.md).
 Every test file imports `scripts/test-state.mjs` first, and `test/test-state.test.mjs` fails on one that does not.
 It gives the run its own state folder, temporary folder, and fake `gh`, so a file run alone, `node --test test/<name>.test.mjs`,
 writes no fixture lesson or state folder into this machine's own state folder.
+The unattended marks and chain floors are read in the user's own `~/.local/state/aidrian` too, which no variable moves,
+so a test call that reads them, such as `continueBrief` or `readUnattendedMark`, passes `home`, as `TEST_HOME` from
+`test/fixtures/test-home.mjs`, and `test/unattended-mark.test.mjs` fails on one that does not.
 A probe script that runs a hook or a command by hand takes the same preload: `node --import ./scripts/test-state.mjs probe.mjs`.
 The hooks in `.githooks/` keep the private words of `.banned-terms.local` out of commit messages and branch names,
 and refuse a commit in the main checkout, one that newly stages a git-ignored file, or one that adds a conflict marker ([Commit guard](hooks.md#commit-guard)).

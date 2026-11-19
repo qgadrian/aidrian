@@ -7,7 +7,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
@@ -17,6 +17,7 @@ import { startedUnattended } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { noteFrom, openStore, storePath } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { defaultStateDir, findProject, projectCheckouts, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { dropPending, MARK_AGE, markFolder, markPending, markUnattended, PENDING_AGE, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
+import { TEST_HOME } from './fixtures/test-home.mjs';
 
 // The hooks this file runs record their blocks, and the gate's marks, in the state root; keep them in a folder of its own.
 process.env.XDG_STATE_HOME = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-state-')));
@@ -173,7 +174,7 @@ test('a marked session is held from a folder outside its project, and in another
   assert.equal(run('plain-session', `rm ${marks}/${full}.json`, { agent: true }).status, 2, 'a subagent may not delete a mark');
   assert.equal(run('plain-session', `printf x > ${marks}/plain-session.json`, { agent: true, cwd: dir }).status, 2, 'nor forge one, in a project');
   // The marks are still there: every refusal was judged before the call ran.
-  assert.deepEqual(readUnattendedMark(full), { root: dir });
+  assert.deepEqual(readUnattendedMark(full, { home: TEST_HOME }), { root: dir });
 });
 
 test('while the gate starts a session, every session the host had not listed and with no mark of its own is held, in whatever folder it works', (t) => {
@@ -221,4 +222,17 @@ test('while the gate starts a session, every session the host had not listed and
   assert.equal(run(fresh, 'claude --bg x', outside).status, 2, 'an unreadable pending mark holds every session');
   assert.ok(dropPending(pending));
   assert.equal(run(fresh, 'claude --bg x').status, 0, 'once the gate removed it, nobody');
+});
+
+// The user's own state folder is read beside the state root's, and no HOME or XDG_STATE_HOME moves it, so a call that
+// gives no `home` reads the marks and floors of the sessions running on the machine, and fails while one hands off.
+test('every test call that reads the unattended marks or the user\'s own chain floors passes a home folder', () => {
+  const reader = /\b(?:readUnattendedMark|unattendedHere|continueBrief|startedUnattended)\(/u;
+  const missing = [];
+  for (const name of readdirSync(import.meta.dirname).filter((each) => each.endsWith('.test.mjs')).sort()) {
+    readFileSync(path.join(import.meta.dirname, name), 'utf8').split('\n').forEach((line, at) => {
+      if (reader.test(line) && !/^\s*(?:import|\/\/)/u.test(line) && !/\bhome\b/u.test(line)) missing.push(`${name}:${at + 1}: ${line.trim()}`);
+    });
+  }
+  assert.deepEqual(missing, [], 'pass `home`, such as TEST_HOME from test/fixtures/test-home.mjs');
 });

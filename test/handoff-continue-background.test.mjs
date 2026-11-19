@@ -23,6 +23,7 @@ import { HOSTS } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { END_DELAY, endAfterTurn, terminalFolder } from '../plugins/aidrian/lib/terminal-replace.mjs';
 import { markUnattended, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
+import { TEST_HOME } from './fixtures/test-home.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
 const PROMPT_HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-prompt.mjs');
@@ -106,7 +107,7 @@ function fakeRun({ name = 'harness-handoff', own, others = [], start = null, lag
   return { run, calls };
 }
 
-const gate = (setting, args = {}) => continueBrief(setting.file, { chainOf, cwd: setting.dir, env: setting.env, wait: noWait, ...args });
+const gate = (setting, args = {}) => continueBrief(setting.file, { chainOf, cwd: setting.dir, env: setting.env, wait: noWait, home: TEST_HOME, ...args });
 const bgCalls = (calls) => calls.filter((call) => call.args[0] === '--bg');
 const sha = (text) => createHash('sha256').update(text).digest('hex');
 
@@ -227,6 +228,26 @@ test('in the window, the session the gate is starting cannot run the gate itself
   assert.equal(gate(setting, { run, env }).out[0], 'continue: background');
   assert.equal(inner.exitCode, 1);
   assert.match(inner.err[0], /another session's handoff gate is starting a background session/u);
+});
+
+test('the gate and unattendedHere read the unattended marks of the home folder they are given, not the user\'s own', (t) => {
+  const setting = setup(t);
+  passCheck(setting);
+  const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
+  t.after(() => rmSync(xdg, { recursive: true, force: true }));
+  const env = { ...setting.env, XDG_STATE_HOME: xdg };
+  // Another session's gate is starting a session, and its pending mark sits in the given home's own state folder.
+  const home = path.join(xdg, 'home');
+  const marks = path.join(home, '.local/state/aidrian/unattended');
+  mkdirSync(marks, { recursive: true, mode: 0o700 });
+  writeFileSync(path.join(marks, 'pending.other-session.json'), JSON.stringify({ pending: true, cwd: setting.dir, session: 'other-session', root: setting.dir, at: Date.now() }), { mode: 0o600 });
+  const held = gate(setting, { run: fakeRun({ own: setting.dir }).run, env, home });
+  assert.equal(held.exitCode, 1, held.out.join('\n'));
+  assert.match(held.err[0], /another session's handoff gate is starting a background session/u);
+  assert.equal(unattendedHere(SESSION, { store: setting.store, env, home, now: Date.now() }), true, 'the mark in the given home holds');
+  // Another home holds no mark: the gate starts its session.
+  assert.equal(unattendedHere(SESSION, { store: setting.store, env, home: TEST_HOME, now: Date.now() }), false, 'no mark in another home');
+  assert.equal(gate(setting, { run: fakeRun({ own: setting.dir }).run, env }).out[0], 'continue: background');
 });
 
 test('no pending mark, no start: the handoff goes on by the clear route, and a start that surely made nothing removes its pending mark', (t) => {
@@ -617,7 +638,7 @@ test('a working copy whose state.dir differs from the base branch\'s goes on by 
   const store = openStore(moved, { checkouts: [setting.dir], maxChain: 3 });
   assert.equal(checkBrief(file, undefined, 0, { store }).exitCode, 0);
   const { run, calls } = fakeRun({ own: setting.dir });
-  const result = continueBrief(file, { chainOf, cwd: setting.dir, env: setting.env, wait: noWait, run });
+  const result = continueBrief(file, { chainOf, cwd: setting.dir, env: setting.env, wait: noWait, run, home: TEST_HOME });
   assert.equal(result.exitCode, 0, result.err.join('\n'));
   assert.deepEqual(result.out.slice(0, 2), [
     'continue: clear',
@@ -1188,7 +1209,7 @@ test('the terminal follows a chain of background hops the shell function attache
     // Its Stop hook: the shell's record names the next hop, the terminal follows it, and this hop stops itself.
     const helpers = [];
     const ended = endAfterTurn({
-      host: claudeCode, session: hop.full, take: () => takeEnding(setting.store, hop.full), unattended: () => unattendedHere(hop.full, { store: setting.store, env, now: Date.now() }),
+      host: claudeCode, session: hop.full, take: () => takeEnding(setting.store, hop.full), unattended: () => unattendedHere(hop.full, { store: setting.store, env, home: TEST_HOME, now: Date.now() }),
       follow: ({ session, shell }) => noteFollow(setting.store, session, { shell }), env, run, start: (each) => helpers.push(each),
     });
     assert.equal(ended, true, `hop ${at + 1}`);

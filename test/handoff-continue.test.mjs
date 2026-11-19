@@ -26,6 +26,7 @@ import {
   takeReady,
 } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { HOSTS, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
+import { TEST_HOME } from './fixtures/test-home.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
 const ADVICE = 'Advice from Claude, not a spec: check each claim against the docs and code before building on it.';
@@ -53,7 +54,7 @@ function setup(t, handoff = { continue: 'clear' }, { state: stateDir } = {}) {
   return { root, dir, state: path.dirname(handoffs), handoffs, file, store };
 }
 
-const gate = (setting, args = {}) => continueBrief(args.brief ?? setting.file, { chainOf, cwd: setting.dir, env: { ...process.env, ...CLAUDE }, ...args });
+const gate = (setting, args = {}) => continueBrief(args.brief ?? setting.file, { chainOf, cwd: setting.dir, env: { ...process.env, ...CLAUDE }, home: TEST_HOME, ...args });
 const passCheck = (setting, file = setting.file) => assert.equal(checkBrief(file, undefined, 0, { store: setting.store }).exitCode, 0);
 const marker = (setting, extra = {}) => ({ route: 'clear', session: 'session-1', brief: setting.file, slug: 'widget', chain: 0, sha256: SHA, ...extra });
 const age = (file, ms) => utimesSync(file, new Date(Date.now() - ms), new Date(Date.now() - ms));

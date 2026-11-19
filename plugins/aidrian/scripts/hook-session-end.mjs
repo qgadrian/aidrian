@@ -1,5 +1,6 @@
 // SessionEnd hook (Claude Code): records a tracker refusal no read followed (settleRefusal), then deletes the session's block counts (lesson-signals.mjs noteDenial), its gate snapshot
-// (gate-snapshot.mjs), its tracker record (hook-tracker-post.mjs), and the session-length reminder's marker
+// (gate-snapshot.mjs), its tracker record (hook-tracker-post.mjs), its recorded issue reads (project-issue-text.mjs),
+// and the session-length reminder's marker
 // (hook-stop.mjs), wherever the session ran. Then, inside a project with config.json `telemetry.enabled` on, it hands the
 // payload to session-row.mjs, which writes the session's row in the dispatch log. The host cancels a SessionEnd hook after
 // a short time, and reading a long session's transcripts takes longer, so the worker runs detached and the hook exits as
@@ -19,6 +20,7 @@ import { readOwnText } from '../lib/fs.mjs';
 import { forgetDenials, sweepHookCounts } from '../lib/lesson-signals.mjs';
 import { sessionLengthMarker } from '../lib/session-length.mjs';
 import { findProject } from '../lib/project.mjs';
+import { dropIssueReads } from '../lib/project-issue-text.mjs';
 import { NO_READ_LANDED, refusalMarker } from '../lib/tracker-guard.mjs';
 
 const WORKER = path.join(import.meta.dirname, 'session-row.mjs');
@@ -31,6 +33,8 @@ await runHook(async (input) => {
   sweepHookCounts();
   forgetGateSnapshot(input.session_id);
   forgetTrackerRecord(input.session_id);
+  // A main session's recorded issue reads (lib/project-issue-text.mjs); a subagent's reads are its main session's.
+  if (!input.agent_id) dropIssueReads(input.session_id);
   if (typeof input.session_id === 'string' && /^[\w-]+$/u.test(input.session_id)) {
     const marker = sessionLengthMarker(input.session_id);
     if (marker) rmSync(marker, { force: true });

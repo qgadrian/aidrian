@@ -7,7 +7,8 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import fs, { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -18,7 +19,7 @@ import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { noteFrom, openStore, storePath } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { LOCKED } from '../plugins/aidrian/lib/jsonl.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
-import { INPUT_CAP, initRun, pinnedRepository, readRun, recordIssue, runFolder, runPlace, runsFolder, writeSummary } from '../plugins/aidrian/lib/project-run.mjs';
+import { INPUT_CAP, initRun, pinnedRepository, readCapped, readRun, recordIssue, runFolder, runPlace, runsFolder, writeSummary } from '../plugins/aidrian/lib/project-run.mjs';
 import { markPending, markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -390,4 +391,49 @@ test('projectRun: a project sets any key within its bounds, and a value past one
   assert.deepEqual([over.config.projectRun.maxParallel, over.config.projectRun.maxStarts, over.config.projectRun.issueHours], [1, 300, 6]);
   const under = loadConfig(project({ maxParallel: 0, maxStarts: 0, issueHours: 0 }));
   assert.equal(under.errors.length, 3);
+});
+
+test('readCapped reads what the stat gave of a file another process appends to meanwhile, and refuses one that grew past its cap', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-capped-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'ledger.jsonl');
+  const real = fs.fstatSync;
+  t.after(() => {
+    fs.fstatSync = real;
+    syncBuiltinESMExports();
+  });
+  // One append between the stat and the read.
+  const appendOnce = (row) => {
+    let once = true;
+    fs.fstatSync = (fd, ...rest) => {
+      const stat = real(fd, ...rest);
+      if (once) {
+        once = false;
+        fs.appendFileSync(file, row);
+      }
+      return stat;
+    };
+    syncBuiltinESMExports();
+  };
+  writeFileSync(file, '{"event":"init"}\n');
+  appendOnce('{"event":"issue"}\n');
+  assert.deepEqual(readCapped(file, 1024), { bytes: Buffer.from('{"event":"init"}\n') }, 'the rows the stat gave');
+  assert.equal(readCapped(file, 1024).bytes.toString('utf8'), '{"event":"init"}\n{"event":"issue"}\n', 'the next read has both');
+  // Grown past the cap while read: refused.
+  writeFileSync(file, '{"event":"init"}\n');
+  appendOnce('{"event":"issue"}\n');
+  assert.match(readCapped(file, 20).problem, /grew while it was read, past the 20 bytes it may hold/u);
+});
+
+test('readCapped allocates what the file holds, not its cap: a small file reads under any cap, and one past its cap is refused', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-capped-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'small.json');
+  writeFileSync(file, '{"a":1}');
+  // A cap no buffer could hold: only the file's own size is allocated.
+  assert.equal(readCapped(file, Number.MAX_SAFE_INTEGER).bytes?.toString('utf8'), '{"a":1}');
+  assert.equal(readCapped(file, 7).bytes?.toString('utf8'), '{"a":1}');
+  assert.match(readCapped(file, 6).problem, /is 7 bytes, over the 6 it may hold/u);
+  writeFileSync(path.join(dir, 'empty'), '');
+  assert.equal(readCapped(path.join(dir, 'empty'), 10).bytes.length, 0);
 });

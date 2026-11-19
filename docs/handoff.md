@@ -218,6 +218,11 @@ whatever the config says, and `background` only when the config says `"backgroun
    subagent, and a session the background route started, may not remove a claim.
    When the host listed the earlier session as done and the new start then made nothing, the handoff goes on by the
    clear route, as with no earlier start.
+   A project run's driver is the one exception: when its last start record names a session of its own run's issues,
+   which the run's ledger records it started, that session holds back the driver's handoff no more than it holds back
+   the driver's next start, since the run's caps count it until the host lists it ended. This holds only for the
+   session the ledger names as the run's current driver, while the run has not ended; every other record, the driver's
+   continuation's included, waits for the host's listing.
    A session whose unattended mark names another project's main checkout, or none the gate can read, starts no
    background session: its chain floor lives in that project's store.
 

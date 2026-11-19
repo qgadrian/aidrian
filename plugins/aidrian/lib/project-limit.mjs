@@ -10,8 +10,9 @@
 //   - a limit met while a pause lasts joins it: the same `wait` number, its `until` moved later only by a named reset;
 //   - past LIMIT_WAITS pauses a run, a `halt` row instead, which an attended `aidrian project resume` lifts.
 // A host that continues its own session once a usage limit resets (`capabilities.projectStart.continuesAtLimit`) keeps
-// it: `wait` records the pause and waits on that session while the pause runs. A rate limit, a pause over with the same
-// record still the session's last, a limit past LIMIT_WAITS, a session that ended on the limit, and one of a host that
+// it: `wait` records the pause and waits on that session while the pause runs, and RESUME_GRACE past the later of its end
+// and the session's newest entry after the limit (recordedPauseRuns). A rate limit, a pause and its grace over with the
+// same record still the session's last, a limit past LIMIT_WAITS, a session that ended on the limit, and one of a host that
 // does not continue all end the attempt (`ended`, reason `limit`), which counts toward no cap of the issue
 // (project-run-guard.mjs spentAttempts), and opens the issue again; the next start of it, once the pause is over, is a
 // new attempt in a fresh clone on the issue's branch as the forge holds it. Time paused does not count toward
@@ -26,6 +27,10 @@ const MINUTE = 60_000;
 export const PAUSE_FLOOR = MINUTE;
 export const PAUSE_CEILING = 6 * 60 * MINUTE;
 export const BACKOFF = Object.freeze([15 * MINUTE, 30 * MINUTE, 60 * MINUTE]);
+// How long a session the host continues stays held past its pause's end, or past its newest entry after the limit; and
+// the most it stays held past its pause's end, however its entries go on, so issueHours is never skipped for long.
+export const RESUME_GRACE = 5 * MINUTE;
+export const RESUME_CEILING = 30 * MINUTE;
 export const LIMIT_KINDS = Object.freeze(['usage', 'rate']);
 
 const iso = (now) => new Date(now).toISOString();
@@ -68,14 +73,16 @@ export function pausedTime(found, from, to) {
   return total;
 }
 
-// The limit a host adapter answered, `given`, as the run keeps it: { kind, until, at } with kind one of LIMIT_KINDS,
-// until a time or null (Infinity for a reset on another day), and at the record's own time or null; null when the answer
-// names no limit or no kind the run knows.
+// The limit a host adapter answered, `given`, as the run keeps it: { kind, until, at, after } with kind one of
+// LIMIT_KINDS, until a time or null (Infinity for a reset on another day), at the record's own time or null, and after
+// the time of the newest entry the session's record shows after the limit, or null when it shows none; null when the
+// answer names no limit or no kind the run knows.
 export function checkedLimit(given) {
   if (given === null || typeof given !== 'object' || !LIMIT_KINDS.includes(given.kind)) return null;
   const until = typeof given.until === 'number' && !Number.isNaN(given.until) ? given.until : null;
   const at = Number.isFinite(given.at) ? given.at : null;
-  return { kind: given.kind, until, at };
+  const after = Number.isFinite(given.after) ? given.after : null;
+  return { kind: given.kind, until, at, after };
 }
 
 // When the pause for `limit` (checkedLimit) ends, from `now`, with `streak` the pauses in a row before it: its reset
@@ -98,11 +105,17 @@ const recordOf = (limit) => (limit.at === null ? null : iso(limit.at));
 // Whether the run `found` holds a `limit` row for this very record of attempt `attempt` of issue `key`.
 export const limitRecorded = (found, key, attempt, limit) => limitRows(found).some((row) => row.key === key && row.attempt === attempt && (row.record ?? null) === recordOf(limit));
 
-// Whether the pause the run recorded for this very record of attempt `attempt` of issue `key` still runs at `now`, with
-// PAUSE_FLOOR of grace after its end for the host to continue the session.
+// Whether a session the host continues is still held at `now` for the pause the run recorded for this very record of
+// attempt `attempt` of issue `key`: while the pause runs, and RESUME_GRACE after the later of its end and the newest
+// entry the session's record shows after the limit (`limit.after`, held to `now`), and never RESUME_CEILING past the
+// pause's end. A host that continues the session writes its own entry first and the model's answer later, so a session
+// whose limit record is still its last assistant entry is not stopped before its first new answer had time to come; and
+// an entry dated ahead, or entries that keep coming, hold it no longer than the ceiling, after which the stop path ends
+// the attempt as for any session past its pause.
 export function recordedPauseRuns(found, key, attempt, limit, now) {
   const waits = new Set(limitRows(found).filter((row) => row.key === key && row.attempt === attempt && (row.record ?? null) === recordOf(limit)).map((row) => row.wait));
-  return pauses(found).some((each) => waits.has(each.wait) && each.end + PAUSE_FLOOR > now);
+  const resumed = Number.isFinite(limit.after) ? Math.min(limit.after, now) : -Infinity;
+  return pauses(found).some((each) => waits.has(each.wait) && Math.min(Math.max(each.end, resumed) + RESUME_GRACE, each.end + RESUME_CEILING) > now);
 }
 
 // The row that records the limit `limit` attempt `attempt` of issue `key` met, at `now`: { row, until } with `until` the

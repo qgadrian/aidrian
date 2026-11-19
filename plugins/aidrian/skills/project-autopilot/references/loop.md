@@ -16,7 +16,7 @@ named and go on from that output as step 2 says.
    - `halted <cause>`: § Halt.
    - `paused until <time>`: § Pause.
    - one `next <key> <branch>` line or more: step 2 for each, in order.
-   - `wait <n> running`: step 3.
+   - `wait <n> running`: step 3. It counts a session that runs on after its issue settled (`lingering <key> ...`).
    - `done`: § Finish.
    - exit 1: § Stop, with its stderr line as the cause.
 2. `aidrian project start <run> <key>`:
@@ -24,7 +24,7 @@ named and go on from that output as step 2 says.
    - an `unverified:` line is a note, not a refusal.
    - `paused until <time>`, exit 1: a usage limit paused the run. Not a refusal: § Pause.
    - a line `halt <cause>`, exit 1: § Halt.
-   - exit 75, `retry: <why>`: § Retry.
+   - exit 75, `retry: <why>`: § Retry. A session that runs on after its issue settled gives this too: a wait.
    - any other exit 1: § Stop, with its stderr line as the cause.
 3. `aidrian project wait <run> --max-wait 150`:
    - `result <key> ...`, `ended <key> ...`, `settled <key> ...`, or `orphan ...`: an issue settled; step 4.
@@ -32,8 +32,11 @@ named and go on from that output as step 2 says.
      usage or rate limit; step 1, whose `next` says whether the run is paused or halted.
    - `paused <key> ...`: that issue's session waits out a limit and goes on by itself; step 3 again.
    - `paused until <time>` with no running issue: § Pause.
-   - only `running <key>` lines: step 3 again.
-   - `overdue <key> ...` or `limited <key> attempt <n>: ... could not be stopped`: a session the run could not stop.
+   - `lingered <key> attempt <n> ended` or `... stopped`: a session that ran on after its issue settled runs no more;
+     step 1.
+   - only `running <key>` and `lingering <key> attempt <n>` lines: step 3 again.
+   - `overdue <key> ...`, or `limited <key> attempt <n>: ...` or `lingered <key> attempt <n>: ...` that ends `could not
+     be stopped`: a session the run could not stop.
      Note it, and go on; a second such line for the same issue: § Stop, with that line as the cause.
    - `idle`: step 1.
    - exit 75, `retry: <why>`, as when the forge cannot answer now: § Retry. Exit 1: § Stop.
@@ -62,22 +65,27 @@ A halt is host-wide, such as a failed sandbox proof, and waits on a person.
 
 1. Start nothing more.
 2. Run `aidrian project wait <run> --max-wait 150` until it prints `idle`, writing each owed report after each settle.
+   Stop waiting sooner once every line left is a `running <key>` or `lingering <key> attempt <n>` line of a session
+   that a `could not be stopped` line named twice: no wait ends it.
 3. `aidrian project summary <run>`.
 4. Tell the Human, in the final report: the cause on the `halt` line, the fix on stderr after `halt:`,
-   and `aidrian project resume <run>` for the Human to run once it is fixed. End the turn.
+   and `aidrian project resume <run>` for the Human to run once it is fixed. Name each session step 2 left running by
+   its issue and attempt, and its name in the host's list of background sessions, `<run> · <key> · <attempt>`: the
+   Human stops it by hand with the host's own stop command, then runs `aidrian project end <run>`. End the turn.
 
 Never run `aidrian project resume` here: only an attended session lifts a halt.
 
 ## Stop
 
 Any other refusal, such as a cap, a policy the forge no longer confirms, or custody: do § Halt's steps 1 to 3, then
-report the refusal as the cause, with what its line says fixes it. Never retry a refused start to see whether it passes.
+report the refusal as the cause, with what its line says fixes it, and each session step 2 left running, as § Halt step
+4 names it. Never retry a refused start to see whether it passes.
 
 ## Finish
 
 After `done`: `aidrian project report <run> --json` once more, writing what it owes, then `aidrian project summary <run>`.
 Then `aidrian project end <run>`, which records the run's end and releases this session's hold; it refuses while an
-issue still runs, so run it only after `wait` printed `idle`. Then the final report of `SKILL.md` § Report.
+issue still runs, or a session runs on after its issue settled, so run it only after `wait` printed `idle`. Then the final report of `SKILL.md` § Report.
 
 ## Hand off
 

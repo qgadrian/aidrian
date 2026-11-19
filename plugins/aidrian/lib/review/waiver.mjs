@@ -43,7 +43,7 @@ import { sessionIdentity } from '../hosts/index.mjs';
 import { branchPolicies, refusingBranches, soloOn, trailPaths, trailPolicies } from '../pr-auto-merge.mjs';
 import { isObject } from '../fs.mjs';
 import { stateFolders } from '../handoff-guard.mjs';
-import { readRun } from '../project-run.mjs';
+import { appendToRun, readRun } from '../project-run.mjs';
 import { mayFollowTeamDefault } from '../project.mjs';
 import { hostOf } from '../remotes.mjs';
 import { originRepo, repoName } from '../review-gate.mjs';
@@ -180,7 +180,7 @@ export function capProblem(state, head) {
 export const signoffOwed = (args) => owedSignoffs(args)?.why ?? null;
 
 // signoffOwed's answer with the flows it is for: { why, unsigned } or null, `unsigned` every flow, sorted, whose sign-off
-// is missing on `head`, none when the record names no flows for that head or the store cannot be read.
+// is missing on `head`, every flow when the store cannot be read, and none when the record names no flows for that head.
 export function owedSignoffs({ state, head, trail, policies, prefix, repo, pr, signoffs = null }) {
   if (!isObject(state?.signoffable) || typeof state.signoffable.head !== 'string' || !sameCommit(state.signoffable.head, head)) {
     return { why: 'the record names no flows the Human signs off on this head, so whether a sign-off is owed cannot be told', unsigned: [] };
@@ -206,27 +206,38 @@ export function runOf(mark) {
 // The ledger of the project run `run`, readRun's answer from the first state folder of `project` (the main checkout,
 // whose config names its state folders, as the merge guard's pinnedFor reads it) that holds it, or null.
 export function runLedger({ project, config, run }) {
+  return runAt({ project, config, run })?.found ?? null;
+}
+
+// runLedger's answer with the state folder it was read in: { state, found }, or null.
+function runAt({ project, config, run }) {
   for (const state of stateFolders(project, config, { lazy: true })) {
     const found = readRun(state, run);
-    if (!found.problem) return found;
+    if (!found.problem) return { state, found };
   }
   return null;
 }
 
+// The pull requests of the run `found` whose merge on a judge's verdict the merge guard took from the run's budget at
+// merge time (takeWaivedMerge): its `waived` rows.
+const takenMerges = (found) => new Set(found.rows.filter((row) => row?.event === 'waived' && Number.isInteger(row.pr)).map((row) => row.pr));
+
 // Thrown when a count runs out of the hook's time.
 class OutOfTime extends Error {}
 
-// How many pull requests the project run `run` merged, other than `pr`, on a judge's verdict: its ledger's merged
-// results whose review record, read in `project`, holds a `waive` that stands for the head its outcome names, the head
-// that merged (waiverFor); or null when the run's ledger cannot be read. The ledger is read through `home`, the main
-// checkout, and its config. It stops counting at WAIVED_MERGES, and `pastDeadline()` is asked before each record read:
-// past it, the count throws OutOfTime.
-export function waivedMerges({ project, home = project, config, run, pr, pastDeadline = () => false }) {
-  const found = runLedger({ project: home, config, run });
+// How many pull requests the project run `run` merged, other than `pr`, on a judge's verdict: those the merge guard took
+// from the budget at merge time (takenMerges), and its ledger's merged results whose review record, read in `project`,
+// holds a `waive` that stands for the head its outcome names, the head that merged (waiverFor); or null when the run's
+// ledger cannot be read. The ledger is read through `home`, the main checkout, and its config, or given as `found`. It
+// stops counting at WAIVED_MERGES, and `pastDeadline()` is asked before each record read: past it, the count throws
+// OutOfTime.
+export function waivedMerges({ project, home = project, config, run, pr, pastDeadline = () => false, found = runLedger({ project: home, config, run }) }) {
   if (!found) return null;
   const { owner, name } = found.init.repository;
-  const merged = new Set(found.rows.filter((row) => row?.event === 'result' && row.status === 'merged' && Number.isInteger(row.pr) && row.pr !== pr).map((row) => row.pr));
-  let count = 0;
+  const taken = takenMerges(found);
+  taken.delete(pr);
+  const merged = new Set(found.rows.filter((row) => row?.event === 'result' && row.status === 'merged' && Number.isInteger(row.pr) && row.pr !== pr && !taken.has(row.pr)).map((row) => row.pr));
+  let count = taken.size;
   for (const n of merged) {
     if (count >= WAIVED_MERGES) break;
     if (pastDeadline()) throw new OutOfTime();
@@ -250,6 +261,29 @@ export function budgetProblem({ project, home = project, config, run, pr, pastDe
   }
   if (spent === null) return `the ledger of project run ${shown(run, PASS_NAME, 'named')} cannot be read, so its waived merges cannot be counted`;
   return spent >= WAIVED_MERGES ? `project run ${run} merged ${spent} pull requests on a judge's verdict already, its most (${WAIVED_MERGES}): park the issue for the Human` : null;
+}
+
+// Takes pull request `pr`'s merge at `head` on a judge's verdict from the budget of project run `run`, at merge time, under
+// the run's ledger lock: the budget is counted again under the lock (waivedMerges), and, below WAIVED_MERGES, a `waived`
+// row is written for `pr`, unless one is there already. So the sessions of parallel issues, each of which counted the
+// budget before its merge, never pass it together. Returns why the merge may not take it, or null. The lock is waited
+// on at most `waitMs`; a lock it cannot take, a ledger it cannot read or write, and a count past `pastDeadline()` refuse.
+export function takeWaivedMerge({ project, home = project, config, run, pr, head, pastDeadline = () => false, waitMs = 1000, now = Date.now() }) {
+  const place = runAt({ project: home, config, run });
+  if (!place) return `the ledger of project run ${shown(run, PASS_NAME, 'named')} cannot be read, so its waived merges cannot be counted`;
+  let answer;
+  try {
+    answer = appendToRun(place.state, run, (found) => {
+      if (takenMerges(found).has(pr)) return { rows: [] };
+      const spent = waivedMerges({ project, home, config, run, pr, pastDeadline, found });
+      if (spent >= WAIVED_MERGES) return { problem: `project run ${run} merged ${spent} pull requests on a judge's verdict already, its most (${WAIVED_MERGES}): park the issue for the Human` };
+      return { rows: [{ event: 'waived', pr, head, at: new Date(now).toISOString() }] };
+    }, { waitMs });
+  } catch (error) {
+    if (error instanceof OutOfTime) return 'the hook ran out of time counting the project run\'s waived merges';
+    return `the ledger of project run ${run} could not be locked or written to take this merge from its budget of waived merges (${String(error?.message ?? error).split('\n')[0]}); try the merge again`;
+  }
+  return answer.problem ?? null;
 }
 
 // Why no verdict may be recorded for `head`, for runWaive's error and the gate's.
@@ -423,7 +457,16 @@ function readWaiver({ project, state, pr, head, named = false, repo = null, view
   const budget = memo && memo.run !== undefined ? budgetProblem({ project, home: main, config: loadConfig(main).config, run: memo.run, pr, pastDeadline: late }) : null;
   if (budget) return cannot(budget);
   const verdict = waiverFor(state, head, kind);
-  if (verdict && named) return { allow: true, note: '', route: '' };
+  if (verdict && named) {
+    // The merge happens now: a session of a project run takes it from the run's budget under the ledger's lock, so
+    // parallel issues never spend more than it holds between them.
+    if (memo && memo.run !== undefined) {
+      if (late()) return unread;
+      const taken = takeWaivedMerge({ project, home: main, config: loadConfig(main).config, run: memo.run, pr, head, pastDeadline: late, waitMs: Math.max(0, Math.min(1000, Math.floor(deadline - now()))) });
+      if (taken) return cannot(taken);
+    }
+    return { allow: true, note: '', route: '' };
+  }
   if (verdict) {
     return { ...none, route: ` A judge's recorded verdict waives this head, but only for a merge that names it: merge with \`gh pr merge ${pr} --match-head-commit ${head}\`, or give the merge tool its \`sha\`.` };
   }

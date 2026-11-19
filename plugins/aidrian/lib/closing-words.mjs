@@ -21,9 +21,12 @@ import { readUnattendedMark } from './unattended-mark.mjs';
 
 // The words that close an issue at a merge, in each form: GitHub's close, fix, and resolve, and Linear's complete too.
 const CLOSING_WORD = /(?<![\w-])(?:clos(?:e[sd]?|ing)|fix(?:e[sd]|ing)?|resolv(?:e[sd]?|ing)|complet(?:e[sd]?|ing))(?![\w-])/giu;
-// What may stand between a closing word and its references, and between two references of one list: any white space
-// but a line break (a line feed, CR LF, or a line or paragraph separator), which ends the list; a lone CR does not.
+// What may stand between two references of one list: any white space but a line break (a line feed, CR LF, or a line
+// or paragraph separator), which ends the list; a lone CR does not.
 const BETWEEN = /(?:[^\S\r\n\u2028\u2029]|\r(?!\n)|[:,;&*_`'"()[\]>]|(?<![\w-])and(?![\w-]))+/yu;
+// What may stand between a closing word and its first reference: the same, and line breaks too, since a forge that
+// reads `Fixes` at a line's end and the key on the next closes it.
+const BEFORE_FIRST = /(?:\s|[:,;&*_`'"()[\]>]|(?<![\w-])and(?![\w-]))+/yu;
 // One reference: a link, `owner/name#12` or `#12`, or a key-shaped token such as `ENG-12`.
 // A key is bounded by word characters only, so one a hyphen joins to more text, such as `ENG-9-export`, still counts.
 const REFERENCE = /https?:\/\/[^\s)>\]]+|(?:[\w.-]+\/[\w.-]+)?#\d{1,9}|[A-Za-z][A-Za-z0-9]{0,15}-\d{1,9}(?!\w)/yu;
@@ -47,8 +50,9 @@ export function closingRefs(text, prefixes = null) {
   for (const match of String(text).matchAll(CLOSING_WORD)) {
     let at = match.index + match[0].length;
     for (let n = 0; ; n += 1) {
-      BETWEEN.lastIndex = at;
-      if (BETWEEN.exec(text)) at = BETWEEN.lastIndex;
+      const gap = n === 0 ? BEFORE_FIRST : BETWEEN;
+      gap.lastIndex = at;
+      if (gap.exec(text)) at = gap.lastIndex;
       REFERENCE.lastIndex = at;
       const ref = REFERENCE.exec(text);
       if (!ref) break;

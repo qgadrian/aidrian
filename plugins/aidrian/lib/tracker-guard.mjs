@@ -289,14 +289,20 @@ function keyProblem(call, allowed) {
   return allowed(call.key) ? null : `${call.spec.key} is ${JSON.stringify(call.key)}`;
 }
 
-// The text a value inserts: the value itself when it is a string; else, at any depth, the strings under the keys in
-// `inserted`, as a patch's operations hold the text they add, and never the anchors they match existing text by.
-const insertedText = (value, inserted) => {
+// The keys of a patch operation whose text is never inserted: the operation's name, and the anchors an operation matches
+// existing text by. An adapter's `anchors` names its own; these hold for every adapter.
+const ANCHORS = Object.freeze(['op', 'old_string', 'anchor', 'from', 'to']);
+
+// The text a value may insert: the value itself when it is a string; else, at any depth, every string but those under a
+// key of ANCHORS or of the adapter's `anchors`, so a key the adapter does not know is checked as text.
+const insertedText = (value, anchors) => {
   if (typeof value === 'string') return [value];
+  const skipped = new Set([...ANCHORS, ...anchors]);
   const walk = (each) => {
+    if (typeof each === 'string') return [each];
     if (Array.isArray(each)) return each.flatMap(walk);
     if (!each || typeof each !== 'object') return [];
-    return Object.entries(each).flatMap(([key, held]) => (inserted.includes(key) && typeof held === 'string' ? [held] : walk(held)));
+    return Object.entries(each).flatMap(([key, held]) => (skipped.has(key) ? [] : walk(held)));
   };
   return walk(value);
 };
@@ -313,7 +319,7 @@ function childRefusal(writer, call, adapter, short, human) {
     return refused(`${short} sets ${call.spec.status} to ${JSON.stringify(call.input[call.spec.status])?.slice(0, 40)}, and an issue's session sets only ${JSON.stringify(call.spec.started)}`, `Leave the rest to the run's report, which the driver writes`);
   }
   const texts = call.kind === 'issue' ? (call.spec.text ?? []) : [call.spec.body];
-  const field = texts.find((each) => insertedText(call.input[each], call.spec.inserted ?? []).some(textProblem));
+  const field = texts.find((each) => insertedText(call.input[each], call.spec.anchors ?? []).some(textProblem));
   if (field) return refused(`${short} sets ${field} with a mention, link, address, image, HTML, or hidden character`, 'Write plain text: name a page or a person in words, and put a file or host name in backticks, such as `config.json`');
   return null;
 }

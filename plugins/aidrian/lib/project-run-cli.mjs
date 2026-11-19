@@ -1,9 +1,10 @@
 // `aidrian project`: the record of a project run and the order of its issues (lib/project-run.mjs).
 //
-//   aidrian project init RUN --file PATH   # validate the driver's snapshot input and start run RUN; the attended main session only
-//                    [--texts PATH]        # each issue's text, apart from the snapshot input, for its session to read
-//                    [--check]             # only check the inputs and print their order and blockers, writing no run
-//   aidrian project next RUN [--json]      # the next issue or issues to start, `wait N running`, or `done`
+//   aidrian project init RUN --file PATH   # validate the driver's snapshot input and start run RUN; the attended main session only,
+//                                          # keeping each issue's text the tracker's answers to this session recorded
+//                    [--check]             # only check the input and print its order and blockers, writing no run
+//   aidrian project next RUN [--json]      # the next issue or issues to start, `wait N running` (a session that runs on
+//                                          # after its issue settled counts), or `done`
 //   aidrian project summary RUN            # write and print summary.md from the ledger
 //   aidrian project end RUN                # the driver records the run's end, which releases its driver mark
 //   aidrian project start RUN ISSUE        # the driver starts the issue's session in a fresh clone (lib/project-run-gate.mjs)
@@ -26,20 +27,24 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { commandConfig } from './config.mjs';
+import { forgeFor } from './forges/index.mjs';
 import { resolvedPath } from './fs.mjs';
-import { sessionIdentity } from './hosts/index.mjs';
+import { detectHost, sessionIdentity } from './hosts/index.mjs';
 import { projectAt } from './project.mjs';
 import { pauseOf } from './project-limit.mjs';
+import { sweepIssueReads } from './project-issue-text.mjs';
+import { lingeringStarts } from './project-linger.mjs';
 import { LOCKED } from './jsonl.mjs';
 import { preflightCommand, snapshotCheck } from './project-preflight.mjs';
 import { recordedCommand, reportCommand } from './project-report.mjs';
 import { runConfine } from './project-confine.mjs';
 import { haltOf, initRun, nextLines, planRun, readRun, runPlace, writeSummary } from './project-run.mjs';
+import { runStore } from './project-run-guard.mjs';
 import { stopAction } from './project-stops.mjs';
-import { endRun, recordHandoff, recordResult, resumeRun, RETRY_EXIT, startIssue, WAIT_CEILING, WAIT_DEFAULT, waitRun } from './project-run-gate.mjs';
+import { endRun, recordHandoff, recordResult, resumeRun, RETRY_EXIT, runParallel, startIssue, WAIT_CEILING, WAIT_DEFAULT, waitRun } from './project-run-gate.mjs';
 import { usageLines } from './usage.mjs';
 
-const USAGE = 'init RUN --file PATH [--texts PATH] [--check] [--project DIR] | next RUN [--json] [--project DIR] | summary RUN [--project DIR] | start RUN ISSUE [--project DIR] | ' +
+const USAGE = 'init RUN --file PATH [--check] [--project DIR] | next RUN [--json] [--project DIR] | summary RUN [--project DIR] | start RUN ISSUE [--project DIR] | ' +
   'wait RUN [--max-wait SECONDS] [--project DIR] | result RUN ISSUE --file PATH [--project DIR] | handoff RUN BRIEF [--project DIR] | resume RUN [--project DIR] | end RUN [--project DIR] | ' +
   'report RUN [--json] [--project DIR] | recorded RUN ISSUE [--project DIR] | preflight [RUN] [--project DIR] | stop-action RUN ISSUE [--project DIR] | confine RUN ISSUE';
 // The actions the command takes; lib/project-run-guard.mjs holds a rule for each (test/project-start-guard.test.mjs).
@@ -92,7 +97,7 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
     options: {
       project: word,
       ...(['init', 'result'].includes(action) ? { file: word } : {}),
-      ...(action === 'init' ? { check: { type: 'boolean' }, texts: word } : {}),
+      ...(action === 'init' ? { check: { type: 'boolean' } } : {}),
       ...(['next', 'report'].includes(action) ? { json: { type: 'boolean' } } : {}),
       ...(action === 'wait' ? { 'max-wait': word } : {}),
     },
@@ -107,12 +112,11 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
   const config = commandConfig(project);
   if (action === 'init') {
     if (!values.file) return fail('project init needs --file');
-    const texts = values.texts === undefined ? null : path.resolve(cwd, values.texts);
-    if (values.check) return snapshotCheck({ project, config, file: path.resolve(cwd, values.file), texts });
+    if (values.check) return snapshotCheck({ project, config, file: path.resolve(cwd, values.file), session: sessionIdentity(env).session, env, home, ...(forge ? { forge } : {}) });
     if (values.project !== undefined && !sameMainCheckout(project, projectAt(cwd))) {
       return refused('init', '--project names a project outside the main checkout of the current folder; run init from that project');
     }
-    return initRun({ project, config, run, file: path.resolve(cwd, values.file), texts, session: sessionIdentity(env).session, env, home });
+    return initRun({ project, config, run, file: path.resolve(cwd, values.file), session: sessionIdentity(env).session, env, home });
   }
   if (action === 'preflight') return preflightCommand({ project, config, run: run ?? null, env, home, ...(forge ? { forge } : {}), ...(platform ? { platform } : {}) });
   if (action === 'report') return reportCommand({ project, config, run, json: values.json === true, env, home });
@@ -125,7 +129,7 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
   }
   if (action === 'handoff') return recordHandoff({ ...gate, brief: path.resolve(cwd, second) });
   if (action === 'resume') return resumeRun({ ...gate, spawn });
-  if (action === 'end') return endRun(gate);
+  if (action === 'end') return endRun({ ...gate, spawn });
   if (action === 'stop-action') return stopAction({ ...gate, key: second, ...(autoMerge ? { autoMerge } : {}) });
   if (action === 'wait') {
     const given = values['max-wait'] ?? String(WAIT_DEFAULT);
@@ -137,10 +141,17 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
   const found = readRun(place.state, run);
   if (found.problem) return refused(action, found.problem);
   if (action === 'next') {
-    const plan = planRun(found.snapshot, found.states);
+    // Each pass of a run's loop sweeps the recorded issue reads past their age, on a host with no session-end hook too.
+    sweepIssueReads({ env, now: now ?? Date.now() });
+    const maxParallel = runParallel(project, found.init.repository, forge ?? forgeFor(project.root));
+    // A session that runs on after its issue settled, as the host lists it, holds every start back: `wait` (lib/project-linger.mjs).
+    const { lingering } = lingeringStarts({ found, store: runStore(project, config, place.state), cap: detectHost({ env }).capabilities.projectStart, env, spawn, now: now ?? Date.now() });
+    const planned = planRun(found.snapshot, found.states, { maxParallel });
+    const plan = lingering.length ? { ...planned, next: [], verdict: 'wait' } : planned;
     const halt = haltOf(found);
     const pause = pauseOf(found, now ?? Date.now());
-    return { exitCode: 0, out: values.json ? [JSON.stringify({ ...plan, halt, pause }, null, 2)] : nextLines(plan, { halt, pause }), err: [] };
+    const held = lingering.map((row) => ({ key: row.key, attempt: row.attempt }));
+    return { exitCode: 0, out: values.json ? [JSON.stringify({ ...plan, lingering: held, maxParallel, halt, pause }, null, 2)] : nextLines(plan, { halt, pause, lingering: held }), err: [] };
   }
   const written = writeSummary(place.state, run);
   if (written.problem) return refused('summary', written.problem);

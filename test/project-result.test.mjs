@@ -38,12 +38,13 @@ function started(t, options) {
     return target;
   };
   const result = (value, session = CHILD, more) => fx.cmd(['result', 'launch', 'ENG-1', '--file', file(value)], { session, ...more });
-  // A result handed over, then the driver's wait that takes it in: the wait's lines but `idle`.
+  // A result handed over, then the driver's wait that takes it in: the wait's lines but `idle`, and but the `lingering`
+  // line of the session the fixture's host still lists working after it handed its result over (project-linger.mjs).
   const recorded = (value, session = CHILD) => {
     const handed = result(value, session);
     if (handed.exitCode !== 0) return handed;
     const waited = fx.cmd(['wait', 'launch', '--max-wait', '0']);
-    return { ...waited, out: waited.out.filter((line) => line !== 'idle') };
+    return { ...waited, out: waited.out.filter((line) => line !== 'idle' && !line.startsWith('lingering ')) };
   };
   return { ...fx, file, result, recorded };
 }
@@ -57,8 +58,9 @@ test('only the session the run started for the issue records its result, and onl
   assert.match(fx.result(failed, OTHER).err[0], /only the session the run started/u);
   const ok = fx.recorded(failed);
   assert.deepEqual(ok, { exitCode: 0, out: ['result ENG-1 failed -> open'], err: [] });
-  const [result, issue] = fx.rows().slice(-2);
-  assert.deepEqual([result.event, result.status, result.session, result.attempt, result.via, issue.state], ['result', 'failed', CHILD, 1, 'drop', 'open']);
+  // The last rows of the result, before the `linger` row of its session, which the host still lists working.
+  const [result, issue, linger] = fx.rows().slice(-3);
+  assert.deepEqual([result.event, result.status, result.session, result.attempt, result.via, issue.state, linger.event], ['result', 'failed', CHILD, 1, 'drop', 'open', 'linger']);
   assert.match(fx.result(failed).err[0], /the issue ENG-1 is not running in the run launch, so it has no result to record/u, 'a second result');
 });
 
@@ -182,7 +184,7 @@ test('wait records an issue whose sessions all ended with no result, and stops a
 
   const settled = started(t);
   settled.result({ status: 'blocked', stop: 'no token' });
-  assert.deepEqual(settled.cmd(['wait', 'launch', '--max-wait', '0']).out, ['result ENG-1 blocked -> parked blocked', 'idle']);
+  assert.deepEqual(settled.cmd(['wait', 'launch', '--max-wait', '0']).out, ['result ENG-1 blocked -> parked blocked', 'lingering ENG-1 attempt 1']);
   assert.match(settled.cmd(['wait', 'launch', '--max-wait', '9999']).err.at(-1), /takes --max-wait as whole seconds from 0 to 540/u);
 });
 
@@ -193,7 +195,7 @@ test('wait returns as soon as a result arrives while it waits', (t) => {
     reads += 1;
     if (reads === 1) fx.result({ status: 'failed', stop: 'x' });
   };
-  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '120'], { pause }).out, ['result ENG-1 failed -> open', 'idle']);
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '120'], { pause }).out, ['result ENG-1 failed -> open', 'lingering ENG-1 attempt 1']);
   assert.equal(reads, 1);
 });
 

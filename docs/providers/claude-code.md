@@ -338,7 +338,10 @@ ignored, so the live checks below must show each one holds.
   time is read against the entry's `timestamp`: from the epoch, from `resets <time> (<zone>)`, then from `resets in`
   a span. The session starts with `autoContinueAtUsageLimit`, so the host waits out a usage limit and continues it,
   and the adapter declares `continuesAtLimit`: `wait` keeps a session the host still lists running only for a `usage`
-  limit, and only while its pause runs, with a minute's grace. The host continues only a claude.ai usage limit, on
+  limit, and only while its pause runs, with 5 minutes' grace past the later of the pause's end and the newest entry
+  of the transcript after the limit record, such as the host's own entry when it continues the session, and never more
+  than 30 minutes past the pause's end. Only an entry that carries the session's id and a time no later than the read
+  counts. The host continues only a claude.ai usage limit, on
   billing that is not usage-based; anything else takes the stop path: a rate limit, a pause over with the same record
   still the session's last, and a limit past the run's 24 pauses each stop the session and end its attempt. These
   shapes and the setting's effect come from the host's issue reports, changelog, and binary, not a live run (live check

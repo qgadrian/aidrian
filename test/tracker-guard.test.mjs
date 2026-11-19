@@ -1115,7 +1115,7 @@ const runTracker = {
   team: { createFields: ['board'], keyFields: ['ticket'] },
   unguardedRoutes: [],
   run: {
-    issue: { tool: 'put_ticket', key: 'ticket', status: 'phase', label: 'tags', started: 'active', done: 'closed', fields: ['points', 'edits'], text: ['edits'], inserted: ['new', 'text'] },
+    issue: { tool: 'put_ticket', key: 'ticket', status: 'phase', label: 'tags', started: 'active', done: 'closed', fields: ['points', 'edits'], text: ['edits'], anchors: ['old'] },
     comment: { tool: 'note_ticket', key: 'ticket', body: 'text' },
   },
   mergeVerbs: ['land_*'],
@@ -1150,6 +1150,11 @@ test('an issue\'s session sets only the started status, and writes plain text', 
   assert.equal(runJudge(child, 'note_ticket', { ticket: 'TB-1', text: 'Two\n\nparagraphs, plain; v1.2 shipped.' }), null, 'white space and plain text pass');
   assert.equal(runJudge(child, 'put_ticket', { ticket: 'TB-1', edits: [{ op: 'replace', old: 'see [spec](https://x.example/a)', new: 'see the spec' }] }), null, 'an anchor is not inserted text');
   assert.match(runJudge(child, 'put_ticket', { ticket: 'TB-1', edits: [{ op: 'replace', old: 'x', new: 'see [spec](https://x.example/a)' }] }), /sets edits with a mention/u);
+  // Every string of an operation is text but the anchors: a key the adapter does not know, at any depth, is checked too.
+  for (const edit of [{ op: 'append', body: 'ping @lead' }, { op: 'insert', anchor: '## Notes', content: { lines: ['see https://evil.example/x'] } }, { op: 'replace', from: 'a', to: 'b', with: '<img src=x>' }, ['@lead']]) {
+    assert.match(runJudge(child, 'put_ticket', { ticket: 'TB-1', edits: [edit] }) ?? '', /sets edits with a mention/u, JSON.stringify(edit));
+  }
+  assert.equal(runJudge(child, 'put_ticket', { ticket: 'TB-1', edits: [{ op: 'move', anchor: 'see [x](https://y.example)', from: '@a', to: '@b', old: '<b>x</b>' }] }), null, 'anchors and the operation name are not inserted text');
   assert.equal(runJudge(child, 'note_ticket', { ticket: 'TB-1', text: 'Updated `config.json` on `api.example.org`.' }), null, 'a file or host name in backticks');
   assert.match(runJudge(child, 'note_ticket', { ticket: 'TB-1', text: 'Updated config.json.' }), /put a file or host name in backticks, such as `config\.json`/u);
   assert.match(runJudge(child, 'note_ticket', { ticket: 'TB-1', text: 'run `rm -rf x`' }), /sets text with a mention/u, 'a code span around anything but one file or host name');

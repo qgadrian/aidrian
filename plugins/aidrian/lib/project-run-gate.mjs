@@ -50,16 +50,18 @@ import { baseBranchConfig } from './handoff-continue.mjs';
 import { claimBusy, dropClaim, readContainedBrief, readStarted, SESSION_ID } from './handoff-markers.mjs';
 import { detectHost, sessionIdentity } from './hosts/index.mjs';
 import { branchPolicies, defaultBranch, soloOn } from './pr-auto-merge.mjs';
+import { chainEnded, lingerLine, lingerProblem, settleLingering, stopChain } from './project-linger.mjs';
 import { checkedLimit, limitEndRows, limitRecorded, pausedTime, pauseOf, pauseRow, recordedPauseRuns } from './project-limit.mjs';
 import { closeVerdict, confineCheck, prepareConfine } from './project-confine.mjs';
 import { cacheVars, registryHosts } from './project-registries.mjs';
 import { afterFailure, cleanText, CAPS, DROP_FILE, ingestDrops, RESULT_CAP, validateResult, writeDrop } from './project-result.mjs';
 import { writeIssueFile } from './project-issue-text.mjs';
 import { appendToRun, attendedProblem, haltOf, planRun, readCapped, readRun, runFolder, runPlace, runsFolder, RUN_ID, SERIAL } from './project-run.mjs';
-import { custody, driverOf, endedIn, ISSUE_ATTEMPTS, issueChain, latestStart, resultAuthorProblem, resumerProblem, runStore, spentAttempts, startRows, startsOf, timeOf, ATTEMPT_CEILING } from './project-run-guard.mjs';
+import { custody, driverOf, endedIn, ISSUE_ATTEMPTS, latestStart, resultAuthorProblem, resumerProblem, runStore, spentAttempts, startRows, startsOf, timeOf, ATTEMPT_CEILING } from './project-run-guard.mjs';
 import { accessProblem, guardedFolders, haltAnswer, hostStartProblem, linkTripwire, placeHolders, prepareAttempt, runLog, runLogFile, stateWorkFolders, sweepAttempts, unverifiedNote, writeShellVars } from './project-start.mjs';
 import { ancestorProblem, pushProblem, repositoryProblem, trustProblem } from './project-trust.mjs';
 import { signoffFolder, signoffFolders } from './review/signoff-store.mjs';
+import { recordsStart } from './run-driver.mjs';
 import { safely, startHeld } from './session-start-gate.mjs';
 import { markDriver, markUnattended, PENDING_AGE, readBeacon, readUnattendedMark } from './unattended-mark.mjs';
 
@@ -76,7 +78,7 @@ export const WAIT_DEFAULT = 100;
 // The exit of a refusal that may pass when tried again, as EX_TEMPFAIL: a forge that cannot answer now, or a ledger
 // another process holds locked (lib/project-run-cli.mjs). Its first line is `retry: <why>`.
 export const RETRY_EXIT = 75;
-const retryAnswer = (command, why) => ({ exitCode: RETRY_EXIT, out: [`retry: ${why}`], err: [`aidrian project ${command}: ${why}`] });
+const retryAnswer = (command, why, lines = []) => ({ exitCode: RETRY_EXIT, out: [`retry: ${why}`, ...lines], err: [`aidrian project ${command}: ${why}`] });
 export const WAIT_CEILING = 540;
 const WAIT_STEP = 30_000;
 const DAY = 24 * 60 * 60 * 1000;
@@ -195,18 +197,6 @@ export function projectPrompt({ run, key, attempt, branch, clone, skill = SKILL,
 // The name of an issue's session: `<run> · <issue> · <attempt>`.
 const sessionName = (run, key, attempt) => `${run} · ${key} · ${attempt}`;
 
-// Whether every session of the chain a start record or row names, from `id` and `session`, is one the host lists as
-// ended: true, false, or null when a listing gives no answer or the chain goes on past what was read (issueChain).
-function chainEnded({ cap, store, id, session, env, spawn, now }) {
-  const { chain, complete } = issueChain(store, { id, child: session }, { now });
-  if (!complete) return null;
-  for (const member of chain) {
-    const answer = safely(() => cap.ended({ id: member.id, session: member.session, env, run: spawn }));
-    if (answer !== true) return answer === false ? false : null;
-  }
-  return true;
-}
-
 // The ledger rows that move custody to `session` when `held` (custody) says it is the successor, else none.
 const custodyRows = (held, session, now) => (held.role === 'successor' ? [{ event: 'driver', session, from: held.driver.session, sha256: held.sha256, at: iso(now) }] : []);
 // Files the driver mark of `session`, the run's current driver, or the continuation custody moved to, once its row is
@@ -235,17 +225,36 @@ function startsToday(state, now) {
   return count;
 }
 
+// The most issues of a run that run at once under `policy` (teamPolicy): its maxParallel, held to PROJECT_PARALLEL, and
+// one when it names no whole number above 0.
+export const parallelOf = (policy) => (Number.isInteger(policy?.maxParallel) && policy.maxParallel >= 1 ? Math.min(policy.maxParallel, PROJECT_PARALLEL) : SERIAL);
+
+// How many issues `next` and `init --check` name to run at once for `project`, whose run pins `repository`: the base
+// branch's projectRun.maxParallel, read as `start` reads it, through this checkout's git and through `forge` at that
+// repository, the lower of the two and at most PROJECT_PARALLEL (teamPolicy). A read that fails, no repository, or a
+// policy that does not allow runs, names one at a time, which only ever starts fewer than `start` allows.
+export function runParallel(project, repository, forge) {
+  if (!repository) return SERIAL;
+  const policy = teamPolicy(project, repository, forge);
+  return policy.problem ? SERIAL : parallelOf(policy);
+}
+
+// Why issue `key` may not start now in the run `found`, with `parallel` issues at most running at once, or null: `next`
+// must list it, which it does only when its blockers are done (a merge the forge confirmed) and a slot is free.
+function orderProblem(found, key, parallel) {
+  const plan = planRun(found.snapshot, found.states, { maxParallel: parallel });
+  if (plan.next.some((issue) => issue.key === key)) return null;
+  if (plan.ready.includes(key) && plan.running.length >= parallel) return `${plan.running.length} issues run already, and a run runs at most ${parallel} at once`;
+  const listed = plan.next.map((issue) => issue.key).join(', ');
+  return `\`aidrian project next ${found.init.run}\` does not list ${key} to start now${listed ? `; it lists ${listed}` : `: it says ${plan.verdict}`}`;
+}
+
 // Why issue `key` of the run `found` may not start now, under `policy`, or null; else { attempt }. `today` is
 // startsToday's count.
 function capProblem({ found, key, policy, today }) {
   if (!found.snapshot.issues.some((issue) => issue.key === key)) return { problem: `the run ${found.init.run} holds no issue ${quote(key)}` };
-  const plan = planRun(found.snapshot, found.states, { maxParallel: SERIAL });
-  if (!plan.next.some((issue) => issue.key === key)) {
-    const listed = plan.next.map((issue) => issue.key).join(', ');
-    return { problem: `\`aidrian project next ${found.init.run}\` does not list ${key} to start now${listed ? `; it lists ${listed}` : `: it says ${plan.verdict}`}` };
-  }
-  const parallel = Math.min(policy.maxParallel, PROJECT_PARALLEL);
-  if (plan.running.length >= parallel) return { problem: `${plan.running.length} issues run already, and a run runs at most ${parallel} at once` };
+  const order = orderProblem(found, key, parallelOf(policy));
+  if (order) return { problem: order };
   const starts = counted(startRows(found)).length;
   const runCap = Math.min(policy.maxStarts, PROJECT_STARTS);
   if (starts >= runCap) return { problem: `the run started ${starts} sessions, and a run starts at most ${runCap}, under projectRun.maxStarts and the cap in code of ${PROJECT_STARTS}` };
@@ -352,11 +361,16 @@ function startContext(given) {
 function startPlace(context) {
   const { project, run, key, env, home, state, store, session, facade, policy, cap, refuse, noted, spawn, main, found } = context;
   const orphans = settleOrphans({ state, run, store, cap, env, spawn, now: context.now });
+  // A session that runs on after its issue settled holds every start back until the host lists it ended, or `wait`
+  // stops it: a wait, not a refusal (project-linger.mjs).
+  settleLingering({ state, run, store, cap, env, spawn, now: context.now });
   const current = readRun(state, run);
   if (current.problem) return refuse(current.problem, orphans);
+  const lingers = lingerProblem(current);
+  if (lingers) return { answer: noted(retryAnswer('start', lingers, orphans)) };
   const capped = capProblem({ found: current, key, policy, today: startsToday(state, context.now) });
   if (capped.problem) return refuse(capped.problem, orphans);
-  const early = heldProblem({ store, session, cap, env, spawn });
+  const early = heldProblem({ store, session, cap, env, spawn, state, run });
   if (early) return refuse(early, orphans);
   const access = accessProblem({
     cap, forge: facade, repository: found.init.repository, env, home, guarded: guardedFolders({ main, state, env, home }), main, platform: context.platform, allowed: policy.outsideSandbox,
@@ -482,6 +496,8 @@ function launchStart(context, place) {
   const prompt = projectPrompt({ run, key, attempt, branch, clone: cwd, afterLimit, issueFile, confine: proving, note: safely(() => cap.sessionNote?.({ work: cwd, branch })) });
   const base = { event: 'start', key, attempt, session, name, cwd, branch, ...(drop ? { drop } : {}) };
   let proof = null;
+  // Why the write-ahead row was refused under the ledger's lock, when the order or the cap moved since the start read it.
+  const ahead = {};
   const since = Date.now();
   let result;
   try {
@@ -499,8 +515,8 @@ function launchStart(context, place) {
         return started;
       },
       stop: (id) => cap.stop({ id, env, run: spawn }),
-      ended: (earlier) => chainEnded({ cap, store, id: earlier.id, session: earlier.session, env, spawn, now: Date.now() }),
-      intent: () => writeAhead({ state, run, base, held, session, now: Date.now(), found: context.found, env }),
+      ended: (earlier) => earlierEnded({ cap, store, earlier, env, spawn, state, run }),
+      intent: () => writeAhead({ state, run, base, held, session, now: Date.now(), found: context.found, env, parallel: parallelOf(context.policy), refused: ahead }),
       store,
       root: context.main,
       floor: { slug: `project-${run}`, chain: 0, brief: null, route: 'background' },
@@ -514,31 +530,63 @@ function launchStart(context, place) {
   }
   // A session the start stopped for its proof keeps a failed proof in its mark, so the hook refuses its every call.
   if (proving && proved && result.outcome !== 'started') fileProof(proved, 'failed');
+  // Another start took the slot or moved the order first: nothing started, and the start is refused, not halted.
+  if (ahead.why && !result.intended && result.outcome === 'none') {
+    safely(() => rmSync(folder, { recursive: true, force: true }));
+    return noted(ahead.retry ? retryAnswer('start', ahead.why, place.orphans) : { exitCode: 1, out: place.orphans, err: [`aidrian project start: ${ahead.why}`] });
+  }
   return noted(startLines({ result, state, run, key, attempt, session, base, proof, cap, orphans: place.orphans, now: context.now }));
 }
 
 // Writes the start of `base` ahead, before the host starts anything: a start row with `outcome: 'uncertain'` and
-// `pending: true`, and the issue running, with custody as the start found it. Whether it was written.
-function writeAhead({ state, run, base, held, session, now, found, env }) {
+// `pending: true`, and the issue running, with custody as the start found it. Under the ledger's lock it asks the order
+// and the cap of `parallel` again (orderProblem), and whether a session runs on after its issue settled (lingerProblem),
+// so starts that ran side by side never pass it together: the claim of the session makes its starts one at a time, and
+// this lock makes the last check and the write one step. Whether it was written; when the order, the cap, or a
+// lingering session refused it, `refused.why` says why, and `refused.retry` marks the last, a wait.
+function writeAhead({ state, run, base, held, session, now, found, env, parallel, refused = {} }) {
   const at = iso(now);
   const custodian = held.role === 'driver' ? session : held.driver.session;
-  const written = safely(() => appendToRun(state, run, (fresh) => (driverOf(fresh).session === custodian
-    ? { rows: [...custodyRows(held, session, now), { ...base, at, outcome: 'uncertain', pending: true }, { event: 'issue', key: base.key, state: 'running', at }] }
-    : { problem: 'custody of the run moved while the session started' })));
+  const written = safely(() => appendToRun(state, run, (fresh) => {
+    if (driverOf(fresh).session !== custodian) return { problem: 'custody of the run moved while the session started' };
+    const lingers = lingerProblem(fresh);
+    if (lingers) {
+      Object.assign(refused, { why: lingers, retry: true });
+      return { problem: lingers };
+    }
+    const order = orderProblem(fresh, base.key, parallel);
+    if (order) {
+      refused.why = order;
+      return { problem: order };
+    }
+    return { rows: [...custodyRows(held, session, now), { ...base, at, outcome: 'uncertain', pending: true }, { event: 'issue', key: base.key, state: 'running', at }] };
+  }));
   const done = Boolean(written && !written.problem);
   if (done) markCustodian(session, found, run, state, env);
   return done;
 }
 
 // Why startHeld would refuse a start for `session` now, or null: its claim on a start holds (claimBusy), or its earlier
-// start record names a chain the host does not list as ended (chainEnded). startHeld asks both again under its claim.
-function heldProblem({ store, session, cap, env, spawn }) {
+// start record names a session that holds the next start back (earlierEnded). startHeld asks both again under its claim.
+function heldProblem({ store, session, cap, env, spawn, state, run }) {
   const busy = safely(() => claimBusy(store, session, { now: Date.now() }));
   if (busy) return `the start claim of this session is busy (${busy}); a start from it may still run`;
   const earlier = safely(() => readStarted(store, session, { now: Date.now() }));
   if (!earlier) return null;
-  if (chainEnded({ cap, store, id: earlier.id, session: earlier.session, env, spawn, now: Date.now() }) === true) return null;
+  if (earlierEnded({ cap, store, earlier, env, spawn, state, run }) === true) return null;
   return `this session's earlier start, ${earlier.id}, has not ended as the host lists it`;
+}
+
+// Whether the driver's earlier start record `earlier` lets another start go on: it names a session the run's ledger
+// records as a start of one of its issues (run-driver.mjs recordsStart), which the run's caps count until the host lists
+// it ended: an issue that runs, under PROJECT_PARALLEL, and one that runs on after its issue settled, which no start
+// passes beside (project-linger.mjs lingerProblem, asked before and again under the ledger's lock); or the chain it names
+// is one the host lists as ended (chainEnded). The background handoff route reads a driver's record the same way
+// (run-driver.mjs drivenRunStart).
+function earlierEnded({ cap, store, earlier, env, spawn, state, run }) {
+  const found = readRun(state, run);
+  if (!found.problem && recordsStart(found.rows, run, earlier)) return true;
+  return chainEnded({ cap, store, id: earlier.id, session: earlier.session, env, spawn, now: Date.now() });
 }
 
 // The commit issues are cut from and checked against: the head of the default branch, as the forge reports it at the
@@ -603,10 +651,12 @@ function startLines({ result, state, run, key, attempt, session, base, proof, ca
 // of sessions the host lists as ended with no result (`ended no_result`), and stops and records one that ran past
 // projectRun.issueHours (`ended timeout`), less the time the run was paused; and, for a session that met a usage or rate
 // limit, pauses the run (lib/project-limit.mjs): one the host continues keeps running (`paused KEY KIND until TIME: ...`),
-// any other ends its attempt (`limit KEY KIND until TIME -> open`, or `limit KEY KIND halt -> open` past LIMIT_WAITS); then
-// it removes the folders of confined attempts whose session ended. It returns once any issue settles, none runs and the
-// run is not paused, or the time is up, with a line for each: `settled KEY STATE`, `result KEY STATUS -> STATE`, `ended
-// KEY REASON -> STATE`, `orphan ...`, `running KEY`, `paused until TIME` while a pause lasts, or `idle` when none runs.
+// any other ends its attempt (`limit KEY KIND until TIME -> open`, or `limit KEY KIND halt -> open` past LIMIT_WAITS); it
+// waits on a session that runs on after its issue settled, and stops it once LINGER_GRACE has passed (`lingered KEY
+// attempt N ended|stopped`, lib/project-linger.mjs); then it removes the folders of confined attempts whose session ended.
+// It returns once any issue settles, none runs, none runs on, and the run is not paused, or the time is up, with a line
+// for each: `settled KEY STATE`, `result KEY STATUS -> STATE`, `ended KEY REASON -> STATE`, `orphan ...`, `running KEY`,
+// `lingering KEY attempt N`, `paused until TIME` while a pause lasts, or `idle` when none runs or runs on.
 // `pause` is a test's stand-in for the wait between reads.
 export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = process.env, home, now = Date.now(), forge = null, spawn, pause = pauseSync, clock = Date.now }) {
   const refuse = (why) => ({ exitCode: 1, out: [], err: [`aidrian project wait: ${why}`] });
@@ -636,7 +686,7 @@ export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = pr
   const until = time() + Math.min(Math.max(0, maxWait), WAIT_CEILING) * 1000;
   for (;;) {
     const at = time();
-    const lines = waitPass({ state, run, store, cap, env, home, spawn, policy, forge: facade, now: at });
+    const { lines, lingering } = waitPass({ state, run, store, cap, env, home, spawn, policy, forge: facade, now: at });
     const found = readRun(state, run);
     if (found.problem) return refuse(found.problem);
     for (const [key, was] of before) {
@@ -645,32 +695,29 @@ export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = pr
     }
     const running = planRun(found.snapshot, found.states, { maxParallel: SERIAL }).running;
     const paused = pauseOf(found, time());
-    // An idle run waits out its pause with the driver, up to the deadline, and returns once the pause is over.
-    if (lines.length || (running.length === 0 && !paused) || time() >= until) {
-      return { exitCode: 0, out: [...lines, ...running.map((key) => `running ${key}`), ...(paused ? [`paused until ${paused.until}`] : []), ...(running.length ? [] : ['idle'])], err: [] };
+    const busy = running.length > 0 || lingering.length > 0;
+    // An idle run waits out its pause with the driver, up to the deadline, and returns once the pause is over; a session
+    // that runs on after its issue settled is waited on as an issue that runs is.
+    if (lines.length || (!busy && !paused) || time() >= until) {
+      return { exitCode: 0, out: [...lines, ...running.map((key) => `running ${key}`), ...lingering.map(lingerLine), ...(paused ? [`paused until ${paused.until}`] : []), ...(busy ? [] : ['idle'])], err: [] };
     }
-    const pauseLeft = paused && running.length === 0 ? Date.parse(paused.until) - time() : WAIT_STEP;
+    const pauseLeft = paused && !busy ? Date.parse(paused.until) - time() : WAIT_STEP;
     pause(Math.max(0, Math.min(WAIT_STEP, pauseLeft, until - time())));
   }
 }
 
-// One read of `wait`: orphans, handed-over results, then ended sessions, and the sweep of ended attempts' folders.
+// One read of `wait`: orphans, handed-over results, ended sessions, then sessions that run on after their issue
+// settled (project-linger.mjs), and the sweep of ended attempts' folders: { lines, lingering }.
 function waitPass({ state, run, store, cap, env, home, spawn, policy, forge, now }) {
   const lines = settleOrphans({ state, run, store, cap, env, spawn, now });
   const dropped = readRun(state, run);
   if (!dropped.problem) lines.push(...ingestDrops({ state, run, found: dropped, forge, now }));
   lines.push(...endedLines({ state, run, store, cap, env, home, spawn, policy, now }));
+  const lingered = settleLingering({ state, run, store, cap, env, spawn, now, wait: true });
+  lines.push(...lingered.lines);
   const after = readRun(state, run);
   if (!after.problem) sweepAttempts({ state, run, found: after, cap, env, spawn });
-  return lines;
-}
-
-// Whether every session of the issue's chain from the start row `start` runs no more, as the host lists it or once
-// stopped now.
-function stopChain({ cap, store, start, env, spawn, now }) {
-  const { chain } = issueChain(store, start, { now });
-  return chain.every((member) => safely(() => cap.ended({ id: member.id, session: member.session, env, run: spawn })) === true
-    || safely(() => cap.stop({ id: member.session ?? member.id, started: member.id, env, run: spawn })) === true);
+  return { lines, lingering: lingered.lingering };
 }
 
 // The issues of run `run` whose session ended with no result, ran past `policy.issueHours`, or met a usage or rate
@@ -716,7 +763,8 @@ function endedLines({ state, run, store, cap, env, home, spawn, policy, now }) {
 // other checks go on; else { line } with the line to print, if any, and the issue's other checks skipped.
 //   - A session the host does not list as ended, of a host that continues its own session once the limit resets
 //     (`continuesAtLimit`), keeps running only for a `usage` limit, and only while its normal pause runs: the record's
-//     pause is written once (pauseRow), and the issue waits until that pause, and PAUSE_FLOOR after it, are over.
+//     pause is written once (pauseRow), and the issue waits until that pause, and RESUME_GRACE after the later of its
+//     end and the session's newest entry after the limit, are over (project-limit.mjs recordedPauseRuns).
 //   - Every other case takes the stop path: a `rate` limit, a pause that is over while the same record is still the
 //     session's last, and a limit past LIMIT_WAITS, which halts the run. The sessions are stopped, and the attempt ends
 //     on the limit (limitEndRows), with no second pause for a record that has one. A session that cannot be stopped
@@ -814,9 +862,9 @@ export function recordHandoff({ project, config, run, brief, env = process.env, 
 
 // Records, for the driver of run `run`, the run's end at the end of its loop: an `end` row, which ends the run for
 // project-run.mjs activeRuns and releases the driver's hold (run-driver.mjs runDriver), so its session may sign off
-// again. Only the run's current driver records it, by custody; the end of a run whose issues are parked is the driver's
+// again. It refuses while an issue runs, or a session runs on after its issue settled (project-linger.mjs). Only the run's current driver records it, by custody; the end of a run whose issues are parked is the driver's
 // to record too, after its report names them. A run that ended starts no issue. Returns { exitCode, out, err }.
-export function endRun({ project, config, run, env = process.env, home, now = Date.now() }) {
+export function endRun({ project, config, run, env = process.env, home, now = Date.now(), spawn }) {
   const refuse = (why) => ({ exitCode: 1, out: [], err: [`aidrian project end: ${why}`] });
   const { session } = sessionIdentity(env);
   const marked = typeof session === 'string' && SESSION_ID.test(session) ? markProblem(session, { env, home }) : null;
@@ -827,10 +875,16 @@ export function endRun({ project, config, run, env = process.env, home, now = Da
   if (endedIn(found)) return refuse(`the run ${run} ended already`);
   const held = custody({ found, store, session, now });
   if (held.problem) return refuse(held.problem);
-  // An issue that still runs has a session the run still answers for: end only once none does.
+  // A session that ran on after its issue settled and that the host now lists as ended is recorded gone first.
+  const cap = detectHost({ env }).capabilities.projectStart;
+  if (cap) settleLingering({ state, run, store, cap, env, spawn, now });
+  // An issue that still runs, or a session that runs on after its issue settled, is one the run still answers for: end
+  // only once none is.
   const written = appendToRun(state, run, (fresh) => {
     const { running } = planRun(fresh.snapshot, fresh.states, { maxParallel: SERIAL });
     if (running.length) return { problem: `the issues ${running.join(', ')} still run; run \`aidrian project wait ${run}\` until it prints idle, then end the run` };
+    const lingers = lingerProblem(fresh);
+    if (lingers) return { problem: `${lingers}; run it until it prints idle, then end the run` };
     return { rows: [...custodyRows(held, session, now), { event: 'end', session, at: iso(now) }] };
   });
   if (written.problem) return refuse(written.problem);

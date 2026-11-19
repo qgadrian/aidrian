@@ -22,7 +22,7 @@ import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { logLimit } from '../plugins/aidrian/lib/hosts/codex-exec.mjs';
 import { clockTime, durationTime, FAR } from '../plugins/aidrian/lib/hosts/limit-time.mjs';
-import { BACKOFF, checkedLimit, LIMIT_WAITS, limitEndRows, PAUSE_CEILING, PAUSE_FLOOR, pauseEnd, pauseOf, pausedTime, pauseRow } from '../plugins/aidrian/lib/project-limit.mjs';
+import { BACKOFF, checkedLimit, LIMIT_WAITS, limitEndRows, PAUSE_CEILING, PAUSE_FLOOR, pauseEnd, pauseOf, pausedTime, pauseRow, recordedPauseRuns, RESUME_CEILING, RESUME_GRACE } from '../plugins/aidrian/lib/project-limit.mjs';
 import { appendToRun } from '../plugins/aidrian/lib/project-run.mjs';
 import { waitRun } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { DRIVER, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
@@ -147,7 +147,7 @@ test('a pause lasts from 1 minute to 6 hours, backs off 15, 30, then 60 minutes,
   assert.deepEqual(BACKOFF, [15 * MINUTE, 30 * MINUTE, 60 * MINUTE]);
   assert.deepEqual([PAUSE_CEILING, LIMIT_WAITS], [6 * HOUR, 24]);
   assert.equal(checkedLimit({ kind: 'billing', until: null }), null, 'a kind the run does not know');
-  assert.deepEqual(checkedLimit({ kind: 'rate', until: 'soon', at: 'then' }), { kind: 'rate', until: null, at: null });
+  assert.deepEqual(checkedLimit({ kind: 'rate', until: 'soon', at: 'then' }), { kind: 'rate', until: null, at: null, after: null });
 
   const row = (wait, from, to, more = {}) => ({ event: 'limit', key: 'ENG-1', attempt: 1, kind: 'rate', wait, at: iso(NOW + from * MINUTE), until: iso(NOW + to * MINUTE), ...more });
   const rate = { kind: 'rate', until: null, at: null };
@@ -226,6 +226,86 @@ test('a running session the host continues keeps running through the pause, whic
   assert.notEqual(second.cwd, fx.start.cwd, 'in a fresh clone');
   assert.match(fx.claude.starts().at(-1).args.at(-1), /Attempt 1 stopped when the host met a usage or rate limit: the branch feat\/eng-1-export on the forge holds the work it pushed/u);
   assert.doesNotMatch(fx.claude.starts()[0].args.at(-1), /usage or rate limit/u, 'a first attempt says nothing of a limit');
+});
+
+test('a session the host continued is held until its first new answer: its own entry after the reset, and a grace after it', (t) => {
+  const fx = started(t);
+  const met = Date.now() - 3 * HOUR;
+  const reset = Math.floor(met / 1000) + 3600;
+  const resetAt = reset * 1000;
+  const limited = apiError(`Claude AI usage limit reached|${reset}`, { timestamp: iso(met) });
+  // The host's own entry when it continues the session at the reset; the model has not answered yet.
+  const goOn = (at) => ({ type: 'user', sessionId: CHILD, timestamp: iso(at), message: { role: 'user', content: 'Continue from where you left off.' } });
+  fx.limit([said('working'), limited]);
+  assert.match(fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: met }).out[0], /^paused ENG-1 usage until /u);
+  fx.limit([said('working'), limited, goOn(resetAt + 10_000)]);
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: resetAt + 2 * MINUTE }).out, ['running ENG-1'], 'read two minutes after the reset: held');
+  assert.equal(fx.claude.states[CHILD], undefined, 'not stopped');
+  // Its entry four minutes after the reset holds it five more, past the pause's own grace.
+  fx.limit([said('working'), limited, goOn(resetAt + 4 * MINUTE)]);
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: resetAt + 8 * MINUTE }).out, ['running ENG-1'], 'five minutes after its newest entry: held');
+  assert.equal(RESUME_GRACE, 5 * MINUTE);
+  const ended = fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: resetAt + 10 * MINUTE }).out;
+  assert.match(ended[0], /^limit ENG-1 usage until \S+ -> open$/u, 'no answer five minutes after the newest entry: stopped');
+  assert.equal(fx.claude.states[CHILD], 'stopped');
+
+  // With no entry after the record, the grace runs from the pause's end alone.
+  const quiet = started(t);
+  quiet.limit([limited]);
+  quiet.cmd(['wait', 'launch', '--max-wait', '0'], { now: met });
+  assert.deepEqual(quiet.cmd(['wait', 'launch', '--max-wait', '0'], { now: resetAt + 2 * MINUTE }).out, ['running ENG-1']);
+  assert.match(quiet.cmd(['wait', 'launch', '--max-wait', '0'], { now: resetAt + 6 * MINUTE }).out[0], /^limit ENG-1 usage until \S+ -> open$/u);
+
+  // The reader names the newest dated entry after the limit record, and only one of the session's.
+  const config = scratch(t);
+  writeTranscript(config, '/w', [limited, goOn(resetAt + 10_000), { type: 'system' }]);
+  const file = path.join(config, 'projects', '-w', `${CHILD}.jsonl`);
+  writeFileSync(file, `${JSON.stringify({ type: 'user', sessionId: 'other', timestamp: iso(resetAt + HOUR) })}\n`, { flag: 'a' });
+  const read = resetAt + 2 * MINUTE;
+  assert.equal(transcriptLimit({ session: CHILD, cwd: '/w', env: { CLAUDE_CONFIG_DIR: config }, now: read }).after, resetAt + 10_000);
+  writeTranscript(config, '/w', [limited]);
+  assert.equal(transcriptLimit({ session: CHILD, cwd: '/w', env: { CLAUDE_CONFIG_DIR: config }, now: read }).after, null);
+  assert.deepEqual(checkedLimit({ kind: 'usage', until: null, at: 5, after: 'later' }), { kind: 'usage', until: null, at: 5, after: null });
+});
+
+test('the hold of a session the host continued has a ceiling: an entry dated ahead, or one with no session id, holds nothing, and entries that keep coming hold it at most 30 minutes past the pause', (t) => {
+  const met = NOW - 10 * MINUTE;
+  const end = NOW + HOUR;
+  const found = { rows: [{ event: 'limit', key: 'ENG-1', attempt: 1, kind: 'usage', record: iso(met), named: true, at: iso(NOW - 9 * MINUTE), until: iso(end), wait: 1 }] };
+  const held = (after, now) => recordedPauseRuns(found, 'ENG-1', 1, checkedLimit({ kind: 'usage', until: end, at: met, after }), now);
+  assert.equal(RESUME_CEILING, 30 * MINUTE);
+  assert.equal(held(end, end + 2 * MINUTE), true, 'the host\'s own entry at the reset: held');
+  assert.equal(held(null, end + 6 * MINUTE), false, 'no entry: the grace past the pause alone');
+  assert.equal(held(Date.parse('2099-01-01T00:00:00.000Z'), NOW + 30 * 24 * HOUR), false, 'an entry dated 2099, read 30 days later');
+  assert.equal(held(Date.parse('2099-01-01T00:00:00.000Z'), end + 10 * MINUTE), true, 'dated ahead counts as the read time, within the ceiling');
+  assert.equal(held(end + 28 * MINUTE, end + 29 * MINUTE), true, 'entries still coming, within the ceiling');
+  assert.equal(held(end + 30 * MINUTE, end + 31 * MINUTE), false, 'entries still coming: released at the ceiling');
+  assert.equal(held(NOW + 72 * HOUR - MINUTE, NOW + 72 * HOUR), false, 'entries every few minutes, three days on');
+
+  // The reader keeps no entry dated ahead, nor one with no session id.
+  const config = scratch(t);
+  const limited = apiError(`Claude AI usage limit reached|${Math.floor(end / 1000)}`, { timestamp: iso(met) });
+  writeTranscript(config, '/w', [limited, { type: 'system', subtype: 'informational', timestamp: '2099-01-01T00:00:00.000Z', sessionId: CHILD }]);
+  assert.equal(transcriptLimit({ session: CHILD, cwd: '/w', env: { CLAUDE_CONFIG_DIR: config }, now: NOW }).after, null, 'dated ahead');
+  writeFileSync(path.join(config, 'projects', '-w', `${CHILD}.jsonl`), `${[{ ...limited, sessionId: CHILD }, { type: 'system', subtype: 'informational', timestamp: iso(NOW - MINUTE) }].map((entry) => JSON.stringify(entry)).join('\n')}\n`);
+  assert.equal(transcriptLimit({ session: CHILD, cwd: '/w', env: { CLAUDE_CONFIG_DIR: config }, now: NOW }).after, null, 'no session id');
+});
+
+test('a held session whose entries keep coming is stopped at the ceiling, and issueHours applies to it again', (t) => {
+  const fx = started(t, { projectRun: { allow: true, unverifiedHosts: true, issueHours: 2 } });
+  const met = Date.now();
+  const reset = Math.floor(met / 1000) + 3600;
+  const resetAt = reset * 1000;
+  const limited = apiError(`Claude AI usage limit reached|${reset}`, { timestamp: iso(met) });
+  const entry = (at) => ({ type: 'user', sessionId: CHILD, timestamp: iso(at), message: { role: 'user', content: 'tick' } });
+  fx.limit([said('working'), limited]);
+  assert.match(fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: met }).out[0], /^paused ENG-1 usage until /u);
+  fx.limit([said('working'), limited, entry(resetAt + 25 * MINUTE)]);
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: resetAt + 27 * MINUTE }).out, ['running ENG-1'], 'held within the ceiling');
+  fx.limit([said('working'), limited, entry(resetAt + 31 * MINUTE)]);
+  const out = fx.cmd(['wait', 'launch', '--max-wait', '0'], { now: resetAt + 32 * MINUTE }).out;
+  assert.match(out[0], /^limit ENG-1 usage until \S+ -> open$/u, 'released at the ceiling, and its attempt ends');
+  assert.equal(fx.claude.states[CHILD], 'stopped');
 });
 
 test('time paused counts toward no issue\'s hours', (t) => {
@@ -385,7 +465,8 @@ test('a session that handed its result over is not read for a limit, and one wit
   const file = path.join(fx.root, 'result.json');
   writeFileSync(file, JSON.stringify({ status: 'failed', pr: null, stop: 'gave up' }));
   assert.equal(fx.cmd(['result', 'launch', 'ENG-1', '--file', file], { session: CHILD }).exitCode, 0);
-  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['result ENG-1 failed -> open', 'idle']);
+  // No limit line: its session, which the host still lists working, runs on after the issue settled.
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['result ENG-1 failed -> open', 'lingering ENG-1 attempt 1']);
 
   const plain = started(t);
   plain.limit([said('done for now')]);

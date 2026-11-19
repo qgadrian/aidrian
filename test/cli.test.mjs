@@ -1807,7 +1807,7 @@ const runIssue = (key, more = {}) => ({ key, branch: `feat/${key.toLowerCase()}`
 
 test('project is a command with its forms, and init refuses a session the host names no id for', (t) => {
   const lines = run(['--help']).stdout.split('\n');
-  assert.ok(lines.includes('  aidrian project init RUN --file PATH [--texts PATH] [--check] [--project DIR]'));
+  assert.ok(lines.includes('  aidrian project init RUN --file PATH [--check] [--project DIR]'));
   assert.ok(lines.includes('  aidrian project next RUN [--json] [--project DIR]'));
   assert.ok(lines.includes('  aidrian project summary RUN [--project DIR]'));
   assert.ok(lines.includes('  aidrian project start RUN ISSUE [--project DIR]'));
@@ -1828,7 +1828,7 @@ test('project is a command with its forms, and init refuses a session the host n
   for (const [args, problem] of [[['project'], 'project takes init, next, summary, start, wait, result, handoff, resume, end, report, recorded, preflight, stop-action, or confine'], [['project', 'begin', 'launch'], 'project takes init, next, summary, start, wait, result, handoff, resume, end, report, recorded, preflight, stop-action, or confine, not "begin"'], [['project', 'stop-action', 'launch'], 'project stop-action takes a run id and an issue key'], [['project', 'next'], 'project next takes one run id'], [['project', 'start', 'launch'], 'project start takes a run id and an issue key'], [['project', 'init', 'launch'], 'project init needs --file'], [['project', 'result', 'launch', 'ENG-1'], 'project result needs --file'], [['project', 'preflight', 'launch', 'extra'], 'project preflight takes at most one run id'], [['project', 'recorded', 'launch'], 'project recorded takes a run id and an issue key']]) {
     const misuse = run(args, dir);
     assert.equal(misuse.status, 1, args.join(' '));
-    assert.match(misuse.stderr, /^usage: aidrian project init RUN --file PATH \[--texts PATH\] \[--check\] \[--project DIR\]\n/u);
+    assert.match(misuse.stderr, /^usage: aidrian project init RUN --file PATH \[--check\] \[--project DIR\]\n/u);
     assert.ok(misuse.stderr.endsWith(`\n${problem}\n`), misuse.stderr);
   }
   const missing = run(['project', 'next', 'nope'], dir);

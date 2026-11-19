@@ -27,7 +27,7 @@ the tracker write guard, and the question names check also record each block: se
 | Before a GitHub MCP merge | The [merge guard](#merge-guard) | Claude Code, Codex (its [GitHub connector is not live](providers/codex.md#github-through-the-app-connector)) | yes |
 | Before a GitHub MCP call that marks a draft ready | The [ready hold](#ready-hold), in a project that runs product feedback, then the [ready checks hold](#ready-checks) | Claude Code, Codex ([not live](#where-the-ready-hold-is-verified)) | yes |
 | Before any MCP tool call | The [tracker write guard](config.md#tracker), when the project turns it on, on a tool in `tracker.writeTools`; and, whatever the working copy says, the [project run rule](config.md#project-run): a run session's tracker writes by its marks, and a tracker's merge or ready tool for every session | Claude Code, Codex ([not live](#where-the-tracker-guard-is-verified)) | yes |
-| After any MCP tool call | The tracker write guard's record of the connected workspace, on a tool in `tracker.readTools`, and its note of a [tool neither list names](config.md#how-a-write-is-judged) | Claude Code, Codex ([not live](#where-the-tracker-guard-is-verified)) | no |
+| After any MCP tool call | The tracker write guard's record of the connected workspace, on a tool in `tracker.readTools`, and its note of a [tool neither list names](config.md#how-a-write-is-judged); and, whatever the working copy says, where the base branch allows project runs, the record of each issue's text a tracker's issue read answers, the only text a [project run](config.md#project-run) keeps, swept after a day | Claude Code, Codex ([not live](#where-the-tracker-guard-is-verified)) | no |
 | Before an Agent tool call | The project's [model and effort](config.md#models) for that agent, and a subagent's background dispatch moved to the [foreground](#background-check) | Claude Code | no |
 | After a Markdown write | The [line-length check](#markdown-line-length) | Claude Code | feedback |
 | Before compaction | A checklist of what the summary must keep | Claude Code, Codex | no |
@@ -35,7 +35,7 @@ the tracker write guard, and the question names check also record each block: se
 | After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code | no |
 | The main session ends a turn | The [announce check](#announced-work), the [hand-back check](#hand-back-check), then the [session-length reminder](#session-length) | Claude Code; the announce and hand-back checks also Codex ([not live](providers/codex.md#hooks)) | once per stop; the reminder once, then at each doubling of the cost ratio (`ask`) or each step of it (`auto`) |
 | A subagent stops | A `stop` row, then the [delivery check](#delivery-check) and the [background check](#background-check) | Claude Code | once |
-| A session ends | When the clear command ends a main session, its armed [handoff continuation](handoff.md#the-clear-route) made ready for the session the clear starts, bound to the host process; then a `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code; the continuation Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
+| A session ends | The main session's recorded issue reads for a [project run](config.md#project-run) removed. When the clear command ends a main session, its armed [handoff continuation](handoff.md#the-clear-route) made ready for the session the clear starts, bound to the host process; then a `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code; the continuation Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 
 The Bash rules run in the order of their table, in one process.
 A file edit is an Edit, Write, or NotebookEdit call, or Codex's `apply_patch`.
@@ -986,10 +986,13 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   [merge guard](#merge-guard), `aidrian pr auto-merge`, and the review-signoff rule. `aidrian project init` files its
   driver mark, `driver.<session id>.json` beside the unattended marks, naming the run, its main checkout, and its state
   folder, before the init row, and refuses when it cannot; each start and wait by the current driver files it again,
-  and custody files one for the continuation it moves to (`runDriver` in `lib/run-driver.mjs`, which reads the mark
+  and custody files one for the continuation it moves to; a driver whose driver mark is there but cannot be read whole
+  starts no background continuation at all (`runDriver` in `lib/run-driver.mjs`, which reads the mark
   alone, and the ledger only in the state folder it names). It holds whatever its age, until that ledger records the
   run's end (`aidrian project end`); a mark it cannot read, a missing state folder, or a ledger it cannot read holds
   the session too, and authorizes nothing. The driver's own `aidrian project` commands still write the ledger.
+  After the run's end, a session that drove it stays held for the unattended marks and the sign-off store for the rest
+  of the session (`droveRun`), so it can neither remove nor rewrite its own driver mark to lift the sign-off hold.
 - The same two, and a project run's driver, may not write in the
   [sign-off store](review.md#merge-trust), `$XDG_STATE_HOME/aidrian/signoffs/` or `~/.local/state/aidrian/signoffs/`,
   read the same way, with the part named `signoffs`: a merge no Human asks for reads the Human's flow sign-offs there,

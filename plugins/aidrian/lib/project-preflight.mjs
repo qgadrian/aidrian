@@ -19,8 +19,9 @@ import { baseBranchConfig } from './handoff-continue.mjs';
 import { continueRoutes, detectHost } from './hosts/index.mjs';
 import { branchPolicies } from './pr-auto-merge.mjs';
 import { mayFollowTeamDefault } from './project.mjs';
-import { activeRuns, nextLines, pinnedRepository, planRun, readIssueTexts, readSnapshotInput, refNames, runPlace, teamsNote } from './project-run.mjs';
-import { teamPolicy } from './project-run-gate.mjs';
+import { recordedTexts } from './project-issue-text.mjs';
+import { activeRuns, nextLines, pinnedRepository, planRun, readSnapshotInput, refNames, runPlace, teamsNote } from './project-run.mjs';
+import { runParallel, teamPolicy } from './project-run-gate.mjs';
 import { accessProblem, guardedFolders, hostStartProblem } from './project-start.mjs';
 import { trackerOfEndpoint } from './tracker-guard.mjs';
 import { knownServers, trackerById, trackerOfTools, TRACKERS } from './trackers/index.mjs';
@@ -171,24 +172,24 @@ function forgeLines({ facade, repository, reviewer, lines, check, asks }) {
   } else asks.push('ask ci: confirm the default branch runs CI on pull requests');
 }
 
-// `aidrian project init RUN --file PATH [--texts PATH] --check`: the inputs' checks, as init makes them, and the order,
-// with no run written: a `blocker snapshot` line for each problem, for each issue blocked by a cycle or by a status the
-// run does not start from, and, when the base branch's projectRun.mcpServers holds no tracker server an issue's session
-// could read the tracker through, for each issue to start with no text; then `next` lines as `aidrian project next`
-// prints them, and a `note teams` line when the snapshot names no team of the workspace (project-run.mjs teamsNote).
-// Exit 1 on any blocker.
-export function snapshotCheck({ project, config, file, texts = null }) {
+// `aidrian project init RUN --file PATH --check`: the input's checks, as init makes them, and the order, with no run
+// written: a `blocker snapshot` line for each problem, for each issue blocked by a cycle or by a status the run does not
+// start from, and, when the base branch's projectRun.mcpServers holds no tracker server an issue's session could read
+// the tracker through, a `blocker texts` line for each issue to start whose text no tracker read of `session` recorded
+// (project-issue-text.mjs recordedTexts); then `next` lines as `aidrian project next` prints them for turn 1, with the
+// maxParallel it reads (project-run-gate.mjs runParallel, through `forge` at the repository init would pin), and a
+// `note teams` line when the snapshot names no team of the workspace (project-run.mjs teamsNote). Exit 1 on any blocker.
+export function snapshotCheck({ project, config, file, session = null, env = process.env, home, forge = null }) {
   const read = readSnapshotInput(file, refNames(project, config));
   if (!read.snapshot) return { exitCode: 1, out: read.problems.slice(0, 50).map((problem) => `blocker snapshot: ${problem}`), err: ['aidrian project init --check: fix the snapshot input, then check it again'] };
-  const kept = readIssueTexts(texts, new Set(read.snapshot.issues.map((issue) => issue.key)));
-  if (kept.problem) return { exitCode: 1, out: [`blocker texts: ${kept.problem}`], err: ['aidrian project init --check: fix the texts input, then check it again'] };
-  const plan = planRun(read.snapshot, new Map());
+  const kept = { texts: recordedTexts(session, read.snapshot.issues.map((issue) => issue.key), { env, ...(home ? { home } : {}) }) };
+  const plan = planRun(read.snapshot, new Map(), { maxParallel: runParallel(project, pinnedRepository(project), forge ?? forgeFor(project.root)) });
   const blockers = plan.blocked.filter(({ reason }) => reason === 'cycle' || reason === 'status')
     .map(({ key, reason, on }) => `blocker snapshot: ${key} is ${reason === 'cycle' ? `in a cycle of blockers, ${on.join(', ')}, so it never starts` : `${on[0]} in the tracker, which a run does not start from`}`);
   if (!trackerReachable(baseBranchTip(project.root) ? baseBranchConfig(project, 'projectRun') : {})) {
     const startable = new Set(plan.order);
     blockers.push(...read.snapshot.issues.filter((issue) => startable.has(issue.key) && !plan.done.includes(issue.key) && !kept.texts[issue.key])
-      .map((issue) => `blocker texts: ${issue.key} has no text, and projectRun.mcpServers holds no tracker server its session could read it through; give its text in --texts`));
+      .map((issue) => `blocker texts: ${issue.key} has no text, and projectRun.mcpServers holds no tracker server its session could read it through; read it in this session with the tracker's own issue read, whose answer the run records`));
   }
   const teams = teamsNote(read.snapshot);
   const out = [`ok snapshot ${read.snapshot.issues.length} issues, ${Object.keys(kept.texts).length} with text`, ...blockers, ...nextLines(plan), ...(teams ? [`note teams: ${teams}`] : [])];

@@ -79,14 +79,22 @@ export function entryLimit(entry, now) {
 }
 
 // Whether the session `session`, started in `cwd`, last met a usage or rate limit: entryLimit's answer for the last
-// assistant entry of its transcript, or null when there is none, it reports no limit, or no transcript can be read.
+// assistant entry of its transcript, with `after`, the time of the newest entry after that one that names this session
+// by its id and its own time no later than `now`, the read's time, or null when none does, such as the host's own entry
+// when it continues the session once the limit resets; or null when there is no such entry, it reports no limit, or no
+// transcript can be read. An entry with no session id, or one dated ahead, never holds the session.
 export function transcriptLimit({ session, cwd, env, home, now = Date.now() }) {
   if (typeof session !== 'string' || !ID.test(session)) return null;
   for (const file of transcripts({ session, cwd, env, home })) {
     const entries = tailObjects(file, TAIL);
     if (entries === null) continue;
-    const last = entries.filter((entry) => entry.type === 'assistant' && (entry.sessionId === undefined || entry.sessionId === session)).at(-1);
-    return entryLimit(last, now);
+    const own = entries.filter((entry) => entry.sessionId === undefined || entry.sessionId === session);
+    const at = own.findLastIndex((entry) => entry.type === 'assistant');
+    const limit = entryLimit(own[at], now);
+    if (!limit) return null;
+    const times = own.slice(at + 1).filter((entry) => entry.sessionId === session)
+      .map((entry) => (typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : Number.NaN)).filter((time) => Number.isFinite(time) && time <= now);
+    return { ...limit, after: times.length ? Math.max(...times) : null };
   }
   return null;
 }

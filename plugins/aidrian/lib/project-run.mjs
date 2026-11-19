@@ -30,7 +30,7 @@ import { RUNS_FOLDER, startedUnattended } from './handoff-guard.mjs';
 import { looseFolder, openStore, SESSION_ID } from './handoff-markers.mjs';
 import { appendRow, withLocks } from './jsonl.mjs';
 import { committedConfigFile, defaultStateDir, stateDir, stateRoot } from './project.mjs';
-import { issueTextsOf, TEXT_BYTES, writeIssueTexts } from './project-issue-text.mjs';
+import { dropIssueReads, recordedTexts, sweepIssueReads, writeIssueTexts } from './project-issue-text.mjs';
 import { endedIn } from './run-driver.mjs';
 import { MARK_FOLDER, markDriver, readUnattendedMark } from './unattended-mark.mjs';
 
@@ -53,8 +53,6 @@ export const MAX_ISSUES = 500;
 export const MAX_BLOCKERS = 50;
 export const MAX_OUTSIDE = 1000;
 export const BRANCH_CAP = 120;
-// The largest texts input read (`init --texts`): every issue's text at its caps.
-export const TEXTS_CAP = MAX_ISSUES * TEXT_BYTES;
 // The largest snapshot.json and ledger.jsonl a run reads. snapshot.json keeps a subset of an input under INPUT_CAP.
 const SNAPSHOT_CAP = 2 * INPUT_CAP;
 const LEDGER_CAP = 8 * 1024 * 1024;
@@ -199,7 +197,9 @@ function repeated(values, what, problems) {
 
 // The bytes of the regular file `file`, at most `cap`, read without following a symlink and without waiting on a FIFO:
 // { bytes } or { problem, code }, where `code` is the error code of a file that could not be opened, such as ENOENT.
-// It reads at most one byte past the cap, so a file that grows after the stat is still refused.
+// It allocates what the stat gave, at most `cap`, and reads at most one byte past it: a file that grows after the stat,
+// as a ledger another process appends to, gives the bytes the stat gave, a whole earlier state of an append-only file,
+// unless it grew past `cap`, which is refused.
 export function readCapped(file, cap) {
   let fd;
   try {
@@ -208,35 +208,22 @@ export function readCapped(file, cap) {
     const stat = fstatSync(fd);
     if (!stat.isFile()) return { problem: `${file} is not a regular file` };
     if (stat.size > cap) return { problem: `${file} is ${stat.size} bytes, over the ${cap} it may hold` };
-    const buffer = Buffer.alloc(cap + 1);
+    // The size the stat gave, and one byte more to see a file that grew since.
+    const buffer = Buffer.alloc(Math.min(stat.size, cap) + 1);
     let length = 0;
     let got = -1;
     while (got !== 0 && length < buffer.length) {
       got = readSync(fd, buffer, length, buffer.length - length, null);
       length += got;
     }
-    if (length > cap) return { problem: `${file} grew past the ${cap} bytes it may hold` };
+    if (length > stat.size && fstatSync(fd).size > cap) return { problem: `${file} grew while it was read, past the ${cap} bytes it may hold` };
+    if (length > stat.size) return { bytes: buffer.subarray(0, stat.size) };
     return { bytes: buffer.subarray(0, length) };
   } catch (error) {
     if (error.code === 'ELOOP') return { problem: `${file} is a symlink` };
     return { problem: `${file} cannot be read (${error.code ?? error.message})`, code: error.code };
   } finally {
     if (fd !== undefined) closeSync(fd);
-  }
-}
-
-// The texts input at `file` (`init --texts`), read as readCapped reads, at most TEXTS_CAP bytes: { texts } with each
-// issue of `keys` it gives a text, or { problem }. No file gives { texts: {} }.
-export function readIssueTexts(file, keys) {
-  if (!file) return { texts: {} };
-  const read = readCapped(file, TEXTS_CAP);
-  if (read.problem) return { problem: `the texts input ${read.problem}` };
-  try {
-    const value = JSON.parse(read.bytes.toString('utf8'));
-    if (!isObject(value)) return { problem: 'the texts input is not a JSON object of issue keys to their text' };
-    return { texts: issueTextsOf(value, keys) };
-  } catch {
-    return { problem: 'the texts input is not JSON' };
   }
 }
 
@@ -387,8 +374,12 @@ const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 // folder runPlace resolves, and returns { exitCode, out, err }. `session` is the driver's session id and `input` a hook's
 // payload when one is known; attendedProblem says who may run it. It refuses a run id or snapshot that fails its checks,
 // a state folder runPlace refuses, a project whose origin names no forge repository, a run that exists already, and any
-// other run still active. Throws jsonl.mjs's LOCKED when another process holds the runs lock. `home` is for a test.
-export function initRun({ project, config, run, file, texts: textsFile = null, session, input = {}, env = process.env, home, now = Date.now() }) {
+// other run still active. Each issue's text is the tracker's own answer the session's reads recorded
+// (project-issue-text.mjs recordedTexts), never a file a session wrote. Throws jsonl.mjs's LOCKED when another process
+// holds the runs lock. `home` is for a test.
+export function initRun({ project, config, run, file, session, input = {}, env = process.env, home, now = Date.now() }) {
+  // Recorded issue reads past their age go first, on every host, whatever init then answers.
+  sweepIssueReads({ env, now });
   if (typeof run !== 'string' || !RUN_ID.test(run)) return refuse(`the run id ${quote(run)} is not lower-case letters, digits, and dashes, up to 64, starting with a letter or digit`);
   const place = runPlace(project, config, { env, home });
   if (place.problem) return refuse(place.problem);
@@ -399,8 +390,7 @@ export function initRun({ project, config, run, file, texts: textsFile = null, s
   if (!read.snapshot) return { exitCode: 1, out: [], err: ['aidrian project init: the snapshot input has problems; fix them and run init again', ...read.problems.slice(0, 20).map((problem) => `  ${problem}`)] };
   const repository = pinnedRepository(project);
   if (!repository) return refuse('the origin remote names no forge repository, so the run cannot pin one');
-  const texts = readIssueTexts(textsFile, new Set(read.snapshot.issues.map((issue) => issue.key)));
-  if (texts.problem) return refuse(texts.problem);
+  const texts = recordedTexts(session, read.snapshot.issues.map((issue) => issue.key), { env, ...(home ? { home } : {}) });
 
   mkdirSync(runsFolder(state), { recursive: true, mode: 0o700 });
   return withLocks([runsLock(state)], () => {
@@ -419,8 +409,11 @@ export function initRun({ project, config, run, file, texts: textsFile = null, s
     mkdirSync(runFolder(state, run), { mode: 0o700 });
     const text = `${JSON.stringify({ run, at: new Date(now).toISOString(), ...read.snapshot })}\n`;
     writeFileSync(snapshotFile(state, run), text, { mode: 0o600, flag: 'wx' });
-    // Each issue's text, kept apart from snapshot.json, for its session to read from a file (lib/project-issue-text.mjs).
-    const kept = writeIssueTexts(runFolder(state, run), texts.texts);
+    // Each issue's text the tracker gave this session, kept apart from snapshot.json, for its session to read from a file
+    // (lib/project-issue-text.mjs).
+    const kept = writeIssueTexts(runFolder(state, run), texts);
+    // The run keeps its own copy now: the session's recorded reads are not kept past it.
+    dropIssueReads(session, { env, ...(home ? { home } : {}) });
     const row = { event: 'init', run, at: new Date(now).toISOString(), session, repository, main, issues: read.snapshot.issues.length, sha256: sha256(Buffer.from(text)) };
     // The runs lock covers this first row: no other writer appends to a run whose ledger has no init row (recordIssue).
     appendRow(ledgerFile(state, run), row);
@@ -549,8 +542,9 @@ export function recordIssue(state, run, { key, state: issueState, decision = nul
 
 // Appends to the ledger of run `run`, under its lock, the rows `build(found)` returns for the run as readRun reads it under
 // that lock: { rows } appended in order, or { problem } appending none, which is what it returns. The run's folder must
-// hold snapshot.json before the lock is taken, as recordIssue's. Throws jsonl.mjs's LOCKED when another holds the lock.
-export function appendToRun(state, run, build) {
+// hold snapshot.json before the lock is taken, as recordIssue's. Throws jsonl.mjs's LOCKED when another holds the lock
+// past `waitMs`, jsonl.mjs's wait by default.
+export function appendToRun(state, run, build, { waitMs } = {}) {
   if (typeof run !== 'string' || !RUN_ID.test(run)) return { problem: `${quote(run)} is not a run id` };
   if (!entryAt(runFolder(state, run))?.isDirectory() || !entryAt(snapshotFile(state, run))?.isFile()) return { problem: `no run ${run} in ${runsFolder(state)}` };
   const file = ledgerFile(state, run);
@@ -561,7 +555,7 @@ export function appendToRun(state, run, build) {
     if (built.problem) return built;
     for (const row of built.rows) appendRow(file, row);
     return built;
-  });
+  }, waitMs === undefined ? {} : { waitMs });
 }
 
 // The runs in `state` other than `except` that are still active, as [{ run }]: a run whose files cannot be read counts,
@@ -596,8 +590,8 @@ const splitKey = (key) => {
   const at = key.lastIndexOf('-');
   return [at < 0 ? '' : key.slice(0, at), Number(key.slice(at + 1))];
 };
-// SHORTCUT: how many issues `next` names at once until a later slice reads projectRun.maxParallel from the base branch
-// through the forge, failing closed. One at a time only ever refuses more than any config allows; that read replaces it.
+// One issue at a time: planRun's default, and what `next` and `start` fall back to when the base branch's
+// projectRun.maxParallel cannot be read through the forge (project-run-gate.mjs teamPolicy, parallelOf).
 export const SERIAL = 1;
 // The state of an issue the ledger has no row for, from its tracker status type.
 const TRACKER_STATE = { completed: 'done', canceled: 'canceled' };
@@ -758,22 +752,25 @@ function topological(issues, byId, cycles, isDone) {
 }
 
 // The lines `aidrian project next` prints for `plan`: one `next KEY BRANCH` line for each issue to start, or `wait N
-// running`, or `done`; then a line for each issue that runs, waits, or is skipped. A halted run's cause comes first, and
-// then the end of a pause on a usage or rate limit (lib/project-limit.mjs pauseOf), until which no start runs.
-export function nextLines(plan, { halt = null, pause = null } = {}) {
+// running`, or `done`; then a line for each issue that runs, each session that runs on after its issue settled
+// (`lingering`, [{ key, attempt }], lib/project-linger.mjs), which `wait N` counts too, and each issue that waits or is
+// skipped. A halted run's cause comes first, and then the end of a pause on a usage or rate limit (lib/project-limit.mjs
+// pauseOf), until which no start runs.
+export function nextLines(plan, { halt = null, pause = null, lingering = [] } = {}) {
   return [
     ...(halt ? [`halted ${halt}`] : []),
     ...(pause ? [`paused until ${pause.until}`] : []),
-    ...verdictLines(plan),
+    ...verdictLines(plan, lingering.length),
     ...plan.running.map((key) => `running ${key}`),
+    ...lingering.map(({ key, attempt }) => `lingering ${key} attempt ${attempt}`),
     ...plan.blocked.map(({ key, reason, on }) => `blocked ${key} ${reason} ${on.join(',')}`),
     ...plan.skipped.map(({ key, skipped_blocked_by: by }) => `skipped ${key} blocked_by ${by.join(',')}`),
   ];
 }
 
-function verdictLines(plan) {
+function verdictLines(plan, lingering = 0) {
   if (plan.verdict === 'next') return plan.next.map(({ key, branch }) => `next ${key} ${branch}`);
-  if (plan.verdict === 'wait') return [`wait ${plan.running.length} running`];
+  if (plan.verdict === 'wait') return [`wait ${plan.running.length + lingering} running`];
   return ['done'];
 }
 

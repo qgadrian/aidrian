@@ -231,7 +231,7 @@ test('every test call that reads the unattended marks or the user\'s own chain f
   const missing = [];
   for (const name of readdirSync(import.meta.dirname).filter((each) => each.endsWith('.test.mjs')).sort()) {
     readFileSync(path.join(import.meta.dirname, name), 'utf8').split('\n').forEach((line, at) => {
-      if (reader.test(line) && !/^\s*(?:import|\/\/)/u.test(line) && !/\bhome\b/u.test(line)) missing.push(`${name}:${at + 1}: ${line.trim()}`);
+      if (reader.test(line) && !/^\s*(?:import|\/\/|\*)/u.test(line) && !/[{,]\s*home\s*[:,}]/u.test(line)) missing.push(`${name}:${at + 1}: ${line.trim()}`);
     });
   }
   assert.deepEqual(missing, [], 'pass `home`, such as TEST_HOME from test/fixtures/test-home.mjs');

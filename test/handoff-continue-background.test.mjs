@@ -248,6 +248,30 @@ test('the gate and unattendedHere read the unattended marks of the home folder t
   // Another home holds no mark: the gate starts its session.
   assert.equal(unattendedHere(SESSION, { store: setting.store, env, home: TEST_HOME, now: Date.now() }), false, 'no mark in another home');
   assert.equal(gate(setting, { run: fakeRun({ own: setting.dir }).run, env }).out[0], 'continue: background');
+
+  // In auto mode, the session's own mark in the given home makes it one no Human attends: its terminal is not handed to
+  // the new session, and the say line adds no shell function hint. With another home, both happen.
+  const marked = path.join(xdg, 'marked-home');
+  mkdirSync(path.join(marked, '.local/state/aidrian/unattended'), { recursive: true, mode: 0o700 });
+  writeFileSync(path.join(marked, `.local/state/aidrian/unattended/${SESSION}.json`), JSON.stringify({ root: setting.dir, at: Date.now() }), { mode: 0o600 });
+  const auto = (wrapped, line, given) => {
+    const each = setup(t, { handoff: { mode: 'auto' } });
+    passCheck(each);
+    const result = gate(each, { run: withPs(fakeRun({ own: each.dir }).run, line), env: { ...each.env, ...wrapped, XDG_STATE_HOME: xdg }, home: given });
+    assert.equal(result.out[0], 'continue: background', result.err.join('\n'));
+    return { say: result.out[1], ending: takeEnding(each.store, SESSION) };
+  };
+  const handed = auto(WRAPPED, undefined, marked);
+  assert.ok(handed.say.endsWith(PLAIN), `marked: ${handed.say}`);
+  assert.equal(handed.ending, null, 'a session its mark holds never hands its terminal over');
+  const switched = auto(WRAPPED, undefined, TEST_HOME);
+  assert.ok(switched.say.endsWith(SWITCHES), `unmarked: ${switched.say}`);
+  assert.deepEqual(switched.ending, { hostPid: 4343, shell: 4242, id: 'abcd1234', next: NEW_SESSION });
+  const bare = { CLAUDE_PID: '4343', CLAUDE_CODE_SESSION_ATTENDED: '1' };
+  const hinted = auto(bare, '4343 4100 claude', marked).say;
+  assert.ok(hinted.endsWith(PLAIN) && !hinted.includes(UNHOOKED), `marked: ${hinted}`);
+  const unhooked = auto(bare, '4343 4100 claude', TEST_HOME).say;
+  assert.ok(unhooked.endsWith(`${PLAIN} ${UNHOOKED}`), `unmarked: ${unhooked}`);
 });
 
 test('no pending mark, no start: the handoff goes on by the clear route, and a start that surely made nothing removes its pending mark', (t) => {
@@ -589,7 +613,7 @@ test('claude is found on the absolute folders of PATH alone', (t) => {
   assert.equal(claudeOnPath({ PATH: bin }), null, 'a file that is not executable');
 });
 
-test('aidrian handoff continue starts the background session from the command line, through the claude on PATH', (t) => {
+test('the gate starts the background session through the claude on PATH, and goes on by the clear route with none', (t) => {
   const setting = setup(t);
   const log = path.join(setting.root, 'claude.log');
   // A fake claude: it logs each call and answers `--bg` and `agents --json` as Claude Code 2.1.326 does.
@@ -605,10 +629,11 @@ else console.log('backgrounded · abcd1234 · ' + args[args.indexOf('--name') + 
 `, { mode: 0o755 });
   const run = (...args) => spawnSync(CLI, ['handoff', ...args], { cwd: setting.dir, encoding: 'utf8', env: setting.env });
   assert.equal(run('check', setting.file).status, 0);
-  const result = run('continue', setting.file);
-  assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(result.stdout.split('\n').slice(0, 1), ['continue: background']);
-  assert.match(result.stdout, /^say: The brief widget continues in the new background session abcd1234 'widget · 1'/mu);
+  // In process, with no `run`: the gate starts the claude on PATH itself, and reads the marks of a home of its own.
+  const result = gate(setting);
+  assert.equal(result.exitCode, 0, result.err.join('\n'));
+  assert.equal(result.out[0], 'continue: background');
+  assert.match(result.out.join('\n'), /^say: The brief widget continues in the new background session abcd1234 'widget · 1'/mu);
   const calls = readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
   assert.deepEqual(calls.map((call) => call.args[0]), ['agents', '--bg', 'agents']);
   assert.equal(readFrom(setting.store, NEW_SESSION).chain, 1);
@@ -621,9 +646,9 @@ else console.log('backgrounded · abcd1234 · ' + args[args.indexOf('--name') + 
   if (system.some((dir) => existsSync(path.join(dir, 'claude')))) return t.skip('a claude in a system folder');
   writeFileSync(setting.file, brief(0).replace('Ship it.', 'Ship it again.'));
   assert.equal(run('check', setting.file).status, 0);
-  const missing = spawnSync(CLI, ['handoff', 'continue', setting.file], { cwd: setting.dir, encoding: 'utf8', env: { ...setting.env, PATH: [nodeOnly, ...system].join(path.delimiter) } });
-  assert.equal(missing.status, 0, missing.stderr);
-  assert.match(missing.stdout, /^continue: clear\nfallback: no background session started, since `claude` is not on PATH, in an absolute folder; this handoff goes on by the clear route\n/u);
+  const missing = gate(setting, { env: { ...setting.env, PATH: [nodeOnly, ...system].join(path.delimiter) } });
+  assert.equal(missing.exitCode, 0, missing.err.join('\n'));
+  assert.deepEqual(missing.out.slice(0, 2), ['continue: clear', 'fallback: no background session started, since `claude` is not on PATH, in an absolute folder; this handoff goes on by the clear route']);
 });
 
 test('a working copy whose state.dir differs from the base branch\'s goes on by the clear route with the reason, and starts nothing', (t) => {
@@ -674,6 +699,7 @@ test('a store the command\'s own environment moves goes on by the clear route an
   const file = path.join(moved, 'handoffs/2026-11-15-widget.md');
   writeFileSync(file, brief());
   assert.equal(checkBrief(file, undefined, 0, { store: openStore(moved, { checkouts: [home.dir], maxChain: 3 }) }).exitCode, 0);
+  // Its own process: `~` in state.dir follows the process's HOME. It reads the user's own unattended marks (issue #345).
   const shown = spawnSync(CLI, ['handoff', 'continue', file], { cwd: home.dir, encoding: 'utf8', env: { ...home.env, HOME: fake } });
   assert.equal(shown.status, 0, shown.stderr);
   assert.match(shown.stdout, /^continue: clear\nfallback: the continuation store this command opens is not the one the base branch's config\.json names under the host's own environment/u);

@@ -24,7 +24,7 @@
       "tags": ["docs"]
     },
     "config-recipes.md": {
-      "summary": "Config recipes: full autonomy, autopilot, and hands-on starting configs and local files, checked by aidrian check; harness-setup offers them.",
+      "summary": "Recipes: full autonomy, solo with project runs, autopilot, and hands-on starting configs and local files, checked by aidrian check; harness-setup offers them.",
       "tags": []
     },
     "hooks.md": {

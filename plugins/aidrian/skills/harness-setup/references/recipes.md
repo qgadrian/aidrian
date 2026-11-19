@@ -5,7 +5,8 @@ The recipes are `<plugin root>/recipes/<name>.json`. The plugin repository's `do
 
 ## The question
 
-Ask it before the main-checkout guard question, whose answer hands-on sets, as one question with these choices, in this order:
+Ask it before the main-checkout guard question, whose answer hands-on sets, as one question with these four choices,
+in this order. Claude Code's question tool takes at most four, so the solo recipe is a follow-up, never a fifth choice:
 
 1. **Keep the defaults** (recommended until the project has used the harness): every decision asks, pull requests are
    marked ready and reviewed alone, and nothing merges unasked.
@@ -18,6 +19,15 @@ Ask it before the main-checkout guard question, whose answer hands-on sets, as o
    critical-flow sign-off, and a hard product call in one of those classes still wait. On Codex, a handoff waits for a
    person to resume it.
 
+Only when the answer is Full autonomy, ask one more question: does one person own the project, and should sessions
+also run whole tracker projects with no one watching? Two choices, in this order:
+
+- **No** (recommended unless one person owns the project and its default branch is protected with no bypass): the
+  `full-autonomy` recipe.
+- **Yes, solo** (`full-autonomy-solo`): full autonomy, and whole tracker projects run with the `project-autopilot`
+  skill. `solo: true` turns the machine switches on with no local file, on every machine that leaves them unset, and
+  `projectRun.allow` lets a run start. Only for a project whose default branch is protected with no bypass.
+
 ## Applying it, in the step 3 brief
 
 - Merge the recipe into `.aidrian/config.json`, key by key; a key the project already sets keeps its value,
@@ -25,14 +35,21 @@ Ask it before the main-checkout guard question, whose answer hands-on sets, as o
 - `github.requiredChecks`: put the names of the CI checks the project's workflows run on a pull request in place of `"test"`.
   With none found, leave the key out, and the report says auto-merge stays off until it names one.
 - Set `requires.aidrian` to the running plugin's version when the recipe sets any `github.autoMerge`,
-  `unattendedWaiver`, `review.unattendedSignoff`, or `session.handoff.continue` key.
+  `unattendedWaiver`, `review.unattendedSignoff`, `session.handoff.continue`, `solo`, or `projectRun` key.
+- `full-autonomy-solo`: the report says the Human merges the change that adds `solo`, since auto-merge never merges a
+  policy file, and names what a project run still needs, which `aidrian project preflight` checks: `github.reviewer`,
+  `tracker.provider`, `projectRun.unverifiedHosts`, which the team sets only after reading its risk, and, on Claude
+  Code, `"autoContinueAtUsageLimit": true` in the user's own settings, since a usage limit stops the run's driver too.
+  The proposal never adds `projectRun.registries`, `unverifiedHosts`, `outsideSandbox`, or `mcpServers`.
 - Never write `.aidrian.local.json`: the config guard refuses a subagent's write of its switches. Return the recipe's
   machine switches below, for the Human to add in the main checkout. The report prints them.
 
 ## Machine switches
 
-Switches only `.aidrian.local.json` holds, so a pull request can never turn them on.
+Switches only `.aidrian.local.json` holds, so a pull request alone never turns them on: `solo`, committed on the
+default branch, turns the unset ones on, and only the Human merges the change that adds it.
 
 - `full-autonomy`: `{ "github": { "unattendedWaiver": { "enabled": true } }, "unattendedSignoff": "on", "handoff": { "background": "on" } }`
 - `autopilot`: `{ "handoff": { "background": "on" } }`
 - `hands-on`: none.
+- `full-autonomy-solo`: none.

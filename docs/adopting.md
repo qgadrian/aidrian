@@ -71,5 +71,5 @@ Run both commands in CI too, as in the README's [In CI](../README.md#in-ci), so 
 
 - Keep agents out of the main checkout: the [main-checkout guard](hooks.md#main-checkout).
 - Keep your own agents beside the plugin's: [Project agents](knowledge.md#project-agents).
-- Start from a working style, full autonomy, autopilot, or hands-on: [config-recipes.md](config-recipes.md).
+- Start from a working style, full autonomy (alone, with project runs, or not), autopilot, or hands-on: [config-recipes.md](config-recipes.md).
 - Change models, names, limits, and more: [config.md](config.md).

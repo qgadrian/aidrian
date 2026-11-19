@@ -1050,6 +1050,38 @@ signals and the ceiling are computed by the command at every cap, a verdict over
 a grant by itself, and under `"auto"` the most a false verdict buys is `github.maxExtraRounds` rounds, every one
 listed on the pull request.
 
+### At the cap under autopilot
+
+Under the `autopilot` skill, and in each issue's session of a [project run](config.md#project-run), no one is there to
+answer at the cap. An extra round goes as [Extra rounds](#extra-rounds) says: under `"ask"`, or over a red flag, it is
+parked as a decision for the Human. What follows `round_limit` on the current head is the
+[unattended waiver](config.md#unattended-waiver), and only when `aidrian pr waive <n> --gate` exits 0. The gate
+checks more than this list, such as the waiver's two switches, telemetry, and every flow of the plan:
+[Before a judge rules](config.md#before-a-judge-rules) and [What it covers](config.md#what-it-covers) hold every
+check. Among them, on exactly that head:
+
+- the open findings of this machine's own reviewers, the local and independent stages, are the whole cause of the cap,
+  each listed, each of `medium` severity or lower, and none a security finding, of a security pass, or of the
+  `security-engineer`;
+- no sign-off of the Human's is owed on the head;
+- the review bot passed exactly the head on the forge: a verdict never stands in for it;
+- the host confirms the judge's dispatch in the dispatch log, which Codex cannot, and no judge has ruled on the head yet;
+- in a project run, the run has merged fewer than 3 pull requests on a judge's verdict (`WAIVED_MERGES`), and the pull
+  request is in the repository the run pinned. Past that budget, the issue parks for the Human.
+
+The session then dispatches one fresh read-only `code-reviewer` as the judge and records its verdict with `--judge`,
+as the `pr-review-loop` skill's `references/review-plan.md` § At the cap: a judge's waiver says.
+`aidrian pr auto-merge` takes a standing `waive` for that head in place of `received`, and its JSON says
+`"waived": true`; every check of [merge trust](#merge-trust) still applies. Exit 1 from the gate is a stop the session
+reports with the line the gate prints; no judge is dispatched.
+
+When the merge stops after the review, an issue's session of a project run runs
+`aidrian project stop-action <run> <issue>`, which prints exactly one action: done when the forge shows the pull request
+merged; merge, wait, update the branch from the base, run the failed checks again, ask the review bot, or run one more
+review round of a new head, each under its own cap; or park, which, like done, has no cap. The table of stops,
+actions, and caps is in [Project run](config.md#project-run). A sign-off the Human owes, or a policy refusal, parks
+before any update, since an update makes a new head and every sign-off and review of the old head no longer counts.
+
 ## The plan command
 
 `review.planCommand` runs a project's own planner: it reads `{ base, head, changes }` on stdin and prints a plan in

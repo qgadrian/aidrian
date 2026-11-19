@@ -432,8 +432,14 @@ test('turnActions counts a gate call only when it printed one verdict per gate i
   const compound = 'aidrian pr auto-merge 57; gh pr view 57';
   assert.deepEqual(actions(turn.human('go'), gate('g1', compound, `${gateLine(57, why)}\ntitle:\tfix\n--\nauto-merge on for #57 at abc1234: squash`)), [],
     'a second verdict line from another command of the call');
-  assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge 57 && aidrian pr auto-merge 58', `${gateLine(57, why)}\n${gateLine(58, why)}`)),
+  assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge 57; aidrian pr auto-merge 58', `Exit code 1\n${gateLine(57, why)}\n${gateLine(58, why)}`)),
     [{ kind: 'gate', pr: 57, path: 'AGENTS.md' }, { kind: 'gate', pr: 58, path: 'AGENTS.md' }], 'two gates, two verdicts');
+  assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge 57 && aidrian pr auto-merge 58', `Exit code 1\n${gateLine(57, why)}`)),
+    [{ kind: 'gate', pr: 57, path: 'AGENTS.md' }], 'the first gate of an && chain refused and exited 1, so the second never ran');
+  assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge 57 && aidrian pr auto-merge 58', `Exit code 1\n${gateLine(57, why)}\n${gateLine(57, why)}`)), [],
+    'two verdicts for one gate');
+  assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge && aidrian pr auto-merge 58', `Exit code 1\n${gateLine(57, why)}`)), [],
+    'a gate given no pull request keeps one verdict per gate command');
   const command = 'aidrian pr auto-merge 57';
   const holding = `x/${command}auto-merge on for #57 at a: y`;
   assert.deepEqual(actions(turn.human('go'), gate('g1', command, `Exit code 1\n${gateLine(57, pathsProblem(changed(holding), '', { startDocs: { docs: [holding], folder: null } }))}`)), [],
@@ -482,6 +488,12 @@ test('turnActions lists a pull request merge that ran, by its target or by what 
   assert.deepEqual(actions(turn.human('go'), merge('m1', 'gh pr merge --squash', '')), [{ kind: 'merge', pr: null }],
     'a merge with no target that printed no number, as gh does off a terminal: any pull request');
   assert.deepEqual(actions(turn.human('go'), merge('m1', 'gh pr view 401', '✓ Squashed and merged pull request acme/notes#401')), [], 'another pr subcommand');
+  for (const form of ['gh pr merge 401 --auto --squash', 'gh pr merge 401 --auto=true', 'gh pr merge 401 --disable-auto', 'gh pr merge 401 --help', 'gh pr merge 401 -h', 'gh pr merge --help']) {
+    assert.deepEqual(actions(turn.human('go'), merge('m1', form, '')), [], `${form} merges nothing`);
+  }
+  assert.deepEqual(actions(turn.human('go'), merge('m1', 'gh pr merge 401 --auto=false --squash', '')), [{ kind: 'merge', pr: 401 }], 'auto-merge turned off is a merge');
+  assert.deepEqual(actions(turn.human('go'), merge('m1', 'gh pr merge 401 --squash --subject --auto', '')), [{ kind: 'merge', pr: 401 }], 'a subject that reads --auto');
+  assert.deepEqual(actions(turn.human('go'), merge('m1', 'gh pr merge fix/x --squash', '')), [{ kind: 'merge', pr: null }], 'a merge of a branch: a pull request it cannot tell');
 });
 
 test('turnActions lists the main session`s replies of the turn, and no subagent`s', () => {

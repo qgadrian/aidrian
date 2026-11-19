@@ -118,9 +118,9 @@ export const HAND_BACK_MARK = 'Try each one first, through its owner, and remove
 // Why the agent is sent back, or null, for a turn whose `aidrian pr auto-merge` run refused a pull request on a path.
 // `actions` is lib/transcript.mjs turnActions' result, or null with no transcript to read: { kind: 'gate', pr, path },
 // path null for a pass or another refusal; { kind: 'merge', pr }, a merge that ran, pr null for one of no known pull
-// request, which clears every refusal before it; and { kind: 'reply', text }, a reply
-// of the main session. The last gate or merge of each pull request counts, so a later run that passed, refused for another
-// reason, or a merge clears an earlier refusal. A refusal is handed over when an item of a list addressed to the Human
+// request; and { kind: 'reply', text }, a reply of the main session. The last gate or merge of each pull request counts,
+// so a later run that passed, refused for another reason, or a merge of it clears an earlier refusal. A merge of no known
+// pull request clears a refusal only when it is the one refusal that stands then: it may have merged any other. A refusal is handed over when an item of a list addressed to the Human
 // (handBackLists), in a reply after it or in the final message, holds the pull request as `#<n>`, `/pull/<n>`, `PR <n>`,
 // or `pull request <n>`, with no digit after it, the path as written, JSON-quoted, or as quoteData writes it, or its first
 // PATH_CUT characters when longer, and a rating (RATINGS). The wording is not matched: the skill's line holds "your",
@@ -130,8 +130,11 @@ export function mergeHandBack(input, transcript, actions, { human = 'the Human' 
   if (!Array.isArray(actions) || backgroundRunning(input)) return null;
   const last = new Map();
   actions.forEach((action, at) => {
-    // A merge that named no pull request and printed none, as gh does off a terminal, clears every refusal before it.
-    if (action?.kind === 'merge' && action.pr === null) for (const pr of last.keys()) last.set(pr, { file: null, at });
+    // A merge that named no pull request and printed none, as gh does off a terminal, clears the one refusal that stands.
+    if (action?.kind === 'merge' && action.pr === null) {
+      const standing = [...last].filter(([, { file }]) => typeof file === 'string' && file !== '');
+      if (standing.length === 1) last.set(standing[0][0], { file: null, at });
+    }
     if (!Number.isSafeInteger(action?.pr)) return;
     if (action.kind === 'gate') last.set(action.pr, { file: action.path, at });
     else if (action.kind === 'merge') last.set(action.pr, { file: null, at });

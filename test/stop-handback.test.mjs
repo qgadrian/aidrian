@@ -205,7 +205,12 @@ test('mergeHandBack passes the item in each form, and a turn with no path refusa
   assert.equal(merge(DONE, [refused(), { kind: 'gate', pr: 401, path: null }]), null, 'a later run for the same pull request');
   assert.equal(merge(DONE, [refused(), { kind: 'merge', pr: 401 }]), null, 'a merge of that pull request after the refusal');
   assert.ok(merge(DONE, [refused(), { kind: 'merge', pr: 402 }]), 'a merge of another pull request');
-  assert.equal(merge(DONE, [refused(), refused(402, 'AGENTS.md'), { kind: 'merge', pr: null }]), null, 'a merge of no known pull request clears each refusal before it');
+  assert.equal(merge(DONE, [refused(), { kind: 'merge', pr: null }]), null, 'a merge of no known pull request clears the one refusal that stands');
+  assert.ok(merge(DONE, [refused(), refused(402, 'AGENTS.md'), { kind: 'merge', pr: null }]), 'and none of two, as it may have merged either');
+  assert.ok(merge(DONE, [refused(), { kind: 'gate', pr: 402, path: null }, refused(403, 'AGENTS.md'), { kind: 'merge', pr: null }]),
+    'a pass is no refusal that stands, and two still do');
+  assert.equal(merge(DONE, [refused(), { kind: 'merge', pr: 401 }, refused(402, 'AGENTS.md'), { kind: 'merge', pr: null }]), null,
+    'one refusal stands once a merge of the other cleared it');
   assert.ok(merge(DONE, [{ kind: 'merge', pr: null }, refused()]), 'and none after it');
   assert.ok(merge(DONE, [{ kind: 'merge', pr: 401 }, refused()]), 'a refusal after a merge');
   assert.ok(merge(DONE, [{ kind: 'gate', pr: 401, path: null }, refused()]), 'a refusal after a pass');
@@ -302,6 +307,14 @@ test('the Stop hook sends a turn back once when a gate refusal on a path is miss
   const merged = bash(`gh pr merge 401 --squash --match-head-commit ${'a'.repeat(40)}`, '✓ Squashed and merged pull request acme/notes#401', false);
   assert.deepEqual(stop([...plain, merged], 'Merged #401 as asked.'), QUIET, 'merged after the refusal');
   assert.deepEqual(stop([...plain, bash('gh pr merge --squash', '', false)], 'Merged.'), QUIET, 'a merge with no target that printed nothing, as gh does off a terminal');
+  const second = bash('aidrian pr auto-merge 402', `Exit code 1\nauto-merge off for #402: ${GATE_WHY}`);
+  assert.match(stop([...plain, second, bash('gh pr merge --squash', '', false)], 'Merged.').stderr, SENT,
+    'a merge with no target that printed nothing, while two refusals stand');
+  for (const form of ['gh pr merge 401 --auto --squash', 'gh pr merge 401 --disable-auto', 'gh pr merge 401 --help', 'gh pr merge -h']) {
+    assert.match(stop([...plain, bash(form, '', false)], 'Done.').stderr, SENT, `${form} merges nothing`);
+  }
+  const chained = [human, bash('aidrian pr auto-merge 401 && aidrian pr auto-merge 402', `Exit code 1\nauto-merge off for #401: ${GATE_WHY}`)];
+  assert.match(stop(chained, DONE).stderr, SENT, 'the first gate of an && chain refused, so the second never ran');
   const denied = bash('gh pr merge 401 --squash', 'merge-guard: the merge is refused', true);
   assert.equal(stop([...plain, denied], 'The merge was refused.').status, 2, 'a merge that did not run');
 

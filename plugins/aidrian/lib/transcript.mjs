@@ -267,14 +267,33 @@ function aidrianTarget({ invocation }) {
   return word && !word.dynamic ? prNumber(word.text) : null;
 }
 
-// The pull request a `gh pr merge` command names: its number, 0 for a merge that names none (the current branch's), or
-// null for any other command or a target it cannot read.
-function mergeTarget({ segment }) {
+// The pull request a `gh pr merge` command that merges names: its number, or 0 for one it names none of (the current
+// branch's) or one this cannot read, such as a branch or a dynamic word; null for any other command, and for the forms
+// that merge nothing: its help, and `--auto` or `--disable-auto`, which only turn auto-merge on or off.
+function mergeTarget({ segment, invocation }) {
   const call = readBodyCall(segment);
-  if (call?.noun !== 'pr' || call.subcommand !== 'merge') return null;
-  if (!call.target) return 0;
-  const named = call.target.dynamic ? null : PR_ARGUMENT.exec(call.target.text);
-  return named ? Number(named[1] ?? named[2]) : null;
+  if (call?.noun !== 'pr' || call.subcommand !== 'merge' || call.help || togglesAutoMerge(invocation.args)) return null;
+  return (call.target && !call.target.dynamic ? prNumber(call.target.text) : null) ?? 0;
+}
+
+// The `gh pr merge` options that take the next word as their value, which is then no option.
+const MERGE_VALUES = new Set(['-b', '--body', '-F', '--body-file', '-t', '--subject', '-A', '--author-email', '--match-head-commit', '-R', '--repo']);
+const FALSE_WORDS = new Set(['false', 'f', '0', 'FALSE', 'False', 'F']);
+// Whether a `gh pr merge` command's words turn auto-merge on or off: `--auto` or `--disable-auto`, alone or with a
+// value that is not false. A dynamic value reads as false: a merge read as a merge can only miss a refusal.
+function togglesAutoMerge(args) {
+  for (let at = 0; at < args.length; at += 1) {
+    const { text, dynamic } = args[at];
+    if (text === '--') return false;
+    if (MERGE_VALUES.has(text)) {
+      at += 1;
+      continue;
+    }
+    const [flag, value] = text.includes('=') ? [text.slice(0, text.indexOf('=')), text.slice(text.indexOf('=') + 1)] : [text, null];
+    if (!['--auto', '--disable-auto'].includes(flag)) continue;
+    if (value === null || (!dynamic && !FALSE_WORDS.has(value))) return true;
+  }
+  return false;
 }
 
 // The commands a Bash command line runs that pass `test`; none for a line the lexer cannot read.
@@ -389,8 +408,8 @@ export function gateVerdicts(output) {
 }
 
 // The pull requests a merge call that ran merged: each target it named, and for a merge that named none, the number gh
-// printed in its `merged pull request <repo>#<n>` line, or null, any pull request, when it printed none: gh prints that
-// line on a terminal only, and a merge read as any pull request can only miss a refusal, never invent one.
+// printed in its `merged pull request <repo>#<n>` line, or null, a pull request it cannot tell, when it printed none:
+// gh prints that line on a terminal only.
 const MERGED_LINE = /merged pull request (?:[\w.-]+\/[\w.-]+)?#(\d+)/giu;
 function mergedPulls(targets, output) {
   const merged = targets.flatMap((target) => {
@@ -525,14 +544,15 @@ function loopedPulls(printed, targets) {
 }
 
 // The verdicts of a gate call that count, read from its output without the lines that quote the command, error or not,
-// since a refusal exits 1, for the pull requests the gates were given when each was given one, and only when it holds
-// one verdict per gate command the call ran: a verdict line another command printed for the same pull request, or a
-// path that quotes the command, leaves none.
+// since a refusal exits 1. With every gate's pull request known, a verdict for another one, which another command
+// printed, is dropped, and the rest count when no pull request has two: a verdict line another command printed for the
+// same pull request leaves none. Fewer verdicts than gates count, as in `aidrian pr auto-merge 57 && aidrian pr
+// auto-merge 58`, where the first refusal exits 1 and the second gate never runs. A call with a gate given no pull
+// request counts only when it printed one verdict per gate command. A path that quotes the command drops its line.
 function callVerdicts(read, gates) {
-  // With every gate's pull request known, a verdict for another one, which another command printed, is dropped.
-  const given = gates.includes(null) ? null : new Set(gates);
-  const verdicts = read.filter(({ pr }) => !given || given.has(pr));
-  return verdicts.length === gates.length ? verdicts : [];
+  if (gates.includes(null)) return read.length === gates.length ? read : [];
+  const verdicts = read.filter(({ pr }) => gates.includes(pr));
+  return new Set(verdicts.map(({ pr }) => pr)).size === verdicts.length ? verdicts : [];
 }
 
 // The skills whose run opens or updates a pull request through a draft create or `gh pr edit`.
@@ -566,7 +586,8 @@ export const SENT_BACK = 'Stop hook feedback:';
 // `aidrian pr await-review` call that printed its JSON, of each pull request it printed, else the one it was given;
 // a pr-review run is none. A review and a draft are of the same pull request when they name it, or either names none.
 // A call counts only by its result, as in sessionActions. A gate is one verdict an `aidrian pr auto-merge` call printed
-// (settleCalls): a call that printed none, such as an error exit, is none. A merge is a pull request a `gh pr merge` call that ran merged.
+// (settleCalls): a call that printed none, such as an error exit, is none. A merge is a pull request a `gh pr merge`
+// call that ran merged, one with no help, `--auto`, or `--disable-auto`.
 // A reply is the text of an assistant message, for the merge hand-back check to find an item an earlier report of the
 // turn gave. A sent-back is the text of a Stop hook's send-back (SENT_BACK), for the stop hook to tell which of its
 // checks already sent the turn back. A subagent's entries are skipped. The stop hook's review-loop check reads it

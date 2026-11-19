@@ -106,7 +106,9 @@ const refuser = (list) => (file, what, folder = false, allows = null) => list.pu
 //   - specific: its attempt's work, drop, and cache folders (`own()`, project-run-guard.mjs ownAttemptFolder), and HAND_FOLDERS of
 //     every state folder of `project`, the project the mark names, that is no link; `reviews`, each state's reviews folder.
 //   - worktree: the checkout of the folder its mark says it started in, when it shares its git folder with the mark's
-//     main checkout; never the call's folder. `temp`: the temporary folders, this process's and /tmp by default.
+//     main checkout, and `worktreeCommon` its git common folder; never the call's folder. `nested` holds the attempt's
+//     clone, { root, work, common, links }, `common` the git folder the start cloned it with. `temp`: the temporary
+//     folders, this process's and /tmp by default.
 //   - refused, each refused wherever it lies, and `later()`, the user's and the system's git config as git names them
 //     (git.mjs gitConfigFiles), read only for a target that would pass.
 // Null when the mark names a main checkout but no project can be read there, or a read fails. `env` is the hook's.
@@ -116,7 +118,7 @@ export function unattendedPlaces({ cwd, mark, project, config, base, own = null,
   if (!limited && !project) return null;
   try {
     const user = home ?? userInfo().homedir;
-    const places = { limited, pending: mark.pending === true, specific: [], reviews: [], worktree: null, temp: [], refused: [], nested: [], home: real(user), issue: null, issueHeld: issueHeld(mark) };
+    const places = { limited, pending: mark.pending === true, specific: [], reviews: [], worktree: null, worktreeCommon: null, temp: [], refused: [], nested: [], home: real(user), issue: null, issueHeld: issueHeld(mark) };
     const refuse = refuser(places.refused);
     userRefused(refuse, user, env);
     let named;
@@ -180,6 +182,7 @@ function ownPlaces(places, { mark, project, config, base, own, home, temp }, ref
   if (places.issueHeld) places.issue = ownIssue(project, config, mark, stateOptions(base, home));
   if (start && real(start.common) === real(repo.common)) {
     places.worktree = real(start.top);
+    places.worktreeCommon = real(start.common);
     gitRefused(refuse, start);
     hostRefused(refuse, start.top);
     if (places.issueHeld) workflowRefused(refuse, start.top);
@@ -196,7 +199,7 @@ function ownPlaces(places, { mark, project, config, base, own, home, temp }, ref
     for (const name of KEPT_FOLDERS) refuse(path.join(attempt, name, ATTEMPT_KEEP), 'the keep file of an attempt\'s folder, which holds the folder in place');
     hostRefused(refuse, path.join(attempt, 'work'));
     if (places.issueHeld) workflowRefused(refuse, path.join(attempt, 'work'));
-    places.nested.push({ root: real(path.join(attempt, 'work')), work: path.join(attempt, 'work'), links: null });
+    places.nested.push({ root: real(path.join(attempt, 'work')), work: path.join(attempt, 'work'), common: real(path.join(attempt, 'git')), links: null });
     refuse(path.join(attempt, 'git', 'config'), 'the attempt clone\'s git config');
     refuse(path.join(attempt, 'git', 'hooks'), 'the attempt clone\'s git hooks', true);
     refuse(path.join(attempt, 'git'), 'the attempt clone\'s git folder, which only git writes', true);
@@ -547,9 +550,13 @@ export function unattendedWriteDenial(input, { names: { human } }, { mark = null
     ?? nameDenial(texts, found, say);
 }
 
-// The folders a project run's issue session pushes from, as `places` (unattendedPlaces) give them: its own worktree and
-// its attempt's clone.
-const pushRoots = (places) => (places ? [places.worktree, ...(places.nested ?? []).map((each) => each.root)].filter(Boolean) : []);
+// The folders a project run's issue session pushes from, as `places` (unattendedPlaces) give them, each { root, common },
+// with the git common folder its own repository keeps: its own worktree and its attempt's clone.
+function pushRoots(places) {
+  if (!places) return [];
+  const worktree = places.worktree ? [{ root: places.worktree, common: places.worktreeCommon }] : [];
+  return [...worktree, ...(places.nested ?? []).map(({ root, common }) => ({ root, common }))].filter((each) => each.root && each.common);
+}
 
 // The denials of unattendedWriteDenial, which say what the call does, to whom, and why.
 function sayer(input, human, opaque) {

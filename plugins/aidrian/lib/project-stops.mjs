@@ -148,7 +148,7 @@ function nextStep(decision, { view, branch, method }) {
       : `${waitWords(decision.pause ?? WAIT_PAUSE)}, ${again}`;
     case 'rerun_checks': return `the forge started the failed jobs of ${decision.runs.length} workflow run${decision.runs.length === 1 ? '' : 's'} again; ${again}`;
     case 'update_branch': return `the forge ${method === 'rebase' ? `rebased it onto ${view.base}` : `merged ${view.base} into it`}; ${again}`;
-    case 'merge_base': return `run \`git fetch origin ${view.base} ${branch}\` and \`git checkout -B ${branch} origin/${branch}\`, merge origin/${view.base}, resolve the conflicts, run the tests, commit, and push with \`git push origin HEAD:refs/heads/${branch}\`, never with force; ${again}`;
+    case 'merge_base': return `run \`git fetch origin ${view.base} ${branch}\` and \`git checkout -B ${branch} origin/${branch}\`, merge origin/${view.base}, resolve the conflicts, run the tests, commit, and push with \`git push origin HEAD:refs/heads/${branch}\` in a call of its own, never with force; ${again}`;
     case 'review_round': return 'run one review round on this head, with § 4\'s waiver at the round cap; when it signs off with nothing to push, run the pr-auto-merge skill again, else record the result pr_open';
     case 'request_bot': return `run \`aidrian pr await-review ${view.number} --request\`, ${again}`;
     default: return 'record the result pr_open with this line as its stop';

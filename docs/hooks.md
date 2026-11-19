@@ -1243,18 +1243,27 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   allowlist above, for the same sessions and their subagents). The session keeps the forge token in its sandbox, so
   the hook holds what it runs with it:
   - `git push` only as `git push origin HEAD:refs/heads/<branch>`, `<branch>` the one the run's snapshot names for its
-    issue, from its own worktree or attempt clone, with `+`, `--force`, or `--force-with-lease` (bare, or naming that
+    issue, in a call of its own, from its own worktree or attempt clone, with `+`, `--force`, or `--force-with-lease` (bare, or naming that
     branch) and the switches `-u`, `-q`, `-v`, `-n`, `--set-upstream`, `--quiet`, `--verbose`, `--progress`,
     `--porcelain`, `--dry-run`, and `--force-if-includes`. Refused: a tag, `--tags`, `--follow-tags`, `--mirror`,
     `--all`, `--delete`, `-d`, a `:ref` delete, any other ref or a second refspec, a URL or another remote, `--repo`,
     `-o`, `--no-verify`, any other option, a word built at run time, a git `-c`, `--git-dir`, or `--work-tree`, a
     variable that moves git's repository or config (`GIT_DIR`, `GIT_CONFIG_*`, `HOME`, `XDG_CONFIG_HOME`) on the line,
-    a push from any other folder, and every push while no running start of its issue names a branch. The exact push is
-    refused too when its commits change a file of the forge's workflow folders (`forgeWorkflowFolders`) from their merge
-    base with origin's default branch (`refs/remotes/origin/HEAD`, else `origin/main`), however the file got there, as by
-    `git apply --cached`, `patch`, `tar -x`, `unzip`, or `git am`, which the write rule above does not see; a merge of
-    the default branch brings none of its own changes into that diff, and a git that cannot answer within the hook's
-    budget, or names no such base, refuses the push. `git send-pack`, `git http-push`, and every git subcommand outside
+    a push from any other folder, and every push while no running start of its issue names a branch. In a call of its
+    own: beside the push only `cd`, git's reads `status`, `log`, `diff`, `show`, `rev-parse`, and
+    `branch --show-current`, and the filters `echo`, `printf`, `true`, `head`, `tail`, `wc`, `cat`, and `grep` may run,
+    so `git apply --cached p && git commit -m x && git push ...`, a merge, a reset, or a fetch on the push's line,
+    which would change its commits after the hook read them, is refused with "push in a call of its own". Then git
+    holds the checkout: the folder's `git rev-parse --git-common-dir` is its worktree's or attempt clone's own, not a
+    repository cloned inside it; origin's push URL (`git remote get-url --push origin`) is the one the start row's
+    `pushUrl` pinned, read from the clone before its session started (a start that recorded none pushes nothing); its
+    commits change no file of the forge's workflow folders (`forgeWorkflowFolders`), nor a folder that holds them, as a
+    `.github` made a link, from their merge base with origin's default branch (`refs/remotes/origin/HEAD`, else
+    `origin/main`), however the file got there, as by `git apply --cached`, `patch`, `tar -x`, `unzip`, or `git am`,
+    which the write rule above does not see; and `git status --porcelain` names no staged, unstaged, or untracked change
+    in those folders. A merge of the default branch brings none of its own changes into that diff; a git that cannot
+    answer within the hook's budget refuses the push, and one that names no base advises `git fetch origin`, which sets
+    origin/HEAD again from git 2.48 on, or `git remote set-head origin --auto` with an older git. `git send-pack`, `git http-push`, and every git subcommand outside
     the list of git's own commands an issue session runs, such as an alias or `git subtree`, are refused; of `git lfs`,
     only `ls-files`, `status`, `env`, `version`, `fetch`, `pull`, `checkout`, `track`, `untrack`, `logs`, and `pointer`
     pass. `git submodule`, `rebase`, `bisect`, `difftool`, and `mergetool` are refused when the command they run names
@@ -1278,7 +1287,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     or the API.
 
   An attended session, a run's driver, and a session a pending mark holds are not held by it. Its residual: a script or
-  program the session runs, or `curl` with the token, can still push or call the forge, and git in the session's own
+  program the session runs, or `curl` with the token, can still push or call the forge, a command an earlier call left
+  running in the background can still commit between the hook's read and the push, and git in the session's own
   checkout can move its copy of origin's default branch, the base the workflow diff starts from; the forge itself holds
   that, so `aidrian project preflight` blocks a run whose default branch asks the signed-in user, admin or not, for no
   pull request, whose tags no rule that user cannot bypass stops being created or moved, or whose workflows see CI

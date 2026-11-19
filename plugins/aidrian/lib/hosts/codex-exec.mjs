@@ -443,4 +443,4 @@ export function stopLine({ id }) {
 // What the session is told beside the project prompt: it works only in its attempt's folder, pushes its branch with a
 // full refspec, and names the branch to every forge command, since its clone tracks no branch of the forge.
 export const sessionNote = ({ work, branch }) => `This session runs in Codex's workspace-write sandbox, in ${work}, a clone made for this attempt: work only in that folder. ` +
-  `Push only with \`git push origin HEAD:refs/heads/${branch}\`, and name the branch to every forge command, as \`gh pr create --head ${branch}\`.`;
+  `Push only with \`git push origin HEAD:refs/heads/${branch}\`, in a call of its own, and name the branch to every forge command, as \`gh pr create --head ${branch}\`.`;

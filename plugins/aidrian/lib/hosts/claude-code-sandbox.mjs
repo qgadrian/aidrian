@@ -717,7 +717,7 @@ export const PLACEHOLDERS = Object.freeze([
 // What the session is told beside the project prompt: it works only in its attempt's clone, under the host's sandbox,
 // pushes its branch with a full refspec over the HTTPS URL its clone has, and names the branch to every forge command.
 export const sessionNote = ({ work, branch }) => `This session runs in Claude Code's sandbox, in ${work}, a clone made for this attempt: work only in that folder, and never ask to run a command outside the sandbox. ` +
-  `Push only with \`git push origin HEAD:refs/heads/${branch}\`, and name the branch to every forge command, as \`gh pr create --head ${branch}\`. ` +
+  `Push only with \`git push origin HEAD:refs/heads/${branch}\`, in a call of its own, and name the branch to every forge command, as \`gh pr create --head ${branch}\`. ` +
   'This session starts no other session and hands no continuation over: when its work ends, it records its result.';
 
 // Why the host would not carry on by itself after a usage limit, or null: a limit is account-wide, so it stops a project

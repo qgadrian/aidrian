@@ -492,7 +492,9 @@ A launcher, a program on PATH that sets something up and ends in `exec claude "$
 each name, `function claude-work`, whose first run is `command claude-work "$@"` with `AIDRIAN_SHELL_PID` set, and an
 alias check that accepts an alias whose value starts with `claude-work` or `claude`. Every later hop opens with
 `command claude attach <id>`, in the shell's own environment, never through the launcher. A name is 1 to 32 letters,
-digits, `_`, or `-`, starting with a letter. The command refuses a host's own program, such as `claude`; every reserved
+digits, `_`, or `-`, starting with a letter. The command refuses a host's own program, such as `claude`; a shell's own
+name, `sh`, `bash`, `zsh`, `dash`, `ksh`, `mksh`, `fish`, `tcsh`, or `csh`, since its function would run the host's
+attach flow each time that shell exits; every reserved
 word and builtin of zsh and bash, such as `if`, `local`, `trap`, `setopt`, or `mapfile`, from a fixed list, so no shell
 runs at install; a function a shell runs by its name as a hook, such as `preexec`, `precmd`, `chpwd`, or
 `command_not_found_handler`, and any name that starts with `TRAP` or `zle-`; a core tool the block runs or a function

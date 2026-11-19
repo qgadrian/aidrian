@@ -11,7 +11,8 @@
 // in `exec` of the host's program. A name is untrusted text that becomes shell code, so wrapProblem checks it on every
 // path to the block: 1 to 32 letters, digits, `_`, or `-`, starting with a letter; not a host's own program; not in
 // WRAP_REFUSED, every reserved word and builtin of zsh and bash, the functions a shell runs as hooks, and core tools;
-// not starting with `TRAP` or `zle-`; at most MAX_WRAPS in one block. The block records its names on its third line,
+// not in WRAP_REFUSED_SHELLS, a shell's own name, such as `zsh`; not starting with `TRAP` or `zle-`; at most MAX_WRAPS
+// in one block. The block records its names on its third line,
 // `# Wrapped launchers: <names>`, sorted and space-separated, so a re-install keeps them and a later `--wrap` adds to them.
 // A shell function of a wrapped name that the shell already has when it reads the block, other than the block's own
 // wrapper, stays: no fixed list knows the hooks a Human's setup defines, so the block checks (wrapGuard).
@@ -72,11 +73,14 @@ export const WRAP_REFUSED = Object.freeze([...new Set([
 ])]);
 // The prefixes of the names zsh runs as hooks too: a trap, `TRAPZERR`, and a widget of the line editor, `zle-line-init`.
 export const WRAP_REFUSED_PREFIX = /^(?:TRAP|zle-)/u;
+// The shells' own names: a function of such a name would run the host's attach flow each time that shell exits.
+export const WRAP_REFUSED_SHELLS = Object.freeze(['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'fish', 'tcsh', 'csh']);
 
 // Why `name` cannot be a wrapped launcher, or null when it can. The reason never repeats the name.
 export function wrapProblem(name) {
   if (typeof name !== 'string' || !WRAP_SHAPE.test(name)) return 'is not 1 to 32 letters, digits, `_`, or `-` that start with a letter';
   if (HOSTS.map(replacer).some((replace) => replace?.program === name)) return 'is a host\'s own program, which the block already wraps';
+  if (WRAP_REFUSED_SHELLS.includes(name)) return 'is a shell\'s own name, which the block would replace with a function that runs the host\'s attach flow after that shell exits';
   if (WRAP_REFUSED.includes(name) || WRAP_REFUSED_PREFIX.test(name)) return 'is a reserved word or builtin of zsh or bash, a function a shell runs as a hook, or a core tool the block runs or a function of that name would shadow';
   return null;
 }

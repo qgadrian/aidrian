@@ -12,7 +12,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { HOSTS } from '../plugins/aidrian/lib/hosts/index.mjs';
-import { BEGIN, commands, END, functionLines, install, rcBlock, WRAP_REFUSED, wrapProblem, wrapsOf } from '../plugins/aidrian/lib/shell-init.mjs';
+import { BEGIN, commands, END, functionLines, install, rcBlock, WRAP_REFUSED, WRAP_REFUSED_SHELLS, wrapProblem, wrapsOf } from '../plugins/aidrian/lib/shell-init.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
 const START = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-session-start.mjs');
@@ -379,6 +379,28 @@ test('wrapProblem refuses the functions a shell runs as hooks, any TRAP or zle- 
   const builtins = ['shift', 'trap', 'setopt', 'mapfile', 'readarray', 'compopt', 'coproc', 'shopt'];
   for (const name of [...hooks, ...prefixed, ...builtins]) assert.notEqual(wrapProblem(name), null, name);
   for (const name of ['claude-work', 'trapper', 'Trap', 'zlestuff']) assert.equal(wrapProblem(name), null, `${name}: only the exact prefixes are refused`);
+});
+
+test('a shell\'s own name is refused as a wrapped launcher, and --install --wrap zsh exits 2 and writes nothing', (t) => {
+  const shells = ['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'fish', 'tcsh', 'csh'];
+  assert.deepEqual([...WRAP_REFUSED_SHELLS].sort(), [...shells].sort());
+  for (const name of shells) assert.match(wrapProblem(name) ?? '', /shell's own name/u, name);
+  for (const name of ['zsh-work', 'bashful', 'shx']) assert.equal(wrapProblem(name), null, `${name}: only the exact names are refused`);
+
+  const home = folder(t, 'aidrian-home-');
+  const rc = startup(home, 'zsh');
+  writeFileSync(rc, 'alias g=git\n');
+  for (const name of shells) {
+    const result = shellInit(home, 'zsh', '--install', '--wrap', 'cc', '--wrap', name);
+    assert.equal(result.status, 2, `${name}: ${result.stdout}`);
+    assert.match(result.stderr, /^usage: aidrian shell-init /u);
+    assert.match(result.stderr, /--wrap name 2 of 2 is a shell's own name/u, name);
+    assert.doesNotMatch(result.stderr.split('\n').slice(1).join('\n'), new RegExp(`\\b${name}\\b`, 'u'), `${name} is never echoed`);
+    assert.equal(read(rc), 'alias g=git\n', `${name}: byte for byte`);
+  }
+  const empty = folder(t, 'aidrian-home-');
+  assert.equal(shellInit(empty, 'zsh', '--install', '--wrap', 'zsh').status, 2);
+  assert.equal(existsSync(startup(empty, 'zsh')), false, 'no startup file is created');
 });
 
 // The words `shell` names as its own builtins and reserved words, zsh with every module it can load, run with an

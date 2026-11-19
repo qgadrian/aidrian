@@ -166,6 +166,11 @@ export default {
     // leaves such a child out (lib/dispatch-rows.mjs blockingChildren). `taskTypes` are its `background_tasks` types of an
     // agent; a shell task is none. docs/providers/claude-code.md#background-agents.
     wakesOnChildReport: { taskTypes: ['subagent', 'local_agent', 'remote_agent'] },
+    // A background shell's end reaches the subagent that started it as a task notification, and starts it again after it
+    // ended its turn: 280 such wakes in subagent transcripts of 2.1.316 and later, each right after an end_turn. The stop
+    // hook lets a handoff file wait for the stop after such a wake (hooks.md#delivery-check); a shell that never ends, such
+    // as a dev server, wakes it never. `taskTypes` are its `background_tasks` types of a shell.
+    wakesOnTaskEnd: { taskTypes: ['shell'] },
     // Every MCP call reaches its hooks with no step by a person.
     trackerGuard: { verified: 'live', evidence: 'The PostToolUse payload of a real get_workspace call on Claude Code 2.1.318', unguardedRoutes: [] },
     // How a session goes on after its handoff (session.handoff.continue). A clear keeps the same process, so the hook's parent,

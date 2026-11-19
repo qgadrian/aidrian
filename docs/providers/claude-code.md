@@ -124,6 +124,12 @@ it stops with no live background child. Each idle-with-children occurrence of 20
 shows the wake. The adapter declares it as `capabilities.wakesOnChildReport`, with the `background_tasks` types of an
 agent, and the stop hook leaves such a task out of the check. A background shell still counts.
 
+A background shell's end wakes the subagent too: the task notice arrives as a message and starts it again after it
+ended its turn. Subagent transcripts of 2.1.316 and later hold 280 such wakes, each right after the turn ended. The
+adapter declares it as `capabilities.wakesOnTaskEnd`, and the stop hook lets a handoff file wait for the stop after
+such a wake ([delivery check](../hooks.md#delivery-check)). The background check still sends the agent back for a
+shell, since one that never ends, such as a dev server, never wakes it.
+
 Checked by reading the transcripts of four such subagents and Claude Code 2.1.328's launch code. Not verified: a
 session with the fork-subagent mode turned off.
 

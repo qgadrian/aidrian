@@ -10,7 +10,7 @@ import { CHILD_SEND_BACKS } from './child-send-backs.mjs';
 import { checkDelivery } from './delivery-check.mjs';
 import { stamp } from './dispatch-log.mjs';
 import { fileBytes } from './fs.mjs';
-import { detectHost, sessionIdentity, wakesOnReport } from './hosts/index.mjs';
+import { detectHost, sessionIdentity, wakesOnEnd, wakesOnReport } from './hosts/index.mjs';
 import { loadKnowledge } from './knowledge.mjs';
 import {
   aggregateUsage, estimateCostUsd, filesRead, partOf, readText, sessionActions, subagentTranscripts, sumTokens, launchedTaskIds,
@@ -87,6 +87,14 @@ export function runningChildren(input) {
 export function blockingChildren(input, children, { env = process.env } = {}) {
   const host = detectHost({ env, input });
   return children.filter((child) => !wakesOnReport(host, child));
+}
+
+// The `children` (runningChildren) whose end starts the subagent again once it is idle (hosts wakesOnEnd): while one runs,
+// a later stop is sure, so the stop hook lets a handoff file wait for it. A background shell counts on Claude Code, though
+// the background check still sends the agent back for one.
+export function wakingChildren(input, children, { env = process.env } = {}) {
+  const host = detectHost({ env, input });
+  return children.filter((child) => wakesOnEnd(host, child));
 }
 
 // Which subagent stopped, as its `stop` row names it: { session_id, agent_id, agent_type }.

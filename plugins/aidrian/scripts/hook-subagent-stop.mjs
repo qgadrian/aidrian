@@ -4,11 +4,12 @@
 // for that agent type (lib/lesson-signals.mjs). A handoff file its brief asked it to write and it did not (unwrittenHandoffs)
 // is the record its dispatcher reads, since a handback can reach another session or none: the hook writes the agent's
 // final report there (deliverHandoffs), and sends it back for the file only when it has no report to write. While a
-// background task of its own still runs and a later stop is sure, the file is not due: the background check sends the
-// agent back, or the host wakes it with that task's report, and the delivery check neither sends it back for the file nor
-// records a lesson. A stop let end with a task running that the host does not wake it for, as when the cap is reached with
-// a shell running, may be its last, so the file is written then. It writes only on a stop it lets end: a stop sent back,
-// as for another missing file, has a report the agent will correct, and the corrected one is what the file must hold.
+// background task of its own still runs and a later stop is sure, the file is not due: the host wakes the agent when that
+// task ends (wakingChildren: on Claude Code a shell's end notice or an agent's report), or the background check sends it
+// back, and the delivery check neither sends it back for the file nor records a lesson. A stop let end with only tasks the
+// host does not wake it for may be its last, so the file is written then. It writes only on a stop it lets end: a stop
+// sent back, as for another missing file, has a report the agent will correct, and the corrected one is what the file
+// must hold.
 // The background check: no background shell or agent it started may still run (runningChildren). A subagent that ends its
 // turn goes idle: a shell task's end notice wakes it, but on a host that refuses a subagent task's handback to an idle
 // agent, the work it waits on stalls until something else wakes it. A host that delivers that report and wakes the agent
@@ -28,7 +29,7 @@
 import { CHILD_SEND_BACKS, childSendBacks, forgetChildSendBacks, storeChildSendBacks } from '../lib/child-send-backs.mjs';
 import { loadConfig } from '../lib/config.mjs';
 import { appendEvent } from '../lib/dispatch-log.mjs';
-import { blockingChildren, checkDelivery, runningChildren, sendsBack, stopAgent, stopRow, undelivered } from '../lib/dispatch-rows.mjs';
+import { blockingChildren, checkDelivery, runningChildren, sendsBack, stopAgent, stopRow, undelivered, wakingChildren } from '../lib/dispatch-rows.mjs';
 import { deliverHandoffs, finalReport } from '../lib/delivery-check.mjs';
 import { claimProblem, passClaims, readCheckRuns, unsupportedClaims } from '../lib/check-runs.mjs';
 import { deny, runHook } from '../lib/hook-io.mjs';
@@ -109,10 +110,10 @@ await runHook((input) => {
   const made = children.length ? childSendBacks(input) : 0;
   if (!children.length) forgetChildSendBacks(input);
   const forChildren = childrenSendBack(input, children, made);
-  // A handoff waits for a later stop only when one is sure to come: this stop is sent back for its tasks, or each task
-  // that runs is one whose report the host wakes the agent with. A stop the cap lets end with a shell still running, or
-  // any task on a host that wakes for none, may be its last: its handoff is written now.
-  const running = tasks.length > 0 && (forChildren || !children.length);
+  // A handoff waits for a later stop only when one is sure to come, decided apart from the background check's filter:
+  // a running task whose end wakes the agent (wakingChildren), or this stop sent back for its tasks. With none, as for a
+  // task on a host that wakes the agent for none, this stop may be its last: its handoff is written now.
+  const running = wakingChildren(input, tasks).length > 0 || (tasks.length > 0 && forChildren);
   // The send-back is decided on the delivery as it would be once the handoff files are written, and they are written
   // only when the stop ends.
   let delivery = deliverHandoffs(input, checked, { running, write: false });

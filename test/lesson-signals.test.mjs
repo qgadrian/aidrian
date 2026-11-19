@@ -265,9 +265,10 @@ test('a stop sent back for a running background task files no delivery lesson fo
   assert.deepEqual([...all(), ...plugin()].map((lesson) => lesson.key), []);
 });
 
-// A handoff deferred on every stop with a task running was never written when the background check's cap let a stop end
-// with a shell still running: the host does not wake the agent for that shell, so no later stop came to write it.
-test('a stop the cap lets end with a background shell running writes the handoff; one sent back for the shell does not', (t) => {
+// The handoff waits for the stop after a wake, decided apart from the background check: on Claude Code a shell's end
+// notice wakes an idle subagent as an agent's report does (280 such wakes in subagent transcripts of 2.1.316 and later).
+// A handoff written at the cap stop while either still ran held a report written before that task's result.
+test('a stop the cap lets end with a shell and an agent running leaves the handoff to the stop after the wake; a host that wakes for none writes it', (t) => {
   const { dir, hook } = project(t);
   const file = path.join(stateDir(projectAt(dir)), 'dispatch', 'docs-S1-fixer.json');
   const transcript = path.join(dir, 'agent-f1.jsonl');
@@ -275,27 +276,28 @@ test('a stop the cap lets end with a background shell running writes the handoff
     JSON.stringify({ type: 'user', message: { role: 'user', content: `Push the fix. Write your machine handoff to ${file}.` } }),
     JSON.stringify({ type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'git push', run_in_background: true } }] } }),
     JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'Command running in background with ID: bpush0001.' }] }, toolUseResult: { stdout: '', stderr: '', backgroundTaskId: 'bpush0001' } }),
+    JSON.stringify({ type: 'assistant', message: { id: 'm2', content: [{ type: 'tool_use', id: 't2', name: 'Agent', input: { subagent_type: 'Explore', prompt: 'x' } }] } }),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't2', content: 'launched' }] }, toolUseResult: { status: 'async_launched', agentId: 'achild001' } }),
   ].join('\n'));
-  const shell = [{ id: 'bpush0001', type: 'shell', status: 'running', description: 'Push the fix' }];
-  const stop = (fields) => hook('hook-subagent-stop.mjs', {
+  const shell = { id: 'bpush0001', type: 'shell', status: 'running', description: 'Push the fix' };
+  const agent = { id: 'achild001', type: 'local_agent', status: 'running', description: 'Explore' };
+  const stop = (fields, env = { CLAUDECODE: '1' }) => hook('hook-subagent-stop.mjs', {
     session_id: 's1', agent_id: 'f1', agent_type: 'aidrian:fixer', agent_transcript_path: transcript,
-    last_assistant_message: '{"status":"done","role":"fixer"}', background_tasks: shell, ...fields,
-  }, { CLAUDECODE: '1' });
+    last_assistant_message: '{"status":"done","role":"fixer"}', background_tasks: [shell, agent], ...fields,
+  }, env);
   const sent = [stop({ stop_hook_active: false }), ...Array.from({ length: CHILD_SEND_BACKS - 1 }, () => stop({ stop_hook_active: true }))];
   assert.deepEqual(sent.map((round) => round.status), Array(CHILD_SEND_BACKS).fill(2), 'each stop under the cap is sent back for the shell');
-  assert.ok(sent.every((round) => !/machine handoff/u.test(round.stderr)), 'the handoff is no send-back reason while the shell is waited on');
-  assert.ok(!existsSync(file), 'a stop sent back writes nothing');
+  assert.ok(sent.every((round) => !/machine handoff/u.test(round.stderr)), 'the handoff is no send-back reason while the tasks run');
   assert.equal(stop({ stop_hook_active: true }).status, 0, 'the cap lets the stop end');
-  assert.ok(existsSync(file), 'the stop the cap lets end writes the handoff: nothing wakes the agent for the shell');
-  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { status: 'done', role: 'fixer' });
+  assert.ok(!existsSync(file), 'the cap stop leaves the handoff to the stop after the wake: the shell\'s end and the agent\'s report each wake the agent');
+  assert.equal(stop({ stop_hook_active: true, background_tasks: [shell] }).status, 0);
+  assert.ok(!existsSync(file), 'a shell alone still wakes the agent when it ends');
+  assert.equal(stop({ stop_hook_active: false, background_tasks: [] }).status, 0, 'the stop after the wake ends');
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { status: 'done', role: 'fixer' }, 'the stop after the wake writes the handoff');
 
-  // A host that wakes the agent for no task, and sends no stop_hook_active, never sends it back: its stop writes too.
+  // A host that wakes the agent for no task, and sends no stop_hook_active, never sends it back: its stop is its last.
   rmSync(file);
-  const agent = [{ id: 'bpush0001', type: 'local_agent', status: 'running' }];
-  assert.equal(hook('hook-subagent-stop.mjs', {
-    session_id: 's1', agent_id: 'f1', agent_type: 'aidrian:fixer', agent_transcript_path: transcript,
-    last_assistant_message: '{"status":"done","role":"fixer"}', background_tasks: agent,
-  }).status, 0);
+  assert.equal(stop({}, {}).status, 0);
   assert.ok(existsSync(file), 'a task nothing wakes the agent for leaves no later stop to write the handoff');
 });
 

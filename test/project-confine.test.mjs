@@ -22,7 +22,7 @@ import { readOwnText, readSmallJson, writeOwnText } from '../plugins/aidrian/lib
 import { HOOK_COUNTS_AGE, sweepHookCounts } from '../plugins/aidrian/lib/lesson-signals.mjs';
 import { sessionLengthMarker } from '../plugins/aidrian/lib/session-length.mjs';
 import { refusalMarker } from '../plugins/aidrian/lib/tracker-guard.mjs';
-import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
+import claudeCode, { READ_TOOLS } from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import { accessProblem, confineDomains, managedPlists, managedSettings } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { fileReadOf } from '../plugins/aidrian/lib/hosts/index.mjs';
@@ -742,4 +742,9 @@ test('the counts folder sweeps entries a session that never ended left, past the
   writeFileSync(path.join(root, 'aidrian-session-length-now'), '{}');
   sweepHookCounts({ dir: root });
   assert.deepEqual(readdirSync(root), ['aidrian-session-length-now']);
+});
+
+test('the host`s read tools are pinned: a read tool the host adds fails this until the read refusal covers it', () => {
+  assert.deepEqual([...READ_TOOLS], ['Read', 'Grep', 'Glob', 'NotebookRead', 'LS']);
+  assert.deepEqual(claudeCode.fileReadTools, READ_TOOLS);
 });

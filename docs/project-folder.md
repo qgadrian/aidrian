@@ -176,8 +176,9 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
   [sign-off store](review.md#merge-trust), `<owner>/<name>/<PR>.json`, owner-only, which only `aidrian pr signoff` in a
   session the Human attends writes,
   and `handoff-terminals/`, the record a shell reads to open the session a handoff replaced its own with, owner-only, valid
-  60 seconds, deleted when the shell reads it, and `follows-<shell pid>`, the session the shell's terminal shows, deleted
-  when that program exits ([Replacing the terminal](handoff.md#replacing-the-terminal)), and
+  60 seconds, deleted when the shell reads it, and `follows-<shell pid>`, the session the shell's terminal shows,
+  by its id or the hex of the name it was opened by, deleted when that program exits
+  ([Replacing the terminal](handoff.md#replacing-the-terminal)), and
   `session-origins/`, the state folders each session started with, which the session-folder guard holds for its
   subagents wherever they work ([hooks.md](hooks.md#agent-gates)), owner-only, kept 30 days.
 - The project folder's `sessions/<session id>/`, apart from the state root's `sessions/`, holds the caches of

@@ -84,32 +84,37 @@ async function recordCheckRuns(input, command) {
   if (folder) appendCheckRuns(folder, rows);
 }
 
-// Records the link of `command`, run from `cwd`, whose output was `output`: for the `aidrian worktree new` it ran as its
-// one printing command that printed a created result, the worktree git now lists for its branch, in the main checkout
-// of the project of the folder that command ran in (session-links-writer.mjs worktreeBranches), with origin as that
-// folder's checkout reads it, filed in that project's session folder. Every step after the worktree reader loads,
-// finding the project, its main checkout, origin, the list, and the session folder, runs inside LINKS_BUDGET_MS: each
-// git read is stopped at what is left of it, by SIGKILL, and none starts once it is spent.
+// Records the links of `command`, run from `cwd`, whose output was `output`: for each `aidrian worktree new` of the line
+// whose own result, at its place among the line's results, says it created its worktree (session-links-writer.mjs
+// createdWorktrees), the worktree git now lists for its branch, in the main checkout of the project of the folder that
+// command ran in, with origin as that folder's checkout reads it, filed in that project's session folder. Every step
+// after the worktree reader loads, finding each project, its main checkout, origin, the list, and the session folder,
+// runs inside LINKS_BUDGET_MS, the calls of one line together: each git read, the tracked-file check of project
+// discovery's local file too, is stopped at what is left of it, by SIGKILL, and none starts once it is spent.
 async function recordWorktrees(command, cwd, output, { findProject, folderOf }) {
   if (!/\bworktree\b/u.test(command)) return;
   const links = await import('../lib/session-links-writer.mjs');
-  const created = links.createdWorktrees(output);
-  const [called] = created.length ? links.worktreeBranches(command, cwd) : [];
-  if (!called) return;
+  const created = links.createdWorktrees(command, cwd, output);
+  if (created.length === 0) return;
   const [{ mainRoot }, { listWorktrees }, { canonical }] = await Promise.all([
     import('../lib/git.mjs'), import('../lib/worktree.mjs'), import('../lib/rules/main-checkout.mjs'),
   ]);
   const until = Date.now() + LINKS_BUDGET_MS;
   const left = () => until - Date.now();
   const git = () => ({ timeout: Math.max(1, left()), killSignal: 'SIGKILL' });
-  const project = findProject(called.folder, git);
-  if (!project || left() <= 0) return;
-  const main = mainRoot(project.root, git());
-  if (!main || left() <= 0) return;
-  const origin = links.originRepository(called.folder, git());
   const list = (dir) => listWorktrees(dir, { timeoutMs: Math.max(1, left()), killSignal: 'SIGKILL' });
   const same = (listed, printed) => listed === printed || canonical(listed) === canonical(printed);
-  const rows = left() > 0 ? links.worktreeRows({ branches: [called.branch], created, main, origin, list, same }) : [];
-  const folder = rows.length && left() > 0 ? folderOf(project, git) : null;
-  if (folder) links.recordLinks(folder, rows);
+  // The calls by the folder they ran in, in the line's order.
+  const byFolder = Map.groupBy(created, ({ folder }) => folder);
+  for (const [ran, made] of byFolder) {
+    if (left() <= 0) return;
+    const project = findProject(ran, git);
+    if (!project || left() <= 0) continue;
+    const main = mainRoot(project.root, git());
+    if (!main || left() <= 0) continue;
+    const origin = links.originRepository(ran, git());
+    const rows = left() > 0 ? links.worktreeRows({ branches: made.map(({ branch }) => branch), created: made, main, origin, list, same }) : [];
+    const folder = rows.length && left() > 0 ? folderOf(project, git) : null;
+    if (folder) links.recordLinks(folder, rows);
+  }
 }

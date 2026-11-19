@@ -196,15 +196,18 @@ What each rule matches:
   This rule reads `sh -c` bodies and heredocs or here-strings fed to a shell, as well as command substitutions.
 - Kill by name: `pkill`, `killall`, `pgrep --signal`, `kill` fed by `pgrep` or `ps`, and `kill -- -1`. `kill <pid>` stays allowed.
   The deny of a plain `pkill` or `killall` names the `pgrep` that lists what it would stop, such as `pgrep -f 'next dev'`.
-- Command-line listing: `pgrep -fl`, `pgrep -a`, and `ps` without a format free of `args`, `command`, and `cmd`.
+- Command-line listing: `pgrep -fl`, `pgrep -a`, and `ps` without a format free of `args`, `command`, `cmd`, and `comm`.
+  On macOS `comm` is the full executable path, and for a process that sets its own title that title, arguments and all;
+  `ucomm`, the accounting name, is neither. On Linux `ucomm` and `pgrep -l` show the task name,
+  which a process can set itself, at most 15 bytes.
   A listing on the command line itself, or in a substitution of it, whose output reaches only `/dev/null` or a counter
   (`wc`, `grep -c`, `grep -q`) runs: `ps -p <pid> >/dev/null` and `ps aux | grep -c x` print no command line.
   Between the listing and the counter only `grep`, `head`, `tail`, `sort`, `uniq`, and `cut` may stand, with no operand
   but grep's pattern, no long option, no `sort -o`, and no word that may expand, an option value included.
   Inside `sh -c`, `eval`, `env -S`, or xargs a listing never passes.
   The deny starts with the command to run instead, the whole line with each listing replaced:
-  `pgrep -fl x` and `ps aux | grep x` become `pgrep -d, -f x | xargs -r ps -o pid=,ppid=,etime=,comm= -p`,
-  and a `ps` format trades `args`, `command`, and `cmd` for `comm`.
+  `pgrep -fl x` and `ps aux | grep x` become `pgrep -d, -f x | xargs -r ps -o pid=,ppid=,etime=,ucomm= -p`,
+  and a `ps` format trades `args`, `command`, `cmd`, and `comm` for `ucomm`.
 - Counting grep in `&&`: such as `grep -c x log && npm test`. The deny starts with the line to run instead,
   each such count wrapped as `{ grep -c x log || true; }`, which keeps the count and the chain.
 - Neither rule rewrites a segment that starts with a shell word (`if`, `while`, `!`), opens or closes a group or a `case`
@@ -1591,14 +1594,29 @@ The same hook records the worktree a session creates, in a second file, `<state>
 one row `{ at, kind: "worktree", host, path, branch, cwd }` for each worktree an `aidrian worktree new <branch>` of a
 shell call created. It reads the command with `lib/shell-lex.mjs` (`lib/session-links-writer.mjs`), and a word the
 shell fills in, a branch or an option it does not know that starts with `-`, or `--plan`, records nothing. A row also
-needs the command's own result in the call's output: the JSON line `aidrian worktree new` prints with
-`status: "created"`, that branch, and an absolute `worktree_path`, read from the output's last 64 KB. The command must
-be the line's one printing command, read as the ledger reads a `gh pr create` (`printsAlone` in
-`lib/session-prs.mjs`): only bare assignments and a `cd` the walk leaves out may come before it, and nothing after it,
-so the output is its result alone. So a call that was skipped, as after `false &&`, refused, as for a branch already
-checked out, or printed nothing records nothing, and neither does one beside another command, such as
-`echo '<saved result>'; aidrian worktree new <branch>` or `aidrian worktree new <branch> && npm test`, or a line with
-two of them. Within that rule an existing worktree is not recorded as one the session made, but the output is what the
+needs the command's own result in the call's output: the one JSON line `aidrian worktree new` prints, whatever happens,
+here with `status: "created"`, that branch, and an absolute `worktree_path`, read from the output's first 64 KB. Each
+result is matched to its own call by its place (`worktreeCalls` and `createdWorktrees`): the line must open with bare
+assignments and `cd`s the walk leaves out, joined by `&&`, `;`, or a newline, then one or more calls joined by `&&`, so
+nothing prints before the first call, each call runs only once the one before it succeeded, and the nth JSON line with a
+`status` is the nth call's.
+From the first call to the end of the line, every command is joined to the next by `&&`, a pipe allowed inside a
+command after the calls, and only a `;` or a newline may end the line, so no command after a call runs unless that
+call succeeded.
+What follows the last call may print anything, so `aidrian worktree new <branch> && npm test` records its worktree, and
+`aidrian worktree new <a> && aidrian worktree new <b>` records both, in order.
+A line with `;`, `||`, a newline, or a `&` after its first call records nothing, as
+`aidrian worktree new <branch> && npm test || cat <saved result>` would let a saved result take the place of a call
+that failed and printed nothing.
+Pairing stops at the first result that is neither created nor planned: that call failed, and no call after it ran.
+A call piped elsewhere or whose output is redirected records nothing, with any call after it, and so do a negated
+call and every call after a substitution other than a plain `cat`, whose error output the shell does not capture.
+So a call that was skipped, as after `false &&`, refused, as for a branch already checked out, or printed nothing
+records nothing, and neither does an echoed or replayed result, such as
+`echo '<saved result>'; aidrian worktree new <branch>` or `aidrian worktree new <branch>; cat <saved result>`.
+Claude Code runs `PostToolUse` only for a Bash call that succeeded, so there a worktree is recorded only when the whole
+line succeeded; on Codex, which runs it either way, a line that failed after its calls still records them.
+Within that rule an existing worktree is not recorded as one the session made, but the output is what the
 host hands the hook, which the model's own shell call shapes: a call made to print a forged result, such as a wrapper
 named `aidrian`, can still claim one. That is accepted for display data. Each command is looked up in the folder it ran
 in by the ledger's rule (`knownFolders`), which holds whether a host's payload names the folder the line started in or
@@ -1611,8 +1629,10 @@ holds in the main checkout records nothing. `host` and `path` are origin's repos
 `remote.origin.url` in the folder the command ran in, so an origin only that checkout's own config sets
 (`config.worktree`, `includeIf.onbranch`) is the one recorded, as the snapshot there reads its remotes; a
 `url.<base>.insteadOf` rewrite applies on neither side; both null with no origin. Every step of the links, finding the
-project, its main checkout, origin, the list, and the session folder, shares a 1-second budget, each git read stopped
-by SIGKILL at what is left, and runs after the ledger's row is written and apart from it, so a git that stalls neither
+project, its main checkout, origin, the list, and the session folder, for every call of the line together, shares a
+1-second budget, each git read stopped by SIGKILL at what is left, the check whether git tracks the main checkout's
+`.aidrian.local.json`, which finding a project makes when that file sets a machine switch or
+`review.productFeedback.auto`, among them, and runs after the ledger's row is written and apart from it, so a git that stalls neither
 passes the host's 5-second hook timeout nor loses the call's ledger row. Every field is checked as the reader checks it, and the row is filed under
 the payload's session id, so a subagent's call lands in its session's file. The command itself writes nothing, and its
 output and exit code are its own ([Session links](providers/adding-a-host.md#session-links) says why the hook and not

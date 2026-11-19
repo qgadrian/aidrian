@@ -12,7 +12,7 @@ import test, { after } from 'node:test';
 import { foldCase } from '../plugins/aidrian/lib/fs.mjs';
 import { noteFrom, openStore, readFrom, readHop, storeNames } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { keyOfBranch, lineage, linksOf, MAX_ANCESTORS, prefixList, rowReader, ticketOf } from '../plugins/aidrian/lib/session-links.mjs';
-import { createdWorktrees, isWorktreeRow, recordLinks, worktreeBranches, worktreeRows } from '../plugins/aidrian/lib/session-links-writer.mjs';
+import { createdWorktrees, isWorktreeRow, printedResults, recordLinks, worktreeCalls, worktreeRows } from '../plugins/aidrian/lib/session-links-writer.mjs';
 import { sessionFolder } from '../plugins/aidrian/lib/session-folder.mjs';
 import { remoteRepos } from '../plugins/aidrian/lib/session-prs.mjs';
 import { readRows } from '../plugins/aidrian/lib/session-rows.mjs';
@@ -331,27 +331,64 @@ test('a worktree row has exactly its six checked fields; the reader drops one th
   }
 });
 
-test('worktreeBranches reads aidrian worktree new through the shared lexer, with the folder each runs in', () => {
-  const branches = (command) => worktreeBranches(command, '/here').map(({ branch }) => branch);
-  assert.deepEqual(worktreeBranches('aidrian worktree new feat/x', '/here'), [{ branch: 'feat/x', folder: '/here' }]);
-  assert.deepEqual(worktreeBranches('cd /repo && aidrian worktree new --base origin/main feat/x --slug x --fetch', '/here'), [{ branch: 'feat/x', folder: path.resolve('/repo') }], 'the folder an absolute cd names, as this system resolves it');
+test('worktreeCalls reads aidrian worktree new through the shared lexer, with the folder each runs in and its place', () => {
+  const branches = (command) => worktreeCalls(command, '/here').map(({ branch }) => branch);
+  assert.deepEqual(worktreeCalls('aidrian worktree new feat/x', '/here'), [{ branch: 'feat/x', folder: '/here', at: 0 }]);
+  assert.deepEqual(worktreeCalls('cd /repo && aidrian worktree new --base origin/main feat/x --slug x --fetch', '/here'), [{ branch: 'feat/x', folder: path.resolve('/repo'), at: 0 }], 'the folder an absolute cd names, as this system resolves it');
   assert.deepEqual(branches('cd sub && aidrian worktree new feat/x'), [], 'a relative cd: the payload may name the folder the line started in or ended in');
-  assert.deepEqual(branches('aidrian worktree new feat/x && echo done'), [], 'not the line`s one printing command');
   assert.deepEqual(branches('node /p/plugins/aidrian/lib/cli.mjs worktree new feat/y --reuse-existing'), ['feat/y']);
   for (const command of ['aidrian worktree new "$B"', 'aidrian worktree new -x', 'aidrian worktree new feat/x --plan', 'aidrian worktree new --plan=1 feat/x',
     'aidrian worktree new', 'aidrian worktree new a b', 'aidrian worktree cleanup', 'echo aidrian worktree new feat/x', 'aidrian worktree new $(echo x)', 'aidrian worktree new a..b',
     'cd "$X" && aidrian worktree new feat/x']) {
     assert.deepEqual(branches(command), [], command);
   }
-  assert.deepEqual(worktreeBranches('aidrian worktree new feat/x', null), [], 'no folder to start from');
+  assert.deepEqual(worktreeCalls('aidrian worktree new feat/x', null), [], 'no folder to start from');
 });
 
-test('createdWorktrees reads the created results the command printed, and nothing else', () => {
-  const line = (fields) => JSON.stringify({ status: 'created', worktree_path: '/w/feat-x', branch: 'feat/x', ...fields });
-  assert.deepEqual(createdWorktrees(`noise\n${line({})}\n`), [{ branch: 'feat/x', path: '/w/feat-x' }]);
-  for (const output of [null, '', line({ status: 'planned' }), line({ status: 'blocked' }), line({ worktree_path: 'w/rel' }), line({ branch: 'a..b' }), `x ${line({})}`, '{"status":"created"']) {
-    assert.deepEqual(createdWorktrees(output), [], String(output));
+test('worktreeCalls takes the calls that open the line joined by &&, and what follows them may print', () => {
+  const calls = (command) => worktreeCalls(command, '/here').map(({ branch, at }) => [branch, at]);
+  assert.deepEqual(calls('aidrian worktree new feat/x && npm test'), [['feat/x', 0]]);
+  assert.deepEqual(calls('aidrian worktree new feat/x;'), [['feat/x', 0]], 'a trailing ; ends the line');
+  assert.deepEqual(calls('aidrian worktree new feat/a && aidrian worktree new feat/b && npm test'), [['feat/a', 0], ['feat/b', 1]]);
+  assert.deepEqual(calls('X=1; aidrian worktree new feat/x && echo done'), [['feat/x', 0]], 'a bare assignment prints nothing');
+  assert.deepEqual(calls('aidrian worktree new "$B" && aidrian worktree new feat/b'), [['feat/b', 1]], 'a call the shell fills in keeps its place');
+  assert.deepEqual(calls('aidrian worktree new feat/a 2>/dev/null && npm test'), [['feat/a', 0]], 'its error output may go elsewhere');
+  assert.deepEqual(calls('aidrian worktree new feat/x\n'), [['feat/x', 0]], 'a trailing newline ends the line');
+  assert.deepEqual(calls('aidrian worktree new feat/x && npm test | tee log'), [['feat/x', 0]], 'a pipe inside a command after the calls');
+  assert.deepEqual(calls('aidrian worktree new feat/a && aidrian worktree new feat/b | jq .'), [['feat/a', 0]], 'a call piped elsewhere is left out, the one before it kept');
+  assert.deepEqual(calls('aidrian worktree new feat/a && aidrian worktree new feat/b --base "$(git rev-parse HEAD)"'), [['feat/a', 0]],
+    'a substitution that may print its errors ends the calls before the command that holds it');
+  for (const command of [
+    // Something that may print comes first.
+    `echo '{"status":"created"}'; aidrian worktree new feat/x`, 'npm test && aidrian worktree new feat/x', 'false && aidrian worktree new feat/x',
+    // A call that may print nothing before something else prints.
+    'aidrian worktree new feat/x; cat saved.json', 'aidrian worktree new feat/x || cat saved.json', 'aidrian worktree new feat/x\ncat saved.json',
+    // From the first call on, anything but && lets a later command run after a call that failed.
+    'aidrian worktree new feat/a && aidrian worktree new feat/b; npm test', 'aidrian worktree new feat/x && npm test; cat saved.json',
+    'aidrian worktree new feat/x && npm test || cat saved.json', "aidrian worktree new feat/x <<'EOF'\nbody\nEOF\ncat saved.json",
+    // Its output goes elsewhere, or runs beside another command's.
+    'aidrian worktree new feat/x | jq .', 'aidrian worktree new feat/x > out.json && cat out.json', 'aidrian worktree new feat/x & cat saved.json',
+    'aidrian worktree new feat/x && npm test & cat saved.json', 'aidrian worktree new feat/x &', 'aidrian worktree new feat/x && npm test &',
+    '! aidrian worktree new feat/x && cat saved.json', 'X=1 || aidrian worktree new feat/x && cat saved.json',
+    // A substitution in the lead whose error output reaches the call's output.
+    'X=$(git rev-parse HEAD 2>&1); aidrian worktree new feat/x',
+  ]) assert.deepEqual(calls(command), [], command);
+});
+
+test('createdWorktrees pairs each call with the result at its place, and takes only a created one of its branch', () => {
+  const line = (branch, fields = {}) => JSON.stringify({ status: 'created', worktree_path: `/w/${branch}`, branch, ...fields });
+  const blocked = JSON.stringify({ status: 'blocked', phase: 'validate', reason: 'x' });
+  const made = (command, output) => createdWorktrees(command, '/here', output).map(({ branch, path: tree }) => [branch, tree]);
+  assert.deepEqual(made('aidrian worktree new a', `noise\n${line('a')}\n`), [['a', '/w/a']], 'a line of another shape is skipped');
+  assert.deepEqual(made('aidrian worktree new a && npm test', `${line('a')}\ntest output\n${line('b')}\n`), [['a', '/w/a']]);
+  assert.deepEqual(made('aidrian worktree new a && aidrian worktree new b', `${line('a')}\n${line('b')}\n`), [['a', '/w/a'], ['b', '/w/b']]);
+  assert.deepEqual(made('aidrian worktree new a && aidrian worktree new b', `${blocked}\n${line('b')}\n`), [], 'a refused call ran nothing after it, so no later place is a call`s');
+  assert.deepEqual(made('aidrian worktree new a && aidrian worktree new b', `${line('a')}\n${blocked}\n`), [['a', '/w/a']], 'a refusal after it leaves an earlier call`s result');
+  assert.deepEqual(made('aidrian worktree new a && aidrian worktree new b && cat saved', `${line('a')}\n${line('a')}\n${line('b')}\n`), [['a', '/w/a']], 'a result at another call`s place');
+  for (const output of [null, '', line('a', { status: 'planned' }), blocked, line('a', { worktree_path: 'w/rel' }), line('a..b'), `x ${line('a')}`, '{"status":"created"']) {
+    assert.deepEqual(made('aidrian worktree new a', output), [], String(output));
   }
+  assert.deepEqual(printedResults(`${'x'.repeat(70 * 1024)}\n${line('a')}`), [], 'read from the output`s first 64 KiB, where the results are');
 });
 
 test('worktreeRows writes a row only for a worktree the call created: git`s path, at the path the result names', () => {

@@ -14,14 +14,14 @@ import test from 'node:test';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { projectStore } from '../plugins/aidrian/lib/handoff-continue.mjs';
 import { ENDING_WINDOW, FOLLOW_AGE, noteEnding, noteFollow, openStore, readFollow, takeEnding } from '../plugins/aidrian/lib/handoff-markers.mjs';
-import { stopOwnBackground } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
+import { nameMatcher, stopOwnBackground } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
 import { HOSTS } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { terminalRecordWriteDenial } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { stopMarkerPath } from '../plugins/aidrian/lib/session-length.mjs';
 import { markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { shellInit } from '../plugins/aidrian/lib/shell-init.mjs';
-import { END_DELAY, endAfterTurn, endHost, NEXT_WINDOW, readFollows, terminalFolder, writeNext } from '../plugins/aidrian/lib/terminal-replace.mjs';
+import { END_DELAY, endAfterTurn, endHost, NAME_BYTES, NEXT_WINDOW, readFollows, terminalFolder, writeNext } from '../plugins/aidrian/lib/terminal-replace.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-stop.mjs');
@@ -369,6 +369,56 @@ test('the shell function\'s record says which shell shows a session, under its i
   assert.deepEqual(readFollows(BG_SESSION, { env, now }), { shell: 4242, id: 'abcd1234' });
 });
 
+test('a shell record that opened a session by a name says which shell shows it, when the host says that name opens it', (t) => {
+  const env = { ...process.env, XDG_STATE_HOME: folder(t, 'aidrian-xdg-') };
+  const records = terminalFolder(env);
+  mkdirSync(records, { recursive: true, mode: 0o700 });
+  const now = Date.now();
+  const seconds = Math.floor(now / 1000);
+  const hex = (text) => `~${Buffer.from(text, 'utf8').toString('hex')}`;
+  const asked = [];
+  const named = (target) => {
+    asked.push(target);
+    return target === 'staff-perm · 6' || target === 'staff';
+  };
+  writeFileSync(path.join(records, 'follows-4242'), `${hex('staff-perm · 6')} ${seconds}\n`);
+  assert.deepEqual(readFollows(BG_SESSION, { env, now, named }), { shell: 4242, id: BG_SESSION }, 'by its name: the session is its own id');
+  assert.deepEqual(asked, ['staff-perm · 6'], 'the name is decoded before it is asked');
+  assert.equal(readFollows(BG_SESSION, { env, now }), null, 'with no host to say what a name opens, a name opens nothing');
+  assert.equal(readFollows(BG_SESSION, { env, now, named: () => 'yes' }), null, 'only a true answer counts');
+
+  writeFileSync(path.join(records, 'follows-4242'), `${hex('staff-perm · 7')} ${seconds}\n`);
+  assert.equal(readFollows(BG_SESSION, { env, now, named }), null, 'another name');
+  writeFileSync(path.join(records, 'follows-4242'), `staff ${seconds}\n`);
+  assert.deepEqual(readFollows(BG_SESSION, { env, now, named }), { shell: 4242, id: BG_SESSION }, 'a name that reads as a plain id');
+
+  asked.length = 0;
+  writeFileSync(path.join(records, 'follows-4242'), `${BG_SESSION} ${seconds}\n`);
+  assert.deepEqual(readFollows(BG_SESSION, { env, now, named }), { shell: 4242, id: BG_SESSION });
+  assert.deepEqual(asked, [], 'a record its id matches asks the host nothing');
+  writeFileSync(path.join(records, 'follows-4242'), `${hex('staff-perm · 6')} ${seconds - FOLLOW_AGE / 1000 - 120}\n`);
+  assert.equal(readFollows(BG_SESSION, { env, now, named }), null, 'past FOLLOW_AGE');
+  assert.deepEqual(asked, [], 'a stale record asks the host nothing');
+
+  writeFileSync(path.join(records, 'follows-4242'), `${hex('staff-perm · 6')} ${seconds}\n`);
+  writeFileSync(path.join(records, 'follows-4343'), `${hex('staff-perm · 6')} ${seconds - 30}\n`);
+  assert.deepEqual(readFollows(BG_SESSION, { env, now, named, live: (shell) => shell !== 4242 }), { shell: 4343, id: BG_SESSION }, 'a newer record whose shell runs no client hides no live one');
+  rmSync(path.join(records, 'follows-4343'));
+
+  for (const [why, text] of [
+    ['an odd count of hex digits', `~abc ${seconds}\n`],
+    ['capital hex digits', `~4A4B ${seconds}\n`],
+    ['no hex at all', `~ ${seconds}\n`],
+    ['more than NAME_BYTES bytes', `${hex('x'.repeat(NAME_BYTES + 1))} ${seconds}\n`],
+    ['a name typed as it is', `staff-perm · 6 ${seconds}\n`],
+  ]) {
+    writeFileSync(path.join(records, 'follows-4242'), text);
+    assert.equal(readFollows(BG_SESSION, { env, now, named: () => true }), null, why);
+  }
+  writeFileSync(path.join(records, 'follows-4242'), `${hex('x'.repeat(NAME_BYTES))} ${seconds}\n`);
+  assert.deepEqual(readFollows(BG_SESSION, { env, now, named: () => true }), { shell: 4242, id: BG_SESSION }, 'NAME_BYTES bytes');
+});
+
 test('the shell function records the session it opens by a plain id, typed or from a record, while that program runs', { skip: !ZSH }, (t) => {
   for (const shell of ['zsh', ...(BASH ? ['bash'] : [])]) {
     const typed = inShell(t, { shell, script: 'claude attach abcd1234; echo rc=$?' });
@@ -397,10 +447,25 @@ test('the shell function records the session it opens by a plain id, typed or fr
     assert.deepEqual(open.follows, ['abcd1234'], `${shell}: written in a folder others could write`);
     assert.equal((statSync(open.records).mode & 0o777), 0o700, `${shell}: and that folder is made the user's alone first`);
 
-    for (const script of ['claude attach "ab;cd"', 'claude attach \'harness · 2\'', 'claude agents', 'set -eu; claude attach']) {
+    for (const script of ['claude agents', 'set -eu; claude attach', 'set -eu; claude attach ""', `claude attach '${'\u00b7'.repeat(NAME_BYTES / 2 + 1)}'`]) {
       const plain = inShell(t, { shell, script });
       assert.equal(plain.calls.length, 1, `${shell}: ${script}: ${plain.result.stderr}`);
       assert.deepEqual(plain.follows, [''], `${shell}: ${script}`);
+    }
+  }
+});
+
+test('the shell function records a session it opens by a name, as the hex of its bytes, under set -eu too', { skip: !ZSH }, (t) => {
+  const hex = (text) => `~${Buffer.from(text, 'utf8').toString('hex')}`;
+  for (const shell of ['zsh', ...(BASH ? ['bash'] : [])]) {
+    // NAME_BYTES bytes in half as many characters: the cap counts bytes.
+    for (const name of ['staff-perm · 6', 'ab;cd $(exit 3) `false` \'q\' "d" *', '\u00b7'.repeat(NAME_BYTES / 2)]) {
+      const quoted = `'${name.replaceAll('\'', '\'\\\'\'')}'`;
+      const typed = inShell(t, { shell, script: `set -eu; claude attach ${quoted} || echo rc=$?` });
+      assert.deepEqual(typed.calls, [`${typed.shell} attach ${name}`], `${shell}: ${name}: ${typed.result.stderr}`);
+      assert.deepEqual(typed.follows, [hex(name)], `${shell}: ${name}`);
+      assert.match(typed.result.stdout, /rc=5$/mu, `${shell}: ${name}: the exit code stays the program's`);
+      assert.equal(existsSync(path.join(typed.records, `follows-${typed.shell}`)), false, `${shell}: ${name}: deleted once the program exits`);
     }
   }
 });
@@ -481,6 +546,74 @@ test('the helper ends a background session through the host\'s own stop, and the
   assert.deepEqual(stop('abcd1234', NEXT_SESSION), { ok: false, stops: [] }, 'a session that is not the id\'s');
   assert.deepEqual(stop('session-1', 'session-1'), { ok: false, stops: [] }, 'an interactive session is never stopped this way');
   assert.deepEqual(stop('abcd1234', BG_SESSION, [...listing, { kind: 'background', id: 'abcd1234', sessionId: BG_SESSION }]), { ok: false, stops: [] }, 'two that fit are none');
+});
+
+test('Claude Code\'s adapter says a name opens a session only when it is its whole name, and no other row\'s name or any id holds it', () => {
+  const listing = [
+    { kind: 'background', id: 'abcd1234', sessionId: BG_SESSION, name: 'staff-perm · 6', startedAt: 1 },
+    { kind: 'background', id: 'efgh5678', sessionId: NEXT_SESSION, name: 'staff-perm · 7', startedAt: 2 },
+    { kind: 'background', id: 'ijkl9012', sessionId: 'ijkl9012-0000', name: 'widget build', startedAt: 3 },
+    { kind: 'interactive', sessionId: 'session-1', name: 'deploy' },
+  ];
+  const lists = [];
+  const matcher = (session, list = listing, result = {}) => nameMatcher({ session, env: {}, resolve: () => '/bin/claude', run: (command, args) => {
+    lists.push(args);
+    return { status: 0, stdout: JSON.stringify(list), ...result };
+  } });
+  const own = matcher(BG_SESSION);
+  assert.deepEqual(lists, [['agents', '--json']], 'one read of the listing');
+  assert.equal(own('staff-perm · 6'), true, 'its exact name, which no other row\'s name holds');
+  assert.equal(own('staff-perm'), false, 'a part of its name');
+  assert.equal(own('perm · 6'), false, 'another part');
+  assert.equal(own('Staff-perm · 6'), false, 'case and all');
+  assert.equal(own('staff-perm · 7'), false, 'another session\'s name');
+  assert.equal(own(''), false);
+  assert.equal(own(undefined), false);
+  assert.equal(lists.length, 1, 'each test reads nothing more');
+  assert.equal(matcher('session-1')('deploy'), true, 'a row with no start time and no short id is a whole row');
+
+  // Another row whose name holds the target blocks it: the same name, a longer one, dated or not.
+  for (const [why, row] of [
+    ['a row with the same name', { kind: 'background', id: 'mnop3456', sessionId: 'mnop3456-0000', name: 'staff-perm · 6', startedAt: 4 }],
+    ['a row whose name holds it', { kind: 'background', id: 'mnop3456', sessionId: 'mnop3456-0000', name: 'staff-perm · 60', startedAt: 4 }],
+    ['an undated row whose name holds it', { kind: 'background', id: 'mnop3456', sessionId: 'mnop3456-0000', name: 'old staff-perm · 6' }],
+    ['a row renamed to it since', { kind: 'background', sessionId: 'mnop3456-0000', name: 'staff-perm · 6' }],
+  ]) assert.equal(matcher(BG_SESSION, [...listing, row])('staff-perm · 6'), false, why);
+
+  // A target that is an id, or the start of one, of any row, this one included, never opens by a name.
+  const named = (name, extra = []) => [{ ...listing[0], name }, ...listing.slice(1), ...extra];
+  assert.equal(matcher(BG_SESSION, named('ijkl9012'))('ijkl9012'), false, 'another row\'s short id');
+  assert.equal(matcher(BG_SESSION, named('ijkl'))('ijkl'), false, 'the start of another row\'s id, however short');
+  assert.equal(matcher(BG_SESSION, named('ijkl9012-0000'))('ijkl9012-0000'), false, 'another row\'s full id');
+  assert.equal(matcher(BG_SESSION, named('abcd'))('abcd'), false, 'the start of its own id');
+  assert.equal(matcher(BG_SESSION, named('abcd1234-0000-4000-8000-000000000001'))(BG_SESSION), false, 'its own full id');
+
+  // A listing that fails, or a row no check can read, gives no test at all.
+  assert.equal(matcher(BG_SESSION, listing, { status: 1 }), null, 'a listing that exits non-zero');
+  assert.equal(matcher(BG_SESSION, listing, { error: new Error('timeout') }), null, 'a listing that did not finish');
+  assert.equal(nameMatcher({ session: BG_SESSION, env: {}, resolve: () => '/bin/claude', run: () => ({ status: 0, stdout: 'not json' }) }), null, 'output that is not JSON');
+  assert.equal(nameMatcher({ session: BG_SESSION, env: {}, resolve: () => '/bin/claude', run: () => ({ status: 0, stdout: '{}' }) }), null, 'output that is no list');
+  for (const [why, row] of [['a row that is no object', null], ['a row with no name', { sessionId: 'x-0000' }], ['a row whose name is a number', { sessionId: 'x-0000', name: 7 }], ['a row with no session id', { name: 'x' }], ['a row whose id is no string', { sessionId: 'x-0000', name: 'x', id: 7 }]]) {
+    assert.equal(matcher(BG_SESSION, [...listing, row]), null, why);
+  }
+  assert.equal(matcher('zzzz0000-0000'), null, 'a session the listing does not name');
+  assert.equal(matcher(BG_SESSION, [...listing, listing[0]]), null, 'a session the listing names twice');
+
+  // The session the handoff just started, and that row alone, is left out: its name holds this one's.
+  const chain = [
+    { kind: 'background', id: 'abcd1234', sessionId: BG_SESSION, name: 'widget' },
+    { kind: 'background', id: 'efgh5678', sessionId: NEXT_SESSION, name: 'widget · 1' },
+  ];
+  const skipping = (skip, list = chain) => nameMatcher({ session: BG_SESSION, skip, env: {}, resolve: () => '/bin/claude', run: () => ({ status: 0, stdout: JSON.stringify(list) }) });
+  assert.equal(skipping(NEXT_SESSION)('widget'), true, 'the next session\'s name does not block it');
+  assert.equal(skipping(null)('widget'), false, 'without the next session\'s id, its name blocks it');
+  assert.equal(skipping('efgh5678')('widget'), false, 'only a full session id leaves a row out');
+  assert.equal(skipping(NEXT_SESSION, [...chain, { kind: 'background', sessionId: 'mnop3456-0000', name: 'widget build' }])('widget'), false, 'any other row whose name holds it still blocks it');
+  assert.equal(skipping(NEXT_SESSION, [...chain, { kind: 'background', sessionId: 'mnop3456-0000', name: 'widget' }])('widget'), false, 'and so does a row with the same name');
+  assert.equal(skipping(NEXT_SESSION, [...chain, { sessionId: NEXT_SESSION, name: 7 }]), null, 'a malformed row is never left out to pass the check');
+  assert.equal(skipping(BG_SESSION), null, 'it never leaves out the session itself');
+  assert.equal(nameMatcher({ session: BG_SESSION, env: {}, resolve: () => null, run: () => assert.fail('no claude, no run') }), null);
+  assert.equal(typeof claudeCode.capabilities.handoffContinue.replaceTerminal.nameMatcher, 'function', 'the adapter declares it');
 });
 
 test('the Stop hook of a background session the terminal follows stops that session itself, and leaves the shell its record', { skip: process.platform === 'win32' }, async (t) => {

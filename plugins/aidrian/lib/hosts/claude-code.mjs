@@ -110,7 +110,8 @@ export default {
     const parts = [response?.stdout, response?.stderr].filter((part) => typeof part === 'string');
     const finished = parts.length > 0 && response?.interrupted !== true && !response?.backgroundTaskId;
     const file = response?.persistedOutputPath;
-    const persisted = typeof file === 'string' && path.isAbsolute(file) ? { file, after: typeof response?.stderr === 'string' ? response.stderr : '' } : null;
+    const after = typeof response?.stderr === 'string' ? response.stderr : '';
+    const persisted = typeof file === 'string' && path.isAbsolute(file) ? { file, after } : null;
     return { output: parts.length ? parts.join('\n') : null, persisted, finished, exitZero: true };
   },
   // `raw_tool_name` keeps what Claude Code sent, so a pattern a project wrote in that form still matches (lib/hosts/index.mjs toolNames),

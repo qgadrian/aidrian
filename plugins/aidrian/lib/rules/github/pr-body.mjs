@@ -475,7 +475,8 @@ function ownBranch(call, folder, listOpenPrs) {
     open = null;
   }
   // The branch an edit names when it names no number: none names the checked-out one.
-  const head = Number.isNaN(number) ? (text === '' ? branch : text.replace(/^[^:/]+:/u, '')) : null;
+  const named = text === '' ? branch : text.replace(/^[^:/]+:/u, '');
+  const head = Number.isNaN(number) ? named : null;
   const pull = Array.isArray(open)
     ? open.find((pr) => (head === null ? pr?.number === number : pr?.headRefName === head))
     : undefined;

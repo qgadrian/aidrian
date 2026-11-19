@@ -166,8 +166,10 @@ export function routeOf({ override, env = process.env, cwd = process.cwd() } = {
 // Runs the gate on `brief`, a path from `cwd`, and returns { exitCode, out, err }: the lines for stdout and stderr.
 // `chainOf` reads a brief's chain count (lib/handoff-brief.mjs). Throws config.mjs's CONFIG_ERROR, exit 2, on a config
 // with errors. `run`, spawnSync's shape, and `wait`, a pause in milliseconds, are what the background route starts and
-// polls with: the host's own when omitted, and a test's stand-ins, so no test starts a real session.
-export function continueBrief(brief, { override, chainOf, env = process.env, cwd = process.cwd(), now = Date.now(), run, wait }) {
+// polls with: the host's own when omitted, and a test's stand-ins, so no test starts a real session. `home` is the home
+// folder whose unattended marks are read beside the state root's (lib/unattended-mark.mjs markFolders): the user's own
+// when omitted, and a test's temporary folder, so no test reads the marks of the sessions on its machine.
+export function continueBrief(brief, { override, chainOf, env = process.env, cwd = process.cwd(), now = Date.now(), run, wait, home }) {
   const bad = routeProblem(override);
   if (bad) return bad;
   const project = projectAt(cwd);
@@ -182,12 +184,12 @@ export function continueBrief(brief, { override, chainOf, env = process.env, cwd
   const known = typeof session === 'string' && SESSION_ID.test(session);
   try {
     if (known) cancelArmed(store, session, { now });
-    if (known && safely(() => readUnattendedMark(session, { env, now }))?.pending) {
+    if (known && safely(() => readUnattendedMark(session, { env, home, now }))?.pending) {
       return refuse('another session\'s handoff gate is starting a background session, and until the host lists that session\'s id, this one cannot be told apart from it and has no chain floor to hold a brief to; run this again in a few minutes, after the start, or a person resumes the brief');
     }
     const host = detectHost({ env });
     const routed = effectiveRoute(configured, host, override, () => backgroundGate(project, config, env));
-    return decide({ found, store, session: known ? session : null, routed, host, chainOf, env, now, run, wait, cwd, root: project.checkouts.at(-1) });
+    return decide({ found, store, session: known ? session : null, routed, host, chainOf, env, now, run, wait, cwd, home, root: project.checkouts.at(-1) });
   } catch (error) {
     if (typeof error?.code !== 'string') throw error;
     return { exitCode: 2, out: [], err: [`could not arm the continuation of ${found.path} (${error.code})`] };
@@ -196,7 +198,7 @@ export function continueBrief(brief, { override, chainOf, env = process.env, cwd
 
 // The gate's steps 2 to 5 on a brief that resolved, once any earlier marker of `session` is gone. `routed` is
 // effectiveRoute's answer.
-function decide({ found, store, session, routed, host, chainOf, env, now, run, wait, cwd, root }) {
+function decide({ found, store, session, routed, host, chainOf, env, now, run, wait, cwd, home, root }) {
   const { route, fallback } = routed;
   if (route === 'none') return none(fallback);
   // First: every later line may print the path, and the delivery refuses such a brief anyway.
@@ -235,7 +237,7 @@ function decide({ found, store, session, routed, host, chainOf, env, now, run, w
 
   sweep(store, now);
   const ready = { host, found, slug, chain, hash, store, session, now };
-  if (route === 'background') return startInBackground({ ...ready, maxChain: limit, mode: routed.mode, env, run, wait, cwd, root });
+  if (route === 'background') return startInBackground({ ...ready, maxChain: limit, mode: routed.mode, env, run, wait, cwd, home, root });
   return armed({ ...ready, route, fallback });
 }
 
@@ -276,7 +278,7 @@ function armed({ host, found, slug, chain, hash, store, session, now, route, fal
 // the pending mark stays until it lapses, nothing is armed, and the line says how to find and stop it (`findLine`).
 // Whatever surely did not start goes on by the clear route where the host has it (byClear).
 function startInBackground(ready) {
-  const { host, found, slug, chain, hash, store, session, now, maxChain, mode, env, run, wait, cwd, root } = ready;
+  const { host, found, slug, chain, hash, store, session, now, maxChain, mode, env, run, wait, cwd, home, root } = ready;
   const handoff = host.capabilities.handoffContinue;
   const fallBack = (why) => {
     const routed = byClear(host, why);
@@ -315,8 +317,8 @@ function startInBackground(ready) {
     && safely(() => noteStarted(store, session, marker, { now }));
   if (!held) return unheld({ handoff, started, env, run, slug, release, fallBack });
   release();
-  const ending = handTerminal({ host, store, session, env, run, now, mode, id: marker.id, next: marker.session ?? null });
-  return startedLines(host, marker, { ending, unhooked: ending === null && unhooked({ host, store, session, env, now, mode }) });
+  const ending = handTerminal({ host, store, session, env, home, run, now, mode, id: marker.id, next: marker.session ?? null });
+  return startedLines(host, marker, { ending, unhooked: ending === null && unhooked({ host, store, session, env, home, now, mode }) });
 }
 
 // The progress the background hop from `session` records with the floor of the session it starts: { tree, done, stalls }.
@@ -343,9 +345,9 @@ function progressOf({ store, session, now, cwd, text }) {
 // Human attends, which the background route started, names itself, never a process, on a host that can end its own
 // session: it switches when a terminal follows it (followed), and otherwise stops, so the host lists it as done rather
 // than idle. It notes the request in the store for the Stop hook. A request it cannot note is none: the session stays.
-function handTerminal({ host, store, session, env, run, now, mode, id, next }) {
+function handTerminal({ host, store, session, env, home, run, now, mode, id, next }) {
   if (mode !== 'auto' || typeof id !== 'string' || !OPEN_ID.test(id) || !replacer(host)) return null;
-  const way = unattendedHere(session, { store, env, now }) ? followed({ host, store, session, env, run, now, next }) : safely(() => terminalOf(host, { env, run }));
+  const way = unattendedHere(session, { store, env, home, now }) ? followed({ host, store, session, env, run, now, next }) : safely(() => terminalOf(host, { env, run }));
   if (way === null || safely(() => noteEnding(store, session, { ...way, id, next }, { now })) === null) return null;
   return way.shell === null ? 'stop' : 'switch';
 }
@@ -353,10 +355,10 @@ function handTerminal({ host, store, session, env, run, now, mode, id, next }) {
 // Whether the terminal stays on this session only because its shell never loaded the shell function: auto mode, a host
 // that can replace a terminal, a session a Human attends, and no shell pid in its environment, as when the terminal
 // opened before `aidrian shell-init <shell> --install` wrote the function, or it was never installed.
-function unhooked({ host, store, session, env, now, mode }) {
+function unhooked({ host, store, session, env, home, now, mode }) {
   const replace = replacer(host);
   if (mode !== 'auto' || !replace || shellPid(env) !== null || !replace.attended(env)) return false;
-  return !unattendedHere(session, { store, env, now });
+  return !unattendedHere(session, { store, env, home, now });
 }
 
 // For a background session, on a host that can end its own session, which no Human attends as the host tells it, so a
@@ -383,10 +385,10 @@ function followed({ host, store, session, env, run, now, next = null }) {
 }
 
 // Whether no Human attends `session`: its unattended mark, or a chain floor of the background route, holds it. A mark
-// that cannot be read counts. The Stop hook asks it too, before a session ends itself.
-export function unattendedHere(session, { store, env, now }) {
+// that cannot be read counts. The Stop hook asks it too, before a session ends itself. `home` as continueBrief.
+export function unattendedHere(session, { store, env, home, now }) {
   try {
-    return readUnattendedMark(session, { env, now }) !== null || startedInBackground(store, session, { now });
+    return readUnattendedMark(session, { env, home, now }) !== null || startedInBackground(store, session, { now });
   } catch {
     return true;
   }

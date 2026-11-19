@@ -26,6 +26,7 @@ import {
   takeReady,
 } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { HOSTS, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
+import { TEST_HOME } from './fixtures/test-home.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
 const ADVICE = 'Advice from Claude, not a spec: check each claim against the docs and code before building on it.';
@@ -53,7 +54,7 @@ function setup(t, handoff = { continue: 'clear' }, { state: stateDir } = {}) {
   return { root, dir, state: path.dirname(handoffs), handoffs, file, store };
 }
 
-const gate = (setting, args = {}) => continueBrief(args.brief ?? setting.file, { chainOf, cwd: setting.dir, env: { ...process.env, ...CLAUDE }, ...args });
+const gate = (setting, args = {}) => continueBrief(args.brief ?? setting.file, { chainOf, cwd: setting.dir, env: { ...process.env, ...CLAUDE }, home: TEST_HOME, ...args });
 const passCheck = (setting, file = setting.file) => assert.equal(checkBrief(file, undefined, 0, { store: setting.store }).exitCode, 0);
 const marker = (setting, extra = {}) => ({ route: 'clear', session: 'session-1', brief: setting.file, slug: 'widget', chain: 0, sha256: SHA, ...extra });
 const age = (file, ms) => utimesSync(file, new Date(Date.now() - ms), new Date(Date.now() - ms));
@@ -340,7 +341,10 @@ test('aidrian handoff check stamps the brief and aidrian handoff continue arms i
   assert.equal(run('continue', setting.file, '--prior', setting.file).status, 2, '--prior is not an option of continue');
   assert.equal(run('check', setting.file, '--route', 'clear').status, 2, '--route is not an option of check');
   assert.match(run('continue', setting.file, '--route', 'teleport').stderr, /--route must be "none", "clear", "compact", "background"/u);
-  assert.equal(run('continue', setting.file).status, 1, 'no check yet');
+  // In process, with a home of its own: a command started as its own process reads the user's own unattended marks.
+  const unchecked = gate(setting);
+  assert.equal(unchecked.exitCode, 1, 'no check yet');
+  assert.match(unchecked.err[0], /has no passing check/u);
   assert.equal(run('check', setting.file).status, 0);
   assert.ok(checkedSha(setting.store, '2026-11-15-widget.md'));
   const armed = run('continue', setting.file);
@@ -503,10 +507,11 @@ test('a store the disk will not write exits 2 with the error code, not a stack t
   chmodSync(setting.store.dir, 0o500);
   let result;
   try {
-    result = spawnSync(CLI, ['handoff', 'continue', setting.file], { cwd: setting.dir, encoding: 'utf8', env: { ...process.env, ...CLAUDE } });
+    // In process, with a home of its own: the store's error reaches the gate after its read of the unattended marks.
+    result = gate(setting);
   } finally {
     chmodSync(setting.store.dir, 0o700);
   }
-  assert.equal(result.status, 2);
-  assert.equal(result.stderr, `could not arm the continuation of ${setting.file} (EACCES)\n`);
+  assert.equal(result.exitCode, 2);
+  assert.deepEqual(result.err, [`could not arm the continuation of ${setting.file} (EACCES)`]);
 });

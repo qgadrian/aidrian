@@ -3,7 +3,7 @@
 // and, with or without gates, from setting the machine's switches, as it keeps a session the background handoff route
 // started (lib/handoff-guard.mjs startedUnattended); lib/handoff-guard.mjs, with or without
 // gates, from running `aidrian handoff continue` or writing in the handoff continuation store, and keeps a subagent
-// and such a session from writing there or in the unattended marks, from starting a host session outside the gate, and
+// and such a session from writing there, in the unattended marks, or in the session folders, from starting a host session outside the gate, and
 // from running the gate with a variable of their own that moves its store or session. Whether the session is such a
 // one is read from its unattended mark (lib/unattended-mark.mjs) on every call, before it runs, wherever it runs, with
 // no project at its folder too: the mark names the project the gate started it in, whose guards then hold the call.
@@ -34,10 +34,10 @@ import path from 'node:path';
 import { gateDenial, readOnlyDenial, unreadableConfigDenial } from '../lib/agent-gates.mjs';
 import { DEFAULTS, loadConfig, malformedGates } from '../lib/config.mjs';
 import { isFile } from '../lib/fs.mjs';
-import { configWriteDenial, deadlineDenial, machineSwitchWriteDenial, opaqueLimitDenial, writeLimitDenial } from '../lib/config-guard.mjs';
+import { bashCall, configWriteDenial, deadlineDenial, machineSwitchWriteDenial, opaqueLimitDenial, writeLimitDenial, writeTargets } from '../lib/config-guard.mjs';
 import { PastDeadline, withinDeadline } from '../lib/deadline.mjs';
 import { readGateSnapshot } from '../lib/gate-snapshot.mjs';
-import { continueStoreWriteDenial, handoffContinueDenial, handoffEnvDenial, hostSessionStartDenial, startedUnattended, stateFoldersWriteDenial } from '../lib/handoff-guard.mjs';
+import { continueStoreWriteDenial, handoffContinueDenial, handoffEnvDenial, hostSessionStartDenial, sessionFoldersWriteDenial, startedUnattended, stateFoldersWriteDenial } from '../lib/handoff-guard.mjs';
 import { block, runHook } from '../lib/hook-io.mjs';
 import { findProject, openProject, stateDir } from '../lib/project.mjs';
 import { canonical } from '../lib/rules/main-checkout.mjs';
@@ -66,7 +66,16 @@ async function gate(input) {
   const marked = mark?.root ? findProject(mark.root) : null;
   // With its config.json gone, the folder is no project any more; the snapshot still names the one the session started
   // in, and the mark the one the gate ran in.
-  const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd()) ?? (snapshot?.root ? openProject(snapshot.root) : null) ?? marked;
+  const found = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
+  // The project the snapshot names, opened only when a guard asks for it, and never when it is the call's own: opening it
+  // runs git, and a call that writes nowhere near the state root runs none of its own.
+  let opened;
+  const origin = () => {
+    if (!snapshot?.root || found?.checkouts.some((each) => canonical(each) === canonical(snapshot.root))) return null;
+    opened ??= openProject(snapshot.root);
+    return opened;
+  };
+  const project = found ?? origin() ?? marked;
   if (snapshot?.problem) {
     const settings = project ? loadConfig(project).config : DEFAULTS;
     const denial = unreadableConfigDenial(input, snapshot.file, snapshot.problem, settings, 'to start a new session, which takes the gates from the config again');
@@ -78,7 +87,8 @@ async function gate(input) {
     let outside;
     try {
       outside = withinDeadline(budget, () => handoffContinueDenial(input, DEFAULTS) ?? handoffEnvDenial(input, DEFAULTS, { unattended })
-        ?? hostSessionStartDenial(input, DEFAULTS, { unattended }) ?? stateFoldersWriteDenial(input, DEFAULTS, { unattended }));
+        ?? hostSessionStartDenial(input, DEFAULTS, { unattended }) ?? stateFoldersWriteDenial(input, DEFAULTS, { unattended })
+        ?? sessionFoldersWriteDenial(input, null, DEFAULTS, null, { unattended }));
     } catch (error) {
       if (!(error instanceof PastDeadline)) throw error;
       outside = deadlineDenial(input, DEFAULTS, { unattended });
@@ -104,7 +114,7 @@ async function gate(input) {
   const unattended = () => mark !== null || (alone ??= startedUnattended(project, config, input.session_id));
   let denial;
   try {
-    denial = withinDeadline(budget, () => guards(input, project, config, gated, snapshot, marked, unattended));
+    denial = withinDeadline(budget, () => guards(input, project, config, gated, snapshot, [() => marked, origin], unattended));
   } catch (error) {
     if (!(error instanceof PastDeadline)) throw error;
     denial = deadlineDenial(input, config, { unattended });
@@ -114,9 +124,11 @@ async function gate(input) {
 
 // The first guard's denial of the call, or null. The store guard runs first without its link walk, which reads folders
 // on disk, and with it last, so a call the other guards refuse by the paths and names it gives is refused before any walk.
-// `marked` is the project the session's unattended mark names, or null: when that is another project than the call's,
-// its store and its machine's switches are guarded too. `unattended()` says whether no Human attends the session.
-function guards(input, project, config, gated, snapshot, marked, unattended) {
+// `others` give, each when first asked, the project the session's unattended mark names and the one its gate snapshot names, each or null: each
+// that is another project than the call's has its store, its session folders, and its machine's switches guarded too,
+// so a subagent that moved to another project still meets the folders of the session's own. `unattended()` says whether
+// no Human attends the session.
+function guards(input, project, config, gated, snapshot, others, unattended) {
   let dir;
   const state = () => (dir ??= stateDir(project, { config }));
   const guarded = snapshot?.gates ? [snapshot.file, snapshot.marker] : [];
@@ -126,22 +138,42 @@ function guards(input, project, config, gated, snapshot, marked, unattended) {
     ?? handoffEnvDenial(input, config, { unattended })
     ?? hostSessionStartDenial(input, config, { unattended })
     ?? continueStoreWriteDenial(input, project, config, state, { links: false, unattended })
+    ?? sessionFoldersWriteDenial(input, project, config, state, { links: false, unattended })
     ?? stateFoldersWriteDenial(input, config, { project, links: false, unattended })
     ?? machineSwitchWriteDenial(input, project, config, { unattended })
     ?? (gated ? configWriteDenial(input, project, config, { also: guarded }) : null)
     ?? continueStoreWriteDenial(input, project, config, state, { unattended })
+    ?? sessionFoldersWriteDenial(input, project, config, state, { unattended })
     ?? stateFoldersWriteDenial(input, config, { project, unattended })
-    ?? otherProject(input, project, marked, unattended);
+    ?? otherProjects(input, project, others, unattended);
 }
 
-// The denial of the guards of `marked`, the project a session's unattended mark names, when it is another project than
-// the call's, as when the session works in another repository: its continuation store and its machine's switches.
-function otherProject(input, project, marked, unattended) {
-  if (!marked || canonical(marked.checkouts.at(-1)) === canonical(project.checkouts.at(-1))) return null;
+// The first denial of the guards of each of `others` that is another project folder than the call's, each asked once:
+// by its own folder, so a linked checkout whose config moves `state.dir` elsewhere than the main checkout's is its own.
+function otherProjects(input, project, others, unattended) {
+  // A call with no write target of a tool that is no shell, such as a Read, writes nothing any guard reads.
+  const { files, names, globs } = writeTargets(input);
+  if (files.length === 0 && names.length === 0 && globs.length === 0 && !bashCall(input)) return null;
+  const seen = new Set([canonical(project.root)]);
+  for (const ask of others) {
+    const other = ask();
+    const key = other ? canonical(other.root) : null;
+    if (key === null || seen.has(key)) continue;
+    seen.add(key);
+    const denial = otherProject(input, other, unattended);
+    if (denial) return denial;
+  }
+  return null;
+}
+
+// The denial of the guards of `marked`, a project the session started in or the gate ran in, as when the session works
+// in another repository: its machine's switches, its continuation store, and its session folders.
+function otherProject(input, marked, unattended) {
   const { config } = loadConfig(marked);
   let dir;
   const state = () => (dir ??= stateDir(marked, { config }));
-  return machineSwitchWriteDenial(input, marked, config, { unattended }) ?? continueStoreWriteDenial(input, marked, config, state, { unattended });
+  return machineSwitchWriteDenial(input, marked, config, { unattended }) ?? continueStoreWriteDenial(input, marked, config, state, { unattended })
+    ?? sessionFoldersWriteDenial(input, marked, config, state, { unattended });
 }
 
 // The first file that sets the configuration and is there but could not be read, as { file, problem }, or null.

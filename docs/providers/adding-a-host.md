@@ -93,6 +93,30 @@ and its `live` field says whether a real host ever sent it.
 Only a live session with the hooks running proves a guard holds.
 [Where the tracker guard is verified](../hooks.md#where-the-tracker-guard-is-verified) says how far each host has come.
 
+### Session links
+
+The [snapshot](../handoff.md#across-a-handoff) shows the pull requests and the ticket of the sessions a handoff came
+from, through the `parent` a chain floor names, and the [worktree](../handoff.md#the-worktree) a session created. A
+host gets the first only through its continue routes. The second is written by the ledger's PostToolUse Bash hook,
+under the session id of the hook's payload ([Session ledger](../hooks.md#session-ledger)), on every host.
+
+| Host | Writer of `links.jsonl` | Inheritance | Verified |
+| --- | --- | --- | --- |
+| Claude Code | The PostToolUse Bash hook, under the payload's `session_id` | The clear route and the background route write `parent` on the chain floor | By `node --test` on fixtures (`test/session-snapshot-links.test.mjs`, `test/handoff-continue-hooks.test.mjs`, `test/handoff-continue-background.test.mjs`, and the hook on `test/fixtures/hosts/claude-code/bash-post.json` in `test/adapters.test.mjs`); not live |
+| Codex | The PostToolUse Bash hook, under the payload's `session_id` | None: Codex declares no continue route, so it has no floor and no parent | The hook on `test/fixtures/hosts/codex/bash-post.json`, built from Codex's source; fixture only, not live |
+| A host that names no session | None | None | `links` is null |
+
+`test/adapters.test.mjs` feeds each host in `HOSTS` its `bash-post.json` with an `aidrian worktree new` command, and
+the command's `status: "created"` result where the host's response holds the call's output, and a row must land under
+the payload's session id; a host added without that fixture fails it. The hook reads that output only through the
+host's `shellOutput`: a host whose adapter gives none records no worktree.
+
+Why the hook and not `aidrian worktree new` itself: the command would file its row under the session id its shell's
+environment names, and on Codex that id is not the hook's. Codex gives a shell call `CODEX_THREAD_ID`, the thread's own
+id, and its hooks `session_id`, the identity the root thread shares with every thread it starts, which equals the
+root thread's id ([Codex](codex.md#session-ids)): in a subagent's shell the two differ, so its row would land where no
+snapshot of the session reads. The hook files the row where the pull request ledger files its own, on both hosts.
+
 ### What else a new host has to check by hand
 
 - **The auto-merge guard.** `GUARDED_PATHS` in `lib/project.mjs` lists the folders that instruct a host, such as `.codex/`.

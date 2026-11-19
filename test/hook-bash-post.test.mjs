@@ -11,7 +11,8 @@ import test, { after } from 'node:test';
 
 import { forgeFor } from '../plugins/aidrian/lib/forges/index.mjs';
 import * as githubCalls from '../plugins/aidrian/lib/rules/github/session-calls.mjs';
-import { appendLedger, LEDGER_MAX_BYTES, ledgerRows, MAX_FOLDERS, MAX_ROWS, OUTPUT_TAIL, outputTail } from '../plugins/aidrian/lib/session-prs.mjs';
+import { findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
+import { appendLedger, LEDGER_MAX_BYTES, ledgerRows, MAX_FOLDERS, MAX_ROWS, OUTPUT_TAIL, outputTail, remoteRepos } from '../plugins/aidrian/lib/session-prs.mjs';
 import { sessionFolder } from '../plugins/aidrian/lib/session-folder.mjs';
 
 const ROOT_DIR = path.resolve(import.meta.dirname, '..');
@@ -625,4 +626,162 @@ test('the PostToolUse Bash group comes last in hooks.json, so the tracker hooks 
   assert.equal(last.matcher, 'Bash');
   assert.deepEqual(last.hooks.map(({ command }) => command), ['node "$CLAUDE_PLUGIN_ROOT/scripts/hook-bash-post.mjs"']);
   assert.ok(!JSON.stringify(hooks.PostToolUseFailure ?? []).includes('hook-bash-post.mjs'), 'no row for a call that failed');
+});
+
+// A project checkout with one commit and a worktree of `branch`, under `parent` (a folder that may be reached by a
+// symlink), whose origin is `origin` or none. `tree` is the worktree's folder as the command spelled it, `listed` its
+// path as `git worktree list` prints it.
+let worktreeRepos = 0;
+function worktreeRepo(branch, { origin = 'git@github.com:acme/widgets.git', parent = ROOT, config = [] } = {}) {
+  worktreeRepos += 1;
+  const dir = path.join(parent, `wt-${worktreeRepos}`);
+  mkdirSync(path.join(dir, '.aidrian'), { recursive: true });
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  const env = { ...ENV, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  const git = (...args) => {
+    const ran = spawnSync('git', args, { cwd: dir, env, encoding: 'utf8' });
+    assert.equal(ran.status, 0, `${args.join(' ')}: ${ran.stderr}`);
+    return ran.stdout;
+  };
+  git('init', '-q', '-b', 'main');
+  for (const [key, value] of config) git('config', key, value);
+  if (origin) git('remote', 'add', 'origin', origin);
+  git('add', '.');
+  git('commit', '-q', '-m', 'start');
+  const tree = path.join(parent, `wt-${worktreeRepos}-tree`);
+  git('worktree', 'add', '-q', '-b', branch, tree);
+  const listed = git('worktree', 'list', '--porcelain').split('\n').filter((line) => line.startsWith('worktree ')).map((line) => line.slice('worktree '.length))[1];
+  return { dir, tree, listed };
+}
+
+// The line `aidrian worktree new` prints when it created the worktree `tree` of `branch`, and when it refused.
+const createdLine = (branch, tree) => JSON.stringify({ status: 'created', worktree_path: tree, branch, branch_mode: 'new', base: 'main', base_sha: 'f'.repeat(40), bootstrap: null });
+const blockedLine = (branch) => JSON.stringify({ status: 'blocked', phase: 'validate-branch', reason: `${branch} is checked out in /x`, next_step: 'Work in /x.' });
+
+// The rows the hook appended to the session's links.jsonl, in each project's state folder, for `command` run in `cwd`
+// with `stdout`, by the project id they were filed under.
+function linkRowsByProject(command, cwd, { stdout = '', session = nextSession(), env = {} } = {}) {
+  runHook(payload(command, { cwd, session, stdout }), env);
+  const projects = path.join(STATE, 'aidrian/projects');
+  return Object.fromEntries(readdirSync(projects).map((id) => [id, path.join(projects, id, 'sessions', session, 'links.jsonl')]).filter(([, file]) => existsSync(file))
+    .map(([id, file]) => [id, readFileSync(file, 'utf8').trim().split('\n').map((line) => JSON.parse(line))]));
+}
+const linkRows = (command, cwd, options) => Object.values(linkRowsByProject(command, cwd, options)).flat();
+
+test('aidrian worktree new records one links row under the payload`s session: its branch, git`s path, and origin', { skip: !POSIX }, () => {
+  const { dir, tree, listed } = worktreeRepo('feat/wt');
+  const [only, ...more] = linkRows('aidrian worktree new feat/wt', dir, { stdout: `${createdLine('feat/wt', tree)}\n` });
+  assert.deepEqual(more, []);
+  assert.deepEqual({ ...only, at: 'x' }, { at: 'x', kind: 'worktree', host: 'github.com', path: 'acme/widgets', branch: 'feat/wt', cwd: listed });
+  assert.equal(linkRows('aidrian worktree new feat/wt --base origin/main', dir, { stdout: `${createdLine('feat/wt', tree)}\n` }).length, 1);
+  const none = worktreeRepo('feat/no-origin', { origin: null });
+  assert.deepEqual(linkRows('aidrian worktree new feat/no-origin', none.dir, { stdout: createdLine('feat/no-origin', none.tree) }).map(({ host, path: repo }) => [host, repo]), [[null, null]]);
+});
+
+test('a shell-filled branch, an option, --plan, or a branch git lists no worktree for records no links row', { skip: !POSIX }, () => {
+  const { dir, tree } = worktreeRepo('feat/quiet');
+  for (const command of ['aidrian worktree new "$B"', 'aidrian worktree new -x', 'aidrian worktree new feat/quiet --plan', 'aidrian worktree new feat/never']) {
+    assert.deepEqual(linkRows(command, dir, { stdout: `${createdLine('feat/quiet', tree)}\n${createdLine('feat/never', tree)}\n` }), [], command);
+  }
+});
+
+test('a worktree the call did not create records no links row: no result, a refusal, a skipped call, or another path', { skip: !POSIX }, () => {
+  const { dir, tree } = worktreeRepo('feat/existing');
+  const cases = [
+    ['aidrian worktree new feat/existing', ''],
+    ['aidrian worktree new feat/existing', `${blockedLine('feat/existing')}\n`],
+    ['false && aidrian worktree new feat/existing', ''],
+    ['aidrian worktree new feat/existing', `${createdLine('feat/existing', path.join(ROOT, 'somewhere-else'))}\n`],
+    ['aidrian worktree new main', `${createdLine('main', dir)}\n`],
+    ['aidrian worktree new feat/existing', `{"status":"created","branch":"feat/existing","worktree_path":"relative/tree"}\n`],
+    // Another command's output: a saved result printed beside a skipped or refused call claims nothing.
+    [`echo '${createdLine('feat/existing', tree)}'; aidrian worktree new feat/existing`, `${createdLine('feat/existing', tree)}\n`],
+    ['false && aidrian worktree new feat/existing; cat saved.json', `${createdLine('feat/existing', tree)}\n`],
+    // A command after it prints too, so its result is not alone in the output.
+    ['aidrian worktree new feat/existing && npm test', `${createdLine('feat/existing', tree)}\ntest output\n`],
+    // Two creations on one line: neither is the line's one printing command.
+    ['aidrian worktree new feat/existing && aidrian worktree new feat/other', `${createdLine('feat/existing', tree)}\n`],
+    // A relative cd: the payload may name the folder the line started in or the one it ended in.
+    ['cd sub && aidrian worktree new feat/existing', `${createdLine('feat/existing', tree)}\n`],
+  ];
+  for (const [command, stdout] of cases) assert.deepEqual(linkRows(command, dir, { stdout }), [], `${command} printing ${stdout || 'nothing'}`);
+  assert.equal(linkRows('aidrian worktree new feat/existing', dir, { stdout: `output before\n${createdLine('feat/existing', tree)}\n` }).length, 1, 'the created result, among other lines');
+});
+
+test('a worktree made after a cd is filed in the project of that folder, with its own checkout`s path', { skip: !POSIX }, () => {
+  const here = worktreeRepo('feat/here');
+  const there = worktreeRepo('feat/there', { origin: 'git@github.com:acme/there.git' });
+  const byProject = linkRowsByProject(`cd ${there.dir} && aidrian worktree new feat/there`, here.dir, { stdout: `${createdLine('feat/there', there.tree)}\n` });
+  const filed = Object.values(byProject);
+  assert.equal(filed.length, 1, 'one project`s session folder');
+  assert.deepEqual(filed[0].map(({ branch, cwd, path: repo }) => [branch, cwd, repo]), [['feat/there', there.listed, 'acme/there']]);
+  assert.equal(stateDir(findProject(there.dir)).endsWith(Object.keys(byProject)[0]), true, 'filed under the project the command ran in');
+  assert.deepEqual(linkRows(`cd /tmp && aidrian worktree new feat/here`, here.dir, { stdout: `${createdLine('feat/here', here.tree)}\n` }), [], 'a folder with no project records nothing');
+  const same = worktreeRepo('feat/same');
+  assert.deepEqual(linkRows(`cd ${there.dir} && aidrian worktree new feat/same`, same.dir, { stdout: `${createdLine('feat/same', same.tree)}\n` }), [], 'the payload`s project is not looked up');
+});
+
+test('in a checkout under a symlinked folder, the row`s cwd is the path git worktree list prints', { skip: !POSIX }, () => {
+  const real = path.join(ROOT, 'real-parent');
+  mkdirSync(real);
+  const linked = path.join(ROOT, 'linked-parent');
+  symlinkSync(real, linked);
+  const { dir, tree, listed } = worktreeRepo('feat/linked', { parent: linked });
+  const [row] = linkRows('aidrian worktree new feat/linked', dir, { stdout: createdLine('feat/linked', tree) });
+  assert.equal(row.cwd, listed);
+});
+
+test('a rewritten origin is recorded as the snapshot`s remotes read it, with no insteadOf applied', { skip: !POSIX }, () => {
+  const { dir, tree } = worktreeRepo('feat/short', { origin: 'gh:acme/widgets', config: [['url.git@github.com:.insteadOf', 'gh:']] });
+  const [row] = linkRows('aidrian worktree new feat/short', dir, { stdout: createdLine('feat/short', tree) });
+  assert.deepEqual([row.host, row.path], [remoteRepos(dir)[0].host, remoteRepos(dir)[0].path]);
+  assert.deepEqual([row.host, row.path], ['gh', 'acme/widgets']);
+});
+
+test('a git that stalls, on the links` own list or on the session folder`s checkout list, costs the links` 1 s budget at most', { skip: !POSIX }, () => {
+  const { dir, tree } = worktreeRepo('feat/slow');
+  const realGit = spawnSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8', env: ENV }).stdout.trim();
+  // `git -C <main> worktree list` is the links' list; a plain `git worktree list` is the session folder's checkout list,
+  // which the links read after it. `none` stalls nothing: the time the hook takes anyway on this machine.
+  const timed = (name, pattern) => {
+    const bin = path.join(ROOT, `stalling-git-${name}`);
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(path.join(bin, 'git'), `#!/bin/sh\ncase "$*" in ${pattern}) exec sleep 30;; esac\nexec ${realGit} "$@"\n`);
+    chmodSync(path.join(bin, 'git'), 0o755);
+    const input = payload('aidrian worktree new feat/slow', { cwd: dir, stdout: `${createdLine('feat/slow', tree)}\n` });
+    const started = Date.now();
+    const ran = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), encoding: 'utf8', env: { ...ENV, PATH: `${bin}${path.delimiter}${ENV.PATH}` }, timeout: 15_000 });
+    assert.deepEqual([ran.status, ran.stdout, ran.stderr], [0, '', ''], name);
+    return Date.now() - started;
+  };
+  const baseline = timed('none', 'no-such-call');
+  for (const [name, pattern] of [['checkout-list', '"worktree list"*'], ['links-list', '"-C "*"worktree list"*']]) {
+    const over = timed(name, pattern) - baseline;
+    // A git read's own 2 s limit would show as about 2 s over; the links' budget as 1 s at most.
+    assert.ok(over < 1500, `${name}: the stall cost ${over} ms over the ${baseline} ms baseline, past the links budget`);
+  }
+});
+
+test('the ledger row of a call is written before its links are looked at, and apart from them', { skip: !POSIX }, () => {
+  const { dir } = worktreeRepo('feat/both');
+  const session = nextSession();
+  // A pull request and a worktree on one line: the worktree is not the line's one printing command, so it records
+  // nothing, and the pull request records its touched row all the same.
+  runHook(payload('gh pr view 12 && aidrian worktree new feat/both', { cwd: dir, session, stdout: 'x' }));
+  const ledger = ledgerFiles(session).flatMap((file) => readFileSync(file, 'utf8').trim().split('\n')).map((line) => JSON.parse(line));
+  assert.deepEqual(ledger.map(({ kind, number }) => [kind, number]), [['touched', 12]]);
+});
+
+test('origin is read in the checkout the command ran in, so a worktree-specific origin is recorded', { skip: !POSIX }, () => {
+  // Origin set only in the linked checkout's own config: the main checkout has none.
+  const { dir } = worktreeRepo('feat/linked-origin', { origin: null, config: [['extensions.worktreeConfig', 'true']] });
+  const linked = path.join(ROOT, `wt-${worktreeRepos}-own`);
+  const env = { ...ENV, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  const git = (cwd, ...args) => assert.equal(spawnSync('git', args, { cwd, env, encoding: 'utf8' }).status, 0, args.join(' '));
+  git(dir, 'worktree', 'add', '-q', '-b', 'feat/session-home', linked);
+  git(linked, 'config', '--worktree', 'remote.origin.url', 'git@github.com:acme/fork.git');
+  const tree = path.join(ROOT, `wt-${worktreeRepos}-made`);
+  git(dir, 'worktree', 'add', '-q', '-b', 'feat/made-here', tree);
+  const [row] = linkRows('aidrian worktree new feat/made-here', linked, { stdout: createdLine('feat/made-here', tree) });
+  assert.deepEqual([row?.host, row?.path], ['github.com', 'acme/fork']);
 });

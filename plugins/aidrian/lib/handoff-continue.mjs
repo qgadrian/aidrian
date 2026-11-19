@@ -308,7 +308,7 @@ function startInBackground(ready) {
     release();
     return fallBack(`no background session started, since ${started.problem}`);
   }
-  const record = { slug, chain: chain + 1, brief: found.path, route: 'background', progress };
+  const record = { slug, chain: chain + 1, brief: found.path, route: 'background', progress, parent: session };
   const id = started.session ?? started.id;
   const marker = { sha256: hash, slug, brief: found.path, chain: chain + 1, id: started.id, session: started.session, name: started.name, cwd: started.cwd, mode: started.mode };
   const held = pending !== null && safely(() => noteFrom(store, id, record, { now })) && safely(() => markUnattended(id, { root, env, now }))
@@ -519,7 +519,7 @@ export function deliverCleared(store, marker, session, { now = Date.now() } = {}
     return { systemMessage: `The handoff brief ${marker.slug} ${problem}, so this session did not load it: resume with the session-continue skill and the slug ${marker.slug}.`, context: null };
   }
   try {
-    noteFrom(store, session, { slug: marker.slug, chain: marker.chain + 1, brief: found.path, route: marker.route }, { now });
+    noteFrom(store, session, { slug: marker.slug, chain: marker.chain + 1, brief: found.path, route: marker.route, parent: marker.session }, { now });
   } catch {
     // No floor: the context still names the count for the next brief.
   }

@@ -7,7 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { stateRoot } from '../plugins/aidrian/lib/project.mjs';
-import { appendSessionFile, APPENDED_FILES, boundFolder, heldFolder, readSessionFile, readSessionTail, reservationName, reserveSessionFile, SESSION_FILES, SESSION_RESERVATION, SESSION_TEMPORARY, sessionFolder, sweepSessions, temporaryName, writeSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
+import { appendSessionFile, APPENDED_FILES, boundFolder, existingSessionFolder, heldFolder, readSessionFile, readSessionTail, reservationName, reserveSessionFile, SESSION_FILES, SESSION_RESERVATION, SESSION_TEMPORARY, sessionFolder, sessionFolderNames, sweepSessions, temporaryName, writeSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
 import { cachedSessionUsage } from '../plugins/aidrian/lib/session-usage-cache.mjs';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -417,7 +417,7 @@ test('the sweep deletes a reservation only when it is a regular file', { skip: !
 test('appendSessionFile appends the ledger in place, within its cap, and only the ledger', { skip: !POSIX }, () => {
   const { state } = stateWithSessions();
   const folder = sessionFolder(state, 'appender', NONE);
-  assert.deepEqual(APPENDED_FILES, ['prs.jsonl']);
+  assert.deepEqual(APPENDED_FILES, ['prs.jsonl', 'links.jsonl']);
   assert.ok(SESSION_FILES.includes('prs.jsonl'), 'the sweep deletes it too');
   assert.equal(appendSessionFile(folder, 'prs.jsonl', 'a\n', { maxBytes: 10 }), true);
   assert.equal(appendSessionFile(folder, 'prs.jsonl', 'b\n', { maxBytes: 10 }), true);
@@ -468,4 +468,67 @@ test('readSessionTail reads the ledger no-follow: missing is empty, any size is 
   rmSync(file);
   mkdirSync(file);
   assert.equal(tail(), null, 'no regular file');
+});
+
+test('existingSessionFolder finds a folder without creating or sweeping one', { skip: !POSIX }, () => {
+  const { state, sessions } = stateWithSessions();
+  const old = oldFolder(sessions, 'old-1', 40);
+  assert.deepEqual(existingSessionFolder(state, 'gone-1', NONE), { folder: null, refused: false }, 'a missing folder');
+  assert.deepEqual(readdirSync(sessions), ['old-1'], 'nothing made');
+  assert.equal(existsSync(old), true, 'an old folder is not swept');
+  const made = sessionFolder(state, 'here-1', { ...NONE, now: Date.now() - 50 * DAY });
+  assert.deepEqual(existingSessionFolder(state, 'here-1', NONE), { folder: made, refused: false });
+  assert.deepEqual(existingSessionFolder(path.join(scratch(), 'none'), 'here-1', NONE), { folder: null, refused: false }, 'no state folder yet');
+  for (const id of ['../x', 'a/b', 'x'.repeat(129), '']) assert.deepEqual(existingSessionFolder(state, id, NONE), { folder: null, refused: true }, id);
+  assert.deepEqual(existingSessionFolder(state, 'here-1', { checkouts: null }), { folder: null, refused: true });
+  const elsewhere = path.join(scratch(), 'elsewhere');
+  mkdirSync(elsewhere, { mode: 0o700 });
+  symlinkSync(elsewhere, path.join(sessions, 'linked-1'));
+  assert.equal(existingSessionFolder(state, 'linked-1', NONE).refused, true, 'a symlinked session folder');
+  const open = path.join(sessions, 'open-1');
+  mkdirSync(open, { mode: 0o700 });
+  chmodSync(open, 0o755);
+  assert.equal(existingSessionFolder(state, 'open-1', NONE).refused, true, 'a folder another user may read');
+  chmodSync(open, 0o722);
+  assert.equal(existingSessionFolder(state, 'open-1', NONE).refused, true, 'a folder another user may write');
+  assert.deepEqual(sessionFolderNames(state, NONE).sort(), ['here-1', 'linked-1', 'old-1', 'open-1']);
+  assert.equal(existsSync(old), true, 'still not swept');
+});
+
+test('existingSessionFolder and sessionFolderNames refuse a symlinked sessions folder and a state folder inside a checkout', { skip: !POSIX }, () => {
+  const base = scratch();
+  const real = path.join(base, 'real-sessions');
+  mkdirSync(path.join(real, 'one-1'), { recursive: true, mode: 0o700 });
+  chmodSync(real, 0o700);
+  const state = path.join(base, 'state');
+  mkdirSync(state, { mode: 0o700 });
+  symlinkSync(real, path.join(state, 'sessions'));
+  assert.deepEqual(existingSessionFolder(state, 'one-1', NONE), { folder: null, refused: true });
+  assert.equal(sessionFolderNames(state, NONE), null);
+  const checkout = path.join(base, 'repo');
+  const inside = path.join(checkout, '.state');
+  mkdirSync(path.join(inside, 'sessions', 'one-1'), { recursive: true, mode: 0o700 });
+  assert.deepEqual(existingSessionFolder(inside, 'one-1', { checkouts: [checkout] }), { folder: null, refused: true });
+  assert.equal(sessionFolderNames(inside, { checkouts: [checkout] }), null);
+  assert.deepEqual(sessionFolderNames(path.join(base, 'not-made'), NONE), [], 'no state folder: no names, nothing made');
+  assert.equal(existsSync(path.join(base, 'not-made')), false);
+  const fresh = stateWithSessions();
+  writeFileSync(path.join(fresh.sessions, 'file-1'), '');
+  mkdirSync(path.join(fresh.sessions, 'bad name'));
+  assert.deepEqual(sessionFolderNames(fresh.state, NONE), ['file-1'], 'names that pass SESSION_ID alone');
+});
+
+test('links.jsonl is a session file appended in place: written, appended, and swept, and a name off the lists is still refused', { skip: !POSIX }, () => {
+  assert.ok(SESSION_FILES.includes('links.jsonl') && APPENDED_FILES.includes('links.jsonl'));
+  const { state, sessions } = stateWithSessions();
+  const folder = sessionFolder(state, 'links-1', NONE);
+  assert.ok(writeSessionFile(folder, 'links.jsonl', '{"a":1}\n'));
+  assert.equal(appendSessionFile(folder, 'links.jsonl', '{"b":2}\n', { maxBytes: 1024 }), true);
+  assert.equal(readFileSync(path.join(folder, 'links.jsonl'), 'utf8'), '{"a":1}\n{"b":2}\n');
+  assert.equal(statSync(path.join(folder, 'links.jsonl')).mode & 0o777, 0o600);
+  assert.equal(writeSessionFile(folder, 'links.json', '{}'), null);
+  assert.equal(appendSessionFile(folder, 'notes.jsonl', '{}\n', { maxBytes: 1024 }), false);
+  const old = oldFolder(sessions, 'old-links', 31, ['links.jsonl', path.basename(temporaryName(path.join(sessions, 'old-links'), 'links.jsonl')), 'links.jsonl.bak']);
+  assert.notEqual(sessionFolder(state, 'links-2', NONE), null);
+  assert.deepEqual(readdirSync(old), ['links.jsonl.bak'], 'the sweep deletes links.jsonl and its temporary file, and nothing it did not delete before');
 });

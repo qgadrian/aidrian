@@ -140,15 +140,18 @@ export function testRuns(command, cwd, testing = {}) {
 // 3. cargo's `test result: ok. 12 passed; 0 failed; ...`, one a test binary and the doc-tests;
 // 4. any other line with "N passed" or "N failed", as pytest's `=== 12 passed in 0.5s ===` and Playwright's own lines;
 // 5. rspec's and mix's `12 examples, 0 failures`.
-// A family that names passes and no failure counts 0 failures. A summary-shaped "N failed" above 0 anywhere in the tail,
-// as Playwright's standalone `  1 failed` line, makes the fail count at least N, whichever family counted.
+// A family that names passes and no failure counts 0 failures. Unless node's runner counted, whose fail count stands, a
+// line that is only "N failed" above 0, ANSI colours stripped, as Playwright's standalone `  1 failed` line, makes the
+// fail count at least N. A test's name, such as `✔ lists 2 failed payments`, is never such a line.
 const NODE_COUNTS = { pass: /^\s*(?:ℹ|#)\s*pass\s+(\d+)\s*$/gmu, fail: /^\s*(?:ℹ|#)\s*fail\s+(\d+)\s*$/gmu };
 const TASK_PREFIX = String.raw`(?:[\w@./-]+:\s*)*`;
 const TESTS_LINE = new RegExp(String.raw`^\s*${TASK_PREFIX}Tests:?\s+\d`, 'u');
 const CARGO_LINE = /\btest result:\s+\w+\.\s+\d+\s+passed;/u;
 const WORDS_LINE = /\b\d+\s+(?:passed|failed)\b/u;
 const EXAMPLES_LINE = /\b(\d+)\s+(?:examples?|tests?),\s+(\d+)\s+failures?\b/u;
-const ANY_FAILED = /(?:^|[\s,;|(:])([1-9]\d*)\s+failed\b/gmu;
+const BARE_FAILED = /^\s*([1-9]\d*)\s+failed\s*$/gmu;
+// An ANSI colour code, which a runner wraps its summary in.
+const ANSI = /\u001b\[[0-9;]*m/gu;
 const lineSum = (lines, pattern) => lines.reduce((total, line) => {
   const found = pattern.exec(line);
   return found ? (total ?? 0) + Number(found[1]) : total;
@@ -160,9 +163,10 @@ export function runCounts(output) {
     for (const match of text.matchAll(pattern)) total = (total ?? 0) + Number(match[1]);
     return total;
   };
-  let counts = { pass: sum(NODE_COUNTS.pass), fail: sum(NODE_COUNTS.fail) };
-  if (counts.pass === null && counts.fail === null) counts = familyCounts(text.split(/\r?\n/u));
-  const failed = Math.max(0, ...[...text.matchAll(ANY_FAILED)].map((match) => Number(match[1])));
+  const node = { pass: sum(NODE_COUNTS.pass), fail: sum(NODE_COUNTS.fail) };
+  if (node.pass !== null || node.fail !== null) return node;
+  const counts = familyCounts(text.split(/\r?\n/u));
+  const failed = Math.max(0, ...[...text.replace(ANSI, '').matchAll(BARE_FAILED)].map((match) => Number(match[1])));
   return failed > (counts.fail ?? 0) ? { pass: counts.pass, fail: failed } : counts;
 }
 

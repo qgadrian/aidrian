@@ -1332,8 +1332,8 @@ since a script or a monorepo tool prints one summary a runner: the first of node
 `# fail 0`); `Tests` lines, as vitest and jest print them, also behind a task prefix such as turbo's `web:test: `;
 cargo's `test result:` lines, one a test binary and the doc-tests; any other line with "N passed" or "N failed", as
 pytest's and Playwright's; rspec's and mix's "12 examples, 0 failures". A family that names passes and no failure counts
-0 failures, and a summary-shaped "N failed" above 0 anywhere in the output, as Playwright's own `1 failed` line, makes
-the run failed whichever family counted.
+0 failures. Unless node's runner counted, whose fail count stands, a line that is only "N failed" above 0, colours
+stripped, as Playwright's own `1 failed` line, makes the run failed; a test named "lists 2 failed payments" never does.
 The record keeps its newest rows within 64 KB.
 
 Two checks read it:

@@ -116,7 +116,16 @@ test('counts come from one summary: node\'s, else the Tests line, else the last 
   assert.deepEqual(runCounts(CARGO), { pass: 5, fail: 0 }, 'every cargo test result, the doc-tests\' 0 included');
   assert.deepEqual(runCounts(JEST_TWO), { pass: 7, fail: 1 }, 'two jest runs, the first failing');
   assert.deepEqual(runCounts(TURBO), { pass: 8, fail: 0 }, 'Tests lines behind a task prefix, not Test Files');
-  assert.deepEqual(runCounts(`${VITEST_PASS}  2 failed\n`), { pass: 5, fail: 2 }, 'a failed line anywhere fails the run');
+  assert.deepEqual(runCounts(`${VITEST_PASS}  2 failed\n`), { pass: 5, fail: 2 }, 'a bare failed line fails the run');
+  assert.deepEqual(runCounts(`${VITEST_PASS}\u001b[31m  2 failed\u001b[39m\n`), { pass: 5, fail: 2 }, 'in colour too');
+  const nodePass = '✔ lists 2 failed payments (1.2ms)\n✔ retries 3 failed jobs (0.4ms)\nℹ tests 2\nℹ pass 2\nℹ fail 0\n';
+  assert.deepEqual(runCounts(nodePass), { pass: 2, fail: 0 }, 'a node test named for failures passes');
+  assert.equal(runStatus(runCounts(nodePass), false), 'passed');
+  const vitestPass = ' ✓ src/pay.test.ts > lists 2 failed payments 3ms\n ✓ src/job.test.ts > retries 3 failed jobs 1ms\n\n' +
+    ' Test Files  2 passed (2)\n      Tests  2 passed (2)\n';
+  assert.deepEqual(runCounts(vitestPass), { pass: 2, fail: 0 }, 'a vitest test named for failures passes');
+  assert.equal(runStatus(runCounts(vitestPass), false), 'passed');
+  assert.deepEqual(runCounts('ℹ pass 4\nℹ fail 0\n  1 failed\n'), { pass: 4, fail: 0 }, 'node\'s fail count stands');
   assert.deepEqual(runCounts(RSPEC), { pass: 10, fail: 2 });
   assert.deepEqual(runCounts(MIX), { pass: 10, fail: 0 });
   assert.deepEqual(runCounts('lint ok'), { pass: null, fail: null });

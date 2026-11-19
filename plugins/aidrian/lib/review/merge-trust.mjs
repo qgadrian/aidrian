@@ -138,16 +138,24 @@ export function signoffProblem({ flows, reasons = new Map(), signoffs, head }) {
   return null;
 }
 
-// Why the forge and the sign-off store do not let a merge no Human asks for go ahead, as { kind, why }, or null: the
-// bot's verdict first (`kind` "bot"), then the sign-offs ("signoff"). `trail` is the forge's reviewTrail, `reviewer` and
+// Why the forge and the sign-off store do not let a merge no Human asks for go ahead, as { kind, why, flow? }, or null: the
+// bot's verdict first (`kind` "bot"), then the sign-offs ("signoff", with `flow`, the flow whose sign-off is missing). `trail` is the forge's reviewTrail, `reviewer` and
 // `configs` read from the forge, `files` and `complete` the changed files, `state` the review record, read only for the
 // flows it names.
 export function trustVerdict({ trail, head, reviewer, files, complete, configs, prefix, policyFiles = [], state, signoffs }) {
   const bot = botProblem(trail, head, reviewer);
   if (bot) return { kind: 'bot', why: bot };
   const floor = flowsFloor({ files, complete, configs, prefix, policyFiles });
-  const signoff = signoffProblem({ flows: new Set([...recordedFlows(state, head), ...floor.flows]), reasons: floor.reasons, signoffs, head });
-  return signoff ? { kind: 'signoff', why: signoff } : null;
+  const flows = new Set([...recordedFlows(state, head), ...floor.flows]);
+  const signoff = signoffProblem({ flows, reasons: floor.reasons, signoffs, head });
+  return signoff ? { kind: 'signoff', why: signoff, flow: unsignedFlow({ flows, signoffs, head }) } : null;
+}
+
+// The flow signoffProblem names: the first of `flows`, sorted, the store holds no sign-off of on `head`, or null when the
+// store itself could not be read.
+export function unsignedFlow({ flows, signoffs, head }) {
+  if (signoffs.problem) return null;
+  return [...flows].sort().find((flow) => !(signoffs.flows[flow] && signoffs.flows[flow].head === head.toLowerCase())) ?? null;
 }
 
 // trustVerdict's sentence alone, or null.

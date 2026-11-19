@@ -217,17 +217,17 @@ export function resultAuthorProblem({ found, store, key, session, mark, now = Da
 }
 
 // Why `session` may not act on the pull request of issue `key` of the run `found` with `aidrian project stop-action`
-// (lib/project-stops.mjs), or null: the run's driver may, by custody; otherwise only the newest session of the chain of
-// the issue's latest start, while the issue runs, whose unattended mark, when it has one, names that run and issue.
+// (lib/project-stops.mjs), or null: only the newest session of the chain of the issue's latest start, while the issue
+// runs, whose unattended mark, when it has one, names that run and issue. The driver does not: an issue's merge is its
+// own session's.
 export function stopActorProblem({ found, store, key, session, mark, now = Date.now() }) {
   if (typeof key !== 'string' || !ISSUE_KEY.test(key)) return `${JSON.stringify(key)} is not an issue key`;
   if (!found.snapshot.issues.some((issue) => issue.key === key)) return `the run ${found.init.run} holds no issue ${key}`;
-  if (!custody({ found, store, session, now }).problem) return null;
   if (!isSession(session)) return 'this host tells the command no session id, so the run cannot tell whether this session works the issue';
-  if (found.states.get(key)?.state !== 'running') return `the issue ${key} is not running in the run ${found.init.run}, and only the run's driver acts on its pull request then`;
+  if (found.states.get(key)?.state !== 'running') return `the issue ${key} is not running in the run ${found.init.run}, so no session acts on its pull request`;
   const start = latestStart(found, key);
-  if (!start) return `no start of the issue ${key} held a session, so only the run's driver acts on its pull request`;
-  if (!newest(issueChain(store, start, { now }), session)) return `only the run's driver, or the newest session of the chain the run started for the issue ${key}, ${start.child ?? start.id}, acts on its pull request`;
+  if (!start) return `no start of the issue ${key} held a session, so no session acts on its pull request`;
+  if (!newest(issueChain(store, start, { now }), session)) return `only the newest session of the chain the run started for the issue ${key}, ${start.child ?? start.id}, acts on its pull request`;
   if (mark && (mark.project !== found.init.run || mark.issue !== key)) return `this session's unattended mark names ${mark.issue ? `the issue ${mark.issue} of the run ${mark.project}` : 'no issue of a project run'}, not the issue ${key} of the run ${found.init.run}`;
   return null;
 }
@@ -310,7 +310,7 @@ export function projectCalls(input) {
 // Every session's call is then authorized against the run's ledger by `input.session_id`, the host's own session id,
 // which no variable of the command moves: `init` by attendedProblem with the hook's payload; `start`, `wait`, and
 // `handoff` only for the driver, or a continuation custody may move to; `result` only for a session of the issue's
-// chain; `stop-action` for the driver or that session (stopActorProblem). A call whose run, issue, or project folder
+// chain; `stop-action` only for that session's newest one (stopActorProblem). A call whose run, issue, or project folder
 // is built from a variable is refused to all but `next` and
 // `summary`. A run or project the hook cannot read lets the call run: the command reads the same files and refuses.
 export function projectCommandDenial(input, { names: { human } }, { unattended = () => false, home } = {}) {
@@ -321,7 +321,11 @@ export function projectCommandDenial(input, { names: { human } }, { unattended =
   for (const { sub, rest, folder } of calls) {
     // Plainly aidrian: no session needs a subcommand it cannot type.
     if (sub === null) return deny('hides an aidrian project subcommand', 'it runs `aidrian project` with a subcommand word after `project` built from a variable or a substitution, which the hooks cannot authorize');
-    if (!SUBCOMMANDS.includes(sub)) continue;
+    // A word the command does not take runs nothing, but a later step may give it meaning: only a rule lets it run.
+    if (!SUBCOMMANDS.includes(sub)) {
+      if (sub.startsWith('-')) continue;
+      return deny(`runs aidrian project ${sub}`, `the hooks hold no rule for \`aidrian project ${sub}\`, a word the command does not take, and a project run's subcommand runs only under its rule`);
+    }
     if (subagent && !SUBAGENT_MAY.has(sub)) return deny(`runs aidrian project ${sub}`, `\`aidrian project ${sub}\` acts for a project run's driver or issue session, and a subagent runs only \`aidrian project next\``);
     const rule = RULES[sub];
     if (!rule) return deny(`runs aidrian project ${sub}`, `the hooks hold no rule for \`aidrian project ${sub}\` yet, and a project run's subcommand runs only under its rule`);
@@ -370,7 +374,7 @@ const RULES = Object.freeze({
     const problem = resultAuthorProblem({ found, store, key, session, mark });
     return problem && `\`aidrian project result\` records the result of the issue's own session, and ${problem}`;
   },
-  // Acts on the issue's pull request after its auto-merge stopped: the run's driver, or the issue's own session.
+  // Acts on the issue's pull request after its auto-merge stopped: the issue's own session only.
   'stop-action': ({ found, store, key, session, home }) => {
     let mark = null;
     try {
@@ -379,7 +383,7 @@ const RULES = Object.freeze({
       mark = { root: null };
     }
     const problem = stopActorProblem({ found, store, key, session, mark });
-    return problem && `\`aidrian project stop-action\` acts on the pull request of an issue, for the run's driver or the issue's own session, and ${problem}`;
+    return problem && `\`aidrian project stop-action\` acts on the pull request of an issue, for the issue's own session only, and ${problem}`;
   },
 });
 // The subcommands the hooks hold a rule for.

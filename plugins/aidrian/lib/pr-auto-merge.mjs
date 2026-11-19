@@ -40,9 +40,11 @@
 //      fixture, or golden file; and every file still at the head is a regular file there, read from the head's tree:
 //      no symbolic link and no submodule. Every list is read from GitHub, never the working copy, so a pull request
 //      cannot widen what lets it through. Any other `none_needed` waits for the Human.
-//   then closes, only for a session no Human attends whose unattended mark names a project run's issue (runIssueOf):
-//      the pull request's title, body, and every commit message, read through the forge at exactly the head, name no
-//      issue but that one after a closing word (closingProblem). A mark it cannot read names no issue, so any counts.
+//   then closes, only for a session no Human attends whose unattended mark names a project run's issue
+//      (closing-words.mjs runClosingContext): the pull request's title, body, and every commit message, read through the
+//      forge at exactly the head, name no issue but that one after a closing word, and the title no other key of a team
+//      the run knows (closingProblem). A mark it cannot read names no issue, so any counts. Computed from the final
+//      review verdict, after every check before it.
 //   8. trust, only for a session no Human attends (its unattended mark): the record is this machine's word, which a
 //      project run's confined session can write, so the merge also rests on what no such session writes
 //      (lib/review/merge-trust.mjs): the default branch's `github.reviewer` bot passed exactly the head on GitHub, read in
@@ -61,9 +63,10 @@
 // of that route passed; the two configs above hold its lists.
 // Every `gh api` call names the host of the pull request's URL. A gh failure prints gh's last line of stderr.
 // stdout: one line, or with --json { effective, reason, why, allow, local, strategy, deleteBranch, deleteWorktree, pr, head,
-// repo, base, trust? }: `why` is the off line's sentence, null when on; `allow` is true only when both branches allow it, and the
+// repo, base, trust?, flow?, signoffClass? }: `why` is the off line's sentence, null when on; `allow` is true only when both branches allow it, and the
 // other team values are the default branch's; `trust`, only with the reason `trust`, is `bot` or `signoff`, which half
-// of merge trust is missing, as the plain line names it too.
+// of merge trust is missing, as the plain line names it too; with `signoff`, `flow` names the flow and `signoffClass`
+// is `security` or `product` (signoffClassOf).
 // When the reason is local and the local file has errors, they go to stderr.
 // Exit 0 on, 1 off, 3 error (an argument, a gh read, or a pull request gh describes only in part).
 // A failed read of the full file list, or of the head after it, is off (paths): the paths check names it.
@@ -79,6 +82,7 @@ import { prNumber, repoName } from './review-gate.mjs';
 import { isFindingId } from './review/findings.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { readHumanSignoffs, trustVerdict } from './review/merge-trust.mjs';
+import { closingTextsProblem, runClosingContext } from './closing-words.mjs';
 import { driverHold } from './run-driver.mjs';
 import { readUnattendedMark } from './unattended-mark.mjs';
 import { heldWaiver } from './review/settled.mjs';
@@ -460,7 +464,7 @@ const cleanup = (team) => `${team.deleteBranch ? 'delete' : 'keep'} the branch, 
 // The CLI body. `forge` is the test seam: the forge facade (lib/forges), whose methods throw as gh does. `unattended`
 // says whether no Human attends the session that runs it: its unattended mark, by the session id its host gives the
 // command (hosts/index.mjs sessionIdentity), a pending or unreadable mark included.
-export function runAutoMerge(argv, project, { forge = forgeFor(project.root), session = sessionIdentity(process.env).session, home, unattended = () => heldSession(session, home ? { home } : {}), runIssue = () => runIssueOf(session, home ? { home } : {}), out = console } = {}) {
+export function runAutoMerge(argv, project, { forge = forgeFor(project.root), session = sessionIdentity(process.env).session, home, unattended = () => heldSession(session, home ? { home } : {}), runIssue = () => runClosingContext(session, home ? { home } : {}), out = console } = {}) {
   const fail = (message) => {
     out.error(`aidrian pr auto-merge: ${message}`);
     return 3;
@@ -499,6 +503,8 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root), se
   let { effective, reason } = resolveAutoMerge({ autoMerge: team }, local);
   // Which half of merge trust is missing, `bot` or `signoff`, when the reason is `trust`; else null.
   let trust = null;
+  // With `trust` "signoff": the flow whose sign-off is missing, and the class of the decision it is for the Human.
+  let signoff = null;
   let why = reason === 'team'
     ? `the team does not allow it (github.autoMerge.allow on ${pr.repo} ${refusing.join(' and ')})`
     : reason === 'local' ? `this machine has not opted in (github.autoMerge in ${project.paths.local})` : null;
@@ -544,12 +550,13 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root), se
       const unreviewed = { files: listed.files, prefix, review: policy.review, errors: policies.policyErrors, ...unreviewedLists(policies, pr), startDocs: loaded, tree };
       const state = scoped(recordFor(project, pr.number, pr.repo), project, pr.repo);
       const problem = changesRequested(pr) ?? reviewProblem(state, pr.head, unreviewed);
-      // The closing words of a project run's issue session: read only when every check before them allows it.
-      const issue = outsider || problem ? undefined : runIssue();
+      // The closing words of a project run's issue session, from the final review verdict: read only when every check
+      // before them allows it. One read of the mark gives the run and its issue.
+      const context = outsider || problem ? undefined : runIssue();
       let closing = null;
-      if (issue !== undefined && unattended()) {
+      if (context !== undefined && unattended()) {
         try {
-          closing = closingProblem(forge, pr, issue);
+          closing = closingProblem(forge, pr, context);
         } catch (error) {
           return fail(error.message);
         }
@@ -571,13 +578,14 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root), se
           prefix, policyFiles, state, signoffs: readHumanSignoffs({ repo: pr.repo, pr: pr.number }),
         });
         if (verdict) [effective, reason, why, trust] = [false, 'trust', verdict.why, verdict.kind];
+        if (verdict?.kind === 'signoff') signoff = { flow: verdict.flow, signoffClass: signoffClassOf(policy, verdict.flow) };
       }
     }
   }
 
   const result = {
     effective, reason, why, allow: team.allow, local, strategy: team.strategy, deleteBranch: team.deleteBranch,
-    deleteWorktree: team.deleteWorktree, pr: pr.number, head: pr.head, repo: pr.repo, base: pr.base, ...(trust ? { trust } : {}),
+    deleteWorktree: team.deleteWorktree, pr: pr.number, head: pr.head, repo: pr.repo, base: pr.base, ...(trust ? { trust } : {}), ...(signoff ?? {}),
   };
   // A trust refusal names its reason and which half is missing: the bot's verdict, or a sign-off.
   const off = reason === 'trust' ? `auto-merge off for #${pr.number} (trust: ${trust}): ${why}` : `auto-merge off for #${pr.number}: ${why}`;
@@ -589,71 +597,14 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root), se
   return effective ? 0 : 1;
 }
 
-// --- The closing words of a project run's issue session (reason `closes`) ---
-// A merge closes the issues its pull request's title, body, or commits name after a closing word, as GitHub and a
-// tracker's forge integration such as Linear's read them. A project run's issue session merges with no Human, so it
-// may close only its own issue: any other would leave the run's ledger and the tracker telling different stories, and
-// would let text a session read steer which issues end. Read only for a session whose unattended mark names a run's
-// issue (runIssueOf); a session with no such mark is not held to it.
+// --- The closing words of a project run's issue session (reason `closes`, lib/closing-words.mjs) ---
 
-// The words that close an issue at a merge, in each form: GitHub's close, fix, and resolve, and Linear's complete too.
-const CLOSING_WORD = /(?<![\w-])(?:clos(?:e[sd]?|ing)|fix(?:e[sd]|ing)?|resolv(?:e[sd]?|ing)|complet(?:e[sd]?|ing))(?![\w-])/giu;
-// What may stand between a closing word and its references, and between two references of one list.
-const BETWEEN = /(?:[\s:,;&*_`'"()[\]>]|(?<![\w-])and(?![\w-]))+/yu;
-// One reference: a link, `owner/name#12` or `#12`, or a tracker key such as `ENG-12`.
-const REFERENCE = /https?:\/\/[^\s)>\]]+|(?:[\w.-]+\/[\w.-]+)?#\d{1,9}|[A-Za-z][A-Za-z0-9]{0,15}-\d{1,9}(?![\w-])/yu;
-const GITHUB_LINK = /^https?:\/\/([^/\s]+)\/([^/\s]+\/[^/\s]+)\/(?:issues|pull)\/(\d{1,9})(?:[/?#]|$)/iu;
-const TRACKER_LINK = /^https?:\/\/linear\.app\/[^/\s]+\/issue\/([A-Za-z][A-Za-z0-9]{0,15}-\d{1,9})(?:[/?#]|$)/iu;
-// The most references read after one closing word.
-const LIST_CAP = 50;
-
-// Every reference a closing word names in `text`: [{ word, text, key }] for a tracker key, upper-cased, or
-// [{ word, text, number, repo, host }] for a forge issue, with `repo` and `host` null when the text names neither.
-// A link that is neither stops the list.
-export function closingRefs(text) {
-  const found = [];
-  for (const match of String(text).matchAll(CLOSING_WORD)) {
-    let at = match.index + match[0].length;
-    for (let n = 0; n < LIST_CAP; n += 1) {
-      BETWEEN.lastIndex = at;
-      if (BETWEEN.exec(text)) at = BETWEEN.lastIndex;
-      REFERENCE.lastIndex = at;
-      const ref = REFERENCE.exec(text);
-      if (!ref) break;
-      at = REFERENCE.lastIndex;
-      const read = referenceOf(ref[0]);
-      if (!read) break;
-      found.push({ word: match[0], text: ref[0], ...read });
-    }
-  }
-  return found;
-}
-
-function referenceOf(text) {
-  if (/^https?:/iu.test(text)) {
-    const github = GITHUB_LINK.exec(text);
-    if (github) return { number: Number(github[3]), repo: github[2].toLowerCase(), host: github[1].toLowerCase() };
-    const tracker = TRACKER_LINK.exec(text);
-    return tracker ? { key: tracker[1].toUpperCase() } : null;
-  }
-  const hash = /^(?:([\w.-]+\/[\w.-]+))?#(\d+)$/u.exec(text);
-  if (hash) return { number: Number(hash[2]), repo: hash[1]?.toLowerCase() ?? null, host: null };
-  return { key: text.toUpperCase() };
-}
-
-// Whether the reference `ref` names `own`, the run's issue key (lib/project-run.mjs ISSUE_KEY): a tracker key, or a
-// bare number for an issue of the pull request's own repository, `pr` { repo, host }. A null `own` matches nothing.
-export function namesOwnIssue(ref, own, pr) {
-  if (typeof own !== 'string') return false;
-  if (ref.key !== undefined) return /-/u.test(own) && ref.key === own.toUpperCase();
-  return /^\d+$/u.test(own) && ref.number === Number(own)
-    && (ref.repo === null || ref.repo === pr.repo.toLowerCase()) && (ref.host === null || ref.host === pr.host.toLowerCase());
-}
-
-// Why the title, body, or a commit of the pull request `pr` ({ repo, host, number, head }) would close an issue other
-// than `own` when it merges, or null. Read through the forge: the pull request, at exactly `head`, then its commits,
-// which must be all of them: GitHub lists at most 250. Throws, naming the read, when gh fails.
-export function closingProblem(forge, pr, own) {
+// Why the title, body, or a commit of the pull request `pr` ({ repo, host, number, head }) would close, or its title link,
+// an issue other than the run's own, by `context` { own, prefixes } (closing-words.mjs runClosingContext), or null. Read
+// through the forge: the pull request, at exactly `head`, then its commits, which must be all of them: GitHub lists at
+// most 250. Throws, naming the read, when gh fails or the head moved during the read: the caller exits 3, and the
+// stop's command waits for a settled head rather than refuse on a race.
+export function closingProblem(forge, pr, context) {
   const { repo, host, number, head } = pr;
   let pull;
   let commits;
@@ -662,7 +613,7 @@ export function closingProblem(forge, pr, own) {
   } catch (error) {
     throw new Error(`could not read the title and body of #${number} with gh (${ghError(error)})`);
   }
-  if (pull?.head?.sha !== head) return `the head moved from ${head.slice(0, 7)} to ${String(pull?.head?.sha ?? 'none').slice(0, 7)} while the gate read its title and body`;
+  if (pull?.head?.sha !== head) throw new Error(`the head of #${number} moved from ${head.slice(0, 7)} to ${String(pull?.head?.sha ?? 'none').slice(0, 7)} while the gate read its title and body`);
   if (typeof pull.title !== 'string' || (pull.body !== null && typeof pull.body !== 'string') || !Number.isInteger(pull.commits)) return `gh returned no title, body, or commit count for #${number}`;
   try {
     commits = forge.changeCommits(repo, number, { host });
@@ -670,33 +621,23 @@ export function closingProblem(forge, pr, own) {
     throw new Error(`could not read the commits of #${number} with gh (${ghError(error)})`);
   }
   if (!Array.isArray(commits) || commits.length !== pull.commits) return `gh listed ${Array.isArray(commits) ? commits.length : 'none'} of its ${pull.commits} commits, and GitHub lists at most 250, so a closing word may hide in one it did not list`;
-  const texts = [['its title', pull.title], ['its body', pull.body ?? '']];
+  const texts = [{ where: 'its title', text: pull.title, title: true }, { where: 'its body', text: pull.body ?? '' }];
   for (const commit of commits) {
     const message = commit?.commit?.message;
     if (typeof message !== 'string') return `gh returned a commit of #${number} with no message`;
-    texts.push([`commit ${String(commit.sha ?? '').slice(0, 7) || 'with no SHA'}`, message]);
+    texts.push({ where: `commit ${String(commit.sha ?? '').slice(0, 7) || 'with no SHA'}`, text: message });
   }
-  for (const [where, text] of texts) {
-    const other = closingRefs(text).find((ref) => !namesOwnIssue(ref, own, pr));
-    if (other) {
-      const owned = typeof own === 'string' ? `its own issue ${own}` : 'an issue its unattended mark names, and that mark names none it can read';
-      return `${where} says ${JSON.stringify(`${other.word} ${other.text}`.slice(0, 80))}, so its merge would close an issue other than ${owned}`;
-    }
-  }
-  return null;
+  return closingTextsProblem(texts, context, pr);
 }
 
-// The issue a project run started `session` for, as its unattended mark names it: the key; null when the mark cannot
-// be read, or names a run's tags of a wrong shape, so every closing reference counts as another issue's; undefined
-// when no mark names one, which holds no session to the check.
-export function runIssueOf(session, options = {}) {
-  let mark;
-  try {
-    mark = readUnattendedMark(session, options);
-  } catch {
-    return null;
-  }
-  if (!mark || mark.pending) return undefined;
-  if (mark.root === null) return null;
-  return mark.issue === undefined ? undefined : mark.issue;
+// The class of the decision a missing sign-off of `flow` is for the Human (`aidrian project stop-action` names it):
+// `security` when the default branch's config, `policy`, has the flow's sign-off a security one, a flow whose id holds
+// the word `security` or whose `require` names the security-engineer agent; `product` otherwise, a flow it does not
+// define included.
+export function signoffClassOf(policy, flow) {
+  if (typeof flow !== 'string') return 'product';
+  const defined = policy?.review?.flows?.[flow];
+  const tagged = flow.split('-').includes('security');
+  const reviewed = Array.isArray(defined?.require) && defined.require.includes('agent:security-engineer');
+  return tagged || reviewed ? 'security' : 'product';
 }

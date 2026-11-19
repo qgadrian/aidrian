@@ -77,7 +77,8 @@ const EDITS_QUERY = 'query($o:String!,$r:String!,$n:Int!){repository(owner:$o,na
 // default branch's name, and its config pointer, config.json, and knowledge folder at the paths given; and the pull
 // request's head, base, author, draft state, review decision, latest reviews, the head's checks, the changed files, the
 // newest reviews, and the first conversation comments, each with the login of every edit to it, and the base branch's
-// pointer and config.json. A login GraphQL gives a bot carries no `[bot]`; `__typename` says whether the author is a bot.
+// pointer and config.json; and the head branch, title, body, and first commits' messages, for the closing-word check.
+// A login GraphQL gives a bot carries no `[bot]`; `__typename` says whether the author is a bot.
 export const TRAIL_PAGE = 100;
 const BLOB = '... on Blob { text isTruncated }';
 const POLICY_FILES = `pointer: file(path: $pointer) { object { ${BLOB} } } config: file(path: $config) { object { ${BLOB} } }`;
@@ -90,12 +91,16 @@ const TRAIL_QUERY = `query($o: String!, $r: String!, $n: Int!, $pointer: String!
     }
     pullRequest(number: $n) {
       headRefOid
+      headRefName
       baseRefName
+      title
+      body
       isDraft
       reviewDecision
       author { login }
       baseRef { name target { ... on Commit { ${POLICY_FILES} } } }
       latestReviews(first: ${TRAIL_PAGE}) { nodes { author { login } state } }
+      history: commits(first: ${TRAIL_PAGE}) { totalCount nodes { commit { oid message } } }
       commits(last: 1) {
         nodes { commit { oid statusCheckRollup { contexts(first: ${TRAIL_PAGE}) { totalCount nodes { __typename ... on CheckRun { name status conclusion } ... on StatusContext { context state } } } } } }
       }
@@ -579,11 +584,18 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
       const reviews = trailNodes(pr.reviews);
       const comments = trailNodes(pr.comments);
       const commit = pr.commits?.nodes?.at(-1)?.commit ?? null;
+      const history = trailNodes(pr.history);
       const contexts = trailNodes(commit?.statusCheckRollup?.contexts);
       const association = (each) => (typeof each?.authorAssociation === 'string' ? each.authorAssociation : null);
       return {
         viewer: typeof data?.viewer?.login === 'string' ? data.viewer.login : null,
         head: typeof pr.headRefOid === 'string' ? pr.headRefOid : null,
+        headRef: typeof pr.headRefName === 'string' ? pr.headRefName : null,
+        title: typeof pr.title === 'string' ? pr.title : null,
+        body: typeof pr.body === 'string' ? pr.body : null,
+        // Every commit's message, for the closing-word check (lib/closing-words.mjs); complete only when all are here.
+        messages: history.nodes.map((each) => ({ oid: each?.commit?.oid ?? null, message: typeof each?.commit?.message === 'string' ? each.commit.message : null })),
+        messagesComplete: history.complete,
         base: typeof pr.baseRefName === 'string' ? pr.baseRefName : null,
         author: typeof pr.author?.login === 'string' ? pr.author.login : null,
         draft: pr.isDraft === true,
@@ -684,6 +696,8 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
       if (typeof id !== 'string' || !NODE_ID.test(id)) throw new Error(`GitHub gave no node id for pull request #${number}`);
       return json(['api', 'graphql', ...(host ? ['--hostname', host] : []), '-f', `query=${REBASE_MUTATION}`, '-f', `id=${id}`, '-f', `head=${expectedHead}`]);
     },
+    // One Actions workflow run of `repo`, by id: its `head_sha`, `head_branch`, `head_repository`, and `run_attempt`.
+    workflowRun: (repo, id, { host } = {}) => rest(`repos/${repo}/actions/runs/${idOf(id, 'a workflow run id')}`, { host }),
     // The commits of pull request `n` of `repo`, every page, each with its `commit.message`: GitHub lists at most 250.
     changeCommits: (repo, n, { host } = {}) => list(`repos/${repo}/pulls/${idOf(n, 'a pull request number')}/commits?per_page=100`, { host }),
   });

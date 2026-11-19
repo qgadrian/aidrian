@@ -161,6 +161,10 @@ test('every subcommand the command takes has a hook rule, and one with no rule i
     const denial = projectCommandDenial(bash(`aidrian project ${sub} launch ENG-1`, { session_id: DRIVER, cwd: fx.dir }), fx.config, { unattended: attended, home: fx.home });
     assert.match(denial?.reason ?? '', new RegExp(`the hooks hold no rule for \`aidrian project ${sub}\` yet`, 'u'), sub);
   }
+  // A word the command does not take at all is refused too, and an option word is not a subcommand.
+  const unknown = projectCommandDenial(bash('aidrian project frobnicate launch ENG-1', { session_id: DRIVER, cwd: fx.dir }), fx.config, { unattended: attended, home: fx.home });
+  assert.match(unknown?.reason ?? '', /the hooks hold no rule for `aidrian project frobnicate`, a word the command does not take/u);
+  assert.equal(projectCommandDenial(bash('aidrian project --help', { session_id: DRIVER, cwd: fx.dir }), fx.config, { unattended: attended, home: fx.home }), null);
 });
 
 test('the copies of the run id, issue key, and command word patterns match their sources', () => {

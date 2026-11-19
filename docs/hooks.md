@@ -64,13 +64,24 @@ At the start of every session and subagent, the hook prints:
 - in the main session only, while [`session.handoff.mode`](handoff.md#the-reminder) is `"auto"`, one `Handoff:` line:
   the session never asks the Human whether to hand off or keep going; it judges by itself and runs the
   `session-handoff` skill when a handoff is worth it. `"ask"` and `"off"` print nothing;
-- in the main session only, on a host that can [replace the terminal](handoff.md#replacing-the-terminal), one
-  `Handoff terminal:` line while this machine's `handoff.background` is `"on"` and config.json resolves
-  `session.handoff` to the background route in `"auto"` mode, for a session a Human attends that the shell function did
-  not start, unless a startup file already holds the current block: after a background handoff its terminal stays on
-  the old session, and the line names
-  `aidrian shell-init zsh --install`, or bash's, for the Human to run once, after updating an older copy of the plugin,
-  which answers `unknown command: shell-init`, with the host's update command (`claude plugin update aidrian@aidrian-harness`);
+- in the main session only, on a host that can [replace the terminal](handoff.md#replacing-the-terminal), while this
+  machine's `handoff.background` is `"on"`, one `Handoff terminal:` line at most, the first of these that applies:
+  1. A shell startup file holds a block of the shell function that is not the current one: the line names every such
+     file, and the `aidrian shell-init <shell> --install` command that replaces its block, for the Human to run. Any
+     session gets it, one the function started or a background one too.
+  2. config.json resolves `session.handoff` to the background route in `"auto"` mode, and a session a Human attends was
+     not started by the shell function, while a startup file holds the current block: the session was started past the
+     function, such as by a launcher, an editor command, or a terminal opened before the install, so its terminal will not
+     switch at a background handoff. The line says a new terminal settles the last, and names
+     `aidrian shell-init <shell> --install --wrap <launcher>`, for the shell whose file holds the block, for a launcher
+     on PATH that ends in `exec claude`. It adds that an older copy of the plugin refuses `--wrap` as an unknown
+     option, so the plugin is updated first, with the host's update command.
+  3. The same session, with no block installed: after a background handoff its terminal stays on the old session, and
+     the line names `aidrian shell-init zsh --install`, or bash's, for the Human to run once, after updating an older
+     copy of the plugin, which answers `unknown command: shell-init`, with the host's update command
+     (`claude plugin update aidrian@aidrian-harness`).
+
+  It reads the two startup files and no process. A file it cannot read counts as holding no block;
 - in the main session only, one more line while the [lesson inbox](lessons.md#session-start) holds open lessons;
 - in the main session only, one `Decisions to review: N (oldest X days)` line while the indexed docs hold unconfirmed
   [decision markers](project-folder.md#decision-markers), unless [`decisions.unreviewed.remind`](config.md#decisions) is `"off"`.
@@ -160,7 +171,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Git amend | `git commit --amend`; the deny names a follow-up commit, which a squash merge folds in, and `aidrian lint` fails a skill or agent that asks for an amend | `AIDRIAN_ALLOW_GIT_AMEND=1` |
 | Kill by name | Killing processes by name | `AIDRIAN_ALLOW_PROCESS_KILL_BY_NAME=1` |
 | Command-line listing | Listing the command lines of other processes | `AIDRIAN_ALLOW_PROCESS_ARGS_LISTING=1` |
-| Shell startup file | `aidrian shell-init <shell> --install` or `--uninstall` from any agent, the main session's included: both write the Human's `~/.zshrc` or `~/.bashrc` ([Replacing the terminal](handoff.md#replacing-the-terminal)). It reads the command in a substitution, `sh -c`, `eval`, a heredoc or pipe fed to a shell, and carried by `xargs`, `find -exec`, `watch`, `script`, `parallel`, or a shell the walk does not read, such as `fish -c`. Out of sight: a flag behind a variable, a script file or an interpreter (`python -c`, `node -e`) that runs it, and a shell alias or function that hides it | none: the deny says to hand the Human the command with the `!` prefix |
+| Shell startup file | `aidrian shell-init <shell> --install` or `--uninstall` from any agent, the main session's included, with `--wrap` or without: both write the Human's `~/.zshrc` or `~/.bashrc` ([Replacing the terminal](handoff.md#replacing-the-terminal)). It reads the command in a substitution, `sh -c`, `eval`, a heredoc or pipe fed to a shell, and carried by `xargs`, `find -exec`, `watch`, `script`, `parallel`, or a shell the walk does not read, such as `fish -c`. Out of sight: a flag behind a variable, a script file or an interpreter (`python -c`, `node -e`) that runs it, and a shell alias or function that hides it | none: the deny says to hand the Human the command with the `!` prefix |
 | Counting grep in `&&` | A `grep -c` whose exit status an `&&` chain reads | `AIDRIAN_ALLOW_GREP_EXIT_CHAIN=1` |
 | Dependency link | An `ln` of a `node_modules` or `.venv` folder: a package manager run in the copy installs through the link and changes the original's packages. The deny sends the agent to install in its own task worktree, where `aidrian worktree new` already runs the project's bootstrap. For a worktree under review it names no install and no command: the reviewer installs nothing, there or in a copy, reviews read-only or reports that the run needs the pull request's own task worktree, and leaves that run to its owner. A pull request controls its tree, its bootstrap, and its package manager's hooks, so any install there runs its code | `AIDRIAN_ALLOW_DEPENDENCY_LINK=1` |
 | Pull request body | A pull request body without the required sections, or with the footer; the [contract](config.md#pull-request-contract); a `## Tests run` line that says a test command passed with no [finished run](#check-runs) to show it | `AIDRIAN_ALLOW_PR_BODY=1` |

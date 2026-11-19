@@ -105,6 +105,8 @@ export const SUMMARY_BUDGET = 58;
 // The label rule of the snapshot's line, in its lib/session-prs.mjs, written again here, since a mod cannot import
 // across plugins: a row has a number when it is a safe integer above 0, and its repository is its host and its path in
 // lower case. test/claude-mod-format.test.mjs holds the band's words equal to the line's.
+// Lower case matches GitHub's case-insensitive paths; on a forge with case-sensitive paths, two repositories that
+// differ only in case share one letter, an accepted residual of pull request #426.
 const hasNumber = (row) => Number.isSafeInteger(row.number) && row.number > 0;
 const repositoryOf = (row) => `${row.host}/${String(row.repo).toLowerCase()}`;
 

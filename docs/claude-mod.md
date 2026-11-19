@@ -33,9 +33,10 @@ gives the snapshot's line without it.
   for four: an armed chain above its limit draws `armed <n>` with no fraction; a `maxChain` of `unlimited` draws
   `armed <n>` where the line prints `<n>/unlimited`; pull requests from mixed forges, or from a forge with no
   entry in the mod's table, count as `changes` where the line says `PRs`; and, since that word is longer, near the
-  58-character budget those rows list one number fewer on the band than on the line, with a larger `+N`, so the band's
-  numbers are always the first of the line's. The line keeps one row: the handoff, then the
-  pull requests, then the harness signals.
+  58-character budget the band may list fewer numbers than the line, with a larger `+N`: one or more, since dropping a
+  short number such as `#1` for a larger `+N` can free no room.
+  The band's numbers are always the first of the line's.
+  The line keeps one row: the handoff, then the pull requests, then the harness signals.
 - **The pane.** `/aidrian-mod` shows the same data with one row per pull request and a link to it, the ticket's
   link, and one row per subagent. Each pull request's row starts with its number as the band lists it, `PR a#42`,
   then its repository, so each letter shows beside the repository it names.

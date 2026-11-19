@@ -70,8 +70,9 @@ A halt is host-wide, such as a failed sandbox proof, and waits on a person.
 3. `aidrian project summary <run>`.
 4. Tell the Human, in the final report: the cause on the `halt` line, the fix on stderr after `halt:`,
    and `aidrian project resume <run>` for the Human to run once it is fixed. Name each session step 2 left running by
-   its issue, its attempt, and the session id from its `started <key> attempt <n> session <id>` line: the Human stops
-   it by hand with the host's command its `could not be stopped` line names. Only a driver ends the run: § Hand off's
+   its issue, its attempt, and the session id its `could not be stopped` line names, `a session of it, <id>, ...`,
+   or, when that line names none, the id of its `started <key> attempt <n> session <id>` line: the Human stops it by
+   hand with the host's command that `could not be stopped` line names. Only a driver ends the run: § Hand off's
    last list says how the Human takes the run up. End the turn.
 
 Never run `aidrian project resume` here: only an attended session lifts a halt.
@@ -80,7 +81,8 @@ Never run `aidrian project resume` here: only an attended session lifts a halt.
 
 Any other refusal, such as a cap, a policy the forge no longer confirms, or custody: do § Halt's steps 1 to 3, then
 report the refusal as the cause, with what its line says fixes it, and each session step 2 left running by its issue,
-its attempt, and its session id, with how the Human stops it and takes the run up, as § Halt step 4 says. Never retry
+its attempt, and its session id from its `could not be stopped` line, or else its `started` line, with how the Human
+stops it and takes the run up, as § Halt step 4 says. Never retry
 a refused start to see whether it passes.
 
 ## Finish

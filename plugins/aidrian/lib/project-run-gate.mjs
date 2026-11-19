@@ -742,8 +742,9 @@ function endedLines({ state, run, store, cap, env, home, spawn, policy, now }) {
     const ended = dropped ? false : chainEnded({ cap, store, id: start.id, session: start.child, env, spawn, now });
     let reason = ended === true ? 'no_result' : null;
     if (!reason && overdue) {
-      if (!stopChain({ cap, store, start, env, spawn, now })) {
-        lines.push(`overdue ${key} attempt ${start.attempt}: a session of it ${notStopped(cap, start)}`);
+      const stuck = stopChain({ cap, store, start, env, spawn, now });
+      if (stuck) {
+        lines.push(`overdue ${key} attempt ${start.attempt}: ${notStopped(cap, stuck)}`);
         continue;
       }
       reason = dropped ? 'bad_result' : 'timeout';
@@ -792,7 +793,8 @@ function limitLine({ state, run, store, cap, env, home, spawn, key, start, found
     if (written?.rows?.length) return { line: `paused ${key} ${limit.kind} ${when(paused.until)}: its session goes on once the limit resets` };
     if (paused?.until !== null) return {};
   }
-  if (ended !== true && !stopChain({ cap, store, start, env, spawn, now })) return { line: `limited ${key} attempt ${start.attempt}: a session of it ${notStopped(cap, start)}` };
+  const stuck = ended === true ? null : stopChain({ cap, store, start, env, spawn, now });
+  if (stuck) return { line: `limited ${key} attempt ${start.attempt}: ${notStopped(cap, stuck)}` };
   let closed = null;
   const written = safely(() => appendToRun(state, run, (fresh) => {
     if (!current(fresh)) return { rows: [] };

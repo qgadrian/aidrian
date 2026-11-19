@@ -336,7 +336,7 @@ test('a host that does not continue has its limited session stopped; one that ca
   fx.limit([apiError('Claude AI usage limit reached|1763481600')]);
   const failing = (command, args, options) => (args[0] === 'stop' ? { status: 1, stdout: '', stderr: 'no' } : fx.claude.run(command, args, options));
   const before = fx.rows().length;
-  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { spawn: failing }).out, [`limited ENG-1 attempt 1: a session of it could not be stopped; \`claude stop ${STARTED[0].id}\` stops it`, 'running ENG-1']);
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0'], { spawn: failing }).out, [`limited ENG-1 attempt 1: a session of it, ${STARTED[0].id}, could not be stopped; \`claude stop ${STARTED[0].id}\` stops it`, 'running ENG-1']);
   assert.equal(fx.rows().length, before, 'nothing written');
   const out = fx.cmd(['wait', 'launch', '--max-wait', '0']).out;
   assert.match(out[0], /^limit ENG-1 usage until \S+ -> open$/u);

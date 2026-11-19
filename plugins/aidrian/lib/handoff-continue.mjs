@@ -19,8 +19,9 @@
 // lib/session-start-gate.mjs startHeld).
 // A session another gate's pending mark still holds (lib/unattended-mark.mjs), which may be the session that gate is
 // starting before its chain floor exists, is refused: it could otherwise start the count again. A session whose
-// unattended mark names a project run or an issue gets `continue: none` on every route, a --route clear included,
-// before the route is read (confinedIssue): its continuation, a clear one too, would run outside its clone and sandbox.
+// unattended mark names a project run or an issue, or is there but cannot be read, gets `continue: none` on every route,
+// a --route clear included, before the route is read (confinedIssue): its continuation, a clear one too, would run
+// outside its clone and sandbox.
 // The main session alone runs it: the agent-gates hook refuses it to a subagent, whose shell carries the main session's
 // id (lib/handoff-guard.mjs handoffContinueDenial). The route a host can do, and what it asks of the Human, are the host
 // adapter's `capabilities.handoffContinue`; this file names no host. `aidrian handoff route` (routeOf) prints the route
@@ -161,9 +162,27 @@ export function effectiveRoute(configured, host, override, gateOf = () => NO_GAT
 // Why a session whose unattended mark `mark` names an issue of a project run starts no continuation, or null: every
 // host's project start is confined, so the issue's session runs in a clone under its host's sandbox, and a continuation
 // would start outside both. The session pushes its work and records its result instead. A mark that names an issue in a
-// shape that cannot be read (null) counts too.
+// shape that cannot be read (null) counts too, and so does a mark that is there but cannot be read at all, `root: null`
+// (lib/unattended-mark.mjs markOf): a folder, a file of MARK_CAP or more, no JSON, a folder of marks that cannot be
+// listed, or a read that throws (markRead). No mark at all, null, is an ordinary session's. A pending mark is the gate's
+// own refusal, read before this.
 const CONFINED_ISSUE = 'a confined issue session starts no continuation; push the work and hand the result over';
-const confinedIssue = (mark) => (mark && (mark.issue !== undefined || mark.project !== undefined) ? CONFINED_ISSUE : null);
+const UNREADABLE_MARK = 'this session\'s unattended mark cannot be read, so whether it works an issue of a project run cannot be told; it starts no continuation, and a person resumes the brief';
+function confinedIssue(mark) {
+  if (!mark || mark.pending) return null;
+  if (mark.issue !== undefined || mark.project !== undefined) return CONFINED_ISSUE;
+  return mark.root === null ? UNREADABLE_MARK : null;
+}
+
+// The unattended mark of `session` (readUnattendedMark): null when none holds, and `{ root: null }`, a mark that cannot
+// be read, when the read throws, so confinedIssue fails closed on it.
+function markRead(session, { env, now }) {
+  try {
+    return readUnattendedMark(session, { env, now });
+  } catch {
+    return { root: null };
+  }
+}
 
 // The route a background handoff that cannot run goes on by, for the reason `why`: clear where `host` lists it.
 function byClear(host, why) {
@@ -182,15 +201,15 @@ const routeProblem = (override) => (override !== undefined && !CONTINUE_ROUTES.i
 // It prints `route: <route>`, and the `fallback:` line when the route asked for cannot run, exit 0; exit 2 on an unknown
 // --route or a config with errors (CONFIG_ERROR). It opens no store and writes nothing. The gate may still fall back for
 // what only a brief or the store tells, such as its chain or a store it refuses. A session whose unattended mark names a
-// run or an issue of a project run gets `route: none` on every route, whatever the config or --route says (confinedIssue),
-// as the gate answers it. `forgeSolo` is backgroundGate's.
+// run or an issue of a project run, or is there but cannot be read, gets `route: none` on every route, whatever the
+// config or --route says (confinedIssue), as the gate answers it. `forgeSolo` is backgroundGate's.
 export function routeOf({ override, env = process.env, cwd = process.cwd(), forgeSolo } = {}) {
   const bad = routeProblem(override);
   if (bad) return bad;
   const project = projectAt(cwd);
   const config = commandConfig(project, { exitCode: 2 });
   const { session } = sessionIdentity(env);
-  const mark = typeof session === 'string' && SESSION_ID.test(session) ? safely(() => readUnattendedMark(session, { env })) : null;
+  const mark = typeof session === 'string' && SESSION_ID.test(session) ? markRead(session, { env, now: Date.now() }) : null;
   const confined = confinedIssue(mark);
   const host = detectHost({ env });
   const { route, fallback } = confined ? { route: 'none', fallback: confined } : effectiveRoute(config.session.handoff.continue, host, override, () => backgroundGate(project, config, env, { forgeSolo }));
@@ -217,7 +236,7 @@ export function continueBrief(brief, { override, chainOf, env = process.env, cwd
   const known = typeof session === 'string' && SESSION_ID.test(session);
   try {
     if (known) cancelArmed(store, session, { now });
-    const mark = known ? safely(() => readUnattendedMark(session, { env, now })) : null;
+    const mark = known ? markRead(session, { env, now }) : null;
     if (mark?.pending) {
       return refuse('another session\'s handoff gate is starting a background session, and until the host lists that session\'s id, this one cannot be told apart from it and has no chain floor to hold a brief to; run this again in a few minutes, after the start, or a person resumes the brief');
     }
@@ -315,12 +334,14 @@ function armed({ host, found, slug, chain, hash, store, session, now, route, fal
 // command to stop it (`stopLine`). A launch whose outcome the adapter cannot know, such as a start that timed out, or
 // exited 0 with no id the listing then names, may have started a session the gate cannot name, so it ends the same way:
 // nothing is armed, and the line says how to find and stop it (`findLine`). Whatever surely did not start goes on by
-// the clear route where the host has it (byClear). A session a project run started for an issue starts none, before any
-// store or mark write: every host's project start is confined, so its continuation would run outside its clone and
-// sandbox; it pushes its work and records its result instead (confinedIssue). No continuation carries an issue's tags.
+// the clear route where the host has it (byClear). A session a project run started for an issue starts none: every
+// host's project start is confined, so its continuation would run outside its clone and sandbox; it pushes its work and
+// records its result instead (confinedIssue). No continuation carries an issue's tags.
 function startInBackground(ready) {
   const { host, found, slug, chain, hash, store, session, now, maxChain, mode, env, run, wait, cwd, root, mark } = ready;
-  // Before any store or mark write: an issue's session starts nothing outside its sandbox.
+  // A second line of defence on a trust boundary: continueBrief decides this, before it reads the route, and decide, the
+  // only caller, never reaches here for such a mark. Kept so a later caller cannot start an issue's continuation, before
+  // any floor, mark, or start record.
   const confined = confinedIssue(mark);
   if (confined) return none(confined);
   const handoff = host.capabilities.handoffContinue;

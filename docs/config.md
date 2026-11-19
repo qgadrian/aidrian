@@ -2029,9 +2029,12 @@ refuses. `wait` prints `lingering <issue> attempt <n>` and waits on it as on an 
 the first time, and once 2 minutes have passed since that row it stops the session and writes a `gone` row with
 `how: "stopped"`, printing `lingered <issue> attempt <n> stopped`. One the host lists as ended gets a `gone` row with
 `how: "ended"`, from `wait`, `start`, or `end`, and `wait` prints `lingered <issue> attempt <n> ended` when it had seen it
-run on. A session that cannot be stopped prints `lingered <issue> attempt <n>: ... could not be stopped; <how>` each
-`wait`, where `<how>` is the host's own command that stops it by hand, such as `` `claude stop <id>` stops it ``; so do
-the `overdue` and `limited` lines of a session `wait` could not stop.
+run on. A session that cannot be stopped prints
+`lingered <issue> attempt <n>: a session of it, <id>, ran on after its issue settled and could not be stopped; <how>`
+each `wait`, where `<id>` is the session's id as its `started` line printed it, and `<how>` the host's own command that
+stops it by hand, such as `` `claude stop <id>` stops it ``; so do the `overdue` and `limited` lines of a session `wait`
+could not stop, `a session of it, <id>, could not be stopped; <how>`. An id of no session's shape is left out, and a
+`<how>` that is not printable ASCII alone becomes `the host's own command stops it`.
 The write-ahead row of a start asks the ledger again under its lock, so no start passes beside such a session.
 `resume RUN`, from a session a person attends, also takes custody of a run whose driver's sessions the host lists as
 ended, so that session drives on: a `driver` row moves custody, and the session's driver mark is filed.

@@ -184,7 +184,7 @@ test('wait records an issue whose sessions all ended with no result, and stops a
   // One past issueHours that cannot be stopped is named with the host's own command that stops it by hand.
   const stuck = started(t, { projectRun: { allow: true, unverifiedHosts: true, issueHours: 2 } });
   const failing = (command, args, options) => (args[0] === 'stop' ? { status: 1, stdout: '', stderr: 'no' } : stuck.claude.run(command, args, options));
-  assert.deepEqual(stuck.cmd(['wait', 'launch', '--max-wait', '0'], { now: later, spawn: failing }).out, [`overdue ENG-1 attempt 1: a session of it could not be stopped; \`claude stop ${STARTED[0].id}\` stops it`, 'running ENG-1']);
+  assert.deepEqual(stuck.cmd(['wait', 'launch', '--max-wait', '0'], { now: later, spawn: failing }).out, [`overdue ENG-1 attempt 1: a session of it, ${STARTED[0].id}, could not be stopped; \`claude stop ${STARTED[0].id}\` stops it`, 'running ENG-1']);
 
   const settled = started(t);
   settled.result({ status: 'blocked', stop: 'no token' });

@@ -166,7 +166,11 @@ A background route either switch keeps off prints `route: clear` and the `fallba
 A session whose unattended mark names a run or an issue of a [project run](config.md#project-run) prints `route: none`
 on every route, whatever `--route` or the config says, with the `fallback:` line `a confined issue session starts no
 continuation; push the work and hand the result over`: every host starts such a session confined, in a clone under its
-sandbox, and a continuation, a clear one too, would start outside both.
+sandbox, and a continuation, a clear one too, would start outside both. A session whose unattended mark is there but
+cannot be read, as a folder, a file of 64 KiB or more, one that is not JSON, or a folder of marks that cannot be
+listed, prints `route: none` the same way, with the `fallback:` line `this session's unattended mark cannot be read, so
+whether it works an issue of a project run cannot be told; it starts no continuation, and a person resumes the brief`.
+A session with no mark is unchanged.
 It reads the config, the machine's local file, and the base branch's config, writes nothing, and exits 2 on an
 unknown `--route` or a config with errors.
 The `session-handoff` skill runs it in its first step, so it settles every running agent only when a continuation can
@@ -196,6 +200,9 @@ whatever the config says, and `background` only when the config says `"backgroun
    continuation on any route, whatever `--route` or the config says, before it reads the route and before any floor,
    mark, or start record: `continue: none` and the `fallback:` line `a confined issue session starts no continuation;
    push the work and hand the result over`, on every host. It pushes its work and records its result instead.
+   A session whose unattended mark is there but cannot be read gets the same answer, with the `fallback:` line of
+   [The route the host runs](#the-route-the-host-runs): whether it works an issue cannot be told, so the gate fails
+   closed. A session with no mark goes on by its route.
    On the background route, a switch that is off, a chain the [progress check](#the-progress-check) finds stuck, a
    working copy whose `state.dir` differs from the base branch's, a session that did not start, and a started session
    the gate could not hold to a chain floor and stopped fall back to the clear route instead where the host has it:
@@ -449,8 +456,9 @@ Limits:
 ### A project run
 
 A [project run](config.md#project-run), which the `project-autopilot` skill drives, starts many sessions with nothing
-typed. None of them lifts the cap of 5 background continuations in a row (`BACKGROUND_HOPS` in
-`lib/handoff-continue.mjs`): the cap counts per chain, and the run starts new chains instead of making one longer.
+typed. The run lifts no cap of its own: the cap of 5 background continuations in a row (`BACKGROUND_HOPS` in
+`lib/handoff-continue.mjs`) counts per chain, the run starts new chains instead of making one longer, and only the base
+branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the progress check then bounds it.
 
 - **Each issue's session is its own start.** `aidrian project start` holds it as the background route holds a
   continuation, with a chain floor of 0 under the slug `project-<run>`, so it carries neither the driver's count nor
@@ -459,7 +467,7 @@ typed. None of them lifts the cap of 5 background continuations in a row (`BACKG
   and 3 attempts an issue.
 - **An issue's session starts no continuation.** Every host starts it confined, in a fresh clone under its sandbox,
   and a continuation would start outside both. `aidrian handoff route` prints `route: none` for it, and
-  `aidrian handoff continue` answers `continue: none`, before any store or mark write, with the line
+  `aidrian handoff continue` answers `continue: none`, before any floor, mark, or start record, with the line
   `a confined issue session starts no continuation; push the work and hand the result over` ([The gate](#the-gate),
   step 3). So the cap of 5, `maxChain`, and the chain floor never come into play for it: it pushes its work and records
   its result, and any later attempt of the issue starts in a fresh clone of the branch as the forge holds it.
@@ -477,9 +485,10 @@ typed. None of them lifts the cap of 5 background continuations in a row (`BACKG
   and the driver keeps driving in its own session, which the host compacts; it does the same on `continue: clear`,
   which would wait on a person, and when the host lists no route at all, as on Codex. So a run never stops for its
   chain: at worst one long session drives it. The [progress check](#the-progress-check) counts the driver's hops like
-  any chain's. The driver commits nothing, and its issues' work lands in their clones and on the forge, not on the
-  branch the gate reads, so only new items under its brief's `## Done` count as progress. Two hops in a row with
-  none, and the gate falls back to the clear route, where the loop keeps the driver in its session. `"unlimited"`
+  any chain's. The driver commits nothing, and its issues' work lands in their clones and on the forge, so its own
+  work moves no tree on the brief's branch, or on HEAD where the gate runs, and its progress shows as new items under
+  its brief's `## Done`. Two hops in a row with none, and the gate falls back to the clear route, where the loop keeps
+  the driver in its session. `"unlimited"`
   lifts the cap of 5 for the driver's chain, and the progress check then bounds it; an issue's session never meets
   either, since it starts no continuation. A person who resumes the brief by hand starts the count again, and that
   session takes custody only through `aidrian project resume <run>`, once the host lists the old driver as ended.

@@ -202,8 +202,9 @@ function guards(input, project, config, gated, snapshot, others, unattended, bas
   // checkout's host paths.
   let active;
   const runSession = () => (active ??= projectRunActive(project, config, { base }));
-  // A project run's driver is held as one no Human attends for the runs folder, the marks, and the sign-off store: it may
-  // run for hours with no Human at hand. Its driver mark names it (project-run-guard.mjs runDriver).
+  // A project run's driver is held as one no Human attends for the continuation store, the runs folder, the marks, and
+  // the sign-off store: it may run for hours with no Human at hand, from its first call, before any unattended mark of its
+  // own. Its driver mark names it (project-run-guard.mjs runDriver).
   let drives;
   const storeHeld = () => unattended() || (drives ??= drivesRun(input.session_id));
   // A session that drove a run keeps the sign-off hold and the marks' hold after the run's end (run-driver.mjs
@@ -217,14 +218,14 @@ function guards(input, project, config, gated, snapshot, others, unattended, bas
     ?? hostSessionStartDenial(input, config, { unattended })
     ?? remoteChangeDenial(input, config, { unattended })
     ?? projectCommandDenial(input, config, { unattended })
-    ?? continueStoreWriteDenial(input, project, config, state, { links: false, unattended, base })
+    ?? continueStoreWriteDenial(input, project, config, state, { links: false, unattended: storeHeld, base })
     ?? sessionFoldersWriteDenial(input, project, config, state, { links: false, unattended })
     ?? stateFoldersWriteDenial(input, config, { project, links: false, unattended, marksHeld: droveHeld, signoffsHeld: droveHeld })
     ?? projectRunWriteDenial(input, project, config, state, { links: false, unattended: storeHeld, base, own })
     ?? mainCheckoutWriteDenial(input, project, config, { links: false, unattended, runSession })
     ?? machineSwitchWriteDenial(input, project, config, { unattended })
     ?? (gated ? configWriteDenial(input, project, config, { also: guarded }) : null)
-    ?? continueStoreWriteDenial(input, project, config, state, { unattended, base })
+    ?? continueStoreWriteDenial(input, project, config, state, { unattended: storeHeld, base })
     ?? sessionFoldersWriteDenial(input, project, config, state, { unattended })
     ?? stateFoldersWriteDenial(input, config, { project, unattended, marksHeld: droveHeld, signoffsHeld: droveHeld })
     ?? projectRunWriteDenial(input, project, config, state, { unattended: storeHeld, base, own })

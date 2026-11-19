@@ -16,7 +16,7 @@ import { owedReports, reportBody, reportCalls, runWriter } from '../plugins/aidr
 import { runFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { bodyHash } from '../plugins/aidrian/lib/tracker-guard.mjs';
 import linear from '../plugins/aidrian/lib/trackers/linear.mjs';
-import { markDriver, markPending, markUnattended, readDriverMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
+import { markDriver, markPending, markUnattended, readDriverMark, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { signoffFolder } from '../plugins/aidrian/lib/review/signoff-store.mjs';
 import { drivesRun, droveRun } from '../plugins/aidrian/lib/run-driver.mjs';
 import { startHeld } from '../plugins/aidrian/lib/session-start-gate.mjs';
@@ -272,6 +272,31 @@ test('the driver may not rewrite the run\'s ledger or snapshot after init', (t) 
     const ran = spawnSync(process.execPath, [AGENT_GATES], { input: JSON.stringify(input), cwd: fx.dir, env: { ...fx.env, HOME: fx.home }, encoding: 'utf8' });
     assert.equal(ran.status, 2, `${file}: ${ran.stderr}`);
   }
+});
+
+// A run's first driver has its driver mark from init on and no unattended mark of its own: it is held from the
+// continuation store as a session no Human attends is, so it cannot write the marker it may not arm, while its own
+// `aidrian handoff continue` still runs.
+test('the driver may not write the handoff continuation store, though it runs the handoff gate', (t) => {
+  const fx = started(t);
+  assert.equal(readUnattendedMark(DRIVER, { env: fx.env, home: fx.home }), null, 'the first driver has no unattended mark');
+  assert.equal(drivesRun(DRIVER, { env: fx.env, home: fx.home }), true, 'its driver mark holds it');
+  const store = path.join(fx.state, 'handoffs', '.continue');
+  mkdirSync(store, { recursive: true, mode: 0o700 });
+  const call = (tool, input) => spawnSync(process.execPath, [AGENT_GATES], { input: JSON.stringify({ cwd: fx.dir, session_id: DRIVER, tool_name: tool, tool_input: input }), cwd: fx.dir, env: { ...fx.env, HOME: fx.home }, encoding: 'utf8' });
+  for (const [tool, input] of [
+    ['Write', { file_path: path.join(store, 'armed-x.json'), content: '{}' }],
+    ['Bash', { command: `echo {} > ${path.join(store, 'ready-x.json')}` }],
+    ['Bash', { command: `rm ${store}/from-*.json` }],
+  ]) {
+    const ran = call(tool, input);
+    assert.equal(ran.status, 2, `${JSON.stringify(input)}: ${ran.stderr}`);
+    assert.match(ran.stderr, /the handoff continuation store/u, JSON.stringify(input));
+  }
+  const gate = call('Bash', { command: `aidrian handoff continue ${path.join(fx.state, 'handoffs', '2026-11-19-project-launch.md')}` });
+  assert.equal(gate.status, 0, gate.stderr);
+  // A session neither mark holds still writes there, as before.
+  assert.equal(spawnSync(process.execPath, [AGENT_GATES], { input: JSON.stringify({ cwd: fx.dir, session_id: OTHER, tool_name: 'Write', tool_input: { file_path: path.join(store, 'armed-x.json'), content: '{}' } }), cwd: fx.dir, env: { ...fx.env, HOME: fx.home }, encoding: 'utf8' }).status, 0, 'an attended session');
 });
 
 test('preflight names every blocker at once, and starts nothing', (t) => {
@@ -657,8 +682,8 @@ test('the driver\'s halt wait ends once only sessions it could not stop are left
   const text = readFileSync(path.resolve(import.meta.dirname, '../plugins/aidrian/skills/project-autopilot/references/loop.md'), 'utf8').replace(/\s+/gu, ' ');
   const halt = text.slice(text.indexOf('## Halt'), text.indexOf('## Stop'));
   assert.ok(halt.includes('Stop waiting sooner once every line left is a `running <key>` or `lingering <key> attempt <n>` line of a session that a `could not be stopped` line named twice: no wait ends it.'), 'the bound on the wait');
-  assert.ok(halt.includes('Name each session step 2 left running by its issue, its attempt, and the session id from its `started <key> attempt <n> session <id>` line: the Human stops it by hand with the host\'s command its `could not be stopped` line names. Only a driver ends the run: § Hand off\'s last list says how the Human takes the run up.'), 'the report names it');
-  assert.match(text, /## Stop Any other refusal, such as a cap, a policy the forge no longer confirms, or custody: do § Halt's steps 1 to 3, then report the refusal as the cause, with what its line says fixes it, and each session step 2 left running by its issue, its attempt, and its session id, with how the Human stops it and takes the run up, as § Halt step 4 says\./u, 'Stop takes the same bounded wait and names the same sessions');
+  assert.ok(halt.includes('Name each session step 2 left running by its issue, its attempt, and the session id its `could not be stopped` line names, `a session of it, <id>, ...`, or, when that line names none, the id of its `started <key> attempt <n> session <id>` line: the Human stops it by hand with the host\'s command that `could not be stopped` line names. Only a driver ends the run: § Hand off\'s last list says how the Human takes the run up.'), 'the report names it');
+  assert.match(text, /## Stop Any other refusal, such as a cap, a policy the forge no longer confirms, or custody: do § Halt's steps 1 to 3, then report the refusal as the cause, with what its line says fixes it, and each session step 2 left running by its issue, its attempt, and its session id from its `could not be stopped` line, or else its `started` line, with how the Human stops it and takes the run up, as § Halt step 4 says\./u, 'Stop takes the same bounded wait and names the same sessions');
   // Only the run's driver may end it: neither the halt report nor the stop sends the Human to `aidrian project end`.
   const stop = text.slice(text.indexOf('## Stop'), text.indexOf('## Finish'));
   assert.ok(!halt.includes('aidrian project end') && !stop.includes('aidrian project end'), 'no end for the Human');

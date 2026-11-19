@@ -34,6 +34,7 @@ const brief = (chain = 0, worktree = 'none yet') => `# Handoff: continue the wid
 const SESSION = 'session-1';
 const NEW_SESSION = 'abcd1234-0000-4000-8000-000000000001';
 const SWITCH_ON = { handoff: { background: 'on' } };
+const UNREADABLE_MARK = 'this session\'s unattended mark cannot be read, so whether it works an issue of a project run cannot be told; it starts no continuation, and a person resumes the brief';
 const noWait = () => {};
 
 // A git repository whose committed config asks for `committed`, its working copy for `handoff` when it differs, its
@@ -230,6 +231,58 @@ test('an issue session arms no clear: neither the clear fallback nor --route cle
     assert.equal(readArmed(setting.store, SESSION), null, `${why}: no clear marker armed`);
     assert.deepEqual(bgCalls(calls), [], `${why}: nothing started`);
     assert.deepEqual(routeOf({ env, cwd: setting.dir, ...args }).out, ['route: none', confinedLines[1]], `${why}: the route says the same`);
+  }
+});
+
+// A mark that is there but cannot be read cannot say whether the session works an issue of a project run, so the gate
+// fails closed on it as on an issue's: no clear is armed on any route. No mark at all is an ordinary session's.
+test('a session whose unattended mark cannot be read arms no clear on any route; one with no mark does', { skip: process.getuid?.() === 0 && 'root lists any folder' }, (t) => {
+  const unreadable = [
+    ['a folder in the mark\'s place', (folder) => mkdirSync(path.join(folder, `${SESSION}.json`))],
+    ['a mark of 64 KiB or more', (folder) => writeFileSync(path.join(folder, `${SESSION}.json`), JSON.stringify({ root: '/x', pad: 'x'.repeat(64 * 1024) }), { mode: 0o600 })],
+    ['a mark that is not JSON', (folder) => writeFileSync(path.join(folder, `${SESSION}.json`), '{', { mode: 0o600 })],
+    ['a folder of marks that cannot be listed', (folder) => chmodSync(folder, 0o000)],
+  ];
+  const routes = [
+    ['the clear fallback, with this machine\'s switch unset', { local: null }, {}],
+    ['--route clear', {}, { override: 'clear' }],
+    ['a config that asks for clear', { handoff: { continue: 'clear' } }, {}],
+  ];
+  const marks = (setting) => {
+    const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
+    const folder = path.join(xdg, 'aidrian', 'unattended');
+    t.after(() => {
+      chmodSync(folder, 0o700);
+      rmSync(xdg, { recursive: true, force: true });
+    });
+    mkdirSync(folder, { recursive: true, mode: 0o700 });
+    return { env: { ...setting.env, XDG_STATE_HOME: xdg }, folder };
+  };
+  for (const [shape, make] of unreadable) {
+    for (const [why, options, args] of routes) {
+      const label = `${shape}, ${why}`;
+      const setting = setup(t, options);
+      passCheck(setting);
+      const { env, folder } = marks(setting);
+      make(folder);
+      const { run, calls } = fakeRun({ own: setting.dir });
+      const result = gate(setting, { run, env, ...args });
+      assert.deepEqual(result.out, ['continue: none', `fallback: ${UNREADABLE_MARK}`], `${label}: ${result.err.join('\n')}`);
+      assert.equal(result.exitCode, 0, label);
+      assert.equal(readArmed(setting.store, SESSION), null, `${label}: no clear marker armed`);
+      assert.deepEqual(bgCalls(calls), [], `${label}: nothing started`);
+      assert.deepEqual(routeOf({ env, cwd: setting.dir, ...args }).out, ['route: none', `fallback: ${UNREADABLE_MARK}`], `${label}: the route says the same`);
+    }
+  }
+  // An ordinary session a Human attends: a folder of marks that holds none of its own arms the clear route.
+  for (const [why, options, args] of routes) {
+    const setting = setup(t, options);
+    passCheck(setting);
+    const { env } = marks(setting);
+    assert.equal(routeOf({ env, cwd: setting.dir, ...args }).out[0], 'route: clear', `${why}: no mark`);
+    const result = gate(setting, { run: fakeRun({ own: setting.dir }).run, env, ...args });
+    assert.equal(result.out[0], 'continue: clear', `${why}: ${result.out.join('\n')} ${result.err.join('\n')}`);
+    assert.equal(readArmed(setting.store, SESSION)?.route, 'clear', `${why}: armed`);
   }
 });
 
@@ -1052,7 +1105,12 @@ test('a session a gate of another project started, or whose mark names no projec
   t.after(() => rmSync(elsewhere, { recursive: true, force: true }));
   const marked = (setting, env) => markUnattended(SESSION, { root: elsewhere, env });
   const unnamed = (setting, env, xdg) => writeFileSync(path.join(xdg, 'aidrian', 'unattended', `${SESSION}.json`), 'not json');
-  for (const [file, expected] of [[marked, `this session was started by a handoff gate of the project in ${elsewhere}`], [unnamed, 'this session was started by a handoff gate whose project its unattended mark does not name']]) {
+  // A mark that cannot be read names no project: the gate answers it before the route, as one it cannot tell from an
+  // issue's session.
+  for (const [file, expected] of [
+    [marked, `this session was started by a handoff gate of the project in ${elsewhere}, and its chain floor lives in that project's store, so it starts no background session here; a person resumes the brief widget`],
+    [unnamed, UNREADABLE_MARK],
+  ]) {
     const setting = setup(t);
     passCheck(setting);
     const { xdg, env } = ownMarks(t, setting);
@@ -1060,7 +1118,7 @@ test('a session a gate of another project started, or whose mark names no projec
     file(setting, env, xdg);
     const { run, calls } = fakeRun({ own: setting.dir });
     const result = gate(setting, { run, env });
-    assert.deepEqual(result.out, ['continue: none', `fallback: ${expected}, and its chain floor lives in that project's store, so it starts no background session here; a person resumes the brief widget`]);
+    assert.deepEqual(result.out, ['continue: none', `fallback: ${expected}`]);
     assert.deepEqual(bgCalls(calls), []);
     assert.equal(readArmed(setting.store, SESSION), null);
   }

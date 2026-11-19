@@ -998,8 +998,10 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   that may reach it, a link already on disk, or, where the folder is unknown, a part named `unattended`. The same holds
   for the shell records' folder, `handoff-terminals/` beside it, which names the session a shell opens in its terminal
   next ([Replacing the terminal](handoff.md#replacing-the-terminal)).
-- A project run's driver counts as a session no Human attends for writes to the runs folder (its ledger and snapshot),
-  the unattended marks, and the sign-off store, from `aidrian project init` on, wherever its call runs, and for the
+- A project run's driver counts as a session no Human attends for writes to the
+  [continuation store](handoff.md#continue), `<state>/handoffs/.continue/`, the runs folder (its ledger and snapshot),
+  the unattended marks, and the sign-off store, from `aidrian project init` on, wherever its call runs, its first
+  driver too, which has no unattended mark of its own, and for the
   [merge guard](#merge-guard), `aidrian pr auto-merge`, and the review-signoff rule. `aidrian project init` files its
   driver mark, `driver.<session id>.json` beside the unattended marks, naming the run, its main checkout, and its state
   folder, before the init row, and refuses when it cannot; each start and wait by the current driver files it again,

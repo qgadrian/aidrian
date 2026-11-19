@@ -352,7 +352,7 @@ How issue sessions and the driver relate to the cap of five background continuat
   sandbox that the sandbox is in force ([The sandbox proof](#the-sandbox-proof)): its first call must be `aidrian
   project confine <run> <issue>`, and nothing else runs until the start confirmed it.
 - An issue's session starts no continuation: `aidrian handoff continue` from it prints `continue: none`, and
-  `aidrian handoff route` `route: none`, before any store or mark write. It pushes its work and records its result.
+  `aidrian handoff route` `route: none`, before any floor, mark, or start record. It pushes its work and records its result.
 - A usage or rate limit is read from the session's transcript alone (`lib/hosts/claude-code-limit.mjs`): its last
   `assistant` entry, only when the host marked it `isApiErrorMessage: true`. Its structured `error` decides where the
   host writes one, and only `rate_limit` is a limit; with none, its text must start with a limit's words, as

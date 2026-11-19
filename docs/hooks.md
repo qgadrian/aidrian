@@ -190,15 +190,18 @@ What each rule matches:
   This rule reads `sh -c` bodies and heredocs or here-strings fed to a shell, as well as command substitutions.
 - Kill by name: `pkill`, `killall`, `pgrep --signal`, `kill` fed by `pgrep` or `ps`, and `kill -- -1`. `kill <pid>` stays allowed.
   The deny of a plain `pkill` or `killall` names the `pgrep` that lists what it would stop, such as `pgrep -f 'next dev'`.
-- Command-line listing: `pgrep -fl`, `pgrep -a`, and `ps` without a format free of `args`, `command`, and `cmd`.
+- Command-line listing: `pgrep -fl`, `pgrep -a`, and `ps` without a format free of `args`, `command`, `cmd`, and `comm`.
+  On macOS `comm` is the full executable path, and for a process that sets its own title that title, arguments and all;
+  `ucomm`, the accounting name, is neither. On Linux `ucomm` and `pgrep -l` show the task name,
+  which a process can set itself, at most 15 bytes.
   A listing on the command line itself, or in a substitution of it, whose output reaches only `/dev/null` or a counter
   (`wc`, `grep -c`, `grep -q`) runs: `ps -p <pid> >/dev/null` and `ps aux | grep -c x` print no command line.
   Between the listing and the counter only `grep`, `head`, `tail`, `sort`, `uniq`, and `cut` may stand, with no operand
   but grep's pattern, no long option, no `sort -o`, and no word that may expand, an option value included.
   Inside `sh -c`, `eval`, `env -S`, or xargs a listing never passes.
   The deny starts with the command to run instead, the whole line with each listing replaced:
-  `pgrep -fl x` and `ps aux | grep x` become `pgrep -d, -f x | xargs -r ps -o pid=,ppid=,etime=,comm= -p`,
-  and a `ps` format trades `args`, `command`, and `cmd` for `comm`.
+  `pgrep -fl x` and `ps aux | grep x` become `pgrep -d, -f x | xargs -r ps -o pid=,ppid=,etime=,ucomm= -p`,
+  and a `ps` format trades `args`, `command`, `cmd`, and `comm` for `ucomm`.
 - Counting grep in `&&`: such as `grep -c x log && npm test`. The deny starts with the line to run instead,
   each such count wrapped as `{ grep -c x log || true; }`, which keeps the count and the chain.
 - Neither rule rewrites a segment that starts with a shell word (`if`, `while`, `!`), opens or closes a group or a `case`

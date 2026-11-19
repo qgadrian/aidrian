@@ -436,9 +436,33 @@ test('denies an argument column at any format width', () => {
   denyListing('ps --format args:200');
   denyListing('ps --format=pid,cmd:50');
   denyListing('ps -p 1 -o "pid comm args:9"');
-  allowListing('ps -o pid:8,comm:20');
-  allowListing('ps -eo pid=,comm:32=');
-  allowListing('ps --format=pid:6,%cpu:5,comm:20 -e');
+  denyListing('ps -o pid:8,comm:20');
+  denyListing('ps -eo pid=,comm:32=');
+  denyListing('ps --format=pid:6,%cpu:5,comm:20 -e');
+  allowListing('ps -o pid:8,ucomm:20');
+  allowListing('ps -eo pid=,ucomm:32=');
+  allowListing('ps --format=pid:6,%cpu:5,ucomm:20 -e');
+});
+
+// On macOS `comm` is the full executable path, and for a process that sets its own title it is that title, arguments
+// and all; `ucomm`, the accounting name, is neither. A session following the old suggestion copied a token this way.
+test('denies comm in a ps format, in every spelling', () => {
+  denyListing('ps -o pid=,etime=,pcpu=,comm= -p 123');
+  denyListing('ps -o pid=,ppid=,pcpu=,rss=,etime=,comm=');
+  denyListing('ps -e -o pid=,comm=');
+  denyListing('ps -A -o pid=,comm=');
+  denyListing('ps -eo pid=,comm=');
+  denyListing('ps -p 123 -o comm=');
+  denyListing('ps -o comm= -p "$PID"');
+  denyListing('ps -o comm=NAME -p 1');
+  denyListing('ps -ocomm= -p 1');
+  denyListing('ps --format pid,comm -e');
+  denyListing('ps --format=comm -p 1');
+  denyListing('ps -eo pid,%cpu,%mem,comm');
+  denyListing('ps -p 1234 -o pid,ppid,%cpu,%mem,rss,etime,comm');
+  denyListing('ps -o "pid comm" -p 1');
+  denyListing('rtk ps -o pid=,comm=');
+  denyListing('bash -c "ps -o pid=,comm= -p $PID"');
 });
 
 test('judges a nested listing like a top-level one', () => {
@@ -462,22 +486,25 @@ test('judges a nested string that expands by its literal text', () => {
   deny('sh -c "kill \\$(pgrep -f x)"');
   deny('bash -c "echo \\$HOME; pkill -f x"');
   deny('eval "echo \\$HOME; pkill -f x"');
-  allowListing('bash -c "ps -o pid=,comm= -p $PID"');
+  allowListing('bash -c "ps -o pid=,ucomm= -p $PID"');
   allow('bash -c "kill $PID"');
   allow('bash -c "$CMD"');
 });
 
 test('allows listings that print pids and names only', () => {
-  allowListing('ps -o pid=,ppid=,pcpu=,rss=,etime=,comm=');
-  allowListing('ps -e -o pid=,comm=');
-  allowListing('ps -A -o pid=,comm=');
-  allowListing('ps -eo pid=,comm=');
-  allowListing('ps -p 123 -o comm=');
-  allowListing('ps -o comm= -p "$PID"');
+  // the listing the deny suggests runs as it is
+  allowListing('ps -o pid=,ppid=,pcpu=,rss=,etime=,ucomm=');
+  allowListing('ps -e -o pid=,ucomm=');
+  allowListing('ps -o pid,ppid,pcpu,rss,etime,ucomm');
+  allowListing('pgrep -d, -f next | xargs -r ps -o pid=,ppid=,etime=,ucomm= -p');
+  allowListing('ps -A -o pid=,ucomm=');
+  allowListing('ps -eo pid=,ucomm=');
+  allowListing('ps -p 123 -o ucomm=');
+  allowListing('ps -o ucomm= -p "$PID"');
   allowListing('ps -o pid=,rss= --pid=1 --no-headers');
-  allowListing('ps --format pid,comm -e');
-  allowListing('ps -eo pid,%cpu,%mem,comm');
-  allowListing('ps -p 1234 -o pid,ppid,%cpu,%mem,rss,etime,comm');
+  allowListing('ps --format pid,ucomm -e');
+  allowListing('ps -eo pid,%cpu,%mem,ucomm');
+  allowListing('ps -p 1234 -o pid,ppid,%cpu,%mem,rss,etime,ucomm');
   allowListing('ps -o %cpu=,%mem= -p 1');
   allowListing('pgrep next');
   allowListing('pgrep -f next');
@@ -485,7 +512,7 @@ test('allows listings that print pids and names only', () => {
   allowListing('pgrep -l next');
   allowListing('pgrep -P 123');
   allowListing('pgrep -F/tmp/lf.pid');
-  allowListing('rtk ps -o pid=,comm=');
+  allowListing('rtk ps -o pid=,ucomm=');
   allowListing('pidof node');
 });
 
@@ -563,7 +590,7 @@ test('listing deny reason names the root cause, the safe forms, and the override
   assert.match(reason, /macOS/u);
   assert.match(reason, /sets its own title/u);
   assert.match(reason, /inherited environment as arguments/u);
-  assert.ok(reason.includes('`ps -o pid=,ppid=,pcpu=,rss=,etime=,comm=`'));
+  assert.ok(reason.includes('`ps -o pid=,ppid=,pcpu=,rss=,etime=,ucomm=`'));
   assert.ok(reason.includes('`pgrep <pattern>`'));
   assert.ok(reason.includes('`pgrep -f <pattern>`'));
   assert.ok(reason.includes('`pgrep -l <pattern>` without `-f`'));
@@ -669,26 +696,33 @@ test('a named descriptor before a command, or among a prefix\'s words, hides nei
 
 // [denied command, the command its reason says to run instead]
 const REPLACEMENTS = [
-  ['pgrep -fl "git push" | head', "pgrep -d, -f 'git push' | xargs -r ps -o pid=,ppid=,etime=,comm= -p | head"],
-  ['pgrep -l -f e2e-local', 'pgrep -d, -f e2e-local | xargs -r ps -o pid=,ppid=,etime=,comm= -p'],
-  ['pgrep -fa node', 'pgrep -d, -f node | xargs -r ps -o pid=,ppid=,etime=,comm= -p'],
+  ['pgrep -fl "git push" | head', "pgrep -d, -f 'git push' | xargs -r ps -o pid=,ppid=,etime=,ucomm= -p | head"],
+  ['pgrep -l -f e2e-local', 'pgrep -d, -f e2e-local | xargs -r ps -o pid=,ppid=,etime=,ucomm= -p'],
+  ['pgrep -fa node', 'pgrep -d, -f node | xargs -r ps -o pid=,ppid=,etime=,ucomm= -p'],
   ['pgrep -fl run-agent-gates || echo none', 'pgrep -f run-agent-gates || echo none'],
-  ['pgrep -fl -u adrian node', 'pgrep -d, -f -u adrian node | xargs -r ps -o pid=,ppid=,etime=,comm= -p'],
-  ['ps aux | grep -E "git push|husky" | grep -v grep | head -5', "pgrep -d, -f 'git push|husky' | xargs -r ps -o pid=,ppid=,pcpu=,rss=,etime=,comm= -p | head -5"],
-  ['ps aux | grep "[g]it push\\|husky"', "pgrep -d, -f '[g]it push|husky' | xargs -r ps -o pid=,ppid=,pcpu=,rss=,etime=,comm= -p"],
-  ['ps -axo pid,rss,command | grep -i next', 'pgrep -i -d, -f next | xargs -r ps -o pid=,rss=,comm= -p'],
+  ['pgrep -fl -u adrian node', 'pgrep -d, -f -u adrian node | xargs -r ps -o pid=,ppid=,etime=,ucomm= -p'],
+  ['ps aux | grep -E "git push|husky" | grep -v grep | head -5', "pgrep -d, -f 'git push|husky' | xargs -r ps -o pid=,ppid=,pcpu=,rss=,etime=,ucomm= -p | head -5"],
+  ['ps aux | grep "[g]it push\\|husky"', "pgrep -d, -f '[g]it push|husky' | xargs -r ps -o pid=,ppid=,pcpu=,rss=,etime=,ucomm= -p"],
+  ['ps -axo pid,rss,command | grep -i next', 'pgrep -i -d, -f next | xargs -r ps -o pid=,rss=,ucomm= -p'],
   ['ps aux | grep node && echo up', 'pgrep -f node && echo up'],
-  ['ps aux', 'ps -ax -o pid,ppid,pcpu,rss,etime,comm'],
-  ['ps -ef', 'ps -e -o pid,ppid,pcpu,rss,etime,comm'],
-  ['ps', 'ps -o pid,ppid,pcpu,rss,etime,comm'],
-  ['ps -Ao pcpu,command -r | head -12', 'ps -Ar -o pcpu,comm | head -12'],
-  ['ps -p 14274 -o pid,command | cat', 'ps -p 14274 -o pid,comm | cat'],
-  ['ps -o pid,pcpu,etime,args -p $p 2>/dev/null | tail -1', 'ps -p "$p" -o pid,pcpu,etime,comm 2>/dev/null | tail -1'],
-  ['ps -o "%p %a" -p 1', 'ps -p 1 -o pid,comm'],
-  ['ps aux | grep -F a.b', 'ps -ax -o pid,ppid,pcpu,rss,etime,comm | grep -F a.b'],
-  ['sudo ps aux', 'sudo ps -ax -o pid,ppid,pcpu,rss,etime,comm'],
-  ['git status; pgrep -fl next | head; ps -p 1 -o command=', 'git status; pgrep -d, -f next | xargs -r ps -o pid=,ppid=,etime=,comm= -p | head; ps -p 1 -o comm='],
-  ['echo "$(pgrep -fl next)"', 'echo "$(pgrep -d, -f next | xargs -r ps -o pid=,ppid=,etime=,comm= -p)"'],
+  ['ps aux', 'ps -ax -o pid,ppid,pcpu,rss,etime,ucomm'],
+  ['ps -ef', 'ps -e -o pid,ppid,pcpu,rss,etime,ucomm'],
+  ['ps', 'ps -o pid,ppid,pcpu,rss,etime,ucomm'],
+  ['ps -Ao pcpu,command -r | head -12', 'ps -Ar -o pcpu,ucomm | head -12'],
+  ['ps -p 14274 -o pid,command | cat', 'ps -p 14274 -o pid,ucomm | cat'],
+  ['ps -o pid,pcpu,etime,args -p $p 2>/dev/null | tail -1', 'ps -p "$p" -o pid,pcpu,etime,ucomm 2>/dev/null | tail -1'],
+  ['ps -o "%p %a" -p 1', 'ps -p 1 -o pid,ucomm'],
+  ['ps aux | grep -F a.b', 'ps -ax -o pid,ppid,pcpu,rss,etime,ucomm | grep -F a.b'],
+  ['sudo ps aux', 'sudo ps -ax -o pid,ppid,pcpu,rss,etime,ucomm'],
+  ['git status; pgrep -fl next | head; ps -p 1 -o command=', 'git status; pgrep -d, -f next | xargs -r ps -o pid=,ppid=,etime=,ucomm= -p | head; ps -p 1 -o ucomm='],
+  ['echo "$(pgrep -fl next)"', 'echo "$(pgrep -d, -f next | xargs -r ps -o pid=,ppid=,etime=,ucomm= -p)"'],
+  ['ps -o pid=,etime=,pcpu=,comm= -p 123', 'ps -p 123 -o pid=,etime=,pcpu=,ucomm='],
+  ['ps -o pid:8,comm:20', 'ps -o pid:8,ucomm:20'],
+  ['ps -eo pid=,comm:32=', 'ps -e -o pid=,ucomm:32='],
+  ['ps -o comm= -p "$PID"', 'ps -p "$PID" -o ucomm='],
+  ['ps --format pid,comm -e', 'ps -e -o pid,ucomm'],
+  ['ps -o comm=NAME -p 1', 'ps -p 1 -o ucomm=NAME'],
+  ['ps aux | grep x; ps -o pid,comm -p 1', 'pgrep -d, -f x | xargs -r ps -o pid=,ppid=,pcpu=,rss=,etime=,ucomm= -p; ps -p 1 -o pid,ucomm'],
 ];
 
 test('a listing deny names first the exact command to run instead, and that command runs', () => {
@@ -724,7 +758,7 @@ test('no whole-line replacement for a listing behind a shell word, in a group, o
 
 test('a listing inside a command string gets the replacement for that listing alone', () => {
   const { reason } = decideForCommand("sh -c 'pgrep -fl next'", NO_OVERRIDE);
-  assert.ok(reason.includes('Run `pgrep -d, -f next | xargs -r ps -o pid=,ppid=,etime=,comm= -p` in place of `pgrep -fl next`.'), reason);
+  assert.ok(reason.includes('Run `pgrep -d, -f next | xargs -r ps -o pid=,ppid=,etime=,ucomm= -p` in place of `pgrep -fl next`.'), reason);
   assert.ok(decideForCommand('ps $FLAGS', NO_OVERRIDE).reason.startsWith(`Blocked: this process listing prints full command lines. On macOS`), 'none it cannot build');
 });
 
@@ -735,4 +769,73 @@ test('a pkill or killall deny names the pgrep that lists what it would stop', ()
   assert.ok(killall.includes("List the pids first with `pgrep -x 'node|next-server'`"), killall);
   assert.equal(firstSentence(pkill), firstSentence(decideForCommand('pgrep -x yes | xargs kill', ENV).reason), 'one key for the rule in the log');
   assert.ok(!decideForCommand('pgrep -x yes | xargs kill', ENV).reason.includes('List the pids first'));
+});
+
+// Every command a deny suggests: its code spans and the line under "Run this instead".
+function suggestedCommands(reason) {
+  const spans = reason.split('`').filter((_, index) => index % 2 === 1);
+  const line = /Run this instead:\n\n {2}(.+)\n/u.exec(reason)?.[1];
+  return line ? [line, ...spans] : spans;
+}
+
+// The format keys of every `ps` in `suggestion`, from `-o`, `-O`, and `--format`, without `=header` and `:width`.
+function psFormatKeys(suggestion) {
+  const keys = [];
+  for (const piece of suggestion.split(/[|;&()]+/u)) {
+    const tokens = piece.trim().split(/\s+/u).map((token) => token.replace(/^["']|["']$/gu, ''));
+    const ps = tokens.findIndex((token) => token.split('/').pop() === 'ps');
+    if (ps === -1) continue;
+    for (let i = ps + 1; i < tokens.length; i += 1) {
+      const token = tokens[i];
+      let format = null;
+      const short = /^-[A-Za-z]*[oO](.*)$/u.exec(token);
+      if (short) format = short[1] || tokens[(i += 1)];
+      else if (token === '--format') format = tokens[(i += 1)];
+      else if (token.startsWith('--format=')) format = token.slice('--format='.length);
+      if (format) keys.push(...format.split(/[,\s]+/u).filter(Boolean).map((key) => key.split('=')[0].split(':')[0]));
+    }
+  }
+  return keys;
+}
+
+// On macOS `comm` is the full executable path, and for a process that sets its own title its arguments too, so a
+// suggestion asks for `ucomm`, the accounting name, never `comm`, `args`, `command`, `cmd`, or an AIX descriptor.
+test('no listing a deny suggests asks for arguments, a command line, or a bare comm', () => {
+  const commands = [
+    ...REPLACEMENTS.map(([command]) => command),
+    'ps -O pid',
+    'ps -o pid,comm,args',
+    'ps -eo pid,comm:20,args:200',
+    'ps -o pid=,comm=NAME,command=',
+    'ps -o "%p %c %a"',
+    'ps --format=pid,cmd:50',
+    'ps --format pid,comm,args -e',
+    'ps -o pid=,comm= aux',
+    'ps -o pid=,etime=,pcpu=,comm= -p 123',
+    'ps aux | grep x; ps -o pid,comm -p 1',
+    'ps -o comm= -p 1 | head',
+    'ps -p 123',
+    'pgrep -a node',
+    'pgrep --list-full node',
+    "sh -c 'pgrep -fl next'",
+    "sh -c 'ps -ef'",
+    'ps $FLAGS',
+    'pkill -f next',
+    'killall node',
+    'kill $(pgrep -f x)',
+  ];
+  const banned = new Set(['args', 'command', 'cmd', 'comm']);
+  let formats = 0;
+  for (const command of commands) {
+    const { decision, reason } = decideForCommand(command, NO_OVERRIDE);
+    assert.equal(decision, 'deny', command);
+    for (const suggestion of suggestedCommands(reason)) {
+      for (const key of psFormatKeys(suggestion)) {
+        formats += 1;
+        assert.ok(!banned.has(key), `${command} suggests \`${suggestion}\`, which asks for ${key}`);
+        assert.ok(!key.includes('%') || key === '%cpu' || key === '%mem', `${command} suggests \`${suggestion}\`, which asks for ${key}`);
+      }
+    }
+  }
+  assert.ok(formats > commands.length, 'the suggestions carry ps formats to judge');
 });

@@ -7,12 +7,14 @@
 //
 // Command-line listings: no `pgrep -fl`, `pgrep -a`, or `ps` without an explicit format free of argument columns.
 // On macOS a process that sets its own title shows its environment as arguments, so secrets would reach the transcript.
+// `comm` counts as one: on macOS it is the full executable path, and for a self-titled process that title, arguments
+// and all. `ucomm`, the accounting name, is neither.
 // A listing whose output reaches only `/dev/null` or a counter (`wc`, `grep -c`, `grep -q`) prints none of it, so it runs,
 // but only when the listing is on the command line itself or in a substitution of it, never inside `sh -c`, `eval`,
 // `env -S`, or xargs, and only through programs whose every word this rule reads.
 //
 // Each deny names the command to run instead, built from the one it saw: `pgrep -fl x` and `ps aux | grep x` become
-// `pgrep -d, -f x | xargs -r ps -o pid=,…,comm= -p`, a `ps` format trades its argument columns for `comm`, and a
+// `pgrep -d, -f x | xargs -r ps -o pid=,…,ucomm= -p`, a `ps` format trades its argument columns for `ucomm`, and a
 // `pkill` or `killall` the `pgrep` that lists what it would stop.
 //
 // Both look through wrappers, `case` arms, subshells, `sh -c`, `eval`, `env -S`, xargs, and the substitutions that run.
@@ -38,7 +40,7 @@ const LISTING_LEAD = 'Blocked: this process listing prints full command lines.';
 const LISTING_REASON =
   'On macOS a process that sets its own title shows its ' +
   'inherited environment as arguments, so secrets would land in the transcript. List pids and names only: ' +
-  '`ps -o pid=,ppid=,pcpu=,rss=,etime=,comm=` (add `-p <pid>` or `-e`), `pgrep <pattern>`, `pgrep -f <pattern>` ' +
+  '`ps -o pid=,ppid=,pcpu=,rss=,etime=,ucomm=` (add `-p <pid>` or `-e`), `pgrep <pattern>`, `pgrep -f <pattern>` ' +
   `(pids only), or \`pgrep -l <pattern>\` without \`-f\`; a count (\`| wc -l\`, \`| grep -c\`) or \`>/dev/null\` runs as it is. ` +
   `To override for an explicit, user-confirmed reason, set ` +
   `${LISTING_OVERRIDE}=1 in your own shell before starting the session (agents must never set it on the user's behalf).`;
@@ -96,7 +98,7 @@ function probesOnly(args) {
 
 // `ps` prints the command line unless an explicit format leaves the argument columns out, and every other token is a
 // known selector or layout option. `-f`, `-F`, `-l`, `-j`, `-v`, `-O`, `-E`, and BSD clusters such as `aux` print it.
-const PS_ARGUMENT_KEYS = new Set(['args', 'command', 'cmd']);
+const PS_ARGUMENT_KEYS = new Set(['args', 'command', 'cmd', 'comm']);
 const PS_SAFE_FLAG_LETTERS = new Set(['A', 'a', 'c', 'd', 'e', 'h', 'm', 'r', 'w', 'X', 'x']);
 const PS_SAFE_VALUE_LETTERS = new Set(['p', 'q', 't', 'U']);
 const PS_SAFE_LONG_FLAGS = new Set(['--no-headers', '--no-heading', '--headers']);
@@ -492,8 +494,8 @@ function outputDiscarded(segments, separators, i) {
 }
 
 // What a replacement prints for each process, by the form it replaces. `=` keeps a header off, as grep would.
-const PGREP_FIELDS = 'pid=,ppid=,etime=,comm=';
-const PS_DEFAULT_FIELDS = 'pid,ppid,pcpu,rss,etime,comm';
+const PGREP_FIELDS = 'pid=,ppid=,etime=,ucomm=';
+const PS_DEFAULT_FIELDS = 'pid,ppid,pcpu,rss,etime,ucomm';
 const pidsThrough = (fields) => `xargs -r ps -o ${fields} -p`;
 
 // The words of `tokens`, or null when one cannot be written back.
@@ -546,15 +548,15 @@ function pgrepReplacement(args, separator) {
   return `pgrep -d, ${kept.join(' ')} | ${pidsThrough(PGREP_FIELDS)}`;
 }
 
-// `ps` format keys without the argument columns: `args`, `command`, and `cmd` become `comm`, and an AIX descriptor its
-// keyword (`%a` is args, so `comm`). `=header` and `:width` stay with their key.
-const AIX_KEYS = { '%a': 'comm', '%c': 'comm', '%p': 'pid', '%P': 'ppid', '%C': 'pcpu', '%z': 'vsz', '%t': 'etime', '%u': 'user', '%U': 'ruser', '%g': 'group', '%G': 'rgroup', '%n': 'nice', '%x': 'time', '%y': 'tty', '%r': 'pgid' };
+// `ps` format keys without the argument columns: `args`, `command`, `cmd`, and `comm` become `ucomm`, and an AIX
+// descriptor its keyword (`%a` is args, so `ucomm`). `=header` and `:width` stay with their key.
+const AIX_KEYS = { '%a': 'ucomm', '%c': 'ucomm', '%p': 'pid', '%P': 'ppid', '%C': 'pcpu', '%z': 'vsz', '%t': 'etime', '%u': 'user', '%U': 'ruser', '%g': 'group', '%G': 'rgroup', '%n': 'nice', '%x': 'time', '%y': 'tty', '%r': 'pgid' };
 function safeFields(format) {
   const keys = [];
   for (const key of format.split(/[,\s]+/u).filter(Boolean)) {
     const name = key.split('=')[0].split(':')[0];
     let safe = key;
-    if (PS_ARGUMENT_KEYS.has(name)) safe = `comm${key.slice(name.length)}`;
+    if (PS_ARGUMENT_KEYS.has(name)) safe = `ucomm${key.slice(name.length)}`;
     else if (name.includes('%') && !PS_PERCENT_KEYWORDS.has(name)) safe = AIX_KEYS[name] ?? null;
     if (safe !== null && !keys.includes(safe)) keys.push(safe);
   }
@@ -608,7 +610,7 @@ function psParts(args) {
           addFields(value.text);
         } else if (letter === 'O') {
           if (value.dynamic) return null;
-          addFields(`pid,${value.text},comm`);
+          addFields(`pid,${value.text},ucomm`);
         } else {
           const word = shellWord(value);
           if (word === null) return null;

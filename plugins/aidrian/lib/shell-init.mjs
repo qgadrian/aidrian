@@ -67,6 +67,7 @@ function shellFunction(shell, program, attach) {
     '  [[ ${XDG_STATE_HOME:-} == /* ]] && base=$XDG_STATE_HOME',
     `  local dir="$base/aidrian/${TERMINAL_FOLDER}"`,
     `  local next="$dir/$$" follows="$dir/${FOLLOWS_PREFIX}$$"`,
+    '  command rm -f -- "$follows" 2>/dev/null || :',
     `  [[ \${1:-} == ${attach} && \${2:-} =~ $pattern ]] && id=$2`,
     ...followsWrite('  '),
     `  ${SHELL_VAR}=$$ command ${program} "$@" || rc=$?`,
@@ -89,9 +90,10 @@ function shellFunction(shell, program, attach) {
 }
 
 // The lines that write this shell's `follows-` record for a plain `$id`, at `indent`: in a subshell, so its umask and
-// noclobber stay there, into a folder that is a real one this user owns, never through a file left in its place.
+// noclobber stay there, into a folder that is a real one this user owns, made owner-only first, never through a file
+// left in its place. The function deletes its record before it runs anything, so one an earlier run left never counts.
 const followsWrite = (indent) => [
-  `${indent}[[ -n $id ]] && { ( umask 077 && command mkdir -p -- "$dir" && [[ -d $dir && ! -L $dir && -O $dir ]] && command rm -f -- "$follows" \\`,
+  `${indent}[[ -n $id ]] && { ( umask 077 && command mkdir -p -- "$dir" && [[ -d $dir && ! -L $dir && -O $dir ]] && command chmod 700 "$dir" && command rm -f -- "$follows" \\`,
   `${indent}  && set -C && command printf '%s %s\\n' "$id" "$(command date +%s)" > "$follows" ) 2>/dev/null || :; }`,
 ];
 

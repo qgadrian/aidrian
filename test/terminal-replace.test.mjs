@@ -342,6 +342,9 @@ test('the shell function\'s record says which shell shows a session, under its i
   assert.deepEqual(readFollows(BG_SESSION, { env, now }), { shell: 4343, id: BG_SESSION }, 'the latest of those that name it');
   assert.deepEqual(readFollows(NEXT_SESSION, { env, now }), { shell: 4444, id: 'efgh5678' }, 'a short id the session starts with');
   assert.equal(readFollows('zzzz0000-0000', { env, now }), null, 'another session');
+  writeFileSync(path.join(records, 'follows-4646'), `zzzz ${seconds()}\n`);
+  assert.equal(readFollows('zzzz0000-0000', { env, now }), null, 'a prefix shorter than a short id names no other session');
+  rmSync(path.join(records, 'follows-4646'));
   assert.equal(readFollows(BG_SESSION, { env, now: now + FOLLOW_AGE + 120_000 }), null, 'past FOLLOW_AGE');
   rmSync(path.join(records, 'follows-4343'));
   assert.deepEqual(readFollows(BG_SESSION, { env, now }), { shell: 4242, id: 'abcd1234' });
@@ -376,6 +379,13 @@ test('the shell function records the session it opens by a plain id, typed or fr
     assert.deepEqual(chained.calls.slice(1), [`${chained.shell} attach first-id`, `${chained.shell} attach second-id`], `${shell}: chained`);
     assert.deepEqual(chained.follows, ['', 'first-id', 'second-id'], `${shell}: chained`);
     assert.equal(existsSync(path.join(chained.records, `follows-${chained.shell}`)), false, `${shell}: chained`);
+
+    const stale = inShell(t, { shell, script: 'd="$XDG_STATE_HOME/aidrian/handoff-terminals"; mkdir -p "$d"; echo "abcd1234 1" > "$d/follows-$$"; claude --resume x' });
+    assert.deepEqual(stale.follows, [''], `${shell}: a record an earlier run left is gone before a plain run starts`);
+
+    const open = inShell(t, { shell, script: 'd="$XDG_STATE_HOME/aidrian/handoff-terminals"; mkdir -p "$d"; chmod 777 "$d"; claude attach abcd1234' });
+    assert.deepEqual(open.follows, ['abcd1234'], `${shell}: written in a folder others could write`);
+    assert.equal((statSync(open.records).mode & 0o777), 0o700, `${shell}: and that folder is made the user's alone first`);
 
     for (const script of ['claude attach "ab;cd"', 'claude attach \'harness · 2\'', 'claude agents', 'set -eu; claude attach']) {
       const plain = inShell(t, { shell, script });

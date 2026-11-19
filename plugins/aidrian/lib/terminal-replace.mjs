@@ -51,6 +51,9 @@ export const OPEN_ID = /^[0-9A-Za-z][-_0-9A-Za-z]{3,127}$/u;
 // The shell function's record of the session its terminal shows, `follows-<shell pid>`, and its one line.
 export const FOLLOWS_PREFIX = 'follows-';
 const FOLLOWS_FILE = new RegExp(`^${FOLLOWS_PREFIX}(\\d{1,10})$`, 'u');
+// The shortest id a follows record may name a session by when it is not the full id: the short id a host lists, such as
+// the first 8 characters of a Claude Code session id. A shorter typed name never matches another session by prefix.
+export const SHORT_ID_MIN = 8;
 const FOLLOWS_LINE = new RegExp(`^(${OPEN_ID.source.slice(1, -1)}) (\\d{1,12})\\n?$`, 'u');
 const HELPER = path.resolve(import.meta.dirname, '../scripts/end-host.mjs');
 
@@ -141,7 +144,7 @@ export function readFollows(session, { env = process.env, now = Date.now() } = {
     if (!match) continue;
     const at = Number(match[2]) * 1000;
     const id = match[1];
-    if (at > now + NEXT_MARGIN || now - at > FOLLOW_AGE || !(id === session || session.startsWith(id))) continue;
+    if (at > now + NEXT_MARGIN || now - at > FOLLOW_AGE || !(id === session || (id.length >= SHORT_ID_MIN && session.startsWith(id)))) continue;
     if (!latest || at > latest.at) latest = { shell, id, at };
   }
   return latest && { shell: latest.shell, id: latest.id };

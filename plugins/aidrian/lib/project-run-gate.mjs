@@ -134,7 +134,8 @@ function guardedStore({ env, home }) {
 // and through the forge at the repository init pinned, `repository`. { maxParallel, maxStarts, issueHours, solo,
 // unverifiedHosts, workflowSecretsAccepted, outsideSandbox, mcpServers, registries } with each number the lowest of the two reads and its
 // CEILINGS value, each switch true only when both reads set it, outsideSandbox and registries the names both reads
-// list, and mcpServers the servers both reads define alike, or { problem }. A forge read that fails refuses.
+// list, and mcpServers the servers both reads define alike, or { problem }: with `transient` when the forge could not
+// answer now, and with issueHours when it answered and withdrew projectRun.allow. A forge read that fails refuses.
 export function teamPolicy(project, repository, forge) {
   const local = baseBranchConfig(project, 'projectRun');
   if (local.why) return { problem: local.why };
@@ -147,8 +148,9 @@ export function teamPolicy(project, repository, forge) {
   } catch (error) {
     return { problem: `the forge's copy of the default branch's config.json cannot be read (${String(error.message).split('\n')[0]}), so project runs stay off for now`, transient: true };
   }
-  if (policies.policy.projectRun?.allow !== true) return { problem: `the default branch ${policies.main} on the forge does not set projectRun.allow to true` };
   const pick = (key) => Math.min(local.config.projectRun[key], policies.policy.projectRun[key], CEILINGS[key]);
+  // A refusal the forge answers still carries the hours both reads hold, which wait's settlePolicy never exceeds.
+  if (policies.policy.projectRun?.allow !== true) return { problem: `the default branch ${policies.main} on the forge does not set projectRun.allow to true`, issueHours: pick('issueHours') };
   return {
     maxParallel: pick('maxParallel'), maxStarts: pick('maxStarts'), issueHours: pick('issueHours'), solo: local.config.solo === true && soloOn(policies),
     unverifiedHosts: local.config.projectRun.unverifiedHosts === true && policies.policy.projectRun.unverifiedHosts === true,
@@ -661,8 +663,9 @@ function startLines({ result, state, run, key, attempt, session, base, proof, ca
 // for each: `settled KEY STATE`, `result KEY STATUS -> STATE`, `ended KEY REASON -> STATE`, `orphan ...`, `running KEY`,
 // `lingering KEY attempt N`, `paused until TIME` while a pause lasts, or `idle` when none runs or runs on.
 // `wait` starts nothing. A team policy the forge no longer confirms, such as projectRun.allow turned off on the default
-// branch while the run's sessions run, refuses no wait: it settles under settlePolicy, with a first `note policy:` line,
-// so the driver's halt wait still stops overdue sessions, takes in results, and reaches `idle`.
+// branch while the run's sessions run, or one the forge cannot answer now, through an outage or a rate limit, refuses no
+// wait: it settles under settlePolicy, with a first `note policy:` line, so the driver's halt wait still stops overdue
+// sessions, takes in results, and reaches `idle`. Only `start` exits 75 on a read the forge cannot answer now.
 // `pause` is a test's stand-in for the wait between reads.
 export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = process.env, home, now = Date.now(), forge = null, spawn, pause = pauseSync, clock = Date.now }) {
   const refuse = (why) => ({ exitCode: 1, out: [], err: [`aidrian project wait: ${why}`] });
@@ -675,9 +678,7 @@ export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = pr
   const held = custody({ found: opened.found, store, session, now });
   if (held.problem) return refuse(held.problem);
   const facade = forge ?? forgeFor(project.root);
-  const team = teamPolicy(project, opened.found.init.repository, facade);
-  if (team.transient) return retryAnswer('wait', team.problem);
-  const { policy, note } = settlePolicy(project, team);
+  const { policy, note } = settlePolicy(project, teamPolicy(project, opened.found.init.repository, facade));
   const cap = detectHost({ env }).capabilities.projectStart;
   if (!cap) return refuse('this host declares no way to read a project run\'s sessions (capabilities.projectStart)');
   if (held.role === 'successor') {
@@ -713,14 +714,15 @@ export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = pr
 }
 
 // The policy `wait` settles a run's issues under, from the team's policy `team` (teamPolicy): { policy, note }, where
-// `note` holds the line to print first, if any. A policy the forge confirms stands. One it no longer confirms leaves
-// only issueHours, which every running session is held to: the base branch's own, as this checkout's git holds it, or
-// the default when that cannot be read, within CEILINGS. Nothing here lets a session start: start reads teamPolicy itself.
+// `note` holds the line to print first, if any. A policy the forge confirms stands. One it no longer confirms, or cannot
+// answer now, leaves only issueHours, which every running session is held to: the lowest of the default, the CEILINGS
+// value, the base branch's own as this checkout's git holds it, and the hours both reads held when the forge answered
+// with its refusal. A bound the forge no longer confirms never loosens past the one it last did or the default.
+// Nothing here lets a session start: start reads teamPolicy itself.
 function settlePolicy(project, team) {
   if (!team.problem) return { policy: team, note: [] };
   const read = safely(() => baseBranchConfig(project, 'projectRun').config?.projectRun?.issueHours);
-  const hours = Number.isFinite(read) && read > 0 ? read : DEFAULTS.projectRun.issueHours;
-  const issueHours = Math.min(hours, CEILINGS.issueHours);
+  const issueHours = Math.min(...[DEFAULTS.projectRun.issueHours, CEILINGS.issueHours, read, team.issueHours].filter((hours) => Number.isFinite(hours) && hours > 0));
   return { policy: { issueHours }, note: [`note policy: ${team.problem}; wait starts nothing and settles the issues that run, stopping any past projectRun.issueHours, ${issueHours}`] };
 }
 

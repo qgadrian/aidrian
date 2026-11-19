@@ -1107,8 +1107,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   call of the plugin runs with `core.fsmonitor`, `core.hooksPath`, submodule recursion, the `ext::` transport, and
   signature display turned off (`lib/git.mjs`), the start gate's that make each attempt clone among them; another
   `commondir` would lead git to a config those settings do not cover. One call runs as the person's own git would:
-  `aidrian worktree new`'s `git worktree add`, which an attended person runs, so a repository's post-checkout hook,
-  such as husky's, pre-commit's, or git-lfs's, runs in the new worktree as it does by hand.
+  `aidrian worktree new`'s `git worktree add`, so a repository's post-checkout hook, such as husky's, pre-commit's, or
+  git-lfs's, runs in the new worktree as it does by hand. The command runs in its caller's own shell, inside a confined
+  session's sandbox when an issue session runs it, so it has no more rights than a hand-typed `git worktree add` there.
 - An attempt clone stands linked to its run's main checkout only for the session whose unattended mark names that run,
   that issue, and that main checkout, or, before the gate files that mark, whose pending mark names that main checkout
   and that clone as the folder it starts the session in. A hook reads the session from its payload's id; a command

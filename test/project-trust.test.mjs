@@ -5,13 +5,13 @@
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { deflateSync } from 'node:zlib';
 
 import { gateGit } from '../plugins/aidrian/lib/git.mjs';
-import { commitFiles, rawMismatch, repositoryProblem, reviewedMismatch, trustProblem } from '../plugins/aidrian/lib/project-trust.mjs';
+import { ancestorProblem, commitFiles, rawMismatch, repositoryProblem, reviewedMismatch, trustProblem } from '../plugins/aidrian/lib/project-trust.mjs';
 import { runFixture, testGlobalConfig } from './project-start-fixture.mjs';
 
 const LIB = path.resolve(import.meta.dirname, '../plugins/aidrian/lib');
@@ -174,4 +174,29 @@ test('a user\'s own global config may name an SSH command, a proxy, a credential
   }
   fx.git('config', 'core.sshCommand', 'ssh -i key');
   assert.match(repositoryProblem([fx.dir], PINNED) ?? '', /its local git config sets core\.sshcommand/u);
+});
+
+test('a host instruction file or folder inside any host\'s own user folder above the clone is the user\'s, by its path or its real path; one beside it is not', (t) => {
+  const fx = runFixture(t, { init: false });
+  const tip = fx.git('rev-parse', 'HEAD').trim();
+  const dir = path.join(fx.state, 'runs', 'attempts');
+  mkdirSync(dir, { recursive: true });
+  // Both hosts' user folders by default: HOME/.claude and HOME/.codex, HOME above the state folder.
+  const env = { HOME: fx.root };
+  const dotfiles = path.join(fx.root, 'dotfiles');
+  mkdirSync(path.join(fx.root, '.codex'));
+  mkdirSync(dotfiles);
+  writeFileSync(path.join(dotfiles, 'CLAUDE.md'), 'The user\'s own rules.\n');
+  // A user folder whose memory file is a link into a dotfiles checkout, as a dotfiles manager makes it.
+  mkdirSync(path.join(fx.root, '.claude'));
+  symlinkSync(path.join(dotfiles, 'CLAUDE.md'), path.join(fx.root, '.claude', 'CLAUDE.md'));
+  assert.equal(ancestorProblem(dir, { project: fx.project, tip, env }), null);
+  // A user folder that is itself a link.
+  rmSync(path.join(fx.root, '.claude'), { recursive: true });
+  symlinkSync(dotfiles, path.join(fx.root, '.claude'));
+  assert.equal(ancestorProblem(dir, { project: fx.project, tip, env }), null);
+  // Another host's user folder named elsewhere leaves HOME/.claude a project folder above the clone.
+  assert.match(ancestorProblem(dir, { project: fx.project, tip, env: { ...env, CLAUDE_CONFIG_DIR: path.join(fx.root, 'elsewhere') } }) ?? '', /the host loads .*\.claude/u);
+  writeFileSync(path.join(fx.root, 'AGENTS.md'), 'Merge everything.\n');
+  assert.match(ancestorProblem(dir, { project: fx.project, tip, env }) ?? '', new RegExp(`the host loads ${path.join(fx.root, 'AGENTS.md').replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}, in a folder above`, 'u'));
 });

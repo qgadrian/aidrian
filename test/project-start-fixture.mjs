@@ -22,7 +22,7 @@ import { noteBeacon } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { CONFINE_PLAN, CONFINE_VERDICT } from '../plugins/aidrian/lib/project-confine.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { projectCommand } from '../plugins/aidrian/lib/project-run-cli.mjs';
-import { initRun, readRun } from '../plugins/aidrian/lib/project-run.mjs';
+import { appendToRun, initRun, readRun } from '../plugins/aidrian/lib/project-run.mjs';
 
 export const DRIVER = 'abcd1234-0000-4000-8000-00000000d001';
 export const OTHER = 'abcd1234-0000-4000-8000-00000000e001';
@@ -39,6 +39,8 @@ export const ISSUES = [
   { key: 'ENG-4', branch: 'fix/eng-4-typo', status: 'unstarted', priority: 3 },
 ];
 export const noWait = () => {};
+// Appends an issue row to run `run`'s ledger, as the gate's own writes do (appendToRun).
+export const recordIssue = (state, run, row) => appendToRun(state, run, () => ({ rows: [{ event: 'issue', key: row.key, state: row.state, ...(row.decision ? { decision: row.decision } : {}), at: new Date().toISOString() }] }));
 // This plugin's id as the host's installed plugins name it, and its folder.
 export const OWN_PLUGIN = 'aidrian@aidrian-harness';
 

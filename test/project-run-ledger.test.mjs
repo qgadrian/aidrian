@@ -19,11 +19,9 @@ import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { noteFrom, openStore, storePath } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { LOCKED } from '../plugins/aidrian/lib/jsonl.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
-import { appendToRun, INPUT_CAP, initRun, pinnedRepository, readCapped, readRun, runFolder, runPlace, runsFolder, writeSummary } from '../plugins/aidrian/lib/project-run.mjs';
+import { INPUT_CAP, initRun, pinnedRepository, readCapped, readRun, runFolder, runPlace, runsFolder, writeSummary } from '../plugins/aidrian/lib/project-run.mjs';
 import { markPending, markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
-
-// Appends an issue row to run `run`'s ledger, as the gate's own writes do (appendToRun).
-const recordIssue = (state, run, row) => appendToRun(state, run, () => ({ rows: [{ event: 'issue', key: row.key, state: row.state, ...(row.decision ? { decision: row.decision } : {}), at: new Date().toISOString() }] }));
+import { recordIssue } from './project-start-fixture.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SESSION = 'abcd1234-0000-4000-8000-00000000aa01';

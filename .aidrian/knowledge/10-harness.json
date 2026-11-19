@@ -32,7 +32,7 @@
       "tags": []
     },
     "project-folder.md": {
-      "summary": ".aidrian/: init, check, lint, state, sessions, runs: attempts results issues stops logs, hook-counts, issue-reads, sources, quorum route, quorum provisional",
+      "summary": ".aidrian/: init, check, lint, state, sessions, runs, hook-counts, issue-reads, worktrees, sources, decision markers, quorum route, quorum provisional, migrating",
       "tags": []
     },
     "personas.md": {
@@ -60,7 +60,7 @@
       "tags": []
     },
     "config.md": {
-      "summary": "config.json: auto-merge, quorum roles/autoStart, decisions, authority, productFeedback, PR body, gate, solo, project init/start/wait/result/preflight/report",
+      "summary": "config.json: auto-merge, quorum roles/autoStart, decisions, authority, productFeedback, PR body, gate, solo, projectRun, project init/next/start/wait/preflight",
       "tags": []
     },
     "dispatch-log.md": {

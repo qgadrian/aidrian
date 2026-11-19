@@ -214,7 +214,7 @@ export default {
   instructionFiles: {
     files: ['CLAUDE.md', 'CLAUDE.local.md', '.claude/CLAUDE.md'],
     folders: ['.claude'],
-    userFolder: (env) => env.CLAUDE_CONFIG_DIR || path.join(homedir(), '.claude'),
+    userFolder: (env) => configDir(env),
   },
   // What a session in a linked worktree reads from the main checkout, wherever the worktree lies: the main checkout's
   // .claude/settings.local.json (code.claude.com/docs/en/settings), and, from 2.1.277, its .claude skills, agents, and

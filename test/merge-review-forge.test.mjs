@@ -23,7 +23,7 @@ import { emptyState, readLocalState, RECORD_LIST_CAP, recordFile, recordNames, r
 import { check, checkMcp, endpointOf, MERGE_MUTATIONS } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 import { markDriver, markFolder, markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { check as signoffCheck, UNATTENDED_REASON } from '../plugins/aidrian/lib/rules/review-signoff.mjs';
-import { DRIVER, ISSUES, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
+import { DRIVER, ISSUES, OTHER, recordIssue, runFixture, STARTED } from './project-start-fixture.mjs';
 
 // An unattended merge never rests on a record a confined session can write (docs/review.md, Merge trust): the merge guard
 // and `aidrian pr auto-merge` confirm the team's policy and the review bot's verdict on the forge, and read the Human's
@@ -36,9 +36,6 @@ const TEAM = { allow: true, strategy: 'squash', deleteBranch: true, deleteWorktr
 const CHECKS = { requiredChecks: ['e2e'], conditionalChecks: [], ignoreCancelledChecks: [] };
 const PAYMENTS = { files: ['src/pay/**'], signoff: 'human', invariants: [{ id: 'p1', text: 'a payment is never charged twice' }] };
 const configOf = (extra = {}) => ({ version: 1, state: { dir: '../state' }, github: { ...CHECKS, autoMerge: TEAM }, ...extra });
-
-// Appends an issue row to run `run`'s ledger, as the gate's own writes do (appendToRun).
-const recordIssue = (state, run, row) => appendToRun(state, run, () => ({ rows: [{ event: 'issue', key: row.key, state: row.state, ...(row.decision ? { decision: row.decision } : {}), at: new Date().toISOString() }] }));
 
 // The bot's status card, as the forge's reviewTrail gives a comment: by the bot, every edit the bot's.
 const card = (sha = HEAD, { unresolved = false, any = unresolved, ...extra } = {}) => ({

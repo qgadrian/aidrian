@@ -665,6 +665,54 @@ test('Claude Code reads auto mode from the user settings alone, never from the p
   assert.equal(read.file, path.join(config, 'settings.json'));
 });
 
+// A permission rule that allows a `git push` approves it before auto mode's classifier runs, so no denial stands
+// beside one, in the user settings or in the project's `.claude/settings.json` or `.claude/settings.local.json`.
+test('Claude Code answers unknown, not denied, when a permission rule allows a git push, in the user or the project settings', (t) => {
+  const ONLY_OTHER = trusting(['Trusted repo: github.com/acme/other']);
+  const withRules = (allow) => ({ ...ONLY_OTHER, permissions: { allow } });
+  const pushing = ['Bash(git push:*)', 'Bash(git push *)', 'Bash(git push)', 'Bash(git:*)', 'Bash(git *)', 'Bash(git * main)', 'Bash(git push origin main)', ' Bash( git push:* ) '];
+  // Unrelated rules, and the broad ones auto mode drops on entry: bare `Bash`, `Bash(*)`, and a leading wildcard.
+  const unrelated = ['Bash(git status)', 'Bash(git pull:*)', 'Bash(git pushall)', 'Bash(git:* push)', 'Bash(npm run *)', 'Read(**)', 'WebFetch', 'Bash(gh pr view:*)', 'Bash', 'Bash(*)', 'Bash(* --version)', 'Bash()'];
+  for (const rule of pushing) assert.deepEqual(askClaude(claudeSettings(t, withRules(['Bash(git status)', rule]))), { answer: 'unknown' }, `user file: ${rule}`);
+  for (const rule of unrelated) assert.equal(askClaude(claudeSettings(t, withRules([rule]))).answer, 'denied', `user file: ${rule}`);
+  // The project's files, in the session's folder and in the root of the repository it is in.
+  const project = (files, { below = false } = {}) => {
+    const config = claudeSettings(t, ONLY_OTHER);
+    const root = path.join(config, 'work');
+    mkdirSync(path.join(root, '.claude'), { recursive: true });
+    mkdirSync(path.join(root, '.git'));
+    for (const [name, settings] of Object.entries(files)) writeFileSync(path.join(root, '.claude', name), typeof settings === 'string' ? settings : JSON.stringify(settings));
+    const cwd = below ? path.join(root, 'packages', 'app') : root;
+    mkdirSync(cwd, { recursive: true });
+    return askClaude(config, { cwd });
+  };
+  for (const name of ['settings.json', 'settings.local.json']) {
+    assert.deepEqual(project({ [name]: { permissions: { allow: ['Bash(git push:*)'] } } }), { answer: 'unknown' }, name);
+    assert.deepEqual(project({ [name]: { permissions: { allow: ['Bash(git push *)'] } } }, { below: true }), { answer: 'unknown' }, `${name} at the repository root, from a folder below it`);
+    assert.equal(project({ [name]: { permissions: { allow: ['Bash(git status)'] } } }).answer, 'denied', `${name}: an unrelated rule`);
+    assert.equal(project({ [name]: { permissions: { deny: ['Bash(git push:*)'] } } }).answer, 'denied', `${name}: a deny rule`);
+    // A project file that is there and cannot be read, or rules of another shape: no denial stands.
+    for (const settings of ['{"permissions": {', '[]', { permissions: 'Bash' }, { permissions: { allow: 'Bash(git push:*)' } }, { permissions: { allow: [7] } }]) {
+      assert.deepEqual(project({ [name]: settings }), { answer: 'unknown' }, `${name}: ${JSON.stringify(settings)}`);
+    }
+  }
+  assert.equal(project({}).answer, 'denied', 'no project settings');
+  // A worktree: Claude Code reads `.claude/settings.local.json` at the main checkout's root.
+  const config = claudeSettings(t, ONLY_OTHER);
+  const main = path.join(config, 'main');
+  const worktree = path.join(config, 'worktrees', 'wt');
+  mkdirSync(path.join(main, '.git', 'worktrees', 'wt'), { recursive: true });
+  mkdirSync(path.join(main, '.claude'));
+  mkdirSync(worktree, { recursive: true });
+  writeFileSync(path.join(main, '.git', 'worktrees', 'wt', 'commondir'), '../..\n');
+  writeFileSync(path.join(worktree, '.git'), `gitdir: ${path.join(main, '.git', 'worktrees', 'wt')}\n`);
+  assert.equal(askClaude(config, { cwd: worktree }).answer, 'denied', 'a worktree with no rule');
+  writeFileSync(path.join(main, '.claude', 'settings.local.json'), JSON.stringify({ permissions: { allow: ['Bash(git push *)'] } }));
+  assert.deepEqual(askClaude(config, { cwd: worktree }), { answer: 'unknown' }, 'the main checkout\'s local settings, from a worktree');
+  assert.deepEqual(askClaude(claudeSettings(t, ONLY_OTHER), { cwd: 'work' }), { answer: 'unknown' }, 'a relative folder');
+  assert.deepEqual(askClaude(claudeSettings(t, { ...ONLY_OTHER, permissions: { allow: 'Bash' } })), { answer: 'unknown' }, 'user rules of another shape');
+});
+
 test('Claude Code answers unknown at once for a named pipe at its user settings, alone or behind a symlink', { skip: process.platform === 'win32' }, (t) => {
   for (const linked of [false, true]) {
     const config = claudeSettings(t, undefined);

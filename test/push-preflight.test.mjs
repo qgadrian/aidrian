@@ -137,6 +137,21 @@ test('a credential in the remote URL never reaches the host or the message: only
   assert.deepEqual(asks, []);
 });
 
+test('an SSH host alias answers unknown without asking the host, and a .git suffix in any case is dropped', (t) => {
+  // A host with no dot, such as an alias in the SSH config, names no host a setting would: the host is never asked.
+  const { asks, host } = answering(DENIAL);
+  for (const url of ['git@github-work:acme/widget.git', 'github-work:acme/widget', 'ssh://git@github-work/acme/widget.git', 'https://localhost/acme/widget']) {
+    assert.deepEqual(pushPreflight({ cwd: repository(t), host, session: SESSION, git: remote(url) }), { answer: 'unknown' }, url);
+  }
+  assert.deepEqual(asks, [], 'the host was never asked');
+  for (const url of ['git@github.com:acme/widget.GIT', 'https://github.com/Acme/Widget.Git/', 'git@github.com:acme/widget.git']) {
+    const asked = answering(DENIAL);
+    const read = pushPreflight({ cwd: repository(t), host: asked.host, session: SESSION, git: remote(url) });
+    assert.equal(read.repository, REPOSITORY, url);
+    assert.equal(asked.asks[0].repository, REPOSITORY, url);
+  }
+});
+
 test('the push URL is the remote judged: a pushurl of another repository is the one the host is asked about', (t) => {
   const cwd = repository(t, { origin: 'https://github.com/acme/widget.git' });
   execFileSync('git', ['-C', cwd, 'config', 'remote.origin.pushurl', 'git@github.com:acme/mirror.git']);

@@ -19,10 +19,11 @@ const UNKNOWN = Object.freeze({ answer: 'unknown' });
 const MAX_URL = 1024;
 // A remote on this machine: a path, a `~` path, a file: URL, or a drive letter. No host trusts or refuses a push there.
 const LOCAL = /^(?:[/.~\\]|file:|[a-z]:[\\/])/iu;
-// The only repository the host is asked about and a message prints: a host name, then two or more path segments of
-// plain ASCII, in lower case. Anything else, such as what a password with an `@` or a `:` leaves behind, a query, a
-// fragment, or an invisible or right-to-left character, answers unknown and is never sent or printed.
-const REPOSITORY = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*(?:\/(?!\.{1,2}(?:\/|$))[a-z0-9._~%+-]+){2,}$/u;
+// The only repository the host is asked about and a message prints: a host name with at least one dot, then two or
+// more path segments of plain ASCII, in lower case. Anything else answers unknown and is never sent or printed: what a
+// password with an `@` or a `:` leaves behind, a query, a fragment, an invisible or right-to-left character, and a host
+// with no dot, such as an SSH host alias (`git@github-work:acme/widget.git`), which names no host a setting would.
+const REPOSITORY = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+(?:\/(?!\.{1,2}(?:\/|$))[a-z0-9._~%+-]+){2,}$/u;
 
 // { answer: 'allowed' | 'unknown' } or { answer: 'denied', repository, message }, never thrown. `message` is one line,
 // with no final full stop, so a caller can go on after it: it names the host, the setting and the file to change, the
@@ -38,7 +39,8 @@ export function pushPreflight({ cwd, env = process.env, host, session, git = run
     const url = read.stdout.replace(/\r?\n$/u, '');
     // Several push URLs, or none: no one remote to judge.
     if (url === '' || url.length > MAX_URL || hasControl(url) || /\s/u.test(url) || LOCAL.test(url)) return UNKNOWN;
-    const repository = normalizeRemote(url).toLowerCase();
+    // normalizeRemote drops a `.git` in lower case alone; `.GIT` goes here, so the repository has one name.
+    const repository = normalizeRemote(url).toLowerCase().replace(/\.git$/u, '');
     if (!REPOSITORY.test(repository)) return UNKNOWN;
     const asking = session === undefined ? asked.sessionId(env) : session;
     const said = pushPermission(asked, { repository, session: asking, cwd: folder, env });

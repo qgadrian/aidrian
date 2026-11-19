@@ -352,9 +352,11 @@ The adapter's `capabilities.pushPermission` ([the adapter's fields](adding-a-hos
 in `lib/hosts/claude-code-push.mjs`, says whether auto mode would let a session push to the repository's remote.
 In the `auto` permission mode a classifier judges each action against `autoMode` in the settings, whose `environment`
 lists the trusted repositories as prose, such as `"Trusted repo: github.com/acme/widget and its remotes"`
-([auto mode configuration](https://code.claude.com/docs/en/auto-mode-config)). It reads one file,
+([auto mode configuration](https://code.claude.com/docs/en/auto-mode-config)). It reads `autoMode` from one file,
 `<config folder>/settings.json`, the user settings, where the config folder is `CLAUDE_CONFIG_DIR`, else `.claude` in
-the home folder. It writes nothing. Each step answers `unknown` when it cannot go on:
+the home folder. Before a denial it also reads `permissions.allow` from that file and from the project's
+`.claude/settings.json` and `.claude/settings.local.json`, since a rule there approves a push before the classifier
+runs. It writes nothing. Each step answers `unknown` when it cannot go on:
 
 1. The session's permission mode, from its transcript, as the [background route](#the-background-route) reads it.
    Anything but `auto`, a session with no id, and a transcript it cannot read, a named pipe in its place included,
@@ -366,7 +368,22 @@ the home folder. It writes nothing. Each step answers `unknown` when it cannot g
    `autoMode.allow`, when present, not a list of strings: `unknown`.
 5. `allowed` when `environment` holds `"$defaults"`, or an `environment` entry names the repository, or an `allow`
    entry names the repository and holds the word `push`, in any case, as in `pushes` or `git push`.
-6. Otherwise `denied`: `autoMode.environment` in that file replaces the default trusted repositories, with no
+6. `unknown` when a `permissions.allow` rule would allow a `git push`, in the user settings or in the project's
+   `.claude/settings.json` or `.claude/settings.local.json`: such a rule approves the push before the classifier runs.
+   Claude Code reads `.claude/settings.json` in the session's folder, and `.claude/settings.local.json` at the root of
+   its git repository, the main checkout's root for a worktree. The adapter reads both files in each of the session's
+   folder, the `cwd` of the ask; the nearest folder at or above it holding `.git`; and, when that `.git` is a file naming
+   a worktree's git folder, the main checkout its `commondir` names. A file the host does not read can only turn a
+   denial into `unknown`. A rule `Bash(<pattern>)` allows a push when its pattern, where `*` is any text, a trailing
+   ` *` also matches the command before it, and a final `:*` is the same as a trailing ` *`, matches `git push` or some
+   `git push ...`: `Bash(git push:*)`, `Bash(git push *)`, `Bash(git push)`, `Bash(git *)`, and
+   `Bash(git push origin main)` do, and `Bash(git status)`, `Bash(git pushall)`, and `Bash(git:* push)` do not.
+   A rule that names a remote counts, since a remote's name in a command says nothing of the repository it points to.
+   Bare `Bash`, `Bash(*)`, and a pattern that starts with `*` do not count: auto mode drops them on entry
+   ([permission modes](https://code.claude.com/docs/en/permission-modes)). A `cwd` that is not absolute, and a project
+   file that is there and cannot be read as in step 2, or whose `permissions` is not an object or whose
+   `permissions.allow` is not a list of strings, answer `unknown`; a project file that is not there holds no rule.
+7. Otherwise `denied`: `autoMode.environment` in that file replaces the default trusted repositories, with no
    `"$defaults"` in its list, and names this remote in no entry. The fix it gives adds `"$defaults"` to that list, or an
    entry such as `"Trusted repo: github.com/acme/widget"`.
 
@@ -379,13 +396,17 @@ An entry names the repository `github.com/acme/widget`, compared in lower case, 
   those or a `.`: `github.com/acme and all repos under it`, `github.com/acme.` at the end of a sentence, and
   `github.com/acme/*` name it, and `github.com/acme/other`, `github.com/acme/.github`, and `github.com/acme.io` do not.
 
-Read on 2026-11-19 from the [auto mode configuration](https://code.claude.com/docs/en/auto-mode-config) and
-[settings](https://code.claude.com/docs/en/settings) references, with Claude Code 2.1.328 installed, and held against
-one live user settings file. Three assumptions follow from them:
+Read on 2026-11-19 from the [auto mode configuration](https://code.claude.com/docs/en/auto-mode-config),
+[settings](https://code.claude.com/docs/en/settings), [permissions](https://code.claude.com/docs/en/permissions), and
+[permission modes](https://code.claude.com/docs/en/permission-modes) references, with Claude Code 2.1.328 installed.
+The fixtures' shape of `autoMode` was compared by hand with one user settings file; that comparison is no
+verification. Four assumptions follow from the references:
 
-- Only the user settings file is read. The classifier ignores `autoMode` in `.claude/settings.json` and
-  `.claude/settings.local.json`, so a checked-in file cannot add its own rules, and counting them would count entries
-  the host ignores.
+- `autoMode` is read from the user settings file alone. The classifier ignores `autoMode` in `.claude/settings.json`
+  and `.claude/settings.local.json`, so a checked-in file cannot add its own rules, and counting them would count
+  entries the host ignores.
+- A `permissions.allow` rule that matches a command approves it before the classifier runs, in every settings file the
+  permission system reads, so one that allows a `git push` leaves no denial to predict.
 - `denied` is a prediction of what a prose classifier will do. A custom `environment` with no `"$defaults"` that names
   this repository in no entry is the shape of a run whose push was refused, and the only shape that answers `denied`.
 - `soft_deny` and `hard_deny` are never read: no pattern over prose says whether one forbids a push.
@@ -396,10 +417,14 @@ can answer `denied` where the classifier would allow the push, and the fix still
 entries that name another repository answer `allowed`: one on another host whose path is the same, such as
 `gitlab.example.com/acme/widget`, a name that goes on past a `.`, such as `acme/widget.site`, and an `allow` entry
 phrased as a refusal, such as `Never push to github.com/acme/widget`; the run then starts as it would without the
-check. A relative `CLAUDE_CONFIG_DIR` answers `unknown`. Every shape of `autoMode` the adapter does not know answers `unknown`.
+check. A permission rule for another command that pushes, such as a script, reads as no push rule, and a rule in
+managed settings or a `--settings` value is not read; either can answer `denied` where the push would go through.
+A project rule counts before the Human has trusted the folder, where the host holds it back, and a `deny` or `ask`
+rule is not read; either can answer `unknown` where the push would not go through. A relative `CLAUDE_CONFIG_DIR`
+answers `unknown`. Every shape of `autoMode` the adapter does not know answers `unknown`.
 
-Verified by `node --test` on fixtures (`test/adapters.test.mjs`); not live: no denial of a real classifier has been held
-against the answer. `claude auto-mode config` shows the rules the host applies, as a check by hand.
+Verified on Claude Code by `node --test` on fixtures (`test/adapters.test.mjs`); not live: no denial of a real
+classifier has been held against the answer. `claude auto-mode config` shows the rules the host applies, as a check by hand.
 
 ## The Claude mod
 

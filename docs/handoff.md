@@ -278,34 +278,39 @@ through its `capabilities.pushPermission` ([the adapter's fields](providers/addi
   the mode the host judges pushes in, settings it cannot read, no `origin`, and an `origin` on this machine, such as a
   path or a `file:` URL, all answer `unknown`: a host that cannot answer never stops a run.
 - `denied`: one line names the host, the setting, the settings file, and the repository, and what the Human changes in
-  that file before a run no Human attends. The AI never changes that file.
+  that file before a run no Human attends. The AI never changes that file. A Human's go-on at the `autopilot` launch
+  covers that launch only: each background handoff of the run asks again, and falls back to the clear route until the
+  setting names the remote.
 
 The host sees the remote only as `host/owner/repo`, in lower case, with no scheme, user name, password, port, or
-`.git`, so the user name and password of the remote URL are never sent to the adapter or printed. What is left must be
-plain ASCII: a host name, then two or more path segments of letters, digits, and `.`, `_`, `~`, `%`, `+`, or `-`.
-Anything else answers `unknown` and is never sent or printed, such as what a password holding an `@` or a `:` leaves
-behind, a query or a fragment, or an invisible or right-to-left character.
+`.git` in any case, so the user name and password of the remote URL are never sent to the adapter or printed. What is
+left must be plain ASCII: a host name with at least one dot, then two or more path segments of letters, digits, and
+`.`, `_`, `~`, `%`, `+`, or `-`. Anything else answers `unknown` and is never sent or printed, such as what a password
+holding an `@` or a `:` leaves behind, a query or a fragment, an invisible or right-to-left character, or a host with
+no dot, such as an SSH host alias in `git@github-work:acme/widget.git`, which names no host a setting would.
 
 Two entry points run it, both through `pushPreflight` in `lib/push-preflight.mjs`:
 
 | Entry point | On `denied` |
 | --- | --- |
-| The [background route](#the-background-route) of the gate, after the progress check and before it keeps the brief | `continue: clear`, `fallback: no background session started, since <the line>; this handoff goes on by the clear route`, and the clear route's `say:` line, exit 0. Nothing is kept, no pending mark is filed, no session starts, and no chain floor is written. In a session no Human attends, the chain ends there with the reason. |
+| The [background route](#the-background-route) of the gate, after the progress check and before it keeps the brief | `continue: clear` where the host has the clear route, `fallback: no background session started, since <the line>; this handoff goes on by the clear route`, and the clear route's `say:` line, exit 0. Nothing is kept, no pending mark is filed, no session starts, and no chain floor is written. In a session no Human attends, the chain ends there with the reason. |
 | The `autopilot` skill's launch, while the Human is still there | `aidrian push-preflight` exits 1: the skill tells the Human the line and starts no run unless the Human says to go on. |
 
 `aidrian push-preflight` takes no argument and needs no project folder. It prints `push: allowed` or `push: unknown`
 and exits 0 with nothing on stderr, or prints `push: denied` and exits 1 with `aidrian push-preflight: <the line>` on
 stderr. Any argument prints its usage and exits 2. [`aidrian handoff route`](#the-route-the-host-runs) and the hooks
-never run it. A session the Human works in meets it only at the `autopilot` launch, which runs it while the Human is
-there to decide.
+never run it. A session the Human works in meets it at the `autopilot` launch, which runs it while the Human is there
+to decide, and at the gate of a handoff by the background route, whose denial falls back to the clear route there too.
 
 | Host | What it reads |
 | --- | --- |
-| Claude Code | In `auto` mode, auto mode's trusted repositories in the user settings: [Push permission in auto mode](providers/claude-code.md#push-permission-in-auto-mode) |
+| Claude Code | In `auto` mode, auto mode's trusted repositories in the user settings, and the permission rules that allow a `git push` in the user and project settings: [Push permission in auto mode](providers/claude-code.md#push-permission-in-auto-mode) |
 | Codex | Nothing: `unknown`, so it never stops a run |
 
-Verified by `node --test` on fixtures (`test/push-preflight.test.mjs`, `test/handoff-continue-background.test.mjs`); not
-live: no real host's refusal of a push has been held against a `denied`.
+Verified on Claude Code by `node --test` on fixtures (`test/push-preflight.test.mjs`,
+`test/handoff-continue-background.test.mjs`, `test/adapters.test.mjs`); Codex answers `unknown` by its adapter, verified
+by `node --test` (`test/adapters.test.mjs`). Not live on either host: no real host's refusal of a push has been held
+against a `denied`.
 Limits: managed settings and a host's settings flag are not read, and a push to any remote other than `origin` is not
 judged.
 

@@ -201,3 +201,4 @@ Read in Codex's source at `rust-v0.166.0` on 2026-11-18, not live:
 - The session's own sandbox binds every agent in it, such as `codex --sandbox read-only`.
 - Nothing tells whether Codex would let a session push to the repository's remote: its `capabilities.pushPermission`
   ([the adapter's fields](adding-a-host.md#the-adapters-fields)) answers `unknown`, so the push preflight never stops a run here.
+  Verified by `node --test` on fixtures (`test/adapters.test.mjs`), not live.

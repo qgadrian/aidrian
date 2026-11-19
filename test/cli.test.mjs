@@ -9,17 +9,15 @@ import test from 'node:test';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { projectCommand } from '../plugins/aidrian/lib/project-run-cli.mjs';
-import { appendToRun, initRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
+import { initRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { markPending } from '../plugins/aidrian/lib/unattended-mark.mjs';
+import { recordIssue } from './project-start-fixture.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const EXAMPLE = path.join(ROOT, 'examples/consumer');
 const CLI = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
 
 const run = (args, cwd = EXAMPLE, env = process.env) => spawnSync(CLI, args, { cwd, encoding: 'utf8', env });
-
-// Appends an issue row to run `run`'s ledger, as the gate's own writes do (appendToRun).
-const recordIssue = (state, run, row) => appendToRun(state, run, () => ({ rows: [{ event: 'issue', key: row.key, state: row.state, ...(row.decision ? { decision: row.decision } : {}), at: new Date().toISOString() }] }));
 
 test('check prints ok in the example consumer, from a subfolder, and with --project', () => {
   for (const [args, cwd] of [[['check']], [['check'], path.join(EXAMPLE, 'src')], [['check', '--project', EXAMPLE], ROOT]]) {

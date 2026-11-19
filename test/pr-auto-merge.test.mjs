@@ -1438,6 +1438,7 @@ test('closes: an issue session\'s pull request that closes only its own issue go
     { title: 'fix: utf-8 BOM', messages: ['fix: x86-64 build', 'Fixed SHA-256 check', 'fix: e2e-2 flake'] },
     { body: 'Closes ENG-1\n\nTAX-13 covers the rest' },
     { title: 'feat(ENG-1): export' },
+    { title: 'ENG-1-export: x', body: 'Fixes ENG-1-export\r\nENG-9 is next' },
   ]) {
     const result = closing(t, given);
     passes(result, JSON.stringify(given, (k, v) => (v instanceof Set ? [...v] : v)));
@@ -1454,6 +1455,16 @@ test('closes: a title, body, or commit that closes, or a title that names, anoth
     [{ context: { own: '5', prefixes: new Set() }, body: 'Closes other/repo#5' }, /"Closes other\/repo#5"/u],
     [{ body: 'Fixes #3' }, /"Fixes #3"/u],
     [{ body: 'Fixes https://example.com/x, ENG-9' }, /"Fixes ENG-9"/u],
+    // Any white space but a line break separates: a no-break space, an em space, a lone CR.
+    [{ body: 'Fixes ENG-9' }, /"Fixes ENG-9"/u],
+    [{ body: 'Fixes ENG-1, ENG-9' }, /"Fixes ENG-9"/u],
+    [{ body: 'Fixes\rENG-9' }, /"Fixes ENG-9"/u],
+    // A key a hyphen joins to more text still counts.
+    [{ body: 'Fixes ENG-9-export' }, /"Fixes ENG-9"/u],
+    [{ title: 'ENG-9-export: x' }, /its title names "ENG-9"/u],
+    // A key of a team the run does not know is passed over, and the list goes on.
+    [{ body: 'Fixes ACME-1, TAX-40' }, /"Fixes TAX-40"/u],
+    [{ body: 'Fixes utf-8 and TAX-40' }, /"Fixes TAX-40"/u],
     [{ context: { own: null, prefixes: null } }, /the issue its unattended mark names, and that mark names none it can read/u],
     [{ context: { own: 'ENG-1', prefixes: null }, title: 'fix: utf-8 BOM' }, /its title says "fix utf-8"/u],
   ]) {

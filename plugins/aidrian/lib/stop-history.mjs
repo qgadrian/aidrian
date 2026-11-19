@@ -15,7 +15,7 @@ export const STOPS_FILE = 'stops.jsonl';
 const ARCHIVE = 'stops';
 const STOPS_CAP = 64 * 1024;
 // The actions a row may record.
-export const RECORDED = Object.freeze(['wait', 'rerun_checks', 'update_branch', 'merge_base', 'review_round', 'request_bot', 'merge']);
+export const RECORDED = Object.freeze(['wait', 'retry', 'rerun_checks', 'update_branch', 'merge_base', 'review_round', 'request_bot', 'merge']);
 const SHA = /^[0-9a-f]{40}$/u;
 const OPEN_FLAGS = (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 const processUid = () => (typeof process.getuid === 'function' ? process.getuid() : null);
@@ -103,7 +103,10 @@ export const archiveFile = (state, run, key) => path.join(runFolder(state, run),
 // next stop parks rather than start its caps again. Null, or why it could not, which keeps the folder.
 export function archiveStops({ state, run, key, attempt, drop }) {
   const read = readStops(path.join(drop, STOPS_FILE));
-  const rows = read.problem ? [{ event: 'unreadable', attempt, why: read.problem }] : read.rows.filter((row) => row.action).map((row) => ({ ...row, attempt }));
+  // Only the fields the caps read are kept, each checked: an action and head readStops already checked, a pull request
+  // number or null, and this attempt.
+  const rows = read.problem ? [{ event: 'unreadable', attempt }] : read.rows.filter((row) => row.action)
+    .map((row) => ({ action: row.action, head: row.head, pr: Number.isSafeInteger(row.pr) && row.pr > 0 ? row.pr : null, attempt }));
   const file = archiveFile(state, run, key);
   try {
     mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });

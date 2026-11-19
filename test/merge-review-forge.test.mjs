@@ -12,7 +12,7 @@ import { sandboxSettings } from '../plugins/aidrian/lib/hosts/claude-code-sandbo
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
-import { recordIssue } from '../plugins/aidrian/lib/project-run.mjs';
+import { initRun, recordIssue } from '../plugins/aidrian/lib/project-run.mjs';
 import { drivesRun, runDriver } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { stateWorkFolders } from '../plugins/aidrian/lib/project-start.mjs';
 import { runSignoff } from '../plugins/aidrian/lib/review-gate.mjs';
@@ -706,8 +706,15 @@ test('an in-process sign-off is refused to a session with an unattended mark or 
 // The closing-word rule at merge time (lib/closing-words.mjs, merge-review.mjs mergeClosesProblem): a merge no Human asks
 // for, of a project run's issue's pull request, closes or links no other issue of a team the run knows, whatever its
 // title, body, and commits say on the forge then, and whatever subject and body the merge itself gives.
-function closingRun(t) {
-  const fx = runFixture(t, { local: { handoff: { background: 'on' }, github: { autoMerge: 'on' } } });
+function closingRun(t, { teams } = {}) {
+  const fx = runFixture(t, { local: { handoff: { background: 'on' }, github: { autoMerge: 'on' } }, init: teams === undefined });
+  if (teams !== undefined) {
+    // The driver's snapshot names every team of the tracker workspace.
+    const file = path.join(fx.dir, 'snapshot.json.input');
+    writeFileSync(file, JSON.stringify({ issues: ISSUES, teams }));
+    const started = initRun({ project: fx.project, config: fx.config, run: 'launch', file, session: DRIVER, env: fx.env, home: fx.home });
+    assert.equal(started.exitCode, 0, started.err.join('\n'));
+  }
   t.after(() => rmSync(signoffFolder(), { recursive: true, force: true }));
   const record = emptyState(7, 'acme/widgets');
   record.outcome = { status: 'received', head: HEAD, at: '2026-11-18T09:00:00.000Z' };
@@ -762,4 +769,23 @@ test('a missing sign-off of a security flow is a security decision: a flow whose
     const off = autoMerge(t, r, { files: ['src/pay/charge.js'], trail: trailOf(r.text, changing('src/pay/charge.js')) });
     assert.deepEqual([off.result.trust, off.result.flow, off.result.signoffClass], ['signoff', id, 'security'], id);
   }
+});
+
+test('a run whose snapshot names the workspace\'s teams refuses a key of a team outside the run, in a body, a title, and a merge body', (t) => {
+  const { run } = closingRun(t, { teams: ['ENG', 'OPS', 'SEC'] });
+  assert.match(run(MERGE, { over: { body: 'Fixes ENG-1, OPS-5' } }) ?? '', /its body says "Fixes OPS-5"/u);
+  assert.match(run(MERGE, { over: { title: 'feat: export for SEC-2' } }) ?? '', /its title names "SEC-2"/u);
+  assert.match(run(`gh pr merge 7 -b 'Closes OPS-5' --match-head-commit ${HEAD}`) ?? '', /the merge commit's body says "Closes OPS-5"/u);
+  // No team is named UTF or SHA: those tokens are still no keys.
+  assert.equal(run(MERGE, { over: { title: 'fix: utf-8 BOM', messages: [{ oid: HEAD, message: 'Fixed SHA-256 check' }] } }), null);
+  // With no teams in the snapshot, only the run's own teams are known, the residual docs/config.md names.
+  const { run: plain } = closingRun(t);
+  assert.equal(plain(MERGE, { over: { body: 'Fixes ENG-1, OPS-5' } }), null);
+});
+
+test('a missing sign-off is a security decision when any unsigned flow is a security one, even when the first is not', (t) => {
+  const r = repo(t, configOf({ review: { flows: { payments: PAYMENTS, 'zz-security': { ...PAYMENTS } } } }));
+  r.record((state) => (state.outcome = { status: 'received', head: HEAD, at: '2026-11-18T09:00:00.000Z' }));
+  const off = autoMerge(t, r, { files: ['src/pay/charge.js'], trail: trailOf(r.text, changing('src/pay/charge.js')) });
+  assert.deepEqual([off.result.trust, off.result.flow, off.result.signoffClass], ['signoff', 'payments', 'security']);
 });

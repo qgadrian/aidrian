@@ -22,8 +22,8 @@
 //      failing check is a first run of the head on the issue's branch in the pinned repository, as the forge reads each
 //      run; pending checks, `wait`; a merge the forge still blocks parks; else `merge`, once per head: a second `merge`
 //      on the same head means the merge steps stopped for a reason this command does not read, and parks.
-// A forge or auto-merge read that fails, or a forge action it refuses, is a `wait` of WAIT_PAUSE seconds, under the
-// same cap, never a park, until the cap is spent. Each capped action is recorded (lib/stop-history.mjs), and the caps
+// A forge or auto-merge read that fails, or a forge action it refuses, is a `wait` under its own cap, RETRY_PAUSES, per
+// attempt, each longer than the last, never a park until that cap is spent. Each capped action is recorded (lib/stop-history.mjs), and the caps
 // count every attempt of the issue. A history it cannot read parks. Every forge call goes through the forge facade.
 
 import path from 'node:path';
@@ -41,11 +41,11 @@ import { readUnattendedMark } from './unattended-mark.mjs';
 
 export { STOPS_FILE };
 // The caps, in code: per head for each action but `base_update`, the `merge_base` and `update_branch` actions together,
-// per issue.
-export const STOP_CAPS = Object.freeze({ rerun_checks: 1, base_update: 2, wait: 3, review_round: 1, request_bot: 1, merge: 1 });
+// per issue, and `retry`, the waits on a failed read or action, per attempt.
+export const STOP_CAPS = Object.freeze({ rerun_checks: 1, base_update: 2, wait: 3, retry: 3, review_round: 1, request_bot: 1, merge: 1 });
 // The actions a line may name.
 export const STOP_ACTIONS = Object.freeze(['done', 'merge', 'park', 'wait', 'rerun_checks', 'update_branch', 'merge_base', 'review_round', 'request_bot']);
-const CAPPED = new Set(['wait', 'rerun_checks', 'update_branch', 'merge_base', 'review_round', 'request_bot', 'merge']);
+const CAPPED = new Set(['wait', 'retry', 'rerun_checks', 'update_branch', 'merge_base', 'review_round', 'request_bot', 'merge']);
 const BASE_UPDATES = new Set(['update_branch', 'merge_base']);
 // The auto-merge reasons nothing a session does unattended can change: they wait for the Human.
 export const POLICY_REASONS = Object.freeze(['team', 'local', 'checks', 'paths', 'author', 'outsider', 'closes']);
@@ -53,7 +53,9 @@ export const POLICY_REASONS = Object.freeze(['team', 'local', 'checks', 'paths',
 const KNOWN_REASONS = new Set([...POLICY_REASONS, 'review', 'trust']);
 // How long a wait on a read or an action that failed lasts, in seconds.
 export const WAIT_PAUSE = 60;
-// The head a wait counts against when the forge named none.
+// How long each wait on a failed read or action lasts, in seconds, in turn: the `retry` cap, per attempt.
+export const RETRY_PAUSES = Object.freeze([60, 300, 900]);
+// The head a retry row records when the forge named none: retries count per attempt, never per head.
 const UNKNOWN_HEAD = '0'.repeat(40);
 const SHA = /^[0-9a-f]{40}$/u;
 
@@ -70,19 +72,25 @@ function capped(history, head, action, scope, why, { spent = null, ...extra } = 
 }
 
 // A wait on a read or an action that failed, on head `head`.
-export const transientWait = (history, head, why) => capped(history, head ?? UNKNOWN_HEAD, 'wait', 'for this head', why, { pause: WAIT_PAUSE });
+// A wait on a read or an action that failed, in attempt `attempt`: recorded as `retry`, and counted per attempt, apart
+// from the waits on pending checks, so a forge outage neither spends their budget nor parks the issue for good.
+export function transientWait(history, attempt, why) {
+  const used = count(history, (row) => row.action === 'retry' && row.attempt === attempt);
+  if (used >= STOP_CAPS.retry) return { action: 'park', why: `${why}, and it failed ${used} times in this attempt already` };
+  return { action: 'wait', record: 'retry', why, cap: STOP_CAPS.retry, used: used + 1, scope: 'for this attempt', pause: RETRY_PAUSES[used] };
+}
 
 // The one action for a stop: { action, why, cap?, used?, scope?, runs?, pause?, parkAs? }. Pure. `view` is the pull
 // request as readMergeState gives it, `autoMerge` { result, error }, the auto-merge JSON or why there is none, `checks` the
 // verdict of its checks with `runs`, the workflow runs a rerun takes, or null when one failing check is no Actions run
 // of the pinned repository (readChecks; read only when auto-merge is on), and `history` the recorded rows of the issue.
-export function classifyStop({ view, autoMerge, checks = null, history = [] }) {
+export function classifyStop({ view, autoMerge, checks = null, history = [], attempt = null }) {
   const park = (why, more = {}) => ({ action: 'park', why, ...more });
   const act = (action, scope, why, extra) => capped(history, view.head, action, scope, why, extra);
   if (view.state === 'MERGED') return { action: 'done', why: 'the forge shows it merged' };
   if (view.state !== 'OPEN') return park(`the forge shows it ${String(view.state).toLowerCase()}`);
   const result = autoMerge?.result;
-  if (!result) return transientWait(history, view.head, `aidrian pr auto-merge could not answer now: ${autoMerge?.error ?? 'no reason'}`);
+  if (!result) return transientWait(history, attempt, `aidrian pr auto-merge could not answer now: ${autoMerge?.error ?? 'no reason'}`);
   if (result.head !== view.head) return act('wait', 'for this head', `the head moved from ${short(result.head)} to ${short(view.head)} while it was read`);
   if (!result.effective) {
     const { reason } = result;
@@ -102,7 +110,7 @@ export function classifyStop({ view, autoMerge, checks = null, history = [] }) {
       if (update && update.head !== view.head) return act('review_round', 'for this head', `a base update made this head, which no review has seen: ${result.why}`);
       return park(`auto-merge is off (review): ${result.why}`);
     }
-    if (history.some((row) => row.action === 'request_bot' && row.head === view.head)) return act('wait', 'for this head', `the review bot was asked for this head and has not passed it yet: ${result.why}`);
+    if (history.some((row) => row.action === 'request_bot' && row.head === view.head)) return act('wait', 'for this head', `the review bot was asked for this head and has not passed it yet: ${result.why}`, { awaitBot: true });
     return act('request_bot', 'for this head', `auto-merge is off (trust: bot): ${result.why}`);
   }
   if (checks?.verdict === 'failing') {
@@ -112,7 +120,8 @@ export function classifyStop({ view, autoMerge, checks = null, history = [] }) {
   if (checks?.verdict === 'pending') return act('wait', 'for this head', `its checks are pending: ${checks.reason}`);
   if (checks?.verdict !== 'ready') return park('its checks could not be read');
   if (view.status === 'BLOCKED') return park('auto-merge is on and its checks pass, and the forge still blocks the merge: its branch rules ask for more, such as an approving review');
-  return act('merge', 'for this head', 'nothing stops the merge now', { spent: 'auto-merge is on and nothing this command reads stops the merge, yet the merge steps stopped on this head before: they stopped for a reason this command does not read, and their stop line is the stop' });
+  const merge = act('merge', 'for this head', 'nothing stops the merge now', { spent: 'auto-merge is on and nothing this command reads stops the merge, yet the merge steps stopped on this head before: they stopped for a reason this command does not read, and their stop line is the stop' });
+  return merge.action === 'park' ? { ...merge, parkAs: 'merge_steps' } : merge;
 }
 
 // What the session does after each action, once stopAction took the forge's part.
@@ -121,10 +130,13 @@ function nextStep(decision, { view, branch, method }) {
   switch (decision.action) {
     case 'done': return 'record the result merged with `aidrian project result`';
     case 'merge': return 'run the pr-auto-merge skill again';
-    case 'park': return decision.parkAs === 'signoff'
-      ? `record the result parked with one decision of class ${decision.decisionClass ?? 'product'}: the Human's sign-off of the flows of #${view.number} at head ${short(view.head)}, options "sign off from an attended session" and "decline", recommended the first`
-      : 'record the result pr_open with this line as its stop';
-    case 'wait': return `wait ${decision.pause ?? WAIT_PAUSE} seconds, ${again}`;
+    case 'park':
+      if (decision.parkAs === 'signoff') return `record the result parked with one decision of class ${decision.decisionClass ?? 'product'}: the Human's sign-off of the flows of #${view.number} at head ${short(view.head)}, options "leave the pull request unmerged" and "sign off from an attended session", recommended the first`;
+      if (decision.parkAs === 'merge_steps') return 'record the result pr_open with the merge steps\' own stop line as its stop';
+      return 'record the result pr_open with this line as its stop';
+    case 'wait': return decision.awaitBot
+      ? `run \`aidrian pr await-review ${view.number}\`, which waits for the bot it asked, ${again}`
+      : `wait ${decision.pause ?? WAIT_PAUSE} seconds, ${again}`;
     case 'rerun_checks': return `the forge started the failed jobs of ${decision.runs.length} workflow run${decision.runs.length === 1 ? '' : 's'} again; ${again}`;
     case 'update_branch': return `the forge ${method === 'rebase' ? `rebased it onto ${view.base}` : `merged ${view.base} into it`}; ${again}`;
     case 'merge_base': return `run \`git fetch origin ${view.base} ${branch}\` and \`git checkout -B ${branch} origin/${branch}\`, merge origin/${view.base}, resolve the conflicts, run the tests, commit, and push with \`git push origin HEAD:refs/heads/${branch}\`, never with force; ${again}`;
@@ -250,7 +262,7 @@ export function stopAction({ project, config, run, key, env = process.env, home,
   const history = issueStops({ state: place.state, run, key, starts: startsOf(found, key) });
   const answer = (decision, view, method) => {
     if (decision.action !== 'park' && CAPPED.has(decision.action)) {
-      const kept = appendStops(path.join(start.drop, STOPS_FILE), [{ action: decision.action, head: view?.head ?? UNKNOWN_HEAD, pr: view?.number ?? null, attempt: start.attempt, session, at: new Date(now).toISOString() }]);
+      const kept = appendStops(path.join(start.drop, STOPS_FILE), [{ action: decision.record ?? decision.action, head: view?.head ?? UNKNOWN_HEAD, pr: view?.number ?? null, attempt: start.attempt, session, at: new Date(now).toISOString() }]);
       if (kept) return { exitCode: 0, out: [stopLine({ action: 'park', why: `the stop history cannot be kept: ${kept}` }, { view, key, branch })], err: [] };
     }
     return { exitCode: 0, out: [stopLine(decision, { view, key, branch, method })], err: [] };
@@ -259,25 +271,25 @@ export function stopAction({ project, config, run, key, env = process.env, home,
   const rows = history.rows;
   const view = readMergeState(forge, repository, branch);
   if (view.problem) return refuse(view.problem);
-  if (view.error) return answer(transientWait(rows, null, view.error), null);
+  if (view.error) return answer(transientWait(rows, start.attempt, view.error), null);
   let main;
   try {
     main = defaultBranch(forge, { repo: named, host: repository.host });
   } catch (error) {
-    return answer(transientWait(rows, view.head, error.message), view);
+    return answer(transientWait(rows, start.attempt, error.message), view);
   }
   if (view.state === 'OPEN' && view.base !== main) return answer({ action: 'park', why: `it targets ${view.base}, not the default branch ${main}, which a project run's issue merges into` }, view);
   const merged = view.state === 'OPEN' ? (autoMerge ?? ((url) => autoMergeOf(project, url, { forge, session, home })))(view.url) : null;
   const checks = merged?.result?.effective === true && merged.result.head === view.head ? readChecks(forge, repository, view, config.github) : null;
-  const decision = classifyStop({ view, autoMerge: merged, checks, history: rows });
+  const decision = classifyStop({ view, autoMerge: merged, checks, history: rows, attempt: start.attempt });
   if (decision.action === 'rerun_checks') {
     const refused = rerunProblem(forge, repository, view, branch, decision.runs);
-    if (refused?.error) return answer(transientWait(rows, view.head, refused.error), view);
+    if (refused?.error) return answer(transientWait(rows, start.attempt, refused.error), view);
     if (refused) return answer({ action: 'park', why: refused.problem }, view);
     try {
       forge.rerunFailedChecks(named, decision.runs, { host: repository.host });
     } catch (error) {
-      return answer(transientWait(rows, view.head, `the forge could not start the failed jobs again (${quoted(error)})`), view);
+      return answer(transientWait(rows, start.attempt, `the forge could not start the failed jobs again (${quoted(error)})`), view);
     }
   }
   let method = 'merge';
@@ -290,7 +302,7 @@ export function stopAction({ project, config, run, key, env = process.env, home,
     try {
       forge.updateBranch(named, view.number, { host: repository.host, expectedHead: view.head, method });
     } catch (error) {
-      return answer(transientWait(rows, view.head, `the forge could not bring #${view.number} up to date with ${view.base} (${quoted(error)})`), view);
+      return answer(transientWait(rows, start.attempt, `the forge could not bring #${view.number} up to date with ${view.base} (${quoted(error)})`), view);
     }
   }
   return answer(decision, view, method);

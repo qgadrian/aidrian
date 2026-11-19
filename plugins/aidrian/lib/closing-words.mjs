@@ -6,9 +6,10 @@
 // would leave the run's ledger and the tracker telling different stories, and let text a session read steer which issues
 // end. A session with no run's issue (runClosingContext) is not held to it.
 //
-// A token reads as a tracker key only when its prefix is a team key the run knows: the own issue's, and those of the
-// run's snapshot. So `utf-8`, `x86-64`, `SHA-256`, and `e2e-2` are no keys, and a key of a team the run does not know is
-// a residual. When the run's snapshot cannot be read, every key-shaped token counts.
+// A token reads as a tracker key only when its prefix is a team key the run knows: the own issue's, the snapshot's
+// `teams`, every team of the tracker workspace, and the teams of its issues. So `utf-8`, `x86-64`, `SHA-256`, and `e2e-2`
+// are no keys while no team is named UTF, X86, SHA, or E2E. A snapshot with no `teams` knows only its issues' teams, and
+// a key of any other team is a residual. When the run's snapshot cannot be read, every key-shaped token counts.
 
 import { readdirSync } from 'node:fs';
 
@@ -20,12 +21,13 @@ import { readUnattendedMark } from './unattended-mark.mjs';
 
 // The words that close an issue at a merge, in each form: GitHub's close, fix, and resolve, and Linear's complete too.
 const CLOSING_WORD = /(?<![\w-])(?:clos(?:e[sd]?|ing)|fix(?:e[sd]|ing)?|resolv(?:e[sd]?|ing)|complet(?:e[sd]?|ing))(?![\w-])/giu;
-// What may stand between a closing word and its references, and between two references of one list: never a line
-// break, which ends the list.
-const BETWEEN = /(?:[ \t:,;&*_`'"()[\]>]|(?<![\w-])and(?![\w-]))+/yu;
+// What may stand between a closing word and its references, and between two references of one list: any white space
+// but a line break (a line feed, CR LF, or a line or paragraph separator), which ends the list; a lone CR does not.
+const BETWEEN = /(?:[^\S\r\n\u2028\u2029]|\r(?!\n)|[:,;&*_`'"()[\]>]|(?<![\w-])and(?![\w-]))+/yu;
 // One reference: a link, `owner/name#12` or `#12`, or a key-shaped token such as `ENG-12`.
-const REFERENCE = /https?:\/\/[^\s)>\]]+|(?:[\w.-]+\/[\w.-]+)?#\d{1,9}|[A-Za-z][A-Za-z0-9]{0,15}-\d{1,9}(?![\w-])/yu;
-const KEY_TOKEN = /(?<![\w-])([A-Za-z][A-Za-z0-9]{0,15})-(\d{1,9})(?![\w-])/gu;
+// A key is bounded by word characters only, so one a hyphen joins to more text, such as `ENG-9-export`, still counts.
+const REFERENCE = /https?:\/\/[^\s)>\]]+|(?:[\w.-]+\/[\w.-]+)?#\d{1,9}|[A-Za-z][A-Za-z0-9]{0,15}-\d{1,9}(?!\w)/yu;
+const KEY_TOKEN = /(?<!\w)([A-Za-z][A-Za-z0-9]{0,15})-(\d{1,9})(?!\w)/gu;
 const GITHUB_LINK = /^https?:\/\/([^/\s]+)\/([^/\s]+\/[^/\s]+)\/(?:issues|pull)\/(\d{1,9})(?:[/?#]|$)/iu;
 const TRACKER_LINK = /^https?:\/\/linear\.app\/[^/\s]+\/issue\/([A-Za-z][A-Za-z0-9]{0,15})-(\d{1,9})(?:[/?#]|$)/iu;
 // The most references read after one closing word: a list that goes on past it is refused.
@@ -36,8 +38,8 @@ const known = (prefix, prefixes) => prefixes === null || prefixes.has(prefix);
 
 // Every reference a closing word names in `text`: { refs, overflow }, each ref { word, text, key } for a tracker key,
 // upper-cased, or { word, text, number, repo, host } for a forge issue, with `repo` and `host` null when the text names
-// neither. `prefixes` is the set of team keys the run knows, upper-cased, or null for any. A link of another site is
-// passed over; a token that is no reference, such as a key of an unknown team, ends the list, and so does a line break. `overflow` is true
+// neither. `prefixes` is the set of team keys the run knows, upper-cased, or null for any. A link of another site, and
+// a key of a team it does not know, are passed over; any other token ends the list, and so does a line break. `overflow` is true
 // when a list goes on past LIST_CAP references.
 export function closingRefs(text, prefixes = null) {
   const refs = [];
@@ -74,8 +76,9 @@ function referenceOf(text, prefixes) {
   }
   const hash = /^(?:([\w.-]+\/[\w.-]+))?#(\d+)$/u.exec(text);
   if (hash) return { number: Number(hash[2]), repo: hash[1]?.toLowerCase() ?? null, host: null };
+  // A key of a team the run does not know names no issue here, and the list goes on past it, as past a link.
   const key = text.toUpperCase();
-  return known(prefixOf(key), prefixes) ? { key } : null;
+  return known(prefixOf(key), prefixes) ? { key } : { skip: true };
 }
 
 // Whether the reference `ref` names `own`, the run's issue key (lib/project-run.mjs ISSUE_KEY): a tracker key, or a
@@ -109,8 +112,9 @@ export function closingTextsProblem(texts, { own, prefixes }, pr) {
   return null;
 }
 
-// The team keys the run `found` (readRun) knows, with the prefix of `own`: a set of upper-cased prefixes.
-const prefixesOf = (found, own) => new Set([prefixOf(own), ...found.snapshot.issues.map((issue) => prefixOf(issue.key))].filter(Boolean));
+// The team keys the run `found` (readRun) knows, with the prefix of `own`: a set of upper-cased prefixes, from the
+// snapshot's `teams`, every team of the tracker workspace when the driver gave them, and its issues' teams.
+const prefixesOf = (found, own) => new Set([prefixOf(own), ...(found.snapshot.teams ?? []), ...found.snapshot.issues.map((issue) => prefixOf(issue.key))].filter(Boolean));
 
 // The run `run` of the project at the main checkout `root`, as readRun reads it in a state folder the project's runs
 // may be kept in, or null.

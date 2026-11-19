@@ -578,7 +578,7 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root), se
           prefix, policyFiles, state, signoffs: readHumanSignoffs({ repo: pr.repo, pr: pr.number }),
         });
         if (verdict) [effective, reason, why, trust] = [false, 'trust', verdict.why, verdict.kind];
-        if (verdict?.kind === 'signoff') signoff = { flow: verdict.flow, signoffClass: signoffClassOf(policy, verdict.flow) };
+        if (verdict?.kind === 'signoff') signoff = { flow: verdict.flow, signoffClass: signoffClassOf(policy, verdict.unsigned ?? [verdict.flow]) };
       }
     }
   }
@@ -630,14 +630,15 @@ export function closingProblem(forge, pr, context) {
   return closingTextsProblem(texts, context, pr);
 }
 
-// The class of the decision a missing sign-off of `flow` is for the Human (`aidrian project stop-action` names it):
-// `security` when the default branch's config, `policy`, has the flow's sign-off a security one, a flow whose id holds
-// the word `security` or whose `require` names the security-engineer agent; `product` otherwise, a flow it does not
-// define included.
-export function signoffClassOf(policy, flow) {
-  if (typeof flow !== 'string') return 'product';
-  const defined = policy?.review?.flows?.[flow];
-  const tagged = flow.split('-').includes('security');
-  const reviewed = Array.isArray(defined?.require) && defined.require.includes('agent:security-engineer');
-  return tagged || reviewed ? 'security' : 'product';
+// The class of the decision the missing sign-offs of `flows` are for the Human (`aidrian project stop-action` names it):
+// `security` when the default branch's config, `policy`, has any of them a security sign-off, a flow whose id holds the
+// word `security` or whose `require` names the security-engineer agent; `product` otherwise, a flow it does not define
+// included. A single flow id is read as a list of one.
+export function signoffClassOf(policy, flows) {
+  const security = (flow) => {
+    if (typeof flow !== 'string') return false;
+    const defined = policy?.review?.flows?.[flow];
+    return flow.split('-').includes('security') || (Array.isArray(defined?.require) && defined.require.includes('agent:security-engineer'));
+  };
+  return (Array.isArray(flows) ? flows : [flows]).some(security) ? 'security' : 'product';
 }

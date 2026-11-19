@@ -14,7 +14,7 @@ import test from 'node:test';
 
 import { runIssueOf } from '../plugins/aidrian/lib/closing-words.mjs';
 import { createGithubForge } from '../plugins/aidrian/lib/forges/github.mjs';
-import { appendToRun } from '../plugins/aidrian/lib/project-run.mjs';
+import { appendToRun, validateSnapshot } from '../plugins/aidrian/lib/project-run.mjs';
 import { projectCommandDenial } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { classifyStop, POLICY_REASONS, STOP_ACTIONS, STOP_CAPS, STOPS_FILE, stopLine, WAIT_PAUSE } from '../plugins/aidrian/lib/project-stops.mjs';
 import { emptyState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
@@ -38,10 +38,19 @@ const lineOf = (decision, more = {}) => stopLine(decision, { view: view(), key: 
 test('the forge\'s merge ends it, a closed pull request parks, and an auto-merge that could not answer waits under the wait cap', () => {
   assert.equal(classify({ view: view({ state: 'MERGED' }) }).action, 'done');
   assert.equal(classify({ view: view({ state: 'CLOSED' }) }).action, 'park');
-  const none = classify({ autoMerge: { error: 'could not read the pull request with gh (HTTP 502)' } });
-  assert.deepEqual([none.action, none.pause, /HTTP 502/u.test(none.why)], ['wait', WAIT_PAUSE, true]);
-  assert.match(lineOf(none), /\(1 of 3 for this head\); wait 60 seconds, then run the pr-auto-merge skill again$/u);
-  assert.equal(classify({ autoMerge: { error: 'x' }, history: rows('wait', 3) }).action, 'park', 'once the wait cap is spent');
+  const none = classify({ autoMerge: { error: 'could not read the pull request with gh (HTTP 502)' }, attempt: 1 });
+  assert.deepEqual([none.action, none.record, none.pause, /HTTP 502/u.test(none.why)], ['wait', 'retry', WAIT_PAUSE, true]);
+  assert.match(lineOf(none), /\(1 of 3 for this attempt\); wait 60 seconds, then run the pr-auto-merge skill again$/u);
+  const retries = (n, attempt = 1) => Array.from({ length: n }, () => ({ action: 'retry', head: HEAD, attempt }));
+  // Each retry waits longer: 60, 300, then 900 seconds.
+  assert.deepEqual([0, 1, 2].map((n) => classify({ autoMerge: { error: 'x' }, attempt: 1, history: retries(n) }).pause), [60, 300, 900]);
+  assert.match(classify({ autoMerge: { error: 'x' }, attempt: 1, history: retries(3) }).why, /failed 3 times in this attempt already/u);
+  assert.equal(classify({ autoMerge: { error: 'x' }, attempt: 1, history: retries(3) }).action, 'park', 'once the retry cap is spent');
+  assert.equal(classify({ autoMerge: { error: 'x' }, attempt: 2, history: retries(3) }).action, 'wait', 'a new attempt retries again');
+  // Retries spend nothing of the pending-check budget, and pending waits nothing of theirs.
+  const pending = { verdict: 'pending', reason: '1 not terminal: e2e', runs: null };
+  assert.equal(classify({ checks: pending, attempt: 1, history: retries(3) }).used, 1);
+  assert.equal(classify({ autoMerge: { error: 'x' }, attempt: 1, history: rows('wait', 3) }).action, 'wait');
 });
 
 test('every policy reason, changes requested, a sign-off the Human owes, and a reason it does not know park with the reason', () => {
@@ -55,7 +64,8 @@ test('every policy reason, changes requested, a sign-off the Human owes, and a r
   const signoff = classify({ autoMerge: off('trust', { trust: 'signoff' }) });
   assert.deepEqual([signoff.action, /only the Human signs off/u.test(signoff.why)], ['park', true]);
   // A sign-off park is a decision for the Human, not an open pull request.
-  assert.match(lineOf(signoff), /; record the result parked with one decision of class product: the Human's sign-off of the flows of #12 at head aaaaaaa, options "sign off from an attended session" and "decline", recommended the first$/u);
+  // The safe option comes first, and is the one recommended.
+  assert.match(lineOf(signoff), /; record the result parked with one decision of class product: the Human's sign-off of the flows of #12 at head aaaaaaa, options "leave the pull request unmerged" and "sign off from an attended session", recommended the first$/u);
   // The class is the flow's, as auto-merge names it: a security flow's sign-off is a security decision.
   assert.match(lineOf(classify({ autoMerge: off('trust', { trust: 'signoff', flow: 'auth', signoffClass: 'security' }) })), /one decision of class security: /u);
   assert.match(lineOf(classify({ autoMerge: off('trust', { trust: 'signoff', flow: 'checkout', signoffClass: 'product' }) })), /one decision of class product: /u);
@@ -94,6 +104,7 @@ test('a bot verdict missing asks the bot once per head, then waits for it under 
   assert.match(lineOf(ask), /run `aidrian pr await-review 12 --request`, then run the pr-auto-merge skill again/u);
   const slow = classify({ autoMerge: off('trust', { trust: 'bot' }), history: rows('request_bot', 1) });
   assert.deepEqual([slow.action, /asked for this head and has not passed it yet/u.test(slow.why)], ['wait', true]);
+  assert.match(lineOf(slow), /; run `aidrian pr await-review 12`, which waits for the bot it asked, then run the pr-auto-merge skill again$/u, 'no second request');
   assert.equal(classify({ autoMerge: off('trust', { trust: 'bot' }), history: [...rows('request_bot', 1), ...rows('wait', 3)] }).action, 'park');
   assert.equal(classify({ autoMerge: off('trust', { trust: 'bot' }), history: rows('request_bot', 1, NEW) }).action, 'request_bot', 'a new head asks again');
 });
@@ -113,6 +124,7 @@ test('with auto-merge on: failing checks run again once per head, pending checks
   assert.deepEqual([merge.action, merge.cap], ['merge', 1]);
   const again = classify({ history: rows('merge', 1) });
   assert.deepEqual([again.action, again.why], ['park', 'auto-merge is on and nothing this command reads stops the merge, yet the merge steps stopped on this head before: they stopped for a reason this command does not read, and their stop line is the stop']);
+  assert.match(lineOf(again), /; record the result pr_open with the merge steps' own stop line as its stop$/u);
   assert.equal(classify({ history: rows('merge', 1, NEW) }).action, 'merge', 'a new head tries again');
   assert.equal(classify({ autoMerge: on({ head: NEW }) }).action, 'wait', 'a head that moved between reads');
 });
@@ -126,7 +138,7 @@ test('a line cleans its reason as a result\'s stop is: no control or bidirection
 
 test('every action a line names is one the classifier gives, and each capped one has its cap', () => {
   assert.deepEqual([...STOP_ACTIONS].sort(), ['done', 'merge', 'merge_base', 'park', 'request_bot', 'rerun_checks', 'review_round', 'update_branch', 'wait']);
-  assert.deepEqual(Object.keys(STOP_CAPS).sort(), ['base_update', 'merge', 'request_bot', 'rerun_checks', 'review_round', 'wait']);
+  assert.deepEqual(Object.keys(STOP_CAPS).sort(), ['base_update', 'merge', 'request_bot', 'rerun_checks', 'retry', 'review_round', 'wait']);
 });
 
 // A check row as the forge's checks gives it (forges/github.mjs checkRow).
@@ -228,7 +240,7 @@ test('stop-action answers a conflict, a stale review after an update, a missing 
 
 test('a forge read or action that fails waits under the wait cap, and parks only once it is spent', (t) => {
   for (const [fail, given, why] of [
-    [['mergeState'], {}, /^wait ENG-1 at an unknown head: the forge could not describe the pull request of feat\/eng-1-export \("gh: mergeState failed \(HTTP 502\)"\) \(1 of 3 for this head\); wait 60 seconds/u],
+    [['mergeState'], {}, /^wait ENG-1 at an unknown head: the forge could not describe the pull request of feat\/eng-1-export \("gh: mergeState failed \(HTTP 502\)"\) \(1 of 3 for this attempt\); wait 60 seconds/u],
     [['repository'], {}, /^wait ENG-1 #12 at aaaaaaa: could not read the default branch/u],
     [['workflowRun'], { checks: [checkRow('e2e', 'FAILURE', 41)] }, /^wait .*the forge could not describe workflow run 41/u],
     [['rerunFailedChecks'], { checks: [checkRow('e2e', 'FAILURE', 41)] }, /^wait .*the forge could not start the failed jobs again \("gh: rerunFailedChecks failed \(HTTP 502\)"\)/u],
@@ -236,9 +248,9 @@ test('a forge read or action that fails waits under the wait cap, and parks only
   ]) {
     const fx = stopped(t, { fail, ...given });
     assert.match(fx.act(on()).out[0], why, fail[0]);
-    fx.act(on());
-    fx.act(on());
-    assert.match(fx.act(on()).out[0], /^park .*wait has reached its cap of 3 for this head/u, `${fail[0]}: spent`);
+    assert.match(fx.act(on()).out[0], /\(2 of 3 for this attempt\); wait 300 seconds/u, `${fail[0]}: backs off`);
+    assert.match(fx.act(on()).out[0], /\(3 of 3 for this attempt\); wait 900 seconds/u, `${fail[0]}: backs off`);
+    assert.match(fx.act(on()).out[0], /^park .*failed 3 times in this attempt already/u, `${fail[0]}: spent`);
   }
   const exit3 = stopped(t);
   assert.match(exit3.act({ error: 'aidrian pr auto-merge: could not read the gh user (HTTP 502)' }).out[0], /^wait ENG-1 #12 at aaaaaaa: aidrian pr auto-merge could not answer now/u);
@@ -277,6 +289,8 @@ test('the caps hold across attempts: the driver\'s sweep archives an attempt\'s 
   assert.ok(!existsSync(path.dirname(fx.drop)), 'the first attempt\'s folder is swept');
   const archived = readFileSync(archiveFile(fx.state, 'launch', 'ENG-1'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
   assert.deepEqual(archived.map((row) => row.action ?? row.event), ['update_branch', 'archived']);
+  // Only the fields the caps read are archived: no session, time, or other text of the drop's row.
+  assert.deepEqual(archived[0], { action: 'update_branch', head: HEAD, pr: 12, attempt: 1 });
   // A later wait does not archive a swept attempt again.
   fx.cmd(['wait', 'launch', '--max-wait', '0']);
   assert.equal(readFileSync(archiveFile(fx.state, 'launch', 'ENG-1'), 'utf8').trim().split('\n').length, 2);
@@ -407,4 +421,15 @@ test('the force rule is false for a protected branch, a non-fast-forward ruleset
   assert.equal(ask({ protected: false }, [[{ type: 'non_fast_forward' }]]), false);
   assert.equal(ask({ protected: false }, [[{}]]), false);
   assert.equal(ask({ protected: false }, [[]]), true);
+});
+
+test('the run snapshot keeps an optional teams list, each a team key, for the closing-word check', () => {
+  const issues = [{ key: 'ENG-1', branch: 'feat/eng-1-export', status: 'unstarted' }];
+  assert.equal(validateSnapshot({ issues }).snapshot.teams, undefined, 'no teams: none kept');
+  assert.deepEqual(validateSnapshot({ issues, teams: ['ENG', 'OPS', 'ENG'] }).snapshot.teams, ['ENG', 'OPS']);
+  for (const teams of ['ENG', [1], ['eng'], ['ENG-1'], ['A'.repeat(17)], Array(501).fill('ENG')]) {
+    const checked = validateSnapshot({ issues, teams });
+    assert.equal(checked.snapshot, null, JSON.stringify(teams).slice(0, 40));
+    assert.match(checked.problems.join('\n'), /team key|"teams" is not a list/u);
+  }
 });

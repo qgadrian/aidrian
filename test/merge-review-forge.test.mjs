@@ -471,7 +471,11 @@ test('the agent gate refuses a subagent, and a session no Human attends, a write
   const store = signoffFile('acme/notes', 7);
   const names = { names: { human: 'Adrian' } };
   const write = { tool_name: 'Write', tool_input: { file_path: store, content: '{}' }, cwd: r.dir };
-  assert.match(signoffWriteDenial(write, names, { unattended: () => true })?.reason ?? '', /changes the sign-off store/u);
+  const marked = signoffWriteDenial(write, names, { unattended: () => true })?.reason ?? '';
+  assert.match(marked, /changes the sign-off store/u);
+  // Its reason names what holds it: the background route that started it, not a project run it never drove.
+  assert.match(marked, /background handoff route started this session, with no Human/u);
+  assert.doesNotMatch(marked, /has driven a project run/u);
   assert.match(signoffWriteDenial({ ...write, agent_id: 'a1' }, names)?.reason ?? '', /only `aidrian pr signoff` in a main session the Human attends writes/u);
   assert.ok(signoffWriteDenial({ tool_name: 'Bash', tool_input: { command: `mkdir -p ${path.dirname(store)} && echo '{}' > ${store}` }, cwd: r.dir }, names, { unattended: () => true }));
   assert.ok(signoffWriteDenial({ tool_name: 'Bash', tool_input: { command: 'cd "$S" && rm -rf signoffs' }, cwd: r.dir }, names, { unattended: () => true }), 'by its name in a folder no path gives');

@@ -800,7 +800,7 @@ export function terminalRecordWriteDenial(input, config, { project = null, links
 // subagent, and for a main session `unattended()` says no Human attends, and reads a call's targets as
 // unattendedMarkWriteDenial does, with `folders` (signoffFolders) and the part name `signoffs`.
 export function signoffWriteDenial(input, config, { project = null, links = true, unattended = () => false, folders = signoffFolders() } = {}) {
-  return stateFoldersWriteDenial(input, config, { project, links, signoffsHeld: unattended, marks: [], terminals: [], origins: [], signoffs: folders });
+  return stateFoldersWriteDenial(input, config, { project, links, unattended, signoffsHeld: unattended, marks: [], terminals: [], origins: [], signoffs: folders });
 }
 
 // The guards above in one pass, which the agent gates hook runs, with the session origins of lib/session-origins.mjs,

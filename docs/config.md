@@ -1252,8 +1252,11 @@ An entry has `deny`, `allow`, or both, each a list of tool patterns:
 - The gates are asked before the guards below, which read a command's paths and globs, so a call a gate denies is
   denied before the guards read it. The guards then have a time budget, 2.5 seconds from the hook's start, well inside
   the host's 5 second hook timeout: a subagent's call they cannot finish reading in time is refused, as is one of a
-  main session no Human attends or a project run's driver, and an attended main session's runs. A subagent's PowerShell command of more than 512 words, counting each case, and its Bash call of more
-  than 1024 write targets are refused too, as the guards read no more ([hooks](hooks.md#agent-gates)).
+  main session no Human attends or a project run's driver, and an attended main session's runs. A call that is no shell
+  and writes no file, such as a Read, runs past the budget for every session, as no guard refuses it.
+  A PowerShell command of more than 512 words, counting each case, and a Bash call of more than 1024 write targets,
+  of a subagent, a main session no Human attends, or a project run's driver, are refused too, as the guards read no more
+  ([hooks](hooks.md#agent-gates)).
 - `deny` wins: a call that matches a `deny` pattern is blocked, whatever `allow` says.
 - An `allow` or `deny` that is not a list, or a `deny` with an invalid pattern, leaves the gates unknown: a subagent may then
   only read files until the file is fixed.

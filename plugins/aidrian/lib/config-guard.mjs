@@ -358,12 +358,23 @@ export function writeLimitDenial(input, { names: { human } }, { unattended = () 
   return { match: `more than ${WRITE_TARGETS} write targets`, reason: projectRuleReason(input, why, human, 'that the command writes more files than the guards read, or run it as shorter commands') };
 }
 
+// Whether the call in `input` is no shell and has no write target, such as a Read, a search, or an MCP tool's call:
+// every guard of the agent gate hook reads a shell command or the files a call writes, so none refuses such a call,
+// whoever makes it. A PowerShell pipeline of read-only cmdlets alone (writeTargets) has none either.
+export function writesNothing(input) {
+  if (bashCall(input)) return false;
+  const { files, names, globs } = writeTargets(input);
+  return files.length === 0 && names.length === 0 && globs.length === 0;
+}
+
 // Why the call in `input` may not run because the guards could not finish reading it within the agent gate hook's time
 // budget (lib/deadline.mjs), or null for a main session a Human attends, whose call runs: { match, reason }. It holds
 // for a subagent, and for a main session `unattended()` says no Human attends or `drove()` says has driven a project
 // run (onlyMain): the guards it could not finish hold a run's driver from the run's stores, the marks, and the sign-off
-// store.
+// store. A call that writes nothing (writesNothing), which no guard refuses, runs for every session, so a loaded machine
+// never stalls a session the guards hold on its reads; a shell call, such as a driver's `aidrian project wait`, is held.
 export function deadlineDenial(input, { names: { human } }, { unattended = () => false, drove = () => false } = {}) {
+  if (writesNothing(input)) return null;
   const who = onlyMain(input, unattended, drove);
   if (who === null) return null;
   const why = `the guards could not finish reading this command in time, so it may change a file ${who}`;

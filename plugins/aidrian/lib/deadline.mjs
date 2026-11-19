@@ -1,7 +1,17 @@
 // A time budget for work a hook may cut short. scripts/hook-agent-gates.mjs runs its guards under one, as they resolve the
-// paths, globs, and links a command gives, so a command that would hold them past the host's hook timeout, where the host
-// runs the call with no guard, is answered in time instead. The guards check it in their loops (checkDeadline); outside
-// a budget, as in every other hook and command, the check does nothing.
+// paths, globs, and links a command gives, and scripts/hook-tracker-pre.mjs its project run rule, so a call that would
+// hold them past the host's hook timeout, where the host runs the call with no guard, is answered in time instead. The
+// guards check it in their loops and before their slow reads (checkDeadline); outside a budget, as in every other hook
+// and command, the check does nothing.
+
+// The milliseconds from a hook's start its guards may take, well inside the host's 5 second hook timeout, past which the
+// host runs the call with no guard: GUARD_BUDGET_MS, or AIDRIAN_GUARD_BUDGET_MS in `env` when it is lower, as a test
+// sets it. The variable may only lower it.
+export const GUARD_BUDGET_MS = 2500;
+export function guardBudget(env = process.env) {
+  const lowered = env.AIDRIAN_GUARD_BUDGET_MS ? Number(env.AIDRIAN_GUARD_BUDGET_MS) : Number.NaN;
+  return Number.isFinite(lowered) && lowered >= 0 ? Math.min(lowered, GUARD_BUDGET_MS) : GUARD_BUDGET_MS;
+}
 
 // What checkDeadline throws once the budget is spent.
 export class PastDeadline extends Error {}

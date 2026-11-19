@@ -1215,7 +1215,41 @@ test('a server named otherwise in projectRun.mcpServers maps to its tracker by e
     const reason = runWriteRefusal({ writer: child, tool: `mcp__${server}__put_ticket`, input: { ticket: 'TB-2' }, trackers: [runTracker], mcpServers })?.reason ?? '';
     assert.match(reason, /ticket is "TB-2"/u, server);
   }
-  assert.equal(runWriteRefusal({ writer: child, tool: 'mcp__other__put_ticket', input: { ticket: 'TB-2' }, trackers: [runTracker], mcpServers }), null);
+  assert.match(runWriteRefusal({ writer: child, tool: 'mcp__other__put_ticket', input: { ticket: 'TB-2' }, trackers: [runTracker], mcpServers })?.reason ?? '', /other, a server projectRun\.mcpServers lists, maps to no tracker/u, 'a listed server no tracker maps');
+  assert.equal(runWriteRefusal({ writer: child, tool: 'mcp__other__put_ticket', input: { ticket: 'TB-2' }, trackers: [runTracker], mcpServers, otherServers: ['other'] }), null, 'declared to reach no tracker');
+});
+
+// A tracker connection the run rule cannot map: a stdio server under a name no adapter knows, whose command reaches no
+// endpoint an adapter names, as a team might list Linear's own server.
+test('a listed server no tracker maps holds an issue\'s session, the driver, and a held session to calls that read by their name', () => {
+  const mcpServers = { issues: { command: 'npx', args: ['-y', 'linear-mcp'] }, docs: { command: 'npx', args: ['-y', 'docs-mcp'] } };
+  const judge = (writer, tool, more = {}) => runWriteRefusal({ writer, tool, input: { id: 'ENG-2', state: 'completed' }, mcpServers, ...more })?.reason ?? null;
+  for (const writer of [{ role: 'child', run: 'launch', issue: 'ENG-1' }, driver]) {
+    assert.match(judge(writer, 'mcp__issues__save_issue'), /save_issue does not say by its name that it reads, and issues, a server projectRun\.mcpServers lists, maps to no tracker.*list issues in projectRun\.nonTrackerServers when it reaches no tracker/u, writer.role);
+    assert.match(judge(writer, 'mcp__issues__archive'), /archive does not say by its name/u, `${writer.role}: any name that does not read`);
+    assert.equal(judge(writer, 'mcp__issues__get_issue'), null, `${writer.role}: a read by its name`);
+    assert.equal(judge(writer, 'mcp__issues__save_issue', { otherServers: ['issues'] }), null, `${writer.role}: declared to reach no tracker`);
+    assert.match(judge(writer, 'mcp__issues__save_issue', { otherServers: ['docs'] }), /issues, a server projectRun\.mcpServers lists/u, `${writer.role}: another server's declaration`);
+    assert.equal(judge(writer, 'mcp__unlisted__save_issue'), null, `${writer.role}: a server the run never listed`);
+  }
+  assert.match(judge({ role: 'held', why: 'x' }, 'mcp__issues__save_issue'), /because x/u);
+  assert.equal(judge({ role: 'unattended' }, 'mcp__issues__save_issue'), null, 'unattended outside a run');
+  assert.equal(judge(null, 'mcp__issues__save_issue'), null, 'attended');
+  assert.equal(runWriteRefusal({ writer: { role: 'child', run: 'launch', issue: 'ENG-1' }, tool: 'mcp__issues__merge_pr', input: {}, mcpServers })?.reason.includes('named like a tool that merges'), true, 'a merge name keeps its own refusal');
+});
+
+test('with the base branch unread, an issue\'s session and the driver are refused every call no tracker maps unless it reads, and a held session always', () => {
+  const unread = 'the base branch\'s config could not be read (git could not read the base branch\'s config.json)';
+  const child = { role: 'child', run: 'launch', issue: 'ENG-1' };
+  for (const writer of [child, driver]) {
+    assert.match(runWriteRefusal({ writer, tool: 'mcp__issues__save_issue', input: { id: 'ENG-2' }, unread })?.reason ?? '', /save_issue does not say by its name that it reads, and the run rule cannot tell which servers reach a tracker, since the base branch's config could not be read/u, writer.role);
+    assert.equal(runWriteRefusal({ writer, tool: 'mcp__issues__list_issues', input: {}, unread }), null, `${writer.role}: a read`);
+    assert.equal(runWriteRefusal({ writer, tool: 'mcp__issues__save_issue', input: { id: 'ENG-2' } }), null, `${writer.role}: read, and no list names it`);
+  }
+  assert.match(runWriteRefusal({ writer: child, tool: 'mcp__linear__save_issue', input: { id: 'ENG-2', state: 'started' }, unread })?.reason ?? '', /id is "ENG-2"/u, 'a known tracker server keeps its own rule');
+  assert.match(runWriteRefusal({ writer: { role: 'held', why: 'held here' }, tool: 'mcp__anything__send', input: {} })?.reason ?? '', /because held here/u, 'a held session reads no base branch');
+  assert.equal(runWriteRefusal({ writer: { role: 'held', why: 'held here' }, tool: 'mcp__anything__search', input: {} }), null);
+  assert.equal(runWriteRefusal({ writer: { role: 'unattended' }, tool: 'mcp__anything__send', input: {}, unread }), null, 'unattended outside a run');
 });
 
 test('the run rule reads the host\'s raw name, the base branch\'s servers and lists, and the working copy\'s lists', () => {
@@ -1237,7 +1271,7 @@ test('the run rule judges a merge, a ready call, or a write, so the hook judges 
   assert.equal(kind('get_ticket', { strict: true }), null);
   assert.equal(kind('frob_ticket'), null, 'not strict: only the lists');
   assert.equal(kind('frob_ticket', { strict: true }).write, true);
-  assert.deepEqual(kind('put_ticket'), { adapter: runTracker, short: 'put_ticket', merge: null, ready: false, write: true });
+  assert.deepEqual(kind('put_ticket'), { adapter: runTracker, short: 'put_ticket', merge: null, ready: false, write: true, unscreened: false });
   assert.equal(kind('land_change').merge, 'tracker');
   assert.equal(runCallKind({ tool: 'mcp__other__land_change', trackers: [runTracker] }).merge, 'anywhere');
   assert.equal(kind('edit_change', { input: { state: 'ready' } }).ready, true);

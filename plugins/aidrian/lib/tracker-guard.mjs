@@ -211,11 +211,26 @@ export function trackerOfTool(tool, tracker, trackers = TRACKERS, mcpServers = {
 // read tool, or one of its `readVerbs`.
 const readByName = (adapter, short) => READ_NAME.test(short) || short === adapter?.readTool || (adapter?.readVerbs ?? []).some((pattern) => nameMatches(pattern, short));
 
-// What the run rule judges of the call of `tool` with `input`: { adapter, short, merge, ready, write }, or null for a
-// call it lets run whoever calls. `merge` is a tool whose name an adapter's `mergeVerbs` match, on its tracker's server
-// (`tracker`), or on any server (`anywhere`); `ready` a call the adapter's `readyCalls` name; `write` a call `writeTools`
-// or the adapter's own verbs match, or, with `strict`, any call on a tracker's server that is not a read by its name.
-export function runCallKind({ tool, rawTool, input, tracker = null, writeTools = [], trackers = TRACKERS, mcpServers = {}, strict = false }) {
+// Whether the MCP tool `tool` says by its name that it only reads (READ_NAME), whatever its server: what a hook lets a
+// held session call when it cannot finish judging the call (scripts/hook-tracker-pre.mjs).
+export const readsByName = (tool) => {
+  const server = serverPrefix(tool);
+  return server !== null && READ_NAME.test(tool.slice(server.length));
+};
+
+// Whether `server`, a tool's `mcp__<server>__` prefix, is one of `mcpServers` (the base branch's projectRun.mcpServers),
+// as a host spells its name, that `others` (projectRun.nonTrackerServers) does not declare reaches no tracker.
+const listedServer = (server, mcpServers, others) => Object.keys(mcpServers ?? {})
+  .some((name) => !others.includes(name) && knownServers({ servers: {} }, [name]).some((spelled) => `mcp__${spelled}__` === server));
+
+// What the run rule judges of the call of `tool` with `input`: { adapter, short, merge, ready, write, unscreened }, or
+// null for a call it lets run whoever calls. `merge` is a tool whose name an adapter's `mergeVerbs` match, on its
+// tracker's server (`tracker`), or on any server (`anywhere`); `ready` a call the adapter's `readyCalls` name; `write` a
+// call `writeTools` or the adapter's own verbs match, or, with `strict`, any call on a tracker's server that is not a read
+// by its name. `unscreened`, with `strict` only, is a call no adapter maps whose name does not say it reads, on a server
+// of `mcpServers` that `otherServers` does not declare reaches no tracker, or, with `blind`, on any server: the rule
+// cannot tell it from a tracker write, so it counts as a write too.
+export function runCallKind({ tool, rawTool, input, tracker = null, writeTools = [], trackers = TRACKERS, mcpServers = {}, otherServers = [], strict = false, blind = false }) {
   if (typeof tool !== 'string') return null;
   const called = rawTool ? [tool, rawTool] : [tool];
   const adapter = trackerOfTool(tool, tracker, trackers, mcpServers);
@@ -226,8 +241,9 @@ export function runCallKind({ tool, rawTool, input, tracker = null, writeTools =
   const given = input && typeof input === 'object' ? input : {};
   const ready = Boolean(adapter && (adapter.readyCalls ?? []).some((each) => each.tool === short && each.values.includes(given[each.field])));
   const patterns = [...writeTools, ...(adapter ? writeToolsOf(adapter, [server.slice('mcp__'.length, -2)]) : [])];
-  const write = patterns.some((pattern) => called.some((name) => nameMatches(pattern, name))) || (strict && adapter !== null && !readByName(adapter, short));
-  return merge || ready || write ? { adapter, short, merge, ready, write } : null;
+  const unscreened = strict && adapter === null && server !== null && !READ_NAME.test(short) && (blind || listedServer(server, mcpServers, otherServers));
+  const write = patterns.some((pattern) => called.some((name) => nameMatches(pattern, name))) || (strict && adapter !== null && !readByName(adapter, short)) || unscreened;
+  return merge || ready || write ? { adapter, short, merge, ready, write, unscreened } : null;
 }
 
 // Why a session may not call `tool` with `input` under the project run rule, as { match, reason }, or null. It never
@@ -244,11 +260,16 @@ export function runCallKind({ tool, rawTool, input, tracker = null, writeTools =
 //   { role: 'unattended' }          a session no Human attends outside a run: the merge and ready rules alone;
 //   { role: 'held', why }           a session that cannot be told apart from one of these: every write refused.
 // Any role but null is refused a tool a merge verb names on any server. For the child, driver, and held roles, every call
-// on a tracker's server is a write unless its name says it reads. `tracker` and `mcpServers` are the base branch's
-// `tracker` and projectRun.mcpServers, read through the main checkout the session's mark names, or null and {}.
-export function runWriteRefusal({ writer, tool, rawTool, input, tracker = null, writeTools = [], human = 'the Human', trackers = TRACKERS, mcpServers = {} }) {
-  const strict = ['child', 'driver', 'held'].includes(writer?.role);
-  const kind = runCallKind({ tool, rawTool, input, tracker, writeTools, trackers, mcpServers, strict });
+// on a tracker's server is a write unless its name says it reads, and so is every call no tracker maps, unless its name
+// says it reads, on a server of `mcpServers` that `otherServers` does not declare reaches no tracker: a tracker
+// connection the rule cannot map. `tracker`, `mcpServers`, and `otherServers` are the base branch's `tracker`,
+// projectRun.mcpServers, and projectRun.nonTrackerServers, read through the main checkout the session's mark names.
+// `unread` says why that read failed, or null when it did not: the child and driver roles, then, and the held role
+// always, since it reads none, count every call on any server that no tracker maps as one of those.
+export function runWriteRefusal({ writer, tool, rawTool, input, tracker = null, writeTools = [], human = 'the Human', trackers = TRACKERS, mcpServers = {}, otherServers = [], unread = null }) {
+  const strict = STRICT_ROLES.includes(writer?.role);
+  const blind = writer?.role === 'held' || unread !== null;
+  const kind = runCallKind({ tool, rawTool, input, tracker, writeTools, trackers, mcpServers, otherServers, strict, blind });
   if (kind === null) return null;
   const { adapter, short } = kind;
   if (kind.merge === 'anywhere' && writer) {
@@ -262,10 +283,25 @@ export function runWriteRefusal({ writer, tool, rawTool, input, tracker = null, 
   if (kind.ready) return refused(`${short} marks a pull request ready through the tracker, past the ready hold`, 'Mark it ready with `gh pr ready <number>`, which the ready hold judges');
   if (!writer || !kind.write || writer.role === 'unattended') return null;
   if (writer.role === 'held') return refused(writer.why, `Try again once that has settled, or tell ${human}`);
+  if (kind.unscreened) return unscreenedRefusal(short, serverPrefix(tool), unread, human);
   const call = runCall(adapter, short, input);
   if (writer.role === 'child') return childRefusal(writer, call, adapter, short, human);
   if (writer.role === 'driver') return driverRefusal(writer, call, adapter, short, human);
   return refused(`the run cannot tell what this session may write (${String(writer.role).slice(0, 20)})`, `Tell ${human}`);
+}
+
+// The roles the run rule holds to its run: every call that may write a tracker is judged.
+export const STRICT_ROLES = Object.freeze(['child', 'driver', 'held']);
+
+// The refusal of a call the run rule cannot screen: `short` on `server`, which no tracker maps, with a name that does
+// not say it reads; `unread`, why the base branch's config could not be read, or null for a server
+// projectRun.mcpServers lists.
+function unscreenedRefusal(short, server, unread, human) {
+  if (unread !== null) {
+    return refused(`${short} does not say by its name that it reads, and the run rule cannot tell which servers reach a tracker, since ${unread}`, `Call only tools that read until that is fixed, or tell ${human}`);
+  }
+  const name = server.slice('mcp__'.length, -2);
+  return refused(`${short} does not say by its name that it reads, and ${name}, a server projectRun.mcpServers lists, maps to no tracker, so whether it writes one cannot be told`, `Ask ${human} to point that server at its tracker's own endpoint, or to list ${name} in projectRun.nonTrackerServers when it reaches no tracker; do not edit the key`);
 }
 
 // The call of `short` with `input` as the adapter's `run` names it: { kind, spec, key, fields }, or null for any other

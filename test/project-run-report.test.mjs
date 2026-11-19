@@ -181,8 +181,8 @@ test('runWriter reads the role from the session\'s marks alone: the issue\'s, th
 });
 
 // The hook as a process, for the session `session`, on the call of `tool` with `input`, from `cwd`.
-function hook(fx, session, tool, input, cwd = fx.dir) {
-  const env = { ...fx.env, HOME: fx.home };
+function hook(fx, session, tool, input, cwd = fx.dir, more = {}) {
+  const env = { ...fx.env, HOME: fx.home, ...more };
   return spawnSync(process.execPath, [PRE], { input: JSON.stringify({ cwd, session_id: session, tool_name: tool, tool_input: input }), cwd, env, encoding: 'utf8' });
 }
 
@@ -213,6 +213,45 @@ test('a child on a tracker server named otherwise, whose working copy drops the 
   assert.match(hook(fx, CHILD, 'mcp__tickets__save_issue', { id: 'ENG-4', state: 'started' }).stderr, /id is "ENG-4"/u);
   assert.match(hook(fx, CHILD, 'mcp__tickets__merge_diff', { urlOrId: '12' }).stderr, /merge_diff merges code/u);
   assert.match(hook(fx, CHILD, 'mcp__anything__merge_pr', { pr: 12 }).stderr, /merge_pr is named like a tool that merges, and a session no Human attends never calls one/u, 'a merge-named tool on any server');
+});
+
+test('the hook holds an issue\'s session to calls that read on a listed stdio server no tracker maps, unless the base branch declares it none', (t) => {
+  const issues = { command: 'npx', args: ['-y', 'linear-mcp'] };
+  const fx = started(t, { projectRun: { allow: true, unverifiedHosts: true, mcpServers: { issues } } });
+  const refused = hook(fx, CHILD, 'mcp__issues__save_issue', { id: 'ENG-2', state: 'completed' });
+  assert.equal(refused.status, 2, refused.stderr);
+  assert.match(refused.stderr, /save_issue does not say by its name that it reads, and issues, a server projectRun\.mcpServers lists, maps to no tracker/u);
+  assert.match(hook(fx, DRIVER, 'mcp__issues__save_comment', { issueId: 'ENG-2', body: 'x' }).stderr, /issues, a server projectRun\.mcpServers lists/u, 'the driver');
+  assert.equal(hook(fx, CHILD, 'mcp__issues__get_issue', { id: 'ENG-2' }).status, 0, 'a read by its name');
+  assert.equal(hook(fx, OTHER, 'mcp__issues__save_issue', { id: 'ENG-2', state: 'completed' }).status, 0, 'an attended session');
+  const declared = started(t, { projectRun: { allow: true, unverifiedHosts: true, mcpServers: { issues }, nonTrackerServers: ['issues'] } });
+  assert.equal(hook(declared, CHILD, 'mcp__issues__save_issue', { id: 'ENG-2', state: 'completed' }).status, 0, 'the base branch declares it reaches no tracker');
+});
+
+test('with the base branch unreadable, the hook refuses an issue\'s session and the driver every call no tracker maps unless it reads', (t) => {
+  const fx = started(t);
+  assert.equal(hook(fx, CHILD, 'mcp__slack__send_message', { text: 'x' }).status, 0, 'readable: a server the run never listed');
+  fx.git('update-ref', '-d', 'refs/remotes/origin/main');
+  for (const session of [CHILD, DRIVER]) {
+    const refused = hook(fx, session, 'mcp__slack__send_message', { text: 'x' });
+    assert.equal(refused.status, 2, `${session}: ${refused.stderr}`);
+    assert.match(refused.stderr, /send_message does not say by its name that it reads, and the run rule cannot tell which servers reach a tracker, since the base branch's config could not be read/u);
+    assert.equal(hook(fx, session, 'mcp__slack__search_messages', { query: 'x' }).status, 0, `${session}: a read by its name`);
+  }
+  assert.equal(hook(fx, OTHER, 'mcp__slack__send_message', { text: 'x' }).status, 0, 'an attended session');
+});
+
+test('past the guards\' time budget, the hook refuses a run\'s sessions every call whose name does not say it reads, and lets an attended one run', (t) => {
+  const fx = started(t);
+  const late = { AIDRIAN_GUARD_BUDGET_MS: '0' };
+  assert.equal(hook(fx, CHILD, 'mcp__linear__save_comment', { issueId: 'ENG-1', body: 'progress' }).status, 0, 'in time');
+  for (const session of [CHILD, DRIVER]) {
+    const refused = hook(fx, session, 'mcp__linear__save_comment', { issueId: 'ENG-1', body: 'progress' }, fx.dir, late);
+    assert.equal(refused.status, 2, `${session}: ${refused.stderr}`);
+    assert.match(refused.stderr, /the project run rule could not judge it in time, and its name does not say it reads/u);
+    assert.equal(hook(fx, session, 'mcp__linear__get_issue', { id: 'ENG-1' }, fx.dir, late).status, 0, `${session}: a read by its name`);
+  }
+  assert.equal(hook(fx, OTHER, 'mcp__linear__save_comment', { issueId: 'ENG-2', body: 'x' }, fx.dir, late).status, 0, 'an attended session');
 });
 
 test('the hook holds the driver to the exact writes the report owes, from any folder', (t) => {
@@ -397,7 +436,9 @@ test('preflight notes a run with no tracker server, blocks a tracker-named serve
   assert.ok(none.includes('ok tracker'), 'issue sessions read their issue from a file');
   assert.match(none.find((line) => line.startsWith('note tracker')), /holds no Linear server, so issue sessions will not write the tracker; the driver reports/u);
   const other = lines({ mcpServers: { ...READY.projectRun.mcpServers, db: { url: 'https://db.example/mcp' } } });
-  assert.match(other.find((line) => line.startsWith('note mcp-servers')), /maps "db" to no tracker/u);
+  assert.match(other.find((line) => line.startsWith('note mcp-servers')), /maps "db" to no tracker, so issue sessions and the driver may call only tools there whose name says they read/u);
+  const declared = lines({ mcpServers: { ...READY.projectRun.mcpServers, db: { url: 'https://db.example/mcp' } }, nonTrackerServers: ['db'] });
+  assert.equal(declared.find((line) => line.startsWith('note mcp-servers')), undefined, 'declared to reach no tracker');
   assert.match(lines({}, READY.config.github, { handoff: { continue: 'clear' } }).find((line) => line.startsWith('blocker handoff')), /"clear", and the clear route needs a person/u);
   assert.match(check({ mcpServers: { ...READY.projectRun.mcpServers, 'linear-proxy': { url: 'https://proxy.example/mcp' } } })[0], /"linear-proxy", named like a tracker with an endpoint no tracker adapter knows/u);
   assert.deepEqual(check({ mcpServers: { tickets: { url: 'https://mcp.linear.app/mcp' }, db: { url: 'https://db.example/mcp' } } }), [], 'mapped by its endpoint; a server named like no tracker is no tracker');

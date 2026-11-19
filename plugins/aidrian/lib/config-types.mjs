@@ -77,6 +77,11 @@ export const TYPES = {
     (value) => isObject(value) && Object.entries(value).every(([name, server]) => /^[\w.-]{1,64}$/u.test(name) && isObject(server)),
     'an object of MCP server names, each letters, digits, ".", "_", or "-", to the server\'s definition as an object',
   ],
+  // Names of servers in projectRun.mcpServers, each spelled as a key there.
+  serverNames: [
+    (value) => Array.isArray(value) && value.every((name) => typeof name === 'string' && /^[\w.-]{1,64}$/u.test(name)),
+    'a list of MCP server names, each letters, digits, ".", "_", or "-", as projectRun.mcpServers names them',
+  ],
   // The package registries a confined project session may reach, by ecosystem name (lib/project-registries.mjs), each once.
   registries: [isRegistries, () => `a list of registry names, each once, from ${oneOf(REGISTRY_NAMES)}`],
   budgetEnforce: [(value) => ['warn', 'fail'].includes(value), '"warn" or "fail"'],

@@ -1240,6 +1240,7 @@ hand-back check on the report ([Send-backs per turn](#send-backs-per-turn)).
   A draft is owed when no review of its pull request follows it in the turn: a review before it, or of another pull
   request, leaves it unreviewed. A draft or a review whose pull request the transcript does not show matches any, since
   a false send-back costs more than a missed one: a loop run with no argument counts for every draft before it.
+  The one send-back names each draft still owed, by its number, or as a draft with no number shown.
 - `"ask"` turns it off, and the transcript is then not parsed for it. A background task still running holds it, as it
   holds the announce check: its end wakes the session.
 - A subagent's calls are not read, so a draft an `orchestrator` opens is its own loop's.

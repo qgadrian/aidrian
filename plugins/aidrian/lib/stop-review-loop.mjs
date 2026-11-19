@@ -18,16 +18,21 @@ export const REVIEW_LOOP_LEAD = 'This turn opened or updated a draft pull reques
 // after it. A draft and a review are of the same pull request when both name it, or either names none (`pr` null or
 // missing): a false send-back costs more than a missed one. The loop's own update after its review, as when it copies
 // residuals into the body through pr-write before it marks the draft ready, is no draft action (transcript.mjs
-// turnActions), so a draft after a review is a new pull request, or an update of another.
+// turnActions), so a draft after a review is a new pull request, or an update of another. The reason names every draft
+// still owed, once each, by its number, or as one with no number shown, so its one send-back in the turn asks for each.
 const pullOf = (action) => (Number.isSafeInteger(action?.pr) ? action.pr : null);
 const samePull = (a, b) => a === null || b === null || a === b;
 export function reviewLoopOwed(input, actions, { reviewLoop, human = 'the Human' } = {}) {
   if (reviewLoop !== 'auto' || !Array.isArray(actions) || backgroundRunning(input)) return null;
-  const owed = actions.some((action, at) => action?.kind === 'draft'
+  const owed = actions.filter((action, at) => action?.kind === 'draft'
     && !actions.slice(at + 1).some((later) => later?.kind === 'review' && samePull(pullOf(later), pullOf(action))));
-  if (!owed) return null;
-  return `${REVIEW_LOOP_LEAD} ` +
-    'config.json `github.reviewLoop` is "auto", so run the `pr-review-loop` skill on it now, as the session\'s own step and not ' +
+  if (!owed.length) return null;
+  const numbers = [...new Set(owed.map(pullOf).filter((pr) => pr !== null))].map((pr) => `#${pr}`);
+  const unnumbered = owed.filter((action) => pullOf(action) === null).length;
+  const names = [...numbers, ...(unnumbered ? [unnumbered === 1 ? 'a draft with no number shown' : `${unnumbered} drafts with no number shown`] : [])];
+  const several = numbers.length + unnumbered > 1;
+  return `${REVIEW_LOOP_LEAD} ${several ? 'The drafts owed a review' : 'The draft owed a review'}: ${names.join(', ')}. ` +
+    `config.json \`github.reviewLoop\` is "auto", so run the \`pr-review-loop\` skill on ${several ? 'each' : 'it'} now, as the session's own step and not ` +
     'as a step of the skill that opened it: its last step marks the draft ready as `github.markReady` says and runs ' +
     '`pr-auto-merge`, which merges only when `aidrian pr auto-merge <n>` exits 0. ' +
     'End the turn again instead when a skill or agent that runs its own review loop owns the pull request, ' +

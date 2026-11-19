@@ -162,6 +162,11 @@ test('a new draft opened after the loop ran on another pull request is sent back
   assert.deepEqual(stop([human('go'), DRAFT, received, skillRun('p2', 'aidrian:pr-write'), publish, loop41, said('Looped #41.')]), QUIET,
     'each draft has its own loop');
   assert.equal(stop([human('go'), DRAFT, second, loop41, said('Looped #41.')]).status, 2, 'two drafts, one loop: #40 is still owed');
+  const both = stop([human('go'), DRAFT, second, said('Opened #40 and #41.')]);
+  assert.equal(both.status, 2);
+  assert.match(both.stderr, /^This turn opened or updated a draft pull request and ran no review after it\. The drafts owed a review: #40, #41\./u,
+    'one send-back names every draft still owed');
+  assert.match(both.stderr, /run the `pr-review-loop` skill on each now/u);
 });
 
 test('the review-loop check holds while a background task runs, and is quiet on Codex, outside a project, and without a transcript', (t) => {
@@ -196,4 +201,9 @@ test('reviewLoopOwed: a reason only under "auto", with a transcript, and for a d
   assert.equal(owed([of('draft', 40), of('review', null)]), null, 'a review of no known pull request may be of any');
   assert.equal(owed([of('draft', null), of('review', 41)]), null, 'a draft of no known pull request, and a review');
   assert.equal(owed([of('draft', 40), of('draft', 41), of('review', 41), of('review', 40)]), null);
+  assert.match(owed([of('draft', 40)]), /after it\. The draft owed a review: #40\. .* skill on it now/u, 'one draft');
+  assert.match(owed([of('draft', 40), of('review', 40), of('draft', 41), of('draft', 41), of('draft', null)]),
+    /The drafts owed a review: #41, a draft with no number shown\. .* skill on each now/u, 'each owed draft once, and one with no number');
+  assert.match(owed([of('draft', null), of('draft', null)]), /The drafts owed a review: 2 drafts with no number shown\./u);
+  assert.match(owed([draft]), /The draft owed a review: a draft with no number shown\./u, 'a draft action with no pr');
 });

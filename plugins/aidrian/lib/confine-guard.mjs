@@ -31,7 +31,8 @@ export const real = (file) => {
     return null;
   }
 };
-export const within = (folder, file) => file === folder || file.startsWith(`${folder}${path.sep}`);
+// Whether `file` is `folder` or under it, the file system's root included.
+export const within = (folder, file) => file === folder || file.startsWith(folder.endsWith(path.sep) ? folder : `${folder}${path.sep}`);
 // Whether something is at `file`; a path that cannot be checked counts as there.
 export const exists = (file) => {
   try {

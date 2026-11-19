@@ -795,6 +795,8 @@ It allows a git-ignored path, a path in `git.mainCheckout.allowWrites`, and anyt
 A target that is a link is judged as itself too, wherever it points ([The state folder](#the-state-folder)).
 [config.md](config.md) lists both keys.
 When git cannot answer, an Edit or Write is blocked to be safe, and a Bash command runs.
+A file edit whose payload names no file the host's adapter can read, such as a Write with no path or a patch it cannot
+parse, is blocked from the main checkout too, since the rule cannot tell it writes no tracked file.
 
 Several sessions can share the main checkout, so the rule also keeps its git state, and lets only what is plainly safe
 through, whatever the spelling:
@@ -969,7 +971,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   whenever its call runs in an attempt's clone whose start wrote the proof's plan. Once the mark or the verdict in the
   drop folder says the proof failed, or the mark's proof state cannot be read, every call is refused, the confine
   command too. Before and after the proof, a file-tool read (Read, Grep, Glob, or LS, as the host's adapter names its
-  read tools) that reaches a store the plan lists as hidden, or a folder that holds one, is refused. The hook also refuses the confine command, and writes a failed verdict, when
+  read tools) that reaches a store the plan lists as hidden, or a folder that holds one, is refused. A Glob pattern
+  with a `..` segment past its literal folder climbs from wherever a glob matched, so it reaches the file system's root
+  and is refused. The hook also refuses the confine command, and writes a failed verdict, when
   its own environment, the host process's, holds a variable whose value names the attempt's `cache` folder. Only that
   issue's session may run the confine command (`lib/project-run-guard.mjs`). A session with no proof in its mark
   and no plan beside its clone, as Codex's, is not held so. And a session an unattended mark holds never runs a call

@@ -211,7 +211,7 @@ export function forgetDenials(session, { dir, env = process.env } = {}) {
   try {
     rmSync(denialsDir(dir ?? hookCountsFolder(env), session), { recursive: true, force: true });
   } catch {
-    // The temporary folder clears them in time.
+    // sweepHookCounts removes them once they pass HOOK_COUNTS_AGE.
   }
 }
 

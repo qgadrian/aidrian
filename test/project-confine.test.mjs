@@ -609,6 +609,14 @@ test('a file-tool read through `~`, or a relative Glob that climbs out of the cl
   }
   assert.equal(call('Glob', { pattern: 'src/**/*.mjs' }), null);
   assert.equal(call('Read', { file_path: '~notes' }), null, 'a `~` that is not the first part');
+  // A `..` past the pattern's literal folder climbs from wherever a glob matched: no folder bounds it, so it is refused.
+  for (const pattern of ['src/**/../../../../../../../home/.ssh/*', '*/../../../../../../home/.ssh/*', 'src/*/..', 'src/{a,..}/*', `${at.work}/**/../x`]) {
+    assert.match(call('Glob', { pattern })?.reason ?? '', /hides/u, pattern);
+  }
+  assert.deepEqual(fileReadOf({ tool_name: 'Glob', tool_input: { pattern: 'src/**/../x', path: '/c' } }), ['/c', '/c/src/', '/']);
+  // A `..` in the literal folder is that folder, and a name that only holds two dots is no `..` segment.
+  assert.equal(call('Glob', { pattern: '../work/src/*.mjs' }), null);
+  assert.equal(call('Glob', { pattern: 'src/**/a..b.mjs' }), null);
 });
 
 test('a read probe sorts a folder`s entries before it caps them, so the fingerprint entry is always among them', async (t) => {
@@ -674,9 +682,19 @@ test('the organization`s rule that only managed permission rules count halts a s
   assert.deepEqual(managedPlists('alice'), ['/Library/Managed Preferences/com.anthropic.claudecode.plist', '/Library/Managed Preferences/alice/com.anthropic.claudecode.plist']);
 });
 
-test('a JSON read under a folder a session may write never waits on a FIFO swapped in for the file', { skip: process.platform === 'win32' }, (t) => {
+test('a JSON read under a folder a session may write never waits on a FIFO swapped in for the file', { skip: process.platform === 'win32' }, async (t) => {
+  // The helper that swaps the files spins until it is stopped: the body stops it and waits for its exit before it
+  // returns, and a hook registered before the removal does so too when the body throws first, so no removal races it.
+  let toggler = null;
+  const stopToggler = async () => {
+    if (toggler === null || toggler.exitCode !== null || toggler.signalCode !== null) return;
+    const exited = new Promise((resolve) => toggler.once('exit', resolve));
+    toggler.kill('SIGKILL');
+    await exited;
+  };
+  t.after(stopToggler);
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-race-')));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
   mkdirSync(path.join(root, '.aidrian'));
   const config = path.join(root, '.aidrian', 'config.json');
   const plain = path.join(root, '.aidrian', 'a.json');
@@ -689,13 +707,18 @@ test('a JSON read under a folder a session may write never waits on a FIFO swapp
   assert.equal(direct.signal, null);
   assert.deepEqual(JSON.parse(direct.stdout), ['.aidrian/b.fifo: not found']);
   // A file and a FIFO swapped at the path while it is read, as a session may: no read waits.
-  const toggler = spawn(process.execPath, ['-e', `const fs = require('node:fs'); const [cfg, file, fifo] = process.argv.slice(1);
-    for (;;) { try { fs.renameSync(file, cfg); fs.renameSync(cfg, file); fs.renameSync(fifo, cfg); fs.renameSync(cfg, fifo); } catch {} }`, config, plain, fifo], { stdio: 'ignore' });
-  t.after(() => toggler.kill());
+  // Its own deadline, past the reads' 8 runs of at most 4 seconds, so it never spins alone.
+  const end = String(Date.now() + 60_000);
+  toggler = spawn(process.execPath, ['-e', `const fs = require('node:fs'); const [cfg, file, fifo, end] = process.argv.slice(1);
+    for (;;) { if (Date.now() > Number(end)) process.exit(); try { fs.renameSync(file, cfg); fs.renameSync(cfg, file); fs.renameSync(fifo, cfg); fs.renameSync(cfg, fifo); } catch {} }`, config, plain, fifo, end], { stdio: 'ignore' });
   let hung = 0;
-  for (let run = 0; run < 8; run += 1) {
-    const reads = spawnSync(process.execPath, ['--input-type=module', '-e', `import { readJson } from ${JSON.stringify(FS_LIB)}; for (let k = 0; k < 2000; k += 1) readJson(${JSON.stringify(root)}, '.aidrian/config.json', []);`], { timeout: 4000 });
-    if (reads.signal) hung += 1;
+  try {
+    for (let run = 0; run < 8; run += 1) {
+      const reads = spawnSync(process.execPath, ['--input-type=module', '-e', `import { readJson } from ${JSON.stringify(FS_LIB)}; for (let k = 0; k < 2000; k += 1) readJson(${JSON.stringify(root)}, '.aidrian/config.json', []);`], { timeout: 4000 });
+      if (reads.signal) hung += 1;
+    }
+  } finally {
+    await stopToggler();
   }
   assert.equal(hung, 0);
 });

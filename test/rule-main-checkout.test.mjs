@@ -115,6 +115,18 @@ test('apply_patch: every Add, Update, Delete, and Move target is checked', (t) =
   assert.equal(patch('*** Add File: build/x.js\n+x'), null);
 });
 
+test('a write tool whose payload names no file the guard can read is denied from the main checkout, and runs elsewhere', (t) => {
+  const { repo } = fixture(t);
+  const write = (tool, toolInput, cwd = repo) => checkTool({ tool_name: tool, tool_input: toolInput, cwd }, { env: ENV });
+  for (const [tool, toolInput] of [['Write', { content: 'x' }], ['Edit', { file_path: '' }], ['NotebookEdit', {}], ['apply_patch', { command: 'not a patch' }]]) {
+    assert.match(write(tool, toolInput) ?? '', new RegExp(`^Blocked: this writes with ${tool}, and the guard cannot read which files it writes from the main checkout`, 'u'), tool);
+    assert.equal(write(tool, toolInput, path.join(repo, 'wt/task')), null, `${tool} in a worktree`);
+  }
+  // A tool that writes no file is no concern of this rule.
+  assert.equal(write('Read', { file_path: path.join(repo, 'src/app.js') }), null);
+  assert.equal(checkTool({ tool_name: 'Write', tool_input: { content: 'x' }, cwd: repo }, { env: { AIDRIAN_ALLOW_MAIN_WRITE: '1' } }), null, 'the override');
+});
+
 test('bashTargets finds the certain write targets, resolved against cwd, and nothing else', () => {
   const at = (command) => bashTargets(command, '/repo').map((file) => path.relative('/repo', file));
   assert.deepEqual(at('echo hi > src/a.ts'), ['src/a.ts']);

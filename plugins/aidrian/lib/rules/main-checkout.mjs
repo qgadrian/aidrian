@@ -16,7 +16,7 @@
 
 import path from 'node:path';
 
-import { fileEditOf } from '../hosts/index.mjs';
+import { fileEditOf, isFileEditTool } from '../hosts/index.mjs';
 import { bashTargets, bashWrites } from './main-checkout/bash-writes.mjs';
 import { canonical, cdLead, decide, failedCdLead, guardedMain, OVERRIDE, reason } from './main-checkout/checkout.mjs';
 import { afterChanges } from './main-checkout/directory-change.mjs';
@@ -73,15 +73,23 @@ function afterCdDenial(command, cwd) {
   return null;
 }
 
-// Edit, Write, NotebookEdit, and apply_patch: the deny reason for the hook payload, or null.
+// Edit, Write, NotebookEdit, and apply_patch: the deny reason for the hook payload, or null. A write tool whose payload
+// names no file the host's adapter can read, such as a patch it cannot parse, is denied from a guarded main checkout,
+// as a write git cannot judge is: the guard cannot tell it writes no tracked file.
 export function checkTool(input, { env = process.env } = {}) {
   if (env[OVERRIDE] === '1') return null;
-  return decide(toolTargets(input), typeof input.cwd === 'string' ? input.cwd : process.cwd(), true, 'this writes');
+  const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
+  const targets = toolTargets(input);
+  if (targets.length === 0 && isFileEditTool(input.tool_name)) {
+    const main = guardedMain(cwd);
+    if (!main) return null;
+    return reason(`Blocked: this writes with ${input.tool_name}, and the guard cannot read which files it writes from the main checkout (${main.roots.main}), so it writes nothing to be safe.`, main.project, main.config);
+  }
+  return decide(targets, cwd, true, 'this writes');
 }
 
-// Every path an Edit, Write, NotebookEdit, or apply_patch payload writes, as it names them: relative to its cwd or absolute.
+// Every path an Edit, Write, NotebookEdit, or apply_patch payload writes, as the host's adapter names them (hosts/index.mjs
+// fileEditOf): relative to its cwd or absolute. None when the adapter reads none.
 export function toolTargets(input) {
-  const toolInput = input.tool_input ?? {};
-  const targets = fileEditOf(input)?.targets ?? [toolInput.file_path ?? toolInput.notebook_path];
-  return targets.filter((target) => typeof target === 'string' && target !== '');
+  return (fileEditOf(input)?.targets ?? []).filter((target) => typeof target === 'string' && target !== '');
 }

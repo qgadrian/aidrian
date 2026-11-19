@@ -571,12 +571,6 @@ export const recordsFolder = (state) => path.join(state, 'reviews');
 // the user's real home folder, outside the temporary folder and the run's test state folder, is refused: a test that
 // reached it would write fixture lessons and state folders into the developer's own inbox. scripts/test-state.mjs gives
 // every test its own root.
-// The folder of the hooks' counts and markers: the block counts, a subagent's send-backs, the session-length marker, and
-// a tracker refusal's marker. It lies in the state root, which no sandbox of a session the plugin confines may write,
-// never in the temporary folder, which one may: a FIFO planted there would stall a hook past its time, after which the
-// host runs the call it was refusing, and a link would lead the hook's write outside the sandbox.
-export const hookCountsFolder = (env = process.env) => path.join(stateRoot(env), 'hook-counts');
-
 export function stateRoot(env = process.env) {
   const base = path.isAbsolute(env.XDG_STATE_HOME ?? '') ? env.XDG_STATE_HOME : path.join(homedir(), '.local/state');
   const root = path.join(base, 'aidrian');
@@ -586,6 +580,12 @@ export function stateRoot(env = process.env) {
   }
   return root;
 }
+
+// The folder of the hooks' counts and markers: the block counts, a subagent's send-backs, the session-length marker, and
+// a tracker refusal's marker. It lies in the state root, which no sandbox of a session the plugin confines may write,
+// never in the temporary folder, which one may: a FIFO planted there would stall a hook past its time, after which the
+// host runs the call it was refusing, and a link would lead the hook's write outside the sandbox.
+export const hookCountsFolder = (env = process.env) => path.join(stateRoot(env), 'hook-counts');
 
 // Whether `folder` is in the home folder of the user this process runs as, which no HOME change moves.
 function realHome(folder) {

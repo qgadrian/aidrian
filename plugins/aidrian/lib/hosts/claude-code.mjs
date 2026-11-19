@@ -99,7 +99,7 @@ function mapInput(input) {
 
 // Its file tools that read, and the path each names (code.claude.com/docs/en/tools-reference): Read's `file_path`, Grep's
 // and Glob's `path`, the call's folder when unset, and Glob's `pattern` when it is absolute, up to its first glob
-// character. They run outside the sandbox, so the agent gate hook holds a confined session's reads (lib/confine-guard.mjs).
+// character, and the file system's root when a `..` follows that. They run outside the sandbox, so the agent gate hook holds a confined session's reads (lib/confine-guard.mjs).
 export const READ_TOOLS = Object.freeze(['Read', 'Grep', 'Glob', 'NotebookRead', 'LS']);
 function fileRead(tool, given) {
   if (tool === 'Read' || tool === 'NotebookRead') return [given.file_path ?? given.notebook_path ?? null];
@@ -112,6 +112,9 @@ function fileRead(tool, given) {
     const literal = at < 0 ? given.pattern : given.pattern.slice(0, given.pattern.lastIndexOf('/', at) + 1);
     const expanded = filePath(literal);
     named.push(path.isAbsolute(expanded) || base === null ? expanded || null : path.join(filePath(base), expanded));
+    // A `..` segment past that folder, in a path or a brace list, climbs from wherever a glob matched, so no folder
+    // bounds it: the read reaches the file system's root, which holds every store a confined session may not read.
+    if (/(?:^|[/{,])\.\.(?:[/},]|$)/u.test(given.pattern.slice(literal.length))) named.push(path.parse(process.cwd()).root);
   }
   return named;
 }

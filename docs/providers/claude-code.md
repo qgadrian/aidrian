@@ -550,7 +550,8 @@ Before `verified` changes, a live Claude Code must show every one of these, each
     does too; and whether server-managed settings, which the start does not read, leave a local cache a later check
     could read.
 23. Claude Code's file tools expand a leading `~` and `~/` to the home folder of the user the host runs as, as the
-    adapter's `filePath` does for every guard of a file tool; and a Glob pattern's `..` reaches above its path.
+    adapter's `filePath` does for every guard of a file tool; and a Glob pattern's `..` reaches above its path. A `..`
+    past the pattern's first glob character is bounded by no folder, so the adapter reads it as the file system's root.
 
 ### The sandbox proof
 

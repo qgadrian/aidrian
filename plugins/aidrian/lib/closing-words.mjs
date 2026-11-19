@@ -144,15 +144,32 @@ export function runIssueOf(session, options = {}) {
   return typeof mark.issue === 'string' && ISSUE_KEY.test(mark.issue) ? mark.issue : null;
 }
 
+// One read of `session`'s unattended mark, kept: a function that gives { mark } on every call, or { unreadable: true }
+// when the read threw, so the callers of one command, such as the waiver's run budget and the closing words, read the
+// same mark.
+export function markOnce(session, options = {}) {
+  let read = null;
+  return () => {
+    if (read) return read;
+    try {
+      read = { mark: readUnattendedMark(session, options) };
+    } catch {
+      read = { unreadable: true };
+    }
+    return read;
+  };
+}
+
 // What the closing-word check holds `session` to, from one read of its unattended mark: { own, prefixes } (see
 // closingTextsProblem), or undefined when the mark names no run's issue. A run it cannot read leaves `prefixes` null.
 export function runClosingContext(session, options = {}) {
-  let mark;
-  try {
-    mark = readUnattendedMark(session, options);
-  } catch {
-    return { own: null, prefixes: null };
-  }
+  return closingContextOf(markOnce(session, options)(), options);
+}
+
+// runClosingContext's answer from `read`, markOnce's answer.
+export function closingContextOf(read, options = {}) {
+  if (read.unreadable) return { own: null, prefixes: null };
+  const { mark } = read;
   if (!mark) return undefined;
   if (mark.pending || mark.root === null) return { own: null, prefixes: null };
   if (mark.issue === undefined && mark.project === undefined) return undefined;

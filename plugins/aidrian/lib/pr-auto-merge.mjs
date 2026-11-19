@@ -36,8 +36,9 @@
 //      finding open at the cap a local reviewer's of medium severity or lower and no security finding; the judge in the
 //      recording session's dispatch log; under a project run, fewer than WAIVED_MERGES waived merges; and the review
 //      bot's pass of exactly the head, read in the review trail, attended or not. A verdict never stands in for the bot.
-//      A verdict that would stand but for a sign-off the Human owes on the head stops as merge trust does: reason
-//      `trust`, `trust: "signoff"`, naming the flow.
+//      A sign-off the Human owes on the head, found before any verdict is read, stops as merge trust does: reason
+//      `trust`, `trust: "signoff"`, naming the flow and the class of the decision. The closing-word check holds a
+//      waived merge too, and comes first.
 //      A `none_needed` outcome on exactly that head counts only by pr-auto-merge-docs.mjs noneNeededProblem: its plan
 //      reasons are exactly "only files that cannot change behaviour", at depth `none`; `github.autoMerge.unreviewedPaths` is a non-empty
 //      list with no error on both the default branch and the base, and names every changed file on each, as the whole path
@@ -91,7 +92,7 @@ import { prNumber, repoName } from './review-gate.mjs';
 import { isFindingId } from './review/findings.mjs';
 import { detectHost, sessionIdentity } from './hosts/index.mjs';
 import { readHumanSignoffs, trustVerdict } from './review/merge-trust.mjs';
-import { closingTextsProblem, runClosingContext } from './closing-words.mjs';
+import { closingContextOf, closingTextsProblem, markOnce } from './closing-words.mjs';
 import { driverHold } from './run-driver.mjs';
 import { readUnattendedMark } from './unattended-mark.mjs';
 import { heldWaiver } from './review/settled.mjs';
@@ -477,8 +478,9 @@ const cleanup = (team) => `${team.deleteBranch ? 'delete' : 'keep'} the branch, 
 // command (hosts/index.mjs sessionIdentity), a pending or unreadable mark included. `run` gives the project run that
 // mark names (waiver-stand.mjs runOf), for the run's budget of waived merges; `runHost` the host it runs under, which
 // must confirm a waiver's judge (waiver-stand.mjs judgeHostProblem); `runIssue` the issue that run holds the session to,
-// for the closing-word check (closing-words.mjs runClosingContext).
-export function runAutoMerge(argv, project, { forge = forgeFor(project.root), session = sessionIdentity(process.env).session, home, unattended = () => heldSession(session, home ? { home } : {}), run = () => runOf(readUnattendedMark(session, home ? { home } : {})), runHost = detectHost(), runIssue = () => runClosingContext(session, home ? { home } : {}), out = console } = {}) {
+// for the closing-word check (closing-words.mjs runClosingContext). Both come from one read of the mark (`mark`,
+// closing-words.mjs markOnce); a mark that cannot be read names a run whose budget cannot be counted.
+export function runAutoMerge(argv, project, { forge = forgeFor(project.root), session = sessionIdentity(process.env).session, home, unattended = () => heldSession(session, home ? { home } : {}), mark = markOnce(session, home ? { home } : {}), run = () => (mark().unreadable ? null : runOf(mark().mark)), runHost = detectHost(), runIssue = () => closingContextOf(mark(), home ? { home } : {}), out = console } = {}) {
   const fail = (message) => {
     out.error(`aidrian pr auto-merge: ${message}`);
     return 3;
@@ -582,10 +584,13 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root), se
           return fail(`could not read the review trail of #${pr.number} with gh (${ghError(error)})`);
         }
         if (stand.waived) [problem, waived] = [null, true];
-        // A verdict that would stand but for a sign-off the Human owes is merge trust's stop, reported as merge trust
-        // reports it, so a run parks it as a decision for the Human.
-        else if (stand.kind === 'signoff') [problem, owedSignoff] = [null, stand.why];
-        else problem = `${problem}, and no judge's verdict lets it merge: ${stand.why}`;
+        // A sign-off the Human owes on the head, found before any verdict is read, stops as merge trust does, with its
+        // flow and class, so a run parks it as a decision for the Human.
+        else if (stand.kind === 'signoff') {
+          [problem, owedSignoff] = [null, stand.why];
+          const unsigned = stand.unsigned ?? [];
+          signoff = { flow: unsigned[0] ?? null, signoffClass: signoffClassOf(policy, unsigned) };
+        } else problem = `${problem}, and no judge's verdict lets it merge: ${stand.why}`;
       }
       // The closing words of a project run's issue session, from the final review verdict: read only when every check
       // before them allows it, a review a judge's verdict waived included. One read of the mark gives the run and its
@@ -600,9 +605,10 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root), se
         }
       }
       if (outsider) [effective, reason, why] = [false, 'outsider', `${outsider} commented, and is no member of the repository`];
-      else if (owedSignoff) [effective, reason, why, trust] = [false, 'trust', owedSignoff, 'signoff'];
       else if (problem) [effective, reason, why] = [false, 'review', problem];
+      // Before merge trust, as for any merge: a pull request that would close another issue stops on that first.
       else if (closing) [effective, reason, why] = [false, 'closes', closing];
+      else if (owedSignoff) [effective, reason, why, trust] = [false, 'trust', owedSignoff, 'signoff'];
       else if (unattended()) {
         // The record is this machine's word, which a confined session can write: a merge no Human attends rests on the
         // forge too. The merge guard holds the merge itself to the same.
@@ -623,7 +629,7 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root), se
 
   const result = {
     effective, reason, why, allow: team.allow, local, strategy: team.strategy, deleteBranch: team.deleteBranch,
-    deleteWorktree: team.deleteWorktree, pr: pr.number, head: pr.head, repo: pr.repo, base: pr.base, ...(waived ? { waived } : {}), ...(trust ? { trust } : {}), ...(signoff ?? {}),
+    deleteWorktree: team.deleteWorktree, pr: pr.number, head: pr.head, repo: pr.repo, base: pr.base, ...(waived ? { waived } : {}), ...(trust ? { trust } : {}), ...(trust === 'signoff' ? signoff ?? {} : {}),
   };
   // A trust refusal names its reason and which half is missing: the bot's verdict, or a sign-off.
   const off = reason === 'trust' ? `auto-merge off for #${pr.number} (trust: ${trust}): ${why}` : `auto-merge off for #${pr.number}: ${why}`;

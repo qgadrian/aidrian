@@ -9,6 +9,7 @@ import test from 'node:test';
 import { commands } from '../plugins/aidrian/lib/pr.mjs';
 import { computeVerdict } from '../plugins/aidrian/lib/pr-checks.mjs';
 import { pathsProblem, reviewProblem, runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
+import { markOnce } from '../plugins/aidrian/lib/closing-words.mjs';
 import { configFromText, loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { classify, evaluateRules } from '../plugins/aidrian/lib/review/plan.mjs';
@@ -1532,7 +1533,10 @@ function logJudge(r, rows = [{ event: 'dispatch', ts: '2026-11-03T14:30:00.000Z'
 // auto-merge over fakeForge with the default branch's config `config` and a review trail whose bot card passes `card`.
 // A host whose hook confirms a judge's dispatch, as Claude Code's does.
 const CONFIRMS = { name: 'claude-code', capabilities: { judgeDispatch: true } };
-function waived(t, r, { config = waiverConfig(), card = HEAD, run = undefined, unattended = false, head = HEAD, runHost = CONFIRMS } = {}) {
+// `closing`, when given, is { context, title?, body? }: the pull request's title and body on the forge, and the issue
+// and teams its project run holds it to. `mark`, when given, is the one read of the session's mark that both the run's
+// budget and the closing words come from, in place of `run`.
+function waived(t, r, { config = waiverConfig(), card = HEAD, run = undefined, unattended = false, head = HEAD, runHost = CONFIRMS, closing = null, mark = null } = {}) {
   const out = [];
   t.mock.method(console, 'log', (line) => out.push(line));
   t.mock.method(console, 'error', () => {});
@@ -1546,7 +1550,12 @@ function waived(t, r, { config = waiverConfig(), card = HEAD, run = undefined, u
       branches: { default: { name: 'main', pointer: null, config, knowledge: null }, base: { name: 'main', pointer: null, config } },
     };
   };
-  const code = runAutoMerge(['7', '--json'], r.project, { forge, unattended: () => unattended, run: () => run, runHost });
+  if (closing) {
+    forge.pull = (repoName, n, { host } = {}) => (calls.push(['pull', repoName, n, host]), { head: { sha: head }, title: closing.title ?? 'feat: export', body: closing.body ?? '', commits: 1 });
+    forge.changeCommits = (repoName, n, { host } = {}) => (calls.push(['changeCommits', repoName, n, host]), [{ sha: '0'.repeat(40), commit: { message: 'feat: export' } }]);
+  }
+  const reads = mark ? { mark } : { run: () => run, ...(closing ? { runIssue: () => closing.context } : {}) };
+  const code = runAutoMerge(['7', '--json'], r.project, { forge, unattended: () => unattended, runHost, ...reads });
   t.mock.restoreAll();
   return { code, result: JSON.parse(out.join('\n')), calls };
 }
@@ -1624,4 +1633,45 @@ test('a waived round cap never lets auto-merge skip the Human\'s sign-off of a f
   // A deleted flow test in the cause needs the same, and the cause refuses it whatever the store holds.
   r.record(capped(HEAD, {}, { tests_removed: ['payments'] }));
   assert.match(waived(t, r).result.why, /deletes a test of flow payments/u);
+});
+
+test('a waived round cap still meets the closing-word check, first, and an owed sign-off names its flow and class', (t) => {
+  t.after(() => rmSync(signoffFolder(), { recursive: true, force: true }));
+  const context = { own: 'ENG-1', prefixes: new Set(['ENG', 'OTHER']) };
+  const r = waiverRepo(t);
+  r.record(capped());
+  logJudge(r);
+  // Its own issue only: the waived merge goes on, once the closing words are read.
+  const own = waived(t, r, { unattended: true, closing: { context, body: 'Fixes ENG-1' } });
+  assert.deepEqual([own.code, own.result.waived], [0, true], own.result.why);
+  assert.ok(own.calls.some(([name]) => name === 'changeCommits'), 'the closing words were read');
+  // Another issue after a closing word: off, closes, though the judge's verdict stands.
+  const other = waived(t, r, { unattended: true, closing: { context, body: 'Fixes ENG-1\nFixes OTHER-9' } });
+  assert.deepEqual([other.code, other.result.reason], [1, 'closes']);
+  assert.match(other.result.why, /its body says "Fixes OTHER-9"/u);
+  // A sign-off the Human owes, of a security flow: merge trust's stop, with the flow and its class for the run's park.
+  r.record((state) => (capped()(state), (state.signoffable.flows = ['payments-security'])));
+  const owed = waived(t, r, { unattended: true, closing: { context, body: 'Fixes ENG-1' } });
+  assert.deepEqual([owed.code, owed.result.reason, owed.result.trust, owed.result.flow, owed.result.signoffClass], [1, 'trust', 'signoff', 'payments-security', 'security']);
+  // With another issue closed too, closes comes first, as it comes before merge trust on any merge.
+  const both = waived(t, r, { unattended: true, closing: { context, body: 'Fixes OTHER-9' } });
+  assert.deepEqual([both.code, both.result.reason, both.result.flow], [1, 'closes', undefined]);
+});
+
+test('auto-merge reads the session\'s mark once, and the waiver\'s run budget comes from that read', (t) => {
+  const r = waiverRepo(t);
+  r.record(capped());
+  logJudge(r);
+  const gone = waived(t, r, { mark: () => ({ mark: { root: r.dir, project: 'gone', issue: 'ENG-1' } }) });
+  assert.deepEqual([gone.code, gone.result.reason], [1, 'review']);
+  assert.match(gone.result.why, /the ledger of project run gone cannot be read, so its waived merges cannot be counted/u);
+  // A mark that cannot be read names a run whose budget cannot be counted.
+  const unreadable = waived(t, r, { mark: () => ({ unreadable: true }) });
+  assert.match(unreadable.result.why, /names a project run that cannot be read, so the run's waived merges cannot be counted/u);
+  // markOnce reads once and gives that read on every call.
+  const home = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-mark-once-')));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const read = markOnce('no-such-session', { home });
+  assert.deepEqual(read(), { mark: null });
+  assert.equal(read(), read(), 'the same read');
 });

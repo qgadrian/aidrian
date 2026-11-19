@@ -50,7 +50,7 @@ import { originRepo, repoName } from '../review-gate.mjs';
 import { localRefSolo, viewSolo } from '../solo.mjs';
 import { isFindingId, noHigher, severityOf } from './findings.mjs';
 import { boundedReads, holdToBase } from './in-force.mjs';
-import { botProblem, flowsFloor, readHumanSignoffs, recordedFlows, signoffProblem } from './merge-trust.mjs';
+import { botProblem, flowsFloor, readHumanSignoffs, recordedFlows, signoffProblem, unsignedFlows } from './merge-trust.mjs';
 import { postContext, readReading } from './dispatch.mjs';
 import { heldWaiver } from './settled.mjs';
 import { heldMessage, mergePending, owed, publishState, readLocalState, readRecord, sameCommit, SHA_REF, writeLocalState } from './state.mjs';
@@ -177,14 +177,20 @@ export function capProblem(state, head) {
 // head), every flow the forge's file list and both branches' configs may select (merge-trust.mjs flowsFloor), and every
 // flow the cap's cause names, needs a sign-off on exactly `head` in the sign-off store (merge-trust.mjs signoffProblem),
 // attended or not. `trail` is the forge's review trail, `policies` branchPolicies' answer.
-export function signoffOwed({ state, head, trail, policies, prefix, repo, pr, signoffs = null }) {
+export const signoffOwed = (args) => owedSignoffs(args)?.why ?? null;
+
+// signoffOwed's answer with the flows it is for: { why, unsigned } or null, `unsigned` every flow, sorted, whose sign-off
+// is missing on `head`, none when the record names no flows for that head or the store cannot be read.
+export function owedSignoffs({ state, head, trail, policies, prefix, repo, pr, signoffs = null }) {
   if (!isObject(state?.signoffable) || typeof state.signoffable.head !== 'string' || !sameCommit(state.signoffable.head, head)) {
-    return 'the record names no flows the Human signs off on this head, so whether a sign-off is owed cannot be told';
+    return { why: 'the record names no flows the Human signs off on this head, so whether a sign-off is owed cannot be told', unsigned: [] };
   }
   const floor = flowsFloor({ files: Array.isArray(trail?.files) ? trail.files : [], complete: trail?.filesComplete === true, configs: [policies.policy, policies.basePolicy], prefix, policyFiles: policies.policyFiles });
   const human = Array.isArray(state.outcome?.cap?.human) ? state.outcome.cap.human.filter((flow) => typeof flow === 'string') : [];
   const flows = new Set([...recordedFlows(state, head), ...floor.flows, ...human]);
-  return signoffProblem({ flows, reasons: floor.reasons, signoffs: signoffs ?? readHumanSignoffs({ repo, pr }), head });
+  const store = signoffs ?? readHumanSignoffs({ repo, pr });
+  const why = signoffProblem({ flows, reasons: floor.reasons, signoffs: store, head });
+  return why ? { why, unsigned: unsignedFlows({ flows, signoffs: store, head }) } : null;
 }
 
 // The most pull requests one project run merges on a judge's verdict; past it, the issue is parked for the Human.

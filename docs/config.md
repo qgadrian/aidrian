@@ -410,7 +410,9 @@ It lets a session that runs without the Human merge a pull request whose review 
 on the word of a fresh judge instead of the Human's answer to the merge guard's question, through the merge guard or
 through [auto-merge](#auto-merge): with both switches on, any `aidrian pr auto-merge` takes a standing verdict, not only
 one under `autopilot`. A verdict never stands in for the review bot: it waives only the findings of this machine's own
-reviewers, and only once the bot passed the head. It never lifts a sign-off the Human owes.
+reviewers, and only once the bot passed the head. It never lifts a sign-off the Human owes: one found before any
+verdict is read stops `aidrian pr auto-merge` as [merge trust](#when-it-is-on) does, `trust: "signoff"`, with its
+`flow` and `signoffClass`. Nor does it lift the [`closes`](#when-it-is-on) check, which a waived merge meets first.
 
 ### Turn it on
 

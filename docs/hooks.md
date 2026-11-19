@@ -1421,7 +1421,8 @@ cargo's `test result:` lines, one a test binary and the doc-tests; `go test -v`'
 package that did not build, a test binary that timed out, or a TestMain that exited 1 after its tests passed fails the
 run; else, since go test prints no pass count, its package lines, `ok  <package>  0.01s` and `FAIL  <package>  0.01s`,
 one a package, where a package whose tests were all filtered out (`[no tests to run]`) or that has none counts no
-pass, as a `-v` run whose tests were all skipped counts none; any other line with "N passed" or
+pass, as a `-v` run whose tests were all skipped counts none; package lines that count nothing leave the counts to a
+later family, and with none, the run counts 0 passes; any other line with "N passed" or
 "N failed", as pytest's and Playwright's; rspec's and mix's "12 examples, 0 failures". A family that names passes and
 no failure counts 0 failures. Unless node's runner counted, whose fail count stands, a line that is only "N failed"
 above 0, colours stripped, as Playwright's own `1 failed` line, makes the run failed; a test named
@@ -1429,7 +1430,7 @@ above 0, colours stripped, as Playwright's own `1 failed` line, makes the run fa
 long for the payload in a file (`persistedOutputPath`), and sends only its head, the counts read the last 64 KB of that
 file, then the stderr. The file is read only when it is a regular file by `lstat`, never a symlink or a FIFO, in a
 `tool-results` folder whose real path is under the real path of Claude Code's projects folder (`CLAUDE_CONFIG_DIR`, else
-`~/.claude`, then `projects`), so a symlinked config folder still counts and a folder linked from elsewhere does not.
+`.claude` under `HOME`, then `projects`), so a symlinked config folder still counts and a folder linked from elsewhere does not.
 It is opened without following a symlink and without taking a terminal, and its descriptor must show a regular file.
 Any other path, or a file it cannot read, leaves the head.
 The record keeps its newest rows within 64 KB.
@@ -1454,15 +1455,21 @@ Two checks read it:
   fit and nothing settles which, the edit is judged as if the body were new. An edit judges only the clauses its pull
   request's current body does not already hold. The duplicate-body check reads the edit's target the same way.
 - The evidence check of the subagent stop hook reads the subagent's final report the same way, at any tree, against its
-  own rows since its run started: a run of the session or of another agent is that one's to report. Like fenced code,
-  what the report quotes is not its claim: a block quote line, a span in double quotes outside a code span (the quotes
-  of `pytest -k "adds"` are the command's), a clause that opens with "according to" an outside source, and a part of a
-  clause, split at a coordinating "and", in which an outside source and a verb of saying come right before the command,
-  as "the pull request body says `npm test` passed". An outside source is another agent, a pull request, an issue, a
-  review, or a handoff; "this report", "my run", and "the test output" are the writer's own, so "according to the test
-  output, `npm test` passed" and "fixed the issue reported in the ticket and `npm test` passed" stay claims.
-  An accepted residual: a report that wraps its own claim in a quote or a block quote, as one in fenced code, is not
-  checked; the check stops the mistake seen live, a report written from runs that never ended, not one set on hiding.
+  own rows since its run started: a run of the session or of another agent is that one's to report. A report that is
+  a JSON object, or opens with one, as a machine handoff does, is read one string value at a time, then the text after
+  it; an object that does not parse is read as plain text. Like fenced code, what the report quotes is not its claim:
+  a block quote line; a span in double quotes that a verb of reading or saying introduces, as `it read "..."`, outside
+  a code span (the quotes of `pytest -k "adds"` are the command's, and a JSON string's are the writer's); a clause that
+  opens with "according to" an outside source; and a part of a clause, split at a coordinating "and", in which an
+  outside source and a verb of saying come right before the command, as "the pull request body says `npm test` passed".
+  Such a part with no pass word of its own carries into the parts after it, up to the first with one, so "the pull
+  request body says `npm test` and `vitest run` passed" is all the body's. An outside source is another agent, a pull
+  request, an issue, a review, or a handoff; a report, handoff, review, or agent after "this", "my", or "our", with at
+  most one word between, and "my run" and "the test output" are the writer's own, so "according to the test output,
+  `npm test` passed", "my final report lists ...", and "fixed the issue reported in the ticket and `npm test` passed"
+  stay claims. An accepted residual: a report that puts its own claim in fenced code, a block quote, or a quote a
+  reading or saying verb introduces is not checked, and a JSON handoff in a fenced block is fenced code; the check
+  stops the mistake seen live, a report written from runs that never ended, not one set on hiding.
   It sends the subagent back once, on the first stop of its turn, to quote the output a finished run returned or to
   call the run "not finished".
 

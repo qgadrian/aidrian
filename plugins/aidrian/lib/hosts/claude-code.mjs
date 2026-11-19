@@ -3,10 +3,10 @@
 // docs/providers/adding-a-host.md lists the fields; docs/providers/claude-code.md says what was checked on this host.
 
 import { lstatSync, realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { attachLine, findLine, startBackground, stopBackground, stopLine, stopOwnBackground } from './claude-code-background.mjs';
+import { configDir } from './claude-code-config.mjs';
 import { attended, END_SIGNAL, hasClient, hostProcess, isWrappedHost, PROGRAM } from './claude-code-terminal.mjs';
 import modelPrices from './claude-code-prices.mjs';
 import { responseObjects } from './response.mjs';
@@ -16,12 +16,12 @@ const agentName = (env) => env.CLAUDE_CODE_AGENT || null;
 const effort = (env) => env.CLAUDE_EFFORT || null;
 
 // The file a Bash payload's `persistedOutputPath` names, or null unless it is a regular file, by lstat, so no symlink, in a
-// `tool-results` folder whose real path is under Claude Code's real projects folder (CLAUDE_CONFIG_DIR, else ~/.claude,
-// then `projects`), where Claude Code keeps a long output. Any other path is no output of a call, and is never read.
+// `tool-results` folder whose real path is under Claude Code's real projects folder (configDir, then `projects`), where
+// Claude Code keeps a long output. Any other path is no output of a call, and is never read.
 function persistedFile(file, env) {
   if (typeof file !== 'string' || !path.isAbsolute(file)) return null;
   try {
-    const projects = realpathSync(path.join(env.CLAUDE_CONFIG_DIR || path.join(homedir(), '.claude'), 'projects'));
+    const projects = realpathSync(path.join(configDir(env), 'projects'));
     const folder = realpathSync(path.dirname(file));
     if (path.basename(folder) !== 'tool-results' || !folder.startsWith(`${projects}${path.sep}`)) return null;
     const real = path.join(folder, path.basename(file));
@@ -157,7 +157,7 @@ export default {
     prFooterSettings: (root, env) => [
       path.join(root, '.claude/settings.local.json'),
       path.join(root, '.claude/settings.json'),
-      path.join(env.CLAUDE_CONFIG_DIR || path.join(homedir(), '.claude'), 'settings.json'),
+      path.join(configDir(env), 'settings.json'),
     ],
     // Every MCP call reaches its hooks with no step by a person.
     trackerGuard: { verified: 'live', evidence: 'The PostToolUse payload of a real get_workspace call on Claude Code 2.1.318', unguardedRoutes: [] },

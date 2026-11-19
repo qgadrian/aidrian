@@ -16,6 +16,7 @@ import {
   workingTree,
 } from '../plugins/aidrian/lib/check-runs.mjs';
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
+import { configDir } from '../plugins/aidrian/lib/hosts/claude-code-config.mjs';
 import { detectHost, HOSTS } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { check as prBody } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
 import { check as pushFirst, unpushed } from '../plugins/aidrian/lib/rules/push-first.mjs';
@@ -182,6 +183,8 @@ test('a go package with no tests to run counts no pass', () => {
   const [row] = checkRows({ command: 'go test -run TestNone ./...', cwd: '/w', output: 'ok  \texample.test/pkg\t0.005s [no tests to run]\n', exitZero: true, tree: () => ({ tree: 't', trackedTree: 't' }), at: 't' });
   assert.equal(row.pass, 0);
   assert.equal(unsupportedClaims(passClaims('`go test -run TestNone ./...` passed', { section: null }), [row], { tree: 't' }).length, 1, 'supports no claim');
+  // Go packages that count nothing leave the counts to the next family a script's output holds.
+  assert.deepEqual(runCounts('?   \texample.test/cmd\t[no test files]\n============== 12 passed in 0.50s ==============\n'), { pass: 12, fail: 0 }, 'go, then pytest');
 });
 
 test('the working trees count uncommitted files, with and without the untracked ones, and match the commit that holds them', () => {
@@ -263,6 +266,20 @@ test('a report\'s own claims leave out what it quotes from another source', () =
   assert.equal(passClaims('> `npm test` passed\n`npm test` passed', { section: null, ownOnly: true }).length, 1, 'a line after a block quote is the writer\'s');
   assert.deepEqual(passClaims('The reviewer says `npm test` passed, and `vitest run` passed 3/3.', { section: null, ownOnly: true }).map(({ key }) => key),
     ['vitest run'], 'the part after a coordinating "and" is the writer\'s');
+  assert.deepEqual(passClaims('The PR body says `npm test` and `vitest run` passed.', { section: null, ownOnly: true }), [],
+    'a source\'s part with no pass word of its own carries into the next part');
+});
+
+test('a report that is or opens with a JSON object is read a string value at a time', () => {
+  const own = (text) => passClaims(text, { section: null, ownOnly: true, testing: TESTING }).map(({ key, counts }) => ({ key, counts }));
+  const handoff = { status: 'done', role: 'backend-developer', evidence: ['`npm run check` at f9d8ace: 3817/3817 pass', 'lib/a.mjs: the fix'], risks: [] };
+  assert.deepEqual(own(JSON.stringify(handoff)), [{ key: 'npm run check', counts: [3817] }], 'a bare JSON handoff');
+  assert.deepEqual(own(JSON.stringify(handoff, null, 2)), [{ key: 'npm run check', counts: [3817] }], 'pretty-printed');
+  const quoting = { status: 'done', evidence: ['The PR body says `npm test` passed'] };
+  assert.deepEqual(own(`${JSON.stringify(quoting)}\n\nDone. \`npm run check\`: 12/12 pass.`), [{ key: 'npm run check', counts: [12] }],
+    'a JSON object then prose: the source\'s value is dropped, the prose kept');
+  assert.deepEqual(own('{"status": "done", unparsed `npm test` passed 3/3'), [{ key: 'npm test', counts: [3] }], 'an object that does not parse is plain text');
+  assert.deepEqual(own('Earlier it read "`npm test` passed" in a comment.'), [], 'a quote a reading verb introduces');
 });
 
 test('a report\'s own claim stays one when it names a source that does not say the command', () => {
@@ -274,7 +291,13 @@ test('a report\'s own claim stays one when it names a source that does not say t
     ['Fixed the two findings the reviewer reported, and `npm test` now passes: 12 passed.', [12]],
     ['Updated the fixture according to the spec and `npm test` passed.', []],
     ['This report states `npm test` passed 40/40.', [40]],
+    ['My final report lists `npm test` passed 40/40.', [40]],
+    ['This final report states `npm test` passed 40/40.', [40]],
+    ['My handoff lists `npm test` passed 40/40.', [40]],
+    ['According to my review, `npm test` passed 40/40.', [40]],
+    ['This agent reports `npm test` passed 40/40.', [40]],
   ]) assert.deepEqual(own(text), [{ key: 'npm test', counts }], text);
+  assert.deepEqual(own('The final report states `npm test` passed 40/40.'), [], 'a report not the writer\'s');
   assert.deepEqual(own('The PR body says npm run check passed.'), [], 'a full suite named as plain words, said by a source');
 });
 
@@ -367,9 +390,12 @@ test('a call whose output Claude Code kept in a file is counted from that file\'
   writeFileSync(file, whole);
   const response = { stdout: whole.slice(0, 30_000), stderr: '', interrupted: false, isImage: false, noOutputExpected: false, persistedOutputPath: file, persistedOutputSize: whole.length };
   const claude = detectHost({ env: { CLAUDECODE: '1' } });
-  const home = { HOME: ROOT };
   assert.deepEqual(claude.shellRun(response, { CLAUDE_CONFIG_DIR: path.join(ROOT, '.claude') }).persisted, { file, after: '' });
-  assert.equal(claude.shellRun({ stdout: 'o', stderr: '' }, home).persisted, null);
+  // With no CLAUDE_CONFIG_DIR, the config folder is `.claude` under HOME, as the hook's environment gives it.
+  assert.deepEqual(claude.shellRun(response, { HOME: ROOT }).persisted, { file, after: '' }, 'the env\'s HOME');
+  assert.equal(claude.shellRun({ stdout: 'o', stderr: '' }, { HOME: ROOT }).persisted, null);
+  assert.equal(configDir({ HOME: '/h' }), path.join('/h', '.claude'));
+  assert.equal(configDir({ HOME: '/h', CLAUDE_CONFIG_DIR: '/c' }), '/c');
   runScript('hook-bash-post.mjs', postPayload('npm run check', { cwd: dir, session: 'persist-1', response }));
   assert.deepEqual(recorded('persist-1').map(({ status, pass, fail, tree: at }) => ({ status, pass, fail, at })), [{ status: 'passed', pass: 2000, fail: 0, at: tree }]);
 
@@ -520,6 +546,8 @@ test('the subagent stop hook sends back once a report that claims a pass its own
   assert.equal(stop('ev-1', 'Done. `npm run check`: not finished; I stopped it.').status, 0);
   assert.equal(stop('ev-1', 'Done. The pull request body says `npm run check`: 4071/4071 pass, which no run here shows.').status, 0, 'a claim it quotes from another source');
   assert.equal(stop('ev-1', 'Done. The reviewer wrote:\n\n> `npm run check`: 4071/4071 pass\n').status, 0, 'a block quote');
+  const handoff = JSON.stringify({ status: 'done', evidence: ['`npm run check`: 4071/4071 pass'] });
+  assert.equal(stop('ev-1', handoff).status, 2, 'a bare JSON handoff\'s claim is the subagent\'s own');
   runScript('hook-bash-post.mjs', postPayload('npm run check', { cwd: dir, session: 'ev-2', stdout: 'ℹ pass 4071\nℹ fail 0\n' }));
   assert.equal(stop('ev-2', claim).status, 2, 'the parent\'s run is not the subagent\'s');
   runScript('hook-bash-post.mjs', postPayload('npm run check', { cwd: dir, session: 'ev-2', stdout: 'ℹ pass 4071\nℹ fail 0\n', agent: 'a1' }));

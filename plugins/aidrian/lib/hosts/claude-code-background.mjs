@@ -7,8 +7,9 @@
 
 import { spawnSync } from 'node:child_process';
 import { accessSync, closeSync, constants, fstatSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
 import path from 'node:path';
+
+import { configDir } from './claude-code-config.mjs';
 
 // `claude --bg` may first start the supervisor, which takes a few seconds.
 const START_TIMEOUT = 60_000;
@@ -111,7 +112,7 @@ function awaitSession({ run, claude, wait, ...want }) {
 // entries carry the mode as a top-level `permissionMode` field, which is all some transcripts have.
 export function sessionMode({ session, cwd, env }) {
   if (typeof session !== 'string' || !ID.test(session)) return null;
-  const projects = path.join(env.CLAUDE_CONFIG_DIR || path.join(homedir(), '.claude'), 'projects');
+  const projects = path.join(configDir(env), 'projects');
   const name = `${session}.jsonl`;
   const first = path.join(projects, String(cwd).replace(/[^A-Za-z0-9]/gu, '-'), name);
   let folders;

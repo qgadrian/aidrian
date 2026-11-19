@@ -97,35 +97,66 @@ function summaryWords(rows) {
 // How many change numbers the summary lists before it counts the rest as `+N`.
 export const LISTED_CHANGES = 5;
 
-// Whether `rows` come from more than one repository. Such a summary lists no number, since `#42` could then name a
-// change in either; the pane names each change with its repository.
-export const spansRepositories = (rows) => new Set(rows.map((row) => `${row.host}/${String(row.repo).toLowerCase()}`)).size > 1;
+// The most characters, by code point, a summary holds. Its one `⏳` is two columns wide, so 58 characters fit the 61
+// columns a 64-column band leaves its changes row. A constant, never the terminal's width, so the band and the line
+// print the same words. The snapshot's SUMMARY_BUDGET.
+export const SUMMARY_BUDGET = 58;
+
+// The label rule of the snapshot's line, in its lib/session-prs.mjs, written again here, since a mod cannot import
+// across plugins: a row has a number when it is a safe integer above 0, and its repository is its host and its path in
+// lower case. test/claude-mod-format.test.mjs holds the band's words equal to the line's.
+const hasNumber = (row) => Number.isSafeInteger(row.number) && row.number > 0;
+const repositoryOf = (row) => `${row.host}/${String(row.repo).toLowerCase()}`;
+
+// The letters of a repository's place in the sorted list: 0 is `a`, 25 `z`, 26 `aa`, 701 `zz`, 702 `aaa`.
+function lettersOf(index) {
+  let letters = '';
+  for (let n = index + 1; n > 0; n = Math.floor((n - 1) / 26)) letters = String.fromCharCode(97 + ((n - 1) % 26)) + letters;
+  return letters;
+}
+
+// Each row's label, null for a row with no number. When the numbered rows come from more than one repository, each
+// number carries its repository's letter, `a#42`: `a` is the first of their repositories sorted by UTF-16 code unit, so
+// a letter changes only when the set of repositories does, never with the rows' order. One repository: bare `#42`.
+// A label holds no repository text, so no cut can make two repositories read the same.
+function changeLabels(rows) {
+  const repositories = [...new Set(rows.filter(hasNumber).map(repositoryOf))].sort();
+  const letters = new Map(repositories.length > 1 ? repositories.map((key, index) => [key, lettersOf(index)]) : []);
+  return rows.map((row) => (hasNumber(row) ? `${letters.get(repositoryOf(row)) ?? ''}#${row.number}` : null));
+}
+
+// How many of `count` labels the summary lists: the most whose text, `textAt(k)`, keeps within SUMMARY_BUDGET, or 0.
+// A summary never cuts a label; it lists fewer and counts the rest in `+N`.
+function listedCount(count, textAt) {
+  let listed = count;
+  while (listed > 0 && [...textAt(listed)].length > SUMMARY_BUDGET) listed -= 1;
+  return listed;
+}
 
 // The changes summary, `PRs ✓2 ✗0 ⏳1 · #12, #34, +1`: the noun, the counts of changes, not checks (a change with no
-// check counts in none), then the first LISTED_CHANGES numbers, each in the color of its checks, and `+N` for the rest
-// and any row with no number. The counts come first so a narrow terminal cuts numbers, never a failure. With no
-// number to list, or rows from more than one repository, `3 PRs · ✓2 ✗0 ⏳1`.
+// check counts in none), then the labels of the first LISTED_CHANGES numbered rows (changeLabels), each in the color of
+// its checks, as many as SUMMARY_BUDGET holds, and `+N` for the rest and any row with no number. The counts come first
+// so a narrow terminal cuts numbers, never a failure. With no number to list, `3 PRs · ✓2 ✗0 ⏳1`.
 export function changesParts(prs) {
   const rows = changeRowsOf(prs);
   if (rows.length === 0) return [];
   const words = summaryWords(rows);
   const states = rows.map((row) => checksState(row.checks));
   const count = (state) => states.filter((each) => each === state).length;
-  const numbered = rows.map((row, index) => ({ row, state: states[index] })).filter(({ row }) => Number.isSafeInteger(row.number) && row.number > 0);
-  const listed = spansRepositories(rows) ? [] : numbered.slice(0, LISTED_CHANGES);
-  const rest = rows.length - listed.length;
+  const labels = changeLabels(rows).map((label, index) => ({ label, state: states[index] })).filter(({ label }) => label !== null).slice(0, LISTED_CHANGES);
   const noun = rows.length === 1 ? words.one : words.many;
   const counts = [
     part(`✓${count('passed')}`, COLORS.passed), part(' '),
     part(`✗${count('failed')}`, COLORS.failed), part(' '),
     part(`⏳${count('pending')}`, COLORS.pending),
   ];
-  if (listed.length === 0) return [part(`${rows.length} ${noun}${SEPARATOR}`), ...counts];
-  return [
+  const partsAt = (listed) => [
     part(`${noun} `), ...counts, part(SEPARATOR),
-    ...listed.flatMap(({ row, state }, index) => [...(index ? [part(', ')] : []), part(`#${row.number}`, state === null ? COLORS.text : COLORS[state])]),
-    ...(rest > 0 ? [part(`, +${rest}`)] : []),
+    ...labels.slice(0, listed).flatMap(({ label, state }, index) => [...(index ? [part(', ')] : []), part(label, state === null ? COLORS.text : COLORS[state])]),
+    ...(rows.length > listed ? [part(`, +${rows.length - listed}`)] : []),
   ];
+  const listed = listedCount(labels.length, (each) => partsAt(each).map(({ text }) => text).join(''));
+  return listed === 0 ? [part(`${rows.length} ${noun}${SEPARATOR}`), ...counts] : partsAt(listed);
 }
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -182,14 +213,17 @@ function changeStatus(row) {
 }
 
 // The pane's rows, one a change: `{ parts, link }`, the link the row's url only when it matches its forge's pattern
-// for the row, else null, and the url then shows nowhere.
+// for the row, else null, and the url then shows nowhere. The first part is the forge's word and the row's label as
+// the band lists it, `PR a#42`, and the second its repository, so each letter shows beside the repository it names.
 export function changeRows(prs) {
-  return changeRowsOf(prs).map((row) => {
+  const rows = changeRowsOf(prs);
+  const labels = changeLabels(rows);
+  return rows.map((row, index) => {
     const forge = forgeOf(row);
-    const number = Number.isSafeInteger(row.number) && row.number > 0 ? ` #${row.number}` : '';
+    const label = labels[index] === null ? '' : ` ${labels[index]}`;
     const where = [textOf(row.host, DISPLAY_CAPS.name), textOf(row.repo, DISPLAY_CAPS.path)].filter(Boolean).join('/');
     const title = textOf(row.title, DISPLAY_CAPS.title);
-    const parts = [part(`${forge.one}${number}`), ...(where ? [part(where, COLORS.muted)] : []), ...(title ? [part(title)] : []), ...changeStatus(row)];
+    const parts = [part(`${forge.one}${label}`), ...(where ? [part(where, COLORS.muted)] : []), ...(title ? [part(title)] : []), ...changeStatus(row)];
     return { parts, link: forge.isLink(row) ? row.url : null };
   });
 }

@@ -22,17 +22,24 @@ gives the snapshot's line without it.
   subagents. Two rows below them are `aidrian session snapshot` ([The snapshot](handoff.md#the-snapshot)): first the handoff verdict the Stop hook would give
   and the harness signals to act on, P1 lessons, provisional decisions, merged worktrees to clean, and untriaged
   persona findings; then, on a row of their own so a long list never cuts the signals off, the pull requests the
-  session touched: the check counts first, so a narrow terminal cuts numbers and never a failure, then the first five
-  numbers, each in the color of its checks, and `+N` for the rest. Pull requests from more than one repository
-  show only their count, since the same number could name either; the pane names each one's repository.
+  session touched: the check counts first, so a narrow terminal cuts numbers and never a failure, then up to five
+  numbers, each in the color of its checks, and `+N` for the rest. When the numbers come from more than one
+  repository, each carries its repository's letter, `PRs ✓1 ✗1 ⏳0 · a#42, b#42`: `a` is the first repository when
+  their hosts and paths are sorted, so one name under two owners, or on two hosts, gets two letters, and a letter
+  changes only when the set of repositories does. A pull request with no number takes no letter. The summary is at
+  most 58 characters, which fits a 64-column band, and lists fewer numbers and a larger `+N` rather than cut one.
   At 70% context or more, a context
   alert row follows it. Each part shows only when it holds something, in the words of the snapshot's `--line`, but
-  for three: an armed chain above its limit draws `armed <n>` with no fraction; a `maxChain` of `unlimited` draws
-  `armed <n>` where the line prints `<n>/unlimited`; and pull requests from mixed forges, or from a forge with no
-  entry in the mod's table, count as `changes` where the line says `PRs`. The line keeps one row: the handoff, then the
+  for four: an armed chain above its limit draws `armed <n>` with no fraction; a `maxChain` of `unlimited` draws
+  `armed <n>` where the line prints `<n>/unlimited`; pull requests from mixed forges, or from a forge with no
+  entry in the mod's table, count as `changes` where the line says `PRs`; and, since that word is longer, near the
+  58-character budget those rows list one number fewer on the band than on the line, with a larger `+N`, so the band's
+  numbers are always the first of the line's. The line keeps one row: the handoff, then the
   pull requests, then the harness signals.
 - **The pane.** `/aidrian-mod` shows the same data with one row per pull request and a link to it, the ticket's
-  link, and one row per subagent; `/aidrian-mod hide` closes it. When there is no snapshot, the pane says why, in
+  link, and one row per subagent. Each pull request's row starts with its number as the band lists it, `PR a#42`,
+  then its repository, so each letter shows beside the repository it names.
+  `/aidrian-mod hide` closes the pane. When there is no snapshot, the pane says why, in
   one of six notices: the `aidrian` plugin is not installed for the folder, is off for it, or failed the mod's safety
   checks; the mod found no `node` on a PATH folder outside the session's folder; or the plugin returned no snapshot
   (update it), or took longer than 10 seconds.

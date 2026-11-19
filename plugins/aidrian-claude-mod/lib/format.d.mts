@@ -9,6 +9,7 @@ export function displayText(text: unknown, cap?: number): string
 export const COLORS: Readonly<Record<'quiet' | 'offer' | 'due' | 'reminded' | 'ceiling' | 'armed' | 'text' | 'muted' | 'passed' | 'failed' | 'pending' | 'merged', string>>
 export const FORGES: Readonly<Record<string, Readonly<{ change: string; one: string; many: string; isLink: (row: Record<string, unknown>) => boolean }>>>
 export function handoffParts(handoff: unknown): Part[]
+export const SUMMARY_BUDGET: number
 export function changesParts(prs: unknown): Part[]
 export function harnessParts(snapshot: { lessons?: unknown; decisions?: unknown; worktrees?: unknown; audits?: unknown }): Part[]
 export function bandSegments(snapshot: unknown): Segment[]

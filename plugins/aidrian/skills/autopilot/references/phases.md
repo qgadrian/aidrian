@@ -111,3 +111,18 @@ Then:
    In a session no Human attends, the merge also needs merge trust: the review bot's pass on the head, requested with
    `aidrian pr await-review <n> --request`, and the Human's sign-off of each flow that asks for one, from a session they attend.
 3. Write the last checkpoint when allowed, then the report of `SKILL.md` § Report.
+
+### When the merge stops
+
+In a project run's issue session, when step 2 stops short of a merge, because `aidrian pr auto-merge` exits 1 or the
+merge steps stop on a conflict, a branch behind its base, failing checks, or checks still pending at their cap,
+run `aidrian project stop-action <run> <issue>`, with the run and the issue the session's first message names.
+It prints one line whose first word is the action, and has already taken the forge's part of it.
+
+- Do what the line says, then run the `pr-auto-merge` skill again. On the next stop, run `stop-action` again.
+- `park`: record the result `pr_open`, with the line as its stop. `done`: record the result `merged`.
+- The command keeps the caps. Run no action it did not print: never rerun checks, update the branch, or ask the bot by hand.
+- A `merge_base` line's push is the one push allowed after `gh pr ready`. Its new head voids every sign-off and review of the old one.
+- A `review_round` runs § 3 once on the new head. When that round would push a fix, record `pr_open` instead.
+
+Outside a project run, report the stop, as step 2 says.

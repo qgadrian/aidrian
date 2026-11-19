@@ -1404,3 +1404,65 @@ test('reviewProblem holds on a waiver whose record holds no text, and names the 
   state.passes['agent:code-reviewer'] = { head, list: [{ id: 'R1-9', file: 'src/a.js', state: 'fixed' }, { file: 'src/a.js', state: 'fixed' }] };
   assert.match(reviewProblem(state, head), /finding R1-1, above low severity and no listing holds it fixed/u, 'a listing of another id, or of none, ends nothing');
 });
+
+// The closing-word refusal (reason `closes`): a project run's issue session, whose unattended mark names its issue,
+// merges only a pull request whose title, body, and commits close no other issue.
+function closing(t, { title = 'feat(export): add CSV export', body = 'Fixes ENG-1', messages = ['feat: export'], issue = 'ENG-1', runIssue = () => issue, commits, pullHead = HEAD } = {}) {
+  const r = repo(t);
+  r.record((state) => finished(state));
+  const { forge, calls } = fakeForge();
+  const listed = messages.map((message, i) => ({ sha: `${i}`.repeat(40), commit: { message } }));
+  forge.pull = (repo, n, { host } = {}) => (calls.push(['pull', repo, n, host]), { head: { sha: pullHead }, title, body, commits: commits ?? listed.length });
+  forge.changeCommits = (repo, n, { host } = {}) => (calls.push(['changeCommits', repo, n, host]), listed);
+  forge.reviewTrail = () => {
+    throw Object.assign(new Error('trail'), { stderr: 'past the closing words\n' });
+  };
+  const out = [];
+  const err = [];
+  const code = runAutoMerge(['7', '--json'], r.project, { forge, unattended: () => true, runIssue, out: { log: (line) => out.push(line), error: (line) => err.push(line) } });
+  return { code, out, err, calls, reason: out.length ? JSON.parse(out[0]).reason : null, why: out.length ? JSON.parse(out[0]).why : null };
+}
+
+test('closes: an issue session\'s pull request that closes only its own issue goes on to merge trust', (t) => {
+  for (const given of [
+    {},
+    { body: 'Fixes eng-1 and refs ENG-2', messages: ['fix(api): handle ENG-3 in the export', 'Resolves: ENG-1'] },
+    { issue: '5', body: 'Closes #5, and https://github.com/acme/notes/issues/5' },
+  ]) {
+    const result = closing(t, given);
+    assert.equal(result.code, 3, JSON.stringify(given));
+    assert.match(result.err.join('\n'), /could not read the review trail of #7 with gh \(past the closing words\)/u);
+    assert.deepEqual(result.calls.filter((call) => ['pull', 'changeCommits'].includes(call[0])).map((call) => call[0]), ['pull', 'changeCommits']);
+  }
+});
+
+test('closes: a title, body, or commit that pairs a closing word with another issue is off (closes), before merge trust', (t) => {
+  for (const [given, where] of [
+    [{ body: 'Fixes ENG-1, ENG-9' }, /its body says "Fixes ENG-9"/u],
+    [{ title: 'fix: export (closes ENG-4)' }, /its title says "closes ENG-4"/u],
+    [{ messages: ['feat: export', 'Completes ENG-2'] }, /commit 1111111 says "Completes ENG-2"/u],
+    [{ body: 'Resolves https://linear.app/acme/issue/ENG-7/slug' }, /ENG-7/u],
+    [{ issue: '5', body: 'Closes other/repo#5' }, /"Closes other\/repo#5"/u],
+    [{ body: 'Fixes #3' }, /"Fixes #3"/u],
+    [{ issue: null }, /an issue its unattended mark names, and that mark names none it can read/u],
+  ]) {
+    const result = closing(t, given);
+    assert.deepEqual([result.code, result.reason], [1, 'closes'], JSON.stringify(given));
+    assert.match(result.why, where);
+    assert.match(result.why, /so its merge would close an issue other than/u);
+  }
+});
+
+test('closes: a commit list cut short, or a head that moved, is off (closes); a session no mark names an issue for, or an attended one, reads nothing', (t) => {
+  assert.match(closing(t, { commits: 300 }).why, /gh listed 1 of its 300 commits, and GitHub lists at most 250/u);
+  assert.match(closing(t, { pullHead: OLD }).why, /the head moved from abcdef1 to 1234567/u);
+  const unmarked = closing(t, { runIssue: () => undefined, body: 'Fixes ENG-9' });
+  assert.equal(unmarked.code, 3, 'on to merge trust');
+  assert.ok(!unmarked.calls.some((call) => call[0] === 'changeCommits'));
+  const r = repo(t);
+  r.record((state) => finished(state));
+  const { forge, calls } = fakeForge();
+  const out = [];
+  assert.equal(runAutoMerge(['7', '--json'], r.project, { forge, unattended: () => false, runIssue: () => 'ENG-1', out: { log: (line) => out.push(line), error: () => {} } }), 0);
+  assert.ok(!calls.some((call) => call[0] === 'pull'), 'an attended session reads no closing words');
+});

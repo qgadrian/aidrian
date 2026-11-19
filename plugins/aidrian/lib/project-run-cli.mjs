@@ -9,6 +9,7 @@
 //   aidrian project result RUN ISSUE --file PATH   # the issue's own session records how it ended
 //   aidrian project handoff RUN BRIEF      # the driver records the brief its background continuation starts from
 //   aidrian project resume RUN             # an attended session lifts the halt a failed start proof put on the run
+//   aidrian project stop-action RUN ISSUE  # the one action for an issue whose auto-merge stopped (lib/project-stops.mjs)
 //
 // The run's files are in `<state>/runs/RUN/`, where `<state>` is the project's state folder as lib/project-run.mjs
 // runPlace resolves and checks it. `--project` on init must name the project of the current folder's main checkout.
@@ -22,22 +23,24 @@ import { resolvedPath } from './fs.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { projectAt } from './project.mjs';
 import { haltOf, initRun, nextLines, planRun, readRun, runPlace, writeSummary } from './project-run.mjs';
+import { stopAction } from './project-stops.mjs';
 import { endRun, recordHandoff, recordResult, resumeRun, startIssue, WAIT_CEILING, WAIT_DEFAULT, waitRun } from './project-run-gate.mjs';
 import { usageLines } from './usage.mjs';
 
 const USAGE = 'init RUN --file PATH [--project DIR] | next RUN [--json] [--project DIR] | summary RUN [--project DIR] | start RUN ISSUE [--project DIR] | ' +
-  'wait RUN [--max-wait SECONDS] [--project DIR] | result RUN ISSUE --file PATH [--project DIR] | handoff RUN BRIEF [--project DIR] | resume RUN [--project DIR] | end RUN [--project DIR]';
+  'wait RUN [--max-wait SECONDS] [--project DIR] | result RUN ISSUE --file PATH [--project DIR] | handoff RUN BRIEF [--project DIR] | resume RUN [--project DIR] | end RUN [--project DIR] | stop-action RUN ISSUE [--project DIR]';
 // The actions the command takes; lib/project-run-guard.mjs holds a rule for each (test/project-start-guard.test.mjs).
-export const ACTIONS = ['init', 'next', 'summary', 'start', 'wait', 'result', 'handoff', 'resume', 'end'];
+export const ACTIONS = ['init', 'next', 'summary', 'start', 'wait', 'result', 'handoff', 'resume', 'end', 'stop-action'];
 // The positionals each action takes after its name.
-const POSITIONALS = { init: ['one run id'], next: ['one run id'], summary: ['one run id'], start: ['a run id', 'an issue key'], wait: ['one run id'], result: ['a run id', 'an issue key'], handoff: ['a run id', 'a brief'], resume: ['one run id'], end: ['one run id'] };
+const POSITIONALS = { init: ['one run id'], next: ['one run id'], summary: ['one run id'], start: ['a run id', 'an issue key'], wait: ['one run id'], result: ['a run id', 'an issue key'], handoff: ['a run id', 'a brief'], resume: ['one run id'], end: ['one run id'], 'stop-action': ['a run id', 'an issue key'] };
 
 export const commands = {
   project: {
     usage: USAGE,
     about: 'keep the record of a project run that works through a tracker project: init validates the snapshot input the driver session wrote from the tracker and starts run RUN, from the attended main session only; next prints the issue or issues to start, by blockers, then priority, then key, or done; summary writes the run\'s summary.md from its ledger; ' +
       'start, for the run\'s driver, starts the issue\'s own session in the background in its worktree, under the caps; wait waits for an issue\'s session to end or record its result; result records it, from that session only; handoff records the brief the driver\'s background continuation takes the run on with; ' +
-      'resume, from an attended session only, lifts the halt a failed start proof put on the run; end, for the run\'s driver at the end of its loop, records the run\'s end, which releases the driver\'s hold',
+      'resume, from an attended session only, lifts the halt a failed start proof put on the run; end, for the run\'s driver at the end of its loop, records the run\'s end, which releases the driver\'s hold; ' +
+      'stop-action, for the driver or the issue\'s own session, prints the one action for an issue whose pull request did not merge, takes the forge\'s part of it, and records it against its cap',
     run: (args) => print(projectCommand(args)),
   },
 };
@@ -48,8 +51,8 @@ export const commands = {
 // an in-process caller can point it elsewhere. So are `forge`, the forge facade the team's policy and a merge are read
 // through, `spawn` and `wait`, the host adapter's stand-ins for its command and its pause, `pause`, wait's pause between
 // reads, `now`, and `platform`, the operating system a start's host sandbox runs on. Throws what parseArgs and
-// commandConfig throw, which lib/cli.mjs reports.
-export function projectCommand(args, { cwd = process.cwd(), env = process.env, home, forge, spawn, wait, pause, now, platform } = {}) {
+// commandConfig throw, which lib/cli.mjs reports. `autoMerge(url)` is stop-action's stand-in for the auto-merge answer.
+export function projectCommand(args, { cwd = process.cwd(), env = process.env, home, forge, spawn, wait, pause, now, platform, autoMerge } = {}) {
   const [action, ...rest] = args;
   if (!ACTIONS.includes(action)) return fail(`project takes ${ACTIONS.slice(0, -1).join(', ')}, or ${ACTIONS.at(-1)}${action ? `, not "${action}"` : ''}`);
   const word = { type: 'string' };
@@ -84,6 +87,7 @@ export function projectCommand(args, { cwd = process.cwd(), env = process.env, h
   if (action === 'handoff') return recordHandoff({ ...gate, brief: path.resolve(cwd, second) });
   if (action === 'resume') return resumeRun(gate);
   if (action === 'end') return endRun(gate);
+  if (action === 'stop-action') return stopAction({ ...gate, key: second, ...(autoMerge ? { autoMerge } : {}) });
   if (action === 'wait') {
     const given = values['max-wait'] ?? String(WAIT_DEFAULT);
     if (!/^\d{1,4}$/u.test(given) || Number(given) > WAIT_CEILING) return fail(`project wait takes --max-wait as whole seconds from 0 to ${WAIT_CEILING}`);

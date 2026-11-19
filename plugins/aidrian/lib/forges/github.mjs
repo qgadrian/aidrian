@@ -652,5 +652,44 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // Uploads image files to `repo` through the gh-image extension and returns what it prints: one Markdown image a file.
     // It may take UPLOAD_TIMEOUT_MS.
     uploadImages: (repo, files) => gh(['image', '--repo', repo, ...files], { timeoutMs: UPLOAD_TIMEOUT_MS }),
+    // What an auto-merge stop reads and does (lib/project-stops.mjs), and what the closing-word check reads
+    // (lib/pr-auto-merge.mjs closingProblem).
+    // Where pull request `ref` of `repo` stands for a merge: `ref` is its number or its head branch, and `repo` may name
+    // its host, `host/owner/name`. GitHub's view with MERGE_STATE_FIELDS: `mergeable` is MERGEABLE, CONFLICTING, or
+    // UNKNOWN, and `mergeStateStatus` is BEHIND, DIRTY, BLOCKED, CLEAN, UNSTABLE, HAS_HOOKS, DRAFT, or UNKNOWN.
+    mergeState: (repo, ref) => json(['pr', 'view', String(ref), '--repo', repo, '--json', MERGE_STATE_FIELDS]),
+    // Starts the failed jobs of each Actions workflow run of `repo` in `runs`, by id, again; returns the ids it asked for.
+    rerunFailedChecks: (repo, runs, { host } = {}) => runs.map((run) => {
+      const id = idOf(run, 'a workflow run id');
+      rest(`repos/${repo}/actions/runs/${id}/rerun-failed-jobs`, { method: 'POST', empty: true, host });
+      return id;
+    }),
+    // Whether a push that is no fast-forward may land on the branch `branch` of `repo`: false when GitHub protects the
+    // branch, whose protection only an admin may read, or a ruleset that applies to it forbids one (`non_fast_forward`).
+    branchAllowsForce: (repo, branch, { host } = {}) => {
+      const name = encodeURIComponent(branch);
+      if (rest(`repos/${repo}/branches/${name}`, { host })?.protected !== false) return false;
+      const rules = rest(`repos/${repo}/rules/branches/${name}`, { paginate: true, host });
+      return Array.isArray(rules) && rules.every((rule) => typeof rule?.type === 'string' && rule.type !== 'non_fast_forward');
+    },
+    // Brings pull request `n` of `repo` up to date with its base on the forge, only while its head is `expectedHead`:
+    // `merge` merges the base in, one new commit on top; `rebase` puts its commits on the base, which replaces them, a
+    // push that is no fast-forward. Throws what gh throws, such as GitHub's 422 for a conflict or a head that moved.
+    updateBranch: (repo, n, { host, expectedHead, method = 'merge' } = {}) => {
+      const number = idOf(n, 'a pull request number');
+      if (typeof expectedHead !== 'string' || !/^[0-9a-f]{40}$/u.test(expectedHead)) throw new Error('an update names the head it expects, a full commit SHA');
+      if (method === 'merge') return rest(`repos/${repo}/pulls/${number}/update-branch`, { method: 'PUT', fields: { expected_head_sha: expectedHead }, host });
+      if (method !== 'rebase') throw new Error('an update merges the base in or rebases onto it');
+      const id = rest(`repos/${repo}/pulls/${number}`, { host })?.node_id;
+      if (typeof id !== 'string' || !NODE_ID.test(id)) throw new Error(`GitHub gave no node id for pull request #${number}`);
+      return json(['api', 'graphql', ...(host ? ['--hostname', host] : []), '-f', `query=${REBASE_MUTATION}`, '-f', `id=${id}`, '-f', `head=${expectedHead}`]);
+    },
+    // The commits of pull request `n` of `repo`, every page, each with its `commit.message`: GitHub lists at most 250.
+    changeCommits: (repo, n, { host } = {}) => list(`repos/${repo}/pulls/${idOf(n, 'a pull request number')}/commits?per_page=100`, { host }),
   });
 }
+
+// The fields mergeState reads.
+export const MERGE_STATE_FIELDS = 'number,url,state,isDraft,mergeable,mergeStateStatus,headRefOid,headRefName,baseRefName,isCrossRepository,reviewDecision,latestReviews';
+// updateBranch's rebase, which GitHub's REST route does not offer.
+const REBASE_MUTATION = 'mutation($id:ID!,$head:GitObjectID!){updatePullRequestBranch(input:{pullRequestId:$id,expectedHeadOid:$head,updateMethod:REBASE}){pullRequest{headRefOid}}}';

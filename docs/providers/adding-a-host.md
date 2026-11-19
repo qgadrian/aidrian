@@ -207,6 +207,14 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   `-F`, which reads a leading `@` as a file.
 - Commits: `commit`, `checkRuns`, `compare`, `deployments` of one commit and `deploymentStatuses` of one deployment,
   and `uploadImages` for a pull request's captures.
+- Merge stops, which `aidrian project stop-action` reads and takes (`lib/project-stops.mjs`): `mergeState(repo, ref)`,
+  where the pull request of a number or a head branch stands for a merge, with its mergeability and merge state;
+  `rerunFailedChecks(repo, runs, { host })`, which starts the failed jobs of each workflow run again;
+  `branchAllowsForce(repo, branch, { host })`, false when the branch is protected or a ruleset forbids a push that is
+  no fast-forward; and `updateBranch(repo, n, { host, expectedHead, method })`, which brings it up to date with its
+  base on the forge, only while its head is `expectedHead`, by merging the base in or, with `method: 'rebase'`, by a
+  rebase. `changeCommits(repo, n, { host })` lists its commits with their messages, for the auto-merge gate's
+  closing-word check ([config.md](../config.md#when-it-is-on)).
 - Links: `compareUrl(repo, from, to)`, the web link that shows the commits from `from` to `to`, which the review
   summary's findings table gives a finding's closing range. It is built only from two full-hex SHAs and the forge's own
   identity of the repository, never from pull request content: GitHub's adapter reads the repository's `html_url` once,

@@ -215,9 +215,48 @@ function programWrites(segment, invocation, folder) {
   return [];
 }
 
-// The writes of one git call (programWrites).
+// The writes of one git call (programWrites): what its subcommand makes (subcommandWrites), and each file a diff
+// option, `git format-patch`, or `git archive` writes its output to (outputTargets).
 function gitWrites(git, folder, shown) {
   if (!git) return [];
+  return [...subcommandWrites(git, folder, shown), ...outputTargets(git, folder, shown)];
+}
+
+// The subcommands whose short `-o` names the file or folder they write: format-patch's output folder, archive's file.
+const OUTPUT_SHORT = new Set(['format-patch', 'archive']);
+// The long options that name where a git call writes its output: `--output`, which every command that takes diff
+// options (log, show, diff, diff-tree, range-diff, format-patch) and archive take, and format-patch's folder.
+const OUTPUT_LONG = new Set(['--output', '--output-directory']);
+
+// Each file or folder a git call writes its output to, in any spelling: `--output=<file>`, `--output <file>`,
+// format-patch's `--output-directory` and `-o`, archive's `-o`, alone, attached (`-o<dir>`), or last in a cluster
+// (`-ko <dir>`). A name built at run time is refused, since where it writes cannot be told. A `-C` folder before the
+// subcommand is the folder a relative name lies in.
+function outputTargets(git, folder, shown) {
+  const at = git.globals.findIndex((token) => token.text === '-C');
+  const into = at >= 0 && git.globals[at + 1] && !git.globals[at + 1].dynamic && folder !== null ? path.resolve(folder, git.globals[at + 1].text) : folder;
+  const found = [];
+  const rest = git.rest;
+  for (let i = 0; i < rest.length; i += 1) {
+    const { text } = rest[i];
+    if (text === '--') break;
+    let value;
+    const long = text.startsWith('--') ? text.split('=')[0] : null;
+    if (long !== null && OUTPUT_LONG.has(long) && (long === '--output' || git.subcommand === 'format-patch')) {
+      value = text.includes('=') ? { text: text.slice(text.indexOf('=') + 1), dynamic: rest[i].dynamic } : rest[i + 1];
+    } else if (long === null && OUTPUT_SHORT.has(git.subcommand) && /^-[A-Za-z]*o/u.test(text)) {
+      const attached = text.slice(text.indexOf('o') + 1);
+      value = attached !== '' ? { text: attached, dynamic: rest[i].dynamic } : rest[i + 1];
+    } else continue;
+    if (!value || value.dynamic) {
+      found.push({ what: 'a file git writes its output to, whose name is missing or built at run time, so where it writes cannot be told', text: shown });
+    } else found.push({ file: value.text, folder: into, text: shown });
+  }
+  return found;
+}
+
+// What one git call's subcommand makes: a config write, a worktree, a clone, or a new repository (gitWrites).
+function subcommandWrites(git, folder, shown) {
   const words = git.rest.filter((token) => !token.dynamic).map((token) => token.text);
   const file = (spelled) => ({ file: spelled, folder, text: shown });
   if (git.subcommand === 'config') return configWrites(words, file, shown);

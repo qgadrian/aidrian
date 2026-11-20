@@ -208,16 +208,24 @@ test('an issue session pushes in a call of its own, so no command beside it chan
     `git apply --cached ${patch} && git commit -m x && ${EXACT}`, `git commit -qam x && ${EXACT}`, `git merge side && ${EXACT}`, `git reset --hard side; ${EXACT}`,
     `${EXACT} && git commit -m later`, `git fetch origin && ${EXACT}`, `git branch -f side && ${EXACT}`, `npm run release; ${EXACT}`, `(git commit -m x) && ${EXACT}`,
     `bash -c "git commit -m x" && ${EXACT}`, `$TOOL && ${EXACT}`, `git -c core.hooksPath=x status && ${EXACT}`,
+    // A read that writes a file, as a branch's ref in the clone's git folder, or runs a program, is no read.
+    `git log -1 --format=%H --output=${path.join(fx.attempt, 'git', 'refs', 'heads', ...BRANCH.split('/'))} HEAD && ${EXACT}`,
+    `git log -1 --output ${path.join(fx.attempt, 'git', 'refs', 'heads', 'x')} && ${EXACT}`, `git diff --ext-diff && ${EXACT}`, `git log -p --textconv && ${EXACT}`,
+    `git show -o x HEAD && ${EXACT}`, `git status --exec=x && ${EXACT}`, `git diff -c && ${EXACT}`, `git rev-parse --git-path x --frobnicate && ${EXACT}`,
   ]) {
     assert.match(fx.ask(bash(command))?.reason ?? '', /an issue session pushes in a call of its own: commit first, then run `git push origin HEAD:refs\/heads\/feat\/eng-1-export` alone/u, command);
   }
   // Reads and text filters may share its call.
-  for (const command of [EXACT, `cd ${fx.work} && ${EXACT}`, `git status --short && git log --oneline -1 && ${EXACT} 2>&1 | tail -5`, `git rev-parse HEAD; git branch --show-current; ${EXACT}; echo done`, `${EXACT} | grep -v hint | head -3`]) {
+  for (const command of [EXACT, `cd ${fx.work} && ${EXACT}`, `git status --short && git log --oneline -1 && ${EXACT} 2>&1 | tail -5`, `git log --oneline -3 && ${EXACT}`,
+    `git log -n 2 --format=%H --stat origin/main..HEAD -- src && git diff --cached --name-only && ${EXACT}`, `git rev-parse HEAD; git branch --show-current; ${EXACT}; echo done`, `${EXACT} | grep -v hint | head -3`]) {
     assert.equal(fx.ask(bash(command)), null, command);
   }
   const hooked = fx.hook(bash(`git commit --allow-empty -qm x && ${EXACT}`));
   assert.equal(hooked.status, 2, hooked.stderr);
   assert.match(hooked.stderr, /in a call of its own/u);
+  // Alone, a read whose output names the clone's git folder is refused by the write rule.
+  const ref = path.join(fx.attempt, 'git', 'refs', 'heads', ...BRANCH.split('/'));
+  assert.match(fx.ask(bash(`git log -1 --format=%H --output=${ref} HEAD`))?.reason ?? '', /the attempt clone's git folder, which only git writes/u);
 });
 
 test('an issue session\'s exact push is refused while its checkout holds an uncommitted workflow change, or a .github that is no folder', (t) => {

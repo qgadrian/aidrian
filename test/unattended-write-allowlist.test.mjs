@@ -326,6 +326,29 @@ test('a program that writes its own config is refused to a session no Human atte
   }
 });
 
+test('a git call that writes its output to a file names that file to the write allowlist, in every spelling', (t) => {
+  const fx = fixture(t);
+  const ref = path.join(fx.dir, '.git', 'refs', 'heads', 'feat', 'x');
+  const elsewhere = path.join(fx.root, 'elsewhere');
+  for (const [command, reason] of [
+    [`git log -1 --format=%H --output=${ref} HEAD`, /git folder|shared git/u],
+    [`git log -1 --format=%H --output ${ref} HEAD`, /git folder|shared git/u],
+    [`git show --output=${path.join(elsewhere, 'x')} HEAD`, /outside the places/u],
+    [`git diff --output ${path.join(fx.home, '.zshrc')}`, /a shell startup file/u],
+    [`git -C ${fx.root} diff --output=x`, /outside the places/u],
+    [`git format-patch -1 -o ${elsewhere}`, /outside the places/u],
+    [`git format-patch -1 -o${elsewhere}`, /outside the places/u],
+    [`git format-patch -1 -ko ${elsewhere}`, /outside the places/u],
+    [`git format-patch -1 --output-directory=${elsewhere}`, /outside the places/u],
+    [`git format-patch -1 --output-directory ${elsewhere}`, /outside the places/u],
+    [`git archive -o ${path.join(elsewhere, 'a.tar')} HEAD`, /outside the places/u],
+    ['git log --output="$OUT" -1', /whose name is missing or built at run time/u],
+  ]) assert.match(fx.ask(bash(command))?.reason ?? '', reason, command);
+  for (const command of [`git log -1 --output=${path.join(fx.temp, 'log.txt')}`, `git format-patch -1 -o ${path.join(fx.temp, 'p')}`, 'git log --oneline -3', 'git diff --output-indicator-new=+ HEAD', 'git log -- --output=x']) {
+    assert.equal(fx.ask(bash(command)), null, command);
+  }
+});
+
 test('a session no Human attends never publishes, withdraws, or changes a package or its owners on a registry', (t) => {
   const fx = fixture(t);
   const refused = [

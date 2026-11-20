@@ -1202,7 +1202,10 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   - A program that writes its own config is refused: a `git config` write (anything but a read, a list, or a key alone)
     to the user's, the system's, the shared, or the worktree's config, or with `--file` to a file outside the places;
     a key that makes git run a program at any scope, and `git config --edit`; the folders `git worktree add`,
-    `git clone`, and `git init` make, when outside the places; the forge CLI's, which its adapter declares
+    `git clone`, and `git init` make, and the file or folder a git call writes its output to (`--output=<file>` or
+    `--output <file>` on any subcommand, as `git log`, `show`, or `diff`, and `-o` or `--output-directory` of
+    `git format-patch`, and `-o` of `git archive`, alone, attached, or last in a cluster), when outside the places, or
+    when built at run time; the forge CLI's, which its adapter declares
     (`gh auth setup-git`, `login`, `logout`, `switch`, and `refresh`, `gh config set`, and `gh extension install` on
     GitHub); each host's own config subcommands, which its adapter declares (`configCommands`: `claude mcp add`,
     `claude config set`, `claude plugin install`, and `claude plugin marketplace add` for Claude Code, `codex mcp add`,
@@ -1265,7 +1268,10 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     `-o`, `--no-verify`, any other option, a word built at run time, a git `-c`, `--git-dir`, or `--work-tree`, a
     variable that moves git's repository or config (`GIT_DIR`, `GIT_CONFIG_*`, `HOME`, `XDG_CONFIG_HOME`) on the line,
     a push from any other folder, and every push while no running start of its issue names a branch. In a call of its
-    own: beside the push only `cd`, git's reads `status`, `log`, `diff`, `show`, `rev-parse`, and
+    own: beside the push only `cd`, git's reads `status`, `log`, `diff`, `show`, `rev-parse`, with only the options
+    that read (`--oneline`, `-<n>`, `-n <n>`, `--format=`, `--stat`, `--name-only`, `--cached`, and the like, never
+    `--output`, `-o`, `--ext-diff`, `--textconv`, `--exec`, `-c`, or one the hook does not list, which write a file,
+    such as a branch's ref in the clone's git folder, or run a program), and
     `branch --show-current`, and the filters `echo`, `printf`, `true`, `head`, `tail`, `wc`, `cat`, and `grep` may run,
     so `git apply --cached p && git commit -m x && git push ...`, a merge, a reset, or a fetch on the push's line,
     which would change its commits after the hook read them, is refused with "push in a call of its own". Then git

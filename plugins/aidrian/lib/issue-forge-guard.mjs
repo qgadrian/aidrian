@@ -7,8 +7,9 @@
 //     mark's hold, an attended session, and a run's driver are not (unattended-mark.mjs issueHeld).
 //   - `git push`: only `git push origin HEAD:refs/heads/<branch>`, `<branch>` the one the run's snapshot names for its
 //     issue (project-run-guard.mjs ownIssue), with a `+` or a force option that names only that branch, and switches
-//     that change nothing else, in a call of its own: beside it only `cd`, git's reads (BESIDE_GIT), and text filters
-//     (BESIDE_PROGRAMS), so no command of the call changes the commits it carries after the guard read them. git then
+//     that change nothing else, in a call of its own: beside it only `cd`, git's reads (BESIDE_GIT) with the options
+//     that only read (BESIDE_OPTIONS), and text filters (BESIDE_PROGRAMS), so no command of the call changes the commits
+//     it carries after the guard read them. git then
 //     holds the checkout (issue-push-checkout.mjs): its own clone or worktree, not a repository nested in it, with origin
 //     pushing to the URL its issue's start pinned, and commits that change none of the forge's workflow files
 //     (forges/index.mjs forgeWorkflowFolders) from where they leave origin's default branch, however the session made
@@ -70,6 +71,23 @@ const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish']);
 // `git branch` only as `--show-current`, and programs that only read their input or files and print. A fetch moves
 // origin's remote-tracking ref, the base of the workflow diff, so it runs in a call of its own too.
 const BESIDE_GIT = new Set(['status', 'log', 'diff', 'show', 'rev-parse']);
+// The options those reads take beside the push, alone or with `=<value>` (BESIDE_VALUED), plus `-<n>`, `-n <n>`, and
+// `-U<n>`: no other, since `--output` writes a file, as a branch's ref in the clone's git folder, and `--ext-diff`,
+// `--textconv`, and an unknown option may run a program, after the guard read the commits.
+const BESIDE_OPTIONS = new Set([
+  '--short', '-s', '--branch', '-b', '--long', '--porcelain', '-z', '--ahead-behind', '--no-ahead-behind', '-u', '--untracked-files', '--ignored',
+  '--oneline', '--graph', '--decorate', '--no-decorate', '--stat', '--shortstat', '--numstat', '--name-only', '--name-status', '--summary',
+  '--abbrev-commit', '--no-abbrev-commit', '--color', '--no-color', '--reverse', '--first-parent', '--merges', '--no-merges', '--all',
+  '-p', '--patch', '--no-patch', '--cached', '--staged', '--quiet', '-q', '--exit-code', '--check', '--no-ext-diff', '--no-textconv',
+  '--word-diff', '--full-index', '--no-renames', '--raw', '--left-right', '--cherry-pick', '--boundary', '--walk-reflogs', '-g',
+  '--abbrev-ref', '--show-toplevel', '--show-prefix', '--git-dir', '--git-common-dir', '--absolute-git-dir', '--is-inside-work-tree',
+  '--symbolic-full-name', '--verify', '--show-current',
+]);
+const BESIDE_VALUED = new Set([
+  '--format', '--pretty', '--max-count', '--skip', '--since', '--after', '--until', '--before', '--author', '--committer', '--grep', '--date',
+  '--abbrev', '--unified', '--porcelain', '--untracked-files', '--ignored', '--path-format', '--color', '--decorate', '--stat', '--short',
+  '--abbrev-ref', '--diff-filter', '--word-diff',
+]);
 const BESIDE_PROGRAMS = new Set(['echo', 'printf', 'true', 'head', 'tail', 'wc', 'cat', 'grep']);
 // The variables, besides git-push.mjs GIT_VARIABLES, that move the config files git reads, and so where a push goes.
 const CONFIG_HOMES = ['HOME', 'XDG_CONFIG_HOME'];
@@ -110,7 +128,27 @@ function besidePush({ invocation, unread }) {
   const git = gitCall(invocation.args ?? []);
   if (!git || git.built || !plainGlobals(git.globals) || git.rest.some((token) => token.dynamic)) return false;
   if (git.subcommand === 'branch') return git.rest.length === 1 && git.rest[0].text === '--show-current';
-  return git.subcommand === 'push' || BESIDE_GIT.has(git.subcommand);
+  if (git.subcommand === 'push') return true;
+  return BESIDE_GIT.has(git.subcommand) && readsOnly(git.rest.map((token) => token.text));
+}
+
+// Whether the words after a read of BESIDE_GIT take only the options BESIDE_OPTIONS and BESIDE_VALUED name, with any
+// revisions and paths: an option such as `--output`, `-o`, `--ext-diff`, `--textconv`, or `--exec` makes it no read.
+function readsOnly(words) {
+  for (let i = 0; i < words.length; i += 1) {
+    const word = words[i];
+    if (word === '--') return true;
+    if (!word.startsWith('-') || word === '-') continue;
+    if (/^-(?:\d+|n\d+|U\d+)$/u.test(word)) continue;
+    if (word === '-n' && /^\d+$/u.test(words[i + 1] ?? '')) {
+      i += 1;
+      continue;
+    }
+    const at = word.indexOf('=');
+    if (at < 0 ? BESIDE_OPTIONS.has(word) : word.startsWith('--') && BESIDE_VALUED.has(word.slice(0, at))) continue;
+    return false;
+  }
+  return true;
 }
 
 // The words of a walked command, for a refusal.

@@ -9,9 +9,33 @@ import { realpathSync } from 'node:fs';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 
+import { anchorReaders } from './attempt-clone.mjs';
 import { loadConfig, pluginRepository } from './config.mjs';
 import { insidePath, isDirectory, isFile, isObject, isWithin, joinedInside, readJson } from './fs.mjs';
 import { checkoutRoots, mainRoot, repositoryCheckouts, runGit } from './git.mjs';
+import { sessionIdentity } from './hosts/index.mjs';
+import { readUnattendedMark } from './unattended-mark.mjs';
+
+// The readers an attempt clone's link is anchored with (lib/attempt-clone.mjs): the session the host names, its
+// unattended mark, and the state folders the project at a main checkout names, its state.dir as the environment and as
+// the user's own home resolve it. Given here, where every command and hook loads them, so attempt-clone.mjs, which
+// lib/git.mjs loads, imports no local module. Each is called only when a link is read, never on load.
+anchorReaders({
+  sessionOf: (env) => sessionIdentity(env).session,
+  readMark: (session, options) => readUnattendedMark(session, options),
+  namedStates(main, { env, home } = {}) {
+    const project = findProject(main);
+    if (!project) return [];
+    const reads = [() => stateDir(project, { env }), () => defaultStateDir(project, home ? { home } : {})];
+    return reads.flatMap((read) => {
+      try {
+        return [read()];
+      } catch {
+        return [];
+      }
+    });
+  },
+});
 
 const DEFAULT_DIR = '.aidrian';
 const OVERRIDE = '.aidrian.json';
@@ -29,17 +53,26 @@ const defaultRead = () => undefined;
 // hooks.json runs, and every module and data file those load (test/auto-merge-guard.test.mjs walks them and fails on a
 // load it cannot follow); the agents that review, as generated and as sources; the skills with every reference and step
 // file they tell a session to read; the Codex install; and the plugin manifests. The modules behind the other `aidrian`
-// subcommands, such as check.mjs, lint.mjs, worktree.mjs, and report-*.mjs, are not guarded.
+// subcommands, such as check.mjs, lint.mjs, worktree.mjs, and report-*.mjs, are not guarded, except project-run.mjs,
+// project-run-cli.mjs, project-run-gate.mjs, project-run-guard.mjs, and project-stops.mjs: they decide which session may
+// start a project run, which issue it starts, which session records its result, and what an issue whose merge stopped
+// does, so a pull request that auto-merged itself cannot change them.
 // At the repository root: the marketplace manifests that install the plugin, and the optional `aidrian-claude-mod`
 // plugin's folder, whole, since it picks and runs the aidrian binary.
 const GUARDED_LIB = [
-  'agent-gates', 'agent-models', 'attribution', 'audit-import', 'audits', 'banned-terms', 'bounded-regexp', 'check-runs', 'child-send-backs', 'cli', 'code-words', 'config', 'config-committed', 'config-defaults',
-  'config-guard', 'config-local', 'config-merge', 'config-schema', 'config-tracker', 'config-types', 'config-version',
-  'deadline', 'decisions', 'delivery-check', 'dispatch-log', 'dispatch-rows', 'feedback-record', 'finding-disposition', 'foreground-dispatch', 'fs', 'gate-snapshot', 'git', 'git-push', 'glob-links',
-  'handoff-continue', 'handoff-guard', 'handoff-markers', 'handoff-sections', 'hidden-text', 'hook-deny', 'hook-io', 'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits',
-  'markdown-prose', 'markdown-sections', 'markdown-wrap', 'model-prices', 'names', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review',
-  'pr-checks', 'pr-product-feedback', 'pr-resolve', 'project', 'remotes', 'review-gate', 'session-folder', 'session-length', 'session-links', 'session-links-writer', 'session-origins', 'session-prs', 'session-rows', 'shell-init', 'shell-lex',
-  'stop-announce', 'stop-handback', 'terminal-replace', 'terms', 'test-changed', 'tracker-check', 'tracker-guard', 'transcript', 'unattended-mark', 'usage', 'worktree',
+  'agent-gates', 'agent-models', 'attempt-clone', 'attribution', 'audit-import', 'audits', 'banned-terms', 'bounded-regexp', 'check-runs',
+  'child-send-backs', 'clean-text', 'cli', 'closing-words', 'code-words', 'config', 'config-committed', 'config-defaults', 'config-guard',
+  'config-local', 'config-merge', 'config-schema', 'config-tracker', 'config-types', 'config-version', 'confine-guard', 'deadline', 'decisions',
+  'delivery-check', 'dispatch-log', 'dispatch-rows', 'feedback-record', 'finding-disposition', 'foreground-dispatch', 'fs', 'gate-snapshot', 'git',
+  'git-push', 'glob-links', 'handoff-continue', 'handoff-guard', 'handoff-markers', 'handoff-sections', 'hidden-text', 'hook-deny', 'hook-io', 'issue-forge-guard', 'issue-push-checkout',
+  'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits', 'markdown-prose', 'markdown-sections', 'markdown-wrap',
+  'model-prices', 'names', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review', 'pr-checks', 'pr-product-feedback',
+  'pr-resolve', 'project', 'project-confine', 'project-issue-text', 'project-limit', 'project-linger', 'project-preflight', 'project-registries', 'project-report',
+  'project-result', 'project-run', 'project-run-cli', 'project-run-gate', 'project-run-guard', 'project-start', 'project-stops', 'project-trust',
+  'remotes', 'review-gate', 'run-driver', 'session-folder', 'session-length', 'session-links', 'session-links-writer', 'session-origins',
+  'session-prs', 'session-rows', 'session-start-gate', 'shell-init', 'shell-lex', 'solo', 'stop-announce', 'stop-handback', 'stop-history', 'stop-review-loop',
+  'terminal-replace', 'terms', 'test-changed', 'tracker-check', 'tracker-guard', 'transcript', 'unattended-mark', 'unattended-shell',
+  'unattended-write', 'usage', 'worktree',
 ].join('|');
 const GUARDED_PLUGIN = String.raw`bin/|scripts/|hooks/|lib/(?:forges|rules|review|hosts|trackers)/|lib/(?:${GUARDED_LIB})\.(?:mjs|json)$|agents/|codex/|agents-src/|providers/|agent-addons/|skills/|(?:\.claude-plugin/)?plugin\.json$`;
 // The instruction files AI hosts read by name, at any depth and in any case: AGENTS.md, CLAUDE.md, and GEMINI.md, with
@@ -60,6 +93,9 @@ export const GUARDED_PATHS = new RegExp(
   'iu',
 );
 
+// The paths, from the top of the repository, a review trail reads each branch's policy files at for the project folder
+// `prefix` (the forge's reviewTrail `paths`): the pointer file, the default folder's config.json, and its knowledge folder.
+export const trailPaths = (prefix = '') => ({ pointer: `${prefix}${OVERRIDE}`, config: `${prefix}${DEFAULT_DIR}/config.json`, knowledge: `${prefix}${DEFAULT_DIR}/knowledge` });
 // Guarded only in the plugin's own repository (isPluginRepository), from its root: the release script, which runs in the
 // release job that holds the write token. Another project's file at that path is its own, and stays unguarded.
 export const PLUGIN_REPOSITORY_PATHS = /^scripts\/version\.mjs$/iu;
@@ -151,7 +187,9 @@ export function projectAt(start) {
 // `.aidrian.local.json`, as written; config.mjs checks them. `localAutoMerge`
 // is its `github.autoMerge`: "on" or "off", checked here, "unset" when no file sets it, and "off" for a file with an error; the team's
 // ceiling still decides (resolveAutoMerge). `localUnattendedWaiver` is its `github.unattendedWaiver`, read the same way,
-// where "unset" is off: the team's `github.unattendedWaiver.allow` still decides (resolveUnattendedWaiver).
+// where "unset" is off unless the base branch's `solo` turns it on (config-local.mjs machineSwitch): the team's
+// `github.unattendedWaiver.allow` still decides (resolveUnattendedWaiver). `localUnattendedSignoff` and
+// `localHandoffBackground` follow `solo` the same way when unset.
 // `localReviewApprovals` is its `reviewApprovals`, read the same way: "on" or
 // "off", "unset" when no file sets it; the team's `review.approvals.allow` still decides (lib/review/approvals.mjs).
 // `localHandoffBackground` is its `handoff.background`, read the same way; the base branch's session.handoff still
@@ -168,8 +206,9 @@ export function openProject(root, roots, read) {
   const unreadable = [];
   const dir = folderDir(root, errors, unreadable);
   const paths = { config: `${dir}/config.json`, knowledge: `${dir}/knowledge`, local: LOCAL };
-  const checkouts = checkoutsOf(root, roots);
-  const local = readLocal(checkouts, errors, unreadable, read);
+  const found = roots === undefined ? safeRoots(root, read) : roots;
+  const checkouts = checkoutsOf(root, found);
+  const local = cloneLocal(found, checkouts, errors, unreadable, read);
   const sources = [{ label: dir, base: root, index: paths.knowledge, local: false }, ...local.sources];
   return {
     root,
@@ -282,6 +321,24 @@ export function strictConfigPathIn(read) {
 }
 
 // `root`, then, when it is in a git worktree, the same folder in the main checkout.
+// checkoutRoots for `root`, with the options `read` gives, or null when it is no folder.
+function safeRoots(root, read) {
+  try {
+    return checkoutRoots(root, typeof read === 'function' ? read() : undefined);
+  } catch {
+    return null;
+  }
+}
+
+// The local settings of the checkouts `checkouts` whose roots are `roots`: readLocal's, but for a project run's attempt
+// clone (lib/attempt-clone.mjs), whose session writes its folder, only the run's main checkout's file counts, the
+// clone's own never; and one whose link cannot be read reads every switch off and no decisions. `read` is readLocal's.
+function cloneLocal(roots, checkouts, errors, unreadable, read) {
+  if (!roots?.attempt) return readLocal(checkouts, errors, unreadable, read);
+  if (roots.unlinked) return { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined, ...OFF_SWITCHES };
+  return readLocal([checkouts.at(-1)], errors, unreadable, read);
+}
+
 function checkoutsOf(root, roots) {
   const main = inMainCheckout(root, roots);
   return main && main !== realpathSync(root) ? [root, main] : [root];
@@ -353,6 +410,7 @@ function mainLocal(main, errors) {
 }
 
 const UNSET_SWITCHES = Object.freeze({ autoMerge: 'unset', unattendedWaiver: 'unset', reviewApprovals: 'unset', unattendedSignoff: 'unset', handoffBackground: 'unset' });
+const OFF_SWITCHES = Object.freeze({ autoMerge: 'off', unattendedWaiver: 'off', reviewApprovals: 'off', unattendedSignoff: 'off', handoffBackground: 'off' });
 
 // This machine's switches, from the main checkout's file as checkedLocal read it: each "unset" when there is no file,
 // and "off" when it cannot be read. An error anywhere in the file, a tracked-file one too, reads an unset auto-merge
@@ -408,10 +466,10 @@ function mainFeedbackAuto(raw, tracked, errors) {
 
 // Whether a machine with no setting may follow a team default of "on": git says it tracks no local file in the main
 // checkout, under any case, present on disk or not. Asked only when the default applies, so a hook pays no git call. A tracked file, or a git that fails
-// or stalls, is no machine's own, as machineSwitch reads it.
-export function mayFollowTeamDefault(project) {
+// or stalls, is no machine's own, as machineSwitch reads it. `options` are runGit's, such as a hook's bounded `timeout`.
+export function mayFollowTeamDefault(project, options) {
   const main = project.checkouts.at(-1);
-  return runGit(['ls-files', '--error-unmatch', '--', `:(icase)${LOCAL}`], main).status === 1;
+  return runGit(['ls-files', '--error-unmatch', '--', `:(icase)${LOCAL}`], main, options).status === 1;
 }
 
 // The machine settings of the local file's `github` group, the only keys it takes: { autoMerge, unattendedWaiver, problems }.
@@ -449,7 +507,8 @@ function localAutoMerge(raw, errors) {
 }
 
 // The local file's `github.unattendedWaiver`: githubGroup's, "off" when the group has any error. It adds none, since
-// localAutoMerge reports the group's errors once. Unset is off: the waiver has no team default.
+// localAutoMerge reports the group's errors once. Unset is "unset", which reads off unless the team sets solo
+// (config-local.mjs machineSwitch): the waiver has no team default of its own.
 function localUnattendedWaiver(raw) {
   const { unattendedWaiver, problems } = githubGroup(raw);
   return problems.length ? 'off' : unattendedWaiver;
@@ -547,6 +606,12 @@ export function stateRoot(env = process.env) {
   }
   return root;
 }
+
+// The folder of the hooks' counts and markers: the block counts, a subagent's send-backs, the session-length marker, and
+// a tracker refusal's marker. It lies in the state root, which no sandbox of a session the plugin confines may write,
+// never in the temporary folder, which one may: a FIFO planted there would stall a hook past its time, after which the
+// host runs the call it was refusing, and a link would lead the hook's write outside the sandbox.
+export const hookCountsFolder = (env = process.env) => path.join(stateRoot(env), 'hook-counts');
 
 // Whether `folder` is in the home folder of the user this process runs as, which no HOME change moves.
 function realHome(folder) {

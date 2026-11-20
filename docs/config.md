@@ -8,7 +8,7 @@ The hooks keep working, with the default in place of each bad value.
 Without a `config.json`, the commands use the defaults.
 
 [`examples/consumer/.aidrian/config.json`](../examples/consumer/.aidrian/config.json) is a minimal, checked example,
-and [config-recipes.md](config-recipes.md) gives three checked starting configs by how much the Human steers.
+and [config-recipes.md](config-recipes.md) gives four checked starting configs by how much the Human steers.
 
 ## Keys
 
@@ -29,6 +29,7 @@ In a group such as `github`, set only the keys you change; the others keep their
     "commits": { "types": ["build", "chore", "ci", "docs", "feat", "fix", "perf", "refactor", "revert", "style", "test"] }
   },
   "state": { "dir": null },
+  "solo": false,
   "github": {
     "requiredSections": ["Summary", "Tests run"],
     "reviewer": "chatgpt-codex-connector[bot]",
@@ -125,7 +126,8 @@ In a group such as `github`, set only the keys you change; the others keep their
   "audits": {
     "triage": { "issueCreation": "confirm", "labels": ["persona-audit", "persona:{persona}", "severity:{severity}"] }
   },
-  "tracker": { "enabled": false, "workspace": null, "readTools": [], "writeTools": [], "team": null, "project": null }
+  "tracker": { "enabled": false, "workspace": null, "readTools": [], "writeTools": [], "team": null, "project": null },
+  "projectRun": { "allow": false, "maxParallel": 1, "maxStarts": 300, "issueHours": 6, "blockedStatus": null, "decisionLabel": "needs-decision", "unverifiedHosts": false, "workflowSecretsAccepted": false, "outsideSandbox": [], "mcpServers": {}, "nonTrackerServers": [], "registries": [] }
 }
 ```
 
@@ -140,6 +142,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `git.mainCheckout.allowWrites` | Tracked paths agents may still edit in the main checkout, as globs with `*` and `**`. Ignored paths are always allowed. |
 | `git.commits.types` | The Conventional Commits types a commit subject may use; at least one. |
 | `state.dir` | The machine-local [state folder](project-folder.md#local-state); `null` is the one under `$XDG_STATE_HOME`. |
+| `solo` | `true` says one person runs the project: each unattended machine switch the local file leaves unset follows the team's keys ([Solo](#solo)). `false`, the default, keeps them to the local file. Read from the base branch on GitHub, never the working copy. |
 | `github.requiredSections` | The `## ` sections every pull request body must have ([Bash rules](hooks.md#bash-rules)); `[]` checks none. |
 | `github.reviewer` | The login of the Codex review bot that `aidrian pr await-review` waits for. `null` or `"none"`: no bot ([below](#no-review-bot)). |
 | `github.maxReviewRounds` | The review rounds a pull request may get, 3 by default: the review loop and `aidrian pr await-review --request` stop there, unless `extraRounds` grants one more. They read it from the pull request's base branch, as the remote naming its repository has it ([The record](review.md#the-record)), so an edit to the working copy does not raise it; `aidrian pr await-review` without `--request` posts nothing and reads no base branch. A `--max-rounds` above it runs only with `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`, and runs at exactly that count; a higher cap an earlier bot request recorded in its comment carries over only to a run with the variable set and no `--max-rounds`. The Human sets it in their own shell, or an agent sets it inline on the exact raise the Human approved by an answer or a typed grant ([review.md](review.md#unattended-rulings)); a Bash rule refuses it on any other ground, and any bot request made outside `aidrian pr`. |
@@ -149,7 +152,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.ignoreCancelledChecks` | Parts of check names whose `CANCELLED` result is routine and not a failure. |
 | `github.conditionalChecks` | Parts of check names whose `SKIPPED` or `NEUTRAL` result is routine, such as a job a path filter turns off. |
 | `github.markReady` | Who marks a draft pull request ready. `"auto"`, the default: the `pr-review-loop` skill, or `autopilot` and the `orchestrator` when they run it, mark it ready once a review of the current head signs off with no blocked row and `aidrian pr checks` says ready. `"ask"`: its author, or the review loop when the Human asks in the session. Either way, nothing is pushed after it is marked ready. Marking it ready merges nothing: only the Human's request or [auto-merge](#auto-merge) does. The default was `"ask"` before; [Changed defaults](#changed-defaults) has the opt-out. |
-| `github.reviewLoop` | What follows the `pr-write` skill once it opens or updates a pull request. `"auto"`, the default: once `pr-write`, and any skill that ran it, has ended, the session starts the `pr-review-loop` skill on it right away, without asking. `"ask"`: the session offers the loop and runs it when the Human asks. Run inside a skill or agent that runs its own review loop, such as `autopilot` or the `orchestrator`, `pr-write` leaves the loop to it. |
+| `github.reviewLoop` | What follows the `pr-write` skill once it opens or updates a pull request. `"auto"`, the default: once `pr-write`, and any skill that ran it, such as a top-level `issue-implement` or `plan-implement`, has ended, the session starts the `pr-review-loop` skill on it right away, without asking. `"ask"`: the session offers the loop and runs it when the Human asks. Run inside a skill or agent that runs its own review loop, such as `autopilot` or the `orchestrator`, `pr-write` leaves the loop to it. |
 | `github.titleIssuePrefix` | `true` writes pull request titles as `[<issue key>] type(scope): subject`, or `[NOISSUE] type: subject`; `false`, the default, writes a plain Conventional Commits title. |
 | `github.pullRequest` | The project's [pull request contract](#pull-request-contract), beyond the required sections; off by default but for `sharedTempBodyFile`. |
 | `github.publicText.patterns` | The case-insensitive regular expressions no issue, pull request, or comment text may match ([Public text](#public-text)); `[]`, the default, adds none. |
@@ -163,9 +166,9 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.autoMerge.includeGuardedPaths` | `true` lets a pull request that changes a guarded path (the fixed list under `paths` in [Auto-merge](#auto-merge), and the knowledge docs the start hook loads) pass the `paths` check, but never a policy file: the files the gate reads its policy from, including a folder `.aidrian.json` names, and `.aidrian/config.json` at any depth, `.aidrian.json`, `.aidrian.local.json`, and the `.aidrian` entry itself stay refused. `false`, the default, keeps a guarded path off. It counts only when the repository's default branch and the pull request's base both set it, read from GitHub as `allow` is, never from the checkout. Every other check stays. Read the risk under [Auto-merge](#auto-merge) before setting it. |
 | `github.autoMerge.unreviewedPaths` | The files a pull request whose review was `none_needed` may change and still auto-merge, as globs or `re:` entries in the syntax of the review's lists, from the project root. Each entry matches the whole path: `README.md` is the top-level file only, not `prompts/README.md`, and a `re:` entry is anchored at both ends. `[]`, the default, keeps every such pull request for the Human. It counts only when the repository's default branch and the pull request's base both list the file, read from GitHub as `allow` is, never from the checkout, so a branch cannot list its own files. A bad entry, such as a `re:` that does not compile or an empty `re:`, is a config error, and the gate refuses on it. The gate cannot know how a file is read, so list only files that no AI session reads as instructions, through an import, a link, a command, or a plugin, and that no build, docs site, or test reads as code or as an expected result. Common cases that do not qualify: Markdown a docs site parses as MDX, such as Docusaurus, or as pages with script, such as VitePress; a README whose code blocks run as doctests, such as cargo's or pytest's `--doctest-glob`; and an end-to-end test's expected files. A top-level `README.md` that nothing builds or runs is the usual case. The rest of the `review` row under [When it is on](#when-it-is-on) still applies to a listed file. An older plugin rejects the key as unknown, so set [`requires.aidrian`](#plugin-version) to the release that ships it. |
 | `github.autoMerge` in `.aidrian.local.json` | This machine's choice, the same key with one field: `{ "enabled": true }` opts in under the team's `allow`, and `{ "enabled": false }` stays out. Unset follows `github.autoMerge.default`. The older `"on"` and `"off"` still work. |
-| `review.unattendedSignoff.allow` | `true` lets a machine opt in to [unattended rulings](review.md#unattended-rulings): a judge's `aidrian pr settle` closes an unverified or disputed invariant in place of the Human. `false`, the default, keeps it off. Read from the base branch. The machine's switch is `"unattendedSignoff": "on"` in `.aidrian.local.json`. |
-| `github.unattendedWaiver.allow` | `true` lets a machine opt in to the [unattended waiver](#unattended-waiver): the merge guard may take a judge's recorded verdict in place of the Human's answer to the merge guard's question, at the round cap. `false`, the default, keeps it off. It counts only when the repository's default branch and the pull request's base both allow it, read from GitHub, so a branch cannot raise it. |
-| `github.unattendedWaiver` in `.aidrian.local.json` | This machine's choice, the same shape as `github.autoMerge` there: `{ "enabled": true }` or `{ "enabled": false }`, or the older `"on"` and `"off"`. Unset is off: there is no team default. |
+| `review.unattendedSignoff.allow` | `true` lets a machine opt in to [unattended rulings](review.md#unattended-rulings): a judge's `aidrian pr settle` closes an unverified or disputed invariant in place of the Human. `false`, the default, keeps it off. Read from the base branch. The machine's switch is `"unattendedSignoff": "on"` in `.aidrian.local.json`; unset follows [`solo`](#solo). |
+| `github.unattendedWaiver.allow` | `true` lets a machine opt in to the [unattended waiver](#unattended-waiver): the merge guard, and any `aidrian pr auto-merge` under these switches, may take a judge's recorded verdict in place of the Human's answer to the merge guard's question, at the round cap, once the review bot passed the head. `false`, the default, keeps it off. It counts only when the repository's default branch and the pull request's base both allow it, read from GitHub, so a branch cannot raise it. |
+| `github.unattendedWaiver` in `.aidrian.local.json` | This machine's choice, the same shape as `github.autoMerge` there: `{ "enabled": true }` or `{ "enabled": false }`, or the older `"on"` and `"off"`. Unset is off, unless the team runs the project [`solo`](#solo). |
 | `review.engine` | The project's [review engine](review.md#the-engine); it wins over the machine's. `null` leaves the choice to each machine. |
 | `review.record` | Where the [review record](review.md#the-record) goes: `"comment"` also writes a summary comment on the pull request; `"local"` keeps it in the state folder only. The record commands read it as the pull request's base branch commits it, not from the working copy; only a command the forge names no base for reads no comment, keeps this machine's record, and publishes nothing. Another machine builds on the comment's copy only on a private repository; on one that is not private it restarts from its own record, with the copy's round count and id counter as floors, so the round cap still holds, or holds and names the machine that wrote the copy while that copy has an open, blocking finding it holds no text for ([A second machine](review.md#the-posted-copy)). |
 | `review.publish.summary` | What the summary comment shows of the findings: `"counts"`, the default, each pass's counts; `"findings"` adds a table of each finding's id, location, severity, disposition, and outcome, with no finding text: [Publishing](review.md#publishing). Read from the base branch, as `review.record` is; under `review.record: "local"` nothing is posted, whatever this group says. An unknown key or value is a config error. |
@@ -206,7 +209,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `attribution.commit` | The trailers an agent's commit must carry: [Attribution](#attribution). `[]`, the default, is off. |
 | `attribution.pullRequest` | The lines a pull request body an agent opens must end with: [Attribution](#attribution). `[]` is off. |
 | `attribution.exclude` | The agents the `Assisted-by:` lines leave out; by default the ones that only search and read. |
-| `telemetry.enabled` | `false` stops the hooks and `aidrian decisions` from writing the [dispatch log](dispatch-log.md): [Telemetry](#telemetry). |
+| `telemetry.enabled` | `false` stops the hooks and `aidrian decisions` from writing the [dispatch log](dispatch-log.md): [Telemetry](#telemetry). It also refuses recording a judge with `aidrian pr waive --judge`, and keeps auto-merge from taking a judge's verdict, since the log confirms the judge: [Unattended waiver](#unattended-waiver). |
 | `telemetry.docReads` | `false` leaves out which knowledge docs each agent read. |
 | `telemetry.hookDenies` | `false` leaves out the `hook_deny` row each block by one of the plugin's rules writes; the rules still block. |
 | `telemetry.maxMb` | The size, in megabytes, at which the dispatch log moves to its rotated part. |
@@ -227,6 +230,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `audits.triage.issueCreation` | Whether the persona-audit triage asks before it creates an issue: `"confirm"`, the default, or `"auto"`: [Audit triage](#audit-triage). |
 | `audits.triage.labels` | The labels every issue from the persona-audit triage gets: [Audit triage](#audit-triage). |
 | `tracker` | The workspace, team, and project MCP tracker writes belong to, off by default: [Tracker](#tracker). |
+| `projectRun` | The keys of a run that works through a tracker project, one issue or a few independent ones at a time: [Project run](#project-run). |
 
 A path in `state.dir` or `git.worktrees.dir` may start with `~`, the home folder, or be relative to the repository root.
 A state folder inside the repository's checkouts keeps the plans, lessons, and audits, and `aidrian check` warns about it,
@@ -357,18 +361,20 @@ An older plugin rejects the key as unknown, so set `requires.aidrian` as above.
 `aidrian pr auto-merge [PR] [--json]` reports it for one pull request: a number, `#number`, or URL, or by default the
 current branch's. It exits 0 when on, 1 when off, and 3 on an error, such as a bad argument or a failed gh read.
 
-It is on only when all seven of these hold, checked in this order.
+It is on only when all of these hold, checked in this order; the last two, `closes` and `trust`, only in a session no Human attends.
 With `--json`, `reason` names the first that fails and `why` says it in a sentence; both are `null` when on.
 
 | `reason` | What must hold |
 | --- | --- |
 | `team` | `github.autoMerge.allow` is true on both the repository's default branch and the pull request's base. Both are read from GitHub as each branch commits them now, never from the checkout. So a branch cannot raise it, and the pull request that turns it on does not merge itself. |
 | `checks` | The default branch names `github.requiredChecks`: a named check that has not reported is pending, so a draft's partial set of checks cannot read as ready. This checkout's `requiredChecks`, `conditionalChecks`, and `ignoreCancelledChecks` equal the default branch's as sets, committed or not: `aidrian pr checks` reads this checkout, so a branch cannot relax the lists, and a branch that changes workflows stays off (`paths`), unless `github.autoMerge.includeGuardedPaths` is true on both the default branch and the base. This checkout's `state.dir` equals the default branch's, since the review record is read from it. A working-copy config that cannot be read, or has errors, is off too. |
-| `paths` | gh lists every changed file with its `changeType`: `gh pr view` lists at most 100, so past that the gate reads the whole list through the paged files route, which GitHub caps at 3000, maps each REST `status` to its `changeType` (`unchanged` reads as `MODIFIED`), and reads the head again after it. A list whose count is not `changedFiles`, that fails, holds an entry with no path or no known status, lists a path twice, leaves out a file the view gave, or was read while the head moved keeps it off, with that reason. None is `RENAMED`, since gh does not give the old path, and none is on this fixed list, unless `github.autoMerge.includeGuardedPaths` is true on both the default branch and the base (see the end of this row): `SKILL.md`, `CODEOWNERS`, `.aidrian.json`, `.aidrian.local.json`, and `.banned-terms.local` at any depth, and `.claude`, `.codex`, `.aidrian`, `.github/workflows`, or `.github/actions` at the repository root or the project root, or anything under them. Every AI host's instruction files are on it too, not one host's: by name at any depth and in any case, `AGENT`, `AGENTS`, `CLAUDE`, `GEMINI`, `QWEN`, `WARP`, `CRUSH`, or `CONVENTIONS` then `.md`, with any infix, such as `AGENTS.override.md` or `CLAUDE.local.md`; `.cursor/`, `.windsurf/`, and `.clinerules`, a file or a folder, and `.cursorrules` and `.windsurfrules`, at any depth; and `.github/copilot-instructions.md` and `.github/instructions/` at the repository root or the project root. These instruct AI sessions or decide CI, and a review of the change may not read them as behavior. So do the knowledge docs the start hook loads into every session, which differ per project: the gate reads the default branch's knowledge folder beside the `config.json` it located, and each `.json` index in it, by the knowledge reader's own rules. It refuses each bucket's `always` docs, compared ignoring case, and any file in that knowledge folder, since its indexes decide what loads. A bucket's other docs are not refused, since the start hook does not load them. No knowledge folder on the default branch means no docs; a folder or index the gate cannot read, or an index the reader rejects, keeps it off, naming it. The plugin's own code that decides auto-merge is on the list too, so with that key off the gate never approves a change to itself. Under `plugins/aidrian/`: `bin/`, `scripts/`, `hooks/`, `lib/forges/`, `lib/rules/`, `lib/review/`, `lib/hosts/`, `lib/trackers/`, and every other module in `lib/` loaded by the module each `bin/` script starts, by `aidrian pr`, by the gate, by its review, or by a hook, such as `cli.mjs`, `knowledge-cli.mjs`, `pr.mjs`, `pr-auto-merge.mjs`, `project.mjs`, `config.mjs`, `hook-io.mjs`, `usage.mjs`, and `transcript.mjs`, with the `.json` table of the same name, such as `finding-disposition.json` (`GUARDED_PATHS` in `lib/project.mjs` lists them all). The agents that review are on it too, generated and as sources: `agents/`, `codex/`, `agents-src/`, `providers/`, and `agent-addons/`. So is `skills/`, whole, since a `SKILL.md` sends a session to its `references/` and `steps/` files. So are the plugin manifests `plugin.json` and `.claude-plugin/plugin.json`, and the marketplace manifests `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json` at the repository root. So is the optional `aidrian-mod` plugin's folder, `plugins/aidrian-claude-mod/`, whole, since it picks and runs the `aidrian` binary. In the plugin's own repository alone, `scripts/version.mjs` at the repository root keeps it off too, since that release script runs in the release job that holds the write token; another project's file at that path is its own, and is not refused. A test walks from the module each `bin/` script starts (`cli.mjs` and `knowledge-cli.mjs`), `pr.mjs`, the gate, its review, and the scripts in `hooks.json`, and fails on a file off the list or a load it cannot follow, so a new import, `bin/` script, or hook cannot fall outside it. The modules behind the other `aidrian` subcommands, such as `check.mjs`, `lint.mjs`, `worktree.mjs`, and `report-*.mjs`, are not on the list. For a project below the repository root, the setting is read from its own folder, and no file may be outside that folder, since [its review does not cover those](review.md#paths). With `github.autoMerge.includeGuardedPaths` true on both the default branch and the base, read from GitHub like `allow`, the fixed-list refusal and the start hook's knowledge refusal are skipped, but never for a policy file: `.aidrian/config.json` at any depth, `.aidrian.json`, `.aidrian.local.json`, and the `.aidrian` entry itself stay off, with their own reason. The count, rename, change-type, and project-folder refusals of this row stay too. With the key on or off, no file is one of the files the gate reads its policy from, including a folder `.aidrian.json` names: the pointer file and the `config.json` it located, on the default branch and on the base, compared ignoring case. |
+| `paths` | gh lists every changed file with its `changeType`: `gh pr view` lists at most 100, so past that the gate reads the whole list through the paged files route, which GitHub caps at 3000, maps each REST `status` to its `changeType` (`unchanged` reads as `MODIFIED`), and reads the head again after it. A list whose count is not `changedFiles`, that fails, holds an entry with no path or no known status, lists a path twice, leaves out a file the view gave, or was read while the head moved keeps it off, with that reason. None is `RENAMED`, since gh does not give the old path, and none is on this fixed list, unless `github.autoMerge.includeGuardedPaths` is true on both the default branch and the base (see the end of this row): `SKILL.md`, `CODEOWNERS`, `.aidrian.json`, `.aidrian.local.json`, and `.banned-terms.local` at any depth, and `.claude`, `.codex`, `.aidrian`, `.github/workflows`, or `.github/actions` at the repository root or the project root, or anything under them. Every AI host's instruction files are on it too, not one host's: by name at any depth and in any case, `AGENT`, `AGENTS`, `CLAUDE`, `GEMINI`, `QWEN`, `WARP`, `CRUSH`, or `CONVENTIONS` then `.md`, with any infix, such as `AGENTS.override.md` or `CLAUDE.local.md`; `.cursor/`, `.windsurf/`, and `.clinerules`, a file or a folder, and `.cursorrules` and `.windsurfrules`, at any depth; and `.github/copilot-instructions.md` and `.github/instructions/` at the repository root or the project root. These instruct AI sessions or decide CI, and a review of the change may not read them as behavior. So do the knowledge docs the start hook loads into every session, which differ per project: the gate reads the default branch's knowledge folder beside the `config.json` it located, and each `.json` index in it, by the knowledge reader's own rules. It refuses each bucket's `always` docs, compared ignoring case, and any file in that knowledge folder, since its indexes decide what loads. A bucket's other docs are not refused, since the start hook does not load them. No knowledge folder on the default branch means no docs; a folder or index the gate cannot read, or an index the reader rejects, keeps it off, naming it. The plugin's own code that decides auto-merge is on the list too, so with that key off the gate never approves a change to itself. Under `plugins/aidrian/`: `bin/`, `scripts/`, `hooks/`, `lib/forges/`, `lib/rules/`, `lib/review/`, `lib/hosts/`, `lib/trackers/`, and every other module in `lib/` loaded by the module each `bin/` script starts, by `aidrian pr`, by the gate, by its review, or by a hook, such as `cli.mjs`, `knowledge-cli.mjs`, `pr.mjs`, `pr-auto-merge.mjs`, `project.mjs`, `config.mjs`, `hook-io.mjs`, `usage.mjs`, and `transcript.mjs`, with the `.json` table of the same name, such as `finding-disposition.json` (`GUARDED_PATHS` in `lib/project.mjs` lists them all). The agents that review are on it too, generated and as sources: `agents/`, `codex/`, `agents-src/`, `providers/`, and `agent-addons/`. So is `skills/`, whole, since a `SKILL.md` sends a session to its `references/` and `steps/` files. So are the plugin manifests `plugin.json` and `.claude-plugin/plugin.json`, and the marketplace manifests `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json` at the repository root. So is the optional `aidrian-mod` plugin's folder, `plugins/aidrian-claude-mod/`, whole, since it picks and runs the `aidrian` binary. In the plugin's own repository alone, `scripts/version.mjs` at the repository root keeps it off too, since that release script runs in the release job that holds the write token; another project's file at that path is its own, and is not refused. A test walks from the module each `bin/` script starts (`cli.mjs` and `knowledge-cli.mjs`), `pr.mjs`, the gate, its review, and the scripts in `hooks.json`, and fails on a file off the list or a load it cannot follow, so a new import, `bin/` script, or hook cannot fall outside it; a second walk from every module on the list fails on a file one of them loads that is off it, as `project-preflight.mjs`, which `project-run-cli.mjs` loads. The modules behind the other `aidrian` subcommands, such as `check.mjs`, `lint.mjs`, `worktree.mjs`, and `report-*.mjs`, are not on the list, but `project-run.mjs`, `project-run-cli.mjs`, and `project-stops.mjs` are: they decide which session may start a [project run](#project-run), which issue it starts, and what an issue whose merge stopped does, so a pull request that auto-merged itself cannot change them. For a project below the repository root, the setting is read from its own folder, and no file may be outside that folder, since [its review does not cover those](review.md#paths). With `github.autoMerge.includeGuardedPaths` true on both the default branch and the base, read from GitHub like `allow`, the fixed-list refusal and the start hook's knowledge refusal are skipped, but never for a policy file: `.aidrian/config.json` at any depth, `.aidrian.json`, `.aidrian.local.json`, and the `.aidrian` entry itself stay off, with their own reason. The count, rename, change-type, and project-folder refusals of this row stay too. With the key on or off, no file is one of the files the gate reads its policy from, including a folder `.aidrian.json` names: the pointer file and the `config.json` it located, on the default branch and on the base, compared ignoring case. |
 | `local` | This machine's setting is on, or it has none and the default branch's `github.autoMerge.default` is `"on"`. |
 | `author` | The pull request's author is the gh user. |
 | `outsider` | Every issue comment, review, and inline comment on the pull request has the author association `OWNER`, `MEMBER`, or `COLLABORATOR`, or is by the default branch's `github.reviewer` bot. Any other bot, such as a CI or preview bot that comments, counts as an outsider. |
 | `review` | Nobody's latest review requests changes, and the review decision is not changes requested. This machine's [review record](review.md#the-record) holds a `received` review of exactly the current head, and nothing is owed. There is no looser mode: no record, a review of an earlier head, an owed review, or a waiver above `low` through an accepted residual, on any pass record, keeps it off, also after the waiver ends: a waiver above `low` holds auto-merge until the Human merges. The hold keys on the finding's [id](review.md#finding-ids), so a listing of the same title and file as fixed ends nothing. A `none_needed` record of exactly the current head counts too, with nothing owed, only when all of these hold. Its plan's reasons are exactly "only files that cannot change behaviour", at depth `none`, so any other reason, an extra one such as a rule's, or a record an older plugin wrote with no reasons, waits for the Human. [`github.autoMerge.unreviewedPaths`](#auto-merge) is a non-empty list with no error on both the default branch and the base, and each lists every changed file, from the project root. Every changed file in the paths check's whole list is added, modified, or deleted (never `CHANGED`, a type change, nor `COPIED`); is one the default branch's [`review.nonBehaviour`](review.md#rules), its own or the built-in list, names, and not one its `review.ignore` names, since no review read it, with no error anywhere in its `review` group; and ends in `.md`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.avif`, or `.ico`, whatever the lists say. Whatever the team lists, these stay off: a file on the `paths` row's fixed list, which holds every host's instruction files, at the repository root or the project root, even with `github.autoMerge.includeGuardedPaths` on; a knowledge doc the start hook loads, or a file of its knowledge folder, as the `paths` row reads them, with the key on too, and knowledge the gate cannot read; a path with a folder or file name that starts with `.`, which covers every host's folder, such as `.github/prompts/`, `.kiro/`, and `.changeset/`; and a test file, fixture, or golden file: a path the review's test-file patterns match (`*.test.*`, `*.spec.*`, `*_test.*`, or a `test/`, `tests/`, `__tests__/`, or `spec/` folder), or one under a `fixture`, `fixtures`, `__fixtures__`, `testdata`, `test-data`, `golden`, `goldens`, or `__golden__` folder. Every list is read from GitHub as the branches commit it now, never from the head or this checkout, so a pull request that widens a list gets nothing from it. Last, every changed file still at the head is a regular file there. The forge's changed-file list gives no file mode, so the gate reads the head commit's tree, one folder at a time. It refuses a symbolic link (mode `120000`), which a static server or site builder may follow to a file it should not publish, a submodule (`160000`), any other mode, a file the tree does not hold, and a tree it cannot read whole. A deleted file is not looked up. Beyond the two branches' config files and the knowledge the `paths` row read, the route reads only that tree. |
+| `closes` | Only for a [project run](#project-run)'s issue session, one whose unattended mark names the run's issue: the pull request's title, body, and every commit message name no issue but that one after a closing word, as GitHub and a tracker's forge integration read them: `close`, `fix`, `resolve`, and `complete`, in each form, followed by a list of `#12`, `owner/name#12`, an issue link, or tracker keys such as `ENG-12`. The title names no key but the issue's own even with no closing word, since Linear links an issue a title names, and may move it at the merge. A token counts as a tracker key only when its prefix is a team key the run knows: the issue's own, the snapshot's `teams`, every team of the tracker workspace as the driver read it at init, and the teams of the run's issues. So `utf-8`, `SHA-256`, and `e2e-2` are none while no team is so named. A snapshot with no `teams` knows only the run's own teams, and a key of any other team is not seen: a named residual. A key a hyphen joins to more text, such as `ENG-9-export`, counts. Any white space separates a closing word from its first reference, line breaks included, and separates the rest of a list but a line break, which ends it; a key of a team the run does not know, and a link to another site, are passed over, and one longer than 50 references keeps it off. A merge would otherwise close those issues too, behind the run's back. The gate reads the pull request at exactly its head, then its commits, and a list shorter than its count, which GitHub caps at 250, keeps it off; a head that moves during the read is an error (exit 3). A mark that is pending or cannot be read names no issue, and a run whose snapshot cannot be read knows no team, so any reference keeps it off. Text that names an issue in the body with no closing word, such as `Refs ENG-9`, does not count. The [merge guard](hooks.md#merge-guard) holds the merge itself to the same rule at the moment it runs, with the merge commit's own subject and body. |
+| `trust` | Only in a session no Human attends, one with an [unattended mark](handoff.md#the-background-route), or a project run's driver: the record is this machine's word, which a project run's confined session can write, so the merge also needs [merge trust](review.md#merge-trust), the default branch's `github.reviewer` bot's passing verdict on exactly the head, read from GitHub in one more call, and the Human's sign-off from the sign-off store of every flow the record or the changed files ask for, on that head. With no bot set it stays off, and says to set one. `--json` adds `trust`, `bot` or `signoff`, which half is missing, and the plain line names both: `auto-merge off for #<PR> (trust: bot): ...`. With `signoff`, it adds `flow`, the first flow whose sign-off is missing, and `signoffClass`, `security` when any unsigned flow of the default branch has an id that holds the word `security` or a `require` that names `agent:security-engineer`, else `product`. A session the Human attends skips this row. |
 
 `strategy`, `deleteBranch`, `deleteWorktree`, and the check lists come from the default branch only.
 The base counts only for `allow`, `includeGuardedPaths`, and `unreviewedPaths`.
@@ -379,6 +385,9 @@ So a checkout whose lists differ from the default branch's does not auto-merge, 
 The `pr-review-loop`, `orchestration`, and `autopilot` skills run the `pr-auto-merge` skill, only after that same run marked the draft ready.
 `pr-auto-merge` stops unless this run marked the pull request ready and the command exits 0,
 and otherwise reads `pr-merge-when-green` and follows its steps as an unattended run.
+When the command refuses because the pull request changes a path it never merges, it has stopped before its author,
+comment, and review checks, so the run's final report hands the pull request to the Human for review and merge, rated,
+and the [merge hand-back check](hooks.md#merge-hand-back-check) sends back a turn whose reports leave it out.
 The first condition is a step of the skill, not a check the command makes.
 The model cannot start `pr-merge-when-green` itself: the skill merges only on the Human's request in the session, or in that run.
 An unattended run waits for every check, runs the command again right before the merge, and stops unless it still
@@ -420,7 +429,12 @@ It does not reach a fork: gh never deletes a head branch in another repository.
 ## Unattended waiver
 
 It lets a session that runs without the Human merge a pull request whose review stopped at the round cap,
-on the word of a fresh judge instead of the Human's answer to the merge guard's question.
+on the word of a fresh judge instead of the Human's answer to the merge guard's question, through the merge guard or
+through [auto-merge](#auto-merge): with both switches on, any `aidrian pr auto-merge` takes a standing verdict, not only
+one under `autopilot`. A verdict never stands in for the review bot: it waives only the findings of this machine's own
+reviewers, and only once the bot passed the head. It never lifts a sign-off the Human owes: one found before any
+verdict is read stops `aidrian pr auto-merge` as [merge trust](#when-it-is-on) does, `trust: "signoff"`, with its
+`flow` and `signoffClass`. Nor does it lift the [`closes`](#when-it-is-on) check, which a waived merge meets first.
 
 ### Turn it on
 
@@ -431,7 +445,8 @@ and on the pull request's base branch:
 { "version": 1, "github": { "unattendedWaiver": { "allow": true } } }
 ```
 
-Each machine that takes part opts in with `.aidrian.local.json` in its main checkout:
+Each machine that takes part opts in with `.aidrian.local.json` in its main checkout, or, with the switch unset there,
+follows the team's [`solo`](#solo):
 
 ```json
 { "github": { "unattendedWaiver": { "enabled": true } } }
@@ -447,24 +462,73 @@ Set [`requires.aidrian`](#plugin-version) to the release that ships the key: an 
 ### What it covers
 
 One case only: the review step stopped at the round cap (`round_limit`) on the very head being merged, with no
-review owed. And only for a merge that names that head: `gh pr merge <PR> --match-head-commit <sha>`.
-The waiver lifts the [merge guard](hooks.md#merge-guard)'s denial; it merges nothing itself.
+review owed, and every one of these holds on that head:
+
+- Open findings of this machine's reviewers (the local and independent stages) are the whole cause of the cap. The
+  review step keeps the cause on the record's outcome, and a verdict stands only on it: never on a flow left with an
+  invariant violated, unverified, or unsigned, a deleted flow test, a failing flow check, the review bot's own round
+  limit, or a pass of this machine that never reviewed the head; and never on a record from an older plugin, which
+  keeps no cause. Every flow of the plan counts, whichever stage answers for it. When a fix was pushed that no round
+  reviewed, the last reviewed round's whole cause, which the record keeps on that round, decides.
+- Each of those findings is listed, of `medium` severity or lower, and no security finding: none `critical` or
+  `high`, none marked as one, none from a security pass or the security reviewer. Findings only counted refuse, since
+  each one's severity cannot be told. No accepted residual above `low` holds the record.
+- No sign-off of the Human's is owed on the head: every flow the record names for the Human on that head, which it
+  must name, every flow the forge's file list and both branches' configs may select, as
+  [merge trust](review.md#merge-trust) reads them, and every flow the cap's cause names has a sign-off on exactly that
+  head in the sign-off store. This holds attended or not. Auto-merge reports such a stop as merge trust does: reason
+  `trust`, `"trust": "signoff"`, naming the flow.
+- The review bot, the default branch's `github.reviewer`, passed exactly that head on GitHub, read from the review
+  trail as [merge trust](review.md#merge-trust) reads it. With no bot set, nothing is waived.
+
+The verdict binds to that head: a new push moves the head, and the verdict no longer covers it.
+The merge guard takes it only for a merge that names the head: `gh pr merge <PR> --match-head-commit <sha>`.
+[Auto-merge](#auto-merge) takes it in place of `received` when, beside the above, the verdict names its judge
+(`--judge <agent id>`) and the recording session's [dispatch log](dispatch-log.md) holds that judge's dispatch, a
+`code-reviewer`, between the cap and the verdict. Only a host whose hook writes that row confirms a judge: Claude Code
+does; Codex does not, so on Codex no verdict stands for auto-merge and the gate exits 1. With `telemetry.enabled`
+false no log is written, and the same holds. The merge guard asks the same of the verdict it takes, so a session that
+skips auto-merge cannot merge on a verdict it recorded with no `--judge`. In a project run, the run must have merged
+fewer than 3 pull requests on a verdict, counted by the verdicts that stand on each merged head; the merge guard holds
+a run's sessions to that too, its driver among them.
+Its JSON then says `"waived": true`.
+The waiver lifts a denial; it merges nothing itself. A session no Human attends still meets every check of
+[merge trust](review.md#merge-trust): the waiver changes only the `round_limit` stop.
+
+### Before a judge rules
+
+`aidrian pr waive <PR> --gate [--json]` exits 0 only when the waiver may run on the pull request's current head:
+the round cap there, the team's `allow` on the default branch and the base, read through the forge, never the working
+copy, this machine's switch, the open findings as above, the bot's pass of the head, no judge's verdict on that head
+yet (one judge rules per head), a host that confirms a judge with telemetry on, no sign-off owed, and, in a project
+run, its budget of waived merges and a pull request of the run's pinned repository. It also refuses a working copy
+whose state folder is not the default branch's. Exit 1 says why; exit 3 is a read that failed. `autopilot` runs it at
+the cap and dispatches a judge only on exit 0.
+
+A project run merges at most 3 pull requests on a verdict. The gate and `aidrian pr auto-merge` only count that budget;
+the merge guard takes it at the merge itself, under the run's ledger lock, once every other check of the merge,
+merge trust included, has passed: it counts again and writes a `waived` row for the pull request, or refuses the merge
+once 3 are spent, so the sessions of issues that run in parallel never spend more between them. A merge the guard
+refuses spends nothing. A taken merge counts even if the merge then fails after the guard let it run; one the ledger
+lock or a read refuses is not merged.
 
 ### What it never covers
 
 - A review still owed, such as a bot review that was asked for and has not answered.
 - Any other outcome on the head: `blocked_quota`, `error`, `stuck`, `running`, `fix_required`, and the rest.
 - A head pushed after the last review step. Run `aidrian pr review` on it instead.
-- [Auto-merge](#auto-merge): `aidrian pr auto-merge` reads no waiver and still needs `received` on the head.
+- A finding of the review bot, a finding above `medium`, or a security finding.
+- A head the review bot has not passed.
+- Any other cause of the cap, or a sign-off the Human owes on the head.
 
 ### Example
 
 1. The review of pull request #151 stops with `round_limit` on head `abc1234`.
 2. The session runs `gh pr merge 151`. The merge guard denies it and names `aidrian pr waive` as a second route.
-3. The session dispatches a fresh read-only judge, as the `pr-review-loop` skill's `references/review-plan.md`
-   § At the cap says. The judge rules that the change may merge.
-4. The session records that verdict:
-   `aidrian pr waive 151 --verdict waive --reason "<the judge's evidence>"`.
+3. The session runs `aidrian pr waive 151 --gate`, which exits 0, then dispatches a fresh read-only judge, as the
+   `pr-review-loop` skill's `references/review-plan.md` § At the cap says. The judge rules that the change may merge.
+4. The session records that verdict, naming the judge's agent id:
+   `aidrian pr waive 151 --verdict waive --reason "<the judge's evidence>" --judge <agent id>`.
 5. `gh pr merge 151 --squash --match-head-commit abc1234` passes the guard. Give the full SHA, as the denial prints it.
 
 When the judge says no, the session records `aidrian pr waive 151 --verdict refuse --reason "<why>"` and stops.
@@ -476,9 +540,32 @@ when `review.record` posts the record there.
 ### Trust
 
 A verdict is the session's word, not proof: a session with a shell can record one and merge under both switches.
-Only the team switch, read from GitHub, is out of a session's reach.
+The review record, the verdict, and the dispatch log all live in folders a project run's confined session can write.
+Only the team switch and the review bot's pass of the head, both read from GitHub, are out of a session's reach.
 For proof, protect the default and base branches with a required review from a second account,
 as [Sign-off by the Human](review.md#sign-off-by-the-human) says.
+
+## Solo
+
+`solo: true` says one person runs the project. It turns on each unattended machine switch that `.aidrian.local.json`
+leaves unset: the [unattended waiver](#unattended-waiver), `unattendedSignoff`, and `handoff.background`.
+The team's own key for each still decides: `github.unattendedWaiver.allow`, `review.unattendedSignoff.allow`,
+and `session.handoff.continue` resolving to `background`. So a solo project needs no local file.
+
+It is policy, read only from the base branch. A command reads it from GitHub, as each branch commits it now:
+on the default branch and, for a pull request, on its base too. The local ref of the default branch must say it too;
+it may only refuse. A working copy that alone says `solo: true` turns nothing on, and a pull request that adds it
+changes a policy file, which [auto-merge](#auto-merge) never lets through. With no pull request, as for the background
+route, GitHub is read at the repository the `origin` remote names, so a subagent and an unattended session may not
+change a remote or the local file ([agent gates](hooks.md#agent-gates)). Origin is read from the repository's own git
+config alone, and must name one URL. A read that fails turns nothing on.
+A local `off`, or a local file that git tracks or that has an error, always wins.
+
+`solo` makes the default branch's content the switch: whoever can push to it turns the three switches on for every
+machine that sets none. A solo owner protects the default branch with no bypass, so only a reviewed pull request
+changes it. Set [`requires.aidrian`](#plugin-version) to the release that ships the key: an older plugin rejects it.
+The [Full autonomy, solo](config-recipes.md#full-autonomy-solo) recipe sets it, beside every key of the full-autonomy
+recipe and `projectRun.allow`.
 
 ## Pull request contract
 
@@ -1048,7 +1135,7 @@ A team sets `telemetry` in `config.json`, and one developer in the git-ignored `
 - `maxMb`: once the log reaches this size, the next row moves it to `dispatch-log.1.jsonl`, replacing the file there.
   The two files hold about twice `maxMb` at most, and `aidrian report` reads both.
 - `hookDenies: false`: the Bash rules, the main-checkout rule, the agent gates, and the config guard still block,
-  and write no `hook_deny` row ([hooks.md](hooks.md#recorded-blocks)). A rule that keeps blocking one session still becomes a lesson.
+  and write no `hook_deny` row ([hooks.md](hooks.md#recorded-blocks)). A rule that keeps blocking one agent run for the same cause still becomes a lesson.
   The exception is the tracker write guard's [no-read refusal](#how-a-write-is-judged): with this key or `enabled` off,
   a session stuck on it leaves no row and no lesson, though the agent still sees each refusal.
 
@@ -1170,9 +1257,12 @@ An entry has `deny`, `allow`, or both, each a list of tool patterns:
   leaves the main session no shell tool: a recorded limit ([provider page](providers/claude-code.md#powershell-commands)).
 - The gates are asked before the guards below, which read a command's paths and globs, so a call a gate denies is
   denied before the guards read it. The guards then have a time budget, 2.5 seconds from the hook's start, well inside
-  the host's 5 second hook timeout: a subagent's call they cannot finish reading in time is refused, and the main
-  session's runs. A subagent's PowerShell command of more than 512 words, counting each case, and its Bash call of more
-  than 1024 write targets are refused too, as the guards read no more ([hooks](hooks.md#agent-gates)).
+  the host's 5 second hook timeout: a subagent's call they cannot finish reading in time is refused, as is one of a
+  main session no Human attends or a project run's driver, and an attended main session's runs. A call that is no shell
+  and writes no file, such as a Read, runs past the budget for every session, as no guard refuses it.
+  A PowerShell command of more than 512 words, counting each case, and a Bash call of more than 1024 write targets,
+  of a subagent, a main session no Human attends, or a project run's driver, are refused too, as the guards read no more
+  ([hooks](hooks.md#agent-gates)).
 - `deny` wins: a call that matches a `deny` pattern is blocked, whatever `allow` says.
 - An `allow` or `deny` that is not a list, or a `deny` with an invalid pattern, leaves the gates unknown: a subagent may then
   only read files until the file is fixed.
@@ -1707,7 +1797,8 @@ the first hook files an [automatic lesson](lessons.md#automatic-lessons), `track
 It never refuses the call. The lesson asks for the tool in `writeTools` when it writes.
 A tool that only reads is told apart by its name's first word:
 `get`, `list`, `search`, `read`, `find`, `fetch`, `query`, `view`, `show`, `describe`, or `whoami`.
-That has two limits. A write tool named that way, such as `get_or_create_item`, is not noted.
+That has two limits. A write tool named that way, such as `get_or_create_item`, is not noted
+(the [project run rule](#project-run) reads names stricter).
 A read tool named otherwise is noted, and rejecting its lesson ends that, since the same tool never reopens it.
 A tool on a server neither list names is not noted, so a connection under another server name stays out of sight.
 
@@ -1717,7 +1808,7 @@ of the local dispatch log, so the values may reach it, cut to 120 characters. Th
 
 The refusal of rule 1 that names a read to call is the guard's normal flow: a session that writes meets it once, reads, and goes on.
 When it happens it writes no `hook_deny` row and adds no block count, so healthy sessions and a batch of first writes read as no hot spot.
-It leaves a marker in the system's temporary folder instead, and the session's end settles it.
+It leaves a marker in the hooks' counts folder, `<state root>/hook-counts`, instead, and the session's end settles it.
 A session that ends with no read recorded writes one `hook_deny` row, whichever way the read was lost: failing, renamed upstream, or never tried.
 Over several sessions those rows raise the usual hot spot in `aidrian report health`, and the row counts once toward the session's block count.
 With `telemetry.enabled` or `telemetry.hookDenies` off, a session stuck on this refusal leaves no row and no lesson,
@@ -1725,6 +1816,314 @@ though the agent still sees each refusal.
 A session with any recorded read writes none, even when the read was on another server than the refused write.
 Every other refusal is recorded when it happens, including rule 1's two that no read clears, which need the key corrected.
 This depends on the session-end hook: on a host with no SessionEnd, and in a session that crashes, the refusal stays uncounted.
+
+## Project run
+
+`aidrian project` keeps the record of a project run, which a driver session uses to work through a tracker project.
+The driver reads the tracker with its own tools and writes a snapshot input; `init RUN --file PATH` validates it and starts the run.
+`next RUN` names the issues to start, and `summary RUN` writes the run's `summary.md` from its ledger.
+The run's files are in `<state>/runs/RUN/`, where `<state>` is the project's state folder.
+How its sessions relate to the cap of five background continuations in a row, and how the driver hands off, is
+[A project run](handoff.md#a-project-run). The [Full autonomy, solo](config-recipes.md#full-autonomy-solo) recipe
+allows project runs.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `projectRun.allow` | `false` | Whether the team allows project runs. |
+| `projectRun.maxParallel` | `1` | The most issues that run at once, from 1 to 4, read from the default branch on the forge and held to 4 in code; a local ref only lowers it, and a read that fails runs one at a time. `next` names that many issues to start, less those running, and none while a session runs on after its issue settled; `init --check` names as many for turn 1, and `start` refuses one past it. The driver's starts still run one at a time: each takes the session's start claim and its one pending mark, and its write-ahead row asks the order and the cap again under the ledger's lock, so two starts never pass it together; one that loses the race is refused, and halts nothing. An issue starts only once every blocker in the run is done, which a result counts only for a merge the forge confirmed. |
+| `projectRun.maxStarts` | `300` | The most sessions one run starts, from 1 to 1000. |
+| `projectRun.issueHours` | `6` | How long one issue may run, in hours, from 1 to 24. |
+| `projectRun.blockedStatus` | `null` | The tracker status a blocked issue moves to; `null` moves none. |
+| `projectRun.decisionLabel` | `"needs-decision"` | The label an issue parked on a decision gets. |
+| `projectRun.unverifiedHosts` | `false` | Whether a run starts sessions on a host whose project start no live run has verified, which today is both hosts, Claude Code and Codex: setting it opts into a sandbox boundary no live run has checked ([Claude Code](providers/claude-code.md#project-start), [Codex](providers/codex.md#project-start)). Read from the default branch on the forge; a local ref only refuses. Each such start prints an `unverified:` line. |
+| `projectRun.workflowSecretsAccepted` | `false` | Whether the team accepts that a branch an issue's session pushes runs the repository's workflows with its CI secrets. Without it, `aidrian project preflight` blocks a run whose repository, organization, or an open environment (no deployment branch policy, and no required reviewers rule that prevents self-review or names only users other than the signed-in one) gives its workflows a secret, whatever the signed-in token's `workflow` scope: the push and pull request workflows run the pushed branch's own tests, scripts, and build, which the session writes, and a token that may push a workflow file (GitHub's `workflow` scope, or a token that names no scopes) widens that. The agent gate hook refuses an issue session's own workflow writes and pushes that carry them, and a script the session runs is the residual. Keep the secrets in environments limited to protected branches or held for a reviewer who is not the signed-in user, or accept the exposure by setting it. Read from the default branch on the forge and the local ref; both must set it. Never set by a recipe. |
+| `projectRun.outsideSandbox` | `[]` | The names a confined session may still run outside its host's sandbox, each one the team has reviewed: a key of the user's host settings that runs a command, such as `hooks`, `statusLine`, or `apiKeyHelper`; any plugin other than this one that is installed or enabled, by its id, such as `name@marketplace`, since a plugin's hooks, MCP and LSP servers, and monitors all run outside the sandbox; a skill, agent, or command of the user's config folder whose frontmatter declares hooks or MCP servers, by its path spelled from `~/.claude/`, such as `~/.claude/skills/deploy/SKILL.md`; or one of the repository's, at any depth, by its path, such as `.claude/skills/deploy/SKILL.md`, or a link under a skills, agents, or commands folder that leads out of it, such as `.claude/skills/foo`. Any other such command halts the start. It never lifts a halt on the user's `sandbox` settings. Only the names both the default branch on the forge and the local ref list count. |
+| `projectRun.mcpServers` | `{}` | The MCP servers a confined session loads, as the host's `mcpServers` object takes them, each name to its definition. The session starts with only these: a project's `.mcp.json`, the user's own servers, and the host's claude.ai connectors never load. Each listed server, and the helper command it starts, runs outside the sandbox with the user's full access, so list only a server the team trusts with that; its definition travels in the session's command line, which any process of the user can read in the process list, so it holds no secret. Only the servers both the forge and the local ref define alike count. |
+| `projectRun.nonTrackerServers` | `[]` | The servers of `projectRun.mcpServers` that reach no tracker, by name, such as a docs server. The [project run rule](#tracker) holds an issue's session and the driver, on every server that list names and no tracker adapter maps, to calls whose name says they read, since it cannot tell a write there from a tracker write; a server named here is free of that. A server an adapter maps by its name or endpoint stays held whatever this lists. Read from the base branch. |
+| `projectRun.registries` | `[]` | The package registries a confined session may reach to install the project's dependencies, by ecosystem name, each once: `npm` (`registry.npmjs.org`, and `registry.yarnpkg.com`, yarn's default), `pypi` (`pypi.org` and `files.pythonhosted.org`), `crates` (`index.crates.io` and `static.crates.io`), `go` (`proxy.golang.org` and `sum.golang.org`), and `rubygems` (`index.rubygems.org` and `rubygems.org`). The hosts are fixed in `lib/project-registries.mjs`: no name of a host, and no other domain, is ever accepted. A team opts in; a project with no code yet lists the ecosystems of the stack it will scaffold. Install scripts a package runs, such as npm's `postinstall`, run inside the session's sandbox, under its write and network limits, which is why letting a session install is acceptable. Every listed registry but `pypi` and `crates` gives a channel a sandboxed command can send data out on that an attacker can read, `go` the widest, since its proxy fetches from any host a module path names; each is accepted because the forge channel gives one already, and narrowing the forge token reopens that ruling ([Dependency installs](providers/claude-code.md#dependency-installs) names each one's path). With `npm` listed, corepack downloads pnpm and yarn from it too. Every session, whatever this lists, keeps its package managers' caches in its attempt's `cache` folder, and the home folder stays as it is. Codex holds a session to the same hosts through its network proxy, which no live run has checked yet ([Codex](providers/codex.md#project-start)). Only the names both the default branch on the forge and the local ref list count. |
+
+On a host whose start proves its sandbox ([Claude Code](providers/claude-code.md#the-sandbox-proof)), a start refuses
+with `the sandbox proof cannot be prepared`, records nothing, and leaves no attempt folder, for one of four causes:
+every host the proof can name as unlisted (`example.com`, `example.net`, `example.org`) is an allowed domain, as a
+`"*"` or an example domain in the user's or the organization's `sandbox.network.allowedDomains` makes it, so remove
+it; no unattended mark folder exists to probe, which `aidrian project init` makes, so start the run again from its
+init; the start cannot tell whether its localhost listener lives, since on Linux `/proc/self/stat` cannot be read and
+elsewhere `/bin/ps` is not there, so install procps or mount `/proc`; or the localhost listener does not start within
+5 seconds, or the plan cannot be written in the attempt's folder, so check that `node` runs and the state folder is
+writable, then start again.
+
+A start that cannot go on safely halts: `aidrian project start` exits 1, its first line is `halt <cause>`, and no issue
+is parked. Most halts record nothing, such as a user the forge does not let push, a sandbox with no network, or a
+repository whose git config could run a program; fix the cause and start again. A start whose proof failed, as a
+session that never named itself, whose hooks never ran, or whose sandbox proof failed
+([Claude Code](providers/claude-code.md#the-sandbox-proof)), gives its attempt back (a `void` start row, the issue open
+again) and writes a `halt` row: every later start refuses, however long ago it was written, until the Human's own shell,
+or another session a person attends that never drove the run, runs `aidrian project resume RUN`, which writes a `resume`
+row. The driver never runs it, and the hooks and the command refuse it to every session of the run's custody. `next` prints `halted <cause>` first, and `--json` adds `halt`.
+When an issue's pull request does not merge, its session runs `aidrian project stop-action RUN ISSUE`, as the
+autopilot skill's phases say. Only the issue's own session runs it: the newest session of the chain of the issue's
+latest start, while the issue runs, whose mark names that run and issue; never the driver. It finds the pull request
+of the issue's branch in the repository init pinned, reads `aidrian pr auto-merge --json` in the same process, and
+prints one line, `<action> <issue> #<n> at <head>: <why> (<used> of <cap> <scope>); <what to do next>`, for exactly
+one action. The `why` is cleaned and capped as a result's `stop` is, and a forge error in it is quoted.
+
+| Stop | Action | Cap |
+| --- | --- | --- |
+| Merged on the forge | `done`: record the result `merged` | |
+| Closed; a base other than the default branch; a reason `team`, `local`, `checks`, `paths`, `author`, `outsider`, or `closes`; a `review` that is changes requested; a reason it does not know; a draft | `park`: record the result `pr_open` with the line as its stop | |
+| `trust` with `signoff` | `park`: record the result `parked`, with one decision for the Human's sign-off, whose first and recommended option is to leave the pull request unmerged; of class `security` when any unsigned flow is a security one (an id that holds the word `security`, or a `require` that names `agent:security-engineer`), and `product` otherwise | |
+| A conflict with the base | `merge_base`: the session fetches the base and its branch, merges the base on top of its branch as the forge has it, resolves it, and pushes with a full refspec, never with force | 2 base updates per issue, with the next row |
+| Behind the base | `update_branch`: the forge merges the base in, or rebases under the `rebase` strategy where the branch's rules allow a push that is no fast-forward | the same 2 |
+| GitHub still computing it, a head that moved while read, or pending checks | `wait` | 3 per head |
+| The bot asked already for this head and not passed yet | `wait`: `aidrian pr await-review <n>`, with no second request | the same 3 per head |
+| A forge read, its checks' read included, or auto-merge that failed (`aidrian pr auto-merge` exit 3), or a forge action it refused | `wait` 60, then 300, then 900 seconds; a wait past 150 seconds is taken in foreground waits of at most 150 seconds each, since the host moves a longer call to the background | 3 per attempt, apart from the waits above |
+| `review` on a head a base update made | `review_round`: one review round of that head | 1 per head |
+| `trust` with `bot` | `request_bot`: `aidrian pr await-review <n> --request` | 1 per head |
+| Auto-merge on, failing checks that are each a first run of the head, on the issue's branch, in the pinned repository, as the forge reads each Actions run | `rerun_checks`: the forge starts their failed jobs again | 1 per head |
+| Auto-merge on, failing checks that are an app's status, a fork's run, or a run that ran again already | `park` | |
+| Auto-merge on, checks pass, and the forge still blocks it | `park` | |
+| Nothing stops it | `merge`: run the `pr-auto-merge` skill again; a second `merge` on the same head parks with the merge steps' own stop line as the stop, since they stopped for a reason the command does not read | 1 per head |
+
+The order is the table's: a policy refusal, or a sign-off the Human owes, parks before any update, since an update
+makes a new head, and every sign-off and review of the old head no longer counts; so a pull request whose flows need
+the Human's sign-off parks after its update rather than looping. The forge's part of an action goes through the forge
+facade. Each capped action is recorded in `stops.jsonl` in the drop folder of the issue's latest start. Before the
+driver's `wait` removes an ended attempt's folder, it keeps that file's rows in the run's `stops/<issue>.jsonl`, with
+a row that marks the attempt archived, so a new attempt resets no cap. It keeps only the action, head, pull request number, and attempt of each row. Every history file is opened without following
+a link or waiting on a FIFO, and must be a regular file of this user with one link. A history that is not, or holds a
+row the command did not write, parks. `stop-action` exits 1 when it refuses, such as for another session or a pull
+request that is not the issue's own: the session then records `pr_open` with that line as its stop.
+
+At the end of its loop the driver runs `aidrian project end RUN`, which writes an `end` row: an end row counts only when
+the session that wrote it was the run's driver, by custody, at that row, and then the run is over, starts no
+issue, and no longer counts as active, and its driver mark stops holding the driver session
+([hooks.md](hooks.md#agent-gates)). A run whose issues are all done or parked holds its driver until that row: its
+parked issues may still owe the Human's sign-offs, which come from a separate session the Human attends.
+Each start is written ahead: a start row with `pending: true` before the host starts anything, then one row that
+settles it, so a gate killed mid-start leaves a row `wait` finds and settles. A start row's `pushUrl` pins the URL the
+attempt's clone pushes to, read before its session starts, and a clone that pushes to more than one URL, as a second
+`remote.origin.pushurl` in the user's git config makes it, halts the start; the issue session's one push goes only there
+([hooks.md](hooks.md#agent-gates)). Every start is confined to a fresh
+clone under its host's sandbox, and a host that is not halts the start. The session hands its
+result over in its attempt's `drop` folder, and `wait` records it as a `result` row with `via: "drop"`, or ends the
+attempt `bad_result`, as it does at once for a pull request the forge says it does not have; a result the forge cannot
+confirm yet waits for the next `wait`, until `issueHours`, when its sessions are stopped and it ends `bad_result`.
+The Stop hook holds the result: when the newest session of a running issue's chain ends a turn before it handed its
+result over, it is sent back once, before any other Stop check, to run `aidrian project result`, or to go on with the
+work (`lib/project-run-guard.mjs resultHoldReason`, run by `scripts/hook-stop.mjs`); a session that handed the work on,
+or whose mark, run, or ledger cannot be read, stops. It runs on Claude Code, the host whose project start is confined;
+Codex runs the same Stop hook, [not verified live](providers/codex.md#hooks).
+A session that meets a usage or rate limit pauses the run (`lib/project-limit.mjs`). `wait` asks the host adapter
+whether the session's last record is the host's own limit error, never a tool's output or the model's text, and writes
+a `limit` row whose `until` is the reset time the host named, read against the record's own time and held to between
+1 minute and 6 hours from now, so a reset already past waits 1 minute; or, when it named none, 15, then 30, then 60
+minutes for each pause in a row since the last result. A limit met while a pause lasts joins it: the same pause, its
+end moved later only by a named reset. Until the pause is over, `start` of any issue exits 1 with `paused until
+<time>`, `next` prints that line first and `--json` adds `pause`, and an idle `wait` waits with it, up to `--max-wait`.
+Time paused counts toward no issue's `issueHours`.
+
+A session the host still lists running, on a host that continues its own session at the reset (Claude Code, started
+with `autoContinueAtUsageLimit`), keeps running for a usage limit while its pause runs, and 5 minutes past the later
+of the pause's end and the newest entry its transcript holds after the limit record, such as the host's own entry
+when it continues the session, so a session is not stopped before its first new answer, and never more than 30 minutes
+past the pause's end, so an entry dated ahead or entries that keep coming never hold it from `issueHours` for long: `wait`
+prints `paused <issue> usage until <time>` and goes on waiting on it. Every other limited session is stopped, and its
+attempt ends `limit`: one that ended on the limit, one of a host that does not continue (Codex), a rate limit, a
+session whose record is unchanged once its pause and that grace are over, and a limit past the run's 24 pauses. `wait` prints
+`limit <issue> <kind> until <time> -> open`. A limited attempt counts toward no cap of the
+issue, so a limit never parks one. Once the pause is over, the same issue starts again as a new attempt: a fresh
+clone of the issue's branch as the forge holds it, whose prompt says the attempt before stopped on a limit. Work the
+limited session had not pushed is lost, which the host's own continuation makes rarer. A run waits out 24 pauses at
+most: the next limit writes a `halt` row instead, which only `aidrian project resume` lifts.
+
+Neither host's limit record is verified live, and a host that reads none, or a record it does not recognise, leaves the
+backstop: the session ends with no result, or `issueHours` stops it. The driver session shares the account's limit,
+and nothing restarts a driver its own limit stopped: the run goes on when the driver's host continues it after the
+reset, which `autoContinueAtUsageLimit` in the user's own settings asks of the host.
+For the issue's own session, whose unattended mark names the run and the issue, its attempt clone takes the run's
+main checkout, named in the ledger's init row, as its own: the machine's switches and decisions come from that
+checkout's `.aidrian.local.json`, never the clone's. Any other reader, and a clone whose link cannot be read or whose
+state folder the project does not name, reads every switch off.
+
+`init` reads none of these keys and does not check `allow`; `next` and `init --check` read `maxParallel` from the default branch, as `start` and `wait` read them all.
+
+The snapshot input is one JSON object, at most 1 MiB, read as a regular file and never through a symlink:
+
+```json
+{
+  "issues": [
+    { "key": "ENG-12", "branch": "feat/eng-12-export", "status": "unstarted", "blockedBy": ["ENG-10"], "priority": 2 }
+  ],
+  "outside": [{ "key": "ENG-3", "status": "completed" }],
+  "teams": ["ENG", "OPS"]
+}
+```
+
+- `issues` holds 1 to 500 issues, each with at most 50 `blockedBy` keys; `outside` holds at most 1000 blockers.
+- `key` is a team key and a number, such as `ENG-12`, or a number alone. A run id is lower-case letters, digits, and dashes.
+- `branch` is the one text from the tracker the run keeps. It passes `git check-ref-format --branch`, is at most 120 characters
+  of letters, digits, `.`, `_`, `-`, and `/`, and starts with no dash. Compared in any case, it is not under `refs/`,
+  not the default branch (`git.defaultBranch` in the working copy or on the base branch, or the branch origin's HEAD
+  points to), does not start with the name of a remote, and has no part that is a HEAD name, such as `HEAD` or `FETCH_HEAD`.
+  No part is 40 or 64 hex digits, as a commit id is.
+- `status` is a status type: `triage`, `backlog`, `unstarted`, `started`, `completed`, or `canceled`.
+  A run starts only a `backlog` or `unstarted` issue.
+- `priority` is 1, the most urgent, to 4, or 0 for none, which comes last.
+- `outside` lists the status of each blocker outside the project. A blocker that is not `completed`, or not listed, blocks.
+- `teams`, optional, lists every team key of the tracker workspace, at most 500, each a capital letter then capitals or
+  digits, such as `ENG`. The [`closes`](#when-it-is-on) check reads a token as an issue key only when its team is one of
+  these or of the run's issues. With no `teams`, a key of a team outside the run is not seen: a named residual.
+  The `project-autopilot` skill's first turn reads the tracker's team list into it. When the run's issue keys carry a
+  team and `teams` is missing or empty, `init` prints a `teams:` line and `init --check` a `note teams` line that say so.
+- Every other field, such as a title or a description, is dropped: no other tracker text enters the run's state.
+
+The state folder is held as the [background route](handoff.md#the-background-route) holds its continuation store.
+The working copy's `state.dir` must be the base branch's, and the folder the command resolves must be the one the base branch's
+config names under the host's own environment, so an `XDG_STATE_HOME` or `HOME` set for the command cannot move it.
+The state folder and its `runs/` folder may not be a symlink, lie inside a checkout, be another user's, or be writable by every user.
+`init`, `next`, and `summary` each refuse a folder that fails a check, a base branch git cannot read,
+and a project whose `config.json` the base branch does not commit.
+A shell that exports `XDG_STATE_HOME` for every command moves the folder away from the one the host's own environment names,
+so the commands refuse it: commit a `state.dir` in `config.json`, which both read the same.
+
+`init` runs only from an attended main session. It refuses a subagent, a session the host names no id for,
+and a session the background route started or is about to start; when the continuation store cannot be read, it refuses too.
+The [project-init rule](hooks.md#bash-rules) denies the command to a subagent, whose shell carries the main session's id.
+`--project` on `init` must name the project of the current folder's main checkout.
+It pins the repository from the origin remote, refusing an owner or name of `.` or `..`, and records it in the ledger's first row
+with the driver's session id and the sha256 and issue count of `snapshot.json`; `next` and `summary` refuse a snapshot that no
+longer matches. Both files are read with no symlink followed, as regular files, under a size cap.
+One run per project is active at a time.
+
+`next` orders the issues by `blockedBy`, then by priority, then by key. It prints `next KEY BRANCH` for each issue to start,
+`wait N running` when none may start while some run or a session runs on after its issue settled, or `done` when nothing
+may start and nothing runs.
+Lines for the issues that run, are blocked, or are skipped follow. An issue in a cycle of blockers is blocked.
+An issue the ledger records parked, or a canceled one, is never started, and every issue that waits on it through issues not done
+is skipped and names it. `--json` prints the whole plan, with the `maxParallel` it read.
+
+`preflight [RUN]` runs, at once, every check a start would refuse or halt on, and starts nothing: the repository, the
+state folder and any other active run but `RUN`, a host instruction file, such as a `CLAUDE.md`, in a folder above the
+runs folder, which every attempt's clone would load, `projectRun.allow` through the forge, the machine's switch, the host's
+start and its `projectRun.unverifiedHosts`, the host's access check (push rights, an HTTPS origin, nothing outside the
+sandbox that `projectRun.outsideSandbox` does not name), and whether the host carries on by itself after a usage limit
+(in Claude Code, `"autoContinueAtUsageLimit": true` in the user's own settings, the only place the host reads it), since
+a limit is the account's and stops the driver with the issues' sessions. Then what the run needs to finish with no one:
+the base branch's tracker, with no server in `projectRun.mcpServers` named like a tracker whose endpoint no adapter maps
+(no tracker server there is a `note`: issue sessions then write no tracker, and the driver reports; a `note mcp-servers`
+lists the servers the run rule maps to no tracker, each of which must be no tracker connection); auto-merge allowed on
+the forge's default branch with `github.requiredChecks` listed and this machine's switch on; `session.handoff.continue`
+set to `"background"`, since `"clear"` waits on a person; `github.reviewer`, with the bot seen on a recent
+pull request and an active CI workflow, read through the forge; and, through the forge too, a rule on the default branch
+that asks the signed-in user, whose token an issue's session keeps, for a pull request, administrator or not, with no
+bypass for that user (`branch-protection`; an `ask` when the forge shows the branch protection's settings only to an
+administrator), an active tag rule that names every tag, `~ALL` or `refs/tags/**/*` with no exclusion (a rule's `*` and
+`**` stop at a slash, so `refs/tags/*` lets `release/v1` through), restricts creating
+and updating a tag, and that user can never bypass (`release-tags`), and no CI secret the repository's or its
+organization's workflows see, or an open environment's, one with no deployment branch policy and no required reviewers
+rule that prevents self-review or names only other users than the signed-in one (a team may hold that user), whatever
+the token's `workflow` scope, since the push and pull request workflows run the pushed branch's own code, unless the
+team sets `projectRun.workflowSecretsAccepted` (`workflow-secrets`; the blocker says whether the token may also push a
+workflow file); with a `note workflows` line: the forge runs a pushed
+branch's workflow files, and the code they call, with the repository's secrets, so release and deploy secrets belong in
+environments limited to protected branches and tags or held for a reviewer who is not the signed-in user, that an
+environment whose admins may bypass its rules (on GitHub `can_admins_bypass`, true by default) lets an admin's token,
+as the session's may be, deploy past them through a script, so the bypass goes off, that an environment limited to
+protected branches counts as held though a branch protection's pattern may match an issue's branch, so those patterns
+stay off the branch names issues get, and a cloud role trusted through OIDC federation for any ref of the
+repository (`repo:<owner>/<name>:*`) can be assumed from any branch, and a `note triggers` line for other services that act on a push or a comment, such as
+preview deploys and ChatOps bots. It prints `ok NAME`, `blocker NAME: WHY`, `note NAME: WHAT`,
+or `ask NAME: WHAT` for a read the forge or tracker lacks, such as the decision label's existence, and exits 1 on any
+blocker. `init RUN --file PATH --check` checks the input as `init` would, prints its blockers
+(problems, cycles, issues started outside the run, and, when `projectRun.mcpServers` holds no tracker server, each issue
+to start with no text) and the `next` lines, and writes no run. An issue's text never comes from a file a session
+writes: after each call of a tracker's issue read (Linear's `get_issue` and `list_issues`), whatever `tracker.enabled`
+says, in a project whose base branch's config.json sets `projectRun.allow`, the post-call tracker hook records each
+issue the tracker's answer holds, by its key, its title, description, and labels, under the unattended marks
+(`issue-reads/<session id>/`). The agent gate hook refuses a subagent's or an unattended session's write there as it
+reads the call, the same check that keeps the marks: a command that hides the path from that reading, such as an
+interpreter's one-liner that builds it, is not refused. `init` keeps, for each snapshot issue, the read its own session
+recorded, its subagents' reads included, and none for an issue no read recorded, nor any read through a symlinked or
+another user's folder. It then removes the session's recorded reads; the session-end hook removes them too (Claude
+Code), and each new record, each `init`, and each `next` remove those older than a day, on every host. It keeps each text capped, with hidden characters and controls but line feeds and
+tabs removed, in `<state>/runs/RUN/issues/ISSUE.json`, never in `snapshot.json`, and each start writes it read-only to the attempt's
+`issue.md`, fenced and marked as untrusted text from the tracker, which the issue's session reads instead of the tracker. The `project-autopilot` skill runs both in its
+attended first turn, and `init` last, once nothing blocks.
+
+`report RUN [--json]` prints, for the driver only, the report the run owes each issue that settled for good, done after
+a forge-confirmed merge or parked: a status (the adapter's done status type for a merge, `projectRun.blockedStatus` for a
+blocked issue), `projectRun.decisionLabel` for any other, and a comment body with its sha256, with `--json` adding the
+exact tool `calls` for the base branch's tracker. Both values come from the base branch's config. The body is built
+from the ledger and from `results/ISSUE.json`, read again with no symlink followed, under its size cap, matched to the
+ledger's run, issue, attempt, status, and pull request, and checked again; a file that fails gives a body from the
+ledger alone that says so. `recorded RUN ISSUE` closes one, with a `recorded` row holding its attempt and sha256.
+`end RUN` refuses while any issue still runs, naming them, or while a session runs on after its issue settled.
+
+Every session a start held counts toward the run's caps until the host lists it ended, not only the session of an issue
+that runs (`lib/project-linger.mjs`). An issue settles once `wait` takes in its result, often while its session still
+finishes its last turn, and a session can keep working past it for good. While the host lists such a session as
+working, `next` prints `wait N running`, counting it, and a `lingering <issue> attempt <n>` line (`--json` adds
+`lingering`), `start` of any issue exits 75 with a `retry:` line that names it, a wait and not a refusal, and `end`
+refuses. `wait` prints `lingering <issue> attempt <n>` and waits on it as on an issue that runs; it writes a `linger` row
+the first time, and once 2 minutes have passed since that row it stops the session and writes a `gone` row with
+`how: "stopped"`, printing `lingered <issue> attempt <n> stopped`. One the host lists as ended gets a `gone` row with
+`how: "ended"`, from `wait`, `start`, or `end`, and `wait` prints `lingered <issue> attempt <n> ended` when it had seen it
+run on. A session that cannot be stopped prints
+`lingered <issue> attempt <n>: a session of it, <id>, ran on after its issue settled and could not be stopped; <how>`
+each `wait`, where `<id>` is the session's id as its `started` line printed it, and `<how>` the host's own command that
+stops it by hand, such as `` `claude stop <id>` stops it ``; so do the `overdue` and `limited` lines of a session `wait`
+could not stop, `a session of it, <id>, could not be stopped; <how>`. An id of no session's shape is left out, and a
+`<how>` that is empty or holds a character no display text keeps, such as a control, a line or paragraph separator,
+a bidirectional mark, or a zero-width character, becomes `the host's own command stops it`.
+The write-ahead row of a start asks the ledger again under its lock, so no start passes beside such a session.
+`resume RUN`, from a session a person attends, also takes custody of a run whose driver's sessions the host lists as
+ended, so that session drives on: a `driver` row moves custody, and the session's driver mark is filed.
+A command whose ledger another process holds locked, and a `start` whose read of the team's policy the forge cannot
+answer now, exit 75 with a `retry:` line, a refusal that may pass. A policy the forge answers and refuses, such as
+`projectRun.allow` turned off on the default branch while the run's sessions run, makes `start` exit 1. Neither stops
+`wait`, which starts nothing: it prints a first line and settles the run as before, exit 0, stopping each session past
+its `projectRun.issueHours`. Each start row records the hours the team confirmed for it, as `issueHours`.
+On a refusal, the line is `note policy: <why>`, and the hours are the lowest of the default, 6, its ceiling of 24, the
+base branch's local ref, and the forge's own when it answered, so a bound the forge no longer confirms never loosens.
+Through a forge outage or rate limit, the line is `note outage: <why>`, and each session's hours are the lowest of
+those its start row recorded, the ceiling, and the base branch's local ref, or the default for a start row that
+recorded none, so one failed read stops no session the team gave longer.
+So the driver's halt wait reaches `idle` and `end` can follow.
+`resume` names a driver it cannot read as an ended background session, such as the first one the Human ran: the Human
+resumes that same host session, which keeps its id and custody.
+
+The [tracker write guard](#tracker) holds a project run's sessions whatever the working copy's `tracker.enabled` says,
+knowing each by its marks alone, never the folder a call runs in. An issue's session writes only its own issue, by its
+key, through its tracker's issue and comment tools and the fields its adapter lists: status `started`, an estimate,
+a patch of its body, and a comment, each with no mention, link, address, image, HTML, or hidden character, a file or
+host name in backticks; only the text a patch inserts is checked, never the anchors it matches. Result text the run
+quotes keeps a file or host name as an inline code span. A live check is still owed: that Linear renders no link inside
+inline code. The current
+driver (a driver mark the ledger's custody confirms) writes only the calls `report` owes, each matching the status,
+label, and body hash it printed, until `recorded`; a driver mark the ledger does not confirm, as a continuation's
+before its first `wait`, is held, and writes nothing: the background route files the driver's mark for a driver's
+continuation as it starts it. For both, every call on the tracker's server is a write unless
+its name says it reads, and the tracker's servers include those of `projectRun.mcpServers` whose endpoint an adapter
+names. A server `projectRun.mcpServers` lists that no adapter maps, such as Linear's own server started by `npx`
+under a name of the team's choosing, may be a tracker connection the rule cannot screen: on it, both are refused every
+call whose name does not say it reads (`get_`, `list_`, `search_`, `read_`, and the other read verbs of the
+[first-word check](#how-a-write-is-judged)), unless `projectRun.nonTrackerServers` names it as reaching no tracker.
+To this rule a name says it reads only with a read verb other than `query`, which may run any statement, first, and no
+write verb after it, such as `create`, `update`, `delete`, `add`, `set`, or `save`, in any of its words, so
+`get_or_create_item`, `list_and_update`, and `getOrCreate` are writes. The driver runs with the user's own servers, not
+`projectRun.mcpServers` alone, so it is held so on every server no adapter maps that `projectRun.nonTrackerServers`
+does not name. `aidrian project preflight` notes each such server. When the base branch's config cannot be read, or the mark names no
+project, which servers reach a tracker cannot be told, so both are refused that on every server no adapter maps; a held
+session, which reads no base branch, always is. The rule runs under the [agent gate hook's time budget](hooks.md#agent-gates):
+a call it cannot judge in time is refused to a marked, held, or driving session unless its name says it reads.
+The driver may post an owed comment or status more than once before `recorded` closes it: the hook judges each call
+against the report, not against what earlier calls wrote. A repeated status changes nothing, and a repeated comment is
+a duplicate the driver's report already holds, an accepted residual.
+A session that drove a run keeps the sign-off hold after `end`. A session no Human attends calls no tool a tracker's
+merge verb names, on any server, and no session merges or
+marks a pull request ready through a tracker's own tool: `gh pr merge` and `gh pr ready` are the routes the merge guard
+and the ready hold judge. A marked session's base branch config is read through the main checkout its mark names, and
+a read that fails refuses it.
 
 ## Testing
 

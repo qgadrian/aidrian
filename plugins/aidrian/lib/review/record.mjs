@@ -7,9 +7,12 @@ import { isObject } from '../fs.mjs';
 import { notedPlan, parseFindings, recordFindings } from './findings.mjs';
 import { parseVerdicts } from './flows.mjs';
 import { closingRange, readReading } from './dispatch.mjs';
+import { recordHumanSignoff } from './signoff-store.mjs';
 import { gitPaths } from './publish.mjs';
 import * as quota from './quota.mjs';
 import { heldMessage, otherRecordMessage, otherRecordRepo, readRecord, sameCommit, writeLocalState } from './state.mjs';
+
+const SHA_FULL = /^[0-9a-f]{40}$/iu;
 
 // The record to change, as readRecord gives it: the newer of this machine's and the one in the pull request's
 // comments (`remote`, as remoteState read them), so a write never builds on a stale copy. A held comment newer than
@@ -79,18 +82,31 @@ export function recordPass(project, { pr, repo, pass, head, reviewer, findings, 
 }
 
 // `aidrian pr signoff <PR> --flow <id> --head <sha>`: the Human's sign-off of a flow on a head. An audit entry, not
-// proof: the summary comment shows it, and who ran it.
+// proof: the summary comment shows it, and who ran it. It is written to the sign-off store too (merge-trust.mjs), first,
+// on `storeHead`, the full commit the Human's own command names (the typed head resolved in their checkout, or the
+// forge's head for --last), never one the record names: a merge no Human asks for reads the store instead of the record,
+// and a store it cannot write keeps the record unwritten as well. Only a session the Human attends can write the store.
+// The flow is one the last review on that head left to the Human (`signoffable`), or one in `floor`, the flows a merge
+// no Human asks for needs on that head by what the forge alone gives (merge-trust.mjs flowsFloor), so every sign-off such
+// a merge asks for can be given.
 // With `dryRun`, every refusal runs and nothing is written: `aidrian pr signoff --check`.
-export function recordSignoff(project, { pr, repo, flow, head, by, remote = null, reading = undefined, dryRun = false }) {
+export function recordSignoff(project, { pr, repo, flow, head, storeHead = null, floor = [], by, remote = null, reading = undefined, dryRun = false }) {
   const state = current(project, pr, repo, remote, reading);
   const asked = state.signoffable;
-  if (!asked || !sameCommit(asked.head, head)) throw new Error(`no review of ${repo}#${pr} ran on ${head.slice(0, 7)}: run \`aidrian pr review ${pr}\` on that head first, and sign off only a flow it names`);
-  if (!asked.flows.includes(flow)) {
+  const onHead = Boolean(asked) && sameCommit(asked.head, head);
+  const floored = floor.includes(flow);
+  if (!onHead && !floored) throw new Error(`no review of ${repo}#${pr} ran on ${head.slice(0, 7)}: run \`aidrian pr review ${pr}\` on that head first, and sign off only a flow it names`);
+  if (!floored && !asked.flows.includes(flow)) {
     const which = asked.flows.length ? `only ${asked.flows.join(', ')} can be` : 'no flow is';
     throw new Error(`flow ${flow} takes no Human sign-off on ${head.slice(0, 7)} of ${repo}#${pr}: ${which} signed off there. A sign-off never clears a violated invariant: fix the code, or, where reviewers disagree, settle it with the --overrule command the review prints`);
   }
+  const full = storeHead ?? (SHA_FULL.test(head) ? head : null);
+  if (full === null) throw new Error(`the sign-off store takes the full head commit the sign-off is for, not ${head}`);
   state.signoffs[flow] = { head, by, at: new Date().toISOString() };
-  if (!dryRun) writeLocalState(project, state, { repo });
+  if (!dryRun) {
+    recordHumanSignoff({ repo, pr, flow, head: full, by });
+    writeLocalState(project, state, { repo });
+  }
   return state.signoffs[flow];
 }
 

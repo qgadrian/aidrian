@@ -18,6 +18,9 @@ export const REASON =
 
 const FLAG = /^--(?:install|uninstall)$/u;
 const UNREAD = /\bshell-init\b[^\n;|&]*--(?:install|uninstall)\b/u;
+// The shells' own names, each a program that runs a string it is given as commands. The one list of them: the wrap
+// refusal of lib/shell-init.mjs refuses each as a launcher name too.
+export const SHELL_NAMES = Object.freeze(['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'fish', 'csh', 'tcsh', 'yash', 'nu', 'elvish', 'xonsh', 'pwsh', 'powershell']);
 // An aidrian command run by its name, any path to it, or the plugin's cli.mjs, then `shell-init` and a flag.
 const COMMAND_TEXT = /(?:^|[\s;&|(`'"])(?:\S*\/)?(?:aidrian|cli\.mjs)\s[^\n;|&]*\bshell-init\b[^\n;|&]*--(?:install|uninstall)\b/u;
 const AIDRIAN_WORD = /(?:^|\/)(?:aidrian|cli\.mjs)$/u;

@@ -235,7 +235,9 @@ not every feature. The warning never blocks.
 `signoff: "human"` adds `aidrian pr signoff <PR> --flow <id> --head <sha>`, run on the Human's word. The `review-signoff` rule
 ([hooks.md](hooks.md#bash-rules)) blocks an agent that runs it, unless the session holds the Human's
 [answer to it](#answering-in-the-session); on a host without one, the Human runs it in their own shell (`!` in a Claude
-Code prompt, or another terminal). It is still an audit entry, not proof: an agent holds the same GitHub token. Every sign-off and
+Code prompt, or another terminal). A subagent and a session no Human attends may not run it at all: a flow sign-off also
+goes to the [sign-off store](#merge-trust), which a merge no Human asks for reads instead of the record. It is still an
+audit entry, not proof: an agent holds the same GitHub token. Every sign-off and
 override is listed in the review summary on the pull request, or only in the local record with `review.record:
 "local"`. For proof, protect the branch with a required review from a second account.
 Like `aidrian pr attest`, it files the sign-off under the pull request's repository: `--repo OWNER/NAME`, else the one
@@ -376,7 +378,8 @@ or `--overrule <invariant> --reason "<why>"` in place of the accept. Each flow's
 ```
 
 The team switch is read from the base branch; this machine's is `"unattendedSignoff": "on"` in `.aidrian.local.json`,
-which only the main session sets. A ruling takes the same refusals as the matching sign-off, holds for one head, and
+which only the main session sets, or, unset there, the team's [`solo`](config.md#solo), read at the pull request's base
+on GitHub. A ruling takes the same refusals as the matching sign-off, holds for one head, and
 shows in the summary as `judge:<agent>`. It never clears an undisputed violated invariant, signs a whole flow or stage,
 or touches `harness-config`, so a `signoff: "human"` flow and a change to the review's own config still ask the Human.
 Like the [unattended waiver](config.md#unattended-waiver), a ruling is the session's word, not proof.
@@ -1105,6 +1108,38 @@ signals and the ceiling are computed by the command at every cap, a verdict over
 a grant by itself, and under `"auto"` the most a false verdict buys is `github.maxExtraRounds` rounds, every one
 listed on the pull request.
 
+### At the cap under autopilot
+
+Under the `autopilot` skill, and in each issue's session of a [project run](config.md#project-run), no one is there to
+answer at the cap. An extra round goes as [Extra rounds](#extra-rounds) says: under `"ask"`, or over a red flag, it is
+parked as a decision for the Human. What follows `round_limit` on the current head is the
+[unattended waiver](config.md#unattended-waiver), and only when `aidrian pr waive <n> --gate` exits 0. The gate
+checks more than this list, such as the waiver's two switches, telemetry, and every flow of the plan:
+[Before a judge rules](config.md#before-a-judge-rules) and [What it covers](config.md#what-it-covers) hold every
+check. Among them, on exactly that head:
+
+- the open findings of this machine's own reviewers, the local and independent stages, are the whole cause of the cap,
+  each listed, each of `medium` severity or lower, and none a security finding, of a security pass, or of the
+  `security-engineer`;
+- no sign-off of the Human's is owed on the head;
+- the review bot passed exactly the head on the forge: a verdict never stands in for it;
+- the host confirms the judge's dispatch in the dispatch log, which Codex cannot, and no judge has ruled on the head yet;
+- in a project run, the run has merged fewer than 3 pull requests on a judge's verdict (`WAIVED_MERGES`), and the pull
+  request is in the repository the run pinned. Past that budget, the issue parks for the Human.
+
+The session then dispatches one fresh read-only `code-reviewer` as the judge and records its verdict with `--judge`,
+as the `pr-review-loop` skill's `references/review-plan.md` § At the cap: a judge's waiver says.
+`aidrian pr auto-merge` takes a standing `waive` for that head in place of `received`, and its JSON says
+`"waived": true`; every check of [merge trust](#merge-trust) still applies. Exit 1 from the gate is a stop the session
+reports with the line the gate prints; no judge is dispatched.
+
+When the merge stops after the review, an issue's session of a project run runs
+`aidrian project stop-action <run> <issue>`, which prints exactly one action: done when the forge shows the pull request
+merged; merge, wait, update the branch from the base, run the failed checks again, ask the review bot, or run one more
+review round of a new head, each under its own cap; or park, which, like done, has no cap. The table of stops,
+actions, and caps is in [Project run](config.md#project-run). A sign-off the Human owes, or a policy refusal, parks
+before any update, since an update makes a new head and every sign-off and review of the old head no longer counts.
+
 ## The plan command
 
 `review.planCommand` runs a project's own planner: it reads `{ base, head, changes }` on stdin and prints a plan in
@@ -1286,10 +1321,19 @@ shows, such as a waiver's reason, has `<!--` and `-->` escaped, so no text can c
   writes, so a request recorded while a reviewer ran survives the step's write. Both live in the state folder: another
   machine does not see them.
 - **Waivers.** `waivers` lists the judge verdicts `aidrian pr waive` recorded, each `{ head, kind, verdict, reason, judge, at }`,
-  where `kind` is `round_cap` and `verdict` is `waive` or `refuse`. Each binds to one head and one kind.
-  The summary comment shows them under **Merge guard waivers**, each marked an audit entry, not proof.
-  A record without the list has none. The [merge guard](hooks.md#merge-guard) reads them only while the team's
-  `github.unattendedWaiver.allow` and this machine's switch are both on: [Unattended waiver](config.md#unattended-waiver).
+  where `kind` is `round_cap` and `verdict` is `waive` or `refuse`, and, with `--judge`, `judge_id` and `session`: the
+  judge's agent id and the recording session, which auto-merge finds in the dispatch log. A `round_limit` outcome also
+  keeps `cap`, what stopped the review (`plugins/aidrian/lib/review/run.mjs` capCause): the open findings by pass and
+  stage, whether each is listed, the flows left unsigned, deleted flow tests, failing flow checks, passes that never
+  reviewed the head, the bot's own round limit, and the flows the Human signs off with no sign-off kept. Its flows are
+  every flow of the plan not all held, whichever stage answers for it. The cause of a reviewed head is kept on its
+  round too (`rounds[].cap`), which a later cap on a head no round reviewed reads. The posted copy keeps no `cap`,
+  on the outcome or a round, and no waiver's `judge_id` and `session`. Each binds to one head and
+  one kind. The summary comment shows them under **Merge guard waivers**, each marked an audit entry, not proof; the
+  posted copy keeps no `judge_id` or `session`.
+  A record without the list has none. The [merge guard](hooks.md#merge-guard) and `aidrian pr auto-merge` read them only
+  while the team's `github.unattendedWaiver.allow` and this machine's switch are both on, and only once the review bot
+  passed the head: [Unattended waiver](config.md#unattended-waiver).
 - **Delegations.** `delegations` lists the Human's answers to the merge guard's round-limit question that left the ship
   decision to the session, each recorded with `aidrian pr delegate` as `{ head, kind, answer, issue, url, by, session, at }`,
   where `kind` is `round_cap`, `answer` is `delegate`, and `issue` is the follow-up issue as `<owner>/<name>#<n>`.
@@ -1297,6 +1341,92 @@ shows, such as a waiver's reason, has `<!--` and `-->` escaped, so no text can c
   audit entry, not proof; except on a private repository read from inside the team, the posted copy leaves out `by`
   and `session` ([The posted copy](#the-posted-copy)). A record without the list has none. The
   [merge guard](hooks.md#merge-guard) takes one for a merge that names its head while every open finding stays low.
+
+### Merge trust
+
+The record is this machine's word, and a project run's confined session can write it: the state work folders it may
+write hold the review records and the dispatch log, and it may post to the pull request as the user. So a merge in a
+session no Human attends never rests on the record alone. Such a session is one with an
+[unattended mark](handoff.md#the-background-route), a pending or unreadable one included, read by the session id its
+host gives, or a project run's driver, by its driver mark ([hooks.md](hooks.md#agent-gates)). For it, `aidrian pr auto-merge` and the [merge guard](hooks.md#merge-guard), on Claude Code and Codex alike,
+also ask for two things no such session writes (`plugins/aidrian/lib/review/merge-trust.mjs`); the guard first asks the
+team's auto-merge policy of the forge too, as `aidrian pr auto-merge` does. A merge in a session the Human attends
+reads nothing more, except a judge's verdict: under the unattended waiver, the guard and auto-merge read the review
+trail for the bot's pass, and the sign-off store, before one stands, attended or not. A judge's verdict at the round cap
+([Unattended waiver](config.md#unattended-waiver)) changes only the record's `round_limit` stop: it never stands in for
+the review bot, waives only this machine's reviewers' findings of `medium` severity or lower, and stands only once the
+bot passed the head, so a waived merge meets both checks below as any other does. The guard reads the review trail once
+for both: the waiver's read serves merge trust.
+
+1. **The review bot's verdict, on the forge.** The default branch's `github.reviewer`, read from GitHub, a bot account,
+   passed exactly the merge's head: an approving review of that commit, or its own status card saying its code review of
+   that full commit completed and found nothing (`has_any_findings` false, since marking the bot's threads resolved
+   clears `has_unresolved_findings`), with every edit of the card the bot's, its last editor and anyone who deleted an
+   edit from its history included. A review of that commit by the bot in any other state, a dismissed one included,
+   keeps it off. A clean receipt or a 👍 names no full commit, so neither counts. The check holds whatever the record's
+   outcome: a `none_needed` pull request merges unattended only once the bot is requested on it, with
+   `aidrian pr await-review <PR> --request`, and has passed. With no bot set, the check is off with no route: a session
+   no Human attends merges nothing, and the refusal says to set `github.reviewer` on the default branch, or that the
+   Human merges. One GraphQL call reads it, the forge's review trail: the head, the base, the author, the review decision,
+   the head's checks, the first 100 changed files, the last 100 reviews, the first 100 conversation comments with their
+   edits, and both branches' pointer file and `config.json`, with the default branch's knowledge folder. Only a pointer to
+   another folder reads those over REST too. On a real pull request the whole check takes about 1 to 1.5 seconds; a read
+   that runs out of the guard's 4 seconds refuses, and says one more try is safe.
+2. **The Human's sign-offs, from the sign-off store.** `aidrian pr signoff <PR> --flow <id>` also writes the sign-off to
+   `$XDG_STATE_HOME/aidrian/signoffs/<owner>/<name>/<PR>.json`, first: a store it cannot write keeps the record unwritten
+   too. It keeps the head the Human typed, resolved to its full commit in their checkout, a prefix two commits share
+   refused; `--last` keeps the forge's current head. The store is the user's alone (each folder 0700, the file 0600, read
+   without following a link). Only a main session the Human attends writes it: the agent gate hook refuses a subagent, a
+   session no Human attends, and a project run's driver a write there, the review-signoff rule refuses them the command
+   ([hooks.md](hooks.md#bash-rules)), a confined Claude Code session's sandbox denies it to commands and file tools, and
+   the project start gate refuses a Codex writable root, `/tmp`, or `$TMPDIR` that reaches it. During a run, a sign-off
+   comes from a separate session the Human attends. A merge no Human asks for needs, on exactly its head, a store entry
+   for each flow the record names for the Human's sign-off on that head, and for each flow the forge's file list and both
+   branches' configs may select, so a record that names none does not lift them; `aidrian pr signoff` takes a sign-off of
+   any such flow on the forge's current head:
+   - a `signoff: "human"` flow whose `files` match a behaviour file, sorted by the config's `review.ignore` and
+     `review.nonBehaviour` as the plan sorts them, or that a plan command, an `exec` reviewer's command, the visual
+     review's login or preview command, `added` patterns, or `content` tracing may select, since the merge reads no
+     content;
+   - any flow whose `tests` match a deleted file;
+   - `harness-config` when a changed file is a policy file of aidrian, a file either branch's config was read from, or a
+     doc a flow's invariants cite, or one of those commands is set;
+   - every such flow when the list holds a rename or is cut short.
+   A sign-off kept from an earlier head ([Sign-off by the Human](#sign-off-by-the-human)) does not count here: the Human
+   signs off the head that merges. A sign-off given on another machine is not in this machine's store.
+
+The guard reads the review record bounded for every session: a record file that is a link, a FIFO, has a second hard
+link, or is larger than 2 MiB (ten times the largest record in use) reads as no record at once, and each file is parsed
+once a call. For a session no Human attends, or a project run's driver, it first checks the pull request's record
+files without parsing them, and refuses the merge when one fails those checks, or there are more than 8, or more than
+8 MiB in all, or a records folder holds more than 20,000 entries or cannot be listed within the hook's time: the
+folder, which a confined session may write, is read one entry at a time, so entries planted to fill it never stall
+the guard past its hook's time. An attended reader past 20,000 entries reads only the records among the first ones.
+Attended reads are unchanged: the review step still reads the record's sign-offs, from this machine or the pull
+request's comment, and a merge the Human asks for still takes the record's outcome. The trust model's residuals: the
+user's gh token stays readable to a confined session, so it can merge through the API outside every hook; a bot whose
+own account a session can steer is no second reviewer; and only branch protection with a required review from a second
+account is proof.
+
+The agent gate hook holds what an issue session runs with that token by name: it pushes only
+`git push origin HEAD:refs/heads/<its branch>`, and runs no tag push, release, workflow dispatch, or raw API write
+outside its own pull request and issues ([hooks.md](hooks.md#agent-gates)). A script or program the session runs, or
+`curl` with the token, is outside every hook and can still push a tag, cut a release, start a workflow, or push another
+branch: that is an accepted residual, which only the forge closes. So `aidrian project preflight` blocks a run whose
+default branch asks the signed-in user, administrator or not, for no pull request, or whose tags no tag rule holds that
+names every tag, restricts creating and updating one, and that the signed-in user can never bypass. The forge also runs
+a branch's own workflow files, with the repository's secrets, on every push: the hook refuses an issue session's push
+whose commits change them, release and deploy secrets belong in environments limited to protected branches and tags
+or held for a required reviewer who prevents self-review or is not the signed-in user, never in repository secrets or
+an open environment a pushed branch's workflow can read. The preflight counts an environment as held when its admins
+may bypass its rules (on GitHub `can_admins_bypass`, true by default), though an admin's token deploys past them
+through a script, and when it is limited to protected branches, though a branch protection's pattern may match an
+issue's branch; its `note workflows` line says to turn the bypass off and keep those patterns off issue branch names.
+The preflight blocks a run whose workflows see CI secrets,
+whatever the token's `workflow` scope, since the workflows already run the branch's own tests, scripts, and build, unless
+the team sets `projectRun.workflowSecretsAccepted`. A cloud role whose OIDC trust names any ref of the repository,
+`repo:<owner>/<name>:*`, is a secret by another name: any pushed branch's workflow can assume it, so its trust names a
+protected branch or a held environment.
 
 ### Finding ids
 

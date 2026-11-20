@@ -4,6 +4,7 @@
 // (lib/hook-deny.mjs): a hook_deny row in the dispatch log, and a count toward the lesson for a rule that blocks one
 // session again and again. Anything this hook cannot read lets the command run: rules deny only what they positively identify.
 
+import { anchorClones } from '../lib/attempt-clone.mjs';
 import { block, runHook } from '../lib/hook-io.mjs';
 import * as attribution from '../lib/rules/attribution.mjs';
 import * as decisionsSet from '../lib/rules/decisions-set.mjs';
@@ -26,6 +27,7 @@ import * as reviewSignoff from '../lib/rules/review-signoff.mjs';
 import * as grepExitChain from '../lib/rules/grep-exit-chain.mjs';
 import * as mainCheckout from '../lib/rules/main-checkout.mjs';
 import * as processKill from '../lib/rules/process-kill.mjs';
+import * as projectInit from '../lib/rules/project-init.mjs';
 import * as pushFirst from '../lib/rules/push-first.mjs';
 import * as shellInitInstall from '../lib/rules/shell-init-install.mjs';
 
@@ -62,6 +64,7 @@ const RULES = [
   ['review-rounds', reviewRounds],
   ['review-signoff', reviewSignoff],
   ['decisions-set', decisionsSet],
+  ['project-init', projectInit],
   ['review-extend', reviewExtend],
   ['review-delegate', reviewDelegate],
   ['review-fallback', reviewFallback],
@@ -81,6 +84,8 @@ const RULES = [
 await runHook(async (input) => {
   const command = input.tool_input?.command;
   if (input.tool_name !== 'Bash' || typeof command !== 'string' || command === '') return;
+  // An attempt clone is linked only for the session the payload names (lib/attempt-clone.mjs).
+  anchorClones({ session: input.session_id });
   // `startedAt`: when this process started, for a rule that bounds its network calls by the hook's own time (merge-review's
   // unattended waiver, ready-hold).
   const context = { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), env: process.env, input, startedAt: performance.timeOrigin };

@@ -1,6 +1,6 @@
 {
   "name": "aidrian-mod",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Optional Claude Code mod for the aidrian plugin: a band above the prompt, an aidrian-mod pane, and notifications. Requires the aidrian plugin.",
   "author": {
     "name": "aidrian"
@@ -14,7 +14,10 @@
       "type": "string",
       "title": "Mode",
       "description": "shadow logs what would be sent, live sends it",
-      "options": ["shadow", "live"],
+      "options": [
+        "shadow",
+        "live"
+      ],
       "default": "live"
     },
     "notifyMinTurnSeconds": {

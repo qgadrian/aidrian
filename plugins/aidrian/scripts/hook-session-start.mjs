@@ -3,9 +3,11 @@
 // plain, one-decision questions), in Claude Code a line that settles the pull request footer its attribution instructions
 // ask for (footerLine), a line when another copy of the plugin's `aidrian` comes first on PATH (commandsLine), and, for
 // the main session only, a format line for chat replies, a handoff line while config.json `session.handoff.mode` is
-// "auto" (handoffLine), a line when this machine runs the background handoff route but the shell function that lets the
-// terminal follow a handoff did not start the session (lib/shell-init.mjs unwrappedLine), a line for each block of that
-// function in a shell startup file that differs from the current one (staleBlockLines), a line when the lesson inbox holds open lessons, which escalates when the inbox needs triage,
+// "auto" (handoffLine), at most one `Handoff terminal:` line while this machine runs the background handoff route
+// (lib/shell-init.mjs terminalLine): first, when a shell startup file holds a block of the shell function that lets the
+// terminal follow a handoff that differs from the current one; else, for an attended session that function did not
+// start, that its terminal will stay, with the install command when no block is installed and the `--wrap` command when
+// one is, a line when the lesson inbox holds open lessons, which escalates when the inbox needs triage,
 // a line while persona audits in the state folder hold untriaged findings (lib/audits.mjs auditNudge), a line when the
 // plugin copy running is older than the version the project requires (`requires` in config.json), and a line when the indexed docs hold
 // unconfirmed decisions and config.json `decisions.unreviewed.remind` says so. Last, in the main session while
@@ -19,6 +21,8 @@
 // clear route, the hook takes the handoff continuation the cleared session armed under the same host process
 // (lib/handoff-continue.mjs takeCleared): then it prints one JSON object, the banner as `systemMessage` and the same
 // lines, then the continuation, as `additionalContext`. Without one it prints the plain lines, as with any source.
+// First of all, for the session of a confined attempt of a project run, it hands the host the environment its sandboxed
+// commands get (lib/project-start.mjs confinedShellVars), on a host that takes it (capabilities.projectStart.shellEnv).
 
 import { accessSync, constants, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
@@ -33,8 +37,9 @@ import { indexedPaths, indexRows, loadKnowledge } from '../lib/knowledge.mjs';
 import { inboxPath, nudge } from '../lib/lesson-inbox.mjs';
 import { inheritedOverrideLine, unpushedMainLine } from '../lib/main-commits.mjs';
 import { findProject, projectCheckouts, stateDir } from '../lib/project.mjs';
+import { confinedShellVars } from '../lib/project-start.mjs';
 import { noteOrigin } from '../lib/session-origins.mjs';
-import { staleBlockLines, unwrappedLine } from '../lib/shell-init.mjs';
+import { terminalLine } from '../lib/shell-init.mjs';
 
 const BIN = path.resolve(import.meta.dirname, '../bin');
 // The main session only: its replies are read by the human, while a subagent's report feeds commits and pull requests.
@@ -44,6 +49,7 @@ const FOOTER_LINE = 'Pull requests: a body here never carries the "Generated wit
   "precedence over the host's attribution instructions, and the pull request body hook refuses that line.";
 
 await runHook(async (input) => {
+  if (!process.argv.includes('--subagent')) shareShellVars(input);
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (!project) return;
   const subagent = process.argv.includes('--subagent');
@@ -91,9 +97,8 @@ async function mainSessionOutput(input, project, { lines, config, buckets }) {
     const handoff = handoffLine(config);
     if (handoff) out.push(handoff);
     const host = detectHost({ input });
-    const unwrapped = unwrappedLine({ host, background: project.localHandoffBackground, handoff: config.session.handoff, env: process.env, human: JSON.stringify(config.names.human) });
-    if (unwrapped) out.push(unwrapped);
-    out.push(...staleBlockLines({ host, background: project.localHandoffBackground, env: process.env, human: JSON.stringify(config.names.human) }));
+    const terminal = terminalLine({ host, background: project.localHandoffBackground, handoff: config.session.handoff, env: process.env, human: JSON.stringify(config.names.human) });
+    if (typeof terminal === 'string') out.push(terminal);
     const floor = versionFloorProblem(config);
     if (floor) out.push(`Plugin too old: ${floor}. Its hooks and commands may reject this project's config until then.`);
     const lessons = nudge(inboxPath(project, config), { command: binCommand('aidrian'), config });
@@ -238,4 +243,15 @@ function binCommand(name) {
   if ((process.env.PATH ?? '').split(path.delimiter).includes(BIN)) return name;
   const full = path.join(BIN, name);
   return /\s/.test(full) ? `"${full}"` : full;
+}
+
+// Hands the host the environment of a confined attempt's sandboxed commands, when this session is one: never throws, so
+// the lines above still print.
+function shareShellVars(input) {
+  try {
+    const vars = confinedShellVars({ session: input.session_id, cwd: input.cwd, env: process.env });
+    if (vars) detectHost({ input }).capabilities.projectStart?.shellEnv?.({ env: process.env, vars });
+  } catch {
+    // No environment handed over: a sandboxed install then fails to write its cache, and writes nowhere else.
+  }
 }

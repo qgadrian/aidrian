@@ -6,7 +6,7 @@ description: Draft, create, or update a GitHub pull request title and body from 
 # pr-write
 
 Write a pull request a reviewer understands in 30 seconds: what changed, why, how risky it is, and what proves it works.
-This skill writes the title and body and publishes them. It never edits code or merges.
+This skill writes and publishes the title and body; it never edits code or merges.
 `doc-updater` commits the pull request's number on the branch's decision markers, as Publish says.
 
 Before you start, follow the `knowledge` skill. Load your `issue_tracker` docs for the issue key format and closing keyword.
@@ -19,18 +19,18 @@ git log --oneline origin/<base>..HEAD
 git diff --stat origin/<base>...HEAD
 ```
 
-- `<base>` is the branch the pull request targets: the one the caller names, else config.json `git.defaultBranch`.
+- `<base>` is the target branch: the one the caller names, else config.json `git.defaultBranch`.
   Always the `origin/` ref: a local branch can be days behind.
-- Read a large diff by its stat, then open only the files that matter.
+- Read a large diff by its stat; open only the files that matter.
 - When a pull request already exists, `gh pr view <n> --json number,title,body,commits,baseRefName` must agree with the
-  commit count above; if it does not, fetch again before you write.
+  commit count above, or fetch again first.
 - Find the issues the branch implements in its name, its commits, and the existing pull request.
 
 ## Title
 
 A plain Conventional Commits title: `<type>(<scope>): <subject>`.
 Only when config.json `github.titleIssuePrefix` is `true`, prefix the issue key: `[<issue key>] <type>(<scope>): <subject>`,
-or `[NOISSUE] <type>: <subject>` when no issue exists. The type is a Conventional Commits type from config.json
+or `[NOISSUE] <type>: <subject>` when no issue exists. The type is one of config.json
 `git.commits.types`. The subject names the real scope of the branch.
 When config.json `github.pullRequest.title` is set, the title matches that pattern, as the Bash hook checks.
 
@@ -43,8 +43,8 @@ lists the sections and what goes in each.
 When config.json `github.pullRequest` sets them, use only the `sections` it lists, give each `deferrals` item a reason
 from its list and the issue it went to, and each `residuals` item every field it lists, as `field: value`.
 
-- **Evidence is what ran.** List the exact commands you or an agent ran in this branch, and what each proved.
-  If evidence is missing, say so; never invent a test, a screenshot, or a result.
+- **Evidence is what ran.** List the exact commands run in this branch, and what each proved.
+  Say when evidence is missing; never invent a test, a screenshot, or a result.
 - **Close issues in plain text.** One line per issue the branch fully implements, such as `Fixes ABC-12` on Linear
   or `Fixes #12` on GitHub, as the `knowledge` skill's `references/tracker.md` writes the key in a body line,
   never inside backticks, a link, or a quote, where trackers ignore it. Use `Refs ABC-12` or `Refs #12` for partial work.
@@ -54,7 +54,7 @@ from its list and the issue it went to, and each `residuals` item every field it
   No `--fill` either: gh would write the body from commit messages.
 - **Attribution, when config.json `attribution.pullRequest` is set:** end a new body with the `Authored-with:` and
   `Assisted-by:` lines the attribution rule prints, as written. They are the one place agent names belong.
-- Flag a mixed-scope or oversized branch in the risk section.
+- Flag a mixed-scope or oversized branch under Risk.
 - **Decisions.** Every run, run `aidrian decisions list --added-since origin/<base> --json`; exit 1 is the stop below for an unclear base.
   Unless its `queue`, read at the base, is `report`, list each of its `decisions` in a `## Decisions` section,
   each of its `settled` as settled in this branch, and each of its `removed` as removed in this branch.
@@ -69,7 +69,7 @@ from its list and the issue it went to, and each `residuals` item every field it
 Write the body to `<state>/tmp/pr-body-<branch>.md`, where `<state>` is the folder `aidrian state` prints and
 `<branch>` is the branch name with each `/` replaced by `-`. One file per branch, outside the repository, so no other
 session overwrites it; a path under `.git/` fails in a worktree.
-Not the host's scratchpad or the system temp folder: sessions share those, and the Bash hook refuses a body file there.
+Not the host's scratchpad or the system temp folder, which sessions share: the Bash hook refuses a body file there.
 Write it with the file tool, or with `cat > <file> <<'EOF'` (quoted delimiter) in the same command as gh: the Bash hook
 reads that heredoc. Give gh that path written out, or through a variable the same command sets to it, never
 `$(aidrian state)/…`: the hook checks only a body file it can name. Any other edit to the file, such as `sed -i` or a
@@ -80,9 +80,9 @@ gh pr create --draft --base <base> --title "<title>" --body-file <file>   # new:
 gh pr edit <n> --title "<title>" --body-file <file>                       # existing: update, never recreate
 ```
 
-- Draft by default: the review loop runs on the draft, and marks it ready as config.json `github.markReady` says. Open it ready only when asked.
+- Draft by default, for the review loop to mark ready as config.json `github.markReady` says. Open it ready only when asked.
 - Before an edit, reread the live body (`gh pr view <n> --json body`) and keep what is still true.
-- After publishing, read it back and confirm each closing line is plain text on its own line.
+- After publishing, read it back: each closing line is plain text on its own line.
 - When one of its `decisions` has `pr` null, have `doc-updater` replace `pr=none` on that marker line with the pull request's number, commit, and push only that.
   Never on a `settled` entry.
   That push moves the head: it comes before the review of the new head, or the report says it did not.
@@ -91,8 +91,9 @@ gh pr edit <n> --title "<title>" --body-file <file>                       # exis
 
 After a pull request is opened or updated, config.json `github.reviewLoop` says what follows:
 
-- `"auto"`, the default: once this skill, and any skill that ran it, has ended, the session runs the `pr-review-loop`
-  skill on the pull request right away, without asking the Human.
+- `"auto"`, the default: once this skill, and any skill that ran it, such as a top-level `issue-implement` or `plan-implement`,
+  has ended, the session runs the `pr-review-loop` skill on the pull request right away, without asking the Human.
+  `pr-auto-merge`'s step 2 says how the final report hands the Human a path it refused.
 - `"ask"`: offer the loop, and run it when the Human asks.
 
 Inside a skill or agent that runs its own review loop, leave the loop to it, so the loop runs once.

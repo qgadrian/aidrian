@@ -198,9 +198,12 @@ A signal with target `plugin` lands in the [plugin's inbox](#the-plugins-inbox).
 - **A subagent ends its turn with a background task it started still running**, after the [background check](hooks.md#background-check)
   already sent it back 5 times in a row to wait. Key `idle-with-children:<agent type>`; P2, `gap`; target `plugin`.
   It stays quiet: a send-back is the check working; only the stop the cap lets end, with the task still running, counts.
-- **One of the plugin's [blocking rules](hooks.md#recorded-blocks) blocks one session 3 times.** Key `hook-deny:<rule>`; P2, `gap`;
+- **One of the plugin's [blocking rules](hooks.md#recorded-blocks) blocks one agent run 3 times for the same cause.** Key `hook-deny:<rule>`; P2, `gap`;
   target `project` for `agent-gates` and `tracker-guard`, whose gates and `tracker` key the project writes, `plugin` for any other.
-  It stays quiet: one block is the rule doing its job; three in a session is an agent fighting it.
+  It stays quiet: one block is the rule doing its job; three for the same cause in one run is an agent fighting it.
+  A run is one subagent, by its `agent_id`, or the main thread; the cause is the rule's own words for what it matched,
+  the `reason` of its `hook_deny` row. A count per session once filed lessons for blocks days apart, by different agents,
+  on different pull requests, for different causes, each a block the rule was right to make.
   The tracker write guard's [refusal of a write with no read yet](config.md#how-a-write-is-judged) counts once at most, at the session's end,
   and only when no read was recorded, so a batch of first writes never fires this, and a session stuck on that refusal files no lesson by itself.
   With `telemetry.enabled` or `telemetry.hookDenies` off, such a session leaves no row either, though the agent still sees each refusal.
@@ -213,8 +216,12 @@ A signal with target `plugin` lands in the [plugin's inbox](#the-plugins-inbox).
   and a tool is one occurrence for good, so a lesson rejected because the tool only reads never reopens.
 
 A row holds names, counts, paths, and ids, never a prompt, a command, or tool output; the `session` id finds the rest.
-The block counts live in the system's temporary folder, in one folder per session with a small file per rule, which grows
-a byte per block, so subagents that block at the same time all count; the session-end hook deletes the session's folder.
+The block counts live in the hooks' counts folder, `<state root>/hook-counts`, never the temporary folder, which a
+confined session's sandbox may write: a FIFO planted at a count would hold the blocking hook past its time, and the host
+would then run the call it refused. One folder per session holds a small file per rule, agent run, and cause, which grows a byte per block,
+so subagents that block at the same time all count; each is opened without following a link or waiting, and counts
+only as a regular file of the user with one link. The session-end hook deletes the session's folder, and sweeps up to
+2,000 entries of the counts folder older than 7 days, as a session that never ended leaves them.
 That folder also holds a marker per tool noted, so a session notes each tool once.
 
 Not recorded: the session-length reminder fires in most long sessions by design, and its numbers are already in the dispatch log.

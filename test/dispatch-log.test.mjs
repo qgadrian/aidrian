@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { closeSync, constants, cpSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, constants, cpSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -268,8 +268,8 @@ test('the stop hook writes a subagent\'s final report to the handoff file its br
   assert.equal(stop('p4', transcriptFor('p4', kept), 'Done.').status, 0);
   assert.deepEqual(read(kept), { by: 'dispatcher' });
 
-  // While a background task of its own still runs, the stop is no end of its work: nothing is written, and the
-  // background check and the handoff send it back.
+  // While a background task of its own still runs, the stop is no end of its work: nothing is written, and only the
+  // background check sends it back. The handoff is not due yet, so the row does not call it missing.
   const waiting = path.join(dispatch, 'docs-S5-product-manager.json');
   const busy = transcriptFor('p5', waiting, [
     { type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { subagent_type: 'Explore', prompt: 'x' } }] } },
@@ -277,11 +277,16 @@ test('the stop hook writes a subagent\'s final report to the handoff file its br
   ]);
   const held = stop('p5', busy, 'Waiting for the helper-scout result.', { background_tasks: [{ id: 'achild001', type: 'local_agent', status: 'running' }] });
   assert.equal(held.status, 2);
-  assert.match(held.stderr, /Your brief asks you to write your machine handoff to/u);
+  assert.match(held.stderr, /^You started background work that is still running/u);
+  assert.doesNotMatch(held.stderr, /Your brief asks you to write your machine handoff to/u, 'a handoff not due yet is no send-back reason');
   assert.throws(() => readFileSync(waiting), /ENOENT/u);
+  // The task done, the next stop ends and writes the handoff.
+  assert.equal(stop('p5', busy, 'The helper found nothing.', { stop_hook_active: true, background_tasks: [] }).status, 0);
+  assert.deepEqual(read(waiting), { written_by: 'stop-hook', report: 'The helper found nothing.' });
 
-  assert.deepEqual(log().map((row) => [row.agent_id, row.handoffs_written, row.sent_back]), [
-    ['p1', 1, false], ['p2', 1, false], ['p3', 1, false], ['p4', 0, false], ['p5', 0, true],
+  assert.deepEqual(log().map((row) => [row.agent_id, row.delivered, row.running, row.handoffs_written, row.sent_back]), [
+    ['p1', 'chat', 0, 1, false], ['p2', 'file', 0, 1, false], ['p3', 'chat', 0, 1, false], ['p4', 'chat', 0, 0, false],
+    ['p5', 'pending', 1, 0, true], ['p5', 'chat', 0, 1, false],
   ]);
 });
 
@@ -304,6 +309,56 @@ test('the stop hook writes the handoff from the report of the stop it lets end, 
   assert.equal(stop(corrected, true).status, 0);
   assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { written_by: 'stop-hook', report: corrected });
   assert.deepEqual(log().map((row) => [row.handoffs_written, row.sent_back]), [[0, true], [1, false]]);
+});
+
+// A handoff file counts only when this run wrote it: a regular file changed at or after the subagent's transcript began.
+// One an earlier dispatch of the same name left, a link, or a folder is stale: the stop hook replaces it with the report,
+// through a new file renamed over it, so a link is never followed. A transcript with no timestamp keeps the old test.
+test('the stop hook replaces a stale handoff file, a link, but keeps one this run wrote, byte for byte', async (t) => {
+  const { base, dir, state, hook } = project(t);
+  const dispatch = path.join(state(), 'dispatch');
+  mkdirSync(dispatch, { recursive: true });
+  const transcriptFor = (id, file, timestamp) => {
+    const transcript = path.join(base, `agent-${id}.jsonl`);
+    writeFileSync(transcript, JSON.stringify({ type: 'user', ...(timestamp ? { timestamp } : {}), message: { role: 'user', content: `Write your machine handoff to ${file}.` } }));
+    return transcript;
+  };
+  const stop = (id, transcript) => hook('hook-subagent-stop.mjs', {
+    cwd: dir, agent_id: id, agent_type: 'aidrian:product-manager', agent_transcript_path: transcript, last_assistant_message: '{"status":"done","role":"product-manager"}', stop_hook_active: false,
+  });
+  const report = { status: 'done', role: 'product-manager' };
+
+  // Left by an earlier dispatch, before this run began: replaced.
+  const older = path.join(dispatch, 'docs-S1-product-manager.json');
+  writeFileSync(older, '{"status":"done","role":"earlier"}');
+  await sleep(30);
+  assert.equal(stop('s1', transcriptFor('s1', older, new Date().toISOString())).status, 0);
+  assert.deepEqual(JSON.parse(readFileSync(older, 'utf8')), report);
+
+  // Written by this run, after its transcript began: kept as it is.
+  const newer = path.join(dispatch, 'docs-S2-product-manager.json');
+  const began = new Date(Date.now() - 60_000).toISOString();
+  writeFileSync(newer, '{ "by": "the agent itself" }');
+  assert.equal(stop('s2', transcriptFor('s2', newer, began)).status, 0);
+  assert.equal(readFileSync(newer, 'utf8'), '{ "by": "the agent itself" }');
+
+  // A link, even a fresh one, is no handoff: the link is replaced, and the file it named is untouched.
+  const target = path.join(base, 'elsewhere.json');
+  writeFileSync(target, '{"keep":true}');
+  const linked = path.join(dispatch, 'docs-S3-product-manager.json');
+  symlinkSync(target, linked);
+  assert.equal(stop('s3', transcriptFor('s3', linked, began)).status, 0);
+  assert.equal(lstatSync(linked).isFile(), true, 'a regular file now');
+  assert.deepEqual(JSON.parse(readFileSync(linked, 'utf8')), report);
+  assert.equal(readFileSync(target, 'utf8'), '{"keep":true}');
+
+  // No timestamp in the transcript: a file that is there counts, as before.
+  const plain = path.join(dispatch, 'docs-S4-product-manager.json');
+  writeFileSync(plain, '{"by":"dispatcher"}');
+  await sleep(30);
+  assert.equal(stop('s4', transcriptFor('s4', plain, null)).status, 0);
+  assert.equal(readFileSync(plain, 'utf8'), '{"by":"dispatcher"}');
+  assert.deepEqual(readdirSync(dispatch).filter((name) => name.endsWith('.tmp')), [], 'no temporary file left');
 });
 
 test('claimedPaths leaves out a path shortened with an ellipsis: its full form cannot be checked', () => {
@@ -504,7 +559,7 @@ test('summarize: per agent type dispatches, re-dispatch rate, medians, cost, del
   const summary = summarize(rows, { sinceMs: parseSince('7d', NOW) });
   assert.deepEqual(summary.agents[0], {
     agent_type: 'Explore', dispatches: 3, redispatched: 1, redispatch_rate: 0.33, median_duration_ms: 2000, median_tokens: 2000, cost_usd: 0.75,
-    delivered: { file: 1, chat: 1, missing: 0 }, top_docs: [['a.md', 2], ['b.md', 1]],
+    delivered: { file: 1, chat: 1, missing: 0, pending: 0 }, top_docs: [['a.md', 2], ['b.md', 1]],
     runs: 2, cost_per_run_usd: 0.38, sent_back: 1, sent_back_rate: 1, runs_without_send_back: 1, avg_docs_read: 1.5, avg_doc_bytes: 3072,
     requests: 10, tool_requests: 4, tool_calls: 6, tool_calls_per_request: 1.5, runs_without_tool_counts: 1,
   });
@@ -514,9 +569,9 @@ test('summarize: per agent type dispatches, re-dispatch rate, medians, cost, del
     count: 6,
     sessions: 2,
     by_rule: [
-      { rule: 'git-amend', count: 4, agents: [['main', 3], ['aidrian:explorer', 1]], repeated_sessions: 1, reasons: [['`git commit --amend` rewrites the branch tip', 4]] },
+      { rule: 'git-amend', count: 4, agents: [['main', 3], ['aidrian:explorer', 1]], repeated_runs: 1, reasons: [['`git commit --amend` rewrites the branch tip', 4]] },
       {
-        rule: 'agent-gates', count: 2, agents: [['aidrian:explorer', 2]], repeated_sessions: 0,
+        rule: 'agent-gates', count: 2, agents: [['aidrian:explorer', 2]], repeated_runs: 0,
         reasons: [['agents.explorer.allow does not list it', 1], ['agents.explorer.deny has "Bash"', 1]],
       },
     ],
@@ -533,7 +588,7 @@ test('summarize: per agent type dispatches, re-dispatch rate, medians, cost, del
     'Sessions: 1, $4.50 estimated, main conversation and subagents together',
     '1 stop rows have no dispatch row (a background dispatch, or a host change)',
     'Hook denies: 6 in 2 sessions',
-    '  git-amend: 4, by main 3, aidrian:explorer 1; 1 session blocked 3 times or more, an automatic lesson',
+    '  git-amend: 4, by main 3, aidrian:explorer 1; 1 agent run blocked 3 times or more for the same reason, an automatic lesson',
     '    most often: `git commit --amend` rewrites the branch tip',
     '  agent-gates: 2, by aidrian:explorer 2',
     '    most often: agents.explorer.allow does not list it',

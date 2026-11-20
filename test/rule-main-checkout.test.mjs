@@ -115,6 +115,18 @@ test('apply_patch: every Add, Update, Delete, and Move target is checked', (t) =
   assert.equal(patch('*** Add File: build/x.js\n+x'), null);
 });
 
+test('a write tool whose payload names no file the guard can read is denied from the main checkout, and runs elsewhere', (t) => {
+  const { repo } = fixture(t);
+  const write = (tool, toolInput, cwd = repo) => checkTool({ tool_name: tool, tool_input: toolInput, cwd }, { env: ENV });
+  for (const [tool, toolInput] of [['Write', { content: 'x' }], ['Edit', { file_path: '' }], ['NotebookEdit', {}], ['apply_patch', { command: 'not a patch' }]]) {
+    assert.match(write(tool, toolInput) ?? '', new RegExp(`^Blocked: this writes with ${tool}, and the guard cannot read which files it writes from the main checkout`, 'u'), tool);
+    assert.equal(write(tool, toolInput, path.join(repo, 'wt/task')), null, `${tool} in a worktree`);
+  }
+  // A tool that writes no file is no concern of this rule.
+  assert.equal(write('Read', { file_path: path.join(repo, 'src/app.js') }), null);
+  assert.equal(checkTool({ tool_name: 'Write', tool_input: { content: 'x' }, cwd: repo }, { env: { AIDRIAN_ALLOW_MAIN_WRITE: '1' } }), null, 'the override');
+});
+
 test('bashTargets finds the certain write targets, resolved against cwd, and nothing else', () => {
   const at = (command) => bashTargets(command, '/repo').map((file) => path.relative('/repo', file));
   assert.deepEqual(at('echo hi > src/a.ts'), ['src/a.ts']);
@@ -280,13 +292,26 @@ test('when git cannot tell, a tool write is denied and a Bash command runs', (t)
 });
 
 test('the write hook denies through stdin, and exits 0 silently for anything it cannot read', (t) => {
-  const { repo } = fixture(t);
-  const run = (input) => spawnSync(process.execPath, [path.join(SCRIPTS, 'hook-write.mjs')], { input, encoding: 'utf8' });
+  const { base, repo } = fixture(t);
+  // Each run starts in the fixture's guarded main checkout, never the folder the test runs from, which may be one too.
+  const run = (input, cwd = repo) => spawnSync(process.execPath, [path.join(SCRIPTS, 'hook-write.mjs')], { input, encoding: 'utf8', cwd });
   const denied = run(JSON.stringify({ tool_name: 'Write', tool_input: { file_path: path.join(repo, 'src/app.js') }, cwd: repo }));
   assert.deepEqual([denied.status, denied.stdout], [2, '']);
-  for (const input of ['', 'not json', '[]', '{}', JSON.stringify({ tool_name: 'Edit', tool_input: { file_path: 42 } })]) {
+  for (const input of ['', 'not json', '[]', '{}']) {
     const { status, stdout, stderr } = run(input);
     assert.deepEqual([status, stdout, stderr], [0, '', ''], input);
+  }
+  // A readable payload whose edit names no file the host's adapter can read is blocked from a guarded main checkout
+  // (docs/hooks.md, the main-checkout guard), since the guard cannot tell it writes no tracked file, and runs elsewhere.
+  const nameless = (cwd) => run(JSON.stringify({ tool_name: 'Edit', tool_input: { file_path: 42 }, cwd }), cwd);
+  const blocked = nameless(repo);
+  assert.deepEqual([blocked.status, blocked.stdout], [2, '']);
+  assert.match(blocked.stderr, /the guard cannot read which files it writes from the main checkout/u);
+  const outside = path.join(base, 'outside');
+  mkdirSync(outside);
+  for (const cwd of [outside, path.join(repo, 'wt/task')]) {
+    const { status, stdout, stderr } = nameless(cwd);
+    assert.deepEqual([status, stdout, stderr], [0, '', ''], cwd);
   }
 });
 

@@ -64,12 +64,13 @@ The agent that builds or fixes a change commits and pushes it; the orchestrator 
 
 ## Skills
 
-Claude Code runs each skill as `/aidrian:<skill>`. In Codex, ask for it by name.
+Claude Code runs each skill as `/aidrian:<skill>`. In Codex, select a skill from the catalog or ask for it by name when it supports implicit invocation.
 
 | Coordination | What it does |
 | --- | --- |
 | `orchestration` | The orchestrator's steps for worktrees, slices, and pull requests. It merges only when this run marked the pull request ready and `aidrian pr auto-merge` exits 0. |
 | `autopilot` | Runs one task unattended to a reviewed pull request, or takes over a session under way with `--continue`. Merges only when `aidrian pr auto-merge` exits 0. |
+| `project-autopilot` | Runs a whole tracker project unattended, one fresh `autopilot` session per issue, after one attended first turn that names every blocker. Writes the tracker only as `aidrian project report` owes. |
 | `session-handoff` | Writes a brief so a fresh session can resume the work. |
 | `session-continue` | Resumes work from a handoff brief. |
 
@@ -111,6 +112,10 @@ Claude Code runs each skill as `/aidrian:<skill>`. In Codex, ask for it by name.
 | `pr-product-feedback` | Walks a pull request as its personas, has `product-manager` read its diff, and posts both as one comment. Feedback, never an approval ([Product feedback](personas.md#product-feedback-on-a-pull-request)). |
 | `persona-audit-triage` | Takes each persona-audit finding to a decision with the Human: an issue, a fix, a duplicate, a drop, or later ([Triage](personas.md#triage)). |
 
+| Briefs | What it does |
+| --- | --- |
+| `visual-brief` | Creates a standalone HTML brief to summarize sources, review a change, compare options, or explain how something works. Run explicitly. |
+
 | Harness | What it does |
 | --- | --- |
 | `knowledge` | Loads the project's rules. Every agent preloads it. |
@@ -121,3 +126,43 @@ Claude Code runs each skill as `/aidrian:<skill>`. In Codex, ask for it by name.
 | `harness-health` | Explains the top problems in `aidrian report health`. |
 | `harness-setup` | Sets up a project in one guided session through `harness-librarian`; on a set-up project, runs `harness-health`. |
 | `skill-writer` | Creates, updates, audits, renames, or retires a skill. |
+
+### Visual brief
+
+Invoke `/aidrian:visual-brief` in Claude Code or select `aidrian:visual-brief` from the Codex catalog. Give it a question and any
+sources, audience, time window or revision, or local destination. For direct use on any host with source reading, local writing,
+and private file delivery, supply the [visual-brief skill folder](../plugins/aidrian/skills/visual-brief/) and explicitly request
+its workflow. The deliverable is one local HTML file with a short account of completed and unavailable checks. The pre-delivery
+checks cover offline markup and common credential patterns, with a manual fallback when Node or command execution is unavailable.
+
+Model-free probes verified Claude Code 2.1.329 plugin inventory and Codex 0.171.0 enabled catalog discovery and omission from the
+implicit prompt. Native runtime activation remains unverified on both hosts. A direct run using supplied skill files produced
+and privately delivered a brief. Chrome 157.0.8103.79 verified isolated offline preview, narrow and wide reflow, internal anchors,
+keyboard focus, and print reading order. A static fixture also exercised native disclosure toggling.
+
+For a system overview, the skill traces the normal entry point through success and a meaningful stop, fallback, or retry.
+The brief starts with the parts and their handoffs, then uses an example to illustrate a path.
+
+#### Quality check
+
+Use this synthetic prompt and packet to check editorial quality when needed.
+
+> Which intake window should the library's returns nonprofit use for next month's Saturday pilot? Write a decision brief for
+> the site coordinator using the three supplied source notes only. Deliver one local offline HTML file. The coordinator needs
+> the recommendation and why on the first screen, a visual comparison of the options, and a practical decision for the next
+> Saturday. Cite material claims with locators. Dates, organization and figures in this packet are synthetic.
+
+- **Pilot tally, Observed visits.** Four comparable Saturdays under the current three-hour schedule recorded 96 visits at
+  09:00–10:00, 168 at 10:00–11:00, and 144 at 11:00–12:00. The tally covers 408 visits, with no count of unique visitors or visits outside those hours.
+- **Staffing roster, Volunteer cover and Opening duties.** The guaranteed pair works 09:00–12:00. The budget covers either
+  09:00–11:00 or 10:00–12:00. The coordinator needs 20 minutes for setup. The early start depends on an unapproved paid shift before
+  09:00. For the later start, setup fits at 09:40–10:00 during guaranteed coverage.
+- **Access notes, Arrival constraint and Trial policy.** Seven voluntary comments named the 09:00 hour as the only practical
+  arrival period. The cards are unmatched to the tally, and the number of unique visitors with this constraint is unknown.
+  The coordinator can authorize up to four 09:30 appointments per Saturday. Demand and capacity are untested. Collect wait-list
+  and repeat-slot information before deciding whether to keep the schedule.
+
+Check that the first screen recommends 10:00–12:00 under current staffing and flags the access cost of losing the 09:00 hour.
+Verify the 264 and 312 historical visits within the two windows and check that the brief labels them as historical footfall.
+The visual should help compare staffing, visits, and access. Each claim should lead to its source. The next-Saturday action should
+bound any appointments to the authorized trial and gather evidence for the later decision. Apply the skill's release checks to the final file.

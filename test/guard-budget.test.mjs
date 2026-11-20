@@ -13,7 +13,7 @@ import { configWriteDenial, WRITE_TARGETS } from '../plugins/aidrian/lib/config-
 import { foldCase, globParts } from '../plugins/aidrian/lib/fs.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { isolate } from '../plugins/aidrian/lib/review/env.mjs';
-import { dropPending, markPending, markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
+import { dropPending, markDriver, markPending, markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 
 // The hooks this file runs record their blocks in the state folder; keep those rows out of the real one.
 process.env.XDG_STATE_HOME = mkdtempSync(path.join(tmpdir(), 'aidrian-state-'));
@@ -109,6 +109,9 @@ test('a guard past its time budget refuses a subagent\'s call and lets the main 
     assert.match(refused.stderr, /the guards could not finish reading this command in time, so it may change a file only the main session may change/u, tool);
     assert.equal(run(main(subagent(dir, tool, 'echo x > src/app.js')), env).status, 0, `${tool}: the main session`);
   }
+  // A call that writes nothing, which no guard refuses, runs: a loaded machine never stalls a subagent on its reads.
+  const read = run({ ...subagent(dir, 'Read', ''), tool_input: { file_path: path.join(dir, 'src', 'app.js') } }, env);
+  assert.equal(read.status, 0, read.stderr);
   // The budget may only be lowered: a larger one keeps the hook's own.
   assert.equal(run(subagent(dir, 'Bash', 'echo x > src/app.js'), { ...process.env, AIDRIAN_GUARD_BUDGET_MS: '600000' }).status, 0);
 });
@@ -313,10 +316,48 @@ test('a session no Human attends is held as a subagent past the time budget and 
     assert.equal(words.status, 2, `${session}: more words than the guards read`);
     assert.match(words.stderr, unattended);
   }
+  // A project run's issue session is held the same, and its refusal says what it is, not that the handoff route started it.
+  const issue = 'feed000b-0000-4000-8000-00000000000b';
+  assert.ok(markUnattended(issue, { root: dir, cwd: dir, tags: { project: 'launch', issue: 'ENG-1' } }));
+  for (const [what, ran] of [['past the budget', run(as(issue, subagent(dir, 'Bash', 'echo x > src/app.js')), late)], ['more words', run(as(issue, subagent(dir, 'PowerShell', `Remove-Item ${Array.from({ length: 600 }, (_, i) => `w${i}`).join(' ')}`)))]]) {
+    assert.equal(ran.status, 2, `issue session ${what}`);
+    assert.match(ran.stderr, /only a session a Human attends may change, and this session works an issue of a project run, which no Human attends/u, what);
+    assert.doesNotMatch(ran.stderr, /background handoff route/u, what);
+  }
   // Outside any project, a marked session past the budget is refused too.
   assert.equal(run(as(marked, subagent(outside, 'Bash', 'aidrian handoff continue b.md')), late).status, 2, 'outside a project');
   // Once the gate removed its pending mark, an attended main session keeps its calls past the budget.
   assert.ok(dropPending(pending));
   assert.equal(run(as('plain-session', subagent(dir, 'Bash', 'echo x > src/app.js')), late).status, 0, 'an attended session');
   assert.equal(run(as('plain-session', subagent(outside, 'Bash', 'aidrian handoff continue b.md')), late).status, 0, 'an attended session outside a project');
+});
+
+// Outside any project the guards hold the same sessions: a marked session whose mark names no project, and a run's
+// driver whose run's main checkout is no project, are refused a command longer than the guards read and, past the
+// budget, a write; a call that writes nothing runs for each, as it does for any session.
+test('outside any project, a held session is refused a command longer than the guards read and a write past the budget', (t) => {
+  const outside = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-budget-outside-')));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  const marked = 'feed0009-0000-4000-8000-000000000009';
+  const driver = 'feed000a-0000-4000-8000-00000000000a';
+  assert.ok(markUnattended(marked, { root: outside }));
+  assert.ok(markDriver(driver, { run: 'launch', root: outside, state: path.join(outside, 'state') }));
+  const as = (session, input) => ({ ...main(input), session_id: session });
+  const late = { ...process.env, AIDRIAN_GUARD_BUDGET_MS: '0' };
+  const words = `Remove-Item ${Array.from({ length: 600 }, (_, i) => `w${i}`).join(' ')}`;
+  const long = run(as(marked, subagent(outside, 'PowerShell', words)));
+  assert.equal(long.status, 2, long.stderr);
+  assert.match(long.stderr, /the guards read at most 512 in a shell command they cannot parse, so it may change a file only a main session a Human attends may change, and the background handoff route started this one/u);
+  assert.equal(run(as('plain-session', subagent(outside, 'PowerShell', words))).status, 0, 'an attended session');
+  for (const [tool, input] of [['Bash', { command: 'echo x > a.txt' }], ['Write', { file_path: path.join(outside, 'a.txt'), content: 'x' }]]) {
+    const refused = run({ ...as(driver, { cwd: outside }), tool_name: tool, tool_input: input }, late);
+    assert.equal(refused.status, 2, `${tool}: ${refused.stderr}`);
+    assert.match(refused.stderr, /the guards could not finish reading this command in time, so it may change a file only a main session a Human attends may change, and this session has driven a project run/u, tool);
+    assert.equal(run({ ...as('plain-session', { cwd: outside }), tool_name: tool, tool_input: input }, late).status, 0, `${tool}: an attended session`);
+  }
+  // A call that writes nothing runs past the budget, for the driver, a marked session, and a subagent alike.
+  for (const input of [as(driver, { cwd: outside }), as(marked, { cwd: outside }), subagent(outside, 'Read', '')]) {
+    const read = run({ ...input, session_id: input.session_id ?? 'plain-session', tool_name: 'Read', tool_input: { file_path: path.join(outside, 'a.txt') } }, late);
+    assert.equal(read.status, 0, `${input.session_id ?? 'subagent'}: ${read.stderr}`);
+  }
 });

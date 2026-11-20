@@ -83,6 +83,7 @@ For each slice:
 9. **Commit.** Once the review is clean, set the slice's `status: complete` in the plan.
    Then the slice's own agent makes exactly one Conventional Commits commit
    with the planned subject and a `Refs <ref>` body line, and pushes it, the first push with `-u`.
+   In a project run's issue session, the push is `git push origin HEAD:refs/heads/<branch>`, in a call of its own.
    The closing keyword goes in the pull request body, not in a commit.
    Its handoff lists the exact `git commit` and `git push` commands and `not_bypassed`, or `hook_failed`, in `compliance`.
    Run the commit-count guard again: one commit. A failed commit sets the status back to `in_progress`.

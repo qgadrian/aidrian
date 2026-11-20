@@ -5,12 +5,39 @@
 // is forgeFor's methods, and the helpers below. repoIdentity is the facade's; the others are GitHub's today, as the
 // payloads are: a second forge reshapes them with its adapter.
 
-import { createGithubForge, GITHUB_JSON, isLogin, isTrustedCommenter, MAX_BODY, REVIEWS_PAGE, servedRepository } from './github.mjs';
+import { apiWrite, changeNotFound, CONFIG_COMMANDS, createGithubForge, domains, GITHUB_JSON, isLogin, isTrustedCommenter, MAX_BODY, REF_COMMANDS, REVIEWS_PAGE, servedRepository, TOKEN_VARS, WORKFLOW_FOLDERS } from './github.mjs';
 import { remoteIdentity, repoIdentity } from './identity.mjs';
 
 // A repository's `{ host, path }` from a remote or a `-R` value: the facade's own helper (identity.mjs), which reads
 // text before any forge is chosen. remoteIdentity reads a remote URL alone, and is null for one git reads as a folder.
 export { remoteIdentity, repoIdentity };
+
+// Whether a forge call that reads one pull request (`change`) failed because the forge has no such pull request, which
+// is final, rather than because it could not answer now.
+export { changeNotFound };
+
+// The forge CLIs' subcommands that write the user's own config, each { programs, subcommands, valueOptions, what }:
+// the union of every forge adapter's list, whichever forge serves a checkout, since a session may run any forge's CLI.
+// One adapter today; a second adds its list here.
+const ADAPTER_CONFIG_COMMANDS = Object.freeze([CONFIG_COMMANDS]);
+export const forgeConfigCommands = () => ADAPTER_CONFIG_COMMANDS.flat();
+
+// What a project run's issue session never asks of any forge, whichever serves its checkout, since it may run any
+// forge's CLI (lib/issue-forge-guard.mjs): forgeRefCommands(), the CLI subcommands that release, run a workflow, or
+// change the repository's settings, secrets, or keys, each { programs, subcommands, valueOptions, what };
+// forgeApiWrite(program, tokens), what a call of the CLI's raw API writes that the session never writes, or null; and
+// forgeWorkflowFolders(), the folders of a repository whose files the forge runs with its secrets on a push.
+const ADAPTER_REF_COMMANDS = Object.freeze([REF_COMMANDS]);
+export const forgeRefCommands = () => ADAPTER_REF_COMMANDS.flat();
+export const forgeApiWrite = (program, tokens) => apiWrite(program, tokens);
+export const forgeWorkflowFolders = () => [...WORKFLOW_FOLDERS];
+
+// The network hosts a session must reach to push to, and read from, the forge serving `repository`, { host, ... } as a
+// project run pins it: the allowlist of a confined session's sandbox. Today every repository is served by GitHub.
+export const forgeDomains = (repository) => domains(repository?.host);
+
+// The environment variables the forge's CLI reads its token from: the one credential a confined session's sandbox keeps.
+export const forgeTokenVars = () => [...TOKEN_VARS];
 
 // Whether a comment's author belongs to the repository. Each forge method object carries it too.
 export { isTrustedCommenter };

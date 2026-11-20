@@ -10,9 +10,14 @@
 // When the agent stops without it, with none of its own background tasks running, and is not sent back for another reason,
 // the stop hook writes its final report there (deliverHandoffs): a brief can name the file for an agent with no file tool or shell, or make it optional,
 // and the report is the handoff either way. The agent is sent back for it only when it has no report to write.
+// A handoff file counts as written only when it is a regular file changed at or after the subagent's transcript began,
+// by its first entry's timestamp: one an earlier dispatch left, a link, or a folder is stale, owed, and replaced. A
+// transcript with no timestamp keeps the file's existence as the test.
+// While one of its own background tasks runs and a later stop is sure, the file is not due yet, and owes nothing.
 // docs/hooks.md#delivery-check.
 
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { existsSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
@@ -33,17 +38,45 @@ const PLUGIN_FOLDER = path.resolve(import.meta.dirname, '..');
 
 // The paths a subagent's last message presents as delivered, those of them that exist nowhere, and the handoff files its
 // brief asks for that it has not written: { claims, missing, unwritten }.
+// `since` is when the subagent's transcript began, or null (handoffSince).
 export function checkDelivery(input, project) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : project.root;
   const claims = claimedPaths(input.last_assistant_message);
   const unwritten = unwrittenHandoffs(input, project);
-  if (!claims.length) return { claims, missing: [], unwritten };
+  const since = handoffSince(input);
+  if (!claims.length) return { claims, missing: [], unwritten, since };
   const missing = missingPaths(claims, cwd, { roots: () => deliveryRoots(project, cwd), touched: () => touchedFiles(input) });
-  return { claims, missing, unwritten };
+  return { claims, missing, unwritten, since };
 }
 
-// The handoff files a subagent's brief asks it to write that do not exist: each absolute `<state>/dispatch/<name>.json`
-// in the transcript's first prompt whose `<name>` ends with the agent's own name, such as `feat-12-S1-code-reviewer.json`
+// When the subagent's run began: the timestamp of its transcript's first entry, in milliseconds, or null when the
+// transcript holds none.
+export function handoffSince(input) {
+  const transcript = typeof input.agent_transcript_path === 'string' ? readText(input.agent_transcript_path) : null;
+  const first = transcript?.split('\n').find((line) => line.trim() !== '');
+  if (!first) return null;
+  try {
+    const at = Date.parse(JSON.parse(first)?.timestamp);
+    return Number.isFinite(at) ? at : null;
+  } catch {
+    return null;
+  }
+}
+
+// Whether the handoff file `file` counts as written by this run: with `since`, a regular file, not a link or a folder,
+// whose status changed at or after it; without, any file there.
+function handedIn(file, since) {
+  if (since === null) return existsSync(file);
+  try {
+    const stat = lstatSync(file);
+    return stat.isFile() && stat.ctimeMs >= since;
+  } catch {
+    return false;
+  }
+}
+
+// The handoff files a subagent's brief asks it to write that it has not written (handedIn): each absolute
+// `<state>/dispatch/<name>.json` in the transcript's first prompt whose `<name>` ends with the agent's own name, such as `feat-12-S1-code-reviewer.json`
 // or `S1-code-reviewer-result.json` for `aidrian:code-reviewer`. A path named for another agent, such as a handoff the brief tells it to read, is not its own.
 // No brief, no agent name, or no state folder: none.
 export function unwrittenHandoffs(input, project) {
@@ -62,26 +95,43 @@ export function unwrittenHandoffs(input, project) {
   // the name, as in `fix-code-reviewer-S1-backend-developer.json`, does not make the file this agent's.
   const word = new RegExp(`(?:^|[-_.])${escapeRegExp(agent)}(?:[-_.]\\w+)?\\.json$`, 'u');
   const own = named.filter((match) => word.test(match[1])).map((match) => match[0]);
-  return [...new Set(own)].filter((file) => !existsSync(file));
+  const since = handoffSince(input);
+  return [...new Set(own)].filter((file) => !handedIn(file, since));
 }
 
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 
 // `delivery` once the agent's final report is written to each handoff file it owes (`unwritten`), with `written`, the
 // files the hook wrote, and those files out of `unwritten` and `missing`. A stop with a background task of the agent's
-// own still `running` is no end of its work, so nothing is written then; nor with no report (finalReport).
+// own still `running`, and a later stop sure to come (the stop hook decides), is no end of its work, so nothing is written then, and no handoff is due yet: the owed files move
+// from `unwritten` to `pending`, and out of `claims` and `missing` when the report names them, so they neither send the
+// agent back nor count as undelivered, and the stop row says `pending`. The delivery check once
+// filed a lesson on every such stop, though the next stop, with the task done, wrote the file. Nothing is written with
+// no report either (finalReport).
 // With `write: false`, nothing is written: the result is the delivery as it would be once every owed file is, with
 // `written` empty, so the stop hook decides on a send-back before it writes. A report the agent is sent back to correct
 // is not its last, and a file written from it would stand, since a later stop skips a handoff file that exists.
 export function deliverHandoffs(input, delivery, { running = false, write = true } = {}) {
   const owed = delivery.unwritten ?? [];
-  const report = owed.length && !running ? finalReport(input) : null;
+  // A pending file is out of `claims` and `missing` too: a report that names it on a delivery line, such as a `Handoff:`
+  // line, would otherwise send the agent back for it and count it undelivered, or show on the stop row as a file delivered.
+  if (owed.length && running) {
+    const named = { claims: uncovered(input, delivery.claims, owed), missing: uncovered(input, delivery.missing, owed) };
+    return { ...delivery, ...named, unwritten: [], pending: owed, written: [] };
+  }
+  const report = owed.length ? finalReport(input) : null;
   if (report === null) return { ...delivery, written: [] };
-  const written = write ? writeHandoffs(owed, report) : [];
+  const written = write ? writeHandoffs(owed, report, { since: delivery.since ?? null }) : [];
   const covered = write ? written : owed;
+  return { ...delivery, missing: uncovered(input, delivery.missing, covered), unwritten: owed.filter((file) => !covered.includes(file)), written };
+}
+
+// The `claims` that name none of `files`: a claim names a file when it resolves to it from the hook's folder,
+// or is its tail.
+function uncovered(input, missing, files) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : null;
-  const isCovered = (claim) => covered.some((file) => (cwd && file === resolveClaim(cwd, claim)) || file.endsWith(`${path.sep}${path.normalize(claim)}`));
-  return { ...delivery, missing: delivery.missing.filter((claim) => !isCovered(claim)), unwritten: owed.filter((file) => !covered.includes(file)), written };
+  const names = (claim) => files.some((file) => (cwd && file === resolveClaim(cwd, claim)) || file.endsWith(`${path.sep}${path.normalize(claim)}`));
+  return missing.filter((claim) => !names(claim));
 }
 
 // The subagent's final report: the message of its last handback call (transcript.mjs lastHandback), else its last
@@ -93,14 +143,29 @@ export function finalReport(input) {
   return typeof report === 'string' && report.trim() !== '' ? report : null;
 }
 
-// Writes `report` to each of `files` that still does not exist, and returns those written. A file that appeared since
-// the check, as one its dispatcher wrote, is kept as it is; one that cannot be written is left owed.
-export function writeHandoffs(files, report) {
+// Writes `report` to each of `files` this run has not written, and returns those written. A file that appeared since
+// the check, as one its dispatcher wrote, is kept as it is; one that cannot be written is left owed. With `since`, when
+// the subagent's run began, a stale file, one changed before it, a link, or anything but a regular file, is replaced: the
+// report goes to a new temporary file beside it, made only when none is there, then renamed over it, so no link is
+// followed. A folder cannot be replaced, and stays owed.
+export function writeHandoffs(files, report, { since = null } = {}) {
   const body = `${JSON.stringify(handoffRecord(report), null, 2)}\n`;
   return files.filter((file) => {
     try {
       mkdirSync(path.dirname(file), { recursive: true });
-      writeFileSync(file, body, { flag: 'wx' });
+      if (since === null) {
+        writeFileSync(file, body, { flag: 'wx' });
+        return true;
+      }
+      if (handedIn(file, since)) return false;
+      const temporary = `${file}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
+      writeFileSync(temporary, body, { flag: 'wx', mode: 0o600 });
+      try {
+        renameSync(temporary, file);
+      } catch (error) {
+        rmSync(temporary, { force: true });
+        throw error;
+      }
       return true;
     } catch {
       return false;

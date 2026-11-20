@@ -84,6 +84,7 @@ Each finding gets at most 2 passes, as the review rules say; a `blocked` finding
   Its body has one line per finding: `Addresses <id> from pr-review round <raised_in>`.
 - A failing hook is a verdict: the owner fixes the cause and commits again. Never bypass a hook.
 - The owner runs `git push`, to the fork's remote when the head lives in a fork. Never to the default branch.
+  In a project run's issue session, exactly `git push origin HEAD:refs/heads/<branch>`, the one push the hook allows, in a call of its own.
   With `--no-push`, the owner does not push, and the report prints the command.
 - With more than one slice, one `code-reviewer` pass over `git diff <head_sha>..HEAD` checks that no fix broke another.
   A real problem becomes one corrective slice for its owner.

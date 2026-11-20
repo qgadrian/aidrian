@@ -9,10 +9,19 @@
   },
   "github": {
     "extraRounds": "auto",
-    "requiredChecks": ["Check (Node 22)", "Check (Node 24)", "Check (Node 26)", "Conventional Commit title"],
+    "maxReviewRounds": 5,
+    "requiredChecks": [
+      "Check (Node 22)",
+      "Check (Node 24)",
+      "Check (Node 26)",
+      "Conventional Commit title"
+    ],
     "autoMerge": { "allow": true, "strategy": "squash", "deleteBranch": true }
   },
   "review": { "engine": "codex-local", "record": "local" },
   "session": { "handoff": { "mode": "auto" } },
-  "testing": { "fullSuite": ["npm run check", "npm test", "npm run test"], "pushFirstMinutes": 5 }
+  "testing": {
+    "fullSuite": ["npm run check", "npm test", "npm run test"],
+    "pushFirstMinutes": 5
+  }
 }

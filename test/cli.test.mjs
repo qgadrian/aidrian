@@ -1,10 +1,17 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+
+import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
+import { findProject } from '../plugins/aidrian/lib/project.mjs';
+import { projectCommand } from '../plugins/aidrian/lib/project-run-cli.mjs';
+import { initRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
+import { markPending } from '../plugins/aidrian/lib/unattended-mark.mjs';
+import { recordIssue } from './project-start-fixture.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const EXAMPLE = path.join(ROOT, 'examples/consumer');
@@ -1771,4 +1778,153 @@ test('check warns about quorum.product settings that have no effect, and stays q
   assert.match(both, RUNS);
   assert.doesNotMatch(both, NEVER);
   assert.match(check(product({ maxAutoRuns: 3 })), RUNS, 'a value equal to the default is still set');
+});
+
+// A project on `main` with an origin, whose committed state.dir is a folder of its own, and a run `launch` started in it
+// as the attended driver would, unless `start` is false.
+function projectRun(t, issues, { start = true } = {}) {
+  const [dir, home, state] = ['aidrian-cli-run-', 'aidrian-cli-home-', 'aidrian-cli-state-'].map((prefix) => realpathSync(mkdtempSync(path.join(tmpdir(), prefix))));
+  t.after(() => [dir, home, state].forEach((each) => rmSync(each, { recursive: true, force: true })));
+  const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', '-C', dir, ...args], { stdio: 'pipe' });
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: state }, projectRun: { maxParallel: 2 } }));
+  writeFileSync(path.join(dir, '.gitignore'), '*.json.input\n');
+  git('init', '-q', '-b', 'main');
+  git('remote', 'add', 'origin', 'git@github.com:acme/widgets.git');
+  git('add', '.');
+  git('commit', '-q', '-m', 'config');
+  git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  const file = path.join(dir, 'snapshot.json.input');
+  writeFileSync(file, JSON.stringify({ issues }));
+  if (start) {
+    const project = findProject(dir);
+    const { config } = loadConfig(project);
+    const started = initRun({ project, config, run: 'launch', file, session: 'abcd1234-0000-4000-8000-00000000cc01', home });
+    assert.equal(started.exitCode, 0, started.err.join('\n'));
+  }
+  return { dir, state };
+}
+
+const runIssue = (key, more = {}) => ({ key, branch: `feat/${key.toLowerCase()}`, status: 'unstarted', ...more });
+
+test('project is a command with its forms, and init refuses a session the host names no id for', (t) => {
+  const lines = run(['--help']).stdout.split('\n');
+  assert.ok(lines.includes('  aidrian project init RUN --file PATH [--check] [--project DIR]'));
+  assert.ok(lines.includes('  aidrian project next RUN [--json] [--project DIR]'));
+  assert.ok(lines.includes('  aidrian project summary RUN [--project DIR]'));
+  assert.ok(lines.includes('  aidrian project start RUN ISSUE [--project DIR]'));
+  assert.ok(lines.includes('  aidrian project wait RUN [--max-wait SECONDS] [--project DIR]'));
+  assert.ok(lines.includes('  aidrian project result RUN ISSUE --file PATH [--project DIR]'));
+  assert.ok(lines.includes('  aidrian project handoff RUN BRIEF [--project DIR]'));
+  assert.ok(lines.includes('  aidrian project resume RUN [--project DIR]'));
+  assert.ok(lines.includes('  aidrian project end RUN [--project DIR]'));
+  assert.ok(lines.includes('  aidrian project report RUN [--json] [--project DIR]'));
+  assert.ok(lines.includes('  aidrian project recorded RUN ISSUE [--project DIR]'));
+  assert.ok(lines.includes('  aidrian project preflight [RUN] [--project DIR]'));
+  assert.ok(lines.includes('  aidrian project stop-action RUN ISSUE [--project DIR]'));
+  assert.ok(lines.includes('  aidrian project confine RUN ISSUE'));
+  const { dir } = projectRun(t, [runIssue('ENG-1')]);
+  writeFileSync(path.join(dir, 'other.json.input'), JSON.stringify({ issues: [runIssue('ENG-2')] }));
+  const init = run(['project', 'init', 'second', '--file', 'other.json.input'], dir);
+  assert.deepEqual([init.status, init.stdout, init.stderr], [1, '', 'aidrian project init: this host tells the command no session id, so the run cannot record its driver; run init from the attended main session\n']);
+  for (const [args, problem] of [[['project'], 'project takes init, next, summary, start, wait, result, handoff, resume, end, report, recorded, preflight, stop-action, or confine'], [['project', 'begin', 'launch'], 'project takes init, next, summary, start, wait, result, handoff, resume, end, report, recorded, preflight, stop-action, or confine, not "begin"'], [['project', 'stop-action', 'launch'], 'project stop-action takes a run id and an issue key'], [['project', 'next'], 'project next takes one run id'], [['project', 'start', 'launch'], 'project start takes a run id and an issue key'], [['project', 'init', 'launch'], 'project init needs --file'], [['project', 'result', 'launch', 'ENG-1'], 'project result needs --file'], [['project', 'preflight', 'launch', 'extra'], 'project preflight takes at most one run id'], [['project', 'recorded', 'launch'], 'project recorded takes a run id and an issue key']]) {
+    const misuse = run(args, dir);
+    assert.equal(misuse.status, 1, args.join(' '));
+    assert.match(misuse.stderr, /^usage: aidrian project init RUN --file PATH \[--check\] \[--project DIR\]\n/u);
+    assert.ok(misuse.stderr.endsWith(`\n${problem}\n`), misuse.stderr);
+  }
+  const missing = run(['project', 'next', 'nope'], dir);
+  assert.deepEqual([missing.status, missing.stdout], [1, '']);
+  assert.match(missing.stderr, /^aidrian project next: no run nope in \/\S+\/runs\n$/u);
+});
+
+// `aidrian project` in this process, with the host's session variable set and a home folder of the test's own: a spawned
+// command reads the unattended marks in the real user's home, which no variable moves.
+const cliHome = (t) => {
+  const home = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-cli-home-')));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  return home;
+};
+const projectIn = (t, dir, args, session = 'abcd1234-0000-4000-8000-00000000dd01', home = cliHome(t)) =>
+  projectCommand(args, { cwd: dir, env: { ...process.env, CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: session }, home });
+
+test('project init reads the unattended marks in the home it is given: a fresh pending mark there refuses the run', (t) => {
+  const { dir, state } = projectRun(t, [runIssue('ENG-1')], { start: false });
+  const home = cliHome(t);
+  const session = 'abcd1234-0000-4000-8000-00000000dd03';
+  // Another session's gate is starting a background session: its pending mark holds every session but its own.
+  const pending = markPending('abcd1234-0000-4000-8000-00000000ee01', { cwd: dir, root: dir, env: { ...process.env, XDG_STATE_HOME: path.join(home, '.local/state') } });
+  assert.equal(path.dirname(pending), path.join(home, '.local/state', 'aidrian', 'unattended'));
+  const refused = projectIn(t, dir, ['init', 'launch', '--file', 'snapshot.json.input'], session, home);
+  assert.equal(refused.exitCode, 1);
+  assert.match(refused.err[0], /^aidrian project init: another session's handoff gate is starting a background session/u);
+  assert.ok(!existsSync(runFolder(state, 'launch')));
+  rmSync(pending);
+  assert.equal(projectIn(t, dir, ['init', 'launch', '--file', 'snapshot.json.input'], session, home).exitCode, 0);
+});
+
+test('project init starts a run for a session the host names, and records that session as the driver', (t) => {
+  const { dir, state } = projectRun(t, [runIssue('ENG-1'), runIssue('ENG-2', { blockedBy: ['ENG-1'] })], { start: false });
+  const session = 'abcd1234-0000-4000-8000-00000000dd01';
+  const init = projectIn(t, dir, ['init', 'launch', '--file', 'snapshot.json.input'], session);
+  // The snapshot names no `teams`, so init says the closing-word check sees only the run's own teams.
+  const teams = 'teams: the snapshot names no "teams", so keys of teams outside the run will not be seen by the closing-word check; give every team key of the tracker workspace in "teams"';
+  assert.deepEqual(init, { exitCode: 0, out: ['run: launch', 'issues: 2', 'repository: github.com/acme/widgets', teams, `folder: ${runFolder(state, 'launch')}`], err: [] });
+  const [first] = readFileSync(path.join(runFolder(state, 'launch'), 'ledger.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual([first.event, first.session], ['init', session]);
+  assert.equal(run(['project', 'next', 'launch'], dir).stdout.split('\n')[0], 'next ENG-1 feat/eng-1');
+});
+
+test('project init takes --project only for the project of the current folder\'s main checkout', (t) => {
+  const one = projectRun(t, [runIssue('ENG-1')], { start: false });
+  const other = projectRun(t, [runIssue('ENG-1')], { start: false });
+  const refused = projectIn(t, one.dir, ['init', 'launch', '--file', path.join(other.dir, 'snapshot.json.input'), '--project', other.dir]);
+  assert.deepEqual(refused, { exitCode: 1, out: [], err: ['aidrian project init: --project names a project outside the main checkout of the current folder; run init from that project'] });
+  assert.ok(!existsSync(runFolder(other.state, 'launch')));
+  const own = projectIn(t, one.dir, ['init', 'launch', '--file', 'snapshot.json.input', '--project', '.']);
+  assert.deepEqual([own.exitCode, own.err], [0, []]);
+});
+
+test('project next and summary refuse a run folder that fails its checks after the run exists, and write no summary', (t) => {
+  const { dir, state } = projectRun(t, [runIssue('ENG-1')]);
+  assert.equal(projectIn(t, dir, ['next', 'launch']).exitCode, 0);
+  chmodSync(state, 0o777);
+  try {
+    for (const action of ['next', 'summary']) {
+      const result = projectIn(t, dir, [action, 'launch']);
+      assert.deepEqual([result.exitCode, result.out], [1, []], action);
+      assert.deepEqual(result.err, [`aidrian project ${action}: the folder ${state} is writable by every user, so no project run is kept there`]);
+    }
+  } finally {
+    chmodSync(state, 0o700);
+  }
+  assert.ok(!existsSync(path.join(runFolder(state, 'launch'), 'summary.md')));
+});
+
+test('project next prints the issues to start by blockers, then priority, then key, and done when nothing may start or runs', (t) => {
+  const { dir, state } = projectRun(t, [
+    runIssue('ENG-3', { priority: 2 }),
+    runIssue('ENG-1', { priority: 4 }),
+    runIssue('ENG-2', { priority: 1, blockedBy: ['ENG-1'] }),
+    runIssue('ENG-4', { blockedBy: ['ENG-5'] }),
+    runIssue('ENG-5', { blockedBy: ['ENG-4'] }),
+  ]);
+  const next = () => run(['project', 'next', 'launch'], dir);
+  assert.deepEqual([next().status, next().stderr], [0, '']);
+  // The working copy's projectRun.maxParallel of 2 is not read: one issue at a time until the base branch's is.
+  assert.equal(next().stdout, 'next ENG-3 feat/eng-3\nblocked ENG-2 waiting ENG-1\nblocked ENG-4 cycle ENG-4,ENG-5\nblocked ENG-5 cycle ENG-4,ENG-5\n');
+  recordIssue(state, 'launch', { key: 'ENG-3', state: 'running' });
+  assert.equal(next().stdout.split('\n')[0], 'wait 1 running');
+  recordIssue(state, 'launch', { key: 'ENG-3', state: 'done' });
+  assert.equal(next().stdout.split('\n')[0], 'next ENG-1 feat/eng-1');
+  recordIssue(state, 'launch', { key: 'ENG-1', state: 'running' });
+  recordIssue(state, 'launch', { key: 'ENG-1', state: 'parked', decision: 'scope' });
+  assert.equal(next().stdout, 'done\nblocked ENG-4 cycle ENG-4,ENG-5\nblocked ENG-5 cycle ENG-4,ENG-5\nskipped ENG-2 blocked_by ENG-1\n');
+  const json = JSON.parse(run(['project', 'next', 'launch', '--json'], dir).stdout);
+  assert.deepEqual([json.verdict, json.skipped, json.parked], ['done', [{ key: 'ENG-2', skipped_blocked_by: ['ENG-1'] }], [{ key: 'ENG-1', decision: 'scope' }]]);
+
+  const summary = run(['project', 'summary', 'launch'], dir);
+  assert.deepEqual([summary.status, summary.stderr], [0, '']);
+  assert.equal(readFileSync(path.join(runFolder(state, 'launch'), 'summary.md'), 'utf8'), summary.stdout);
+  assert.match(summary.stdout, /## Parked decisions\n\n- ENG-1: decision `scope`\n\n## Skipped\n\n- ENG-2: blocked by ENG-1\n/u);
 });

@@ -7,6 +7,7 @@ import { approvalsSwitch, hasApprovers, isJudgeRuling, readApprovals, settleSwit
 import { contentFlows } from './content.mjs';
 import { touchedCitations } from './cited.mjs';
 import { classify, detectFlows, HARNESS_FLOW, pathPattern } from './plan.mjs';
+import { viewSolo } from '../solo.mjs';
 import { sameCommit } from './state.mjs';
 import { captureKeys, readManifest } from './visual.mjs';
 import { runPlanCommand } from './base-worktree.mjs';
@@ -58,7 +59,8 @@ export function evidenceOf(s) {
   // head's captures. The keys live in the review record too, so another machine without the images can check them.
   const capturesOf = (at) => new Set([...(state.captured?.[at] ?? []), ...captureKeys(at === head ? s.manifest : readManifest(project, n, at))]);
   // A judge's ruling counts only while both switches are on, and never on the flow that guards the review's own config.
-  const settle = settleSwitch(review, project);
+  // A machine that leaves its switch unset follows the team's `solo`, read from the pull request's base on the forge.
+  const settle = settleSwitch(review, project, () => viewSolo(project, s.info, { forge }));
   const stands = (each) => !isJudgeRuling(each) || (settle.on && each.flow !== HARNESS_FLOW);
   // The invariants the Human overruled on this head: a violated verdict another reviewer disputes with evidence.
   const overruledOn = (flowId) => new Set((state.overrulings ?? []).filter((each) => each.flow === flowId && sameCommit(each.head, head) && stands(each)).map((each) => each.invariant));

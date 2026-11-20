@@ -50,7 +50,7 @@ export function summarize(rows, { sinceMs = 0 } = {}) {
       median_duration_ms: median(sent.map((row) => row.duration_ms)),
       median_tokens: median(done.map((row) => (row.tokens ? row.tokens.input + row.tokens.output + row.tokens.cache_read + row.tokens.cache_write : NaN))),
       cost_usd: round(cost),
-      delivered: Object.fromEntries(['file', 'chat', 'missing'].map((kind) => [kind, done.filter((row) => row.delivered === kind).length])),
+      delivered: Object.fromEntries(['file', 'chat', 'missing', 'pending'].map((kind) => [kind, done.filter((row) => row.delivered === kind).length])),
       top_docs: [...docs].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 5),
       runs: done.length,
       cost_per_run_usd: done.length ? round(cost / done.length) : null,
@@ -76,8 +76,10 @@ export function summarize(rows, { sinceMs = 0 } = {}) {
 }
 
 // The `hook_deny` rows since `sinceMs`: { count, sessions, by_rule }, the rules with the most blocks first. Per rule:
-// `count`, `agents` and `reasons` as [name, count] pairs, most first, at most three reasons, and `repeated_sessions`,
-// the sessions it blocked REPEATED_DENIALS times or more, which is when a block becomes an automatic lesson.
+// `count`, `agents` and `reasons` as [name, count] pairs, most first, at most three reasons, and `repeated_runs`, the agent
+// runs it blocked REPEATED_DENIALS times or more for the same reason, which is when a block becomes an automatic lesson
+// (lesson-signals.mjs noteDenial). A run is the row's session and `agent_id`, or the main thread for none; a row written
+// before `agent_id` counts as its session's main thread.
 export function summarizeDenies(rows, { sinceMs = 0 } = {}) {
   const denies = rows.filter((row) => row.event === 'hook_deny' && Date.parse(row.ts) >= sinceMs);
   const add = (map, key) => map.set(key, (map.get(key) ?? 0) + 1);
@@ -85,9 +87,12 @@ export function summarizeDenies(rows, { sinceMs = 0 } = {}) {
   const rules = new Map();
   for (const row of denies) {
     const rule = typeof row.rule === 'string' ? row.rule : 'unknown';
-    const entry = rules.get(rule) ?? { agents: new Map(), sessions: new Map(), reasons: new Map() };
+    const entry = rules.get(rule) ?? { agents: new Map(), runs: new Map(), reasons: new Map() };
     add(entry.agents, row.agent_type ?? 'main');
-    if (row.session_id) add(entry.sessions, row.session_id);
+    // An accepted residual, which affects only the report's wording: a run is grouped by the row's display reason, cut to
+    // 120 characters (dispatch-rows.mjs REASON_CHARS), while the lesson counts the full cause, so causes that share that
+    // prefix can read here as an automatic lesson that never fired; and a legacy row with no agent_id counts with the main thread.
+    if (row.session_id) add(entry.runs, JSON.stringify([row.session_id, row.agent_id ?? 'main', row.reason ?? '']));
     if (row.reason) add(entry.reasons, row.reason);
     rules.set(rule, entry);
   }
@@ -95,7 +100,9 @@ export function summarizeDenies(rows, { sinceMs = 0 } = {}) {
     rule,
     count: sum([...entry.agents.values()], (count) => count),
     agents: ranked(entry.agents),
-    repeated_sessions: [...entry.sessions.values()].filter((count) => count >= REPEATED_DENIALS).length,
+    // An accepted residual: `repeated_runs` counts run-and-cause pairs, so one run blocked repeatedly for two causes
+    // counts twice.
+    repeated_runs: [...entry.runs.values()].filter((count) => count >= REPEATED_DENIALS).length,
     reasons: ranked(entry.reasons).slice(0, 3),
   }));
   return {
@@ -116,11 +123,11 @@ export function formatReport(summary, { file, since, skipped, notes = [] }) {
   const thousands = (value) => (value === null ? '-' : `${Math.round(value / 1000)}k`);
   const percent = (rate) => (rate === null ? '-' : `${Math.round(rate * 100)}%`);
   for (const agent of summary.agents) {
-    const { file: written, chat, missing } = agent.delivered;
+    const { file: written, chat, missing, pending = 0 } = agent.delivered;
     lines.push(
       `${agent.agent_type}: ${agent.dispatches} dispatches, ${percent(agent.redispatch_rate)} re-dispatched, ` +
         `median ${seconds(agent.median_duration_ms)} and ${thousands(agent.median_tokens)} tokens, $${agent.cost_usd.toFixed(2)}, ` +
-        `delivered ${written} file / ${chat} chat / ${missing} missing`,
+        `delivered ${written} file / ${chat} chat / ${missing} missing${pending ? ` / ${pending} pending` : ''}`,
     );
     if (agent.runs) {
       lines.push(
@@ -145,8 +152,8 @@ function formatDenies(denies) {
   if (!denies.count) return ['Hook denies: none'];
   const sessions = `${denies.sessions} session${denies.sessions === 1 ? '' : 's'}`;
   return [`Hook denies: ${denies.count} in ${sessions}`, ...denies.by_rule.flatMap((rule) => {
-    const repeated = rule.repeated_sessions
-      ? `; ${rule.repeated_sessions} session${rule.repeated_sessions === 1 ? '' : 's'} blocked ${REPEATED_DENIALS} times or more, an automatic lesson`
+    const repeated = rule.repeated_runs
+      ? `; ${rule.repeated_runs} agent run${rule.repeated_runs === 1 ? '' : 's'} blocked ${REPEATED_DENIALS} times or more for the same reason, an automatic lesson`
       : '';
     const line = `  ${rule.rule}: ${rule.count}, by ${rule.agents.map(([agent, count]) => `${agent} ${count}`).join(', ')}${repeated}`;
     return rule.reasons.length ? [line, `    most often: ${rule.reasons[0][0]}`] : [line];

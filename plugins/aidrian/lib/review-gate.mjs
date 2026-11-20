@@ -15,7 +15,10 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
-import { runGit } from './git.mjs';
+import { knownPrefix, runGit } from './git.mjs';
+import { sessionIdentity } from './hosts/index.mjs';
+import { droveRun } from './run-driver.mjs';
+import { readUnattendedMark } from './unattended-mark.mjs';
 import { unfencedLines } from './markdown-sections.mjs';
 import { recordsFolder, stateDir } from './project.mjs';
 import { givenRepo, originRepo, remoteRepos, repoName } from './remotes.mjs';
@@ -349,6 +352,25 @@ export function lastSignoff(state, { pr, repo, head }) {
   return { flow, head: asked.head };
 }
 
+// The flows a merge no Human asks for needs the Human's sign-off of on `head` of `repo`#`pr`, by what the forge alone
+// gives (review/merge-trust.mjs flowsFloor), read in one review trail; [] when the forge's head is another or a read
+// fails, so a sign-off then takes only a flow the last review named.
+async function forgeFloor(project, { pr, repo, head, forge }) {
+  // Loaded here: pr-auto-merge.mjs imports this file.
+  const { trailPaths, trailPolicies } = await import('./pr-auto-merge.mjs');
+  const { flowsFloor } = await import('./review/merge-trust.mjs');
+  try {
+    const prefix = knownPrefix(project.root) ?? '';
+    const trail = forge.reviewTrail(repo, pr, { paths: trailPaths(prefix) });
+    if (typeof trail?.head !== 'string' || trail.head.toLowerCase() !== head.toLowerCase()) return [];
+    const policies = trailPolicies(trail, { repo, base: trail.base ?? null }, prefix);
+    if (!policies) return [];
+    return [...flowsFloor({ files: trail.files ?? [], complete: trail.filesComplete === true, configs: [policies.policy, policies.basePolicy], prefix, policyFiles: policies.policyFiles }).flows];
+  } catch {
+    return [];
+  }
+}
+
 // `aidrian pr signoff <PR> --flow <id> --head <sha>`: the Human's sign-off of a critical flow on one head. It is an audit
 // entry, not proof: an agent holds the same shell. The review summary on the pull request shows every sign-off.
 // `--stage <name>` in place of `--flow` signs off a review stage the Human chose to review because its reviewer ran out
@@ -361,10 +383,16 @@ export function lastSignoff(state, { pr, repo, head }) {
 // `--check` runs every refusal of the same command and records nothing: it prints `ok` and returns 0, or throws the
 // refusal, which `aidrian pr` prints before it exits 1. The review-signoff rule lets an agent run it, so a session can
 // try a command before it hands it to the Human.
-export async function runSignoff(args, project, config = null, { forge, by: ruledBy = null } = {}) {
+// A sign-off that records, the Human's own (no `by`), is refused in process too when the session that runs it, by the id
+// its host gives (`session`), has an unattended mark or is held as a project run's driver: the review-signoff rule
+// refuses it to them, and this holds where no hook ran.
+export async function runSignoff(args, project, config = null, { forge, by: ruledBy = null, session = sessionIdentity(process.env).session } = {}) {
   const [ref, ...rest] = args;
   const pr = prNumber(ref);
   if (pr === null) throw new Error('signoff needs a pull request number');
+  if (!ruledBy && !rest.includes('--check') && (readUnattendedMark(session) !== null || droveRun(session))) {
+    throw new Error('a sign-off is the Human\'s, and this session has no Human at hand (an unattended mark) or drives a project run, or did: the Human runs it in a session they attend, or in their own shell');
+  }
   const flags = {};
   let dryRun = false;
   for (let i = 0; i < rest.length; i += 1) {
@@ -387,8 +415,14 @@ export async function runSignoff(args, project, config = null, { forge, by: rule
     if (given.length) throw new Error(`--last takes no ${given.map((key) => `--${key}`).join(', ')}: it signs off the one flow the last review left waiting, on the head that review ran on. Give --last alone, or the long form with --flow and --head`);
   } else {
     if (!flags.head || Boolean(flags.flow) === Boolean(flags.stage)) throw new Error('--head and one of --flow or --stage are required');
-    // The --last head comes from the record the review step wrote, so only a typed head must be a local commit.
-    if (!SHA.test(flags.head) || runGit(['cat-file', '-e', `${flags.head}^{commit}`], project.root).status !== 0) throw new Error(`--head ${flags.head} is not a commit in this repository`);
+    // The --last head comes from the forge, so only a typed head must be a local commit. It is resolved here, in the
+    // Human's checkout, to the full commit the sign-off store keeps: a prefix two commits share is refused, so a commit
+    // the record names cannot take the sign-off in its place.
+    const resolved = SHA.test(flags.head) ? runGit(['rev-parse', '--verify', '--quiet', `${flags.head}^{commit}`], project.root) : null;
+    if (!resolved || resolved.status !== 0 || !/^[0-9a-f]{40}$/u.test(resolved.stdout.trim())) {
+      throw new Error(`--head ${flags.head} is not one commit of this repository: give a commit this checkout has, written out far enough that no other commit shares it`);
+    }
+    flags.full = resolved.stdout.trim();
   }
   const repo = prRepo(project, pr, flags.repo, forge);
   const by = ruledBy ?? (runGit(['config', 'user.name'], project.root).stdout.trim() || 'unknown');
@@ -424,7 +458,7 @@ export async function runSignoff(args, project, config = null, { forge, by: rule
     // The choice reads the record once, and recordSignoff reads it again and re-runs the long form's refusals before it
     // writes. A record written between the two reads is checked by those refusals, not by lastSignoff's: deciding and
     // writing on one read belongs with run.mjs, which #124 changes.
-    recordSignoff(project, { pr, repo, flow, head, by, remote, reading, dryRun });
+    recordSignoff(project, { pr, repo, flow, head, storeHead: current, by, remote, reading, dryRun });
     return done(`${by}'s sign-off of flow ${flow} on ${head.slice(0, 7)}`, `recorded ${by}'s sign-off of flow ${flow} on ${head.slice(0, 7)}. Run \`aidrian pr review\` again.`);
   }
   const held = await holdToNamedBase(project, config, repo, namedBase(project, pr, repo, forge));
@@ -458,7 +492,8 @@ export async function runSignoff(args, project, config = null, { forge, by: rule
     recordStageSignoff(project, { pr, repo, stage: flags.stage, head: flags.head, by, remote: remoteState(repo, pr, undefined, held), reading: remoteReading(repo, pr), dryRun });
     return done(`${by}'s sign-off of the ${flags.stage} stage on ${flags.head.slice(0, 7)}`, `recorded ${by}'s sign-off of the ${flags.stage} stage on ${flags.head.slice(0, 7)}, in place of the reviewer that ran out of quota. Run \`aidrian pr review\` again.`);
   }
-  recordSignoff(project, { pr, repo, flow: flags.flow, head: flags.head, by, remote: remoteState(repo, pr, undefined, held), reading: remoteReading(repo, pr), dryRun });
+  const floor = await forgeFloor(project, { pr, repo, head: flags.full, forge: forge ?? forgeFor(project.root) });
+  recordSignoff(project, { pr, repo, flow: flags.flow, head: flags.head, storeHead: flags.full, floor, by, remote: remoteState(repo, pr, undefined, held), reading: remoteReading(repo, pr), dryRun });
   return done(`${by}'s sign-off of flow ${flags.flow} on ${flags.head.slice(0, 7)}`, `recorded ${by}'s sign-off of flow ${flags.flow} on ${flags.head.slice(0, 7)}. Run \`aidrian pr review\` again.`);
 }
 
@@ -478,7 +513,9 @@ export async function runSettle(args, project, config = null, { forge } = {}) {
   const { HARNESS_FLOW } = await import('./review/plan.mjs');
   if (passed[passed.indexOf('--flow') + 1] === HARNESS_FLOW) throw new Error(`flow ${HARNESS_FLOW} guards how the project is reviewed: only the Human settles it`);
   const { JUDGE_PREFIX, settleSwitch } = await import('./review/approvals.mjs');
-  const { on, off } = settleSwitch(config?.review, project);
+  const { prSolo } = await import('./solo.mjs');
+  const repoAt = passed.indexOf('--repo');
+  const { on, off } = settleSwitch(config?.review, project, () => prSolo(project, prNumber(ref), { forge, repo: repoAt === -1 ? null : passed[repoAt + 1] }));
   if (!on) throw new Error(`a judge's ruling does not count here: ${off}. Ask the Human instead`);
   return runSignoff([ref, ...passed], project, config, { forge, by: `${JUDGE_PREFIX}${judge}` });
 }

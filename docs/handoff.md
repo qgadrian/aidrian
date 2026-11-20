@@ -72,7 +72,9 @@ context, with a 60,000-token baseline near 208,000.
 their cost. It fires on its own, whatever `r` is, at `maxTokens` and then at each doubling of it:
 `maxTokens × 2^n` after `n` firings. Its message names the context only, with no `r` or `N`.
 
-**Re-arming.** A marker in the system's temporary folder, `aidrian-session-length-<session id>`, holds
+**Re-arming.** A marker in the hooks' counts folder, `<state root>/hook-counts/aidrian-session-length-<session id>`,
+read only as the user's own regular file, never through a link or a FIFO, and written, in a folder the user alone
+owns, as a new temporary file, mode 0600, renamed over it, which `aidrian session snapshot` reads at the same path, holds
 `{"lastRatio": r, "tokens": n, "compactions": n}`: the cost ratio at the last cost firing (0 for none), how often the
 ceiling fired, and the compactions seen. A firing changes only what its own trigger holds: a cost firing records its
 ratio, and a ceiling firing raises its count past every doubling the context already reached, so a jump of two
@@ -142,6 +144,7 @@ Two switches more hold it, both read as `github.autoMerge` reads its own, so nei
   [progress check](#the-progress-check) bounds the chain.
 - **The machine's**, `handoff.background: "on"` in the main checkout's `.aidrian.local.json`, a file git does not
   track. A copy in a worktree, a tracked file, and an error in the file read `"off"`, and a subagent may not set it.
+  Unset is off, unless the team sets [`solo`](config.md#solo).
 
 Without either, a handoff on the background route goes on by the clear route on a host that has it, else `none`, and
 the gate's `fallback:` line says which switch is off and, for the machine's, the exact edit that turns it on.
@@ -161,6 +164,14 @@ says so in its `fallback:` line. A route the host does not list falls back the s
 decides it from `--route` or `session.handoff.continue` and the host's routes. A route the host does not run prints
 `route: none` and the `fallback:` line, as with `"compact"` on Claude Code in this release or any route on Codex.
 A background route either switch keeps off prints `route: clear` and the `fallback:` line that names the switch.
+A session whose unattended mark names a run or an issue of a [project run](config.md#project-run) prints `route: none`
+on every route, whatever `--route` or the config says, with the `fallback:` line `a confined issue session starts no
+continuation; push the work and hand the result over`: every host starts such a session confined, in a clone under its
+sandbox, and a continuation, a clear one too, would start outside both. A session whose unattended mark is there but
+cannot be read, as a folder, a file of 64 KiB or more, one that is not JSON, or a folder of marks that cannot be
+listed, prints `route: none` the same way, with the `fallback:` line `this session's unattended mark cannot be read, so
+whether it works an issue of a project run cannot be told; it starts no continuation, and a person resumes the brief`.
+A session with no mark is unchanged.
 It reads the config, the machine's local file, and the base branch's config, writes nothing, and exits 2 on an
 unknown `--route` or a config with errors.
 The `session-handoff` skill runs it in its first step, so it settles every running agent only when a continuation can
@@ -186,6 +197,13 @@ whatever the config says, and `background` only when the config says `"backgroun
    is owned by another user or writable by every user, where the system has user ids (not on Windows, where Node
    reports every writable folder as writable by others); or the brief's chain is `maxChain` or more, on the
    background route the base branch's `maxChain`, at most 5 unless it is `"unlimited"`.
+   A confined issue session, one whose unattended mark names a run or an issue of a project run, starts and arms no
+   continuation on any route, whatever `--route` or the config says, before it reads the route and before any floor,
+   mark, or start record: `continue: none` and the `fallback:` line `a confined issue session starts no continuation;
+   push the work and hand the result over`, on every host. It pushes its work and records its result instead.
+   A session whose unattended mark is there but cannot be read gets the same answer, with the `fallback:` line of
+   [The route the host runs](#the-route-the-host-runs): whether it works an issue cannot be told, so the gate fails
+   closed. A session with no mark goes on by its route.
    On the background route, a switch that is off, a chain the [progress check](#the-progress-check) finds stuck, a
    working copy whose `state.dir` differs from the base branch's, a session that did not start, and a started session
    the gate could not hold to a chain floor and stopped fall back to the clear route instead where the host has it:
@@ -203,6 +221,31 @@ whatever the config says, and `background` only when the config says `"backgroun
    On the background route it arms nothing: it starts the new session, as [The background route](#the-background-route)
    says, and its `say:` line names that session and how to open it. A second run on the same bytes, in the same
    session, prints the same lines again and starts nothing, before any other check.
+   One background start per session: while the gate's record of a session's last start lives, 24 hours, a run on any
+   other bytes, an edit of the same brief or another brief, starts nothing until the host's own listing shows the
+   started session as done. It prints `continue: none` and a `fallback:` line that names that session, what the listing
+   said, and how to open it, and arms no clear beside it. A listing that gives no answer, or does not name that session,
+   counts as still running, as does a session the host lists as failed or stopped. The refusal lifts once the host
+   lists the session as done, or when the record lapses; a person can resume the brief by hand at any time.
+   The gate checks this at its hold, just before the host would start a session, so a start that cannot run for
+   another reason, such as no host command on PATH, still names that reason, and arms no clear while the record lives.
+   Two runs of one session never start two sessions at once: the hold first takes the session's claim in the
+   continuation store, `claim-<session>.json`, a file made only when none is there, and a run that finds another's
+   claim starts nothing. A run's claim lapses after 10 minutes. Once the hold files its pending mark, it keeps the
+   claim for 24 hours before the host starts anything, so a gate killed mid-start still holds the session; the gate
+   drops it again once it knows no session runs unheld. After a start whose outcome is unknown, or a started session
+   the gate could neither hold nor stop, the kept claim stays, so no later run starts a second session beside one that
+   may still run. A claim whose content no read can check counts as kept once it is more than 5 seconds old. A
+   subagent, and a session the background route started, may not remove a claim.
+   When the host listed the earlier session as done and the new start then made nothing, the handoff goes on by the
+   clear route, as with no earlier start.
+   A project run's driver is the one exception: when its last start record names a session of its own run's issues,
+   which the run's ledger records it started, that session holds back the driver's handoff no more than it holds back
+   the driver's next start, since the run's caps count it until the host lists it ended. This holds only for the
+   session the ledger names as the run's current driver, while the run has not ended; every other record, the driver's
+   continuation's included, waits for the host's listing.
+   A session whose unattended mark names another project's main checkout, or none the gate can read, starts no
+   background session: its chain floor lives in that project's store.
 
 The latest run decides: once the brief resolves and the session is known, any continuation the session armed before is
 gone, whatever the exit, so a clear never delivers an earlier brief.
@@ -341,16 +384,21 @@ to another folder falls back to the clear route with that reason; committing `st
    the clear route; when the stop fails too, the gate prints `continue: none` and a `fallback:` line that names the
    running session and the host's command to stop it, arms no clear beside it, and leaves the pending mark to lapse. The gate never reports a background session it cannot hold to the
    count as the continuation.
-6. It records the start for this session, and prints `continue: background` and a `say:` line that names the new
+6. It records the start for this session, which stops the session from starting another until the host lists the
+   started one as ended, and prints `continue: background` and a `say:` line that names the new
    session by its id, and by its name when that is plain text no other listed session has, where it started, and the
    host's command to open it. The line ends on what becomes of this session: with the
    [shell function](#replacing-the-terminal), that this terminal switches to the new session once the turn ends, with
    nothing to open by hand; without it, `This session has ended its work; the new one is <name>, open it with <the
    host's command>.` A session the background route started, which no terminal follows, says it stops once this turn
    ends, before the same words ([Replacing the terminal](#replacing-the-terminal)).
-   In `auto` mode, a session a Human attends whose shell never loaded the function, such as one started in a terminal
-   opened before `aidrian shell-init <shell> --install` wrote it, adds one line on why its terminal stays: start the
-   next session in a new terminal, or after reloading the shell's startup file.
+   In `auto` mode, a session a Human attends that the function did not start, as with a launcher, an editor command,
+   or a terminal opened before `aidrian shell-init <shell> --install` wrote the function, adds one line on why its
+   terminal stays: start the next session in a new terminal. For a launcher on PATH that ends in `exec` of the host's
+   program, the line gives the whole command the Human runs once, `aidrian shell-init zsh --install --wrap <launcher>`
+   (or bash), with the launcher's own name in place of `<launcher>`, so a session that launcher starts follows too.
+   It ends by saying a copy of the plugin older than this one refuses `--wrap` as an unknown option, so the plugin is
+   updated first, with the host's update command when the host declares one.
    The skill tells the Human that line and ends the turn; the old session does nothing more.
 7. A prompt in the old session in the next 24 hours adds one line that names the background session that owns the
    work, so the old session does not take up the same work unasked.
@@ -390,7 +438,8 @@ Limits:
   session's own mark is written, or when nothing started or the start was stopped; a start whose outcome is unknown
   keeps it until it lapses.
   Such a session, and one with a mark, is also refused a call the guards cannot finish reading within their time
-  budget, and a command with more write targets or words than they read, as a subagent is.
+  budget, and a command with more write targets or words than they read, as a subagent is, and so is a project run's
+  driver, whose driver mark holds it.
   A session the gate started before the marks is known by its chain floor of route `background`, under its full id or
   a short one, in the store of the working copy's `state.dir` or the base branch's, each where the hook's environment
   puts it and where the user's own puts it, as the gate does; the hook reads it only for a call the guards below would
@@ -400,6 +449,8 @@ Limits:
     `chgrp` of the store, a file in it, its handoffs folder, or the state folder, which would hide the floor;
   - a write in the unattended marks' folder, or a change of its mode or owner, or of the state root's, which would
     lift its own mark, with or without a project, as a subagent is refused it too;
+  - a write in the [sign-off store](review.md#merge-trust), which holds the Human's flow sign-offs a merge no Human asks
+    for reads, as a subagent is refused it too;
   - a host session started outside the gate, such as `claude -p`, `claude --bg`, or `claude --resume`, by the matcher
     each host adapter declares (`sessionStart`, [Adding a host](providers/adding-a-host.md));
   - an `aidrian handoff continue` or `aidrian handoff route` whose command line sets or unsets `XDG_STATE_HOME`, `HOME`,
@@ -407,6 +458,78 @@ Limits:
     would move the store, the session the gate reads floors for, or the host command it runs.
   A store the hook cannot read finds no floor, and the session's call runs: only what the session can cause itself is
   closed.
+
+### A project run
+
+A [project run](config.md#project-run), which the `project-autopilot` skill drives, starts many sessions with nothing
+typed. The run lifts no cap of its own: the cap of 5 background continuations in a row (`BACKGROUND_HOPS` in
+`lib/handoff-continue.mjs`) counts per chain, the run starts new chains instead of making one longer, and only the base
+branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the progress check then bounds it.
+
+- **Each issue's session is its own start.** `aidrian project start` holds it as the background route holds a
+  continuation, with a chain floor of 0 under the slug `project-<run>`, so it carries neither the driver's count nor
+  another issue's. What bounds the sessions a run starts is the run's own caps in code: 1,000 starts a run and 4 at
+  once, each also under the base branch's `projectRun.maxStarts` and `maxParallel`, 200 starts a day for a project,
+  and 3 attempts an issue.
+- **An issue's session starts no continuation.** Every host starts it confined, in a fresh clone under its sandbox,
+  and a continuation would start outside both. It writes no brief either: the agent gate hook refuses it the handoffs
+  folder ([hooks.md](hooks.md#agent-gates)). `aidrian handoff route` prints `route: none` for it, and
+  `aidrian handoff continue` answers `continue: none`, before any floor, mark, or start record, with the line
+  `a confined issue session starts no continuation; push the work and hand the result over` ([The gate](#the-gate),
+  step 3). So the cap of 5, `maxChain`, and the chain floor never come into play for it: it pushes its work and records
+  its result, and any later attempt of the issue starts in a fresh clone of the branch as the forge holds it.
+- **The driver hands off on the normal route.** It is a main session like any other: at the session-length reminder,
+  a usage-limit warning, or the plan offer, between passes and never mid-start, it writes its brief with the
+  `session-handoff` skill under the slug `project-<run>`. The run's ledger is its state, so the brief names the run and
+  the skill and no issue's detail. It runs `aidrian project handoff <run> <brief>` first, which records the brief's
+  sha256 in the ledger, then `aidrian handoff continue <brief>`. The background route files the run's driver mark for
+  the new session as it starts it, so the hooks hold it as a driver from its first call, and it takes custody on its
+  first `aidrian project wait <run> --max-wait 0`: only when the driver's start record names it, is dated after the
+  ledger row that made that driver, and holds the sha256 of a brief that driver recorded. A slug or a session name
+  never moves custody.
+- **`maxChain` binds the driver's chain alone.** The driver's hops count as any session's, up to the base branch's
+  `session.handoff.maxChain`, at most 5 unless it is `"unlimited"`. At the limit the gate prints `continue: none`,
+  and the driver keeps driving in its own session, which the host compacts; it does the same on `continue: clear`,
+  which would wait on a person, and when the host lists no route at all, as on Codex. So a run never stops for its
+  chain: at worst one long session drives it. The [progress check](#the-progress-check) counts the driver's hops like
+  any chain's. The driver commits nothing, and its issues' work lands in their clones and on the forge, so its own
+  work moves no tree on the brief's branch, or on HEAD where the gate runs, and its progress shows as new items under
+  its brief's `## Done`. Two hops in a row with none, and the gate falls back to the clear route, where the loop keeps
+  the driver in its session. `"unlimited"`
+  lifts the cap of 5 for the driver's chain, and the progress check then bounds it; an issue's session never meets
+  either, since it starts no continuation. A person who resumes the brief by hand starts the count again, and that
+  session takes custody only through `aidrian project resume <run>`, once the host lists the old driver as ended.
+- **Each attempt hands its result over in a drop folder.** `<state>/runs/<run>/attempts/<issue>.<attempt>/drop/`, made
+  owner-only for that attempt, is the one place in the runs folder the issue's session writes besides its clone's
+  `work`, `git`, and `cache` folders. `aidrian project result` writes `result.json` there and no ledger row. The
+  driver's `wait` takes it in: it reads the file without following a link, as a regular file of the user with one
+  link, under 64 KiB, checks every field again, and holds a merged or open pull request to the issue's own on the forge;
+  anything else ends the attempt `bad_result`. `wait` removes an attempt's folder once its session ended, but never
+  while its drop holds a result not yet taken in.
+- **A halt, or a driver that ended, waits for `aidrian project resume <run>`.** A start whose proof failed, and a
+  usage limit past the run's 24 pauses, write a `halt` row, and every later start refuses. The resume runs from the
+  Human's own shell, or from another session a person attends that never drove the run: the hooks and the command
+  refuse it to the driver, to any session that drove the run, and to the continuation custody would move to, so the
+  driver never runs it. It writes a `resume` row that lifts the halt. Run from a session, it also takes custody of a
+  run whose driver the host lists as ended, as a background driver that ended with no successor, and that session
+  then drives on. A driver the host does not list so, such as the first one, a session the Human started, keeps
+  custody: on a run that is not halted, the command prints `not halted <run>`, and, run from a session, says to resume
+  that same host session, which keeps its id; on a halted run, it lifts the halt and the driver stays.
+- **Host files no review saw.** The session works in its attempt's clone, which loads no host file of the main
+  checkout, and on Claude Code its sandbox also denies reads there, so the main checkout's own host files, such as a
+  git-ignored `.claude/settings.local.json` or an untracked skill under `.claude/skills/`, refuse no start. A start
+  refuses, and records nothing, when the clone itself holds a host config or instruction file that differs from the
+  base tip, or one git does not track or ignores: `the attempt's clone <path> is not started: it holds host config or
+  instruction files git does not track, which no review saw: <files>`. It refuses too when a folder above the clone
+  holds a host instruction file, such as a `CLAUDE.md`, that lies outside the main checkout, or that no review saw
+  there; move it away. Only a host's own user folder itself, and the files in it that host loads as the user's own
+  instructions for every session (Claude Code's `CLAUDE.md`, Codex's `AGENTS.md` and `AGENTS.override.md`), such as
+  `~/.claude` and `~/.claude/CLAUDE.md` above a state folder in the home folder, refuse no start, each by its path or
+  its real path, and a link among them only when it leads to a file of such a name. Any other file there is checked as
+  any other: `~/.claude/CLAUDE.local.md` above the clone, another host's name such as `~/.codex/CLAUDE.md`, a
+  `~/.claude/CLAUDE.md` that is a link to `~/.claude/settings.json`, and a `CLAUDE.md` in the runs folder of a state
+  folder inside `~/.claude`. What a session no Human attends may never do is write those files in the main checkout
+  ([agent gates](hooks.md#agent-gates)).
 
 ### Replacing the terminal
 
@@ -433,7 +556,8 @@ not source `~/.bashrc`. `--uninstall` removes every block, from its start marker
 a start marker with no end after it changes nothing and exits 1. A startup file that is a link stays one, and keeps its
 mode. Each prints what it did. When a block differs from the current text, as after a plugin update that changed it,
 the session start adds a `Handoff terminal:` line that names the file and the command to hand the Human; it never
-rewrites the block itself.
+rewrites the block itself. When both startup files hold such a block, one line names both files and both commands,
+and a session start never prints more than one `Handoff terminal:` line ([Start lines](hooks.md#start-lines)).
 
 `aidrian shell-init zsh` (or `bash`) prints the same function, for a startup file that evals it, and exits 2 for any
 other shell. The function is named for each host program that can do it, today `claude`, and is declared as
@@ -485,6 +609,43 @@ An alias for `claude` takes the place of the function when typed. One whose valu
 elsewhere, such as `alias claude=~/.claude/local/claude`, runs past it, so a handoff does not replace that terminal;
 the block prints one line on stderr that says so when the shell reads it.
 
+The plain `--install` covers a session started by typing `claude`, which is all most people need.
+`--wrap` is an advanced option for a launcher script: a program on PATH that sets something up and ends in
+`exec claude "$@"`, such as `claude-work`, opts in with
+`aidrian shell-init zsh --install --wrap claude-work`, repeatable. The block then also holds the same function under
+each name, `function claude-work`, whose first run is `command claude-work "$@"` with `AIDRIAN_SHELL_PID` set, and an
+alias check that accepts an alias whose value starts with `claude-work` or `claude`. Every later hop opens with
+`command claude attach <id>`, in the shell's own environment, never through the launcher. A name is 1 to 32 letters,
+digits, `_`, or `-`, starting with a letter. The command refuses a host's own program, such as `claude`; a shell's own
+name, `sh`, `bash`, `zsh`, `dash`, `ksh`, `mksh`, `fish`, `csh`, `tcsh`, `yash`, `nu`, `elvish`, `xonsh`, `pwsh`, or
+`powershell`, the same list the `shell-init-install` Bash rule reads, since its function would run the host's
+attach flow each time that shell exits; every reserved
+word and builtin of zsh and bash, such as `if`, `local`, `trap`, `setopt`, or `mapfile`, from a fixed list, so no shell
+runs at install; a function a shell runs by its name as a hook, such as `preexec`, `precmd`, `chpwd`, or
+`command_not_found_handler`, and any name that starts with `TRAP` or `zle-`; a core tool the block runs or a function
+would shadow, such as `rm`, `date`, or `od`; and a ninth name in one block. Such a refusal exits 2, writes nothing, and
+names the refused `--wrap` by its position, never its value; `--wrap` without `--install` exits 2 too, and so does a
+value joined by `=` that starts with `-`, such as `--wrap=-x`, which fails the name's shape. A `--wrap` with no value,
+or a separate value that starts with `-`, such as `--wrap -x`, is refused before that, by the argument parser: it
+exits 1, writes nothing, and prints the usage and the parser's own message, which never repeats the value.
+The block records its names on its third line, `# Wrapped launchers: claude-play claude-work`, sorted.
+A re-install keeps them, and a later `--wrap` adds to them and never drops one; to wrap fewer, `--uninstall`, then
+`--install` with a `--wrap` for each name to keep.
+`--uninstall` removes them with the block. A record line the command did not write, such as one naming `claude`, counts
+as no names: the re-install wraps only what its `--wrap` names, and says so. A startup file with a line of its own that
+runs `aidrian shell-init`, and no block, wraps nothing and exits 1, since a wrapped function lives in the block.
+The name must be a program on PATH that ends in `exec` of the host program by its name, so its process shows as
+`claude`: the gate reads the process name, so a launcher that execs a binary named for its version, by its path, does
+not pass. An alias or shell function that itself runs `claude` reaches the `claude` function and needs no wrap.
+A shell function of the wrapped name that the shell already has when it reads the block, such as one defined earlier in
+the startup file or a hook a terminal's own setup registers, stays: the block defines no wrapper for that name and
+prints one line on stderr that says the launcher was not wrapped. The block tells its own wrapper apart, by its first
+run, so reading the startup file again in the same shell, `source ~/.zshrc`, redefines the wrapper and prints nothing.
+A function of that name defined after the block replaces the wrapper, as any later definition does. In zsh, an
+`autoload` of the wrapped name issued after the block does not replace a function already defined, so the wrapper
+stays; wrap no name that a later line of the startup file autoloads.
+Bash in POSIX mode refuses a function name with `-`, such as `claude-work`, so such a name suits zsh or a bash not in that mode.
+
 It runs only where every switch of the background route is on, and `session.handoff.mode` on the base branch is
 `"auto"`, on a host whose adapter declares `replaceTerminal` ([Adding a host](providers/adding-a-host.md)):
 
@@ -494,16 +655,20 @@ It runs only where every switch of the background route is on, and `session.hand
    shell, and the new session's id and full id. When anything above is missing, it notes nothing, and the say line ends
    with the plain line on how to open the new session instead. A session a Human attends that the shell function did
    not start, while this machine's switch and the working config turn the route on in `auto` mode, gets a
-   `Handoff terminal:` line at its start that says its terminal will not follow, and names the install command
-   ([Start lines](hooks.md#start-lines)). When a startup file already holds the current block, it gets none: such a
-   session runs where that file did not start it, such as an editor's terminal, and an install would change nothing.
+   `Handoff terminal:` line at its start that says its terminal will not follow ([Start lines](hooks.md#start-lines)).
+   With no block installed, it names the install command. When a startup file already holds the current block, the
+   session was started past the function, such as by a launcher, an editor command, or a terminal opened before the
+   install. The line names all three, since the session start reads no process to tell them apart; says a new
+   terminal settles the last; and names `aidrian shell-init <shell> --install --wrap <launcher>` for a launcher on PATH
+   that ends in `exec claude`, after updating a copy of the plugin older than this one, which refuses `--wrap` as an
+   unknown option, with the host's update command.
 2. When the turn ends, the Stop hook takes that request, once, within 30 minutes. It checks the request again against
    its own environment: the shell's pid, the host process, a Human attending, and no unattended mark. Then it writes the
    shell's record, valid for 60 seconds, notes in the store, `follow-<new session>.json`, that the shell's terminal now
    follows the new session, for 12 hours, and starts a detached helper. The helper waits 2 seconds, so the host runs its other Stop
    hooks and shows the last message. It checks the process is still the host's program that shell started, and sends
    the host's signal; on Claude Code, SIGTERM ([provider page](providers/claude-code.md#replacing-the-terminal)).
-   A stop the announce or hand-back check sends back ends nothing yet; the next stop does. A stop that ends the session
+   A stop the announce, review-loop, merge hand-back, or hand-back check sends back ends nothing yet; the next stop does. A stop that ends the session
    skips the session-length reminder.
 3. The host's program exits, and the shell function opens the new session in the same terminal.
 
@@ -547,6 +712,17 @@ Limits:
   open a session by a plain id, within its minute, the next time a program the shell function ran exits.
 - A Stop hook of another plugin that sends the turn back gets 2 seconds before the signal, and the session ends
   mid-turn. Its transcript is kept, and the work goes on in the new session.
+- A wrapped launcher that does not end in `exec`, or execs the host program under another process name, carries the
+  shell's pid but fails the gate's check of the host process, so its terminal stays, and the handoff's last line names
+  the command that opens the new session.
+- Only the first session runs through a wrapped launcher: every later hop opens with `command claude attach <id>` in
+  the shell's own environment. What the launcher sets before its `exec`, such as a variable naming a config folder, or
+  flags, does not reach the later sessions, so a launcher that exists only to set such a variable may open the next
+  session with the shell's settings. Not verified live.
+- A client that opened the session from the host's own session list is not followed: the old session still stops.
+  The client then returned to the list the one time it was seen; that was not probed further.
+  `claude attach <id>` typed in the shell is the way that follows every hop
+  ([provider page](providers/claude-code.md#replacing-the-terminal)).
 
 ## The snapshot
 
@@ -765,8 +941,10 @@ that section at once, as at a cache file or the ledger of the session's folder.
 line: the handoff, once the session made a model call (`1.4x` at `quiet`, `1.8x · handoff pays back in ~24 calls` at `offer`,
 `2.3x · handoff due, pays back in ~24 calls` at `due` and `reminded`, `handoff now` at `ceiling`, and ` · armed 1/3`
 while a continuation is armed), then the pull requests, `PRs ✓2 ✗0 ⏳1 · #12, #34, #56`, when `prs` holds an entry (the counts, then the first five
-numbers, then `+N` for the rest and any with no number; `3 PRs · ✓2 ✗0 ⏳1` with no number to list, or with pull
-requests from more than one repository), then
+numbers, then `+N` for the rest and any with no number; `3 PRs · ✓2 ✗0 ⏳1` with no number to list; when the numbers
+come from more than one repository, each carries its repository's letter, `PRs ✓1 ✗1 ⏳0 · a#42, b#42`, `a` the first
+when their hosts and paths are sorted, and a pull request with no number takes none; the segment is at most 58
+characters, and lists fewer numbers and a larger `+N` rather than cut one), then
 `📥 1 P1 · ⚖️ 2 decisions · 🧹 1 worktree · 🔎 3 findings`, each part only above 0. The pull request summary counts pull
 requests, not checks: `✗` one with a failed check, `⏳` one with a pending check and none failed, `✓` one whose checks
 all passed or were skipped; one with no check counts in none.
@@ -859,6 +1037,11 @@ A project that adopts the group sets `requires.aidrian` to the release that ship
   snapshot in `<state>/handoffs/.prior/<name>` that `aidrian handoff snapshot` took before a refresh, else the newest
   other brief of the same slug. A passing check keeps the brief that passed as that snapshot, so the next check of the
   file compares with what last passed; a copy the disk refuses changes neither the output nor the exit code.
+  A project run's driver brief, `<date>-project-<run>.md` right in the handoffs folder of a state folder that keeps the
+  run `<run>`, takes as its prior only a brief whose sha256 a handoff row of the run's ledger records
+  (`aidrian project handoff`): the snapshot first, then each other brief of the slug, newest first, and none when no
+  such brief is left. Another session may have written a file there, and the check would ask the driver to carry its
+  steps; so a refresh compares with the last brief the driver handed off, and `--prior` still names any other.
   A `--prior` that is the brief itself exits 2 for both `check` and `snapshot`: its earlier text is gone. Same file
   means the same device and inode, so a symlink, a hard link, and a letter-case variant on a case-insensitive disk count.
   A header that names this same file, with no snapshot to compare, is a finding the session tells the Human.

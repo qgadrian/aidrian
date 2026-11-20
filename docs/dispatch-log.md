@@ -12,6 +12,11 @@ Three Claude Code hooks append the dispatch, stop, and session rows, the last th
 the review commands append a `review_extension` row, and `aidrian decisions` appends the decision rows,
 only inside a project folder, and only while config.json `telemetry.enabled` is on:
 [config.md](config.md#telemetry) has the switches.
+
+The log is no longer only a record: under the [unattended waiver](config.md#unattended-waiver), `aidrian pr auto-merge`
+takes a judge's verdict at the round cap only when a `dispatch` row of the recording session names that judge, so a
+`dispatch` row now decides a merge. It is not proof: a session that can write the state folder can write a row.
+
 A row holds names, counts, durations, costs, and file paths. It never holds a prompt, a command, or tool output.
 
 ## Rows
@@ -36,7 +41,7 @@ A row holds names, counts, durations, costs, and file paths. It never holds a pr
 | `models`, `cost_usd` | The models it used, and the cost estimated from list prices (the host adapter's `modelPrices`, [Model prices](#model-prices)). |
 | `requests`, `tool_requests`, `tool_calls` | Its API requests, the requests that made a tool call, and its tool calls, as on a `session` row's sides. |
 | `docs_read` | The knowledge docs it opened with the Read tool, as `{ "path", "bytes" }`: index path and size. `null` while `telemetry.docReads` is off. |
-| `delivered` | `file` when every `.md` or `.json` path its last message presents as delivered exists, `missing` when one does not or a handoff file its brief asked for is not written ([delivery check](hooks.md#delivery-check)), `chat` for none. |
+| `delivered` | `file` when every `.md` or `.json` path its last message presents as delivered exists, `missing` when one does not or a handoff file its brief asked for is not written, `pending` when nothing is missing but such a handoff file is not due yet, since a background task of its own still runs and a later stop is sure ([delivery check](hooks.md#delivery-check)), `chat` for none. A pending file is never in `paths`, even when the message names it. |
 | `paths` | Those paths, at most 20. |
 | `running` | The background shells and agents it started that still ran as it stopped: the [background check](hooks.md#background-check). A row written before the field has none. |
 | `handoffs_written` | How many handoff files its brief asked for the hook wrote from its final report, as the [delivery check](hooks.md#delivery-check) does when the agent did not write one. A row written before the field has none. |
@@ -106,6 +111,7 @@ It writes one row at the end of a session with no read recorded, on a host with 
 | `rule` | Its name: `git-hook-bypass`, `git-amend`, `process-kill`, `grep-exit-chain`, `attribution`, `pr-body`, `public-text`, `main-checkout`, `agent-gates`, `config-guard`, `tracker-guard`, or `ask-names`. |
 | `tool` | The tool it blocked, such as `Bash`, `Edit`, or a tool an agent gate names. |
 | `agent_type` | The agent that made the call, named as a `dispatch` row names its dispatcher: `main` for the main session. |
+| `agent_id` | The subagent run that made the call, null for the main thread. A row written before the field has none. |
 | `reason` | What the rule matched, at most 120 characters, as the list below says. |
 
 The `reason` is:
@@ -189,7 +195,7 @@ Explore: 12 dispatches, 8% re-dispatched, median 88s and 85k tokens, $3.08, deli
   docs read: 1.5 docs and 13.0 KB a run; docs/knowledge/engineering/testing.md (11), docs/knowledge/engineering/code-style.md (5)
 Sessions: 2, $42.10 estimated, main conversation and subagents together
 Hook denies: 6 in 2 sessions
-  git-amend: 4, by main 3, Explore 1; 1 session blocked 3 times or more, an automatic lesson
+  git-amend: 4, by main 3, Explore 1; 1 agent run blocked 3 times or more for the same reason, an automatic lesson
     most often: `git commit --amend` rewrites the branch tip, and another agent working on this branch may already have built on it.
   agent-gates: 1, by aidrian:explorer 1
     most often: agents.explorer.deny has "WebFetch"
@@ -203,7 +209,7 @@ Hook denies: 6 in 2 sessions
   `1 - distinct (session, description) / dispatches`. A high rate means agents are sent back to redo work.
 - **median time and tokens**: per dispatch, from the `dispatch` and `stop` rows.
 - **cost**: the sum of the agent type's `stop` rows. The session total already includes it; do not add them.
-- **delivered**: how the agents' reports turned out: files that exist, chat only, or a named file that did not exist.
+- **delivered**: how the agents' reports turned out: files that exist, chat only, or a named file that did not exist; `/ N pending` follows when a run's last stop left its handoff file waiting on a background task.
 - **runs**: the subagents of that type that stopped, and the cost of each on average.
 - **sent back by the delivery check**: the share of runs with any `stop` row whose `sent_back` is `true`.
   A run that named a missing file before rows recorded `sent_back` is unknown: the share leaves it out, and a `Partial:` line counts it.
@@ -211,8 +217,8 @@ Hook denies: 6 in 2 sessions
 - **tool calls per request that made one**: as in [Sessions](#sessions), over the runs' own requests.
 - **docs read**: how many knowledge docs a run opened, and their bytes, on average, then the five that agent type opened most.
   The averages leave out runs logged with doc reads off, and the bytes, runs logged before sizes.
-- **Hook denies**: the `hook_deny` rows, per rule, most blocks first: the agents it blocked, the sessions it blocked
-  3 times or more, which is when a block becomes an [automatic lesson](lessons.md#automatic-lessons),
+- **Hook denies**: the `hook_deny` rows, per rule, most blocks first: the agents it blocked, the agent runs it blocked
+  3 times or more for the same `reason`, which is when a block becomes an [automatic lesson](lessons.md#automatic-lessons),
   and the `reason` it logged most often. A rule an agent keeps hitting needs clearer words in that agent's instructions or in the rule's message.
 
 `--since` takes `30m`, `24h`, `7d`, or a date such as `2026-10-01`; the default is `7d`.

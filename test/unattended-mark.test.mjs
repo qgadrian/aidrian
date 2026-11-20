@@ -16,6 +16,7 @@ import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { startedUnattended } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { noteFrom, openStore, storePath } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { defaultStateDir, findProject, projectCheckouts, stateDir } from '../plugins/aidrian/lib/project.mjs';
+import { GIT_VARS } from '../plugins/aidrian/lib/review/env.mjs';
 import { dropPending, MARK_AGE, markFolder, markPending, markUnattended, PENDING_AGE, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { TEST_HOME } from './fixtures/test-home.mjs';
 
@@ -224,10 +225,135 @@ test('while the gate starts a session, every session the host had not listed and
   assert.equal(run(fresh, 'claude --bg x').status, 0, 'once the gate removed it, nobody');
 });
 
+test('a subagent and a marked session may not repoint a git remote or gh\'s default repository; reads, and an attended session, may', (t) => {
+  const dir = project(t);
+  const outside = folder(t, 'aidrian-outside-');
+  const marked = 'feed0006-0000-4000-8000-000000000006';
+  assert.ok(markUnattended(marked, { root: dir }));
+  const run = (session, command, { cwd = dir, agent = false } = {}) => spawnSync(process.execPath, [HOOK], {
+    input: JSON.stringify({ session_id: session, tool_name: 'Bash', tool_input: { command }, cwd, ...(agent ? { agent_id: 'a5f0c1', agent_type: 'aidrian:explorer' } : {}) }),
+    cwd, encoding: 'utf8',
+  });
+  const refused = [
+    'git remote set-url origin git@github.com:someone/else.git',
+    'git -C . remote add upstream https://github.com/someone/else',
+    'git remote rename upstream origin',
+    'git config remote.origin.url git@github.com:someone/else.git',
+    'gh repo set-default someone/else',
+    'bash -c "git remote set-url origin x"',
+    '$GIT remote set-url origin x',
+    // git config: a remote key's write or removal, gh's default repository, an include, a URL rewrite, an alias, and
+    // the forms that write keys they do not name.
+    'git config --unset remote.origin.url',
+    'git config set remote.origin.url x',
+    'git config remote.origin.gh-resolved base',
+    'git config include.path /tmp/evil.cfg',
+    'git config includeIf.gitdir:~/.path /tmp/evil.cfg',
+    'git config --global url.git@github.com:someone/.insteadOf git@github.com:Acme/',
+    'git config alias.remote "!echo"',
+    'git config --edit',
+    'git config -e',
+    'git config --rename-section remote.upstream remote.origin',
+    'git config --remove-section remote.origin',
+    'git -c alias.st=status st',
+    'git -calias.st=status st',
+    'git --config-env alias.st=CMD st',
+    'gh alias set co "pr checkout"',
+    // Words split by quotes or a backslash read whole.
+    "git rem''ote set-url origin x",
+    'git re\\mote add up x',
+    "gh re''po set-default x/y",
+    // A trailing read word is a value pattern once the key is given: the call still writes.
+    'git config remote.origin.url git@github.com:someone/else.git get',
+    'git config remote.origin.url git@github.com:someone/else.git list',
+    'git config remote.origin.url git@github.com:someone/else.git --get',
+    'git config remote.origin.url git@github.com:someone/else.git -l',
+  ];
+  const allowed = [
+    'git remote -v', 'git remote get-url origin', 'git config --get remote.origin.url', 'git config remote.origin.url',
+    'git config --get-all remote.origin.url', 'git config --list', 'git config user.name t', 'gh repo set-default --view', 'git fetch origin',
+    'git -c core.pager=cat log -1', 'gh alias list',
+    // Other programs whose words name such an action are no git or gh call, whatever their variables.
+    'grep -rn "remote add" "$DIR"', 'rg "set-url" remote $X', 'npm test -- --grep "remote rename" $ARGS',
+  ];
+  for (const [who, session, options] of [['a marked session', marked, {}], ['a subagent', 'plain-session', { agent: true }], ['a marked session outside its project', marked, { cwd: outside }]]) {
+    for (const command of refused) {
+      const result = run(session, command, options);
+      assert.equal(result.status, 2, `${who}: ${command}`);
+      assert.match(result.stderr, /changes which repository the checkout's git remotes or gh's default name, or how git reads them, where the plugin reads the team's policy on the forge, such as solo/u, `${who}: ${command}`);
+    }
+    for (const command of allowed) {
+      const result = run(session, command, options);
+      // A marked session's write of the repository's own git config is the write allowlist's to refuse
+      // (lib/unattended-write.mjs), never this guard's.
+      if (command === 'git config user.name t' && session === marked) {
+        assert.equal(result.status, 2, `${who}: ${command}`);
+        assert.match(result.stderr, /the repository's shared git config/u, `${who}: ${command}`);
+        assert.doesNotMatch(result.stderr, /changes which repository/u, `${who}: ${command}`);
+        continue;
+      }
+      assert.equal(result.status, 0, `${who}: ${command}`);
+    }
+  }
+  for (const command of refused) assert.equal(run('plain-session', command).status, 0, `attended: ${command}`);
+});
+
+test('a subagent and a marked session may not erase the machine\'s local file by any Bash write, though it names no key', (t) => {
+  // The project has no gates: the guard holds without them.
+  const dir = project(t);
+  const local = path.join(dir, '.aidrian.local.json');
+  writeFileSync(local, JSON.stringify({ unattendedSignoff: 'off' }));
+  const marked = 'feed0007-0000-4000-8000-000000000007';
+  assert.ok(markUnattended(marked, { root: dir }));
+  const run = (session, command, { agent = false } = {}) => spawnSync(process.execPath, [HOOK], {
+    input: JSON.stringify({ session_id: session, tool_name: 'Bash', tool_input: { command }, cwd: dir, ...(agent ? { agent_id: 'a5f0c1', agent_type: 'aidrian:explorer' } : {}) }),
+    cwd: dir, encoding: 'utf8',
+  });
+  const refused = [
+    `rm ${local}`, 'rm -f .aidrian.local.json', `mv ${local} ${dir}/kept.json`, ': > .aidrian.local.json', `cp /dev/null ${local}`, 'truncate -s 0 .aidrian.local.json', 'rm .aidrian.*',
+    // Split by quotes; a link made from it; a clean or stash that takes ignored files; a variable or bracket glob that
+    // may spell it.
+    'rm .aid""rian.local.json', 'ln -s .aidrian.local.json alias', 'ln .aidrian.local.json hard', 'cp -l .aidrian.local.json hard', 'cp -s .aidrian.local.json soft',
+    'git clean -fdx', 'git clean -X -f', 'git stash -a', 'git stash push --all',
+    'F=.aidrian.local.json; rm "$F"', 'F=.aidrian.local.json; echo {} > "$F"', 'rm .aidrian.loca[l].json',
+  ];
+  for (const [who, session, options] of [['a marked session', marked, {}], ['a subagent', 'plain-session', { agent: true }]]) {
+    for (const command of refused) {
+      const result = run(session, command, options);
+      assert.equal(result.status, 2, `${who}: ${command}`);
+      assert.match(result.stderr, /it writes, moves, links, or removes \.aidrian\.local\.json, or may, which holds the machine's switches/u, `${who}: ${command}`);
+    }
+    assert.equal(run(session, `cat ${local}`, options).status, 0, `${who}: a read`);
+    for (const command of [`cp ${local} ${dir}/copy.json`, 'git clean -fd', 'git stash', 'F=notes.txt; rm "$F"']) assert.equal(run(session, command, options).status, 0, `${who}: ${command}`);
+    assert.equal(run(session, 'rm -f notes.txt', options).status, 0, `${who}: another file`);
+  }
+  for (const command of refused) assert.equal(run('plain-session', command).status, 0, `attended: ${command}`);
+});
+
+test('a marked session may not run the handoff gate with a variable that moves the repository git reads, or gh\'s config', (t) => {
+  const dir = project(t);
+  const marked = 'feed0008-0000-4000-8000-000000000008';
+  assert.ok(markUnattended(marked, { root: dir }));
+  const run = (session, command) => spawnSync(process.execPath, [HOOK], {
+    input: JSON.stringify({ session_id: session, tool_name: 'Bash', tool_input: { command }, cwd: dir }), cwd: dir, encoding: 'utf8',
+  });
+  // Any variable, not only the ones that move what the gate reads.
+  for (const name of [...GIT_VARS, 'GH_CONFIG_DIR', 'XDG_CONFIG_HOME', 'NODE_OPTIONS', 'HTTPS_PROXY']) {
+    const result = run(marked, `${name}=/tmp/elsewhere aidrian handoff continue b.md`);
+    assert.equal(result.status, 2, name);
+    assert.match(result.stderr, new RegExp(`with ${name} set or unset by the command itself`, 'u'), name);
+    assert.equal(run('plain-session', `${name}=/tmp/elsewhere aidrian handoff continue b.md`).status, 0, `attended: ${name}`);
+  }
+  const exported = run(marked, 'export NODE_OPTIONS=--require=/tmp/x.js; aidrian handoff route');
+  assert.equal(exported.status, 2);
+  assert.match(exported.stderr, /with NODE_OPTIONS set or unset by the command itself/u);
+  assert.equal(run(marked, 'aidrian handoff route').status, 0, 'with no variable');
+});
+
 // The user's own state folder is read beside the state root's, and no HOME or XDG_STATE_HOME moves it, so a call that
 // gives no `home` reads the marks and floors of the sessions running on the machine, and fails while one hands off.
 test('every test call that reads the unattended marks or the user\'s own chain floors passes a home folder', () => {
-  const reader = /\b(?:readUnattendedMark|unattendedHere|continueBrief|startedUnattended)\(/u;
+  const reader = /\b(?:readUnattendedMark|unattendedHere|continueBrief|routeOf|startedUnattended)\(/u;
   const missing = [];
   for (const name of readdirSync(import.meta.dirname).filter((each) => each.endsWith('.test.mjs')).sort()) {
     readFileSync(path.join(import.meta.dirname, name), 'utf8').split('\n').forEach((line, at) => {

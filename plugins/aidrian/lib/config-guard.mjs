@@ -16,12 +16,12 @@ import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
 import { checkDeadline } from './deadline.mjs';
-import { globParts, isEntry, isWithin } from './fs.mjs';
+import { foldCase, globParts, isEntry, isWithin } from './fs.mjs';
 import { folderOf, GLOB_WORD, globLinksTo, globStarts, linkBelow, linkReaches, linkWalk, partMatches, reachesFile, realOf, sameFile } from './glob-links.mjs';
 import { fileEditOf, isFileEditTool, opaqueShellCommand } from './hosts/index.mjs';
 import { configFiles } from './project.mjs';
 import { bashWrites, canonical, toolTargets } from './rules/main-checkout.mjs';
-import { commandLines, givenCode, inlineShellCommand, interpreterOf, lexInputs, readInvocation, SUBSTITUTION_DEPTH_LIMIT } from './shell-lex.mjs';
+import { commandLines, givenCode, inlineShellCommand, interpreterOf, lexInputs, readGit, readInvocation, shellRedirections, SUBSTITUTION_DEPTH_LIMIT, walkCommands } from './shell-lex.mjs';
 
 // A quoted text with no quote, backslash, `$`, or backtick in it, such as a path.
 const TEXT = String.raw`(?:'[^'"\\$\x60\n]*'|"[^'"\\$\x60\n]*")`;
@@ -84,13 +84,21 @@ const SWITCHES = Object.freeze([
   Object.freeze({ key: 'productFeedback', valueIn: (parsed) => parsed?.review?.productFeedback, name: 'review.productFeedback', why: 'only the main session may choose whether this machine owes product feedback', patched: /^[+-].*(?:productFeedback|"auto"\s*:)/mu }),
 ]);
 
+// What a Bash write to the local file that names no key changes: every switch in it, a local "off" among them.
+const EVERY_SWITCH = Object.freeze({ name: 'every machine switch', why: 'only the main session may change the machine\'s switches, a local "off" among them' });
+
 // Why the subagent call in `input` may not set one of the machine's switches, the auto-merge switch, the unattended waiver, review approvals,
 // the background handoff, or the product feedback choice, or null: { match, reason }. It targets the project's local file and either changes the
-// switch (changesSwitch) or is a Bash command that names its key. It targets the file by its name, in any folder and
+// switch (changesSwitch) or is a Bash command that writes it: any Bash write, move, remove, truncate, or copy over the
+// file counts as changing every switch, whether or not it names a key, since erasing a local "off" lets the team's
+// `solo` turn that switch on (config-local.mjs machineSwitch). It targets the file by its name, in any folder and
 // case, by a Bash glob whose last part matches that name, such as its name with a `*` for its end, or by a Bash glob from
 // a folder the lexer knows that passes a link to the file already on disk (globLinksTo), as `tee out/alias*` does
-// when `out/alias` links to it. This holds with no
-// gates set, and other writes to that file stay allowed. Like the rest of this guard, it is for agents that cooperate.
+// when `out/alias` links to it. A write that names no key is judged by its paths and names, and by a glob spelled in
+// a checkout's folder or an unknown one, with no walk of the links on disk: a write through a link named otherwise,
+// such as `: > alias` where `alias` links to the file, is a known limit. This holds with no gates set; a Write or Edit
+// that leaves every switch as it was stays allowed, and so does a read. Like the rest of this guard, it is for agents
+// that cooperate.
 // A command in a shell the lexer cannot read that names the local file, or has a glob that may reach it
 // (opaqueGlobReaches), is refused whether or not it names a key: it may set a switch by a key it builds, and the guard
 // cannot tell.
@@ -100,20 +108,35 @@ export function machineSwitchWriteDenial(input, project, { names: { human } }, {
   const subagent = typeof input.agent_id === 'string' && input.agent_id !== '';
   const opaque = opaqueShellCommand(input) !== null;
   const isBash = bashCall(input);
-  const named = SWITCHES.filter(({ key }) => !isBash || String(input.tool_input?.command).includes(key));
-  if (named.length === 0) return null;
+  const command = String(input.tool_input?.command ?? '');
+  const named = SWITCHES.filter(({ key }) => !isBash || command.includes(key));
+  // A Bash call that names no key may still erase a switch: a remove, move, truncate, link, or copy over the file lifts a
+  // local "off", which the team's `solo` then turns on (config-local.mjs machineSwitch). Only a call that may name the
+  // file, by its name, however quoted, or a glob, or that may clean or stash it away, is read further.
+  const plain = unquoted(command);
+  const erases = isBash && named.length === 0 && /aidrian|[*?[]|\bclean\b|\bstash\b/iu.test(plain);
+  if (named.length === 0 && !erases) return null;
   const { files, names, globs } = writeTargets(input);
   const local = project.paths.local;
   const targets = files.filter((file) => path.basename(file).toLowerCase() === local);
   const locals = configFiles(project).filter((file) => path.basename(file) === local).map((file) => [file]);
   const seen = linkWalk(input);
   const linked = (glob) => glob.unsure === false && locals.some(([file]) => globLinksTo(glob, canonical(file), seen));
-  const globbed = () => globs.some((glob) => !glob.opaque && (globParts(glob.text, [], 'i').pattern.test(local) || linked(glob)));
+  // A write that names no key is judged by the folder a glob is spelled in, with no walk of the links on disk, so a
+  // glob over another folder costs nothing: it reaches the file when its last part matches the name and its folder is
+  // a checkout's, has a wildcard of its own, or is unknown.
+  const folders = new Set(project.checkouts.map((dir) => foldCase(canonical(dir))));
+  const here = (glob) => glob.unsure || (path.isAbsolute(glob.text) ? [glob.text] : (glob.dirs ?? []).map((dir) => path.resolve(dir, glob.text))).some((spelled) => {
+    const folder = path.dirname(spelled);
+    return GLOB_WORD.test(folder) || folders.has(foldCase(canonical(folder)));
+  });
+  const matches = (glob) => globParts(glob.text, [], 'i').pattern.test(local);
+  const globbed = () => globs.some((glob) => !glob.opaque && (erases ? matches(glob) && here(glob) : matches(glob) || linked(glob)));
   // The paths and names first: a call they settle reads no folder on disk.
   const aimed = targets.length > 0 || names.some((name) => name.toLowerCase().includes(local)) || globbed();
   const reached = !aimed && opaque && opaqueGlobbedFile(globs, locals, seen, project.checkouts) !== null;
-  if (!aimed && !reached) return null;
-  const hit = opaque || isBash ? named[0] : named.find((each) => changesSwitch(input, targets[0], each));
+  if (!aimed && !reached && !(erases && !opaque && erasesOtherwise(input, project, plain, globs))) return null;
+  const hit = opaque || isBash ? named[0] ?? EVERY_SWITCH : named.find((each) => changesSwitch(input, targets[0], each));
   if (!hit || (!subagent && !unattended())) return null;
   // A session no Human attends is a main session, so the reason names the Human, not the main session.
   const only = (text) => (subagent ? text : `${text.replace(/^only the main session/u, 'only a main session a Human attends')}, and the background handoff route started this one, with no Human`);
@@ -122,7 +145,60 @@ export function machineSwitchWriteDenial(input, project, { names: { human } }, {
     const why = `it ${how} ${local} in a shell command the guard cannot read, so it may set one of the machine's switches there, which ${only('only the main session may set')}`;
     return { match: `may set a switch in ${local}`, reason: projectRuleReason(input, `${why}; to read the file, use Read`, human) };
   }
+  if (hit === EVERY_SWITCH) {
+    return { match: `changes ${local}`, reason: projectRuleReason(input, `it writes, moves, links, or removes ${local}, or may, which holds the machine's switches, and ${only(hit.why)}; to read the file, use Read`, human) };
+  }
   return { match: `sets ${hit.name} in ${local}`, reason: projectRuleReason(input, `it sets ${hit.name} in ${local}, and ${only(hit.why)}`, human) };
+}
+
+// `text` with its quotes, backslashes, and backticks taken out, so a word split by them, as `rm .aid""rian.local.json`
+// or `git rem''ote`, still reads whole to a quick check of its words. lib/handoff-guard.mjs reads it too.
+export const unquoted = (text) => text.replace(/['"`\\]/gu, '');
+
+// The programs whose word built from a variable may be a file they write.
+const WRITERS = new Set(['rm', 'mv', 'cp', 'ln', 'truncate', 'tee', 'touch', 'dd', 'install', 'rsync', 'unlink', 'shred', 'sed', 'perl']);
+// cp's options that make a link instead of a copy, alone or in a cluster.
+const LINK_COPY = /^(?:--link|--symbolic-link|-[A-Za-z]*[ls][A-Za-z]*)$/u;
+
+// Whether a Bash call that names no key changes the local file in a way its write targets do not show: a link made
+// from it (`ln`, `ln -s`, `cp -l`, `cp -s`), which a later write through the link changes; `git clean` with `-x` or `-X`,
+// or `git stash` with `-a` or `--all`, run in the main checkout or a folder the guard cannot know, which takes the
+// ignored file away; and, when `plain`, the command's unquoted text, names the file, a write to a word built from a
+// variable, or a bracket glob, either of which may spell it. Known limits: a link already on disk under another name,
+// and a program that deletes what it finds, such as `find -delete`.
+function erasesOtherwise(input, project, plain, globs) {
+  const local = project.paths.local;
+  const names = plain.toLowerCase().includes(local.slice(1));
+  const main = foldCase(canonical(project.checkouts.at(-1)));
+  const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
+  const isLocal = (text) => path.basename(text).toLowerCase() === local;
+  if (names && globs.some((glob) => glob.text.includes('['))) return true;
+  for (const { segment, invocation, folder } of walkCommands(input.tool_input.command, cwd)) {
+    checkDeadline();
+    const words = invocation.args.filter((token) => !token.dynamic).map((token) => token.text);
+    const operands = words.filter((text) => !text.startsWith('-'));
+    if (invocation.program === 'ln' && operands.some(isLocal)) return true;
+    if (invocation.program === 'cp' && words.some((text) => LINK_COPY.test(text)) && operands.some(isLocal)) return true;
+    const git = invocation.program === 'git' ? readGit(segment) : null;
+    if (git && wipesIgnored(git)) {
+      const at = git.globals.findIndex((token) => token.text === '-C');
+      const where = folder === null ? null : path.resolve(folder, at === -1 ? '.' : git.globals[at + 1]?.text ?? '.');
+      if (where === null || foldCase(canonical(where)) === main) return true;
+    }
+    if (!names) continue;
+    if (invocation.dynamic || (WRITERS.has(invocation.program) && invocation.args.some((token) => token.dynamic))) return true;
+    if (shellRedirections(segment).some((each) => /^\d*>/u.test(each) && /[$`]/u.test(each))) return true;
+  }
+  return false;
+}
+
+// Whether a git call readGit read takes ignored files away: `git clean` with `-x` or `-X`, or `git stash` with `-a` or
+// `--all`, in a cluster or alone.
+function wipesIgnored({ subcommand, rest }) {
+  const words = rest.filter((token) => !token.dynamic).map((token) => token.text);
+  if (subcommand === 'clean') return words.some((text) => /^-[A-Za-z]*[xX][A-Za-z]*$/u.test(text));
+  if (subcommand === 'stash') return words.some((text) => text === '--all' || /^-[A-Za-z]*a[A-Za-z]*$/u.test(text));
+  return false;
 }
 
 // Whether `input` is a Bash call; lib/handoff-guard.mjs asks it too.
@@ -222,12 +298,13 @@ const READ_ONLY = new RegExp(String.raw`^[ \t]*${STEP}(?:[ \t]*\|[ \t]*${STEP})*
 const BRACKET = /\[[^/]*\]/u;
 
 // The most words of a command in a shell the lexer cannot read that the guards resolve as paths and globs. A command
-// with more, of a subagent or a session no Human attends, is refused (opaqueLimitDenial): a guarded file may hide in the rest. What the guards still cannot
+// with more, of a subagent, a session no Human attends, or a run's driver, is refused (opaqueLimitDenial): a guarded file may hide in the rest. What the guards still cannot
 // finish in time, the agent gate hook's time budget answers (deadlineDenial).
 export const OPAQUE_WORDS = 512;
 
 // The most targets of a Bash call the guards resolve: its paths, its globs, and the texts that may name a file. A call
-// with more, of a subagent or a session no Human attends, is refused (writeLimitDenial), as the guards resolve no more.
+// with more, of a subagent, a session no Human attends, or a run's driver, is refused (writeLimitDenial), as the guards
+// resolve no more.
 export const WRITE_TARGETS = 1024;
 
 // A word as such a shell reads a leading `~`: `~` and `~/x` (`~\x`, its backslash read as a `/`) are in the home folder.
@@ -235,46 +312,68 @@ const fromHome = (word) => (word === '~' || word.startsWith('~/') ? path.join(ho
 
 const isSubagent = (input) => typeof input.agent_id === 'string' && input.agent_id !== '';
 
-// Who alone may change the files the guards keep, as a reason says it to a subagent, and to a main session no Human
-// attends, which `unattended()` says it is.
-const onlyMain = (subagent) => (subagent ? 'only the main session may change'
-  : 'only a main session a Human attends may change, and the background handoff route started this one, with no Human');
+// Who alone may change the files the guards keep, as a reason says it to a call the limits and the time budget hold, or
+// null for a call they let run: a subagent's; a main session's `unattended()` says no Human attends; and a main session's
+// `drove()` says has driven a project run (run-driver.mjs droveRun), held from the run's stores, the marks, and the
+// sign-off store from its first call (scripts/hook-agent-gates.mjs), which a call the guards cannot read whole may reach.
+// `issue()` says the session works an issue of a project run (unattended-mark.mjs issueHeld), which its reason names.
+function onlyMain(input, { unattended, drove, issue }) {
+  if (isSubagent(input)) return 'only the main session may change';
+  if (issue()) return 'only a session a Human attends may change, and this session works an issue of a project run, which no Human attends';
+  if (unattended()) return 'only a main session a Human attends may change, and the background handoff route started this one, with no Human';
+  if (drove()) return 'only a main session a Human attends may change, and this session has driven a project run, whose driver mark holds it as one no Human attends';
+  return null;
+}
 
 // Why the call in `input` may not run because its command, in a shell the lexer cannot read, has more words than the
 // guards resolve (OPAQUE_WORDS), or null: { match, reason }. Past that many, a guarded file may hide in the rest. It holds
-// for a subagent, and for a main session `unattended()` says no Human attends, asked last.
-export function opaqueLimitDenial(input, { names: { human } }, { unattended = () => false } = {}) {
+// for a subagent, and for a main session `unattended()` says no Human attends or `drove()` says has driven a project run
+// (onlyMain), asked last. `mark`, the session's unattended mark, names an issue session as that in the reason.
+export function opaqueLimitDenial(input, { names: { human } }, { unattended = () => false, drove = () => false, issue = () => false, mark = null } = {}) {
   const opaque = opaqueShellCommand(input);
   if (opaque === null) return null;
   const count = opaqueWords(opaque).length;
   if (count <= OPAQUE_WORDS) return null;
-  const subagent = isSubagent(input);
-  if (!subagent && !unattended()) return null;
-  const why = `its command has ${count} words, counting each case, and the guards read at most ${OPAQUE_WORDS} in a shell command they cannot parse, so it may change a file ${onlyMain(subagent)}`;
-  return { match: `more than ${OPAQUE_WORDS} words`, reason: projectRuleReason(input, why, human, 'that the command is longer than the guards read, or run it as shorter commands') };
+  const who = onlyMain(input, { unattended, drove, issue });
+  if (who === null) return null;
+  const why = `its command has ${count} words, counting each case, and the guards read at most ${OPAQUE_WORDS} in a shell command they cannot parse, so it may change a file ${who}`;
+  return { match: `more than ${OPAQUE_WORDS} words`, reason: projectRuleReason(input, why, human, 'that the command is longer than the guards read, or run it as shorter commands', { mark }) };
 }
 
 // Why the Bash call in `input` may not run because it writes more targets than the guards resolve (WRITE_TARGETS), or
 // null: { match, reason }. Past that many, a guarded file may hide in the rest. It holds as opaqueLimitDenial does.
-export function writeLimitDenial(input, { names: { human } }, { unattended = () => false } = {}) {
+export function writeLimitDenial(input, { names: { human } }, { unattended = () => false, drove = () => false, issue = () => false, mark = null } = {}) {
   if (!bashCall(input)) return null;
   const { files, names, globs } = writeTargets(input);
   const count = files.length + names.length + globs.length;
   if (count <= WRITE_TARGETS) return null;
-  const subagent = isSubagent(input);
-  if (!subagent && !unattended()) return null;
-  const why = `its command writes ${count} targets, counting each folder a path may be in, and the guards read at most ${WRITE_TARGETS} in one call, so it may change a file ${onlyMain(subagent)}`;
-  return { match: `more than ${WRITE_TARGETS} write targets`, reason: projectRuleReason(input, why, human, 'that the command writes more files than the guards read, or run it as shorter commands') };
+  const who = onlyMain(input, { unattended, drove, issue });
+  if (who === null) return null;
+  const why = `its command writes ${count} targets, counting each folder a path may be in, and the guards read at most ${WRITE_TARGETS} in one call, so it may change a file ${who}`;
+  return { match: `more than ${WRITE_TARGETS} write targets`, reason: projectRuleReason(input, why, human, 'that the command writes more files than the guards read, or run it as shorter commands', { mark }) };
+}
+
+// Whether the call in `input` is no shell and has no write target, such as a Read, a search, or an MCP tool's call:
+// every guard of the agent gate hook reads a shell command or the files a call writes, so none refuses such a call,
+// whoever makes it. A PowerShell pipeline of read-only cmdlets alone (writeTargets) has none either.
+export function writesNothing(input) {
+  if (bashCall(input)) return false;
+  const { files, names, globs } = writeTargets(input);
+  return files.length === 0 && names.length === 0 && globs.length === 0;
 }
 
 // Why the call in `input` may not run because the guards could not finish reading it within the agent gate hook's time
 // budget (lib/deadline.mjs), or null for a main session a Human attends, whose call runs: { match, reason }. It holds
-// for a subagent, and for a main session `unattended()` says no Human attends.
-export function deadlineDenial(input, { names: { human } }, { unattended = () => false } = {}) {
-  const subagent = isSubagent(input);
-  if (!subagent && !unattended()) return null;
-  const why = `the guards could not finish reading this command in time, so it may change a file ${onlyMain(subagent)}`;
-  return { match: 'past the guards\' time budget', reason: projectRuleReason(input, why, human, 'that the command takes the guards longer than they have, or run it as shorter commands') };
+// for a subagent, and for a main session `unattended()` says no Human attends or `drove()` says has driven a project
+// run (onlyMain): the guards it could not finish hold a run's driver from the run's stores, the marks, and the sign-off
+// store. A call that writes nothing (writesNothing), which no guard refuses, runs for every session, so a loaded machine
+// never stalls a session the guards hold on its reads; a shell call, such as a driver's `aidrian project wait`, is held.
+export function deadlineDenial(input, { names: { human } }, { unattended = () => false, drove = () => false, issue = () => false, mark = null } = {}) {
+  if (writesNothing(input)) return null;
+  const who = onlyMain(input, { unattended, drove, issue });
+  if (who === null) return null;
+  const why = `the guards could not finish reading this command in time, so it may change a file ${who}`;
+  return { match: 'past the guards\' time budget', reason: projectRuleReason(input, why, human, 'that the command takes the guards longer than they have, or run it as shorter commands', { mark }) };
 }
 
 // The texts a command in a shell the lexer cannot read is judged by: the command as given, and, when it differs, a copy

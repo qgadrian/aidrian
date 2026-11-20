@@ -43,6 +43,7 @@ const ALLOWED = {
   'lib/rules/review-extend.mjs|transcript mark': { count: 1, why: 'humanText reads a typed grant from a Claude Code transcript, for the review-rounds rule behind capabilities.transcripts: a subagent`s entry is never the Human`s prompt.' },
   'lib/stop-announce.mjs|host tool': { count: 1, why: `${VOCABULARY} The question tool the send-back reason names, as each host's model calls it.` },
   'lib/transcript.mjs|host tool': { count: 6, why: 'Reads Claude Code transcripts, whose tool names these are, such as the file tools whose paths the delivery check reads; other hosts stay behind capabilities.transcripts.' },
+  'lib/transcript.mjs|transcript mark': { count: 2, why: 'The stop hook`s turn reads (turnActions, humanPrompt) read Claude Code transcripts only, behind capabilities.transcripts, and skip a subagent`s entries by that mark.' },
   'scripts/hook-agent-post.mjs|host tool': { count: 2, why: `${VOCABULARY} This hook runs on what hooks.json matches, Agent or Task.` },
   'scripts/hook-agent-pre.mjs|host tool': { count: 2, why: `${VOCABULARY} This hook runs on what hooks.json matches, Agent or Task.` },
   'scripts/hook-ask.mjs|host tool': { count: 1, why: `${VOCABULARY} This hook runs on what hooks.json matches.` },

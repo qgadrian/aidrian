@@ -1,9 +1,10 @@
 // Codex's adapter. docs/providers/adding-a-host.md lists the fields; docs/providers/codex.md says what was checked here.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
+import { attachLine, findProcesses, logLimit, processEnded, sessionNote, startProject, stopLine, stopProcess } from './codex-exec.mjs';
 import { responseObjects } from './response.mjs';
 
 const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -114,6 +115,130 @@ function hookTrust(env) {
   return states.every((state) => state !== null && holdsHash(state)) ? 'trusted' : 'untrusted';
 }
 
+// Whether Codex would run every hook of this plugin, for a project run's session: the answer hookTrust gives, but over
+// every handler hooks.json lists, of every event and group, each matched by this plugin's own id as its `[plugins."<id>"]`
+// table names it: a session no Human attends is held by many hooks, not by the tracker hooks alone.
+function allHooksTrust(env) {
+  let lines;
+  try {
+    lines = readFileSync(configFile(env), 'utf8').split(/\r?\n/u);
+  } catch {
+    return 'absent';
+  }
+  const ids = lines.map((line) => /^\[plugins\."(aidrian@[^"]+)"\]\s*$/u.exec(line.trimEnd())?.[1]).filter(Boolean);
+  if (ids.length === 0) return 'absent';
+  const answers = ids.map((id) => {
+    if (turnedOff(section(lines, (line) => line.trimEnd() === `[plugins."${id}"]`))) return 'off';
+    const states = allHookKeys().map((key) => section(lines, (line) => line.trimEnd() === `[hooks.state."${id}:hooks/hooks.json:${key}"]`));
+    if (states.some((state) => state !== null && turnedOff(state))) return 'off';
+    return states.every((state) => state !== null && holdsHash(state)) ? 'trusted' : 'untrusted';
+  });
+  if (answers.includes('trusted')) return 'trusted';
+  return answers.includes('off') ? 'off' : 'untrusted';
+}
+
+// The trust key of every handler hooks.json lists, `<event>:<group>:<handler>`, with the event in Codex's snake case.
+function allHookKeys() {
+  const { hooks } = JSON.parse(readFileSync(new URL('../../hooks/hooks.json', import.meta.url), 'utf8'));
+  const snake = (event) => event.replace(/[A-Z]/gu, (letter, at) => `${at ? '_' : ''}${letter.toLowerCase()}`);
+  return Object.entries(hooks).flatMap(([event, groups]) => groups.flatMap((group, at) => group.hooks.map((_hook, handler) => `${snake(event)}:${at}:${handler}`)));
+}
+
+// The folders `[sandbox_workspace_write] writable_roots` names in Codex's config.toml, each as written, or [] when it
+// names none. A value it cannot read gives [null].
+function writableRoots(env) {
+  let lines;
+  try {
+    lines = readFileSync(configFile(env), 'utf8').split(/\r?\n/u);
+  } catch {
+    return [];
+  }
+  const sandbox = section(lines, (line) => /^\[sandbox_workspace_write\]\s*(?:#.*)?$/u.test(line)) ?? [];
+  const text = sandbox.join('\n');
+  const at = text.search(/^\s*writable_roots\s*=/mu);
+  if (at < 0) return [];
+  const rest = text.slice(at);
+  const end = rest.indexOf(']');
+  if (end < 0) return [null];
+  return [...rest.slice(0, end).matchAll(/"((?:[^"\\]|\\.)*)"|'([^']*)'/gu)].map((match) => match[1] ?? match[2]);
+}
+
+// The temporary folders Codex's workspace-write sandbox lets a session write besides its writable roots: /tmp, unless
+// config.toml sets `exclude_slash_tmp = true` under `[sandbox_workspace_write]`, and the folder $TMPDIR names, unless it
+// sets `exclude_tmpdir_env_var = true` (Codex's config reference).
+function tempRoots(env) {
+  let lines;
+  try {
+    lines = readFileSync(configFile(env), 'utf8').split(/\r?\n/u);
+  } catch {
+    lines = [];
+  }
+  const sandbox = section(lines, (line) => /^\[sandbox_workspace_write\]\s*(?:#.*)?$/u.test(line)) ?? [];
+  const excluded = (key) => sandbox.some((line) => new RegExp(String.raw`^\s*${key}\s*=\s*true\b`, 'u').test(line));
+  const tmpdir = typeof env.TMPDIR === 'string' && path.isAbsolute(env.TMPDIR) ? env.TMPDIR : null;
+  return [...(excluded('exclude_slash_tmp') ? [] : ['/tmp']), ...(tmpdir && !excluded('exclude_tmpdir_env_var') ? [tmpdir] : [])];
+}
+
+// Why the writable roots of Codex's config, or the temporary folders its sandbox writes (tempRoots), would let a session
+// write in one of `guarded`, real absolute paths such as the main checkout's git folder, the state root, the mark
+// folders, the sign-off store's, and the runs folder, or null.
+function writableRootsProblem(env, guarded) {
+  for (const root of tempRoots(env)) {
+    let real = root;
+    try {
+      real = realpathSync(root);
+    } catch {}
+    const holds = guarded.find((folder) => real === folder || folder.startsWith(`${real}${path.sep}`) || real.startsWith(`${folder}${path.sep}`));
+    if (holds) return `Codex's workspace-write sandbox lets a session write ${root}, which reaches ${holds}, a folder a session no Human attends must not write: move the state folder out of it, or set ${root === '/tmp' ? 'exclude_slash_tmp' : 'exclude_tmpdir_env_var'} = true under [sandbox_workspace_write] in config.toml`;
+  }
+  for (const root of writableRoots(env)) {
+    if (typeof root !== 'string') return 'Codex\'s config.toml sets writable_roots for its workspace-write sandbox in a form the gate cannot read';
+    const home = env.HOME || homedir();
+    const spelled = root.startsWith('~/') ? path.join(home, root.slice(2)) : root;
+    if (!path.isAbsolute(spelled)) return `Codex's config.toml makes ${root} writable, a path that is not absolute`;
+    let real = path.resolve(spelled);
+    try {
+      real = realpathSync(real);
+    } catch {
+      // Not there yet: its spelling.
+    }
+    const reaches = guarded.find((folder) => real === folder || real.startsWith(`${folder}${path.sep}`) || folder.startsWith(`${real}${path.sep}`));
+    if (reaches) return `Codex's config.toml makes ${root} writable in its workspace-write sandbox, which reaches ${reaches}, a folder a session no Human attends must not write`;
+  }
+  return null;
+}
+
+// Why a session `codex exec --sandbox workspace-write` starts could neither push nor reach the forge, or null: that
+// sandbox turns the network off unless config.toml sets `network_access = true` under `[sandbox_workspace_write]`
+// (Codex's config reference). Read from the same file as hookTrust, and no value of it leaves this function.
+function sandboxNetworkProblem(env) {
+  let lines;
+  try {
+    lines = readFileSync(configFile(env), 'utf8').split(/\r?\n/u);
+  } catch {
+    lines = [];
+  }
+  const sandbox = section(lines, (line) => /^\[sandbox_workspace_write\]\s*(?:#.*)?$/u.test(line)) ?? [];
+  if (sandbox.some((line) => /^\s*network_access\s*=\s*true\b/u.test(line))) return null;
+  return 'Codex runs the session in its workspace-write sandbox, whose network is off unless its config.toml sets network_access = true under [sandbox_workspace_write], so the session could neither push its branch nor reach the forge';
+}
+
+// Why the user's Codex config.toml could widen the network proxy a project start turns on, or null: any line that is no
+// comment and names `network_proxy`, as a `[features.network_proxy]` table, a `network_proxy` key of `[features]`, or a
+// dotted key. Until a live run shows that the start's `-c features.network_proxy.domains` table replaces the user's
+// rather than merging with it (docs/providers/codex.md live check 12), a user allow rule could open a host the team
+// never listed. Read from the same file as hookTrust.
+function networkProxyProblem(env) {
+  let lines;
+  try {
+    lines = readFileSync(configFile(env), 'utf8').split(/\r?\n/u);
+  } catch {
+    return null;
+  }
+  if (!lines.some((line) => !/^\s*#/u.test(line) && /network_proxy/u.test(line))) return null;
+  return 'Codex\'s config.toml sets a features.network_proxy key, and until a live run shows that the start\'s own allow rules replace the user\'s rather than merge with them, a rule there could open a host the team never listed; remove the network_proxy settings from config.toml, then start again';
+}
+
 // The trust keys of the tracker hooks, `<event>:<group>:<handler>`, read from hooks.json so a reordered file cannot go stale.
 // Trust is per hook, so trust in another of this plugin's hooks says nothing about these.
 function trackerHookKeys() {
@@ -190,12 +315,35 @@ export default {
     return name === input.tool_name ? input : { ...input, tool_name: name, raw_tool_name: input.tool_name };
   },
   sessionStart: { programs: ['codex'], starts: startsSession },
+  // The subcommands of its program that write its own user config: MCP servers and the login it keeps, and its global
+  // options that take the next word. The agent gate hook refuses them to a session no Human attends
+  // (lib/unattended-write.mjs).
+  configCommands: {
+    programs: ['codex'],
+    subcommands: [['mcp', 'add'], ['mcp', 'remove'], ['login'], ['logout']],
+    valueOptions: ['-p', '--profile', '-c', '--config', '-m', '--model', '-C', '--cd', '-s', '--sandbox', '-a', '--ask-for-approval', '-i', '--image', '--enable', '--disable', '--add-dir', '--local-provider'],
+  },
   fileEditTools: ['apply_patch'],
   fileEdit(_tool, given) {
     const text = String(given.command ?? given.input ?? '');
     return { shape: 'patch', text, files: patchFiles(text), targets: [...text.matchAll(PATCH_TARGET)].map((match) => match[1].trim()) };
   },
   projectFolders: {},
+  // No host file of a checkout is protected beyond what every host's are: its config is the user's, in CODEX_HOME.
+  protectedPaths: [],
+  // The instruction files and folder it loads from the folders between the project root and the folder a session
+  // starts in, its own user folder, CODEX_HOME, and `globalNames`, the files there it loads as the user's own guidance
+  // for every session: AGENTS.override.md, else AGENTS.md (developers.openai.com/codex/guides/agents-md). A project run
+  // refuses a start under any other such file a review did not see (lib/project-trust.mjs ancestorProblem).
+  instructionFiles: {
+    files: ['AGENTS.md', 'AGENTS.override.md'],
+    folders: ['.codex'],
+    userFolder: (env) => env.CODEX_HOME || path.join(env.HOME || homedir(), '.codex'),
+    globalNames: ['AGENTS.md', 'AGENTS.override.md'],
+  },
+  // What a session in a linked worktree reads from the main checkout: nothing its docs name. Its instructions load from
+  // the worktree's own folders up to the project root, which instructionFiles covers.
+  mainCheckoutPaths: { folders: [], settings: [] },
   capabilities: {
     // Codex keeps its own transcript format, which lib/transcript.mjs does not read.
     transcripts: false,
@@ -211,5 +359,31 @@ export default {
     },
     // No handoff continue route runs here: session.handoff.continue falls back to none on Codex.
     handoffContinue: { routes: [] },
+    // A project run's issue session, through a detached `codex exec` in a fresh clone made for its attempt
+    // (hosts/codex-exec.mjs, lib/project-start.mjs): Codex is `confined` to its workspace-write sandbox, with `--add-dir`
+    // for what the gate grants. Codex lists no sessions, so a session is known by its process, and a start holds it only
+    // once its id, its first tool call, and the agent gate hook's beacon arrive. `verified`: fixtures only, with a fake
+    // `codex`; no live Codex has run it, so a run starts it only where the default branch sets projectRun.unverifiedHosts
+    // (docs/providers/codex.md#project-start lists the live checks). `hookTrust` must answer 'trusted' for every hook of
+    // the plugin, and `access` says why a session it starts could not push or reach the forge, or could write a folder
+    // the gate guards.
+    projectStart: {
+      verified: 'unverified',
+      evidence: 'fixtures with a fake codex that runs the real agent gate hook; codex exec --json, --add-dir, and the sandbox flags are from Codex\'s docs, not a live run',
+      confined: true,
+      hookTrust: allHooksTrust,
+      trustStep: 'open Codex and trust every hook of this plugin in its hooks panel, /hooks, after each install and update',
+      access: ({ env, guarded = [] }) => sandboxNetworkProblem(env) ?? networkProxyProblem(env) ?? writableRootsProblem(env, guarded),
+      sessionNote,
+      start: ({ cwd, name, prompt, env, hold, identify, run, wait, log, beacon, grants, domains, cacheVars }) => startProject({ cwd, name, prompt, env, hold, identify, log, beacon, grants, domains, cacheVars, run, wait }),
+      stop: ({ id, started, run }) => stopProcess({ id, started, run }),
+      ended: ({ id, run }) => processEnded({ id, run }),
+      find: ({ cwd, run }) => findProcesses({ cwd, run }),
+      // Whether the session's turn failed on a usage or rate limit, from Codex's own `turn.failed` record in the run log
+      // (codex-exec.mjs logLimit); unverified, as no live `codex exec` has shown that record.
+      limitOf: ({ log, now }) => logLimit({ log, now }),
+      attachLine,
+      stopLine,
+    },
   },
 };

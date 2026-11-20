@@ -35,7 +35,7 @@ Every test file imports `scripts/test-state.mjs` first, and `test/test-state.tes
 It gives the run its own state folder, temporary folder, and fake `gh`, so a file run alone, `node --test test/<name>.test.mjs`,
 writes no fixture lesson or state folder into this machine's own state folder.
 The unattended marks and chain floors are read in the user's own `~/.local/state/aidrian` too, which no variable moves,
-so a test call that reads them, such as `continueBrief` or `readUnattendedMark`, passes `home`, as `TEST_HOME` from
+so a test call that reads them, such as `continueBrief`, `routeOf`, or `readUnattendedMark`, passes `home`, as `TEST_HOME` from
 `test/fixtures/test-home.mjs`, and `test/unattended-mark.test.mjs` fails on one that does not.
 A gate or hook a test starts as its own process, such as `aidrian handoff continue` or the Stop hook, still reads the
 user's own folder, so a test runs the gate in process where the command line is not what it checks.
@@ -57,6 +57,24 @@ Last, `scripts/code-shape.mjs` lists on stderr the files of `plugins/aidrian/lib
 and the nested ternaries, by the [default code style](../plugins/aidrian/skills/knowledge/references/code-style.md).
 These are warnings, and never fail the check.
 
+## Load-independent deadlines
+
+A full local run loads the machine, and a test that races a real deadline then fails at random.
+A test that does not test the deadline itself gives the code the time the test says:
+
+- In process, through the rule's clock seam, such as the ready hold's `now` (`deadlineForge`), frozen as `FROZEN` in
+  `test/ready-hold.test.mjs`.
+- For a hook the test runs as a program, the test runs the shipped hook under a test-owned preload,
+  `node --import test/fixtures/frozen-clock.mjs <hook>`, whose `Date.now` stands at the process's start, so the ready
+  hold gives each `gh` call the whole 3.5 s. The plugin reads no test switch from the environment: a hook a real
+  session starts keeps its whole deadline whatever variables it inherits.
+- A test that counts the `gh` calls a command made, or times them, reads them where the command makes them:
+  `node --import test/fixtures/gh-spawns.mjs <cli>` records each call in the command's own process before `gh` is
+  spawned, with the time limit and signal it asks for, so a `gh` a short deadline stops before it starts still counts.
+- A wall-clock bound measures only the part the deadline bounds, such as from `gh`'s spawn to the command's exit.
+
+A test of the deadline itself keeps the real clock, and no production deadline changes for a test.
+
 ## What the tests hold
 
 - The Claude Code marketplace lists `aidrian`, from `./plugins/aidrian`, then the optional Claude mod `aidrian-mod`,
@@ -69,7 +87,7 @@ These are warnings, and never fail the check.
 - No project-specific path leaks into the plugin.
 - No tracked file names a person.
   The owner's GitHub name appears only where a user installs: the README, the example's settings, and the manifests.
-- Every agent and skill description fits in 160 characters. Both hosts load all of them into every session.
+- Every agent and skill description fits in 160 characters. Hosts can exclude manual-only skills from implicit prompts.
 - No skill, agent source, host add-on, or brief template asks for `git commit --amend`, which the amend rule refuses.
 - Every host and tracker adapter passes the conformance suite, `test/adapters.test.mjs`, which iterates the registries.
 - Shared code reads no host's variable and branches on no host's tool, past a list in `test/host-coupling.test.mjs` that can only shrink.
@@ -80,7 +98,7 @@ These are warnings, and never fail the check.
 When `claude` and `codex` are on your PATH, `test/hosts.test.mjs` also checks the real hosts. Neither check runs a model.
 
 - Claude Code validates the plugin and loads every agent, skill, and hook event.
-- Codex installs the plugin and shows every skill and agent in a project session.
+- Codex installs every skill, lists manual-only skills in the explicit catalog, and shows implicit skills and agents in the project prompt.
 
 ## Model prices
 

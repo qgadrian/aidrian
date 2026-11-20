@@ -10,8 +10,9 @@ import { readFileSync } from 'node:fs';
 import { awaitReview } from '../plugins/aidrian/lib/pr-await-review.mjs';
 import { priceFor } from '../plugins/aidrian/lib/model-prices.mjs';
 import { EXIT } from '../plugins/aidrian/lib/review/run.mjs';
+import { pathsProblem } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import {
-  aggregateUsage, estimateCostUsd, filesRead, partOf, REVIEW_OUTPUT_STATUSES, sessionActions, subagentTranscripts, sumTokens, launchedTaskIds,
+  aggregateUsage, estimateCostUsd, filesRead, gateVerdicts, partOf, REVIEW_OUTPUT_STATUSES, SENT_BACK, sessionActions, subagentTranscripts, sumTokens, launchedTaskIds, turnActions,
 } from '../plugins/aidrian/lib/transcript.mjs';
 
 // One transcript line: an assistant message with usage, as Claude Code writes it.
@@ -241,6 +242,278 @@ test('sessionActions reads the commands a Bash call runs, not the text that name
   assert.deepEqual(actions('/opt/plugin/bin/aidrian pr await-review 12'), { drafts_opened: 0, review_runs: 1 }, 'aidrian by its path');
   assert.deepEqual(actions('node /opt/plugin/lib/cli.mjs pr review 12'), { drafts_opened: 0, review_runs: 1 }, 'the cli run by node');
   assert.deepEqual(actions('aidrian pr status 12'), { drafts_opened: 0, review_runs: 0 }, 'another pr subcommand');
+});
+
+// turnActions fixtures, as Claude Code writes them: a prompt the Human typed, a tool call, and its result.
+const turn = {
+  human: (content, extra = {}) => JSON.stringify({ type: 'user', origin: { kind: 'human' }, message: { role: 'user', content }, ...extra }),
+  call: (id, name, input) => JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } }),
+  result: (id, content, isError = false) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content, is_error: isError }] } }),
+};
+const draftOpened = (id, pr = 40) => [turn.call(id, 'Bash', { command: 'gh pr create --draft --title t --body-file b.md' }), turn.result(id, `https://github.com/acme/notes/pull/${pr}`)];
+const loopRan = (id) => [turn.call(id, 'Skill', { skill: 'aidrian:pr-review-loop' }), turn.result(id, 'Launching skill: aidrian:pr-review-loop')];
+const kinds = (...lines) => turnActions(lines.flat().join('\n')).map((action) => action.kind);
+
+test('turnActions lists the draft and review actions since the Human`s last prompt, in transcript order', () => {
+  assert.deepEqual(kinds(turn.human('go'), draftOpened('d1'), loopRan('k1')), ['draft', 'review']);
+  assert.deepEqual(kinds(turn.human('go'), loopRan('k1'), draftOpened('d1')), ['review', 'draft']);
+  assert.deepEqual(kinds(draftOpened('d1')), ['draft'], 'with no prompt, the whole transcript is the turn');
+  assert.deepEqual(kinds(turn.human('go'), draftOpened('d1'), turn.human('thanks')), [], 'a draft before the Human`s last prompt');
+  const plain = JSON.stringify({ type: 'user', message: { role: 'user', content: 'thanks' } });
+  assert.deepEqual(kinds(turn.human('go'), draftOpened('d1'), plain), [], 'a prompt with no origin is the Human`s too');
+  const write = [turn.call('p1', 'Skill', { skill: 'aidrian:pr-write' }), turn.result('p1', 'Launching skill: aidrian:pr-write')];
+  const edit = (id, output = 'https://github.com/acme/notes/pull/40', isError = false) =>
+    [turn.call(id, 'Bash', { command: 'gh pr edit 40 --body-file b.md' }), turn.result(id, output, isError)];
+  assert.deepEqual(kinds(turn.human('go'), write, edit('e1')), ['draft'], 'a pr-write run that updated a pull request');
+  assert.deepEqual(kinds(turn.human('go'), write, draftOpened('d1')), ['draft'], 'a pr-write run that opened a draft counts once');
+  assert.deepEqual(kinds(turn.human('go'), write), [], 'a pr-write run that published nothing');
+  assert.deepEqual(kinds(turn.human('go'), write, edit('e1', 'GraphQL: Could not resolve to a PullRequest', true)), [], 'a refused edit');
+  assert.deepEqual(kinds(turn.human('go'), edit('e1')), [], 'an edit with no pr-write run before it');
+  assert.deepEqual(kinds(turn.human('go'), loopRan('k1'), write, edit('e1')), ['review'], 'a pr-write update after a review is the loop`s own');
+  assert.deepEqual(kinds(turn.human('go'), loopRan('k1'), write, draftOpened('d1', 41)), ['review', 'draft'], 'a draft create after a review still counts');
+  assert.deepEqual(kinds(turn.human('go'), draftOpened('d1'), turn.call('r1', 'Skill', { skill: 'pr-review' }), turn.result('r1', 'Launching skill: pr-review')),
+    ['draft'], 'a pr-review Skill run, the integration review before the loop, is no review');
+  const printed = JSON.stringify({ status: 'received', pr: 40 }, null, 2);
+  assert.deepEqual(kinds(turn.human('go'), draftOpened('d1'), turn.call('r1', 'Bash', { command: 'aidrian pr review 40' }), turn.result('r1', printed)),
+    ['draft', 'review'], 'a review command that printed its JSON');
+  assert.deepEqual(turnActions(''), []);
+});
+
+test('turnActions names the pull request of each draft and review where the transcript shows it', () => {
+  const actions = (...lines) => turnActions(lines.flat().join('\n')).map(({ kind, pr }) => ({ kind, pr }));
+  const loop = (id, args) => [turn.call(id, 'Skill', { skill: 'aidrian:pr-review-loop', args }), turn.result(id, 'Launching skill: aidrian:pr-review-loop')];
+  const bash = (id, command, output, isError = false) => [turn.call(id, 'Bash', { command }), turn.result(id, output, isError)];
+  const write = (id) => [turn.call(id, 'Skill', { skill: 'aidrian:pr-write' }), turn.result(id, 'Launching skill: aidrian:pr-write')];
+  assert.deepEqual(actions(turn.human('go'), draftOpened('d1', 40), loop('k1', '40 --await-codex'), loop('k2'), loop('k3', 'https://github.com/acme/notes/pull/41')),
+    [{ kind: 'draft', pr: 40 }, { kind: 'review', pr: 40 }, { kind: 'review', pr: null }, { kind: 'review', pr: 41 }], 'a draft by its URL, a loop by its argument');
+  const typedLoop = turn.human('<command-message>aidrian:pr-review-loop</command-message>\n<command-name>/aidrian:pr-review-loop</command-name>\n<command-args>#42</command-args>');
+  assert.deepEqual(actions(typedLoop), [{ kind: 'review', pr: 42 }], 'a typed loop by its argument');
+  assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr review 40', '{\n  "status": "received",\n  "pr": 40\n}'),
+    bash('r2', 'aidrian pr await-review 43', '{"status":"no_reviewer","pr":null}'), bash('r3', 'aidrian pr await-review', '{"status":"no_reviewer","pr":null}')),
+  [{ kind: 'review', pr: 40 }, { kind: 'review', pr: 43 }, { kind: 'review', pr: null }], 'a review command by what it printed, else its target');
+  const printed = '{\n  "status": "received",\n  "pr": 40\n}';
+  assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr review 40', printed), write('p1'), bash('e1', 'gh pr edit 41 --body-file b.md', 'https://github.com/acme/notes/pull/41')),
+    [{ kind: 'review', pr: 40 }, { kind: 'draft', pr: 41 }], 'an edit of another pull request after a review is a draft');
+  assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr review 40', printed), write('p1'), bash('e1', 'gh pr edit --body-file b.md', 'https://github.com/acme/notes/pull/41')),
+    [{ kind: 'review', pr: 40 }, { kind: 'draft', pr: 41 }], 'an edit with no target, by the URL it printed');
+  assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr review 40', printed), write('p1'), bash('e1', 'gh pr edit 40 --body-file b.md', 'https://github.com/acme/notes/pull/40')),
+    [{ kind: 'review', pr: 40 }], 'an edit of the pull request the turn reviewed is the loop`s own');
+  assert.deepEqual(actions(turn.human('go'), loop('k1'), write('p1'), bash('e1', 'gh pr edit 41 --body-file b.md', 'https://github.com/acme/notes/pull/41')),
+    [{ kind: 'review', pr: null }], 'a loop of no known pull request may be of any');
+});
+
+test('sessionActions still counts a pr-review run as a review run, as the health report reads it', () => {
+  const call = (id, name, input) => usageLine(`m-${id}`, 'claude-opus-5-5', {}, { content: [{ type: 'tool_use', id, name, input }] });
+  const result = (id, content) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content }] } });
+  const typed = JSON.stringify({ type: 'user', uuid: 'u1', message: { role: 'user', content: '<command-name>/aidrian:pr-review</command-name>' } });
+  assert.equal(sessionActions([[call('k1', 'Skill', { skill: 'aidrian:pr-review' }), result('k1', 'Launching skill: aidrian:pr-review'), typed].join('\n')]).review_runs, 2);
+});
+
+test('turnActions: only the Human`s prompt starts the turn, and a typed slash command is an action', () => {
+  const notification = JSON.stringify({ type: 'user', origin: { kind: 'task-notification' }, message: { role: 'user', content: '<task-notification>done</task-notification>' } });
+  const peer = JSON.stringify({ type: 'user', origin: { kind: 'peer' }, message: { role: 'user', content: 'From the scout: done.' } });
+  const meta = turn.human('Base directory for this skill: /p/skills/pr-write', { isMeta: true });
+  const summary = turn.human('This session is being continued from a previous conversation.', { isCompactSummary: true });
+  const sidechain = turn.human('A subagent brief.', { isSidechain: true });
+  for (const [name, line] of Object.entries({ notification, peer, meta, summary, sidechain })) {
+    assert.deepEqual(kinds(turn.human('go'), draftOpened('d1'), line), ['draft'], `a ${name} entry is not the Human's prompt`);
+  }
+  const typed = (skill) => turn.human(`<command-message>${skill}</command-message>\n<command-name>/${skill}</command-name>`);
+  assert.deepEqual(kinds(typed('aidrian:pr-write')), [], 'a typed pr-write that published nothing');
+  assert.deepEqual(kinds(typed('aidrian:pr-write'), turn.call('e1', 'Bash', { command: 'gh pr edit 40 --title t' }), turn.result('e1', 'https://github.com/acme/notes/pull/40')),
+    ['draft'], 'a typed pr-write that updated a pull request');
+  const queued = (origin = { kind: 'human' }) => JSON.stringify({ type: 'attachment', attachment: { type: 'queued_command', commandMode: 'prompt', humanTurn: true, origin, prompt: 'stop at the draft' } });
+  assert.deepEqual(kinds(turn.human('go'), draftOpened('d1'), queued()), [], 'a message the Human typed mid-turn starts the turn');
+  assert.deepEqual(kinds(turn.human('go'), draftOpened('d1'), queued({ kind: 'task-notification' })), ['draft'], 'a queued task notification does not');
+  assert.deepEqual(kinds(turn.human('go'), draftOpened('d1'), queued({ kind: 'peer' })), ['draft'], 'a queued peer message does not');
+  assert.deepEqual(kinds(draftOpened('d1'), typed('aidrian:pr-review-loop')), ['review'], 'a typed review skill starts the turn and is its action');
+  assert.deepEqual(kinds(typed('aidrian:pr-review')), [], 'a typed pr-review is no review of the loop');
+  assert.deepEqual(kinds(typed('clear')), [], 'the host`s own command');
+  const sideCall = JSON.stringify({ type: 'assistant', isSidechain: true, message: { role: 'assistant', content: [{ type: 'tool_use', id: 's1', name: 'Bash', input: { command: 'gh pr create --draft --fill' } }] } });
+  const sideResult = JSON.stringify({ type: 'user', isSidechain: true, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 's1', content: 'https://github.com/acme/notes/pull/41' }] } });
+  assert.deepEqual(kinds(turn.human('go'), sideCall, sideResult), [], 'a subagent`s call is not the main session`s');
+});
+
+test('turnActions lists each Stop hook send-back of the turn, as the isMeta entry Claude Code writes, and no other entry', () => {
+  const feedback = (reason, extra = {}) => JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: `${SENT_BACK}\n[node "/p/scripts/hook-stop.mjs"]: ${reason}` }, ...extra });
+  const sentBacks = (...lines) => turnActions(lines.flat().join('\n')).filter((action) => action.kind === 'sent-back').map((action) => action.text);
+  assert.deepEqual(kinds(turn.human('go'), draftOpened('d1'), feedback('Run the loop.'), loopRan('k1')), ['draft', 'sent-back', 'review'], 'in transcript order');
+  assert.deepEqual(sentBacks(turn.human('go'), feedback('Run the loop.')), [`${SENT_BACK}\n[node "/p/scripts/hook-stop.mjs"]: Run the loop.`], 'its whole text');
+  const blocks = JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: [{ type: 'text', text: `${SENT_BACK}\n[x]: Add the item.` }] } });
+  assert.deepEqual(sentBacks(turn.human('go'), blocks), [`${SENT_BACK}\n[x]: Add the item.`], 'a content array of text blocks');
+  assert.deepEqual(kinds(turn.human('go'), feedback('Run the loop.'), turn.human('thanks')), [], 'a send-back before the Human`s last prompt');
+  assert.deepEqual(kinds(turn.human('go'), turn.human(`${SENT_BACK}\n[x]: typed by the Human`)), [], 'the Human`s prompt, with no isMeta, starts the turn and is no send-back');
+  assert.deepEqual(kinds(turn.human('go'), turn.human('Base directory for this skill: /p/skills/pr-write', { isMeta: true })), [], 'another isMeta entry');
+  assert.deepEqual(kinds(turn.human('go'), feedback('Run the loop.', { isSidechain: true })), [], 'a subagent`s send-back');
+  assert.deepEqual(kinds(turn.human('go'), turn.result('t1', `${SENT_BACK}\n[x]: quoted`)), [], 'a tool result that quotes one');
+});
+
+test('turnActions counts a call only by its result: refused, unanswered, URL-less, and non-draft creates count nowhere', () => {
+  const none = (...lines) => assert.deepEqual(kinds(turn.human('go'), ...lines), []);
+  none(turn.call('d1', 'Bash', { command: 'gh pr create --draft --fill' }), turn.result('d1', 'pr-body: the body has no ## Summary heading.', true));
+  none(turn.call('k1', 'Skill', { skill: 'aidrian:pr-review-loop' }), turn.result('k1', 'Permission to use Skill has been denied.', true));
+  none(turn.call('d1', 'Bash', { command: 'gh pr create --draft --fill' }));
+  none(turn.call('k1', 'Skill', { skill: 'aidrian:pr-review-loop' }));
+  none(turn.call('d1', 'Bash', { command: 'gh pr create --draft --fill' }), turn.result('d1', 'Creating pull request for fix/x into main'));
+  none(turn.call('d1', 'Bash', { command: 'gh pr create --title t --body-file b.md' }), turn.result('d1', 'https://github.com/acme/notes/pull/40'));
+  none(turn.call('r1', 'Bash', { command: 'false && aidrian pr review 40' }), turn.result('r1', 'Exit code 1', true));
+});
+
+// The gate's off line and --json object for a refusal `why`, as runAutoMerge prints them.
+const gateLine = (pr, why) => `auto-merge off for #${pr}: ${why}`;
+const gateJson = (pr, why, reason = 'paths') => JSON.stringify({
+  effective: false, reason, why, allow: true, local: 'on', strategy: 'squash', deleteBranch: true, deleteWorktree: true,
+  pr, head: 'a'.repeat(40), repo: 'acme/notes', base: 'main',
+});
+const changed = (...paths) => ({ files: paths.map((each) => ({ path: each, changeType: 'MODIFIED' })), changedFiles: paths.length });
+
+test('gateVerdicts reads the path of each refusal pathsProblem words as `it changes "<path>"`, in both of the gate`s forms', () => {
+  // Built from pathsProblem's own return, so a change to its wording fails here before the Stop hook misreads it.
+  const refusals = {
+    'a guarded path': [pathsProblem(changed('src/a.mjs', 'AGENTS.md')), 'AGENTS.md'],
+    'a policy file under includeGuardedPaths': [pathsProblem(changed('.aidrian/config.json'), '', { includeGuardedPaths: true }), '.aidrian/config.json'],
+    'a file the gate reads its policy from': [pathsProblem(changed('conf/policy.json'), '', { policyFiles: ['conf/policy.json'] }), 'conf/policy.json'],
+    'the release script': [pathsProblem(changed('scripts/version.mjs'), '', { pluginRepository: true }), 'scripts/version.mjs'],
+    'a knowledge doc the start hook loads': [pathsProblem(changed('docs/rules.md'), '', { startDocs: { docs: ['docs/rules.md'], folder: null } }), 'docs/rules.md'],
+    'a file outside the project folder': [pathsProblem(changed('app/a.mjs', 'lib/b.mjs'), 'app/'), 'lib/b.mjs'],
+    'a path holding a line separator and a bidi override': [pathsProblem(changed('docs/a\u2028b\u202E.md'), '', { startDocs: { docs: ['docs/a\u2028b\u202E.md'], folder: null } }), 'docs/a\u2028b\u202E.md'],
+    'a path holding a quote and a backslash': [pathsProblem(changed('docs/"x"\\y.md'), '', { startDocs: { docs: ['docs/"x"\\y.md'], folder: null } }), 'docs/"x"\\y.md'],
+  };
+  for (const [name, [why, file]] of Object.entries(refusals)) {
+    assert.match(why ?? '', /^it changes "/u, `${name} is a path refusal`);
+    assert.deepEqual(gateVerdicts(`Exit code 1\n${gateLine(12, why)}`), [{ pr: 12, path: file }], `${name}, the plain line`);
+    assert.deepEqual(gateVerdicts(gateJson(12, why)), [{ pr: 12, path: file }], `${name}, the --json object`);
+  }
+  // Refusals that name no changed path, and a pass, are verdicts with no path.
+  for (const [name, why] of Object.entries({
+    rename: pathsProblem({ files: [{ path: 'a.md', changeType: 'RENAMED' }], changedFiles: 1 }),
+    count: pathsProblem({ files: [{ path: 'a.md', changeType: 'MODIFIED' }], changedFiles: 2 }),
+    author: 'it is bob\'s pull request, not alice\'s',
+  })) {
+    assert.ok(why, name);
+    assert.deepEqual(gateVerdicts(gateLine(12, why)), [{ pr: 12, path: null }], `${name}, the plain line`);
+    assert.deepEqual(gateVerdicts(gateJson(12, why, name === 'author' ? 'author' : 'paths')), [{ pr: 12, path: null }], `${name}, the --json object`);
+  }
+  const review = 'received, and it changes "AGENTS.md", which instructs AI sessions, so the merge waits for the Human';
+  assert.deepEqual(gateVerdicts(gateJson(12, review, 'review')), [{ pr: 12, path: null }], 'a review refusal that quotes a path is no path refusal');
+  assert.deepEqual(gateVerdicts('auto-merge on for #12 at abc1234: squash, delete the branch, keep the worktree'), [{ pr: 12, path: null }]);
+  assert.deepEqual(gateVerdicts(JSON.stringify({ effective: true, reason: null, why: null, pr: 12 })), [{ pr: 12, path: null }]);
+  // No verdict: an error exit, a line the gate did not start, and objects of another shape.
+  assert.deepEqual(gateVerdicts('Exit code 3\naidrian pr auto-merge: could not read the pull request with gh (HTTP 404)'), []);
+  assert.deepEqual(gateVerdicts(`notes.md:4:${gateLine(12, refusals['a guarded path'][0])}`), [], 'a grep hit that quotes the line');
+  assert.deepEqual(gateVerdicts(JSON.stringify({ effective: 'no', pr: 12 })), []);
+  assert.deepEqual(gateVerdicts(JSON.stringify({ effective: false, pr: 1.5 })), []);
+  assert.deepEqual(gateVerdicts(JSON.stringify({ status: 'received', pr: 12 })), []);
+});
+
+test('turnActions lists a gate run by the verdict it printed, and no call that only quotes one', () => {
+  const why = pathsProblem(changed('AGENTS.md'));
+  const gate = (id, command, output, isError = true) => [turn.call(id, 'Bash', { command }), turn.result(id, output, isError)];
+  const actions = (...lines) => turnActions(lines.flat().join('\n'));
+  assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge 12', `Exit code 1\n${gateLine(12, why)}`)),
+    [{ kind: 'gate', pr: 12, path: 'AGENTS.md' }], 'a refusal, which exits 1');
+  assert.deepEqual(actions(turn.human('go'), gate('g1', 'node /opt/plugin/lib/cli.mjs pr auto-merge 12 --json', gateJson(12, why))),
+    [{ kind: 'gate', pr: 12, path: 'AGENTS.md' }], 'the --json form, by the cli');
+  assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge 12', 'auto-merge on for #12 at abc1234: squash, delete the branch, keep the worktree', false)),
+    [{ kind: 'gate', pr: 12, path: null }], 'a pass');
+  assert.deepEqual(actions(turn.human('go'), gate('g1', `echo '${gateLine(12, why)}'`, gateLine(12, why), false)), [], 'an echo of the line is no gate run');
+  assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge 12', 'Exit code 3\naidrian pr auto-merge: gh api user returned no login')), [], 'an error exit');
+  const quoting = `aidrian pr auto-merge 12 <<'EOF'\n${gateLine(13, why)}\nEOF`;
+  assert.deepEqual(actions(turn.human('go'), gate('g1', quoting, `Hook PreToolUse:Bash denied this tool: ${quoting}`)), [], 'a refusal that quotes the command');
+  assert.deepEqual(actions(turn.call('g0', 'Bash', { command: 'aidrian pr auto-merge 12' })), [], 'a call with no result');
+  assert.deepEqual(actions(gate('g1', 'aidrian pr auto-merge 12', gateLine(12, why)), turn.human('thanks')), [], 'a refusal before the Human`s last prompt');
+  assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr checks 12', gateLine(12, why))), [], 'another pr subcommand');
+});
+
+test('turnActions counts a gate call only when it printed one verdict per gate it ran, and drops the lines that quote it', () => {
+  const why = pathsProblem(changed('AGENTS.md'));
+  const gate = (id, command, output, isError = true) => [turn.call(id, 'Bash', { command }), turn.result(id, output, isError)];
+  const actions = (...lines) => turnActions(lines.flat().join('\n'));
+  const compound = 'aidrian pr auto-merge 57; gh pr view 57';
+  assert.deepEqual(actions(turn.human('go'), gate('g1', compound, `${gateLine(57, why)}\ntitle:\tfix\n--\nauto-merge on for #57 at abc1234: squash`)), [],
+    'a second verdict line from another command of the call');
+  assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge 57; aidrian pr auto-merge 58', `Exit code 1\n${gateLine(57, why)}\n${gateLine(58, why)}`)),
+    [{ kind: 'gate', pr: 57, path: 'AGENTS.md' }, { kind: 'gate', pr: 58, path: 'AGENTS.md' }], 'two gates, two verdicts');
+  assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge 57 && aidrian pr auto-merge 58', `Exit code 1\n${gateLine(57, why)}`)),
+    [{ kind: 'gate', pr: 57, path: 'AGENTS.md' }], 'the first gate of an && chain refused and exited 1, so the second never ran');
+  assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge 57 && aidrian pr auto-merge 58', `Exit code 1\n${gateLine(57, why)}\n${gateLine(57, why)}`)), [],
+    'two verdicts for one gate');
+  assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge && aidrian pr auto-merge 58', `Exit code 1\n${gateLine(57, why)}`)),
+    [{ kind: 'gate', pr: 57, path: 'AGENTS.md' }], 'the first gate, on the current branch`s pull request, refused, so the second never ran');
+  assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge && aidrian pr auto-merge --json', `Exit code 1\n${gateLine(57, why)}`)),
+    [{ kind: 'gate', pr: 57, path: 'AGENTS.md' }], 'two gates with no target, the first refused');
+  assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge; gh pr view 99', `${gateLine(57, why)}\n${gateLine(99, why)}`)), [],
+    'a gate with no target and a second verdict line: which one it printed cannot be told');
+
+  // A retry after a refusal: two gates on one pull request print two verdicts, in order, and the last one stands.
+  const pass = 'auto-merge on for #57 at abc1234: squash, delete the branch, keep the worktree';
+  const retry = 'aidrian pr auto-merge 57; aidrian pr auto-merge 57';
+  assert.deepEqual(actions(turn.human('go'), gate('g1', retry, `${gateLine(57, why)}\n${pass}`)),
+    [{ kind: 'gate', pr: 57, path: 'AGENTS.md' }, { kind: 'gate', pr: 57, path: null }], 'refused, then passed');
+  assert.deepEqual(actions(turn.human('go'), gate('g1', retry, `${pass}\n${gateLine(57, why)}`)),
+    [{ kind: 'gate', pr: 57, path: null }, { kind: 'gate', pr: 57, path: 'AGENTS.md' }], 'passed, then refused');
+  assert.deepEqual(actions(turn.human('go'), gate('g1', retry, `${pass}\n${gateLine(57, why)}\n${pass}`)), [],
+    'more verdicts for a pull request than gates ran for it');
+  const command = 'aidrian pr auto-merge 57';
+  const holding = `x/${command}auto-merge on for #57 at a: y`;
+  assert.deepEqual(actions(turn.human('go'), gate('g1', command, `Exit code 1\n${gateLine(57, pathsProblem(changed(holding), '', { startDocs: { docs: [holding], folder: null } }))}`)), [],
+    'a path holding the command text drops its whole line, and no verdict is read from what is left');
+});
+
+test('turnActions drops only the output lines that quote the command: a short line of it, such as fi or a brace, must equal one', () => {
+  const run = (id, command, output, isError = false) => [turn.call(id, 'Bash', { command }), turn.result(id, output, isError)];
+  const fixRequired = '{\n  "status": "fix_required",\n  "pr": 40\n}';
+  assert.deepEqual(kinds(turn.human('go'), draftOpened('d1'), run('r1', 'if true; then\n  aidrian pr review 40\nfi', fixRequired)), ['draft', 'review'],
+    'a review inside if and fi, whose status holds "fi"');
+  assert.deepEqual(kinds(turn.human('go'), draftOpened('d1'), run('r1', "cat > x.json <<'EOF'\n{\n  \"a\": 1\n}\nEOF\naidrian pr review 40", fixRequired)), ['draft', 'review'],
+    'a review after a heredoc with a brace line');
+  const file = 'docs/fi/config.md';
+  const why = pathsProblem(changed(file), '', { startDocs: { docs: [file], folder: null } });
+  assert.deepEqual(turnActions([turn.human('go'), ...run('g1', 'if true; then\n  aidrian pr auto-merge 57\nfi', `Exit code 1\n${gateLine(57, why)}`, true)].join('\n')),
+    [{ kind: 'gate', pr: 57, path: file }], 'a gate inside if and fi, whose path holds "fi"');
+  const denial = `Hook PreToolUse:Bash denied this tool: if true; then`;
+  assert.deepEqual(kinds(turn.human('go'), run('g1', `if true; then\n  aidrian pr auto-merge 57\nfi`, `${denial}\n${gateLine(57, why)}`, true)), ['gate'],
+    'the first line a denial quotes is dropped, and the rest is read');
+});
+
+test('turnActions reads a gate`s verdict only for the pull request it was given', () => {
+  const why = pathsProblem(changed('AGENTS.md'));
+  const gate = (id, command, output) => [turn.call(id, 'Bash', { command }), turn.result(id, output, true)];
+  const actions = (...lines) => turnActions(lines.flat().join('\n'));
+  assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge 57; gh pr view 99', gateLine(99, why))), [], 'a verdict line for another pull request');
+  assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge 57; gh pr view 99', `${gateLine(57, why)}\n${gateLine(99, why)}`)),
+    [{ kind: 'gate', pr: 57, path: 'AGENTS.md' }], 'the given one`s verdict, and not the other');
+  assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge https://github.com/acme/notes/pull/77 --json', gateJson(77, why))),
+    [{ kind: 'gate', pr: 77, path: 'AGENTS.md' }], 'by its URL');
+  assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge "#57"', gateLine(57, why))), [{ kind: 'gate', pr: 57, path: 'AGENTS.md' }], 'by #<n>');
+  assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge --json', gateJson(12, why))), [{ kind: 'gate', pr: 12, path: 'AGENTS.md' }],
+    'a gate given no pull request keeps the count rule');
+});
+
+test('turnActions lists a pull request merge that ran, by its target or by what gh printed', () => {
+  const actions = (...lines) => turnActions(lines.flat().join('\n')).filter((action) => action.kind === 'merge');
+  const merge = (id, command, output, isError = false) => [turn.call(id, 'Bash', { command }), turn.result(id, output, isError)];
+  assert.deepEqual(actions(turn.human('go'), merge('m1', `gh pr merge 401 --squash --match-head-commit ${'a'.repeat(40)}`, '✓ Squashed and merged pull request acme/notes#401')),
+    [{ kind: 'merge', pr: 401 }]);
+  assert.deepEqual(actions(turn.human('go'), merge('m1', 'gh -R acme/notes pr merge https://github.com/acme/notes/pull/7 -s', 'ok')), [{ kind: 'merge', pr: 7 }], 'by its URL');
+  assert.deepEqual(actions(turn.human('go'), merge('m1', 'gh pr merge --squash', '✓ Squashed and merged pull request acme/notes#12 (fix: a)')), [{ kind: 'merge', pr: 12 }],
+    'a merge with no target, by the number gh printed');
+  assert.deepEqual(actions(turn.human('go'), merge('m1', 'gh pr merge 401 --squash', 'merge-guard: refused', true)), [], 'a refused merge');
+  assert.deepEqual(actions(turn.human('go'), merge('m1', 'gh pr merge --squash', '')), [{ kind: 'merge', pr: null }],
+    'a merge with no target that printed no number, as gh does off a terminal: any pull request');
+  assert.deepEqual(actions(turn.human('go'), merge('m1', 'gh pr view 401', '✓ Squashed and merged pull request acme/notes#401')), [], 'another pr subcommand');
+  for (const form of ['gh pr merge 401 --auto --squash', 'gh pr merge 401 --auto=true', 'gh pr merge 401 --disable-auto', 'gh pr merge 401 --help', 'gh pr merge 401 -h', 'gh pr merge --help']) {
+    assert.deepEqual(actions(turn.human('go'), merge('m1', form, '')), [], `${form} merges nothing`);
+  }
+  assert.deepEqual(actions(turn.human('go'), merge('m1', 'gh pr merge 401 --auto=false --squash', '')), [{ kind: 'merge', pr: 401 }], 'auto-merge turned off is a merge');
+  assert.deepEqual(actions(turn.human('go'), merge('m1', 'gh pr merge 401 --squash --subject --auto', '')), [{ kind: 'merge', pr: 401 }], 'a subject that reads --auto');
+  assert.deepEqual(actions(turn.human('go'), merge('m1', 'gh pr merge fix/x --squash', '')), [{ kind: 'merge', pr: null }], 'a merge of a branch: a pull request it cannot tell');
+});
+
+test('turnActions lists the main session`s replies of the turn, and no subagent`s', () => {
+  const said = (text, extra = {}) => JSON.stringify({ type: 'assistant', ...extra, message: { role: 'assistant', content: [{ type: 'text', text }] } });
+  const replies = (...lines) => turnActions(lines.flat().join('\n')).filter((action) => action.kind === 'reply').map((action) => action.text);
+  assert.deepEqual(replies(said('before'), turn.human('go'), said('first'), said('  '), said('second'), said('aside', { isSidechain: true })), ['first', 'second']);
 });
 
 test('launchedTaskIds takes ids from the structured result of the calls that launched or resumed a task, never from text', () => {

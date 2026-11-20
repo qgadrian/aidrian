@@ -1409,14 +1409,15 @@ a branch's own workflow files, with the repository's secrets, on every push: the
 whose commits change them, release and deploy secrets belong in environments held for a required reviewer who
 prevents self-review or is not the signed-in user, never in repository secrets or an open environment a pushed
 branch's workflow can read. The preflight counts every other environment as open, one limited to protected branches or
-branch patterns too, since a deployment branch rule is no hold against code the run pushes; a team that has checked
-those environments sets `projectRun.workflowSecretsAccepted`, and `projectRun.forgeProtectionAccepted` waives no secret.
-It counts a reviewer-held environment as held when its admins may bypass its reviewers (on GitHub `can_admins_bypass`,
-true by default), though an admin's token deploys past them through a script, and its `note workflows` line says to
-turn the bypass off.
+branch patterns too, since a deployment branch rule is no hold against code the run pushes, and one held for
+reviewers whose admins may bypass them (on GitHub `can_admins_bypass`, true by default) when the signed-in user is an
+admin of the repository, or the forge does not say, since an admin's token deploys past them through a script.
+`projectRun.forgeProtectionAccepted` waives no secret.
 The preflight blocks a run whose workflows see CI secrets,
 whatever the token's `workflow` scope, since the workflows already run the branch's own tests, scripts, and build, unless
-the team sets `projectRun.workflowSecretsAccepted`. A cloud role whose OIDC trust names any ref of the repository,
+the team sets `projectRun.workflowSecretsAccepted`, which skips the secrets read whole: it accepts all current and future
+workflow secret exposure for project runs, the repository's, its organization's, and every environment's secrets, so a
+team sets it only when that is acceptable. A cloud role whose OIDC trust names any ref of the repository,
 `repo:<owner>/<name>:*`, is a secret by another name: any pushed branch's workflow can assume it, so its trust names a
 protected branch or a held environment.
 

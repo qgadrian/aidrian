@@ -552,14 +552,13 @@ function workflowIds(rows, listRuns) {
 const ALL_TAGS = new Set(['~ALL', 'refs/tags/**/*']);
 
 // The names of the environments of `repo` whose secrets an issue's session could reach, and so counts: every one with no
-// required reviewers rule that holds the signed-in user `login` (heldForReviewer). A deployment branch policy, protected
+// required reviewers rule that holds the signed-in user `login` (heldForReviewer), and every one whose admins may bypass
+// its rules (`can_admins_bypass`, true by default and when GitHub does not say) when that user is an admin, `admin`, as
+// a token that may be the session's deploys past the reviewers through a script. A deployment branch policy, protected
 // branches or custom branch patterns, holds nothing: it is no hold against code the run pushes, since which branches it
-// lets deploy turns on patterns, rulesets, and waivers this read cannot weigh. A team that has checked its branch-limited
-// environments sets projectRun.workflowSecretsAccepted. A repository GitHub keeps no environments for has none.
-// SHORTCUT: an environment whose admins may bypass its rules (`can_admins_bypass`, true by default) counts as held, though
-// an admin's token, as the session's may be, deploys past its reviewers through a script. Reading the bypass would replace
-// this when a team keeps secrets so.
-function openEnvironments(list, repo, host, login) {
+// lets deploy turns on patterns, rulesets, and waivers this read cannot weigh. A repository GitHub keeps no
+// environments for has none.
+function openEnvironments(list, repo, host, login, admin) {
   let pages;
   try {
     pages = list(`repos/${repo}/environments`, { host });
@@ -569,7 +568,8 @@ function openEnvironments(list, repo, host, login) {
   }
   const environments = pages.flatMap((page) => (Array.isArray(page?.environments) ? page.environments : []));
   const reviewed = (each) => (Array.isArray(each?.protection_rules) ? each.protection_rules : []).some((rule) => heldForReviewer(rule, login));
-  return environments.filter((each) => typeof each?.name === 'string' && !reviewed(each)).map((each) => each.name);
+  const bypassed = (each) => admin && each?.can_admins_bypass !== false;
+  return environments.filter((each) => typeof each?.name === 'string' && (bypassed(each) || !reviewed(each))).map((each) => each.name);
 }
 
 // Whether an environment's protection rule holds a deployment for a reviewer other than the signed-in user `login`
@@ -851,8 +851,9 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // What a project run's issue session's token could run with the repository's secrets, for the run's preflight:
     // { secrets, workflowPush }. `secrets` counts the Actions secrets of the repository, those its organization
     // shares with it (none for a repository a user owns, whose organization route GitHub answers with 422, nor for one
-    // GitHub answers 404), and those of each environment no reviewer other than the signed-in user holds, whatever its
-    // deployment branch policy (openEnvironments). `workflowPush` is whether the signed-in token's scopes include
+    // GitHub answers 404), and those of each environment no reviewer other than the signed-in user holds, or whose admins
+    // may bypass its reviewers when that user is an admin of the repository (`permissions.admin` on the repository's read;
+    // a missing one counts as admin), whatever its deployment branch policy (openEnvironments). `workflowPush` is whether the signed-in token's scopes include
     // `workflow`, which GitHub asks of a push that changes a workflow file, or null for a token that names no scopes, as
     // a fine-grained one.
     workflowSecrets: (repo, { host } = {}) => {
@@ -873,7 +874,7 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
       const answer = String(gh(['api', '--include', ...(host ? ['--hostname', host] : []), 'user']));
       const line = answer.split(/\r?\n/u).find((each) => /^x-oauth-scopes:/iu.test(each));
       const scopes = line === undefined ? null : line.slice(line.indexOf(':') + 1).split(',').map((each) => each.trim());
-      const open = openEnvironments(list, repo, host, signedInLogin(answer)).reduce((sum, name) => sum + count(`repos/${repo}/environments/${encodeURIComponent(name)}/secrets`), 0);
+      const open = openEnvironments(list, repo, host, signedInLogin(answer), about?.permissions?.admin !== false).reduce((sum, name) => sum + count(`repos/${repo}/environments/${encodeURIComponent(name)}/secrets`), 0);
       const secrets = count(`repos/${repo}/actions/secrets`) + shared + open;
       return { secrets, workflowPush: scopes === null ? null : scopes.includes('workflow') };
     },

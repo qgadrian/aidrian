@@ -182,6 +182,21 @@ test('an SSH host alias answers unknown without asking the host, and a .git suff
   }
 });
 
+// git splits an scp-style remote at its first colon: what follows is the path, `@` and all, so a remote never reads as
+// a user and another host. The repository then holds an `@`, which no repository name does: unknown.
+test('an scp-style remote is split at its first colon: a @ in its path never names the host judged', (t) => {
+  const { asks, host } = answering(DENIAL);
+  for (const url of ['source.example:mirror@backup.example/team/widget.git', 'git@source.example:mirror@backup.example/team/widget.git', 'git@source.example:team@backup.example:x/widget']) {
+    assert.deepEqual(pushPreflight({ cwd: repository(t), host, session: SESSION, git: remote(url) }), { answer: 'unknown' }, url);
+  }
+  assert.deepEqual(asks, [], 'the host was never asked, and never about backup.example');
+  for (const [url, judged] of [['deploy@git.example.com:acme/widget.git', 'git.example.com/acme/widget'], ['source.example:team/widget', 'source.example/team/widget']]) {
+    const asked = answering(DENIAL);
+    assert.equal(pushPreflight({ cwd: repository(t), host: asked.host, session: SESSION, git: remote(url) }).repository, judged, url);
+    assert.equal(asked.asks[0].repository, judged, url);
+  }
+});
+
 test('the push URL is the remote judged: a pushurl of another repository is the one the host is asked about', (t) => {
   const cwd = repository(t, { origin: 'https://github.com/acme/widget.git' });
   execFileSync('git', ['-C', cwd, 'config', 'remote.origin.pushurl', 'git@github.com:acme/mirror.git']);

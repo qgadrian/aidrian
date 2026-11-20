@@ -29,6 +29,11 @@ const LOCAL = /^(?:[/.~\\]|file:|[a-z]:[\\/])/iu;
 // path on this machine, relative to the repository, whatever host it seems to name; and `<helper>::<address>` goes to a
 // remote helper, not to a host.
 const NETWORK = /^(?:(?:https?|ftps?|ssh|git|git\+ssh|ssh\+git):\/\/|[^/:\\]+:(?!\/\/|:))/iu;
+// A URL with a scheme, which is no scp-style remote.
+const SCHEME = /^[a-z][a-z0-9+.-]*:\/\//iu;
+// An scp-style remote, `[user@]host:path`: git splits it at its first colon, so the host is what comes before it, less a
+// user, and a `@` after it is part of the path, never the end of a user before another host.
+const SCP = /^([^/:\\]+):(?!\/\/|:)(.*)$/su;
 // The only repository the host is asked about and a message prints: a host name with at least one dot, then two or
 // more path segments of plain ASCII, in lower case. Anything else answers unknown and is never sent or printed: what a
 // password with an `@` or a `:` leaves behind, a query, a fragment, an invisible or right-to-left character, and a host
@@ -51,8 +56,12 @@ export function pushPreflight({ cwd, env = process.env, host, session, git = run
     const url = read.stdout.replace(/\r?\n$/u, '');
     // Several push URLs, or none: no one remote to judge. A remote on this machine has no host to ask about.
     if (url === '' || url.length > MAX_URL || hasControl(url) || /\s/u.test(url) || LOCAL.test(url) || !NETWORK.test(url)) return UNKNOWN;
+    // An scp-style remote is split at its first colon before any user is dropped: normalizeRemote alone would drop all
+    // of `source.example:mirror@` from `source.example:mirror@backup.example/team/widget` and judge another host.
+    const scp = SCHEME.test(url) ? null : SCP.exec(url);
+    const remote = scp ? `${scp[1].replace(/^[^@]*@/u, '')}/${scp[2]}` : url;
     // normalizeRemote drops a `.git` in lower case alone; `.GIT` goes here, so the repository has one name.
-    const repository = normalizeRemote(url).toLowerCase().replace(/\.git$/u, '');
+    const repository = normalizeRemote(remote).toLowerCase().replace(/\.git$/u, '');
     if (!REPOSITORY.test(repository)) return UNKNOWN;
     const asking = session === undefined ? asked.sessionId(env) : session;
     const said = pushPermission(asked, { repository, session: asking, cwd: folder, env });

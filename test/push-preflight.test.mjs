@@ -72,6 +72,22 @@ test('no remote, a remote on this machine, and a folder that is no repository an
   assert.deepEqual(asks, [], 'the host was never asked');
 });
 
+test('only a network URL or an scp-style host:path is a network remote: a relative path that reads like one answers unknown, and never asks the host', (t) => {
+  const { asks, host } = answering(DENIAL);
+  const cwd = repository(t);
+  // git reads each of these as a path on this machine, from the repository's folder, though some look like host/owner/repo.
+  for (const url of ['mirrors.example/acme/widget.git', 'github.com/acme/widget', 'github.com/acme/widget.git', 'acme.example/widget/repo', 'foo://github.com/acme/widget', 'rsync://github.com/acme/widget', 'github.com::acme/widget']) {
+    assert.deepEqual(pushPreflight({ cwd, host, session: SESSION, git: remote(url) }), { answer: 'unknown' }, url);
+  }
+  assert.deepEqual(asks, [], 'the host was never asked');
+  // Each network form still reaches the host as host/owner/repo.
+  for (const url of ['https://github.com/acme/widget.git', 'http://github.com/acme/widget', 'ssh://git@github.com/acme/widget.git', 'git://github.com/acme/widget.git', 'git+ssh://git@github.com/acme/widget', 'git@github.com:acme/widget.git', 'github.com:acme/widget.git']) {
+    const asked = answering(DENIAL);
+    assert.equal(pushPreflight({ cwd, host: asked.host, session: SESSION, git: remote(url) }).answer, 'denied', url);
+    assert.equal(asked.asks[0].repository, REPOSITORY, url);
+  }
+});
+
 test('a host without the capability, one that throws, and one that answers allowed or unknown start the run', (t) => {
   const cwd = repository(t, { origin: 'https://github.com/acme/widget.git' });
   assert.deepEqual(pushPreflight({ cwd, host: fakeHost, session: SESSION }), { answer: 'unknown' }, 'no capability');

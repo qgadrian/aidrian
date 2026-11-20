@@ -19,6 +19,11 @@ const UNKNOWN = Object.freeze({ answer: 'unknown' });
 const MAX_URL = 1024;
 // A remote on this machine: a path, a `~` path, a file: URL, or a drive letter. No host trusts or refuses a push there.
 const LOCAL = /^(?:[/.~\\]|file:|[a-z]:[\\/])/iu;
+// A remote git reaches over the network: a URL whose scheme is one git's own transports speak, or scp-style
+// `[user@]host:path`, a colon before any slash. git reads anything else, such as `mirrors.example/acme/widget.git`, as a
+// path on this machine, relative to the repository, whatever host it seems to name; and `<helper>::<address>` goes to a
+// remote helper, not to a host.
+const NETWORK = /^(?:(?:https?|ftps?|ssh|git|git\+ssh|ssh\+git):\/\/|[^/:\\]+:(?!\/\/|:))/iu;
 // The only repository the host is asked about and a message prints: a host name with at least one dot, then two or
 // more path segments of plain ASCII, in lower case. Anything else answers unknown and is never sent or printed: what a
 // password with an `@` or a `:` leaves behind, a query, a fragment, an invisible or right-to-left character, and a host
@@ -37,8 +42,8 @@ export function pushPreflight({ cwd, env = process.env, host, session, git = run
     const read = git(['remote', 'get-url', '--push', '--all', 'origin'], folder);
     if (read?.status !== 0 || typeof read.stdout !== 'string') return UNKNOWN;
     const url = read.stdout.replace(/\r?\n$/u, '');
-    // Several push URLs, or none: no one remote to judge.
-    if (url === '' || url.length > MAX_URL || hasControl(url) || /\s/u.test(url) || LOCAL.test(url)) return UNKNOWN;
+    // Several push URLs, or none: no one remote to judge. A remote on this machine has no host to ask about.
+    if (url === '' || url.length > MAX_URL || hasControl(url) || /\s/u.test(url) || LOCAL.test(url) || !NETWORK.test(url)) return UNKNOWN;
     // normalizeRemote drops a `.git` in lower case alone; `.GIT` goes here, so the repository has one name.
     const repository = normalizeRemote(url).toLowerCase().replace(/\.git$/u, '');
     if (!REPOSITORY.test(repository)) return UNKNOWN;

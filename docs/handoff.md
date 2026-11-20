@@ -276,7 +276,11 @@ through its `capabilities.pushPermission` ([the adapter's fields](providers/addi
 
 - `allowed` and `unknown`: the run starts as before, and nothing is shown. A host that cannot tell, a session not in
   the mode the host judges pushes in, settings it cannot read, no `origin`, and an `origin` on this machine, such as a
-  path or a `file:` URL, all answer `unknown`: a host that cannot answer never stops a run.
+  path or a `file:` URL, all answer `unknown`: a host that cannot answer never stops a run. Only a URL whose scheme is
+  `https`, `http`, `ssh`, `git`, `git+ssh`, `ssh+git`, `ftp`, or `ftps`, or the scp-style `[user@]host:path`, with a
+  colon before any slash, is a remote on the network. git reads anything else as a path on this machine, so
+  `mirrors.example/acme/widget.git`, though it reads like a host, answers `unknown` without asking the host, and so do
+  another scheme and a remote helper's `<helper>::<address>`.
 - `denied`: one line names the host, the setting, the settings file, and the repository, and what the Human changes in
   that file before a run no Human attends. The AI never changes that file. A Human's go-on at the `autopilot` launch
   covers that launch only: each background handoff of the run asks again, and falls back to the clear route until the

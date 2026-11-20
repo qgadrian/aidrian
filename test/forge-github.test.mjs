@@ -310,10 +310,11 @@ test('workflowSecrets counts the secrets of an environment no rule holds, and no
   const headers = 'HTTP/2.0 200 OK\r\nX-Oauth-Scopes: repo, workflow\r\n\r\n{"login":"octo"}';
   const open = { name: 'prod deploy', deployment_branch_policy: null, protection_rules: [{ type: 'wait_timer', wait_timer: 5 }] };
   const user = (login) => ({ type: 'User', reviewer: { login } });
-  const reviewers = (prevent, ...named) => ({ name: 'release', can_admins_bypass: false, deployment_branch_policy: null, protection_rules: [{ type: 'required_reviewers', prevent_self_review: prevent, reviewers: named }] });
+  const reviewers = (prevent, ...named) => ({ name: 'release', deployment_branch_policy: null, protection_rules: [{ type: 'required_reviewers', prevent_self_review: prevent, reviewers: named }] });
   const reviewed = reviewers(true, user('Octo'));
+  // The signed-in user is no admin of the repository, so a reviewer rule can hold that user.
   const read = (environments, more = {}) => routed({
-    'repos/acme/notes': { default_branch: 'main', owner: { login: 'acme', type: 'Organization' } },
+    'repos/acme/notes': { default_branch: 'main', owner: { login: 'acme', type: 'Organization' }, permissions: { admin: false } },
     'repos/acme/notes/actions/secrets': { total_count: 0 }, 'repos/acme/notes/actions/organization-secrets': { total_count: 0 }, user: headers,
     'repos/acme/notes/environments': [{ total_count: environments.length, environments }],
     'repos/acme/notes/environments/prod%20deploy/secrets': { total_count: 4 }, 'repos/acme/notes/environments/release/secrets': { total_count: 3 }, ...more,
@@ -339,29 +340,31 @@ test('workflowSecrets counts the secrets of an environment no rule holds, and no
   assert.throws(() => read([open], { 'repos/acme/notes/environments/prod%20deploy/secrets': new Error('gh: Forbidden (HTTP 403)') }).forge.workflowSecrets('acme/notes'), /Forbidden/u);
 });
 
-test('workflowSecrets counts a reviewer-held environment whose admins may bypass its reviewers when the signed-in user is an admin', () => {
+test('workflowSecrets counts every environment when the signed-in user is an admin, whose token can edit its protection rules', () => {
   const held = (bypass) => ({ name: 'release', ...(bypass === undefined ? {} : { can_admins_bypass: bypass }), deployment_branch_policy: null, protection_rules: [{ type: 'required_reviewers', prevent_self_review: true, reviewers: [{ type: 'User', reviewer: { login: 'ada' } }] }] });
+  // `permissions` undefined: the repository's read carries no permissions at all.
   const secrets = (environment, permissions) => routed({
     'repos/acme/notes': { default_branch: 'main', owner: { login: 'acme', type: 'Organization' }, ...(permissions === undefined ? {} : { permissions }) },
     'repos/acme/notes/actions/secrets': { total_count: 0 }, 'repos/acme/notes/actions/organization-secrets': { total_count: 0 },
     user: 'HTTP/2.0 200 OK\r\nX-Oauth-Scopes: repo\r\n\r\n{"login":"octo"}',
     'repos/acme/notes/environments': [{ total_count: 1, environments: [environment] }], 'repos/acme/notes/environments/release/secrets': { total_count: 3 },
   }).forge.workflowSecrets('acme/notes').secrets;
-  assert.equal(secrets(held(true), { admin: true }), 3, 'an admin deploys past the reviewers');
-  assert.equal(secrets(held(undefined), { admin: true }), 3, 'GitHub lets admins bypass by default');
-  assert.equal(secrets(held(false), { admin: true }), 0, 'no bypass: the reviewer holds an admin too');
-  assert.equal(secrets(held(true), { admin: false }), 0, 'a user who is no admin cannot bypass');
-  assert.equal(secrets(held(true), undefined), 3, 'admin rights GitHub does not show count as an admin\'s');
-  assert.equal(secrets(held(true), { push: true }), 3, 'a permissions answer that names no admin right counts as an admin\'s');
+  // An admin's token can rewrite the reviewers and the self-review rule, so no reviewer holds it, whatever
+  // `can_admins_bypass`, a field GitHub does not document, says.
+  assert.deepEqual([secrets(held(true), { admin: true }), secrets(held(false), { admin: true }), secrets(held(undefined), { admin: true })], [3, 3, 3], 'an admin: counted');
+  assert.deepEqual([secrets(held(true), { admin: false }), secrets(held(false), { admin: false }), secrets(held(undefined), { admin: false })], [0, 0, 0], 'no admin: the reviewer holds');
+  assert.equal(secrets(held(false), undefined), 3, 'admin rights GitHub does not show count as an admin\'s');
+  assert.equal(secrets(held(false), { push: true }), 3, 'a permissions answer that names no admin right counts as an admin\'s');
 });
 
 test('workflowSecrets counts every environment no reviewer other than the signed-in user holds, whatever its deployment branch policy', () => {
   const user = (login) => ({ type: 'User', reviewer: { login } });
+  // The signed-in user is no admin of the repository, so a reviewer rule can hold that user.
   const read = (deployment_branch_policy, protection_rules = []) => routed({
-    'repos/acme/notes': { default_branch: 'main', owner: { login: 'acme', type: 'Organization' } },
+    'repos/acme/notes': { default_branch: 'main', owner: { login: 'acme', type: 'Organization' }, permissions: { admin: false } },
     'repos/acme/notes/actions/secrets': { total_count: 0 }, 'repos/acme/notes/actions/organization-secrets': { total_count: 0 },
     user: 'HTTP/2.0 200 OK\r\nX-Oauth-Scopes: repo\r\n\r\n{"login":"octo"}',
-    'repos/acme/notes/environments': [{ total_count: 1, environments: [{ name: 'deploy', can_admins_bypass: false, deployment_branch_policy, protection_rules }] }],
+    'repos/acme/notes/environments': [{ total_count: 1, environments: [{ name: 'deploy', deployment_branch_policy, protection_rules }] }],
     'repos/acme/notes/environments/deploy/secrets': { total_count: 5 },
     'repos/acme/notes/environments/deploy/deployment-branch-policies': [{ total_count: 1, branch_policies: [{ name: 'main', type: 'branch' }] }],
   });

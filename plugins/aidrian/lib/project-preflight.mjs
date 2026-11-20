@@ -259,7 +259,7 @@ function secretsLine({ facade, named, repository, policy, check, asks }) {
   let token = 'and the signed-in token names no scopes, so it may push a change to a workflow file too';
   if (read.workflowPush === true) token = 'and the signed-in token\'s scopes include workflow, so it may push a change to a workflow file too';
   if (read.workflowPush === false) token = 'though the signed-in token cannot push a change to a workflow file, which narrows it only';
-  check('workflow-secrets', read.secrets > 0 ? `the repository's workflows see ${read.secrets} CI secrets, and the forge runs its push and pull request workflows on an issue's branch with the branch's own code, its tests, scripts, and build, which the session writes, so a change to them could read the secrets, ${token}; move the secrets to environments held for a reviewer who is not the signed-in user, with admin bypass off when that user is an admin, since a deployment branch rule is no hold against code the run pushes; ${SECRETS_ACCEPTED}` : null);
+  check('workflow-secrets', read.secrets > 0 ? `the repository's workflows see ${read.secrets} CI secrets, and the forge runs its push and pull request workflows on an issue's branch with the branch's own code, its tests, scripts, and build, which the session writes, so a change to them could read the secrets, ${token}; move the secrets to environments held for a reviewer who is not the signed-in user, when the signed-in user is not an admin of the repository (an admin's token can edit the rule), since a deployment branch rule is no hold against code the run pushes; ${SECRETS_ACCEPTED}` : null);
 }
 
 // `aidrian project init RUN --file PATH --check`: the input's checks, as init makes them, and the order, with no run

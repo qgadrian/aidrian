@@ -645,14 +645,15 @@ test('preflight counts the secrets of every environment no other reviewer holds,
   // GitHub's own read of the secrets, through a recording gh: no repository or organization secret, and one environment,
   // limited by `limit` and held by `rules`, that holds 2. A route not listed answers 404.
   const reads = [];
-  const github = ({ limit, rules = [], bypass = false, permissions = { admin: true } }) => createGithubForge({ cwd: '/repo', run: (args) => {
+  // `permissions` null: the repository's read carries no permissions at all.
+  const github = ({ limit, rules = [], permissions = { admin: false } }) => createGithubForge({ cwd: '/repo', run: (args) => {
     reads.push(args);
     if (args.includes('--include')) return 'HTTP/2.0 200 OK\r\nX-Oauth-Scopes: repo, workflow\r\n\r\n{"login":"octo"}';
     const route = args.find((each) => each.startsWith('repos/'));
     const answers = {
-      'repos/acme/widgets': { default_branch: 'main', owner: { login: 'acme', type: 'Organization' }, permissions },
+      'repos/acme/widgets': { default_branch: 'main', owner: { login: 'acme', type: 'Organization' }, ...(permissions === null ? {} : { permissions }) },
       'repos/acme/widgets/actions/secrets': { total_count: 0 }, 'repos/acme/widgets/actions/organization-secrets': { total_count: 0 },
-      'repos/acme/widgets/environments': [{ total_count: 1, environments: [{ name: 'production', can_admins_bypass: bypass, deployment_branch_policy: limit, protection_rules: [{ type: 'branch_policy' }, ...rules] }] }],
+      'repos/acme/widgets/environments': [{ total_count: 1, environments: [{ name: 'production', deployment_branch_policy: limit, protection_rules: [{ type: 'branch_policy' }, ...rules] }] }],
       'repos/acme/widgets/environments/production/secrets': { total_count: 2 },
       'repos/acme/widgets/environments/production/deployment-branch-policies': [{ total_count: 1, branch_policies: [{ name: 'main', type: 'branch' }] }],
     };
@@ -668,7 +669,7 @@ test('preflight counts the secrets of every environment no other reviewer holds,
     assert.ok(out.includes('ok policy'), out.join('\n'));
     return out.find((line) => /^(?:ok|blocker) workflow-secrets(?::|$)/u.test(line));
   };
-  const blocked = /^blocker workflow-secrets: the repository's workflows see 2 CI secrets, .*move the secrets to environments held for a reviewer who is not the signed-in user, with admin bypass off when that user is an admin, since a deployment branch rule is no hold against code the run pushes; projectRun\.workflowSecretsAccepted on the default branch skips the workflow secrets read whole: it accepts all current and future workflow secret exposure for project runs, the repository's, its organization's, and every environment's secrets, so a team sets it only when that is acceptable$/u;
+  const blocked = /^blocker workflow-secrets: the repository's workflows see 2 CI secrets, .*move the secrets to environments held for a reviewer who is not the signed-in user, when the signed-in user is not an admin of the repository \(an admin's token can edit the rule\), since a deployment branch rule is no hold against code the run pushes; projectRun\.workflowSecretsAccepted on the default branch skips the workflow secrets read whole: it accepts all current and future workflow secret exposure for project runs, the repository's, its organization's, and every environment's secrets, so a team sets it only when that is acceptable$/u;
   const custom = { protected_branches: false, custom_branch_policies: true };
   const protectedOnly = { protected_branches: true, custom_branch_policies: false };
   const reviewer = (prevent) => [{ type: 'required_reviewers', prevent_self_review: prevent, reviewers: [{ type: 'User', reviewer: { login: 'octo' } }] }];
@@ -678,10 +679,10 @@ test('preflight counts the secrets of every environment no other reviewer holds,
   assert.match(secrets({ limit: custom }), blocked, 'a custom policy for main alone, the default branch verified');
   assert.equal(secrets({ limit: custom, rules: reviewer(true) }), 'ok workflow-secrets', 'held for a reviewer, self-review prevented');
   assert.match(secrets({ limit: null, rules: reviewer(false) }), blocked, 'the signed-in user may approve alone');
-  // An admin's token deploys past reviewers its admins may bypass; a user who is no admin cannot.
-  assert.match(secrets({ limit: custom, rules: reviewer(true), bypass: true }), blocked, 'an admin, with admin bypass on');
-  assert.match(secrets({ limit: custom, rules: reviewer(true), bypass: true, permissions: undefined }), blocked, 'admin rights GitHub does not show');
-  assert.equal(secrets({ limit: custom, rules: reviewer(true), bypass: true, permissions: { admin: false } }), 'ok workflow-secrets', 'no admin, with admin bypass on');
+  // An admin's token can edit an environment's reviewers, so no reviewer holds it; a user who is no admin is held.
+  assert.match(secrets({ limit: custom, rules: reviewer(true), permissions: { admin: true } }), blocked, 'an admin, held for a reviewer');
+  assert.match(secrets({ limit: custom, rules: reviewer(true), permissions: null }), blocked, 'admin rights GitHub does not show');
+  assert.equal(secrets({ limit: custom, rules: reviewer(true), permissions: { admin: false } }), 'ok workflow-secrets', 'no admin, held for a reviewer');
   assert.ok(!reads.some((each) => each.some((word) => /deployment-branch-policies|rulesets|protection|graphql/u.test(word))), 'no read of branch policies or branch rules');
 });
 

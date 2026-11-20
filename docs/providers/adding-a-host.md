@@ -298,10 +298,10 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   a tag, and whether the signed-in user may bypass it (`never` is the only answer the preflight accepts); and
   `workflowSecrets(repo, { host })`, `{ secrets, workflowPush }`: how many CI secrets the repository's workflows see,
   its own, those its organization shares, and those of each environment with no required reviewers rule that holds the
-  signed-in user (one that prevents self-review, or names only other users; a team may hold that user), and those of
-  each environment whose admins may bypass its reviewers when the signed-in user is an admin of the repository (on
-  GitHub `can_admins_bypass`, true by default, and `permissions.admin` on the repository's read; a value the forge does
-  not give counts as a bypass and an admin), whatever its deployment branch limit, since a deployment branch rule is no
+  signed-in user (one that prevents self-review, or names only other users; a team may hold that user), or those of
+  every environment when the signed-in user is an admin of the repository, since an admin's token can edit an
+  environment's protection rules, so no rule holds it (on GitHub `permissions.admin` on the repository's read; a value
+  the forge does not give counts as an admin), whatever its deployment branch limit, since a deployment branch rule is no
   hold against code the run pushes. `projectRun.workflowSecretsAccepted` skips this read whole, accepting all current
   and future workflow secret exposure for project runs, so a team sets it only when that is acceptable. And whether the
   signed-in token may push a change to a workflow file (null when the token does not say), which the preflight's blocker only words: secrets block whatever the scope.

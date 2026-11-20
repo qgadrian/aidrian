@@ -58,8 +58,9 @@ export function lastReply(transcript) {
   return parts.join('\n\n');
 }
 
-// A prompt the human sent: text, or text with images, but no tool output and no interruption marker.
-function isPrompt(content) {
+// A prompt the human sent: text, or text with images, but no tool output and no interruption marker. The stop hook's
+// review-loop check reads the turn from the last one (transcript.mjs turnActions).
+export function isPrompt(content) {
   if (typeof content === 'string') return true;
   if (!Array.isArray(content) || !content.length) return false;
   return content.every((block) => block?.type !== 'tool_result') &&

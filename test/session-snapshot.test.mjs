@@ -17,6 +17,8 @@ import { auditsSection, lessonsSection, snapshotContext } from '../plugins/aidri
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CLI = path.join(ROOT, 'plugins/aidrian/lib/cli.mjs');
 const HOOK = path.join(ROOT, 'plugins/aidrian/scripts/hook-stop.mjs');
+// The preload that records each gh call in the snapshot's own process, before gh is spawned (test/fixtures/gh-spawns.mjs).
+const GH_SPAWNS = path.join(ROOT, 'test/fixtures/gh-spawns.mjs');
 const LIB = path.join(ROOT, 'plugins/aidrian/lib');
 const FIXTURES = path.join(ROOT, 'test/fixtures/transcripts');
 const POSIX = process.platform !== 'win32';
@@ -34,15 +36,43 @@ const git = (cwd, ...args) => {
   return result.stdout.trim();
 };
 
-// A fake gh that logs each call's arguments to `log`, waits `delay` ms, then prints `answer`. With `trap`, it ignores
-// SIGTERM, as a gh stuck in its own cleanup may.
-function fakeGh(bin, { log, delay = 0, answer = '[]', trap = false }) {
+// `bin/gh` as a shell wrapper that execs node on `body`, the fake's script. With `trap`, the shell ignores SIGTERM before
+// node starts, and exec keeps it ignored, so gh ignores SIGTERM from its first instant, however slowly node starts.
+function ghWrapper(bin, body, { trap = false } = {}) {
   mkdirSync(bin, { recursive: true });
+  const script = path.join(bin, 'gh.cjs');
+  writeFileSync(script, body);
   const file = path.join(bin, 'gh');
-  writeFileSync(file, `#!${process.execPath}\nrequire('node:fs').appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + '\\n');\n` +
-    `${trap ? "process.on('SIGTERM', () => {});\n" : ''}setTimeout(() => process.stdout.write(${JSON.stringify(answer)}), ${delay});\n`);
+  writeFileSync(file, `#!/bin/sh\n${trap ? "trap '' TERM\n" : ''}exec ${shellQuoted(process.execPath)} ${shellQuoted(script)} "$@"\n`);
   chmodSync(file, 0o755);
 }
+// `text` as one single-quoted shell word: each `'` closes the quote, adds an escaped one, and opens it again.
+const shellQuoted = (text) => `'${String(text).replaceAll("'", "'\\''")}'`;
+// Each gh call the snapshot made, as the GH_SPAWNS preload recorded it in the snapshot's process before the spawn:
+// { args, timeout, killSignal, at }. A gh that a short deadline stops before its node starts is still here.
+const ghSpawned = (log) => (existsSync(`${log}.spawns`) ? readFileSync(`${log}.spawns`, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []);
+const ghSpawns = (log) => ghSpawned(log).length;
+
+// A fake gh that logs each call's arguments to `log`, waits `delay` ms, then prints `answer` and exits with `status`. With
+// `trap`, it ignores SIGTERM, as a gh stuck in its own cleanup may.
+function fakeGh(bin, { log, delay = 0, answer = '[]', trap = false, status = 0 }) {
+  ghWrapper(bin, `const fs = require('node:fs');\nfs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + '\\n');\n` +
+    `setTimeout(() => { process.stdout.write(${JSON.stringify(answer)}); process.exitCode = ${status}; }, ${delay});\n`, { trap });
+}
+
+// A fake gh that is a shell script alone, for a test of how gh is stopped: it ignores SIGTERM, then appends a line to
+// `beat` every 0.1 s for about 6 s, a gh that would outlive any budget, then answers `[]` as a real gh would: a gh never
+// killed reads as a successful refresh, not a failure. No node runs in it, so a kill that lands before a write leaves that
+// file missing and nothing else.
+function shellGh(bin, { beat }) {
+  mkdirSync(bin, { recursive: true });
+  const file = path.join(bin, 'gh');
+  writeFileSync(file, `#!/bin/sh\ntrap '' TERM\n` +
+    `i=0\nwhile [ "$i" -lt 60 ]; do echo x >> ${shellQuoted(beat)}; sleep 0.1; i=$((i + 1)); done\necho '[]'\n`);
+  chmodSync(file, 0o755);
+}
+// The size of `file`, 0 when it is missing.
+const sizeOf = (file) => (existsSync(file) ? statSync(file).size : 0);
 const ghCalls = (log) => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []);
 
 // A project in a git repository of its own, on `branch`, with its own state root, temporary folder, and fake gh.
@@ -64,8 +94,9 @@ function setup(t, { config = {}, origin = null, branch = 'main', name = 'project
   const env = { ...process.env, ...GIT_CONFIG_NONE, XDG_STATE_HOME: state, TMPDIR: temp, PATH: `${path.join(base, 'bin')}${path.delimiter}${process.env.PATH}` };
   const run = (args = [], { cwd = dir, extraEnv = {} } = {}) => {
     const started = Date.now();
-    const result = spawnSync(process.execPath, [CLI, 'session', 'snapshot', ...args], { cwd, env: { ...env, ...extraEnv }, encoding: 'utf8', timeout: 30_000 });
-    return { ...result, ms: Date.now() - started, json: args.includes('--line') || result.status !== 0 ? null : JSON.parse(result.stdout) };
+    const result = spawnSync(process.execPath, ['--import', GH_SPAWNS, CLI, 'session', 'snapshot', ...args], { cwd, env: { ...env, GH_SPAWN_LOG: `${log}.spawns`, ...extraEnv }, encoding: 'utf8', timeout: 30_000 });
+    const endedAt = Date.now();
+    return { ...result, ms: endedAt - started, endedAt, json: args.includes('--line') || result.status !== 0 ? null : JSON.parse(result.stdout) };
   };
   const projectState = () => spawnSync(process.execPath, [CLI, 'state'], { cwd: dir, env, encoding: 'utf8' }).stdout.trim();
   return { base, dir, state, temp, env, run, log, projectState };
@@ -368,6 +399,19 @@ function withWorktree(t, { origin = 'https://github.com/acme/notes.git', gh = {}
   return { ...env, tree, head };
 }
 
+test('the fake gh runs from a folder whose path holds an apostrophe, with and without its TERM trap', (t) => {
+  const base = path.join(scratch(), "o'brien's");
+  t.after(() => rmSync(path.dirname(base), { recursive: true, force: true }));
+  for (const trap of [false, true]) {
+    const log = path.join(base, `gh-${trap}.log`);
+    fakeGh(path.join(base, 'bin'), { log, answer: '[1]', trap });
+    const out = spawnSync(path.join(base, 'bin', 'gh'), ['pr', 'list'], { encoding: 'utf8', timeout: 30_000 });
+    assert.equal(out.status, 0, `trap ${trap}: ${out.stderr}`);
+    assert.equal(out.stdout, '[1]');
+    assert.deepEqual(ghCalls(log), [['pr', 'list']]);
+  }
+});
+
 test('worktrees counts the owned and the merged ones, and reads merged heads once a window', (t) => {
   const env = withWorktree(t);
   const first = env.run(['--session', ID]).json;
@@ -383,10 +427,14 @@ test('worktrees counts the owned and the merged ones, and reads merged heads onc
   fakeGh(path.join(env.base, 'bin'), { log: env.log, delay: 5000 });
   const late = env.run(['--session', ID, '--deadline-ms', '200']);
   assert.deepEqual(late.json.worktrees, { owned: 1, mergedNotCleaned: 1, stale: true }, 'a refresh past the deadline shows the cached value as stale');
-  assert.ok(late.ms < 4000, `${late.ms} ms`);
-  assert.equal(ghCalls(env.log).length, 2);
+  // From gh's spawn, as the snapshot's own process recorded it, to the snapshot's exit: the node and git startups a loaded
+  // machine slows come before it.
+  const lateMs = late.endedAt - ghSpawned(env.log).at(-1).at;
+  assert.ok(lateMs < 4000, `${lateMs} ms`);
+  // Calls the snapshot made, counted in its process: the 200 ms deadline can stop a slowly started gh before it logs one.
+  assert.equal(ghSpawns(env.log), 2);
   assert.deepEqual(env.run(['--session', ID]).json.worktrees.stale, true);
-  assert.equal(ghCalls(env.log).length, 2, 'after a refresh that hit the deadline, the next snapshot in the window starts no gh call');
+  assert.equal(ghSpawns(env.log), 2, 'after a refresh that hit the deadline, the next snapshot in the window starts no gh call');
 });
 
 test('a snapshot started while a slow gh still answers an earlier one starts no gh call', async (t) => {
@@ -458,11 +506,20 @@ test('a Stop marker past its 64 KiB cap is not read: the handoff section fails',
 });
 
 test('a gh that ignores SIGTERM is killed at the deadline', (t) => {
-  const env = withWorktree(t, { gh: { delay: 6000, trap: true } });
-  const { json, ms, status } = env.run(['--session', ID, '--deadline-ms', '1500']);
+  const env = withWorktree(t);
+  const beat = path.join(env.base, 'gh.beat');
+  shellGh(path.join(env.base, 'bin'), { beat });
+  const { json, status } = env.run(['--session', ID, '--deadline-ms', '1500']);
   assert.equal(status, 0);
-  assert.equal(ghCalls(env.log).length, 1, 'gh started, and set its trap long before the deadline');
-  assert.ok(ms < 4500, `${ms} ms`);
+  // What the snapshot asked of gh, recorded in its own process before the spawn: the 1500 ms it was given, not the 4000 ms
+  // default, and SIGKILL, which the shell's `trap '' TERM` cannot ignore. Load cannot change what is asked.
+  const spawned = ghSpawned(env.log);
+  assert.deepEqual(spawned.map(({ timeout, killSignal }) => ({ timeout, killSignal })), [{ timeout: 1500, killSignal: 'SIGKILL' }]);
+  // No wall-clock bound: when the kill lands depends on the scheduler, and the request above is what aidrian controls.
+  // Dead, not left behind: no heartbeat once the snapshot has exited.
+  const beats = sizeOf(beat);
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);
+  assert.equal(sizeOf(beat), beats, 'gh beat on after the snapshot exited');
   assert.equal(json.worktrees.mergedNotCleaned, null);
   assert.ok(json.errors.includes('worktrees'), 'a read that failed with no cache is a failure');
 });
@@ -820,8 +877,10 @@ test('the merged-heads cache is bound to origin`s repository: once origin moves,
   assert.ok(moved.errors.includes('worktrees'));
   const cache = path.join(fixed, 'sessions', ID, MERGED_HEADS.name);
   writeFileSync(cache, JSON.stringify({ ...JSON.parse(readFileSync(cache, 'utf8')), attemptAt: Date.now() - 120_000 }));
-  fakeGh(path.join(env.base, 'bin'), { log: env.log, delay: 5000 });
-  const failed = env.run(['--session', ID, '--deadline-ms', '200']).json;
+  // A gh that fails at once, `status: 1`: the refresh fails on gh's answer, not on a 200 ms deadline that a loaded
+  // machine's start of the fake gh outlasts before it logs the call this test reads.
+  fakeGh(path.join(env.base, 'bin'), { log: env.log, status: 1 });
+  const failed = env.run(['--session', ID]).json;
   assert.deepEqual(failed.worktrees, { owned: 1, mergedNotCleaned: null }, 'a failed refresh shows no other repository`s heads as stale');
   assert.deepEqual(ghCalls(env.log).at(-1).slice(-2), ['--repo', 'github.com/acme/other']);
 });
@@ -877,19 +936,17 @@ test('a named pipe at the lesson inbox or the audits triage file fails that sect
 function withLedger(t, options = {}) {
   const env = setup(t, options);
   const answerFile = path.join(env.base, 'answer.json');
-  const gh = path.join(env.base, 'bin', 'gh');
-  writeFileSync(gh, `#!${process.execPath}\nconst fs = require('node:fs');\n` +
+  ghWrapper(path.join(env.base, 'bin'), `const fs = require('node:fs');\n` +
     `const input = process.argv.includes('--input') ? fs.readFileSync(0, 'utf8') : null;\n` +
     `fs.appendFileSync(${JSON.stringify(env.log)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), input, ghHost: process.env.GH_HOST ?? null }) + '\\n');\n` +
     `const { text, status, delay } = process.argv.includes('list') ? { text: '[]', status: 0, delay: 0 } : JSON.parse(fs.readFileSync(${JSON.stringify(answerFile)}, 'utf8'));\n` +
     `setTimeout(() => { process.stdout.write(text); process.exitCode = status; }, delay);\n`);
-  chmodSync(gh, 0o755);
   const answer = (value, { status = 0, delay = 0 } = {}) => writeFileSync(answerFile, JSON.stringify({ text: typeof value === 'string' ? value : JSON.stringify(value), status, delay }));
   answer({ data: {} });
   env.run(['--session', ID]);
   const folder = path.join(env.projectState(), 'sessions', ID);
   const ledger = (rows) => writeFileSync(path.join(folder, 'prs.jsonl'), rows.map((row) => `${JSON.stringify(row)}\n`).join(''), { mode: 0o600 });
-  return { ...env, folder, answer, ledger, calls: () => ghCalls(env.log) };
+  return { ...env, folder, answer, ledger, calls: () => ghCalls(env.log), spawns: () => ghSpawns(env.log) };
 }
 
 // One ledger row, `minute` minutes past a fixed hour, in the project's folder unless it names another.
@@ -944,6 +1001,7 @@ test('prs on answers recorded from GitHub: one repository that does not resolve 
   assert.deepEqual(json.errors, []);
   assert.ok(!JSON.stringify(json).includes('Could not resolve'), 'no error text');
   assert.equal(env.calls().length, 1);
+  assert.match(env.run(['--session', ID, '--line']).stdout, /^PRs ✓\d ✗\d ⏳\d · a#15035, b#66655\n$/u, 'cli/cli sorts before nodejs/node');
 });
 
 test('prs: rows on gitlab.com or a made-up host show as unsupported, with no gh call, after the snapshot`s own checks', { skip: !POSIX }, (t) => {
@@ -959,7 +1017,7 @@ test('prs: rows on gitlab.com or a made-up host show as unsupported, with no gh 
   const unknown = { title: null, url: null, isDraft: null, state: null, mergeable: null, reviewDecision: null, unresolvedThreads: null, checks: null, unsupported: true, inherited: false };
   assert.deepEqual(json.prs, [{ host: 'git.example.test', repo: 'team/sub/notes', number: null, ...unknown }, { host: 'gitlab.com', repo: 'acme/notes', number: 3, ...unknown }]);
   assert.deepEqual([json.errors, env.calls()], [[], []]);
-  assert.equal(env.run(['--session', ID, '--line']).stdout, '2 PRs · ✓0 ✗0 ⏳0\n');
+  assert.equal(env.run(['--session', ID, '--line']).stdout, 'PRs ✓0 ✗0 ⏳0 · #3, +1\n');
 });
 
 test('prs: a forge title and check state holding control, bidi, zero-width, and tag characters reach neither --json nor --line', { skip: !POSIX }, (t) => {
@@ -1054,18 +1112,22 @@ test('prs: results cache 60s; past the deadline the cached rows are stale, and w
   writeFileSync(cache, JSON.stringify({ ...stored, attemptAt: Date.now() - 120_000 }));
   env.answer({ data: {} }, { delay: 5000 });
   const late = env.run(['--session', ID, '--deadline-ms', '200']);
-  assert.ok(late.ms < 4000, `${late.ms} ms`);
+  // From gh's spawn, as the snapshot's own process recorded it, to the snapshot's exit: the node and git startups a loaded
+  // machine slows come before it.
+  const lateMs = late.endedAt - ghSpawned(env.log).at(-1).at;
+  assert.ok(lateMs < 4000, `${lateMs} ms`);
   assert.deepEqual(late.json.prs, [{ ...PR_ROW, stale: true }]);
   assert.deepEqual(late.json.errors, []);
-  assert.equal(env.calls().length, 2);
+  // Calls the snapshot made, counted in its process: the 200 ms deadline can stop a slowly started gh before it logs one.
+  assert.equal(env.spawns(), 2);
   assert.deepEqual(env.run(['--session', ID]).json.prs, [{ ...PR_ROW, stale: true }]);
-  assert.equal(env.calls().length, 2, 'after a refresh that hit the deadline, the next snapshot in the window starts no gh call');
+  assert.equal(env.spawns(), 2, 'after a refresh that hit the deadline, the next snapshot in the window starts no gh call');
   rmSync(cache);
   const cold = env.run(['--session', ID, '--deadline-ms', '200']);
   assert.deepEqual([cold.json.prs, cold.json.errors], [null, ['prs']], 'no cache: the section fails');
   rmSync(cache);
   env.ledger([]);
-  assert.deepEqual([env.run(['--session', ID]).json.prs, env.calls().length], [[], 3], 'a ledger with no row: no call');
+  assert.deepEqual([env.run(['--session', ID]).json.prs, env.spawns()], [[], 3], 'a ledger with no row: no call');
   env.ledger([ledgerRow(env.dir, { branch: 'feat/none' })]);
   env.answer({ data: { r0: { pullRequests: { nodes: [] }, parent: null } } });
   const none = env.run(['--session', ID]).json;

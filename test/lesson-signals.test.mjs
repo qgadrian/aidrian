@@ -10,7 +10,7 @@ import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
 import { inboxPath, lessons, pluginInboxPath } from '../plugins/aidrian/lib/lesson-inbox.mjs';
 import { CHILD_SEND_BACKS } from '../plugins/aidrian/lib/child-send-backs.mjs';
 import { deliverySignal, denialSignal, forgetDenials, noteDenial, recordSignal, REPEATED_DENIALS, roundLimitSignal } from '../plugins/aidrian/lib/lesson-signals.mjs';
-import { projectAt, projectId } from '../plugins/aidrian/lib/project.mjs';
+import { projectAt, projectId, stateDir } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SCRIPTS = path.join(ROOT, 'plugins/aidrian/scripts');
@@ -35,7 +35,7 @@ function project(t, config = { version: 1 }) {
   // The project's own inbox, and the plugin's, where a signal for the plugin lands.
   const all = () => lessons(inboxPath(proj));
   const plugin = () => lessons(pluginInboxPath());
-  const hook = (script, input) => spawnSync(process.execPath, [path.join(SCRIPTS, script)], { input: JSON.stringify({ cwd: dir, ...input }), encoding: 'utf8', env });
+  const hook = (script, input, extra = {}) => spawnSync(process.execPath, [path.join(SCRIPTS, script)], { input: JSON.stringify({ cwd: dir, ...input }), encoding: 'utf8', env: { ...env, ...extra } });
   return { dir, temp, proj, all, plugin, hook };
 }
 
@@ -65,7 +65,7 @@ test('a signal dedupes by its key, reopens a fix it recurs after, and stays off 
   assert.equal(first.source, 'auto');
   recordSignal(proj, { ...signal, session: 's2' });
   const [only] = all();
-  assert.deepEqual([only.id, only.key, only.seen, only.source, only.title], [first.id, 'hook-deny:git-amend', 2, 'auto', `The git-amend rule blocked one session ${REPEATED_DENIALS} times`]);
+  assert.deepEqual([only.id, only.key, only.seen, only.source, only.title], [first.id, 'hook-deny:git-amend', 2, 'auto', `The git-amend rule blocked one agent ${REPEATED_DENIALS} times for the same cause`]);
   spawnSync(path.join(ROOT, 'plugins/aidrian/bin/aidrian'), ['lesson', 'resolve', first.id, '--outcome', 'mechanism', '--link', 'abc1234'], { cwd: proj.root, encoding: 'utf8' });
   assert.equal(all()[0].status, 'resolved');
   recordSignal(proj, { ...signal, session: 's3' }, { now: new Date(Date.now() + 60_000) });
@@ -76,7 +76,7 @@ test('a signal dedupes by its key, reopens a fix it recurs after, and stays off 
   assert.equal(all().length, 1);
 });
 
-test('noteDenial records a lesson on the third block of one rule in one session, once', (t) => {
+test('noteDenial records a lesson on the third block of one rule for one cause in one agent run, once', (t) => {
   const { dir, temp, plugin: all } = project(t);
   const input = (session) => ({ session_id: session, cwd: dir, agent_type: 'aidrian:explorer' });
   const results = Array.from({ length: REPEATED_DENIALS + 1 }, () => noteDenial(input('s1'), 'git-amend', { dir: temp }));
@@ -84,13 +84,30 @@ test('noteDenial records a lesson on the third block of one rule in one session,
   assert.equal(results[2].agent, 'aidrian:explorer');
   noteDenial(input('s1'), 'process-kill', { dir: temp });
   noteDenial(input('s2'), 'git-amend', { dir: temp });
-  const count = (session, rule) => readFileSync(path.join(temp, `aidrian-denials-${session}`, rule), 'utf8').length;
-  assert.deepEqual([count('s1', 'git-amend'), count('s1', 'process-kill'), count('s2', 'git-amend')], [4, 1, 1]);
+  const count = (session, rule) => readdirSync(path.join(temp, `aidrian-denials-${session}`)).filter((name) => name.startsWith(`${rule}.main.`) && !name.endsWith('.recorded'))
+    .map((name) => readFileSync(path.join(temp, `aidrian-denials-${session}`, name), 'utf8').length);
+  assert.deepEqual([count('s1', 'git-amend'), count('s1', 'process-kill'), count('s2', 'git-amend')], [[4], [1], [1]]);
   assert.equal(noteDenial(input('s1'), '../x', { dir: temp }), null, 'a rule name that is not a file name part counts nothing');
   assert.deepEqual(all().map((lesson) => [lesson.key, lesson.seen]), [['hook-deny:git-amend', 1]]);
   for (const session of [undefined, '../x', 'a b']) assert.equal(noteDenial({ session_id: session, cwd: dir }, 'git-amend', { dir: temp }), null);
   const outside = mkdtempSync(path.join(temp, 'outside-'));
   for (let i = 0; i < REPEATED_DENIALS; i += 1) assert.equal(noteDenial({ session_id: 's9', cwd: outside }, 'git-amend', { dir: temp }), null);
+});
+
+// Long sessions once filed hook-deny lessons for three blocks days apart, by the main thread and two subagents, on two
+// pull requests, for three causes, each a block the rule was right to make.
+test('noteDenial counts a repeat only within one agent run and for one cause', (t) => {
+  const { dir, temp, plugin: all } = project(t);
+  const block = (agentId, cause) => noteDenial({ session_id: 'long', cwd: dir, agent_type: agentId ? 'general-purpose' : undefined, agent_id: agentId }, 'public-text', { dir: temp, cause });
+  assert.deepEqual([block(undefined, 'the body names a banned term.'), block('a1', 'the body names a banned term.'), block('a2', 'the body names a banned term.')], [null, null, null], 'three runs, one block each');
+  assert.deepEqual([block(undefined, 'the heredoc body cannot be read.'), block(undefined, 'the body changed on the same line.')], [null, null], 'the main thread, three causes');
+  assert.deepEqual(all(), []);
+  assert.equal(block('a1', 'the body names a banned term.'), null);
+  const row = block('a1', 'the body names a banned term.');
+  assert.ok(row, 'one run, one cause, a third time');
+  assert.deepEqual([row.key, row.agent, row.evidence], ['hook-deny:public-text', 'general-purpose', ['session long', 'agent a1']]);
+  assert.equal(block('a1', 'the body names a banned term.'), null, 'once per run and cause');
+  assert.deepEqual(all().map((lesson) => [lesson.key, lesson.seen]), [['hook-deny:public-text', 1]]);
 });
 
 test('blocks that land at the same time all count, and exactly one of them records the lesson', async (t) => {
@@ -102,7 +119,8 @@ test('blocks that land at the same time all count, and exactly one of them recor
     spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: 'ignore' }).on('exit', resolve);
   })));
   assert.deepEqual(exits, Array(blocks).fill(0));
-  assert.equal(readFileSync(path.join(temp, 'aidrian-denials-race', 'git-amend'), 'utf8').length, blocks);
+  const [counted] = readdirSync(path.join(temp, 'aidrian-denials-race')).filter((name) => name.startsWith('git-amend.') && !name.endsWith('.recorded'));
+  assert.equal(readFileSync(path.join(temp, 'aidrian-denials-race', counted), 'utf8').length, blocks);
   assert.deepEqual(all().map((lesson) => [lesson.key, lesson.seen]), [['hook-deny:git-amend', 1]]);
 });
 
@@ -112,7 +130,7 @@ test('the session-end hook deletes the session`s block counts and no other sessi
   noteDenial({ session_id: 'ending', cwd: dir }, 'process-kill', { dir: temp });
   noteDenial({ session_id: 'ending-2', cwd: dir }, 'git-amend', { dir: temp });
   const left = () => readdirSync(temp).filter((name) => name.startsWith('aidrian-denials-'))
-    .flatMap((folder) => readdirSync(path.join(temp, folder)).map((name) => `${folder}/${name}`)).sort();
+    .flatMap((folder) => readdirSync(path.join(temp, folder)).map((name) => `${folder}/${name.replace(/\.main\.[0-9a-f]{16}/u, '')}`)).sort();
   assert.deepEqual(left(), ['aidrian-denials-ending-2/git-amend', 'aidrian-denials-ending/git-amend', 'aidrian-denials-ending/git-amend.recorded', 'aidrian-denials-ending/process-kill']);
   assert.equal(hook('hook-session-end.mjs', { session_id: 'ending' }).status, 0);
   assert.deepEqual(left(), ['aidrian-denials-ending-2/git-amend']);
@@ -204,6 +222,113 @@ test('a delivery-check send-back becomes a lesson for that agent type; the secon
     ],
   );
   assert.deepEqual(plugin().map((lesson) => lesson.key), ['delivery-check:aidrian:planning-agent'], 'the plugin agent\'s lesson is in the plugin\'s inbox');
+});
+
+// Claude Code starts an idle subagent again with its background agent's report, and tells the subagent's own dispatcher it
+// stopped only once no child of its runs: each idle-with-children occurrence of 2026-11-14 to 17 was woken that way. The five
+// send-backs only cost turns, and an agent with no shell handed back before the report arrived.
+test('on a host that wakes an idle subagent with its child agent\'s report, the background check counts only its shell tasks', (t) => {
+  const { dir, plugin, hook } = project(t);
+  const transcript = childTranscript(dir);
+  const claude = { CLAUDECODE: '1' };
+  const stop = (active, tasks, extra = claude) => hook('hook-subagent-stop.mjs', {
+    session_id: 's1', agent_id: 'a1', agent_type: 'aidrian:product-manager', agent_transcript_path: transcript, last_assistant_message: 'Waiting for the review.',
+    stop_hook_active: active, background_tasks: tasks,
+  }, extra);
+  const reviewer = SESSION_TASKS.slice(1, 2);
+  assert.deepEqual([stop(false, reviewer).status, stop(true, reviewer).status], [0, 0], 'its own background agent sends it back on no stop');
+  const sent = stop(false, SESSION_TASKS);
+  assert.equal(sent.status, 2, 'its own background shell still does');
+  assert.match(sent.stderr, /^You started background work that is still running: `bmnjbq03x` \(shell: Push the branch\)\. /u);
+  assert.deepEqual(plugin(), [], 'ending with only a background agent running is no lesson');
+  assert.equal(stop(false, reviewer, {}).status, 2, 'a host that declares no such wake keeps the check for an agent');
+});
+
+// The handoff file a brief asks for is due when the agent's work ends. A stop sent back while a background task of its own
+// still runs is no end of it, and the next stop wrote the file: such stops once made 208 delivery-check occurrences.
+test('a stop sent back for a running background task files no delivery lesson for the handoff it does not owe yet', (t) => {
+  const { dir, all, plugin, hook } = project(t);
+  const file = path.join(stateDir(projectAt(dir)), 'dispatch', 'docs-S1-product-manager.json');
+  const transcript = path.join(dir, 'agent-p1.jsonl');
+  writeFileSync(transcript, [
+    JSON.stringify({ type: 'user', message: { role: 'user', content: `Rule on the copy. Write your machine handoff to ${file}.` } }),
+    JSON.stringify({ type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { subagent_type: 'Explore', prompt: 'x' } }] } }),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'launched' }] }, toolUseResult: { status: 'async_launched', agentId: 'achild001' } }),
+  ].join('\n'));
+  const stop = (active, tasks) => hook('hook-subagent-stop.mjs', {
+    session_id: 's1', agent_id: 'p1', agent_type: 'aidrian:product-manager', agent_transcript_path: transcript,
+    last_assistant_message: 'Waiting for the explorer.', stop_hook_active: active, background_tasks: tasks,
+  });
+  assert.equal(stop(false, [{ id: 'achild001', type: 'local_agent', status: 'running' }]).status, 2);
+  assert.equal(stop(true, []).status, 0);
+  assert.ok(existsSync(file), 'the stop that ends writes the handoff');
+  assert.deepEqual([...all(), ...plugin()].map((lesson) => lesson.key), []);
+});
+
+// The handoff waits for the stop after a wake, decided apart from the background check: on Claude Code a shell's end
+// notice wakes an idle subagent as an agent's report does (280 such wakes in subagent transcripts of 2.1.316 and later).
+// A handoff written at the cap stop while either still ran held a report written before that task's result.
+test('a stop the cap lets end with a shell and an agent running leaves the handoff to the stop after the wake; a host that wakes for none writes it', (t) => {
+  const { dir, hook } = project(t);
+  const file = path.join(stateDir(projectAt(dir)), 'dispatch', 'docs-S1-fixer.json');
+  const transcript = path.join(dir, 'agent-f1.jsonl');
+  writeFileSync(transcript, [
+    JSON.stringify({ type: 'user', message: { role: 'user', content: `Push the fix. Write your machine handoff to ${file}.` } }),
+    JSON.stringify({ type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'git push', run_in_background: true } }] } }),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'Command running in background with ID: bpush0001.' }] }, toolUseResult: { stdout: '', stderr: '', backgroundTaskId: 'bpush0001' } }),
+    JSON.stringify({ type: 'assistant', message: { id: 'm2', content: [{ type: 'tool_use', id: 't2', name: 'Agent', input: { subagent_type: 'Explore', prompt: 'x' } }] } }),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't2', content: 'launched' }] }, toolUseResult: { status: 'async_launched', agentId: 'achild001' } }),
+  ].join('\n'));
+  const shell = { id: 'bpush0001', type: 'shell', status: 'running', description: 'Push the fix' };
+  const agent = { id: 'achild001', type: 'local_agent', status: 'running', description: 'Explore' };
+  const stop = (fields, env = { CLAUDECODE: '1' }) => hook('hook-subagent-stop.mjs', {
+    session_id: 's1', agent_id: 'f1', agent_type: 'aidrian:fixer', agent_transcript_path: transcript,
+    last_assistant_message: '{"status":"done","role":"fixer"}', background_tasks: [shell, agent], ...fields,
+  }, env);
+  const sent = [stop({ stop_hook_active: false }), ...Array.from({ length: CHILD_SEND_BACKS - 1 }, () => stop({ stop_hook_active: true }))];
+  assert.deepEqual(sent.map((round) => round.status), Array(CHILD_SEND_BACKS).fill(2), 'each stop under the cap is sent back for the shell');
+  assert.ok(sent.every((round) => !/machine handoff/u.test(round.stderr)), 'the handoff is no send-back reason while the tasks run');
+  assert.equal(stop({ stop_hook_active: true }).status, 0, 'the cap lets the stop end');
+  assert.ok(!existsSync(file), 'the cap stop leaves the handoff to the stop after the wake: the shell\'s end and the agent\'s report each wake the agent');
+  assert.equal(stop({ stop_hook_active: true, background_tasks: [shell] }).status, 0);
+  assert.ok(!existsSync(file), 'a shell alone still wakes the agent when it ends');
+  assert.equal(stop({ stop_hook_active: false, background_tasks: [] }).status, 0, 'the stop after the wake ends');
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { status: 'done', role: 'fixer' }, 'the stop after the wake writes the handoff');
+
+  // A host that wakes the agent for no task, and sends no stop_hook_active, never sends it back: its stop is its last.
+  rmSync(file);
+  assert.equal(stop({}, {}).status, 0);
+  assert.ok(existsSync(file), 'a task nothing wakes the agent for leaves no later stop to write the handoff');
+});
+
+// A pending handoff left `unwritten` but stayed in `missing` when the report named it on a delivery line, so the stop was
+// sent back for it and filed the lesson the pending state exists to prevent. Another path the report names still counts.
+test('a pending handoff the report names on a delivery line is not missing; another missing path still is', (t) => {
+  const { dir, all, plugin, hook } = project(t);
+  const file = path.join(stateDir(projectAt(dir)), 'dispatch', 'docs-S1-product-manager.json');
+  const transcript = path.join(dir, 'agent-p1.jsonl');
+  writeFileSync(transcript, [
+    JSON.stringify({ type: 'user', message: { role: 'user', content: `Rule on the copy. Write your machine handoff to ${file}.` } }),
+    JSON.stringify({ type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { subagent_type: 'Explore', prompt: 'x' } }] } }),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'launched' }] }, toolUseResult: { status: 'async_launched', agentId: 'achild001' } }),
+  ].join('\n'));
+  // Claude Code wakes the agent with its background agent's report, so the stop ends and the handoff waits for that one.
+  const stop = (message) => hook('hook-subagent-stop.mjs', {
+    session_id: 's1', agent_id: 'p1', agent_type: 'aidrian:product-manager', agent_transcript_path: transcript,
+    last_assistant_message: message, stop_hook_active: false, background_tasks: [{ id: 'achild001', type: 'local_agent', status: 'running' }],
+  }, { CLAUDECODE: '1' });
+  const rows = () => readFileSync(path.join(stateDir(projectAt(dir)), 'dispatch-log.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  const named = stop(`Waiting for the explorer.\nHandoff: ${file}`);
+  assert.equal(named.status, 0, `the pending handoff sent the agent back: ${named.stderr}`);
+  assert.deepEqual([...all(), ...plugin()].map((lesson) => lesson.key), [], 'the pending handoff is no lesson');
+  assert.deepEqual([rows().at(-1).delivered, rows().at(-1).paths], ['pending', []], 'the stop row shows the handoff pending, never as a file delivered');
+  assert.ok(!existsSync(file), 'nothing is written while the task runs');
+  const other = stop(`Waiting for the explorer.\nHandoff: ${file}\nWrote out/notes.md`);
+  assert.equal(other.status, 2, 'a path that exists nowhere still sends the agent back');
+  assert.match(other.stderr, /^Your report names `out\/notes\.md`, which does not exist\./u);
+  assert.ok(!other.stderr.includes(file), 'the pending handoff is not among the missing paths');
+  assert.deepEqual([rows().at(-1).delivered, rows().at(-1).paths], ['missing', ['out/notes.md']], 'only the other path is a claim');
+  assert.deepEqual(plugin().map((lesson) => [lesson.key, lesson.note]), [['delivery-check:aidrian:product-manager', 'aidrian:product-manager presented out/notes.md as written, and it did not exist.']]);
 });
 
 // A subagent transcript in Claude Code's shape: a background push and a resumed reviewer, each with the text result and the

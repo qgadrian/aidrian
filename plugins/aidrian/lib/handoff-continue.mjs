@@ -40,6 +40,7 @@ import { continueRoutes, detectHost, sessionIdentity } from './hosts/index.mjs';
 import { branchOf } from './handoff-sections.mjs';
 import { sectionItems } from './markdown-sections.mjs';
 import { committedConfigFile, defaultStateDir, projectAt, projectCheckouts, stateDir } from './project.mjs';
+import { olderWrap } from './shell-init.mjs';
 import { OPEN_ID, readFollows, replacer, shellPid, terminalOf } from './terminal-replace.mjs';
 import { dropPending, markPending, markUnattended, PENDING_AGE, readUnattendedMark } from './unattended-mark.mjs';
 
@@ -352,9 +353,10 @@ function handTerminal({ host, store, session, env, home, run, now, mode, id, nex
   return way.shell === null ? 'stop' : 'switch';
 }
 
-// Whether the terminal stays on this session only because its shell never loaded the shell function: auto mode, a host
-// that can replace a terminal, a session a Human attends, and no shell pid in its environment, as when the terminal
-// opened before `aidrian shell-init <shell> --install` wrote the function, or it was never installed.
+// Whether the terminal stays on this session only because the shell function did not start it: auto mode, a host that
+// can replace a terminal, a session a Human attends, and no shell pid in its environment, as when a launcher or an
+// editor command started it, the terminal opened before `aidrian shell-init <shell> --install` wrote the function, or
+// it was never installed.
 function unhooked({ host, store, session, env, home, now, mode }) {
   const replace = replacer(host);
   if (mode !== 'auto' || !replace || shellPid(env) !== null || !replace.attended(env)) return false;
@@ -424,7 +426,9 @@ function safely(act) {
 }
 
 // Why the terminal did not switch, for a session its shell's function did not start (docs/handoff.md#replacing-the-terminal).
-export const UNHOOKED = 'This terminal stays on this session because its shell had not loaded the aidrian shell function when this session started, as when this terminal opened before `aidrian shell-init zsh --install` (or bash) wrote it; start the next session in a new terminal, or after reloading the shell\'s startup file, and its handoff switches the terminal.';
+export const UNHOOKED = 'This terminal stays on this session because the aidrian shell function did not start it, as with a launcher, an editor command, or a terminal opened before `aidrian shell-init zsh --install` (or bash) wrote the function; start the next session in a new terminal, and its handoff switches the terminal. For a launcher on PATH that ends in `exec` of the host\'s program, the Human runs `aidrian shell-init zsh --install --wrap <launcher>` (or bash) once, with the launcher\'s own name in place of `<launcher>`, and a session the launcher starts follows too.';
+// UNHOOKED and the sentence for a copy of the plugin older than `--wrap`, with the update command `host` declares.
+export const unhookedLine = (host) => `${UNHOOKED} ${olderWrap(replacer(host) ?? {})}`;
 
 // The lines of a background start, `marker` as noteStarted records it. The say line ends on what becomes of this session,
 // as `ending` (handTerminal) says: `switch`, its terminal switches to the new one once the turn ends, with nothing to
@@ -437,7 +441,7 @@ function startedLines(host, marker, { ending = null, unhooked = false } = {}) {
   const stops = ending === 'stop' ? ' and stops once this turn ends' : '';
   const last = ending === 'switch'
     ? `This session has ended its work; this terminal switches to the new one, \`${called}\`, once this turn ends.`
-    : `This session has ended its work${stops}; the new one is \`${called}\`${open}.${unhooked ? ` ${UNHOOKED}` : ''}`;
+    : `This session has ended its work${stops}; the new one is \`${called}\`${open}.${unhooked ? ` ${unhookedLine(host)}` : ''}`;
   const named = marker.name ? ` '${marker.name}'` : '';
   // A start record an earlier version wrote, whose session started in the host's default mode: it may stop at a prompt.
   const mode = marker.mode === null ? ' It runs in the host\'s default permission mode, since this session\'s own could not be read, so it may stop at a permission prompt.' : '';

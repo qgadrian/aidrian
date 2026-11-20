@@ -566,6 +566,28 @@ describe('the snapshot rows', () => {
     expect(links).toEqual(['https://github.com/acme/notes/pull/12'])
   })
 
+  test('pull requests from two repositories carry a letter on the band, and the pane shows it beside its repository', async ($, on) => {
+    const prs = [
+      pull(42, { repo: 'acme/api', url: 'https://github.com/acme/api/pull/42' }),
+      pull(42, { repo: 'acme/web', url: 'https://github.com/acme/web/pull/42', checks: { passed: 0, failed: 1, pending: 0, skipped: 0 } }),
+    ]
+    await startIn($, on, world({ snapshot: { ...SNAPSHOT, prs } }))
+    const drawing = await band($)
+
+    expect((await drawing.find({ type: 'Text', text: /^a#42$/ }))?.props.color).toBe('success')
+    expect((await drawing.find({ type: 'Text', text: /^b#42$/ }))?.props.color).toBe('error')
+
+    const listing = await pane($)
+
+    expect(await listing.find({ type: 'Text', text: /^PR a#42$/ })).toBeDefined()
+    expect(await listing.find({ type: 'Text', text: /^PR b#42$/ })).toBeDefined()
+    expect(await listing.find({ type: 'Text', text: /^github\.com\/acme\/api$/ })).toBeDefined()
+    expect(await listing.find({ type: 'Text', text: /^github\.com\/acme\/web$/ })).toBeDefined()
+    const links = (await listing.findAll({ type: 'Link' })).map(link => link.props.href)
+
+    expect(links).toEqual(['https://github.com/acme/api/pull/42', 'https://github.com/acme/web/pull/42'])
+  })
+
   test('no hidden character of a title or a check reaches the band or the pane', async ($, on) => {
     const hostile = pull(14, { title: 'Fix \u001b]52;c;aGk=\u0007 it\u001b[2J \u202eevil\u200f\u2060\u{E0041}' })
     await startIn($, on, world({ snapshot: { ...SNAPSHOT, prs: [hostile] } }))

@@ -10,6 +10,7 @@
 // When the agent stops without it, with none of its own background tasks running, and is not sent back for another reason,
 // the stop hook writes its final report there (deliverHandoffs): a brief can name the file for an agent with no file tool or shell, or make it optional,
 // and the report is the handoff either way. The agent is sent back for it only when it has no report to write.
+// While one of its own background tasks runs and a later stop is sure, the file is not due yet, and owes nothing.
 // docs/hooks.md#delivery-check.
 
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
@@ -69,19 +70,35 @@ const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 
 // `delivery` once the agent's final report is written to each handoff file it owes (`unwritten`), with `written`, the
 // files the hook wrote, and those files out of `unwritten` and `missing`. A stop with a background task of the agent's
-// own still `running` is no end of its work, so nothing is written then; nor with no report (finalReport).
+// own still `running`, and a later stop sure to come (the stop hook decides), is no end of its work, so nothing is written then, and no handoff is due yet: the owed files move
+// from `unwritten` to `pending`, and out of `claims` and `missing` when the report names them, so they neither send the
+// agent back nor count as undelivered, and the stop row says `pending`. The delivery check once
+// filed a lesson on every such stop, though the next stop, with the task done, wrote the file. Nothing is written with
+// no report either (finalReport).
 // With `write: false`, nothing is written: the result is the delivery as it would be once every owed file is, with
 // `written` empty, so the stop hook decides on a send-back before it writes. A report the agent is sent back to correct
 // is not its last, and a file written from it would stand, since a later stop skips a handoff file that exists.
 export function deliverHandoffs(input, delivery, { running = false, write = true } = {}) {
   const owed = delivery.unwritten ?? [];
-  const report = owed.length && !running ? finalReport(input) : null;
+  // A pending file is out of `claims` and `missing` too: a report that names it on a delivery line, such as a `Handoff:`
+  // line, would otherwise send the agent back for it and count it undelivered, or show on the stop row as a file delivered.
+  if (owed.length && running) {
+    const named = { claims: uncovered(input, delivery.claims, owed), missing: uncovered(input, delivery.missing, owed) };
+    return { ...delivery, ...named, unwritten: [], pending: owed, written: [] };
+  }
+  const report = owed.length ? finalReport(input) : null;
   if (report === null) return { ...delivery, written: [] };
   const written = write ? writeHandoffs(owed, report) : [];
   const covered = write ? written : owed;
+  return { ...delivery, missing: uncovered(input, delivery.missing, covered), unwritten: owed.filter((file) => !covered.includes(file)), written };
+}
+
+// The `claims` that name none of `files`: a claim names a file when it resolves to it from the hook's folder,
+// or is its tail.
+function uncovered(input, missing, files) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : null;
-  const isCovered = (claim) => covered.some((file) => (cwd && file === resolveClaim(cwd, claim)) || file.endsWith(`${path.sep}${path.normalize(claim)}`));
-  return { ...delivery, missing: delivery.missing.filter((claim) => !isCovered(claim)), unwritten: owed.filter((file) => !covered.includes(file)), written };
+  const names = (claim) => files.some((file) => (cwd && file === resolveClaim(cwd, claim)) || file.endsWith(`${path.sep}${path.normalize(claim)}`));
+  return missing.filter((claim) => !names(claim));
 }
 
 // The subagent's final report: the message of its last handback call (transcript.mjs lastHandback), else its last

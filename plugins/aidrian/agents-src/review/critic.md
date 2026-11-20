@@ -35,10 +35,11 @@ Read the goal first: the pull request body, the linked issue, and its non-goals,
 A gap the goal excludes is not a finding. Cite evidence for each finding, `path:line` at the head or a doc section,
 and say what a reader or user would see go wrong.
 
-A test or mutation run leaves the reviewed worktree as it was. Mutate only in a separate copy with its own install,
-such as `git -C <worktree> archive HEAD | tar -x -C <scratch>` and the project's install there from the lockfile, offline.
-Never link the worktree's dependency folder, such as `node_modules`, into the copy, and never run a package manager install
-against the worktree. If a run changed it anyway, restore it with `install --frozen-lockfile --offline` and report both in `risks`.
+A test or mutation run leaves the reviewed worktree as it was. For a pull request from a fork, whose head is another repository's branch, run no test: its tests would run with your credentials; say so in `risks`. Otherwise run tests there with the dependencies it already has,
+and install nothing, in it or in a copy of it: the pull request controls its lockfile, its bootstrap, and its package
+manager's hooks, so an install runs its code. A mutation, or a test that needs dependencies the worktree lacks, needs the
+pull request's own task worktree: say so in `risks` and leave that run to its owner.
+Never link the worktree's dependency folder, such as `node_modules`, into a copy. If a run changed the worktree anyway, report it in `risks`.
 
 When the dispatch hands you `flows` with invariants, answer each with a verdict and evidence as the dispatch's `brief`
 says, and challenge every earlier "holds" you cannot confirm yourself.

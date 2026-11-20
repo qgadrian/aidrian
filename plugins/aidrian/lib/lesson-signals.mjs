@@ -5,6 +5,7 @@
 // turns all of them off. Rows hold names, counts, paths, and ids; never a prompt, a command, or tool output.
 // A signal with target `plugin` lands in the plugin's inbox, as `aidrian lesson add --target plugin` does.
 
+import { createHash } from 'node:crypto';
 import { appendFileSync, closeSync, mkdirSync, openSync, rmSync, statSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -15,7 +16,9 @@ import { appendRow, withLocks } from './jsonl.mjs';
 import { addRow, homeInbox } from './lesson-inbox.mjs';
 import { findProject } from './project.mjs';
 
-// One block is a guard doing its job; this many of the same rule in one session is an agent fighting it.
+// One block is a guard doing its job; this many of the same rule, for the same cause, in one agent run is an agent
+// fighting it. A count per session once filed lessons for blocks days apart, by different agents, on different pull
+// requests, for different causes, each of which the rule was right to make.
 export const REPEATED_DENIALS = 3;
 
 // Appends the signal's row and returns it; null when the project turned signals off, the inbox's lock is held, or
@@ -76,18 +79,19 @@ export function idleChildrenSignal({ agentType, agentId = null, session = null, 
 // project's to fix.
 const PROJECT_RULES = new Set(['agent-gates', 'tracker-guard']);
 
-// One of the plugin's blocking rules (lib/hook-deny.mjs) blocked one session REPEATED_DENIALS times.
-export function denialSignal({ rule, session = null, agent = null }) {
+// One of the plugin's blocking rules (lib/hook-deny.mjs) blocked one agent run REPEATED_DENIALS times for the same cause.
+// `agentId` names the subagent run; none is the main thread.
+export function denialSignal({ rule, session = null, agent = null, agentId = null }) {
   return {
     key: `hook-deny:${rule}`,
     tier: 'P2',
     kind: 'gap',
     target: PROJECT_RULES.has(rule) ? 'project' : 'plugin',
-    title: `The ${rule} rule blocked one session ${REPEATED_DENIALS} times`,
+    title: `The ${rule} rule blocked one agent ${REPEATED_DENIALS} times for the same cause`,
     note:
-      `Agents tried ${REPEATED_DENIALS} times in one session what the ${rule} rule blocks. ` +
-      'Neither their instructions nor the rule\'s message showed them the allowed way.',
-    evidence: session ? [`session ${session}`] : [],
+      `${agent ?? 'An agent'} tried ${REPEATED_DENIALS} times in one run what the ${rule} rule blocks, and was blocked for the same cause each time. ` +
+      'Neither its instructions nor the rule\'s message showed it the allowed way.',
+    evidence: [...(session ? [`session ${session}`] : []), ...(agentId ? [`agent ${agentId}`] : [])],
     session,
     agent,
   };
@@ -131,24 +135,35 @@ export function roundLimitSignal({ repo, pr, maxRounds, rounds, session = null, 
 
 // A session id or rule name that may name a file.
 const FILE_NAME_PART = /^[\w-]+$/;
-// The temporary folder of one session's block counts, `<prefix><session>`, holds a `<rule>` file per rule,
-// `<rule>.recorded` after one that fired, and `<tool>.noted` per tool noted (noteUnlistedTool). One folder per session lets
-// the session's end delete them by path alone.
+// The temporary folder of one session's block counts, `<prefix><session>`, holds a `<rule>.<run>.<cause>` file per rule,
+// agent run, and cause (denialCount), `<that>.recorded` after one that fired, and `<tool>.noted` per tool noted
+// (noteUnlistedTool). One folder per session lets the session's end delete them by path alone.
 const DENIALS_PREFIX = 'aidrian-denials-';
 const denialsDir = (dir, session) => path.join(dir, `${DENIALS_PREFIX}${session}`);
 const agentOf = (input, env) => (typeof input.agent_type === 'string' && input.agent_type ? input.agent_type : sessionIdentity(env).agent);
 
-// Counts one block by `rule` for the hook payload's session, and records the signal once the count reaches
-// REPEATED_DENIALS, once per session and rule. Parallel subagents share their parent's session and may block at once,
-// so the count is the size of a file in the temporary folder that each block appends one byte to, and the block that
-// creates the `.recorded` marker first is the one that records. Never throws.
-export function noteDenial(input, rule, { dir = tmpdir(), env = process.env, now = new Date() } = {}) {
+// The file name of one count: the rule, the agent run (the payload's `agent_id`, or `main` for the main thread), and a
+// digest of the cause, the rule's own words for what it matched (hook-deny.mjs firstSentence). Null for an id or rule
+// that is no file name part.
+function denialCount(input, rule, cause) {
+  const run = input.agent_id === undefined || input.agent_id === null || input.agent_id === '' ? 'main' : input.agent_id;
+  if (typeof run !== 'string' || !FILE_NAME_PART.test(run) || !FILE_NAME_PART.test(rule)) return null;
+  const digest = createHash('sha256').update(typeof cause === 'string' ? cause : '').digest('hex').slice(0, 16);
+  return `${rule}.${run}.${digest}`;
+}
+
+// Counts one block by `rule` for `cause` in the hook payload's agent run, and records the signal once the count reaches
+// REPEATED_DENIALS, once per session, run, rule, and cause. Parallel subagents share their parent's session and may block
+// at once, so the count is the size of a file in the temporary folder that each block appends one byte to, and the block
+// that creates the `.recorded` marker first is the one that records. Never throws.
+export function noteDenial(input, rule, { cause = '', dir = tmpdir(), env = process.env, now = new Date() } = {}) {
   try {
     const session = input.session_id;
-    if (typeof session !== 'string' || !FILE_NAME_PART.test(session) || !FILE_NAME_PART.test(rule)) return null;
+    const name = denialCount(input, rule, cause);
+    if (typeof session !== 'string' || !FILE_NAME_PART.test(session) || !name) return null;
     const folder = denialsDir(dir, session);
     mkdirSync(folder, { recursive: true });
-    const file = path.join(folder, rule);
+    const file = path.join(folder, name);
     appendFileSync(file, '.');
     if (statSync(file).size < REPEATED_DENIALS) return null;
     try {
@@ -158,8 +173,9 @@ export function noteDenial(input, rule, { dir = tmpdir(), env = process.env, now
     }
     const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
     if (!project) return null;
-    const row = recordSignal(project, denialSignal({ rule, session, agent: agentOf(input, env) }), { now });
-    // Not recorded, such as when the inbox's lock was held: the next block of the rule in this session tries again.
+    const agentId = typeof input.agent_id === 'string' && input.agent_id ? input.agent_id : null;
+    const row = recordSignal(project, denialSignal({ rule, session, agent: agentOf(input, env), agentId }), { now });
+    // Not recorded, such as when the inbox's lock was held: the next such block in this run tries again.
     if (!row) unlinkSync(`${file}.recorded`);
     return row;
   } catch {

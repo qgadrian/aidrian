@@ -140,5 +140,13 @@ export const priceTables = (hosts = HOSTS) => hosts.map((host) => ({ host: host.
 // The handoff continue routes `host` can do, of CONTINUE_ROUTES in lib/config-schema.mjs; none for a host that names none.
 export const continueRoutes = (host) => host.capabilities.handoffContinue?.routes ?? [];
 
+// Whether `host` wakes a subagent that ended its turn with the report of `child`, one of its background tasks, from the
+// adapter's `capabilities.wakesOnChildReport`. A host that declares none wakes it for no task.
+export const wakesOnReport = (host, child) => host.capabilities.wakesOnChildReport?.taskTypes?.includes(child?.type) === true;
+
+// Whether `host` starts a subagent that ended its turn again when `child`, one of its background tasks, finishes: with the
+// child agent's report (wakesOnReport) or with the notice of a shell's end (`capabilities.wakesOnTaskEnd`).
+export const wakesOnEnd = (host, child) => wakesOnReport(host, child) || host.capabilities.wakesOnTaskEnd?.taskTypes?.includes(child?.type) === true;
+
 // What each host says about the tracker guard, as { host, ...capability }.
 export const trackerGuards = (hosts = HOSTS) => hosts.map((host) => ({ host, ...host.capabilities.trackerGuard }));

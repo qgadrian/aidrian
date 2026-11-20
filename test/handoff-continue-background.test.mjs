@@ -16,7 +16,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { checkBrief, chainOf } from '../plugins/aidrian/lib/handoff-brief.mjs';
-import { BACKGROUND_HOPS, backgroundPrompt, continueBrief, deliverCleared, STALL_HOPS, UNHOOKED, unattendedHere } from '../plugins/aidrian/lib/handoff-continue.mjs';
+import { BACKGROUND_HOPS, backgroundPrompt, continueBrief, deliverCleared, STALL_HOPS, UNHOOKED, unattendedHere, unhookedLine } from '../plugins/aidrian/lib/handoff-continue.mjs';
 import { CHAIN_CEILING, noteFollow, noteFrom, openStore, readArmed, readFrom, readHop, readStarted, startedInBackground, takeEnding } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { claudeOnPath, sessionMode, startBackground } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
 import { HOSTS } from '../plugins/aidrian/lib/hosts/index.mjs';
@@ -271,7 +271,7 @@ test('the gate and unattendedHere read the unattended marks of the home folder t
   const hinted = auto(bare, '4343 4100 claude', marked).say;
   assert.ok(hinted.endsWith(PLAIN) && !hinted.includes(UNHOOKED), `marked: ${hinted}`);
   const unhooked = auto(bare, '4343 4100 claude', TEST_HOME).say;
-  assert.ok(unhooked.endsWith(`${PLAIN} ${UNHOOKED}`), `unmarked: ${unhooked}`);
+  assert.ok(unhooked.endsWith(`${PLAIN} ${unhookedLine(claudeCode)}`), `unmarked: ${unhooked}`);
 });
 
 test('no pending mark, no start: the handoff goes on by the clear route, and a start that surely made nothing removes its pending mark', (t) => {
@@ -1127,9 +1127,20 @@ test('in auto mode, an attended session its shell function did not start says wh
     passCheck(setting);
     const result = gate(setting, { run: withPs(fakeRun({ own: setting.dir }).run, '4343 4100 claude'), env: { ...setting.env, ...wrapped } });
     assert.equal(result.out[0], 'continue: background', `${name}: ${result.err.join('\n')}`);
-    assert.ok(result.out[1].endsWith(hint ? `${PLAIN} ${UNHOOKED}` : PLAIN), `${name}: ${result.out[1]}`);
+    assert.ok(result.out[1].endsWith(hint ? `${PLAIN} ${unhookedLine(claudeCode)}` : PLAIN), `${name}: ${result.out[1]}`);
     assert.equal(takeEnding(setting.store, SESSION), null, name);
   }
+});
+
+test('the line on why the terminal stays names each way past the shell function, and the launcher wrap', () => {
+  for (const words of ['a launcher', 'an editor command', 'a terminal opened before `aidrian shell-init zsh --install`', '`aidrian shell-init zsh --install --wrap <launcher>` (or bash)', 'the launcher\'s own name in place of `<launcher>`', 'start the next session in a new terminal']) {
+    assert.ok(UNHOOKED.includes(words), words);
+  }
+  assert.doesNotMatch(UNHOOKED, /had not loaded|reloading/u);
+  // An older copy first on PATH answers an unknown option to `--wrap`: the line says to update it, with the host's command.
+  const older = 'A copy of the plugin older than this one refuses `--wrap` as an unknown option: the plugin is updated first';
+  assert.ok(unhookedLine(claudeCode).endsWith(`${older}, with \`claude plugin update aidrian@aidrian-harness\`.`), unhookedLine(claudeCode));
+  assert.ok(unhookedLine({ capabilities: {} }).endsWith(`${older}.`), 'a host that declares no update command still gets the clause');
 });
 
 // A stand-in for `run` that answers `ps -A` with `rows`, each `pid ppid comm`, and passes every other call to `run`.

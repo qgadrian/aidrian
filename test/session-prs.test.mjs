@@ -11,7 +11,9 @@ import test, { after } from 'node:test';
 
 import { createGithubForge } from '../plugins/aidrian/lib/forges/github.mjs';
 import { forgeFor } from '../plugins/aidrian/lib/forges/index.mjs';
-import { appendLedger, changesSummary, isChangeRow, LEDGER_MAX_BYTES, MAX_REFS, readLedger, resolveChanges, sessionRefs } from '../plugins/aidrian/lib/session-prs.mjs';
+import {
+  appendLedger, changesSummary, isChangeRow, LEDGER_MAX_BYTES, MAX_REFS, readLedger, resolveChanges, sessionRefs, SUMMARY_BUDGET,
+} from '../plugins/aidrian/lib/session-prs.mjs';
 import { readSessionTail, sessionFolder } from '../plugins/aidrian/lib/session-folder.mjs';
 
 const ROOT = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-session-prs-')));
@@ -214,4 +216,19 @@ test('the summary counts pull requests: failed, then pending, then passed or ski
   const numbered = [1, 2, 3, 4, 5, 6].map((number) => ({ number, checks: null }));
   assert.equal(changesSummary(numbered), 'PRs ✓0 ✗0 ⏳0 · #1, #2, #3, #4, #5, +1');
   assert.equal(changesSummary([{ number: 7, checks: null }, { checks: null }]), 'PRs ✓0 ✗0 ⏳0 · #7, +1', 'one with no number counts in the rest');
+  assert.equal(SUMMARY_BUDGET, 58);
+  const passed = { passed: 1, failed: 0, pending: 0, skipped: 0 };
+  const failed = { passed: 0, failed: 1, pending: 0, skipped: 0 };
+  const at = (repo, number, checks = passed, host = 'github.com') => ({ host, repo, number, checks });
+  const cases = [
+    [[at('acme/api', 42), at('acme/web', 42, failed)], 'PRs ✓1 ✗1 ⏳0 · a#42, b#42'],
+    [[at('upstream/widget', 42), at('fork/widget', 42, failed)], 'PRs ✓1 ✗1 ⏳0 · b#42, a#42'],
+    [[at('acme/widget', 42), at('acme/widget', 42, failed, 'git.example.com')], 'PRs ✓1 ✗1 ⏳0 · b#42, a#42'],
+    [[at('acme/notes', 1), at('ACME/Notes', 2)], 'PRs ✓2 ✗0 ⏳0 · #1, #2'],
+    [[at('acme/notes', 3), at('acme/other', null)], 'PRs ✓2 ✗0 ⏳0 · #3, +1'],
+    [[1, 2, 3, 4, 5, 6].map((n) => at('acme/notes', 123_450 + n)), 'PRs ✓6 ✗0 ⏳0 · #123451, #123452, #123453, #123454, +2'],
+    [[1, 2, 3, 4, 5].map((n) => at('acme/notes', 123_450 + n)), 'PRs ✓5 ✗0 ⏳0 · #123451, #123452, #123453, #123454, #123455'],
+    [[1, 2, 3, 4, 5, 6].map((n) => at(n % 2 ? 'a/b' : 'c/d', 12_340 + n)), 'PRs ✓6 ✗0 ⏳0 · a#12341, b#12342, a#12343, b#12344, +2'],
+  ];
+  for (const [rows, words] of cases) assert.equal(changesSummary(rows), words);
 });

@@ -28,6 +28,7 @@ A single concise report. Skip a section if it has nothing to say.
       evidence plus the `designer` deviation-ledger review as each screen
       slice's closure gate. Slice state lives in the plan file, so the run is
       safe to resume after an interruption.
-   3. Review the draft PR that `plan-implement` opens through the `pr-write` skill.
+   3. Review the pull request `plan-implement` opens, which the review
+      loop then runs on as config.json `github.reviewLoop` says.
    When blocked, replace this checklist with the explicit question to
    resolve.

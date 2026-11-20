@@ -54,6 +54,7 @@ test/                               node --test suites
   They have no group folders: Claude Code finds a plugin skill only at `skills/<name>/SKILL.md`.
 - **Composition**: a skill ends at its own output and never names who continues; the caller's text names the next step.
   A skill that runs another, or the agent that runs a skill, says what follows its end, as the `orchestrator` does after `issue-implement`.
+  With no caller, as on a direct run, the skill's end names the session's next step, as `issue-implement`'s phase 8 does with the review loop.
   A test holds the rule for the plugin's callers, and the `skill-writer` checklist for new skills.
 - **Hooks**: `hooks/hooks.json` names the events. Each event runs one `scripts/hook-*.mjs`.
   The Bash and write rules live in `lib/rules/`. [hooks.md](hooks.md) describes each one.

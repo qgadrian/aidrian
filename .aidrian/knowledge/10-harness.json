@@ -8,7 +8,7 @@
       "tags": []
     },
     "contributing.md": {
-      "summary": "Building and checking the plugin: npm run build and check, what the tests hold, trying a branch, skill evals, releases and versions.",
+      "summary": "Building and checking the plugin: npm run build and check, load-independent deadlines, the test clock, trying a branch, skill evals, releases and versions.",
       "tags": ["harness_engineering", "docs"]
     },
     "architecture.md": {
@@ -28,7 +28,7 @@
       "tags": []
     },
     "hooks.md": {
-      "summary": "Bash rules: pr-body, main-checkout, commit messages, amend, terms, gates, merge guard, product feedback, ready hold, AIDRIAN_ALLOW_UNHELD_READY, announce check.",
+      "summary": "Bash rules: pr-body, main-checkout, commits, amend, gates, merge guard, product feedback, ready hold, AIDRIAN_ALLOW_UNHELD_READY, announce, review-loop checks.",
       "tags": []
     },
     "project-folder.md": {

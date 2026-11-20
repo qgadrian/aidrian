@@ -402,8 +402,8 @@ lists the trusted repositories as prose, such as `"Trusted repo: github.com/acme
 `<config folder>/settings.json`, the user settings, where the config folder is `CLAUDE_CONFIG_DIR`, else `.claude` in
 the home folder. It also reads `permissions.allow`, `permissions.deny`, and `permissions.ask` from that file and from
 the project's `.claude/settings.json` and `.claude/settings.local.json`, since a rule there settles a push before the
-classifier runs. It does not emulate how Claude Code matches a rule: a rule that may reach a push only makes the answer
-`unknown`, and no rule answers `allowed` or `denied`. It writes nothing.
+classifier runs. It does not emulate how Claude Code matches a rule: a deny or ask rule that may reach a push, or an
+allow rule that covers one, only makes the answer `unknown`, and no rule answers `allowed` or `denied`. It writes nothing.
 Each step answers `unknown` when it cannot go on:
 
 1. The session's permission mode, from its transcript, as the [background route](#the-background-route) reads it.
@@ -418,8 +418,14 @@ Each step answers `unknown` when it cannot go on:
    denial into `unknown`. A file that is there and is not a regular file, such as a named pipe, is too large, holds bad
    JSON, or is not an object cannot be read; a project file that is not there holds no rule, and a `cwd` that is not
    absolute reads no project file.
-3. `unknown` when any of those files holds a `permissions.allow`, `permissions.deny`, or `permissions.ask` rule that may
-   reach a push. Each rule is read in lower case, with its spaces run together. It may reach a push when it mentions
+3. `unknown` when any of those files holds a `permissions.deny` or `permissions.ask` rule that may reach a push, or a
+   `permissions.allow` rule that covers one: `Bash(git push)`, `Bash(git push:*)`, `Bash(git push *)`, or
+   `Bash(git push origin` with any rest after a word boundary, `origin` being the remote the push preflight reads, so
+   `Bash(git pushall)` does not. On entering auto mode Claude Code drops broad allow rules, such as `Bash(*)`
+   ([permission modes](https://code.claude.com/docs/en/permission-modes), read on 2026-11-20), so a whole-tool allow,
+   such as `Bash`, `Bash(*)`, `*`, or `B*`, leaves the verdict to the next steps; so does `Bash(git:*)` or
+   `Bash(git *)`, which that page does not name, so a session it would let push may be told `denied`.
+   Each rule is read in lower case, with its spaces run together. A deny or ask rule may reach a push when it mentions
    `git push`, such as `Bash(git push:*)`, `Bash(git push origin main)`, or `Bash(git pushall)`; or when its tool is the
    shell tool, `Bash` or a tool-name glob that matches it, such as `B*` or `*`, with no pattern, an empty one, or one
    whose text before its first `*`, less a final `:`, starts `git push`, such as `Bash(*)`, `Bash(git:*)`,

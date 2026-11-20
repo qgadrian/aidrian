@@ -5,8 +5,8 @@
 // repository and its remotes (code.claude.com/docs/en/auto-mode-config, read on 2026-11-19 with Claude Code 2.1.328).
 // The classifier ignores `autoMode` in project and local settings, so `autoMode` is read from the user file alone.
 // A permission rule settles a command before the classifier does, and this file does not emulate how Claude Code
-// matches one: a `permissions.allow`, `permissions.deny`, or `permissions.ask` rule, in the user file or the project's
-// `.claude/settings.json` or `.claude/settings.local.json`, that may reach a `git push` only makes the answer `unknown`.
+// matches one: a `permissions.deny` or `permissions.ask` rule that may reach a `git push`, or a `permissions.allow` rule
+// that covers one, in the user file or the project's settings files, only makes the answer `unknown`.
 // No rule answers `allowed` or `denied`. `denied` is a prediction of a prose classifier, given for one shape alone: a
 // custom `environment` with no "$defaults" that names this repository in no entry, though each entry names one other
 // source-control host or path, and no rule that may reach a push. Every other shape it cannot read answers `unknown`,
@@ -130,6 +130,16 @@ function mayReachPush(rule) {
   return star === -1 ? pattern === '' : PUSH.startsWith(pattern.slice(0, star).replace(/:$/u, ''));
 }
 
+// Whether the allow rule `rule`, read as mayReachPush reads one, covers a push to `origin`, the remote the push preflight
+// reads: `Bash(git push)`, `Bash(git push:*)`, `Bash(git push *)`, or `Bash(git push origin` with any rest after a word
+// boundary. On entering auto mode Claude Code drops broad allow rules, such as `Bash(*)`
+// (code.claude.com/docs/en/permission-modes, read on 2026-11-20), so a whole-tool allow, such as `Bash`, `*`, `B*`, or
+// `Bash(git:*)`, does not stand a verdict aside. A deny or an ask rule still does whenever it may reach a push.
+function allowsPush(rule) {
+  const text = rule.trim().toLowerCase().replace(/\s+/gu, ' ');
+  return /^bash ?\( ?git push(?::\*| \*| origin(?![\p{L}\p{N}_.-]).*)? ?\)$/u.test(text);
+}
+
 // The main checkout of the worktree at `root`, whose `.git` is a file naming its git folder, from that folder's
 // `commondir`: null for a checkout whose `.git` is a folder, or any pointer this cannot read.
 function mainCheckout(root) {
@@ -161,15 +171,17 @@ function projectFolders(cwd) {
 }
 
 // Whether the settings `settings` leave no verdict to give: a file that is there and cannot be read, whose `permissions`
-// is not an object, whose `allow`, `deny`, or `ask` is not a list of strings, or that holds a rule that may reach a push
-// (mayReachPush). A file that is not there, or that sets no such rules, leaves one.
+// is not an object, whose `allow`, `deny`, or `ask` is not a list of strings, or that holds an allow rule that covers a
+// push (allowsPush), or a deny or ask rule that may reach one (mayReachPush). A file that is not there, or that sets no
+// such rules, leaves one.
 function standsAside(settings) {
   if (settings === MISSING) return false;
   if (settings === null) return true;
   const { permissions } = settings;
   if (permissions === undefined) return false;
   if (!isObject(permissions)) return true;
-  return RULE_LISTS.some((key) => permissions[key] !== undefined && (!isStrings(permissions[key]) || permissions[key].some(mayReachPush)));
+  return RULE_LISTS.some((key) => permissions[key] !== undefined
+    && (!isStrings(permissions[key]) || permissions[key].some(key === 'allow' ? allowsPush : mayReachPush)));
 }
 
 // Whether the `environment` entry `entry` names exactly one source-control host or path, and nothing that could also

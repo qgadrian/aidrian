@@ -21,7 +21,7 @@ plugins/aidrian/
 ├── hooks/hooks.json                the plugin's hooks, for both hosts
 ├── scripts/hook-*.mjs              the programs those hooks run
 ├── lib/                            the code behind the commands and hooks
-│   ├── forges/                     the code forge facade: forgeFor in index.mjs, the GitHub adapter, and github-cli.mjs, the one way gh runs
+│   ├── forges/                     the code forge facade: forgeFor in index.mjs, the GitHub adapter with github-refs.mjs, its branch patterns, and github-cli.mjs, the one way gh runs
 │   ├── hosts/                      one adapter per host and their registry; what shared code calls instead of a host's names,
 │   │                               and each host's model prices as data, which model-prices.mjs reads
 │   ├── review/                     aidrian pr review: run.mjs, the entry and the step's outcome; step.mjs plans, stages.mjs runs the stages, record.mjs the attest and signoff writes

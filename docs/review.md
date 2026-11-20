@@ -1410,11 +1410,12 @@ whose commits change them, release and deploy secrets belong in environments lim
 with the default branch protected, or held for a required reviewer who prevents self-review or is not the signed-in user, never in repository secrets or
 an open environment a pushed branch's workflow can read. The preflight counts an environment as held when its admins
 may bypass its rules (on GitHub `can_admins_bypass`, true by default), though an admin's token deploys past them
-through a script, and when it is limited to protected branches or branch patterns while a rule verifiably protects the
-default branch, though a branch protection's pattern may match an issue's branch; its `note workflows` line says to
-turn the bypass off and keep those patterns off issue branch names. With the default branch not verified protected,
-which `projectRun.forgeProtectionAccepted` never changes, such an environment counts as open: GitHub lets every branch
-deploy to an environment limited to protected branches when the repository protects none.
+through a script, and its `note workflows` line says to turn the bypass off. An environment limited to branch patterns
+counts as held only when none of them can match an issue's branch, which may be any name the tracker gives but the
+default branch's; one limited to protected branches only when the repository has a branch protection rule, since GitHub
+lets every branch deploy to it otherwise, and no branch protection rule or branch ruleset can cover an issue's branch.
+Whether the default branch asks for a pull request plays no part, and `projectRun.forgeProtectionAccepted` changes
+no environment's reach.
 The preflight blocks a run whose workflows see CI secrets,
 whatever the token's `workflow` scope, since the workflows already run the branch's own tests, scripts, and build, unless
 the team sets `projectRun.workflowSecretsAccepted`. A cloud role whose OIDC trust names any ref of the repository,

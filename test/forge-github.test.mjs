@@ -7,6 +7,7 @@ import test from 'node:test';
 
 import { runGh } from '../plugins/aidrian/lib/forges/github-cli.mjs';
 import { createGithubForge, domains, FORGE_HOSTS, GITHUB_JSON, isTrustedCommenter, MAX_CHANGE_REFS, REVIEWS_PAGE, servedRepository, UPLOAD_TIMEOUT_MS } from '../plugins/aidrian/lib/forges/github.mjs';
+import { fnmatch, patternsReach, rulesetPattern, witnesses } from '../plugins/aidrian/lib/forges/github-refs.mjs';
 import { remoteIdentity, repoIdentity } from '../plugins/aidrian/lib/forges/identity.mjs';
 import * as facade from '../plugins/aidrian/lib/forges/index.mjs';
 import { forgeFor } from '../plugins/aidrian/lib/forges/index.mjs';
@@ -195,8 +196,9 @@ test('the facade index gives shared code forgeFor and its helpers, and nothing o
 // A recording gh that answers each REST route from `answers`, by the route's word, an Error thrown as gh would.
 function routed(answers) {
   return recorded((call) => {
-    const route = call.find((each) => each.startsWith('repos/') || each === 'user');
-    const answer = answers[route];
+    const route = call.find((each) => each.startsWith('repos/') || each === 'user' || each === 'graphql');
+    const given = answers[route];
+    const answer = typeof given === 'function' ? given(call) : given;
     if (answer instanceof Error) throw answer;
     return typeof answer === 'string' ? answer : JSON.stringify(answer ?? null);
   });
@@ -306,30 +308,26 @@ test('workflowSecrets counts no organization secret for a repository a user owns
   assert.throws(() => secrets('Organization').forge.workflowSecrets('acme/notes'), /Validation Failed/u);
 });
 
-test('workflowSecrets counts the secrets of an environment any branch may deploy to, and not those of one held to protected branches or reviewers', () => {
-  // The caller verified the default branch protected, so an environment's branch limit holds; read below without it.
+test('workflowSecrets counts the secrets of an environment an issue\'s branch may deploy to, and not those of one held to reviewers', () => {
   const headers = 'HTTP/2.0 200 OK\r\nX-Oauth-Scopes: repo, workflow\r\n\r\n{"login":"octo"}';
   const open = { name: 'prod deploy', deployment_branch_policy: null, protection_rules: [{ type: 'wait_timer', wait_timer: 5 }] };
-  const branches = { name: 'staging', deployment_branch_policy: { protected_branches: true, custom_branch_policies: false }, protection_rules: [{ type: 'branch_policy' }] };
   const user = (login) => ({ type: 'User', reviewer: { login } });
   const reviewers = (prevent, ...named) => ({ name: 'release', deployment_branch_policy: null, protection_rules: [{ type: 'required_reviewers', prevent_self_review: prevent, reviewers: named }] });
   const reviewed = reviewers(true, user('Octo'));
   const read = (environments, more = {}) => routed({
+    'repos/acme/notes': { default_branch: 'main', owner: { login: 'acme', type: 'Organization' } },
     'repos/acme/notes/actions/secrets': { total_count: 0 }, 'repos/acme/notes/actions/organization-secrets': { total_count: 0 }, user: headers,
     'repos/acme/notes/environments': [{ total_count: environments.length, environments }],
-    'repos/acme/notes/environments/prod%20deploy/secrets': { total_count: 4 }, 'repos/acme/notes/environments/staging/secrets': { total_count: 2 },
-    'repos/acme/notes/environments/release/secrets': { total_count: 3 }, ...more,
+    'repos/acme/notes/environments/prod%20deploy/secrets': { total_count: 4 }, 'repos/acme/notes/environments/release/secrets': { total_count: 3 }, ...more,
   });
   // Every secret in an environment no rule holds: the preflight sees them.
   const { forge, args } = read([open]);
-  assert.deepEqual(forge.workflowSecrets('acme/notes', { host: 'github.com', defaultProtected: true }), { secrets: 4, workflowPush: true });
+  assert.deepEqual(forge.workflowSecrets('acme/notes', { host: 'github.com' }), { secrets: 4, workflowPush: true });
   assert.ok(args().some((each) => each.includes('repos/acme/notes/environments/prod%20deploy/secrets')), 'the name of the environment is encoded in its route');
-  // Held to protected branches, or to a reviewer: not counted.
-  const verified = { defaultProtected: true };
-  const held = read([branches, reviewed]);
-  assert.equal(held.forge.workflowSecrets('acme/notes', verified).secrets, 0);
+  const held = read([reviewed]);
+  assert.equal(held.forge.workflowSecrets('acme/notes').secrets, 0);
   assert.ok(!held.args().some((each) => each.some((word) => /environments\/.+\/secrets/u.test(word))), 'a held environment\'s secrets are not read');
-  assert.equal(read([open, branches]).forge.workflowSecrets('acme/notes', verified).secrets, 4);
+  assert.equal(read([open, reviewed]).forge.workflowSecrets('acme/notes').secrets, 4);
   // A reviewer rule holds only when the signed-in user cannot approve alone: self-review prevented, or every reviewer
   // another user. The user named, a team that may hold the user, or no reviewer at all: counted.
   const counted = (environment) => read([environment]).forge.workflowSecrets('acme/notes').secrets;
@@ -341,15 +339,93 @@ test('workflowSecrets counts the secrets of an environment any branch may deploy
   // A repository GitHub keeps no environments for has none; any other failure throws.
   assert.equal(read([], { 'repos/acme/notes/environments': new Error('gh: Not Found (HTTP 404)') }).forge.workflowSecrets('acme/notes').secrets, 0);
   assert.throws(() => read([open], { 'repos/acme/notes/environments/prod%20deploy/secrets': new Error('gh: Forbidden (HTTP 403)') }).forge.workflowSecrets('acme/notes'), /Forbidden/u);
-  // A default branch not verified protected, which is the default: GitHub lets every branch deploy to an environment
-  // limited to protected branches when the repository protects none, so its secrets count, and a pattern's too.
-  const patterns = { name: 'release', deployment_branch_policy: { protected_branches: false, custom_branch_policies: true }, protection_rules: [{ type: 'branch_policy' }] };
-  assert.equal(read([branches]).forge.workflowSecrets('acme/notes').secrets, 2, 'limited to protected branches, none verified');
-  assert.equal(read([branches]).forge.workflowSecrets('acme/notes', { defaultProtected: false }).secrets, 2, 'said unverified');
-  assert.equal(read([patterns]).forge.workflowSecrets('acme/notes').secrets, 3, 'limited by branch patterns, none verified');
-  assert.equal(read([patterns]).forge.workflowSecrets('acme/notes', verified).secrets, 0, 'branch patterns, the default branch verified');
-  // A reviewer rule that holds still holds with no protection verified.
-  assert.equal(read([{ ...reviewed, deployment_branch_policy: branches.deployment_branch_policy }]).forge.workflowSecrets('acme/notes').secrets, 0, 'held for a reviewer');
+});
+
+// An environment `deploy` that holds 5 secrets, limited by custom branch policies or to protected branches, read with
+// the patterns GitHub answers: the policies' own, the branch protection rules' (GraphQL), and the branch rulesets'.
+function limitedEnvironment({ limit, policies = [], classic = [], rulesets = [], more = {} }) {
+  const deploy = { name: 'deploy', deployment_branch_policy: limit, protection_rules: [{ type: 'branch_policy' }] };
+  const ruled = Object.fromEntries(rulesets.map((each, index) => [`repos/acme/notes/rulesets/${index + 1}`, { id: index + 1, conditions: { ref_name: each } }]));
+  return routed({
+    'repos/acme/notes': { default_branch: 'main', owner: { login: 'acme', type: 'Organization' } },
+    'repos/acme/notes/actions/secrets': { total_count: 0 }, 'repos/acme/notes/actions/organization-secrets': { total_count: 0 },
+    user: 'HTTP/2.0 200 OK\r\nX-Oauth-Scopes: repo\r\n\r\n{"login":"octo"}',
+    'repos/acme/notes/environments': [{ total_count: 1, environments: [deploy] }], 'repos/acme/notes/environments/deploy/secrets': { total_count: 5 },
+    'repos/acme/notes/environments/deploy/deployment-branch-policies': [{ total_count: policies.length, branch_policies: policies }],
+    graphql: { data: { repository: { branchProtectionRules: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: classic.map((pattern) => ({ pattern })) } } } },
+    'repos/acme/notes/rulesets?targets=branch&includes_parents=true': [rulesets.map((each, index) => ({ id: index + 1, target: 'branch', enforcement: each.enforcement ?? 'active' }))],
+    ...ruled, ...more,
+  });
+}
+const CUSTOM = { protected_branches: false, custom_branch_policies: true };
+const PROTECTED = { protected_branches: true, custom_branch_policies: false };
+
+test('workflowSecrets counts an environment limited by custom branch policies open when a branch pattern can match an issue\'s branch', () => {
+  const secrets = (policies, options = {}, more = {}) => limitedEnvironment({ limit: CUSTOM, policies, more }).forge.workflowSecrets('acme/notes', options).secrets;
+  const branch = (name) => ({ name, type: 'branch' });
+  assert.equal(secrets([branch('main')]), 0, 'only the default branch, which no issue\'s branch is');
+  assert.equal(secrets([{ name: 'main' }]), 0, 'a policy GitHub answers with no type is a branch policy');
+  assert.equal(secrets([branch('Main')]), 0, 'the default branch in another case');
+  assert.deepEqual([secrets([branch('feat/*')]), secrets([branch('*')]), secrets([branch('**')]), secrets([branch('main'), branch('release/*')])], [5, 5, 5, 5]);
+  assert.equal(secrets([{ name: 'v*', type: 'tag' }]), 0, 'a tag pattern: an issue\'s session pushes no tag');
+  assert.equal(secrets([{ name: 'v*', type: 'tag' }, branch('[!m]ain')]), 5, 'a set that matches a name other than main');
+  assert.equal(secrets([branch('[m]ain')]), 0, 'a set that matches main alone');
+  // The caller's word on which names an issue's branch may take.
+  assert.equal(secrets([branch('release/*')], { issueBranch: (name) => name.startsWith('feat/') }), 0, 'no issue\'s branch is a release branch');
+  assert.equal(secrets([branch('feat/*')], { issueBranch: (name) => name.startsWith('feat/') }), 5);
+  // Policies that cannot be read count as open.
+  const route = 'repos/acme/notes/environments/deploy/deployment-branch-policies';
+  assert.equal(secrets([branch('main')], {}, { [route]: new Error('gh: Forbidden (HTTP 403)') }), 5, 'a read that fails');
+  assert.equal(secrets([branch('main')], {}, { [route]: [{ total_count: 1 }] }), 5, 'an answer with no list');
+  const { forge, args } = limitedEnvironment({ limit: CUSTOM, policies: [branch('main')] });
+  forge.workflowSecrets('acme/notes');
+  assert.ok(args().some((each) => each.includes(route) && each.includes('--paginate')), 'the policies are read page by page');
+  // A policy of neither kind lets every branch deploy.
+  assert.equal(limitedEnvironment({ limit: { protected_branches: false, custom_branch_policies: false } }).forge.workflowSecrets('acme/notes').secrets, 5);
+});
+
+test('workflowSecrets counts an environment limited to protected branches open when the repository has no branch protection rule or a rule can cover an issue\'s branch', () => {
+  const secrets = (options) => limitedEnvironment({ limit: PROTECTED, ...options }).forge.workflowSecrets('acme/notes').secrets;
+  const heads = (...include) => ({ include, exclude: [] });
+  assert.equal(secrets({}), 5, 'no rule at all: every branch may deploy');
+  assert.equal(secrets({ classic: ['main'], rulesets: [heads('refs/heads/main')] }), 0, 'a rule on main alone');
+  assert.equal(secrets({ classic: ['main'], rulesets: [heads('~DEFAULT_BRANCH')] }), 0, 'the default branch by name');
+  assert.equal(secrets({ classic: ['main'] }), 0, 'a protection on main that asks only for status checks covers main alone');
+  assert.deepEqual([secrets({ classic: ['main'], rulesets: [heads('~ALL')] }), secrets({ classic: ['main'], rulesets: [heads('refs/heads/**')] }), secrets({ classic: ['main', 'feat/*'] }), secrets({ classic: ['*'] })], [5, 5, 5, 5]);
+  assert.equal(secrets({ rulesets: [heads('refs/heads/main')] }), 5, 'a ruleset never stands in for a branch protection rule');
+  assert.equal(secrets({ classic: ['main'], rulesets: [{ include: ['~ALL'], exclude: ['refs/heads/**'] }] }), 0, 'a ruleset whose excludes leave no branch');
+  assert.equal(secrets({ classic: ['main'], rulesets: [{ include: ['~ALL'], exclude: ['refs/heads/feat/**'] }] }), 5, 'excludes that leave other branches');
+  assert.equal(secrets({ classic: ['main'], rulesets: [{ ...heads('~ALL'), enforcement: 'disabled' }] }), 0, 'a disabled ruleset covers nothing');
+  // Rules that cannot be read count as open: the free plan's 403 for a private repository, and any other failure.
+  const gated = new Error('Command failed: gh api\ngh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)');
+  assert.equal(secrets({ classic: ['main'], more: { 'repos/acme/notes/rulesets?targets=branch&includes_parents=true': gated } }), 5, 'the plan offers no rule');
+  assert.equal(secrets({ classic: ['main'], more: { graphql: new Error('gh: Something went wrong (HTTP 502)') } }), 5, 'a read that fails');
+  assert.equal(secrets({ classic: ['main'], more: { graphql: { data: { repository: null } } } }), 5, 'an answer with no list');
+  // The rules are read once for every environment, and page by page.
+  const pages = (call) => (call.some((word) => word.startsWith('after='))
+    ? { data: { repository: { branchProtectionRules: { pageInfo: { hasNextPage: false }, nodes: [{ pattern: 'feat/*' }] } } } }
+    : { data: { repository: { branchProtectionRules: { pageInfo: { hasNextPage: true, endCursor: 'c1' }, nodes: [{ pattern: 'main' }] } } } });
+  assert.equal(secrets({ more: { graphql: pages } }), 5, 'a pattern on the second page');
+  const twice = limitedEnvironment({ limit: PROTECTED, classic: ['main'], more: { 'repos/acme/notes/environments': [{ total_count: 2, environments: [{ name: 'deploy', deployment_branch_policy: PROTECTED }, { name: 'stage', deployment_branch_policy: PROTECTED }] }] } });
+  assert.equal(twice.forge.workflowSecrets('acme/notes', { host: 'github.com' }).secrets, 0);
+  assert.equal(twice.args().filter((each) => each.includes('graphql')).length, 1, 'one read of the rules');
+  assert.ok(twice.args().filter((each) => each.includes('graphql')).every((each) => each.includes('--hostname')), 'the pinned host');
+});
+
+test('fnmatch reads GitHub\'s branch patterns: * and ? stop at a slash, ** crosses one, sets, escapes, and braces', () => {
+  const cases = [
+    ['*', 'x', true], ['*', 'feat/x', false], ['**', 'feat/x/y', true], ['feat/*', 'feat/x', true], ['feat/*', 'feat/x/y', false],
+    ['feat/**', 'feat/x/y', true], ['**/x', 'x', true], ['**/x', 'a/b/x', true], ['release/*/*', 'release/a/b', true],
+    ['ma?n', 'main', true], ['ma?n', 'ma/n', false], ['[mn]ain', 'nain', true], ['[!m]ain', 'main', false], ['[^m]ain', 'xain', true],
+    ['[a-c]', 'b', true], ['[c-a]', 'b', false], ['[]]', ']', true], ['a[', 'a[', true], ['main', 'main', true], ['main', 'Main', false],
+    ['\\*', '*', true], ['\\*', 'x', false], ['{feat,fix}/*', 'fix/a', true], ['{feat,fix}/*', 'docs/a', false], ['{a,{b,c}}', 'c', true],
+  ];
+  for (const [pattern, name, matches] of cases) assert.equal(fnmatch(pattern, name), matches, `${pattern} on ${name}`);
+  assert.deepEqual(witnesses('feat/*'), ['feat/x', 'feat/issue-1']);
+  assert.deepEqual(witnesses('[m]ain'), ['main', 'main']);
+  const issue = (name) => name !== 'main';
+  assert.deepEqual([patternsReach(['main'], [], issue), patternsReach(['*'], [], issue), patternsReach(['**'], ['**'], issue), patternsReach(['**'], ['feat/**'], issue)], [false, true, false, true]);
+  assert.deepEqual([rulesetPattern('~ALL', 'main'), rulesetPattern('~DEFAULT_BRANCH', 'ma*n'), rulesetPattern('refs/heads/feat/*', 'main')], ['**', 'ma\\*n', 'feat/*']);
 });
 
 test('mergedChanges takes a repo option, as openChanges does, and the repository check names only a repository the adapter serves', () => {

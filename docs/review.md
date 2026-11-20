@@ -1406,7 +1406,11 @@ names every tag, restricts creating and updating one, and that the signed-in use
 a branch's own workflow files, with the repository's secrets, on every push: the hook refuses an issue session's push
 whose commits change them, release and deploy secrets belong in environments limited to protected branches and tags
 or held for a required reviewer who prevents self-review or is not the signed-in user, never in repository secrets or
-an open environment a pushed branch's workflow can read, and the preflight blocks a run whose workflows see CI secrets,
+an open environment a pushed branch's workflow can read. The preflight counts an environment as held when its admins
+may bypass its rules (on GitHub `can_admins_bypass`, true by default), though an admin's token deploys past them
+through a script, and when it is limited to protected branches, though a branch protection's pattern may match an
+issue's branch; its `note workflows` line says to turn the bypass off and keep those patterns off issue branch names.
+The preflight blocks a run whose workflows see CI secrets,
 whatever the token's `workflow` scope, since the workflows already run the branch's own tests, scripts, and build, unless
 the team sets `projectRun.workflowSecretsAccepted`. A cloud role whose OIDC trust names any ref of the repository,
 `repo:<owner>/<name>:*`, is a secret by another name: any pushed branch's workflow can assume it, so its trust names a

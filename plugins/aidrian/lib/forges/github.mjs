@@ -544,8 +544,11 @@ const ALL_TAGS = new Set(['~ALL', 'refs/tags/**/*']);
 // The names of the environments of `repo` a workflow on any branch may deploy to, and so read the secrets of: those with
 // no deployment branch policy and no required reviewers rule that holds the signed-in user `login` (heldForReviewer).
 // A repository GitHub keeps no environments for has none.
-// SHORTCUT: an environment limited by custom branch patterns counts as held, though a pattern may match an issue's branch;
-// listing each pattern would replace this when a team keeps secrets so.
+// SHORTCUT: an environment limited by custom branch patterns counts as held, though a pattern may match an issue's branch,
+// and so does one limited to protected branches, though a branch protection's pattern may match an issue's branch too;
+// an environment whose admins may bypass its rules (`can_admins_bypass`, true by default) counts as held, though an
+// admin's token, as the session's may be, deploys past them through a script. Listing each pattern against the branch
+// names issues get, and reading the bypass, would replace this when a team keeps secrets so.
 function openEnvironments(list, repo, host, login) {
   let pages;
   try {

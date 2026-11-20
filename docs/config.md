@@ -2026,7 +2026,11 @@ the token's `workflow` scope, since the push and pull request workflows run the 
 team sets `projectRun.workflowSecretsAccepted` (`workflow-secrets`; the blocker says whether the token may also push a
 workflow file); with a `note workflows` line: the forge runs a pushed
 branch's workflow files, and the code they call, with the repository's secrets, so release and deploy secrets belong in
-environments limited to protected branches and tags or held for a reviewer who is not the signed-in user, and a cloud role trusted through OIDC federation for any ref of the
+environments limited to protected branches and tags or held for a reviewer who is not the signed-in user, that an
+environment whose admins may bypass its rules (on GitHub `can_admins_bypass`, true by default) lets an admin's token,
+as the session's may be, deploy past them through a script, so the bypass goes off, that an environment limited to
+protected branches counts as held though a branch protection's pattern may match an issue's branch, so those patterns
+stay off the branch names issues get, and a cloud role trusted through OIDC federation for any ref of the
 repository (`repo:<owner>/<name>:*`) can be assumed from any branch, and a `note triggers` line for other services that act on a push or a comment, such as
 preview deploys and ChatOps bots. It prints `ok NAME`, `blocker NAME: WHY`, `note NAME: WHAT`,
 or `ask NAME: WHAT` for a read the forge or tracker lacks, such as the decision label's existence, and exits 1 on any

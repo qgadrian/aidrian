@@ -411,11 +411,14 @@ Each step answers `unknown` when it cannot go on:
    answer `unknown`, and no settings file is read.
 2. The settings files, each following a symlink, opened without blocking and read as a regular file of at most 1 MB,
    parsed as JSON: the user settings, and the project's `.claude/settings.json` and `.claude/settings.local.json`.
-   Claude Code reads `.claude/settings.json` in the session's folder, and `.claude/settings.local.json` at the root of
-   its git repository, the main checkout's root for a worktree. The adapter reads both files in each of the session's
-   folder, the `cwd` of the ask, the folder the run will work in; the nearest folder at or above it holding `.git`; and, when that `.git` is a file naming
-   a worktree's git folder, the main checkout its `commondir` names. A file the host does not read can only turn a
-   denial into `unknown`. A file that is there and is not a regular file, such as a named pipe, is too large, holds bad
+   The adapter reads each file only from the folder Claude Code loads it from
+   ([settings files](https://code.claude.com/docs/en/settings), read on 2026-11-20). `.claude/settings.json` is read
+   from the session's folder alone, the `cwd` of the ask, the folder the run will work in: Claude Code reads it from the
+   session's primary working directory, so a session started below the repository root never loads the root's.
+   `.claude/settings.local.json` is read from the root of the git repository, the nearest folder at or above `cwd`
+   holding `.git`, or, when that `.git` is a file naming a worktree's git folder, the main checkout its `commondir`
+   names; and from `cwd` too, where Claude Code before 2.1.211 kept it and still reads it, and where it stays outside a
+   repository. A file that is there and is not a regular file, such as a named pipe, is too large, holds bad
    JSON, or is not an object cannot be read; a project file that is not there holds no rule, and a `cwd` that is not
    absolute reads no project file.
 3. `unknown` when any of those files holds a `permissions.deny` or `permissions.ask` rule that may reach a push, or a

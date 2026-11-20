@@ -25,8 +25,6 @@ const UNKNOWN = Object.freeze({ answer: 'unknown' });
 const DEFAULTS = '$defaults';
 // A settings file that is not there, as opposed to one that is there and cannot be read.
 const MISSING = Symbol('missing');
-// The project's settings files, in its `.claude` folder, whose permission rules the permission system reads.
-const PROJECT_FILES = ['settings.json', 'settings.local.json'];
 // The lists of permission rules a settings file may hold.
 const RULE_LISTS = ['allow', 'deny', 'ask'];
 // The command the run pushes with, which a rule that may reach a push mentions or starts.
@@ -152,21 +150,18 @@ function mainCheckout(root) {
   return path.basename(shared) === '.git' ? path.dirname(shared) : null;
 }
 
-// The folders whose `.claude` settings may be the project's for a session in `cwd`. Claude Code reads
-// `.claude/settings.json` in `cwd`, and `.claude/settings.local.json` at the root of the git repository, the main
-// checkout's for a worktree (code.claude.com/docs/en/permissions, read on 2026-11-19). Both files are read in each of
-// `cwd`, the nearest folder at or above it that holds `.git`, and that worktree's main checkout: reading a file the host
-// does not can only turn a denial into `unknown`.
-function projectFolders(cwd) {
-  const folders = [cwd];
+// The project settings files Claude Code loads for a session in `cwd`, each from its own folder
+// (code.claude.com/docs/en/settings, read on 2026-11-20): `.claude/settings.json` from `cwd` alone, the session's
+// primary working directory, never from the repository root above it; `.claude/settings.local.json` from the root of
+// the git repository, the nearest folder at or above `cwd` that holds `.git`, or its main checkout for a worktree, and
+// from `cwd` too, where versions before 2.1.211 kept it and Claude Code still reads it, and where it stays outside a
+// repository.
+function projectFiles(cwd) {
+  const local = (folder) => path.join(folder, '.claude', 'settings.local.json');
+  const files = [path.join(cwd, '.claude', 'settings.json'), local(cwd)];
   for (let folder = cwd; ; folder = path.dirname(folder)) {
-    if (existsSync(path.join(folder, '.git'))) {
-      folders.push(folder);
-      const main = mainCheckout(folder);
-      if (main) folders.push(main);
-      return [...new Set(folders)];
-    }
-    if (path.dirname(folder) === folder) return folders;
+    if (existsSync(path.join(folder, '.git'))) return [...new Set([...files, local(mainCheckout(folder) ?? folder)])];
+    if (path.dirname(folder) === folder) return files;
   }
 }
 
@@ -230,7 +225,7 @@ export function pushPermission({ repository, session, cwd, env = process.env, re
   // its rules unread, no answer stands.
   if (!path.isAbsolute(file) || typeof cwd !== 'string' || !path.isAbsolute(cwd)) return UNKNOWN;
   const user = readSettings(file);
-  const project = projectFolders(cwd).flatMap((folder) => PROJECT_FILES.map((name) => readSettings(path.join(folder, '.claude', name))));
+  const project = projectFiles(cwd).map(readSettings);
   if ([user, ...project].some(standsAside)) return UNKNOWN;
   const trust = environmentTrust(user, repository, names);
   if (trust !== 'denied') return trust === 'allowed' ? { answer: 'allowed' } : UNKNOWN;

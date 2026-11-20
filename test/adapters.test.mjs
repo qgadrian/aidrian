@@ -778,7 +778,9 @@ test('Claude Code answers unknown for a deny, an ask, and an allow push rule, an
   assert.deepEqual(askClaude(claudeSettings(t, { ...trusting(['$defaults']), permissions: { allow: ['Bash(git status)'] } })), { answer: 'allowed' }, '"$defaults"');
 });
 
-test('Claude Code reads the push rules of the project\'s settings files too, from the session\'s folder, the repository root, and a worktree\'s main checkout', (t) => {
+// Claude Code loads `.claude/settings.json` from the session's folder alone, and `.claude/settings.local.json` from the
+// repository root, a worktree's main checkout, and the session's folder (code.claude.com/docs/en/settings).
+test('Claude Code reads the push rules of each project settings file from the folder it loads that file from', (t) => {
   const ONLY_OTHER = trusting(['Trusted repo: github.com/acme/other']);
   const project = (files, { below = false } = {}) => {
     const config = claudeSettings(t, ONLY_OTHER);
@@ -793,7 +795,9 @@ test('Claude Code reads the push rules of the project\'s settings files too, fro
   for (const name of ['settings.json', 'settings.local.json']) {
     for (const key of ['allow', 'deny', 'ask']) {
       assert.deepEqual(project({ [name]: { permissions: { [key]: ['Bash(git push:*)'] } } }), { answer: 'unknown' }, `${name} ${key}`);
-      assert.deepEqual(project({ [name]: { permissions: { [key]: ['Bash(git push *)'] } } }, { below: true }), { answer: 'unknown' }, `${name} ${key} at the repository root, from a folder below it`);
+      const below = project({ [name]: { permissions: { [key]: ['Bash(git push *)'] } } }, { below: true });
+      if (name === 'settings.json') assert.equal(below.answer, 'denied', `${key}: the repository root's settings.json, which a session below it does not load`);
+      else assert.deepEqual(below, { answer: 'unknown' }, `${key}: the repository root's settings.local.json, from a folder below it`);
       assert.equal(project({ [name]: { permissions: { [key]: ['Bash(git status)'] } } }).answer, 'denied', `${name} ${key}: an unrelated rule`);
     }
     // A project file that is there and cannot be read, or rules of another shape: no denial stands.

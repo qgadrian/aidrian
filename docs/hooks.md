@@ -1293,7 +1293,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     which would change its commits after the hook read them, is refused with "push in a call of its own". Then git
     holds the checkout: the folder's `git rev-parse --git-common-dir` is its worktree's or attempt clone's own, not a
     repository cloned inside it; origin pushes to one URL (`git remote get-url --push --all origin`), the one the start row's
-    `pushUrl` pinned, so a second `remote.origin.pushurl` refuses the push, read from the clone before its session started (a start that recorded none pushes nothing); its
+    `pushUrl` pinned, read from the clone before its session started (a start that recorded none pushes nothing),
+    so a second `remote.origin.pushurl` refuses the push; its
     commits change no file of the forge's workflow folders (`forgeWorkflowFolders`), nor a folder that holds them, as a
     `.github` made a link, from their merge base with origin's default branch (`refs/remotes/origin/HEAD`, else
     `origin/main`), however the file got there, as by `git apply --cached`, `patch`, `tar -x`, `unzip`, or `git am`,

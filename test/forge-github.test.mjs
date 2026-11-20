@@ -254,6 +254,23 @@ test('refProtection holds the default branch protected only by a rule the signed
   assert.throws(() => recorded(() => '{}').forge.refProtection('acme/notes'), /named no default branch/u);
 });
 
+test('refProtection reads a private repository whose plan offers no rules as unprotected for that reason, and throws any other refusal', () => {
+  // As gh fails on GitHub's answer for a private repository on the free plan: the body on stdout, the line on stderr.
+  const gated = (route) => Object.assign(new Error(`Command failed: gh api --hostname github.com ${route} --paginate --slurp\ngh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)`), {
+    stderr: 'gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)',
+    stdout: '{"message":"Upgrade to GitHub Pro or make this repository public to enable this feature.","status":"403"}',
+  });
+  const PLAN = { branch: 'main', protected: false, plan: true, why: 'the plan offers no branch protection or rulesets for a private repository: GitHub Pro, or a public repository, offers them', tags: [] };
+  const free = { 'repos/acme/notes': { default_branch: 'main', private: true, permissions: { admin: true } } };
+  assert.deepEqual(routed({ ...free, 'repos/acme/notes/rules/branches/main': gated('rules/branches/main') }).forge.refProtection('acme/notes', { host: 'github.com' }), PLAN, 'the rules of the branch');
+  assert.deepEqual(routed({ ...HELD, ...free, 'repos/acme/notes/rulesets?targets=tag&includes_parents=true': gated('rulesets') }).forge.refProtection('acme/notes'), PLAN, 'the tag rulesets');
+  // Branch protection's settings: the plan's 403, not an administrator's view.
+  const classic = { ...HELD, ...free, 'repos/acme/notes/rules/branches/main': [[]], 'repos/acme/notes/branches/main': { protected: true } };
+  assert.deepEqual(routed({ ...classic, 'repos/acme/notes/branches/main/protection': gated('protection') }).forge.refProtection('acme/notes'), PLAN, 'branch protection');
+  assert.equal(routed({ ...classic, 'repos/acme/notes/branches/main/protection': new Error('gh: Not Found (HTTP 404)') }).forge.refProtection('acme/notes').protected, null, 'a hidden protection is still asked');
+  assert.throws(() => routed({ ...free, 'repos/acme/notes/rules/branches/main': new Error('gh: Forbidden (HTTP 403)') }).forge.refProtection('acme/notes'), /Forbidden/u, 'another 403 throws');
+});
+
 test('workflowSecrets counts the repository\'s and its organization\'s Actions secrets, and reads the token\'s workflow scope', () => {
   const headers = (scopes) => `HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n${scopes === null ? '' : `X-Oauth-Scopes: ${scopes}\r\n`}\r\n{"login":"octo"}`;
   const secrets = (more) => routed({
@@ -268,6 +285,20 @@ test('workflowSecrets counts the repository\'s and its organization\'s Actions s
   assert.deepEqual(secrets({ 'repos/acme/notes/actions/organization-secrets': new Error('gh: Not Found (HTTP 404)') }).forge.workflowSecrets('acme/notes').secrets, 2, 'no organization');
   assert.throws(() => secrets({ 'repos/acme/notes/actions/secrets': new Error('gh: Forbidden (HTTP 403)') }).forge.workflowSecrets('acme/notes'), /Forbidden/u);
   assert.throws(() => secrets({ 'repos/acme/notes/actions/secrets': {} }).forge.workflowSecrets('acme/notes'), /no count of secrets/u);
+});
+
+test('workflowSecrets counts no organization secret for a repository a user owns, whose organization route GitHub refuses with 422', () => {
+  const headers = 'HTTP/2.0 200 OK\r\nX-Oauth-Scopes: repo, workflow\r\n\r\n{"login":"octo"}';
+  const validation = Object.assign(new Error('Command failed: gh api repos/acme/notes/actions/organization-secrets\ngh: Validation Failed (HTTP 422)'), { stderr: 'gh: Validation Failed (HTTP 422)' });
+  const secrets = (owner) => routed({
+    'repos/acme/notes': { default_branch: 'main', owner: { login: 'acme', type: owner } }, 'repos/acme/notes/actions/secrets': { total_count: 2 },
+    'repos/acme/notes/actions/organization-secrets': validation, 'repos/acme/notes/environments': [{ total_count: 0, environments: [] }], user: headers,
+  });
+  const user = secrets('User');
+  assert.deepEqual(user.forge.workflowSecrets('acme/notes', { host: 'github.com' }), { secrets: 2, workflowPush: true });
+  assert.ok(!user.args().some((each) => each.includes('repos/acme/notes/actions/organization-secrets')), 'a user\'s repository has no organization to ask');
+  // An organization's repository that answers 422 is a failure the preflight names, not a count of none.
+  assert.throws(() => secrets('Organization').forge.workflowSecrets('acme/notes'), /Validation Failed/u);
 });
 
 test('workflowSecrets counts the secrets of an environment any branch may deploy to, and not those of one held to protected branches or reviewers', () => {

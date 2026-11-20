@@ -29,6 +29,8 @@ const MISSING = Symbol('missing');
 const RULE_LISTS = ['allow', 'deny', 'ask'];
 // The command the run pushes with, which a rule that may reach a push mentions or starts.
 const PUSH = 'git push';
+// A pattern that names a push to `origin`, or to no remote: `git push`, its flags, then nothing, `:*`, ` *`, or `origin`.
+const PUSH_FORM = /^git push(?: --?[\p{L}\p{N}][\p{L}\p{N}_-]*(?:=[^ ]*)?)*(?::\*| \*| origin(?![\p{L}\p{N}_.-]).*)?$/u;
 // What may not touch a name on either side for it to be that name, and not part of a longer one.
 const NAME_CHAR = String.raw`[\p{L}\p{N}_.-]`;
 const NAME_TAIL = String.raw`[\p{L}\p{N}_-]`;
@@ -128,14 +130,18 @@ function mayReachPush(rule) {
   return star === -1 ? pattern === '' : PUSH.startsWith(pattern.slice(0, star).replace(/:$/u, ''));
 }
 
-// Whether the allow rule `rule`, read as mayReachPush reads one, covers a push to `origin`, the remote the push preflight
-// reads: `Bash(git push)`, `Bash(git push:*)`, `Bash(git push *)`, or `Bash(git push origin` with any rest after a word
-// boundary. On entering auto mode Claude Code drops broad allow rules, such as `Bash(*)`
-// (code.claude.com/docs/en/permission-modes, read on 2026-11-20), so a whole-tool allow, such as `Bash`, `*`, `B*`, or
-// `Bash(git:*)`, does not stand a verdict aside. A deny or an ask rule still does whenever it may reach a push.
+// Whether the allow rule `rule`, read as mayReachPush reads one, may cover a push to `origin`, the remote the push
+// preflight reads: a `Bash` pattern whose text before its first `*`, less a final `:`, starts `git push`, such as
+// `git:*`, `git *`, or `git p*`; or `git push`, then any flags, then nothing, `:*`, ` *`, or `origin` with any rest after
+// a word boundary, such as `git push -u origin:*`. On entering auto mode Claude Code drops broad allow rules, such as
+// `Bash(*)`, and keeps narrow ones (code.claude.com/docs/en/permission-modes, read on 2026-11-20), so `Bash`, `Bash(*)`,
+// `*`, `B*`, and a pattern that starts with `*` do not stand a verdict aside. A deny or an ask rule still does whenever
+// it may reach a push.
 function allowsPush(rule) {
-  const text = rule.trim().toLowerCase().replace(/\s+/gu, ' ');
-  return /^bash ?\( ?git push(?::\*| \*| origin(?![\p{L}\p{N}_.-]).*)? ?\)$/u.test(text);
+  const call = /^bash ?\( ?(.*?) ?\)$/u.exec(rule.trim().toLowerCase().replace(/\s+/gu, ' '));
+  if (!call) return false;
+  const star = call[1].indexOf('*');
+  return (star > 0 && PUSH.startsWith(call[1].slice(0, star).replace(/:$/u, ''))) || PUSH_FORM.test(call[1]);
 }
 
 // The main checkout of the worktree at `root`, whose `.git` is a file naming its git folder, from that folder's

@@ -738,7 +738,8 @@ test('Claude Code reads auto mode from the user settings alone, never from the p
 // unknown. No rule answers allowed or denied. Auto mode drops broad allow rules, so a whole-tool allow leaves the verdict.
 const PUSH_RULES = ['Bash(git push:*)', 'Bash(git push *)', 'Bash(git push)', 'Bash(GIT PUSH origin main)', 'Bash(git  push --force:*)', 'Bash(git pushall)', 'Bash(git:*)', 'Bash(git *)', 'Bash(g*)', 'Bash(git:* push)',
   'Bash', 'Bash(*)', 'Bash()', 'Bash(* --version)', 'B*', '*', 'Ba*h', 'Bash(*)(git status)', 'mcp__shell__run(git push origin)'];
-const ALLOW_PUSH_RULES = ['Bash(git push:*)', 'Bash(git push *)', 'Bash(git push)', 'Bash(GIT PUSH origin main)', 'Bash(git push origin:*)'];
+const ALLOW_PUSH_RULES = ['Bash(git push:*)', 'Bash(git push *)', 'Bash(git push)', 'Bash(GIT PUSH origin main)', 'Bash(git push origin:*)', 'Bash(git:*)', 'Bash(git *)', 'Bash(g*)',
+  'Bash(git:* push)', 'Bash(git  push --force:*)', 'Bash(git push -u origin:*)', 'Bash(git push --force-with-lease=main origin main)'];
 const UNRELATED_RULES = ['Bash(git status)', 'Bash(git pull:*)', 'Bash(npm run *)', 'Bash(gh pr view:*)', 'Read(**)', 'WebFetch', 'mcp__github__push_files', 'mcp__github__*', 'R*', '*(git status)'];
 
 test('Claude Code answers unknown, never denied, beside a deny or ask rule that may reach a git push, or an allow rule that covers one, and never allowed for one', (t) => {
@@ -765,14 +766,14 @@ test('Claude Code answers unknown, never denied, beside a deny or ask rule that 
 
 // The four rules the review named, each with an otherwise-denying setup, and with "$defaults", which no rule turns into
 // a denial either.
-test('Claude Code answers unknown for a deny, an ask, and an allow push rule, and for a B* deny, where it would deny, and denies beside a whole-tool allow', (t) => {
+test('Claude Code answers unknown for a deny, an ask, and an allow push rule, a narrow git allow, and a B* deny, where it would deny, and denies beside a whole-tool allow', (t) => {
   const ONLY_OTHER = trusting(['Trusted repo: github.com/acme/other']);
   assert.equal(askClaude(claudeSettings(t, ONLY_OTHER)).answer, 'denied', 'the setup denies with no rule');
-  for (const permissions of [{ deny: ['Bash(git push:*)'] }, { ask: ['Bash(git push:*)'] }, { allow: ['Bash(git push:*)'] }, { deny: ['B*'] }]) {
+  for (const permissions of [{ deny: ['Bash(git push:*)'] }, { ask: ['Bash(git push:*)'] }, { allow: ['Bash(git push:*)'] }, { allow: ['Bash(git:*)'] }, { allow: ['Bash(git *)'] }, { allow: ['Bash(git push -u origin:*)'] }, { deny: ['B*'] }]) {
     assert.deepEqual(askClaude(claudeSettings(t, { ...ONLY_OTHER, permissions })), { answer: 'unknown' }, JSON.stringify(permissions));
   }
-  // Auto mode drops a broad allow rule, so it leaves the denial; `git pushall` is no push.
-  for (const rule of ['Bash', 'Bash(*)', '*', 'B*', 'Bash(git:*)', 'Bash(git *)', 'Bash(git pushall)', 'Bash(git push originals)']) {
+  // Auto mode drops a broad allow rule, so it leaves the denial; `git pushall` is no push, and `upstream` another remote.
+  for (const rule of ['Bash', 'Bash(*)', '*', 'B*', 'Bash(* --version)', 'Bash(git pushall)', 'Bash(git push originals)', 'Bash(git push upstream main)', 'Bash(git push -u upstream:*)']) {
     assert.equal(askClaude(claudeSettings(t, { ...ONLY_OTHER, permissions: { allow: [rule] } })).answer, 'denied', `allow ${rule}`);
   }
   assert.deepEqual(askClaude(claudeSettings(t, { ...trusting(['$defaults']), permissions: { allow: ['Bash(git status)'] } })), { answer: 'allowed' }, '"$defaults"');

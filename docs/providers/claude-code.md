@@ -424,12 +424,14 @@ Each step answers `unknown` when it cannot go on:
    JSON, or is not an object cannot be read; a project file that is not there holds no rule, and a `cwd` that is not
    absolute reads no project file.
 3. `unknown` when any of those files holds a `permissions.deny` or `permissions.ask` rule that may reach a push, or a
-   `permissions.allow` rule that covers one: `Bash(git push)`, `Bash(git push:*)`, `Bash(git push *)`, or
-   `Bash(git push origin` with any rest after a word boundary, `origin` being the remote the push preflight reads, so
-   `Bash(git pushall)` does not. On entering auto mode Claude Code drops broad allow rules, such as `Bash(*)`
-   ([permission modes](https://code.claude.com/docs/en/permission-modes), read on 2026-11-20), so a whole-tool allow,
-   such as `Bash`, `Bash(*)`, `*`, or `B*`, leaves the verdict to the next steps; so does `Bash(git:*)` or
-   `Bash(git *)`, which that page does not name, so a session it would let push may be told `denied`.
+   `permissions.allow` rule that may cover one: a `Bash` pattern whose text before its first `*`, less a final `:`,
+   starts `git push`, such as `Bash(git:*)`, `Bash(git *)`, or `Bash(git p*)`; or `git push`, then any flags, then
+   nothing, `:*`, ` *`, or `origin` with any rest after a word boundary, such as `Bash(git push)`,
+   `Bash(git push --force:*)`, or `Bash(git push -u origin:*)`, `origin` being the remote the push preflight reads.
+   `Bash(git pushall)` and `Bash(git push upstream main)` do not. On entering auto mode Claude Code drops broad allow
+   rules, such as `Bash(*)`, and keeps narrow ones ([permission modes](https://code.claude.com/docs/en/permission-modes),
+   read on 2026-11-20), so `Bash`, `Bash(*)`, `*`, `B*`, and a pattern that starts with `*` leave the verdict to the
+   next steps.
    Each rule is read in lower case, with its spaces run together. A deny or ask rule may reach a push when it mentions
    `git push`, such as `Bash(git push:*)`, `Bash(git push origin main)`, or `Bash(git pushall)`; or when its tool is the
    shell tool, `Bash` or a tool-name glob that matches it, such as `B*` or `*`, with no pattern, an empty one, or one

@@ -29,15 +29,19 @@ Each line is `ok <name>`, `blocker <name>: <why and fix>`, `note <name>: <what>`
 | `handoff` | the base branch's `session.handoff.continue` is `"background"`, so the driver can hand itself on; `"clear"` needs a person, so it blocks | set it on the default branch |
 | `reviewer`, `reviewer-seen` | `github.reviewer` is set, and the bot reviewed a recent pull request | install the bot and request one review; with no pull request yet, a `note`: the first one proves it, and the merge's trust check holds every merge until then |
 | `ci` | the repository has an active CI workflow | merge one before the run |
-| `branch-protection` | a rule on the default branch asks the signed-in user, whose token an issue's session keeps, for a pull request, administrator or not, and lets that user bypass nothing | a ruleset that asks for a pull request with no bypass for that user, or branch protection that includes administrators; an `ask` when only an administrator can read the protection |
-| `release-tags` | an active tag rule names every tag (`~ALL` or `refs/tags/**/*`, excluding none; `refs/tags/*` stops at a slash), restricts creating and updating one, and that user can never bypass it | such a tag ruleset, with no bypass for that user |
-| `workflow-secrets` | no CI secret of the repository, its organization, or an open environment: no deployment branch policy, and no reviewer rule that prevents self-review or names only other users; the token's `workflow` scope only narrows it, since the workflows run the branch's own code | the secrets in environments limited to protected branches or held for a reviewer who is not the signed-in user, or the team sets `projectRun.workflowSecretsAccepted` |
+| `branch-protection` | a rule on the default branch asks the signed-in user, whose token an issue's session keeps, for a pull request, administrator or not, and lets that user bypass nothing | a ruleset that asks for a pull request with no bypass for that user, or branch protection that includes administrators; an `ask` when only an administrator can read the protection; or the team sets `projectRun.forgeProtectionAccepted` |
+| `release-tags` | an active tag rule names every tag (`~ALL` or `refs/tags/**/*`, excluding none; `refs/tags/*` stops at a slash), restricts creating and updating one, and that user can never bypass it | such a tag ruleset, with no bypass for that user; or the team sets `projectRun.forgeProtectionAccepted` |
+| `workflow-secrets` | no CI secret of the repository, its organization, or an open environment: one with no reviewer rule that prevents self-review or names only other users, or any environment when the signed-in user is an admin, whose token can edit the rule; one limited to protected branches or branch patterns counts, since a deployment branch rule is no hold against code the run pushes; the token's `workflow` scope only narrows it, since the workflows run the branch's own code | the secrets in environments held for a reviewer who is not the signed-in user, when the signed-in user is not an admin of the repository (an admin's token can edit the rule); or the team sets `projectRun.workflowSecretsAccepted`, which accepts all current and future workflow secret exposure for project runs, repository, organization, and environment secrets alike, only when that is acceptable; `projectRun.forgeProtectionAccepted` waives no secret |
 
 Answer each `ask` line with the tool it names, or the forge's and tracker's own tools; a `no` is a blocker.
+When the forge's plan offers no branch or tag rule, as for a private repository on a free plan, both protection blockers
+name the plan and its remedies. Setting `projectRun.forgeProtectionAccepted` is the team's decision on the default branch,
+never this session's: it turns both lines into a `note` that a script an issue session runs can push to the default branch
+or a tag, held by the hooks alone.
 A `note mcp-servers` line names servers the run rule maps to no tracker: each must be no tracker connection.
 A `note workflows` line says the forge runs a pushed branch's workflow files, and the code they call, with the repository's
-secrets: keep release and deploy secrets in environments limited to protected branches and tags or held for a reviewer
-who is not the signed-in user, and trust a cloud role
+secrets: keep release and deploy secrets in environments held for a reviewer who is not the signed-in user, since
+the preflight counts a branch-limited environment as open, and trust a cloud role
 through OIDC only for a protected branch or such an environment, never `repo:<owner>/<name>:*`. A `note triggers` line names other services,
 such as preview deploys and ChatOps bots, that act on an issue's push or comment.
 `ask labels` names the tracker's label and status reads: the decision label, and `projectRun.blockedStatus` when set,

@@ -11,9 +11,10 @@
 // team's projectRun.mcpServers, each tracker server there mapped so the run rule can hold it, auto-merge on with
 // required checks, a handoff route for the driver, and, through the forge, the reviewer bot seen, CI workflows, a
 // default branch that asks the signed-in user for a pull request, admin or not, a tag rule that user cannot bypass that
-// stops any tag being created or moved, and no CI secret a workflow file that token may push could read, unless the team
-// accepts it, since an issue's session keeps that user's token: the agent gate hook refuses its tag pushes, releases,
-// and workflow pushes, and the forge holds what a script it runs does with the token. Notes say the forge runs a
+// stops any tag being created or moved, and no CI secret a workflow file that token may push could read, each unless the
+// team accepts it, since an issue's session keeps that user's token: the agent gate hook refuses its tag pushes, releases,
+// and workflow pushes, and the forge holds what a script it runs does with the token, unless the team accepts running
+// without that backstop (projectRun.forgeProtectionAccepted). Notes say the forge runs a
 // branch's workflow files with the repository's secrets on every push, and other services act on a push or a comment.
 // A read the forge or the tracker lacks becomes an `ask` line, which the driver answers with its own tools.
 
@@ -37,6 +38,9 @@ import { knownServers, trackerById, trackerOfTools, TRACKERS } from './trackers/
 
 // The reviewer values that mean no bot reviews, as config-defaults.mjs reads `github.reviewer`.
 const NO_REVIEWER = new Set([null, undefined, '', 'none']);
+// What a `note` says in place of a branch-protection or release-tags blocker the team accepts through
+// projectRun.forgeProtectionAccepted.
+const ACCEPTED_PROTECTION = 'the team accepts no forge protection (projectRun.forgeProtectionAccepted): a script an issue session runs can push to the default branch or a tag with the token, and only the hooks hold it';
 
 // Runs every check for `project`, whose loaded config is `config`, with `run` the run these checks are for, which the
 // active-run check leaves out, and returns { exitCode, out, err }: a line `ok NAME`,
@@ -190,30 +194,47 @@ function forgeLines({ facade, repository, reviewer, lines, check, asks }) {
 // read (refProtection), or `ask` lines for a forge with none: a blocker when no rule that asks for a pull request on the
 // default branch binds the signed-in user, who may be an administrator a rule lets past, an `ask` when the forge shows
 // such a rule only to an administrator, and a blocker when no active tag rule that user may never bypass names every
-// tag and restricts creating and updating one. Then the workflow secrets (secretsLine), and notes on what the forge runs.
+// tag and restricts creating and updating one; a forge whose plan offers no such rule names the plan in both blockers.
+// When the team sets projectRun.forgeProtectionAccepted (as teamPolicy reads it, on the forge and the local ref both),
+// each of those blockers and asks is a `note` naming the risk the team took instead. Then the workflow secrets
+// (secretsLine), and notes on what the forge runs.
 function protectionLines({ facade, repository, policy, lines, check, asks }) {
   const named = repository ? `${repository.owner}/${repository.name}` : null;
+  const accepted = policy.forgeProtectionAccepted === true;
+  const guard = (name, problem) => {
+    if (problem && accepted) lines.push(`note ${name}: ${ACCEPTED_PROTECTION}`);
+    else check(name, problem);
+  };
   if (typeof facade.refProtection === 'function' && named) {
-    let read;
+    let read = null;
     try {
       read = facade.refProtection(named, { host: repository.host });
     } catch (error) {
-      const why = `the forge cannot say what guards the default branch and the tags (${String(error.message).split('\n')[0]})`;
-      check('branch-protection', why);
-      check('release-tags', why);
-      read = null;
+      const why = `the forge cannot say what guards the default branch and the tags (${String(error.message).split('\n')[0]}); check them on the forge and add the rules the run needs, or the default branch sets projectRun.forgeProtectionAccepted`;
+      guard('branch-protection', why);
+      guard('release-tags', why);
     }
-    if (read) {
-      if (read.protected === null) asks.push(`ask branch-protection: confirm on the forge that the default branch ${read.branch} asks for a pull request of the signed-in user too, since ${read.why}; a missing one is a blocker`);
-      else check('branch-protection', read.protected ? null : `no rule on the forge holds the signed-in user, whose token an issue's session keeps, to a pull request on the default branch ${read.branch} (${read.why}), so a script it runs could push to it; protect it with a rule that asks for a pull request, includes administrators, and lets that user bypass nothing, before the run`);
+    if (read?.plan === true) {
+      const plan = `the forge offers no rule for this repository, since ${read.why}, so nothing holds the signed-in user, whose token an issue's session keeps, from pushing to the default branch ${read.branch} or a tag, and a script it runs could; move to a plan that offers them, or make the repository public, then add the rules, or the default branch sets projectRun.forgeProtectionAccepted to run with only the hooks holding it`;
+      guard('branch-protection', plan);
+      guard('release-tags', plan);
+    } else if (read) {
+      if (read.protected === null && accepted) guard('branch-protection', read.why);
+      else if (read.protected === null) asks.push(`ask branch-protection: confirm on the forge that the default branch ${read.branch} asks for a pull request of the signed-in user too, since ${read.why}; a missing one is a blocker, unless the default branch sets projectRun.forgeProtectionAccepted`);
+      else guard('branch-protection', read.protected ? null : `no rule on the forge holds the signed-in user, whose token an issue's session keeps, to a pull request on the default branch ${read.branch} (${read.why}), so a script it runs could push to it; protect it with a rule that asks for a pull request, includes administrators, and lets that user bypass nothing, before the run, or the default branch sets projectRun.forgeProtectionAccepted`);
       const held = read.tags.filter((rule) => rule.all && rule.creation && rule.update && rule.bypass === 'never');
-      check('release-tags', held.length ? null : 'no active tag rule on the forge names every tag and stops the signed-in user, whose token an issue\'s session keeps, creating or moving one, so a script it runs could push a release tag; add a tag ruleset over all tags (~ALL or refs/tags/**/*, excluding none; refs/tags/* stops at a slash) that restricts creations and updates, with no bypass for that user, before the run');
+      guard('release-tags', held.length ? null : 'no active tag rule on the forge names every tag and stops the signed-in user, whose token an issue\'s session keeps, creating or moving one, so a script it runs could push a release tag; add a tag ruleset over all tags (~ALL or refs/tags/**/*, excluding none; refs/tags/* stops at a slash) that restricts creations and updates, with no bypass for that user, before the run, or the default branch sets projectRun.forgeProtectionAccepted');
     }
-  } else asks.push('ask protection: confirm on the forge that the default branch asks for a pull request of the signed-in user, admin or not, and that a tag rule the signed-in user cannot bypass stops a tag being created or moved; a missing one is a blocker');
+  } else if (accepted) lines.push(`note protection: ${ACCEPTED_PROTECTION}`);
+  else asks.push('ask protection: confirm on the forge that the default branch asks for a pull request of the signed-in user, admin or not, and that a tag rule the signed-in user cannot bypass stops a tag being created or moved; a missing one is a blocker, unless the default branch sets projectRun.forgeProtectionAccepted');
   secretsLine({ facade, named, repository, policy, check, asks });
-  lines.push('note workflows: the forge runs a branch\'s own workflow files, and the code they call, with the repository\'s secrets on every push, and an issue\'s session pushes its branch: keep release and deploy secrets in environments limited to protected branches and tags, or held for a reviewer who prevents self-review or is not the signed-in user; an environment whose admins may bypass its rules, which a forge may allow by default, lets an admin\'s token deploy past them through a script, so turn that bypass off; an environment limited to protected branches counts as held, though a branch protection\'s pattern may match an issue\'s branch, so keep those patterns off the branch names issues get; a token without the workflow scope keeps the session from changing a workflow file, not from changing the tests and scripts a workflow runs; a cloud role trusted through OIDC federation for any ref of the repository (a subject such as repo:<owner>/<name>:*) can be assumed from any branch, so limit its trust to a protected branch, or to an environment held as above; the hook refuses an issue session\'s writes to the workflow files and a push whose commits change them, and a script it runs is the residual');
+  lines.push(`note workflows: the forge runs a branch's own workflow files, and the code they call, with the repository's secrets on every push, and an issue's session pushes its branch: keep release and deploy secrets in environments held for a reviewer who prevents self-review or is not the signed-in user; an environment limited to protected branches or branch patterns counts as open, since a deployment branch rule is no hold against code the run pushes; ${SECRETS_ACCEPTED}; a token without the workflow scope keeps the session from changing a workflow file, not from changing the tests and scripts a workflow runs; a cloud role trusted through OIDC federation for any ref of the repository (a subject such as repo:<owner>/<name>:*) can be assumed from any branch, so limit its trust to a protected branch, or to an environment held as above; the hook refuses an issue session's writes to the workflow files and a push whose commits change them, and a script it runs is the residual`);
   lines.push('note triggers: other services that act on a push or a pull request comment, such as preview deploys and ChatOps bots, run for an issue\'s branch too, with their own secrets; keep them to protected branches or reviewed pull requests');
 }
+
+// How a team accepts the workflow secrets risk, in every line that names the key: it skips the secrets read whole, so it
+// accepts the secrets of the repository, its organization, and every environment, today's and any added later.
+const SECRETS_ACCEPTED = 'projectRun.workflowSecretsAccepted on the default branch skips the workflow secrets read whole: it accepts all current and future workflow secret exposure for project runs, the repository\'s, its organization\'s, and every environment\'s secrets, so a team sets it only when that is acceptable';
 
 // The workflow secrets check: a blocker when the repository's workflows see CI secrets, unless the default branch sets
 // projectRun.workflowSecretsAccepted (as teamPolicy reads it, on the forge and the local ref both); an `ask` for a forge
@@ -226,20 +247,20 @@ function secretsLine({ facade, named, repository, policy, check, asks }) {
     return;
   }
   if (typeof facade.workflowSecrets !== 'function' || !named) {
-    asks.push('ask workflow-secrets: confirm the repository\'s workflows see no CI secret on a branch an issue\'s session pushes, since they run that branch\'s own code; else the default branch sets projectRun.workflowSecretsAccepted');
+    asks.push(`ask workflow-secrets: confirm the repository's workflows see no CI secret on a branch an issue's session pushes, since they run that branch's own code; else ${SECRETS_ACCEPTED}`);
     return;
   }
   let read;
   try {
     read = facade.workflowSecrets(named, { host: repository.host });
   } catch (error) {
-    check('workflow-secrets', `the forge cannot say which CI secrets the repository's workflows see (${String(error.message).split('\n')[0]}); set projectRun.workflowSecretsAccepted on the default branch once the team has checked`);
+    check('workflow-secrets', `the forge cannot say which CI secrets the repository's workflows see (${String(error.message).split('\n')[0]}); ${SECRETS_ACCEPTED}`);
     return;
   }
   let token = 'and the signed-in token names no scopes, so it may push a change to a workflow file too';
   if (read.workflowPush === true) token = 'and the signed-in token\'s scopes include workflow, so it may push a change to a workflow file too';
   if (read.workflowPush === false) token = 'though the signed-in token cannot push a change to a workflow file, which narrows it only';
-  check('workflow-secrets', read.secrets > 0 ? `the repository's workflows see ${read.secrets} CI secrets, and the forge runs its push and pull request workflows on an issue's branch with the branch's own code, its tests, scripts, and build, which the session writes, so a change to them could read the secrets, ${token}; move the secrets to environments limited to protected branches or held for a reviewer who is not the signed-in user, or set projectRun.workflowSecretsAccepted on the default branch` : null);
+  check('workflow-secrets', read.secrets > 0 ? `the repository's workflows see ${read.secrets} CI secrets, and the forge runs its push and pull request workflows on an issue's branch with the branch's own code, its tests, scripts, and build, which the session writes, so a change to them could read the secrets, ${token}; move the secrets to environments held for a reviewer who is not the signed-in user, when the signed-in user is not an admin of the repository (an admin's token can edit the rule), since a deployment branch rule is no hold against code the run pushes; ${SECRETS_ACCEPTED}` : null);
 }
 
 // `aidrian project init RUN --file PATH --check`: the input's checks, as init makes them, and the order, with no run

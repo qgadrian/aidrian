@@ -134,7 +134,7 @@ function guardedStore({ env, home }) {
 
 // The team's projectRun for `project`, as the base branch commits it: through this checkout's git, which only refuses,
 // and through the forge at the repository init pinned, `repository`. { maxParallel, maxStarts, issueHours, solo,
-// unverifiedHosts, workflowSecretsAccepted, outsideSandbox, mcpServers, registries } with each number the lowest of the two reads and its
+// unverifiedHosts, workflowSecretsAccepted, forgeProtectionAccepted, outsideSandbox, mcpServers, registries } with each number the lowest of the two reads and its
 // CEILINGS value, each switch true only when both reads set it, outsideSandbox and registries the names both reads
 // list, and mcpServers the servers both reads define alike, or { problem }: with `transient` when the forge could not
 // answer now, and with issueHours when it answered and withdrew projectRun.allow. A forge read that fails refuses.
@@ -157,6 +157,7 @@ export function teamPolicy(project, repository, forge) {
     maxParallel: pick('maxParallel'), maxStarts: pick('maxStarts'), issueHours: pick('issueHours'), solo: local.config.solo === true && soloOn(policies),
     unverifiedHosts: local.config.projectRun.unverifiedHosts === true && policies.policy.projectRun.unverifiedHosts === true,
     workflowSecretsAccepted: local.config.projectRun.workflowSecretsAccepted === true && policies.policy.projectRun.workflowSecretsAccepted === true,
+    forgeProtectionAccepted: local.config.projectRun.forgeProtectionAccepted === true && policies.policy.projectRun.forgeProtectionAccepted === true,
     outsideSandbox: bothList(local.config.projectRun.outsideSandbox, policies.policy.projectRun.outsideSandbox),
     mcpServers: bothServers(local.config.projectRun.mcpServers, policies.policy.projectRun.mcpServers),
     registries: bothList(local.config.projectRun.registries, policies.policy.projectRun.registries),

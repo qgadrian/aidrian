@@ -11,6 +11,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { cleanText, textProblem } from '../plugins/aidrian/lib/clean-text.mjs';
+import { createGithubForge } from '../plugins/aidrian/lib/forges/github.mjs';
 import { baseReader } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { owedReports, reportBody, reportCalls, runWriter } from '../plugins/aidrian/lib/project-report.mjs';
 import { runFolder } from '../plugins/aidrian/lib/project-run.mjs';
@@ -480,7 +481,9 @@ test('preflight names every blocker at once, and starts nothing', (t) => {
   delete ready.forge.ciWorkflows;
   delete ready.forge.refProtection;
   delete ready.forge.workflowSecrets;
-  assert.deepEqual(ready.cmd(['preflight']).out.filter((line) => line.startsWith('ask ')).map((line) => line.split(':')[0]), ['ask reviewer-seen', 'ask ci', 'ask protection', 'ask workflow-secrets', 'ask labels'], 'a forge with no such read');
+  const unread = ready.cmd(['preflight']).out;
+  assert.deepEqual(unread.filter((line) => line.startsWith('ask ')).map((line) => line.split(':')[0]), ['ask reviewer-seen', 'ask ci', 'ask protection', 'ask workflow-secrets', 'ask labels'], 'a forge with no such read');
+  assert.match(unread.find((line) => line.startsWith('ask workflow-secrets:')), /; else projectRun\.workflowSecretsAccepted on the default branch skips the workflow secrets read whole: it accepts all current and future workflow secret exposure for project runs, the repository's, its organization's, and every environment's secrets, so a team sets it only when that is acceptable$/u);
   const off = runFixture(t, { projectRun: { allow: false }, local: null, config: { github: { reviewer: 'none' } } });
   execFileSync('git', ['-C', off.dir, 'remote', 'set-url', 'origin', 'git@github.com:acme/widgets.git']);
   const blocked = off.cmd(['preflight']);
@@ -540,14 +543,15 @@ test('preflight blocks a default branch no rule holds the signed-in user to, rel
   // A protection only an administrator can read is asked of the driver.
   const hidden = lines({ ...GUARDED, protected: null, why: 'GitHub shows the settings of its branch protection only to an administrator' });
   assert.equal(blocker(hidden, 'branch-protection'), null);
-  assert.match(hidden.find((line) => line.startsWith('ask branch-protection:')), /confirm on the forge that the default branch main asks for a pull request of the signed-in user too/u);
+  assert.match(hidden.find((line) => line.startsWith('ask branch-protection:')), /confirm on the forge that the default branch main asks for a pull request of the signed-in user too.*a missing one is a blocker, unless the default branch sets projectRun\.forgeProtectionAccepted$/u);
   for (const tags of [
     [{ ...GUARDED.tags[0], bypass: 'always' }], [{ ...GUARDED.tags[0], bypass: 'pull_requests_only' }], [{ ...GUARDED.tags[0], bypass: null }],
     [{ ...GUARDED.tags[0], creation: false }], [{ ...GUARDED.tags[0], update: false }], [{ ...GUARDED.tags[0], all: false }],
   ]) assert.ok(blocker(lines({ ...GUARDED, tags }), 'release-tags'), JSON.stringify(tags));
   const held = lines(GUARDED);
   assert.deepEqual([blocker(held, 'branch-protection'), blocker(held, 'release-tags'), blocker(held, 'workflow-secrets')], [null, null, null]);
-  assert.match(held.find((line) => line.startsWith('note workflows:')), /keep release and deploy secrets in environments limited to protected branches and tags, or held for a reviewer who prevents self-review or is not the signed-in user; an environment whose admins may bypass its rules, which a forge may allow by default, lets an admin's token deploy past them through a script, so turn that bypass off; an environment limited to protected branches counts as held, though a branch protection's pattern may match an issue's branch, so keep those patterns off the branch names issues get; a token without the workflow scope keeps the session from changing a workflow file, not from changing the tests and scripts a workflow runs;.*the hook refuses an issue session's writes to the workflow files and a push whose commits change them/u);
+  assert.match(held.find((line) => line.startsWith('note workflows:')), /keep release and deploy secrets in environments held for a reviewer who prevents self-review or is not the signed-in user; an environment limited to protected branches or branch patterns counts as open, since a deployment branch rule is no hold against code the run pushes; projectRun\.workflowSecretsAccepted on the default branch skips the workflow secrets read whole: it accepts all current and future workflow secret exposure for project runs, the repository's, its organization's, and every environment's secrets, so a team sets it only when that is acceptable; a token without the workflow scope keeps the session from changing a workflow file, not from changing the tests and scripts a workflow runs;.*the hook refuses an issue session's writes to the workflow files and a push whose commits change them/u);
+  assert.doesNotMatch(held.find((line) => line.startsWith('note workflows:')), /turn that bypass off|once the team has checked|has checked those environments/u, 'the bypass is counted, and the key accepts every secret, not checked environments');
   // A cloud role trusted for any ref of the repository is named: any branch's workflow can assume it.
   assert.match(held.find((line) => line.startsWith('note workflows:')), /OIDC federation for any ref of the repository \(a subject such as repo:<owner>\/<name>:\*\) can be assumed from any branch/u);
   assert.match(blocker(lines({ ...GUARDED, tags: [{ ...GUARDED.tags[0], all: false }] }), 'release-tags'), /~ALL or refs\/tags\/\*\*\/\*, excluding none; refs\/tags\/\* stops at a slash/u);
@@ -555,8 +559,10 @@ test('preflight blocks a default branch no rule holds the signed-in user to, rel
   const failed = lines(() => {
     throw new Error('gh: Not Found (HTTP 404)');
   });
-  assert.match(blocker(failed, 'release-tags'), /the forge cannot say what guards the default branch and the tags \(gh: Not Found \(HTTP 404\)\)/u);
-  assert.ok(blocker(failed, 'branch-protection'));
+  // A read that fails, or an answer the adapter does not recognize, names the option the team has, as every other line does.
+  for (const name of ['branch-protection', 'release-tags']) {
+    assert.match(blocker(failed, name), /the forge cannot say what guards the default branch and the tags \(gh: Not Found \(HTTP 404\)\); check them on the forge and add the rules the run needs, or the default branch sets projectRun\.forgeProtectionAccepted$/u, name);
+  }
   // Workflow secrets: a blocker whatever the token's scopes, since the workflows run the branch's own code; the scope
   // only widens or narrows what the blocker says.
   const secrets = (read) => {
@@ -569,7 +575,7 @@ test('preflight blocks a default branch no rule holds the signed-in user to, rel
   assert.equal(secrets({ secrets: 0, workflowPush: true }), null, 'no secret');
   assert.match(secrets(() => {
     throw new Error('gh: Forbidden (HTTP 403)');
-  }), /the forge cannot say which CI secrets the repository's workflows see \(gh: Forbidden \(HTTP 403\)\)/u);
+  }), /the forge cannot say which CI secrets the repository's workflows see \(gh: Forbidden \(HTTP 403\)\); projectRun\.workflowSecretsAccepted on the default branch skips the workflow secrets read whole: it accepts all current and future workflow secret exposure for project runs, the repository's, its organization's, and every environment's secrets, so a team sets it only when that is acceptable$/u);
 });
 
 test('preflight takes the team\'s acceptance of workflow secrets only when the default branch sets it on the forge and the local ref', (t) => {
@@ -590,6 +596,94 @@ test('preflight takes the team\'s acceptance of workflow secrets only when the d
   const narrow = { secrets: 3, workflowPush: false };
   assert.ok(blocked({}, narrow), 'no workflow scope, set on neither');
   assert.equal(blocked({ projectRun: accepted }, narrow), null, 'no workflow scope, set on both');
+});
+
+test('preflight names the plan of a forge that offers no rule, and takes the team\'s acceptance of no forge protection only from the forge and the local ref both', (t) => {
+  const PLAN = { branch: 'main', protected: false, plan: true, why: 'the plan offers no branch protection or rulesets for a private repository: GitHub Team, or a public repository, offers them', tags: [] };
+  const NOTE = 'the team accepts no forge protection (projectRun.forgeProtectionAccepted): a script an issue session runs can push to the default branch or a tag with the token, and only the hooks hold it';
+  const preflight = (options, protection = PLAN, working = null) => {
+    const fx = runFixture(t, { init: false, ...READY, ...options });
+    Object.assign(fx.forge, { reviewerSeen: () => ({ changes: 4, seen: true }), ciWorkflows: () => ['test'], workflowSecrets: () => NO_SECRETS });
+    if (protection === null) delete fx.forge.refProtection;
+    else fx.forge.refProtection = typeof protection === 'function' ? protection : () => protection;
+    if (working) {
+      const file = path.join(fx.dir, '.aidrian/config.json');
+      writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf8')), projectRun: working }));
+    }
+    const { out } = fx.cmd(['preflight']);
+    assert.ok(out.includes('ok policy'), out.join('\n'));
+    const line = (name) => out.find((each) => new RegExp(`^(?:ok|blocker|note|ask) ${name}(?::|$)`, 'u').test(each)) ?? null;
+    return { out, line };
+  };
+  // Not accepted: both blockers name the plan, its two remedies, and the key.
+  const plain = preflight({});
+  for (const name of ['branch-protection', 'release-tags']) {
+    assert.match(plain.line(name), /^blocker [a-z-]+: the forge offers no rule for this repository, since the plan offers no branch protection or rulesets for a private repository: GitHub Team, or a public repository, offers them, .*default branch main.*make the repository public.*projectRun\.forgeProtectionAccepted/u, name);
+  }
+  assert.match(preflight({}, { branch: 'main', protected: false, why: 'it has no branch protection', tags: [] }).line('branch-protection'), /^blocker .*projectRun\.forgeProtectionAccepted$/u, 'an unprotected branch names the key');
+  // Accepted on the forge and the local ref: each line is a note naming the risk, and nothing blocks.
+  const accepted = { ...READY.projectRun, forgeProtectionAccepted: true };
+  const both = preflight({ projectRun: accepted });
+  assert.deepEqual([both.line('branch-protection'), both.line('release-tags')], [`note branch-protection: ${NOTE}`, `note release-tags: ${NOTE}`]);
+  assert.ok(!both.out.some((each) => /^blocker (?:branch-protection|release-tags):/u.test(each)), both.out.join('\n'));
+  assert.deepEqual([preflight({ projectRun: accepted }, GUARDED).line('branch-protection'), preflight({ projectRun: accepted }, GUARDED).line('release-tags')], ['ok branch-protection', 'ok release-tags'], 'a rule that holds is still ok');
+  const failing = preflight({ projectRun: accepted }, () => { throw new Error('gh: Forbidden (HTTP 403)'); });
+  assert.equal(failing.line('release-tags'), `note release-tags: ${NOTE}`, 'a read that fails');
+  const hidden = preflight({ projectRun: accepted }, { ...GUARDED, protected: null, why: 'GitHub shows the settings of its branch protection only to an administrator' });
+  assert.equal(hidden.line('branch-protection'), `note branch-protection: ${NOTE}`, 'no ask for a protection the team accepts going without');
+  const unread = preflight({ projectRun: accepted }, null);
+  assert.equal(unread.line('protection'), `note protection: ${NOTE}`, 'a forge with no read');
+  // The forge alone, the local ref alone, or a working copy: still blockers.
+  const committed = { version: 1, ...READY.config, projectRun: READY.projectRun };
+  const blockers = (run) => ['branch-protection', 'release-tags'].map((name) => run.line(name)?.split(':')[0]);
+  assert.deepEqual(blockers(preflight({ projectRun: accepted, forgeConfig: committed })), ['blocker branch-protection', 'blocker release-tags'], 'the local ref alone');
+  assert.deepEqual(blockers(preflight({ forgeConfig: { ...committed, projectRun: accepted } })), ['blocker branch-protection', 'blocker release-tags'], 'the forge alone');
+  assert.deepEqual(blockers(preflight({}, PLAN, accepted)), ['blocker branch-protection', 'blocker release-tags'], 'a working copy');
+});
+
+test('preflight counts the secrets of every environment no other reviewer holds, whatever its deployment branch policy or the default branch\'s protection', (t) => {
+  // GitHub's own read of the secrets, through a recording gh: no repository or organization secret, and one environment,
+  // limited by `limit` and held by `rules`, that holds 2. A route not listed answers 404.
+  const reads = [];
+  // `permissions` null: the repository's read carries no permissions at all.
+  const github = ({ limit, rules = [], permissions = { admin: false } }) => createGithubForge({ cwd: '/repo', run: (args) => {
+    reads.push(args);
+    if (args.includes('--include')) return 'HTTP/2.0 200 OK\r\nX-Oauth-Scopes: repo, workflow\r\n\r\n{"login":"octo"}';
+    const route = args.find((each) => each.startsWith('repos/'));
+    const answers = {
+      'repos/acme/widgets': { default_branch: 'main', owner: { login: 'acme', type: 'Organization' }, ...(permissions === null ? {} : { permissions }) },
+      'repos/acme/widgets/actions/secrets': { total_count: 0 }, 'repos/acme/widgets/actions/organization-secrets': { total_count: 0 },
+      'repos/acme/widgets/environments': [{ total_count: 1, environments: [{ name: 'production', deployment_branch_policy: limit, protection_rules: [{ type: 'branch_policy' }, ...rules] }] }],
+      'repos/acme/widgets/environments/production/secrets': { total_count: 2 },
+      'repos/acme/widgets/environments/production/deployment-branch-policies': [{ total_count: 1, branch_policies: [{ name: 'main', type: 'branch' }] }],
+    };
+    if (!(route in answers)) throw new Error(`gh: Not Found (HTTP 404) ${route}`);
+    return JSON.stringify(answers[route]);
+  } });
+  const PLAN = { branch: 'main', protected: false, plan: true, why: 'the plan offers no branch protection or rulesets for a private repository: GitHub Team, or a public repository, offers them', tags: [] };
+  const waived = { ...READY.projectRun, forgeProtectionAccepted: true };
+  const secrets = (read, protection = GUARDED) => {
+    const fx = runFixture(t, { init: false, ...READY, projectRun: waived });
+    Object.assign(fx.forge, { reviewerSeen: () => ({ changes: 4, seen: true }), ciWorkflows: () => ['test'], workflowSecrets: github(read).workflowSecrets, refProtection: () => protection });
+    const { out } = fx.cmd(['preflight']);
+    assert.ok(out.includes('ok policy'), out.join('\n'));
+    return out.find((line) => /^(?:ok|blocker) workflow-secrets(?::|$)/u.test(line));
+  };
+  const blocked = /^blocker workflow-secrets: the repository's workflows see 2 CI secrets, .*move the secrets to environments held for a reviewer who is not the signed-in user, when the signed-in user is not an admin of the repository \(an admin's token can edit the rule\), since a deployment branch rule is no hold against code the run pushes; projectRun\.workflowSecretsAccepted on the default branch skips the workflow secrets read whole: it accepts all current and future workflow secret exposure for project runs, the repository's, its organization's, and every environment's secrets, so a team sets it only when that is acceptable$/u;
+  const custom = { protected_branches: false, custom_branch_policies: true };
+  const protectedOnly = { protected_branches: true, custom_branch_policies: false };
+  const reviewer = (prevent) => [{ type: 'required_reviewers', prevent_self_review: prevent, reviewers: [{ type: 'User', reviewer: { login: 'octo' } }] }];
+  assert.match(secrets({ limit: null }), blocked, 'no policy');
+  assert.match(secrets({ limit: protectedOnly }), blocked, 'protected branches, the default branch verified');
+  assert.match(secrets({ limit: custom }, PLAN), blocked, 'a custom policy, on a plan with no rule');
+  assert.match(secrets({ limit: custom }), blocked, 'a custom policy for main alone, the default branch verified');
+  assert.equal(secrets({ limit: custom, rules: reviewer(true) }), 'ok workflow-secrets', 'held for a reviewer, self-review prevented');
+  assert.match(secrets({ limit: null, rules: reviewer(false) }), blocked, 'the signed-in user may approve alone');
+  // An admin's token can edit an environment's reviewers, so no reviewer holds it; a user who is no admin is held.
+  assert.match(secrets({ limit: custom, rules: reviewer(true), permissions: { admin: true } }), blocked, 'an admin, held for a reviewer');
+  assert.match(secrets({ limit: custom, rules: reviewer(true), permissions: null }), blocked, 'admin rights GitHub does not show');
+  assert.equal(secrets({ limit: custom, rules: reviewer(true), permissions: { admin: false } }), 'ok workflow-secrets', 'no admin, held for a reviewer');
+  assert.ok(!reads.some((each) => each.some((word) => /deployment-branch-policies|rulesets|protection|graphql/u.test(word))), 'no read of branch policies or branch rules');
 });
 
 test('preflight notes a run with no tracker server, blocks a tracker-named server it cannot map, and no required checks', (t) => {

@@ -139,6 +139,9 @@ implicit prompt. Native runtime activation remains unverified on both hosts. A d
 and privately delivered a brief. Chrome 157.0.8103.79 verified isolated offline preview, narrow and wide reflow, internal anchors,
 keyboard focus, and print reading order. A static fixture also exercised native disclosure toggling.
 
+For a system overview, the skill traces the normal entry point through success and a meaningful stop, fallback, or retry.
+The brief starts with the parts and their handoffs, then uses an example to illustrate a path.
+
 #### Quality check
 
 Use this synthetic prompt and packet to check editorial quality when needed.

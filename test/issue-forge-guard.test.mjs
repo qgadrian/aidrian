@@ -155,6 +155,10 @@ test('the agent gate hook, run as the host runs it, refuses an issue session eac
     const ran = fx.hook(bash(command));
     assert.equal(ran.status, 0, `${command}: ${ran.stderr}`);
   }
+  // The remote rule, past the forge rule, names the session by its mark too, never as one the handoff route started.
+  const moved = fx.hook(bash('git fetch . +HEAD:refs/remotes/origin/main'));
+  assert.equal(moved.status, 2, moved.stderr);
+  assert.match(moved.stderr, /blocked for the issue session of a project run \(launch, ENG-1\) in this project: .*or a remote-tracking ref.*this session works an issue of a project run/u);
 });
 
 test('an issue session\'s exact push is refused when its commits change a workflow file, however it got there, and not for a merge of the default branch', (t) => {

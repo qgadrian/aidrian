@@ -337,10 +337,11 @@ export function projectCalls(input) {
 // chain; `stop-action` only for that session's newest one (stopActorProblem). A call whose run, issue, or project folder
 // is built from a variable is refused to all but `next` and
 // `summary`. A run or project the hook cannot read lets the call run: the command reads the same files and refuses.
-export function projectCommandDenial(input, { names: { human } }, { unattended = () => false, home } = {}) {
+// `mark`, the session's unattended mark, names an issue session of a project run as that in the reason.
+export function projectCommandDenial(input, { names: { human } }, { unattended = () => false, home, mark = null } = {}) {
   const { calls, hidden } = projectCalls(input);
   const subagent = typeof input.agent_id === 'string' && input.agent_id !== '';
-  const deny = (match, why) => ({ match, reason: projectRuleReason(input, why, human, 'to run that project run command') });
+  const deny = (match, why) => ({ match, reason: projectRuleReason(input, why, human, 'to run that project run command', { mark }) });
   if (hidden && (subagent || unattended())) return deny('hides an aidrian project command', `it runs ${hidden}, and the hooks authorize a project run's command only from its plain words`);
   for (const { sub, rest, folder } of calls) {
     // Plainly aidrian: no session needs a subcommand it cannot type.

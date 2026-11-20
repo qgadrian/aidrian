@@ -143,10 +143,10 @@ async function gate(input) {
     let outside;
     try {
       // A command longer than the guards read may hide one of those stores in the words they skip.
-      outside = withinDeadline(budget, () => opaqueLimitDenial(input, DEFAULTS, { unattended, drove, issue })
+      outside = withinDeadline(budget, () => opaqueLimitDenial(input, DEFAULTS, { unattended, drove, issue, mark })
         ?? handoffContinueDenial(input, DEFAULTS) ?? handoffEnvDenial(input, DEFAULTS, { unattended }) ?? prEnvDenial(input, DEFAULTS, { unattended })
-        ?? hostSessionStartDenial(input, DEFAULTS, { unattended }) ?? remoteChangeDenial(input, DEFAULTS, { unattended })
-        ?? projectCommandDenial(input, DEFAULTS, { unattended })
+        ?? hostSessionStartDenial(input, DEFAULTS, { unattended }) ?? remoteChangeDenial(input, DEFAULTS, { unattended, mark })
+        ?? projectCommandDenial(input, DEFAULTS, { unattended, mark })
         ?? stateFoldersWriteDenial(input, DEFAULTS, { unattended, marksHeld: droveHeld, signoffsHeld: droveHeld })
         ?? sessionFoldersWriteDenial(input, null, DEFAULTS, null, { unattended })
         // A driver whose run's main checkout no longer resolves to a project, as when its config was removed.
@@ -156,7 +156,7 @@ async function gate(input) {
         ?? unattendedWriteDenial(input, DEFAULTS, { mark, places: () => unattendedPlaces({ cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), mark, project: null }) }));
     } catch (error) {
       if (!(error instanceof PastDeadline)) throw error;
-      outside = deadlineDenial(input, DEFAULTS, { unattended, drove, issue });
+      outside = deadlineDenial(input, DEFAULTS, { unattended, drove, issue, mark });
     }
     if (outside) await block(input, 'config-guard', outside.reason, { match: outside.match });
     return;
@@ -193,14 +193,14 @@ async function gate(input) {
       config: held === project ? config : loadConfig(held).config, base: held === project ? base : baseReader(held), own,
     }));
     // The driver's run project is one of `others`, so a call from another project's folder still meets its run's stores.
-    denial = withinDeadline(budget, () => guards(input, project, config, gated, snapshot, [() => marked, origin, drivenProject], { unattended, drives, drove, issue }, base, own)
+    denial = withinDeadline(budget, () => guards(input, project, config, gated, snapshot, [() => marked, origin, drivenProject], { unattended, drives, drove, issue, mark }, base, own)
       // The run's state folder, by the driver mark itself, from any project: its own may no longer resolve.
       ?? runStateDenial(input, driven, config, { unattended, drives, own, checkouts: () => drivenProject()?.checkouts ?? [] })
       ?? unattendedWriteDenial(input, config, { mark, places: placesOf }));
   } catch (error) {
     if (!(error instanceof PastDeadline)) throw error;
     // A run's driver past the budget is held as the guards it could not finish would hold it.
-    denial = deadlineDenial(input, config, { unattended, drove, issue });
+    denial = deadlineDenial(input, config, { unattended, drove, issue, mark });
   }
   if (denial) await block(input, 'config-guard', denial.reason, { match: denial.match, project, config });
 }
@@ -213,7 +213,8 @@ async function gate(input) {
 // subagent that moved to another project, and a run's driver whose call runs there, still meet the folders of the
 // session's own. `holds` are the session's: `unattended()` says whether no Human attends it, `issue()` whether it works
 // an issue of a project run, `drives()` whether it drives a project run under way, and `drove()` whether it has driven
-// one; `base` is the call's one read of the base branch's config (handoff-guard.mjs baseReader).
+// one, and `mark` its unattended mark, which names an issue session as that in a reason; `base` is the call's one read
+// of the base branch's config (handoff-guard.mjs baseReader).
 function guards(input, project, config, gated, snapshot, others, holds, base, own) {
   const { unattended, drives, drove } = holds;
   let dirs;
@@ -230,14 +231,14 @@ function guards(input, project, config, gated, snapshot, others, holds, base, ow
   // A session that drove a run keeps the sign-off hold and the marks' hold after the run's end (run-driver.mjs
   // droveRun): its driver mark is what holds it, so it may not remove or rewrite that mark either.
   const droveHeld = () => unattended() || drove();
-  return opaqueLimitDenial(input, config, { unattended, drove, issue: holds.issue })
-    ?? writeLimitDenial(input, config, { unattended, drove, issue: holds.issue })
+  return opaqueLimitDenial(input, config, { unattended, drove, issue: holds.issue, mark: holds.mark })
+    ?? writeLimitDenial(input, config, { unattended, drove, issue: holds.issue, mark: holds.mark })
     ?? handoffContinueDenial(input, config)
     ?? handoffEnvDenial(input, config, { unattended })
     ?? prEnvDenial(input, config, { unattended })
     ?? hostSessionStartDenial(input, config, { unattended })
-    ?? remoteChangeDenial(input, config, { unattended })
-    ?? projectCommandDenial(input, config, { unattended })
+    ?? remoteChangeDenial(input, config, { unattended, mark: holds.mark })
+    ?? projectCommandDenial(input, config, { unattended, mark: holds.mark })
     ?? continueStoreWriteDenial(input, project, config, state, { links: false, unattended, drives, base })
     ?? sessionFoldersWriteDenial(input, project, config, state, { links: false, unattended })
     ?? stateFoldersWriteDenial(input, config, { project, links: false, unattended, marksHeld: droveHeld, signoffsHeld: droveHeld })

@@ -335,8 +335,8 @@ function onlyMain(input, { unattended, drove, issue }) {
 // Why the call in `input` may not run because its command, in a shell the lexer cannot read, has more words than the
 // guards resolve (OPAQUE_WORDS), or null: { match, reason }. Past that many, a guarded file may hide in the rest. It holds
 // for a subagent, and for a main session `unattended()` says no Human attends or `drove()` says has driven a project run
-// (onlyMain), asked last.
-export function opaqueLimitDenial(input, { names: { human } }, { unattended = () => false, drove = () => false, issue = () => false } = {}) {
+// (onlyMain), asked last. `mark`, the session's unattended mark, names an issue session as that in the reason.
+export function opaqueLimitDenial(input, { names: { human } }, { unattended = () => false, drove = () => false, issue = () => false, mark = null } = {}) {
   const opaque = opaqueShellCommand(input);
   if (opaque === null) return null;
   const count = opaqueWords(opaque).length;
@@ -344,12 +344,12 @@ export function opaqueLimitDenial(input, { names: { human } }, { unattended = ()
   const who = onlyMain(input, { unattended, drove, issue });
   if (who === null) return null;
   const why = `its command has ${count} words, counting each case, and the guards read at most ${OPAQUE_WORDS} in a shell command they cannot parse, so it may change a file ${who}`;
-  return { match: `more than ${OPAQUE_WORDS} words`, reason: projectRuleReason(input, why, human, 'that the command is longer than the guards read, or run it as shorter commands') };
+  return { match: `more than ${OPAQUE_WORDS} words`, reason: projectRuleReason(input, why, human, 'that the command is longer than the guards read, or run it as shorter commands', { mark }) };
 }
 
 // Why the Bash call in `input` may not run because it writes more targets than the guards resolve (WRITE_TARGETS), or
 // null: { match, reason }. Past that many, a guarded file may hide in the rest. It holds as opaqueLimitDenial does.
-export function writeLimitDenial(input, { names: { human } }, { unattended = () => false, drove = () => false, issue = () => false } = {}) {
+export function writeLimitDenial(input, { names: { human } }, { unattended = () => false, drove = () => false, issue = () => false, mark = null } = {}) {
   if (!bashCall(input)) return null;
   const { files, names, globs } = writeTargets(input);
   const count = files.length + names.length + globs.length;
@@ -357,7 +357,7 @@ export function writeLimitDenial(input, { names: { human } }, { unattended = () 
   const who = onlyMain(input, { unattended, drove, issue });
   if (who === null) return null;
   const why = `its command writes ${count} targets, counting each folder a path may be in, and the guards read at most ${WRITE_TARGETS} in one call, so it may change a file ${who}`;
-  return { match: `more than ${WRITE_TARGETS} write targets`, reason: projectRuleReason(input, why, human, 'that the command writes more files than the guards read, or run it as shorter commands') };
+  return { match: `more than ${WRITE_TARGETS} write targets`, reason: projectRuleReason(input, why, human, 'that the command writes more files than the guards read, or run it as shorter commands', { mark }) };
 }
 
 // Whether the call in `input` is no shell and has no write target, such as a Read, a search, or an MCP tool's call:
@@ -375,12 +375,12 @@ export function writesNothing(input) {
 // run (onlyMain): the guards it could not finish hold a run's driver from the run's stores, the marks, and the sign-off
 // store. A call that writes nothing (writesNothing), which no guard refuses, runs for every session, so a loaded machine
 // never stalls a session the guards hold on its reads; a shell call, such as a driver's `aidrian project wait`, is held.
-export function deadlineDenial(input, { names: { human } }, { unattended = () => false, drove = () => false, issue = () => false } = {}) {
+export function deadlineDenial(input, { names: { human } }, { unattended = () => false, drove = () => false, issue = () => false, mark = null } = {}) {
   if (writesNothing(input)) return null;
   const who = onlyMain(input, { unattended, drove, issue });
   if (who === null) return null;
   const why = `the guards could not finish reading this command in time, so it may change a file ${who}`;
-  return { match: 'past the guards\' time budget', reason: projectRuleReason(input, why, human, 'that the command takes the guards longer than they have, or run it as shorter commands') };
+  return { match: 'past the guards\' time budget', reason: projectRuleReason(input, why, human, 'that the command takes the guards longer than they have, or run it as shorter commands', { mark }) };
 }
 
 // The texts a command in a shell the lexer cannot read is judged by: the command as given, and, when it differs, a copy

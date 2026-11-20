@@ -11,6 +11,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { DEFAULTS } from '../plugins/aidrian/lib/config-defaults.mjs';
+import { deadlineDenial, WRITE_TARGETS, writeLimitDenial } from '../plugins/aidrian/lib/config-guard.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { PastDeadline, withinDeadline } from '../plugins/aidrian/lib/deadline.mjs';
 import { baseReader, continueStoreWriteDenial, handoffEnvDenial, mainCheckoutWriteDenial, PROJECT_SUB, PROJECT_WORD, projectRunWriteDenial, remoteChangeDenial, RUNS_FOLDER, stateFolders } from '../plugins/aidrian/lib/handoff-guard.mjs';
@@ -262,6 +263,24 @@ test('a subagent and an unattended session may not move a remote-tracking ref; a
     // A wildcard destination whose literal part leaves refs/remotes/ behind.
     "git fetch origin 'refs/heads/*:refs/heads/*'", "git fetch origin 'refs/tags/*:refs/tags/*'", "git fetch . 'refs/heads/*:refs/rx/*'",
   ]) assert.equal(ask(command, unattended), null, command);
+});
+
+test('the remote rule, the project command rule, and the guards\' limits name an issue session of a project run as that', (t) => {
+  const fx = runFixture(t);
+  const mark = { root: fx.dir, cwd: fx.dir, project: 'launch', issue: 'ENG-1' };
+  const issue = () => true;
+  const session = /^aidrian: Bash is blocked for the issue session of a project run \(launch, ENG-1\) in this project: /u;
+  const remote = (more) => remoteChangeDenial(bash('git fetch . +HEAD:refs/remotes/origin/main', { session_id: OTHER, cwd: fx.dir, ...more }), fx.config, { unattended, mark })?.reason ?? '';
+  assert.match(remote(), session);
+  assert.match(remote(), /only a session the Human attends changes them, and this session works an issue of a project run, which no Human attends\./u);
+  assert.doesNotMatch(remote(), /background handoff route/u);
+  assert.match(remote({ agent_id: 'a1' }), /^aidrian: Bash is blocked for a subagent of the issue session of a project run \(launch, ENG-1\) in this project: .*only the main session changes them/u);
+  // With no mark, the reason names the main session and the route that started it, as before.
+  assert.match(remoteChangeDenial(bash('git fetch . +HEAD:refs/remotes/origin/main', { session_id: OTHER, cwd: fx.dir }), fx.config, { unattended })?.reason ?? '', /blocked for the main session .*background handoff route/u);
+  assert.match(projectCommandDenial(bash('aidrian project start $RUN ENG-1', { session_id: OTHER, cwd: fx.dir }), fx.config, { unattended, home: fx.home, mark })?.reason ?? '', session);
+  const many = Array.from({ length: WRITE_TARGETS + 1 }, (_, i) => `: > a${i}`).join('; ');
+  assert.match(writeLimitDenial(bash(many, { session_id: OTHER, cwd: fx.dir }), fx.config, { unattended, issue, mark })?.reason ?? '', session);
+  assert.match(deadlineDenial(bash(': > a', { session_id: OTHER, cwd: fx.dir }), fx.config, { unattended, issue, mark })?.reason ?? '', session);
 });
 
 test('the hook scripts hold the new guards: a subagent\'s project start, an unattended write into the runs, and an issue session\'s stop', (t) => {

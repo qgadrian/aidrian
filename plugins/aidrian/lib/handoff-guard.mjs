@@ -40,7 +40,7 @@ import { SESSION_FILES } from './session-folder.mjs';
 import { ORIGIN_FOLDER, originFolders, readOrigins } from './session-origins.mjs';
 import { aidrianArgs, changedVariables, changesVariable, readGit, walkCommands } from './shell-lex.mjs';
 import { TERMINAL_FOLDER, terminalFolders } from './terminal-replace.mjs';
-import { MARK_FOLDER, markFolders, marksNaming } from './unattended-mark.mjs';
+import { issueHeld, MARK_FOLDER, markFolders, marksNaming } from './unattended-mark.mjs';
 
 const isSubagent = (input) => typeof input.agent_id === 'string' && input.agent_id !== '';
 // How a denial names who may do what it refuses, for a subagent and for a session no Human attends.
@@ -551,8 +551,9 @@ function symbolicRef(words) {
 // command. A command in a shell the lexer cannot read counts when its text names such an action. Known limits, as for
 // the other guards here: a write by its path to `.git/config`, a file it includes, or gh's own config folder; a program
 // that runs its arguments as a command, such as `xargs git ...`; a git subcommand held in a variable, as in
-// `git $ACTION ...`, whose later words name no such action; and HOME or XDG_CONFIG_HOME moved on the line.
-export function remoteChangeDenial(input, { names: { human } }, { unattended = () => false } = {}) {
+// `git $ACTION ...`, whose later words name no such action; and HOME or XDG_CONFIG_HOME moved on the line. `mark`, the
+// session's unattended mark, names an issue session of a project run as that in the reason.
+export function remoteChangeDenial(input, { names: { human } }, { unattended = () => false, mark = null } = {}) {
   const opaque = opaqueShellCommand(input);
   const command = opaque ?? (bashCall(input) ? input.tool_input?.command : null);
   // Every form it refuses names one of these words, however quoted, so a call with none of them is not walked.
@@ -562,9 +563,10 @@ export function remoteChangeDenial(input, { names: { human } }, { unattended = (
     : walkedRemoteChange(command, input.cwd);
   const subagent = isSubagent(input);
   if (!hit || (!subagent && !unattended())) return null;
-  const who = subagent ? 'only the main session changes them' : `only a session the Human attends changes them, ${UNATTENDED}`;
+  const held = issueHeld(mark) ? 'and this session works an issue of a project run, which no Human attends' : UNATTENDED;
+  const who = subagent ? 'only the main session changes them' : `only a session the Human attends changes them, ${held}`;
   const why = `it changes which repository the checkout's git remotes or gh's default name, or how git reads them, where the plugin reads the team's policy on the forge, such as solo, or a remote-tracking ref, which names the commit a project run cuts each issue from, and ${who}`;
-  return { match: 'changes a git remote', reason: projectRuleReason(input, why, human, 'to change the remote') };
+  return { match: 'changes a git remote', reason: projectRuleReason(input, why, human, 'to change the remote', { mark }) };
 }
 
 // Whether a command the walk reads changes a remote (changesRemote), with what the whole line shares: whether a command

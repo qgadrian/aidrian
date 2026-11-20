@@ -440,10 +440,13 @@ test('a FIFO or a link at a hook`s counter neither stalls a refusal past the hoo
   };
   const counts = path.join(at.env.XDG_STATE_HOME, 'aidrian', 'hook-counts', `aidrian-denials-${SESSION}`);
   assert.equal(refuse().status, 2);
-  assert.ok(existsSync(path.join(counts, 'config-guard')), 'the count lies in the state root');
+  // One count per rule, agent run, and cause (lib/lesson-signals.mjs denialCount): `config-guard.main.<digest>`.
+  const name = (existsSync(counts) ? readdirSync(counts) : []).find((each) => /^config-guard\.main\.[0-9a-f]{16}$/u.test(each));
+  assert.ok(name, 'the count lies in the state root');
+  const count = path.join(counts, name);
   assert.equal(existsSync(path.join(temp, `aidrian-denials-${SESSION}`)), false, 'and not in the temporary folder a sandbox may write');
   // A FIFO at the count and at the old temporary path: the refusal still exits 2, well inside the host's 5 seconds.
-  for (const fifo of [path.join(counts, 'config-guard'), path.join(temp, `aidrian-denials-${SESSION}`, 'config-guard')]) {
+  for (const fifo of [count, path.join(temp, `aidrian-denials-${SESSION}`, name)]) {
     rmSync(fifo, { force: true });
     mkdirSync(path.dirname(fifo), { recursive: true });
     execFileSync('mkfifo', [fifo]);
@@ -453,8 +456,8 @@ test('a FIFO or a link at a hook`s counter neither stalls a refusal past the hoo
   // A link at the count: the write never lands at its target.
   const target = path.join(at.home, '.zshrc');
   writeFileSync(target, 'kept\n');
-  rmSync(path.join(counts, 'config-guard'));
-  symlinkSync(target, path.join(counts, 'config-guard'));
+  rmSync(count);
+  symlinkSync(target, count);
   assert.equal(refuse().status, 2);
   assert.equal(readFileSync(target, 'utf8'), 'kept\n');
   // So for a subagent's send-back count, read and stored.

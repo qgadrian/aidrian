@@ -296,15 +296,12 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   only to an administrator, which the preflight asks of the driver), why not, and each active tag rule as `{ name, all,
   creation, update, bypass }`: whether it names every tag and excludes none, whether it restricts creating and updating
   a tag, and whether the signed-in user may bypass it (`never` is the only answer the preflight accepts); and
-  `workflowSecrets(repo, { host, issueBranch })`, `{ secrets, workflowPush }`: how many CI secrets the
-  repository's workflows see, its own, those its organization shares, and those of each environment with no required
-  reviewers rule that holds the signed-in user (one that prevents self-review, or names only other users; a team may
-  hold that user) whose deployment branch limit lets an issue's branch deploy. `issueBranch(name)` is the preflight's
-  word on whether the run may name an issue's branch `name`: any name the run accepts but a default branch's or one
-  under a remote's name, since the tracker names each branch. The adapter tests the forge's own patterns against it:
-  on GitHub, an environment's custom branch policies (a tag policy holds), or, for one limited to protected branches,
-  the branch protection rules and branch rulesets, where a repository with no branch protection rule lets every branch
-  deploy (`lib/forges/github-refs.mjs` reads GitHub's fnmatch patterns). A limit it cannot read counts as open. And whether the signed-in token may push a change to a workflow file (null when the token
+  `workflowSecrets(repo, { host })`, `{ secrets, workflowPush }`: how many CI secrets the repository's workflows see,
+  its own, those its organization shares, and those of each environment with no required reviewers rule that holds the
+  signed-in user (one that prevents self-review, or names only other users; a team may hold that user), whatever its
+  deployment branch limit, since a deployment branch rule is no hold against code the run pushes; a team that has
+  checked its branch-limited environments sets `projectRun.workflowSecretsAccepted`. And whether the signed-in token
+  may push a change to a workflow file (null when the token
   does not say), which the preflight's blocker only words: secrets block whatever the scope.
 - Links: `compareUrl(repo, from, to)`, the web link that shows the commits from `from` to `to`, which the review
   summary's findings table gives a finding's closing range. It is built only from two full-hex SHAs and the forge's own

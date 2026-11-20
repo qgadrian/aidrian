@@ -548,7 +548,7 @@ test('preflight blocks a default branch no rule holds the signed-in user to, rel
   ]) assert.ok(blocker(lines({ ...GUARDED, tags }), 'release-tags'), JSON.stringify(tags));
   const held = lines(GUARDED);
   assert.deepEqual([blocker(held, 'branch-protection'), blocker(held, 'release-tags'), blocker(held, 'workflow-secrets')], [null, null, null]);
-  assert.match(held.find((line) => line.startsWith('note workflows:')), /keep release and deploy secrets in environments limited to protected branches and tags, or held for a reviewer who prevents self-review or is not the signed-in user; an environment whose admins may bypass its rules, which a forge may allow by default, lets an admin's token deploy past them through a script, so turn that bypass off; an environment limited to branch patterns, or to protected branches, counts as held only when no pattern of its own, or of a branch protection rule or ruleset, can match an issue's branch, any name the tracker gives but the default branch's, and a forge may let every branch deploy to one limited to protected branches when the repository protects none, so keep those patterns to the default branch, or hold the environment for a reviewer; a token without the workflow scope keeps the session from changing a workflow file, not from changing the tests and scripts a workflow runs;.*the hook refuses an issue session's writes to the workflow files and a push whose commits change them/u);
+  assert.match(held.find((line) => line.startsWith('note workflows:')), /keep release and deploy secrets in environments held for a reviewer who prevents self-review or is not the signed-in user; an environment limited to protected branches or branch patterns counts as open, since a deployment branch rule is no hold against code the run pushes, so a team that has checked those environments sets projectRun\.workflowSecretsAccepted; an environment whose admins may bypass its reviewers, which a forge may allow by default, lets an admin's token deploy past them through a script, so turn that bypass off; a token without the workflow scope keeps the session from changing a workflow file, not from changing the tests and scripts a workflow runs;.*the hook refuses an issue session's writes to the workflow files and a push whose commits change them/u);
   // A cloud role trusted for any ref of the repository is named: any branch's workflow can assume it.
   assert.match(held.find((line) => line.startsWith('note workflows:')), /OIDC federation for any ref of the repository \(a subject such as repo:<owner>\/<name>:\*\) can be assumed from any branch/u);
   assert.match(blocker(lines({ ...GUARDED, tags: [{ ...GUARDED.tags[0], all: false }] }), 'release-tags'), /~ALL or refs\/tags\/\*\*\/\*, excluding none; refs\/tags\/\* stops at a slash/u);
@@ -638,29 +638,25 @@ test('preflight names the plan of a forge that offers no rule, and takes the tea
   assert.deepEqual(blockers(preflight({}, PLAN, accepted)), ['blocker branch-protection', 'blocker release-tags'], 'a working copy');
 });
 
-test('preflight counts the secrets of an environment by whether its deployment branch patterns can match an issue\'s branch, whatever the default branch\'s protection', (t) => {
+test('preflight counts the secrets of every environment no other reviewer holds, whatever its deployment branch policy or the default branch\'s protection', (t) => {
   // GitHub's own read of the secrets, through a recording gh: no repository or organization secret, and one environment,
-  // limited by `limit`, that holds 2. `classic` are the branch protection rules' patterns and `rulesets` the branch
-  // rulesets' includes; a route not listed answers 404.
-  const github = ({ limit, policies = [], classic = [], rulesets = [], gated = false }) => createGithubForge({ cwd: '/repo', run: (args) => {
+  // limited by `limit` and held by `rules`, that holds 2. A route not listed answers 404.
+  const reads = [];
+  const github = ({ limit, rules = [] }) => createGithubForge({ cwd: '/repo', run: (args) => {
+    reads.push(args);
     if (args.includes('--include')) return 'HTTP/2.0 200 OK\r\nX-Oauth-Scopes: repo, workflow\r\n\r\n{"login":"octo"}';
-    if (args.includes('graphql')) return JSON.stringify({ data: { repository: { branchProtectionRules: { pageInfo: { hasNextPage: false }, nodes: classic.map((pattern) => ({ pattern })) } } } });
     const route = args.find((each) => each.startsWith('repos/'));
     const answers = {
       'repos/acme/widgets': { default_branch: 'main', owner: { login: 'acme', type: 'Organization' } },
       'repos/acme/widgets/actions/secrets': { total_count: 0 }, 'repos/acme/widgets/actions/organization-secrets': { total_count: 0 },
-      'repos/acme/widgets/environments': [{ total_count: 1, environments: [{ name: 'production', deployment_branch_policy: limit, protection_rules: [{ type: 'branch_policy' }] }] }],
+      'repos/acme/widgets/environments': [{ total_count: 1, environments: [{ name: 'production', deployment_branch_policy: limit, protection_rules: [{ type: 'branch_policy' }, ...rules] }] }],
       'repos/acme/widgets/environments/production/secrets': { total_count: 2 },
-      'repos/acme/widgets/environments/production/deployment-branch-policies': [{ total_count: policies.length, branch_policies: policies.map((name) => ({ name, type: 'branch' })) }],
-      'repos/acme/widgets/rulesets?targets=branch&includes_parents=true': [rulesets.map((_, index) => ({ id: index + 1, target: 'branch', enforcement: 'active' }))],
-      ...Object.fromEntries(rulesets.map((include, index) => [`repos/acme/widgets/rulesets/${index + 1}`, { id: index + 1, conditions: { ref_name: { include, exclude: [] } } }])),
+      'repos/acme/widgets/environments/production/deployment-branch-policies': [{ total_count: 1, branch_policies: [{ name: 'main', type: 'branch' }] }],
     };
-    if (gated && route.includes('rulesets')) throw new Error('gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)');
     if (!(route in answers)) throw new Error(`gh: Not Found (HTTP 404) ${route}`);
     return JSON.stringify(answers[route]);
   } });
   const PLAN = { branch: 'main', protected: false, plan: true, why: 'the plan offers no branch protection or rulesets for a private repository: GitHub Team, or a public repository, offers them', tags: [] };
-  const CHECKS_ONLY = { branch: 'main', protected: false, why: 'its branch protection does not ask for a pull request', tags: [] };
   const waived = { ...READY.projectRun, forgeProtectionAccepted: true };
   const secrets = (read, protection = GUARDED) => {
     const fx = runFixture(t, { init: false, ...READY, projectRun: waived });
@@ -669,22 +665,17 @@ test('preflight counts the secrets of an environment by whether its deployment b
     assert.ok(out.includes('ok policy'), out.join('\n'));
     return out.find((line) => /^(?:ok|blocker) workflow-secrets(?::|$)/u.test(line));
   };
-  const blocked = /^blocker workflow-secrets: the repository's workflows see 2 CI secrets, .*limited to branch patterns or protected branches that no issue's branch can match, or set projectRun\.workflowSecretsAccepted/u;
+  const blocked = /^blocker workflow-secrets: the repository's workflows see 2 CI secrets, .*move the secrets to environments held for a reviewer who is not the signed-in user, since a deployment branch rule is no hold against code the run pushes, or set projectRun\.workflowSecretsAccepted on the default branch once the team has checked them$/u;
   const custom = { protected_branches: false, custom_branch_policies: true };
   const protectedOnly = { protected_branches: true, custom_branch_policies: false };
-  // Custom branch policies: held when no pattern can name an issue's branch, whatever refProtection says.
-  assert.equal(secrets({ limit: custom, policies: ['main'] }, PLAN), 'ok workflow-secrets', 'only the default branch, on a plan with no rule');
-  assert.match(secrets({ limit: custom, policies: ['feat/*'] }), blocked, 'an issue\'s branch, with the default branch protected');
-  assert.match(secrets({ limit: custom, policies: ['*'] }), blocked);
-  // The preflight's own word on the names an issue's branch can take: none starts with a remote's name.
-  assert.equal(secrets({ limit: custom, policies: ['main', 'origin/*'] }), 'ok workflow-secrets', 'a remote\'s name');
-  // Protected branches: open with no rule at all, though refProtection verified the default branch; held when the rules
-  // cover main alone, though no rule asks for a pull request there.
-  assert.match(secrets({ limit: protectedOnly }), blocked, 'no branch protection rule, the default branch verified');
-  assert.equal(secrets({ limit: protectedOnly, classic: ['main'] }, CHECKS_ONLY), 'ok workflow-secrets', 'a protection on main that asks only for status checks');
-  assert.equal(secrets({ limit: protectedOnly, classic: ['main'], rulesets: [['refs/heads/main']] }), 'ok workflow-secrets');
-  assert.match(secrets({ limit: protectedOnly, classic: ['main'], rulesets: [['~ALL']] }), blocked, 'a ruleset over every branch');
-  assert.match(secrets({ limit: protectedOnly, classic: ['main'], gated: true }, PLAN), blocked, 'the plan offers no rule');
+  const reviewer = (prevent) => [{ type: 'required_reviewers', prevent_self_review: prevent, reviewers: [{ type: 'User', reviewer: { login: 'octo' } }] }];
+  assert.match(secrets({ limit: null }), blocked, 'no policy');
+  assert.match(secrets({ limit: protectedOnly }), blocked, 'protected branches, the default branch verified');
+  assert.match(secrets({ limit: custom }, PLAN), blocked, 'a custom policy, on a plan with no rule');
+  assert.match(secrets({ limit: custom }), blocked, 'a custom policy for main alone, the default branch verified');
+  assert.equal(secrets({ limit: custom, rules: reviewer(true) }), 'ok workflow-secrets', 'held for a reviewer, self-review prevented');
+  assert.match(secrets({ limit: null, rules: reviewer(false) }), blocked, 'the signed-in user may approve alone');
+  assert.ok(!reads.some((each) => each.some((word) => /deployment-branch-policies|rulesets|protection|graphql/u.test(word))), 'no read of branch policies or branch rules');
 });
 
 test('preflight notes a run with no tracker server, blocks a tracker-named server it cannot map, and no required checks', (t) => {

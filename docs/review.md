@@ -1406,16 +1406,14 @@ names every tag, restricts creating and updating one, and that the signed-in use
 sets `projectRun.forgeProtectionAccepted`, which removes that backstop: the hooks alone then hold the token, and a
 script the session runs can push to the default branch or a tag. The forge also runs
 a branch's own workflow files, with the repository's secrets, on every push: the hook refuses an issue session's push
-whose commits change them, release and deploy secrets belong in environments limited to protected branches and tags,
-with the default branch protected, or held for a required reviewer who prevents self-review or is not the signed-in user, never in repository secrets or
-an open environment a pushed branch's workflow can read. The preflight counts an environment as held when its admins
-may bypass its rules (on GitHub `can_admins_bypass`, true by default), though an admin's token deploys past them
-through a script, and its `note workflows` line says to turn the bypass off. An environment limited to branch patterns
-counts as held only when none of them can match an issue's branch, which may be any name the tracker gives but the
-default branch's; one limited to protected branches only when the repository has a branch protection rule, since GitHub
-lets every branch deploy to it otherwise, and no branch protection rule or branch ruleset can cover an issue's branch.
-Whether the default branch asks for a pull request plays no part, and `projectRun.forgeProtectionAccepted` changes
-no environment's reach.
+whose commits change them, release and deploy secrets belong in environments held for a required reviewer who
+prevents self-review or is not the signed-in user, never in repository secrets or an open environment a pushed
+branch's workflow can read. The preflight counts every other environment as open, one limited to protected branches or
+branch patterns too, since a deployment branch rule is no hold against code the run pushes; a team that has checked
+those environments sets `projectRun.workflowSecretsAccepted`, and `projectRun.forgeProtectionAccepted` waives no secret.
+It counts a reviewer-held environment as held when its admins may bypass its reviewers (on GitHub `can_admins_bypass`,
+true by default), though an admin's token deploys past them through a script, and its `note workflows` line says to
+turn the bypass off.
 The preflight blocks a run whose workflows see CI secrets,
 whatever the token's `workflow` scope, since the workflows already run the branch's own tests, scripts, and build, unless
 the team sets `projectRun.workflowSecretsAccepted`. A cloud role whose OIDC trust names any ref of the repository,

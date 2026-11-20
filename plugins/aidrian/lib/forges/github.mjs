@@ -6,7 +6,6 @@
 import { isRefName } from '../git.mjs';
 import { hasHidden } from '../hidden-text.mjs';
 import { runGh } from './github-cli.mjs';
-import { patternsReach, rulesetPattern } from './github-refs.mjs';
 
 // The author associations GitHub gives the people who belong to a repository.
 // Frozen, with no add, and compared by === rather than through a prototype method, so no module in the gate's process
@@ -552,13 +551,15 @@ function workflowIds(rows, listRuns) {
 // slash, as fnmatch's do, so `refs/tags/*` and `refs/tags/**` let a tag such as `release/v1` through.
 const ALL_TAGS = new Set(['~ALL', 'refs/tags/**/*']);
 
-// The names of the environments of `repo` an issue's branch may deploy to, and so read the secrets of: those with no
-// required reviewers rule that holds the signed-in user `login` (heldForReviewer), whose deployment branch policy lets
-// such a branch deploy (`deploys`, from deployReach). A repository GitHub keeps no environments for has none.
+// The names of the environments of `repo` whose secrets an issue's session could reach, and so counts: every one with no
+// required reviewers rule that holds the signed-in user `login` (heldForReviewer). A deployment branch policy, protected
+// branches or custom branch patterns, holds nothing: it is no hold against code the run pushes, since which branches it
+// lets deploy turns on patterns, rulesets, and waivers this read cannot weigh. A team that has checked its branch-limited
+// environments sets projectRun.workflowSecretsAccepted. A repository GitHub keeps no environments for has none.
 // SHORTCUT: an environment whose admins may bypass its rules (`can_admins_bypass`, true by default) counts as held, though
-// an admin's token, as the session's may be, deploys past them through a script. Reading the bypass would replace this
-// when a team keeps secrets so.
-function openEnvironments(list, repo, host, login, deploys) {
+// an admin's token, as the session's may be, deploys past its reviewers through a script. Reading the bypass would replace
+// this when a team keeps secrets so.
+function openEnvironments(list, repo, host, login) {
   let pages;
   try {
     pages = list(`repos/${repo}/environments`, { host });
@@ -568,54 +569,7 @@ function openEnvironments(list, repo, host, login, deploys) {
   }
   const environments = pages.flatMap((page) => (Array.isArray(page?.environments) ? page.environments : []));
   const reviewed = (each) => (Array.isArray(each?.protection_rules) ? each.protection_rules : []).some((rule) => heldForReviewer(rule, login));
-  return environments.filter((each) => typeof each?.name === 'string' && !reviewed(each) && deploys(each)).map((each) => each.name);
-}
-
-// The most pages of classic branch protection rules read; a repository with more counts as one whose rules cannot be read.
-const PROTECTION_RULE_PAGES = 10;
-const PROTECTION_RULES_QUERY = 'query($o:String!,$r:String!,$after:String){repository(owner:$o,name:$r){branchProtectionRules(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{pattern}}}}';
-
-// Whether an environment's deployment branch policy lets an issue's branch deploy to it, as a function of the
-// environment, where `issueBranch(name)` says whether a run may name an issue's branch `name`. `read` holds the reads it
-// needs: `policies(environment)`, its custom deployment branch policies; `classic()`, the patterns of the repository's
-// branch protection rules; `rulesets()`, its branch rulesets' ref_name conditions; `main`, the default branch.
-// - No policy: every branch may deploy.
-// - Custom branch policies: a branch whose name a branch pattern matches (fnmatch, github-refs.mjs). A tag pattern lets
-//   only a tag deploy, which an issue's session never pushes, since the issue forge rule refuses it.
-// - Protected branches: a branch a branch protection rule covers, and every branch when the repository has no such rule.
-//   GitHub does not say whether a ruleset counts as one, so a ruleset widens what may deploy, and never stands in for a
-//   branch protection rule. The repository's rules are read once for every environment.
-// A policy that cannot be read, or one of neither kind, lets an issue's branch deploy: GitHub's 403 for a private
-// repository on the free plan is one, and that repository has no protection rule anyway.
-function deployReach(read, issueBranch) {
-  let protectedReach = null;
-  const reachesProtected = () => {
-    if (protectedReach !== null) return protectedReach;
-    try {
-      const classic = read.classic();
-      const rulesets = read.rulesets();
-      const covered = (include, exclude = []) => patternsReach(include, exclude, issueBranch);
-      protectedReach = classic.length === 0 || classic.some((pattern) => covered([pattern]))
-        || rulesets.some((each) => covered(each.include.map((ref) => rulesetPattern(ref, read.main)), each.exclude.map((ref) => rulesetPattern(ref, read.main))));
-    } catch {
-      protectedReach = true;
-    }
-    return protectedReach;
-  };
-  return (environment) => {
-    const policy = environment.deployment_branch_policy;
-    if (!policy) return true;
-    if (policy.custom_branch_policies === true) {
-      try {
-        const branches = read.policies(environment).filter((each) => each?.type !== 'tag').map((each) => String(each?.name ?? ''));
-        return patternsReach(branches, [], issueBranch);
-      } catch {
-        return true;
-      }
-    }
-    if (policy.protected_branches === true) return reachesProtected();
-    return true;
-  };
+  return environments.filter((each) => typeof each?.name === 'string' && !reviewed(each)).map((each) => each.name);
 }
 
 // Whether an environment's protection rule holds a deployment for a reviewer other than the signed-in user `login`
@@ -786,38 +740,6 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     const why = classic.held === true ? null : [...bypassed, classic.why].filter(Boolean).join('; ');
     return { branch, protected: classic.held, why, tags };
   };
-  // deployReach's reads, for workflowSecrets. The custom deployment branch policies of the environment `name`, each
-  // { name, type } as GitHub answers it.
-  const deploymentPolicies = (repo, name, host) => list(`repos/${repo}/environments/${encodeURIComponent(name)}/deployment-branch-policies`, { host })
-    .flatMap((page) => {
-      if (!Array.isArray(page?.branch_policies)) throw new Error('GitHub answered the deployment branch policies with no list');
-      return page.branch_policies;
-    });
-  // The pattern of each branch protection rule of `repo`, page by page; more than PROTECTION_RULE_PAGES pages, or an
-  // answer that is not a list, throws.
-  const classicPatterns = (repo, host) => {
-    const [owner, name] = String(repo).split('/');
-    const patterns = [];
-    let after = null;
-    for (let page = 0; page < PROTECTION_RULE_PAGES; page += 1) {
-      const answer = json(['api', 'graphql', ...(host ? ['--hostname', host] : []), '-f', `query=${PROTECTION_RULES_QUERY}`, '-f', `o=${owner}`, '-f', `r=${name}`, ...(after ? ['-f', `after=${after}`] : [])]);
-      const rules = answer?.data?.repository?.branchProtectionRules;
-      if (!Array.isArray(rules?.nodes)) throw new Error('GitHub answered the branch protection rules with no list');
-      patterns.push(...rules.nodes.map((node) => String(node?.pattern ?? '')));
-      if (rules.pageInfo?.hasNextPage !== true) return patterns;
-      after = rules.pageInfo.endCursor;
-    }
-    throw new Error(`the repository has more than ${PROTECTION_RULE_PAGES * 100} branch protection rules`);
-  };
-  // The ref_name condition of each branch ruleset of `repo` and its parents that is not disabled, as { include, exclude };
-  // one with no ref_name condition names every branch.
-  const branchRulesets = (repo, host) => list(`repos/${repo}/rulesets?targets=branch&includes_parents=true`, { host })
-    .filter((each) => (each?.target ?? 'branch') === 'branch' && each?.enforcement !== 'disabled' && Number.isSafeInteger(each?.id))
-    .map((each) => rest(`repos/${repo}/rulesets/${each.id}`, { host })?.conditions?.ref_name)
-    .map((names) => ({
-      include: Array.isArray(names?.include) ? names.include : ['~ALL'],
-      exclude: Array.isArray(names?.exclude) ? names.exclude : [],
-    }));
   return Object.freeze({
     id: FORGE_ID,
     cwd,
@@ -929,12 +851,11 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // What a project run's issue session's token could run with the repository's secrets, for the run's preflight:
     // { secrets, workflowPush }. `secrets` counts the Actions secrets of the repository, those its organization
     // shares with it (none for a repository a user owns, whose organization route GitHub answers with 422, nor for one
-    // GitHub answers 404), and those of each environment an issue's branch may deploy to without a reviewer other than
-    // the signed-in user (openEnvironments, deployReach). `issueBranch(name)` says whether the run may name an issue's
-    // branch `name`; without one, any name but the default branch's. `workflowPush` is whether the signed-in token's
-    // scopes include `workflow`, which GitHub asks of a push that changes a workflow file, or null for a token that
-    // names no scopes, as a fine-grained one.
-    workflowSecrets: (repo, { host, issueBranch } = {}) => {
+    // GitHub answers 404), and those of each environment no reviewer other than the signed-in user holds, whatever its
+    // deployment branch policy (openEnvironments). `workflowPush` is whether the signed-in token's scopes include
+    // `workflow`, which GitHub asks of a push that changes a workflow file, or null for a token that names no scopes, as
+    // a fine-grained one.
+    workflowSecrets: (repo, { host } = {}) => {
       const count = (route) => {
         const total = rest(route, { host })?.total_count;
         if (!Number.isSafeInteger(total)) throw new Error('GitHub answered no count of secrets');
@@ -952,10 +873,7 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
       const answer = String(gh(['api', '--include', ...(host ? ['--hostname', host] : []), 'user']));
       const line = answer.split(/\r?\n/u).find((each) => /^x-oauth-scopes:/iu.test(each));
       const scopes = line === undefined ? null : line.slice(line.indexOf(':') + 1).split(',').map((each) => each.trim());
-      const main = typeof about?.default_branch === 'string' ? about.default_branch : '';
-      const issue = typeof issueBranch === 'function' ? issueBranch : (name) => name !== '' && name.toLowerCase() !== main.toLowerCase();
-      const deploys = deployReach({ main, policies: (environment) => deploymentPolicies(repo, environment.name, host), classic: () => classicPatterns(repo, host), rulesets: () => branchRulesets(repo, host) }, issue);
-      const open = openEnvironments(list, repo, host, signedInLogin(answer), deploys).reduce((sum, name) => sum + count(`repos/${repo}/environments/${encodeURIComponent(name)}/secrets`), 0);
+      const open = openEnvironments(list, repo, host, signedInLogin(answer)).reduce((sum, name) => sum + count(`repos/${repo}/environments/${encodeURIComponent(name)}/secrets`), 0);
       const secrets = count(`repos/${repo}/actions/secrets`) + shared + open;
       return { secrets, workflowPush: scopes === null ? null : scopes.includes('workflow') };
     },

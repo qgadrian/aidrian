@@ -92,15 +92,19 @@ The loop ends at the first of these:
   A round that pushes a fix moves the head, and no review has seen the new one: run the next round on it.
   The code comment an `accepted_residual` gets is not a fix.
 - **The cap**: the last round ends with `fix_now` findings open, or with fixes pushed that no review has seen.
-  List both in the report, and start no further round. Dispatch no waiver judge: the loop's `references/review-plan.md`
-  § At the cap: a judge's waiver is for a session told to merge, and this run merges only through the auto-merge step
-  below, whose `aidrian pr auto-merge` reads no verdict.
+  List both in the report, and start no further round. When the review step returned `round_limit` on the current
+  head, follow the loop's `references/review-plan.md` § At the cap: a judge's waiver: run `aidrian pr waive <n> --gate`,
+  and only on exit 0 dispatch its one judge and record the verdict with `--judge`. A `waive` ends the loop as a
+  sign-off does for step 1 below, and `aidrian pr auto-merge` takes it for that head alone; any later push needs a new
+  review. Exit 1 or a `refuse`: report the gate's line or the judge's evidence, and park the merge as a Decision for
+  the Human.
 - **A stop** from `SKILL.md` § Stop.
 
 Then:
 
 1. Leave the pull request a draft. Mark it ready only when config.json `github.markReady` is `"auto"`,
-   the default, or the Human asked for that at launch, the loop ended at sign-off, and `aidrian pr checks <n>` says ready.
+   the default, or the Human asked for that at launch, the loop ended at sign-off or on a judge's `waive`, and
+   `aidrian pr checks <n>` says ready.
    Then run `aidrian pr product-feedback status <n>`, and the re-check when only that is owed, by that file's
    § Before `gh pr ready`. On exit 0, mark it ready with `gh pr ready <n>`.
    Pending, failing, or any other exit: leave it a draft and say why. The report lists each owed item with its command,
@@ -108,4 +112,24 @@ Then:
    After `gh pr ready`, push nothing more: a later finding belongs in a new pull request.
 2. Once step 1 marked it ready in this run, run the `pr-auto-merge` skill.
    Keep the line it stops on for the report. Merge only through that step, never otherwise.
+   In a session no Human attends, the merge also needs merge trust: the review bot's pass on the head, requested with
+   `aidrian pr await-review <n> --request`, and the Human's sign-off of each flow that asks for one, from a session they attend.
 3. Write the last checkpoint when allowed, then the report of `SKILL.md` § Report.
+   Under a project run, then record the result: `references/entry-task.md` § Under a project run.
+
+### When the merge stops
+
+In a project run's issue session, when step 2 stops short of a merge, because `aidrian pr auto-merge` exits 1 or 3, or the
+merge steps stop on a conflict, a branch behind its base, failing checks, or checks still pending at their cap,
+run `aidrian project stop-action <run> <issue>`, with the run and the issue the session's first message names.
+It prints one line whose first word is the action, and has already taken the forge's part of it.
+
+- Do what the line says, then run the `pr-auto-merge` skill again. On the next stop, run `stop-action` again.
+- `park`: record the result the line names, `pr_open` with the stop it names, or `parked` with the one decision it names.
+  `done`: record the result `merged`.
+- Exit 1: record the result `pr_open`, with its error line as the stop.
+- The command keeps the caps. Run no action it did not print: never rerun checks, update the branch, or ask the bot by hand.
+- A `merge_base` line's push is the one push allowed after `gh pr ready`. Its new head voids every sign-off and review of the old one.
+- A `review_round` runs § 3 once on the new head. When that round would push a fix, record `pr_open` instead.
+
+Outside a project run, report the stop, as step 2 says.

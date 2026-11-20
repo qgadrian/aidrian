@@ -13,6 +13,15 @@ export function repoName(value) {
   return name.length === 2 && !name.some((part) => part === '.' || part === '..') ? name.join('/') : null;
 }
 
+// The host of a forge URL, such as a pull request's, or null when it is no URL.
+export function hostOf(url) {
+  try {
+    return new URL(url).hostname || null;
+  } catch {
+    return null;
+  }
+}
+
 // The repository a `--repo` value names, as `owner/name`: the first step of every command's resolution of its pull
 // request's repository (lib/review-gate.mjs prRepo), and all of it a hook reads, since a hook reads no forge. A value
 // that is not OWNER/NAME throws.

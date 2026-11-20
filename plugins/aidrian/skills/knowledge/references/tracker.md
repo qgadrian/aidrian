@@ -15,6 +15,9 @@ and its conventions from the knowledge.
 Make no read ahead of a write: when the guard refuses a write because this session has not read the connected workspace,
 call the read tool the refusal names, then write again.
 For any other refusal, follow its reason. Never edit `tracker` to get a write through.
+In a project run, the guard holds an issue's session to its own issue, and the driver to what `aidrian project report` owes,
+whatever `tracker.enabled` says. No session merges or marks a pull request ready through a tracker's tool: use `gh pr merge`
+and `gh pr ready`.
 
 | Step | Linear: the host's Linear tools | GitHub Issues: `gh` |
 | --- | --- | --- |
@@ -34,6 +37,7 @@ For any other refusal, follow its reason. Never edit `tracker` to get a write th
 | Create | `save_issue`, by the `agent-issue-writer` skill's `references/linear.md` | `gh issue create --title <title> --body-file -`, plus `--label` and `--milestone` |
 | Parent and children | `parentId` on each child | read: `parent` and `subIssues.nodes`, each with its `state`, and the body lines this cell writes; write: the parent's body lists each child as `- [ ] #<n>`; each child's body names its parent |
 | A group of issues | a Linear Project | the milestone or GitHub project the knowledge names |
+| The workspace's team keys | `list_teams`, each team's `key` | none: an issue's number names no team |
 
 Pass a body on stdin, never inline: `--body-file -` reads it from a quoted heredoc, so the shell cannot mangle Markdown,
 quotes, or backticks, and an agent without a file tool needs no file.

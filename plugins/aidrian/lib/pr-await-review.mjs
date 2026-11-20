@@ -46,6 +46,7 @@ import { forgeFor } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { repoFlag } from './remotes.mjs';
+import { cardState, isReviewSummaryCard, REVIEW_SUMMARY_CARD_MARKER } from './review/bot-card.mjs';
 import { holdToBase } from './review/in-force.mjs';
 
 export const DEFAULT_REVIEWER = CONFIG_DEFAULTS.github.reviewer;
@@ -105,11 +106,8 @@ export const requestCommentBody = (headSha, maxRounds = DEFAULTS.maxRounds, revi
 export const QUOTA_NOTICE_PATTERN = /codex usage limits?/i;
 export const isQuotaNotice = (body) => typeof body === 'string' && QUOTA_NOTICE_PATTERN.test(body);
 
-// The bot's review-summary status card. It is created once per pull request and edited in place as runs progress, and
-// its "Completed" edit lands after the real signal, so it is never the signal at any status. Created at or after a
-// trigger, it does say the bot started, so `acknowledgement` reads it then. Matched on the stable machine marker.
-export const REVIEW_SUMMARY_CARD_MARKER = '<!-- codex-pull-request-review-summary -->';
-export const isReviewSummaryCard = (body) => typeof body === 'string' && body.includes(REVIEW_SUMMARY_CARD_MARKER);
+// The bot's review-summary status card and its machine state (review/bot-card.mjs).
+export { cardState, isReviewSummaryCard, REVIEW_SUMMARY_CARD_MARKER };
 
 // The bot's clean answer on a draft: a conversation comment in place of a 👍, matched on its layout, never on its words
 // anywhere: it opens with the receipt marker, the text after it opens with "Codex Review: Didn't find any major
@@ -125,18 +123,6 @@ export const isCleanReceipt = (body) => {
   return CLEAN_RECEIPT_LEAD.test(rest) && reviewedCommit(rest) !== null;
 };
 
-// The status card's machine state, `<!-- codex-review-state:v1 {...} -->`: its `code_review` names the commit the review
-// ran on, its status, and whether it left unresolved findings. Null when the card carries none or it does not parse.
-const REVIEW_STATE_PATTERN = /<!--\s*codex-review-state:v1\s+(.*?)\s*-->/su;
-export const cardState = (body) => {
-  const json = typeof body === 'string' ? body.match(REVIEW_STATE_PATTERN)?.[1] : null;
-  if (!json) return null;
-  try {
-    return JSON.parse(json);
-  } catch {
-    return null;
-  }
-};
 
 // Whether the reviewer's newest status card says its code review of `commit` completed with no unresolved finding. The
 // card vouches for `comment` only when it was last updated at or after `since` and no earlier than that comment: a card

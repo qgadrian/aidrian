@@ -30,6 +30,15 @@
 //      and nothing is owed. A waiver above low through an accepted residual, on any pass record, keeps it off too, also
 //      after the waiver ends. A reviewer's output cannot end that hold; a listing of the finding's title and file as
 //      fixed does (settled.mjs heldWaiver).
+//      `round_limit` on exactly the head counts in place of `received` only with a judge's `waive` verdict that stands for
+//      that head under the unattended waiver (lib/review/waiver-stand.mjs waivedReview): the team's
+//      `github.unattendedWaiver.allow` on both branches, read with the policies above, and this machine's switch; every
+//      finding open at the cap a local reviewer's of medium severity or lower and no security finding; the judge in the
+//      recording session's dispatch log; under a project run, fewer than WAIVED_MERGES waived merges; and the review
+//      bot's pass of exactly the head, read in the review trail, attended or not. A verdict never stands in for the bot.
+//      A sign-off the Human owes on the head, found before any verdict is read, stops as merge trust does: reason
+//      `trust`, `trust: "signoff"`, naming the flow and the class of the decision. The closing-word check holds a
+//      waived merge too, and comes first.
 //      A `none_needed` outcome on exactly that head counts only by pr-auto-merge-docs.mjs noneNeededProblem: its plan
 //      reasons are exactly "only files that cannot change behaviour", at depth `none`; `github.autoMerge.unreviewedPaths` is a non-empty
 //      list with no error on both the default branch and the base, and names every changed file on each, as the whole path
@@ -40,34 +49,60 @@
 //      fixture, or golden file; and every file still at the head is a regular file there, read from the head's tree:
 //      no symbolic link and no submodule. Every list is read from GitHub, never the working copy, so a pull request
 //      cannot widen what lets it through. Any other `none_needed` waits for the Human.
+//   then closes, only for a session no Human attends whose unattended mark names a project run's issue
+//      (closing-words.mjs runClosingContext): the pull request's title, body, and every commit message, read through the
+//      forge at exactly the head, name no issue but that one after a closing word, and the title no other key of a team
+//      the run knows (closingProblem). A mark it cannot read names no issue, so any counts. Computed from the final
+//      review verdict, after every check before it.
+//   8. trust, only for a session no Human attends (its unattended mark): the record is this machine's word, which a
+//      project run's confined session can write, so the merge also rests on what no such session writes
+//      (lib/review/merge-trust.mjs): the default branch's `github.reviewer` bot passed exactly the head on GitHub, read in
+//      one call (the forge's reviewTrail), whatever the record's outcome, and the sign-off store holds the Human's
+//      sign-off on exactly the head of every flow the record names for it and every flow the changed files, as GitHub
+//      lists them, may select (flowsFloor). With no bot set, it is off. Its reason is `trust`. An attended run reads none.
 // gh reads, each through the forge facade (lib/forges): one `gh pr view` for the number, head, base, author, URL, files,
 // and reviews; `gh api repos/<repo>` for the default branch; each branch's folder override and config.json through the
 // contents API, at `refs/heads/<branch>` (once when the base is the default branch); and, only when the team, the checks,
 // the paths, and the machine all allow it, `gh api user` for the login, then the pull request's three comment lists.
 // When the view lists fewer files than it counts, and the team and the checks allow it, the paged file list and then the
 // pull request's head again, before the login. Then, with a whole list, the default branch's knowledge folder beside its
-// config.json and each `.json` index in it (startDocs).
+// config.json and each `.json` index in it (startDocs). Last, once, the review trail: for a judge's verdict at the round
+// cap under the unattended waiver, and for a session no Human attends when every other check allows it.
 // The `none_needed` route of the review check reads the head's tree too, one folder at a time, after every other check
 // of that route passed; the two configs above hold its lists.
 // Every `gh api` call names the host of the pull request's URL. A gh failure prints gh's last line of stderr.
 // stdout: one line, or with --json { effective, reason, why, allow, local, strategy, deleteBranch, deleteWorktree, pr, head,
-// repo, base }: `why` is the off line's sentence, null when on; `allow` is true only when both branches allow it, and the
-// other team values are the default branch's.
+// repo, base, waived?, trust?, flow?, signoffClass? }: `why` is the off line's sentence, null when on; `allow` is true only when both branches allow it, and the
+// other team values are the default branch's; `waived`, only when the review check passed on a judge's verdict at the
+// round cap, is true, as the plain line says too; `trust`, only with the reason `trust`, is `bot` or `signoff`, which half
+// of merge trust is missing, as the plain line names it too; with `signoff`, `flow` names the flow and `signoffClass`
+// is `security` or `product` (signoffClassOf).
 // When the reason is local and the local file has errors, they go to stderr.
 // Exit 0 on, 1 off, 3 error (an argument, a gh read, or a pull request gh describes only in part).
 // A failed read of the full file list, or of the head after it, is off (paths): the paths check names it.
 
 import { configFromText, loadConfig, resolveAutoMerge, stateDirProblem } from './config.mjs';
 import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
-import { runGit } from './git.mjs';
+import { knownPrefix } from './git.mjs';
 import { indexedAlways } from './knowledge.mjs';
 import { noneNeededProblem, RELEASE_SCRIPT, startLoadProblem, startUnreadable } from './pr-auto-merge-docs.mjs';
-import { configPathIn, GUARDED_PATHS, isPluginRepository, knowledgeIn, mayFollowTeamDefault, PLUGIN_REPOSITORY_PATHS, POLICY_PATHS } from './project.mjs';
+import { configPathIn, GUARDED_PATHS, isPluginRepository, knowledgeIn, mayFollowTeamDefault, PLUGIN_REPOSITORY_PATHS, POLICY_PATHS, trailPaths } from './project.mjs';
+import { hostOf } from './remotes.mjs';
 import { prNumber, repoName } from './review-gate.mjs';
 import { isFindingId } from './review/findings.mjs';
+import { detectHost, sessionIdentity } from './hosts/index.mjs';
+import { readHumanSignoffs, trustVerdict } from './review/merge-trust.mjs';
+import { closingContextOf, closingTextsProblem, markOnce } from './closing-words.mjs';
+import { driverHold } from './run-driver.mjs';
+import { readUnattendedMark } from './unattended-mark.mjs';
 import { heldWaiver } from './review/settled.mjs';
 import { owed } from './review/state.mjs';
+import { waiverKind } from './review/waiver.mjs';
+import { runOf, waivedReview } from './review/waiver-stand.mjs';
 import { recordFor, scoped } from './rules/github/merge-review.mjs';
+
+// Whether no Human attends `session`: its unattended mark, a pending or unreadable one included, or its driver mark.
+const heldSession = (session, options = {}) => (readUnattendedMark(session, options) ?? driverHold(session, options)) !== null;
 
 export const VIEW_FIELDS = 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews';
 const SHA = /^[0-9a-f]{40}$/iu;
@@ -96,10 +131,7 @@ export function parseArgs(argv) {
 export function readView(view) {
   const { number, headRefOid: head, baseRefName: base, url, files, changedFiles, reviewDecision, latestReviews } = view ?? {};
   const author = view?.author?.login;
-  let host = null;
-  try {
-    host = new URL(url).hostname || null;
-  } catch {}
+  const host = hostOf(url);
   const repo = typeof url === 'string' ? repoName(url) : null;
   if (!Number.isInteger(number) || typeof base !== 'string' || base === '' || typeof author !== 'string' || author === '' || !host || !repo) {
     return 'gh returned no number, base branch, author, or URL for the pull request';
@@ -194,17 +226,78 @@ export function startDocs(forge, pr, branch, configFile, prefix = '') {
 // folder the pointer file names; and each config's errors, one line each, whose keys then hold their defaults (the
 // same list when the base is the default branch), and the config.json path the default branch's read located, from the
 // top of the repository. Read in this order: the default branch, its config, then the base's
-// config, each config by branchConfig's reads. `pr` is { repo, host, base }. Throws as defaultBranch and branchConfig do.
+// config, each config by branchConfig's reads. `pr` is { repo, host, base }; a null `base` is the default branch, for a
+// reader with no pull request (lib/solo.mjs). Throws as defaultBranch and branchConfig do.
 export function branchPolicies(forge, pr, prefix = '') {
   const seen = [];
   const policyErrors = [];
   const main = defaultBranch(forge, pr);
+  const base = pr.base ?? main;
   const policy = branchConfig(forge, pr, main, prefix, { seen, parse: (text, file) => configFromText(text, file, policyErrors) });
   // branchConfig reads the located config.json last.
   const configFile = seen.at(-1);
-  const baseErrors = pr.base === main ? policyErrors : [];
-  const basePolicy = pr.base === main ? policy : branchConfig(forge, pr, pr.base, prefix, { seen, parse: (text, file) => configFromText(text, file, baseErrors) });
+  const baseErrors = base === main ? policyErrors : [];
+  const basePolicy = base === main ? policy : branchConfig(forge, pr, base, prefix, { seen, parse: (text, file) => configFromText(text, file, baseErrors) });
   return { main, policy, basePolicy, policyFiles: [...new Set(seen)], policyErrors, baseErrors, configFile };
+}
+
+// The paths a review trail reads each branch's policy files at (project.mjs trailPaths), for the merge guard.
+export { trailPaths };
+
+// branchPolicies' answer from a review trail's branch files, with no further read, or null when the trail cannot stand
+// in for those reads: a branch it names no name for, a file it gave only in part, or a pointer that names another
+// folder than the default one, whose config.json the trail did not read. `pr` is { repo, base }.
+export function trailPolicies(trail, pr, prefix = '') {
+  const { default: main, base } = trail?.branches ?? {};
+  if (typeof main?.name !== 'string' || main.name === '') return null;
+  const branch = pr.base ?? main.name;
+  if (branch !== main.name && base?.name !== branch) return null;
+  const paths = trailPaths(prefix);
+  const configOf = (files, errors, seen) => {
+    const read = (name) => {
+      const file = `${prefix}${name}`;
+      seen.push(file);
+      const text = { [paths.pointer]: files.pointer, [paths.config]: files.config }[file];
+      if (text === undefined || text === false) throw new TrailMiss();
+      return text;
+    };
+    const file = configPathIn(read);
+    return configFromText(read(file), file, errors);
+  };
+  const seen = [];
+  const policyErrors = [];
+  try {
+    const policy = configOf(main, policyErrors, seen);
+    const configFile = seen.at(-1);
+    const baseErrors = branch === main.name ? policyErrors : [];
+    const basePolicy = branch === main.name ? policy : configOf(base, baseErrors, seen);
+    return { main: main.name, policy, basePolicy, policyFiles: [...new Set(seen)], policyErrors, baseErrors, configFile };
+  } catch (error) {
+    if (error instanceof TrailMiss) return null;
+    throw error;
+  }
+}
+class TrailMiss extends Error {}
+
+// startDocs' answer from a review trail's knowledge folder on the default branch, read beside `configFile` when that is
+// the default folder's, or null when the trail did not read that folder.
+export function trailDocs(trail, configFile, prefix = '') {
+  const folder = knowledgeIn(configFile);
+  if (folder !== trailPaths(prefix).knowledge) return null;
+  const listing = trail?.branches?.default?.knowledge;
+  if (listing === null) return { docs: [], folder };
+  if (!Array.isArray(listing)) return `the review trail gave no listing of ${folder}`;
+  const docs = [];
+  for (const entry of listing.filter((each) => each?.type === 'blob' && typeof each.name === 'string' && each.name.endsWith('.json')).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    const file = `${folder}/${entry.name}`;
+    if (typeof entry.text !== 'string') return `the review trail gave only part of ${file}`;
+    try {
+      docs.push(...indexedAlways(entry.text, file).map((doc) => `${prefix}${doc}`));
+    } catch (error) {
+      return error.message;
+    }
+  }
+  return { docs, folder };
 }
 
 // What the `none_needed` route of the review check reads from the two branches' configs (pr-auto-merge-docs.mjs
@@ -222,6 +315,10 @@ function unreviewedLists({ main, policy, basePolicy, policyErrors, baseErrors },
 // The branches whose `github.<key>.allow` is not true, the default branch first, each once: empty when both allow it.
 export const refusingBranches = ({ main, policy, basePolicy }, base, key) =>
   [...new Set([[main, policy.github[key]], [base, basePolicy.github[key]]].filter(([, each]) => each?.allow !== true).map(([name]) => name))];
+
+// Whether the team runs the project solo (config.json `solo`): true only when the default branch and the base both commit
+// it true, read as `allow` is, never from the working copy. A value that fails its check reads as the default, false.
+export const soloOn = ({ policy, basePolicy }) => policy.solo === true && basePolicy.solo === true;
 
 // Whether the team lets a guarded path through the paths gate: true only when the default branch and the base both
 // commit `github.autoMerge.includeGuardedPaths` true, read as `allow` is, never from the working copy.
@@ -379,10 +476,16 @@ export function checksProblem({ github: policy, state }, working, where) {
 
 const cleanup = (team) => `${team.deleteBranch ? 'delete' : 'keep'} the branch, ${team.deleteWorktree ? 'delete' : 'keep'} the worktree`;
 
-// The CLI body. `forge` is the test seam: the forge facade (lib/forges), whose methods throw as gh does.
-export function runAutoMerge(argv, project, { forge = forgeFor(project.root) } = {}) {
+// The CLI body. `forge` is the test seam: the forge facade (lib/forges), whose methods throw as gh does. `unattended`
+// says whether no Human attends the session that runs it: its unattended mark, by the session id its host gives the
+// command (hosts/index.mjs sessionIdentity), a pending or unreadable mark included. `run` gives the project run that
+// mark names (waiver-stand.mjs runOf), for the run's budget of waived merges; `runHost` the host it runs under, which
+// must confirm a waiver's judge (waiver-stand.mjs judgeHostProblem); `runIssue` the issue that run holds the session to,
+// for the closing-word check (closing-words.mjs runClosingContext). Both come from one read of the mark (`mark`,
+// closing-words.mjs markOnce); a mark that cannot be read names a run whose budget cannot be counted.
+export function runAutoMerge(argv, project, { forge = forgeFor(project.root), session = sessionIdentity(process.env).session, home, unattended = () => heldSession(session, home ? { home } : {}), mark = markOnce(session, home ? { home } : {}), run = () => (mark().unreadable ? null : runOf(mark().mark)), runHost = detectHost(), runIssue = () => closingContextOf(mark(), home ? { home } : {}), out = console } = {}) {
   const fail = (message) => {
-    console.error(`aidrian pr auto-merge: ${message}`);
+    out.error(`aidrian pr auto-merge: ${message}`);
     return 3;
   };
   const { target, asJson, unknown } = parseArgs(argv);
@@ -396,8 +499,7 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root) } =
   if (typeof pr === 'string') return fail(pr);
   let team;
   // An empty prefix is the repository root, so a failed lookup is null, which the paths check refuses, never the root.
-  const shown = runGit(['rev-parse', '--show-prefix'], project.root);
-  const prefix = shown.status === 0 ? shown.stdout.trim() : null;
+  const prefix = knownPrefix(project.root);
   let refusing;
   let main;
   let policy;
@@ -420,6 +522,12 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root) } =
   let { effective, reason } = resolveAutoMerge({ autoMerge: team }, local);
   // The plugin's own repository guards its release script too (PLUGIN_REPOSITORY_PATHS); no other project does.
   const pluginRepository = isPluginRepository(project);
+  // Which half of merge trust is missing, `bot` or `signoff`, when the reason is `trust`; else null.
+  let trust = null;
+  // With `trust` "signoff": the flow whose sign-off is missing, and the class of the decision it is for the Human.
+  let signoff = null;
+  // Whether the review check passed on a judge's verdict at the round cap.
+  let waived = false;
   let why = reason === 'team'
     ? `the team does not allow it (github.autoMerge.allow on ${pr.repo} ${refusing.join(' and ')})`
     : reason === 'local' ? `this machine has not opted in (github.autoMerge in ${project.paths.local})` : null;
@@ -463,21 +571,123 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root) } =
         }
       };
       const unreviewed = { files: listed.files, prefix, review: policy.review, errors: policies.policyErrors, ...unreviewedLists(policies, pr), startDocs: loaded, tree, pluginRepository };
-      const problem = changesRequested(pr) ?? reviewProblem(scoped(recordFor(project, pr.number, pr.repo), project, pr.repo), pr.head, unreviewed);
+      const state = scoped(recordFor(project, pr.number, pr.repo), project, pr.repo);
+      const changes = changesRequested(pr);
+      let problem = changes ?? reviewProblem(state, pr.head, unreviewed);
+      // A sign-off of the Human's that a judge's verdict would otherwise need: merge trust's `signoff` stop.
+      let owedSignoff = null;
+      // The review trail, read at most once: for a verdict's bot check and for merge trust.
+      let trail = null;
+      const readTrail = () => (trail ??= forge.reviewTrail(pr.repo, pr.number, { host: pr.host, paths: trailPaths(prefix) }));
+      if (!outsider && !changes && problem && waiverKind(state, pr.head) === 'round_cap') {
+        let stand;
+        try {
+          stand = waivedReview({
+            project, config: loadConfig(project).config, state, pr: pr.number, head: pr.head, policies, repo: pr.repo, host: pr.host, base: pr.base, prefix, trail: readTrail, run: run(), runHost,
+          });
+        } catch (error) {
+          return fail(`could not read the review trail of #${pr.number} with gh (${ghError(error)})`);
+        }
+        if (stand.waived) [problem, waived] = [null, true];
+        // A sign-off the Human owes on the head, found before any verdict is read, stops as merge trust does, with its
+        // flow and class, so a run parks it as a decision for the Human.
+        else if (stand.kind === 'signoff') {
+          [problem, owedSignoff] = [null, stand.why];
+          const unsigned = stand.unsigned ?? [];
+          signoff = { flow: unsigned[0] ?? null, signoffClass: signoffClassOf(policy, unsigned) };
+        } else problem = `${problem}, and no judge's verdict lets it merge: ${stand.why}`;
+      }
+      // The closing words of a project run's issue session, from the final review verdict: read only when every check
+      // before them allows it, a review a judge's verdict waived included. One read of the mark gives the run and its
+      // issue.
+      const context = outsider || problem ? undefined : runIssue();
+      let closing = null;
+      if (context !== undefined && unattended()) {
+        try {
+          closing = closingProblem(forge, pr, context);
+        } catch (error) {
+          return fail(error.message);
+        }
+      }
       if (outsider) [effective, reason, why] = [false, 'outsider', `${outsider} commented, and is no member of the repository`];
       else if (problem) [effective, reason, why] = [false, 'review', problem];
+      // Before merge trust, as for any merge: a pull request that would close another issue stops on that first.
+      else if (closing) [effective, reason, why] = [false, 'closes', closing];
+      else if (owedSignoff) [effective, reason, why, trust] = [false, 'trust', owedSignoff, 'signoff'];
+      else if (unattended()) {
+        // The record is this machine's word, which a confined session can write: a merge no Human attends rests on the
+        // forge too. The merge guard holds the merge itself to the same.
+        try {
+          readTrail();
+        } catch (error) {
+          return fail(`could not read the review trail of #${pr.number} with gh (${ghError(error)})`);
+        }
+        const verdict = trustVerdict({
+          trail, head: pr.head, reviewer: policy.github.reviewer, files: listed.files, complete: true, configs: [policy, policies.basePolicy],
+          prefix, policyFiles, state, signoffs: readHumanSignoffs({ repo: pr.repo, pr: pr.number }),
+        });
+        if (verdict) [effective, reason, why, trust] = [false, 'trust', verdict.why, verdict.kind];
+        if (verdict?.kind === 'signoff') signoff = { flow: verdict.flow, signoffClass: signoffClassOf(policy, verdict.unsigned ?? [verdict.flow]) };
+      }
     }
   }
 
   const result = {
     effective, reason, why, allow: team.allow, local, strategy: team.strategy, deleteBranch: team.deleteBranch,
-    deleteWorktree: team.deleteWorktree, pr: pr.number, head: pr.head, repo: pr.repo, base: pr.base,
+    deleteWorktree: team.deleteWorktree, pr: pr.number, head: pr.head, repo: pr.repo, base: pr.base, ...(waived ? { waived } : {}), ...(trust ? { trust } : {}), ...(trust === 'signoff' ? signoff ?? {} : {}),
   };
-  console.log(asJson ? JSON.stringify(result)
-    : effective ? `auto-merge on for #${pr.number} at ${pr.head.slice(0, 7)}: ${team.strategy ?? 'no strategy set'}, ${cleanup(team)}`
-      : `auto-merge off for #${pr.number}: ${why}`);
+  // A trust refusal names its reason and which half is missing: the bot's verdict, or a sign-off.
+  const off = reason === 'trust' ? `auto-merge off for #${pr.number} (trust: ${trust}): ${why}` : `auto-merge off for #${pr.number}: ${why}`;
+  out.log(asJson ? JSON.stringify(result)
+    : effective ? `auto-merge on for #${pr.number} at ${pr.head.slice(0, 7)}${waived ? ' on a judge\'s verdict at the round cap' : ''}: ${team.strategy ?? 'no strategy set'}, ${cleanup(team)}` : off);
   if (reason === 'local') {
-    for (const line of project.errors.filter((each) => each.startsWith(`${project.paths.local}:`))) console.error(line);
+    for (const line of project.errors.filter((each) => each.startsWith(`${project.paths.local}:`))) out.error(line);
   }
   return effective ? 0 : 1;
+}
+
+// --- The closing words of a project run's issue session (reason `closes`, lib/closing-words.mjs) ---
+
+// Why the title, body, or a commit of the pull request `pr` ({ repo, host, number, head }) would close, or its title link,
+// an issue other than the run's own, by `context` { own, prefixes } (closing-words.mjs runClosingContext), or null. Read
+// through the forge: the pull request, at exactly `head`, then its commits, which must be all of them: GitHub lists at
+// most 250. Throws, naming the read, when gh fails or the head moved during the read: the caller exits 3, and the
+// stop's command waits for a settled head rather than refuse on a race.
+export function closingProblem(forge, pr, context) {
+  const { repo, host, number, head } = pr;
+  let pull;
+  let commits;
+  try {
+    pull = forge.pull(repo, number, { host });
+  } catch (error) {
+    throw new Error(`could not read the title and body of #${number} with gh (${ghError(error)})`);
+  }
+  if (pull?.head?.sha !== head) throw new Error(`the head of #${number} moved from ${head.slice(0, 7)} to ${String(pull?.head?.sha ?? 'none').slice(0, 7)} while the gate read its title and body`);
+  if (typeof pull.title !== 'string' || (pull.body !== null && typeof pull.body !== 'string') || !Number.isInteger(pull.commits)) return `gh returned no title, body, or commit count for #${number}`;
+  try {
+    commits = forge.changeCommits(repo, number, { host });
+  } catch (error) {
+    throw new Error(`could not read the commits of #${number} with gh (${ghError(error)})`);
+  }
+  if (!Array.isArray(commits) || commits.length !== pull.commits) return `gh listed ${Array.isArray(commits) ? commits.length : 'none'} of its ${pull.commits} commits, and GitHub lists at most 250, so a closing word may hide in one it did not list`;
+  const texts = [{ where: 'its title', text: pull.title, title: true }, { where: 'its body', text: pull.body ?? '' }];
+  for (const commit of commits) {
+    const message = commit?.commit?.message;
+    if (typeof message !== 'string') return `gh returned a commit of #${number} with no message`;
+    texts.push({ where: `commit ${String(commit.sha ?? '').slice(0, 7) || 'with no SHA'}`, text: message });
+  }
+  return closingTextsProblem(texts, context, pr);
+}
+
+// The class of the decision the missing sign-offs of `flows` are for the Human (`aidrian project stop-action` names it):
+// `security` when the default branch's config, `policy`, has any of them a security sign-off, a flow whose id holds the
+// word `security` or whose `require` names the security-engineer agent; `product` otherwise, a flow it does not define
+// included. A single flow id is read as a list of one.
+export function signoffClassOf(policy, flows) {
+  const security = (flow) => {
+    if (typeof flow !== 'string') return false;
+    const defined = policy?.review?.flows?.[flow];
+    return flow.split('-').includes('security') || (Array.isArray(defined?.require) && defined.require.includes('agent:security-engineer'));
+  };
+  return (Array.isArray(flows) ? flows : [flows]).some(security) ? 'security' : 'product';
 }

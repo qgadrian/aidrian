@@ -294,7 +294,14 @@ test('gh api merges are read: a PUT or POST to pulls/<n>/merge', (t) => {
   assert.equal(r.run('gh api repos/acme/notes/pulls/5/merge'), null, 'a GET reads whether it merged');
   assert.equal(r.run('gh api -X PUT repos/other/repo/pulls/5/merge'), null, 'another repository');
   const read = (command) => readMerge(readInvocation(lexCommand(command)[0]), {});
-  assert.deepEqual(read(`gh api -X PUT repos/acme/notes/pulls/5/merge -f sha=${HEAD}`), { pr: 5, head: HEAD, target: null, repo: 'acme/notes' });
+  assert.deepEqual(read(`gh api -X PUT repos/acme/notes/pulls/5/merge -f sha=${HEAD}`), { pr: 5, head: HEAD, target: null, repo: 'acme/notes', text: { subject: null, body: null, unreadable: false } });
+  // The merge commit's own subject and body, for the closing-word check; a field from a file or a variable is unreadable.
+  assert.deepEqual(read(`gh api -X PUT repos/acme/notes/pulls/5/merge -f commit_title='Fixes ENG-9' -f commit_message=body`).text, { subject: 'Fixes ENG-9', body: 'body', unreadable: false });
+  assert.equal(read('gh api -X PUT repos/acme/notes/pulls/5/merge -F commit_message=@msg.txt').text.unreadable, true);
+  assert.equal(read('gh api -X PUT repos/acme/notes/pulls/5/merge -f commit_message="$M"').text.unreadable, true);
+  assert.equal(read('gh api -X PUT repos/acme/notes/pulls/5/merge --input body.json').text.unreadable, true);
+  assert.deepEqual(read(`gh pr merge 5 -t 'Fixes ENG-9' -b 'x' --match-head-commit ${HEAD}`).text, { subject: 'Fixes ENG-9', body: 'x', unreadable: false });
+  assert.equal(read(`gh pr merge 5 -F body.md --match-head-commit ${HEAD}`).text.unreadable, true);
   assert.equal(read('gh pr view 5'), null);
 });
 

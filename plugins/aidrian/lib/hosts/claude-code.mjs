@@ -3,12 +3,15 @@
 // docs/providers/adding-a-host.md lists the fields; docs/providers/claude-code.md says what was checked on this host.
 
 import { lstatSync, realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
 import path from 'node:path';
 
-import { attachLine, findLine, nameMatcher, startBackground, stopBackground, stopLine, stopOwnBackground } from './claude-code-background.mjs';
+import { attachLine, findLine, findSessions, nameMatcher, sessionEnded, sessionFinished, startBackground, startProject, stopBackground, stopLine, stopOwnBackground } from './claude-code-background.mjs';
 import { configDir } from './claude-code-config.mjs';
 import { attended, END_SIGNAL, hasClient, hostProcess, isWrappedHost, PROGRAM } from './claude-code-terminal.mjs';
 import modelPrices from './claude-code-prices.mjs';
+import { transcriptLimit } from './claude-code-limit.mjs';
+import { accessProblem, cloneProblem, confineDomains, confineReads, limitContinueProblem, nestedProtected, PLACEHOLDERS, PROTECTED_PATHS, sessionNote, writeEnvFile } from './claude-code-sandbox.mjs';
 import { responseObjects } from './response.mjs';
 
 const MODEL_CHOICES = { model: ['sonnet', 'opus', 'haiku', 'fable'], effort: ['low', 'medium', 'high', 'xhigh', 'max'] };
@@ -81,6 +84,43 @@ const OPAQUE_SHELL_TOOLS = Object.freeze(['PowerShell']);
 // `claude mcp serve` runs Claude Code as a server whose tools a client calls, so it counts as a start.
 const NO_SESSION = new Set(['agents', 'attach', 'stop', 'kill', 'logs', 'doctor', 'update', 'install', 'config', 'mcp', 'plugin', 'plugins', 'setup-token', 'auth', 'migrate-installer']);
 const INFO = new Set(['-v', '-V', '--version', '-h', '--help']);
+// The standard names of a hook payload (hookInput), before its sandbox escape is read.
+function mapInput(input) {
+  if (shellCommand(input)) return { ...input, tool_name: 'Bash', raw_tool_name: input.tool_name };
+  if (shellWatch(input)) return { ...input, permission_tool_name: 'Bash' };
+  const name = toolName(input.tool_name);
+  return name === input.tool_name ? input : { ...input, tool_name: name, raw_tool_name: input.tool_name };
+}
+
+// Its file tools that read, and the path each names (code.claude.com/docs/en/tools-reference): Read's `file_path`, Grep's
+// and Glob's `path`, the call's folder when unset, and Glob's `pattern` when it is absolute, up to its first glob
+// character, and the file system's root when a `..` follows that. They run outside the sandbox, so the agent gate hook holds a confined session's reads (lib/confine-guard.mjs).
+export const READ_TOOLS = Object.freeze(['Read', 'Grep', 'Glob', 'NotebookRead', 'LS']);
+function fileRead(tool, given) {
+  if (tool === 'Read' || tool === 'NotebookRead') return [given.file_path ?? given.notebook_path ?? null];
+  const base = typeof given.path === 'string' ? given.path : null;
+  const named = [base];
+  if (tool === 'Glob' && typeof given.pattern === 'string') {
+    // The pattern's literal folder: up to the last `/` before its first glob character, `..` included, from its `path`
+    // or the call's folder when it is relative.
+    const at = given.pattern.search(/[*?[{]/u);
+    const literal = at < 0 ? given.pattern : given.pattern.slice(0, given.pattern.lastIndexOf('/', at) + 1);
+    const expanded = filePath(literal);
+    named.push(path.isAbsolute(expanded) || base === null ? expanded || null : path.join(filePath(base), expanded));
+    // A `..` segment past that folder, in a path or a brace list, climbs from wherever a glob matched, so no folder
+    // bounds it: the read reaches the file system's root, which holds every store a confined session may not read.
+    if (/(?:^|[/{,])\.\.(?:[/},]|$)/u.test(given.pattern.slice(literal.length))) named.push(path.parse(process.cwd()).root);
+  }
+  return named;
+}
+
+// A path its file tools name, as they resolve it: a leading `~` or `~/` is the home folder of the user the host runs as
+// (live check 23). Every other path is as it is, relative ones from the call's folder.
+function filePath(file) {
+  if (typeof file !== 'string') return file;
+  return file === '~' || file.startsWith('~/') ? path.join(homedir(), file.slice(1)) : file;
+}
+
 const startsSession = (args) => {
   const [first, second] = args.map((token) => (token.dynamic ? null : token.text));
   if (first === undefined) return true;
@@ -132,15 +172,27 @@ export default {
     return { output: parts.length ? parts.join('\n') : null, persisted: file ? { file, after } : null, finished, exitZero: true };
   },
   // `raw_tool_name` keeps what Claude Code sent, so a pattern a project wrote in that form still matches (lib/hosts/index.mjs toolNames),
-  // as `Monitor` in an agent gate does for a Monitor call read as Bash.
+  // as `Monitor` in an agent gate does for a Monitor call read as Bash. A shell call's `dangerouslyDisableSandbox`, its ask
+  // to run outside the sandbox (code.claude.com/docs/en/sandboxing), with any value but false or null, reads as the
+  // standard `sandbox_escape: true`, failing closed on a value the host may read as true.
   hookInput(input) {
-    if (shellCommand(input)) return { ...input, tool_name: 'Bash', raw_tool_name: input.tool_name };
-    if (shellWatch(input)) return { ...input, permission_tool_name: 'Bash' };
-    const name = toolName(input.tool_name);
-    return name === input.tool_name ? input : { ...input, tool_name: name, raw_tool_name: input.tool_name };
+    const mapped = mapInput(input);
+    const escape = input?.tool_input?.dangerouslyDisableSandbox;
+    return escape === undefined || escape === null || escape === false ? mapped : { ...mapped, sandbox_escape: true };
   },
   opaqueShellTools: OPAQUE_SHELL_TOOLS,
   sessionStart: { programs: ['claude'], starts: startsSession },
+  // The subcommands of its program that write its own user or project config: MCP servers, settings, and plugins, and
+  // its global options that take the next word. The agent gate hook refuses them to a session no Human attends
+  // (lib/unattended-write.mjs).
+  configCommands: {
+    programs: ['claude'],
+    subcommands: [['mcp', 'add'], ['mcp', 'add-json'], ['mcp', 'add-from-claude-desktop'], ['mcp', 'remove'], ['config', 'set'], ['config', 'add'], ['config', 'remove'], ['plugin', 'install'], ['plugin', 'marketplace', 'add']],
+    valueOptions: ['--settings', '--setting-sources', '--model', '--fallback-model', '--add-dir', '--mcp-config', '--permission-mode', '--agents', '--agent', '--session-id', '--append-system-prompt', '--system-prompt', '--allowedTools', '--allowed-tools', '--disallowedTools', '--disallowed-tools', '--output-format', '--input-format', '--plugin-dir', '-r', '--resume', '-n', '--name'],
+  },
+  fileReadTools: READ_TOOLS,
+  fileRead,
+  filePath,
   fileEditTools: ['Edit', 'Write', 'NotebookEdit'],
   fileEdit(tool, given) {
     const targets = [given.file_path ?? given.notebook_path];
@@ -149,6 +201,31 @@ export default {
     return { shape: 'notebook', file: given.notebook_path, targets };
   },
   projectFolders: { skills: '.claude/skills', agents: '.claude/agents' },
+  // The host files of a checkout a session no Human attends never writes, from its root: the settings, skills, agents,
+  // commands, hooks, scheduled work, and MCP servers a later session there would load (lib/unattended-write.mjs).
+  protectedPaths: PROTECTED_PATHS,
+  // Whether a path, by its parts from a confined clone's root, is a host file it loads from any depth: a `.claude`
+  // folder or its skills, agents, commands, hooks, workflows, or settings, or any SKILL.md (lib/unattended-write.mjs).
+  nestedProtected,
+  // The instruction files and folder it loads from the folder a session starts in and from each folder above it
+  // (code.claude.com/docs/en/memory), its own user folder, and `globalNames`, the files in that folder it loads as the
+  // user's own memory for every session wherever it starts: CLAUDE.md alone. A project run refuses a start under any
+  // other such file above its attempt's clone that a review did not see (lib/project-trust.mjs ancestorProblem).
+  instructionFiles: {
+    files: ['CLAUDE.md', 'CLAUDE.local.md', '.claude/CLAUDE.md'],
+    folders: ['.claude'],
+    userFolder: (env) => configDir(env),
+    globalNames: ['CLAUDE.md'],
+  },
+  // What a session in a linked worktree reads from the main checkout, wherever the worktree lies: the main checkout's
+  // .claude/settings.local.json (code.claude.com/docs/en/settings), and, from 2.1.277, its .claude skills, agents, and
+  // commands when the worktree has none (code.claude.com/docs/en/common-workflows, worktrees). The agent gate hook
+  // refuses their writes to a session no Human attends (lib/handoff-guard.mjs mainCheckoutWriteDenial). A project run's
+  // session works in a fresh clone, which loads none of them, so they refuse no start.
+  mainCheckoutPaths: {
+    folders: ['.claude/skills', '.claude/agents', '.claude/commands'],
+    settings: [{ file: '.claude/settings.local.json' }],
+  },
   capabilities: {
     // Reads Claude Code's transcripts (lib/transcript.mjs): cost, names reminder, session length, and attribution's model.
     // Also opts it into the review-rounds rule's reading of the Human's answers and typed grants of review rounds.
@@ -159,6 +236,10 @@ export default {
       path.join(root, '.claude/settings.json'),
       path.join(configDir(env), 'settings.json'),
     ],
+    // Its PostToolUse hook on the Agent tool writes a `dispatch` row with the agent id the tool returned for each subagent
+    // (lib/dispatch-rows.mjs dispatchRow), so a waiver's judge can be confirmed in the dispatch log
+    // (lib/review/waiver-stand.mjs judgeHostProblem).
+    judgeDispatch: true,
     // A background agent's report reaches the subagent that started it even after that subagent ended its turn: the host
     // starts it again with the report (SubagentStart fires, and the report arrives as a message), and tells the subagent's
     // own dispatcher it stopped only once it stops with no live background child. Seen on 2.1.3xx in each of the four
@@ -177,9 +258,10 @@ export default {
     // the claude process, names the session before and after it. The background route starts a new session with
     // `claude --bg` (lib/hosts/claude-code-background.mjs), in the session's own folder, under its name, agent, and
     // effort; `stopBackground` stops one the gate cannot hold to a chain floor, `stopLine` says how to stop it by hand when
-    // that failed, `findLine` how to find and stop one a start may have made that the gate cannot name, and `attachLine`
-    // and `attachCommand` say how to open one. `replaceTerminal` ends a session that handed off once its turn ends, so the
-    // shell function `aidrian shell-init` prints opens the new one in the same terminal (lib/hosts/claude-code-terminal.mjs).
+    // that failed, `findLine` how to find and stop one a start may have made that the gate cannot name, `attachLine`
+    // and `attachCommand` say how to open one, and `sessionEnded` whether `claude agents --json --all` lists a started one
+    // as done. `replaceTerminal` ends a session that handed off once its turn ends, so the shell function
+    // `aidrian shell-init` prints opens the new one in the same terminal (lib/hosts/claude-code-terminal.mjs).
     handoffContinue: {
       routes: ['clear', 'background'],
       steps: {
@@ -190,6 +272,7 @@ export default {
         session, slug, chain, env, prompt, hold, run, wait, agent: agentName(env), effort: effort(env), efforts: MODEL_CHOICES.effort,
       }),
       stopBackground: ({ id, env, run }) => stopBackground({ id, env, run }),
+      sessionEnded: ({ id, session, env, run }) => sessionEnded({ id, session, env, run }),
       stopLine,
       findLine,
       attachLine,
@@ -214,6 +297,58 @@ export default {
       // (code.claude.com/docs/en/commands) has `/clear [name]`, with the aliases `/reset` and `/new`, and `/compact [instructions]`.
       keepsArmed: (prompt) => typeof prompt === 'string' && /^\/(?:clear|reset|new|compact)(?:\s[\s\S]*)?$/u.test(prompt.trim()),
       hookHostPid: (pid = process.ppid) => (Number.isInteger(pid) && pid > 1 ? pid : null),
+    },
+    // How `aidrian project start` starts the session of one issue (lib/project-run-gate.mjs): Claude Code is `confined`,
+    // as Codex is. The session works in a fresh clone made for its attempt, never a linked worktree, whose shared .git the
+    // host's sandbox would let it write, and starts with `claude --bg --setting-sources user --settings <sandbox>
+    // --strict-mcp-config --mcp-config <servers>` (hosts/claude-code-sandbox.mjs, claude-code-background.mjs), under the
+    // name `<run> · <issue> · <attempt>`, with no agent and the driver session's permission mode and effort. A start holds
+    // the session only once the agent gate hook's beacon shows the plugin's hooks run for it, and the session's own
+    // `aidrian project confine` showed, from inside it, that the sandbox refuses what it must (confineProof). `access` halts on user
+    // settings that would weaken the sandbox or run a command outside it, this plugin not enabled for the user, any other
+    // plugin, a user skill, agent, or command with frontmatter hooks or MCP servers, an SSH origin, git's `store` helper,
+    // and a Linux without bubblewrap or socat; `cloneProblem` on such a skill, agent, or command of the clone at any
+    // depth, or a link out of one's folder; `placeholders` are the protected host files made empty before launch. `ended` counts a
+    // session the host lists as stopped or failed as ended too (sessionFinished); `find` lists the background sessions in a
+    // folder under an exact name, for a start whose outcome was unknown. `verified`: the launch, listing, and stop are the
+    // background route's, checked live on 2.1.326; the sandbox settings, their key names, and the beacon under
+    // --setting-sources user come from the host's docs and fixtures, with no live run, so a run starts it only where the
+    // default branch sets projectRun.unverifiedHosts (docs/providers/claude-code.md#project-start lists the live checks).
+    projectStart: {
+      verified: 'unverified',
+      evidence: 'fixtures and the host docs; no live run',
+      confined: true,
+      access: ({ env, home, guarded, pushUrl, platform, allowed, helpers }) => accessProblem({ env, home, guarded, pushUrl, platform, allowed, helpers }),
+      cloneProblem: ({ work, allowed }) => cloneProblem({ work, allowed }),
+      // Whether a driver on this host would carry on by itself after a usage limit (aidrian project preflight).
+      limitContinue: ({ env, home }) => limitContinueProblem({ env, home }),
+      placeholders: PLACEHOLDERS,
+      sessionNote,
+      // The package managers' caches reach the session's sandboxed commands alone: the SessionStart hook appends them to
+      // the file the host sources before each Bash command, never the settings' `env`, which its hooks and MCP servers get.
+      shellEnv: ({ env, vars }) => writeEnvFile(env.CLAUDE_ENV_FILE, vars),
+      // Each start proves, from inside the session, that the sandbox holds (lib/project-confine.mjs): its first call runs
+      // `aidrian project confine`, which tries what the sandbox must refuse, and the start holds the session only once the
+      // gate confirmed the verdict (`confined`). `confineReads` are the credential stores the proof tries to read.
+      confineProof: true,
+      confineReads: ({ env, home }) => confineReads({ env, home }),
+      // The allowedDomains the user's and the organization's settings add, which the proof's unlisted host stays outside.
+      confineDomains: ({ env, home, platform }) => confineDomains({ env, home, platform }),
+      start: ({ session, cwd, name, prompt, env, hold, identify, beacon, confined, git, grants, domains, main, mainGit, tokens, guarded, mcp, home, platform, run, wait }) => startProject({
+        session, cwd, name, prompt, env, hold, identify, beacon, confined, sandbox: { git, grants, domains, main, mainGit, tokens, guarded }, mcp, home, platform, run, wait, effort: effort(env), efforts: MODEL_CHOICES.effort,
+      }),
+      stop: ({ id, env, run }) => stopBackground({ id, env, run }),
+      ended: ({ id, session, env, run }) => sessionFinished({ id, session, env, run }),
+      find: ({ cwd, name, env, run }) => findSessions({ cwd, name, env, run }),
+      // Whether the session last met a usage or rate limit, from the host's own API error entry at the end of its
+      // transcript (hosts/claude-code-limit.mjs); unverified, as no live session has shown that entry.
+      limitOf: ({ session, cwd, env, home, now }) => transcriptLimit({ session, cwd, env, home, now }),
+      // The session starts with autoContinueAtUsageLimit (claude-code-sandbox.mjs sandboxSettings), so the host waits
+      // out a usage limit and goes on with its work: `wait` keeps a limited session it still lists running. Unverified
+      // on a background session (docs/providers/claude-code.md#project-start lists the live check).
+      continuesAtLimit: true,
+      attachLine,
+      stopLine,
     },
   },
 };

@@ -35,7 +35,7 @@ Every test file imports `scripts/test-state.mjs` first, and `test/test-state.tes
 It gives the run its own state folder, temporary folder, and fake `gh`, so a file run alone, `node --test test/<name>.test.mjs`,
 writes no fixture lesson or state folder into this machine's own state folder.
 The unattended marks and chain floors are read in the user's own `~/.local/state/aidrian` too, which no variable moves,
-so a test call that reads them, such as `continueBrief` or `readUnattendedMark`, passes `home`, as `TEST_HOME` from
+so a test call that reads them, such as `continueBrief`, `routeOf`, or `readUnattendedMark`, passes `home`, as `TEST_HOME` from
 `test/fixtures/test-home.mjs`, and `test/unattended-mark.test.mjs` fails on one that does not.
 A gate or hook a test starts as its own process, such as `aidrian handoff continue` or the Stop hook, still reads the
 user's own folder, so a test runs the gate in process where the command line is not what it checks.

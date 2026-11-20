@@ -18,6 +18,7 @@ import { nameMatcher, stopOwnBackground } from '../plugins/aidrian/lib/hosts/cla
 import { HOSTS } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { terminalRecordWriteDenial } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
+import { stopMarkerPath } from '../plugins/aidrian/lib/session-length.mjs';
 import { markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { shellInit } from '../plugins/aidrian/lib/shell-init.mjs';
 import { END_DELAY, endAfterTurn, endHost, NAME_BYTES, NEXT_WINDOW, readFollows, terminalFolder, writeNext } from '../plugins/aidrian/lib/terminal-replace.mjs';
@@ -189,7 +190,7 @@ test('a stop that ends the session skips the session-length reminder, though the
   });
   assert.equal(result.status, 0, 'the stop is not sent back');
   assert.doesNotMatch(`${result.stdout}${result.stderr}`, /This session is long/u, 'no session-length reminder');
-  assert.equal(existsSync(path.join(temp, `aidrian-session-length-${SESSION}`)), false, 'no session-length marker');
+  assert.equal(existsSync(stopMarkerPath(SESSION, { env })), false, 'no session-length marker');
   assert.match(readFileSync(record, 'utf8'), /^abcd1234 \d+\n$/u, 'the shell opens the session that took the work');
   assert.deepEqual(await withTimeout(exited, END_DELAY + 5000), { code: null, signal: 'SIGTERM' }, 'the session ends');
 });

@@ -2,28 +2,64 @@
 // commands. Paths are relative to `root` where a function takes one. No dependencies: this file runs from the installed
 // plugin, which has no node_modules.
 
-import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, constants, fstatSync, ftruncateSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, writeSync } from 'node:fs';
 import path from 'node:path';
 
-// The parsed JSON object at `rel`, or null with the reason added to `errors`. `scope` names `root` in that reason.
+// The largest JSON file readJson reads.
+const JSON_CAP = 16 * 1024 * 1024;
+
+// The parsed JSON object at `rel`, or null with the reason added to `errors`. `scope` names `root` in that reason. The
+// file is read from one open that never waits, as on a FIFO, checked as a regular file through that open (readOnce): a
+// session may swap the file between a check by path and a read by path.
 export function readJson(root, rel, errors, scope = 'the project') {
   const file = path.join(root, rel);
-  if (!isFile(file)) {
-    errors.push(`${rel}: not found`);
+  if (linksOutside(root, rel)) {
+    errors.push(isFile(file) ? `${rel}: links outside ${scope}` : `${rel}: not found`);
     return null;
   }
-  if (linksOutside(root, rel)) {
-    errors.push(`${rel}: links outside ${scope}`);
+  const read = readOnce(file, JSON_CAP);
+  if (read.text === undefined) {
+    errors.push(read.missing ? `${rel}: not found` : `${rel}: ${read.problem}`);
     return null;
   }
   try {
-    const value = JSON.parse(readFileSync(file, 'utf8'));
+    const value = JSON.parse(read.text);
     if (isObject(value)) return value;
     errors.push(`${rel}: must be a JSON object`);
   } catch (error) {
     errors.push(`${rel}: invalid JSON (${error.message})`);
   }
   return null;
+}
+
+// The text of `file`, following a link as a plain read does, from one open that never waits, checked as a regular file
+// of at most `cap` bytes through that open: { text }, { missing: true } when nothing, or no regular file, is there, or
+// { problem }. Every hook read of a file under a folder a session may write goes through it or readSmallJson.
+export function readOnce(file, cap = JSON_CAP) {
+  let fd;
+  try {
+    fd = openSync(file, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+  } catch (error) {
+    return error.code === 'ENOENT' || error.code === 'ENOTDIR' ? { missing: true } : { problem: `cannot be read (${error.code ?? 'no code'})` };
+  }
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) return { missing: true };
+    if (stat.size > cap) return { problem: `is larger than ${cap} bytes` };
+    // A file that reports no size, as one of /proc, is read to its end, up to the cap.
+    const buffer = Buffer.alloc(stat.size > 0 ? stat.size : Math.min(cap, 64 * 1024));
+    let read = 0;
+    while (read < buffer.length) {
+      const got = readSync(fd, buffer, read, buffer.length - read, null);
+      if (got === 0) break;
+      read += got;
+    }
+    return { text: buffer.subarray(0, read).toString('utf8') };
+  } catch (error) {
+    return { problem: `cannot be read (${error.code ?? 'no code'})` };
+  } finally {
+    closeSync(fd);
+  }
 }
 
 // True when `rel`, with symlinks resolved, lies outside the folder `within` (both relative to `root`; `within` is the
@@ -146,6 +182,41 @@ export function isEntry(file) {
   } catch {
     return false;
   }
+}
+
+// Blocks this thread for `ms` milliseconds, at least 0: a pause between reads in code that runs synchronously, such as a
+// lock's poll, a host listing's retry, or a project run's wait.
+export const pauseSync = (ms) => {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, ms));
+};
+
+// The JSON objects of the last `bytes` of the regular file `file`, one a whole line, in order, read without following a
+// link: a line cut at the start of the read, or that is no JSON object, is left out. null when it cannot be read.
+export function tailObjects(file, bytes) {
+  let fd;
+  let text;
+  try {
+    fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) return null;
+    const start = Math.max(0, stat.size - bytes);
+    const buffer = Buffer.alloc(stat.size - start);
+    const read = readSync(fd, buffer, 0, buffer.length, start);
+    text = buffer.subarray(0, read).toString('utf8');
+    if (start > 0) text = text.slice(text.indexOf('\n') + 1);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+  return text.split('\n').flatMap((line) => {
+    try {
+      const value = JSON.parse(line);
+      return isObject(value) ? [value] : [];
+    } catch {
+      return [];
+    }
+  });
 }
 
 export function isObject(value) {
@@ -295,5 +366,89 @@ function classSource(body) {
     return source;
   } catch {
     return '.';
+  }
+}
+
+const OWN_FLAGS = (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+
+// Makes `dir` and every folder above it that is missing, owner-only, and returns whether `dir` is then a plain folder of
+// this process's user, not a link. Never throws.
+export function ownFolderSync(dir) {
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const stat = lstatSync(dir);
+    const uid = processUid();
+    return stat.isDirectory() && !stat.isSymbolicLink() && (!Number.isInteger(uid) || stat.uid === uid);
+  } catch {
+    return false;
+  }
+}
+
+// Opens `file` with `flags` (and O_CREAT's `mode`), never following a link and never waiting, as on a FIFO: the file
+// descriptor when it is then a regular file of this process's user with a single link, else null, with the file closed.
+// A hook's counter opens its file this way, so a planted FIFO, link, or hard link neither stalls the hook nor leads its
+// write elsewhere. Never throws.
+export function openOwnFile(file, flags, mode = 0o600) {
+  let fd;
+  try {
+    fd = openSync(file, flags | OWN_FLAGS, mode);
+    const stat = fstatSync(fd);
+    const uid = processUid();
+    if (stat.isFile() && stat.nlink === 1 && (!Number.isInteger(uid) || stat.uid === uid)) return fd;
+  } catch {
+    // Not there, not plain, or not ours.
+  }
+  if (fd !== undefined) closeSync(fd);
+  return null;
+}
+
+// The JSON object in the regular file `file`, of one link and at most `cap` bytes, read without following a link and
+// without waiting on a FIFO, or null.
+export function readSmallJson(file, cap = 64 * 1024) {
+  let fd;
+  try {
+    fd = openSync(file, constants.O_RDONLY | OWN_FLAGS);
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1 || stat.size > cap) return null;
+    const buffer = Buffer.alloc(stat.size);
+    const value = JSON.parse(buffer.subarray(0, readSync(fd, buffer, 0, stat.size, 0)).toString('utf8'));
+    return typeof value === 'object' && value !== null && !Array.isArray(value) ? value : null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+// The text of this user's own regular file `file` of one link, at most `cap` bytes, read without following a link or
+// waiting (openOwnFile), or null: a hook's marker in its counts folder.
+export function readOwnText(file, cap = 64 * 1024) {
+  const fd = openOwnFile(file, constants.O_RDONLY);
+  if (fd === null) return null;
+  try {
+    const size = Math.min(fstatSync(fd).size, cap);
+    const buffer = Buffer.alloc(size);
+    return buffer.subarray(0, readSync(fd, buffer, 0, size, 0)).toString('utf8');
+  } catch {
+    return null;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// Writes `text` to `file` in an owner-only folder of this user, a new file when `exclusive`, else replacing the text of
+// this user's own regular file there, never following a link or waiting (ownFolderSync, openOwnFile): whether it did.
+export function writeOwnText(file, text, { exclusive = false } = {}) {
+  if (!ownFolderSync(path.dirname(file))) return false;
+  const fd = openOwnFile(file, constants.O_WRONLY | constants.O_CREAT | (exclusive ? constants.O_EXCL : 0));
+  if (fd === null) return false;
+  try {
+    ftruncateSync(fd, 0);
+    writeSync(fd, text, 0);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    closeSync(fd);
   }
 }

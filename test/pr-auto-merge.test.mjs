@@ -9,10 +9,13 @@ import test from 'node:test';
 import { commands } from '../plugins/aidrian/lib/pr.mjs';
 import { computeVerdict } from '../plugins/aidrian/lib/pr-checks.mjs';
 import { pathsProblem, reviewProblem, runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
+import { markOnce } from '../plugins/aidrian/lib/closing-words.mjs';
 import { configFromText, loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { classify, evaluateRules } from '../plugins/aidrian/lib/review/plan.mjs';
 import { emptyState, noteOutcome, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
+import { logPath } from '../plugins/aidrian/lib/dispatch-log.mjs';
+import { recordHumanSignoff, signoffFolder } from '../plugins/aidrian/lib/review/merge-trust.mjs';
 
 const HEAD = 'abcdef1234567890abcdef1234567890abcdef12';
 const OLD = '1234567890abcdef1234567890abcdef12345678';
@@ -1416,4 +1419,275 @@ test('reviewProblem holds on a waiver whose record holds no text, and names the 
   state.passes['engine:codex-local'].carried[0].ended = true;
   state.passes['agent:code-reviewer'] = { head, list: [{ id: 'R1-9', file: 'src/a.js', state: 'fixed' }, { file: 'src/a.js', state: 'fixed' }] };
   assert.match(reviewProblem(state, head), /finding R1-1, above low severity and no listing holds it fixed/u, 'a listing of another id, or of none, ends nothing');
+});
+
+// The closing-word refusal (reason `closes`): a project run's issue session, whose unattended mark names its issue,
+// merges only a pull request whose title, body, and commits close, and whose title links, no other issue of a team the
+// run knows (lib/closing-words.mjs).
+const TEAM_KEYS = { own: 'ENG-1', prefixes: new Set(['ENG', 'TAX']) };
+function closing(t, { title = 'feat(export): add CSV export', body = 'Fixes ENG-1', messages = ['feat: export'], context = TEAM_KEYS, runIssue = () => context, commits, pullHead = HEAD } = {}) {
+  const r = repo(t);
+  r.record((state) => finished(state));
+  const { forge, calls } = fakeForge();
+  const listed = messages.map((message, i) => ({ sha: `${i}`.repeat(40), commit: { message } }));
+  forge.pull = (repo, n, { host } = {}) => (calls.push(['pull', repo, n, host]), { head: { sha: pullHead }, title, body, commits: commits ?? listed.length });
+  forge.changeCommits = (repo, n, { host } = {}) => (calls.push(['changeCommits', repo, n, host]), listed);
+  forge.reviewTrail = () => {
+    throw Object.assign(new Error('trail'), { stderr: 'past the closing words\n' });
+  };
+  const out = [];
+  const err = [];
+  const code = runAutoMerge(['7', '--json'], r.project, { forge, unattended: () => true, runIssue, out: { log: (line) => out.push(line), error: (line) => err.push(line) } });
+  return { code, out, err, calls, reason: out.length ? JSON.parse(out[0]).reason : null, why: out.length ? JSON.parse(out[0]).why : null };
+}
+const passes = (result, label) => {
+  assert.equal(result.code, 3, label);
+  assert.match(result.err.join('\n'), /could not read the review trail of #7 with gh \(past the closing words\)/u, label);
+};
+
+test('closes: an issue session\'s pull request that closes only its own issue goes on to merge trust', (t) => {
+  for (const given of [
+    {},
+    { body: 'Fixes eng-1 and refs ENG-2', messages: ['fix(api): handle ENG-3 in the export', 'Resolves: ENG-1'] },
+    { context: { own: '5', prefixes: new Set() }, body: 'Closes #5, and https://github.com/acme/notes/issues/5' },
+    // Tokens shaped like keys of no team the run knows, and a list a line break ends.
+    { title: 'fix: utf-8 BOM', messages: ['fix: x86-64 build', 'Fixed SHA-256 check', 'fix: e2e-2 flake'] },
+    { body: 'Closes ENG-1\n\nTAX-13 covers the rest' },
+    { title: 'feat(ENG-1): export' },
+    { title: 'ENG-1-export: x', body: 'Fixes ENG-1-export\r\nENG-9 is next' },
+  ]) {
+    const result = closing(t, given);
+    passes(result, JSON.stringify(given, (k, v) => (v instanceof Set ? [...v] : v)));
+    assert.deepEqual(result.calls.filter((call) => ['pull', 'changeCommits'].includes(call[0])).map((call) => call[0]), ['pull', 'changeCommits']);
+  }
+});
+
+test('closes: a title, body, or commit that closes, or a title that names, another issue of a known team is off (closes), before merge trust', (t) => {
+  for (const [given, where] of [
+    [{ body: 'Fixes ENG-1, ENG-9' }, /its body says "Fixes ENG-9"/u],
+    [{ title: 'fix: export (closes ENG-4)' }, /its title says "closes ENG-4"/u],
+    [{ messages: ['feat: export', 'Completes TAX-2'] }, /commit 1111111 says "Completes TAX-2"/u],
+    [{ body: 'Resolves https://linear.app/acme/issue/ENG-7/slug' }, /ENG-7/u],
+    [{ context: { own: '5', prefixes: new Set() }, body: 'Closes other/repo#5' }, /"Closes other\/repo#5"/u],
+    [{ body: 'Fixes #3' }, /"Fixes #3"/u],
+    [{ body: 'Fixes https://example.com/x, ENG-9' }, /"Fixes ENG-9"/u],
+    // Any white space but a line break separates: a no-break space, an em space, a lone CR.
+    [{ body: 'Fixes ENG-9' }, /"Fixes ENG-9"/u],
+    [{ body: 'Fixes ENG-1, ENG-9' }, /"Fixes ENG-9"/u],
+    [{ body: 'Fixes\rENG-9' }, /"Fixes ENG-9"/u],
+    // Before the first reference, a line break separates too: the forge reads the word and the key on the next line.
+    [{ body: 'Fixes\nTAX-5' }, /"Fixes TAX-5"/u],
+    [{ body: 'Closes:\r\n\r\n  ENG-9 and more' }, /"Closes ENG-9"/u],
+    // A key a hyphen joins to more text still counts.
+    [{ body: 'Fixes ENG-9-export' }, /"Fixes ENG-9"/u],
+    [{ title: 'ENG-9-export: x' }, /its title names "ENG-9"/u],
+    // A key of a team the run does not know is passed over, and the list goes on.
+    [{ body: 'Fixes ACME-1, TAX-40' }, /"Fixes TAX-40"/u],
+    [{ body: 'Fixes utf-8 and TAX-40' }, /"Fixes TAX-40"/u],
+    [{ context: { own: null, prefixes: null } }, /the issue its unattended mark names, and that mark names none it can read/u],
+    [{ context: { own: 'ENG-1', prefixes: null }, title: 'fix: utf-8 BOM' }, /its title says "fix utf-8"/u],
+  ]) {
+    const result = closing(t, given);
+    assert.deepEqual([result.code, result.reason], [1, 'closes'], JSON.stringify(given));
+    assert.match(result.why, where);
+  }
+  // A key in the title links that issue, with or without a closing word.
+  const titled = closing(t, { title: 'feat: export, see TAX-12' });
+  assert.deepEqual([titled.reason, /its title names "TAX-12", which links that issue/u.test(titled.why)], ['closes', true]);
+});
+
+test('closes: a list longer than the gate reads is off; a cut commit list is off; a head that moved is an error, not a refusal', (t) => {
+  const long = closing(t, { body: `Fixes ${Array(50).fill('ENG-1').join(', ')}, ENG-9` });
+  assert.deepEqual([long.reason, /lists more than 50 references after a closing word/u.test(long.why)], ['closes', true]);
+  assert.match(closing(t, { commits: 300 }).why, /gh listed 1 of its 300 commits, and GitHub lists at most 250/u);
+  const moved = closing(t, { pullHead: OLD });
+  assert.equal(moved.code, 3, 'the stop command waits on an error');
+  assert.match(moved.err.join('\n'), /the head of #7 moved from abcdef1 to 1234567 while the gate read its title and body/u);
+});
+
+test('closes: a session no mark names an issue for, and an attended one, read no closing words', (t) => {
+  const unmarked = closing(t, { runIssue: () => undefined, body: 'Fixes ENG-9' });
+  passes(unmarked, 'unmarked');
+  assert.ok(!unmarked.calls.some((call) => call[0] === 'changeCommits'));
+  const r = repo(t);
+  r.record((state) => finished(state));
+  const { forge, calls } = fakeForge();
+  const out = [];
+  assert.equal(runAutoMerge(['7', '--json'], r.project, { forge, unattended: () => false, runIssue: () => TEAM_KEYS, out: { log: (line) => out.push(line), error: () => {} } }), 0);
+  assert.ok(!calls.some((call) => call[0] === 'pull'), 'an attended session reads no closing words');
+});
+
+// ---- a judge's verdict at the round cap (docs/config.md#unattended-waiver)
+
+const CAP_AT = '2026-11-03T14:00:00.000Z';
+const BOT = 'chatgpt-codex-connector';
+// The review bot's status card on `sha`, as the review trail gives a comment, passing it with nothing found.
+const botCard = (sha = HEAD) => ({
+  id: 9, login: BOT, bot: true, association: 'NONE', at: '2026-11-03T14:10:00Z', editors: [BOT], editsComplete: true,
+  body: `<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1 ${JSON.stringify({ code_review: { commit_sha: sha, has_any_findings: false, has_unresolved_findings: false, status: 'completed' } })} -->`,
+});
+// The default branch's config with the unattended waiver allowed, or as `waiver` says.
+const waiverConfig = (waiver = { allow: true }) => JSON.stringify({ version: 1, state: STATE, github: { ...CHECKS, autoMerge: TEAM, unattendedWaiver: waiver } });
+// A record stopped at the round cap on `head`, with a judge's `waive` there, its agent id and session named.
+// Its cause is open findings of this machine's reviewers alone, here none (review/run.mjs capCause), and it names no flow
+// for the Human on that head.
+const capped = (head = HEAD, entry = {}, cause = {}) => (state) => {
+  state.outcome = {
+    status: 'round_limit', head, at: CAP_AT,
+    cap: { head, reviewed: head, items: [], counted: 0, itemized: true, unrun: [], unsigned: [], flows: [], tests_removed: [], checks_failing: 0, bot: false, human: [], ...cause },
+  };
+  state.signoffable = { head, flows: [] };
+  state.waivers = [{ head, kind: 'round_cap', verdict: 'waive', reason: 'every open finding is a nit', judge: 'unknown', judge_id: 'judge-1', session: 'sess-1', at: '2026-11-03T14:40:00.000Z', ...entry }];
+};
+// The judge's dispatch in the recording session's dispatch log.
+function logJudge(r, rows = [{ event: 'dispatch', ts: '2026-11-03T14:30:00.000Z', session_id: 'sess-1', dispatcher: 'main', agent_id: 'judge-1', agent_type: 'aidrian:code-reviewer' }]) {
+  const file = logPath(r.project, loadConfig(r.project).config);
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, rows.map((row) => `${JSON.stringify(row)}\n`).join(''));
+}
+
+// auto-merge over fakeForge with the default branch's config `config` and a review trail whose bot card passes `card`.
+// A host whose hook confirms a judge's dispatch, as Claude Code's does.
+const CONFIRMS = { name: 'claude-code', capabilities: { judgeDispatch: true } };
+// `closing`, when given, is { context, title?, body? }: the pull request's title and body on the forge, and the issue
+// and teams its project run holds it to. `mark`, when given, is the one read of the session's mark that both the run's
+// budget and the closing words come from, in place of `run`.
+function waived(t, r, { config = waiverConfig(), card = HEAD, run = undefined, unattended = false, head = HEAD, runHost = CONFIRMS, closing = null, mark = null } = {}) {
+  const out = [];
+  t.mock.method(console, 'log', (line) => out.push(line));
+  t.mock.method(console, 'error', () => {});
+  const { forge, calls } = fakeForge({ files: { 'acme/notes@main:.aidrian/config.json': config }, view: { headRefOid: head } });
+  forge.reviewTrail = (repoName, n, { host, paths } = {}) => {
+    calls.push(['reviewTrail', repoName, n, host, paths]);
+    return {
+      viewer: 'adrian', head, base: 'main', author: 'adrian', draft: false, reviewDecision: '', latestReviews: [],
+      checks: { head, rows: [{ name: 'e2e', state: 'SUCCESS' }], complete: true }, files: [{ path: 'src/app.js', changeType: 'MODIFIED' }], filesTotal: 1, filesComplete: true,
+      reviews: [], reviewsComplete: true, comments: card === null ? [] : [botCard(card)], commentsComplete: true,
+      branches: { default: { name: 'main', pointer: null, config, knowledge: null }, base: { name: 'main', pointer: null, config } },
+    };
+  };
+  if (closing) {
+    forge.pull = (repoName, n, { host } = {}) => (calls.push(['pull', repoName, n, host]), { head: { sha: head }, title: closing.title ?? 'feat: export', body: closing.body ?? '', commits: 1 });
+    forge.changeCommits = (repoName, n, { host } = {}) => (calls.push(['changeCommits', repoName, n, host]), [{ sha: '0'.repeat(40), commit: { message: 'feat: export' } }]);
+  }
+  const reads = mark ? { mark } : { run: () => run, ...(closing ? { runIssue: () => closing.context } : {}) };
+  const code = runAutoMerge(['7', '--json'], r.project, { forge, unattended: () => unattended, runHost, ...reads });
+  t.mock.restoreAll();
+  return { code, result: JSON.parse(out.join('\n')), calls };
+}
+const waiverRepo = (t, local = { github: { autoMerge: 'on', unattendedWaiver: 'on' } }) => repo(t, { local });
+
+test('auto-merge takes round_limit on the head with a judge\'s waive there, the gate on, and the bot\'s pass of that head: waived, exit 0', (t) => {
+  const r = waiverRepo(t);
+  r.record(capped());
+  logJudge(r);
+  const on = waived(t, r);
+  assert.equal(on.code, 0, on.result.why);
+  assert.deepEqual([on.result.effective, on.result.reason, on.result.waived], [true, null, true]);
+  assert.equal(on.calls.filter(([name]) => name === 'reviewTrail').length, 1, 'the trail read once');
+  // A session no Human attends meets merge trust too, on the same trail: read once still.
+  const held = waived(t, r, { unattended: true });
+  assert.deepEqual([held.code, held.result.waived], [0, true]);
+  assert.equal(held.calls.filter(([name]) => name === 'reviewTrail').length, 1, 'merge trust reuses the waiver\'s trail');
+  // Without a verdict, round_limit is the review refusal as ever, and no waived field.
+  r.record((state) => (capped()(state), (state.waivers = [])));
+  const none = waived(t, r);
+  assert.deepEqual([none.code, none.result.reason, none.result.waived], [1, 'review', undefined]);
+  assert.match(none.result.why, /is `round_limit`, and no judge's verdict lets it merge: no judge's `waive` verdict stands for head abcdef1/u);
+});
+
+test('auto-merge refuses round_limit unless every part of the waiver holds: the exact head, the team on both branches, the machine, the bot, the findings, the judge', (t) => {
+  const cases = [
+    ['a new push voids the verdict', { head: OLD }, (r) => r.record(capped(HEAD)), /the last review covered abcdef1, not head 1234567/u],
+    ['the team does not allow it', { config: waiverConfig({ allow: false }) }, (r) => r.record(capped()), /no judge's verdict lets it merge: the team does not allow it \(github\.unattendedWaiver\.allow on acme\/notes main\)/u],
+    ['the bot has not passed the head', { card: null }, (r) => r.record(capped()), /a verdict never stands in for the review bot, and chatgpt-codex-connector\[bot\] has not passed head abcdef1/u],
+    ['the bot passed another head', { card: OLD }, (r) => r.record(capped()), /has not passed head abcdef1/u],
+    ['a high finding open', {}, (r) => r.record(capped(HEAD, {}, { items: [{ id: 'R1-1', severity: 'high', stage: 'local', reviewer: 'self', pass: 'self:0' }], counted: 1 })), /finding R1-1 is high, above medium/u],
+    ['a violated invariant behind the cap', {}, (r) => r.record(capped(HEAD, {}, { flows: ['payments'] })), /flow payments has an invariant violated, unverified, or unsigned/u],
+    ['a host that does not confirm a judge', { runHost: { name: 'codex', capabilities: {} } }, (r) => r.record(capped()), /this host \(codex\) does not confirm a judge's dispatch/u],
+    ['a refuse after the waive', {}, (r) => r.record((state) => (capped()(state), state.waivers.push({ ...state.waivers[0], verdict: 'refuse', at: '2026-11-03T14:50:00.000Z' }))), /no judge's `waive` verdict stands for head abcdef1/u],
+    ['a verdict naming no judge', {}, (r) => r.record(capped(HEAD, { judge_id: undefined, session: undefined })), /the verdict names no judge agent and session/u],
+    ['a judge the dispatch log does not show', {}, (r) => r.record(capped(HEAD, { judge_id: 'judge-9' })), /the dispatch log holds no dispatch of the code-reviewer judge-9 by session sess-1/u],
+    ['a project run whose ledger cannot be read', { run: 'gone' }, (r) => r.record(capped()), /the ledger of project run gone cannot be read, so its waived merges cannot be counted/u],
+  ];
+  for (const [name, options, edit, pattern] of cases) {
+    const r = waiverRepo(t);
+    edit(r);
+    logJudge(r);
+    const off = waived(t, r, options);
+    assert.deepEqual([off.code, off.result.reason, off.result.waived], [1, 'review', undefined], name);
+    assert.match(off.result.why, pattern, name);
+  }
+  // This machine's switch off: the verdict counts for nothing, whatever the team says.
+  const local = waiverRepo(t, { github: { autoMerge: 'on' } });
+  local.record(capped());
+  logJudge(local);
+  const off = waived(t, local);
+  assert.deepEqual([off.code, off.result.reason], [1, 'review']);
+  assert.match(off.result.why, /this machine has not opted in \(github\.unattendedWaiver in \.aidrian\.local\.json\)/u);
+  // The working copy allowing it lifts nothing: the team's switch is read on the forge.
+  const working = repo(t, { local: { github: { autoMerge: 'on', unattendedWaiver: 'on' } } });
+  writeFileSync(path.join(working.dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: STATE, github: { ...CHECKS, autoMerge: TEAM, unattendedWaiver: { allow: true } } }));
+  working.record(capped());
+  logJudge(working);
+  assert.equal(waived(t, working, { config: waiverConfig({ allow: false }) }).code, 1);
+});
+
+test('a waived round cap never lets auto-merge skip the Human\'s sign-off of a flow, attended or not: with it in the store, it merges', (t) => {
+  t.after(() => rmSync(signoffFolder(), { recursive: true, force: true }));
+  const r = waiverRepo(t);
+  r.record((state) => (capped()(state), (state.signoffable.flows = ['payments'])));
+  logJudge(r);
+  const attended = waived(t, r);
+  // Reported as merge trust reports an owed sign-off, so a run parks it as a decision for the Human.
+  assert.deepEqual([attended.code, attended.result.reason, attended.result.trust], [1, 'trust', 'signoff']);
+  assert.match(attended.result.why, /flow payments needs the Human's sign-off on head abcdef1/u);
+  // The Human signs it off on that head, in the store only a session they attend writes.
+  recordHumanSignoff({ repo: 'acme/notes', pr: 7, flow: 'payments', head: HEAD, by: 'Adrian' });
+  const signed = waived(t, r);
+  assert.deepEqual([signed.code, signed.result.waived], [0, true]);
+  // A deleted flow test in the cause needs the same, and the cause refuses it whatever the store holds.
+  r.record(capped(HEAD, {}, { tests_removed: ['payments'] }));
+  assert.match(waived(t, r).result.why, /deletes a test of flow payments/u);
+});
+
+test('a waived round cap still meets the closing-word check, first, and an owed sign-off names its flow and class', (t) => {
+  t.after(() => rmSync(signoffFolder(), { recursive: true, force: true }));
+  const context = { own: 'ENG-1', prefixes: new Set(['ENG', 'OTHER']) };
+  const r = waiverRepo(t);
+  r.record(capped());
+  logJudge(r);
+  // Its own issue only: the waived merge goes on, once the closing words are read.
+  const own = waived(t, r, { unattended: true, closing: { context, body: 'Fixes ENG-1' } });
+  assert.deepEqual([own.code, own.result.waived], [0, true], own.result.why);
+  assert.ok(own.calls.some(([name]) => name === 'changeCommits'), 'the closing words were read');
+  // Another issue after a closing word: off, closes, though the judge's verdict stands.
+  const other = waived(t, r, { unattended: true, closing: { context, body: 'Fixes ENG-1\nFixes OTHER-9' } });
+  assert.deepEqual([other.code, other.result.reason], [1, 'closes']);
+  assert.match(other.result.why, /its body says "Fixes OTHER-9"/u);
+  // A sign-off the Human owes, of a security flow: merge trust's stop, with the flow and its class for the run's park.
+  r.record((state) => (capped()(state), (state.signoffable.flows = ['payments-security'])));
+  const owed = waived(t, r, { unattended: true, closing: { context, body: 'Fixes ENG-1' } });
+  assert.deepEqual([owed.code, owed.result.reason, owed.result.trust, owed.result.flow, owed.result.signoffClass], [1, 'trust', 'signoff', 'payments-security', 'security']);
+  // With another issue closed too, closes comes first, as it comes before merge trust on any merge.
+  const both = waived(t, r, { unattended: true, closing: { context, body: 'Fixes OTHER-9' } });
+  assert.deepEqual([both.code, both.result.reason, both.result.flow], [1, 'closes', undefined]);
+});
+
+test('auto-merge reads the session\'s mark once, and the waiver\'s run budget comes from that read', (t) => {
+  const r = waiverRepo(t);
+  r.record(capped());
+  logJudge(r);
+  const gone = waived(t, r, { mark: () => ({ mark: { root: r.dir, project: 'gone', issue: 'ENG-1' } }) });
+  assert.deepEqual([gone.code, gone.result.reason], [1, 'review']);
+  assert.match(gone.result.why, /the ledger of project run gone cannot be read, so its waived merges cannot be counted/u);
+  // A mark that cannot be read names a run whose budget cannot be counted.
+  const unreadable = waived(t, r, { mark: () => ({ unreadable: true }) });
+  assert.match(unreadable.result.why, /names a project run that cannot be read, so the run's waived merges cannot be counted/u);
+  // markOnce reads once and gives that read on every call.
+  const home = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-mark-once-')));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const read = markOnce('no-such-session', { home });
+  assert.deepEqual(read(), { mark: null });
+  assert.equal(read(), read(), 'the same read');
 });

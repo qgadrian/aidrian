@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: project-autopilot-turn1-blocker
+context:
+  scaffold_script: scaffold.sh

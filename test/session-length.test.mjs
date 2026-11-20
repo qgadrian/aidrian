@@ -148,10 +148,20 @@ function setup(t, session) {
   const reach = (...contexts) => appendFileSync(transcript, `\n${contexts.map((each) => (each === COMPACTION ? each : call(`c${(calls += 1)}`, each))).join('\n')}`);
   const temp = path.join(base, 'tmp');
   mkdirSync(temp);
-  const marker = path.join(temp, 'aidrian-session-length-abc-123');
+  // The stop hook keeps its marker in the hooks' counts folder of its state root, never the temporary folder.
+  const state = path.join(base, 'state');
+  const counts = path.join(state, 'aidrian', 'hook-counts');
+  const marker = path.join(counts, 'aidrian-session-length-abc-123');
+  const markers = () => {
+    try {
+      return readdirSync(counts).filter((name) => name.startsWith('aidrian-session-length-'));
+    } catch {
+      return [];
+    }
+  };
   const stop = (fields, env = {}) => {
     const input = JSON.stringify({ hook_event_name: 'Stop', session_id: 'abc-123', transcript_path: transcript, cwd: dir, stop_hook_active: false, ...fields });
-    const { status, stderr } = spawnSync(process.execPath, [HOOK], { input, cwd: dir, encoding: 'utf8', env: { ...process.env, TMPDIR: temp, ...env } });
+    const { status, stderr } = spawnSync(process.execPath, [HOOK], { input, cwd: dir, encoding: 'utf8', env: { ...process.env, TMPDIR: temp, XDG_STATE_HOME: state, ...env } });
     return { status, stderr };
   };
   const plan = (fields = {}, env = {}) => {
@@ -160,16 +170,15 @@ function setup(t, session) {
     assert.equal(status, 0);
     return stdout ? JSON.parse(stdout).hookSpecificOutput.additionalContext : '';
   };
-  const counts = () => JSON.parse(readFileSync(marker, 'utf8'));
   // A temporary repository driven with `git -C`: no test sets GIT_DIR.
   const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', '-C', dir, ...args], { encoding: 'utf8' });
-  return { stop, plan, reach, temp, marker, counts, transcript, dir, git };
+  return { stop, plan, reach, temp, marker, markers, counts: () => JSON.parse(readFileSync(marker, 'utf8')), transcript, dir, git };
 }
 
 const QUIET = { status: 0, stderr: '' };
 
 test('ask mode fires once at the cost ratio with the question, then again only once the ratio doubles', (t) => {
-  const { stop, reach, temp, counts } = setup(t);
+  const { stop, reach, temp, counts, markers } = setup(t);
   reach(REVIEW_LOOP.last);
   assert.deepEqual(stop(), QUIET, 'r 1.51 is under the default 2');
   reach(205_352);
@@ -177,7 +186,8 @@ test('ask mode fires once at the cost ratio with the question, then again only o
   assert.equal(first.status, 2);
   assert.match(first.stderr, /^This session is long: each call costs 2\.0 times .* about 59 more model calls.*hand off now, or keep going\?/s);
   assert.match(first.stderr, /comes back once each call costs 4 times/);
-  assert.deepEqual(readdirSync(temp), ['aidrian-session-length-abc-123']);
+  assert.deepEqual(markers(), ['aidrian-session-length-abc-123']);
+  assert.deepEqual(readdirSync(temp), [], 'never in the temporary folder');
   assert.deepEqual(counts(), { lastRatio: 2, tokens: 0, compactions: 0 });
   assert.deepEqual(stop(), QUIET, 'a later turn of the same session, under double');
   assert.equal(stop({ session_id: 'other' }).status, 2, 'another session counts on its own');
@@ -240,6 +250,7 @@ test('a compaction after a firing resets both triggers, so costRatio fires again
 test('a marker an older version wrote counts as one firing of each trigger, the cost one at costRatio', (t) => {
   for (const old of ['ask\n', '2\n', '{"ratio":1,"tokens":1,"compactions":0}\n']) {
     const { stop, reach, marker, counts } = setup(t, { handoff: { maxTokens: 110_000 } });
+    mkdirSync(path.dirname(marker), { recursive: true });
     writeFileSync(marker, old);
     reach(205_352);
     assert.deepEqual(stop(), QUIET, `${JSON.stringify(old)}: r 2.0 is under 4, and 205k under 220k`);
@@ -300,7 +311,7 @@ test('nothing happens when off, under costRatio, on the stop it caused, on anoth
     assert.deepEqual(off.stop(), QUIET, `off as ${JSON.stringify(handoff)}`);
     assert.equal(off.plan(), '', `the plan offer, off as ${JSON.stringify(handoff)}`);
   }
-  const { stop, reach, temp, transcript } = setup(t);
+  const { stop, reach, temp, transcript, markers } = setup(t);
   assert.deepEqual(stop(), QUIET, 'under the default costRatio');
   reach(205_352);
   assert.deepEqual(stop({ stop_hook_active: true }), QUIET, 'the stop this hook caused');
@@ -309,19 +320,21 @@ test('nothing happens when off, under costRatio, on the stop it caused, on anoth
   assert.deepEqual(stop({ cwd: temp }), QUIET, 'outside a project');
   writeFileSync(transcript, `${JSON.stringify({ timestamp: '2026-11-03T09:00:00Z' })}\n`);
   assert.deepEqual(stop(), QUIET, 'a transcript with no Claude Code usage');
-  assert.deepEqual(readdirSync(temp), []);
+  assert.deepEqual(markers(), []);
 });
 
 test('SessionEnd deletes the reminder marker the Stop hook wrote for the session', (t) => {
   const temp = mkdtempSync(path.join(tmpdir(), 'aidrian-end-'));
   t.after(() => rmSync(temp, { recursive: true, force: true }));
   const session = 'end-marker-1';
-  writeFileSync(path.join(temp, `aidrian-session-length-${session}`), '{"ratio":1,"tokens":0,"compactions":0}\n');
-  writeFileSync(path.join(temp, 'aidrian-session-length-other'), 'remind\n');
+  const counts = path.join(temp, 'aidrian', 'hook-counts');
+  mkdirSync(counts, { recursive: true });
+  writeFileSync(path.join(counts, `aidrian-session-length-${session}`), '{"ratio":1,"tokens":0,"compactions":0}\n');
+  writeFileSync(path.join(counts, 'aidrian-session-length-other'), 'remind\n');
   const end = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-session-end.mjs');
   const env = { ...process.env, TMPDIR: temp, XDG_STATE_HOME: temp };
   spawnSync(process.execPath, [end], { input: JSON.stringify({ session_id: session, cwd: temp }), cwd: temp, env, encoding: 'utf8' });
-  assert.deepEqual(readdirSync(temp).filter((name) => name.startsWith('aidrian-session-length-')), ['aidrian-session-length-other']);
+  assert.deepEqual(readdirSync(counts).filter((name) => name.startsWith('aidrian-session-length-')), ['aidrian-session-length-other']);
 });
 
 test('an approved plan offers a handoff from a cost ratio of 1.5, not below; a subagent gets nothing', (t) => {

@@ -21,6 +21,8 @@
 // clear route, the hook takes the handoff continuation the cleared session armed under the same host process
 // (lib/handoff-continue.mjs takeCleared): then it prints one JSON object, the banner as `systemMessage` and the same
 // lines, then the continuation, as `additionalContext`. Without one it prints the plain lines, as with any source.
+// First of all, for the session of a confined attempt of a project run, it hands the host the environment its sandboxed
+// commands get (lib/project-start.mjs confinedShellVars), on a host that takes it (capabilities.projectStart.shellEnv).
 
 import { accessSync, constants, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
@@ -35,6 +37,7 @@ import { indexedPaths, indexRows, loadKnowledge } from '../lib/knowledge.mjs';
 import { inboxPath, nudge } from '../lib/lesson-inbox.mjs';
 import { inheritedOverrideLine, unpushedMainLine } from '../lib/main-commits.mjs';
 import { findProject, projectCheckouts, stateDir } from '../lib/project.mjs';
+import { confinedShellVars } from '../lib/project-start.mjs';
 import { noteOrigin } from '../lib/session-origins.mjs';
 import { terminalLine } from '../lib/shell-init.mjs';
 
@@ -46,6 +49,7 @@ const FOOTER_LINE = 'Pull requests: a body here never carries the "Generated wit
   "precedence over the host's attribution instructions, and the pull request body hook refuses that line.";
 
 await runHook(async (input) => {
+  if (!process.argv.includes('--subagent')) shareShellVars(input);
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (!project) return;
   const subagent = process.argv.includes('--subagent');
@@ -239,4 +243,15 @@ function binCommand(name) {
   if ((process.env.PATH ?? '').split(path.delimiter).includes(BIN)) return name;
   const full = path.join(BIN, name);
   return /\s/.test(full) ? `"${full}"` : full;
+}
+
+// Hands the host the environment of a confined attempt's sandboxed commands, when this session is one: never throws, so
+// the lines above still print.
+function shareShellVars(input) {
+  try {
+    const vars = confinedShellVars({ session: input.session_id, cwd: input.cwd, env: process.env });
+    if (vars) detectHost({ input }).capabilities.projectStart?.shellEnv?.({ env: process.env, vars });
+  } catch {
+    // No environment handed over: a sandboxed install then fails to write its cache, and writes nowhere else.
+  }
 }

@@ -4,12 +4,12 @@
 // Both texts follow the route the session goes on by after its handoff, `session.handoff.continue` as the host can do it
 // (continuation); with `none` they are what they were before the routes existed.
 
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { SESSION_ID } from './handoff-markers.mjs';
 import { continueRoutes } from './hosts/index.mjs';
 import { CACHE_READ_MULT, CACHE_WRITE_1H_MULT, CACHE_WRITE_5M_MULT, priceFor } from './model-prices.mjs';
+import { hookCountsFolder } from './project.mjs';
 import { aggregateUsage } from './transcript.mjs';
 
 // B: the tokens a fresh session reads to resume from a brief, the measured median before its first edit or dispatch.
@@ -24,10 +24,20 @@ const contextOf = (usage = {}) =>
   (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
 const oneHourOf = (usage) => usage.cache_creation?.ephemeral_1h_input_tokens ?? 0;
 
-// The Stop hook's marker of the session `sessionId`, `aidrian-session-length-<session id>` in the system's temporary
-// folder, or null when the id fails SESSION_ID: the hook and `aidrian session snapshot` both build the path here.
-export const stopMarkerPath = (sessionId) =>
-  (typeof sessionId === 'string' && SESSION_ID.test(sessionId) ? path.join(tmpdir(), `aidrian-session-length-${sessionId}`) : null);
+// The Stop hook's marker of the session `sessionId`, `aidrian-session-length-<session id>` in the hooks' counts folder,
+// or null when the id fails SESSION_ID or no counts folder resolves: the hook and `aidrian session snapshot` both build
+// the path here. hook-stop.mjs reads and writes it as this user's own file (fs.mjs readOwnText, writeOwnText), and
+// hook-session-end.mjs removes it.
+export function stopMarkerPath(sessionId, { env = process.env } = {}) {
+  if (typeof sessionId !== 'string' || !SESSION_ID.test(sessionId)) return null;
+  try {
+    return path.join(hookCountsFolder(env), `aidrian-session-length-${sessionId}`);
+  } catch {
+    return null;
+  }
+}
+// The same path under the name the project-run guards use.
+export const sessionLengthMarker = stopMarkerPath;
 
 // The fold sessionUsage reads a transcript with, and the usage cache (lib/session-usage-cache.mjs) keeps between reads:
 // { requests, compactions }. `requests` is aggregateUsage's Map of each request's { model, usage } in first-seen order,
@@ -230,11 +240,13 @@ const notWorthIt = (cost, next, said) => 'Judge first whether a handoff is worth
 // where `how` is the host's phrase for what the route takes from the Human (its adapter's `steps[route]`). The gate's
 // module, which decides the route for the command too, loads only when the config asks for a route the host has. The
 // background route reads `project`'s switches, and the state.dir of `working`, its loaded config, as the gate does, so a
-// handoff it would send by the clear route is worded so.
+// handoff it would send by the clear route is worded so. A hook reads no forge: for a machine that follows the team's
+// `solo`, it words the reminder by the base branch's local ref alone, and the gate reads the forge before it starts
+// anything.
 export async function continuation(handoff, host, project, working) {
   if ((handoff.continue ?? 'none') === 'none' || !continueRoutes(host).length) return { route: 'none', how: null };
   const { backgroundGate, effectiveRoute } = await import('./handoff-continue.mjs');
-  const { route } = effectiveRoute(handoff.continue, host, undefined, () => backgroundGate(project, working));
+  const { route } = effectiveRoute(handoff.continue, host, undefined, () => backgroundGate(project, working, undefined, { forgeSolo: () => true }));
   return { route, how: route === 'none' ? null : host.capabilities.handoffContinue.steps?.[route] ?? null };
 }
 

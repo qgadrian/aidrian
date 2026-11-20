@@ -72,7 +72,9 @@ context, with a 60,000-token baseline near 208,000.
 their cost. It fires on its own, whatever `r` is, at `maxTokens` and then at each doubling of it:
 `maxTokens × 2^n` after `n` firings. Its message names the context only, with no `r` or `N`.
 
-**Re-arming.** A marker in the system's temporary folder, `aidrian-session-length-<session id>`, holds
+**Re-arming.** A marker in the hooks' counts folder, `<state root>/hook-counts/aidrian-session-length-<session id>`,
+read only as the user's own regular file, never through a link or a FIFO, and written, in a folder the user alone
+owns, as a new temporary file, mode 0600, renamed over it, which `aidrian session snapshot` reads at the same path, holds
 `{"lastRatio": r, "tokens": n, "compactions": n}`: the cost ratio at the last cost firing (0 for none), how often the
 ceiling fired, and the compactions seen. A firing changes only what its own trigger holds: a cost firing records its
 ratio, and a ceiling firing raises its count past every doubling the context already reached, so a jump of two
@@ -142,6 +144,7 @@ Two switches more hold it, both read as `github.autoMerge` reads its own, so nei
   [progress check](#the-progress-check) bounds the chain.
 - **The machine's**, `handoff.background: "on"` in the main checkout's `.aidrian.local.json`, a file git does not
   track. A copy in a worktree, a tracked file, and an error in the file read `"off"`, and a subagent may not set it.
+  Unset is off, unless the team sets [`solo`](config.md#solo).
 
 Without either, a handoff on the background route goes on by the clear route on a host that has it, else `none`, and
 the gate's `fallback:` line says which switch is off and, for the machine's, the exact edit that turns it on.
@@ -161,6 +164,14 @@ says so in its `fallback:` line. A route the host does not list falls back the s
 decides it from `--route` or `session.handoff.continue` and the host's routes. A route the host does not run prints
 `route: none` and the `fallback:` line, as with `"compact"` on Claude Code in this release or any route on Codex.
 A background route either switch keeps off prints `route: clear` and the `fallback:` line that names the switch.
+A session whose unattended mark names a run or an issue of a [project run](config.md#project-run) prints `route: none`
+on every route, whatever `--route` or the config says, with the `fallback:` line `a confined issue session starts no
+continuation; push the work and hand the result over`: every host starts such a session confined, in a clone under its
+sandbox, and a continuation, a clear one too, would start outside both. A session whose unattended mark is there but
+cannot be read, as a folder, a file of 64 KiB or more, one that is not JSON, or a folder of marks that cannot be
+listed, prints `route: none` the same way, with the `fallback:` line `this session's unattended mark cannot be read, so
+whether it works an issue of a project run cannot be told; it starts no continuation, and a person resumes the brief`.
+A session with no mark is unchanged.
 It reads the config, the machine's local file, and the base branch's config, writes nothing, and exits 2 on an
 unknown `--route` or a config with errors.
 The `session-handoff` skill runs it in its first step, so it settles every running agent only when a continuation can
@@ -186,6 +197,13 @@ whatever the config says, and `background` only when the config says `"backgroun
    is owned by another user or writable by every user, where the system has user ids (not on Windows, where Node
    reports every writable folder as writable by others); or the brief's chain is `maxChain` or more, on the
    background route the base branch's `maxChain`, at most 5 unless it is `"unlimited"`.
+   A confined issue session, one whose unattended mark names a run or an issue of a project run, starts and arms no
+   continuation on any route, whatever `--route` or the config says, before it reads the route and before any floor,
+   mark, or start record: `continue: none` and the `fallback:` line `a confined issue session starts no continuation;
+   push the work and hand the result over`, on every host. It pushes its work and records its result instead.
+   A session whose unattended mark is there but cannot be read gets the same answer, with the `fallback:` line of
+   [The route the host runs](#the-route-the-host-runs): whether it works an issue cannot be told, so the gate fails
+   closed. A session with no mark goes on by its route.
    On the background route, a switch that is off, a chain the [progress check](#the-progress-check) finds stuck, a
    working copy whose `state.dir` differs from the base branch's, a session that did not start, and a started session
    the gate could not hold to a chain floor and stopped fall back to the clear route instead where the host has it:
@@ -203,6 +221,31 @@ whatever the config says, and `background` only when the config says `"backgroun
    On the background route it arms nothing: it starts the new session, as [The background route](#the-background-route)
    says, and its `say:` line names that session and how to open it. A second run on the same bytes, in the same
    session, prints the same lines again and starts nothing, before any other check.
+   One background start per session: while the gate's record of a session's last start lives, 24 hours, a run on any
+   other bytes, an edit of the same brief or another brief, starts nothing until the host's own listing shows the
+   started session as done. It prints `continue: none` and a `fallback:` line that names that session, what the listing
+   said, and how to open it, and arms no clear beside it. A listing that gives no answer, or does not name that session,
+   counts as still running, as does a session the host lists as failed or stopped. The refusal lifts once the host
+   lists the session as done, or when the record lapses; a person can resume the brief by hand at any time.
+   The gate checks this at its hold, just before the host would start a session, so a start that cannot run for
+   another reason, such as no host command on PATH, still names that reason, and arms no clear while the record lives.
+   Two runs of one session never start two sessions at once: the hold first takes the session's claim in the
+   continuation store, `claim-<session>.json`, a file made only when none is there, and a run that finds another's
+   claim starts nothing. A run's claim lapses after 10 minutes. Once the hold files its pending mark, it keeps the
+   claim for 24 hours before the host starts anything, so a gate killed mid-start still holds the session; the gate
+   drops it again once it knows no session runs unheld. After a start whose outcome is unknown, or a started session
+   the gate could neither hold nor stop, the kept claim stays, so no later run starts a second session beside one that
+   may still run. A claim whose content no read can check counts as kept once it is more than 5 seconds old. A
+   subagent, and a session the background route started, may not remove a claim.
+   When the host listed the earlier session as done and the new start then made nothing, the handoff goes on by the
+   clear route, as with no earlier start.
+   A project run's driver is the one exception: when its last start record names a session of its own run's issues,
+   which the run's ledger records it started, that session holds back the driver's handoff no more than it holds back
+   the driver's next start, since the run's caps count it until the host lists it ended. This holds only for the
+   session the ledger names as the run's current driver, while the run has not ended; every other record, the driver's
+   continuation's included, waits for the host's listing.
+   A session whose unattended mark names another project's main checkout, or none the gate can read, starts no
+   background session: its chain floor lives in that project's store.
 
 The latest run decides: once the brief resolves and the session is known, any continuation the session armed before is
 gone, whatever the exit, so a clear never delivers an earlier brief.
@@ -341,7 +384,8 @@ to another folder falls back to the clear route with that reason; committing `st
    the clear route; when the stop fails too, the gate prints `continue: none` and a `fallback:` line that names the
    running session and the host's command to stop it, arms no clear beside it, and leaves the pending mark to lapse. The gate never reports a background session it cannot hold to the
    count as the continuation.
-6. It records the start for this session, and prints `continue: background` and a `say:` line that names the new
+6. It records the start for this session, which stops the session from starting another until the host lists the
+   started one as ended, and prints `continue: background` and a `say:` line that names the new
    session by its id, and by its name when that is plain text no other listed session has, where it started, and the
    host's command to open it. The line ends on what becomes of this session: with the
    [shell function](#replacing-the-terminal), that this terminal switches to the new session once the turn ends, with
@@ -394,7 +438,8 @@ Limits:
   session's own mark is written, or when nothing started or the start was stopped; a start whose outcome is unknown
   keeps it until it lapses.
   Such a session, and one with a mark, is also refused a call the guards cannot finish reading within their time
-  budget, and a command with more write targets or words than they read, as a subagent is.
+  budget, and a command with more write targets or words than they read, as a subagent is, and so is a project run's
+  driver, whose driver mark holds it.
   A session the gate started before the marks is known by its chain floor of route `background`, under its full id or
   a short one, in the store of the working copy's `state.dir` or the base branch's, each where the hook's environment
   puts it and where the user's own puts it, as the gate does; the hook reads it only for a call the guards below would
@@ -404,6 +449,8 @@ Limits:
     `chgrp` of the store, a file in it, its handoffs folder, or the state folder, which would hide the floor;
   - a write in the unattended marks' folder, or a change of its mode or owner, or of the state root's, which would
     lift its own mark, with or without a project, as a subagent is refused it too;
+  - a write in the [sign-off store](review.md#merge-trust), which holds the Human's flow sign-offs a merge no Human asks
+    for reads, as a subagent is refused it too;
   - a host session started outside the gate, such as `claude -p`, `claude --bg`, or `claude --resume`, by the matcher
     each host adapter declares (`sessionStart`, [Adding a host](providers/adding-a-host.md));
   - an `aidrian handoff continue` or `aidrian handoff route` whose command line sets or unsets `XDG_STATE_HOME`, `HOME`,
@@ -411,6 +458,78 @@ Limits:
     would move the store, the session the gate reads floors for, or the host command it runs.
   A store the hook cannot read finds no floor, and the session's call runs: only what the session can cause itself is
   closed.
+
+### A project run
+
+A [project run](config.md#project-run), which the `project-autopilot` skill drives, starts many sessions with nothing
+typed. The run lifts no cap of its own: the cap of 5 background continuations in a row (`BACKGROUND_HOPS` in
+`lib/handoff-continue.mjs`) counts per chain, the run starts new chains instead of making one longer, and only the base
+branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the progress check then bounds it.
+
+- **Each issue's session is its own start.** `aidrian project start` holds it as the background route holds a
+  continuation, with a chain floor of 0 under the slug `project-<run>`, so it carries neither the driver's count nor
+  another issue's. What bounds the sessions a run starts is the run's own caps in code: 1,000 starts a run and 4 at
+  once, each also under the base branch's `projectRun.maxStarts` and `maxParallel`, 200 starts a day for a project,
+  and 3 attempts an issue.
+- **An issue's session starts no continuation.** Every host starts it confined, in a fresh clone under its sandbox,
+  and a continuation would start outside both. It writes no brief either: the agent gate hook refuses it the handoffs
+  folder ([hooks.md](hooks.md#agent-gates)). `aidrian handoff route` prints `route: none` for it, and
+  `aidrian handoff continue` answers `continue: none`, before any floor, mark, or start record, with the line
+  `a confined issue session starts no continuation; push the work and hand the result over` ([The gate](#the-gate),
+  step 3). So the cap of 5, `maxChain`, and the chain floor never come into play for it: it pushes its work and records
+  its result, and any later attempt of the issue starts in a fresh clone of the branch as the forge holds it.
+- **The driver hands off on the normal route.** It is a main session like any other: at the session-length reminder,
+  a usage-limit warning, or the plan offer, between passes and never mid-start, it writes its brief with the
+  `session-handoff` skill under the slug `project-<run>`. The run's ledger is its state, so the brief names the run and
+  the skill and no issue's detail. It runs `aidrian project handoff <run> <brief>` first, which records the brief's
+  sha256 in the ledger, then `aidrian handoff continue <brief>`. The background route files the run's driver mark for
+  the new session as it starts it, so the hooks hold it as a driver from its first call, and it takes custody on its
+  first `aidrian project wait <run> --max-wait 0`: only when the driver's start record names it, is dated after the
+  ledger row that made that driver, and holds the sha256 of a brief that driver recorded. A slug or a session name
+  never moves custody.
+- **`maxChain` binds the driver's chain alone.** The driver's hops count as any session's, up to the base branch's
+  `session.handoff.maxChain`, at most 5 unless it is `"unlimited"`. At the limit the gate prints `continue: none`,
+  and the driver keeps driving in its own session, which the host compacts; it does the same on `continue: clear`,
+  which would wait on a person, and when the host lists no route at all, as on Codex. So a run never stops for its
+  chain: at worst one long session drives it. The [progress check](#the-progress-check) counts the driver's hops like
+  any chain's. The driver commits nothing, and its issues' work lands in their clones and on the forge, so its own
+  work moves no tree on the brief's branch, or on HEAD where the gate runs, and its progress shows as new items under
+  its brief's `## Done`. Two hops in a row with none, and the gate falls back to the clear route, where the loop keeps
+  the driver in its session. `"unlimited"`
+  lifts the cap of 5 for the driver's chain, and the progress check then bounds it; an issue's session never meets
+  either, since it starts no continuation. A person who resumes the brief by hand starts the count again, and that
+  session takes custody only through `aidrian project resume <run>`, once the host lists the old driver as ended.
+- **Each attempt hands its result over in a drop folder.** `<state>/runs/<run>/attempts/<issue>.<attempt>/drop/`, made
+  owner-only for that attempt, is the one place in the runs folder the issue's session writes besides its clone's
+  `work`, `git`, and `cache` folders. `aidrian project result` writes `result.json` there and no ledger row. The
+  driver's `wait` takes it in: it reads the file without following a link, as a regular file of the user with one
+  link, under 64 KiB, checks every field again, and holds a merged or open pull request to the issue's own on the forge;
+  anything else ends the attempt `bad_result`. `wait` removes an attempt's folder once its session ended, but never
+  while its drop holds a result not yet taken in.
+- **A halt, or a driver that ended, waits for `aidrian project resume <run>`.** A start whose proof failed, and a
+  usage limit past the run's 24 pauses, write a `halt` row, and every later start refuses. The resume runs from the
+  Human's own shell, or from another session a person attends that never drove the run: the hooks and the command
+  refuse it to the driver, to any session that drove the run, and to the continuation custody would move to, so the
+  driver never runs it. It writes a `resume` row that lifts the halt. Run from a session, it also takes custody of a
+  run whose driver the host lists as ended, as a background driver that ended with no successor, and that session
+  then drives on. A driver the host does not list so, such as the first one, a session the Human started, keeps
+  custody: on a run that is not halted, the command prints `not halted <run>`, and, run from a session, says to resume
+  that same host session, which keeps its id; on a halted run, it lifts the halt and the driver stays.
+- **Host files no review saw.** The session works in its attempt's clone, which loads no host file of the main
+  checkout, and on Claude Code its sandbox also denies reads there, so the main checkout's own host files, such as a
+  git-ignored `.claude/settings.local.json` or an untracked skill under `.claude/skills/`, refuse no start. A start
+  refuses, and records nothing, when the clone itself holds a host config or instruction file that differs from the
+  base tip, or one git does not track or ignores: `the attempt's clone <path> is not started: it holds host config or
+  instruction files git does not track, which no review saw: <files>`. It refuses too when a folder above the clone
+  holds a host instruction file, such as a `CLAUDE.md`, that lies outside the main checkout, or that no review saw
+  there; move it away. Only a host's own user folder itself, and the files in it that host loads as the user's own
+  instructions for every session (Claude Code's `CLAUDE.md`, Codex's `AGENTS.md` and `AGENTS.override.md`), such as
+  `~/.claude` and `~/.claude/CLAUDE.md` above a state folder in the home folder, refuse no start, each by its path or
+  its real path, and a link among them only when it leads to a file of such a name. Any other file there is checked as
+  any other: `~/.claude/CLAUDE.local.md` above the clone, another host's name such as `~/.codex/CLAUDE.md`, a
+  `~/.claude/CLAUDE.md` that is a link to `~/.claude/settings.json`, and a `CLAUDE.md` in the runs folder of a state
+  folder inside `~/.claude`. What a session no Human attends may never do is write those files in the main checkout
+  ([agent gates](hooks.md#agent-gates)).
 
 ### Replacing the terminal
 
@@ -918,6 +1037,11 @@ A project that adopts the group sets `requires.aidrian` to the release that ship
   snapshot in `<state>/handoffs/.prior/<name>` that `aidrian handoff snapshot` took before a refresh, else the newest
   other brief of the same slug. A passing check keeps the brief that passed as that snapshot, so the next check of the
   file compares with what last passed; a copy the disk refuses changes neither the output nor the exit code.
+  A project run's driver brief, `<date>-project-<run>.md` right in the handoffs folder of a state folder that keeps the
+  run `<run>`, takes as its prior only a brief whose sha256 a handoff row of the run's ledger records
+  (`aidrian project handoff`): the snapshot first, then each other brief of the slug, newest first, and none when no
+  such brief is left. Another session may have written a file there, and the check would ask the driver to carry its
+  steps; so a refresh compares with the last brief the driver handed off, and `--prior` still names any other.
   A `--prior` that is the brief itself exits 2 for both `check` and `snapshot`: its earlier text is gone. Same file
   means the same device and inode, so a symlink, a hard link, and a letter-case variant on a case-insensitive disk count.
   A header that names this same file, with no snapshot to compare, is a finding the session tells the Human.

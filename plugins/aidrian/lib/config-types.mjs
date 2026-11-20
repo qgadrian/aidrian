@@ -7,6 +7,7 @@ import { AUDIT_LABEL_FIELDS, COMMIT_FIELDS, CONTINUE_ROUTES, HANDOFF_MODES, MAX_
 import { CLASS_MAX, DECISION_MODES, decisionClasses, isClassName, SAFE_DEFAULTS } from './decisions.mjs';
 import { loadTable as dispositionTable } from './finding-disposition.mjs';
 import { isObject } from './fs.mjs';
+import { isRegistries, REGISTRY_NAMES } from './project-registries.mjs';
 import { pathsProblem } from './review/config.mjs';
 
 const SEMVER = /^\d+\.\d+\.\d+$/u;
@@ -66,6 +67,23 @@ export const TYPES = {
   positive: [(value) => Number.isInteger(value) && value > 0, 'a whole number above 0'],
   positiveOrNull: [(value) => value === null || (Number.isInteger(value) && value > 0), 'a whole number above 0, or null'],
   positiveOrUnlimited: [(value) => value === 'unlimited' || (Number.isInteger(value) && value > 0), 'a whole number above 0, or "unlimited"'],
+  // A project run's bounds (docs/config.md#project-run): how many issues run at once, sessions one run starts, and hours one issue runs.
+  parallelCap: [(value) => Number.isInteger(value) && value >= 1 && value <= 4, 'a whole number from 1 to 4'],
+  startCap: [(value) => Number.isInteger(value) && value >= 1 && value <= 1000, 'a whole number from 1 to 1000'],
+  hourCap: [(value) => Number.isInteger(value) && value >= 1 && value <= 24, 'a whole number from 1 to 24'],
+  // The MCP servers a confined project session loads, as the host's `mcpServers` object takes them: each name a word,
+  // each definition an object (docs/config.md#project-run).
+  mcpServers: [
+    (value) => isObject(value) && Object.entries(value).every(([name, server]) => /^[\w.-]{1,64}$/u.test(name) && isObject(server)),
+    'an object of MCP server names, each letters, digits, ".", "_", or "-", to the server\'s definition as an object',
+  ],
+  // Names of servers in projectRun.mcpServers, each spelled as a key there.
+  serverNames: [
+    (value) => Array.isArray(value) && value.every((name) => typeof name === 'string' && /^[\w.-]{1,64}$/u.test(name)),
+    'a list of MCP server names, each letters, digits, ".", "_", or "-", as projectRun.mcpServers names them',
+  ],
+  // The package registries a confined project session may reach, by ecosystem name (lib/project-registries.mjs), each once.
+  registries: [isRegistries, () => `a list of registry names, each once, from ${oneOf(REGISTRY_NAMES)}`],
   budgetEnforce: [(value) => ['warn', 'fail'].includes(value), '"warn" or "fail"'],
   docBytes: [
     (value) => isObject(value) && Object.entries(value).every(([doc, bytes]) => isText(doc) && Number.isInteger(bytes) && bytes > 0),

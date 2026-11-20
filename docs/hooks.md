@@ -1283,13 +1283,14 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     `--all`, `--delete`, `-d`, a `:ref` delete, any other ref or a second refspec, a URL or another remote, `--repo`,
     `-o`, `--no-verify`, any other option, a word built at run time, a git `-c`, `--git-dir`, or `--work-tree`, a
     variable that moves git's repository or config (`GIT_DIR`, `GIT_CONFIG_*`, `HOME`, `XDG_CONFIG_HOME`) on the line,
-    a push from any other folder, and every push while no running start of its issue names a branch. In a call of its
+    any variable set or removed for the push itself (`VAR=value`, `env VAR=value`, `env -u`), as `GIT_SSH_COMMAND`,
+    which runs a program, or `GIT_TRACE`, which writes a file, a push from any other folder, and every push while no running start of its issue names a branch. In a call of its
     own: beside the push only `cd`, git's reads `status`, `log`, `diff`, `show`, `rev-parse`, with only the options
     that read (`--oneline`, `-<n>`, `-n <n>`, `--format=`, `--stat`, `--name-only`, `--cached`, and the like, never
     `--output`, `-o`, `--ext-diff`, `--textconv`, `--exec`, `-c`, or one the hook does not list, which write a file,
     such as a branch's ref in the clone's git folder, or run a program), and
     `branch --show-current`, and the filters `echo`, `printf`, `true`, `head`, `tail`, `wc`, `cat`, and `grep` may run,
-    so `git apply --cached p && git commit -m x && git push ...`, a merge, a reset, or a fetch on the push's line,
+    none with a variable set or removed for it, as `GIT_EXTERNAL_DIFF=x git diff`, which runs a program, so `git apply --cached p && git commit -m x && git push ...`, a merge, a reset, or a fetch on the push's line,
     which would change its commits after the hook read them, is refused with "push in a call of its own". Then git
     holds the checkout: the folder's `git rev-parse --git-common-dir` is its worktree's or attempt clone's own, not a
     repository cloned inside it; origin pushes to one URL (`git remote get-url --push --all origin`), the one the start row's

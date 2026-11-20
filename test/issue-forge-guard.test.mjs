@@ -215,6 +215,9 @@ test('an issue session pushes in a call of its own, so no command beside it chan
     `git log -1 --format=%H --output=${path.join(fx.attempt, 'git', 'refs', 'heads', ...BRANCH.split('/'))} HEAD && ${EXACT}`,
     `git log -1 --output ${path.join(fx.attempt, 'git', 'refs', 'heads', 'x')} && ${EXACT}`, `git diff --ext-diff && ${EXACT}`, `git log -p --textconv && ${EXACT}`,
     `git show -o x HEAD && ${EXACT}`, `git status --exec=x && ${EXACT}`, `git diff -c && ${EXACT}`, `git rev-parse --git-path x --frobnicate && ${EXACT}`,
+    // A variable set for a read beside the push, as one that makes git diff run a program, makes it no read.
+    `GIT_EXTERNAL_DIFF=./x git diff && ${EXACT}`, `env GIT_EXTERNAL_DIFF=./x git log -p && ${EXACT}`, `GIT_PAGER=x git status && ${EXACT}`,
+    `LC_ALL=C git branch --show-current && ${EXACT}`, `X=1 cat notes.md && ${EXACT}`, `env -u PATH grep x notes.md; ${EXACT}`,
   ]) {
     assert.match(fx.ask(bash(command))?.reason ?? '', /an issue session pushes in a call of its own: commit first, then run `git push origin HEAD:refs\/heads\/feat\/eng-1-export` alone/u, command);
   }
@@ -222,6 +225,10 @@ test('an issue session pushes in a call of its own, so no command beside it chan
   for (const command of [EXACT, `cd ${fx.work} && ${EXACT}`, `git status --short && git log --oneline -1 && ${EXACT} 2>&1 | tail -5`, `git log --oneline -3 && ${EXACT}`,
     `git log -n 2 --format=%H --stat origin/main..HEAD -- src && git diff --cached --name-only && ${EXACT}`, `git rev-parse HEAD; git branch --show-current; ${EXACT}; echo done`, `${EXACT} | grep -v hint | head -3`]) {
     assert.equal(fx.ask(bash(command)), null, command);
+  }
+  // A variable set for the push itself, which may run a program or write a file, refuses it.
+  for (const command of [`GIT_SSH_COMMAND=./x ${EXACT}`, `GIT_TRACE=/tmp/trace ${EXACT}`, `env GIT_TRACE=1 ${EXACT}`, `env -u LANG ${EXACT}`, `git status && GIT_SSH=./x ${EXACT}`]) {
+    assert.match(fx.ask(bash(command))?.reason ?? '', /for the push, and a variable such as GIT_SSH_COMMAND runs a program/u, command);
   }
   const hooked = fx.hook(bash(`git commit --allow-empty -qm x && ${EXACT}`));
   assert.equal(hooked.status, 2, hooked.stderr);

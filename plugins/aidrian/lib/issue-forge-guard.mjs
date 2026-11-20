@@ -32,7 +32,7 @@ import { isWithin } from './fs.mjs';
 import { changesGitTarget, plainGlobals } from './git-push.mjs';
 import { opaqueShellCommand } from './hosts/index.mjs';
 import { pushCheckoutProblem } from './issue-push-checkout.mjs';
-import { changesVariable, GIT_VALUE_GLOBALS, readShortOptions, walkCommands } from './shell-lex.mjs';
+import { changedVariables, changesVariable, GIT_VALUE_GLOBALS, readShortOptions, walkCommands } from './shell-lex.mjs';
 import { issueHeld } from './unattended-mark.mjs';
 import { runsDeclared } from './unattended-shell.mjs';
 
@@ -120,15 +120,18 @@ export function issueForgeDenial(input, { names: { human } }, { mark = null, iss
 }
 
 // Whether one walked command (shell-lex walkCommands) may run in the call of the exact push: a git push, whose own words
-// pushProblem holds, a read of BESIDE_GIT, `git branch --show-current`, or a program of BESIDE_PROGRAMS, none built at run
-// time or feeding a shell the walk could not read.
+// and variables pushProblem holds, a read of BESIDE_GIT, `git branch --show-current`, or a program of BESIDE_PROGRAMS,
+// none built at run time, feeding a shell the walk could not read, or run with a variable set or removed for it
+// (`VAR=value`, `env VAR=value`, `env -u`), since one such as GIT_EXTERNAL_DIFF makes a read run a program.
 function besidePush({ invocation, unread }) {
   if (unread !== undefined || invocation.dynamic) return false;
-  if (invocation.program !== 'git') return BESIDE_PROGRAMS.has(invocation.program);
+  const sets = changedVariables(invocation).length > 0;
+  if (invocation.program !== 'git') return !sets && BESIDE_PROGRAMS.has(invocation.program);
   const git = gitCall(invocation.args ?? []);
   if (!git || git.built || !plainGlobals(git.globals) || git.rest.some((token) => token.dynamic)) return false;
-  if (git.subcommand === 'branch') return git.rest.length === 1 && git.rest[0].text === '--show-current';
   if (git.subcommand === 'push') return true;
+  if (sets) return false;
+  if (git.subcommand === 'branch') return git.rest.length === 1 && git.rest[0].text === '--show-current';
   return BESIDE_GIT.has(git.subcommand) && readsOnly(git.rest.map((token) => token.text));
 }
 
@@ -209,7 +212,7 @@ function gitProblem(entry, { moved, issue, roots, fold, beside }) {
   if (git.built) return { match: 'issue session git command built at run time', why: 'it runs git with a subcommand or an option built at run time, which may push any ref' };
   if (OTHER_PUSHES.has(git.subcommand)) return { match: 'issue session push', why: `it pushes with \`git ${git.subcommand}\`, which may push any ref to any repository` };
   if (git.subcommand === 'push') {
-    const why = pushProblem(git, { moved, issue, folder: entry.folder, roots, fold, beside });
+    const why = pushProblem(git, { moved, issue, folder: entry.folder, roots, fold, beside, sets: changedVariables(entry.invocation) });
     return why ? { match: 'issue session push', why } : null;
   }
   if (git.subcommand === 'lfs') {
@@ -224,11 +227,13 @@ function gitProblem(entry, { moved, issue, roots, fold, beside }) {
 }
 
 // Why a `git push` (gitCall's `git`) is not the session's own exact push, or null: `git push origin
-// HEAD:refs/heads/<branch>`, with `+` or a lease that names only that branch, run in a call of its own (`beside`, the
-// first command of the call that may not share it, or null) in one of its roots. What the words alone refuse is read
-// first: the branch (`issue()`) and the roots are read only for a push shaped like its own, and git only past them all.
-function pushProblem(git, { moved, issue, folder, roots, fold, beside }) {
+// HEAD:refs/heads/<branch>`, with `+` or a lease that names only that branch, with no variable set or removed for it
+// (`sets`, the names changedVariables gives), run in a call of its own (`beside`, the first command of the call that may
+// not share it, or null) in one of its roots. What the words alone refuse is read first: the branch (`issue()`) and the
+// roots are read only for a push shaped like its own, and git only past them all.
+function pushProblem(git, { moved, issue, folder, roots, fold, beside, sets = [] }) {
   if (moved || !plainGlobals(git.globals)) return 'it pushes with a git option or variable that changes the repository or the config git reads, which may point the push anywhere';
+  if (sets.length > 0) return `it pushes with ${sets[0] === '*' ? 'its environment changed' : `${sets[0].slice(0, 40)} set or removed`} for the push, and a variable such as GIT_SSH_COMMAND runs a program and GIT_TRACE writes a file; an issue session runs its one push with no variable of its own`;
   if (git.rest.some((token) => token.dynamic)) return 'it pushes with a word built at run time, which may name any ref or remote';
   const operands = [];
   const leases = [];

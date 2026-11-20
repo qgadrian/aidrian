@@ -953,9 +953,6 @@ other rules still show. When `prs` is null or stale, rules 3 and 5 use what it s
 adds no error of its own: `prs` names the failure. The tickets read the pull requests the `prs` section read, so the
 forge is still asked once a snapshot. Without `--session` only rule 1 runs; in a folder with no project `tickets` is
 null like every section.
-The deprecated `ticket` beside it is the first entry of `tickets`, or null, and `errors` never names it: kept only
-for an `aidrian-mod` older than the one that reads `tickets`, it goes 30 days after the `aidrian-mod` release that
-reads `tickets` ships, or at the next major version of `aidrian` or `aidrian-mod`, whichever comes first.
 
 **The worktree.** `links` reads the session's `links.jsonl`, the worktrees its `aidrian worktree new` calls created
 ([Session ledger](hooks.md#session-ledger)). It keeps the newest row of each key, `host/path:branch`, drops each whose

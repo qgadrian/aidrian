@@ -70,7 +70,7 @@ test('the driver starts the issue next lists in a fresh clone cut from the base 
 
   // Written ahead, before the host started anything, then settled once.
   const [ahead, issue, start] = fx.rows();
-  const row = { event: 'start', key: 'ENG-1', attempt: 1, session: DRIVER, name, cwd: clone, branch: 'feat/eng-1-export', drop: path.join(path.dirname(clone), 'drop'), at: null };
+  const row = { event: 'start', key: 'ENG-1', attempt: 1, session: DRIVER, name, cwd: clone, branch: 'feat/eng-1-export', issueHours: 6, drop: path.join(path.dirname(clone), 'drop'), at: null };
   assert.deepEqual({ ...ahead, at: null }, { ...row, outcome: 'uncertain', pending: true });
   assert.deepEqual([issue.event, issue.key, issue.state], ['issue', 'ENG-1', 'running']);
   assert.deepEqual({ ...start, at: null }, { ...row, outcome: 'started', id: STARTED[0].id, child: session });

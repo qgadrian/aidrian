@@ -409,9 +409,13 @@ the handoff goes on by the clear route with what to change, and nothing is kept,
    nothing to open by hand; without it, `This session has ended its work; the new one is <name>, open it with <the
    host's command>.` A session the background route started, which no terminal follows, says it stops once this turn
    ends, before the same words ([Replacing the terminal](#replacing-the-terminal)).
-   In `auto` mode, a session a Human attends whose shell never loaded the function, such as one started in a terminal
-   opened before `aidrian shell-init <shell> --install` wrote it, adds one line on why its terminal stays: start the
-   next session in a new terminal, or after reloading the shell's startup file.
+   In `auto` mode, a session a Human attends that the function did not start, as with a launcher, an editor command,
+   or a terminal opened before `aidrian shell-init <shell> --install` wrote the function, adds one line on why its
+   terminal stays: start the next session in a new terminal. For a launcher on PATH that ends in `exec` of the host's
+   program, the line gives the whole command the Human runs once, `aidrian shell-init zsh --install --wrap <launcher>`
+   (or bash), with the launcher's own name in place of `<launcher>`, so a session that launcher starts follows too.
+   It ends by saying a copy of the plugin older than this one refuses `--wrap` as an unknown option, so the plugin is
+   updated first, with the host's update command when the host declares one.
    The skill tells the Human that line and ends the turn; the old session does nothing more.
 7. A prompt in the old session in the next 24 hours adds one line that names the background session that owns the
    work, so the old session does not take up the same work unasked.
@@ -494,7 +498,8 @@ not source `~/.bashrc`. `--uninstall` removes every block, from its start marker
 a start marker with no end after it changes nothing and exits 1. A startup file that is a link stays one, and keeps its
 mode. Each prints what it did. When a block differs from the current text, as after a plugin update that changed it,
 the session start adds a `Handoff terminal:` line that names the file and the command to hand the Human; it never
-rewrites the block itself.
+rewrites the block itself. When both startup files hold such a block, one line names both files and both commands,
+and a session start never prints more than one `Handoff terminal:` line ([Start lines](hooks.md#start-lines)).
 
 `aidrian shell-init zsh` (or `bash`) prints the same function, for a startup file that evals it, and exits 2 for any
 other shell. The function is named for each host program that can do it, today `claude`, and is declared as
@@ -546,6 +551,43 @@ An alias for `claude` takes the place of the function when typed. One whose valu
 elsewhere, such as `alias claude=~/.claude/local/claude`, runs past it, so a handoff does not replace that terminal;
 the block prints one line on stderr that says so when the shell reads it.
 
+The plain `--install` covers a session started by typing `claude`, which is all most people need.
+`--wrap` is an advanced option for a launcher script: a program on PATH that sets something up and ends in
+`exec claude "$@"`, such as `claude-work`, opts in with
+`aidrian shell-init zsh --install --wrap claude-work`, repeatable. The block then also holds the same function under
+each name, `function claude-work`, whose first run is `command claude-work "$@"` with `AIDRIAN_SHELL_PID` set, and an
+alias check that accepts an alias whose value starts with `claude-work` or `claude`. Every later hop opens with
+`command claude attach <id>`, in the shell's own environment, never through the launcher. A name is 1 to 32 letters,
+digits, `_`, or `-`, starting with a letter. The command refuses a host's own program, such as `claude`; a shell's own
+name, `sh`, `bash`, `zsh`, `dash`, `ksh`, `mksh`, `fish`, `csh`, `tcsh`, `yash`, `nu`, `elvish`, `xonsh`, `pwsh`, or
+`powershell`, the same list the `shell-init-install` Bash rule reads, since its function would run the host's
+attach flow each time that shell exits; every reserved
+word and builtin of zsh and bash, such as `if`, `local`, `trap`, `setopt`, or `mapfile`, from a fixed list, so no shell
+runs at install; a function a shell runs by its name as a hook, such as `preexec`, `precmd`, `chpwd`, or
+`command_not_found_handler`, and any name that starts with `TRAP` or `zle-`; a core tool the block runs or a function
+would shadow, such as `rm`, `date`, or `od`; and a ninth name in one block. Such a refusal exits 2, writes nothing, and
+names the refused `--wrap` by its position, never its value; `--wrap` without `--install` exits 2 too, and so does a
+value joined by `=` that starts with `-`, such as `--wrap=-x`, which fails the name's shape. A `--wrap` with no value,
+or a separate value that starts with `-`, such as `--wrap -x`, is refused before that, by the argument parser: it
+exits 1, writes nothing, and prints the usage and the parser's own message, which never repeats the value.
+The block records its names on its third line, `# Wrapped launchers: claude-play claude-work`, sorted.
+A re-install keeps them, and a later `--wrap` adds to them and never drops one; to wrap fewer, `--uninstall`, then
+`--install` with a `--wrap` for each name to keep.
+`--uninstall` removes them with the block. A record line the command did not write, such as one naming `claude`, counts
+as no names: the re-install wraps only what its `--wrap` names, and says so. A startup file with a line of its own that
+runs `aidrian shell-init`, and no block, wraps nothing and exits 1, since a wrapped function lives in the block.
+The name must be a program on PATH that ends in `exec` of the host program by its name, so its process shows as
+`claude`: the gate reads the process name, so a launcher that execs a binary named for its version, by its path, does
+not pass. An alias or shell function that itself runs `claude` reaches the `claude` function and needs no wrap.
+A shell function of the wrapped name that the shell already has when it reads the block, such as one defined earlier in
+the startup file or a hook a terminal's own setup registers, stays: the block defines no wrapper for that name and
+prints one line on stderr that says the launcher was not wrapped. The block tells its own wrapper apart, by its first
+run, so reading the startup file again in the same shell, `source ~/.zshrc`, redefines the wrapper and prints nothing.
+A function of that name defined after the block replaces the wrapper, as any later definition does. In zsh, an
+`autoload` of the wrapped name issued after the block does not replace a function already defined, so the wrapper
+stays; wrap no name that a later line of the startup file autoloads.
+Bash in POSIX mode refuses a function name with `-`, such as `claude-work`, so such a name suits zsh or a bash not in that mode.
+
 It runs only where every switch of the background route is on, and `session.handoff.mode` on the base branch is
 `"auto"`, on a host whose adapter declares `replaceTerminal` ([Adding a host](providers/adding-a-host.md)):
 
@@ -555,16 +597,20 @@ It runs only where every switch of the background route is on, and `session.hand
    shell, and the new session's id and full id. When anything above is missing, it notes nothing, and the say line ends
    with the plain line on how to open the new session instead. A session a Human attends that the shell function did
    not start, while this machine's switch and the working config turn the route on in `auto` mode, gets a
-   `Handoff terminal:` line at its start that says its terminal will not follow, and names the install command
-   ([Start lines](hooks.md#start-lines)). When a startup file already holds the current block, it gets none: such a
-   session runs where that file did not start it, such as an editor's terminal, and an install would change nothing.
+   `Handoff terminal:` line at its start that says its terminal will not follow ([Start lines](hooks.md#start-lines)).
+   With no block installed, it names the install command. When a startup file already holds the current block, the
+   session was started past the function, such as by a launcher, an editor command, or a terminal opened before the
+   install. The line names all three, since the session start reads no process to tell them apart; says a new
+   terminal settles the last; and names `aidrian shell-init <shell> --install --wrap <launcher>` for a launcher on PATH
+   that ends in `exec claude`, after updating a copy of the plugin older than this one, which refuses `--wrap` as an
+   unknown option, with the host's update command.
 2. When the turn ends, the Stop hook takes that request, once, within 30 minutes. It checks the request again against
    its own environment: the shell's pid, the host process, a Human attending, and no unattended mark. Then it writes the
    shell's record, valid for 60 seconds, notes in the store, `follow-<new session>.json`, that the shell's terminal now
    follows the new session, for 12 hours, and starts a detached helper. The helper waits 2 seconds, so the host runs its other Stop
    hooks and shows the last message. It checks the process is still the host's program that shell started, and sends
    the host's signal; on Claude Code, SIGTERM ([provider page](providers/claude-code.md#replacing-the-terminal)).
-   A stop the announce or hand-back check sends back ends nothing yet; the next stop does. A stop that ends the session
+   A stop the announce, review-loop, merge hand-back, or hand-back check sends back ends nothing yet; the next stop does. A stop that ends the session
    skips the session-length reminder.
 3. The host's program exits, and the shell function opens the new session in the same terminal.
 
@@ -608,6 +654,17 @@ Limits:
   open a session by a plain id, within its minute, the next time a program the shell function ran exits.
 - A Stop hook of another plugin that sends the turn back gets 2 seconds before the signal, and the session ends
   mid-turn. Its transcript is kept, and the work goes on in the new session.
+- A wrapped launcher that does not end in `exec`, or execs the host program under another process name, carries the
+  shell's pid but fails the gate's check of the host process, so its terminal stays, and the handoff's last line names
+  the command that opens the new session.
+- Only the first session runs through a wrapped launcher: every later hop opens with `command claude attach <id>` in
+  the shell's own environment. What the launcher sets before its `exec`, such as a variable naming a config folder, or
+  flags, does not reach the later sessions, so a launcher that exists only to set such a variable may open the next
+  session with the shell's settings. Not verified live.
+- A client that opened the session from the host's own session list is not followed: the old session still stops.
+  The client then returned to the list the one time it was seen; that was not probed further.
+  `claude attach <id>` typed in the shell is the way that follows every hop
+  ([provider page](providers/claude-code.md#replacing-the-terminal)).
 
 ## The snapshot
 

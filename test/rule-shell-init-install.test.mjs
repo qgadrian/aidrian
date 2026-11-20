@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import test from 'node:test';
 
-import { check, REASON } from '../plugins/aidrian/lib/rules/shell-init-install.mjs';
+import { check, REASON, SHELL_NAMES } from '../plugins/aidrian/lib/rules/shell-init-install.mjs';
 
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-bash.mjs');
 const deny = (command) => assert.equal(check(command), REASON, `expected deny: ${command}`);
@@ -24,6 +24,12 @@ test('denies an install or uninstall of the shell function, however aidrian is r
   deny('echo "aidrian shell-init zsh --install" | bash');
 });
 
+test('denies an install that wraps a launcher, wherever --wrap sits', () => {
+  deny('aidrian shell-init zsh --install --wrap cc');
+  deny('aidrian shell-init zsh --wrap cc --install');
+  deny('aidrian shell-init zsh --wrap=cc --install');
+});
+
 test('denies the command carried by a program that runs its arguments or a string as a command', () => {
   deny('echo zsh | xargs aidrian shell-init --install');
   deny('find . -maxdepth 0 -exec aidrian shell-init zsh --install \\;');
@@ -36,6 +42,22 @@ test('denies the command carried by a program that runs its arguments or a strin
   allow('xargs -n1 echo < files');
   allow('find . -name "*.md" -exec grep -l "shell-init zsh --install" {} +');
   allow("watch 'aidrian shell-init zsh'");
+});
+
+test('each shell of the shared list runs the command in its -c string, and a shell the walk does not read carries its text', () => {
+  const walked = ['sh', 'bash', 'zsh', 'dash', 'ksh'];
+  for (const shell of SHELL_NAMES) {
+    deny(`${shell} -c 'aidrian shell-init zsh --install'`);
+    const printed = `${shell} -c 'echo aidrian shell-init zsh --install'`;
+    if (walked.includes(shell)) allow(printed);
+    else deny(printed);
+  }
+});
+
+// Written out, not read from SHELL_NAMES: a shorter shared list would otherwise shrink this check with it.
+test('each of the fifteen shells, as a literal list, runs the command in its -c string and is denied', () => {
+  const shells = ['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'fish', 'csh', 'tcsh', 'yash', 'nu', 'elvish', 'xonsh', 'pwsh', 'powershell'];
+  for (const shell of shells) deny(`${shell} -c 'aidrian shell-init zsh --install'`);
 });
 
 test('allows printing the function, other aidrian commands, and text that only names the command', () => {

@@ -8,7 +8,8 @@ description: Implement one Linear or GitHub issue to a draft pull request. Track
 Take one tracker issue, Linear or GitHub, to a draft pull request.
 The session that runs this skill coordinates: it resolves the issue, locks a slice plan, dispatches one agent per slice,
 checks each result, and opens the pull request through the `pr-write` skill.
-It never edits a repository file itself, never merges, and never closes the issue; it only keeps the plan's slice state,
+Within this skill it never edits a repository file, never merges, and never closes the issue; on a direct run a merge comes
+only after the skill ends, from the review loop phase 8 names. It only keeps the plan's slice state,
 through `planning-agent` when the `orchestrator` runs it and git tracks the plan.
 
 Before you start, follow the `knowledge` skill. Load your `issue_tracker` docs for the key format, branch names, status names,

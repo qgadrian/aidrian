@@ -69,7 +69,7 @@ These are warnings, and never fail the check.
 - No project-specific path leaks into the plugin.
 - No tracked file names a person.
   The owner's GitHub name appears only where a user installs: the README, the example's settings, and the manifests.
-- Every agent and skill description fits in 160 characters. Both hosts load all of them into every session.
+- Every agent and skill description fits in 160 characters. Hosts can exclude manual-only skills from implicit prompts.
 - No skill, agent source, host add-on, or brief template asks for `git commit --amend`, which the amend rule refuses.
 - Every host and tracker adapter passes the conformance suite, `test/adapters.test.mjs`, which iterates the registries.
 - Shared code reads no host's variable and branches on no host's tool, past a list in `test/host-coupling.test.mjs` that can only shrink.
@@ -80,7 +80,7 @@ These are warnings, and never fail the check.
 When `claude` and `codex` are on your PATH, `test/hosts.test.mjs` also checks the real hosts. Neither check runs a model.
 
 - Claude Code validates the plugin and loads every agent, skill, and hook event.
-- Codex installs the plugin and shows every skill and agent in a project session.
+- Codex installs every skill, lists manual-only skills in the explicit catalog, and shows implicit skills and agents in the project prompt.
 
 ## Model prices
 

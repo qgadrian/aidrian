@@ -149,7 +149,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.ignoreCancelledChecks` | Parts of check names whose `CANCELLED` result is routine and not a failure. |
 | `github.conditionalChecks` | Parts of check names whose `SKIPPED` or `NEUTRAL` result is routine, such as a job a path filter turns off. |
 | `github.markReady` | Who marks a draft pull request ready. `"auto"`, the default: the `pr-review-loop` skill, or `autopilot` and the `orchestrator` when they run it, mark it ready once a review of the current head signs off with no blocked row and `aidrian pr checks` says ready. `"ask"`: its author, or the review loop when the Human asks in the session. Either way, nothing is pushed after it is marked ready. Marking it ready merges nothing: only the Human's request or [auto-merge](#auto-merge) does. The default was `"ask"` before; [Changed defaults](#changed-defaults) has the opt-out. |
-| `github.reviewLoop` | What follows the `pr-write` skill once it opens or updates a pull request. `"auto"`, the default: once `pr-write`, and any skill that ran it, has ended, the session starts the `pr-review-loop` skill on it right away, without asking. `"ask"`: the session offers the loop and runs it when the Human asks. Run inside a skill or agent that runs its own review loop, such as `autopilot` or the `orchestrator`, `pr-write` leaves the loop to it. |
+| `github.reviewLoop` | What follows the `pr-write` skill once it opens or updates a pull request. `"auto"`, the default: once `pr-write`, and any skill that ran it, such as a top-level `issue-implement` or `plan-implement`, has ended, the session starts the `pr-review-loop` skill on it right away, without asking. `"ask"`: the session offers the loop and runs it when the Human asks. Run inside a skill or agent that runs its own review loop, such as `autopilot` or the `orchestrator`, `pr-write` leaves the loop to it. |
 | `github.titleIssuePrefix` | `true` writes pull request titles as `[<issue key>] type(scope): subject`, or `[NOISSUE] type: subject`; `false`, the default, writes a plain Conventional Commits title. |
 | `github.pullRequest` | The project's [pull request contract](#pull-request-contract), beyond the required sections; off by default but for `sharedTempBodyFile`. |
 | `github.publicText.patterns` | The case-insensitive regular expressions no issue, pull request, or comment text may match ([Public text](#public-text)); `[]`, the default, adds none. |
@@ -379,6 +379,9 @@ So a checkout whose lists differ from the default branch's does not auto-merge, 
 The `pr-review-loop`, `orchestration`, and `autopilot` skills run the `pr-auto-merge` skill, only after that same run marked the draft ready.
 `pr-auto-merge` stops unless this run marked the pull request ready and the command exits 0,
 and otherwise reads `pr-merge-when-green` and follows its steps as an unattended run.
+When the command refuses because the pull request changes a path it never merges, it has stopped before its author,
+comment, and review checks, so the run's final report hands the pull request to the Human for review and merge, rated,
+and the [merge hand-back check](hooks.md#merge-hand-back-check) sends back a turn whose reports leave it out.
 The first condition is a step of the skill, not a check the command makes.
 The model cannot start `pr-merge-when-green` itself: the skill merges only on the Human's request in the session, or in that run.
 An unattended run waits for every check, runs the command again right before the merge, and stops unless it still

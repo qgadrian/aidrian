@@ -10,7 +10,7 @@
 // `grep`. Out of sight, as for every rule: a flag behind a variable, a script file or an interpreter (`python -c`,
 // `node -e`) that runs the command, and a shell alias or function that hides it.
 
-import { aidrianArgs, walkCommands } from '../shell-lex.mjs';
+import { aidrianArgs, inlineShellCommand, walkCommands } from '../shell-lex.mjs';
 
 export const REASON =
   'Blocked: `aidrian shell-init --install` and `--uninstall` write the Human\'s shell startup file, which only the Human decides to change. ' +
@@ -18,9 +18,14 @@ export const REASON =
 
 const FLAG = /^--(?:install|uninstall)$/u;
 const UNREAD = /\bshell-init\b[^\n;|&]*--(?:install|uninstall)\b/u;
+// The shells' own names, each a program that runs a string it is given as commands. The one list of them: the wrap
+// refusal of lib/shell-init.mjs refuses each as a launcher name too.
+export const SHELL_NAMES = Object.freeze(['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'fish', 'csh', 'tcsh', 'yash', 'nu', 'elvish', 'xonsh', 'pwsh', 'powershell']);
+// Whether walkCommands reads the `-c` string of the shell `name` as commands (shell-lex inlineShellCommand).
+const walkReads = (name) => inlineShellCommand({ program: name, args: [{ text: '-c', dynamic: false }, { text: ':', dynamic: false }] }) !== null;
 // The programs that run their arguments, or a string among them, as a command. A shell the walk reads, such as `sh -c`,
 // is not one: walkCommands reads its body as commands.
-const CARRIERS = new Set(['xargs', 'find', 'watch', 'script', 'parallel', 'fish', 'csh', 'tcsh', 'mksh', 'yash', 'nu', 'elvish', 'xonsh', 'pwsh', 'powershell']);
+const CARRIERS = new Set(['xargs', 'find', 'watch', 'script', 'parallel', ...SHELL_NAMES.filter((name) => !walkReads(name))]);
 // An aidrian command run by its name, any path to it, or the plugin's cli.mjs, then `shell-init` and a flag.
 const COMMAND_TEXT = /(?:^|[\s;&|(`'"])(?:\S*\/)?(?:aidrian|cli\.mjs)\s[^\n;|&]*\bshell-init\b[^\n;|&]*--(?:install|uninstall)\b/u;
 const AIDRIAN_WORD = /(?:^|\/)(?:aidrian|cli\.mjs)$/u;

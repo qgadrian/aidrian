@@ -27,6 +27,7 @@ Testing is in `SKILL.md` Step 7's Done when.
 - [ ] An MCP tool is named by its server and tool, or by the role a shared reference gives it.
 - [ ] The skill ends at its own output and never names who continues: no "run by X, then" or "under X, continue with".
   The caller's text names the next step. A next step in the skill's report is output for its reader.
+  With no caller, as on a direct run, the skill's end names the session's next step, as `issue-implement`'s phase 8 does with the review loop.
 
 ## Structure
 

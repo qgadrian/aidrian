@@ -118,8 +118,8 @@ function projectConfig(project) {
 // default branch without one) with no upstream, so a bare `git push` cannot target the default branch. An existing
 // local or remote branch is reused only with `reuseExisting`, after a person approved the plan that named it.
 // `git worktree add` runs with the repository's hooks, as it would by hand, so a post-checkout hook a project's setup
-// relies on (husky, pre-commit, git-lfs) runs in the new worktree. The command runs in its caller's own shell, inside a
-// confined session's sandbox when an issue session runs it, so it has no more rights than a hand-typed
+// relies on (husky, pre-commit, git-lfs) runs in the new worktree. The command runs as the process that called it, inside
+// a confined session's sandbox when an issue session runs it, so it has no more rights than a hand-typed
 // `git worktree add` there. A project run's attempt clones are lib/project-start.mjs's, made with hardened git.
 export function createWorktree({ branch, slug, base, fetch = false, plan = false, reuseExisting = false }, { cwd = process.cwd() } = {}) {
   const ctx = context(cwd);

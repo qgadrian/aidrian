@@ -1270,13 +1270,14 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     so `git apply --cached p && git commit -m x && git push ...`, a merge, a reset, or a fetch on the push's line,
     which would change its commits after the hook read them, is refused with "push in a call of its own". Then git
     holds the checkout: the folder's `git rev-parse --git-common-dir` is its worktree's or attempt clone's own, not a
-    repository cloned inside it; origin's push URL (`git remote get-url --push origin`) is the one the start row's
-    `pushUrl` pinned, read from the clone before its session started (a start that recorded none pushes nothing); its
+    repository cloned inside it; origin pushes to one URL (`git remote get-url --push --all origin`), the one the start row's
+    `pushUrl` pinned, so a second `remote.origin.pushurl` refuses the push, read from the clone before its session started (a start that recorded none pushes nothing); its
     commits change no file of the forge's workflow folders (`forgeWorkflowFolders`), nor a folder that holds them, as a
     `.github` made a link, from their merge base with origin's default branch (`refs/remotes/origin/HEAD`, else
     `origin/main`), however the file got there, as by `git apply --cached`, `patch`, `tar -x`, `unzip`, or `git am`,
     which the write rule above does not see; and `git status --porcelain` names no staged, unstaged, or untracked change
-    in those folders. A merge of the default branch brings none of its own changes into that diff; a git that cannot
+    in those folders. Both reads take git's NUL-ended output (`-z`), so a file name git would quote, with a space or a
+    non-ASCII letter, counts as it is. A merge of the default branch brings none of its own changes into that diff; a git that cannot
     answer within the hook's budget refuses the push, and one that names no base advises `git fetch origin`, which sets
     origin/HEAD again from git 2.48 on, or `git remote set-head origin --auto` with an older git. `git send-pack`, `git http-push`, and every git subcommand outside
     the list of git's own commands an issue session runs, such as an alias or `git subtree`, are refused; of `git lfs`,

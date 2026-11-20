@@ -14,6 +14,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { issueForgeDenial } from '../plugins/aidrian/lib/issue-forge-guard.mjs';
+import { rawPaths, statusEntries } from '../plugins/aidrian/lib/issue-push-checkout.mjs';
 import { appendToRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { ownAttemptFolder, ownIssue } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { issueHeld, markUnattended, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
@@ -242,6 +243,37 @@ test('an issue session\'s exact push is refused while its checkout holds an unco
   assert.match(push(), /it pushes commits that change \.github, a workflow file/u, 'a link in place of .github');
 });
 
+test('an issue session\'s exact push reads a workflow file\'s name as git holds it, with a space or a letter git would quote', (t) => {
+  const fx = issueFixture(t);
+  const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8', stdio: 'pipe' });
+  const push = () => fx.ask(bash(EXACT))?.reason ?? null;
+  for (const name of ['é.yml', 'a b.yml']) {
+    mkdirSync(path.join(fx.work, '.github', 'workflows'), { recursive: true });
+    const file = path.join(fx.work, '.github', 'workflows', name);
+    writeFileSync(file, 'on: push\n');
+    assert.match(push() ?? '', new RegExp(`holds an uncommitted change to \\.github/workflows/${name.replace('.', '\\.')}, a workflow file`, 'u'), `untracked ${name}`);
+    git(fx.work, 'add', '--', `.github/workflows/${name}`);
+    assert.match(push() ?? '', /holds an uncommitted change to/u, `staged ${name}`);
+    git(fx.work, 'commit', '-q', '-m', `chore: ${name}`);
+    assert.match(push() ?? '', new RegExp(`it pushes commits that change \\.github/workflows/${name.replace('.', '\\.')}, a workflow file`, 'u'), `committed ${name}`);
+    git(fx.work, 'rm', '-q', '--', `.github/workflows/${name}`);
+    git(fx.work, 'commit', '-q', '-m', `chore: drop ${name}`);
+    assert.equal(push(), null, `${name} taken out`);
+  }
+  // The advice quotes a name with a space, so running it takes the file out.
+  mkdirSync(path.join(fx.work, '.github', 'workflows'), { recursive: true });
+  writeFileSync(path.join(fx.work, '.github', 'workflows', 'a b.yml'), 'on: push\n');
+  assert.match(push() ?? '', /`git clean -f -- '\.github\/workflows\/a b\.yml'`/u);
+});
+
+test('the workflow-file reads take both paths of a rename, from git\'s NUL-ended output', () => {
+  assert.deepEqual(rawPaths(':100644 100644 a b M\0x y.yml\0:100644 100644 a b R100\0.github/workflows/é.yml\0src/z.yml\0'), ['x y.yml', '.github/workflows/é.yml', 'src/z.yml']);
+  assert.deepEqual(statusEntries('R  src/z.yml\0.github/workflows/a b.yml\0?? .github/workflows/é.yml\0'), [
+    { paths: ['src/z.yml', '.github/workflows/a b.yml'], untracked: false },
+    { paths: ['.github/workflows/é.yml'], untracked: true },
+  ]);
+});
+
 test('an issue session pushes only from its own clone\'s repository, to the URL its start pinned, never from a clone nested in it', (t) => {
   const fx = issueFixture(t);
   const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8', stdio: 'pipe' });
@@ -260,6 +292,12 @@ test('an issue session pushes only from its own clone\'s repository, to the URL 
   // The clone's origin made to push elsewhere, past the guards, as a config write by a program would.
   git(fx.work, 'remote', 'set-url', '--push', 'origin', other);
   assert.match(fx.ask(bash(EXACT))?.reason ?? '', new RegExp(`it pushes to ${other.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}, and origin pushes only to .*, the URL its issue's start pinned`, 'u'));
+  // Two push URLs, the pinned one among them: git pushes to both.
+  git(fx.work, 'config', '--unset-all', 'remote.origin.pushurl');
+  assert.equal(fx.ask(bash(EXACT)), null, 'one push URL again');
+  git(fx.work, 'config', '--add', 'remote.origin.pushurl', fx.dir);
+  git(fx.work, 'config', '--add', 'remote.origin.pushurl', other);
+  assert.match(fx.ask(bash(EXACT))?.reason ?? '', /one of the 2 URLs origin pushes to, and origin pushes only to/u, 'a second push URL');
 });
 
 test('an issue session whose start pinned no push URL pushes nothing', (t) => {

@@ -215,11 +215,23 @@ function programWrites(segment, invocation, folder) {
   return [];
 }
 
-// The writes of one git call (programWrites): what its subcommand makes (subcommandWrites), and each file a diff
-// option, `git format-patch`, or `git archive` writes its output to (outputTargets).
+// The writes of one git call (programWrites): what its subcommand makes (subcommandWrites), each file a diff
+// option, `git format-patch`, or `git archive` writes its output to (outputTargets), and the file `git bundle create`
+// writes (bundleTarget).
 function gitWrites(git, folder, shown) {
   if (!git) return [];
-  return [...subcommandWrites(git, folder, shown), ...outputTargets(git, folder, shown)];
+  return [...subcommandWrites(git, folder, shown), ...outputTargets(git, folder, shown), ...bundleTarget(git, folder, shown)];
+}
+
+// The file `git bundle create` writes: its first word past `create` that is no option, as none of its options
+// (-q, --progress, --version=<n>) takes the next word. `-` writes to standard output. A name built at run time, or a
+// call that names none, is refused, since where it writes cannot be told.
+function bundleTarget(git, folder, shown) {
+  if (git.subcommand !== 'bundle' || git.rest[0]?.dynamic || git.rest[0]?.text !== 'create') return [];
+  const value = git.rest.slice(1).find((token) => token.dynamic || token.text === '-' || !token.text.startsWith('-'));
+  if (value?.text === '-' && !value.dynamic) return [];
+  if (!value || value.dynamic) return [{ what: 'a bundle file git writes, whose name is missing or built at run time, so where it writes cannot be told', text: shown }];
+  return [{ file: value.text, folder, text: shown }];
 }
 
 // The subcommands whose short `-o` names the file or folder they write: format-patch's output folder, archive's file.
@@ -230,11 +242,9 @@ const OUTPUT_LONG = new Set(['--output', '--output-directory']);
 
 // Each file or folder a git call writes its output to, in any spelling: `--output=<file>`, `--output <file>`,
 // format-patch's `--output-directory` and `-o`, archive's `-o`, alone, attached (`-o<dir>`), or last in a cluster
-// (`-ko <dir>`). A name built at run time is refused, since where it writes cannot be told. A `-C` folder before the
-// subcommand is the folder a relative name lies in.
+// (`-ko <dir>`). A name built at run time is refused, since where it writes cannot be told. A relative name lies in
+// `folder`, which walkCommands already resolved through every leading `-C`, so no `-C` is applied again here.
 function outputTargets(git, folder, shown) {
-  const at = git.globals.findIndex((token) => token.text === '-C');
-  const into = at >= 0 && git.globals[at + 1] && !git.globals[at + 1].dynamic && folder !== null ? path.resolve(folder, git.globals[at + 1].text) : folder;
   const found = [];
   const rest = git.rest;
   for (let i = 0; i < rest.length; i += 1) {
@@ -250,7 +260,7 @@ function outputTargets(git, folder, shown) {
     } else continue;
     if (!value || value.dynamic) {
       found.push({ what: 'a file git writes its output to, whose name is missing or built at run time, so where it writes cannot be told', text: shown });
-    } else found.push({ file: value.text, folder: into, text: shown });
+    } else found.push({ file: value.text, folder, text: shown });
   }
   return found;
 }

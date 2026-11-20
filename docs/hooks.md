@@ -1216,8 +1216,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     a key that makes git run a program at any scope, and `git config --edit`; the folders `git worktree add`,
     `git clone`, and `git init` make, and the file or folder a git call writes its output to (`--output=<file>` or
     `--output <file>` on any subcommand, as `git log`, `show`, or `diff`, and `-o` or `--output-directory` of
-    `git format-patch`, and `-o` of `git archive`, alone, attached, or last in a cluster), when outside the places, or
-    when built at run time; the forge CLI's, which its adapter declares
+    `git format-patch`, and `-o` of `git archive`, alone, attached, or last in a cluster), and the file
+    `git bundle create` writes, when outside the places, or when built at run time; a relative name lies in the folder
+    every leading `-C` moves to, the last one included; the forge CLI's, which its adapter declares
     (`gh auth setup-git`, `login`, `logout`, `switch`, and `refresh`, `gh config set`, and `gh extension install` on
     GitHub); each host's own config subcommands, which its adapter declares (`configCommands`: `claude mcp add`,
     `claude config set`, `claude plugin install`, and `claude plugin marketplace add` for Claude Code, `codex mcp add`,

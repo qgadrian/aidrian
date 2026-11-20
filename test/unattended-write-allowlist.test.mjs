@@ -342,9 +342,21 @@ test('a git call that writes its output to a file names that file to the write a
     [`git format-patch -1 --output-directory=${elsewhere}`, /outside the places/u],
     [`git format-patch -1 --output-directory ${elsewhere}`, /outside the places/u],
     [`git archive -o ${path.join(elsewhere, 'a.tar')} HEAD`, /outside the places/u],
+    [`git archive --output=${path.join(elsewhere, 'a.tar')} HEAD`, /outside the places/u],
+    [`git archive --output ${path.join(fx.home, '.zshrc')} HEAD`, /a shell startup file/u],
     ['git log --output="$OUT" -1', /whose name is missing or built at run time/u],
+    // Every leading -C moves the folder a relative name lies in, the last one included: the name lies in the last.
+    [`git -C ${fx.worktree} -C ${path.join(fx.home, '.claude')} log -1 --output=settings.json`, /a dot file or folder of the user's home folder/u],
+    [`git -C ${fx.worktree} -C ${path.join(fx.attempt, 'git')} log -1 --output=config`, /git folder|shared git|outside the places/u],
+    [`git -C ${fx.worktree} -C ${path.join(fx.home, '.claude')} format-patch -1 -o out`, /a dot file or folder of the user's home folder/u],
+    // git bundle create writes the file it names first, past its options.
+    [`git bundle create ${path.join(elsewhere, 'all.bundle')} --all`, /outside the places/u],
+    [`git bundle create -q --version=3 ${path.join(fx.home, '.zshrc')} HEAD`, /a shell startup file/u],
+    [`git -C ${fx.worktree} -C ${path.join(fx.home, '.claude')} bundle create settings.json HEAD`, /a dot file or folder of the user's home folder/u],
+    ['git bundle create "$OUT" HEAD', /whose name is missing or built at run time/u],
+    ['git bundle create', /whose name is missing or built at run time/u],
   ]) assert.match(fx.ask(bash(command))?.reason ?? '', reason, command);
-  for (const command of [`git log -1 --output=${path.join(fx.temp, 'log.txt')}`, `git format-patch -1 -o ${path.join(fx.temp, 'p')}`, 'git log --oneline -3', 'git diff --output-indicator-new=+ HEAD', 'git log -- --output=x']) {
+  for (const command of [`git log -1 --output=${path.join(fx.temp, 'log.txt')}`, `git format-patch -1 -o ${path.join(fx.temp, 'p')}`, 'git log --oneline -3', 'git diff --output-indicator-new=+ HEAD', 'git log -- --output=x', `git bundle create ${path.join(fx.temp, 'all.bundle')} --all`, 'git bundle create - HEAD', `git bundle verify ${path.join(fx.root, 'elsewhere', 'x.bundle')}`, `git -C ${fx.root} -C ${fx.worktree} log -1 --output=log.txt`]) {
     assert.equal(fx.ask(bash(command)), null, command);
   }
 });

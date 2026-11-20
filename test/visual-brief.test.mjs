@@ -8,6 +8,8 @@ import test from 'node:test';
 
 const SKILL = path.resolve(import.meta.dirname, '../plugins/aidrian/skills/visual-brief');
 const CHECK = path.join(SKILL, 'scripts/check-secrets.mjs');
+const OFFLINE = path.join(SKILL, 'scripts/check-offline.mjs');
+const checkOffline = (file) => spawnSync(process.execPath, [OFFLINE, file], { encoding: 'utf8' });
 const scan = (...args) => spawnSync(process.execPath, [CHECK, ...args], { encoding: 'utf8' });
 
 // Keep a synthetic release-shaped file available for the isolated browser check.
@@ -148,4 +150,74 @@ test('the checker gives generic usage and read errors without leaking a supplied
   }
   const result = scan(missing);
   assert.deepEqual([result.status, result.stdout, result.stderr], [2, '', 'Could not read HTML file.\n']);
+});
+
+test('scan detects credential-bearing environment variable assignments', (t) => {
+  const file = path.join(scratch(t), 'environment.html');
+  writeFileSync(file, [
+    '<pre>POSTGRES_PASSWORD=fictional-db-password',
+    'SERVICE_API_KEY=&quot;fictional-opaque-value&quot;',
+    'MAIL_PASSWD=[REDACTED]',
+    'APP_SECRET_KEY=YOUR_SECRET',
+    'MAX_PASSWORD_LENGTH=24</pre>',
+  ].join('\n'));
+  const result = scan(file);
+  assert.deepEqual([result.status, result.stdout, result.stderr], [1, 'credential-value:1\ncredential-value:2\n', '']);
+});
+
+test('scan checks cookie pair values independently and ignores Set-Cookie attributes', (t) => {
+  const file = path.join(scratch(t), 'cookies.html');
+  writeFileSync(file, [
+    '<pre>Set-Cookie: session=[REDACTED]; Path=/; Secure; HttpOnly',
+    'Cookie: session=&lt;redacted&gt;; preferences=&quot;[REDACTED]&quot;',
+    'Cookie: session=[REDACTED]; preferences=fictional-value',
+    'Set-Cookie: session=fictional-value; Path=/',
+    'Cookie:',
+    '<strong>session=fictional-wrapped-value</strong></pre>',
+  ].join('\n'));
+  const result = scan(file);
+  assert.deepEqual([result.status, result.stdout, result.stderr], [1, 'credential-value:3\ncredential-value:4\ncredential-value:5\n', '']);
+});
+
+test('offline check accepts the standalone fixture and locally authored SVG', (t) => {
+  const file = path.join(scratch(t), 'offline.html');
+  writeFileSync(file, BRIEF_FIXTURE.replace('</main>', [
+    '<!-- <script>Quoted markup</script> -->',
+    '<p>&lt;iframe src=&quot;example&quot;&gt;</p>',
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 50 50" aria-label="Sample">',
+    '<defs><linearGradient id="shade"><stop offset="0%" stop-color="#fff"/></linearGradient></defs>',
+    '<rect width="50" height="50" fill="url(#shade)"/>',
+    '</svg>',
+    '</main>',
+  ].join('\n')));
+  const result = checkOffline(file);
+  assert.deepEqual([result.status, result.stdout, result.stderr], [0, '', '']);
+});
+
+test('offline check rejects active markup and resource-bearing syntax without echoing it', (t) => {
+  const file = path.join(scratch(t), 'contains-markup.html');
+  for (const [rule, markup] of [
+    ['offline-element', '<script>synthetic text</script>'],
+    ['offline-element', '<img src="https://example.org/image">'],
+    ['offline-element', '<link rel="dns-prefetch" href="//example.org">'],
+    ['offline-element', '<iframe srcdoc="synthetic text"></iframe>'],
+    ['offline-element', '<svg><foreignObject>synthetic text</foreignObject></svg>'],
+    ['offline-element', '<form action="/submit"></form>'],
+    ['offline-meta', '<meta http-equiv="refresh" content="1">'],
+    ['offline-attribute', '<p onpointerover="synthetic text">Paragraph</p>'],
+    ['offline-attribute', '<a href="#times" ping="https://example.org/">Anchor</a>'],
+    ['offline-attribute', '<svg><use href="https://example.org/graphic"/></svg>'],
+    ['offline-citation', '<a href="jav&#97;script:void(0)">Anchor</a>'],
+    ['offline-citation', '<a href="//example.org/" rel="noreferrer">Anchor</a>'],
+    ['offline-citation', '<a href="https://example.org/">Citation</a>'],
+    ['offline-css', '<style>@import "https://example.org/style";</style>'],
+    ['offline-css', '<style>.x { background: image-set("https://example.org/image" 1x); }</style>'],
+    ['offline-css', '<p style="background:&#117;rl(https://example.org/image)">Paragraph</p>'],
+    ['offline-css', '<svg><rect fill="url(https://example.org/paint)"/></svg>'],
+    ['offline-markup', '<p class="a" CLASS="b">Duplicate attribute</p>'],
+  ]) {
+    writeFileSync(file, '<!doctype html>\n' + markup);
+    const result = checkOffline(file);
+    assert.deepEqual([result.status, result.stdout, result.stderr], [1, rule + ':2\n', ''], markup);
+  }
 });

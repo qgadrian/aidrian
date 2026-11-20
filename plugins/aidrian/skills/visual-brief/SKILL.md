@@ -60,8 +60,9 @@ send the browser elsewhere.
 
 Create a unique owner-private temporary directory. Create the descriptively named HTML file with owner-only access from the first
 write (mode 0600 or equivalent). Keep the staged file private through review and delivery. Read [verification.md](references/verification.md)
-before opening it. Run [check-secrets.mjs](scripts/check-secrets.mjs) as described there, or use the manual scan if Node or command execution
-is unavailable. Inspect the exact staged file in a locally isolated browser when that capability is available.
+before opening it. Run [check-offline.mjs](scripts/check-offline.mjs) and [check-secrets.mjs](scripts/check-secrets.mjs) as described
+there, or use the manual checks if Node or command execution is unavailable. Inspect the exact staged file in a locally isolated
+browser when that capability is available.
 
 Check that static checks pass, any observed preview failures are fixed, and unavailable checks are recorded.
 

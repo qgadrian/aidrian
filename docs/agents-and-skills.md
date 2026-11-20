@@ -131,7 +131,8 @@ Claude Code runs each skill as `/aidrian:<skill>`. In Codex, select a skill from
 Invoke `/aidrian:visual-brief` in Claude Code or select `aidrian:visual-brief` from the Codex catalog. Give it a question and any
 sources, audience, time window or revision, or local destination. For direct use on any host with source reading, local writing,
 and private file delivery, supply the [visual-brief skill folder](../plugins/aidrian/skills/visual-brief/) and explicitly request
-its workflow. The deliverable is one local HTML file with a short account of completed and unavailable checks.
+its workflow. The deliverable is one local HTML file with a short account of completed and unavailable checks. The pre-delivery
+checks cover offline markup and common credential patterns, with a manual fallback when Node or command execution is unavailable.
 
 Model-free probes verified Claude Code 2.1.329 plugin inventory and Codex 0.171.0 enabled catalog discovery and omission from the
 implicit prompt. Native runtime activation remains unverified on both hosts. A direct run using supplied skill files produced

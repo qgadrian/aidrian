@@ -20,7 +20,8 @@ from creating page-wide horizontal scrolling. Use native `details` and `summary`
 answer, main visual or its text equivalent, and citations in print reading order.
 
 Write one document with inline styles, system fonts, and static authored HTML or inline SVG. Allow internal anchor jumps and
-clickable citations only. Use HTTPS where available and omit URL credentials, signed parameters, and private addresses or identifiers.
+clickable citations only. Use HTTPS where available and omit URL credentials, signed parameters, and private addresses or identifiers. Quote HTML and SVG
+attribute values and use simple fragment IDs for internal links. CSS and SVG paint may refer to same-document IDs such as `url(#shade)`.
 Give external citations `rel="noreferrer"` and avoid automatic navigation. Use a restrictive content security policy as a second check
 on resource loading and executable content. For a brief with inline styles and no other resources, put this early in the head:
 

@@ -2,10 +2,14 @@
 
 Use the checklist in order. Use the exact staged bytes for static and preview checks, and repeat affected checks after edits.
 
-1. **Inspect before opening.** Read the raw document, including comments, attributes, inline styles, embedded values, SVG, and citations.
-   Confirm that source markup is escaped, sensitive data and private locators are absent, and only approved HTTP(S) citation links leave
-   the page on click. Check for scripts, event handlers, active SVG, resource URLs in HTML or CSS, forms, frames, automatic navigation,
-   network hints, and browser persistence. Remove active or network-bearing content except approved citation links.
+1. **Inspect and check offline markup before opening.** Read the raw document to confirm that source markup is escaped,
+   sensitive data and private locators are absent, and only approved HTTP(S) citations leave the page on click. Run
+   `node "<skill-directory>/scripts/check-offline.mjs" "<staged-html>"` with Node 22 or later. This check accepts the
+   brief's static HTML and SVG, quoted attribute values, inline CSS without remote resources, and citation links. Exit 0 means
+   it found no violations. Exit 1 reports the first rule and line. Repair the markup and rerun the check. Exit 2 indicates a usage
+   or read error. Resolve it before preview or delivery. When Node or command execution is unavailable, manually inspect the
+   exact markup and CSS for scripts, event handlers, active SVG, external resource loads, forms, frames, automatic navigation,
+   network hints, and browser persistence. Report the manual fallback. Keep browser isolation as a separate check.
 2. **Scan the secrets.** Run `node "<skill-directory>/scripts/check-secrets.mjs" "<staged-html>"` with Node 22 or later, resolving
    `<skill-directory>` to the directory containing `SKILL.md`. A clean scan exits 0. Exit 1 prints only rule names and input line numbers.
    Repair findings privately and scan again. Exit 2 indicates a usage or read error. Resolve it before delivery. If Node or command execution

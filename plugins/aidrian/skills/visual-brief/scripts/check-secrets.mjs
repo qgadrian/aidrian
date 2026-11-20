@@ -17,12 +17,13 @@ const URL_CREDENTIALS = /(?<![\w+.-])[a-z][a-z\d+.-]*:\/\/[^\s/?#\0<>"'@]+@[^/\s
 // AWS, Google, CloudFront and Azure use these parameter names in signed URLs.
 const SIGNED_URL = /[?&](?:x-(?:amz|goog)-(?:signature|credential|security-token)|signature|sig|awsaccesskeyid|googleaccessid|key-pair-id|access_token)=[^&\s\0<>"'#]/iu;
 const ASSIGNMENT = new RegExp(
-  String.raw`(?<![\w.-])(?:data-)?((?:proxy[-_])?authorization|(?:set[-_])?cookie|x[-_]api[-_]key|` +
+  String.raw`(?<![\w.-])(?:data-)?((?:proxy[-_])?authorization|(?:[a-z][a-z\d]*_)+(?:password|passwd|pwd|api_key|client_secret|secret_key|(?:access|refresh|auth|session)_token|token)|x[-_]api[-_]key|` +
   String.raw`api[-_ ]?key|client[-_ ]?secret|(?:access|refresh|auth|session)[-_ ]?token|token|password|passwd|` +
   String.raw`secret[-_ ]?key|aws[-_]secret[-_]access[-_]key)["']?\s*[:=]\s*(?:(?:bearer|basic|token)\s+)?` +
   String.raw`(?:"([^"\0\n]*)"|'([^'\0\n]*)'|(<[^<>\0\n]+>|\[[^[\]\0\n]+\]|\$\{[^{}\0\n]+\}|[^\s\0<>"',;#}\])]+))`,
   'giu',
 );
+const COOKIE_HEADER = /(?<![\w.-])(?:data-)?((?:set[-_])?cookie)["']?\s*[:=]\s*([^\0\r\n]+)/giu;
 // Keep the exceptions exact, or recognize an explicit variable reference.
 const PLACEHOLDER = /^(?:|\*+|x{3,}|redacted|removed|omitted|placeholder|example|null|none|n\/a|change[_-]?me|your[_-](?:api[_-]?key|token|secret|password)|\$(?:\{[a-z_]\w*\}|[a-z_]\w*))$/iu;
 // These authored inline elements can wrap a value without creating a separate block of text.
@@ -48,15 +49,38 @@ function normalizedLine(line) {
   }).replace(/\p{Cf}/gu, '');
 }
 
+function unquote(value) {
+  return value.trim().replace(/^(?:"([^"]*)"|'([^']*)')$/u, '$1$2').trim();
+}
+
+function placeholder(value) {
+  return PLACEHOLDER.test(unquote(value).replace(/^[<\[]|[>\]]$/gu, ''));
+}
+
+function hasCookieValue(text, lineLength) {
+  for (const { index, 1: field, 2: header } of text.matchAll(COOKIE_HEADER)) {
+    if (index >= lineLength) break;
+    const value = unquote(header.replace(/\s*-->\s*$/u, ''));
+    if (placeholder(value)) continue;
+    const pairs = field.toLowerCase() === 'cookie' ? value.split(';') : value.split(';', 1);
+    if (pairs.some((pair) => {
+      const equals = pair.indexOf('=');
+      return !placeholder(equals < 0 ? pair : pair.slice(equals + 1));
+    })) return true;
+  }
+  return false;
+}
+
 function hasAssignedValue(line, next = '') {
   const text = line + '\n' + next;
+  if (hasCookieValue(text, line.length)) return true;
   for (const match of text.matchAll(ASSIGNMENT)) {
     if (match.index >= line.length) break;
     const [, field, doubleQuoted, singleQuoted, bare] = match;
-    const value = (doubleQuoted ?? singleQuoted ?? bare).trim().replace(/^[<\[]|[>\]]$/gu, '');
+    const value = (doubleQuoted ?? singleQuoted ?? bare).trim();
     // A wrapped value can leave just the scheme in the raw source copy. The visible copy checks the value.
     if (/authorization$/iu.test(field) && /^(?:bearer|basic|token)$/iu.test(value)) continue;
-    if (!PLACEHOLDER.test(value)) return true;
+    if (!placeholder(value)) return true;
   }
   return false;
 }

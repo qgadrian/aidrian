@@ -27,6 +27,7 @@ import { loadConfig } from './config.mjs';
 import { bashCall, globNamesFile, opaqueTexts, unquoted, writeTargets } from './config-guard.mjs';
 import { foldCase, globParts, isEntry, isWithin, partsReach } from './fs.mjs';
 import { GIT_TIMEOUT_MS, runGit } from './git.mjs';
+import { changesGitTarget } from './git-push.mjs';
 import { globLinksTo, globStarts, linkWalk } from './glob-links.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
 import { ARMING_FILE, openStore, SESSION_ID, startedInBackground, storePath } from './handoff-markers.mjs';
@@ -377,23 +378,40 @@ function configWrites(words) {
   return form.writes;
 }
 
-// Whether git's global options set an alias for the one command: `-c alias.<name>=...`, attached or not, or
-// `--config-env alias.<name>=<variable>`.
-const aliasGlobal = (globals) => globals.some((token, i) => {
-  const value = ['-c', '--config-env'].includes(token.text) ? globals[i + 1]?.text : /^(?:-c|--config-env=)(.*)$/su.exec(token.text)?.[1];
-  return typeof value === 'string' && /^alias\./iu.test(value);
+// Whether git's global options set, for the one command, a key that decides which repository a remote names or what git
+// runs (POLICY_KEY): a remote's URL, push URL, or fetch refspec, a URL rewrite (`url.<base>.insteadOf` or
+// `pushInsteadOf`), an included file, or an alias, by `-c <key>=...`, attached or not, or `--config-env <key>=<variable>`.
+// A value built at run time may name any key.
+const policyGlobal = (globals) => globals.some((token, i) => {
+  const valued = ['-c', '--config-env'].includes(token.text);
+  const value = valued ? globals[i + 1] : /^(?:-c|--config-env=)(.*)$/su.exec(token.text)?.[1];
+  if (valued && value?.dynamic) return true;
+  const text = typeof value === 'string' ? value : value?.text;
+  return typeof text === 'string' && POLICY_KEY.test(text.split('=')[0]);
 });
+
+// The options of a fetch, pull, or push that take the next word as their value, skipped before its repository is read.
+const TRANSFER_VALUES = Object.freeze({
+  fetch: new Set(['--upload-pack', '-o', '--server-option', '--depth', '--deepen', '--shallow-since', '--shallow-exclude', '-j', '--jobs', '--negotiation-tip']),
+  pull: new Set(['--upload-pack', '-o', '--server-option', '--depth', '--deepen', '--shallow-since', '--shallow-exclude', '-j', '--jobs', '--negotiation-tip', '-s', '--strategy', '-X', '--strategy-option']),
+  push: new Set(['--receive-pack', '--exec', '-o', '--push-option', '--repo']),
+});
+// The git subcommands a variable that moves git's repository or config (git-push.mjs GIT_VARIABLES, or any GIT_CONFIG_*)
+// on the same line may point at another repository, or have write a remote-tracking ref.
+const REMOTE_READERS = new Set(['fetch', 'pull', 'push', 'remote']);
 
 // Whether one command the walk read changes a remote, gh's default repository, or how git reads either: `git remote
 // add`, `set-url`, or `rename`; a `git config` write of a remote, include, URL, or alias key (configWrites), or an edit,
-// rename, or removal of a section; an alias given by `-c` or `--config-env`; `git update-ref` of a remote-tracking ref,
-// or with `--stdin`, whose refs it cannot see; `git symbolic-ref` that writes or deletes one, past its `-m` reason;
+// rename, or removal of a section; such a key given by `-c` or `--config-env` (policyGlobal); a fetch, pull, push, or
+// remote on a line that moves git's repository or config (`reconfigured`); `git update-ref` of a remote-tracking ref,
+// or with `--stdin`, whose refs it cannot see; `git symbolic-ref` that writes or deletes one, past its `-m` reason, or
+// points a ref at one;
 // `git remote set-head` but with `--auto`, which reads the remote's own; `git branch` deleting remote-tracking
 // branches; a fetch, pull, or push refspec or `--refmap` that writes a remote-tracking ref (movesTracking);
 // `gh repo set-default` without `--view`;
 // or `gh alias set` or `import`. A command whose program is a variable or a substitution, and a git or gh call whose
 // words the lexer cannot all read, count when their plain words name such an action.
-function changesRemote({ segment, invocation, unread }) {
+function changesRemote({ segment, invocation, unread, folder }, { reconfigured = false, remotes = () => new Set() } = {}) {
   if (unread !== undefined && REMOTE_TEXTS.some((words) => words.every((word) => word.test(unread)))) return true;
   const plain = invocation.args.filter((token) => !token.dynamic).map((token) => token.text);
   const ours = invocation.dynamic || invocation.program === 'git' || invocation.program === 'gh';
@@ -410,7 +428,8 @@ function changesRemote({ segment, invocation, unread }) {
   }
   const git = invocation.program === 'git' ? readGit(segment) : null;
   if (!git) return false;
-  if (aliasGlobal(git.globals)) return true;
+  if (policyGlobal(git.globals)) return true;
+  if (reconfigured && REMOTE_READERS.has(git.subcommand)) return true;
   const words = git.rest.filter((token) => !token.dynamic).map((token) => token.text);
   if (git.subcommand === 'remote') {
     const action = words.find((text) => !text.startsWith('-'));
@@ -424,11 +443,12 @@ function changesRemote({ segment, invocation, unread }) {
     const remotes = words.includes('--remotes') || short.includes('r');
     return remotes && (words.includes('--delete') || /[dD]/u.test(short));
   }
-  if (['fetch', 'pull', 'push'].includes(git.subcommand)) return movesTracking(git.subcommand, words);
-  // symbolic-ref writes with a second operand, or deletes; with one, it reads.
+  if (['fetch', 'pull', 'push'].includes(git.subcommand)) return movesTracking(git.subcommand, git.rest, () => remotes(folder));
+  // symbolic-ref writes with a second operand, or deletes; with one, it reads. Pointing a ref, such as HEAD, at a
+  // remote-tracking ref makes every later commit move that ref.
   if (git.subcommand === 'symbolic-ref') {
     const { operands, deletes } = symbolicRef(words);
-    return TRACKING_REF.test(operands[0] ?? '') && (operands.length > 1 || deletes);
+    return (TRACKING_REF.test(operands[0] ?? '') && (operands.length > 1 || deletes)) || (operands.length > 1 && TRACKING_REF.test(fetchDestination(operands[1])));
   }
   return false;
 }
@@ -447,24 +467,53 @@ const fetchDestination = (dst) => {
   return /^(?:heads|tags|remotes)\//u.test(dst) ? `refs/${dst}` : `refs/heads/${dst}`;
 };
 
-// Whether a fetch, pull, or push (`subcommand`, its words `words`) writes a remote-tracking ref through a refspec or a
+// Whether a fetch, pull, or push (`subcommand`, its tokens `tokens`) writes a remote-tracking ref through a refspec or a
 // `--refmap` value: a fetch or pull destination as git expands it, as `git fetch . +HEAD:remotes/origin/main`; a push
-// destination under refs/remotes/, or, to a repository on this disk such as `.`, any destination that is not a full
-// branch or tag, which git matches against that repository's own refs, as `git push . HEAD:origin/main` does.
-function movesTracking(subcommand, words) {
+// destination under refs/remotes/, or, to a repository that is no remote `remotes()` names (a Set of the checkout's
+// configured remote names), such as `.`, `.git`, `~/x`, or a path built at run time, any destination that is not a full
+// branch or tag, which git matches against that repository's own refs, as `git push . HEAD:origin/main` does. The
+// options of TRANSFER_VALUES take their next word, and push's `--repo` names the repository when no operand does. A
+// refspec built at run time or expanded by the shell counts when it holds a `:` and names `remote`, or its destination
+// starts with what the shell expands.
+function movesTracking(subcommand, tokens, remotes) {
   const specs = [];
   const operands = [];
-  for (let i = 0; i < words.length; i += 1) {
-    const text = words[i];
-    if (text === '--refmap') specs.push(words[(i += 1)] ?? '');
-    else if (text.startsWith('--refmap=')) specs.push(text.slice('--refmap='.length));
-    else if (!text.startsWith('-')) operands.push(text);
+  const values = TRANSFER_VALUES[subcommand];
+  let repo = null;
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    const { text } = token;
+    if (text === '--refmap') specs.push(tokens[(i += 1)] ?? { text: '' });
+    else if (text.startsWith('--refmap=')) specs.push({ ...token, text: text.slice('--refmap='.length) });
+    else if (subcommand === 'push' && text.startsWith('--repo=')) repo = { ...token, text: text.slice('--repo='.length) };
+    else if (values.has(text)) {
+      if (subcommand === 'push' && text === '--repo') repo = tokens[i + 1] ?? null;
+      i += 1;
+    } else if (token.dynamic || !text.startsWith('-')) operands.push(token);
   }
-  specs.push(...operands.slice(1).filter((text) => text.includes(':')));
-  const destinations = specs.filter((spec) => spec.includes(':')).map((spec) => spec.slice(spec.lastIndexOf(':') + 1)).filter(Boolean);
+  specs.push(...operands.slice(1));
+  if (specs.some((spec) => (spec.dynamic || spec.expands) && builtTracking(spec.text))) return true;
+  const destinations = specs.filter((spec) => !spec.dynamic && spec.text.includes(':')).map((spec) => spec.text.slice(spec.text.lastIndexOf(':') + 1)).filter(Boolean);
   if (subcommand !== 'push') return destinations.some((dst) => TRACKING_REF.test(fetchDestination(dst)));
-  const local = /^(?:\.{1,2}|\.{0,2}\/.*|file:.*)$/u.test(operands[0] ?? '');
-  return destinations.some((dst) => TRACKING_REF.test(dst) || (local && !/^refs\/(?:heads|tags)\//u.test(dst)));
+  if (destinations.some((dst) => TRACKING_REF.test(dst))) return true;
+  const short = destinations.filter((dst) => !/^refs\/(?:heads|tags)\//u.test(dst));
+  if (short.length === 0) return false;
+  const repository = operands[0] ?? repo;
+  return !repository || localRepository(repository, remotes);
+}
+
+// Whether a refspec built at run time or expanded by the shell may name a remote-tracking ref: it holds a `:`, and
+// names `remote` in any case, or its destination starts, past `+` and `refs/`, with a part the shell builds.
+const builtTracking = (text) => text.includes(':') && (/remote/iu.test(text) || /^\+?(?:refs\/)?[$`*?[{]/u.test(text.slice(text.lastIndexOf(':') + 1)));
+
+// Whether a push's repository word names a repository on this disk, or may: built at run time, a path (`.`, `..`,
+// `.git`, `~`, or one with a slash), a `file:` URL, or any word that is no remote the checkout configures (`remotes()`).
+function localRepository(token, remotes) {
+  if (token.dynamic || token.expands) return true;
+  const { text } = token;
+  if (/^(?:\.{1,2}|\.git|~.*|\.{0,2}\/.*|file:.*)$/u.test(text)) return true;
+  if (/^[\w.+-]+@[^:]+:|^[a-z][a-z0-9+.-]*:\/\//iu.test(text)) return false;
+  return !remotes().has(text);
 }
 
 // The operands of `git symbolic-ref`'s words, past its options, and whether it deletes: `-m` takes the next word as the
@@ -494,8 +543,8 @@ function symbolicRef(words) {
 // It holds for a subagent and for a session `unattended()` says the background route started, asked only for such a
 // command. A command in a shell the lexer cannot read counts when its text names such an action. Known limits, as for
 // the other guards here: a write by its path to `.git/config`, a file it includes, or gh's own config folder; a program
-// that runs its arguments as a command, such as `xargs git ...`; and a git subcommand held in a variable, as in
-// `git $ACTION ...`, whose later words name no such action.
+// that runs its arguments as a command, such as `xargs git ...`; a git subcommand held in a variable, as in
+// `git $ACTION ...`, whose later words name no such action; and HOME or XDG_CONFIG_HOME moved on the line.
 export function remoteChangeDenial(input, { names: { human } }, { unattended = () => false } = {}) {
   const opaque = opaqueShellCommand(input);
   const command = opaque ?? (bashCall(input) ? input.tool_input?.command : null);
@@ -503,12 +552,32 @@ export function remoteChangeDenial(input, { names: { human } }, { unattended = (
   if (typeof command !== 'string' || !/remote|config|repo|alias|update-ref|symbolic-ref|branch|fetch|pull|push/iu.test(unquoted(command))) return null;
   const hit = opaque !== null
     ? REMOTE_TEXTS.some((words) => words.every((word) => opaqueTexts(opaque).some((text) => word.test(text))))
-    : walkCommands(command, null).some(changesRemote);
+    : walkedRemoteChange(command, input.cwd);
   const subagent = isSubagent(input);
   if (!hit || (!subagent && !unattended())) return null;
   const who = subagent ? 'only the main session changes them' : `only a session the Human attends changes them, ${UNATTENDED}`;
   const why = `it changes which repository the checkout's git remotes or gh's default name, or how git reads them, where the plugin reads the team's policy on the forge, such as solo, or a remote-tracking ref, which names the commit a project run cuts each issue from, and ${who}`;
   return { match: 'changes a git remote', reason: projectRuleReason(input, why, human, 'to change the remote') };
+}
+
+// Whether a command the walk reads changes a remote (changesRemote), with what the whole line shares: whether a command
+// on it changes a variable that moves git's repository or config (git-push.mjs changesGitTarget, or any GIT_CONFIG_*),
+// and the remotes of each folder a push runs in, which `git remote` names, read once a push needs them; none when git
+// fails, so every repository word counts as local.
+function walkedRemoteChange(command, cwd) {
+  const entries = [...walkCommands(command, typeof cwd === 'string' ? cwd : null)];
+  const reconfigured = entries.some(({ invocation }) => changesGitTarget(invocation) || changedVariables(invocation).some((name) => /^GIT_CONFIG/u.test(name)));
+  const read = new Map();
+  const remotes = (folder) => {
+    if (typeof folder !== 'string') return new Set();
+    if (!read.has(folder)) {
+      checkDeadline();
+      const listed = runGit(['remote'], folder, Number.isFinite(remainingMs()) ? { timeout: Math.max(1, Math.floor(remainingMs())) } : { timeout: GIT_TIMEOUT_MS });
+      read.set(folder, new Set(listed.status === 0 ? listed.stdout.split('\n').map((line) => line.trim()).filter(Boolean) : []));
+    }
+    return read.get(folder);
+  };
+  return entries.some((entry) => changesRemote(entry, { reconfigured, remotes }));
 }
 
 // A path part named as a file whose forgery would arm or deliver a continuation, in any case. A chain floor or a task

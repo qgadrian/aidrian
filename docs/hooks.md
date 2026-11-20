@@ -1052,19 +1052,31 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
 - With or without gates or a project, the same two may not repoint a git remote or gh's default repository, nor
   change how git reads them: `git remote add`, `set-url`, or `rename`; a `git config` write of a `remote.*`,
   `include.path`, `includeIf.*`, `url.*`, or `alias.*` key, or any `--edit`, `--rename-section`, or `--remove-section`;
-  an alias given by `git -c alias.*` or `--config-env`; `gh repo set-default`; and `gh alias set` or `import`.
+  any of those keys given to one git call by `git -c` or `--config-env`, such as `remote.origin.url`,
+  `remote.origin.pushurl`, `remote.origin.fetch`, `url.<base>.insteadOf`, or `pushInsteadOf`, or a key built at run
+  time; a `git fetch`, `pull`, `push`, or `remote` on a line that sets, exports, or unsets a variable that moves git's
+  repository or config, such as `GIT_DIR`, `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_GLOBAL`, or any other `GIT_CONFIG_*`;
+  `gh repo set-default`; and `gh alias set` or `import`.
   Nor may they move a remote-tracking ref, which names the commit a project run cuts each issue from: `git update-ref`
-  of one or with `--stdin`; `git symbolic-ref` that writes or deletes one, past its `-m` reason; `git remote set-head`
+  of one or with `--stdin`; `git symbolic-ref` that writes or deletes one, past its `-m` reason, or points a ref such
+  as `HEAD` at one, which every later commit would move; `git remote set-head`
   but `git remote set-head <remote> --auto` (or `-a`), which sets it from the forge's own default branch; `git branch`
-  deleting remote-tracking branches; and a fetch, pull, or push refspec, or a `--refmap` value, whose destination git
-  expands to one (`remotes/x` is `refs/remotes/x`, and `refs/REMOTES/x` the same file on a disk that folds case), or a
-  push to a repository on the disk, such as `.`, whose destination is no full branch or tag, as `git push . HEAD:origin/main`.
+  deleting remote-tracking branches; a fetch, pull, or push refspec, or a `--refmap` value, whose destination git
+  expands to one (`remotes/x` is `refs/remotes/x`, and `refs/REMOTES/x` the same file on a disk that folds case), or
+  one the shell builds or expands that holds a `:` and names `remote`, or whose destination starts with what the shell
+  builds, as `+HEAD:refs/$R/origin/main`; and a push to a repository on the disk whose destination is no full branch or
+  tag, as `git push . HEAD:origin/main`. The push's repository is read past the options that take a value
+  (`--receive-pack`, `--exec`, `-o`, `--push-option`, `--repo`), and counts as on the disk when it is a path (`.`,
+  `.git`, `~/x`), a `file:` URL, a word built at run time, such as `"$PWD"`, or any word that is no remote
+  `git remote` lists in the call's folder.
   The plugin reads the team's policy, such as [`solo`](config.md#solo), from the repository a remote names on GitHub.
-  A read, such as `git remote -v`, `git config --get remote.origin.url`, or `gh repo set-default --view`, runs;
+  A read, such as `git remote -v`, `git config --get remote.origin.url`, or `gh repo set-default --view`, runs, as do
+  `git fetch origin`, `git pull --rebase origin main`, and a push to a configured remote;
   a shell it cannot read that names such an action counts. Its known limits: a write by its path to `.git/config`,
   a file it includes, or `~/.config/gh`; a program that runs its arguments, such as `xargs git ...`; a git
-  subcommand held in a variable, as in `git $ACTION ...`; and a git or gh word built by an expansion, such as
-  ANSI-C quoting (`$'...'`) or a command substitution inside the subcommand (#340).
+  subcommand held in a variable, as in `git $ACTION ...`; a git or gh word built by an expansion, such as
+  ANSI-C quoting (`$'...'`) or a command substitution inside the subcommand (#340); and `HOME` or `XDG_CONFIG_HOME`
+  moved on the line, which points git at another user config.
 - With or without gates, the same two may not run `aidrian handoff continue` or `aidrian handoff route` with any
   variable the command line sets, exports, or unsets, anywhere in the command: by a prefix assignment, `env`, or
   `export`, or by `env -u`, `env -i`, `sudo`, or `unset`. The gate needs none. The reason names the ones that move its

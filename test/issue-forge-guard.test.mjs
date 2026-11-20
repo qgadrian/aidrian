@@ -231,6 +231,26 @@ test('an issue session pushes in a call of its own, so no command beside it chan
   assert.match(fx.ask(bash(`git log -1 --format=%H --output=${ref} HEAD`))?.reason ?? '', /the attempt clone's git folder, which only git writes/u);
 });
 
+test('an issue session\'s exact push from a subfolder reads the whole checkout, whatever diff.relative the clone sets', (t) => {
+  const fx = issueFixture(t);
+  const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8', stdio: 'pipe' });
+  const sub = path.join(fx.work, 'src');
+  mkdirSync(sub);
+  writeFileSync(path.join(sub, 'a.js'), 'x\n');
+  git(fx.work, 'config', 'diff.relative', 'true');
+  git(fx.work, 'config', 'status.relativePaths', 'true');
+  git(fx.work, 'add', '--', 'src');
+  git(fx.work, 'commit', '-q', '-m', 'feat: a change');
+  const push = () => fx.ask(bash(EXACT), { cwd: sub })?.reason ?? null;
+  assert.equal(push(), null, 'a normal change, from a subfolder');
+  mkdirSync(path.join(fx.work, '.github', 'workflows'), { recursive: true });
+  writeFileSync(path.join(fx.work, '.github', 'workflows', 'leak.yml'), 'on: push\n');
+  assert.match(push(), /holds an uncommitted change to \.github\/workflows\/leak\.yml, a workflow file/u, 'untracked, from a subfolder');
+  git(fx.work, 'add', '--', '.github');
+  git(fx.work, 'commit', '-q', '-m', 'chore: tidy');
+  assert.match(push(), /it pushes commits that change \.github\/workflows\/leak\.yml, a workflow file/u, 'committed, from a subfolder');
+});
+
 test('an issue session\'s exact push is refused while its checkout holds an uncommitted workflow change, or a .github that is no folder', (t) => {
   const fx = issueFixture(t);
   const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8', stdio: 'pipe' });

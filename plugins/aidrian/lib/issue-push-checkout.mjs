@@ -54,11 +54,13 @@ function workflowPaths() {
 // Why the commits a push from `folder` carries change the forge's workflow files (forges/index.mjs
 // forgeWorkflowFolders), or a folder that holds them, or null: the paths HEAD changes from its merge base with origin's
 // default branch (BASE_REFS), so a merge of the default branch brings none of that branch's own changes in.
+// `--no-relative` keeps a clone's `diff.relative` from hiding, in a push from a subfolder, every path outside it;
+// `git status --porcelain` already names paths from the root whatever `status.relativePaths` says.
 // SHORTCUT: origin's remote-tracking ref is the session's own copy, which git in its checkout can move; the forge's
 // branch and tag rules and its secrets' environments stand behind it (docs/hooks.md#agent-gates names the residual).
 function committedProblem(folder, { pathspecs, counts }) {
   for (const base of BASE_REFS) {
-    const diff = budgeted(['diff', '--raw', '-z', '--no-renames', '--no-abbrev', `${base}...HEAD`, '--', ...pathspecs], folder);
+    const diff = budgeted(['diff', '--raw', '-z', '--no-renames', '--no-abbrev', '--no-relative', `${base}...HEAD`, '--', ...pathspecs], folder);
     if (diff.status === null) return `it pushes, and ${SLOW} which files its commits change, so they may change the forge's workflow files`;
     if (diff.status !== 0) continue;
     const changed = rawPaths(diff.stdout).filter((file) => counts(file));

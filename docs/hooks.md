@@ -1297,8 +1297,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     commits change no file of the forge's workflow folders (`forgeWorkflowFolders`), nor a folder that holds them, as a
     `.github` made a link, from their merge base with origin's default branch (`refs/remotes/origin/HEAD`, else
     `origin/main`), however the file got there, as by `git apply --cached`, `patch`, `tar -x`, `unzip`, or `git am`,
-    which the write rule above does not see; and `git status --porcelain` names no staged, unstaged, or untracked change
-    in those folders. Both reads take git's NUL-ended output (`-z`), so a file name git would quote, with a space or a
+    which the write rule above does not see, read with `--no-relative`, so a clone's `diff.relative` hides no path
+    outside the subfolder a push runs in; and `git status --porcelain`, which names paths from the root whatever
+    `status.relativePaths` says, names no staged, unstaged, or untracked change in those folders. Both reads take git's NUL-ended output (`-z`), so a file name git would quote, with a space or a
     non-ASCII letter, counts as it is. A merge of the default branch brings none of its own changes into that diff; a git that cannot
     answer within the hook's budget refuses the push, and one that names no base advises `git fetch origin`, which sets
     origin/HEAD again from git 2.48 on, or `git remote set-head origin --auto` with an older git. `git send-pack`, `git http-push`, and every git subcommand outside

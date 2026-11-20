@@ -27,7 +27,6 @@ import { projectCommandDenial } from '../plugins/aidrian/lib/project-run-guard.m
 import { appendToRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { markFolder, markPending, markUnattended, noteBeacon, PENDING_AGE, readBeacon, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { DRIVER, runFixture } from './project-start-fixture.mjs';
-import { spawnedFile, stopListed } from '../scripts/test-state.mjs';
 
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-agent-gates.mjs');
 const HOOKS_JSON = path.resolve(import.meta.dirname, '../plugins/aidrian/hooks/hooks.json');
@@ -64,21 +63,15 @@ function codexConfig({ trusted = 'all', off = null, network = true, roots = null
 // and a `turn.failed` event with the message `mode.failed`; then, unless `mode.tool` is false, after `mode.slow`
 // milliseconds, its first tool call's event and, when `mode.hook`, runs the agent gate hook as Codex runs it for that
 // call. Then it runs each of `mode.hooks`, { script, input }, as Codex runs a hook in its folder, and records their exit
-// codes in `<bin>/hook-results.json`; then it runs until it is stopped.
+// codes in `<bin>/hook-results.json`; then it runs until it is stopped, until `bin` is gone, or ten minutes at most.
 function fakeCodex(t, bin, mode) {
   const record = path.join(bin, 'codex-call.json');
-  // Every pid the fake ran as, one a line, outside the fixture, whose cleanup deletes `bin` before this one runs: a test
-  // that starts a second attempt runs it twice, and the record keeps the last. The suite's file catches what this misses.
-  const pids = path.join(mkdtempSync(path.join(process.env.AIDRIAN_TEST_STATE, 'codex-pids-')), 'pids');
-  const suite = spawnedFile();
   rmSync(record, { force: true });
   writeFileSync(path.join(bin, 'codex-mode.json'), JSON.stringify({ tool: true, slow: 0, ...mode }));
   writeFileSync(path.join(bin, 'codex'), `#!${process.execPath}
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const mode = JSON.parse(fs.readFileSync(${JSON.stringify(path.join(bin, 'codex-mode.json'))}, 'utf8'));
-fs.appendFileSync(${JSON.stringify(pids)}, process.pid + '\\n');
-fs.appendFileSync(${JSON.stringify(suite)}, process.pid + '\\n');
 fs.writeFileSync(${JSON.stringify(record)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), pid: process.pid, inherited: process.env.CODEX_THREAD_ID ?? null, caches: Object.fromEntries(Object.entries(process.env).filter(([name]) => ${JSON.stringify(Object.keys(cacheVars('/c', {}, { registries: ['npm'] })))}.includes(name))) }));
 if (mode.reject) {
   console.error(mode.reject);
@@ -101,12 +94,14 @@ setTimeout(() => {
   });
   fs.writeFileSync(${JSON.stringify(path.join(bin, 'hook-results.json'))}, JSON.stringify(results));
 }, mode.slow);
-setInterval(() => {}, 1000);
-// It ends itself after ten minutes, should the test that runs it die before its cleanup: a killed run left them for days.
+// The start runs it detached, so no test's cleanup reaches it by pid: it ends once the fixture's cleanup deletes \`bin\`,
+// and after ten minutes should a killed run leave the folder behind. Before this, every run left its fakes running.
+setInterval(() => {
+  if (!fs.existsSync(${JSON.stringify(bin)})) process.exit(0);
+}, 200);
 setTimeout(() => process.exit(0), 600000);
 `, { mode: 0o755 });
   const call = () => (existsSync(record) ? JSON.parse(readFileSync(record, 'utf8')) : null);
-  t.after(() => stopListed(pids));
   return { call };
 }
 
@@ -161,6 +156,29 @@ test('Codex declares an unverified, confined project start behind its hook trust
   assert.deepEqual([cap.verified, cap.confined], ['unverified', true]);
   for (const field of ['start', 'stop', 'ended', 'find', 'hookTrust', 'access', 'attachLine', 'stopLine', 'sessionNote']) assert.equal(typeof cap[field], 'function', field);
   assert.match(cap.sessionNote({ work: '/w', branch: 'feat/x' }), /work only in that folder.*git push origin HEAD:refs\/heads\/feat\/x.*--head feat\/x/su);
+});
+
+test('the fake codex ends once its fixture folder is gone, so a run leaves none of them running', (t) => {
+  const fx = runFixture(t, { init: false });
+  const bin = path.join(fx.root, 'fake-bin');
+  mkdirSync(bin);
+  const fake = fakeCodex(t, bin, { event: 'none', tool: false });
+  const fd = openSync(path.join(fx.root, 'fake.log'), 'w');
+  const { pid } = launchCommand(path.join(bin, 'codex'), [], { cwd: fx.root, env: process.env, fd });
+  closeSync(fd);
+  t.after(() => {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      // Ended by itself, as it should.
+    }
+  });
+  for (let step = 0; step < 200 && fake.call()?.pid !== pid; step += 1) pauseSync(25);
+  assert.equal(fake.call()?.pid, pid, 'the fake started');
+  assert.equal(gone(pid), false);
+  rmSync(bin, { recursive: true, force: true });
+  for (let step = 0; step < 200 && !gone(pid); step += 1) pauseSync(25);
+  assert.equal(gone(pid), true, 'the fake still runs after its folder was removed');
 });
 
 test('a start lasts less than a pending mark holds, by 30 seconds at least', () => {

@@ -9,7 +9,7 @@
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -121,7 +121,9 @@ test('the host setting check sees a comment and a string, and the adapter that h
   assert.match(readFileSync(path.join(PLUGIN, 'lib/hosts/claude-code-push.mjs'), 'utf8'), HOST_SETTINGS, 'the adapter is where it lives, and the walk leaves it out');
 });
 
-// lib/hosts/ imports nothing outside itself but Node's built-ins, so an adapter never pulls shared code into every hook.
+// lib/hosts/ imports, from outside itself, only Node's built-ins and leaf modules that themselves import nothing but
+// Node's built-ins, such as lib/fs.mjs, so an adapter never pulls the shared code graph into every hook, and no import
+// cycle runs through lib/hosts/index.mjs, which most shared code loads.
 const HOSTS_DIR = path.join(PLUGIN, 'lib/hosts');
 const IMPORTS = [/^\s*(?:import|export)\b[^;]*?\bfrom\s*['"]([^'"]+)['"]/gmu, /^\s*import\s*['"]([^'"]+)['"]/gmu, /\bimport\(\s*['"]([^'"]+)['"]\s*\)/gu];
 
@@ -130,9 +132,21 @@ const outsideImports = (file, text) => IMPORTS.flatMap((pattern) => [...text.mat
   .filter((specifier) => !specifier.startsWith('node:'))
   .filter((specifier) => !specifier.startsWith('.') || !path.resolve(path.dirname(file), specifier).startsWith(`${HOSTS_DIR}${path.sep}`));
 
-test('lib/hosts/ imports nothing outside lib/hosts/ but Node built-ins', () => {
-  const outside = walk(HOSTS_DIR).flatMap((file) => outsideImports(file, readFileSync(file, 'utf8')).map((each) => `${path.relative(PLUGIN, file)}: ${each}`));
+// Whether the module `specifier`, imported by `file` in lib/hosts/, is a file of this plugin that imports nothing but
+// Node's built-ins.
+const isLeaf = (file, specifier) => {
+  if (!specifier.startsWith('.')) return false;
+  const target = path.resolve(path.dirname(file), specifier);
+  if (!target.startsWith(`${PLUGIN}${path.sep}`) || !existsSync(target)) return false;
+  return IMPORTS.flatMap((pattern) => [...readFileSync(target, 'utf8').matchAll(pattern)].map((match) => match[1])).every((each) => each.startsWith('node:'));
+};
+
+test('lib/hosts/ imports nothing outside lib/hosts/ but Node built-ins and leaf modules of Node built-ins alone', () => {
+  const outside = walk(HOSTS_DIR).flatMap((file) => outsideImports(file, readFileSync(file, 'utf8')).filter((each) => !isLeaf(file, each)).map((each) => `${path.relative(PLUGIN, file)}: ${each}`));
   assert.deepEqual(outside, []);
+  const adapter = path.join(HOSTS_DIR, 'x.mjs');
+  assert.equal(isLeaf(adapter, '../fs.mjs'), true, 'lib/fs.mjs imports only Node built-ins');
+  for (const each of ['../git.mjs', '../project.mjs', '../push-preflight.mjs', '../missing.mjs', 'lodash']) assert.equal(isLeaf(adapter, each), false, each);
   const sample = "import { runGit } from '../git.mjs';\nimport {\n  a,\n} from './response.mjs';\nimport x from 'node:fs';\nconst m = await import('../project.mjs');\nimport 'lodash';\n";
   assert.deepEqual(outsideImports(path.join(HOSTS_DIR, 'x.mjs'), sample).sort(), ['../git.mjs', '../project.mjs', 'lodash']);
 });

@@ -486,7 +486,8 @@ The clone pushes to origin's URL as the main checkout has it, never its `pushurl
 refuses SSH, so an SSH URL halts the start on every platform: `git remote set-url origin
 https://<host>/<owner>/<name>.git`, and remove any `url.<base>.insteadOf` rule in the git config that rewrites the
 HTTPS URL to SSH, as git applies it to the URL it reports. A clone whose push URL is not that URL, as a `pushInsteadOf` in the user's git
-config makes it, halts too. On Linux, `bwrap` and `socat` must be on an absolute folder of PATH. A state folder that
+config makes it, or that pushes to more than one URL (`git remote get-url --push --all origin`), as a second
+`remote.origin.pushurl` there makes it, halts too. On Linux, `bwrap` and `socat` must be on an absolute folder of PATH. A state folder that
 lies in the main checkout starts nothing, since the session may not read the main checkout.
 
 In a folder the host has not trusted, `claude --bg` exits with `Workspace not trusted` and starts nothing; the start

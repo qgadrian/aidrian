@@ -404,7 +404,7 @@ const endedOnLimit = (found, key, attempt) => found.rows.some((row) => row.event
 // (lib/issue-push-checkout.mjs), or
 // { halt } or { problem }. A clone the host says would run a command outside its sandbox (`cloneProblem`) halts, and so
 // does one whose origin pushes to another URL than `pushUrl`, the one the host's access check read, as a pushInsteadOf
-// of the user's git config would make it. Last, the host's placeholders go in (placeHolders).
+// of the user's git config would make it, or to more than one URL, which the session's push guard never lets through. Last, the host's placeholders go in (placeHolders).
 function confinedRoom({ project, state, run, key, branch, attempt, tip, env, home, found, cap, policy, main, pushUrl }) {
   const folders = stateWorkFolders(state, { env, home });
   if (folders.problem) return { halt: folders.problem };
@@ -421,8 +421,12 @@ function confinedRoom({ project, state, run, key, branch, attempt, tip, env, hom
     }
     if (outside) return { halt: outside };
   }
-  const pushes = gateGit(['remote', 'get-url', '--push', 'origin'], clone.work, { timeout: 30_000 });
-  const url = pushes.status === 0 ? pushes.stdout.trim() : null;
+  // Every URL origin pushes to: git pushes to each remote.origin.pushurl in turn, and the issue session's push guard
+  // (lib/issue-push-checkout.mjs) lets a push through only to exactly one, the URL pinned here.
+  const pushes = gateGit(['remote', 'get-url', '--push', '--all', 'origin'], clone.work, { timeout: 30_000 });
+  const urls = pushes.status === 0 ? pushes.stdout.split('\n').map((line) => line.trim()).filter(Boolean) : [];
+  if (urls.length > 1) return { halt: `the attempt's clone pushes to ${urls.length} URLs (${urls.join(', ').slice(0, 240)}), as a second remote.origin.pushurl in the user's or the system's git config makes it, and an issue session pushes to exactly one, the URL its start pins; remove the extra push URL, then start again` };
+  const url = urls[0] ?? null;
   if (typeof pushUrl === 'string' && url !== pushUrl) return { halt: `the attempt's clone pushes to ${url ?? 'no URL'}, not ${pushUrl}, the URL the host's access check read, as a pushInsteadOf in the user's git config would make it; remove the rewrite, then start again` };
   const placed = placeHolders({ work: clone.work, git: clone.git, placeholders: Array.isArray(cap.placeholders) ? cap.placeholders : [] });
   if (placed) return { problem: placed.problem };

@@ -7,7 +7,7 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -21,7 +21,7 @@ import { DROP_FILE } from '../plugins/aidrian/lib/project-result.mjs';
 import { appendToRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { attemptFolder, sweepAttempts } from '../plugins/aidrian/lib/project-start.mjs';
 import { markUnattended, PENDING_AGE, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
-import { DRIVER, fakeClaude, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
+import { DRIVER, fakeClaude, ORIGIN, OTHER, runFixture, STARTED, testGlobalConfig } from './project-start-fixture.mjs';
 
 const SKILL = path.resolve(import.meta.dirname, '../plugins/aidrian/skills/autopilot/SKILL.md');
 const at = (ms) => new Date(ms).toISOString();
@@ -182,6 +182,19 @@ test('start refuses an origin that fetches or pushes to another repository, thro
   assert.match(fetch.cmd(['start', 'launch', 'ENG-1']).out[0], /^halt git config url\.https:\/\/example\.com\/acme\/\.insteadof rewrites origin's URL/u);
   for (const fx of [rewrite, fetch]) assert.deepEqual(fx.rows(), [], 'a halt records nothing');
   for (const fx of [pushurl, rewrite, fetch]) assert.deepEqual(fx.claude.starts(), []);
+});
+
+test('start halts when the user\'s git config gives origin a second push URL, which the issue session\'s one push never takes', (t) => {
+  const fx = runFixture(t);
+  const global = testGlobalConfig(t);
+  // Both name the pinned repository, and the first is origin's own URL: only their count stands in the way.
+  appendFileSync(global, `[remote "origin"]\n\tpushurl = ${ORIGIN}\n\tpushurl = git@github.com:acme/widgets.git\n`);
+  const started = fx.cmd(['start', 'launch', 'ENG-1']);
+  const halt = started.out.find((line) => line.startsWith('halt ')) ?? '';
+  assert.match(halt, /^halt the attempt's clone pushes to 2 URLs \(https:\/\/github\.com\/acme\/widgets\.git, git@github\.com:acme\/widgets\.git\), as a second remote\.origin\.pushurl/u, JSON.stringify(started));
+  assert.match(halt, /an issue session pushes to exactly one, the URL its start pins; remove the extra push URL, then start again/u);
+  assert.deepEqual(fx.rows(), [], 'a halt records nothing');
+  assert.deepEqual(fx.claude.starts(), []);
 });
 
 test('a later attempt clones again from the issue branch on the forge, and one whose branch changed a host file is refused', (t) => {

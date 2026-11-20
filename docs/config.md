@@ -1901,7 +1901,8 @@ issue, and no longer counts as active, and its driver mark stops holding the dri
 parked issues may still owe the Human's sign-offs, which come from a separate session the Human attends.
 Each start is written ahead: a start row with `pending: true` before the host starts anything, then one row that
 settles it, so a gate killed mid-start leaves a row `wait` finds and settles. A start row's `pushUrl` pins the URL the
-attempt's clone pushes to, read before its session starts; the issue session's one push goes only there
+attempt's clone pushes to, read before its session starts, and a clone that pushes to more than one URL, as a second
+`remote.origin.pushurl` in the user's git config makes it, halts the start; the issue session's one push goes only there
 ([hooks.md](hooks.md#agent-gates)). Every start is confined to a fresh
 clone under its host's sandbox, and a host that is not halts the start. The session hands its
 result over in its attempt's `drop` folder, and `wait` records it as a `result` row with `via: "drop"`, or ends the

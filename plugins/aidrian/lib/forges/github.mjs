@@ -178,7 +178,8 @@ const CLOSING_KEY = /(?<![A-Za-z0-9])([A-Za-z]{3,8}):?[ \t]{1,8}([A-Za-z][A-Za-z
 
 // The issue references a pull request says it closes, at most MAX_CLOSES distinct, in order: `#<n>` for each of GitHub's
 // closing references to an issue of the pull request's own repository (`owner`, `name`), a number GraphQL's Int holds
-// (isChangeNumber), from any author, since GitHub itself made them. GitHub links an issue a closing keyword names only
+// (isChangeNumber), from any author, unlike a body key, since GitHub itself made them and they are display only, never
+// looked up (a `#N` has no lookup). GitHub links an issue a closing keyword names only
 // for a pull request into the default branch; an issue linked by hand in the sidebar has no branch rule. Then, only
 // when the token's user wrote the pull request or its author belongs to the repository (own, trusted: anyone can open
 // a pull request and write its body),
@@ -190,10 +191,14 @@ function closesOf(node, owner, name) {
   const refs = Array.isArray(node?.closingIssuesReferences?.nodes) ? node.closingIssuesReferences.nodes : [];
   const same = refs.filter((ref) => sameName(ref?.repository?.owner?.login, owner) && sameName(ref?.repository?.name, name) && isChangeNumber(ref.number));
   const closes = new Set(same.map((ref) => `#${ref.number}`));
+  // Membership is judged on the pull request's own repository, so a third-party repository's owner is trusted there:
+  // accepted, as it reaches no further than the title rule does (prefix-matched, at most 3 keys a pull request).
   const text = (own(node) || trusted(node)) && typeof node.bodyText === 'string' ? node.bodyText : '';
   const body = text.slice(0, MAX_BODY);
   const cut = text.length > body.length;
   for (const match of body.matchAll(CLOSING_KEY)) {
+    // SHORTCUT: the cap applies before shared code filters by prefix and origin, so ten other entries, or case variants
+    // of one key, crowd out an eligible key. Accepted as contrived: a pull request rarely links ten issues.
     if (closes.size >= MAX_CLOSES) break;
     if (cut && match.index + match[0].length === body.length) continue;
     if (CLOSING_WORDS.has(match[1].toLowerCase())) closes.add(match[2]);

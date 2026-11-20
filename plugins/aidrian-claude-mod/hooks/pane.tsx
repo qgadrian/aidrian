@@ -925,6 +925,8 @@ async function loadIssues($: EngineInterface, snapshot: SnapshotResult, prefixes
 }
 
 // The answers of the active keys, in their order, as the issues atom holds them.
+// SHORTCUT: an expired answer for a returning key still draws until its fresh lookup settles. Accepted: the stale
+// title shows only for the length of one lookup.
 async function drawIssues($: EngineInterface) {
   const answers = live.issueKeys.map(key => live.issues.get(key)?.value ?? null).filter((issue): issue is Issue => issue !== null)
   await update($, issuesAtom, () => answers)

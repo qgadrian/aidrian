@@ -1,7 +1,7 @@
 // `aidrian session snapshot`: what a status line shows about the session it runs for and the project at the current
 // folder, as one JSON object or one line of plain text (docs/handoff.md#the-snapshot). Display data only: no hook, gate,
 // skill, or agent decides anything from it, and the Stop hook keeps reading the whole transcript.
-//   { session: { id, transcript, cwd }, handoff, prs, lessons, worktrees, decisions, audits, ticket, links, errors }
+//   { session: { id, transcript, cwd }, handoff, prs, lessons, worktrees, decisions, audits, tickets, links, errors }
 // The caller passes what it needs, `--session` and `--transcript`: the command reads no host variable and no stdin.
 // Each section fails open: one that throws is null and its name goes in `errors`, which holds names alone, and the
 // command exits 0 whenever its arguments parse. Every process it starts has a time limit: git's (lib/git.mjs), or the
@@ -13,21 +13,21 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { scanDecisions } from './decisions-cli.mjs';
-import { forgeFor, remoteIdentity, servedRepository } from './forges/index.mjs';
-import { GIT_TIMEOUT_MS, killingGit, mainRoot, runGit } from './git.mjs';
+import { forgeFor, servedRepository } from './forges/index.mjs';
+import { GIT_TIMEOUT_MS, killingGit, mainRoot } from './git.mjs';
 import { latestBrief, MARKER_CAP, readArmed, readFrom, readOwnFile, SESSION_ID } from './handoff-markers.mjs';
 import { HIDDEN } from './hidden-text.mjs';
 import { findProject } from './project.mjs';
 import { cachedValue } from './session-cached-value.mjs';
-import { LINKS, LINKS_MAX_BYTES, linksOf, sessionLinks, ticketOf } from './session-links.mjs';
+import { LINKS, LINKS_MAX_BYTES, linksOf, sessionLinks, ticketsOf } from './session-links.mjs';
 import { changesSummary, isChangeCache, LEDGER, LEDGER_MAX_BYTES, resolveSelection, sessionRefs, shownChanges } from './session-prs.mjs';
-import { auditsSection, KILL, lessonsSection, ownState, snapshotContext } from './session-snapshot-state.mjs';
+import { auditsSection, KILL, lessonsSection, originOf, ownState, snapshotContext } from './session-snapshot-state.mjs';
 import { handoffStatus, stopMarkerPath } from './session-length.mjs';
 import { cachedSessionUsage } from './session-usage-cache.mjs';
 import { usageLines } from './usage.mjs';
 import { listWorktrees, mergedHeads } from './worktree.mjs';
 
-export const SECTIONS = Object.freeze(['handoff', 'prs', 'lessons', 'worktrees', 'decisions', 'audits', 'ticket', 'links']);
+export const SECTIONS = Object.freeze(['handoff', 'prs', 'lessons', 'worktrees', 'decisions', 'audits', 'tickets', 'links']);
 // How long the forge calls of one snapshot may take together, in milliseconds; `--deadline-ms` shortens it.
 export const FORGE_BUDGET_MS = 4000;
 // The merged heads' and the change requests' caches: each refreshed at most once a minute, and never read past 1 MiB.
@@ -35,8 +35,6 @@ export const MERGED_HEADS = Object.freeze({ name: 'merged-heads-cache.json', win
 export const PRS_CACHE = Object.freeze({ name: 'prs-cache.json', windowMs: 60_000, cap: 1024 * 1024 });
 // The session files the row reader reads, each with the most of the session's own it reads (lib/session-links.mjs).
 const ROW_FILES = Object.freeze({ [LEDGER]: LEDGER_MAX_BYTES, [LINKS]: LINKS_MAX_BYTES });
-// `git remote get-url`'s exit status when the remote is not configured.
-const NO_SUCH_REMOTE = 2;
 
 // The longest text displayText keeps, in code points: a title, a name (a branch, an owner, a repository, a check, a
 // slug, or a ticket key), and a path or URL.
@@ -51,7 +49,7 @@ const OPTIONS = Object.fromEntries([...['session', 'transcript', 'ticket-prefixe
 export const commands = {
   session: {
     usage: 'snapshot [--session ID] [--transcript PATH] [--ticket-prefixes A|B] [--deadline-ms N] [--json|--line]',
-    about: "print the session's status for a status line, as JSON or one plain line: handoff, pull requests, lessons, worktrees, decisions, audits, ticket, and links",
+    about: "print the session's status for a status line, as JSON or one plain line: handoff, pull requests, lessons, worktrees, decisions, audits, tickets, and links",
     run(args) {
       const { values, positionals } = parseArgs({ args, allowPositionals: true, options: OPTIONS });
       const deadline = values['deadline-ms'] ?? String(FORGE_BUDGET_MS);
@@ -72,8 +70,17 @@ export const commands = {
 
 // The snapshot of the folder `cwd`, for the session `session` whose transcript is `transcript` (each null when not
 // given). In a folder with no project every section is null, `errors` is empty, and nothing is written. `io` is for a
-// test that counts the reads of lib/session-links.mjs sessionLinks.
+// test that counts the reads of lib/session-links.mjs sessionLinks, and of the change requests' cache (`cachedValue`).
 export const snapshot = (options) => killingGit(() => snapshotOf(options));
+
+// The runner of a section: `read`'s value in `out[name]`, or, when it throws, the name in `errors`.
+const sectionRunner = (out, errors) => (name, read) => {
+  try {
+    out[name] = read();
+  } catch {
+    errors.add(name);
+  }
+};
 
 function snapshotOf({ cwd, session = null, transcript = null, ticketPrefixes = '', budgetMs = FORGE_BUDGET_MS, io = {} }) {
   const validId = typeof session === 'string' && SESSION_ID.test(session);
@@ -83,13 +90,7 @@ function snapshotOf({ cwd, session = null, transcript = null, ticketPrefixes = '
     errors: [],
   };
   const errors = new Set();
-  const section = (name, read) => {
-    try {
-      out[name] = read();
-    } catch {
-      errors.add(name);
-    }
-  };
+  const section = sectionRunner(out, errors);
   let ctx;
   try {
     const found = findProject(cwd);
@@ -99,24 +100,40 @@ function snapshotOf({ cwd, session = null, transcript = null, ticketPrefixes = '
     return { ...out, errors: [...SECTIONS] };
   }
   const { project, state, checkouts, folder } = ctx;
-  // What the handoff, prs, and ticket sections share: one store listing, and one read of each session file.
+  // What the handoff, prs, and tickets sections share: one store listing, one read of each session file and of the
+  // remotes, and one of the change requests, for the prs section before the worktrees section spends the budget.
   const links = validId ? sessionLinks({ state, checkouts, maxChain: ctx.config.session.handoff.maxChain, folder, session, cwd, files: ROW_FILES, forge: forgeFor(cwd), git: KILL, io }) : null;
   if (validId && transcript !== null) section('handoff', () => handoffSection(ctx, links, session, transcript));
   const forge = forgeBudget(budgetMs);
-  if (validId) section('prs', () => prsSection(ctx, links, cwd, forge));
+  const changes = validId ? once(() => sessionChanges(ctx, links, cwd, forge, io)) : null;
+  if (changes) section('prs', () => changes().map(shownChange));
   section('lessons', () => lessonsSection(ctx));
   // The worktree list, read once a snapshot for the worktrees and links sections; a failed read fails each that asks.
   const worktrees = once(() => listWorktrees(needed(mainRoot(project.root, KILL)), { timeoutMs: GIT_TIMEOUT_MS, ...KILL }));
   section('worktrees', () => worktreesSection(ctx, worktrees, validId, forge, errors));
   section('decisions', () => ({ provisional: unconfirmed(scanDecisions(project, { unindexed: false, config: ctx.config })) }));
   section('audits', () => auditsSection(ctx));
-  section('ticket', () => shownTicket(ticketOf(cwd, ticketPrefixes, { rows: links?.rows ?? null, git: KILL })));
+  section('tickets', () => ticketsSection(cwd, ticketPrefixes, { links, changes }, errors));
   // Without --session there are no links to read, and so no error, as for prs.
   if (session !== null) section('links', () => shownLink(linksOf(links?.rows ?? null, worktrees)));
   return { ...out, errors: SECTIONS.filter((name) => errors.has(name)) };
 }
 
-const shownTicket = (ticket) => ticket && { key: displayText(ticket.key), source: ticket.source };
+// The tickets ticketsOf gives (lib/session-links.mjs), each key through displayText, from the change requests the prs
+// section read, none with no session or when that read failed (`prs` names it), and origin as links.origin() reads it,
+// when a `#N` needs it, spelled as the rows it is compared with record it: no `url.<base>.insteadOf` rewrite, unlike the
+// worktrees section's originOf, which asks the forge as git fetches. An own session file that cannot be read names
+// `tickets` in `errors`, the other keys kept; a bad prefix list throws.
+function ticketsSection(cwd, prefixes, { links, changes }, errors) {
+  let read = null;
+  try {
+    read = changes?.() ?? null;
+  } catch { /* the prs section names the failure */ }
+  const { tickets, unread } = ticketsOf(cwd, prefixes, { rows: links?.rows ?? null, changes: read, origin: links?.origin, git: KILL });
+  if (unread) errors.add('tickets');
+  return tickets.map(({ key, source }) => ({ key: displayText(key), source }));
+}
+
 const shownLink = (link) => link && { branch: displayText(link.branch), worktree: displayText(link.worktree, DISPLAY_CAPS.path), source: link.source };
 
 // `read`'s value, or what it threw, read once and given again.
@@ -182,12 +199,13 @@ function continuationOf(links, session, maxChain) {
 // `unsupported: true`, which start no forge call. The forge runs in the session's folder `cwd`, never in one a row names.
 // After the session's own refs come those of the sessions a handoff came from, read only while there are places left.
 // A state folder not the user's own (ownState), a ledger that cannot be read, or a failed read with no cache throws.
-function prsSection(ctx, links, cwd, forge) {
+// The rows are whole, `closes` and all: the prs section cuts each to its documented keys (shownChange).
+function sessionChanges(ctx, links, cwd, forge, io) {
   const folder = needed(ownState(ctx) && ctx.folder);
   const { refs, unsupported } = sessionRefs(needed(links.rows.own(LEDGER)), forgeFor(cwd), links.rows.inherited(LEDGER));
   const refresh = () => forge((timeoutMs) => resolveSelection(forgeFor(cwd, { timeoutMs, ...KILL }), refs));
-  const cached = refs.length ? needed(cachedValue({ folder, ...PRS_CACHE, isValue: isChangeCache, refresh })) : { value: { refs: [], rows: [] }, stale: false };
-  return shownChanges({ forge: forgeFor(cwd), refs, unsupported, cache: cached.value, stale: cached.stale }).map(shownChange);
+  const cached = refs.length ? needed((io.cachedValue ?? cachedValue)({ folder, ...PRS_CACHE, isValue: isChangeCache, refresh })) : { value: { refs: [], rows: [] }, stale: false };
+  return shownChanges({ forge: forgeFor(cwd), refs, unsupported, cache: cached.value, stale: cached.stale });
 }
 
 // A change request's row as shown: its documented keys alone, in order, strings through displayText, flags as booleans.
@@ -201,21 +219,19 @@ const shownChange = (row) => Object.fromEntries(SHOWN.filter(([key]) => Object.h
 // { owned, mergedNotCleaned }, and `stale: true` when the merged count is a cached value past its window. `owned` counts
 // the worktrees other than the main checkout. `mergedNotCleaned` counts those whose HEAD is the head commit of a merged
 // pull request of their branch, without cleanup's tree and age checks; null without a session, with no origin, or for
-// an origin the forge does not serve, and null, naming the section in `errors`, when origin cannot be read or the
-// merged heads' read fails with no cached value.
+// an origin the forge does not serve, and null, naming the section in `errors`, when origin cannot be read (originOf) or
+// the merged heads' read fails with no cached value.
 function worktreesSection({ project, folder }, list, validId, forge, errors) {
   const main = needed(mainRoot(project.root, KILL));
   const worktrees = list().filter((each) => !each.main);
   const out = { owned: worktrees.length, mergedNotCleaned: null };
   if (!validId) return out;
-  // As git fetches in the checkout that asks: the first URL, after any `url.<base>.insteadOf` rewrite, with that
-  // checkout's own config, such as a worktree's or an `includeIf "onbranch:"` one. Exit 2 is git's "No such remote".
-  const origin = runGit(['remote', 'get-url', 'origin'], project.root, KILL);
-  if (origin.status !== 0 && origin.status !== NO_SUCH_REMOTE) {
+  const home = originOf(project.root);
+  if (home.failed) {
     errors.add('worktrees');
     return out;
   }
-  const repo = origin.status === 0 ? servedRepository(remoteIdentity(origin.stdout.trim())) : null;
+  const repo = servedRepository(home.repo);
   if (repo === null) return out;
   const heads = mergedHeadsOf(main, repo, folder, forge);
   if (heads === null) {

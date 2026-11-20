@@ -95,8 +95,9 @@ Only a live session with the hooks running proves a guard holds.
 
 ### Session links
 
-The [snapshot](../handoff.md#across-a-handoff) shows the pull requests and the ticket of the sessions a handoff came
-from, through the `parent` a chain floor names, and the [worktree](../handoff.md#the-worktree) a session created. A
+The [snapshot](../handoff.md#across-a-handoff) shows the pull requests and the tickets of the sessions a handoff came
+from, through the `parent` a chain floor names, and the [worktree](../handoff.md#the-worktree) a session created; its
+[tickets](../handoff.md#the-tickets) also hold the keys those pull requests name, from the forge's one call. A
 host gets the first only through its continue routes. The second is written by the ledger's PostToolUse Bash hook,
 under the session id of the hook's payload ([Session ledger](../hooks.md#session-ledger)), on every host.
 

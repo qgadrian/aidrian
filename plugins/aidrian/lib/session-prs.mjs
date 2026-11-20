@@ -341,9 +341,9 @@ export const isRepository = (host, repoPath) => typeof host === 'string' && HOST
 const isUnsupportedRow = ({ host, path: repoPath, number = null, branch = null, cwd }) => typeof host === 'string' && HOST_NAME.test(host)
   && isRepoPath(repoPath) && validCwd(cwd) && isNumber(number) && isBranch(branch) && (number !== null || branch !== null);
 // The check of a ledger row under the adapter `forge`, which lib/session-links.mjs runs on each row of a ledger, the
-// session's own and an earlier session's, before the ticket or any other reader takes it, and groupRefs too: a known
+// session's own and an earlier session's, before the tickets or any other reader takes it, and groupRefs too: a known
 // kind and a time that parses; on a host the adapter declares, its own ref check (changeRef, which also bounds a number
-// as its API takes one) and the cwd check; on any other host, isUnsupportedRow. So the ticket comes only from a row the
+// as its API takes one) and the cwd check; on any other host, isUnsupportedRow. So the tickets come only from rows the
 // writer could have written.
 export const ledgerRowCheck = (forge) => (row) => row !== null && typeof row === 'object' && KINDS.has(row.kind) && typeof row.at === 'string'
   && Number.isFinite(Date.parse(row.at)) && (Array.isArray(forge?.hosts) && forge.hosts.includes(row.host)

@@ -1,4 +1,4 @@
-// `aidrian session snapshot` across a handoff (lib/session-links.mjs): the pull requests and the ticket of the sessions a
+// `aidrian session snapshot` across a handoff (lib/session-links.mjs): the pull requests and the tickets of the sessions a
 // chain floor's `parent` leads back to, each file read once, and no row value in any process.
 
 import '../scripts/test-state.mjs';
@@ -29,10 +29,10 @@ const git = (cwd, ...args) => {
   return result.stdout.trim();
 };
 
-// A project on `branch` whose `upstream` remote names acme/notes on github.com (origin stays unset, so the merged-heads
-// read starts no forge call), with its own state root, a fake gh that logs each call and answers what `answer` last set,
-// and a fake git before the real one that logs each call's argv, folder, and environment, which is the minimal one
-// `env` gives the command.
+// A project on `branch` whose `upstream` remote names acme/notes on github.com (origin stays unset unless `remotes`
+// names it, so the merged-heads read starts no forge call), with its own state root, a fake gh that logs each call,
+// answers a list of merged pull requests with none, and anything else with what `answer` last set, and a fake git before
+// the real one that logs each call's argv, folder, and environment, which is the minimal one `env` gives the command.
 function setup({ branch = 'main', remotes = { upstream: 'https://github.com/acme/notes.git' }, failRemotes = false, failList = false } = {}) {
   const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-snapshot-links-')));
   const dir = path.join(base, 'project');
@@ -51,7 +51,7 @@ function setup({ branch = 'main', remotes = { upstream: 'https://github.com/acme
   const answerFile = path.join(base, 'answer.json');
   const record = (log) => `require('node:fs').appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), env: process.env, input }) + '\\n');\n`;
   writeFileSync(path.join(bin, 'gh'), `#!${process.execPath}\nconst fs = require('node:fs');\nconst input = process.argv.includes('--input') ? fs.readFileSync(0, 'utf8') : null;\n${record(ghLog)}` +
-    `const { text } = JSON.parse(fs.readFileSync(${JSON.stringify(answerFile)}, 'utf8'));\nprocess.stdout.write(text);\n`);
+    `const { text } = process.argv.includes('list') ? { text: '[]' } : JSON.parse(fs.readFileSync(${JSON.stringify(answerFile)}, 'utf8'));\nprocess.stdout.write(text);\n`);
   const fail = (failRemotes ? `if (process.argv.includes('--get-regexp')) { process.exitCode = 128; return; }\n` : '')
     + (failList ? `if (process.argv.includes('--porcelain')) { process.exitCode = 128; return; }\n` : '');
   writeFileSync(path.join(bin, 'git'), `#!${process.execPath}\nconst input = null;\n${record(gitLog)}(() => {\n${fail}` +
@@ -83,6 +83,8 @@ function setup({ branch = 'main', remotes = { upstream: 'https://github.com/acme
   const variables = () => ghCalls().filter((call) => call.input).map((call) => JSON.parse(call.input).variables);
   return { base, dir, state, env, run, answer, ledger, hop, folder, projectState, store, ghCalls, gitCalls, variables };
 }
+// The remotes of a project whose origin is the repository the rows record, so a branch's `#N` names its issue.
+const ORIGIN = { origin: 'https://github.com/acme/notes.git' };
 
 // One ledger row, `minute` minutes past an hour that is past.
 const row = (fields, minute = 0) => ({
@@ -127,7 +129,7 @@ test('a parent`s touched rows, and its rows on a repository the remotes do not n
   const json = env.run(['--session', ID]);
   assert.deepEqual(env.variables().map((vars) => sentNumbers(vars)), [[1]], 'the session`s own touched ref on another repository alone');
   assert.deepEqual(json.prs.map(({ number, inherited }) => [number, inherited]), [[1, false]]);
-  assert.equal(json.ticket, null, 'a parent`s touched branch gives no ticket');
+  assert.deepEqual(json.tickets, [], 'a parent`s touched branch gives no ticket');
 });
 
 test('25 own refs leave the parent`s file unread; 20 own and 10 of the parent send the 20 and its 5 newest', { skip: !POSIX }, () => {
@@ -167,38 +169,71 @@ test('remotes that git cannot read hand nothing down, and fail no section', { sk
   env.answer(answerFor([1]));
   const json = env.run(['--session', ID]);
   assert.deepEqual(sentNumbers(env.variables()[0]), [1]);
-  assert.deepEqual([json.prs.map(({ number }) => number), json.ticket, json.errors], [[1], null, []]);
+  assert.deepEqual([json.prs.map(({ number }) => number), json.tickets, json.errors], [[1], [], []]);
 });
 
 test('a row dated next year is dropped, own or inherited: not sent, not shown, and no ticket; 30 seconds ahead is kept', { skip: !POSIX }, () => {
   const env = setup();
   const nextYear = new Date(Date.now() + 365 * 86_400_000).toISOString();
   env.ledger(ID, [row({ kind: 'pushed', branch: 'fix/1-future', at: nextYear })]);
-  assert.deepEqual([env.run(['--session', ID]).prs, env.run(['--session', ID]).errors, env.run(['--session', ID]).ticket], [[], [], null]);
+  assert.deepEqual([env.run(['--session', ID]).prs, env.run(['--session', ID]).errors, env.run(['--session', ID]).tickets], [[], [], []]);
   env.ledger(ID, [row({ number: 2, at: nextYear }), row({ number: 3, at: new Date(Date.now() + 30_000).toISOString() })]);
   env.ledger(PARENT, [row({ number: 4, at: nextYear }), row({ kind: 'pushed', branch: 'fix/5-future', at: nextYear })]);
   env.hop(ID, PARENT, Date.now());
   env.answer(answerFor([3]));
   const json = env.run(['--session', ID]);
   assert.deepEqual(sentNumbers(env.variables().at(-1)), [3]);
-  assert.deepEqual([json.prs.map(({ number }) => number), json.ticket], [[3], null]);
+  assert.deepEqual([json.prs.map(({ number }) => number), json.tickets], [[3], []]);
 });
 
-test('the ticket comes from the current branch, else the session`s pushed rows, else the parent`s as cut', { skip: !POSIX }, () => {
-  const env = setup();
+test('the tickets come from the current branch, then the session`s pushed rows, then the parent`s as cut', { skip: !POSIX }, () => {
+  const env = setup({ remotes: ORIGIN });
   env.ledger(ID, [row({ kind: 'pushed', branch: 'fix/42-login' }, 1)]);
-  assert.deepEqual(env.run(['--session', ID]).ticket, { key: '#42', source: 'ledger' });
+  assert.deepEqual(env.run(['--session', ID]).tickets, [{ key: '#42', source: 'ledger' }]);
   env.ledger(ID, [row({ kind: 'pushed', branch: 'feat/abc-7-x' }, 1)]);
-  assert.deepEqual(env.run(['--session', ID, '--ticket-prefixes', 'ABC']).ticket, { key: 'ABC-7', source: 'ledger' });
-  assert.equal(env.run([]).ticket, null, 'without --session no ledger is read');
-  assert.equal(env.run([]).errors.includes('ticket'), false);
+  assert.deepEqual(env.run(['--session', ID, '--ticket-prefixes', 'ABC']).tickets, [{ key: 'ABC-7', source: 'ledger' }]);
+  assert.deepEqual(env.run([]).tickets, [], 'without --session no ledger is read');
+  assert.equal(env.run([]).errors.includes('tickets'), false);
   env.ledger(ID, []);
   env.ledger(PARENT, [row({ kind: 'pushed', branch: 'fix/5-parent' }, 1)]);
   env.hop(ID, PARENT);
-  assert.deepEqual(env.run(['--session', ID]).ticket, { key: '#5', source: 'ledger' });
-  const keyed = setup({ branch: 'fix/9-here' });
+  assert.deepEqual(env.run(['--session', ID]).tickets, [{ key: '#5', source: 'ledger' }]);
+  const keyed = setup({ branch: 'fix/9-here', remotes: ORIGIN });
   keyed.ledger(ID, [row({ kind: 'pushed', branch: 'fix/42-login' }, 1)]);
-  assert.deepEqual(keyed.run(['--session', ID]).ticket, { key: '#9', source: 'branch' });
+  assert.deepEqual(keyed.run(['--session', ID]).tickets, [{ key: '#9', source: 'branch' }, { key: '#42', source: 'ledger' }]);
+});
+
+test('an own key and a parent`s key both show, the own first; the tickets read origin from the remotes` one config read', { skip: !POSIX }, () => {
+  const env = setup({ remotes: ORIGIN });
+  env.ledger(ID, [row({ kind: 'pushed', branch: 'fix/42-own' }, 1), row({ kind: 'touched', branch: 'fix/43-own', path: 'other/repo' }, 3)]);
+  env.ledger(PARENT, [row({ kind: 'pushed', branch: 'fix/5-parent' }, 2)]);
+  env.hop(ID, PARENT);
+  const json = env.run(['--session', ID]);
+  assert.deepEqual([json.tickets, json.errors], [[{ key: '#42', source: 'ledger' }, { key: '#5', source: 'ledger' }], []], 'a branch of another repository gives no #N');
+  const own = env.gitCalls().filter(({ cwd }) => cwd === env.dir).map(({ args }) => args.join(' '));
+  assert.equal(own.filter((args) => args === 'remote get-url origin').length, 1, 'the worktrees section`s read, once');
+  assert.equal(own.filter((args) => args.startsWith('config --get-regexp')).length, 1, 'the remotes and the tickets` origin, one read');
+});
+
+test('a rewritten origin: the tickets compare with origin as the links writer recorded it, so a worktree row`s #12 shows', { skip: !POSIX }, () => {
+  const env = setup({ remotes: { origin: 'gh:acme/notes' } });
+  git(env.dir, 'config', 'url.https://github.com/.insteadOf', 'gh:');
+  const listed = withWorktree(env, 'feat/12-x');
+  const origin = originRepository(env.dir);
+  links(env, ID, [linkRow({ branch: 'feat/12-x', cwd: listed, host: origin.host, path: origin.path }, 1)]);
+  env.ledger(ID, []);
+  const json = env.run(['--session', ID]);
+  assert.deepEqual([json.tickets, json.errors], [[{ key: '#12', source: 'ledger' }], []]);
+});
+
+test('a fetch mirror rewriting origin keeps a pushed row`s #7 and a same-repository pull request`s closing #5', { skip: !POSIX }, () => {
+  const env = setup({ remotes: ORIGIN });
+  git(env.dir, 'config', 'url.https://mirror.example.com/github/.insteadOf', 'https://github.com/');
+  env.ledger(ID, [row({ kind: 'pushed', number: 3, branch: 'fix/7-y' }, 1)]);
+  env.answer({ data: { r0: { pullRequest: node(3, { closingIssuesReferences: { nodes: [{ number: 5, repository: { name: 'notes', owner: { login: 'acme' } } }] } }) } } });
+  const json = env.run(['--session', ID]);
+  assert.deepEqual(json.prs.map(({ number }) => number), [3]);
+  assert.deepEqual([json.tickets, json.errors], [[{ key: '#7', source: 'ledger' }, { key: '#5', source: 'pr' }], []]);
 });
 
 test('no row value reaches a process`s argv, environment, or folder; the forge gets the selected refs on stdin, as GraphQL variables', { skip: !POSIX }, () => {
@@ -383,7 +418,8 @@ test('the git and gh doubles never see the runner`s own variables, such as a for
 });
 
 test('a malformed ledger row gives no ticket, the session`s own or an earlier session`s', { skip: !POSIX }, () => {
-  const env = setup();
+  // Each bad row names a key no good row does, so a key of one would show.
+  const env = setup({ remotes: ORIGIN });
   const bad = [
     row({ kind: 'unknown', branch: 'fix/42-x' }, 5), row({ kind: 'pushed', branch: 'fix/43..bad' }, 6), row({ kind: 'pushed', branch: 'fix/44-x', cwd: 'relative' }, 7),
     row({ kind: 'pushed', branch: 'fix/45-x', host: 'Not A Host' }, 8), row({ kind: 'pushed', branch: 'fix/46-x', number: -1 }, 9),
@@ -391,17 +427,17 @@ test('a malformed ledger row gives no ticket, the session`s own or an earlier se
     row({ kind: 'pushed', branch: 'fix/47-x', path: 'notes' }, 10), row({ kind: 'pushed', branch: 'fix/48-x', number: 2 ** 31 }, 11),
   ];
   env.ledger(ID, [row({ kind: 'pushed', branch: 'fix/1-good' }, 1), ...bad]);
-  assert.deepEqual(env.run(['--session', ID]).ticket, { key: '#1', source: 'ledger' }, 'the newest well-formed row');
+  assert.deepEqual(env.run(['--session', ID]).tickets, [{ key: '#1', source: 'ledger' }], 'the well-formed row alone');
   env.ledger(ID, bad);
   env.ledger(PARENT, [row({ kind: 'pushed', branch: 'fix/2-parent' }, 1), ...bad]);
   env.hop(ID, PARENT);
-  assert.deepEqual(env.run(['--session', ID]).ticket, { key: '#2', source: 'ledger' }, 'the parent`s newest well-formed row');
+  assert.deepEqual(env.run(['--session', ID]).tickets, [{ key: '#2', source: 'ledger' }], 'the parent`s well-formed row alone');
 });
 
-test('a branch pushed again more than a minute later is the newest for the ticket', { skip: !POSIX }, () => {
-  const env = setup();
+test('a branch pushed again more than a minute later is the newest for the tickets', { skip: !POSIX }, () => {
+  const env = setup({ remotes: ORIGIN });
   env.ledger(ID, [row({ kind: 'pushed', branch: 'fix/1-first' }, 1), row({ kind: 'pushed', branch: 'fix/2-second' }, 5), row({ kind: 'pushed', branch: 'fix/1-first' }, 10)]);
-  assert.deepEqual(env.run(['--session', ID]).ticket, { key: '#1', source: 'ledger' });
+  assert.deepEqual(env.run(['--session', ID]).tickets, [{ key: '#1', source: 'ledger' }, { key: '#2', source: 'ledger' }]);
 });
 
 test('a worktree recorded under a rewritten origin is inherited across a handoff: writer and reader read the raw URL', { skip: !POSIX }, () => {

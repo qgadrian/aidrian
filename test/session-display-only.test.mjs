@@ -1,5 +1,5 @@
 // The Display only rule of the session links (docs/handoff.md#the-snapshot): no hook, gate, skill, or agent decides
-// anything from a floor's parent, the lineage, or the snapshot's prs and ticket, and none of these values reaches a
+// anything from a floor's parent, the lineage, or the snapshot's prs and tickets, and none of these values reaches a
 // model's context. The scan reads the source with comments removed, as test/host-coupling.test.mjs does; each rule has
 // a sample breach that fails it.
 

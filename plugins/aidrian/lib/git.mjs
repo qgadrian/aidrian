@@ -37,6 +37,17 @@ export function runGit(args, cwd, options = {}) {
   return result;
 }
 
+// A runGit with `options` that runs each command once, by its arguments and folder, and gives its result again: for the
+// readers of one process that share a read, such as a snapshot's remotes and its origin (lib/session-links.mjs).
+export function memoGit(options = {}) {
+  const results = new Map();
+  return (args, cwd) => {
+    const key = JSON.stringify([args, cwd]);
+    if (!results.has(key)) results.set(key, runGit(args, cwd, options));
+    return results.get(key);
+  };
+}
+
 function firstLine(args, cwd, options) {
   const result = runGit(args, cwd, options);
   return result.status === 0 ? result.stdout.trim() : null;

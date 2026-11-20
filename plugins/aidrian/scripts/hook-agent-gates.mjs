@@ -56,7 +56,7 @@ import { configWriteDenial, deadlineDenial, machineSwitchWriteDenial, opaqueLimi
 import { PastDeadline, withinDeadline } from '../lib/deadline.mjs';
 import { readGateSnapshot } from '../lib/gate-snapshot.mjs';
 import { baseReader, continueStoreWriteDenial, handoffContinueDenial, handoffEnvDenial, hostSessionStartDenial, mainCheckoutWriteDenial, prEnvDenial, projectRunWriteDenial, remoteChangeDenial, sessionFoldersWriteDenial, startedUnattended, stateFolders, stateFoldersWriteDenial } from '../lib/handoff-guard.mjs';
-import { block, runHook } from '../lib/hook-io.mjs';
+import { block, HookExit, isMain, runHook } from '../lib/hook-io.mjs';
 import { findProject, openProject } from '../lib/project.mjs';
 import { confineDenial, sandboxEscapeDenial } from '../lib/confine-guard.mjs';
 import { drivesRun, ownAttemptFolder, projectCommandDenial, projectRunActive } from '../lib/project-run-guard.mjs';
@@ -66,19 +66,29 @@ import { unattendedPlaces, unattendedWriteDenial } from '../lib/unattended-write
 
 // The milliseconds from the hook's start the guards may take. AIDRIAN_GUARD_BUDGET_MS may only lower it, as a test does.
 const GUARD_BUDGET_MS = 2500;
-const lowered = process.env.AIDRIAN_GUARD_BUDGET_MS ? Number(process.env.AIDRIAN_GUARD_BUDGET_MS) : Number.NaN;
-const budget = Number.isFinite(lowered) && lowered >= 0 ? Math.min(lowered, GUARD_BUDGET_MS) : GUARD_BUDGET_MS;
+const guardBudget = () => {
+  const lowered = process.env.AIDRIAN_GUARD_BUDGET_MS ? Number(process.env.AIDRIAN_GUARD_BUDGET_MS) : Number.NaN;
+  return Number.isFinite(lowered) && lowered >= 0 ? Math.min(lowered, GUARD_BUDGET_MS) : GUARD_BUDGET_MS;
+};
+// The deadline of the running call, in performance.now() milliseconds: its start plus the budget.
+let budget = GUARD_BUDGET_MS;
 
-await runHook(async (input) => {
+// The hook's body, for the payload `input`; `start` is when the call began, 0 for the hook's own process (lib/hook-io.mjs
+// callHook).
+export async function handle(input, { start = 0 } = {}) {
+  budget = start + guardBudget();
   try {
     await gate(input);
   } catch (error) {
+    if (error instanceof HookExit) throw error;
     if (readGateSnapshot(input) === null) return;
     const why = `the agent gate hook failed (${error?.message ?? error}), so the gates this session started with are unknown for this call, and a subagent may only read files`;
     const denial = readOnlyDenial(input, 'the agent gate hook failed', why, DEFAULTS, 'that the agent gate hook failed on this call');
     if (denial) await block(input, 'agent-gates', denial.reason, { match: denial.match });
   }
-});
+}
+
+if (isMain(import.meta.url)) await runHook(handle);
 
 async function gate(input) {
   // Every attempt clone this call reads is linked only for the session the payload names (lib/attempt-clone.mjs).

@@ -249,7 +249,9 @@ the absolute folders of PATH alone, so an empty or relative entry never runs a `
 the gate's [push preflight](../handoff.md#the-push-preflight) reads the folder through `startFolder`, and judges that
 folder's remote; `startBackground` then starts there from that same listing, and never reads the folder again. When
 that listing does not answer or does not list the session's folder, or the folder is not there, the preflight answers
-`unknown`, and the gate never judges its own folder in its place; with no folder from `startFolder`, step 1 reads its own:
+`unknown`, and the gate never judges its own folder in its place; with no folder from `startFolder`, step 1 reads its own.
+In a folder that is not there, `claude` cannot run (`ENOENT`), so nothing starts, the gate removes its pending mark, and
+the handoff goes on by the clear route:
 
 1. `claude agents --json`, for the handing-off session's `name` and `cwd`, by its `sessionId`. That folder, where the
    host already runs a session, is where the new one starts, never the brief's worktree; a session the listing does

@@ -269,7 +269,9 @@ function armed({ host, found, slug, chain, hash, store, session, now, route, fal
 // none too, since a clear would deliver the same chain. A host that would refuse the new session's push to the
 // repository's remote (pushPreflight), that of the folder the host starts the new session in (`startFolder`), goes on by
 // the clear route, before anything is kept, marked, or started: a run no Human attends would do its work and then fail
-// at the push. A folder the host cannot name, or one that is not there, answers unknown, and the start goes on. Otherwise the store keeps the checked bytes, the host starts a new
+// at the push. A folder the host cannot name, or one that is not there, answers unknown, and the start goes on; in a
+// folder that is not there the host's start cannot run, so nothing starts, the pending mark is removed, and the handoff
+// goes on by the clear route. Otherwise the store keeps the checked bytes, the host starts a new
 // session in the handing-off session's own folder, whose first message is backgroundPrompt on that copy, and the gate
 // records the new session's chain floor, under its full id or the short one the host printed, and its unattended mark
 // under the same id, which the hooks read wherever the session's calls run (lib/unattended-mark.mjs), then the start

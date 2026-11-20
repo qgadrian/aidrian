@@ -1356,15 +1356,19 @@ test('the push preflight answers unknown when the host cannot name the new sessi
   }
 });
 
-test('the push preflight answers unknown for a new session\'s folder that is not there, and the session starts', (t) => {
+// The preflight answers unknown, so the start is tried; spawnSync cannot run `claude` in a folder that is not there.
+test('the push preflight answers unknown for a new session\'s folder that is not there, and the start that fails there goes on by the clear route', (t) => {
   const setting = setup(t, { mode: 'auto' });
-  const { env } = preflighted(t, setting, { settings: ONLY_OTHER });
+  const { env, marks } = preflighted(t, setting, { settings: ONLY_OTHER });
   passCheck(setting);
-  const { run, calls } = fakeRun({ own: path.join(setting.dir, 'worktrees', 'not-yet') });
+  const { run: listing, calls } = fakeRun({ own: path.join(setting.dir, 'worktrees', 'not-yet') });
+  const run = (command, args, options) => (options.cwd && !existsSync(options.cwd)
+    ? (calls.push({ command, args, cwd: options.cwd }), { status: null, stdout: '', stderr: '', error: Object.assign(new Error('spawnSync'), { code: 'ENOENT' }) })
+    : listing(command, args, options));
   const result = gate(setting, { run, env });
-  assert.equal(result.out[0], 'continue: background', result.out.join('\n'));
-  assert.ok(!result.out.some((line) => line.startsWith('fallback:')), result.out.join('\n'));
-  assert.equal(bgCalls(calls).length, 1);
+  assert.equal(bgCalls(calls).length, 1, 'the start was tried');
+  assert.deepEqual(result.out.slice(0, 2), ['continue: clear', 'fallback: no background session started, since `claude` could not be run (ENOENT); this handoff goes on by the clear route']);
+  assert.ok(!readdirSync(marks).some((name) => name.startsWith('pending.')), 'the pending mark was released');
 });
 
 test('a remote the host trusts starts the background session as before (AC3)', (t) => {

@@ -101,7 +101,7 @@ const FORGE_VALUES = new Set(['-R', '--repo', '--hostname', '-h']);
 // and its git common folder. `fold(path)` gives a path as roots holds them.
 export function issueForgeDenial(input, { names: { human } }, { mark = null, issue = () => null, roots = () => [], fold = (each) => each, cwd = process.cwd() } = {}) {
   if (!issueHeld(mark)) return null;
-  const deny = (match, why) => ({ match, reason: projectRuleReason(input, `${why}, and a project run's issue session never does that: only ${human} does`, human, 'to make that change, or record the issue parked with the decision it needs') });
+  const deny = (match, why) => ({ match, reason: projectRuleReason(input, `${why}, and a project run's issue session never does that: only ${human} does`, human, 'to make that change, or record the issue parked with the decision it needs', { mark }) });
   const opaque = opaqueShellCommand(input);
   if (opaque !== null) {
     return opaqueTexts(opaque).some((text) => FORGE_WORD.test(text)) ? deny('issue session forge call it cannot read', 'it runs a shell the guard cannot read, in words that may push, release, or call the forge') : null;

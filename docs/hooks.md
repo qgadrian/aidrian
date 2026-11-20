@@ -1327,8 +1327,10 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   that, so `aidrian project preflight` blocks a run whose default branch asks the signed-in user, admin or not, for no
   pull request, whose tags no rule that user cannot bypass stops being created or moved, or whose workflows see CI
   secrets, whatever that token's `workflow` scope, unless the team sets `projectRun.workflowSecretsAccepted`
-  ([review.md](review.md)). When the guards run out of their time budget, an issue session's refusal says it works an
-  issue of a project run. The block is [recorded](#recorded-blocks) as
+  ([review.md](review.md)). A refusal of this rule or the write allowlist above names the session as the issue session
+  of a project run, with the run and the issue (`blocked for the issue session of a project run (launch, ENG-1)`), and a
+  subagent as one of that session, never as the main session. When the guards run out of their time budget, an issue
+  session's refusal says it works an issue of a project run. The block is [recorded](#recorded-blocks) as
   `config-guard`.
 
 - A subagent, and a main session the background route started, may not write in the session folders,

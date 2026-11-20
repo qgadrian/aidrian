@@ -106,11 +106,18 @@ export function readOnlyDenial(input, match, why, { names: { human } }, fix) {
 
 // The reason a project rule gives the agent when it blocks the call in `input`: the tool, by the name the host sent when
 // that differs (`raw_tool_name`), since that is the tool the agent called, who called it, `why`, and that it should ask
-// `human` for `ask` rather than work around the rule. The gates and the config guard block with it.
-export function projectRuleReason(input, why, human, ask = 'what the task needs') {
+// `human` for `ask` rather than work around the rule. The gates and the config guard block with it. A guard that holds
+// the session's unattended `mark` passes it, so a session that works an issue of a project run, and its subagents, are
+// named as that, never as the main session.
+export function projectRuleReason(input, why, human, ask = 'what the task needs', { mark = null } = {}) {
   const tool = calledName(input);
-  let who = typeof input.agent_id === 'string' && input.agent_id !== '' ? 'a subagent' : 'the main session';
+  const subagent = typeof input.agent_id === 'string' && input.agent_id !== '';
+  let who = subagent ? 'a subagent' : 'the main session';
   if (typeof input.agent_type === 'string' && input.agent_type !== '') who = `the agent "${input.agent_type}"`;
+  if (typeof mark?.issue === 'string' && mark.issue !== '') {
+    const session = `the issue session of a project run${typeof mark.project === 'string' && mark.project !== '' ? ` (${mark.project}, ${mark.issue})` : ` (${mark.issue})`}`;
+    who = subagent ? `${who} of ${session}` : session;
+  }
   return `aidrian: ${tool} is blocked for ${who} in this project: ${why}.`
     + ` This is a project rule: do not reach the same result with another tool; tell ${human} ${ask}.`;
 }

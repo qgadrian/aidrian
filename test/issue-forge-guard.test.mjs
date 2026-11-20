@@ -114,8 +114,11 @@ test('an issue session pushes only its own branch to origin, and asks the forge 
     assert.match(denial?.reason ?? '', /a project run's issue session never does that: only the Human does/u, command);
   }
   for (const command of PASSED) assert.equal(fx.ask(bash(command)), null, command);
-  // The reason names the one push it makes.
-  assert.match(fx.ask(bash('git push origin HEAD:refs/heads/main')).reason, /the one push it makes is `git push origin HEAD:refs\/heads\/feat\/eng-1-export`/u);
+  // The reason names the one push it makes, and the session as an issue session of the run, never the main session.
+  const refusal = fx.ask(bash('git push origin HEAD:refs/heads/main')).reason;
+  assert.match(refusal, /the one push it makes is `git push origin HEAD:refs\/heads\/feat\/eng-1-export`/u);
+  assert.match(refusal, /^aidrian: Bash is blocked for the issue session of a project run \(launch, ENG-1\) in this project/u);
+  assert.match(fx.ask({ ...write(path.join(fx.root, 'elsewhere.md')), agent_id: 'a1', agent_type: 'aidrian:explorer' })?.reason ?? '', /blocked for the agent "aidrian:explorer" of the issue session of a project run \(launch, ENG-1\)/u, 'a subagent, through the write rule');
   // An issue whose start the ledger does not name as running pushes nothing: its branch cannot be told.
   appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'issue', key: 'ENG-1', state: 'parked', at: new Date().toISOString() }] }));
   assert.match(fx.ask(bash(EXACT))?.reason ?? '', /no running start of its issue names the branch it may push/u);

@@ -533,7 +533,7 @@ export function unattendedWriteDenial(input, { names: { human } }, { mark = null
   const shell = command === null ? null : shellWrites(command, cwd, env);
   const any = [files, names, globs, modes, shell?.dynamic ?? [], shell?.links ?? [], shell?.programs ?? [], shell?.removed ?? []].some((list) => list.length > 0);
   if (!any) return null;
-  const say = sayer(input, human, opaqueShellCommand(input) !== null);
+  const say = sayer(input, human, opaqueShellCommand(input) !== null, mark);
   const found = places();
   if (!found) return say.unknown();
   say.hold(found);
@@ -558,12 +558,12 @@ function pushRoots(places) {
   return [...worktree, ...(places.nested ?? []).map(({ root, common }) => ({ root, common }))].filter((each) => each.root && each.common);
 }
 
-// The denials of unattendedWriteDenial, which say what the call does, to whom, and why.
-function sayer(input, human, opaque) {
+// The denials of unattendedWriteDenial, which say what the call does, to whom (`mark` names an issue session), and why.
+function sayer(input, human, opaque, mark) {
   const verb = opaque ? 'may change' : 'writes';
   let suffix = '';
   let list = 'its own worktree or its attempt\'s folders, the state folders it writes by hand (plans, tmp, handoffs, quorum, and a review manifest or capture), and the temporary folder';
-  const deny = (match, why) => ({ match, reason: projectRuleReason(input, `${why}${suffix}`, human, 'to make that change, or where the work should go instead') });
+  const deny = (match, why) => ({ match, reason: projectRuleReason(input, `${why}${suffix}`, human, 'to make that change, or where the work should go instead', { mark }) });
   return {
     verb,
     hold(found) {

@@ -160,7 +160,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Git amend | `git commit --amend`; the deny names a follow-up commit, which a squash merge folds in, and `aidrian lint` fails a skill or agent that asks for an amend | `AIDRIAN_ALLOW_GIT_AMEND=1` |
 | Kill by name | Killing processes by name | `AIDRIAN_ALLOW_PROCESS_KILL_BY_NAME=1` |
 | Command-line listing | Listing the command lines of other processes | `AIDRIAN_ALLOW_PROCESS_ARGS_LISTING=1` |
-| Shell startup file | `aidrian shell-init <shell> --install` or `--uninstall` from any agent, the main session's included: both write the Human's `~/.zshrc` or `~/.bashrc` ([Replacing the terminal](handoff.md#replacing-the-terminal)). It reads the command in a substitution, `sh -c`, `eval`, a heredoc or pipe fed to a shell, and carried by `xargs`, `find -exec`, `watch`, `script`, `parallel`, or a shell the walk does not read, such as `fish -c`. Out of sight: a flag behind a variable, a script file or an interpreter (`python -c`, `node -e`) that runs it, and a shell alias or function that hides it | none: the deny says to hand the Human the command with the `!` prefix |
+| Shell startup file | `aidrian shell-init <shell> --install` or `--uninstall` from any agent, the main session's included: both write the Human's `~/.zshrc` or `~/.bashrc` ([Replacing the terminal](handoff.md#replacing-the-terminal)). It reads the command in a substitution, `sh -c`, `eval`, a heredoc or pipe fed to a shell, and carried by `xargs`, `find -exec`, `watch`, `script`, `parallel`, `arch`, or a shell the walk does not read, such as `fish -c`. Out of sight: a flag behind a variable, a script file or an interpreter (`python -c`, `node -e`) that runs it, and a shell alias or function that hides it | none: the deny says to hand the Human the command with the `!` prefix |
 | Counting grep in `&&` | A `grep -c` whose exit status an `&&` chain reads | `AIDRIAN_ALLOW_GREP_EXIT_CHAIN=1` |
 | Dependency link | An `ln` of a `node_modules` or `.venv` folder: a package manager run in the copy installs through the link and changes the original's packages. The deny names a copy with its own offline install from the lockfile | `AIDRIAN_ALLOW_DEPENDENCY_LINK=1` |
 | Pull request body | A pull request body without the required sections, or with the footer; the [contract](config.md#pull-request-contract); a `## Tests run` line that says a test command passed with no [finished run](#check-runs) to show it | `AIDRIAN_ALLOW_PR_BODY=1` |
@@ -171,12 +171,13 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Review sign-off | `aidrian pr signoff`, `--last` included, which records the Human's sign-off of a flow under their name ([review.md](review.md#sign-off-by-the-human)) | none: the Human runs it in their own shell |
 | Decision answer | `aidrian decisions set` or `undo` from a subagent, which carry out the Human's answer on a decision ([Decision markers](project-folder.md#decision-markers)) | none: the main session runs them on the Human's word |
 | Extra round approval | `aidrian pr extend <PR> --human approve` without the Human's answer in the session ([review.md](review.md#extra-rounds)) | none: the Human answers, or runs it in their own shell |
+| Round limit delegation | `aidrian pr delegate <PR>` without the Human's own answer to the merge guard's round-limit question in the session that leaves the ship decision to the session, and from a subagent ([Merge guard](#merge-guard)). Verified on Claude Code 2.1.295 to 2.1.328 in the terminal; in the desktop app, and on Codex, whose transcript the rule cannot read, the Human runs it | none: the Human answers, or runs it in their own shell |
 | Quota fallback choice | `aidrian pr review <PR> --quota-fallback` without the Human's pick in the session ([review.md](review.md#out-of-quota)) | none: the Human answers, or runs it in their own shell |
 | Product feedback answer | `--by human` on a [product feedback](config.md#product-feedback) item without the Human's answer in the session | none: the Human answers, or runs it in their own shell |
 | Product feedback post | `aidrian pr product-feedback post` on a pull request from outside the team without the Human's answer in the session, and from a subagent | none: the Human answers, or runs `post` in their own shell |
 | Ready hold, in a project that runs product feedback | Marking a draft ready while its [product feedback](config.md#product-feedback) is owed ([Ready hold](#ready-hold)) | `AIDRIAN_ALLOW_UNHELD_READY=1`, set by a person in their own shell before the session |
 | Ready checks | Marking a draft ready while a check on its head has not finished, or before a check its last edit re-queues has shown, and editing a title or body in the same call as a ready ([Ready checks](#ready-checks)) | `AIDRIAN_ALLOW_UNHELD_READY=1`, the ready hold's, set the same way |
-| Merge guard | Merging a pull request while a review it owes is open, or the review of its head has not finished ([Merge guard](#merge-guard)) | none: the Human answers the guard's question, "Merge anyway" or, at the round cap, "Merge with the findings filed", or merges in their own shell; under `github.unattendedWaiver`, a verdict recorded with `aidrian pr waive` |
+| Merge guard | Merging a pull request while a review it owes is open, or the review of its head has not finished ([Merge guard](#merge-guard)) | none: the Human answers the guard's question, "Merge anyway" or, at the round cap, "Merge with the findings filed", or merges in their own shell; at the round cap with every open finding low, the Human's answer that the session decides, recorded with `aidrian pr delegate`; under `github.unattendedWaiver`, a verdict recorded with `aidrian pr waive` |
 | Push first, when turned on | A full test suite while the branch holds a commit older than `testing.pushFirstMinutes` that its remote copy lacks ([Push first](#push-first)) | `AIDRIAN_ALLOW_FULL_SUITE=1` |
 | Main checkout, when turned on | A shell write to a tracked file in the main checkout; a git call there that makes a commit or moves the branch; after a `cd` it cannot trust, a relative write or a git call that may change the main checkout; and a relative write that lands there only if a `cd` inside it fails ([After a cd](#after-a-cd)) | `AIDRIAN_ALLOW_MAIN_WRITE=1` |
 
@@ -316,6 +317,34 @@ What each rule matches:
   answer or on their typed `grant up to <N> review rounds on <owner>/<name>#<PR>` ([review.md](review.md#unattended-rulings)),
   naming `--repo <owner>/<name>` in a checkout whose remotes name more than one repository, as the review step's printed rerun does.
   An answer the rule cannot read, such as `--human "$X"`, counts as approve; a pull request it cannot read is refused.
+- Round limit delegation: `aidrian pr delegate <PR>`, also as `node …/cli.mjs`, in a substitution, `sh -c`, `eval`, or a
+  heredoc fed to a shell. It runs when this machine's review record of the repository the call acts on holds a review
+  stopped at its round limit (`extension_check` or `round_limit`, nothing owed), and the session transcript holds an
+  AskUserQuestion answer, given at or after that outcome, to the merge guard's round-limit question: its very text, which
+  the guard and the rule build from the outcome's head and the open count, offered with exactly its two options. The
+  latest such answer decides. One that starts with either option is that option: "Merge with the findings filed" (or
+  "Merge anyway") the merge guard takes by itself, with nothing to record, and "Grant more review rounds" means do not
+  merge, even with "your call how many" after it. Otherwise the answer must be the Human's own words and leave the
+  decision to the session: the whole answer, with case, spaces, and a closing `.` or `!` aside, is one of a fixed
+  English list, such as "whatever you recommend best", "you decide", "up to you", or "your call". A word before or after
+  the phrase, such as a condition ("if CI is green"), a lean ("I would rather grant more rounds"), "stop.", or a quote
+  mark, refuses it. The answer must also be one the host's adapter reads as the Human's own in the terminal
+  (`humanAnswer` in `lib/hosts/`, [Adding a host](providers/adding-a-host.md#the-adapters-fields)): on Claude Code, not a
+  sidechain, the `cli` entrypoint, and a permission decision whose source is `user_temporary`, as every AskUserQuestion
+  answer carries on Claude Code 2.1.295 to 2.1.328 ([Answers the Human gave](providers/claude-code.md#answers-the-human-gave));
+  an answer the desktop app, an SDK app, or a hook gave is refused, and so is every answer on a host whose adapter reads none.
+  The rule binds to the record's head, never to the call's `--head`. A deny names the nearest miss and never quotes the
+  Human's answer. A subagent's call (one with an `agent_id`) is refused: the Human answered the main session. With no
+  review stopped at its round limit in this machine's record, as when another machine ran the review, the Human runs the
+  command in their own shell. A pull request number or subcommand the shell builds at run time, a shell fed text the
+  rule cannot read that names the command, and a program that runs its words as a command and names it are refused:
+  `xargs`, `find -exec`, `watch`, `script`, `parallel`, `arch`, `npx`, `bunx`, `npm exec` (also after the manager's
+  options and their values, as `npm --yes exec` and `npm -w a -w b exec`), `pnpm dlx`, `yarn dlx`, `bun x`, inline code
+  (`node -e` or `-pe`, `python3 -c`, `perl -e`, `ruby -e`, a versioned name such as `perl5.34` included, the same table the
+  [agent gates](#agent-gates) guard of config files reads, and `deno eval`), and a program name the shell builds, such as `$A` or `"$(command -v aidrian)"`. So is such a
+  program that leaves aidrian's `pr` subcommand for itself to fill in: `xargs aidrian pr`, which adds its input, a
+  `{}` it replaces (`find -exec aidrian pr {}`), or xargs's replace string (`xargs -I S aidrian pr S`). The repository is the call's `--repo`, one of this checkout's remotes, else the one repository the remotes
+  name, as for the extra round approval.
 - Quota fallback choice: `aidrian pr review <PR> --quota-fallback agent:<name>` or `--quota-fallback human`, also as
   `node …/cli.mjs` or `--quota-fallback=<value>`. It runs when this machine's review record of the repository the call
   acts on holds a quota stop and the session transcript holds an AskUserQuestion answer, given after that stop, to a
@@ -399,6 +428,18 @@ Each rule is a file in `plugins/aidrian/lib/rules/`; a rule that reads only `gh`
 Each block is recorded: [Recorded blocks](#recorded-blocks).
 A rule reads the command the way the shell splits it.
 It sees through `sudo`, `env`, `timeout`, `command`, `rtk`, and similar wrappers, and ignores text in quotes, comments, and heredocs.
+`builtin` counts as a wrapper only before `command`, `exec`, `eval`, or another `builtin`, the builtins that run another command;
+`builtin cd` stays `builtin`.
+It also peels zsh's precommand modifiers, `noglob`, `nocorrect`, and a bare `-`, and zsh's `repeat` with its count, as in `noglob git reset --hard HEAD^`.
+In a `case` arm it reads the command after the pattern: a word that ends in an unquoted `)`, as `x)`, `*)`, and `"$x")` do,
+or a word before a bare `)`, as in `a ) git push`. A function definition is read from its body, `f()` or `f ()` alike.
+A quoted word that ends in `)`, such as `"$(command -v gh)"`, is a program word the shell builds, never a pattern.
+The command behind a zsh modifier, `repeat`, or a spaced pattern or function name may never run:
+bash has no `noglob`, `repeat 0` runs nothing, and an arm may go untaken or a function uncalled.
+Those reads only refuse: a `cd` behind one moves no rule's folder, and a test run behind one adds no row to the [check-run record](#check-runs).
+Four shapes still hide the program from every rule: a case pattern glued to its command (`*)git push`),
+a function head with a space inside its parentheses (`f ( ) { git push; }`),
+a zsh glob qualifier on the program path (`/usr/bin/git(N) push`), and an array assignment before the command (`x=(a b) gh pr merge 5`).
 A long option it blocks also matches the shorter prefixes the program accepts, such as `--no-veri` for `--no-verify`,
 `--am` for `--amend`, and `--cou` for grep's `--count`.
 Every rule also reads the command substitutions that run: `$(…)`, backticks, `<(…)`, and those in a heredoc that expands.
@@ -474,7 +515,7 @@ Neither record waits on a lock, so a block stays well inside the host's 5-second
 
 The rules are named in the rows and lessons as `git-hook-bypass`, `git-amend`, `dependency-link`, `process-kill` (both the kill and the listing rule),
 `shell-init-install`, `grep-exit-chain`, `pr-body`, `public-text`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`,
-`decisions-set`, `review-extend`, `review-fallback`, `merge-review` (the Bash rule and the MCP hook), `main-checkout`, `review-disposition`, `terms`, `agent-gates`,
+`decisions-set`, `review-extend`, `review-delegate`, `review-fallback`, `merge-review` (the Bash rule and the MCP hook), `main-checkout`, `review-disposition`, `terms`, `agent-gates`,
 `config-guard`, `tracker-guard`, and `ask-names`.
 The hooks load the recorder only when they block, so a call they let run costs no more than before.
 When the recorder fails, the call is still blocked.
@@ -557,6 +598,29 @@ review rounds" merges nothing, and the reason names the route to one more round:
 at the cap waits for its judge or the Human, else `aidrian pr extend <PR> --human approve`, whose refusal names the
 route when no extension waits for the Human ([Extra rounds](review.md#extra-rounds)). `extension_ask` keeps the first
 question: the step waits for the Human's answer to the extra-round question there.
+
+When every open finding of the head is low, the reason also names a third route, for an answer in the Human's own words
+that the session decides, such as "whatever you recommend": the session files what the review left open as an open
+follow-up issue that names the pull request, runs `aidrian pr delegate <PR> --issue <issue> --head <sha>` as its own
+command, ending in `--repo <owner>/<name>` when this checkout's remotes name several repositories (the merge's own when
+it names one), then merges with `gh pr merge <PR> --match-head-commit <sha>`. Every open finding is low when the record's last
+round is for the head and lists each of its open findings, as many as its count, each `low` and none marked security;
+a finding of medium or higher, one with a severity the table does not know, such as a violated flow invariant, a
+security mark, or a round that recorded counts only, keeps today's reason, word for word. The
+[round limit delegation rule](#bash-rules) lets the command run only on the Human's answer in the session. The command
+then refuses, and writes nothing, unless the pull request's current head is the one the review stopped on with nothing
+owed, this machine's own record (before the summary comment's copy is merged in) is stopped on that head with the same
+open count, since the rule read the question the Human answered from it, every open finding is low and has an id, and
+the follow-up issue the forge reads is in the pull request's own repository, exists, is an issue and not a pull request,
+is open, was filed at or after the review stopped (to the second), names the pull request in its title or body
+(`<owner>/<name>#<PR>`, its URL, or `#<PR>` with no repository or path before it, so `other/repo#<PR>` does not count),
+and lists each open finding's id, such as `R2-1`. It records `{ head, kind: "round_cap", answer: "delegate", issue, url, by, session, at }` under
+`delegations` in [the record](review.md#the-record). The guard takes that entry on three conditions: the merge names
+its head (`--match-head-commit`, `sha=` in a `gh api` merge, or the merge tool's `sha`), every open finding of the
+head is still low, and the entry is for that head, at or after its outcome. An entry another session recorded is passed
+over when the hook gives the merging session's id and the entry holds its own; one recorded with no session id counts
+for any. A merge that names no head is refused, and told to name it. The guard reads the entry from the record it already loaded: it makes no call for it, and needs no
+transcript at merge time. `aidrian pr auto-merge` reads no delegation.
 
 Under the [unattended waiver](config.md#unattended-waiver), a judge's verdict recorded with `aidrian pr waive` stands in
 for that answer, for one denial only: `round_limit` on the merge's own head, with nothing owed. A head pushed after the
@@ -814,6 +878,7 @@ and what follows runs there. So from a session in a guarded main checkout, the r
 
 A `builtin cd` skips a shell alias or function, so it fails loudly, but it can still fail, as on a missing folder: it is
 sorted the same, and its reason says only that it may fail.
+A `cd` or `pushd` through `command`, as in `command cd <worktree>`, is untrusted: zsh's `command` runs no builtin, so the shell stays where it was.
 
 The reason names the `cd` and the way out: name the folder in each command, with an absolute path,
 `git -C <absolute folder>`, or `env -C <absolute folder>`. From a worktree or a project with the guard off, nothing

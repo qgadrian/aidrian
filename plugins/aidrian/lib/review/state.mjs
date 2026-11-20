@@ -97,11 +97,25 @@ export const SHA_REF = /^[0-9a-f]{7,40}$/iu;
 // marked, so the review step can merge in what was recorded while it ran (mergePending). `waivers`, there once
 // `aidrian pr waive` writes one, lists the judge verdicts the merge guard may take in place of the Human's answer:
 // { head, kind: 'round_cap', verdict: 'waive' | 'refuse', reason, judge, at } (lib/review/waiver.mjs). A
-// record without it has none.
+// record without it has none. `delegations`, there once `aidrian pr delegate` writes one, lists the Human's answers that
+// left the ship decision at the round limit to the session, each with the follow-up issue it was filed as:
+// { head, kind: 'round_cap', answer: 'delegate', issue: '<owner>/<name>#<n>', url, by, session, at }
+// (lib/review/delegation.mjs). A record without it has none.
 export const emptyState = (pr, repo) => ({ version: 1, revision: 0, pr, repo, rounds: [], passes: {}, signoffs: {}, overrides: [], failures: {}, outcome: null, pending: [] });
 
 // The review step's statuses after which nothing is left to review on that head.
 export const FINISHED = new Set(['received', 'none_needed']);
+// The review step's statuses on a head where the review is stopped at its round limit and nothing runs: the cap's check
+// waits for its judge, or the cap stands. Not `extension_ask`: there the step waits for the Human's answer to the
+// extra-round question, which comes first.
+export const CAPPED = new Set(['extension_check', 'round_limit']);
+
+// The open findings of the record's last round, when that round is for `head` and left some; else null. The merge
+// guard's round-limit question names this count, and `aidrian pr delegate` holds the record to it.
+export function openCount(state, head) {
+  const last = Array.isArray(state?.rounds) ? state.rounds.at(-1) : null;
+  return isObject(last) && sameCommit(last.head, head) && Number.isInteger(last.open) && last.open > 0 ? last.open : null;
+}
 
 // Whether `entry` of `state` is for repository `repo` (null: any), compared as `owner/name` in any case.
 export const ofRepo = (state, entry, repo) => {
@@ -687,6 +701,7 @@ function assemble({ header, planLines, flowLines, outsideHead }, state, post) {
   lines.push(...carriedLines(copy));
   lines.push(...extensionLines(copy));
   lines.push(...waiverLines(copy));
+  lines.push(...delegationLines(copy));
   const overrides = [...(Array.isArray(copy.overrides) ? copy.overrides : []), ...(open ? [] : overruleLines(copy))];
   if (overrides.length) lines.push('', OVERRIDES_HEADING, ...overrides.map((each) => `- ${clip(each)}`));
   lines.push('', CITATION_LINE);
@@ -823,6 +838,22 @@ export function waiverLines(copy) {
   if (!waivers.length) return [];
   return ['', WAIVER_HEADING, ...waivers.map((entry) =>
     `- ${clip(entry.kind ?? 'unknown')} on \`${String(entry.head).slice(0, 7)}\`: ${clip(entry.verdict ?? 'unknown')} by ${clip(entry.judge ?? 'a judge')}${typeof entry.reason === 'string' ? `: ${clip(entry.reason)}` : ''} (an audit entry, not proof)`)];
+}
+
+export const DELEGATION_HEADING = '**Round limit, left to the session:**';
+
+// Every answer of the Human that left the ship decision at the round limit to the session (`delegations`,
+// lib/review/delegation.mjs): a blank line, the heading, and one line per entry; nothing when there is none. The
+// session's record of the Human's word, so each line says it is no proof. The issue and its URL show only where the copy
+// holds them.
+export function delegationLines(copy) {
+  const delegations = (Array.isArray(copy?.delegations) ? copy.delegations : []).filter(isObject);
+  if (!delegations.length) return [];
+  return ['', DELEGATION_HEADING, ...delegations.map((entry) => {
+    const issue = typeof entry.issue === 'string' ? ` as ${clip(entry.issue)}` : '';
+    const url = typeof entry.url === 'string' ? ` (${clip(entry.url)})` : '';
+    return `- \`${clip(String(entry.head).slice(0, 7))}\`: the Human left the ship decision to the session; findings filed${issue}${url} (an audit entry, not proof)`;
+  })];
 }
 
 export const CARRIED_HEADING = '**Carried review:**';

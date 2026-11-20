@@ -32,7 +32,14 @@
 // A review stopped at its round limit (`extension_check` or `round_limit` on the merge's head, nothing owed) runs no
 // more, so its denial offers no wait: it asks to ship with what the review left open filed as an issue, or to grant
 // more rounds, neither preferred, and an answer starting "Merge with the findings filed" waives it too, there only.
-// The guard does not check that the issue was filed. `extension_ask` keeps the first question: it waits for the Human.
+// For that answer, the guard does not check that the issue was filed. `extension_ask` keeps the first question: it waits
+// for the Human. When every open finding of the head is low (lib/review/delegation.mjs lowOnly), the denial also names a
+// third route: the Human answers in their own words that the session decides, and the session records that answer with
+// the follow-up issue (`aidrian pr delegate`, which the review-delegate rule holds to the Human's answer to this very
+// question, roundLimitQuestion, and which checks the issue). That record waives the denial for a merge that names the
+// head, while every open finding of the head stays low and the entry is at or after the outcome; an entry another
+// session recorded is not taken when the hook gives this session's id and the entry holds its own. The guard reads it
+// from the record it already loaded, with no call.
 // An unattended run's judge verdict (`aidrian pr waive`, lib/review/waiver.mjs) waives it in that answer's place, only
 // for `round_limit` on the merge's own head, nothing owed, and only under both switches:
 // `github.unattendedWaiver.allow` on the default and base branches, read from GitHub, and the main checkout's local switch.
@@ -49,11 +56,13 @@ import { forgeFor } from '../../forges/index.mjs';
 import { findProject } from '../../project.mjs';
 import { originRepo, prNumber, remoteRepos, repoName } from '../../review-gate.mjs';
 import { baseProblem, boundedReads, recourse } from '../../review/in-force.mjs';
-import { emptyState, FINISHED, owed, owedElsewhere, readLocalState, recordRepos, sameCommit } from '../../review/state.mjs';
+import { delegationFor, lowOnly } from '../../review/delegation.mjs';
+import { CAPPED, emptyState, FINISHED, openCount, owed, owedElsewhere, readLocalState, recordRepos, sameCommit } from '../../review/state.mjs';
 // A cycle (waiver.mjs → pr-auto-merge.mjs → this file), benign while neither uses the other's exports as it loads.
 import { guardWaiver, WAIVER_DEADLINE_MS } from '../../review/waiver.mjs';
 import { walkCommands } from '../../shell-lex.mjs';
 import { transcriptAnswers, waitingRoute } from '../review-extend.mjs';
+import { severalRemotes } from '../review-signoff.mjs';
 import { commandPath, fillRepo, invocationRepo, readWords } from './review-request.mjs';
 
 // How long the head lookup may take, inside the hook's 5 s, as pr-body's open pull request lookup.
@@ -125,13 +134,9 @@ export function readMerge({ program, args, environment = [] }, env = {}) {
   };
 }
 
-// The outcomes on the merge's head where the review is stopped at its round limit and nothing runs: the cap's check waits
-// for its judge, or the cap stands. Not `extension_ask`: there the step waits for the Human's answer to the extra-round
-// question, which comes first.
-const CAPPED = new Set(['extension_check', 'round_limit']);
-// The options of the question at a capped review, in the deny and in the answer mergeApproved takes.
-const SHIP = 'Merge with the findings filed';
-const GRANT = 'Grant more review rounds';
+// The options of the question at a capped review (state.mjs CAPPED), in the deny and in the answer mergeApproved takes.
+export const SHIP = 'Merge with the findings filed';
+export const GRANT = 'Grant more review rounds';
 // SHIP holds no character a regular expression treats as special.
 const SHIP_ANSWER = new RegExp(`^\\s*${SHIP}\\b`, 'iu');
 
@@ -145,12 +150,6 @@ export function mergeApproved(answers, { pr, head, since = null, capped = false 
     (since === null || (each.at !== null && Date.parse(each.at) >= Date.parse(since))));
 }
 
-// The open findings of the record's last round, when that round is for `head` and left some; else null.
-function openCount(state, head) {
-  const last = state.rounds.at(-1);
-  return last && sameCommit(last.head, head) && Number.isInteger(last.open) && last.open > 0 ? last.open : null;
-}
-
 // `, with <N> finding(s) open` for a count, or nothing without one.
 const withOpen = (count) => {
   if (count === null) return '';
@@ -161,20 +160,44 @@ const withOpen = (count) => {
 // The review step's outcome on head `sha7`, as the deny names it: its status, and its reason when it has one.
 const statusText = (outcome, sha7) => `the review of head ${sha7} is \`${outcome.status}\`${outcome.reason ? ` (${outcome.reason})` : ''}`;
 
-// The deny's tail at a review stopped at its round limit: ship with the findings filed, or grant more rounds, with
-// neither preferred. The grant's route is the waiting check's own, else `aidrian pr extend`, whose refusal names it.
-function cappedAsk({ pr, sha7, count, last }) {
+// The question the guard asks at a review of `pr` stopped at its round limit on `head`, with `count` findings open (null:
+// the record has no count). The review-delegate rule reads the Human's answer to this very text, so both build it here.
+export function roundLimitQuestion(pr, head, count) {
   // With no count, the record does not say findings are what is open: the cap is also reached on a failing check.
   let left = 'them';
   if (count === null) left = 'what it left open';
   else if (count === 1) left = 'it';
-  const question = `Review of pull request #${pr} at ${sha7} stopped at its round limit${withOpen(count)}. Ship, and file ${left} as an issue?`;
+  return `Review of pull request #${pr} at ${String(head).slice(0, 7).toLowerCase()} stopped at its round limit${withOpen(count)}. Ship, and file ${left} as an issue?`;
+}
+
+// The deny's tail at a review stopped at its round limit: ship with the findings filed, or grant more rounds, with
+// neither preferred. The grant's route is the waiting check's own, else `aidrian pr extend`, whose refusal names it.
+// `delegable`: every open finding of `head` is low, so the Human may also leave the decision to the session; `repoArg`
+// is ` --repo <owner>/<name>` for the delegate command in a checkout whose remotes name several repositories.
+function cappedAsk({ pr, count, last, head, delegable, repoArg }) {
+  const question = roundLimitQuestion(pr, head, count);
   const route = waitingRoute(pr, last) ??
     `Run \`aidrian pr extend ${pr} --human approve\`: it records the grant when an extension waits for the Human, and otherwise its refusal names the route to one more round.`;
   return `Only the Human decides this: ask with AskUserQuestion, the question "${question}", the options "${SHIP}" and "${GRANT}", ` +
     `and mark neither as preferred. When the Human picks "${SHIP}", file the findings the review left open as a follow-up issue, then merge. ` +
-    `When the Human picks "${GRANT}", do not merge. ${route} `;
+    `When the Human picks "${GRANT}", do not merge. ${route} ${delegable ? delegateRoute(pr, head, repoArg) : ''}`;
 }
+
+// The route when the Human answers in their own words that the session decides, offered only while every open finding is low.
+const delegateRoute = (pr, head, repoArg) =>
+  'When the Human instead answers in their own words that the session decides, the session may ship, since every open finding is low: ' +
+  `file what the review left open as an open follow-up issue that names pull request #${pr}, run \`aidrian pr delegate ${pr} --issue <issue> --head ${head}${repoArg}\` ` +
+  `as its own command, then merge with \`gh pr merge ${pr} --match-head-commit ${head}\`. `;
+
+// ` --repo <owner>/<name>` for a command in a checkout whose remotes name several repositories: the merge's own when it
+// names one, else a placeholder; '' with one remote. A git read that fails reads as one remote.
+const repoArgFor = (project, repo) => {
+  let several = false;
+  try {
+    several = severalRemotes(project);
+  } catch {}
+  return several ? ` --repo ${repoName(repo) ?? '<owner>/<name>'}` : '';
+};
 
 const readTranscript = (file) => {
   try {
@@ -249,12 +272,25 @@ function heldReason({ project, pr, repo, base, deadline, now }) {
   return `Blocked: this merges ${merge}, but ${problem.replace(/\.$/u, '')}. ${recourse(problem, base)}`;
 }
 
+// What the guard makes of the Human's recorded answer that left the decision to the session (lib/review/delegation.mjs):
+// { allow, delegable, route }. Read only at a capped review whose open findings are all low (`delegable`), and taken only
+// for a merge that names its head (`named`), as a recorded verdict; for another, `route` says to name it. `session` is the
+// merging session's id, or null when the hook gives none: an entry another session recorded is then not taken.
+function delegated({ state, pr, head, capped, named, session }) {
+  const delegable = capped && lowOnly(state, head).ok;
+  const taken = delegable ? delegationFor(state, head, { session }) : null;
+  const route = taken && !named
+    ? ` The Human's recorded answer covers this head, but only for a merge that names it: merge with \`gh pr merge ${pr} --match-head-commit ${head}\`, or give the merge tool its \`sha\`.`
+    : '';
+  return { allow: Boolean(taken) && named, delegable, route };
+}
+
 // The deny reason for a merge of `pr` at `head` in `project`, or null. `pr` or `head` null is read through
 // `viewPr(target, repo)`; `answers` are the Human's AskUserQuestion answers in this session.
 // `waiverForge` is the test seam for the unattended waiver's reads (lib/review/waiver.mjs guardWaiver, budgetedForge's
 // `make`); null builds forgeFor's only when the waiver is asked. `startedAt` is when the hook's process started, shared by
-// every merge of one command; `now` the clock.
-export function judgeMerge({ project, pr = null, head = null, target = null, repo = null, unreadable = false, viewPr, answers = [], how = MERGE_HOW, waiverForge = null, startedAt = null, now = Date.now }) {
+// every merge of one command; `now` the clock. `session` is the merging session's id from the hook, or null.
+export function judgeMerge({ project, pr = null, head = null, target = null, repo = null, unreadable = false, viewPr, answers = [], how = MERGE_HOW, waiverForge = null, startedAt = null, now = Date.now, session = null }) {
   startedAt ??= now();
   // Only a merge that names its head can take a recorded verdict: otherwise gh merges whatever head the branch has then.
   const named = head !== null;
@@ -315,16 +351,23 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
   }
   const since = [onHead ? outcome.at : null, ...owing.map((entry) => entry.at)].filter((at) => typeof at === 'string').sort().at(-1) ?? null;
   if (mergeApproved(answers, { pr, head, since, capped })) return null;
+  const delegation = delegated({ state, pr, head, capped, named, session });
+  if (delegation.allow) return null;
   // A judge's recorded verdict, under both switches, for the round cap on this head only (waiverKind).
   const waiver = guardWaiver({ project, state, pr, head, named, repo, view, forge: waiverForge, startedAt, now });
   if (waiver.allow) return null;
   const question = `Merge pull request #${pr} at ${sha7} before its review is finished?`;
+  // The remotes are read only for the delegation route, which only a capped review whose open findings are all low names.
+  const repoArg = delegation.delegable ? repoArgFor(project, repo) : '';
   const ask = capped
-    ? cappedAsk({ pr, sha7, count, last: state.extensions?.at(-1) ?? null })
+    ? cappedAsk({ pr, count, last: state.extensions?.at(-1) ?? null, head, delegable: delegation.delegable, repoArg })
     : `Only the Human waives this: ask with AskUserQuestion, the question "${question}", the options "Wait for the review" ` +
       '(first, recommended) and "Merge anyway", and merge only when the Human picks "Merge anyway". ';
-  return `Blocked: this merges pull request #${pr} at ${sha7}, and ${problem}${waiver.note}. ${ask}Or the Human merges in their own shell.${waiver.route}`;
+  return `Blocked: this merges pull request #${pr} at ${sha7}, and ${problem}${waiver.note}. ${ask}Or the Human merges in their own shell.${waiver.route}${delegation.route}`;
 }
+
+// The session the hook payload names, or null.
+const sessionOf = (input) => (typeof input?.session_id === 'string' && input.session_id !== '' ? input.session_id : null);
 
 // The deny reason for `command`, or null. On only inside a project. `input` is the hook payload, for its transcript.
 // `startedAt` is when the hook's process started (hook-bash passes it); without it, when this check began.
@@ -337,7 +380,7 @@ export function check(command, { cwd = process.cwd(), env = process.env, input =
     const merge = readMerge(invocation, env);
     if (!merge) continue;
     answers ??= transcriptAnswers(readTranscript(input?.transcript_path));
-    const reason = judgeMerge({ project, ...merge, viewPr, answers, waiverForge, startedAt, now });
+    const reason = judgeMerge({ project, ...merge, viewPr, answers, waiverForge, startedAt, now, session: sessionOf(input) });
     if (reason) return reason;
   }
   return null;
@@ -353,5 +396,5 @@ export function checkMcp(toolInput, { cwd = process.cwd(), input = {}, viewPr = 
   const pr = Number.isInteger(n) && n > 0 ? n : null;
   const how = 'Merge with `gh pr merge <PR> --match-head-commit <sha>` instead, which names the head.';
   if (pr === null) return unresolved(null, how);
-  return judgeMerge({ project, pr, head, repo, viewPr, answers: transcriptAnswers(readTranscript(input?.transcript_path)), how, waiverForge, startedAt, now });
+  return judgeMerge({ project, pr, head, repo, viewPr, answers: transcriptAnswers(readTranscript(input?.transcript_path)), how, waiverForge, startedAt, now, session: sessionOf(input) });
 }

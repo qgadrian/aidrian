@@ -19,7 +19,7 @@
 
 import { aidrianArgs, walkCommands } from '../shell-lex.mjs';
 import { findProject } from '../project.mjs';
-import { givenRepo, originRepo, remoteRepos, repoName } from '../remotes.mjs';
+import { givenRepo, namesChange, originRepo, remoteRepos, repoName } from '../remotes.mjs';
 import { readTranscript, transcriptAnswers } from './review-extend.mjs';
 
 // What every in-session ask route says, as a clause and as a sentence: a Human away from the session, such as on a
@@ -104,8 +104,8 @@ export function callRepo(project, words) {
 // Whether this checkout's remotes name more than one repository, so an approved command ends in `--repo`.
 export const severalRemotes = (project) => new Set(remoteRepos(project)).size > 1;
 
-// Whether `question` names pull request `pr` of `repo`, as `owner/name#pr`.
-export const namesChange = (question, repo, pr) => new RegExp(`(?<![\\w./-])${repo.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}#${pr}(?!\\d)`, 'iu').test(question);
+// Whether a question names pull request `pr` of `repo`, as `owner/name#pr` (lib/remotes.mjs), for the rules that read it here.
+export { namesChange };
 
 // Whether `answers` hold the Human's approval of the sign-off `words`. The latest answer naming it decides.
 export function answered(words, answers, repo) {

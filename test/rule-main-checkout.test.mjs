@@ -751,6 +751,50 @@ test('a cd reads its folder past --, and followCd keeps the folder before it', (
   assert.ok(files.includes('/repo/a.txt'), 'a cd that may fail leaves the shell where it was');
 });
 
+test('in the main checkout, a write in a case arm whose pattern is a glob or a variable, or behind builtin, is denied', (t) => {
+  const { repo } = fixture(t);
+  const hook = (command) => spawnSync(process.execPath, [path.join(SCRIPTS, 'hook-bash.mjs')], {
+    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd: repo }), encoding: 'utf8',
+  });
+  for (const [command, lead] of [
+    ['case $x in *) git commit -m x ;; esac', /^Blocked: `git commit` /u], ['case $x in "$y") git reset --hard HEAD~1 ;; esac', /^Blocked: `git reset` /u],
+    ['case $x in main*) git add -A ;; esac', /^Blocked: /u], ['case $x in ?) rm src/app.js ;; esac', /^Blocked: /u],
+    ['builtin command git commit -m x', /^Blocked: `git commit` /u], ['builtin exec git commit -m x', /^Blocked: `git commit` /u],
+    ['case $x in a ) git reset --hard HEAD~1 ;; esac', /^Blocked: `git reset` /u], ['f () { git commit -m x; }; f', /^Blocked: `git commit` /u],
+    ['noglob git reset --hard HEAD^', /^Blocked: `git reset` /u], ['nocorrect git reset --hard HEAD^', /^Blocked: `git reset` /u],
+    ['- git reset --hard HEAD^', /^Blocked: `git reset` /u], ['repeat 1 git reset --hard HEAD^', /^Blocked: `git reset` /u],
+    ['builtin builtin command git reset --hard HEAD^', /^Blocked: `git reset` /u],
+  ]) {
+    const run = hook(command);
+    assert.equal(run.status, 2, `${command}: ${run.stderr}`);
+    assert.match(run.stderr, lead, command);
+    assert.match(run.stderr, /main checkout/u, command);
+  }
+  assert.equal(hook('case $x in *) git status ;; esac').status, 0, 'an arm that writes nothing');
+});
+
+test('a cd into a linked worktree behind a word the shell may not run grants no trust in the main checkout', (t) => {
+  const { repo } = fixture(t);
+  const worktree = path.join(repo, 'wt/task');
+  const bash = (command) => check(command, { cwd: repo, env: ENV });
+  // A zero count, an untaken arm, an uncalled function, or a modifier bash lacks: the shell may still be in the main checkout.
+  for (const command of [
+    `repeat 0 cd ${worktree}; git commit -m x`, `noglob cd ${worktree}; git commit -m x`, `nocorrect cd ${worktree} && git commit -m x`,
+    `- cd ${worktree}; git commit -m x`, `case $x in a ) cd ${worktree} ;; esac; git commit -m x`, `f () { cd ${worktree}; }; git commit -m x`,
+    `noglob cd ${worktree} && echo x > src/app.js`,
+    // zsh's `command` runs no builtin: `command cd` runs a `cd` script, and the shell stays in the main checkout.
+    `command cd ${worktree}; git commit -m x`, `builtin command cd ${worktree}; git commit -m x`, `builtin command pushd ${worktree} && git commit -m x`,
+    `command cd ${worktree} && echo x > src/app.js`,
+  ]) {
+    assert.match(bash(command) ?? '', CD_LEAD, command);
+  }
+  // A cd that runs in every shell still moves the shell into the worktree. Through `builtin exec`, nothing after it runs.
+  for (const command of [`cd ${worktree}; git commit -m x`, `builtin cd ${worktree}; git commit -m x`, `builtin builtin cd ${worktree}; git commit -m x`,
+    `builtin exec cd ${worktree}; git commit -m x`]) {
+    assert.equal(bash(command), null, command);
+  }
+});
+
 test('the Bash hook blocks a commit after a cd that leaves the repository', (t) => {
   const { repo } = fixture(t);
   const run = spawnSync(process.execPath, [path.join(SCRIPTS, 'hook-bash.mjs')], {

@@ -4,13 +4,13 @@
 // denies each command run as `aidrian`, or as a node script that is the plugin's cli.mjs or bin/aidrian, wherever it runs
 // (shell-lex walkCommands): in a substitution, `sh -c`, `eval`, or a heredoc fed to a shell. A shell fed text the rule
 // cannot read as commands, such as a pipe into `bash`, is refused when that text names the command with either flag.
-// So is a program that runs its arguments, or a string it is given, as a command (CARRIERS): `xargs`, `find -exec`,
-// `watch`, `script`, `parallel`, and a shell the walk does not read, such as `fish -c`. Printing the function,
+// So is a program that runs its arguments, or a string it is given, as a command (shell-lex CARRIERS): `xargs`, `find -exec`,
+// `watch`, `script`, `parallel`, `arch`, and a shell the walk does not read, such as `fish -c`. Printing the function,
 // `aidrian shell-init zsh`, runs, and so does a program that only prints or searches the words, such as `echo` or
 // `grep`. Out of sight, as for every rule: a flag behind a variable, a script file or an interpreter (`python -c`,
 // `node -e`) that runs the command, and a shell alias or function that hides it.
 
-import { aidrianArgs, walkCommands } from '../shell-lex.mjs';
+import { aidrianArgs, CARRIERS, walkCommands } from '../shell-lex.mjs';
 
 export const REASON =
   'Blocked: `aidrian shell-init --install` and `--uninstall` write the Human\'s shell startup file, which only the Human decides to change. ' +
@@ -18,9 +18,6 @@ export const REASON =
 
 const FLAG = /^--(?:install|uninstall)$/u;
 const UNREAD = /\bshell-init\b[^\n;|&]*--(?:install|uninstall)\b/u;
-// The programs that run their arguments, or a string among them, as a command. A shell the walk reads, such as `sh -c`,
-// is not one: walkCommands reads its body as commands.
-const CARRIERS = new Set(['xargs', 'find', 'watch', 'script', 'parallel', 'fish', 'csh', 'tcsh', 'mksh', 'yash', 'nu', 'elvish', 'xonsh', 'pwsh', 'powershell']);
 // An aidrian command run by its name, any path to it, or the plugin's cli.mjs, then `shell-init` and a flag.
 const COMMAND_TEXT = /(?:^|[\s;&|(`'"])(?:\S*\/)?(?:aidrian|cli\.mjs)\s[^\n;|&]*\bshell-init\b[^\n;|&]*--(?:install|uninstall)\b/u;
 const AIDRIAN_WORD = /(?:^|\/)(?:aidrian|cli\.mjs)$/u;

@@ -24,6 +24,9 @@ const COUPLINGS = {
   'env bracket': /\benv\[\s*['"`](?:CLAUDE|CODEX|PLUGIN)/gu,
   'host tool': /['"`](?:apply_patch|Edit|Write|NotebookEdit|Bash|Agent|Task|AskUserQuestion|EnterWorktree|ExitPlanMode|TodoWrite|Read|Grep|Glob|LS|NotebookRead|spawn_agent)['"`]/gu,
   'host name': /[!=]==\s*['"`](?:Claude Code|claude-code|claude|Claude|Codex|codex)['"`]/gu,
+  // A Claude Code transcript entry's marks of who gave it: a subagent's, the app it came from, and whose permission decision.
+  // Whether an answer is the Human's is the adapter's to say (lib/hosts/index.mjs humanAnswer).
+  'transcript mark': /\b(?:isSidechain|entrypoint|permissionDecision|user_temporary)\b/gu,
 };
 
 // `<file>|<coupling>`: how many it holds, and why it stays. Each one is a reason, not a to-do: a line goes when its reason does.
@@ -33,9 +36,11 @@ const ALLOWED = {
   'lib/attribution.mjs|host tool': { count: 1, why: 'Not a tool: the commit trailer named Agent.' },
   'lib/config-guard.mjs|host tool': { count: 2, why: `${VOCABULARY} A Bash call's targets.` },
   'lib/decisions-cli.mjs|host tool': { count: 2, why: `${VOCABULARY} A command asks the main-checkout rule about a file by building a standard Edit call.` },
+  'lib/names.mjs|transcript mark': { count: 1, why: 'The names reminder reads Claude Code transcripts only, a Codex rollout never matches, and it skips a subagent`s entries by that mark.' },
   'lib/quorum.mjs|host name': { count: 3, why: 'The quorum provider and action named codex: a second-opinion command the plugin runs, whichever host is running.' },
   'lib/review/quota.mjs|host name': { count: 1, why: 'It words a message about the reviewer that ran out of quota, a review bot or the Codex command, whichever host runs.' },
   'lib/review/reviewers.mjs|host name': { count: 1, why: 'The built-in reviewer named codex: a command the plugin runs, whichever host is running.' },
+  'lib/rules/review-extend.mjs|transcript mark': { count: 1, why: 'humanText reads a typed grant from a Claude Code transcript, for the review-rounds rule behind capabilities.transcripts: a subagent`s entry is never the Human`s prompt.' },
   'lib/stop-announce.mjs|host tool': { count: 1, why: `${VOCABULARY} The question tool the send-back reason names, as each host's model calls it.` },
   'lib/transcript.mjs|host tool': { count: 6, why: 'Reads Claude Code transcripts, whose tool names these are, such as the file tools whose paths the delivery check reads; other hosts stay behind capabilities.transcripts.' },
   'scripts/hook-agent-post.mjs|host tool': { count: 2, why: `${VOCABULARY} This hook runs on what hooks.json matches, Agent or Task.` },
@@ -89,12 +94,14 @@ if (tool === 'apply_patch' || name === 'Edit') run();
 const edits = ['Write', "NotebookEdit"];
 if (host === 'Codex' || provider === 'codex') run();
 const value = env['CODEX_' + 'X'];
+if (entry.isSidechain === false && entry.entrypoint === 'cli' && entry.permissionDecision?.source === 'user_temporary') run();
 `;
   const count = (name) => [...sample.matchAll(COUPLINGS[name])].length;
   assert.equal(count('host variable'), 4, 'with a digit in the name, and PLUGIN_ROOT');
   assert.equal(count('host tool'), 4, 'a tool in a comparison and in a list');
   assert.equal(count('host name'), 2, 'lower case too');
   assert.equal(count('env bracket'), 1);
+  assert.equal(count('transcript mark'), 4, 'the marks of the Human`s own answer stay behind the adapter');
   assert.equal([...'const CODEX_TIMEOUT_SEC = 780;'.matchAll(COUPLINGS['host variable'])].length, 0);
   assert.ok(SHARED.includes('bin'), 'the commands are shared code too');
   assert.ok(walk(path.join(PLUGIN, 'bin')).length > 0, 'and the walk reaches them');

@@ -342,6 +342,8 @@ const PASS_ID = /^[\w.:+-]{1,120}$/u;
 const PENDING_ID = /^\d+-[0-9a-f]{8}$/u;
 const REPO = /^[\w.-]{1,100}\/[\w.-]{1,100}$/u;
 const URL = /^https:\/\/[^\s<>"'`]{1,500}$/u;
+// A follow-up issue as a delegation names it: `<owner>/<name>#<n>`.
+const ISSUE_REF = /^[\w.-]{1,100}\/[\w.-]{1,100}#\d{1,10}$/u;
 const WORD = /^[a-z_]{1,40}$/u;
 const CAPTURE_KEY = /^[\w.:/@=+-]{1,200}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
@@ -423,6 +425,7 @@ const FIXED_KEYS = new Set([
   'disposition', 'accepted_by', 'settled_severity', 'settled_by', 'ended', 'residual', 'ruled_id', 'aliases', 'mint',
   'already_ruled', 'round', 'pass', 'requested_head', 'index', 'closed_in', 'seen', 'placed', 'current', 'to',
   'thread', 'reviewId', 'commentId', 'fallbackId', 'replyId', 'replied', 'resolved', 'earlier', 'textless', 'resolvedByEngine',
+  'delegations', 'issue',
 ]);
 // The keys of a finding's thread that name a comment, as the delete's `textless` mark lists them.
 const THREAD_COMMENT_KEYS = new Set(['replyId', 'commentId', 'fallbackId']);
@@ -804,6 +807,15 @@ function allowlisted(state, post, counter) {
       signoff: (value) => (value === null ? null : object(value, { at: date, by: () => drop() })),
     })),
     waivers: list((entry) => object(entry, { head: sha, kind: word(), verdict: word(new Set(['waive', 'refuse'])), judge: reviewer, at: date })),
+    // The Human's answer at the round limit (lib/review/delegation.mjs): who recorded it, and in which session, stay here.
+    delegations: list((entry) => object(entry, {
+      head: sha,
+      kind: word(),
+      answer: word(new Set(['delegate'])),
+      issue: check((value) => typeof value === 'string' && ISSUE_REF.test(value)),
+      url: check((value) => typeof value === 'string' && URL.test(value)),
+      at: date,
+    })),
     extensions: list(extension),
   });
 }
@@ -889,6 +901,7 @@ export function fillWithheld(remote, local) {
   byEntry('overrulings', ['flow', 'invariant', 'head', 'at']);
   byEntry('acceptances', ['flow', 'invariant', 'head', 'at']);
   byEntry('waivers', ['head', 'kind', 'at']);
+  byEntry('delegations', ['head', 'kind', 'at']);
   byEntry('pending', ['id']);
   for (const stop of Array.isArray(remote.quotaStops) ? remote.quotaStops : []) {
     const theirs = isObject(stop) ? matching(local.quotaStops, stop, ['head', 'stage', 'reviewer', 'at']) : null;

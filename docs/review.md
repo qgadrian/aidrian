@@ -332,14 +332,14 @@ This machine keeps one review record a repository and pull request number, in th
 checkout reviews `a/b#12` and `c/d#12` apart, and a record never changes file when the remotes change, as when
 `gh repo fork` renames origin to upstream. The attest record (`pr-<N>-<owner>--<name>.json`) and a dispatch's findings
 folder (`tmp/review-<N>-<owner>--<name>/`) are keyed the same way. Every reader gets its own repository's record or
-none: a bot request, `aidrian pr extend` and its rule, `aidrian pr waive`, the quota-fallback rule, a sign-off, an
+none: a bot request, `aidrian pr extend` and its rule, `aidrian pr waive`, `aidrian pr delegate` and its rule, the quota-fallback rule, a sign-off, an
 attest, the review step's notes of a held finding or an error, and the merge guard read only that one, and start fresh,
 or refuse, when there is none. A record under the old name `pr-<N>-review.json`, written before the key, is read for the
 repository it names, and moved to that repository's file by its next write; one that names no repository is read for
 origin alone. When both files of one pull request exist, as when a session on an older plugin keeps writing the old name
 while a newer one writes the repository's file, and both are copies of one review (the same first round, which a quiet push moves to a new head without making it
 another review), the record is
-their merge: the newer of the two, with every Human entry of the other (sign-offs, overrules, acceptances, waivers, extensions, and stage sign-offs), each pass and round it lacks,
+their merge: the newer of the two, with every Human entry of the other (sign-offs, overrules, acceptances, waivers, delegations, extensions, and stage sign-offs), each pass and round it lacks,
 its owed entries, and the higher id counter. Each merged list ends in time order, so an older waive the other copy holds
 lands before a newer refuse, and the refuse still stands. A stage sign-off travels with its quota stop's choice: a signed or chosen stop
 only the other holds is added, the later choice of a stop both hold wins with its own sign-off, and a stop the newer one
@@ -353,7 +353,7 @@ A reader that names no repository, such as a merge with no `-R`, reads the newes
 refuses such a merge when this machine holds records of that number for more than one repository.
 A pull request's summary comment is that pull request's own, so a copy there whose record names no repository is taken
 as the repository's, and one that names another repository is ignored, never built on or written. Each writer, the
-review step, a bot request, `aidrian pr extend`, `aidrian pr waive`, a sign-off, an attest, and a recorded request,
+review step, a bot request, `aidrian pr extend`, `aidrian pr waive`, `aidrian pr delegate`, a sign-off, an attest, and a recorded request,
 refuses to write a record that names another repository than its own. An entry owed on one repository that a record of
 another holds, as one written before the key may, is moved into the owed repository's own record on its next write and
 marked moved in the other once the owed repository's own record is written. Only a record in this project's own
@@ -1045,6 +1045,11 @@ It applies to `aidrian pr review` and to `aidrian pr await-review --request`, wh
    aidrian pr extend <PR> --human approve|deny
    ```
 
+At the cap that stands, `stop` or the ceiling, the merge guard asks the Human to ship with the findings filed or to
+grant more rounds. When every open finding is low and the Human answers in their own words that the session decides,
+the session records that answer with the follow-up issue, `aidrian pr delegate`, and merges naming the head:
+[Merge guard](hooks.md#merge-guard).
+
 **A fix no round reviewed.** The cap often meets a fix pushed after the last round: `aidrian pr review` cannot open a
 round for it, and `aidrian pr await-review --request` reaches its cap only on a head the bot has not reviewed. Against
 the new code, the last round's findings read as fixed, so the question changes. When the last round of the history
@@ -1285,6 +1290,13 @@ shows, such as a waiver's reason, has `<!--` and `-->` escaped, so no text can c
   The summary comment shows them under **Merge guard waivers**, each marked an audit entry, not proof.
   A record without the list has none. The [merge guard](hooks.md#merge-guard) reads them only while the team's
   `github.unattendedWaiver.allow` and this machine's switch are both on: [Unattended waiver](config.md#unattended-waiver).
+- **Delegations.** `delegations` lists the Human's answers to the merge guard's round-limit question that left the ship
+  decision to the session, each recorded with `aidrian pr delegate` as `{ head, kind, answer, issue, url, by, session, at }`,
+  where `kind` is `round_cap`, `answer` is `delegate`, and `issue` is the follow-up issue as `<owner>/<name>#<n>`.
+  Each binds to one head. The summary comment shows them under **Round limit, left to the session**, each marked an
+  audit entry, not proof; except on a private repository read from inside the team, the posted copy leaves out `by`
+  and `session` ([The posted copy](#the-posted-copy)). A record without the list has none. The
+  [merge guard](hooks.md#merge-guard) takes one for a merge that names its head while every open finding stays low.
 
 ### Finding ids
 
@@ -1373,7 +1385,7 @@ which the review step alone writes, are kept from the comment.
   a date, a count, a word the engine defines, a defined name, a tracked path): no title, body, evidence, reason, note,
   or person's name. Without text, the waived-repeat lines show the count, the id, the file, and the severity; an Extra
   rounds line shows the status, who decided, and its red flags by name; a waiver line shows its kind, head, verdict,
-  and judge; and the outside evidence, overrides, quota, and visual lines show no reason and no person. A security
+  and judge; a delegation line shows its head and the follow-up issue's reference and URL; and the outside evidence, overrides, quota, and visual lines show no reason and no person. A security
   finding has no file or line there ([Reviewers](#reviewers)), and a verdict posts no evidence. A judge's ruling keeps
   `judge:<name>` for a name the plan or config defines, else `judge:` alone, so it never reads as the Human's. This
   copy is for display: no machine builds its record on it (A second machine, below).

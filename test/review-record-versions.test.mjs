@@ -16,6 +16,7 @@ import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { readRecord as readAttest, writeRecord as writeAttest } from '../plugins/aidrian/lib/review-gate.mjs';
 import { postedCopy } from '../plugins/aidrian/lib/review/publish.mjs';
 import { keepHuman, sameReview } from '../plugins/aidrian/lib/review/record-merge.mjs';
+import { delegationFor } from '../plugins/aidrian/lib/review/delegation.mjs';
 import { waiverFor } from '../plugins/aidrian/lib/review/waiver.mjs';
 import { emptyState, readLocalState, readRecord, recordFile, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 
@@ -163,6 +164,27 @@ test('a refused waiver stays refused when the other copy holds only the older wa
   assert.equal(state.revision, 21, 'the newer copy is built on');
   assert.deepEqual(state.waivers.map((each) => each.verdict), ['waive', 'refuse']);
   assert.equal(waiverFor(state, H2, 'round_cap'), null);
+});
+
+// The Human left the ship decision at the cap to the session twice, one answer on each copy.
+const DELEGATED = { head: H2, kind: 'round_cap', answer: 'delegate', issue: `x/y#9`, url: 'https://github.com/x/y/issues/9', by: 'The Human', session: null, at: '2026-11-14T18:35:00.000Z' };
+const LATER = { ...DELEGATED, issue: 'x/y#10', url: 'https://github.com/x/y/issues/10', at: '2026-11-14T18:40:00.000Z' };
+
+test('two copies of one review merge their delegations in time order, and the later one stands', (t) => {
+  const { project, repo, own, plain, put } = setup(t);
+  put(own, record(repo, { revision: 8, updatedAt: '2026-11-14T18:41:00.000Z', rounds: [{ head: H1 }, { head: H2 }], outcome: CAPPED, delegations: [LATER] }));
+  put(plain, record(repo, { revision: 5, updatedAt: '2026-11-14T18:36:00.000Z', rounds: [{ head: H1 }, { head: H2 }], outcome: CAPPED, delegations: [DELEGATED] }));
+  const merged = readLocalState(project, 12, repo);
+  assert.deepEqual(merged.delegations, [DELEGATED, LATER], 'in time order, the later one last');
+  assert.equal(delegationFor(merged, H2).issue, 'x/y#10');
+  // A newer copy on the pull request that lacks this machine's delegation keeps it.
+  put(own, record(repo, { revision: 5, updatedAt: '2026-11-14T18:36:00.000Z', rounds: [{ head: H1 }, { head: H2 }], outcome: CAPPED, delegations: [DELEGATED] }));
+  rmSync(plain);
+  const posted = record(repo, { revision: 21, updatedAt: '2026-11-14T18:41:00.000Z', rounds: [{ head: H1 }, { head: H2 }], outcome: CAPPED });
+  const { state } = readRecord(project, 12, [{ id: 1, body: summaryBody(posted, null, 'x', OPEN), author_association: 'MEMBER' }], repo);
+  assert.equal(state.revision, 21, 'the newer copy is built on');
+  assert.deepEqual(state.delegations, [DELEGATED]);
+  assert.deepEqual(keepHuman({ rounds: [{ head: H1 }], delegations: [LATER] }, { rounds: [{ head: H1 }], delegations: [DELEGATED, LATER] }).delegations, [DELEGATED, LATER], 'an entry both hold is kept once');
 });
 
 test('a copy written before a quiet push of the first round is the same review, and keeps the Human`s sign-off', (t) => {

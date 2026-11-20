@@ -1,9 +1,11 @@
 // The one shell lexer behind the Bash rules. It reads a command line the way bash splits it, without running anything:
 // quotes, escapes, comments, operators, redirections, heredocs, and command substitutions.
 //
-// A token is { text, dynamic, expands?, operator?, fd?, fdDup? }: `text` without its quotes; `dynamic` when it holds `$`, a
+// A token is { text, dynamic, expands?, closes?, operator?, fd?, fdDup? }: `text` without its quotes; `dynamic` when it holds `$`, a
 // backtick, or a glob, so a rule never guesses at its value; `expands` when an unquoted `*`, `?`, `[`, or a brace list or
-// range (`{a,b}`, `{1..3}`) in it makes the shell turn it into other words, or several; `operator` for a redirection (`>`, `>>`, `<`); `fd` for the
+// range (`{a,b}`, `{1..3}`) in it makes the shell turn it into other words, or several; `closes` when its last character is
+// an unquoted `)` outside any substitution, as a case arm's pattern ends (`*)`, `"$x")`), and a quoted `"$(which gh)"` never
+// does; `operator` for a redirection (`>`, `>>`, `<`); `fd` for the
 // descriptor a redirection names before it, as written (`2` of `2>`, `{x}` of `{x}<`), absent when it names none;
 // `fdDup` for the `&1` of `2>&1`. Everything a rule cannot read is meant to fail open: an unknown shape yields no match, never a deny.
 
@@ -133,6 +135,7 @@ function lexSegments(command) {
   const endToken = () => {
     if (current) {
       if (EXPANDS.test(shapes.get(current) ?? '')) current.expands = true;
+      if (shapes.get(current)?.endsWith(')')) current.closes = true;
       tokens.push(current);
     }
     current = null;
@@ -227,6 +230,7 @@ function lexSegments(command) {
       token.splits = true;
       token.substituted = true;
       if (ch === '`') {
+        shape(token, '_');
         const closing = command.indexOf('`', i + 1);
         if (closing !== -1) substitutions.push(command.slice(i + 1, closing));
         i = closing === -1 ? command.length : closing;
@@ -396,8 +400,21 @@ export function commandLines(command) {
 }
 
 // Programs that run the command after them and return its status, so the program that matters is the wrapped one.
-// `builtin` is not one: it runs shell builtins only. `rtk` and `rtk proxy` run the command through a token-saving proxy.
-const WRAPPERS = new Set(['sudo', 'doas', 'command', 'env', 'nice', 'nohup', 'stdbuf', 'timeout', 'exec', 'time', 'rtk', 'setsid', 'flock', 'caffeinate', 'coproc']);
+// `builtin` is not one: it runs shell builtins only, so it is peeled only before the builtins that run another command
+// (BUILTIN_RUNNERS) and before itself, and `builtin cd` or `builtin export` stays as it is. `rtk` and `rtk proxy` run
+// the command through a token-saving proxy. `noglob`, `nocorrect`, and a bare `-` are zsh's precommand modifiers, the
+// shell the host may run commands in; in bash they are no command. Reading past them, past zsh's `repeat N`, and past a
+// case pattern or function name spaced from its parentheses refuses a command that may run; the command may as well
+// never run (bash, `repeat 0`, an untaken arm, an uncalled function), so readInvocation marks it `uncertain`, and a
+// consumer that grants trust on a command, such as a directory change or a passed test run, skips a marked one.
+// zsh's `command` runs only an external program, never a builtin, so a `cd` behind it leaves the shell where it was;
+// readInvocation reports a command reached through it as `viaCommand`, without marking it, since the program still runs.
+const BUILTIN_RUNNERS = new Set(['command', 'exec', 'eval', 'builtin']);
+const WRAPPERS = new Set(['sudo', 'doas', 'command', 'env', 'nice', 'nohup', 'stdbuf', 'timeout', 'exec', 'time', 'rtk', 'setsid', 'flock', 'caffeinate', 'coproc', 'noglob', 'nocorrect']);
+// zsh's precommand modifiers among WRAPPERS; a bare `-`, the third, is read on its own.
+const ZSH_MODIFIERS = new Set(['noglob', 'nocorrect']);
+// A bare `)` or `()` token after a word: the end of a case arm's pattern, or a function head, spaced from the word.
+const SPACED_CLOSE = new Set([')', '()']);
 // Wrapper options that take the next token as their value, per wrapper (`-i` takes one for stdbuf, not for env).
 const WRAPPER_VALUE_FLAGS = new Map([
   ['doas', new Set(['-u', '-a', '-C'])],
@@ -459,7 +476,9 @@ function splitStringInvocation(value, depth, rest = []) {
 // name; `args` exclude redirections and their targets; `chdir` is the directory a wrapper moves to, or null.
 // `environment` lists, in order, the changes the assignments and env make to the program's environment: { name, value }
 // sets a variable to a token, { name, value: null } unsets it, and { clear: true, keep } empties the environment
-// (`env -i`) but for the names in `keep`, if any.
+// (`env -i`) but for the names in `keep`, if any. `uncertain` is whether it read past a word the shell may not run the
+// command behind (see WRAPPERS): such a command may run, and may as well not. `viaCommand` is whether it read past
+// `command`, which in zsh runs no builtin (see WRAPPERS).
 export function readInvocation(segment, depth = 0) {
   const targets = new Set();
   for (let i = 0; i < segment.length; i += 1) {
@@ -468,6 +487,8 @@ export function readInvocation(segment, depth = 0) {
   const usable = segment.filter((token) => !token.operator && !token.fdDup && !targets.has(token));
   let index = 0;
   let negated = false;
+  let uncertain = false;
+  let viaCommand = false;
   let chdir = null;
   const environment = [];
   // The lexer leaves a subshell's parentheses glued to its words, as in `(git commit --amend)`. A word left empty goes.
@@ -489,10 +510,22 @@ export function readInvocation(segment, depth = 0) {
     if (index < usable.length) retext(index, usable[index].text.replace(/^\(+/u, ''));
     const text = usable[index]?.text;
     if (text === '!') negated = true;
-    // `function f`, and `case x in`: the word after the keyword is a name or a subject, never the command.
+    // `function f`, `case x in`, and zsh's `repeat 3`: the word after the keyword is a name, a subject, or a count, never
+    // the command.
     else if (text === 'function' || text === 'case') index += 1;
-    // A function head, or a case arm's pattern such as `x)`, before the command it guards.
-    else if (FUNCTION_HEAD.test(text) || (text?.endsWith(')') && index + 1 < usable.length)) {
+    else if (text === 'repeat' && index + 1 < usable.length) {
+      index += 1;
+      uncertain = true;
+    }
+    // A word before a bare unquoted `)` or `()` token is a case arm's pattern or a function's name, spaced from its
+    // parentheses as in `a ) git push` or `f () { git push; }`; anywhere else a lone parenthesis is a syntax error.
+    else if (index + 2 < usable.length && usable[index + 1].closes === true && SPACED_CLOSE.has(usable[index + 1].text)) {
+      index += 1;
+      uncertain = true;
+    }
+    // A function head, or a case arm's pattern such as `x)`, `*)`, or `"$x")`, before the command it guards: a word whose
+    // last character is an unquoted `)` (`closes`). A quoted `"$(command -v gh)"` ends in `)` too, but it is the program.
+    else if (FUNCTION_HEAD.test(text) || (usable[index]?.closes === true && index + 1 < usable.length)) {
       // The command itself follows.
     } else if (!SHELL_WORDS.has(text)) break;
     index += 1;
@@ -501,7 +534,14 @@ export function readInvocation(segment, depth = 0) {
   for (let guard = 0; guard < WRAPPER_PEEL_LIMIT; guard += 1) {
     const spelled = usable[index]?.text ?? '';
     const wrapper = spelled.split('/').pop();
+    if ((wrapper === 'builtin' && BUILTIN_RUNNERS.has(usable[index + 1]?.text)) || (spelled === '-' && index + 1 < usable.length)) {
+      if (spelled === '-') uncertain = true;
+      index += 1;
+      continue;
+    }
     if (!WRAPPERS.has(wrapper)) break;
+    if (ZSH_MODIFIERS.has(wrapper)) uncertain = true;
+    if (wrapper === 'command') viaCommand = true;
     // `time` is a reserved word only when bare; /usr/bin/time is another program.
     if (wrapper === 'time' && spelled !== wrapper) break;
     index += 1;
@@ -546,7 +586,8 @@ export function readInvocation(segment, depth = 0) {
       if (wrapper === 'env' && SPLIT_STRING_FLAGS.has(option.name)) {
         const carried = splitStringInvocation(value, depth, usable.slice(index));
         if (carried) {
-          return { ...carried, negated: negated || carried.negated, chdir: composeChdir(chdir, carried.chdir),
+          return { ...carried, negated: negated || carried.negated, uncertain: uncertain || carried.uncertain,
+            viaCommand: viaCommand || carried.viaCommand, chdir: composeChdir(chdir, carried.chdir),
             environment: [...environment, ...carried.environment] };
         }
       }
@@ -565,7 +606,7 @@ export function readInvocation(segment, depth = 0) {
     peelAssignments();
   }
   const program = usable[index]?.text ?? '';
-  return { program: program.split('/').pop() ?? '', dynamic: usable[index]?.dynamic === true, args: usable.slice(index + 1), negated, chdir, environment };
+  return { program: program.split('/').pop() ?? '', dynamic: usable[index]?.dynamic === true, args: usable.slice(index + 1), negated, uncertain, viaCommand, chdir, environment };
 }
 
 // The builtins that set or export a shell variable named in their arguments.
@@ -689,6 +730,41 @@ export function aidrianArgs({ program, args }) {
   return script === -1 ? null : args.slice(script + 1);
 }
 
+// The programs that run their arguments, or a string among them, as a command: `xargs`, `find -exec`, `watch`, `script`,
+// `parallel`, `arch` (macOS's, which runs its command under another architecture), and a shell the walk does not read,
+// such as `fish -c`. A shell the walk reads, such as `sh -c`, is not one: walkCommands reads its body as commands.
+export const CARRIERS = new Set(['xargs', 'find', 'watch', 'script', 'parallel', 'arch', 'fish', 'csh', 'tcsh', 'mksh', 'yash', 'nu', 'elvish', 'xonsh', 'pwsh', 'powershell']);
+// Package runners that run a package's program with the words after it, and the subcommands that make one of a manager,
+// or of an interpreter that runs code given on the command line (`deno eval`).
+const PACKAGE_RUNNERS = new Set(['npx', 'bunx', 'pnpx']);
+const RUNNER_SUBCOMMANDS = new Map([['npm', ['exec', 'x']], ['pnpm', ['exec', 'dlx']], ['yarn', ['exec', 'dlx']], ['bun', ['x']], ['deno', ['eval']]]);
+
+// Whether one of `subcommands` is the manager's subcommand among `words`, the words after it. Options come before the
+// subcommand, and one may take the next word as its value (`npm -w a -w b exec`, `yarn --cwd . --silent dlx`), so a word
+// right after an option without `=` may be a value; the first word that cannot be one is the subcommand.
+function runsSubcommand(words, subcommands = []) {
+  for (const [i, word] of words.entries()) {
+    if (word.startsWith('-')) continue;
+    if (subcommands.includes(word)) return true;
+    const before = words[i - 1];
+    if (!before?.startsWith('-') || before.includes('=')) return false;
+  }
+  return false;
+}
+
+// The words of an invocation whose program runs them, or a string among them, as a command no rule reads as one, joined
+// by spaces, or null for any other: a carrier (CARRIERS), a package runner (`npx`, `bunx`, `npm exec`, also after the
+// manager's options and their values, as `npm -w a --yes exec`), an interpreter given inline code (INTERPRETERS, such as
+// `node -pe`, `python3 -c`, or `perl5.34 -e`, and `deno eval`), and a program word the shell builds at run time (`$A …`, `"$(command -v aidrian)" …`). A rule that guards
+// one command refuses such an invocation when the text names that command.
+export function carriedText({ program, dynamic = false, args = [] }) {
+  const words = args.map((token) => token.text);
+  const options = interpreterOf(program)?.options;
+  const carries = dynamic || CARRIERS.has(program) || PACKAGE_RUNNERS.has(program) || runsSubcommand(words, RUNNER_SUBCOMMANDS.get(program)) ||
+    (options !== undefined && words.some((word) => givenCode(word, options) !== undefined));
+  return carries ? words.join(' ') : null;
+}
+
 // Git global options that take the next token as their value.
 export const GIT_VALUE_GLOBALS = new Set(['-C', '-c', '--config-env', '--git-dir', '--work-tree', '--namespace', '--exec-path']);
 
@@ -732,6 +808,28 @@ export function readShortOptions(text, valueFlags, restFlags = NO_OPTIONS) {
   return { options, value: null };
 }
 
+// Interpreters, by `name`, and the `options` that hand them code on the command line, a short one also inside a cluster
+// (`python3 -Bc`, `perl -wle`). node takes `-pe` as one option, so its code is the next word, not `e`.
+export const INTERPRETERS = [
+  { name: 'python', program: /^python[\d.]*$/u, options: ['-c'] },
+  { name: 'node', program: /^(?:node|nodejs|bun)$/u, options: ['-e', '-p', '-pe', '--eval', '--print'] },
+  { name: 'perl', program: /^perl[\d.]*$/u, options: ['-e', '-E'] },
+  { name: 'ruby', program: /^ruby[\d.]*$/u, options: ['-e'] },
+];
+export const interpreterOf = (program) => INTERPRETERS.find((each) => each.program.test(program));
+
+// The code the word gives when it is one of `options`, or, for a short one, a cluster of short options that holds it, as
+// `-Bc` holds `-c`: the rest of the word, as in `--eval=<code>`, `-c<code>`, or `-Bc<code>`, or null when the code is the
+// next word. Undefined when the word gives none.
+export function givenCode(word, options) {
+  if (options.includes(word)) return null;
+  const long = options.find((option) => option.startsWith('--') && word.startsWith(`${option}=`));
+  if (long) return word.slice(long.length + 1);
+  if (!/^-[^-]/u.test(word)) return undefined;
+  const { value } = readShortOptions(word, new Set(options.filter((option) => /^-\w$/u.test(option))));
+  return value ? value.attached : undefined;
+}
+
 // Whether `text` is the long option `option`, or a prefix of it no shorter than `shortest`, with or without `=value`.
 // git and getopt_long take any unambiguous prefix, so `git commit --no-veri` is `--no-verify`.
 export function isLongOption(text, option, shortest) {
@@ -752,7 +850,8 @@ const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
 // answers to. It follows a `cd` only when every link from that `cd` to the command is `&&` in the same shell, as in
 // `x; cd /y && gh`, where the command runs only once that `cd` worked. Past a `;`, newline, `||`, pipe, `&`, `!`, or
 // subshell boundary it is null, and the rule falls back on its default; so it is for a `cd` that may not run in this shell:
-// one after `||` or in a pipe, negated, in a subshell, or under a wrapper such as `env`.
+// one after `||` or in a pipe, negated, in a subshell, under a wrapper such as `env` or `command`, or marked `uncertain`
+// (readInvocation), which also leaves `folder` unknown, as `command` does.
 // `unread` is the text of the commands a shell or `eval` runs that the walk could not read as command lines: what a pipe
 // feeds a shell (`echo 'git push' | bash`) with the shell itself, a shell's script or unreadable options, or a body
 // nested past SUBSTITUTION_DEPTH_LIMIT. A rule that must not miss a command fails closed on it when it names one.
@@ -790,9 +889,9 @@ export function walkCommands(command, cwd) {
       for (const body of substitutions.slice(ends[index - 1] ?? 0, ends[index])) nested(body, here, chain);
       const closes = holds(')');
       if (CHANGES_DIRECTORY.has(invocation.program)) {
-        const leading = index === 0 && separators[0] === '&&' && !segment[0]?.text.startsWith('(');
+        const leading = index === 0 && separators[0] === '&&' && !segment[0]?.text.startsWith('(') && !invocation.uncertain && !invocation.viaCommand;
         here = leading ? folderAfter(start, invocation) : null;
-        const movesThisShell = !closes && !invocation.negated && !runsInOwnProcess(segment) && !['||', '|', '|&'].includes(after);
+        const movesThisShell = !closes && !invocation.negated && !invocation.uncertain && !invocation.viaCommand && !runsInOwnProcess(segment) && !['||', '|', '|&'].includes(after);
         chain = movesThisShell ? folderAfter(chain, invocation) : null;
         moved = true;
         return;
@@ -838,7 +937,7 @@ export function walkCommands(command, cwd) {
 }
 
 // Whether a directory change sits under a wrapper that gives it a process of its own, as `env cd x` does, so this shell
-// stays where it was. `command` and `time` run it in this shell.
+// stays where it was. `time` runs it in this shell; `command` is read from readInvocation's `viaCommand`.
 function runsInOwnProcess(segment) {
   const at = segment.findIndex((token) => CHANGES_DIRECTORY.has(path.basename(token.text.replace(/^\(+/u, ''))));
   return segment.slice(0, at).some(({ text }) => WRAPPERS.has(path.basename(text)) && text !== 'command' && text !== 'time');

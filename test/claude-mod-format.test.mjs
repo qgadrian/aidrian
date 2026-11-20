@@ -342,6 +342,9 @@ test('ticketsOf reads the list, else an older plugin`s one ticket, 10 at most', 
   const legacy = { key: 'ABC-1', source: 'branch' };
   assert.deepEqual(ticketsOf({ ticket: legacy }), [legacy], 'an older aidrian plugin prints one ticket');
   assert.deepEqual(ticketsOf({ tickets: [], ticket: legacy }), [], 'the list wins, even empty');
+  const both = ticketsOf(snap({ tickets: [legacy, { key: 'ABC-2', source: 'pr' }], ticket: legacy }));
+  assert.deepEqual(both, [legacy, { key: 'ABC-2', source: 'pr' }], 'a plugin that prints both: the list alone');
+  assert.deepEqual(ticketRows(both).map(rowText), ['ABC-1', 'ABC-2'], 'one row a ticket, none twice');
   for (const value of [null, 'tickets', 42, [], {}, { ticket: null }, { ticket: 'ABC-1' }]) assert.deepEqual(ticketsOf(value), [], JSON.stringify(value));
 });
 

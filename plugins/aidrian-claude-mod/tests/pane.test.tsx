@@ -679,6 +679,18 @@ describe('the tickets', () => {
     expect(linearIds(state)).toEqual(['ABC-12'])
   })
 
+  test('a snapshot with tickets and the deprecated ticket draws each ticket once and looks each key up once', { options: { ticketPrefixes: 'ABC' } }, async ($, on) => {
+    const snapshot = { tickets: [{ key: 'ABC-12', source: 'pr' }, { key: 'ABC-15', source: 'pr' }], ticket: { key: 'ABC-12', source: 'pr' } }
+    const state = world({ snapshot, issues: { 'ABC-12': ISSUE, 'ABC-15': { ...ISSUE, title: 'Close the band', url: 'https://linear.app/acme/issue/ABC-15' } } })
+    await startIn($, on, state)
+    const texts = (await (await pane($)).findAll({ type: 'Text' })).map(found => found.text)
+
+    // A row's key is its own Text, `◆ <key>`, inside the row's Text.
+    expect(texts.filter(text => /^◆ ABC-1\d$/.test(text))).toEqual(['◆ ABC-12', '◆ ABC-15'])
+    expect(texts.filter(text => /^ {2}(Ship the band|Close the band)$/.test(text))).toEqual(['  Ship the band', '  Close the band'])
+    expect([...linearIds(state)].sort()).toEqual(['ABC-12', 'ABC-15'])
+  })
+
   test('a Linear url that is not the key`s page is no link', { options: { ticketPrefixes: 'ABC' } }, async ($, on) => {
     const state = world({ snapshot: one('ABC-12'), linear: { ...ISSUE, url: 'https://linear.app.example.org/acme/issue/ABC-12' } })
     await startIn($, on, state)

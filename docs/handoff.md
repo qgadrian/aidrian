@@ -626,8 +626,11 @@ aidrian session snapshot [--session ID] [--transcript PATH] [--ticket-prefixes A
 | `decisions` | `{ provisional }`: the decision markers with status `unconfirmed` in the indexed docs, as `aidrian decisions list` reads them. |
 | `audits` | `{ untriaged }`: the untriaged persona-audit findings, as the session-start line counts them; null, and in `errors`, when the state folder is inside a checkout, or is not the user's own. |
 | `tickets` | A list of `{ key, source }`, 10 at most, `[]` when none: each key of `--ticket-prefixes`, such as `ABC-123`, or `#42`, that the current branch, a branch the session's ledger or an earlier session's recorded, or a pull request `prs` shows names; `source` is `branch`, `ledger`, or `pr` ([The tickets](#the-tickets)). Null, and in `errors`, for a bad prefix list; when the session's own ledger or `links.jsonl` cannot be read, the keys of the other rules, with `tickets` in `errors`. |
+| `ticket` | Deprecated: the first entry of `tickets`, the same `{ key, source }` object, or null when `tickets` is `[]` or null, and never in `errors`. Kept only for an `aidrian-mod` older than the one that reads `tickets`, which reads this key alone; removed 30 days after the `aidrian-mod` release that reads `tickets` ships, or at the next major version of `aidrian` or `aidrian-mod`, whichever comes first. |
 | `links` | `{ branch, worktree, source }` or null: the worktree the session created with `aidrian worktree new`, while git still lists it, `source` `own`, else the one an earlier session created, `inherited` ([The worktree](#the-worktree)). |
 | `errors` | The names of the sections that failed, never their error text. |
+<!-- aidrian:decision id=snapshot-legacy-ticket status=unconfirmed class=product-behaviour domain=product date=2026-11-20 pr=439 -->
+<!-- aidrian:decision-new id=snapshot-legacy-ticket text="| `ticket` | Deprecated: the first entry of `tickets`, the same `{ key, source }` object, or null when `tickets` is `[]` or null, and never in `errors`. Kept only for an `aidrian-mod` older than the one that reads `tickets`, which reads this key alone; removed 30 days after the `aidrian-mod` release that reads `tickets` ships, or at the next major version of `aidrian` or `aidrian-mod`, whichever comes first. |" -->
 
 Each section fails open: one that fails is null, or keeps what it read, as `worktrees` and `tickets` do, with its name
 in `errors`, and the command exits 0 whenever its arguments parse, so a status line never breaks.
@@ -831,6 +834,9 @@ other rules still show. When `prs` is null or stale, rules 3 and 5 use what it s
 adds no error of its own: `prs` names the failure. The tickets read the pull requests the `prs` section read, so the
 forge is still asked once a snapshot. Without `--session` only rule 1 runs; in a folder with no project `tickets` is
 null like every section.
+The deprecated `ticket` beside it is the first entry of `tickets`, or null, and `errors` never names it: kept only
+for an `aidrian-mod` older than the one that reads `tickets`, it goes 30 days after the `aidrian-mod` release that
+reads `tickets` ships, or at the next major version of `aidrian` or `aidrian-mod`, whichever comes first.
 
 **The worktree.** `links` reads the session's `links.jsonl`, the worktrees its `aidrian worktree new` calls created
 ([Session ledger](hooks.md#session-ledger)). It keeps the newest row of each key, `host/path:branch`, drops each whose

@@ -403,6 +403,8 @@ test('the real aidrian cli, run with the argv the client builds, gives an object
   assert.equal(snapshot.session.transcript, realpathSync(path.join(config, 'projects/-project', `${ID}.jsonl`)));
   assert.notEqual(snapshot.handoff, null, JSON.stringify(snapshot.errors));
   assert.deepEqual(snapshot.tickets, [{ key: 'ABC-7', source: 'branch' }]);
+  assert.deepEqual(snapshot.ticket, { key: 'ABC-7', source: 'branch' }, 'the deprecated ticket an older mod reads');
+  assert.deepEqual(issueLookup(snapshot.ticket, 'ABC'), { id: 'ABC-7' }, 'the lookup an older mod starts from it');
   assert.deepEqual(changesParts(snapshot.prs), []);
   assert.deepEqual(bandSegments(snapshot).map((segment) => segment.id), ['handoff']);
 });

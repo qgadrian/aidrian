@@ -1,8 +1,10 @@
 // `aidrian session snapshot`: what a status line shows about the session it runs for and the project at the current
 // folder, as one JSON object or one line of plain text (docs/handoff.md#the-snapshot). Display data only: no hook, gate,
 // skill, or agent decides anything from it, and the Stop hook keeps reading the whole transcript.
-//   { session: { id, transcript, cwd }, handoff, prs, lessons, worktrees, decisions, audits, tickets, links, errors }
-// The caller passes what it needs, `--session` and `--transcript`: the command reads no host variable and no stdin.
+//   { session: { id, transcript, cwd }, handoff, prs, lessons, worktrees, decisions, audits, tickets, links, ticket, errors }
+// `ticket` is deprecated and no section: the first entry of `tickets`, or null, computed in snapshotOf alone, so an
+// aidrian-mod older than the one that reads `tickets` still shows one ticket (docs/handoff.md#the-snapshot names when
+// it goes). `errors` never names it. The caller passes what it needs, `--session` and `--transcript`: the command reads no host variable and no stdin.
 // Each section fails open: one that throws is null and its name goes in `errors`, which holds names alone, and the
 // command exits 0 whenever its arguments parse. Every process it starts has a time limit: git's (lib/git.mjs), or the
 // forge budget its forge calls share; it reaches the forge through lib/forges/index.mjs alone, for a repository the
@@ -87,6 +89,7 @@ function snapshotOf({ cwd, session = null, transcript = null, ticketPrefixes = '
   const out = {
     session: { id: validId ? session : null, transcript: transcript === null ? null : displayText(transcript, DISPLAY_CAPS.path), cwd: displayText(cwd, DISPLAY_CAPS.path) },
     ...Object.fromEntries(SECTIONS.map((name) => [name, null])),
+    ticket: null,
     errors: [],
   };
   const errors = new Set();
@@ -116,7 +119,7 @@ function snapshotOf({ cwd, session = null, transcript = null, ticketPrefixes = '
   section('tickets', () => ticketsSection(cwd, ticketPrefixes, { links, changes }, errors));
   // Without --session there are no links to read, and so no error, as for prs.
   if (session !== null) section('links', () => shownLink(linksOf(links?.rows ?? null, worktrees)));
-  return { ...out, errors: SECTIONS.filter((name) => errors.has(name)) };
+  return { ...out, ticket: out.tickets?.[0] ?? null, errors: SECTIONS.filter((name) => errors.has(name)) };
 }
 
 // The tickets ticketsOf gives (lib/session-links.mjs), each key through displayText, from the change requests the prs

@@ -120,7 +120,7 @@ test('the JSON object and the line at each handoff level, with the Stop hook`s o
     return [env.run(['--session', ID, '--transcript', transcript, '--json']), env.run(['--session', ID, '--transcript', transcript, '--line'])];
   };
   const [quiet, quietLine] = at(cost, 0);
-  assert.deepEqual(Object.keys(quiet.json), ['session', ...SECTIONS, 'errors']);
+  assert.deepEqual(Object.keys(quiet.json), ['session', ...SECTIONS, 'ticket', 'errors']);
   assert.deepEqual(quiet.json.session, { id: ID, transcript, cwd: cost.dir });
   assert.deepEqual(Object.keys(quiet.json.handoff), ['ratio', 'breakEven', 'level', 'nextRatio', 'context', 'ceiling', 'chain', 'maxChain', 'continueArmed', 'lastBrief']);
   assert.equal(quiet.json.handoff.level, 'quiet');
@@ -240,7 +240,7 @@ test('with nothing to show, the line is empty; with no project every section is 
   writeFileSync(transcript, turnsOf('handoff-cost')[4]);
   const { json, status } = env.run(['--session', ID, '--transcript', transcript], { cwd: outside });
   assert.equal(status, 0);
-  assert.deepEqual(json, { session: { id: ID, transcript, cwd: outside }, ...Object.fromEntries(SECTIONS.map((name) => [name, null])), errors: [] });
+  assert.deepEqual(json, { session: { id: ID, transcript, cwd: outside }, ...Object.fromEntries(SECTIONS.map((name) => [name, null])), ticket: null, errors: [] });
   assert.deepEqual(env.run(['--line'], { cwd: outside }).stdout, '\n');
   assert.deepEqual([readdirSync(env.state), readdirSync(env.temp)], before);
   assert.equal(snapshotLine({ handoff: null, lessons: { open: 2, byTier: { P1: 0, P2: 2, P3: 0 } }, decisions: { provisional: 0 }, worktrees: null, audits: { untriaged: 0 } }), '');
@@ -598,9 +598,12 @@ test('session-snapshot.mjs names no forge outside its comments', () => {
 
 test('the tickets come from the prefixes the caller passes, else from a numbered branch; a bad prefix list makes them null', (t) => {
   const keyed = setup(t, { branch: 'feat/abc-123-login' });
-  assert.deepEqual(keyed.run(['--ticket-prefixes', 'XY|ABC']).json.tickets, [{ key: 'ABC-123', source: 'branch' }]);
-  assert.deepEqual(keyed.run([]).json.tickets, [], 'no prefixes and no number after the type');
-  assert.equal(Object.hasOwn(keyed.run([]).json, 'ticket'), false, 'no ticket key beside tickets');
+  const prefixed = keyed.run(['--ticket-prefixes', 'XY|ABC']).json;
+  assert.deepEqual(prefixed.tickets, [{ key: 'ABC-123', source: 'branch' }]);
+  assert.deepEqual(prefixed.ticket, prefixed.tickets[0], 'the deprecated ticket: the first of tickets');
+  const bare = keyed.run([]).json;
+  assert.deepEqual(bare.tickets, [], 'no prefixes and no number after the type');
+  assert.deepEqual([Object.hasOwn(bare, 'ticket'), bare.ticket], [true, null], 'no ticket: the deprecated key is there, and null');
   const numbered = setup(t, { branch: 'fix/42-login-redirect' });
   assert.deepEqual(numbered.run([]).json.tickets, [{ key: '#42', source: 'branch' }]);
   assert.deepEqual(numbered.run(['--ticket-prefixes', 'ABC']).json.tickets, [{ key: '#42', source: 'branch' }]);
@@ -608,6 +611,7 @@ test('the tickets come from the prefixes the caller passes, else from a numbered
     const { json, status } = numbered.run(['--ticket-prefixes', prefixes]);
     assert.equal(status, 0);
     assert.equal(json.tickets, null, prefixes);
+    assert.deepEqual([json.ticket, json.errors.includes('ticket')], [null, false], prefixes);
     assert.deepEqual(json.errors, ['worktrees', 'tickets', 'links'].filter((name) => json.errors.includes(name)));
     assert.ok(json.errors.includes('tickets'), prefixes);
   }
@@ -1183,6 +1187,7 @@ test('tickets: a session on main that touched a pull request whose body says Fix
   env.answer({ data: { r0: { pullRequest: prNode(7, { authorAssociation: 'MEMBER', bodyText: 'Fixes ABC-12', closingIssuesReferences: { nodes: [] } }) } } });
   const { json, stdout } = env.run(['--session', ID, '--ticket-prefixes', 'ABC']);
   assert.deepEqual(json.tickets, [{ key: 'ABC-12', source: 'pr' }]);
+  assert.deepEqual(json.ticket, { key: 'ABC-12', source: 'pr' }, 'the deprecated ticket: the first of tickets');
   assert.deepEqual(json.errors, []);
   assert.deepEqual(json.prs, [PR_ROW], 'closes never reaches prs');
   assert.ok(!stdout.includes('Fixes'), 'the body text reaches no output');
@@ -1193,7 +1198,7 @@ test('tickets: a session on main that touched a pull request whose body says Fix
   assert.equal(query.match(/query changes\(/gu).length, 1);
   assert.match(query, /bodyText/u);
   const again = env.run(['--session', ID]).json;
-  assert.deepEqual([again.tickets, again.errors, env.calls().length], [[], [], 1], 'no prefix: no key; inside the minute: the cache, and no second call');
+  assert.deepEqual([again.tickets, again.ticket, again.errors, env.calls().length], [[], null, [], 1], 'no prefix: no key; inside the minute: the cache, and no second call');
 });
 
 test('tickets: pull requests for two issues show both, the newest pull request`s first', { skip: !POSIX }, (t) => {
@@ -1203,6 +1208,7 @@ test('tickets: pull requests for two issues show both, the newest pull request`s
   const { json } = env.run(['--session', ID, '--ticket-prefixes', 'ABC']);
   assert.deepEqual(json.prs.map(({ number }) => number), [8, 7]);
   assert.deepEqual(json.tickets, [{ key: 'ABC-15', source: 'pr' }, { key: 'ABC-12', source: 'pr' }]);
+  assert.deepEqual(json.ticket, { key: 'ABC-15', source: 'pr' }, 'the deprecated ticket: the newest pull request`s');
   assert.deepEqual([json.errors, env.calls().length], [[], 1]);
 });
 

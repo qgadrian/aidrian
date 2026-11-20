@@ -89,6 +89,11 @@ Each is a row of Claude Code's config menu, from `userConfig` in the mod's
   With the plugin enabled but no entry for the folder, or when the mod runs outside a plugin cache, as with
   `--plugin-dir`, it runs instead the `lib/cli.mjs` beside an `aidrian` command on a checked PATH folder: a regular
   file, not a link, below that plugin folder, and outside the session's folder.
+  The mod reads the snapshot's `tickets`, and its `ticket` only from an `aidrian` plugin that prints no `tickets`, so
+  a snapshot with both draws each ticket once and looks each key up once. A mod older than this one reads the
+  deprecated `ticket` alone, so with a newer plugin it shows the session's first ticket only. The plugin keeps
+  `ticket` for those older mods alone, and removes it 30 days after the `aidrian-mod` release that reads `tickets`
+  ships, or at the next major version of `aidrian` or `aidrian-mod`, whichever comes first.
 - **Processes.** Every process starts by an absolute path through one resolver, never through a shell: `node` and
   `git` from PATH folders outside the session's folder, and `/usr/bin/osascript` with one constant script for the
   focus check. `focusApp` is only compared with what that script prints. Each process gets as its PATH only those

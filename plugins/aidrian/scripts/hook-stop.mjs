@@ -49,7 +49,7 @@ import path from 'node:path';
 import { loadConfig } from '../lib/config.mjs';
 import { ownFolderSync, readOwnText } from '../lib/fs.mjs';
 import { MARKER_CAP, noteFollow, takeEnding } from '../lib/handoff-markers.mjs';
-import { deny, runHook } from '../lib/hook-io.mjs';
+import { deny, isMain, runHook } from '../lib/hook-io.mjs';
 import { detectHost } from '../lib/hosts/index.mjs';
 import { findProject } from '../lib/project.mjs';
 import { resultHoldReason } from '../lib/project-run-guard.mjs';
@@ -68,7 +68,9 @@ const MARKS = [ANNOUNCE_LEAD, REVIEW_LOOP_LEAD, MERGE_HAND_BACK_LEAD, HAND_BACK_
 // What the host writes before a hook's reason in a send-back: the hook's command in brackets (marked).
 const HOOK_PREFIX = /^\[.*?\]: /u;
 
-await runHook(async (input) => {
+// The hook's body, for the payload `input`; `start` is when the call began, 0 for the hook's own process (lib/hook-io.mjs
+// callHook).
+export async function handle(input, { start = 0 } = {}) {
   const settled = input.stop_hook_active === false;
   const caused = input.stop_hook_active === true;
   // The result hold goes first, wherever the session's folder is.
@@ -99,7 +101,9 @@ await runHook(async (input) => {
   const reminder = stopReminder(text, handoff, earlier, await continuation(handoff, host, project, config));
   writeMarker(marker, `${JSON.stringify(reminder.marker)}\n`);
   deny(reminder.reason);
-});
+}
+
+if (isMain(import.meta.url)) await runHook(handle);
 
 // The reason of the first of the four checks that sends this stop back, or null. On a stop a hook caused, a check runs
 // only when sentBack lets it. `transcript` is null on a host whose transcripts lib/transcript.mjs cannot read.

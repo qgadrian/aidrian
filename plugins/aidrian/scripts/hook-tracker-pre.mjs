@@ -25,7 +25,7 @@ import { loadConfig } from '../lib/config.mjs';
 import { checkDeadline, guardBudget, PastDeadline, withinDeadline } from '../lib/deadline.mjs';
 import { snapshotPath } from '../lib/gate-snapshot.mjs';
 import { baseReader } from '../lib/handoff-guard.mjs';
-import { block, deny, runHook } from '../lib/hook-io.mjs';
+import { block, deny, isMain, runHook } from '../lib/hook-io.mjs';
 import { detectHost } from '../lib/hosts/index.mjs';
 import { findProject } from '../lib/project.mjs';
 import { runWriter } from '../lib/project-report.mjs';
@@ -33,7 +33,8 @@ import { runDriver } from '../lib/run-driver.mjs';
 import { judgeTrackerWrite, readsByName, refusalMarker, runWriteRefusal } from '../lib/tracker-guard.mjs';
 import { readUnattendedMark } from '../lib/unattended-mark.mjs';
 
-await runHook(async (input) => {
+// The hook's body, for the payload `input` (lib/hook-io.mjs callHook).
+export async function handle(input) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
   const project = findProject(cwd);
   const config = project ? loadConfig(project).config : null;
@@ -51,7 +52,9 @@ await runHook(async (input) => {
     deny(denial.reason);
   }
   await block(input, 'tracker-guard', denial.reason, { match: denial.match, project, config });
-});
+}
+
+if (isMain(import.meta.url)) await runHook(handle);
 
 // The project run rule's refusal of the call in `input`, or null. Who calls comes from the session's marks alone
 // (lib/project-report.mjs runWriter). A session no mark names is judged on the working copy's tracker key, for a

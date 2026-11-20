@@ -6,13 +6,14 @@
 // with `background` in the session the gate starts in the background.
 
 import { loadConfig } from '../lib/config.mjs';
-import { runHook } from '../lib/hook-io.mjs';
+import { isMain, out, runHook } from '../lib/hook-io.mjs';
 import { detectHost } from '../lib/hosts/index.mjs';
 import { findProject } from '../lib/project.mjs';
 import { continuation, planApprovedContext, sessionUsage } from '../lib/session-length.mjs';
 import { readText } from '../lib/transcript.mjs';
 
-await runHook(async (input) => {
+// The hook's body, for the payload `input` (lib/hook-io.mjs callHook).
+export async function handle(input) {
   if (input.tool_name !== 'ExitPlanMode' || input.agent_id || typeof input.transcript_path !== 'string') return;
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (!project) return;
@@ -20,5 +21,7 @@ await runHook(async (input) => {
   const { handoff } = config.session;
   const text = readText(input.transcript_path);
   const context = text ? planApprovedContext(handoff, sessionUsage(text), await continuation(handoff, detectHost({ input }), project, config)) : null;
-  if (context) console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: context } }));
-});
+  if (context) out(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: context } }));
+}
+
+if (isMain(import.meta.url)) await runHook(handle);

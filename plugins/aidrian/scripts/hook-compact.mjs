@@ -3,7 +3,7 @@
 // generic recap. Instructions typed after /compact win: then this prints nothing. If a host ignores the output,
 // compaction falls back to its default summary.
 
-import { runHook } from '../lib/hook-io.mjs';
+import { isMain, out, runHook } from '../lib/hook-io.mjs';
 
 const CHECKLIST = `Preserve everything needed to continue the current task, through implementation, review, and fixes, until it is done. Omit a section below that does not apply to this session.
 
@@ -28,7 +28,10 @@ Discard:
 - Resolved review findings whose fix is committed and verified (keep a one-line trace)
 - Anything unrelated to the current task`;
 
-await runHook((input) => {
+// The hook's body, for the payload `input` (lib/hook-io.mjs callHook).
+export async function handle(input) {
   if (typeof input.custom_instructions === 'string' && input.custom_instructions.trim() !== '') return;
-  console.log(CHECKLIST);
-});
+  out(CHECKLIST);
+}
+
+if (isMain(import.meta.url)) await runHook(handle);

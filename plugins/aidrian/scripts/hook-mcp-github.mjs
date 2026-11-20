@@ -13,7 +13,7 @@
 // already read as the standard one, by the host adapter's `hookInput`. Anything else this hook cannot read lets the call run.
 
 import { loadConfig } from '../lib/config.mjs';
-import { block, runHook } from '../lib/hook-io.mjs';
+import { block, isMain, runHook } from '../lib/hook-io.mjs';
 import { githubCall } from '../lib/hosts/index.mjs';
 import { findProject } from '../lib/project.mjs';
 import { asksForReview, judgeRequests, markersIn } from '../lib/review-gate.mjs';
@@ -32,16 +32,18 @@ const PR_FIELD = {
 // The GitHub MCP server's tools that can mark a draft ready, through their `draft` input.
 const READY_TOOLS = new Set(['mcp__github__update_pull_request', 'mcp__github__update_pull_request_draft_state']);
 
-await runHook(async (input) => {
+// The hook's body, for the payload `input`; `start` is when the call began, 0 for the hook's own process (lib/hook-io.mjs
+// callHook).
+export async function handle(input, { start = 0 } = {}) {
   const { tool, given: toolInput } = githubCall(input.tool_name, input.tool_input ?? {});
   if (tool === 'mcp__github__merge_pull_request') {
     // `startedAt`: the merge guard bounds the unattended waiver's reads by the hook's own time.
-    const reason = checkMcp(toolInput, { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), input, startedAt: performance.timeOrigin });
+    const reason = checkMcp(toolInput, { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), input, startedAt: performance.timeOrigin + start });
     if (reason) await block(input, 'merge-review', reason);
     return;
   }
   if (READY_TOOLS.has(tool)) {
-    const context = { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), startedAt: performance.timeOrigin };
+    const context = { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), startedAt: performance.timeOrigin + start };
     const reason = checkReady(toolInput, context);
     if (reason) return block(input, 'ready-hold', reason);
     const pending = checkChecks(toolInput, context);
@@ -59,4 +61,6 @@ await runHook(async (input) => {
   if (botNamed(config.github.reviewer)) return block(input, 'review-rounds', REQUEST_REASON);
   const reason = judgeRequests([request], { project, config });
   if (reason) await block(input, 'review-gate', reason);
-});
+}
+
+if (isMain(import.meta.url)) await runHook(handle);

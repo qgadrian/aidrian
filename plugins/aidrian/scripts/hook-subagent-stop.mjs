@@ -32,7 +32,7 @@ import { appendEvent } from '../lib/dispatch-log.mjs';
 import { blockingChildren, checkDelivery, runningChildren, sendsBack, stopAgent, stopRow, undelivered, wakingChildren } from '../lib/dispatch-rows.mjs';
 import { deliverHandoffs, finalReport } from '../lib/delivery-check.mjs';
 import { claimProblem, passClaims, readCheckRuns, unsupportedClaims } from '../lib/check-runs.mjs';
-import { deny, runHook } from '../lib/hook-io.mjs';
+import { deny, isMain, runHook } from '../lib/hook-io.mjs';
 import { deliverySignal, idleChildrenSignal, recordSignal } from '../lib/lesson-signals.mjs';
 import { findProject, projectCheckouts, stateDir } from '../lib/project.mjs';
 import { sessionFolder } from '../lib/session-folder.mjs';
@@ -99,7 +99,8 @@ function childrenSendBack(input, children, made) {
   return storeChildSendBacks(input, made + 1) || input.stop_hook_active === false;
 }
 
-await runHook((input) => {
+// The hook's body, for the payload `input` (lib/hook-io.mjs callHook).
+export async function handle(input) {
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (!project) return;
   const { config } = loadConfig(project);
@@ -160,4 +161,6 @@ await runHook((input) => {
       'Correct the report: quote the output a finished run returned, or say which runs did not finish.');
   }
   if (reasons.length) deny(reasons.join('\n\n'));
-});
+}
+
+if (isMain(import.meta.url)) await runHook(handle);

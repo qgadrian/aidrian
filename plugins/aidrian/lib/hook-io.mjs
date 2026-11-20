@@ -37,6 +37,12 @@ function writeErr(text) {
   else writeSync(2, text);
 }
 
+// Writes `text` and a newline to stdout, where a hook hands the host its JSON or context; callHook keeps it instead.
+export function out(text) {
+  if (called) called.stdout += `${text}\n`;
+  else writeSync(1, `${text}\n`);
+}
+
 // Whether the module at `url` is the script node was started with, so a hook script runs its body only then, and a
 // test can import its `handle` instead.
 export function isMain(url) {
@@ -83,13 +89,13 @@ export async function runHook(body) {
 }
 
 // Runs the hook `handle` in this process, as the host runs its script, for the payload `payload` from the folder `cwd`
-// with the environment `env`: { status, stderr }, the exit code and text its script would give. `handle(input, { start })`
+// with the environment `env`: { status, stderr, stdout }, the exit code and text its script would give. `handle(input, { start })`
 // gets `start`, performance.now() at the call, which a script's run takes as 0, its process's start. Only for tests:
 // it swaps the process's folder and environment for the call, so calls run one at a time, never in parallel.
 export async function callHook(handle, payload, { cwd = process.cwd(), env = process.env } = {}) {
   if (called) throw new Error('callHook runs one hook at a time');
   const saved = { cwd: process.cwd(), env: { ...process.env } };
-  called = { stderr: '' };
+  called = { stderr: '', stdout: '' };
   process.chdir(cwd);
   replaceEnv(env);
   let status = 0;
@@ -99,11 +105,11 @@ export async function callHook(handle, payload, { cwd = process.cwd(), env = pro
     // Any other error lets the action run, as runHook does.
     if (error instanceof HookExit) status = error.code;
   }
-  const { stderr } = called;
+  const { stderr, stdout } = called;
   called = null;
   process.chdir(saved.cwd);
   replaceEnv(saved.env);
-  return { status, stderr, stdout: '' };
+  return { status, stderr, stdout };
 }
 
 function replaceEnv(env) {

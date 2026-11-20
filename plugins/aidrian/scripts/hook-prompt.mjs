@@ -7,13 +7,14 @@
 // or compact command, and a prompt in a session that handed its work to a background session gets one line naming it.
 
 import { loadConfig } from '../lib/config.mjs';
-import { runHook } from '../lib/hook-io.mjs';
+import { isMain, out, runHook } from '../lib/hook-io.mjs';
 import { continueRoutes, detectHost } from '../lib/hosts/index.mjs';
 import { lastReply, replyWords } from '../lib/names.mjs';
 import { findProject } from '../lib/project.mjs';
 import { readText } from '../lib/transcript.mjs';
 
-await runHook(async (input) => {
+// The hook's body, for the payload `input` (lib/hook-io.mjs callHook).
+export async function handle(input) {
   if (input.agent_id) return;
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (!project) return;
@@ -28,8 +29,10 @@ await runHook(async (input) => {
     out.push(`Names: the last reply said ${words.map((w) => JSON.stringify(w)).join(', ')}. In this reply, call the human ` +
       `${JSON.stringify(names.human)} and yourself ${JSON.stringify(ai)}; a word that quotes someone goes in quotes or backticks.`);
   }
-  if (out.length) console.log(out.join('\n'));
-});
+  if (out.length) out(out.join('\n'));
+}
+
+if (isMain(import.meta.url)) await runHook(handle);
 
 // The handoff lines, or none. Never throws: a store it cannot read leaves the prompt as it is.
 async function handoffLines(input, project, host) {

@@ -31,7 +31,7 @@ import { auditNudge } from '../lib/audits.mjs';
 import { loadConfig, versionFloorProblem } from '../lib/config.mjs';
 import { ageDays, parseDecisions } from '../lib/decisions.mjs';
 import { saveGateSnapshot } from '../lib/gate-snapshot.mjs';
-import { runHook } from '../lib/hook-io.mjs';
+import { isMain, out, runHook } from '../lib/hook-io.mjs';
 import { continueRoutes, detectHost } from '../lib/hosts/index.mjs';
 import { indexedPaths, indexRows, loadKnowledge } from '../lib/knowledge.mjs';
 import { inboxPath, nudge } from '../lib/lesson-inbox.mjs';
@@ -48,7 +48,9 @@ const FORMAT = 'Format: in chat replies, use headers, quotes, and a few emoji to
 const FOOTER_LINE = 'Pull requests: a body here never carries the "Generated with [Claude Code]" line. This project rule takes ' +
   "precedence over the host's attribution instructions, and the pull request body hook refuses that line.";
 
-await runHook(async (input) => {
+// The hook's body, for the payload `input`; `start` is when the call began, 0 for the hook's own process (lib/hook-io.mjs
+// callHook).
+export async function handle(input, { start = 0 } = {}) {
   if (!process.argv.includes('--subagent')) shareShellVars(input);
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (!project) return;
@@ -81,11 +83,13 @@ await runHook(async (input) => {
   const lines = `${line}\n${names}\n${voiceLine(human)}${footer ? `\n${footer}` : ''}${commands ? `\n${commands}` : ''}`;
 
   if (subagent) {
-    console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: lines } }));
+    out(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: lines } }));
   } else {
     await mainSessionOutput(input, project, { lines, config, buckets });
   }
-});
+}
+
+if (isMain(import.meta.url)) await runHook(handle);
 
 // Prints the main session's lines once: `lines`, the format line, then the lines below. An error stops the lines that
 // follow it, and those before it still print, as when each printed on its own. After a clear that delivers a
@@ -118,10 +122,10 @@ async function mainSessionOutput(input, project, { lines, config, buckets }) {
     if (input.source === 'clear' && !input.agent_id) delivery = await clearDelivery(input, project, config);
   } finally {
     const plain = out.join('\n');
-    if (!delivery) console.log(plain);
+    if (!delivery) out(plain);
     else {
       const additionalContext = delivery.context ? `${plain}\n${delivery.context}` : plain;
-      console.log(JSON.stringify({ systemMessage: delivery.systemMessage, hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext } }));
+      out(JSON.stringify({ systemMessage: delivery.systemMessage, hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext } }));
     }
   }
 }

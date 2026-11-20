@@ -8,14 +8,15 @@ import path from 'node:path';
 
 import { loadConfig } from '../lib/config.mjs';
 import { anchorClones } from '../lib/attempt-clone.mjs';
-import { block, runHook } from '../lib/hook-io.mjs';
+import { block, isMain, out, runHook } from '../lib/hook-io.mjs';
 import { isIgnored } from '../lib/git.mjs';
 import { findProject } from '../lib/project.mjs';
 import { checkTool } from '../lib/rules/main-checkout.mjs';
 
 const MAX_REPORTED = 10;
 
-await runHook(async (input) => {
+// The hook's body, for the payload `input` (lib/hook-io.mjs callHook).
+export async function handle(input) {
   // An attempt clone is linked only for the session the payload names (lib/attempt-clone.mjs).
   anchorClones({ session: input.session_id });
   const reason = checkTool(input);
@@ -35,8 +36,10 @@ await runHook(async (input) => {
     ].join('\n'));
   }
   const context = [`The write adds ${hits.length} term(s) the project's terms file warns about; use the replacements in a follow-up edit:`, ...shown(hits)].join('\n');
-  console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: context } }));
-});
+  out(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: context } }));
+}
+
+if (isMain(import.meta.url)) await runHook(handle);
 
 // The review-disposition refusal for this write, or null. Only a write whose target is a review manifest reads further.
 async function manifestDrift(input) {

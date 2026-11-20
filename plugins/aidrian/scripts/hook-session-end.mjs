@@ -14,7 +14,7 @@ import path from 'node:path';
 
 import { loadConfig } from '../lib/config.mjs';
 import { forgetGateSnapshot, snapshotPath } from '../lib/gate-snapshot.mjs';
-import { runHook } from '../lib/hook-io.mjs';
+import { isMain, runHook } from '../lib/hook-io.mjs';
 import { continueRoutes, detectHost } from '../lib/hosts/index.mjs';
 import { readOwnText } from '../lib/fs.mjs';
 import { forgetDenials, sweepHookCounts } from '../lib/lesson-signals.mjs';
@@ -25,7 +25,8 @@ import { NO_READ_LANDED, refusalMarker } from '../lib/tracker-guard.mjs';
 
 const WORKER = path.join(import.meta.dirname, 'session-row.mjs');
 
-await runHook(async (input) => {
+// The hook's body, for the payload `input` (lib/hook-io.mjs callHook).
+export async function handle(input) {
   const endedAt = Date.now();
   // First: it reads the tracker record the next lines delete, and the recorder's count lands in the folder they delete.
   await settleRefusal(input);
@@ -51,7 +52,9 @@ await runHook(async (input) => {
   worker.stdin.on('error', () => {});
   worker.stdin.end(JSON.stringify({ ...input, ended_at: endedAt }));
   worker.unref();
-});
+}
+
+if (isMain(import.meta.url)) await runHook(handle);
 
 // The ending session's armed continuation becomes ready for the session the clear starts. Any other reason does
 // nothing here, so an exit keeps its short budget. Never throws: a store it cannot read costs the continuation alone.

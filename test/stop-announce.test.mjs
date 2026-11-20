@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { announcedWork, announceReason, lastParagraph, QUESTION_TOOL } from '../plugins/aidrian/lib/stop-announce.mjs';
+import { ANNOUNCE_LEAD, announcedWork, announceReason, lastParagraph, QUESTION_TOOL } from '../plugins/aidrian/lib/stop-announce.mjs';
 
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-stop.mjs');
 const NAMES = { ai: 'HAL9K', human: 'Adrian' };
@@ -23,6 +23,13 @@ test('the stalled message is sent back, quoting the phrase, naming the Human and
   assert.match(reason, /Do it now\./);
   assert.match(reason, new RegExp(`ask with the question tool \\(${QUESTION_TOOL}\\)`));
   assert.match(reason, /end the turn again\.$/);
+  assert.ok(reason.startsWith(ANNOUNCE_LEAD), 'the lead the Stop hook knows its send-back by');
+});
+
+test('the quoted phrase stays on the reason`s one line when it spans lines of the message', () => {
+  const reason = announceReason({ message: 'Starting\nnow unless Adrian says otherwise.', ...NAMES });
+  assert.match(reason, /\("Starting now"\)/u);
+  assert.doesNotMatch(reason, /\n/u);
 });
 
 test('each announce phrase fires, in any case, in the last paragraph', () => {

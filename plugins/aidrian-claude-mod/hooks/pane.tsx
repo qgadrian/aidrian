@@ -281,7 +281,11 @@ const drawParts = (ui: Ui, parts: Part[]) => {
 
 function band(ui: Ui, state: RenderState, settings: Settings, columns: number) {
   const { Box, Text } = ui
+  // The changes take a row of their own, below the handoff and the harness signals, so a long list of pull requests
+  // never cuts those off at the terminal's edge.
   const segments = bandSegments(snapshotOf(state))
+  const changes = segments.filter((segment: Segment) => segment.id === 'changes')
+  const signals = segments.filter((segment: Segment) => segment.id !== 'changes')
   const running = state.agents.filter(row => row.status === 'running').length
   const ticket = ticketOf(state)
   const hasPlace = state.repo !== null || ticket !== null || running > 0
@@ -316,10 +320,10 @@ function band(ui: Ui, state: RenderState, settings: Settings, columns: number) {
             </Text>
           </Box>
         )}
-        {segments.length > 0 && (
+        {[signals, changes].filter(row => row.length > 0).map(row => (
           <Box paddingLeft={3}>
             <Text wrap="truncate-end">
-              {segments.map((segment: Segment, index: number) => (
+              {row.map((segment: Segment, index: number) => (
                 <Text>
                   {index > 0 && dot}
                   {drawParts(ui, segment.parts)}
@@ -327,7 +331,7 @@ function band(ui: Ui, state: RenderState, settings: Settings, columns: number) {
               ))}
             </Text>
           </Box>
-        )}
+        ))}
         {alerts.length > 0 && (
           <Box paddingLeft={3}>
             <Text wrap="truncate-end" color="error">
@@ -362,24 +366,25 @@ function modelLine(ui: Ui, state: RenderState, settings: Settings) {
       {isWarm(cacheLeft) ? '♨️ ' : '❄️ '}
       <Text color={LABEL}>cache </Text>
       <Text color={cacheColor(cacheLeft, ttl)}>{cacheWords(cacheLeft, '–', '')}</Text>
-      {dot}
-      {limitText(ui, '5h', fiveHour, state.now)}
-      {dot}
-      {limitText(ui, '7d', sevenDay, state.now)}
+      {fiveHour && dot}
+      {fiveHour && limitText(ui, '5h', fiveHour, state.now)}
+      {sevenDay && dot}
+      {sevenDay && limitText(ui, '7d', sevenDay, state.now)}
     </Text>
   )
 }
 
 const limitOf = (state: { usage: Usage | null }, kind: string) => state.usage?.limits.find(limit => limit.kind === kind) ?? null
 
-function limitText(ui: Ui, label: string, limit: Usage['limits'][number] | null, nowMs: number) {
+// A rate limit the engine reported. One it never reported, as on a plan with no 5-hour window, is not drawn at all.
+function limitText(ui: Ui, label: string, limit: Usage['limits'][number], nowMs: number) {
   const { Text } = ui
 
   return (
     <Text>
       <Text color={LABEL}>{label} </Text>
-      <Text color={limit ? usageColor(limit.percent) : undefined}>{limit ? `${Math.round(limit.percent)}%` : '–'}</Text>
-      {limit?.resetsAt && <Text color={LABEL}> {resetLabel(limit.resetsAt, nowMs)}</Text>}
+      <Text color={usageColor(limit.percent)}>{`${Math.round(limit.percent)}%`}</Text>
+      {limit.resetsAt && <Text color={LABEL}> {resetLabel(limit.resetsAt, nowMs)}</Text>}
     </Text>
   )
 }
@@ -497,8 +502,8 @@ function modelCard(ui: Ui, state: RenderState, settings: Settings) {
         <Text color={LABEL}>cache  </Text>
         <Text color={cacheColor(cacheLeft, ttl)}>{cacheWords(cacheLeft, 'no turn yet', ' left')}</Text>
       </Text>
-      {meterRow(ui, '⏳ 5h   ', fiveHour?.percent ?? null, usageColor, resetLabel(fiveHour?.resetsAt ?? null, state.now))}
-      {meterRow(ui, '📅 7d   ', sevenDay?.percent ?? null, usageColor, resetLabel(sevenDay?.resetsAt ?? null, state.now))}
+      {fiveHour && meterRow(ui, '⏳ 5h   ', fiveHour.percent, usageColor, resetLabel(fiveHour.resetsAt, state.now))}
+      {sevenDay && meterRow(ui, '📅 7d   ', sevenDay.percent, usageColor, resetLabel(sevenDay.resetsAt, state.now))}
     </Box>
   )
 }

@@ -268,8 +268,8 @@ test('the stop hook writes a subagent\'s final report to the handoff file its br
   assert.equal(stop('p4', transcriptFor('p4', kept), 'Done.').status, 0);
   assert.deepEqual(read(kept), { by: 'dispatcher' });
 
-  // While a background task of its own still runs, the stop is no end of its work: nothing is written, and the
-  // background check and the handoff send it back.
+  // While a background task of its own still runs, the stop is no end of its work: nothing is written, and only the
+  // background check sends it back. The handoff is not due yet, so the row does not call it missing.
   const waiting = path.join(dispatch, 'docs-S5-product-manager.json');
   const busy = transcriptFor('p5', waiting, [
     { type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { subagent_type: 'Explore', prompt: 'x' } }] } },
@@ -277,11 +277,16 @@ test('the stop hook writes a subagent\'s final report to the handoff file its br
   ]);
   const held = stop('p5', busy, 'Waiting for the helper-scout result.', { background_tasks: [{ id: 'achild001', type: 'local_agent', status: 'running' }] });
   assert.equal(held.status, 2);
-  assert.match(held.stderr, /Your brief asks you to write your machine handoff to/u);
+  assert.match(held.stderr, /^You started background work that is still running/u);
+  assert.doesNotMatch(held.stderr, /Your brief asks you to write your machine handoff to/u, 'a handoff not due yet is no send-back reason');
   assert.throws(() => readFileSync(waiting), /ENOENT/u);
+  // The task done, the next stop ends and writes the handoff.
+  assert.equal(stop('p5', busy, 'The helper found nothing.', { stop_hook_active: true, background_tasks: [] }).status, 0);
+  assert.deepEqual(read(waiting), { written_by: 'stop-hook', report: 'The helper found nothing.' });
 
-  assert.deepEqual(log().map((row) => [row.agent_id, row.handoffs_written, row.sent_back]), [
-    ['p1', 1, false], ['p2', 1, false], ['p3', 1, false], ['p4', 0, false], ['p5', 0, true],
+  assert.deepEqual(log().map((row) => [row.agent_id, row.delivered, row.running, row.handoffs_written, row.sent_back]), [
+    ['p1', 'chat', 0, 1, false], ['p2', 'file', 0, 1, false], ['p3', 'chat', 0, 1, false], ['p4', 'chat', 0, 0, false],
+    ['p5', 'pending', 1, 0, true], ['p5', 'chat', 0, 1, false],
   ]);
 });
 
@@ -554,7 +559,7 @@ test('summarize: per agent type dispatches, re-dispatch rate, medians, cost, del
   const summary = summarize(rows, { sinceMs: parseSince('7d', NOW) });
   assert.deepEqual(summary.agents[0], {
     agent_type: 'Explore', dispatches: 3, redispatched: 1, redispatch_rate: 0.33, median_duration_ms: 2000, median_tokens: 2000, cost_usd: 0.75,
-    delivered: { file: 1, chat: 1, missing: 0 }, top_docs: [['a.md', 2], ['b.md', 1]],
+    delivered: { file: 1, chat: 1, missing: 0, pending: 0 }, top_docs: [['a.md', 2], ['b.md', 1]],
     runs: 2, cost_per_run_usd: 0.38, sent_back: 1, sent_back_rate: 1, runs_without_send_back: 1, avg_docs_read: 1.5, avg_doc_bytes: 3072,
     requests: 10, tool_requests: 4, tool_calls: 6, tool_calls_per_request: 1.5, runs_without_tool_counts: 1,
   });
@@ -564,9 +569,9 @@ test('summarize: per agent type dispatches, re-dispatch rate, medians, cost, del
     count: 6,
     sessions: 2,
     by_rule: [
-      { rule: 'git-amend', count: 4, agents: [['main', 3], ['aidrian:explorer', 1]], repeated_sessions: 1, reasons: [['`git commit --amend` rewrites the branch tip', 4]] },
+      { rule: 'git-amend', count: 4, agents: [['main', 3], ['aidrian:explorer', 1]], repeated_runs: 1, reasons: [['`git commit --amend` rewrites the branch tip', 4]] },
       {
-        rule: 'agent-gates', count: 2, agents: [['aidrian:explorer', 2]], repeated_sessions: 0,
+        rule: 'agent-gates', count: 2, agents: [['aidrian:explorer', 2]], repeated_runs: 0,
         reasons: [['agents.explorer.allow does not list it', 1], ['agents.explorer.deny has "Bash"', 1]],
       },
     ],
@@ -583,7 +588,7 @@ test('summarize: per agent type dispatches, re-dispatch rate, medians, cost, del
     'Sessions: 1, $4.50 estimated, main conversation and subagents together',
     '1 stop rows have no dispatch row (a background dispatch, or a host change)',
     'Hook denies: 6 in 2 sessions',
-    '  git-amend: 4, by main 3, aidrian:explorer 1; 1 session blocked 3 times or more, an automatic lesson',
+    '  git-amend: 4, by main 3, aidrian:explorer 1; 1 agent run blocked 3 times or more for the same reason, an automatic lesson',
     '    most often: `git commit --amend` rewrites the branch tip',
     '  agent-gates: 2, by aidrian:explorer 2',
     '    most often: agents.explorer.allow does not list it',

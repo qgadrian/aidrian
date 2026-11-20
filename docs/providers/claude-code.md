@@ -108,6 +108,31 @@ Checked on Claude Code 2.1.314, with a hook that logged each call:
 
 So Claude Code holds each agent to its gates, tool by tool and pattern by pattern.
 
+## Background agents
+
+Claude Code runs every agent dispatch in the background while its fork-subagent mode is on, and that mode is on by
+default in an interactive session. The launch is forced asynchronous for any caller but an in-process teammate, whatever
+the call's `run_in_background` says. So the Agent hook's rewrite to `run_in_background: false`, which the transcript
+records as applied, does not move a subagent's dispatch to the foreground there, and its dispatch row stays
+`async_launched`. Only `CLAUDE_CODE_FORK_SUBAGENT=0` in the session's environment turns the mode off, which also removes
+the `fork` agent type. A child's `.meta.json` `launchedWithDefaults` says the call named no model, not that it named no flag.
+
+What the [background check](../hooks.md#background-check) guarded against does not happen on this host. A background
+agent's report reaches the subagent that started it after that subagent ended its turn: Claude Code starts it again
+(`SubagentStart` fires), and the report arrives as a message. The subagent's own dispatcher is told it stopped only once
+it stops with no live background child. Each idle-with-children occurrence of 2026-11-14 to 17 whose transcript was kept
+shows the wake. The adapter declares it as `capabilities.wakesOnChildReport`, with the `background_tasks` types of an
+agent, and the stop hook leaves such a task out of the check. A background shell still counts.
+
+A background shell's end wakes the subagent too: the task notice arrives as a message and starts it again after it
+ended its turn. Subagent transcripts of 2.1.316 and later hold 280 such wakes, each right after the turn ended. The
+adapter declares it as `capabilities.wakesOnTaskEnd`, and the stop hook lets a handoff file wait for the stop after
+such a wake ([delivery check](../hooks.md#delivery-check)). The background check still sends the agent back for a
+shell, since one that never ends, such as a dev server, never wakes it.
+
+Checked by reading the transcripts of four such subagents and Claude Code 2.1.328's launch code. Not verified: a
+session with the fork-subagent mode turned off.
+
 ## Shell commands of the Monitor tool
 
 The Monitor tool runs its `command` in a shell, in the background, under Bash's permission rules, and a subagent may
@@ -723,6 +748,12 @@ the terminal that ran it opens the new session ([handoff.md](../handoff.md#repla
 `claude` the shell's pid as `AIDRIAN_SHELL_PID`. A session is attended when `CLAUDE_CODE_SESSION_ATTENDED` is `1`.
 Its host process is `CLAUDE_PID`, when it is attended and `ps -o pid=,ppid=,comm= -p <pid>` shows a process named
 `claude` whose parent is that shell; it reads no process's arguments. It ends that process with SIGTERM.
+A launcher wrapped with `--install --wrap <name>` that ends in `exec claude "$@"` passes the same check: `exec` keeps
+the launcher's process, so it stays the shell's child, and the program it now runs is `claude`, so `ps` names it
+`claude`. One that execs a binary under another file name, or runs `claude` as a child of its own, does not.
+Only the first session runs through the launcher, since each later hop opens with `command claude attach <id>` in the
+shell's own environment, so a variable or flag the launcher sets before its `exec` does not reach later sessions (not
+verified live).
 
 Checked by hand on Claude Code 2.1.326 on 2026-11-17, in a pseudo-terminal, with throwaway sessions in a trusted
 folder and a trivial prompt:
@@ -759,8 +790,19 @@ that could open another session.
 Checked by hand on Claude Code 2.1.326, in a pseudo-terminal: `claude attach <id>` on a live background session exits 0
 about 1.1 seconds after `claude stop <id>`, so the shell function goes on to the next session.
 
+A client that opened a session from Claude Code's own session list is not followed: the old session still stops, and
+the client returned to the list the one time it was seen. `claude attach <id>` typed in the shell is the way that
+follows every hop. Checked by hand on Claude Code 2.1.328 on 2026-11-19:
+
+- No command points a running client at another session.
+- `claude agents --json`, the job state file, and the daemon roster do not say which client shows which session, so
+  the gate cannot find a client the list opened.
+- `claude attach <id>` exits 0 within 2 seconds of `claude stop <id>`.
+
+That return to the list was not probed further.
+
 Not verified live: a handoff that ends a session through the Stop hook end to end, or `claude attach` in the shell
-function.
+function; a handoff through a wrapped launcher, end to end.
 
 ## The Claude mod
 

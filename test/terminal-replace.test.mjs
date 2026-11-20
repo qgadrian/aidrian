@@ -279,6 +279,19 @@ test('aidrian shell-init prints the function for zsh and bash, for each host tha
   }
 });
 
+test('aidrian shell-init refuses --wrap without --install, and writes nothing', (t) => {
+  const home = folder(t, 'aidrian-home-');
+  const env = { ...process.env, HOME: home };
+  delete env.ZDOTDIR;
+  for (const args of [['zsh', '--wrap', 'cc'], ['zsh', '--uninstall', '--wrap', 'cc']]) {
+    const result = spawnSync(CLI, ['shell-init', ...args], { env, encoding: 'utf8' });
+    assert.equal(result.status, 2, args.join(' '));
+    assert.match(result.stderr, /^usage: aidrian shell-init /u);
+    assert.equal(result.stdout, '', 'nothing printed');
+  }
+  assert.deepEqual(readdirSync(home), [], 'no startup file written');
+});
+
 test('in bash the shell function follows a fresh record and keeps the exit code without one', { skip: !BASH }, (t) => {
   const none = inShell(t, { shell: 'bash' });
   assert.deepEqual(none.calls, [`${none.shell} --resume x`]);

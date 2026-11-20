@@ -68,11 +68,11 @@ test('a Bash rule`s block writes one hook_deny row: the rule, the tool, the agen
   assert.equal(hook('hook-bash.mjs', bash('git status')).status, 0);
   assert.deepEqual(rows().map(withoutTs), [
     {
-      event: 'hook_deny', ts: 'string', session_id: 's1', rule: 'git-amend', tool: 'Bash', agent_type: 'aidrian:explorer',
+      event: 'hook_deny', ts: 'string', session_id: 's1', rule: 'git-amend', tool: 'Bash', agent_type: 'aidrian:explorer', agent_id: 'a1',
       reason: '`git commit --amend` rewrites the branch tip, and another agent working on this branch may already have built on it.'.slice(0, 120),
     },
     {
-      event: 'hook_deny', ts: 'string', session_id: 's1', rule: 'process-kill', tool: 'Bash', agent_type: 'main',
+      event: 'hook_deny', ts: 'string', session_id: 's1', rule: 'process-kill', tool: 'Bash', agent_type: 'main', agent_id: null,
       reason: "stopping processes by name (`pkill`, `killall`, `kill $(pgrep …)`, `… | xargs kill`) also stops other sessions' builds and git hooks that run the same programs.".slice(0, 120),
     },
   ]);
@@ -115,7 +115,7 @@ test('aidrian report shows the blocks by rule and agent, and says when hook deni
   const text = report([]);
   assert.equal(text.status, 0, text.stderr);
   assert.match(text.stdout, /\nSessions: 0, \$0\.00 estimated, main conversation and subagents together\nHook denies: 4 in 2 sessions\n/);
-  assert.match(text.stdout, /\n {2}git-amend: 3, by main 3; 1 session blocked 3 times or more, an automatic lesson\n {4}most often: `git commit --amend` rewrites/);
+  assert.match(text.stdout, /\n {2}git-amend: 3, by main 3; 1 agent run blocked 3 times or more for the same reason, an automatic lesson\n {4}most often: `git commit --amend` rewrites/);
   assert.match(text.stdout, /\n {2}git-hook-bypass: 1, by aidrian:explorer 1\n {4}most often: this skips a git hook\.\n$/);
   const json = JSON.parse(report(['--json']).stdout);
   assert.deepEqual([json.hook_denies.count, json.hook_denies.by_rule.map((rule) => rule.rule), json.coverage.hook_denies], [4, ['git-amend', 'git-hook-bypass'], true]);
@@ -130,5 +130,5 @@ test('firstSentence drops the Blocked lead and stops at the first sentence or li
   assert.equal(firstSentence('one line\nanother'), 'one line');
   assert.equal(firstSentence("Blocked: this writes 'a.js', a tracked file in the main checkout (/srv/repo). Work elsewhere."), "this writes 'a.js', a tracked file in the main checkout.");
   const row = denyRow({ session_id: 's', tool_name: 'Bash' }, 'x', 'y'.repeat(200), { env: { CLAUDE_CODE_AGENT: 'orchestrator' }, now: Date.parse('2026-10-29T12:00:00Z') });
-  assert.deepEqual({ ...row, reason: row.reason.length }, { event: 'hook_deny', ts: '2026-10-29T12:00:00.000Z', session_id: 's', rule: 'x', tool: 'Bash', agent_type: 'orchestrator', reason: 120 });
+  assert.deepEqual({ ...row, reason: row.reason.length }, { event: 'hook_deny', ts: '2026-10-29T12:00:00.000Z', session_id: 's', rule: 'x', tool: 'Bash', agent_type: 'orchestrator', agent_id: null, reason: 120 });
 });

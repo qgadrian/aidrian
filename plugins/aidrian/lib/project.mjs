@@ -70,7 +70,7 @@ const GUARDED_LIB = [
   'pr-resolve', 'project', 'project-confine', 'project-issue-text', 'project-limit', 'project-linger', 'project-registries', 'project-report',
   'project-result', 'project-run', 'project-run-cli', 'project-run-gate', 'project-run-guard', 'project-start', 'project-stops', 'project-trust',
   'remotes', 'review-gate', 'run-driver', 'session-folder', 'session-length', 'session-links', 'session-links-writer', 'session-origins',
-  'session-prs', 'session-rows', 'session-start-gate', 'shell-init', 'shell-lex', 'solo', 'stop-announce', 'stop-handback', 'stop-history',
+  'session-prs', 'session-rows', 'session-start-gate', 'shell-init', 'shell-lex', 'solo', 'stop-announce', 'stop-handback', 'stop-history', 'stop-review-loop',
   'terminal-replace', 'terms', 'test-changed', 'tracker-check', 'tracker-guard', 'transcript', 'unattended-mark', 'unattended-shell',
   'unattended-write', 'usage', 'worktree',
 ].join('|');

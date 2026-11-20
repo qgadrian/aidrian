@@ -506,7 +506,7 @@ test('an implementing skill ends at its draft, and the orchestrator owns what fo
   assert.doesNotMatch(report, /orchestrator/, 'phase 8 names no caller: the caller owns what follows');
   assert.equal((close.match(/ends at (the|a) draft/g) ?? []).length, 1, 'the skill states its end once, in phase 8');
   assert.equal((report.match(/ends at (the|a) draft/g) ?? []).length, 1, 'that one statement is in phase 8');
-  assert.doesNotMatch(close, /Under the `orchestrator`/, 'the skill states no caller-conditional continuation');
+  assert.doesNotMatch(close, /Under the `orchestrator`/, 'the skill names no caller: a direct run alone gets its own continuation');
   assert.doesNotMatch(read('skills/issue-implement/references/hard-rules.md'), /run ends at a draft/);
 
   // The orchestrator keys on the skill's verdicts, so they stay pinned.
@@ -520,6 +520,75 @@ test('an implementing skill ends at its draft, and the orchestrator owns what fo
   const prSection = orchestration.slice(orchestration.indexOf('## 3. The pull request'));
   const step4 = prSection.match(/ 4\. (.*?) 5\. /)?.[1] ?? '';
   assert.match(step4, /`pr-review-loop`/, '§ 3 step 4, where the orchestrator continues, runs the review loop');
+});
+
+test('a direct run of an implementing skill goes on into the review loop, and a caller that runs its own loop keeps it', () => {
+  // A session that ran issue-implement itself stopped at the draft under reviewLoop "auto": phase 8 left what follows to a
+  // caller there was none of, and pr-write's "once any skill that ran it has ended" read the skill's report as the run's end.
+  const read = (rel) => readFileSync(path.join(PLUGIN, rel), 'utf8').replace(/\s+/g, ' ');
+  const section = (text, heading) => {
+    const start = text.indexOf(heading);
+    assert.notEqual(start, -1, heading);
+    const end = text.indexOf(' ## ', start + heading.length);
+    return text.slice(start, end === -1 ? undefined : end);
+  };
+  const close = read('skills/issue-implement/steps/phases-5-8-close.md');
+  const phase8 = section(close, '## Phase 8');
+  assert.match(phase8, /When no skill or agent above it runs the review loop, as on a direct run, the session owns what follows, and the run goes on after the report\./);
+  assert.match(phase8, /config\.json `github\.reviewLoop` `"auto"`, the default, the session runs the `pr-review-loop` skill on the pull request right away/);
+  assert.match(phase8, /as its own next step and not as a step of this skill/, 'the loop does not read itself as another skill\'s step');
+  assert.match(phase8, /marks the draft ready as `github\.markReady` says and, once it marked it ready, runs the `pr-auto-merge` skill, which merges only when `aidrian pr auto-merge <n>` exits 0/);
+  assert.match(phase8, /Under `"ask"`, the session offers the loop and runs it when the Human asks\./);
+  assert.match(phase8, /A caller that runs its own review loop keeps it, so the loop runs once\./);
+
+  // plan-implement runs phase 8 and never forks the engine, so it cites the continuation instead of copying it.
+  const plan = read('skills/plan-implement/SKILL.md');
+  assert.match(section(plan, '## After the draft'),
+    /Phase 8's end holds here, with this skill as the one run: on a direct run under `github\.reviewLoop` `"auto"` the session goes on into the `pr-review-loop` skill, its ready step, and the `pr-auto-merge` skill, which merges only when `aidrian pr auto-merge <n>` exits 0\./);
+  assert.match(plan, /This skill writes to the pull request only through the `pr-write` step and phase 7's integration review/);
+  assert.doesNotMatch(plan, /The run writes to the pull request only through/, 'plan-implement does not forbid the loop that follows');
+
+  assert.match(read('skills/issue-implement/SKILL.md'),
+    /Within this skill it never edits a repository file, never merges, and never closes the issue; on a direct run a merge comes only after the skill ends, from the review loop phase 8 names\./);
+  const directRun = /With no caller, as on a direct run, the skill's end names the session's next step, as `issue-implement`'s phase 8 does with the review loop\./;
+  assert.match(read('skills/skill-writer/references/checklist.md'), directRun);
+  assert.match(readFileSync(path.join(ROOT, 'docs/architecture.md'), 'utf8').replace(/\s+/g, ' '), directRun);
+  assert.match(read('skills/design-import/references/final-report.md'),
+    /Review the pull request `plan-implement` opens, which the review loop then runs on as config\.json `github\.reviewLoop` says\./);
+
+  const hardRules = read('skills/issue-implement/references/hard-rules.md');
+  const noMerge = hardRules.match(/\*\*No merge\.\*\*(.*?) - \*\*/)?.[1] ?? '';
+  assert.match(noMerge, /its caller, or the session itself on a direct run, owns what follows/);
+  assert.match(noMerge, /`pr-auto-merge` skill, run by the caller or, on a direct run, by the session's review loop/);
+
+  const write = read('skills/pr-write/SKILL.md');
+  assert.match(section(write, '## Then the review loop'),
+    /`"auto"`, the default: once this skill, and any skill that ran it, such as a top-level `issue-implement` or `plan-implement`, has ended,/,
+    'the top-level implementing skill is a skill that ran pr-write');
+  assert.match(readFileSync(path.join(ROOT, 'docs/config.md'), 'utf8'), /\| `github\.reviewLoop` \|[^\n]*a top-level `issue-implement` or `plan-implement`/);
+});
+
+test('a pull request pr-auto-merge refuses on a path goes to the Human in the final report, rated, and each route says so', () => {
+  // A direct run whose gate refused a protected path ended on "ready, not merged", and the merge only the Human could make
+  // was never asked for.
+  const read = (rel) => readFileSync(path.join(PLUGIN, rel), 'utf8').replace(/\s+/g, ' ');
+  const auto = read('skills/pr-auto-merge/SKILL.md');
+  const step2 = auto.slice(auto.indexOf('2. Run `aidrian pr auto-merge <n>`'), auto.indexOf('3. Read `../pr-merge-when-green'));
+  assert.match(step2, /When the line says `it changes "<path>"`, the gate stopped at its path check, before its author, comment, and review checks, so the pull request waits for the Human's review and merge\./);
+  assert.match(step2, /under a label for the Human such as `For <name>`, `needs your review and merge: #<n> touches <path>, which auto-merge never merges`/);
+  assert.match(step2, /how critical it is: blocking, high, medium, or low\./, 'the four ratings the hand-back check reads');
+  assert.match(step2, /A report that names the Human writes the name in place of "your", as in `needs <name>'s review and merge: …`\./, 'the named form');
+  assert.match(step2, /The Stop hook sends back a turn whose reports leave it out\./);
+  const route = /A `pr-auto-merge` stop on a path it never merges goes in the final report, as that skill's step 2 says\./;
+  const close = read('skills/issue-implement/steps/phases-5-8-close.md');
+  const phase8 = close.slice(close.indexOf('## Phase 8'));
+  assert.match(phase8, route);
+  assert.doesNotMatch(phase8, /orchestrator/, 'phase 8 still names no caller');
+  const plan = read('skills/plan-implement/SKILL.md');
+  assert.match(plan.slice(plan.indexOf('## After the draft'), plan.indexOf('## Rules')), route);
+  const write = read('skills/pr-write/SKILL.md');
+  assert.match(write.slice(write.indexOf('## Then the review loop')), /`pr-auto-merge`'s step 2 says how the final report hands the Human a path it refused\./);
+  for (const skill of ['pr-auto-merge', 'pr-write', 'plan-implement']) assert.ok(statSync(path.join(PLUGIN, 'skills', skill, 'SKILL.md')).size <= MAX_SKILL_BYTES, skill);
 });
 
 test('a calling skill such as autopilot owns what follows the implementing skill, so the review loop runs once', () => {

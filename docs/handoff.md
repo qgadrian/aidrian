@@ -313,7 +313,7 @@ to decide, and at the gate of a handoff by the background route, whose denial fa
 
 | Host | What it reads |
 | --- | --- |
-| Claude Code | In `auto` mode, auto mode's trusted repositories in the user settings, and the permission rules that allow a `git push` in the user and project settings: [Push permission in auto mode](providers/claude-code.md#push-permission-in-auto-mode) |
+| Claude Code | In `auto` mode, the permission rules that refuse, ask before, or allow a `git push` in the user and project settings, a deny or ask rule first, and auto mode's trusted repositories in the user settings: [Push permission in auto mode](providers/claude-code.md#push-permission-in-auto-mode) |
 | Codex | Nothing: `unknown`, so it never stops a run |
 
 Verified on Claude Code by `node --test` on fixtures (`test/push-preflight.test.mjs`,

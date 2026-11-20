@@ -3,14 +3,16 @@
 // permission mode a classifier judges each action against `autoMode` in the user settings, whose `environment` lists
 // the trusted repositories as prose; with no `environment`, or with "$defaults" in it, the defaults trust the working
 // repository and its remotes (code.claude.com/docs/en/auto-mode-config, read on 2026-11-19 with Claude Code 2.1.328).
-// The classifier ignores `autoMode` in project and local settings, so `autoMode` is read from the user file alone. A
-// narrow `permissions.allow` rule that allows a `git push`, such as `Bash(git push:*)`, approves the push before the
+// The classifier ignores `autoMode` in project and local settings, so `autoMode` is read from the user file alone. First
+// of all, a `permissions.deny` rule that matches the push the run makes refuses it, and a `permissions.ask` rule asks
+// before it, with no one there to answer in a run no Human attends: either answers `denied`, naming the rule, whatever
+// else the files say. A narrow `permissions.allow` rule that allows a `git push`, such as `Bash(git push:*)`, approves the push before the
 // classifier runs (code.claude.com/docs/en/permission-modes, read on 2026-11-19), so the rules of the user file and of
 // the project's `.claude/settings.json` and `.claude/settings.local.json` are read too: one that allows the push the run
 // makes answers `allowed`, and one for a narrower push, which may be that push, leaves `unknown` where the answer would
 // be `denied`. `denied` is a prediction of a prose classifier, given for one shape alone: a custom `environment` with no
-// "$defaults" that names this repository in no entry, and no rule that may allow a push. Every other shape it cannot
-// read answers `unknown`, and nothing here throws on one. It reads no network, starts no process, and
+// "$defaults" that names this repository in no entry, and no rule that may allow a push, or a deny or ask rule that
+// matches the push. Every other shape it cannot read answers `unknown`, and nothing here throws on one. It reads no network, starts no process, and
 // reads no file when loaded.
 
 import { closeSync, constants, existsSync, fstatSync, openSync, readSync } from 'node:fs';
@@ -140,14 +142,16 @@ function matchesAnyAfter(glob, prefix) {
 }
 
 // The globs the permission rule `rule` matches a shell command by, from `Bash(<pattern>)`: the pattern, where a final
-// `:*` is a trailing ` *`, and, for a trailing ` *`, the command before it too. None for any other rule, and none for an
-// empty pattern or one that starts with `*`, which auto mode drops from `permissions.allow` on entry, as it does bare
-// `Bash` and `Bash(*)`.
-function allowGlobs(rule) {
-  const shell = SHELL_RULE.exec(rule.trim());
+// `:*` is a trailing ` *`, and, for a trailing ` *`, the command before it too. None for any other rule or an empty
+// pattern. Bare `Bash` matches every command; in `permissions.allow` (`allow`), auto mode drops it on entry, as it does
+// `Bash(*)` and a pattern that starts with `*`, so none of those allows anything there.
+function shellGlobs(rule, { allow }) {
+  const trimmed = rule.trim();
+  if (trimmed === 'Bash') return allow ? [] : ['*'];
+  const shell = SHELL_RULE.exec(trimmed);
   if (!shell) return [];
   const pattern = shell[1].trim();
-  if (pattern === '' || pattern.startsWith('*')) return [];
+  if (pattern === '' || (allow && pattern.startsWith('*'))) return [];
   const glob = pattern.endsWith(':*') ? `${pattern.slice(0, -2)} *` : pattern;
   return glob.endsWith(' *') ? [glob, glob.slice(0, -2)] : [glob];
 }
@@ -204,6 +208,32 @@ function permissionRules(settings, key) {
   return isStrings(permissions[key]) ? permissions[key] : null;
 }
 
+// The longest rule a denial quotes; a longer one, or one with any character but printable ASCII, is named without it.
+const MAX_QUOTED = 200;
+const quoted = (rule) => (rule.trim().length <= MAX_QUOTED && /^[\x20-\x7e]+$/u.test(rule.trim()) ? `the rule \`${rule.trim()}\`` : 'a rule');
+
+// The denial of the first `permissions.deny` rule, then the first `permissions.ask` rule, in `sources`, that matches the
+// push the run makes, or null when none does. A deny rule refuses a matching command in every permission mode, and an
+// ask rule asks before it, which a run no Human attends has no one to answer; both come before any allow rule and before
+// auto mode's classifier (code.claude.com/docs/en/permissions, read on 2026-11-20). A file whose rules cannot be read
+// holds no rule here.
+function refusal(sources) {
+  for (const [key, does] of [['deny', 'refuses that push'], ['ask', 'asks before that push, and a run no Human attends has no one to answer']]) {
+    for (const { file, settings } of sources) {
+      const rule = permissionRules(settings, key)?.find((each) => coversPush(shellGlobs(each, { allow: false })));
+      if (rule === undefined) continue;
+      return {
+        answer: 'denied',
+        setting: `permissions.${key}`,
+        file,
+        why: `holds ${quoted(rule)}, which ${does}`,
+        fix: `removes that rule, or narrows it so that it matches no push to ${REMOTE}`,
+      };
+    }
+  }
+  return null;
+}
+
 // What auto mode's lists in the user settings `user` say of the repository `names` tests for: 'allowed', 'denied' when a
 // custom `environment` with no "$defaults" names it in no entry, or 'unknown' for any shape this cannot read.
 function environmentTrust(user, names) {
@@ -227,15 +257,21 @@ export function pushPermission({ repository, session, cwd, env = process.env, re
   const file = path.join(configDir(env), 'settings.json');
   // A relative config folder would be read from wherever this process runs, and a denial could not name its file.
   if (!path.isAbsolute(file)) return UNKNOWN;
-  const user = readSettings(file);
+  const user = { file, settings: readSettings(file) };
   // The project's settings are found from the session's folder; one that is not absolute would be read from wherever
   // this process runs, and is not read.
   const project = typeof cwd === 'string' && path.isAbsolute(cwd)
-    ? projectFolders(cwd).flatMap((folder) => PROJECT_FILES.map((name) => readSettings(path.join(folder, '.claude', name))))
+    ? projectFolders(cwd).flatMap((folder) => PROJECT_FILES.map((name) => path.join(folder, '.claude', name)))
+      .map((each) => ({ file: each, settings: readSettings(each) }))
     : null;
-  const allowRules = [user, ...(project ?? [])].map((settings) => permissionRules(settings, 'allow'));
-  const globs = (rules) => rules.flatMap(allowGlobs);
-  const trust = environmentTrust(user, names);
+  const sources = [user, ...(project ?? [])];
+  const refused = refusal(sources);
+  if (refused) return refused;
+  // A file whose deny or ask rules cannot be read may hold one that refuses the push.
+  if (sources.some(({ settings }) => permissionRules(settings, 'deny') === null || permissionRules(settings, 'ask') === null)) return UNKNOWN;
+  const allowRules = sources.map(({ settings }) => permissionRules(settings, 'allow'));
+  const globs = (rules) => rules.flatMap((rule) => shellGlobs(rule, { allow: true }));
+  const trust = environmentTrust(user.settings, names);
   if (trust === 'allowed' || allowRules.some((rules) => rules !== null && coversPush(globs(rules)))) return { answer: 'allowed' };
   if (trust !== 'denied' || project === null) return UNKNOWN;
   // A rule for a narrower push may be the very push the run makes, and one this cannot read may allow it.

@@ -12,6 +12,7 @@ import test from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { isWithin } from '../plugins/aidrian/lib/fs.mjs';
+import { GATE_CONFIG } from '../plugins/aidrian/lib/git.mjs';
 import { DEFAULT_REVIEWER } from '../plugins/aidrian/lib/pr-await-review.mjs';
 import { projectAt, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { runAwaitReview } from '../plugins/aidrian/lib/pr-await-review.mjs';
@@ -796,7 +797,9 @@ function gitCalls(t, act, line = '"$(pwd -P)" "$*"') {
   } finally {
     process.env.PATH = before;
   }
-  return readFileSync(log, 'utf8').trim().split('\n');
+  // Every plugin git call runs hardened (lib/git.mjs GATE_CONFIG): the log shows each call's own arguments after it.
+  const hardened = ` ${GATE_CONFIG.join(' ')}`;
+  return readFileSync(log, 'utf8').trim().split('\n').map((line) => line.replace(hardened, ''));
 }
 
 test('a checkout list git cannot answer stops a command, and lets a merge go on', (t) => {

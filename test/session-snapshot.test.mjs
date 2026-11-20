@@ -28,6 +28,12 @@ const SECTIONS = ['handoff', 'prs', 'lessons', 'worktrees', 'decisions', 'audits
 const CLEAN = /^[^\u0000-\u0009\u000b-\u001f\u007f-\u009f]*\n?$/u;
 
 const scratch = () => realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-snapshot-')));
+// The hooks' counts folder of a setup's state root, where the Stop hook keeps its marker (stopMarkerPath), made owner-only.
+const countsOf = ({ state }) => {
+  const counts = path.join(state, 'aidrian', 'hook-counts');
+  mkdirSync(counts, { recursive: true, mode: 0o700 });
+  return counts;
+};
 // No global or system git config: a developer's own, such as a url.<base>.insteadOf rewrite, would change what origin names.
 const GIT_CONFIG_NONE = { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
 const git = (cwd, ...args) => {
@@ -315,7 +321,8 @@ test('a named pipe at the marker path or as the transcript leaves handoff null, 
   const viaPipe = env.run(['--session', ID, '--transcript', pipe]);
   assert.equal(viaPipe.json.handoff, null);
   assert.ok(viaPipe.json.errors.includes('handoff'));
-  spawnSync('mkfifo', [path.join(env.temp, `aidrian-session-length-${ID}`)]);
+  countsOf(env);
+  spawnSync('mkfifo', [stopMarkerPath(ID, { env: env.env })]);
   const viaMarker = env.run(['--session', ID, '--transcript', transcript]);
   assert.equal(viaMarker.json.handoff, null);
   assert.ok(viaMarker.json.errors.includes('handoff'));
@@ -323,7 +330,8 @@ test('a named pipe at the marker path or as the transcript leaves handoff null, 
 });
 
 test('stopMarkerPath is the one marker path; the hook keeps no id pattern and renames over a symlink', { skip: !POSIX }, (t) => {
-  assert.equal(stopMarkerPath('abc-1'), path.join(tmpdir(), 'aidrian-session-length-abc-1'));
+  // In the hooks' counts folder of the state root, which only this user writes, never the shared temporary folder.
+  assert.equal(stopMarkerPath('abc-1', { env: { XDG_STATE_HOME: '/state' } }), path.join('/state', 'aidrian', 'hook-counts', 'aidrian-session-length-abc-1'));
   for (const id of ['../x', 'a b', '', null, 'x'.repeat(129)]) assert.equal(stopMarkerPath(id), null);
   for (const file of [path.join(ROOT, 'plugins/aidrian/scripts/hook-stop.mjs'), path.join(LIB, 'gate-snapshot.mjs')]) {
     assert.doesNotMatch(readFileSync(file, 'utf8'), /\[\\w-\]/u, `${path.basename(file)} keeps no session id pattern of its own`);
@@ -334,13 +342,14 @@ test('stopMarkerPath is the one marker path; the hook keeps no id pattern and re
   writeFileSync(transcript, turnsOf('handoff-cost')[4]);
   const target = path.join(env.base, 'target');
   writeFileSync(target, 'keep\n');
-  const marker = path.join(env.temp, `aidrian-session-length-${ID}`);
+  countsOf(env);
+  const marker = stopMarkerPath(ID, { env: env.env });
   symlinkSync(target, marker);
   assert.equal(stopHook(env, transcript).status, 2);
   assert.equal(readFileSync(target, 'utf8'), 'keep\n');
   assert.equal(lstatSync(marker).isFile(), true);
   assert.equal(statSync(marker).mode & 0o777, 0o600);
-  assert.deepEqual(readdirSync(env.temp), [path.basename(marker)], 'no temporary file is left');
+  assert.deepEqual(readdirSync(path.dirname(marker)).filter((name) => name.includes('aidrian-session-length')), [path.basename(marker)], 'no temporary file is left');
 });
 
 test('lessons, decisions, and audits count what their readers give; a marker outside the indexes counts no decision', (t) => {
@@ -499,7 +508,7 @@ test('a Stop marker past its 64 KiB cap is not read: the handoff section fails',
   const env = setup(t);
   const transcript = path.join(env.base, 'session.jsonl');
   writeFileSync(transcript, turnsOf('handoff-cost')[4]);
-  writeFileSync(path.join(env.temp, `aidrian-session-length-${ID}`), `${' '.repeat(64 * 1024)}{"lastRatio":0,"tokens":0,"compactions":0}\n`);
+  writeFileSync(path.join(countsOf(env), `aidrian-session-length-${ID}`), `${' '.repeat(64 * 1024)}{"lastRatio":0,"tokens":0,"compactions":0}\n`);
   const { json } = env.run(['--session', ID, '--transcript', transcript]);
   assert.equal(json.handoff, null);
   assert.ok(json.errors.includes('handoff'));
@@ -712,17 +721,17 @@ test('a value whose text passes the cap is not stored, but its attempt is, so th
 test('SessionEnd removes the marker only by stopMarkerPath', (t) => {
   const env = setup(t);
   const long = 'x'.repeat(129);
-  for (const id of [ID, long]) writeFileSync(path.join(env.temp, `aidrian-session-length-${id}`), '{}\n');
+  for (const id of [ID, long]) writeFileSync(path.join(countsOf(env), `aidrian-session-length-${id}`), '{}\n');
   const end = path.join(ROOT, 'plugins/aidrian/scripts/hook-session-end.mjs');
   for (const id of [ID, long]) spawnSync(process.execPath, [end], { input: JSON.stringify({ session_id: id, cwd: env.base }), cwd: env.base, env: env.env, encoding: 'utf8' });
-  assert.deepEqual(readdirSync(env.temp).filter((name) => name.startsWith('aidrian-session-length-')), [`aidrian-session-length-${long}`]);
+  assert.deepEqual(readdirSync(countsOf(env)).filter((name) => name.startsWith('aidrian-session-length-')), [`aidrian-session-length-${long}`]);
 });
 
 test('SessionEnd goes on to the session row when the marker cannot be removed', async (t) => {
   const env = setup(t);
   const transcript = path.join(env.base, 'session.jsonl');
   writeFileSync(transcript, turnsOf('handoff-cost')[4]);
-  const marker = path.join(env.temp, `aidrian-session-length-${ID}`);
+  const marker = path.join(countsOf(env), `aidrian-session-length-${ID}`);
   mkdirSync(marker);
   writeFileSync(path.join(marker, 'keep'), 'x');
   const end = path.join(ROOT, 'plugins/aidrian/scripts/hook-session-end.mjs');

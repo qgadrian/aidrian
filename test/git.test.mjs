@@ -1,12 +1,12 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { checkoutRoots, currentRoot, GIT_TIMEOUT_MS, isIgnored, isRefName, mainRoot, memoGit, REF_NAME_MAX_BYTES, repositoryCheckouts } from '../plugins/aidrian/lib/git.mjs';
+import { checkoutRoots, currentRoot, gateGit, GIT_TIMEOUT_MS, isIgnored, isRefName, mainRoot, memoGit, REF_NAME_MAX_BYTES, repositoryCheckouts } from '../plugins/aidrian/lib/git.mjs';
 
 // A repository with one commit, an ignored folder, and a worktree inside that folder.
 function repo(t) {
@@ -24,6 +24,15 @@ function repo(t) {
   mkdirSync(path.join(dir, 'src'));
   return { dir, worktree };
 }
+
+test('the gate\'s git, which makes a project run\'s attempt clones, runs no repository hook', (t) => {
+  const { dir } = repo(t);
+  writeFileSync(path.join(dir, '.git/hooks/post-checkout'), '#!/bin/sh\ntouch hook-ran\n', { mode: 0o755 });
+  assert.equal(gateGit(['checkout', '-q', '-b', 'other'], dir).status, 0);
+  assert.equal(existsSync(path.join(dir, 'hook-ran')), false);
+  execFileSync('git', ['-C', dir, 'checkout', '-q', 'main'], { stdio: 'pipe' });
+  assert.equal(existsSync(path.join(dir, 'hook-ran')), true, 'the hook runs for a git without the hardened settings');
+});
 
 test('the main root is the same from the main checkout, a subfolder, and a worktree; the current root is not', (t) => {
   const { dir, worktree } = repo(t);

@@ -7,8 +7,9 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { nameMatches } from '../plugins/aidrian/lib/agent-gates.mjs';
+import { TRACKERS } from '../plugins/aidrian/lib/trackers/index.mjs';
 import { fold } from '../plugins/aidrian/lib/lesson-inbox.mjs';
-import { judgeTrackerWrite, readTrackerValue, unlistedTool } from '../plugins/aidrian/lib/tracker-guard.mjs';
+import { bodyHash, judgeTrackerWrite, readsByName, readTrackerValue, runCallKind, runWriteRefusal, trackerOfEndpoint, trackerOfTool, unlistedTool } from '../plugins/aidrian/lib/tracker-guard.mjs';
 
 const PLUGIN = path.resolve(import.meta.dirname, '../plugins/aidrian');
 const MODULE = path.join(PLUGIN, 'lib/tracker-guard.mjs');
@@ -505,6 +506,7 @@ function project(t, settings = { version: 1, tracker }) {
     base,
     dir,
     temp,
+    counts: path.join(state, 'aidrian', 'hook-counts'),
     state,
     session,
     env,
@@ -786,7 +788,7 @@ const NO_READ_LANDED = 'this session was refused for no read of the connected wo
 const denyRows = ({ log }) => log().filter((row) => row.event === 'hook_deny');
 
 test('a batch of first writes is refused with its reason, adds no row and no block count, and files no lesson', (t) => {
-  const { inbox, log, session, temp, write } = project(t, TELEMETRY);
+  const { inbox, log, session, state, write } = project(t, TELEMETRY);
   for (let call = 0; call < 5; call += 1) {
     const refused = write();
     assert.equal(refused.status, 2);
@@ -794,15 +796,15 @@ test('a batch of first writes is refused with its reason, adds no row and no blo
     assert.match(refused.stderr, /Call mcp__x__get_workspace, then write again/);
   }
   assert.deepEqual(log().filter((row) => row.event === 'hook_deny'), []);
-  assert.equal(existsSync(path.join(temp, `aidrian-denials-${session}`)), false);
+  assert.equal(existsSync(path.join(state, 'aidrian', 'hook-counts', `aidrian-denials-${session}`)), false);
   assert.deepEqual(inbox(), []);
 });
 
 test('a session refused for no read whose read never lands writes one row at its end, and cleans up', (t) => {
   const refused = project(t, TELEMETRY);
-  const { end, inbox, session, temp, write } = refused;
+  const { counts, end, inbox, session, write } = refused;
   for (let call = 0; call < 3; call += 1) assert.equal(write({}, { agent_type: 'worker' }).status, 2);
-  const marker = path.join(temp, `aidrian-tracker-refused-${session}`);
+  const marker = path.join(counts, `aidrian-tracker-refused-${session}`);
   assert.equal(existsSync(marker), true);
   assert.deepEqual(denyRows(refused), [], 'nothing counts before the end');
 
@@ -811,7 +813,7 @@ test('a session refused for no read whose read never lands writes one row at its
   assert.deepEqual(rows.map((row) => [row.rule, row.tool, row.agent_type, row.session_id, row.reason]), [['tracker-guard', WRITE, 'worker', session, NO_READ_LANDED]]);
   assert.ok(NO_READ_LANDED.length <= 120);
   assert.equal(existsSync(marker), false);
-  assert.equal(existsSync(path.join(temp, `aidrian-denials-${session}`)), false, 'the recorder\'s count goes with the session');
+  assert.equal(existsSync(path.join(counts, `aidrian-denials-${session}`)), false, 'the recorder\'s count goes with the session');
   assert.deepEqual(inbox(), [], 'one block is no lesson');
 
   assertRuns(end());
@@ -848,7 +850,7 @@ test('a session with a recorded read writes no row at its end, whatever the read
     const before = denyRows(session).length;
     assertRuns(session.end());
     assert.equal(denyRows(session).length, before);
-    assert.equal(existsSync(path.join(session.temp, `aidrian-tracker-refused-${session.session}`)), false);
+    assert.equal(existsSync(path.join(session.counts, `aidrian-tracker-refused-${session.session}`)), false);
   }
 });
 
@@ -858,7 +860,7 @@ test('the row at a session\'s end respects the switches and goes to the project 
     assert.equal(off.write().status, 2);
     assertRuns(off.end());
     assert.deepEqual(denyRows(off), []);
-    assert.equal(existsSync(path.join(off.temp, `aidrian-tracker-refused-${off.session}`)), false);
+    assert.equal(existsSync(path.join(off.counts, `aidrian-tracker-refused-${off.session}`)), false);
   }
   const moved = project(t, TELEMETRY);
   assert.equal(moved.write().status, 2);
@@ -867,8 +869,9 @@ test('the row at a session\'s end respects the switches and goes to the project 
 });
 
 test('a refusal whose marker cannot be written is still refused', (t) => {
-  const { temp, write } = project(t, TELEMETRY);
-  rmSync(temp, { recursive: true });
+  const { counts, write } = project(t, TELEMETRY);
+  mkdirSync(path.dirname(counts), { recursive: true });
+  writeFileSync(counts, 'a plain file where the counts folder goes');
   const refused = write();
   assert.equal(refused.status, 2);
   assert.match(refused.stderr, /has not read the connected workspace/);
@@ -876,18 +879,19 @@ test('a refusal whose marker cannot be written is still refused', (t) => {
 
 test('session end still deletes and hands off when the refusal cannot be settled', async (t) => {
   const failures = [
-    ['a marker that cannot be read', ({ session, temp }) => {
-      const marker = path.join(temp, `aidrian-tracker-refused-${session}`);
+    ['a marker that cannot be read', ({ session, counts }) => {
+      const marker = path.join(counts, `aidrian-tracker-refused-${session}`);
       mkdirSync(marker);
       writeFileSync(path.join(marker, 'held'), '');
     }],
-    ['a marker that is no record', ({ session, temp }) => writeFileSync(path.join(temp, `aidrian-tracker-refused-${session}`), 'not json')],
+    ['a marker that is no record', ({ session, counts }) => writeFileSync(path.join(counts, `aidrian-tracker-refused-${session}`), 'not json')],
   ];
   for (const [label, arrange] of failures) {
     const failing = project(t, TELEMETRY);
-    const { base, end, log, session, temp } = failing;
+    const { base, counts, end, log, session } = failing;
+    mkdirSync(counts, { recursive: true });
     arrange(failing);
-    const length = path.join(temp, `aidrian-session-length-${session}`);
+    const length = path.join(counts, `aidrian-session-length-${session}`);
     writeFileSync(length, '{}\n');
     const transcript = path.join(base, 'transcript.jsonl');
     writeFileSync(transcript, JSON.stringify({ type: 'assistant', timestamp: '2026-11-04T10:00:00Z', message: { id: 'm1', model: 'claude-opus-5-5', usage: { input_tokens: 10, output_tokens: 5 }, content: [] } }));
@@ -900,14 +904,17 @@ test('session end still deletes and hands off when the refusal cannot be settled
 });
 
 test('a row that cannot be written at session end costs nothing else', (t) => {
-  const { end, session, state, temp, write } = project(t, TELEMETRY);
+  const { counts, end, session, state, write } = project(t, TELEMETRY);
   assert.equal(write().status, 2);
-  const length = path.join(temp, `aidrian-session-length-${session}`);
+  const length = path.join(counts, `aidrian-session-length-${session}`);
   writeFileSync(length, '{}\n');
-  writeFileSync(state, 'a plain file, so no state folder can be made under it');
+  // A plain file where the projects' state folders go, so no state folder can be made under it.
+  const projects = path.join(state, 'aidrian', 'projects');
+  rmSync(projects, { recursive: true, force: true });
+  writeFileSync(projects, 'a plain file, so no state folder can be made under it');
   assertRuns(end());
   assert.equal(existsSync(length), false);
-  assert.equal(existsSync(path.join(temp, `aidrian-tracker-refused-${session}`)), false);
+  assert.equal(existsSync(path.join(counts, `aidrian-tracker-refused-${session}`)), false);
 });
 
 test('every refusal but the routine one still counts: its rows, and the lesson at three in a session', (t) => {
@@ -1038,9 +1045,9 @@ test('a note that cannot be saved lets the call run, and a later call in the ses
 });
 
 test('session end forgets which tools the session noted', (t) => {
-  const { end, run, session, temp } = project(t);
+  const { end, run, session, state } = project(t);
   assertRuns(run(POST, { tool_name: UNLISTED }));
-  const folder = path.join(temp, `aidrian-denials-${session}`);
+  const folder = path.join(state, 'aidrian', 'hook-counts', `aidrian-denials-${session}`);
   assert.equal(existsSync(path.join(folder, `${UNLISTED}.noted`)), true);
   assertRuns(end());
   assert.equal(existsSync(folder), false);
@@ -1076,11 +1083,12 @@ test('session end deletes the record, of this session only, tracker on or off', 
 });
 
 test('a record session end cannot delete skips nothing: the session-length marker goes and the session row lands', async (t) => {
-  const { base, end, file, log, session, temp } = project(t, { version: 1, tracker, telemetry: { enabled: true } });
+  const { base, counts, end, file, log, session } = project(t, { version: 1, tracker, telemetry: { enabled: true } });
+  mkdirSync(counts, { recursive: true });
   // A folder at the record's path with a file in it: rmSync refuses that under any uid.
   mkdirSync(file(), { recursive: true });
   writeFileSync(path.join(file(), 'held'), '');
-  const marker = path.join(temp, `aidrian-session-length-${session}`);
+  const marker = path.join(counts, `aidrian-session-length-${session}`);
   writeFileSync(marker, '{}\n');
   const transcript = path.join(base, 'transcript.jsonl');
   writeFileSync(transcript, JSON.stringify({ type: 'assistant', timestamp: '2026-11-04T10:00:00Z', message: { id: 'm1', model: 'claude-opus-5-5', usage: { input_tokens: 10, output_tokens: 5 }, content: [] } }));
@@ -1092,4 +1100,222 @@ test('a record session end cannot delete skips nothing: the session-length marke
   for (const deadline = Date.now() + 15_000; !log().some((row) => row.event === 'session'); await sleep(25)) {
     if (Date.now() > deadline) assert.fail('the session row never landed');
   }
+});
+
+// A project run's sessions (runWriteRefusal), against a tracker that does not exist, so the rule names none: its adapter
+// says which tools and fields a run writes, which tool merges code, and which call marks a change ready.
+const runTracker = {
+  id: 'ticketbox',
+  name: 'Ticketbox',
+  servers: { any: ['ticketbox'], 'claude-code': [], codex: [] },
+  endpoints: ['mcp.ticketbox.example'],
+  readTool: 'site_info',
+  workspaceField: 'url',
+  writeVerbs: ['put_*', 'note_*', 'land_*', 'edit_change'],
+  team: { createFields: ['board'], keyFields: ['ticket'] },
+  unguardedRoutes: [],
+  run: {
+    issue: { tool: 'put_ticket', key: 'ticket', status: 'phase', label: 'tags', started: 'active', done: 'closed', fields: ['points', 'edits'], text: ['edits'], anchors: ['old'] },
+    comment: { tool: 'note_ticket', key: 'ticket', body: 'text' },
+  },
+  mergeVerbs: ['land_*'],
+  readyCalls: [{ tool: 'edit_change', field: 'state', values: ['ready'] }],
+};
+const child = { role: 'child', run: 'launch', issue: 'TB-1' };
+const owedBody = 'Project run launch: TB-1, attempt 1, merged.';
+const driver = { role: 'driver', run: 'launch', owed: [{ key: 'TB-1', status: 'closed', label: null, sha256: bodyHash(owedBody) }, { key: 'TB-2', status: null, label: 'needs-decision', sha256: bodyHash('b') }] };
+const runJudge = (writer, short, input, more = {}) => runWriteRefusal({ writer, tool: `mcp__ticketbox__${short}`, input, trackers: [runTracker], ...more })?.reason ?? null;
+
+test('an issue\'s session writes only its own issue, by its key, through the adapter\'s run tools and fields', () => {
+  assert.equal(runJudge(child, 'put_ticket', { ticket: 'TB-1', phase: 'active', points: 3 }), null);
+  assert.equal(runJudge(child, 'put_ticket', { ticket: 'TB-1', edits: [{ op: 'replace', old: '- [ ] export', new: '- [x] export' }] }), null);
+  assert.equal(runJudge(child, 'note_ticket', { ticket: 'TB-1', text: 'progress' }), null);
+  assert.match(runJudge(child, 'put_ticket', { ticket: 'TB-2', phase: 'active' }), /ticket is "TB-2", and an issue's session of the run launch writes only its own issue TB-1/u);
+  assert.match(runJudge(child, 'put_ticket', { board: 'TB', title: 'new' }), /it names no issue in ticket, which makes a new item/u);
+  assert.match(runJudge(child, 'put_ticket', { ticket: UUID, phase: 'x' }), /names the item by a UUID in ticket/u);
+  assert.match(runJudge(child, 'put_ticket', { ticket: 'TB-1', tags: ['x'] }), /put_ticket sets tags, which an issue's session/u);
+  assert.match(runJudge(child, 'put_ticket', { ticket: 'TB-1', description: 'all new' }), /put_ticket sets description/u, 'the whole body: only a patch');
+  assert.match(runJudge(child, 'note_ticket', { ticket: 'TB-1', text: 'x', parent: 'c-1' }), /note_ticket sets parent/u);
+  assert.match(runJudge(child, 'put_board', { board: 'TB' }), /put_board is not a write the run's tools make, and an issue's session of the run launch writes only its own issue TB-1/u);
+  assert.equal(runJudge(child, 'get_ticket', { ticket: 'TB-2' }), null, 'a read');
+  assert.equal(runWriteRefusal({ writer: child, tool: 'mcp__elsewhere__put_ticket', input: { ticket: 'TB-2' }, trackers: [runTracker] }), null, 'a server no tracker serves');
+});
+
+test('an issue\'s session sets only the started status, and writes plain text', () => {
+  assert.match(runJudge(child, 'put_ticket', { ticket: 'TB-1', phase: 'closed' }), /sets phase to "closed", and an issue's session sets only "active"/u);
+  for (const text of ['ping @lead', 'see [spec](https://x.example/a)', 'at evil.example/x', '![x](y.png)', '<b>bold</b>', 'hidden​mark', 'ref &#64;lead', 'www.example.org']) {
+    assert.match(runJudge(child, 'note_ticket', { ticket: 'TB-1', text }), /note_ticket sets text with a mention, link, address, image, HTML, or hidden character/u, text);
+    assert.match(runJudge(child, 'put_ticket', { ticket: 'TB-1', edits: [{ op: 'append', text }] }), /put_ticket sets edits with a mention/u, text);
+  }
+  assert.equal(runJudge(child, 'note_ticket', { ticket: 'TB-1', text: 'Two\n\nparagraphs, plain; v1.2 shipped.' }), null, 'white space and plain text pass');
+  assert.equal(runJudge(child, 'put_ticket', { ticket: 'TB-1', edits: [{ op: 'replace', old: 'see [spec](https://x.example/a)', new: 'see the spec' }] }), null, 'an anchor is not inserted text');
+  assert.match(runJudge(child, 'put_ticket', { ticket: 'TB-1', edits: [{ op: 'replace', old: 'x', new: 'see [spec](https://x.example/a)' }] }), /sets edits with a mention/u);
+  // Every string of an operation is text but the anchors: a key the adapter does not know, at any depth, is checked too.
+  for (const edit of [{ op: 'append', body: 'ping @lead' }, { op: 'insert', anchor: '## Notes', content: { lines: ['see https://evil.example/x'] } }, { op: 'replace', from: 'a', to: 'b', with: '<img src=x>' }, ['@lead']]) {
+    assert.match(runJudge(child, 'put_ticket', { ticket: 'TB-1', edits: [edit] }) ?? '', /sets edits with a mention/u, JSON.stringify(edit));
+  }
+  assert.equal(runJudge(child, 'put_ticket', { ticket: 'TB-1', edits: [{ op: 'move', anchor: 'see [x](https://y.example)', from: '@a', to: '@b', old: '<b>x</b>' }] }), null, 'anchors and the operation name are not inserted text');
+  assert.equal(runJudge(child, 'note_ticket', { ticket: 'TB-1', text: 'Updated `config.json` on `api.example.org`.' }), null, 'a file or host name in backticks');
+  assert.match(runJudge(child, 'note_ticket', { ticket: 'TB-1', text: 'Updated config.json.' }), /put a file or host name in backticks, such as `config\.json`/u);
+  assert.match(runJudge(child, 'note_ticket', { ticket: 'TB-1', text: 'run `rm -rf x`' }), /sets text with a mention/u, 'a code span around anything but one file or host name');
+});
+
+test('for an issue\'s session, the driver, and a held session, every call on a tracker server is a write unless its name reads', () => {
+  for (const short of ['mark_notification', 'frob_ticket', 'archive_all']) {
+    assert.match(runJudge(child, short, {}), /is not a write the run's tools make/u, short);
+    assert.match(runJudge(driver, short, {}), /is not a write the run's tools make/u, short);
+    assert.match(runJudge({ role: 'held', why: 'x' }, short, {}), /because x/u, short);
+    assert.equal(runJudge({ role: 'unattended' }, short, {}), null, `${short}: unattended outside a run`);
+    assert.equal(runJudge(null, short, {}), null, `${short}: attended`);
+  }
+  for (const short of ['get_ticket', 'list_tickets', 'site_info', 'search_tickets']) assert.equal(runJudge(child, short, {}), null, short);
+});
+
+test('the driver writes only the status, label, and comment body a report owes, and only on an issue that owes one', () => {
+  assert.equal(runJudge(driver, 'put_ticket', { ticket: 'TB-1', phase: 'closed' }), null);
+  assert.equal(runJudge(driver, 'note_ticket', { ticket: 'TB-1', text: owedBody }), null);
+  assert.equal(runJudge(driver, 'put_ticket', { ticket: 'TB-2', tags: ['needs-decision'] }), null);
+  assert.match(runJudge(driver, 'note_ticket', { ticket: 'TB-1', text: `${owedBody} ` }), /the comment on TB-1 is not the body `aidrian project report launch` printed/u);
+  assert.match(runJudge(driver, 'put_ticket', { ticket: 'TB-1', phase: 'canceled' }), /sets phase to "canceled" on TB-1, and `aidrian project report launch` owes "closed"/u);
+  assert.match(runJudge(driver, 'put_ticket', { ticket: 'TB-2', phase: 'closed' }), /put_ticket sets phase on TB-2/u, 'a status the report does not owe');
+  assert.match(runJudge(driver, 'put_ticket', { ticket: 'TB-1', points: 1 }), /sets points on TB-1/u);
+  assert.match(runJudge(driver, 'put_ticket', { ticket: 'TB-1' }), /put_ticket sets nothing on TB-1/u);
+  assert.match(runJudge(driver, 'note_ticket', { ticket: 'TB-3', text: owedBody }), /ticket is "TB-3", and the run launch's driver writes only what/u);
+  assert.match(runJudge(driver, 'put_ticket', { board: 'TB', title: 'x' }), /names no issue in ticket/u);
+  assert.match(runJudge(driver, 'put_board', { board: 'TB' }), /put_board is not a write the run's tools make, and the run launch's driver writes only what/u);
+  assert.match(runJudge({ ...driver, owed: [] }, 'note_ticket', { ticket: 'TB-1', text: owedBody }), /driver writes only what/u, 'recorded: nothing owed');
+});
+
+test('a tracker\'s merge tool is refused to every session, pointing at gh pr merge; a merge-named tool anywhere to every marked one', () => {
+  assert.match(runJudge(null, 'land_change', { change: '12' }), /land_change merges code through the tracker, past the merge guard\. Merge with `gh pr merge <number>`, which the merge guard judges/u, 'attended');
+  for (const writer of [child, driver, { role: 'unattended' }, { role: 'held', why: 'x' }]) {
+    assert.match(runJudge(writer, 'land_change', { change: '12' }), /merges code through the tracker.*only through the pr-auto-merge skill/u, writer.role);
+    const elsewhere = runWriteRefusal({ writer, tool: 'mcp__renamed_box__land_change', input: {}, trackers: [runTracker] });
+    assert.match(elsewhere?.reason ?? '', /land_change is named like a tool that merges, and a session no Human attends never calls one, on any server/u, `${writer.role}: a server no list names`);
+    assert.doesNotMatch(elsewhere?.reason ?? '', /through the tracker/u);
+  }
+  assert.equal(runWriteRefusal({ writer: null, tool: 'mcp__renamed_box__land_change', input: {}, trackers: [runTracker] }), null, 'attended, on a server no tracker is known on');
+  assert.equal(runJudge({ role: 'unattended' }, 'put_ticket', { ticket: 'TB-9' }), null);
+  assert.match(runJudge({ role: 'held', why: 'another session\'s start holds this one, which lapses within 5 minutes' }, 'note_ticket', { ticket: 'TB-1', text: 'x' }), /lapses within 5 minutes/u);
+});
+
+test('a tracker call that marks a change ready is refused to every session, pointing at gh pr ready', () => {
+  for (const writer of [null, child, driver, { role: 'unattended' }]) {
+    assert.match(runJudge(writer, 'edit_change', { change: '12', state: 'ready' }) ?? '', /edit_change marks a pull request ready through the tracker, past the ready hold\. Mark it ready with `gh pr ready <number>`/u, writer?.role ?? 'attended');
+  }
+  assert.equal(runJudge(null, 'edit_change', { change: '12', state: 'draft' }), null);
+});
+
+test('a server named otherwise in projectRun.mcpServers maps to its tracker by endpoint, and holds the child to its issue', () => {
+  const mcpServers = { tickets: { type: 'http', url: 'https://mcp.ticketbox.example/mcp' }, proxied: { command: 'npx', args: ['mcp-remote', 'https://mcp.ticketbox.example/sse'] }, other: { url: 'https://db.example/mcp' } };
+  assert.equal(trackerOfEndpoint(mcpServers.tickets, [runTracker]), runTracker);
+  assert.equal(trackerOfEndpoint(mcpServers.proxied, [runTracker]), runTracker);
+  assert.equal(trackerOfEndpoint(mcpServers.other, [runTracker]), null);
+  for (const server of ['tickets', 'proxied']) {
+    const reason = runWriteRefusal({ writer: child, tool: `mcp__${server}__put_ticket`, input: { ticket: 'TB-2' }, trackers: [runTracker], mcpServers })?.reason ?? '';
+    assert.match(reason, /ticket is "TB-2"/u, server);
+  }
+  assert.match(runWriteRefusal({ writer: child, tool: 'mcp__other__put_ticket', input: { ticket: 'TB-2' }, trackers: [runTracker], mcpServers })?.reason ?? '', /other, a server projectRun\.mcpServers lists, maps to no tracker/u, 'a listed server no tracker maps');
+  assert.equal(runWriteRefusal({ writer: child, tool: 'mcp__other__put_ticket', input: { ticket: 'TB-2' }, trackers: [runTracker], mcpServers, otherServers: ['other'] }), null, 'declared to reach no tracker');
+});
+
+// A tracker connection the run rule cannot map: a stdio server under a name no adapter knows, whose command reaches no
+// endpoint an adapter names, as a team might list Linear's own server.
+test('a listed server no tracker maps holds an issue\'s session, the driver, and a held session to calls that read by their name', () => {
+  const mcpServers = { issues: { command: 'npx', args: ['-y', 'linear-mcp'] }, docs: { command: 'npx', args: ['-y', 'docs-mcp'] } };
+  const judge = (writer, tool, more = {}) => runWriteRefusal({ writer, tool, input: { id: 'ENG-2', state: 'completed' }, mcpServers, ...more })?.reason ?? null;
+  for (const writer of [{ role: 'child', run: 'launch', issue: 'ENG-1' }, driver]) {
+    assert.match(judge(writer, 'mcp__issues__save_issue'), /save_issue does not say by its name that it reads, and issues, a server projectRun\.mcpServers lists, maps to no tracker.*list issues in projectRun\.nonTrackerServers when it reaches no tracker/u, writer.role);
+    assert.match(judge(writer, 'mcp__issues__archive'), /archive does not say by its name/u, `${writer.role}: any name that does not read`);
+    assert.equal(judge(writer, 'mcp__issues__get_issue'), null, `${writer.role}: a read by its name`);
+    assert.equal(judge(writer, 'mcp__issues__save_issue', { otherServers: ['issues'] }), null, `${writer.role}: declared to reach no tracker`);
+    assert.match(judge(writer, 'mcp__issues__save_issue', { otherServers: ['docs'] }), /issues, a server projectRun\.mcpServers lists/u, `${writer.role}: another server's declaration`);
+  }
+  // The child loads projectRun.mcpServers alone; the driver runs with the user's own servers, so it is held on any server
+  // projectRun.nonTrackerServers does not name.
+  assert.equal(judge({ role: 'child', run: 'launch', issue: 'ENG-1' }, 'mcp__unlisted__save_issue'), null, 'child: a server the run never listed');
+  assert.match(judge(driver, 'mcp__unlisted__save_issue'), /save_issue does not say by its name that it reads, and unlisted, a server of this session projectRun\.nonTrackerServers does not name, maps to no tracker/u, 'driver: a server the run never listed');
+  assert.equal(judge(driver, 'mcp__unlisted__get_issue'), null, 'driver: a read by its name there');
+  assert.equal(judge(driver, 'mcp__unlisted__save_issue', { otherServers: ['unlisted'] }), null, 'driver: a server declared to reach no tracker');
+  assert.match(judge({ role: 'held', why: 'x' }, 'mcp__issues__save_issue'), /because x/u);
+  assert.equal(judge({ role: 'unattended' }, 'mcp__issues__save_issue'), null, 'unattended outside a run');
+  assert.equal(judge(null, 'mcp__issues__save_issue'), null, 'attended');
+  assert.equal(runWriteRefusal({ writer: { role: 'child', run: 'launch', issue: 'ENG-1' }, tool: 'mcp__issues__merge_pr', input: {}, mcpServers })?.reason.includes('named like a tool that merges'), true, 'a merge name keeps its own refusal');
+});
+
+test('to a role the run rule holds, a write verb anywhere in a name makes it a write, and query is no read', () => {
+  const mcpServers = { issues: { command: 'npx', args: ['-y', 'linear-mcp'] } };
+  const strict = (short) => runCallKind({ tool: `mcp__issues__${short}`, mcpServers, strict: true })?.write ?? false;
+  for (const short of ['get_or_create_item', 'list_and_update', 'getOrCreateItem', 'findOrCreate', 'fetch-and-delete', 'search_then_add_label', 'query', 'query_issues', 'read.and.save']) {
+    assert.equal(strict(short), true, short);
+    assert.equal(readsByName(`mcp__issues__${short}`), false, `${short}: past the hook's time budget too`);
+    assert.match(runWriteRefusal({ writer: { role: 'child', run: 'launch', issue: 'ENG-1' }, tool: `mcp__issues__${short}`, input: {}, mcpServers })?.reason ?? '', /does not say by its name that it reads/u, short);
+  }
+  for (const short of ['get_issue', 'list_issues', 'getIssue', 'search_documentation', 'list_comments', 'get_issue_status', 'list_issue_labels', 'whoami', 'get_settings', 'list_closed_issues']) {
+    assert.equal(strict(short), false, short);
+    assert.equal(readsByName(`mcp__issues__${short}`), true, short);
+  }
+  // A tracker's own server keeps its adapter's read verbs, and the note for an attended session keeps its looser read.
+  assert.equal(runCallKind({ tool: 'mcp__ticketbox__get_or_create_ticket', trackers: [runTracker], strict: true }).write, true, 'on a tracker server');
+  assert.equal(runCallKind({ tool: 'mcp__ticketbox__get_ticket', trackers: [runTracker], strict: true }), null);
+});
+
+test('with the base branch unread, an issue\'s session and the driver are refused every call no tracker maps unless it reads, and a held session always', () => {
+  const unread = 'the base branch\'s config could not be read (git could not read the base branch\'s config.json)';
+  const child = { role: 'child', run: 'launch', issue: 'ENG-1' };
+  for (const writer of [child, driver]) {
+    assert.match(runWriteRefusal({ writer, tool: 'mcp__issues__save_issue', input: { id: 'ENG-2' }, unread })?.reason ?? '', /save_issue does not say by its name that it reads, and the run rule cannot tell which servers reach a tracker, since the base branch's config could not be read/u, writer.role);
+    assert.equal(runWriteRefusal({ writer, tool: 'mcp__issues__list_issues', input: {}, unread }), null, `${writer.role}: a read`);
+  }
+  assert.equal(runWriteRefusal({ writer: child, tool: 'mcp__issues__save_issue', input: { id: 'ENG-2' } }), null, 'child: read, and no list names it');
+  assert.ok(runWriteRefusal({ writer: driver, tool: 'mcp__issues__save_issue', input: { id: 'ENG-2' } }), 'driver: read, and no list names it, on a server the user loads');
+  assert.match(runWriteRefusal({ writer: child, tool: 'mcp__linear__save_issue', input: { id: 'ENG-2', state: 'started' }, unread })?.reason ?? '', /id is "ENG-2"/u, 'a known tracker server keeps its own rule');
+  assert.match(runWriteRefusal({ writer: { role: 'held', why: 'held here' }, tool: 'mcp__anything__send', input: {} })?.reason ?? '', /because held here/u, 'a held session reads no base branch');
+  assert.equal(runWriteRefusal({ writer: { role: 'held', why: 'held here' }, tool: 'mcp__anything__search', input: {} }), null);
+  assert.equal(runWriteRefusal({ writer: { role: 'unattended' }, tool: 'mcp__anything__send', input: {}, unread }), null, 'unattended outside a run');
+});
+
+test('the run rule reads the host\'s raw name, the base branch\'s servers and lists, and the working copy\'s lists', () => {
+  const raw = runWriteRefusal({ writer: child, tool: 'mcp__ticketbox__put_ticket', rawTool: 'ticketbox/put_ticket', input: { ticket: 'TB-2' }, trackers: [runTracker] });
+  assert.match(raw.reason, /ticket is "TB-2"/u);
+  const own = { provider: 'ticketbox', servers: ['acme-box'] };
+  assert.equal(trackerOfTool('mcp__acme-box__put_ticket', own, [runTracker]), runTracker, 'a server the base branch adds for its provider');
+  assert.equal(trackerOfTool('mcp__acme-box__put_ticket', null, [runTracker]), null);
+  assert.match(runWriteRefusal({ writer: child, tool: 'mcp__acme-box__put_ticket', input: { ticket: 'TB-2' }, tracker: own, trackers: [runTracker] }).reason, /TB-2/u);
+  const listed = runWriteRefusal({ writer: child, tool: 'mcp__custom__edit', input: {}, writeTools: ['mcp__custom__*'], trackers: [runTracker] });
+  assert.match(listed.reason, /edit is not a write the run's tools make/u, 'a write only a list names, on a server no adapter knows');
+  assert.equal(runWriteRefusal({ writer: child, tool: 'mcp__custom__edit', input: {}, trackers: [runTracker] }), null, 'unlisted and unknown: no write to judge');
+});
+
+test('the run rule judges a merge, a ready call, or a write, so the hook judges no read', () => {
+  const kind = (short, more = {}) => runCallKind({ tool: `mcp__ticketbox__${short}`, trackers: [runTracker], ...more });
+  assert.equal(kind('site_info'), null);
+  assert.equal(kind('get_ticket'), null);
+  assert.equal(kind('get_ticket', { strict: true }), null);
+  assert.equal(kind('frob_ticket'), null, 'not strict: only the lists');
+  assert.equal(kind('frob_ticket', { strict: true }).write, true);
+  assert.deepEqual(kind('put_ticket'), { adapter: runTracker, short: 'put_ticket', merge: null, ready: false, write: true, unscreened: false });
+  assert.equal(kind('land_change').merge, 'tracker');
+  assert.equal(runCallKind({ tool: 'mcp__other__land_change', trackers: [runTracker] }).merge, 'anywhere');
+  assert.equal(kind('edit_change', { input: { state: 'ready' } }).ready, true);
+  assert.equal(runCallKind({ tool: 'mcp__other__put_ticket', trackers: [runTracker] }), null);
+  assert.equal(runCallKind({ tool: 42, trackers: [runTracker] }), null);
+});
+
+test('the shipped tracker declares the run tools, statuses, merge verbs, and ready calls the run rule reads', () => {
+  for (const each of TRACKERS) {
+    if (each.run === undefined) continue;
+    for (const kind of ['issue', 'comment']) assert.ok(each.writeVerbs.some((verb) => nameMatches(verb, each.run[kind].tool)), `${each.id} ${kind}: its run tool is a write`);
+    for (const field of ['key', 'status', 'label', 'started', 'done']) assert.equal(typeof each.run.issue[field], 'string', field);
+    for (const field of ['key', 'body']) assert.equal(typeof each.run.comment[field], 'string', field);
+    assert.ok(!(each.run.issue.fields ?? []).includes('description'), 'an issue\'s session patches its body, never replaces it');
+    assert.ok((each.mergeVerbs ?? []).every((verb) => each.writeVerbs.some((write) => nameMatches(write, verb.replace(/\*$/u, 'x')))), `${each.id}: a merge verb is a write too`);
+    for (const call of each.readyCalls ?? []) assert.ok(each.writeVerbs.some((verb) => nameMatches(verb, call.tool)), call.tool);
+  }
+});
+
+test('the shipped tracker\'s read-only tools a first word does not name pass for an issue\'s session', () => {
+  const child = { role: 'child', run: 'launch', issue: 'ENG-1' };
+  for (const tool of ['extract_images', 'get_attachment', 'list_comments']) assert.equal(runWriteRefusal({ writer: child, tool: `mcp__linear__${tool}`, input: {} }), null, tool);
+  assert.match(runWriteRefusal({ writer: child, tool: 'mcp__linear__delete_comment', input: { id: 'c1' } })?.reason ?? '', /is not a write the run's tools make/u);
 });

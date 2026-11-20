@@ -3,6 +3,8 @@
 // State: the tests and the commands they spawn keep their state in a temporary folder, never in the developer's
 // `~/.local/state/aidrian`. A test that sets XDG_STATE_HOME itself wins.
 //
+// Git: an empty global config file and no system file, so no test reads the developer's git config.
+//
 // Temporary files: TMPDIR points inside that folder, so what the tests and the hooks they spawn write to the
 // temporary folder, such as a hook's block counts, goes there too; the process that made the folder deletes it when it
 // exits. Without this, every run left its files behind in the system's temporary folder.
@@ -40,5 +42,10 @@ if (!process.env.AIDRIAN_TEST_STATE) {
   mkdirSync(bin);
   writeFileSync(path.join(bin, 'gh'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
   process.env.PATH = `${bin}${path.delimiter}${process.env.PATH}`;
+  // The developer's git config is never read: an empty global file and no system file.
+  const gitconfig = path.join(state, 'gitconfig');
+  writeFileSync(gitconfig, '');
+  process.env.GIT_CONFIG_GLOBAL = gitconfig;
+  process.env.GIT_CONFIG_NOSYSTEM = '1';
   process.on('exit', () => rmSync(state, { recursive: true, force: true }));
 }

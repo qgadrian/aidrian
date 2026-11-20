@@ -177,6 +177,129 @@ In Codex, only `*` and `main` [agent gates](../hooks.md#agent-gates) are sure to
 - A call without `agent_id` counts as the main session's: `main` gates apply,
   and neither the config guard, the [`decisions-set` rule](../hooks.md#bash-rules), nor the [session's gates](../hooks.md#the-sessions-gates) does.
 
+## Project start
+
+`aidrian project start` can start an issue's session on Codex, but no live Codex has run it: the host declares it
+`verified: 'unverified'`, and a run starts it only where the default branch, on the forge and by its local ref, sets
+[`projectRun.unverifiedHosts`](../config.md#project-run). Every start then prints an `unverified:` line.
+
+- Codex is a confined host. Each attempt works in a fresh clone, never a linked worktree of the main checkout:
+  `<state>/runs/<run>/attempts/<issue>.<attempt>/` holds `work/`, the clone, `git/`, its own git folder, which borrows
+  the main checkout's objects read-only, `drop/`, owner-only, where the session hands its result over, and `cache/`,
+  owner-only, where its package managers keep their caches.
+  The first attempt cuts the issue's branch from the base tip; a later one fetches it from the forge.
+  The main repository never fetches from a clone, and the driver's `wait` removes an attempt's folder once its session ended.
+- The session runs `codex exec --json --sandbox workspace-write -c <override>... --cd <work>`, with `--add-dir` for exactly its git
+  folder, its drop folder, its `cache` folder, and the state work folders `plans`, `reviews`, `tmp`, and `dispatch`,
+  each a plain folder of the user directly in the state folder. No flag that bypasses the sandbox or the approvals is
+  ever passed.
+- The variables that put each package manager's cache and global store in the attempt's `cache` folder, the same as
+  on Claude Code ([Dependency installs](claude-code.md#dependency-installs) lists them), reach the session's sandboxed
+  commands alone: each is a `-c shell_environment_policy.set.<name>=<value>` override, which Codex injects into a
+  command's environment after its exclusions, never the `codex exec` process's own environment, which its hooks and
+  MCP servers inherit. `HOME` stays as it is. A user's `include_only` filter, or the `filters` that replace it, can
+  still remove them; an install then fails to write its cache outside the writable roots, and nothing reaches another
+  folder.
+  Its events go to `logs/<issue>.<attempt>.jsonl` in the run's folder.
+- Git cannot reach the main checkout from there: nothing under its `.git` is granted, the clone's origin is the
+  pinned forge URL, and work moves only through the forge. The session pushes with a full refspec and names the branch
+  to every forge command, as its prompt says.
+- Its `aidrian project result` writes `result.json` in the drop folder and prints `handed <issue> <status>`; it writes
+  no ledger row and calls no forge. The driver's `wait` reads the file without following a link, as a regular file of
+  the user with one link, checks every field again, and, for `merged` or `pr_open`, that the pull request is the
+  issue's own on the forge. Anything else ends the attempt `bad_result`.
+- Codex must run every hook of this plugin unasked: each handler hooks.json lists, of every event, needs a trusted
+  `[hooks.state]` entry for this plugin's id in `config.toml`, not turned off. Trust them in `/hooks` after each install
+  and update. `[sandbox_workspace_write] network_access = true` must be set, or the session could neither push nor
+  reach the forge. That switch alone opens every host, localhost too, so the start also turns on Codex's experimental
+  network proxy for sandboxed commands, `-c features.network_proxy.enabled=true`, with
+  `-c features.network_proxy.domains={ "<host>" = "allow", ... }` for exactly the forge's hosts and those of the
+  registries the base branch's [`projectRun.registries`](../config.md#project-run) lists. A host with no rule is
+  refused, so an empty list fails closed. Until live check 12 shows that a `-c` table override replaces the user's
+  table rather than merging with it, a `config.toml` that sets any `features.network_proxy` key, in any form, halts the
+  start, since a user allow rule could open a host the team never listed. No live run has checked the proxy (live check 12): a Codex that rejects
+  either override exits before it names its session, and the start stops on that first proof, says which setting was
+  refused, gives its attempt back, and halts the run. Install scripts a package runs run inside the sandbox, under its
+  writable roots. `writable_roots` must reach neither the main checkout's `.git`, the state root, the mark
+  folders, the [sign-off store](../review.md#merge-trust)'s folders, nor the runs folder; nor may `/tmp` or `$TMPDIR`,
+  which the sandbox also writes, unless `exclude_slash_tmp` or `exclude_tmpdir_env_var` is set true there. Each failure halts the start, and records nothing.
+- A start holds the session only after three proofs, each in a bounded wait: its session id in the first JSON event
+  within 30 seconds, its first tool call within 180 seconds, and the agent gate hook's beacon a few seconds after it.
+  A failed proof stops the process at once, gives the attempt back, and halts the run until the Human's own shell, or
+  another attended session that never drove the run, runs `aidrian project resume <run>`. Only a shell command, a file
+  change, or an MCP tool's call counts as a tool call; a `turn.failed` event before one names its cause.
+  A top-level `error` event does not end the wait: which of them are fatal is not shown yet, so the wait goes on
+  to a tool call, a `turn.failed`, or its limit.
+- The clone is no shared main checkout for the issue's own session, whose unattended mark names the run, the issue, and
+  the main checkout: its machine switches and decisions come from the run's main checkout, its own
+  `.aidrian.local.json` is never read, and the main-checkout rule lets the session edit and commit there. A hook refuses
+  every call in the clone while its own git config sets a key that makes git run a program, such as `core.fsmonitor`,
+  `gpg.program` with `log.showSignature`, or a credential helper, and every git call of the plugin runs with
+  fsmonitor, hooks, and signature display off.
+- A usage or rate limit is read from the run log alone (`logLimit` in `lib/hosts/codex-exec.mjs`): its last turn end,
+  only when it is a `turn.failed` whose message names one, as `You've hit your usage limit. ... try again in 2 hours 5
+  minutes.` or `... try again at 3:04 PM.`, or `exceeded retry limit, last status: 429 Too Many Requests`; never a
+  top-level `error` event, an item's output, or a message. Its reset time is read against the log's last write. No
+  Codex setting is known that continues a session once the limit resets, so the adapter declares no
+  `continuesAtLimit`: `wait` stops the session and the issue starts again after the pause. These come from Codex's
+  source, not a live run: until one shows them, a limit the reader misses ends the session with no result, or past
+  `issueHours` ([Project run](../config.md#project-run)).
+- A driver on Codex has no route to continue itself: Codex lists no handoff route, so `aidrian project preflight`
+  prints a `note handoff` line, and the driver keeps driving in its one session, which Codex compacts
+  ([Handoff](../handoff.md#a-project-run)). An issue's session starts no continuation on any host.
+- No judge's verdict stands for auto-merge on Codex ([Limits](#limits)), so an issue whose review stops at the round
+  cap does not merge on a waiver: its session reports the stop, as `aidrian pr waive --gate` prints it.
+- A session is known by its process: liveness and stop read the process table, and stop a pid only while its start
+  time is the one recorded. The table is read whole, up to 64 MiB of command lines, so a busy machine's listing still
+  finds a start by its folder. A session `wait` could not stop is named with how the Human stops it: the listing
+  `TZ=UTC ps -o pid=,lstart=,ucomm= -p <pid>`, which prints no arguments and the start time in UTC, as the ledger's
+  rows are, to the second, and `kill <pid>` only when that start time falls within the seconds of the attempt's two
+  start rows in the run's ledger, from the second of the first through the second of the last, since another process
+  may have taken the pid. A start that
+  recorded no process points to the attempt's run log instead, never to a process picked by its name.
+
+Before `verified` changes, a live Codex must show every one of these:
+
+1. A hard link from the workspace to a file outside it is refused.
+2. A write through a symlink to a file outside the writable roots is refused.
+3. Whether a `.git` folder or pointer in a writable root is writable, and whether `--add-dir` can grant one.
+4. `--add-dir` grants exactly the named folders, and no folder above or beside them.
+5. PreToolUse fires for shell, `apply_patch`, and MCP calls, with `session_id` equal to the `thread_id` of
+   `thread.started`.
+6. Hooks run outside the sandbox, so the beacon can be written in the state folder.
+7. What `network_access` covers: git over SSH and HTTPS, and `gh`.
+8. Whether `codex exec` loads a project's `.codex/config.toml` from a clone of a trusted repository.
+9. Which environment hook processes get.
+10. Which top-level `error` events are fatal, so a start may halt on them as it halts on `turn.failed`.
+11. With `projectRun.registries` listing `npm`, `npm ci` in the clone installs into the attempt's `cache` folder,
+    `echo $npm_config_cache` names it, nothing new appears in `~/.npm`, a hook and an MCP server of the session see
+    none of the variables, and the driver's `wait` removes the attempt's folder once the session ended; the same for
+    `pip`, `cargo`, `go`, and `bundler`. For a project with no code yet, each with its registry listed and a sweep
+    check after it: `npm create vite@latest`, `npx create-next-app`, `pnpm create` and `pnpm dlx` through corepack,
+    `yarn create`, `uv init && uv add`, `python -m venv` then `pip install`, `cargo new && cargo add`, and
+    `go mod init && go get`.
+12. `features.network_proxy` with `domains` allow rules holds `git push`, `gh`, and an install to the listed hosts
+    under `codex exec --sandbox workspace-write`, refuses an unlisted host and localhost, and Codex accepts both
+    overrides; and, with a user `config.toml` holding an allow rule for an unlisted host under
+    `[features.network_proxy.domains]`, whether the start's `-c` table replaces it, so that host is refused. Until it
+    does, a Codex session's network is held by an unverified proxy alone, and a user proxy setting halts the start.
+13. What a usage limit and a rate limit leave in the `codex exec --json` log, so `logLimit` reads the real record.
+14. After the session replaces its attempt's `cache` folder with a link, an `apply_patch` through the link is refused.
+    Claude Code's per-start sandbox proof checks the same from inside the session, and that a `CLAUDE_ENV_FILE` line
+    reaches the sandboxed shell alone ([The sandbox proof](claude-code.md#the-sandbox-proof)); a Codex start runs no
+    such proof, so this check stands in for it.
+
+Codex residuals, each open until the live checks hold:
+
+- Until live check 12 holds, a sandboxed command may reach any host, localhost included, if the network proxy does
+  not hold as its reference says.
+- A sandboxed command reads every file of the user that the workspace-write sandbox does not hide, credential stores
+  included, such as `~/.ssh`, `~/.npmrc`, and `~/.yarnrc.yml`: Codex has no read denial the start can pass, unlike
+  Claude Code's `denyRead`. The publish commands the agent gate hook refuses, as on Claude Code, keep a session from
+  publishing with a token it read; a script that does stays the accepted residual.
+- The keep files of `drop` and `cache` are not denied here: a session may remove either folder and put a link in its
+  place, which the agent gate hook then refuses to write through.
+
 ## Session ids
 
 Read in Codex's source at `rust-v0.166.0` on 2026-11-18, not live:
@@ -200,3 +323,6 @@ Read in Codex's source at `rust-v0.166.0` on 2026-11-18, not live:
   So `install-agents.mjs` writes no sandbox into a role.
 - A read-only agent is told so in its instructions, and nothing on Codex enforces it.
 - The session's own sandbox binds every agent in it, such as `codex --sandbox read-only`.
+- No hook writes a `dispatch` row with the agent id of a subagent Codex spawns, so the adapter declares no
+  `capabilities.judgeDispatch`: under the [unattended waiver](../config.md#unattended-waiver), no judge's verdict stands
+  for `aidrian pr auto-merge` on Codex, and `aidrian pr waive --gate` exits 1 and says so.

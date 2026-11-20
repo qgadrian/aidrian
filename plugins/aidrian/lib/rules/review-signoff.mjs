@@ -14,12 +14,16 @@
 // `<flow>/*` for every --accept of the flow, `<flow>/signoff`, or `stage:<name>/signoff` for --stage), with a chosen option that starts with "Approve". The
 // host writes that answer, not the agent; a push changes the head, so it asks again. Without such a transcript the
 // command stays the Human's to run. Any word the shell builds at run time, a repeated flag, and --last get no such route: the long form does the same.
+// A subagent, and a session no Human attends, get no answer route: the sign-off also writes the sign-off store
+// (lib/review/merge-trust.mjs), which only a main session the Human attends writes.
 // The repository is approvalTarget's: `--repo <owner>/<name>` when the command names one of this checkout's remotes, else
 // the one repository the checkout's remotes name. A checkout whose remotes name several needs the `--repo`.
 
 import { aidrianArgs, walkCommands } from '../shell-lex.mjs';
 import { findProject } from '../project.mjs';
 import { givenRepo, originRepo, remoteRepos, repoName } from '../remotes.mjs';
+import { droveRun } from '../run-driver.mjs';
+import { readUnattendedMark } from '../unattended-mark.mjs';
 import { readTranscript, transcriptAnswers } from './review-extend.mjs';
 
 // What every in-session ask route says, as a clause and as a sentence: a Human away from the session, such as on a
@@ -131,20 +135,45 @@ export function answered(words, answers, repo) {
   return /^\s*approve\b/iu.test(matching.at(-1)?.answer ?? '');
 }
 
-// The deny reason for `command`, or null. On only inside a project. `input` is the hook payload, for its transcript.
-export function check(command, { cwd = process.cwd(), input = {} } = {}) {
+// The deny for a sign-off asked by a subagent, or by a session no Human attends: neither may write the sign-off store
+// (lib/review/merge-trust.mjs), which a merge no Human asks for reads as the Human's word, so no answer opens it.
+export const UNATTENDED_REASON =
+  'Blocked: `aidrian pr signoff` is the Human\'s sign-off, and it writes the sign-off store, which a merge no Human asks for reads as the Human\'s word, ' +
+  'so only a main session the Human attends runs it: never a subagent, a session no Human attends, or a project run\'s driver, whatever an answer says. ' +
+  'Stop and report the sign-off the review asks for; the Human runs the command the review printed in a session they attend, or in their own shell.';
+
+// The deny reason for `command`, or null. On only inside a project. `input` is the hook payload, for its transcript, its
+// agent id, and the host's session id. `unattendedMark` reads the session's unattended mark (lib/unattended-mark.mjs),
+// asked only for a sign-off that records: with one, or from a subagent, the sign-off is refused with no answer route.
+export function check(command, { cwd = process.cwd(), input = {}, unattendedMark = () => readUnattendedMark(input?.session_id), drives = null } = {}) {
   const project = findProject(cwd);
-  if (!project) return null;
+  // A session that drove a project run signs off nothing, even after the run's end: the run's sign-offs come from a
+  // separate session the Human attends.
+  const driver = drives ?? (() => droveRun(input?.session_id));
+  // Who may not record a sign-off wherever the call runs, read before the project, so a folder that is none, such as a
+  // git folder of its own, makes no hole: a subagent, a session no Human attends, and a run's driver.
+  let held;
+  const barred = () => (held ??= (typeof input?.agent_id === 'string' && input.agent_id !== '') || Boolean(unattendedMark()) || driver());
   for (const { invocation, unread } of walkCommands(command, null)) {
-    if (unread !== undefined && /\bpr\s+signoff\b/u.test(unread)) return REASON;
+    if (unread !== undefined && /\bpr\s+signoff\b/u.test(unread)) {
+      if (barred()) return UNATTENDED_REASON;
+      if (project) return REASON;
+      continue;
+    }
     const words = aidrianArgs(invocation);
     if (!words) continue;
     // A subcommand the shell builds at run time cannot be read, so it may be a sign-off.
-    if (words[0]?.dynamic || (words[0]?.text === 'pr' && words[1]?.dynamic)) return REASON;
+    if (words[0]?.dynamic || (words[0]?.text === 'pr' && words[1]?.dynamic)) {
+      if (barred()) return UNATTENDED_REASON;
+      if (project) return REASON;
+      continue;
+    }
     // `--check` records nothing (lib/review-gate.mjs runSignoff), and the command takes no value that starts with `--`,
     // so a plain word `--check` is always the dry run: an agent may try a command before it hands it to the Human. A
     // dynamic word is not: `printf …`--check may expand to a value that swallows it, or to nothing.
     if (words[0]?.text === 'pr' && words[1]?.text === 'signoff' && !words.some((word) => !word.dynamic && word.text === '--check')) {
+      if (barred()) return UNATTENDED_REASON;
+      if (!project) continue;
       const answers = transcriptAnswers(readTranscript(input?.transcript_path));
       if (!answers.length || !answered(words, answers, approvalRepo(project, command, cwd))) return REASON;
     }

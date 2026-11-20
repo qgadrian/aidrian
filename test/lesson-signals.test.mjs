@@ -36,7 +36,9 @@ function project(t, config = { version: 1 }) {
   const all = () => lessons(inboxPath(proj));
   const plugin = () => lessons(pluginInboxPath());
   const hook = (script, input, extra = {}) => spawnSync(process.execPath, [path.join(SCRIPTS, script)], { input: JSON.stringify({ cwd: dir, ...input }), encoding: 'utf8', env: { ...env, ...extra } });
-  return { dir, temp, proj, all, plugin, hook };
+  // The hooks' counts folder in that state root (lesson-signals.mjs hookCountsFolder), never the temporary folder.
+  const counts = path.join(env.XDG_STATE_HOME, 'aidrian', 'hook-counts');
+  return { dir, temp, counts, proj, all, plugin, hook };
 }
 
 test('each signal names its key, tier, and target; a plugin agent is the plugin\'s to fix', () => {
@@ -125,12 +127,12 @@ test('blocks that land at the same time all count, and exactly one of them recor
 });
 
 test('the session-end hook deletes the session`s block counts and no other session`s', (t) => {
-  const { dir, temp, hook } = project(t);
-  for (let i = 0; i < REPEATED_DENIALS; i += 1) noteDenial({ session_id: 'ending', cwd: dir }, 'git-amend', { dir: temp });
-  noteDenial({ session_id: 'ending', cwd: dir }, 'process-kill', { dir: temp });
-  noteDenial({ session_id: 'ending-2', cwd: dir }, 'git-amend', { dir: temp });
-  const left = () => readdirSync(temp).filter((name) => name.startsWith('aidrian-denials-'))
-    .flatMap((folder) => readdirSync(path.join(temp, folder)).map((name) => `${folder}/${name.replace(/\.main\.[0-9a-f]{16}/u, '')}`)).sort();
+  const { dir, counts, hook } = project(t);
+  for (let i = 0; i < REPEATED_DENIALS; i += 1) noteDenial({ session_id: 'ending', cwd: dir }, 'git-amend');
+  noteDenial({ session_id: 'ending', cwd: dir }, 'process-kill');
+  noteDenial({ session_id: 'ending-2', cwd: dir }, 'git-amend');
+  const left = () => readdirSync(counts).filter((name) => name.startsWith('aidrian-denials-'))
+    .flatMap((folder) => readdirSync(path.join(counts, folder)).map((name) => `${folder}/${name.replace(/\.main\.[0-9a-f]{16}/u, '')}`)).sort();
   assert.deepEqual(left(), ['aidrian-denials-ending-2/git-amend', 'aidrian-denials-ending/git-amend', 'aidrian-denials-ending/git-amend.recorded', 'aidrian-denials-ending/process-kill']);
   assert.equal(hook('hook-session-end.mjs', { session_id: 'ending' }).status, 0);
   assert.deepEqual(left(), ['aidrian-denials-ending-2/git-amend']);
@@ -357,7 +359,7 @@ const SESSION_TASKS = [
 ];
 
 test('a subagent that stops with a background task it started still running is sent back at each stop, up to the cap; ending anyway is a plugin lesson', (t) => {
-  const { dir, temp, all, plugin, hook } = project(t);
+  const { dir, counts, all, plugin, hook } = project(t);
   const transcript = childTranscript(dir);
   const stop = (active, tasks = SESSION_TASKS, agent = 'a1') => hook('hook-subagent-stop.mjs', {
     session_id: 's1', agent_id: agent, agent_type: 'fix-1027', agent_transcript_path: transcript, last_assistant_message: 'Waiting for the push.',
@@ -398,7 +400,7 @@ test('a subagent that stops with a background task it started still running is s
   assert.equal(plugin()[0].seen, 1, 'a stop with nothing of its own running adds no occurrence');
 
   // A count the hook cannot store ends every stop after the first of a turn: nothing could count the next one.
-  mkdirSync(path.join(temp, 'aidrian-child-send-backs-a9'));
+  mkdirSync(path.join(counts, 'aidrian-child-send-backs-a9'), { recursive: true });
   assert.deepEqual([stop(false, SESSION_TASKS, 'a9').status, stop(true, SESSION_TASKS, 'a9').status], [2, 0]);
 });
 

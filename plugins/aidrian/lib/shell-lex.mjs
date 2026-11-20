@@ -595,6 +595,21 @@ export function changesVariable(invocation, name) {
   return words.some((token) => token.dynamic || token.text === name);
 }
 
+// Every variable readInvocation's { program, args, environment } changes for what it runs, as changesVariable reads a
+// change: each by its name, and `*` for one it cannot name, such as `env -i`, a `sudo` reset, or an `unset` or `export`
+// of a word built from a variable.
+export function changedVariables({ program, args = [], environment = [] }) {
+  const out = environment.map((change) => (typeof change.name === 'string' ? change.name : '*'));
+  let words = [];
+  if (program === 'builtin' && (DECLARERS.has(args[0]?.text) || args[0]?.text === 'unset')) words = args.slice(1);
+  else if (DECLARERS.has(program) || program === 'unset') words = args;
+  for (const token of words) {
+    if (token.dynamic) out.push('*');
+    else if (!token.text.startsWith('-')) out.push(token.text.split('=')[0]);
+  }
+  return out;
+}
+
 // sudo's environment reset after one of its option words: none for -E or a bare --preserve-env, which keep it all;
 // --preserve-env=LIST adds the names it lists to `keep`, and a list the rule cannot read keeps none.
 function afterPreserve(reset, { text, dynamic }, option) {

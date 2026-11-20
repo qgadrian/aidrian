@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { GATE_CONFIG } from '../plugins/aidrian/lib/git.mjs';
 import { noteFrom, openStore, storeNames } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { originRepository } from '../plugins/aidrian/lib/session-links-writer.mjs';
@@ -79,7 +80,9 @@ function setup({ branch = 'main', remotes = { upstream: 'https://github.com/acme
   const hop = (child, parent, at = Date.now()) => noteFrom(store, child, { slug: 'task', chain: 1, brief: path.join(store.handoffs, '2026-11-17-task.md'), route: 'clear', parent }, { now: at });
   const lines = (log) => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []);
   const ghCalls = () => lines(ghLog);
-  const gitCalls = () => lines(gitLog);
+  // Each git call's own arguments: the plugin runs every one with the hardened settings first (lib/git.mjs GATE_CONFIG).
+  const plain = (args) => (GATE_CONFIG.every((each, i) => args[i] === each) ? args.slice(GATE_CONFIG.length) : args);
+  const gitCalls = () => lines(gitLog).map((call) => ({ ...call, args: plain(call.args) }));
   const variables = () => ghCalls().filter((call) => call.input).map((call) => JSON.parse(call.input).variables);
   return { base, dir, state, env, run, answer, ledger, hop, folder, projectState, store, ghCalls, gitCalls, variables };
 }

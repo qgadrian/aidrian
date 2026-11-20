@@ -8,6 +8,9 @@
 //                              a background hop's adds { tree, done, stalls }, the progress it starts from;
 //                              `parent`, the session that handed off, is optional, and only the snapshot reads it
 //   started-<session>.json     { sha256, slug, brief, chain, id, session, name, cwd, at } a background start it made
+// A project run's start (lib/project-run-gate.mjs) starts a session from no brief: its floor's `brief` is null, and its
+// start record has `sha256` and `brief` null and `project`, { run, issue, attempt }, in their place.
+//   claim-<session>.json       { at, kept }       a gate run's claim on starting a session for it (claimStart)
 //   continued-<sha256>.md      the bytes of a brief that passed, as the background session it started reads them
 //   ending-<session>.json      { shell, id, next, host_pid | own, at }   a session that ends itself once its turn ends,
 //                              so the terminal of the shell `shell` opens the background session `id`, whose full id is
@@ -55,8 +58,8 @@ export const ENDING_WINDOW = 30 * 60 * 1000;
 // How long a record that a terminal follows a background session holds: a hop's session rarely runs longer.
 export const FOLLOW_AGE = 12 * 60 * 60 * 1000;
 // How long each kind of file lives: a read past it ignores the file, and the sweep deletes it.
-const AGES = { armed: DAY, ready: DAY, checked: DAY, tasks: DAY, taken: DAY, started: DAY, from: 30 * DAY, gone: 30 * DAY, continued: 30 * DAY, ending: ENDING_WINDOW, follow: FOLLOW_AGE };
-const KIND = /^(armed|ready|checked|tasks|taken|started|from|gone|continued|ending|follow)-/u;
+const AGES = { armed: DAY, ready: DAY, checked: DAY, tasks: DAY, taken: DAY, started: DAY, claim: DAY, from: 30 * DAY, gone: 30 * DAY, continued: 30 * DAY, ending: ENDING_WINDOW, follow: FOLLOW_AGE };
+const KIND = /^(armed|ready|checked|tasks|taken|started|claim|from|gone|continued|ending|follow)-/u;
 // The highest chain a floor may hold. A floor is never read against session.handoff.maxChain: a floor above the limit of
 // the config that reads it is stricter, never void, so a lower maxChain in a worktree cannot drop it.
 export const CHAIN_CEILING = 10_000;
@@ -71,10 +74,10 @@ const MODE = /^[A-Za-z]{1,32}$/u;
 // The names of the files the store writes, and of its temporary files: the sweep deletes nothing else.
 const SESSION_PART = String.raw`[\w-]{1,128}`;
 const BRIEF_PART = String.raw`\d{4}-\d{2}-\d{2}-[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.md`;
-const STORE_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|tasks|started|from|gone|ending|follow)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
+const STORE_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|tasks|started|claim|from|gone|ending|follow)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
 // The names of the files whose forgery would arm or deliver a continuation: lib/handoff-guard.mjs refuses a subagent's
 // write of one in any folder it cannot place.
-export const ARMING_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|gone|started)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
+export const ARMING_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|gone|started|claim)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
 const TEMPORARY = /^\.(.+)\.\d+\.[0-9a-f]{12}\.tmp$/u;
 // No read follows a symlink, and none waits on a FIFO or a device that has no writer.
 const NO_FOLLOW = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
@@ -124,7 +127,8 @@ const foreign = (stat, uid) => Number.isInteger(uid) && stat.uid !== uid;
 // Both checks hold only where the system has user ids: Windows has none, and Node reports its writable folders with the
 // other-write bit set, so there the mode tells nothing.
 // A folder that is not there, or cannot be read, gives null: the store's own checks then refuse what they cannot read.
-// lib/session-folder.mjs holds its state folder, and every folder above it, to a stricter rule (heldFolder).
+// lib/project-run.mjs runPlace holds a project run's folders to it too, and lib/session-folder.mjs holds its state folder,
+// and every folder above it, to a stricter rule (heldFolder).
 export function looseFolder(dir, uid) {
   if (!Number.isInteger(uid)) return null;
   let stat;
@@ -229,12 +233,26 @@ export const floorProgress = (floor) => (floor && !noProgress(floor) && isProgre
 export const floorFits = ({ chain, done = 0 }) => whole(chain, 0, CHAIN_CEILING) && whole(done, 0, CHAIN_CEILING);
 
 // A chain floor as the store reads it: its progress fields are not read here (floorProgress), so a floor whose progress
-// has another shape still holds its chain and route.
+// has another shape still holds its chain and route. Its brief is the absolute path of a brief of its slug, or null for
+// a session a project run started from no brief.
 const isFrom = (value) => isObject(value) && CONTINUE_ROUTES.includes(value.route) && typeof value.slug === 'string'
-  && SLUG.test(value.slug) && whole(value.chain, 0, CHAIN_CEILING) && briefOf(value.brief, value.slug) && Number.isFinite(value.at);
+  && SLUG.test(value.slug) && whole(value.chain, 0, CHAIN_CEILING) && (value.brief === null || briefOf(value.brief, value.slug)) && Number.isFinite(value.at);
 
-const isStarted = (value) => isObject(value) && typeof value.sha256 === 'string' && SHA256.test(value.sha256)
-  && typeof value.slug === 'string' && SLUG.test(value.slug) && briefOf(value.brief, value.slug) && whole(value.chain, 0, CHAIN_CEILING)
+// The run, issue key, and attempt of a project run's start, as lib/project-run.mjs holds them. Kept here, since that
+// file imports this one; test/project-start-guard.test.mjs holds the copies equal.
+export const RUN_PART = /^[a-z0-9][a-z0-9-]{0,63}$/u;
+export const ISSUE_PART = /^(?:[A-Z][A-Z0-9]{0,15}-)?[1-9][0-9]{0,8}$/u;
+const isProjectStart = (value) => isObject(value) && Object.keys(value).length === 3 && typeof value.run === 'string' && RUN_PART.test(value.run)
+  && typeof value.issue === 'string' && ISSUE_PART.test(value.issue) && whole(value.attempt, 1, 100);
+
+// What a start record holds of what it started from: a checked brief, by its sha256 and path; or, for a project run's
+// start, no brief and the run, issue, and attempt.
+const startedFrom = (value) => (value.project === undefined
+  ? typeof value.sha256 === 'string' && SHA256.test(value.sha256) && briefOf(value.brief, value.slug)
+  : value.sha256 === null && value.brief === null && isProjectStart(value.project));
+
+const isStarted = (value) => isObject(value) && typeof value.slug === 'string' && SLUG.test(value.slug) && startedFrom(value)
+  && whole(value.chain, 0, CHAIN_CEILING)
   && typeof value.id === 'string' && SESSION_ID.test(value.id) && (value.session === null || (typeof value.session === 'string' && SESSION_ID.test(value.session)))
   && (value.name === null || (typeof value.name === 'string' && PLAIN_NAME.test(value.name)))
   && typeof value.cwd === 'string' && path.isAbsolute(value.cwd) && !hasControl(value.cwd) && Number.isFinite(value.at)
@@ -444,15 +462,118 @@ const floorsOf = (store, session, now, names) => floorFiles(store, session, name
 // Records that `session` started a background session from the brief whose bytes hash to `sha256`: { sha256, slug,
 // brief, chain, id, session, name, cwd, mode }, where `id` is the id the gate names it by, `session` its full id or null,
 // `name` a plain name or null, and `mode` the permission mode it started in, null when the host's default, or left out
-// when the host does not say. Returns the file, or null when the store is refused or the value has a wrong shape.
+// when the host does not say. A project run's start passes `sha256` and `brief` null and `project`, { run, issue,
+// attempt }. Returns the file, or null when the store is refused or the value has a wrong shape.
 export function noteStarted(store, session, started, { now = Date.now() } = {}) {
-  const value = { sha256: started.sha256, slug: started.slug, brief: started.brief, chain: started.chain, id: started.id, session: started.session ?? null, name: started.name ?? null, cwd: started.cwd, ...(started.mode === undefined ? {} : { mode: started.mode }), at: now };
+  const value = {
+    sha256: started.sha256, slug: started.slug, brief: started.brief, chain: started.chain, ...(started.project === undefined ? {} : { project: started.project }),
+    id: started.id, session: started.session ?? null, name: started.name ?? null, cwd: started.cwd, ...(started.mode === undefined ? {} : { mode: started.mode }), at: now,
+  };
   return isStarted(value) ? writeMarker(store, sessionFile('started', session), value) : null;
 }
 
-// The background start `session` made in the last day, or null.
-export function readStarted(store, session, { now = Date.now() } = {}) {
-  return readMarker(store, sessionFile('started', session), { now, field: 'at', shape: isStarted });
+// The background start `session` made in the last day, or null. `window` reads one made longer ago, while the sweep has
+// not removed it, as a project run walks the chain of an issue's sessions.
+export function readStarted(store, session, { now = Date.now(), window } = {}) {
+  return readMarker(store, sessionFile('started', session), { now, field: 'at', shape: isStarted, ...(window ? { window } : {}) });
+}
+
+// readStarted's record with the modification time of its file: { record, mtimeMs }, or null. A project run moves its
+// driver's custody on a start record dated, by both, after the row that made that session the driver.
+export function readStartedDated(store, session, { now = Date.now() } = {}) {
+  const record = readStarted(store, session, { now });
+  if (!record) return null;
+  try {
+    const stat = lstatSync(path.join(store.dir, sessionFile('started', session)));
+    return stat.isFile() ? { record, mtimeMs: stat.mtimeMs } : null;
+  } catch {
+    return null;
+  }
+}
+
+// How long a claim of a gate run that is starting a session holds: past the host's longest start and listing, so a run
+// that died lets the next one start once it lapses.
+export const CLAIM_AGE = 10 * 60 * 1000;
+// How long a claim whose content cannot be read yet counts as one being written; older, it counts as kept.
+const CLAIM_WRITE = 5 * 1000;
+
+// Takes the claim of `session` on starting a session, as one file made only when none is there: { claimed: true }, or
+// { busy } when it cannot: `running` while another run's claim holds, `kept` while a claim kept after a start whose
+// outcome is unknown holds (keepClaim), and `unknown` when the store is refused or the claim cannot be made or read.
+// A claim holds CLAIM_AGE from its file's modification time, a kept one a day, and one dated in the future holds too;
+// a lapsed one is removed and the claim taken again once. The caller removes it with dropClaim.
+// Removing a lapsed claim is not atomic: two runs that find the same lapsed claim in the same instant may each remove
+// the other's new one. That is accepted: it needs a run that died 10 minutes ago, and the start record still holds.
+export function claimStart(store, session, { now = Date.now() } = {}) {
+  const name = sessionFile('claim', session);
+  if (store.refused || !name) return { busy: 'unknown' };
+  const file = path.join(store.dir, name);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      mkdirSync(store.dir, { recursive: true, mode: 0o700 });
+      writeFileSync(file, `${JSON.stringify({ at: now, kept: false })}\n`, { flag: 'wx', mode: 0o600 });
+      return { claimed: true };
+    } catch (error) {
+      if (error.code !== 'EEXIST') return { busy: 'unknown' };
+    }
+    const held = claimHeld(store, file, now);
+    if (held) return { busy: held };
+    rmSync(file, { force: true });
+  }
+  return { busy: 'running' };
+}
+
+// Whether the claim of `session` holds now, without taking it: 'kept', 'running', or 'unknown', as claimStart's `busy`,
+// or null when no claim holds. A gate asks it before work a refused start would leave behind, such as a worktree.
+export function claimBusy(store, session, { now = Date.now() } = {}) {
+  const name = sessionFile('claim', session);
+  if (store.refused || !name) return 'unknown';
+  return claimHeld(store, path.join(store.dir, name), now);
+}
+
+// Whether the claim file `file` still holds: 'kept', 'running', 'unknown' for one that is no regular file of this user,
+// or null when it lapsed. Content it cannot read or check counts as a run's claim being written for CLAIM_WRITE, and as
+// a kept one after that, so a claim no read can check fails closed for a day: a file of MARKER_CAP bytes or more, text
+// that is no JSON, and a value that is not a plain object whose `kept` is a boolean, and whose `starting`, when there,
+// is one too, such as `null` or a list.
+function claimHeld(store, file, now) {
+  let stat;
+  try {
+    stat = lstatSync(file);
+  } catch (error) {
+    return error.code === 'ENOENT' ? null : 'unknown';
+  }
+  if (!stat.isFile() || foreign(stat, store.uid)) return 'unknown';
+  const age = now - Math.floor(stat.mtimeMs);
+  let value;
+  try {
+    value = stat.size < MARKER_CAP ? JSON.parse(readFileSync(file, 'utf8')) : undefined;
+  } catch {
+    value = undefined;
+  }
+  if (!isClaim(value)) value = age > CLAIM_WRITE ? { kept: true } : {};
+  if (value.kept !== true) return age <= CLAIM_AGE ? 'running' : null;
+  if (value.starting === true && age <= CLAIM_AGE) return 'running';
+  return age <= DAY ? 'kept' : null;
+}
+
+// Whether `value` is a claim as claimStart and keepClaim write it.
+const isClaim = (value) => isObject(value) && typeof value.kept === 'boolean' && (value.starting === undefined || typeof value.starting === 'boolean');
+
+// Keeps the claim of `session` for a day: after a start whose outcome is unknown, or a session that started and could not
+// be held or stopped, so no later run of `session` starts another beside it. `starting` marks one kept as the start
+// begins, which reads as a run's claim for CLAIM_AGE and as kept after it. Returns the file, or null.
+export function keepClaim(store, session, { now = Date.now(), starting = false } = {}) {
+  return writeMarker(store, sessionFile('claim', session), { at: now, kept: true, ...(starting ? { starting: true } : {}) });
+}
+
+// Removes the claim of `session`. Never throws.
+export function dropClaim(store, session) {
+  try {
+    remove(store, sessionFile('claim', session));
+  } catch {
+    // Gone already: the claim lapses with its age.
+  }
 }
 
 const idOrNull = (value) => value === null || (typeof value === 'string' && SESSION_ID.test(value));

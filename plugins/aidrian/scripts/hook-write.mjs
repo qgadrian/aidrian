@@ -7,6 +7,7 @@
 import path from 'node:path';
 
 import { loadConfig } from '../lib/config.mjs';
+import { anchorClones } from '../lib/attempt-clone.mjs';
 import { block, runHook } from '../lib/hook-io.mjs';
 import { isIgnored } from '../lib/git.mjs';
 import { findProject } from '../lib/project.mjs';
@@ -15,6 +16,8 @@ import { checkTool } from '../lib/rules/main-checkout.mjs';
 const MAX_REPORTED = 10;
 
 await runHook(async (input) => {
+  // An attempt clone is linked only for the session the payload names (lib/attempt-clone.mjs).
+  anchorClones({ session: input.session_id });
   const reason = checkTool(input);
   if (reason) await block(input, 'main-checkout', reason);
   const drift = await manifestDrift(input);

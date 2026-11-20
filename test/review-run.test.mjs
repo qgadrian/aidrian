@@ -20,6 +20,7 @@ import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { emptyState, HELD_LINE, heldRevision, readLocalState, recordFile, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
 import { judgeMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
+import { capProblem } from '../plugins/aidrian/lib/review/waiver.mjs';
 import { check as checkSignoff } from '../plugins/aidrian/lib/rules/review-signoff.mjs';
 import { loadTable } from '../plugins/aidrian/lib/finding-disposition.mjs';
 import { runIngest, runSignoff } from '../plugins/aidrian/lib/review-gate.mjs';
@@ -462,9 +463,19 @@ test('the round cap with extraRounds off: the last round goes to the final stage
   recordPass(r.project, { pr: 7, repo: 'o/r', pass: last.dispatch[0].pass, head: last.head, reviewer: 'code-reviewer', findings: 1, fixed: 0 });
   const capped = await r.step({ exec: clean });
   assert.deepEqual([capped.status, capped.open[0].open], ['round_limit', 1], 'a fix needs a new head, and there is no round left');
+  // The outcome keeps what stopped it, for a judge's waiver: the flow left unsigned, and one open finding counted and not
+  // listed, so none may stand.
+  const cause = readLocalState(r.project, 7).outcome.cap;
+  assert.deepEqual([cause.head, cause.reviewed, cause.counted, cause.itemized, cause.flows, cause.unrun, cause.bot], [capped.head, capped.head, 1, false, ['booking'], [], false]);
+  assert.match(capProblem(readLocalState(r.project, 7), capped.head) ?? '', /flow booking has an invariant violated, unverified, or unsigned/u);
+  assert.equal(stateFromComment(r.comments[0].body, 7).outcome.cap, undefined, 'the posted copy keeps no cause');
   r.write('src/booking/a.js', '3\n');
-  r.commit();
+  const pushed = r.commit();
   assert.equal((await r.step({ exec: clean })).status, 'round_limit');
+  // A fix no round reviewed: the cause is the last round's, on the head before.
+  const unreviewed = readLocalState(r.project, 7).outcome.cap;
+  assert.deepEqual([unreviewed.head, unreviewed.reviewed, unreviewed.counted, unreviewed.itemized, unreviewed.unsigned], [pushed, capped.head, 1, false, ['booking']]);
+  assert.match(capProblem(readLocalState(r.project, 7), pushed) ?? '', /flow booking has an invariant violated/u);
 });
 
 test('a failing reviewer is incomplete, then stuck after three attempts; a quota is not a failure', async (t) => {
@@ -3475,4 +3486,67 @@ test('a step that errs on one repository notes the error on its own record, neve
   assert.ok(upstream.rounds.length <= 1, 'with none of origin`s rounds');
   assert.deepEqual(upstream.pending.map((entry) => entry.id), [], 'and none of the entries origin owes: the step`s writes merged in no other record`s');
   assert.equal(readFileSync(recordFile(r.project, 7), 'utf8'), before, 'origin`s record is untouched');
+});
+
+// Two flows, booking answered by the local stage and pay by the independent model alone, to the last of two rounds:
+// round 1 ends fix_required on one open local finding, a fix is pushed, and in round 2 the independent model gives pay
+// `payVerdict` and the code reviewer lists `item` open. Returns the repository and the step at the cap.
+async function capOnLocal(t, { payVerdict, item }) {
+  const flows = { booking: { files: ['src/booking/**'] }, pay: { files: ['src/pay/**'], require: ['independent-model'] } };
+  const r = repo(t, { baseConfig: { version: 1, github: { maxReviewRounds: 2, extraRounds: 'off' }, review: { flows } }, change: (write) => (write('src/booking/a.js', '1\n'), write('src/pay/a.js', '1\n')) });
+  const verdicts = (pay) => async () => ({ status: 'done', findings: [], verdicts: [{ flow: 'booking', invariant: 'unspecified', verdict: 'holds', evidence: 'src/booking/a.js:1' }, { flow: 'pay', invariant: 'unspecified', verdict: pay, evidence: 'src/pay/a.js:1' }], dropped: [] });
+  const one = await r.step({ exec: verdicts('holds') });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: one.dispatch[0].pass, head: one.head, reviewer: 'code-reviewer', findings: 1, fixed: 0, verdictsText: holdsAll(one.dispatch[0], 'src/booking/a.js:1') });
+  assert.equal((await r.step({ exec: verdicts('holds') })).status, 'fix_required');
+  r.write('src/booking/a.js', '2\n');
+  r.commit();
+  const last = await r.step({ exec: verdicts(payVerdict) });
+  assert.equal(last.status, 'dispatch', 'round 2 ran the independent stage first, then asks the code reviewer');
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: last.dispatch[0].pass, head: last.head, reviewer: 'code-reviewer', findingsText: JSON.stringify([item]), verdictsText: holdsAll(last.dispatch[0], 'src/booking/a.js:1') });
+  const capped = await r.step({ exec: verdicts(payVerdict) });
+  assert.deepEqual([capped.status, capped.stage], ['round_limit', 'local'], 'the cap is judged at the local stage');
+  return { r, capped, verdicts };
+}
+const localItem = (severity) => ({ title: 'A name shadows the import', file: 'src/booking/a.js', line: 1, severity, likelihood: 'routine', affects: 'users', state: 'open' });
+
+test('the cap`s cause holds every flow left unheld, not only the judged stage`s: an independent-only violation refuses on the head and the next', async (t) => {
+  const { r, capped, verdicts } = await capOnLocal(t, { payVerdict: 'violated', item: localItem('low') });
+  assert.deepEqual(capped.flows ?? [], [], 'the local stage answers for booking alone');
+  const cause = readLocalState(r.project, 7).outcome.cap;
+  assert.deepEqual([cause.flows, cause.items.map((each) => [each.severity, each.stage]), cause.unrun], [['pay'], [['low', 'local']], []]);
+  assert.match(capProblem(readLocalState(r.project, 7), capped.head) ?? '', /flow pay has an invariant violated, unverified, or unsigned/u);
+  // A fix pushed past the cap: the round's whole cause, kept on it, is read again.
+  r.write('src/booking/a.js', '3\n');
+  const pushed = r.commit();
+  assert.equal((await r.step({ exec: verdicts('violated') })).status, 'round_limit');
+  const after = readLocalState(r.project, 7);
+  assert.deepEqual([after.outcome.cap.head, after.outcome.cap.reviewed, after.outcome.cap.unsigned], [pushed, capped.head, ['pay']]);
+  assert.match(capProblem(after, pushed) ?? '', /flow pay has an invariant violated/u);
+  assert.ok(stateFromComment(r.comments[0].body, 7).rounds.every((round) => !('cap' in round)), 'the posted copy keeps no round cause');
+});
+
+test('a verdict may stand on a real two-stage cap whose last round left one listed medium local finding', async (t) => {
+  const { r, capped } = await capOnLocal(t, { payVerdict: 'holds', item: localItem('medium') });
+  const state = readLocalState(r.project, 7);
+  assert.deepEqual([state.outcome.cap.flows, state.outcome.cap.unrun, state.outcome.cap.itemized], [[], [], true]);
+  assert.equal(capProblem(state, capped.head), null);
+});
+
+test('a verdict may stand on a real single-stage cap: one medium finding of the exec reviewer in each round, on the cap and the next pushed head', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1, github: { maxReviewRounds: 2, extraRounds: 'off' } }, change: (write) => write('src/app.js', '1\n') });
+  const finding = async () => ({ status: 'done', findings: [{ title: 'Refund total unchecked', file: 'src/app.js', line: 1, severity: 'medium', likelihood: 'routine', affects: 'users', cost: 'bounded', state: 'open' }], verdicts: [], dropped: [] });
+  assert.equal((await r.step({ exec: finding })).status, 'fix_required');
+  r.write('src/app.js', '2\n');
+  r.commit();
+  const capped = await r.step({ exec: finding });
+  assert.equal(capped.status, 'round_limit');
+  const state = readLocalState(r.project, 7);
+  assert.deepEqual([state.outcome.cap.itemized, state.outcome.cap.unrun, state.outcome.cap.flows, state.outcome.cap.items.map((each) => each.severity)], [true, [], [], ['medium']]);
+  assert.equal(capProblem(state, capped.head), null);
+  r.write('src/app.js', '3\n');
+  const pushed = r.commit();
+  assert.equal((await r.step({ exec: finding })).status, 'round_limit');
+  const again = readLocalState(r.project, 7);
+  assert.equal(again.outcome.cap.reviewed, capped.head);
+  assert.equal(capProblem(again, pushed), null, 'the fix no round reviewed: the last round`s medium finding decides');
 });

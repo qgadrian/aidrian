@@ -435,16 +435,21 @@ Each step answers `unknown` when it cannot go on:
    `autoMode.allow`, when present, not a list of strings: `unknown`.
 7. `allowed` when `environment` holds `"$defaults"`, or an `environment` entry names the repository, or an `allow`
    entry names the repository and holds the word `push`, in any case, as in `pushes` or `git push`.
-8. `unknown` when a `permissions.allow` rule may allow a narrower push, which may be the very push the run makes: one
+8. `unknown` when an `environment` entry is one the matchers cannot read: an entry is read when it holds a host name,
+   such as `git.example.com`, alone or followed by an owner or a repository, with no letter, digit, `_`, `.`, or `-`
+   on either side: labels of letters, digits, and `-` joined by dots, the last of two or more letters. Prose that holds
+   none, such as `"All repositories of our organisation"`, `"Our GitHub organisation"`, or `"Trusted repo: acme/other"`,
+   may trust the remote in words no matcher reads, so a denial never stands beside it.
+9. `unknown` when a `permissions.allow` rule may allow a narrower push, which may be the very push the run makes: one
    that matches `git push` followed by some text, such as `Bash(git push origin main)`, `Bash(git push upstream:*)`,
    `Bash(git push --force:*)`, or `Bash(git push -u origin:*)`, but not `Bash(git status)`, `Bash(git pushall)`, or
    `Bash(git:* push)`. Also `unknown` for a `cwd` that is not absolute, and for a file whose `permissions.allow` is not
    a list of strings.
-9. Otherwise `denied`: `autoMode.environment` in that file replaces the default trusted repositories, with no
-   `"$defaults"` in its list, and names this remote in no entry. The fix it gives adds `"$defaults"` to that list, or an
-   entry such as `"Trusted repo: github.com/acme/widget"`.
+10. Otherwise `denied`: `autoMode.environment` in that file replaces the default trusted repositories, with no
+    `"$defaults"` in its list, and names this remote in no entry, though each entry names some host. The fix it gives
+    adds `"$defaults"` to that list, or an entry such as `"Trusted repo: github.com/acme/widget"`.
 
-An entry names the repository `github.com/acme/widget`, compared in lower case, when it holds either of:
+An entry names the repository `github.com/acme/widget`, compared in lower case, when it holds any of:
 
 - `acme/widget`, the path after the host, with no letter, digit, `_`, `.`, or `-` before it, and no letter, digit,
   `_`, or `-` after it: `acme/widget.git` and `github.com/acme/widget)` name it, and `acme/widget-site` does not.
@@ -452,6 +457,13 @@ An entry names the repository `github.com/acme/widget`, compared in lower case, 
   before it, and after it no letter, digit, `_`, or `-`, no `.` followed by one of those, and no `/` followed by one of
   those or a `.`: `github.com/acme and all repos under it`, `github.com/acme.` at the end of a sentence, and
   `github.com/acme/*` name it, and `github.com/acme/other`, `github.com/acme/.github`, and `github.com/acme.io` do not.
+  The scp-style `github.com:acme` names it the same way.
+- `github.com`, the host alone, for every repository there, as in `"Trusted source control: git.example.com"` for a
+  remote on `git.example.com`, with no letter, digit, `_`, `.`, or `-` before it, and after it, past a port such as
+  `:443`, no letter, digit, `_`, or `-`, no `.` followed by one of those, and no `/` or `:` followed by one of those or
+  a `.`, which would narrow it to some owner: `github.com`, `GitHub.com.` at the end of a sentence,
+  `https://github.com`, and `github.com/*` name it, and `enterprise.github.com`, `github.com.example.io`,
+  `github.com/other`, and `git@github.com:other/repo` do not.
 
 Read on 2026-11-19 from the [auto mode configuration](https://code.claude.com/docs/en/auto-mode-config),
 [settings](https://code.claude.com/docs/en/settings), [permissions](https://code.claude.com/docs/en/permissions), and
@@ -472,8 +484,9 @@ verification. Four assumptions follow from the references:
 - `soft_deny` and `hard_deny` are never read: no pattern over prose says whether one forbids a push.
 
 Limits: managed settings and a `--settings` value can add `autoMode` entries the user file does not show, and an entry
-that names the remote another way, such as an organisation by its name with no host, reads as naming nothing; either
-can answer `denied` where the classifier would allow the push, and the fix still works. The other way round, some
+that names some host and also trusts the remote in prose, such as `"Our GitHub organisation, and gitlab.example.com"`,
+reads as naming another host only; either can answer `denied` where the classifier would allow the push, and the fix
+still works. A word that reads as a host name, such as `Node.js` or `README.md`, makes its entry one the matchers read. The other way round, some
 entries that name another repository answer `allowed`: one on another host whose path is the same, such as
 `gitlab.example.com/acme/widget`, a name that goes on past a `.`, such as `acme/widget.site`, and an `allow` entry
 phrased as a refusal, such as `Never push to github.com/acme/widget`; the run then starts as it would without the

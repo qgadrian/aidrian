@@ -594,7 +594,6 @@ test('Claude Code in auto mode answers the push permission from auto mode\'s tru
     ['in another case, closed by a bracket', trusting(['Trusted repo: (GitHub.com/Acme/Widget)']), 'allowed'],
     ['a URL', trusting(['Remote: https://github.com/acme/widget']), 'allowed'],
     ['an allow entry that names it and holds push', trusting(['Source control: gitlab.example.com/other'], ['Git Pushes to github.com/acme/widget are fine']), 'allowed'],
-    ['no entry names a repository', trusting(['Company: Acme builds widgets']), 'denied'],
     ['only another remote is trusted', trusting(['Trusted repo: github.com/acme/other']), 'denied'],
     ['a longer repository name', trusting(['Trusted repo: github.com/acme/widget-site']), 'denied'],
     ['a longer organisation name', trusting(['Trusted repo: github.com/acme-corp/widget']), 'denied'],
@@ -621,6 +620,41 @@ test('Claude Code in auto mode answers the push permission from auto mode\'s tru
       assert.deepEqual(read, { answer }, name);
     }
   }
+});
+
+// An entry that trusts the remote's whole host, such as "Trusted source control: git.example.com", trusts the remote.
+// `denied` from the environment needs every entry to be one the matchers read, naming some host, and none naming this
+// remote; prose that names no host may trust it in words no matcher reads, so the answer is then unknown.
+test('Claude Code trusts a host-wide entry, and answers unknown, never denied, beside an entry it cannot read', (t) => {
+  const cases = [
+    ['the host alone', ['Trusted source control: github.com'], 'allowed'],
+    ['the host in another case, ending a sentence', ['Source control is GitHub.com.'], 'allowed'],
+    ['the host as a URL', ['Source control: https://github.com'], 'allowed'],
+    ['the host with a port', ['Source control: github.com:443'], 'allowed'],
+    ['the host with a glob for every path', ['Source control: github.com/*'], 'allowed'],
+    ['the host with a path to this owner, scp-style', ['Source control: git@github.com:acme'], 'allowed'],
+    ['another host only', ['Trusted source control: gitlab.example.com'], 'denied'],
+    ['a longer host', ['Trusted source control: xgithub.com'], 'denied'],
+    ['a subdomain of the host', ['Trusted source control: enterprise.github.com'], 'denied'],
+    ['the host as the start of a longer one', ['Trusted source control: github.com.example.io'], 'denied'],
+    ['the host narrowed to another owner', ['Trusted source control: github.com/other'], 'denied'],
+    ['the host narrowed to another owner, scp-style', ['Trusted source control: git@github.com:other/repo'], 'denied'],
+    ['the host and a port, narrowed to another owner', ['Trusted source control: github.com:22/other/repo'], 'denied'],
+    ['prose that names no host', ['Company: Acme builds widgets'], 'unknown'],
+    ['prose that names no host beside another remote', ['Trusted repo: github.com/acme/other', 'All repositories of our organisation'], 'unknown'],
+    ['prose beside another host', ['Trusted source control: gitlab.example.com', 'Our GitHub organisation'], 'unknown'],
+    ['an owner and repository with no host', ['Trusted repo: acme/other'], 'unknown'],
+    ['prose beside an entry that names the remote', ['Our GitHub organisation', 'Trusted repo: github.com/acme/widget'], 'allowed'],
+    ['prose beside the host', ['Our GitHub organisation', 'Source control: github.com'], 'allowed'],
+  ];
+  for (const [name, environment, answer] of cases) {
+    const read = askClaude(claudeSettings(t, trusting(environment)));
+    assert.equal(read.answer, answer, name);
+    if (answer !== 'denied') assert.deepEqual(read, { answer }, name);
+  }
+  // A host-wide entry for another remote's host.
+  assert.deepEqual(askClaude(claudeSettings(t, trusting(['Trusted source control: git.example.com'])), { repository: 'git.example.com/acme/widget' }), { answer: 'allowed' });
+  assert.equal(askClaude(claudeSettings(t, trusting(['Trusted source control: git.example.com'])), { repository: 'github.com/acme/widget' }).answer, 'denied');
 });
 
 test('Claude Code answers unknown on settings it cannot read as a clear auto mode list', (t) => {

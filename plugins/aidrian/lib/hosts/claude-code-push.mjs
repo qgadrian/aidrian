@@ -43,6 +43,9 @@ const MARK = '\u0000';
 const NAME_CHAR = String.raw`[\p{L}\p{N}_.-]`;
 const NAME_TAIL = String.raw`[\p{L}\p{N}_-]`;
 const PUSH_WORD = /(?<![\p{L}\p{N}_])push/iu;
+// A host name, such as `git.example.com`: labels of letters, digits, and `-`, joined by dots, the last of two or more
+// letters, with no name part on either side. An `environment` entry that holds none is prose no matcher reads.
+const HOST_NAME = /(?<![\p{L}\p{N}_.-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}(?![\p{L}\p{N}_-])/iu;
 
 const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -83,16 +86,19 @@ function readSettings(file) {
 }
 
 // A test of whether an entry names the repository, in lower case: its path after the host, such as `acme/widget`, as a
-// whole name, which `.git` or a bracket may follow; or its host and owner, such as `github.com/acme`, for the whole
-// organisation, followed by no further name part, no `.` with one, and no `/` with one, so a full stop may end it and
-// `github.com/acme/.github` names one repository, not the organisation. null when `repository` is not `host/owner/repo`.
+// whole name, which `.git` or a bracket may follow; its host and owner, such as `github.com/acme` or the scp-style
+// `github.com:acme`, for the whole organisation, followed by no further name part, no `.` with one, and no `/` with one,
+// so a full stop may end it and `github.com/acme/.github` names one repository, not the organisation; or its host alone,
+// such as `github.com`, for every repository there, which a port may follow, but no further name part, no `.` with one,
+// and no `/` or `:` with one, which would narrow it to some owner. null when `repository` is not `host/owner/repo`.
 function namesRepository(repository) {
   if (typeof repository !== 'string') return null;
   const parts = repository.toLowerCase().split('/');
   if (parts.length < 3 || parts.some((part) => part === '')) return null;
   const repo = new RegExp(String.raw`(?<!${NAME_CHAR})${escape(parts.slice(1).join('/'))}(?!${NAME_TAIL})`, 'u');
-  const owner = new RegExp(String.raw`(?<!${NAME_CHAR})${escape(`${parts[0]}/${parts[1]}`)}(?!${NAME_TAIL}|\.${NAME_TAIL}|/${NAME_CHAR})`, 'u');
-  return (entry) => repo.test(entry.toLowerCase()) || owner.test(entry.toLowerCase());
+  const owner = new RegExp(String.raw`(?<!${NAME_CHAR})${escape(parts[0])}[/:]${escape(parts[1])}(?!${NAME_TAIL}|\.${NAME_TAIL}|/${NAME_CHAR})`, 'u');
+  const host = new RegExp(String.raw`(?<!${NAME_CHAR})${escape(parts[0])}(?::\d+)?(?!${NAME_TAIL}|\.${NAME_TAIL}|[/:]${NAME_CHAR})`, 'u');
+  return (entry) => [repo, owner, host].some((each) => each.test(entry.toLowerCase()));
 }
 
 // Whether the glob `glob`, where `*` is any text, matches all of `text`, compared by code point. It goes back only to
@@ -235,7 +241,8 @@ function refusal(sources) {
 }
 
 // What auto mode's lists in the user settings `user` say of the repository `names` tests for: 'allowed', 'denied' when a
-// custom `environment` with no "$defaults" names it in no entry, or 'unknown' for any shape this cannot read.
+// custom `environment` with no "$defaults" names it in no entry and every entry names some host, or 'unknown' for any
+// shape this cannot read.
 function environmentTrust(user, names) {
   const autoMode = isObject(user) ? user.autoMode : undefined;
   if (!isObject(autoMode)) return 'unknown';
@@ -244,7 +251,8 @@ function environmentTrust(user, names) {
   if (allow !== undefined && !isStrings(allow)) return 'unknown';
   if (environment.some((entry) => entry.trim() === DEFAULTS || names(entry))) return 'allowed';
   if ((allow ?? []).some((entry) => names(entry) && PUSH_WORD.test(entry))) return 'allowed';
-  return 'denied';
+  // An entry that names no host may trust the remote in words no matcher reads, such as "our GitHub organisation".
+  return environment.every((entry) => HOST_NAME.test(entry)) ? 'denied' : 'unknown';
 }
 
 // { answer: 'allowed' | 'unknown' } or { answer: 'denied', setting, file, why, fix }, in the order of the steps of

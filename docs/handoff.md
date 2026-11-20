@@ -328,7 +328,7 @@ through its `capabilities.pushPermission` ([the adapter's fields](providers/addi
 - `denied`: one line names the host, the setting, the settings file, and the repository, and what the Human changes in
   that file before a run no Human attends. The AI never changes that file. A Human's go-on at the `autopilot` launch
   covers that launch only: each background handoff of the run asks again, and falls back to the clear route until the
-  setting names the remote.
+  setting names the remote, and each project run start asks again, and halts.
 
 The host sees the remote only as `host/owner/repo`, in lower case, with no scheme, user name, password, port, or
 `.git` in any case, so the user name and password of the remote URL are never sent to the adapter or printed. What is
@@ -345,12 +345,13 @@ the preflight, which never reads `~/.ssh/config`. It is judged under that name: 
 push can read as `denied` though the alias points at that organisation. Name the repository in the setting, or push to
 a remote whose URL names the real host.
 
-Two entry points run it, both through `pushPreflight` in `lib/push-preflight.mjs`:
+Three entry points run it, all through `pushPreflight` in `lib/push-preflight.mjs`:
 
 | Entry point | On `denied` |
 | --- | --- |
 | The [background route](#the-background-route) of the gate, after the progress check and before it keeps the brief, on the folder the host starts the new session in: the handing-off session's own folder as the host lists it (the adapter's `handoffContinue.startFolder`). When the host cannot name that folder, the answer is `unknown`, never that of the folder the gate runs in, which may be another repository | `continue: clear` where the host has the clear route, `fallback: no background session started, since <the line>; this handoff goes on by the clear route`, and the clear route's `say:` line, exit 0. Nothing is kept, no pending mark is filed, no session starts, and no chain floor is written. In a session no Human attends, the chain ends there with the reason. |
 | The `autopilot` skill's launch, while the Human is still there, on the folder the run will work in, `--cwd <dir>`: with `--continue`, the folder of the work under way. Before that folder's worktree exists, `aidrian push-preflight` prints `push: unknown` and exits 0, so the run runs it again inside the worktree once made, before any work there | `aidrian push-preflight --cwd <dir>` exits 1: at the launch, the skill tells the Human the line and starts no run unless the Human says to go on; inside a worktree the run made, the run stops and reports the line. |
+| `aidrian project start` of a [project run](#a-project-run), once the attempt's clone is made and its one push URL checked, before the host starts anything, on that clone, the folder the start then passes the host, in the driver session's permission mode, which the issue's session takes (`confinedRoom` in `lib/project-run-gate.mjs`) | The start halts: `halt no session started, since <the line>`, exit 1, recording nothing; no session starts. Once the Human changes the setting, the driver starts the issue again. `aidrian project preflight` does not run it, since no clone is there at turn 1 |
 
 `aidrian push-preflight [--cwd DIR]` needs no project folder. It judges the remote of `DIR`, from the folder it runs in
 when relative, else of the folder it runs in. It prints `push: allowed` or `push: unknown` and exits 0 with nothing on
@@ -358,7 +359,8 @@ stderr, or prints `push: denied` and exits 1 with `aidrian push-preflight: <the 
 there, such as a worktree not yet created, answers `unknown`, though the folder above it has a remote. Any other argument, `--cwd` with no folder or an empty one, or a second
 `--cwd`, prints its usage and exits 2. [`aidrian handoff route`](#the-route-the-host-runs) and the hooks
 never run it. A session the Human works in meets it at the `autopilot` launch, which runs it while the Human is there
-to decide, and at the gate of a handoff by the background route, whose denial falls back to the clear route there too.
+to decide, and at the gate of a handoff by the background route, whose denial falls back to the clear route there too;
+a project run's driver meets it at each `aidrian project start`.
 
 | Host | What it reads |
 | --- | --- |
@@ -366,7 +368,7 @@ to decide, and at the gate of a handoff by the background route, whose denial fa
 | Codex | Nothing: `unknown`, so it never stops a run |
 
 Verified on Claude Code by `node --test` on fixtures (`test/push-preflight.test.mjs`,
-`test/handoff-continue-background.test.mjs`, `test/adapters.test.mjs`); Codex answers `unknown` by its adapter, verified
+`test/handoff-continue-background.test.mjs`, `test/project-start-gate.test.mjs`, `test/adapters.test.mjs`); Codex answers `unknown` by its adapter, verified
 by `node --test` (`test/adapters.test.mjs`). Not live on either host: no real host's refusal of a push has been held
 against a `denied`.
 Limits: managed settings and a host's settings flag are not read, and a push to any remote other than `origin` is not

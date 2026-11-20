@@ -10,7 +10,8 @@ None, or several: ask the Human which project, naming the values, and stop until
 
 ## 2. The checks
 
-Run `aidrian project preflight`. It runs every check a start makes, at once, and starts nothing.
+Run `aidrian project preflight`. It runs every check a start makes, at once, and starts nothing, but the push preflight:
+each start reads it on the attempt's clone, which turn 1 has not made, and halts when the host would refuse the push.
 Each line is `ok <name>`, `blocker <name>: <why and fix>`, `note <name>: <what>`, or `ask <name>: <what>`.
 
 | Line | What it checks | The usual fix |

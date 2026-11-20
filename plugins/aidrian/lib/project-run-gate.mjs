@@ -35,7 +35,8 @@
 //      the base tip, or hold any such file untracked or git-ignored, each compared by its bytes on disk, and a host
 //      instruction file in a folder above it that no review saw; then a clone the host says would run a command outside
 //      its sandbox, as a skill whose frontmatter declares hooks, and a clone that would push to another URL than the one
-//      the host's access check read (each a halt).
+//      the host's access check read, and a host that would refuse the push of a session in the driver's permission mode
+//      to the clone's remote (push-preflight.mjs; each a halt).
 // A start whose proof failed, as a Codex session that never named itself or whose hooks never ran, gives its attempt
 // back and halts the run with a `halt` row.
 
@@ -62,6 +63,7 @@ import { appendToRun, attendedProblem, haltOf, planRun, readCapped, readRun, run
 import { custody, driverOf, endedIn, ISSUE_ATTEMPTS, latestStart, resultAuthorProblem, resumerProblem, runStore, spentAttempts, startRows, startsOf, timeOf, ATTEMPT_CEILING } from './project-run-guard.mjs';
 import { accessProblem, guardedFolders, haltAnswer, hostStartProblem, linkTripwire, placeHolders, prepareAttempt, runLog, runLogFile, stateWorkFolders, sweepAttempts, unverifiedNote, writeShellVars } from './project-start.mjs';
 import { ancestorProblem, pushProblem, repositoryProblem, trustProblem } from './project-trust.mjs';
+import { pushPreflight } from './push-preflight.mjs';
 import { signoffFolder, signoffFolders } from './review/signoff-store.mjs';
 import { recordsStart } from './run-driver.mjs';
 import { safely, startHeld } from './session-start-gate.mjs';
@@ -404,8 +406,11 @@ const endedOnLimit = (found, key, attempt) => found.rows.some((row) => row.event
 // (lib/issue-push-checkout.mjs), or
 // { halt } or { problem }. A clone the host says would run a command outside its sandbox (`cloneProblem`) halts, and so
 // does one whose origin pushes to another URL than `pushUrl`, the one the host's access check read, as a pushInsteadOf
-// of the user's git config would make it, or to more than one URL, which the session's push guard never lets through. Last, the host's placeholders go in (placeHolders).
-function confinedRoom({ project, state, run, key, branch, attempt, tip, env, home, found, cap, policy, main, pushUrl }) {
+// of the user's git config would make it, or to more than one URL, which the session's push guard never lets through.
+// A host that would refuse the push of a session the driver `session` starts in the clone halts too (pushPreflight, in
+// the driver's permission mode, which the session takes): the clone is the folder the start passes the host, judged
+// once, and a remote or folder it cannot read answers unknown and starts. Last, the host's placeholders go in (placeHolders).
+function confinedRoom({ project, state, run, key, branch, attempt, tip, env, home, found, cap, policy, main, pushUrl, session }) {
   const folders = stateWorkFolders(state, { env, home });
   if (folders.problem) return { halt: folders.problem };
   const clone = prepareAttempt({ project, state, run, key, attempt, branch, tip, env });
@@ -428,6 +433,9 @@ function confinedRoom({ project, state, run, key, branch, attempt, tip, env, hom
   if (urls.length > 1) return { halt: `the attempt's clone pushes to ${urls.length} URLs (${urls.join(', ').slice(0, 240)}), as a second remote.origin.pushurl in the user's or the system's git config makes it, and an issue session pushes to exactly one, the URL its start pins; remove the extra push URL, then start again` };
   const url = urls[0] ?? null;
   if (typeof pushUrl === 'string' && url !== pushUrl) return { halt: `the attempt's clone pushes to ${url ?? 'no URL'}, not ${pushUrl}, the URL the host's access check read, as a pushInsteadOf in the user's git config would make it; remove the rewrite, then start again` };
+  // The denial names a settings file a session no Human attends must never edit: only the Human widens push trust.
+  const push = pushPreflight({ cwd: clone.work, env, session, git: (args, cwd) => gateGit(args, cwd, { env }) });
+  if (push.answer === 'denied') return { halt: `no session started, since ${push.message}` };
   const placed = placeHolders({ work: clone.work, git: clone.git, placeholders: Array.isArray(cap.placeholders) ? cap.placeholders : [] });
   if (placed) return { problem: placed.problem };
   const common = gateGit(['rev-parse', '--path-format=absolute', '--git-common-dir'], main, { timeout: 30_000 });

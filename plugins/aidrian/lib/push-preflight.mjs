@@ -1,7 +1,8 @@
 // The push preflight (docs/handoff.md#the-push-preflight): before a run no Human attends starts work, whether the host
-// would let a session push to the remote, `origin`, of the folder the run will work in. Two entry points ask it: the
+// would let a session push to the remote, `origin`, of the folder the run will work in. Three entry points ask it: the
 // background route of the handoff gate (lib/handoff-continue.mjs startInBackground), on the folder the host starts the
-// new session in, which falls back to the clear route on a denial; and `aidrian push-preflight [--cwd DIR]`, which the
+// new session in, which falls back to the clear route on a denial; a project run's start (lib/project-run-gate.mjs
+// confinedRoom), on the attempt's clone, which halts on a denial; and `aidrian push-preflight [--cwd DIR]`, which the
 // autopilot skill runs at launch. Only a clear denial stops a run: a host with no answer, a folder that is not there,
 // such as a worktree not yet created, a remote this cannot read, or anything that throws answers `unknown`, and the run
 // starts as before.

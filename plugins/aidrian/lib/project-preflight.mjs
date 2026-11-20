@@ -1,4 +1,5 @@
-// `aidrian project preflight`: every check that would refuse or halt a project run's start, run at once from the
+// `aidrian project preflight`: every check that would refuse or halt a project run's start but the push preflight, which
+// reads the attempt's clone no preflight has (project-run-gate.mjs confinedRoom), run at once from the
 // attended session before `aidrian project init`, so the Human sees each blocker before walking away. It reads and
 // starts nothing. Each check is the start gate's own (lib/project-run-gate.mjs, lib/project-start.mjs): the repository
 // origin names, the state folder and any other active run, a host instruction file above the runs folder, the team's projectRun through the forge, the machine's

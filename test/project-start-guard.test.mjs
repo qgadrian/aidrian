@@ -242,6 +242,10 @@ test('a subagent and an unattended session may not move a remote-tracking ref; a
     // A refspec the shell builds or expands.
     'git fetch . "+HEAD:refs/$R/origin/main"', 'git fetch . +HEAD:refs/remote?/origin/main', 'git fetch . +HEAD:refs/remotes/$B',
     'git fetch . refs/heads/main --refmap="+refs/heads/*:refs/remotes/$X/*"', 'git push . "HEAD:$DST"',
+    // A destination whose wildcard, quoted or not, may expand under refs/remotes/, and a refspec that names it whole.
+    "git fetch . 'refs/heads/*:refs/*'", 'git fetch . "refs/heads/*:refs/*/origin/main"', "git pull . 'refs/heads/*:refs/*'",
+    "git fetch . 'refs/*:*'", "git fetch . 'refs/heads/*:REFS/R*'", 'git fetch . refs/heads/*:refs/*',
+    "git fetch origin 'refs/heads/*:refs/remotes/origin/*'", "git fetch . main --refmap='refs/heads/*:refs/*'",
   ]) {
     assert.match(ask(command, unattended)?.reason ?? '', /or a remote-tracking ref/u, command);
     assert.equal(ask(command, attended), null, `${command} (attended)`);
@@ -255,6 +259,8 @@ test('a subagent and an unattended session may not move a remote-tracking ref; a
     // A push to a remote the checkout configures, past an option that takes a value, and a config that names no remote.
     'git push origin HEAD:feat/x', 'git push -o ci.skip origin HEAD:feat/x', 'git push --receive-pack x origin HEAD:refs/heads/feat/x',
     'git -c user.name=x fetch origin', 'git -c core.quotePath=false status', 'git symbolic-ref HEAD refs/heads/feat/x', 'git fetch origin "$BRANCH"',
+    // A wildcard destination whose literal part leaves refs/remotes/ behind.
+    "git fetch origin 'refs/heads/*:refs/heads/*'", "git fetch origin 'refs/tags/*:refs/tags/*'", "git fetch . 'refs/heads/*:refs/rx/*'",
   ]) assert.equal(ask(command, unattended), null, command);
 });
 

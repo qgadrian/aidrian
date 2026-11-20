@@ -468,7 +468,8 @@ const fetchDestination = (dst) => {
 };
 
 // Whether a fetch, pull, or push (`subcommand`, its tokens `tokens`) writes a remote-tracking ref through a refspec or a
-// `--refmap` value: a fetch or pull destination as git expands it, as `git fetch . +HEAD:remotes/origin/main`; a push
+// `--refmap` value: a fetch or pull destination as git expands it, as `git fetch . +HEAD:remotes/origin/main`, or one
+// whose wildcard may expand to one (wildTracking); a push
 // destination under refs/remotes/, or, to a repository that is no remote `remotes()` names (a Set of the checkout's
 // configured remote names), such as `.`, `.git`, `~/x`, or a path built at run time, any destination that is not a full
 // branch or tag, which git matches against that repository's own refs, as `git push . HEAD:origin/main` does. The
@@ -494,13 +495,19 @@ function movesTracking(subcommand, tokens, remotes) {
   specs.push(...operands.slice(1));
   if (specs.some((spec) => (spec.dynamic || spec.expands) && builtTracking(spec.text))) return true;
   const destinations = specs.filter((spec) => !spec.dynamic && spec.text.includes(':')).map((spec) => spec.text.slice(spec.text.lastIndexOf(':') + 1)).filter(Boolean);
-  if (subcommand !== 'push') return destinations.some((dst) => TRACKING_REF.test(fetchDestination(dst)));
+  if (subcommand !== 'push') return destinations.some((dst) => TRACKING_REF.test(fetchDestination(dst)) || wildTracking(dst));
   if (destinations.some((dst) => TRACKING_REF.test(dst))) return true;
   const short = destinations.filter((dst) => !/^refs\/(?:heads|tags)\//u.test(dst));
   if (short.length === 0) return false;
   const repository = operands[0] ?? repo;
   return !repository || localRepository(repository, remotes);
 }
+
+// Whether a fetch or pull destination holding git's wildcard, quoted or not, may expand to a remote-tracking ref: its
+// literal part before the first `*`, case-folded, is a prefix of `refs/remotes/`, as `refs/*`, `refs/*/origin/main`,
+// or `*` are. git puts what the source's `*` matched in its place, so `git fetch . 'refs/heads/*:refs/*'` writes
+// refs/remotes/origin/main from a branch named remotes/origin/main.
+const wildTracking = (dst) => dst.includes('*') && 'refs/remotes/'.startsWith(dst.slice(0, dst.indexOf('*')).toLowerCase());
 
 // Whether a refspec built at run time or expanded by the shell may name a remote-tracking ref: it holds a `:`, and
 // names `remote` in any case, or its destination starts, past `+` and `refs/`, with a part the shell builds.

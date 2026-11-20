@@ -1062,7 +1062,10 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   as `HEAD` at one, which every later commit would move; `git remote set-head`
   but `git remote set-head <remote> --auto` (or `-a`), which sets it from the forge's own default branch; `git branch`
   deleting remote-tracking branches; a fetch, pull, or push refspec, or a `--refmap` value, whose destination git
-  expands to one (`remotes/x` is `refs/remotes/x`, and `refs/REMOTES/x` the same file on a disk that folds case), or
+  expands to one (`remotes/x` is `refs/remotes/x`, and `refs/REMOTES/x` the same file on a disk that folds case), a
+  fetch or pull destination holding git's `*`, quoted or not, whose literal part before it, case-folded, starts
+  `refs/remotes/` (`refs/*`, `refs/*/origin/main`, `*`, and `refs/remotes/origin/*` itself, so a held session's
+  `git fetch origin 'refs/heads/*:refs/remotes/origin/*'` is refused while a plain `git fetch origin` runs), or
   one the shell builds or expands that holds a `:` and names `remote`, or whose destination starts with what the shell
   builds, as `+HEAD:refs/$R/origin/main`; and a push to a repository on the disk whose destination is no full branch or
   tag, as `git push . HEAD:origin/main`. The push's repository is read past the options that take a value

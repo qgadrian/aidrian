@@ -261,7 +261,7 @@ test('refProtection reads a private repository whose plan offers no rules as unp
     stdout: '{"message":"Upgrade to GitHub Pro or make this repository public to enable this feature.","status":"403"}',
   });
   const PLAN = { branch: 'main', protected: false, plan: true, why: 'the plan offers no branch protection or rulesets for a private repository: GitHub Pro, or a public repository, offers them', tags: [] };
-  const free = { 'repos/acme/notes': { default_branch: 'main', private: true, permissions: { admin: true } } };
+  const free = { 'repos/acme/notes': { default_branch: 'main', private: true, permissions: { admin: true }, owner: { login: 'acme', type: 'User' } } };
   assert.deepEqual(routed({ ...free, 'repos/acme/notes/rules/branches/main': gated('rules/branches/main') }).forge.refProtection('acme/notes', { host: 'github.com' }), PLAN, 'the rules of the branch');
   assert.deepEqual(routed({ ...HELD, ...free, 'repos/acme/notes/rulesets?targets=tag&includes_parents=true': gated('rulesets') }).forge.refProtection('acme/notes'), PLAN, 'the tag rulesets');
   // Branch protection's settings: the plan's 403, not an administrator's view.
@@ -269,6 +269,11 @@ test('refProtection reads a private repository whose plan offers no rules as unp
   assert.deepEqual(routed({ ...classic, 'repos/acme/notes/branches/main/protection': gated('protection') }).forge.refProtection('acme/notes'), PLAN, 'branch protection');
   assert.equal(routed({ ...classic, 'repos/acme/notes/branches/main/protection': new Error('gh: Not Found (HTTP 404)') }).forge.refProtection('acme/notes').protected, null, 'a hidden protection is still asked');
   assert.throws(() => routed({ ...free, 'repos/acme/notes/rules/branches/main': new Error('gh: Forbidden (HTTP 403)') }).forge.refProtection('acme/notes'), /Forbidden/u, 'another 403 throws');
+  // GitHub Pro is a personal account's plan: an organization's repository needs GitHub Team, and an owner GitHub does not
+  // name is told both.
+  const owned = (type) => routed({ 'repos/acme/notes': { ...free['repos/acme/notes'], owner: { login: 'acme', type } }, 'repos/acme/notes/rules/branches/main': gated('rules/branches/main') }).forge.refProtection('acme/notes').why;
+  assert.equal(owned('Organization'), 'the plan offers no branch protection or rulesets for a private repository: GitHub Team, or a public repository, offers them');
+  assert.equal(owned(undefined), 'the plan offers no branch protection or rulesets for a private repository: GitHub Pro for a personal account or GitHub Team for an organization, or a public repository, offers them');
 });
 
 test('workflowSecrets counts the repository\'s and its organization\'s Actions secrets, and reads the token\'s workflow scope', () => {
@@ -302,6 +307,7 @@ test('workflowSecrets counts no organization secret for a repository a user owns
 });
 
 test('workflowSecrets counts the secrets of an environment any branch may deploy to, and not those of one held to protected branches or reviewers', () => {
+  // The caller verified the default branch protected, so an environment's branch limit holds; read below without it.
   const headers = 'HTTP/2.0 200 OK\r\nX-Oauth-Scopes: repo, workflow\r\n\r\n{"login":"octo"}';
   const open = { name: 'prod deploy', deployment_branch_policy: null, protection_rules: [{ type: 'wait_timer', wait_timer: 5 }] };
   const branches = { name: 'staging', deployment_branch_policy: { protected_branches: true, custom_branch_policies: false }, protection_rules: [{ type: 'branch_policy' }] };
@@ -316,12 +322,14 @@ test('workflowSecrets counts the secrets of an environment any branch may deploy
   });
   // Every secret in an environment no rule holds: the preflight sees them.
   const { forge, args } = read([open]);
-  assert.deepEqual(forge.workflowSecrets('acme/notes', { host: 'github.com' }), { secrets: 4, workflowPush: true });
+  assert.deepEqual(forge.workflowSecrets('acme/notes', { host: 'github.com', defaultProtected: true }), { secrets: 4, workflowPush: true });
   assert.ok(args().some((each) => each.includes('repos/acme/notes/environments/prod%20deploy/secrets')), 'the name of the environment is encoded in its route');
   // Held to protected branches, or to a reviewer: not counted.
-  assert.equal(read([branches, reviewed]).forge.workflowSecrets('acme/notes').secrets, 0);
-  assert.ok(!read([branches, reviewed]).args().some((each) => each.some((word) => /environments\/.+\/secrets/u.test(word))), 'a held environment\'s secrets are not read');
-  assert.equal(read([open, branches]).forge.workflowSecrets('acme/notes').secrets, 4);
+  const verified = { defaultProtected: true };
+  const held = read([branches, reviewed]);
+  assert.equal(held.forge.workflowSecrets('acme/notes', verified).secrets, 0);
+  assert.ok(!held.args().some((each) => each.some((word) => /environments\/.+\/secrets/u.test(word))), 'a held environment\'s secrets are not read');
+  assert.equal(read([open, branches]).forge.workflowSecrets('acme/notes', verified).secrets, 4);
   // A reviewer rule holds only when the signed-in user cannot approve alone: self-review prevented, or every reviewer
   // another user. The user named, a team that may hold the user, or no reviewer at all: counted.
   const counted = (environment) => read([environment]).forge.workflowSecrets('acme/notes').secrets;
@@ -333,6 +341,15 @@ test('workflowSecrets counts the secrets of an environment any branch may deploy
   // A repository GitHub keeps no environments for has none; any other failure throws.
   assert.equal(read([], { 'repos/acme/notes/environments': new Error('gh: Not Found (HTTP 404)') }).forge.workflowSecrets('acme/notes').secrets, 0);
   assert.throws(() => read([open], { 'repos/acme/notes/environments/prod%20deploy/secrets': new Error('gh: Forbidden (HTTP 403)') }).forge.workflowSecrets('acme/notes'), /Forbidden/u);
+  // A default branch not verified protected, which is the default: GitHub lets every branch deploy to an environment
+  // limited to protected branches when the repository protects none, so its secrets count, and a pattern's too.
+  const patterns = { name: 'release', deployment_branch_policy: { protected_branches: false, custom_branch_policies: true }, protection_rules: [{ type: 'branch_policy' }] };
+  assert.equal(read([branches]).forge.workflowSecrets('acme/notes').secrets, 2, 'limited to protected branches, none verified');
+  assert.equal(read([branches]).forge.workflowSecrets('acme/notes', { defaultProtected: false }).secrets, 2, 'said unverified');
+  assert.equal(read([patterns]).forge.workflowSecrets('acme/notes').secrets, 3, 'limited by branch patterns, none verified');
+  assert.equal(read([patterns]).forge.workflowSecrets('acme/notes', verified).secrets, 0, 'branch patterns, the default branch verified');
+  // A reviewer rule that holds still holds with no protection verified.
+  assert.equal(read([{ ...reviewed, deployment_branch_policy: branches.deployment_branch_policy }]).forge.workflowSecrets('acme/notes').secrets, 0, 'held for a reviewer');
 });
 
 test('mergedChanges takes a repo option, as openChanges does, and the repository check names only a repository the adapter serves', () => {

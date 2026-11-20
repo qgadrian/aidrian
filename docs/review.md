@@ -1406,12 +1406,15 @@ names every tag, restricts creating and updating one, and that the signed-in use
 sets `projectRun.forgeProtectionAccepted`, which removes that backstop: the hooks alone then hold the token, and a
 script the session runs can push to the default branch or a tag. The forge also runs
 a branch's own workflow files, with the repository's secrets, on every push: the hook refuses an issue session's push
-whose commits change them, release and deploy secrets belong in environments limited to protected branches and tags
-or held for a required reviewer who prevents self-review or is not the signed-in user, never in repository secrets or
+whose commits change them, release and deploy secrets belong in environments limited to protected branches and tags,
+with the default branch protected, or held for a required reviewer who prevents self-review or is not the signed-in user, never in repository secrets or
 an open environment a pushed branch's workflow can read. The preflight counts an environment as held when its admins
 may bypass its rules (on GitHub `can_admins_bypass`, true by default), though an admin's token deploys past them
-through a script, and when it is limited to protected branches, though a branch protection's pattern may match an
-issue's branch; its `note workflows` line says to turn the bypass off and keep those patterns off issue branch names.
+through a script, and when it is limited to protected branches or branch patterns while a rule verifiably protects the
+default branch, though a branch protection's pattern may match an issue's branch; its `note workflows` line says to
+turn the bypass off and keep those patterns off issue branch names. With the default branch not verified protected,
+which `projectRun.forgeProtectionAccepted` never changes, such an environment counts as open: GitHub lets every branch
+deploy to an environment limited to protected branches when the repository protects none.
 The preflight blocks a run whose workflows see CI secrets,
 whatever the token's `workflow` scope, since the workflows already run the branch's own tests, scripts, and build, unless
 the team sets `projectRun.workflowSecretsAccepted`. A cloud role whose OIDC trust names any ref of the repository,

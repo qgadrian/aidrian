@@ -296,10 +296,12 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   only to an administrator, which the preflight asks of the driver), why not, and each active tag rule as `{ name, all,
   creation, update, bypass }`: whether it names every tag and excludes none, whether it restricts creating and updating
   a tag, and whether the signed-in user may bypass it (`never` is the only answer the preflight accepts); and
-  `workflowSecrets(repo, { host })`, `{ secrets, workflowPush }`: how many CI secrets the repository's workflows see,
-  its own, those its organization shares, and those of each environment with no deployment branch policy and no
-  required reviewers rule that holds the signed-in user (one that prevents self-review, or names only other users; a
-  team may hold that user), and whether the signed-in token may push a change to a workflow file (null when the token
+  `workflowSecrets(repo, { host, defaultProtected })`, `{ secrets, workflowPush }`: how many CI secrets the
+  repository's workflows see, its own, those its organization shares, and those of each environment with no required
+  reviewers rule that holds the signed-in user (one that prevents self-review, or names only other users; a team may
+  hold that user) and either no deployment branch policy or `defaultProtected` not true, the preflight's word that
+  `refProtection` answered `protected: true` (on GitHub, every branch may deploy to an environment limited to protected
+  branches when the repository protects none), and whether the signed-in token may push a change to a workflow file (null when the token
   does not say), which the preflight's blocker only words: secrets block whatever the scope.
 - Links: `compareUrl(repo, from, to)`, the web link that shows the commits from `from` to `to`, which the review
   summary's findings table gives a finding's closing range. It is built only from two full-hex SHAs and the forge's own

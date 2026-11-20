@@ -535,7 +535,7 @@ describe('the snapshot rows', () => {
     worktrees: { owned: 2, mergedNotCleaned: 1 },
     decisions: { provisional: 0 },
     audits: { untriaged: 0 },
-    ticket: null,
+    tickets: [],
     errors: [],
   }
 
@@ -601,18 +601,21 @@ describe('the snapshot rows', () => {
   })
 
   test('an empty snapshot draws no handoff, pull request, or harness part', async ($, on) => {
-    await startIn($, on, world({ snapshot: { handoff: null, prs: null, lessons: null, worktrees: null, decisions: null, audits: null, ticket: null, errors: [] } }))
+    await startIn($, on, world({ snapshot: { handoff: null, prs: null, lessons: null, worktrees: null, decisions: null, audits: null, tickets: [], errors: [] } }))
     const drawing = await band($)
 
     expect(await drawing.find({ type: 'Text', text: /handoff|PRs?\b|📥|🧹|⚖️|🔎/ })).toBeUndefined()
   })
 })
 
-describe('the ticket', () => {
+describe('the tickets', () => {
   const ISSUE = { title: 'Ship the band', status: 'In Progress', url: 'https://linear.app/acme/issue/ABC-12/ship-the-band' }
+  const one = (key: string) => ({ tickets: [{ key, source: 'branch' }] })
+  const linearIds = (state: World) => state.mcpCalls.filter(call => call.server === 'linear-server').map(call => call.args.id)
+  const bandTexts = async ($: Engine) => (await (await band($)).findAll({ type: 'Text' })).map(found => found.text)
 
   test('a key a prefix matched is looked up with get_issue and { id } alone, and links to its Linear page', { options: { ticketPrefixes: 'ABC' } }, async ($, on) => {
-    const state = world({ snapshot: { ticket: { key: 'ABC-12', source: 'branch' } }, linear: ISSUE })
+    const state = world({ snapshot: one('ABC-12'), linear: ISSUE })
     await startIn($, on, state)
     const drawing = await pane($)
 
@@ -625,57 +628,262 @@ describe('the ticket', () => {
     expect(state.runs.find(run => run.argv[0] === NODE)?.argv).toContain('--ticket-prefixes=ABC')
   })
 
+  test('one ticket keeps its title and state in the band', { options: { ticketPrefixes: 'ABC' } }, async ($, on) => {
+    await startIn($, on, world({ snapshot: one('ABC-12'), linear: ISSUE }))
+    const drawing = await band($)
+
+    expect((await drawing.find({ type: 'Text', text: /^ABC-12$/ }))?.props.color).toBe('merged')
+    expect(await drawing.find({ type: 'Text', text: /^ Ship the band$/ })).toBeDefined()
+    expect(await drawing.find({ type: 'Text', text: /^ In Progress$/ })).toBeDefined()
+  })
+
+  test('two tickets: get_issue once per key a prefix matched, all at once, a row and a link for each in the pane, every key in the band', { options: { ticketPrefixes: 'ABC' } }, async ($, on) => {
+    const issues = {
+      'ABC-12': { ...ISSUE, title: 'Login gaps' },
+      'ABC-15': { ...ISSUE, title: 'Close the band', url: 'https://linear.app/acme/issue/ABC-15' },
+    }
+    const snapshot = { tickets: [{ key: 'ABC-12', source: 'pr' }, { key: 'ABC-15', source: 'pr' }, { key: '#42', source: 'branch' }] }
+    // Each answer takes 3s: one after the other, the second would show only at 6s.
+    const state = world({ snapshot, issues, linearDelayMs: { 'ABC-12': 3000, 'ABC-15': 3000 } })
+    const clock = await startIn($, on, state)
+    await clock.advance(3500)
+    const drawing = await pane($)
+
+    expect([...linearIds(state)].sort()).toEqual(['ABC-12', 'ABC-15'])
+    expect(state.mcpCalls.every(call => call.tool === 'get_issue' && Object.keys(call.args).join() === 'id')).toBe(true)
+    expect(await drawing.find({ type: 'Text', text: /Login gaps/ })).toBeDefined()
+    expect(await drawing.find({ type: 'Text', text: /Close the band/ })).toBeDefined()
+    expect(await drawing.find({ type: 'Text', text: /#42/ })).toBeDefined()
+    expect((await drawing.findAll({ type: 'Link' })).map(link => link.props.href)).toEqual([ISSUE.url, issues['ABC-15'].url])
+
+    const texts = await bandTexts($)
+    for (const key of [/^ABC-12$/, /^ABC-15$/, /^#42$/]) expect(texts.filter(text => key.test(text)).length).toBe(1)
+    expect(texts.filter(text => /Login gaps|\+\d/.test(text))).toEqual([])
+  })
+
+  test('five tickets: the band lists three keys and +2', async ($, on) => {
+    const tickets = [1, 2, 3, 4, 5].map(n => ({ key: `#${n}`, source: 'pr' }))
+    await startIn($, on, world({ snapshot: { tickets } }))
+    const texts = await bandTexts($)
+
+    for (const key of [/^#1$/, /^#2$/, /^#3$/, /^, \+2$/]) expect(texts.some(text => key.test(text))).toBe(true)
+    expect(texts.filter(text => /^#[45]$/.test(text))).toEqual([])
+  })
+
+  test('a snapshot of an older aidrian plugin, with ticket alone, still draws it', { options: { ticketPrefixes: 'ABC' } }, async ($, on) => {
+    const state = world({ snapshot: { ticket: { key: 'ABC-12', source: 'branch' } }, linear: ISSUE })
+    await startIn($, on, state)
+
+    expect(await (await band($)).find({ type: 'Text', text: /^ABC-12$/ })).toBeDefined()
+    expect(await (await pane($)).find({ type: 'Text', text: /Ship the band/ })).toBeDefined()
+    expect(linearIds(state)).toEqual(['ABC-12'])
+  })
+
   test('a Linear url that is not the key`s page is no link', { options: { ticketPrefixes: 'ABC' } }, async ($, on) => {
-    const state = world({ snapshot: { ticket: { key: 'ABC-12', source: 'branch' } }, linear: { ...ISSUE, url: 'https://linear.app.example.org/acme/issue/ABC-12' } })
+    const state = world({ snapshot: one('ABC-12'), linear: { ...ISSUE, url: 'https://linear.app.example.org/acme/issue/ABC-12' } })
     await startIn($, on, state)
 
     expect(await (await pane($)).findAll({ type: 'Link' })).toEqual([])
   })
 
-  test('a slow lookup for a folder the session left never replaces the issue of the folder it is in', { options: { ticketPrefixes: 'ABC' } }, async ($, on) => {
-    const state = world({ issues: { 'ABC-1': { ...ISSUE, title: 'Left folder' }, 'ABC-2': { ...ISSUE, title: 'Current folder' } } })
+  test('a slow lookup for a key that left the snapshot never shows, and a key that stayed keeps its own title', { options: { ticketPrefixes: 'ABC' } }, async ($, on) => {
+    const state = world({ issues: { 'ABC-1': { ...ISSUE, title: 'Left folder' }, 'ABC-2': { ...ISSUE, title: 'Current folder' }, 'ABC-3': { ...ISSUE, title: 'Both folders' } } })
     const clock = await startIn($, on, state)
 
-    state.snapshot = { ticket: { key: 'ABC-1', source: 'branch' } }
+    state.snapshot = { tickets: [{ key: 'ABC-1', source: 'branch' }, { key: 'ABC-3', source: 'pr' }] }
     state.linearDelayMs = { 'ABC-1': 4000 }
     state.cwd = WORKTREE
     await clock.advance(1000)
-    state.snapshot = { ticket: { key: 'ABC-2', source: 'branch' } }
+    state.snapshot = { tickets: [{ key: 'ABC-2', source: 'branch' }, { key: 'ABC-3', source: 'pr' }] }
     state.cwd = MAIN
     await clock.advance(1000)
-    // The worktree's lookup answers at 5s, after the main folder's drew.
+    // The worktree's lookup of ABC-1 answers at 5s, after the main folder's drew.
     await clock.advance(4000)
     const drawing = await pane($)
 
-    expect(state.mcpCalls.filter(call => call.server === 'linear-server').map(call => call.args.id)).toEqual(['ABC-1', 'ABC-2'])
+    expect([...linearIds(state)].sort()).toEqual(['ABC-1', 'ABC-2', 'ABC-3'])
     expect(await drawing.find({ type: 'Text', text: /Current folder/ })).toBeDefined()
+    expect(await drawing.find({ type: 'Text', text: /Both folders/ })).toBeDefined()
     expect(await drawing.find({ type: 'Text', text: /Left folder/ })).toBeUndefined()
+    expect(await drawing.find({ type: 'Text', text: /ABC-1\b/ })).toBeUndefined()
   })
 
-  test('refreshes during a slow lookup of the same key share it, and its title shows', { options: { ticketPrefixes: 'ABC' } }, async ($, on) => {
-    const state = world({ issues: { 'ABC-1': { ...ISSUE, title: 'Same ticket' } } })
+  test('refreshes during a slow lookup of the same keys share it, one call per key, and the titles show', { options: { ticketPrefixes: 'ABC' } }, async ($, on) => {
+    const state = world({ issues: { 'ABC-1': { ...ISSUE, title: 'Same ticket' }, 'ABC-2': { ...ISSUE, title: 'Other ticket' } } })
     const clock = await startIn($, on, state)
 
-    state.snapshot = { ticket: { key: 'ABC-1', source: 'branch' } }
-    state.linearDelayMs = { 'ABC-1': 4000 }
-    // Each move to another folder of the same branch's ticket refreshes, once a second, while Linear takes 4s.
+    state.snapshot = { tickets: [{ key: 'ABC-1', source: 'branch' }, { key: 'ABC-2', source: 'pr' }] }
+    state.linearDelayMs = { 'ABC-1': 4000, 'ABC-2': 4000 }
+    // Each move to another folder of the same branch's tickets refreshes, once a second, while Linear takes 4s.
     for (const cwd of [WORKTREE, MAIN, WORKTREE, MAIN, WORKTREE, MAIN]) {
       state.cwd = cwd
       await clock.advance(1000)
     }
     const drawing = await pane($)
 
-    expect(state.mcpCalls.filter(call => call.server === 'linear-server').map(call => call.args.id)).toEqual(['ABC-1'])
+    expect([...linearIds(state)].sort()).toEqual(['ABC-1', 'ABC-2'])
     expect(await drawing.find({ type: 'Text', text: /Same ticket/ })).toBeDefined()
+    expect(await drawing.find({ type: 'Text', text: /Other ticket/ })).toBeDefined()
   })
 
   test('a GitHub #N key shows as it is, with no lookup', async ($, on) => {
-    const state = world({ snapshot: { ticket: { key: '#42', source: 'branch' } } })
+    const state = world({ snapshot: one('#42') })
     await startIn($, on, state)
 
     expect(await (await band($)).find({ type: 'Text', text: /^#42$/ })).toBeDefined()
     expect(state.mcpCalls).toEqual([])
   })
+
+  test('no hidden character of a key or an answer reaches the band or the pane', { options: { ticketPrefixes: 'ABC' } }, async ($, on) => {
+    const dirty = '\u001b]52;c;aGk=\u0007\u202e\u200f\u2060\u{E0041}'
+    const snapshot = { tickets: [{ key: 'ABC-12', source: 'pr' }, { key: `#4${dirty}`, source: 'pr' }] }
+    await startIn($, on, world({ snapshot, linear: { title: `Ship${dirty}`, status: `Open${dirty}`, url: ISSUE.url } }))
+
+    for (const drawing of [await band($), await pane($)]) {
+      const texts = (await drawing.findAll({ type: 'Text' })).map(found => found.text)
+
+      expect(texts.some(text => /#4/.test(text))).toBe(true)
+      expect(texts.filter(text => HIDDEN.test(text))).toEqual([])
+    }
+  })
+})
+
+describe('the ticket answer cache', () => {
+  const PREFIXED = { options: { ticketPrefixes: 'ABC' } }
+  // Advancing 5 minutes runs 300 ticks of the band's one-second clock, which outlast the kit's 5000 ms default.
+  const FIVE_MINUTES = { timeoutMs: 20_000, options: { ticketPrefixes: 'ABC' } }
+  const named = (from: number, count: number) => Array.from({ length: count }, (_, index) => `ABC-${from + index}`)
+  const snap = (keys: string[]) => ({ tickets: keys.map(key => ({ key, source: 'pr' })) })
+  const titled = (keys: string[]) => Object.fromEntries(keys.map(key => [key, { title: `Title of ${key}`, status: 'Todo', url: `https://linear.app/acme/issue/${key}` }]))
+  const linearIds = (state: World) => state.mcpCalls.filter(call => call.server === 'linear-server').map(call => String(call.args.id))
+  // The pane's text for one key's answer, mounted and unmounted again so each look draws the pane anew.
+  const titleOf = async ($: Engine, key: string) => {
+    const drawing = await pane($)
+    const found = await drawing.find({ type: 'Text', text: new RegExp(`Title of ${key}\\b`) })
+    await drawing.unmount()
+
+    return found
+  }
+  // A move to the other folder, which the next tick refreshes.
+  const move = async (state: World, clock: Clock) => {
+    state.cwd = state.cwd === MAIN ? WORKTREE : MAIN
+    await clock.advance(1000)
+  }
+
+  test('a snapshot that fails between two good ones within 5 minutes asks for no key again', PREFIXED, async ($, on) => {
+    const keys = named(1, 10)
+    const state = world({ snapshot: snap(keys), issues: titled(keys) })
+    const clock = await startIn($, on, state)
+
+    state.snapshotExit = 1
+    await move(state, clock)
+
+    expect(await titleOf($, 'ABC-1')).toBeUndefined()
+
+    state.snapshotExit = 0
+    await move(state, clock)
+
+    expect(linearIds(state).sort()).toEqual([...keys].sort())
+    for (const key of keys) expect(await titleOf($, key)).toBeDefined()
+  })
+
+  test('answers that come while a failed snapshot is drawn are kept, and the next good snapshot asks for no key again', PREFIXED, async ($, on) => {
+    const keys = ['ABC-1', 'ABC-2']
+    const state = world({ issues: titled(keys) })
+    const clock = await startIn($, on, state)
+
+    state.snapshot = snap(keys)
+    state.linearDelayMs = { 'ABC-1': 3000, 'ABC-2': 3000 }
+    await move(state, clock)
+    // The snapshot fails while both lookups are in flight; they answer 2s later.
+    state.snapshotExit = 1
+    await move(state, clock)
+    await clock.advance(3000)
+    state.snapshotExit = 0
+    await move(state, clock)
+
+    expect(linearIds(state).sort()).toEqual(keys)
+    for (const key of keys) expect(await titleOf($, key)).toBeDefined()
+  })
+
+  test('a key that leaves and returns within 5 minutes is not drawn while away, is not asked again, and draws its answer on return', PREFIXED, async ($, on) => {
+    const state = world({ snapshot: snap(['ABC-1', 'ABC-2']), issues: titled(['ABC-1', 'ABC-2']) })
+    const clock = await startIn($, on, state)
+
+    state.snapshot = snap(['ABC-2'])
+    await move(state, clock)
+
+    expect(await titleOf($, 'ABC-1')).toBeUndefined()
+    expect(await titleOf($, 'ABC-2')).toBeDefined()
+
+    // Were it asked again, its answer would come only 4s later.
+    state.linearDelayMs = { 'ABC-1': 4000 }
+    state.snapshot = snap(['ABC-1', 'ABC-2'])
+    await move(state, clock)
+
+    expect(await titleOf($, 'ABC-1')).toBeDefined()
+    expect(linearIds(state).sort()).toEqual(['ABC-1', 'ABC-2'])
+  })
+
+  test('after 5 minutes from its ask, only that key is asked again', FIVE_MINUTES, async ($, on) => {
+    const state = world({ snapshot: snap(['ABC-1']), issues: titled(['ABC-1', 'ABC-2']), linearDelayMs: { 'ABC-1': 10_000 } })
+    const clock = await startIn($, on, state)
+
+    // ABC-1 is asked at 0 and answers at 10s; the refresh each minute asks ABC-2 at 60s.
+    state.snapshot = snap(['ABC-1', 'ABC-2'])
+    await clock.advance(60_000)
+
+    expect(linearIds(state)).toEqual(['ABC-1', 'ABC-2'])
+
+    // The refresh at 300s finds ABC-1 asked 5 minutes before, though answered only 4:50 before, and ABC-2 asked 4.
+    await clock.advance(245_000)
+
+    expect(linearIds(state)).toEqual(['ABC-1', 'ABC-2', 'ABC-1'])
+  })
+
+  test('a refresh draws a cached answer at once, before a slow lookup of another key comes', PREFIXED, async ($, on) => {
+    const state = world({ snapshot: snap(['ABC-1']), issues: titled(['ABC-1', 'ABC-2', 'ABC-3']) })
+    const clock = await startIn($, on, state)
+
+    state.snapshot = snap(['ABC-2'])
+    await move(state, clock)
+    state.snapshot = snap(['ABC-1', 'ABC-3'])
+    state.linearDelayMs = { 'ABC-3': 4000 }
+    await move(state, clock)
+
+    expect(await titleOf($, 'ABC-1')).toBeDefined()
+    expect(await titleOf($, 'ABC-3')).toBeUndefined()
+
+    await clock.advance(4000)
+
+    expect(await titleOf($, 'ABC-3')).toBeDefined()
+    expect(linearIds(state)).toEqual(['ABC-1', 'ABC-2', 'ABC-3'])
+  })
+
+  test('the cache keeps at most 20 answers, forgetting the oldest of keys no draw shows', PREFIXED, async ($, on) => {
+    const first = ['ABC-1', ...named(2, 9)]
+    const second = ['ABC-1', ...named(11, 9)]
+    const third = ['ABC-1', ...named(21, 9)]
+    const state = world({ snapshot: snap(first), issues: titled([...first, ...second, ...third]) })
+    const clock = await startIn($, on, state)
+
+    state.snapshot = snap(second)
+    await move(state, clock)
+    state.snapshot = snap(third)
+    await move(state, clock)
+
+    // 28 answers asked, ABC-1 once: it stayed in every draw, so it is kept while older answers of others are not.
+    expect(linearIds(state).length).toBe(28)
+    expect(await titleOf($, 'ABC-1')).toBeDefined()
+
+    state.snapshot = snap(first)
+    await move(state, clock)
+    const askedAgain = linearIds(state).slice(28)
+
+    expect(askedAgain.length).toBe(8)
+    expect(askedAgain.every(key => first.includes(key) && key !== 'ABC-1')).toBe(true)
+  })
+
 })
 
 describe('the pane names a snapshot it could not read', () => {

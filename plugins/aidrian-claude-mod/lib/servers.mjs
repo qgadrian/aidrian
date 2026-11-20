@@ -22,7 +22,7 @@ export function ticketPrefixes(prefixes) {
   return list;
 }
 
-// The arguments of the issue lookup for the snapshot's `ticket`: `{ id }` when its key is `<PREFIX>-<n>` for one of
+// The arguments of the issue lookup for one of the snapshot's `tickets`: `{ id }` when its key is `<PREFIX>-<n>` for one of
 // the valid `prefixes`, else null, as for a GitHub `#N` key, which shows as it is, with no title.
 export function issueLookup(ticket, prefixes) {
   const list = ticketPrefixes(prefixes);

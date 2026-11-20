@@ -37,7 +37,7 @@ declare module 'claude-code' {
     'aidrian-mod': {
       result: SnapshotResult | null
       repo: Repo | null
-      issue: Issue | null
+      issues: Issue[]
       refreshedAt: number | null
       isRefreshing: boolean
       effort: Effort | null

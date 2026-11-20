@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On, PluginOptions, SessionMeasureInput } from 'claude-code'
 
 import type { AgentRow, Effort, Issue, Repo, SnapshotResult, Usage } from '../types'
-import { bandSegments, changeRows, changesParts, COLORS, displayText, noticeOf, ticketRow } from '../lib/format.mjs'
+import { bandSegments, changeRows, changesParts, COLORS, displayText, noticeOf, ticketRows, ticketsOf, ticketsSummary } from '../lib/format.mjs'
 import type { Part, Row, Segment } from '../lib/format.mjs'
 import { cacheTtlOf, cleanModel, dateMs, effortOf, formatDuration, issueOf, repoOf } from '../lib/pane-data.mjs'
 import { ISSUE_TOOL, issueLookup, LINEAR_SERVERS } from '../lib/servers.mjs'
@@ -15,6 +15,7 @@ import { configDirOf, findTranscript, ownPlace, poller, runnerFor, runSnapshot }
 
 const PANE = 'aidrian-mod'
 const ISSUE_TTL_MS = 5 * 60_000
+const ISSUE_CACHE_MAX = 20
 const SNAPSHOT_EVERY_TICKS = 60
 const DEFAULT_AGENT_WINDOW = 200_000
 const TRANSCRIPT_TAIL_BYTES = 1_048_576
@@ -32,7 +33,7 @@ const GIT_STATUS = ['--no-optional-locks', '-c', 'core.fsmonitor=false', 'status
 
 const result = atom({ plugin: 'aidrian-mod', key: 'result' } as const, null)
 const repoAtom = atom({ plugin: 'aidrian-mod', key: 'repo' } as const, null)
-const issueAtom = atom({ plugin: 'aidrian-mod', key: 'issue' } as const, null)
+const issuesAtom = atom({ plugin: 'aidrian-mod', key: 'issues' } as const, [])
 const refreshedAt = atom({ plugin: 'aidrian-mod', key: 'refreshedAt' } as const, null)
 const isRefreshing = atom({ plugin: 'aidrian-mod', key: 'isRefreshing' } as const, false)
 const effort = atom({ plugin: 'aidrian-mod', key: 'effort' } as const, null)
@@ -62,20 +63,21 @@ type Refresh = SnapshotResult & { repo?: Repo | null }
 // Kept in the module, not in `$.state`: a reload runs session.start again, which sets them anew. `alerts` says whether
 // the session is an interactive terminal one, the only kind the notifications reach; `transcript` is the session's
 // checked transcript, which the cache lifetime is read from: the one a snapshot run was given, or the one the lib finds
-// when no run has given one; `draws` counts the refreshes drawn, so an older one stores no transcript; `issueKey` is
-// the ticket the newest draw looks up, so a slow lookup of another key stores nothing; `lookup` is the Linear lookup in
-// flight, which a refresh of the same key waits on rather than starting another.
+// when no run has given one; `draws` counts the refreshes drawn, so an older one stores no transcript; `issueKeys` are
+// the ticket keys the newest draw looks up, the only ones drawn; `issues` holds each key's answer and when it was asked,
+// kept when its key leaves the snapshot or a snapshot fails, at most ISSUE_CACHE_MAX of them; `lookups` are the Linear
+// lookups in flight by key, which a refresh of the same key waits on rather than starting another.
 const live: {
   client: { trigger: () => Promise<void> } | null
   alerts: boolean
   ticks: number
   cwd: string | null
   transcript: { session: string; file: string } | null
-  issue: { key: string; value: Issue | null; fetchedAt: number } | null
-  issueKey: string | null
-  lookup: { key: string; answer: Promise<Issue | null> } | null
+  issues: Map<string, { value: Issue | null; fetchedAt: number }>
+  issueKeys: string[]
+  lookups: Map<string, Promise<Issue | null>>
   draws: number
-} = { client: null, alerts: false, ticks: 0, cwd: null, transcript: null, issue: null, issueKey: null, lookup: null, draws: 0 }
+} = { client: null, alerts: false, ticks: 0, cwd: null, transcript: null, issues: new Map(), issueKeys: [], lookups: new Map(), draws: 0 }
 
 // Whether this session takes notifications: an interactive session drawn in a terminal, as session.start said. A `-p`
 // run, the SDK, and the desktop app take none.
@@ -133,9 +135,9 @@ export function registerPane(on: On, options: PluginOptions) {
     })
     live.ticks = 0
     live.cwd = null
-    live.issue = null
-    live.issueKey = null
-    live.lookup = null
+    live.issues = new Map()
+    live.issueKeys = []
+    live.lookups = new Map()
     live.transcript = null
     await update($, isRefreshing, () => false)
     const startedAt = await $.clock.now()
@@ -231,7 +233,7 @@ type Ui = ReturnType<EngineInterface['ui']['resolve']>
 type RenderState = {
   result: SnapshotResult | null
   repo: Repo | null
-  issue: Issue | null
+  issues: Issue[]
   refreshedAt: number | null
   isRefreshing: boolean
   cacheTtlMs: number | null
@@ -248,7 +250,7 @@ async function renderState($: EngineInterface): Promise<RenderState> {
   return {
     result: await read($, result),
     repo: await read($, repoAtom),
-    issue: await read($, issueAtom),
+    issues: await read($, issuesAtom),
     refreshedAt: await read($, refreshedAt),
     isRefreshing: await read($, isRefreshing),
     effort: await currentEffort($),
@@ -264,14 +266,9 @@ async function renderState($: EngineInterface): Promise<RenderState> {
 
 const snapshotOf = (state: { result: SnapshotResult | null }) => (state.result?.kind === 'ok' ? (state.result.snapshot ?? null) : null)
 
-// The ticket row for the snapshot's ticket, with what Linear answered only when it answered for that key.
-const ticketOf = (state: RenderState) => {
-  const ticket = snapshotOf(state)?.ticket ?? null
-  const key = ticket !== null && typeof ticket === 'object' ? (ticket as { key?: unknown }).key : null
-  const issue = state.issue !== null && state.issue.key === key ? state.issue : null
-
-  return ticketRow(ticket, issue)
-}
+// One row per ticket of the snapshot, each with what Linear answered for its own key alone. The band and the pane
+// both draw from here.
+const ticketsOfState = (state: RenderState): Row[] => ticketRows(ticketsOf(snapshotOf(state)), state.issues)
 
 const drawParts = (ui: Ui, parts: Part[]) => {
   const { Text } = ui
@@ -287,8 +284,8 @@ function band(ui: Ui, state: RenderState, settings: Settings, columns: number) {
   const changes = segments.filter((segment: Segment) => segment.id === 'changes')
   const signals = segments.filter((segment: Segment) => segment.id !== 'changes')
   const running = state.agents.filter(row => row.status === 'running').length
-  const ticket = ticketOf(state)
-  const hasPlace = state.repo !== null || ticket !== null || running > 0
+  const tickets = ticketsOfState(state)
+  const hasPlace = state.repo !== null || tickets.length > 0 || running > 0
   const alerts = bandAlerts(state.usage?.contextPercent ?? null)
   const agentWord = running === 1 ? 'agent' : 'agents'
   const dot = <Text color={RULE}> · </Text>
@@ -302,16 +299,15 @@ function band(ui: Ui, state: RenderState, settings: Settings, columns: number) {
           <Box paddingLeft={3}>
             <Text wrap="truncate-end">
               {state.repo && repoLabel(ui, state.repo)}
-              {ticket && (
+              {tickets.length > 0 && (
                 <Text>
                   {state.repo && dot}
-                  {drawParts(ui, ticket.parts.slice(0, 1).map((part: Part) => ({ ...part, color: COLOR.orchid })))}
-                  {drawParts(ui, ticket.parts.slice(1).map((part: Part) => ({ ...part, text: ` ${part.text}` })))}
+                  {drawParts(ui, bandTicketParts(tickets))}
                 </Text>
               )}
               {running > 0 && (
                 <Text>
-                  {(state.repo || ticket) && dot}
+                  {(state.repo || tickets.length > 0) && dot}
                   <Text color={COLOR.cyan}>
                     {agentGlyph('running', state.now).icon} {running} {agentWord}
                   </Text>
@@ -342,6 +338,23 @@ function band(ui: Ui, state: RenderState, settings: Settings, columns: number) {
       </Box>
     </Box>
   )
+}
+
+// The band's tickets: one draws its key in orchid, then its title and state; two or more draw the first keys alone, in
+// orchid, then `+N` for the rest.
+function bandTicketParts(tickets: Row[]): Part[] {
+  const key = (row: Row): Part => ({ text: row.parts[0]?.text ?? '', color: COLOR.orchid })
+
+  if (tickets.length === 1) {
+    const [only] = tickets as [Row]
+
+    return [key(only), ...only.parts.slice(1).map((part: Part) => ({ ...part, text: ` ${part.text}` }))]
+  }
+
+  const { listed, more } = ticketsSummary(tickets)
+  const keys = listed.flatMap((row: Row, index: number) => (index > 0 ? [{ text: ', ', color: 'text' }, key(row)] : [key(row)]))
+
+  return more > 0 ? [...keys, { text: `, +${more}`, color: 'text' }] : keys
 }
 
 function modelLine(ui: Ui, state: RenderState, settings: Settings) {
@@ -508,25 +521,32 @@ function modelCard(ui: Ui, state: RenderState, settings: Settings) {
   )
 }
 
+// One line per ticket, each followed by its own link when it has one.
 function ticketCard(ui: Ui, state: RenderState) {
   const { Box, Text, Link } = ui
-  const ticket = ticketOf(state)
+  const tickets = ticketsOfState(state)
 
-  if (ticket === null) {
+  if (tickets.length === 0) {
     return null
   }
 
-  const [key, ...rest] = ticket.parts
-
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={COLOR.orchid} paddingX={1}>
-      <Text wrap="truncate-end">
-        <Text bold color={COLOR.orchid}>
-          ◆ {key?.text ?? ''}
-        </Text>
-        {drawParts(ui, rest.map((part: Part) => ({ ...part, text: `  ${part.text}` })))}
-      </Text>
-      {ticket.link && <Link href={ticket.link} label="Open the issue ↗" />}
+      {tickets.map((ticket: Row) => {
+        const [key, ...rest] = ticket.parts
+
+        return (
+          <Box flexDirection="column">
+            <Text wrap="truncate-end">
+              <Text bold color={COLOR.orchid}>
+                ◆ {key?.text ?? ''}
+              </Text>
+              {drawParts(ui, rest.map((part: Part) => ({ ...part, text: `  ${part.text}` })))}
+            </Text>
+            {ticket.link && <Link href={ticket.link} label="Open the issue ↗" />}
+          </Box>
+        )
+      })}
     </Box>
   )
 }
@@ -831,7 +851,7 @@ async function drawRefresh($: EngineInterface, drawn: Refresh, asked: Target, se
     return
   }
 
-  await loadIssue($, snapshot, settings.prefixes)
+  await loadIssues($, snapshot, settings.prefixes)
 }
 
 // The transcript a snapshot run was given becomes the session's; when it is the first the session has, the cache
@@ -879,55 +899,73 @@ async function loadRepo(io: Io, { cwd, root }: Target): Promise<Repo | null> {
   return repoOf({ branch: branchRun.stdout, gitDir: gitDirRun.stdout, status: statusRun.stdout })
 }
 
-// The title and state of the snapshot's ticket: the one MCP call of the mod, `get_issue` with the `{ id }` issueLookup
-// gives for a key a valid prefix matched, to the first Linear server that answers. A GitHub `#N` key is not looked up.
-// Called for the newest draw only, so the key it looks up becomes the active one; an answer is drawn only while its key
-// is still active.
-async function loadIssue($: EngineInterface, snapshot: SnapshotResult, prefixes: string) {
-  const lookup = snapshot.kind === 'ok' ? issueLookup(snapshot.snapshot?.ticket ?? null, prefixes) : null
-  live.issueKey = lookup?.id ?? null
-
-  if (lookup === null) {
-    await update($, issueAtom, () => null)
-    return
-  }
+// The title and state of each of the snapshot's tickets: the one MCP call of the mod, `get_issue` with the `{ id }`
+// issueLookup gives for a key a valid prefix matched, to the first Linear server that answers. A GitHub `#N` key is not
+// looked up. Every key is looked up at once, none waiting on another, and an answer is reused for 5 minutes from when
+// it was asked. Called for the newest draw only, so its keys become the active ones, the only ones drawn; a snapshot
+// that is not ok has none and leaves the cache as it is.
+async function loadIssues($: EngineInterface, snapshot: SnapshotResult, prefixes: string) {
+  const lookups = snapshot.kind === 'ok' ? ticketsOf(snapshot.snapshot ?? null).map(ticket => issueLookup(ticket, prefixes)) : []
+  const distinct = lookups.filter((lookup, index): lookup is { id: string } => lookup !== null && lookups.findIndex(other => other?.id === lookup.id) === index)
+  const keys = distinct.map(lookup => lookup.id)
+  live.issueKeys = keys
 
   const at = await $.clock.now()
-  const cached = live.issue
-  const isFresh = cached !== null && cached.key === lookup.id && at - cached.fetchedAt < ISSUE_TTL_MS
-  const issue = isFresh ? cached.value : await sharedLookup($, lookup, at)
+  await drawIssues($)
+  const stale = distinct.filter(lookup => {
+    const cached = live.issues.get(lookup.id)
 
-  if (live.issueKey !== lookup.id) {
-    return
-  }
+    return cached === undefined || at - cached.fetchedAt >= ISSUE_TTL_MS
+  })
 
-  await update($, issueAtom, () => issue)
+  await Promise.all(stale.map(async lookup => {
+    await sharedLookup($, lookup, at)
+    await drawIssues($)
+  }))
 }
 
-// The Linear lookup for `lookup`'s key: the one in flight for that key, else a new one. Its answer is cached when it
-// comes while its key is still the active one, whichever draw started it, so refreshes during a slow lookup reuse it
-// rather than each discarding the one before.
+// The answers of the active keys, in their order, as the issues atom holds them.
+async function drawIssues($: EngineInterface) {
+  const answers = live.issueKeys.map(key => live.issues.get(key)?.value ?? null).filter((issue): issue is Issue => issue !== null)
+  await update($, issuesAtom, () => answers)
+}
+
+// The Linear lookup for `lookup`'s key: the one in flight for that key, else a new one. Its answer is cached whenever
+// it comes, whichever draw started it and whether or not its key is still active, so refreshes during a slow lookup
+// reuse it, and a key that leaves the snapshot or a snapshot that fails costs no lookup again within the 5 minutes.
 function sharedLookup($: EngineInterface, lookup: { id: string }, at: number): Promise<Issue | null> {
-  if (live.lookup?.key === lookup.id) {
-    return live.lookup.answer
+  const { id } = lookup
+  const inFlight = live.lookups.get(id)
+
+  if (inFlight !== undefined) {
+    return inFlight
   }
 
   const answer = askLinear($, lookup)
     .catch(() => null)
     .then(issue => {
-      if (live.lookup?.answer === answer) {
-        live.lookup = null
+      if (live.lookups.get(id) === answer) {
+        live.lookups.delete(id)
       }
 
-      if (live.issueKey === lookup.id) {
-        live.issue = { key: lookup.id, value: issue, fetchedAt: at }
-      }
+      keepAnswer(id, { value: issue, fetchedAt: at })
 
       return issue
     })
-  live.lookup = { key: lookup.id, answer }
+  live.lookups.set(id, answer)
 
   return answer
+}
+
+// Caches one key's answer, then forgets the oldest answers of inactive keys while more than ISSUE_CACHE_MAX are kept.
+// An active key's answer is never forgotten: at most 10 keys are active, half the cap.
+function keepAnswer(id: string, entry: { value: Issue | null; fetchedAt: number }) {
+  live.issues.set(id, entry)
+  const inactive = [...live.issues].filter(([key]) => !live.issueKeys.includes(key)).sort(([, a], [, b]) => a.fetchedAt - b.fetchedAt)
+
+  for (const [key] of inactive.slice(0, Math.max(0, live.issues.size - ISSUE_CACHE_MAX))) {
+    live.issues.delete(key)
+  }
 }
 
 async function askLinear($: EngineInterface, lookup: { id: string }): Promise<Issue | null> {

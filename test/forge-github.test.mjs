@@ -274,7 +274,9 @@ test('workflowSecrets counts the secrets of an environment any branch may deploy
   const headers = 'HTTP/2.0 200 OK\r\nX-Oauth-Scopes: repo, workflow\r\n\r\n{"login":"octo"}';
   const open = { name: 'prod deploy', deployment_branch_policy: null, protection_rules: [{ type: 'wait_timer', wait_timer: 5 }] };
   const branches = { name: 'staging', deployment_branch_policy: { protected_branches: true, custom_branch_policies: false }, protection_rules: [{ type: 'branch_policy' }] };
-  const reviewed = { name: 'release', deployment_branch_policy: null, protection_rules: [{ type: 'required_reviewers', reviewers: [] }] };
+  const user = (login) => ({ type: 'User', reviewer: { login } });
+  const reviewers = (prevent, ...named) => ({ name: 'release', deployment_branch_policy: null, protection_rules: [{ type: 'required_reviewers', prevent_self_review: prevent, reviewers: named }] });
+  const reviewed = reviewers(true, user('Octo'));
   const read = (environments, more = {}) => routed({
     'repos/acme/notes/actions/secrets': { total_count: 0 }, 'repos/acme/notes/actions/organization-secrets': { total_count: 0 }, user: headers,
     'repos/acme/notes/environments': [{ total_count: environments.length, environments }],
@@ -289,6 +291,14 @@ test('workflowSecrets counts the secrets of an environment any branch may deploy
   assert.equal(read([branches, reviewed]).forge.workflowSecrets('acme/notes').secrets, 0);
   assert.ok(!read([branches, reviewed]).args().some((each) => each.some((word) => /environments\/.+\/secrets/u.test(word))), 'a held environment\'s secrets are not read');
   assert.equal(read([open, branches]).forge.workflowSecrets('acme/notes').secrets, 4);
+  // A reviewer rule holds only when the signed-in user cannot approve alone: self-review prevented, or every reviewer
+  // another user. The user named, a team that may hold the user, or no reviewer at all: counted.
+  const counted = (environment) => read([environment]).forge.workflowSecrets('acme/notes').secrets;
+  assert.deepEqual([counted(reviewers(false, user('Octo'))), counted(reviewers(false, user('ada'), user('octo'))), counted(reviewers(false, { type: 'Team', reviewer: { slug: 'ops' } })), counted(reviewers(false)), counted(reviewers(undefined, user('octo')))], [3, 3, 3, 3, 3]);
+  assert.deepEqual([counted(reviewers(true, user('octo'))), counted(reviewers(false, user('ada'))), counted(reviewers(false, user('ada'), user('grace')))], [0, 0, 0]);
+  // A login the forge does not name may be any reviewer's.
+  const anonymous = read([reviewers(false, user('ada'))], { user: 'HTTP/2.0 200 OK\r\nX-Oauth-Scopes: repo\r\n\r\nnot json' });
+  assert.equal(anonymous.forge.workflowSecrets('acme/notes').secrets, 3);
   // A repository GitHub keeps no environments for has none; any other failure throws.
   assert.equal(read([], { 'repos/acme/notes/environments': new Error('gh: Not Found (HTTP 404)') }).forge.workflowSecrets('acme/notes').secrets, 0);
   assert.throws(() => read([open], { 'repos/acme/notes/environments/prod%20deploy/secrets': new Error('gh: Forbidden (HTTP 403)') }).forge.workflowSecrets('acme/notes'), /Forbidden/u);

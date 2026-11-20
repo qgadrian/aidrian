@@ -332,12 +332,14 @@ export default {
   // No host file of a checkout is protected beyond what every host's are: its config is the user's, in CODEX_HOME.
   protectedPaths: [],
   // The instruction files and folder it loads from the folders between the project root and the folder a session
-  // starts in, and its own user folder, CODEX_HOME. A project run refuses a start under any other such file a review did
-  // not see (lib/project-run-gate.mjs).
+  // starts in, its own user folder, CODEX_HOME, and `globalNames`, the files there it loads as the user's own guidance
+  // for every session: AGENTS.override.md, else AGENTS.md (developers.openai.com/codex/guides/agents-md). A project run
+  // refuses a start under any other such file a review did not see (lib/project-trust.mjs ancestorProblem).
   instructionFiles: {
     files: ['AGENTS.md', 'AGENTS.override.md'],
     folders: ['.codex'],
     userFolder: (env) => env.CODEX_HOME || path.join(env.HOME || homedir(), '.codex'),
+    globalNames: ['AGENTS.md', 'AGENTS.override.md'],
   },
   // What a session in a linked worktree reads from the main checkout: nothing its docs name. Its instructions load from
   // the worktree's own folders up to the project root, which instructionFiles covers.

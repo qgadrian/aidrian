@@ -272,22 +272,16 @@ export function trustProblem(dir, tip) {
 // file or folder (lib/hosts/index.mjs instructionNames), which every host that reads it loads into the session. One is
 // allowed only inside the main checkout of `project`, tracked by git, and the same as the commit `tip`, or an ancestor
 // of it the main checkout is at (reviewedMismatch), with nothing untracked or ignored in a folder. A host's own user
-// folder, read for every session wherever it starts, and its own top-level files are the user's, such as Claude Code's
-// `.claude` and `.claude/CLAUDE.md` in the home folder, which a default state folder lies under: the entry, by its path
-// or its real path, is a user folder, or its folder is one, so a user folder or a memory file in it that is a symlink,
-// as a dotfiles checkout makes, stays the user's. Nothing deeper is: a state folder inside a user folder has its own
-// instruction files, which no review saw, checked as any other. `env` names those user folders. The state folder lies
-// outside every checkout (project-run.mjs runPlace), so the advice moves the file or the state folder.
+// folder, read for every session wherever it starts, and the files in it that host loads as the user's own instructions
+// (`globalNames`: Claude Code's CLAUDE.md, Codex's AGENTS.md and AGENTS.override.md) are the user's, such as `.claude`
+// and `.claude/CLAUDE.md` in the home folder, which a default state folder lies under (userHolds). Any other file in a
+// user folder, such as `.claude/CLAUDE.local.md`, or another host's name, such as `.codex/CLAUDE.md`, is loaded only as
+// an ancestor of the clone, and is checked as any other, as is a state folder's own instruction file inside a user
+// folder. `env` names those user folders. The state folder lies outside every checkout (project-run.mjs runPlace), so
+// the advice moves the file or the state folder.
 export function ancestorProblem(dir, { project, tip, env = process.env }) {
-  const { files, folders, userFolders } = instructionNames(env);
-  const users = userFolders.flatMap((each) => {
-    const given = path.resolve(each);
-    return [given, path.join(resolvedPath(path.dirname(given)) ?? path.dirname(given), path.basename(given)), resolvedPath(given) ?? given];
-  }).map(foldCase);
-  const usersHold = (file) => {
-    const real = resolvedPath(file) ?? file;
-    return [file, real, path.dirname(file), path.dirname(real)].some((each) => users.includes(foldCase(each)));
-  };
+  const { files, folders, users } = instructionNames(env);
+  const usersHold = userHolds(users);
   const main = resolvedPath(project.checkouts.at(-1)) ?? project.checkouts.at(-1);
   const start = resolvedPath(dir) ?? path.resolve(dir);
   for (let folder = path.dirname(start); folder !== path.dirname(folder); folder = path.dirname(folder)) {
@@ -305,6 +299,27 @@ export function ancestorProblem(dir, { project, tip, env = process.env }) {
     }
   }
   return null;
+}
+
+// Whether an instruction file or folder above a clone is the user's own, from the hosts' `users` ({ folder, names },
+// lib/hosts/index.mjs instructionNames): a host's user folder itself, by its path or real path, or a file directly in
+// that host's user folder, by its path or real path, named one of that host's own global names, and, when it is a link,
+// leading to a file of such a name, so a dotfiles checkout's link stays the user's and a CLAUDE.md that leads to the
+// host's settings does not.
+function userHolds(users) {
+  const forms = (each) => {
+    const given = path.resolve(each);
+    return [given, path.join(resolvedPath(path.dirname(given)) ?? path.dirname(given), path.basename(given)), resolvedPath(given) ?? given].map(foldCase);
+  };
+  const hosts = users.map(({ folder, names }) => ({ folders: forms(folder), names: names.map(foldCase) }));
+  return (file) => {
+    const real = resolvedPath(file) ?? file;
+    return hosts.some(({ folders, names }) => {
+      if (folders.includes(foldCase(file)) || folders.includes(foldCase(real))) return true;
+      const inside = [file, real].some((each) => folders.includes(foldCase(path.dirname(each))));
+      return inside && [file, real].every((each) => names.includes(foldCase(path.basename(each))));
+    });
+  };
 }
 
 // Why the host instruction file or folder `file` is not one a review saw, or null: it must lie inside the main checkout

@@ -1052,19 +1052,31 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
 - With or without gates or a project, the same two may not repoint a git remote or gh's default repository, nor
   change how git reads them: `git remote add`, `set-url`, or `rename`; a `git config` write of a `remote.*`,
   `include.path`, `includeIf.*`, `url.*`, or `alias.*` key, or any `--edit`, `--rename-section`, or `--remove-section`;
-  an alias given by `git -c alias.*` or `--config-env`; `gh repo set-default`; and `gh alias set` or `import`.
+  any of those keys given to one git call by `git -c` or `--config-env`, such as `remote.origin.url`,
+  `remote.origin.pushurl`, `remote.origin.fetch`, `url.<base>.insteadOf`, or `pushInsteadOf`, or a key built at run
+  time; a `git fetch`, `pull`, `push`, or `remote` on a line that sets, exports, or unsets a variable that moves git's
+  repository or config, such as `GIT_DIR`, `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_GLOBAL`, or any other `GIT_CONFIG_*`;
+  `gh repo set-default`; and `gh alias set` or `import`.
   Nor may they move a remote-tracking ref, which names the commit a project run cuts each issue from: `git update-ref`
-  of one or with `--stdin`; `git symbolic-ref` that writes or deletes one, past its `-m` reason; `git remote set-head`
+  of one or with `--stdin`; `git symbolic-ref` that writes or deletes one, past its `-m` reason, or points a ref such
+  as `HEAD` at one, which every later commit would move; `git remote set-head`
   but `git remote set-head <remote> --auto` (or `-a`), which sets it from the forge's own default branch; `git branch`
-  deleting remote-tracking branches; and a fetch, pull, or push refspec, or a `--refmap` value, whose destination git
-  expands to one (`remotes/x` is `refs/remotes/x`, and `refs/REMOTES/x` the same file on a disk that folds case), or a
-  push to a repository on the disk, such as `.`, whose destination is no full branch or tag, as `git push . HEAD:origin/main`.
+  deleting remote-tracking branches; a fetch, pull, or push refspec, or a `--refmap` value, whose destination git
+  expands to one (`remotes/x` is `refs/remotes/x`, and `refs/REMOTES/x` the same file on a disk that folds case), or
+  one the shell builds or expands that holds a `:` and names `remote`, or whose destination starts with what the shell
+  builds, as `+HEAD:refs/$R/origin/main`; and a push to a repository on the disk whose destination is no full branch or
+  tag, as `git push . HEAD:origin/main`. The push's repository is read past the options that take a value
+  (`--receive-pack`, `--exec`, `-o`, `--push-option`, `--repo`), and counts as on the disk when it is a path (`.`,
+  `.git`, `~/x`), a `file:` URL, a word built at run time, such as `"$PWD"`, or any word that is no remote
+  `git remote` lists in the call's folder.
   The plugin reads the team's policy, such as [`solo`](config.md#solo), from the repository a remote names on GitHub.
-  A read, such as `git remote -v`, `git config --get remote.origin.url`, or `gh repo set-default --view`, runs;
+  A read, such as `git remote -v`, `git config --get remote.origin.url`, or `gh repo set-default --view`, runs, as do
+  `git fetch origin`, `git pull --rebase origin main`, and a push to a configured remote;
   a shell it cannot read that names such an action counts. Its known limits: a write by its path to `.git/config`,
   a file it includes, or `~/.config/gh`; a program that runs its arguments, such as `xargs git ...`; a git
-  subcommand held in a variable, as in `git $ACTION ...`; and a git or gh word built by an expansion, such as
-  ANSI-C quoting (`$'...'`) or a command substitution inside the subcommand (#340).
+  subcommand held in a variable, as in `git $ACTION ...`; a git or gh word built by an expansion, such as
+  ANSI-C quoting (`$'...'`) or a command substitution inside the subcommand (#340); and `HOME` or `XDG_CONFIG_HOME`
+  moved on the line, which points git at another user config.
 - With or without gates, the same two may not run `aidrian handoff continue` or `aidrian handoff route` with any
   variable the command line sets, exports, or unsets, anywhere in the command: by a prefix assignment, `env`, or
   `export`, or by `env -u`, `env -i`, `sudo`, or `unset`. The gate needs none. The reason names the ones that move its
@@ -1202,7 +1214,10 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   - A program that writes its own config is refused: a `git config` write (anything but a read, a list, or a key alone)
     to the user's, the system's, the shared, or the worktree's config, or with `--file` to a file outside the places;
     a key that makes git run a program at any scope, and `git config --edit`; the folders `git worktree add`,
-    `git clone`, and `git init` make, when outside the places; the forge CLI's, which its adapter declares
+    `git clone`, and `git init` make, and the file or folder a git call writes its output to (`--output=<file>` or
+    `--output <file>` on any subcommand, as `git log`, `show`, or `diff`, and `-o` or `--output-directory` of
+    `git format-patch`, and `-o` of `git archive`, alone, attached, or last in a cluster), when outside the places, or
+    when built at run time; the forge CLI's, which its adapter declares
     (`gh auth setup-git`, `login`, `logout`, `switch`, and `refresh`, `gh config set`, and `gh extension install` on
     GitHub); each host's own config subcommands, which its adapter declares (`configCommands`: `claude mcp add`,
     `claude config set`, `claude plugin install`, and `claude plugin marketplace add` for Claude Code, `codex mcp add`,
@@ -1265,18 +1280,22 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     `-o`, `--no-verify`, any other option, a word built at run time, a git `-c`, `--git-dir`, or `--work-tree`, a
     variable that moves git's repository or config (`GIT_DIR`, `GIT_CONFIG_*`, `HOME`, `XDG_CONFIG_HOME`) on the line,
     a push from any other folder, and every push while no running start of its issue names a branch. In a call of its
-    own: beside the push only `cd`, git's reads `status`, `log`, `diff`, `show`, `rev-parse`, and
+    own: beside the push only `cd`, git's reads `status`, `log`, `diff`, `show`, `rev-parse`, with only the options
+    that read (`--oneline`, `-<n>`, `-n <n>`, `--format=`, `--stat`, `--name-only`, `--cached`, and the like, never
+    `--output`, `-o`, `--ext-diff`, `--textconv`, `--exec`, `-c`, or one the hook does not list, which write a file,
+    such as a branch's ref in the clone's git folder, or run a program), and
     `branch --show-current`, and the filters `echo`, `printf`, `true`, `head`, `tail`, `wc`, `cat`, and `grep` may run,
     so `git apply --cached p && git commit -m x && git push ...`, a merge, a reset, or a fetch on the push's line,
     which would change its commits after the hook read them, is refused with "push in a call of its own". Then git
     holds the checkout: the folder's `git rev-parse --git-common-dir` is its worktree's or attempt clone's own, not a
-    repository cloned inside it; origin's push URL (`git remote get-url --push origin`) is the one the start row's
-    `pushUrl` pinned, read from the clone before its session started (a start that recorded none pushes nothing); its
+    repository cloned inside it; origin pushes to one URL (`git remote get-url --push --all origin`), the one the start row's
+    `pushUrl` pinned, so a second `remote.origin.pushurl` refuses the push, read from the clone before its session started (a start that recorded none pushes nothing); its
     commits change no file of the forge's workflow folders (`forgeWorkflowFolders`), nor a folder that holds them, as a
     `.github` made a link, from their merge base with origin's default branch (`refs/remotes/origin/HEAD`, else
     `origin/main`), however the file got there, as by `git apply --cached`, `patch`, `tar -x`, `unzip`, or `git am`,
     which the write rule above does not see; and `git status --porcelain` names no staged, unstaged, or untracked change
-    in those folders. A merge of the default branch brings none of its own changes into that diff; a git that cannot
+    in those folders. Both reads take git's NUL-ended output (`-z`), so a file name git would quote, with a space or a
+    non-ASCII letter, counts as it is. A merge of the default branch brings none of its own changes into that diff; a git that cannot
     answer within the hook's budget refuses the push, and one that names no base advises `git fetch origin`, which sets
     origin/HEAD again from git 2.48 on, or `git remote set-head origin --auto` with an older git. `git send-pack`, `git http-push`, and every git subcommand outside
     the list of git's own commands an issue session runs, such as an alias or `git subtree`, are refused; of `git lfs`,
@@ -1307,9 +1326,11 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   checkout can move its copy of origin's default branch, the base the workflow diff starts from; the forge itself holds
   that, so `aidrian project preflight` blocks a run whose default branch asks the signed-in user, admin or not, for no
   pull request, whose tags no rule that user cannot bypass stops being created or moved, or whose workflows see CI
-  secrets while that token may push a workflow file, unless the team sets `projectRun.workflowSecretsAccepted`
-  ([review.md](review.md)). When the guards run out of their time budget, an issue session's refusal says it works an
-  issue of a project run. The block is [recorded](#recorded-blocks) as
+  secrets, whatever that token's `workflow` scope, unless the team sets `projectRun.workflowSecretsAccepted`
+  ([review.md](review.md)). A refusal of this rule or the write allowlist above names the session as the issue session
+  of a project run, with the run and the issue (`blocked for the issue session of a project run (launch, ENG-1)`), and a
+  subagent as one of that session, never as the main session. When the guards run out of their time budget, an issue
+  session's refusal says it works an issue of a project run. The block is [recorded](#recorded-blocks) as
   `config-guard`.
 
 - A subagent, and a main session the background route started, may not write in the session folders,

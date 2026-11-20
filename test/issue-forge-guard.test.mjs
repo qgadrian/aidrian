@@ -14,6 +14,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { issueForgeDenial } from '../plugins/aidrian/lib/issue-forge-guard.mjs';
+import { rawPaths, statusEntries } from '../plugins/aidrian/lib/issue-push-checkout.mjs';
 import { appendToRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { ownAttemptFolder, ownIssue } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { issueHeld, markUnattended, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
@@ -113,8 +114,11 @@ test('an issue session pushes only its own branch to origin, and asks the forge 
     assert.match(denial?.reason ?? '', /a project run's issue session never does that: only the Human does/u, command);
   }
   for (const command of PASSED) assert.equal(fx.ask(bash(command)), null, command);
-  // The reason names the one push it makes.
-  assert.match(fx.ask(bash('git push origin HEAD:refs/heads/main')).reason, /the one push it makes is `git push origin HEAD:refs\/heads\/feat\/eng-1-export`/u);
+  // The reason names the one push it makes, and the session as an issue session of the run, never the main session.
+  const refusal = fx.ask(bash('git push origin HEAD:refs/heads/main')).reason;
+  assert.match(refusal, /the one push it makes is `git push origin HEAD:refs\/heads\/feat\/eng-1-export`/u);
+  assert.match(refusal, /^aidrian: Bash is blocked for the issue session of a project run \(launch, ENG-1\) in this project/u);
+  assert.match(fx.ask({ ...write(path.join(fx.root, 'elsewhere.md')), agent_id: 'a1', agent_type: 'aidrian:explorer' })?.reason ?? '', /blocked for the agent "aidrian:explorer" of the issue session of a project run \(launch, ENG-1\)/u, 'a subagent, through the write rule');
   // An issue whose start the ledger does not name as running pushes nothing: its branch cannot be told.
   appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'issue', key: 'ENG-1', state: 'parked', at: new Date().toISOString() }] }));
   assert.match(fx.ask(bash(EXACT))?.reason ?? '', /no running start of its issue names the branch it may push/u);
@@ -207,16 +211,24 @@ test('an issue session pushes in a call of its own, so no command beside it chan
     `git apply --cached ${patch} && git commit -m x && ${EXACT}`, `git commit -qam x && ${EXACT}`, `git merge side && ${EXACT}`, `git reset --hard side; ${EXACT}`,
     `${EXACT} && git commit -m later`, `git fetch origin && ${EXACT}`, `git branch -f side && ${EXACT}`, `npm run release; ${EXACT}`, `(git commit -m x) && ${EXACT}`,
     `bash -c "git commit -m x" && ${EXACT}`, `$TOOL && ${EXACT}`, `git -c core.hooksPath=x status && ${EXACT}`,
+    // A read that writes a file, as a branch's ref in the clone's git folder, or runs a program, is no read.
+    `git log -1 --format=%H --output=${path.join(fx.attempt, 'git', 'refs', 'heads', ...BRANCH.split('/'))} HEAD && ${EXACT}`,
+    `git log -1 --output ${path.join(fx.attempt, 'git', 'refs', 'heads', 'x')} && ${EXACT}`, `git diff --ext-diff && ${EXACT}`, `git log -p --textconv && ${EXACT}`,
+    `git show -o x HEAD && ${EXACT}`, `git status --exec=x && ${EXACT}`, `git diff -c && ${EXACT}`, `git rev-parse --git-path x --frobnicate && ${EXACT}`,
   ]) {
     assert.match(fx.ask(bash(command))?.reason ?? '', /an issue session pushes in a call of its own: commit first, then run `git push origin HEAD:refs\/heads\/feat\/eng-1-export` alone/u, command);
   }
   // Reads and text filters may share its call.
-  for (const command of [EXACT, `cd ${fx.work} && ${EXACT}`, `git status --short && git log --oneline -1 && ${EXACT} 2>&1 | tail -5`, `git rev-parse HEAD; git branch --show-current; ${EXACT}; echo done`, `${EXACT} | grep -v hint | head -3`]) {
+  for (const command of [EXACT, `cd ${fx.work} && ${EXACT}`, `git status --short && git log --oneline -1 && ${EXACT} 2>&1 | tail -5`, `git log --oneline -3 && ${EXACT}`,
+    `git log -n 2 --format=%H --stat origin/main..HEAD -- src && git diff --cached --name-only && ${EXACT}`, `git rev-parse HEAD; git branch --show-current; ${EXACT}; echo done`, `${EXACT} | grep -v hint | head -3`]) {
     assert.equal(fx.ask(bash(command)), null, command);
   }
   const hooked = fx.hook(bash(`git commit --allow-empty -qm x && ${EXACT}`));
   assert.equal(hooked.status, 2, hooked.stderr);
   assert.match(hooked.stderr, /in a call of its own/u);
+  // Alone, a read whose output names the clone's git folder is refused by the write rule.
+  const ref = path.join(fx.attempt, 'git', 'refs', 'heads', ...BRANCH.split('/'));
+  assert.match(fx.ask(bash(`git log -1 --format=%H --output=${ref} HEAD`))?.reason ?? '', /the attempt clone's git folder, which only git writes/u);
 });
 
 test('an issue session\'s exact push is refused while its checkout holds an uncommitted workflow change, or a .github that is no folder', (t) => {
@@ -242,6 +254,37 @@ test('an issue session\'s exact push is refused while its checkout holds an unco
   assert.match(push(), /it pushes commits that change \.github, a workflow file/u, 'a link in place of .github');
 });
 
+test('an issue session\'s exact push reads a workflow file\'s name as git holds it, with a space or a letter git would quote', (t) => {
+  const fx = issueFixture(t);
+  const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8', stdio: 'pipe' });
+  const push = () => fx.ask(bash(EXACT))?.reason ?? null;
+  for (const name of ['é.yml', 'a b.yml']) {
+    mkdirSync(path.join(fx.work, '.github', 'workflows'), { recursive: true });
+    const file = path.join(fx.work, '.github', 'workflows', name);
+    writeFileSync(file, 'on: push\n');
+    assert.match(push() ?? '', new RegExp(`holds an uncommitted change to \\.github/workflows/${name.replace('.', '\\.')}, a workflow file`, 'u'), `untracked ${name}`);
+    git(fx.work, 'add', '--', `.github/workflows/${name}`);
+    assert.match(push() ?? '', /holds an uncommitted change to/u, `staged ${name}`);
+    git(fx.work, 'commit', '-q', '-m', `chore: ${name}`);
+    assert.match(push() ?? '', new RegExp(`it pushes commits that change \\.github/workflows/${name.replace('.', '\\.')}, a workflow file`, 'u'), `committed ${name}`);
+    git(fx.work, 'rm', '-q', '--', `.github/workflows/${name}`);
+    git(fx.work, 'commit', '-q', '-m', `chore: drop ${name}`);
+    assert.equal(push(), null, `${name} taken out`);
+  }
+  // The advice quotes a name with a space, so running it takes the file out.
+  mkdirSync(path.join(fx.work, '.github', 'workflows'), { recursive: true });
+  writeFileSync(path.join(fx.work, '.github', 'workflows', 'a b.yml'), 'on: push\n');
+  assert.match(push() ?? '', /`git clean -f -- '\.github\/workflows\/a b\.yml'`/u);
+});
+
+test('the workflow-file reads take both paths of a rename, from git\'s NUL-ended output', () => {
+  assert.deepEqual(rawPaths(':100644 100644 a b M\0x y.yml\0:100644 100644 a b R100\0.github/workflows/é.yml\0src/z.yml\0'), ['x y.yml', '.github/workflows/é.yml', 'src/z.yml']);
+  assert.deepEqual(statusEntries('R  src/z.yml\0.github/workflows/a b.yml\0?? .github/workflows/é.yml\0'), [
+    { paths: ['src/z.yml', '.github/workflows/a b.yml'], untracked: false },
+    { paths: ['.github/workflows/é.yml'], untracked: true },
+  ]);
+});
+
 test('an issue session pushes only from its own clone\'s repository, to the URL its start pinned, never from a clone nested in it', (t) => {
   const fx = issueFixture(t);
   const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8', stdio: 'pipe' });
@@ -260,6 +303,12 @@ test('an issue session pushes only from its own clone\'s repository, to the URL 
   // The clone's origin made to push elsewhere, past the guards, as a config write by a program would.
   git(fx.work, 'remote', 'set-url', '--push', 'origin', other);
   assert.match(fx.ask(bash(EXACT))?.reason ?? '', new RegExp(`it pushes to ${other.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}, and origin pushes only to .*, the URL its issue's start pinned`, 'u'));
+  // Two push URLs, the pinned one among them: git pushes to both.
+  git(fx.work, 'config', '--unset-all', 'remote.origin.pushurl');
+  assert.equal(fx.ask(bash(EXACT)), null, 'one push URL again');
+  git(fx.work, 'config', '--add', 'remote.origin.pushurl', fx.dir);
+  git(fx.work, 'config', '--add', 'remote.origin.pushurl', other);
+  assert.match(fx.ask(bash(EXACT))?.reason ?? '', /one of the 2 URLs origin pushes to, and origin pushes only to/u, 'a second push URL');
 });
 
 test('an issue session whose start pinned no push URL pushes nothing', (t) => {

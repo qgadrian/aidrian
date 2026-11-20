@@ -160,13 +160,14 @@ export const modelChoices = () => Object.fromEntries(HOSTS.map((host) => [host.m
 export const priceTables = (hosts = HOSTS) => hosts.map((host) => ({ host: host.id, models: host.modelPrices?.models ?? [], rows: host.modelPrices?.rows ?? [] }));
 
 // The host instruction files and folders every host loads from the folders above where a session starts, as { files,
-// folders, userFolders }: the names of each, and each host's own user folder under `env`, which it reads for every session.
+// folders, users }: the names of each, and each host's own user folder under `env`, which it reads for every session,
+// with the names of the files in it that host loads as the user's own instructions, each { folder, names }.
 export function instructionNames(env = process.env, hosts = HOSTS) {
   const declared = hosts.map((host) => host.instructionFiles).filter(Boolean);
   return {
     files: [...new Set(declared.flatMap((each) => each.files ?? []))],
     folders: [...new Set(declared.flatMap((each) => each.folders ?? []))],
-    userFolders: declared.map((each) => each.userFolder?.(env)).filter((each) => typeof each === 'string' && each !== ''),
+    users: declared.map((each) => ({ folder: each.userFolder?.(env), names: each.globalNames ?? [] })).filter(({ folder }) => typeof folder === 'string' && folder !== ''),
   };
 }
 

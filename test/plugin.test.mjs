@@ -872,9 +872,11 @@ test('a reused ledger reaches what a settled marker means, the handoff carries t
   assert.match(readFileSync(path.join(PLUGIN, 'lib/decisions-cli.mjs'), 'utf8'), /`quorum route` and `quorum provisional` add `resolve`'s/);
   const { docs } = JSON.parse(readFileSync(path.join(ROOT, '.aidrian/knowledge/10-harness.json'), 'utf8'));
   // Each summary keeps the words a search for its surface uses, within the 160 characters an index summary holds.
-  for (const words of ['autoStart', 'projectRun', 'next', 'maxPersonas', 'allWidths', 'items', 'diff', 'result', 'report']) assert.ok(docs['config.md'].summary.includes(words), `config.md summary: ${words}`);
-  for (const words of ['quorum route', 'quorum provisional', 'worktrees', 'decision markers', 'decisions list/set', 'local sources', 'migrating']) assert.ok(docs['project-folder.md'].summary.includes(words), `project-folder.md summary: ${words}`);
+  for (const words of ['config.json', 'autoStart', 'projectRun', 'next', 'maxPersonas', 'allWidths', 'items', 'diff', 'result', 'report']) assert.ok(docs['config.md'].summary.includes(words), `config.md summary: ${words}`);
+  for (const words of ['check, lint', 'quorum route', 'quorum provisional', 'decision markers', 'decisions list/set', 'local sources', 'migrating']) assert.ok(docs['project-folder.md'].summary.includes(words), `project-folder.md summary: ${words}`);
   for (const words of ['ingest', 'quiet', '--accept', 'lateRoundFrom', 'merge trust']) assert.ok(docs['review.md'].summary.includes(words), `review.md summary: ${words}`);
+  // Worktrees are searched through the working agreement's summary, which every session reads anyway.
+  assert.ok(docs['working-agreement.md'].summary.includes('worktrees'), 'working-agreement.md summary: worktrees');
   for (const file of ['config.md', 'project-folder.md', 'review.md']) assert.ok(docs[file].summary.length <= 160, `${file} summary: ${docs[file].summary.length} characters`);
 });
 
@@ -991,6 +993,8 @@ test('autopilot keeps each entry in its own file, and --continue enters where th
   const rule = 'The second and third rows of § 3 publish first, never with force, except on § 7\'s path with no plan and nothing left to change, which publishes once its gates pass: the owner the `knowledge` skill\'s agent rule picks pushes the branch\'s commits to `origin/<branch>` in the foreground, as the `issue-implement` skill\'s `steps/phases-1-4-implement.md` step 9 pushes a slice, the first push with `-u`.';
   assert.ok(publish !== -1 && resume.indexOf(rule) > publish, 'the publish rule');
   assert.ok(flat('plugins/aidrian/skills/issue-implement/steps/phases-1-4-implement.md').includes('and pushes it, the first push with `-u`.'), 'the slice push the rule follows');
+  // An issue session of a project run pushes its slice the one way the forge rule lets it, alone in its call.
+  assert.ok(flat('plugins/aidrian/skills/issue-implement/steps/phases-1-4-implement.md').includes('In a project run\'s issue session, the push is `git push origin HEAD:refs/heads/<branch>`, in a call of its own.'), 'the issue session\'s slice push');
   // Commit only where no engine runs: an engine's slice makes one commit, so work committed ahead of it would leave
   // the slice with nothing to commit. ae94cca took that commit out, and an early draft of #245 brought it back.
   for (const words of [

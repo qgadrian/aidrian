@@ -226,6 +226,22 @@ test('a subagent and an unattended session may not move a remote-tracking ref; a
     'git push . HEAD:origin/main',
     'git push . HEAD:remotes/origin/main',
     'git remote set-head origin -a evil',
+    // A push to a repository on this disk, however its word is spelled, or past an option that takes a value.
+    'git push .git HEAD:origin/main', 'git push ~/project HEAD:origin/main', 'git push "$PWD" HEAD:origin/main', 'git push $REPO HEAD:origin/main',
+    'git push --receive-pack git-receive-pack . HEAD:origin/main', 'git push --exec x . HEAD:origin/main', 'git push -o ci.skip . HEAD:origin/main',
+    'git push --push-option ci.skip . HEAD:origin/main', 'git push --repo origin . HEAD:origin/main', 'git push elsewhere HEAD:origin/main',
+    // A config given for the one command that repoints a remote, or a variable that moves git's config on the line.
+    'git -c remote.origin.url=/tmp/x fetch origin', 'git -c remote.origin.pushurl=/tmp/x push origin HEAD:refs/heads/feat/x',
+    'git -c remote.origin.fetch=+refs/heads/*:refs/remotes/origin/* fetch .', 'git -c url./tmp/x.insteadOf=https://example.com/ fetch origin',
+    'git -c url.x.pushInsteadOf=y status', 'git --config-env url.x.insteadOf=X fetch origin', 'git --config-env=remote.origin.url=X fetch origin', 'git -c "$KEY=x" fetch origin',
+    `GIT_CONFIG_PARAMETERS="'remote.origin.url'='/tmp/x'" git fetch origin`, 'GIT_CONFIG_GLOBAL=/tmp/g git fetch origin',
+    'export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.url GIT_CONFIG_VALUE_0=/tmp/x; git pull origin main', 'GIT_CONFIG_KEY_0=x git remote -v',
+    'GIT_DIR=/tmp/x/.git git fetch origin',
+    // A ref pointed at a remote-tracking ref, which every later commit then moves.
+    'git symbolic-ref HEAD refs/remotes/origin/main', 'git symbolic-ref -m x HEAD refs/remotes/origin/main',
+    // A refspec the shell builds or expands.
+    'git fetch . "+HEAD:refs/$R/origin/main"', 'git fetch . +HEAD:refs/remote?/origin/main', 'git fetch . +HEAD:refs/remotes/$B',
+    'git fetch . refs/heads/main --refmap="+refs/heads/*:refs/remotes/$X/*"', 'git push . "HEAD:$DST"',
   ]) {
     assert.match(ask(command, unattended)?.reason ?? '', /or a remote-tracking ref/u, command);
     assert.equal(ask(command, attended), null, `${command} (attended)`);
@@ -236,6 +252,9 @@ test('a subagent and an unattended session may not move a remote-tracking ref; a
     'git push origin HEAD:refs/heads/feat/x', 'git push . HEAD:refs/heads/feat/x', 'git fetch --refmap= origin main',
     // origin/HEAD set again from the forge's own default branch, as the issue session's push refusal advises.
     'git remote set-head origin -a', 'git remote set-head origin --auto',
+    // A push to a remote the checkout configures, past an option that takes a value, and a config that names no remote.
+    'git push origin HEAD:feat/x', 'git push -o ci.skip origin HEAD:feat/x', 'git push --receive-pack x origin HEAD:refs/heads/feat/x',
+    'git -c user.name=x fetch origin', 'git -c core.quotePath=false status', 'git symbolic-ref HEAD refs/heads/feat/x', 'git fetch origin "$BRANCH"',
   ]) assert.equal(ask(command, unattended), null, command);
 });
 

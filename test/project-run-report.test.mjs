@@ -547,7 +547,7 @@ test('preflight blocks a default branch no rule holds the signed-in user to, rel
   ]) assert.ok(blocker(lines({ ...GUARDED, tags }), 'release-tags'), JSON.stringify(tags));
   const held = lines(GUARDED);
   assert.deepEqual([blocker(held, 'branch-protection'), blocker(held, 'release-tags'), blocker(held, 'workflow-secrets')], [null, null, null]);
-  assert.match(held.find((line) => line.startsWith('note workflows:')), /keep release and deploy secrets in environments limited to protected branches and tags, or held for a reviewer;.*the hook refuses an issue session's writes to the workflow files and a push whose commits change them/u);
+  assert.match(held.find((line) => line.startsWith('note workflows:')), /keep release and deploy secrets in environments limited to protected branches and tags, or held for a reviewer who prevents self-review or is not the signed-in user; a token without the workflow scope keeps the session from changing a workflow file, not from changing the tests and scripts a workflow runs;.*the hook refuses an issue session's writes to the workflow files and a push whose commits change them/u);
   // A cloud role trusted for any ref of the repository is named: any branch's workflow can assume it.
   assert.match(held.find((line) => line.startsWith('note workflows:')), /OIDC federation for any ref of the repository \(a subject such as repo:<owner>\/<name>:\*\) can be assumed from any branch/u);
   assert.match(blocker(lines({ ...GUARDED, tags: [{ ...GUARDED.tags[0], all: false }] }), 'release-tags'), /~ALL or refs\/tags\/\*\*\/\*, excluding none; refs\/tags\/\* stops at a slash/u);
@@ -557,22 +557,23 @@ test('preflight blocks a default branch no rule holds the signed-in user to, rel
   });
   assert.match(blocker(failed, 'release-tags'), /the forge cannot say what guards the default branch and the tags \(gh: Not Found \(HTTP 404\)\)/u);
   assert.ok(blocker(failed, 'branch-protection'));
-  // Workflow secrets: a blocker while the token may push a workflow file, or does not say.
+  // Workflow secrets: a blocker whatever the token's scopes, since the workflows run the branch's own code; the scope
+  // only widens or narrows what the blocker says.
   const secrets = (read) => {
     fx.forge.workflowSecrets = typeof read === 'function' ? read : () => read;
     return blocker(lines(GUARDED), 'workflow-secrets');
   };
-  assert.match(secrets({ secrets: 3, workflowPush: true }), /the repository's workflows see 3 CI secrets, and the signed-in token's scopes include workflow, so it may push a change to a workflow file.*projectRun\.workflowSecretsAccepted/u);
+  assert.match(secrets({ secrets: 3, workflowPush: true }), /the repository's workflows see 3 CI secrets, and the forge runs its push and pull request workflows on an issue's branch with the branch's own code.*the signed-in token's scopes include workflow, so it may push a change to a workflow file too.*projectRun\.workflowSecretsAccepted/u);
   assert.match(secrets({ secrets: 1, workflowPush: null }), /the signed-in token names no scopes, so it may push/u);
-  assert.equal(secrets({ secrets: 3, workflowPush: false }), null, 'a token that cannot push a workflow file');
+  assert.match(secrets({ secrets: 3, workflowPush: false }), /see 3 CI secrets.*though the signed-in token cannot push a change to a workflow file, which narrows it only.*projectRun\.workflowSecretsAccepted/u, 'a token that cannot push a workflow file');
+  assert.equal(secrets({ secrets: 0, workflowPush: true }), null, 'no secret');
   assert.match(secrets(() => {
     throw new Error('gh: Forbidden (HTTP 403)');
   }), /the forge cannot say which CI secrets the repository's workflows see \(gh: Forbidden \(HTTP 403\)\)/u);
 });
 
 test('preflight takes the team\'s acceptance of workflow secrets only when the default branch sets it on the forge and the local ref', (t) => {
-  const exposed = { secrets: 3, workflowPush: true };
-  const blocked = (options) => {
+  const blocked = (options, exposed = { secrets: 3, workflowPush: true }) => {
     const fx = runFixture(t, { init: false, ...READY, ...options });
     Object.assign(fx.forge, { reviewerSeen: () => ({ changes: 4, seen: true }), ciWorkflows: () => ['test'], refProtection: () => GUARDED, workflowSecrets: () => exposed });
     const { out } = fx.cmd(['preflight']);
@@ -585,6 +586,10 @@ test('preflight takes the team\'s acceptance of workflow secrets only when the d
   assert.ok(blocked({ projectRun: accepted, forgeConfig: committed }), 'the local ref alone');
   assert.ok(blocked({ forgeConfig: { ...committed, projectRun: accepted } }), 'the forge alone');
   assert.ok(blocked({}), 'set on neither');
+  // A token without the workflow scope still blocks: the acceptance alone lets the run start.
+  const narrow = { secrets: 3, workflowPush: false };
+  assert.ok(blocked({}, narrow), 'no workflow scope, set on neither');
+  assert.equal(blocked({ projectRun: accepted }, narrow), null, 'no workflow scope, set on both');
 });
 
 test('preflight notes a run with no tracker server, blocks a tracker-named server it cannot map, and no required checks', (t) => {

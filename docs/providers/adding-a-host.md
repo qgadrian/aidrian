@@ -298,7 +298,9 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   a tag, and whether the signed-in user may bypass it (`never` is the only answer the preflight accepts); and
   `workflowSecrets(repo, { host })`, `{ secrets, workflowPush }`: how many CI secrets the repository's workflows see,
   its own, those its organization shares, and those of each environment with no deployment branch policy and no
-  required reviewer, and whether the signed-in token may push a change to a workflow file (null when the token does not say).
+  required reviewers rule that holds the signed-in user (one that prevents self-review, or names only other users; a
+  team may hold that user), and whether the signed-in token may push a change to a workflow file (null when the token
+  does not say), which the preflight's blocker only words: secrets block whatever the scope.
 - Links: `compareUrl(repo, from, to)`, the web link that shows the commits from `from` to `to`, which the review
   summary's findings table gives a finding's closing range. It is built only from two full-hex SHAs and the forge's own
   identity of the repository, never from pull request content: GitHub's adapter reads the repository's `html_url` once,

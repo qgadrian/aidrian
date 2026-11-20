@@ -1314,7 +1314,7 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   checkout can move its copy of origin's default branch, the base the workflow diff starts from; the forge itself holds
   that, so `aidrian project preflight` blocks a run whose default branch asks the signed-in user, admin or not, for no
   pull request, whose tags no rule that user cannot bypass stops being created or moved, or whose workflows see CI
-  secrets while that token may push a workflow file, unless the team sets `projectRun.workflowSecretsAccepted`
+  secrets, whatever that token's `workflow` scope, unless the team sets `projectRun.workflowSecretsAccepted`
   ([review.md](review.md)). When the guards run out of their time budget, an issue session's refusal says it works an
   issue of a project run. The block is [recorded](#recorded-blocks) as
   `config-guard`.

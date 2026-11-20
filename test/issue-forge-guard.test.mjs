@@ -384,6 +384,18 @@ test('an issue session writes no workflow file, no handoff brief or snapshot, no
   assert.equal(workflow.status, 2, workflow.stderr);
   const plan = fx.hook(write(path.join(fx.state, 'plans', 'eng-1-implementation.md')));
   assert.equal(plan.status, 0, plan.stderr);
+  // A state folder inside a temporary folder, as on Linux where the hook's /tmp holds it, keeps its own rules there.
+  const inTemp = (file) => unattendedWriteDenial({ session_id: SESSION, cwd: fx.work, ...write(file) }, fx.config, {
+    mark: fx.mark,
+    env: fx.env,
+    places: () => unattendedPlaces({ cwd: fx.work, mark: fx.mark, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.root], own: () => ownAttemptFolder(fx.project, fx.config, fx.mark, { home: fx.home }) }),
+  });
+  for (const file of [path.join(fx.state, 'handoffs', '2026-11-19-project-launch.md'), path.join(fx.state, 'quorum', 'product', 'x-1234567.json'), path.join(fx.state, 'notes.md')]) {
+    assert.match(inTemp(file)?.reason ?? '', /outside the places/u, `in a temporary folder: ${file}`);
+  }
+  for (const file of [path.join(fx.state, 'plans', 'eng-1-implementation.md'), path.join(fx.root, 'scratch', 'x.txt'), path.join(fx.root, 'elsewhere', 'x.txt')]) {
+    assert.equal(inTemp(file), null, `in a temporary folder: ${file}`);
+  }
 });
 
 test('with no running start to name its issue, an issue session writes none of the shared plans, tmp, or dispatch files', (t) => {

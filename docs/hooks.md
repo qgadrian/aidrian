@@ -1174,7 +1174,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     or `tmp/eng-1/`; and in `dispatch`, only a handoff file named for its own branch, each `/` a `-`, such as
     `feat-eng-1-export-S1-explorer.json`. Its issue and branch are the run snapshot's, read while the ledger names its
     issue running (`lib/project-run-guard.mjs ownIssue`); with none, it writes none of them;
-  - the temporary folder, this process's `TMPDIR` and `/tmp`;
+  - the temporary folder, this process's `TMPDIR` and `/tmp`, but for a state folder inside it, as one under `/tmp`
+    is, where only the state places above pass;
   - `/dev/null`, `/dev/stdout`, `/dev/stderr`, `/dev/tty`, and `/dev/fd/<n>`, by the path a command spells.
 
   Everything else is refused, and these always, inside a place or not, checked first: every git folder, whole (the

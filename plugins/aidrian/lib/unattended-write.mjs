@@ -108,7 +108,8 @@ const refuser = (list) => (file, what, folder = false, allows = null) => list.pu
 //   - worktree: the checkout of the folder its mark says it started in, when it shares its git folder with the mark's
 //     main checkout, and `worktreeCommon` its git common folder; never the call's folder. `nested` holds the attempt's
 //     clone, { root, work, common, links }, `common` the git folder the start cloned it with. `temp`: the temporary
-//     folders, this process's and /tmp by default.
+//     folders, this process's and /tmp by default. `states`: every state folder of `project`, where only `specific`
+//     and `reviews` pass, even inside a temporary folder, as a state folder under /tmp is.
 //   - refused, each refused wherever it lies, and `later()`, the user's and the system's git config as git names them
 //     (git.mjs gitConfigFiles), read only for a target that would pass.
 // Null when the mark names a main checkout but no project can be read there, or a read fails. `env` is the hook's.
@@ -118,7 +119,7 @@ export function unattendedPlaces({ cwd, mark, project, config, base, own = null,
   if (!limited && !project) return null;
   try {
     const user = home ?? userInfo().homedir;
-    const places = { limited, pending: mark.pending === true, specific: [], reviews: [], worktree: null, worktreeCommon: null, temp: [], refused: [], nested: [], home: real(user), issue: null, issueHeld: issueHeld(mark) };
+    const places = { limited, pending: mark.pending === true, specific: [], reviews: [], worktree: null, worktreeCommon: null, temp: [], states: [], refused: [], nested: [], home: real(user), issue: null, issueHeld: issueHeld(mark) };
     const refuse = refuser(places.refused);
     userRefused(refuse, user, env);
     let named;
@@ -354,6 +355,7 @@ function limitedPlaces(places, { cwd, mark, project, config, base, home }, refus
 function stateWork(places, { project, config, base, home }, refuse) {
   for (const state of stateFolders(project, config, stateOptions(base, home))) {
     const root = canonical(state);
+    places.states.push(foldCase(root));
     // A folder that is a link, as `tmp -> ~`, could lead anywhere: it is no place of the session's.
     const plain = (name) => canonical(path.join(root, name)) === path.join(root, name);
     if (places.issueHeld) issueWork(places, root, plain, refuse);
@@ -415,7 +417,9 @@ function refusedHit(target, spelled, entries, { own, holds }) {
 // What a write to the real, case-folded path `target`, spelled `spelled`, meets among `places`: { refused } naming the
 // entry, { outside: true } when it lies in no place the session may write, or null when it passes. The refused entries
 // come first, then the session's places, its own worktree before the home folder's dot entries, so a repository there
-// still writes itself; a target that would pass meets the git config files git names (`later`) too.
+// still writes itself; a target that would pass meets the git config files git names (`later`) too. A temporary folder
+// passes nothing inside a state folder (`states`), whose own places alone pass there, so a state folder under /tmp keeps
+// its handoff briefs, quorum ledgers, and other sessions' files from the session.
 function placeOf(target, spelled, places, { holds = true } = {}) {
   const own = [...places.specific, places.worktree, ...places.temp].includes(target);
   const hit = refusedHit(target, spelled, places.refused, { own, holds }) ?? nestedHit(target, places.nested ?? [], spelled);
@@ -428,7 +432,9 @@ function placeOf(target, spelled, places, { holds = true } = {}) {
   if (places.worktree && isWithin(places.worktree, target)) return passes();
   const below = isWithin(places.home, target) ? path.relative(places.home, target).split(path.sep)[0] : '';
   if (below.startsWith('.')) return { refused: { what: 'a dot file or folder of the user\'s home folder', spelled } };
-  if (places.limited || places.temp.some((dir) => isWithin(dir, target))) return passes();
+  if (places.limited) return passes();
+  const inState = (places.states ?? []).some((dir) => isWithin(dir, target));
+  if (!inState && places.temp.some((dir) => isWithin(dir, target))) return passes();
   return { outside: true };
 }
 

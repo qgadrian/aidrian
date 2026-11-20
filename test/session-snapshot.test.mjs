@@ -61,13 +61,14 @@ function fakeGh(bin, { log, delay = 0, answer = '[]', trap = false, status = 0 }
 }
 
 // A fake gh that is a shell script alone, for a test of how gh is stopped: it ignores SIGTERM, then appends a line to
-// `beat` every 0.1 s for about 6 s, a gh that would outlive any budget. No node runs in it, so a kill that lands before a
-// write leaves that file missing and nothing else.
+// `beat` every 0.1 s for about 6 s, a gh that would outlive any budget, then answers `[]` as a real gh would: a gh never
+// killed reads as a successful refresh, not a failure. No node runs in it, so a kill that lands before a write leaves that
+// file missing and nothing else.
 function shellGh(bin, { beat }) {
   mkdirSync(bin, { recursive: true });
   const file = path.join(bin, 'gh');
   writeFileSync(file, `#!/bin/sh\ntrap '' TERM\n` +
-    `i=0\nwhile [ "$i" -lt 60 ]; do echo x >> ${shellQuoted(beat)}; sleep 0.1; i=$((i + 1)); done\n`);
+    `i=0\nwhile [ "$i" -lt 60 ]; do echo x >> ${shellQuoted(beat)}; sleep 0.1; i=$((i + 1)); done\necho '[]'\n`);
   chmodSync(file, 0o755);
 }
 // The size of `file`, 0 when it is missing.

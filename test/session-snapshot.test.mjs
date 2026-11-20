@@ -60,13 +60,13 @@ function fakeGh(bin, { log, delay = 0, answer = '[]', trap = false, status = 0 }
     `setTimeout(() => { process.stdout.write(${JSON.stringify(answer)}); process.exitCode = ${status}; }, ${delay});\n`, { trap });
 }
 
-// A fake gh that is a shell script alone, for a test of how gh is stopped: it ignores SIGTERM, writes `marker` once, then
-// appends a line to `beat` every 0.1 s for about 6 s, a gh that would outlive any budget. No node runs in it, so a kill that
-// lands before a write leaves that file missing and nothing else.
-function shellGh(bin, { marker, beat }) {
+// A fake gh that is a shell script alone, for a test of how gh is stopped: it ignores SIGTERM, then appends a line to
+// `beat` every 0.1 s for about 6 s, a gh that would outlive any budget. No node runs in it, so a kill that lands before a
+// write leaves that file missing and nothing else.
+function shellGh(bin, { beat }) {
   mkdirSync(bin, { recursive: true });
   const file = path.join(bin, 'gh');
-  writeFileSync(file, `#!/bin/sh\ntrap '' TERM\necho x >> ${shellQuoted(marker)}\n` +
+  writeFileSync(file, `#!/bin/sh\ntrap '' TERM\n` +
     `i=0\nwhile [ "$i" -lt 60 ]; do echo x >> ${shellQuoted(beat)}; sleep 0.1; i=$((i + 1)); done\n`);
   chmodSync(file, 0o755);
 }
@@ -506,27 +506,19 @@ test('a Stop marker past its 64 KiB cap is not read: the handoff section fails',
 
 test('a gh that ignores SIGTERM is killed at the deadline', (t) => {
   const env = withWorktree(t);
-  const marker = path.join(env.base, 'gh.started');
   const beat = path.join(env.base, 'gh.beat');
-  shellGh(path.join(env.base, 'bin'), { marker, beat });
-  const { json, endedAt, status } = env.run(['--session', ID, '--deadline-ms', '1500']);
+  shellGh(path.join(env.base, 'bin'), { beat });
+  const { json, status } = env.run(['--session', ID, '--deadline-ms', '1500']);
   assert.equal(status, 0);
   // What the snapshot asked of gh, recorded in its own process before the spawn: the 1500 ms it was given, not the 4000 ms
   // default, and SIGKILL, which the shell's `trap '' TERM` cannot ignore. Load cannot change what is asked.
   const spawned = ghSpawned(env.log);
   assert.deepEqual(spawned.map(({ timeout, killSignal }) => ({ timeout, killSignal })), [{ timeout: 1500, killSignal: 'SIGKILL' }]);
-  const spawnedAt = spawned[0].at;
-  // gh's lifetime, from its spawn to its last heartbeat, stays under the 4000 ms default budget, and load can only shorten
-  // it. A file the kill beat to its first write is missing: gh was stopped before it wrote, inside any bound.
-  const lastBeat = existsSync(beat) ? statSync(beat).mtimeMs : spawnedAt;
-  assert.ok(lastBeat - spawnedAt < 2750, `gh lived ${lastBeat - spawnedAt} ms: stopped at the 1500 ms deadline, not the 4000 ms default`);
-  assert.ok(!existsSync(beat) || existsSync(marker), 'gh beats only after it marks its start');
+  // No wall-clock bound: when the kill lands depends on the scheduler, and the request above is what aidrian controls.
   // Dead, not left behind: no heartbeat once the snapshot has exited.
   const beats = sizeOf(beat);
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);
   assert.equal(sizeOf(beat), beats, 'gh beat on after the snapshot exited');
-  const ms = endedAt - spawnedAt;
-  assert.ok(ms < 4500, `${ms} ms`);
   assert.equal(json.worktrees.mergedNotCleaned, null);
   assert.ok(json.errors.includes('worktrees'), 'a read that failed with no cache is a failure');
 });

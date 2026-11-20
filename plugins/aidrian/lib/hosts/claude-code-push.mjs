@@ -6,14 +6,15 @@
 // The classifier ignores `autoMode` in project and local settings, so `autoMode` is read from the user file alone. First
 // of all, a `permissions.deny` rule that matches the push the run makes refuses it, and a `permissions.ask` rule asks
 // before it, with no one there to answer in a run no Human attends: either answers `denied`, naming the rule, whatever
-// else the files say. A narrow `permissions.allow` rule that allows a `git push`, such as `Bash(git push:*)`, approves the push before the
-// classifier runs (code.claude.com/docs/en/permission-modes, read on 2026-11-19), so the rules of the user file and of
-// the project's `.claude/settings.json` and `.claude/settings.local.json` are read too: one that allows the push the run
-// makes answers `allowed`, and one for a narrower push, which may be that push, leaves `unknown` where the answer would
-// be `denied`. `denied` is a prediction of a prose classifier, given for one shape alone: a custom `environment` with no
-// "$defaults" that names this repository in no entry, and no rule that may allow a push, or a deny or ask rule that
-// matches the push. Every other shape it cannot read answers `unknown`, and nothing here throws on one. It reads no network, starts no process, and
-// reads no file when loaded.
+// else the files say. A narrow `permissions.allow` rule that allows a `git push`, such as `Bash(git push:*)`, approves
+// the push before the classifier runs (code.claude.com/docs/en/permission-modes, read on 2026-11-19), so the rules of
+// the user file and of the project's `.claude/settings.json` and `.claude/settings.local.json` are read too: one that
+// allows the push the run makes answers `allowed`, and one for a narrower push, which may be that push, leaves
+// `unknown` where the answer would be `denied`. Beside a deny or ask rule, `denied` from auto mode is a prediction of a
+// prose classifier, given for one shape alone: a custom `environment` with no "$defaults" that names this repository in
+// no entry, though each entry names some host, and no rule that may allow a push. Every other shape it cannot read
+// answers `unknown`, and nothing here throws on one. It reads no network, starts no process, and reads no file when
+// loaded.
 
 import { closeSync, constants, existsSync, fstatSync, openSync, readSync } from 'node:fs';
 import path from 'node:path';
@@ -28,12 +29,11 @@ const UNKNOWN = Object.freeze({ answer: 'unknown' });
 const DEFAULTS = '$defaults';
 // A settings file that is not there, as opposed to one that is there and cannot be read.
 const MISSING = Symbol('missing');
-// The project's settings files, in its `.claude` folder, whose `permissions.allow` the permission system reads.
+// The project's settings files, in its `.claude` folder, whose permission rules the permission system reads.
 const PROJECT_FILES = ['settings.json', 'settings.local.json'];
-// A permission rule for the shell tool with a pattern, `Bash(<pattern>)`. Bare `Bash` allows every command, and auto
-// mode drops it on entry, as it does `Bash(*)` and a pattern that starts with `*`, so none of those approves a push.
+// A permission rule for the shell tool with a pattern, `Bash(<pattern>)`; bare `Bash` is read in shellGlobs.
 const SHELL_RULE = /^Bash\((.*)\)$/su;
-// The command a rule must not allow for a denial to stand: a plain push, alone or with arguments after a space.
+// The command the push rules are matched against: a plain push, alone or with arguments after a space.
 const PUSH = 'git push';
 // The remote the push preflight judges (docs/handoff.md#the-push-preflight), by the name a command gives it.
 const REMOTE = 'origin';

@@ -12,9 +12,9 @@
 // allows the push the run makes answers `allowed`, and one for a narrower push, which may be that push, leaves
 // `unknown` where the answer would be `denied`. Beside a deny or ask rule, `denied` from auto mode is a prediction of a
 // prose classifier, given for one shape alone: a custom `environment` with no "$defaults" that names this repository in
-// no entry, though each entry names some host, and no rule that may allow a push. Every other shape it cannot read
-// answers `unknown`, and nothing here throws on one. It reads no network, starts no process, and reads no file when
-// loaded.
+// no entry, though each entry names one other source-control host or path, and no rule that may allow a push. Every
+// other shape it cannot read answers `unknown`, and nothing here throws on one. It reads no network, starts no process,
+// and reads no file when loaded.
 
 import { closeSync, constants, existsSync, fstatSync, openSync, readSync } from 'node:fs';
 import path from 'node:path';
@@ -43,10 +43,14 @@ const MARK = '\u0000';
 const NAME_CHAR = String.raw`[\p{L}\p{N}_.-]`;
 const NAME_TAIL = String.raw`[\p{L}\p{N}_-]`;
 const PUSH_WORD = /(?<![\p{L}\p{N}_])push/iu;
-// A host name, such as `git.example.com`: labels of letters, digits, and `-`, joined by dots, the last of two or more
-// letters, with no name part on either side. An `environment` entry that holds none is prose no matcher reads.
-const HOST_NAME = /(?<![\p{L}\p{N}_.-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}(?![\p{L}\p{N}_-])/iu;
-
+// The last labels that make a name read as a file, not a host: `Node.js`, `README.md`, or `package-lock.json` names no
+// source-control host. A name with a path, such as `tools.example.sh/acme`, or the remote's own host, still counts.
+const FILE_EXTENSIONS = Object.freeze(['md', 'markdown', 'rst', 'txt', 'js', 'mjs', 'cjs', 'jsx', 'ts', 'mts', 'cts', 'tsx', 'json', 'jsonl', 'yml', 'yaml', 'toml', 'ini', 'lock', 'sh', 'bash', 'zsh', 'py', 'rb', 'go', 'rs', 'java', 'kt', 'swift', 'c', 'h', 'cpp', 'css', 'html', 'xml', 'csv', 'log', 'env', 'cfg', 'conf']);
+// A source-control name in an `environment` entry: an optional scheme and user, a host of dotted labels whose last is
+// two or more letters, and the port and the path after it, such as `https://git.example.com/acme/widget` or
+// `git@git.example.com:acme`. Group 1 is the host, group 2 what follows it. No part of it nests a quantifier in another
+// that matches the same text, so it takes time linear in the entry.
+const SOURCE_NAME = /(?<![\p{L}\p{N}_.\-/@:])(?:[a-z][a-z0-9+.-]*:\/\/)?(?:[\p{L}\p{N}_.~%+-]+@)?((?:[a-z0-9-]+\.)+[a-z]{2,})(?![\p{L}\p{N}_-])((?::\d+)?(?:[/:][\p{L}\p{N}_.~%+*-]+)*)/giu;
 const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 const isStrings = (value) => Array.isArray(value) && value.every((each) => typeof each === 'string');
@@ -240,10 +244,28 @@ function refusal(sources) {
   return null;
 }
 
+// Whether the `environment` entry `entry` names exactly one source-control host or path, and nothing that could also
+// cover the remote of `repository`: one SOURCE_NAME whose host is not a file name (FILE_EXTENSIONS), unless a path
+// follows it or it is the remote's own host, and, outside that name, no word that is the remote host's label before its
+// last, such as `github` for `github.com`, as in "our GitHub org". An entry that names none, or several, is prose no
+// matcher reads.
+function namesOneOther(entry, repository) {
+  const own = repository.toLowerCase().split('/')[0];
+  const names = [...entry.matchAll(SOURCE_NAME)].filter((match) => {
+    const host = match[1].toLowerCase();
+    return match[2].replace(/^:\d+/u, '') !== '' || host === own || !FILE_EXTENSIONS.includes(host.split('.').at(-1));
+  });
+  if (names.length !== 1) return false;
+  const [name] = names;
+  const rest = `${entry.slice(0, name.index)} ${entry.slice(name.index + name[0].length)}`;
+  const label = own.split('.').at(-2);
+  return !new RegExp(String.raw`(?<![\p{L}\p{N}_])${escape(label)}(?![\p{L}\p{N}_])`, 'iu').test(rest);
+}
+
 // What auto mode's lists in the user settings `user` say of the repository `names` tests for: 'allowed', 'denied' when a
-// custom `environment` with no "$defaults" names it in no entry and every entry names some host, or 'unknown' for any
-// shape this cannot read.
-function environmentTrust(user, names) {
+// custom `environment` with no "$defaults" names it in no entry and every entry names one other source-control host or
+// path (namesOneOther), or 'unknown' for any shape this cannot read.
+function environmentTrust(user, repository, names) {
   const autoMode = isObject(user) ? user.autoMode : undefined;
   if (!isObject(autoMode)) return 'unknown';
   const { environment, allow } = autoMode;
@@ -251,8 +273,8 @@ function environmentTrust(user, names) {
   if (allow !== undefined && !isStrings(allow)) return 'unknown';
   if (environment.some((entry) => entry.trim() === DEFAULTS || names(entry))) return 'allowed';
   if ((allow ?? []).some((entry) => names(entry) && PUSH_WORD.test(entry))) return 'allowed';
-  // An entry that names no host may trust the remote in words no matcher reads, such as "our GitHub organisation".
-  return environment.every((entry) => HOST_NAME.test(entry)) ? 'denied' : 'unknown';
+  // An entry that names no source-control host, or several, may trust the remote in words no matcher reads.
+  return environment.every((entry) => namesOneOther(entry, repository)) ? 'denied' : 'unknown';
 }
 
 // { answer: 'allowed' | 'unknown' } or { answer: 'denied', setting, file, why, fix }, in the order of the steps of
@@ -279,7 +301,7 @@ export function pushPermission({ repository, session, cwd, env = process.env, re
   if (sources.some(({ settings }) => permissionRules(settings, 'deny') === null || permissionRules(settings, 'ask') === null)) return UNKNOWN;
   const allowRules = sources.map(({ settings }) => permissionRules(settings, 'allow'));
   const globs = (rules) => rules.flatMap((rule) => shellGlobs(rule, { allow: true }));
-  const trust = environmentTrust(user.settings, names);
+  const trust = environmentTrust(user.settings, repository, names);
   if (trust === 'allowed' || allowRules.some((rules) => rules !== null && coversPush(globs(rules)))) return { answer: 'allowed' };
   if (trust !== 'denied' || project === null) return UNKNOWN;
   // A rule for a narrower push may be the very push the run makes, and one this cannot read may allow it.

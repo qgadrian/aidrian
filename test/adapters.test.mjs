@@ -657,6 +657,39 @@ test('Claude Code trusts a host-wide entry, and answers unknown, never denied, b
   assert.equal(askClaude(claudeSettings(t, trusting(['Trusted source control: git.example.com'])), { repository: 'github.com/acme/widget' }).answer, 'denied');
 });
 
+// An entry is understood only when it names one source-control host or path: a word that reads like a file, such as
+// `Node.js` or `README.md`, names none, and an entry that names several, or names another host beside a bare word for
+// this remote's host, such as "our GitHub org", may cover this remote too. Beside any such entry the answer is unknown.
+test('Claude Code counts only a source-control name as an understood trust entry, and answers unknown beside any other', (t) => {
+  const OTHER = 'Trusted repo: github.com/acme/other';
+  for (const entry of ['We build with Node.js', 'See README.md', 'our GitHub org, and gitlab.example.com', 'Config lives in settings.json and package-lock.json',
+    'Trusted source control: gitlab.example.com and bitbucket.org', 'Trusted repos: github.com/acme/other, github.com/acme/third', 'Run scripts/setup.sh first', 'Mirrors on GITHUB too: gitlab.example.com']) {
+    assert.deepEqual(askClaude(claudeSettings(t, trusting([OTHER, entry]))), { answer: 'unknown' }, entry);
+    assert.deepEqual(askClaude(claudeSettings(t, trusting([entry]))), { answer: 'unknown' }, `${entry}, alone`);
+  }
+  // A single clear name of another repository, organisation, or host still denies.
+  for (const entry of ['Source control: github.example.com/other-org and all repos under it', 'Trusted source control: gitlab.example.com', OTHER,
+    'Remote: https://gitlab.example.com/acme/other.git', 'Mirror: git@gitlab.example.com:acme/other.git, read with the docs in README', 'Source control: githubusercontent.example.com']) {
+    assert.equal(askClaude(claudeSettings(t, trusting([entry]))).answer, 'denied', entry);
+  }
+  // The remote's own host counts whatever its last label, and a path names a host whatever it ends in.
+  const repository = 'code.example.sh/acme/widget';
+  assert.equal(askClaude(claudeSettings(t, trusting(['Mirror: code.example.sh/acme/other'])), { repository }).answer, 'denied');
+  assert.deepEqual(askClaude(claudeSettings(t, trusting(['Trusted: tools.example.sh'])), { repository }), { answer: 'unknown' }, 'a bare name with a file extension is no host');
+});
+
+// The user settings choose the entries, up to 1 MB, so reading one for a source-control name takes linear time.
+test('Claude Code reads a long trust entry for a source-control name at once', (t) => {
+  for (const entry of ['a'.repeat(300000), 'a.'.repeat(150000), `${'a-'.repeat(150000)}x`, `git@${'a.'.repeat(100000)}1`]) {
+    const config = claudeSettings(t, trusting(['Trusted repo: github.com/acme/other', entry]));
+    const module = path.join(ROOT, 'plugins/aidrian/lib/hosts/claude-code-push.mjs');
+    const script = `import { pushPermission } from ${JSON.stringify(module)};
+process.stdout.write(JSON.stringify(pushPermission({ repository: ${JSON.stringify(REPOSITORY)}, session: 's', cwd: ${JSON.stringify(config)}, env: { CLAUDE_CONFIG_DIR: ${JSON.stringify(config)} }, readMode: () => 'auto' })));`;
+    const ran = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 5000 });
+    assert.deepEqual([ran.status, ran.signal, ran.stdout], [0, null, '{"answer":"unknown"}'], entry.slice(0, 8));
+  }
+});
+
 test('Claude Code answers unknown on settings it cannot read as a clear auto mode list', (t) => {
   const cases = [
     ['no autoMode', {}],

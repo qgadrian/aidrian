@@ -437,18 +437,28 @@ Each step answers `unknown` when it cannot go on:
    `autoMode.allow`, when present, not a list of strings: `unknown`.
 7. `allowed` when `environment` holds `"$defaults"`, or an `environment` entry names the repository, or an `allow`
    entry names the repository and holds the word `push`, in any case, as in `pushes` or `git push`.
-8. `unknown` when an `environment` entry is one the matchers cannot read: an entry is read when it holds a host name,
-   such as `git.example.com`, alone or followed by an owner or a repository, with no letter, digit, `_`, `.`, or `-`
-   on either side: labels of letters, digits, and `-` joined by dots, the last of two or more letters. Prose that holds
-   none, such as `"All repositories of our organisation"`, `"Our GitHub organisation"`, or `"Trusted repo: acme/other"`,
-   may trust the remote in words no matcher reads, so a denial never stands beside it.
+8. `unknown` when an `environment` entry is not one the matchers understand. An entry is understood when it names
+   exactly one source-control name and nothing else that could cover this remote. A source-control name is a host of
+   labels of letters, digits, and `-` joined by dots, the last of two or more letters, with no letter, digit, `_`, `.`,
+   `-`, `/`, `@`, or `:` before it, and an optional scheme, user, port, and path, such as `git.example.com`,
+   `https://git.example.com/acme/widget`, or `git@git.example.com:acme`. A bare host whose last label is a file
+   extension reads as a file and names nothing, unless it is the remote's own host: `md`, `markdown`, `rst`, `txt`, `js`,
+   `mjs`, `cjs`, `jsx`, `ts`, `mts`, `cts`, `tsx`, `json`, `jsonl`, `yml`, `yaml`, `toml`, `ini`, `lock`, `sh`, `bash`,
+   `zsh`, `py`, `rb`, `go`, `rs`, `java`, `kt`, `swift`, `c`, `h`, `cpp`, `css`, `html`, `xml`, `csv`, `log`, `env`,
+   `cfg`, and `conf` (`FILE_EXTENSIONS` in `lib/hosts/claude-code-push.mjs`); with a path after it, such as
+   `tools.example.sh/acme`, it is a host. An entry that names no such name, such as `"We build with Node.js"`,
+   `"See README.md"`, `"All repositories of our organisation"`, or `"Trusted repo: acme/other"`, names several, such as
+   `"gitlab.example.com and bitbucket.org"`, or holds, outside its one name, the word for the remote's host, its label
+   before the last, such as `github` for `github.com` in `"our GitHub org, and gitlab.example.com"`, may trust the remote
+   in words no matcher reads, so a denial never stands beside it.
 9. `unknown` when a `permissions.allow` rule may allow a narrower push, which may be the very push the run makes: one
    that matches `git push` followed by some text, such as `Bash(git push origin main)`, `Bash(git push upstream:*)`,
    `Bash(git push --force:*)`, or `Bash(git push -u origin:*)`, but not `Bash(git status)`, `Bash(git pushall)`, or
    `Bash(git:* push)`. Also `unknown` for a `cwd` that is not absolute, and for a file whose `permissions.allow` is not
    a list of strings.
 10. Otherwise `denied`: `autoMode.environment` in that file replaces the default trusted repositories, with no
-    `"$defaults"` in its list, and names this remote in no entry, though each entry names some host. The fix it gives
+    `"$defaults"` in its list, and names this remote in no entry, though each entry names one other source-control host
+    or path, such as `"Source control: github.example.com/other-org and all repos under it"`. The fix it gives
     adds `"$defaults"` to that list, or an entry such as `"Trusted repo: github.com/acme/widget"`.
 
 An entry names the repository `github.com/acme/widget`, compared in lower case, when it holds any of:
@@ -486,9 +496,9 @@ verification. Four assumptions follow from the references:
 - `soft_deny` and `hard_deny` are never read: no pattern over prose says whether one forbids a push.
 
 Limits: managed settings and a `--settings` value can add `autoMode` entries the user file does not show, and an entry
-that names some host and also trusts the remote in prose, such as `"Our GitHub organisation, and gitlab.example.com"`,
-reads as naming another host only; either can answer `denied` where the classifier would allow the push, and the fix
-still works. A word that reads as a host name, such as `Node.js` or `README.md`, makes its entry one the matchers read. The other way round, some
+that names one other host and trusts the remote in prose under another word, such as `"Microsoft's forge, and
+gitlab.example.com"`, reads as naming that host only; either can answer `denied` where the classifier would allow the
+push, and the fix still works. The other way round, some
 entries that name another repository answer `allowed`: one on another host whose path is the same, such as
 `gitlab.example.com/acme/widget`, a name that goes on past a `.`, such as `acme/widget.site`, and an `allow` entry
 phrased as a refusal, such as `Never push to github.com/acme/widget`; the run then starts as it would without the

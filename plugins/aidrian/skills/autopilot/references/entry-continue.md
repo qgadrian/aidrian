@@ -28,6 +28,7 @@ Launching with `--continue` approves the session's own worktree and branch, and 
 the `worktree-new` skill's reuse question is answered Reuse, with `--reuse-existing`, for that branch only.
 
 - The worktree that holds the session's work is the run's workspace, wherever the launch happened: every later command runs there.
+  So `SKILL.md` § Before launch runs the push preflight with `--cwd` that worktree, the folder the run will work in.
 - A branch with no worktree gets one through the `worktree-new` skill, with that approval.
 - Work that sits uncommitted in the main checkout, or a branch checked out there, is not adopted in silence:
   ask the `orchestration` skill § 1's question now. Unanswered, the run does not start.

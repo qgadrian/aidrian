@@ -5,7 +5,7 @@
 import { lstatSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
-import { attachLine, findLine, nameMatcher, startBackground, stopBackground, stopLine, stopOwnBackground } from './claude-code-background.mjs';
+import { attachLine, findLine, nameMatcher, startBackground, startFolder, stopBackground, stopLine, stopOwnBackground } from './claude-code-background.mjs';
 import { configDir } from './claude-code-config.mjs';
 import { pushPermission } from './claude-code-push.mjs';
 import { attended, END_SIGNAL, hasClient, hostProcess, isWrappedHost, PROGRAM } from './claude-code-terminal.mjs';
@@ -178,8 +178,8 @@ export default {
     pushPermission: (ask) => pushPermission(ask),
     // How a session goes on after its handoff (session.handoff.continue). A clear keeps the same process, so the hook's parent,
     // the claude process, names the session before and after it. The background route starts a new session with
-    // `claude --bg` (lib/hosts/claude-code-background.mjs), in the session's own folder, under its name, agent, and
-    // effort; `stopBackground` stops one the gate cannot hold to a chain floor, `stopLine` says how to stop it by hand when
+    // `claude --bg` (lib/hosts/claude-code-background.mjs), in the session's own folder, `startFolder`, under its name,
+    // agent, and effort; `stopBackground` stops one the gate cannot hold to a chain floor, `stopLine` says how to stop it by hand when
     // that failed, `findLine` how to find and stop one a start may have made that the gate cannot name, and `attachLine`
     // and `attachCommand` say how to open one. `replaceTerminal` ends a session that handed off once its turn ends, so the
     // shell function `aidrian shell-init` prints opens the new one in the same terminal (lib/hosts/claude-code-terminal.mjs).
@@ -192,6 +192,8 @@ export default {
       startBackground: ({ session, slug, chain, env, prompt, hold, run, wait }) => startBackground({
         session, slug, chain, env, prompt, hold, run, wait, agent: agentName(env), effort: effort(env), efforts: MODEL_CHOICES.effort,
       }),
+      // The folder startBackground would start the new session in, which the gate's push preflight judges.
+      startFolder: ({ session, env, run }) => startFolder({ session, env, run }),
       stopBackground: ({ id, env, run }) => stopBackground({ id, env, run }),
       stopLine,
       findLine,

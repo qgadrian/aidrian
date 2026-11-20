@@ -211,19 +211,38 @@ test('aidrian push-preflight exits 0 on allowed or unknown with nothing on stder
   const removed = spawnSync('sh', ['-c', 'cd "$1" && rm -rf "$1" && exec "$2" "$3" push-preflight', 'sh', gone, process.execPath, path.join(ROOT, 'plugins/aidrian/lib/cli.mjs')], { encoding: 'utf8' });
   assert.deepEqual([removed.status, removed.stdout, removed.stderr], [0, 'push: unknown\n', ''], 'a removed folder');
 
-  for (const args of [['x'], ['--help'], ['--project', plain]]) {
+  for (const args of [['x'], ['--help'], ['--project', plain], ['--cwd'], ['--cwd', plain, 'x'], ['--cwd', plain, '--cwd', plain], [`--cwd=${plain}`], ['--cwd', '']]) {
     const misuse = run(plain, args);
     assert.equal(misuse.status, 2, args.join(' '));
     assert.equal(misuse.stdout, '');
-    assert.equal(misuse.stderr, 'usage: aidrian push-preflight\n', args.join(' '));
+    assert.equal(misuse.stderr, 'usage: aidrian push-preflight [--cwd DIR]\n', args.join(' '));
   }
+});
+
+test('aidrian push-preflight --cwd judges the folder it names, not the folder it runs in', (t) => {
+  const run = (cwd, args = [], env = process.env) => spawnSync(CLI, ['push-preflight', ...args], { cwd, env, encoding: 'utf8' });
+  const denied = repository(t, { origin: 'https://github.com/acme/widget.git' });
+  const trusted = repository(t, { origin: 'https://github.com/acme/other.git' });
+  const { env } = claudeShell(t, denied, { settings: ONLY_OTHER });
+  // From the trusted folder, the denied one named: denied, about the named folder's remote.
+  const refused = run(trusted, ['--cwd', denied], env);
+  assert.deepEqual([refused.status, refused.stdout], [1, 'push: denied\n'], refused.stderr);
+  assert.ok(refused.stderr.includes('github.com/acme/widget'), refused.stderr);
+  // From the denied folder, the trusted one named: allowed. A relative folder is read from where the command runs.
+  assert.deepEqual([run(denied, ['--cwd', trusted], env).status, run(denied, ['--cwd', trusted], env).stdout], [0, 'push: allowed\n']);
+  assert.equal(run(path.dirname(trusted), ['--cwd', path.basename(trusted)], env).stdout, 'push: allowed\n');
+  // A folder that is not there has no remote to read: unknown, and the run starts.
+  assert.deepEqual([run(trusted, ['--cwd', path.join(trusted, 'gone')], env).status, run(trusted, ['--cwd', path.join(trusted, 'gone')], env).stdout], [0, 'push: unknown\n']);
 });
 
 test('the autopilot skill runs the push preflight before launch, and names no host and no host setting there', () => {
   const skill = readFileSync(path.join(ROOT, 'plugins/aidrian/skills/autopilot/SKILL.md'), 'utf8');
   const start = skill.indexOf('## Before launch');
   const launch = skill.slice(start, skill.indexOf('\n## ', start + 1)).replace(/\s+/gu, ' ');
-  assert.ok(launch.includes('`aidrian push-preflight`'), launch);
+  assert.ok(launch.includes('`aidrian push-preflight --cwd <dir>`'), launch);
+  assert.match(launch, /the folder the run will work in/u, 'the folder judged is the one the run works in');
+  const resume = readFileSync(path.join(ROOT, 'plugins/aidrian/skills/autopilot/references/entry-continue.md'), 'utf8').replace(/\s+/gu, ' ');
+  assert.match(resume, /runs the push preflight with `--cwd` that worktree/u, 'a continued session judges the worktree of the work under way');
   assert.match(launch, /On exit 1/u);
   assert.match(launch, /tell the Human its printed line, and start no run unless the Human says to go on/u);
   for (const word of ['Claude Code', 'Codex', 'autoMode', 'settings.json', '$defaults']) assert.ok(!skill.includes(word), `the skill names ${word}`);

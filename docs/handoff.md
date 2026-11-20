@@ -268,7 +268,7 @@ clear: a person resumes the brief. A clear's delivery past 10,000 loads nothing 
 
 A run no Human attends that does its work and then cannot push leaves it stranded on the machine, with no one there to
 let the push through. So before such a run starts work, the push preflight asks the host whether it would let a
-session push to the repository's remote, `origin`, at the URL a push goes to:
+session push to the remote, `origin`, of the folder the run will work in, at the URL a push goes to:
 `git remote get-url --push --all origin`, which is `remote.origin.pushurl` when that is set, and the fetch URL
 otherwise. More than one push URL answers `unknown`.
 The host's adapter answers
@@ -302,12 +302,14 @@ Two entry points run it, both through `pushPreflight` in `lib/push-preflight.mjs
 
 | Entry point | On `denied` |
 | --- | --- |
-| The [background route](#the-background-route) of the gate, after the progress check and before it keeps the brief | `continue: clear` where the host has the clear route, `fallback: no background session started, since <the line>; this handoff goes on by the clear route`, and the clear route's `say:` line, exit 0. Nothing is kept, no pending mark is filed, no session starts, and no chain floor is written. In a session no Human attends, the chain ends there with the reason. |
-| The `autopilot` skill's launch, while the Human is still there | `aidrian push-preflight` exits 1: the skill tells the Human the line and starts no run unless the Human says to go on. |
+| The [background route](#the-background-route) of the gate, after the progress check and before it keeps the brief, on the folder the host starts the new session in: the handing-off session's own folder as the host lists it (the adapter's `handoffContinue.startFolder`), else the folder the gate runs in | `continue: clear` where the host has the clear route, `fallback: no background session started, since <the line>; this handoff goes on by the clear route`, and the clear route's `say:` line, exit 0. Nothing is kept, no pending mark is filed, no session starts, and no chain floor is written. In a session no Human attends, the chain ends there with the reason. |
+| The `autopilot` skill's launch, while the Human is still there, on the folder the run will work in, `--cwd <dir>`: with `--continue`, the folder of the work under way | `aidrian push-preflight --cwd <dir>` exits 1: the skill tells the Human the line and starts no run unless the Human says to go on. |
 
-`aidrian push-preflight` takes no argument and needs no project folder. It prints `push: allowed` or `push: unknown`
-and exits 0 with nothing on stderr, or prints `push: denied` and exits 1 with `aidrian push-preflight: <the line>` on
-stderr. Any argument prints its usage and exits 2. [`aidrian handoff route`](#the-route-the-host-runs) and the hooks
+`aidrian push-preflight [--cwd DIR]` needs no project folder. It judges the remote of `DIR`, from the folder it runs in
+when relative, else of the folder it runs in. It prints `push: allowed` or `push: unknown` and exits 0 with nothing on
+stderr, or prints `push: denied` and exits 1 with `aidrian push-preflight: <the line>` on stderr. A folder that is not
+there reads no remote and answers `unknown`. Any other argument, `--cwd` with no folder or an empty one, or a second
+`--cwd`, prints its usage and exits 2. [`aidrian handoff route`](#the-route-the-host-runs) and the hooks
 never run it. A session the Human works in meets it at the `autopilot` launch, which runs it while the Human is there
 to decide, and at the gate of a handoff by the background route, whose denial falls back to the clear route there too.
 

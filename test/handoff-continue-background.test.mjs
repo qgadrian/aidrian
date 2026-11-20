@@ -635,7 +635,8 @@ else console.log('backgrounded · abcd1234 · ' + args[args.indexOf('--name') + 
   assert.equal(result.out[0], 'continue: background');
   assert.match(result.out.join('\n'), /^say: The brief widget continues in the new background session abcd1234 'widget · 1'/mu);
   const calls = readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
-  assert.deepEqual(calls.map((call) => call.args[0]), ['agents', '--bg', 'agents']);
+  // The first listing names the folder the push preflight judges, the second the folder the start uses.
+  assert.deepEqual(calls.map((call) => call.args[0]), ['agents', 'agents', '--bg', 'agents']);
   assert.equal(readFrom(setting.store, NEW_SESSION).chain, 1);
 
   // No claude on PATH: node alone in a folder of its own, then the system folders, which hold no claude here.
@@ -1292,10 +1293,42 @@ test('a host that would refuse the push stops the background start before work: 
   assert.ok(result.out[1].endsWith('; this handoff goes on by the clear route'), result.out[1]);
   assert.ok(!result.out.join('\n').includes('secret'), 'no credential is printed');
   assert.match(result.out[2], /^say: To continue from the brief widget, /u);
-  assert.deepEqual(calls, [], 'the host was never called: no listing, no start');
+  assert.deepEqual(calls.map((call) => call.args[0]), ['agents'], 'the host was asked only for the folder the session would start in: no start');
   assert.equal(existsSync(marks), false, 'no pending mark');
   assert.deepEqual(storeFiles(setting).filter((name) => /^(?:continued|from|started)-/u.test(name)), [], 'no kept copy, no chain floor, no start record');
   assert.equal(readArmed(setting.store, SESSION).route, 'clear', 'a Human continues it');
+});
+
+// The new session works in the folder the host lists for the handing-off session, which may be another repository than
+// the folder the gate runs in: the preflight judges that folder's remote.
+test('the push preflight judges the remote of the folder the new session starts in, not of the folder the gate runs in', (t) => {
+  // A second repository, with `origin` at `url`.
+  const elsewhere = (url) => {
+    const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-elsewhere-')));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    execFileSync('git', ['-C', dir, 'init', '-q', '-b', 'main']);
+    execFileSync('git', ['-C', dir, 'remote', 'add', 'origin', url]);
+    return dir;
+  };
+  // The gate's folder pushes to a trusted remote, the session's folder to one the settings do not trust: denied.
+  const refused = setup(t, { mode: 'auto' });
+  const { env } = preflighted(t, refused, { url: 'git@github.com:acme/widget.git', settings: TRUSTED });
+  passCheck(refused);
+  const untrusted = elsewhere('git@github.com:acme/elsewhere.git');
+  const first = fakeRun({ own: untrusted });
+  const result = gate(refused, { run: first.run, env });
+  assert.equal(result.out[0], 'continue: clear', result.out.join('\n'));
+  assert.ok(result.out[1].includes('github.com/acme/elsewhere: autoMode.environment in '), result.out[1]);
+  assert.deepEqual(bgCalls(first.calls), [], 'no start');
+  // The gate's folder pushes to an untrusted remote, the session's folder to a trusted one: the session starts there.
+  const started = setup(t, { mode: 'auto' });
+  const other = preflighted(t, started, { url: 'git@github.com:acme/elsewhere.git', settings: TRUSTED });
+  passCheck(started);
+  const trusted = elsewhere('https://github.com/acme/widget.git');
+  const second = fakeRun({ own: trusted });
+  const ok = gate(started, { run: second.run, env: other.env });
+  assert.equal(ok.out[0], 'continue: background', ok.out.join('\n'));
+  assert.equal(bgCalls(second.calls)[0]?.cwd, trusted, 'started in the folder judged');
 });
 
 test('a remote the host trusts starts the background session as before (AC3)', (t) => {

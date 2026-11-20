@@ -249,6 +249,21 @@ export function attachLine({ id, name }) {
 // How the Human stops the session `id` by hand, when stopBackground could not.
 export const stopLine = ({ id }) => `\`claude stop ${id}\` stops it`;
 
+// The folder of the session `session` in the listing `list`, where startBackground starts the session that resumes its
+// brief: an absolute path with no control character, or null.
+function ownFolder(list, session) {
+  const own = list?.find((each) => each.sessionId === session);
+  return typeof own?.cwd === 'string' && path.isAbsolute(own.cwd) && !CONTROL.test(own.cwd) ? own.cwd : null;
+}
+
+// The folder startBackground would start the session that resumes the brief of the session `session` in, from one read
+// of `claude agents --json`: null when `claude` is not found, the listing does not answer, or it lists no such folder.
+// The gate's push preflight judges the remote of this folder (docs/handoff.md#the-push-preflight).
+export function startFolder({ session, env, run = runCommand, resolve = claudeOnPath }) {
+  const claude = resolve(env);
+  return claude ? ownFolder(listed(run, claude, undefined), session) : null;
+}
+
 // Starts the session that resumes a brief, in the background, in the folder of the handing-off session `session` as the
 // host lists it: { id, session, name, cwd }, or { problem, uncertain } when none it can name started. `id` is the id to
 // name it by, the short one when the output printed it; `session` its full id, or null when the listing did not name it
@@ -267,9 +282,7 @@ export function startBackground({ session, slug, chain, agent, effort, efforts, 
   const before = listed(run, claude, undefined);
   if (!before) return { problem: '`claude agents --json` did not answer, so the folder of this session is unknown' };
   const own = before.find((each) => each.sessionId === session);
-  if (typeof own?.cwd !== 'string' || !path.isAbsolute(own.cwd) || CONTROL.test(own.cwd)) {
-    return { problem: '`claude agents --json` does not list the folder of this session' };
-  }
+  if (ownFolder(before, session) === null) return { problem: '`claude agents --json` does not list the folder of this session' };
   const read = readMode({ session, cwd: own.cwd, env });
   if (read === BYPASS) {
     return { problem: 'this session runs with permission checks bypassed, and a session no Human attends never starts that way' };

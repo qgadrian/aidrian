@@ -245,7 +245,9 @@ The SessionEnd hook promotes the continuation before it hands the session row to
 ### The background route
 
 The adapter's `startBackground` (`lib/hosts/claude-code-background.mjs`) runs `claude` by its absolute path, found on
-the absolute folders of PATH alone, so an empty or relative entry never runs a `claude` the folder holds:
+the absolute folders of PATH alone, so an empty or relative entry never runs a `claude` the folder holds. Before it,
+the gate's [push preflight](../handoff.md#the-push-preflight) reads the same folder through `startFolder`, one more
+`claude agents --json`, and judges that folder's remote:
 
 1. `claude agents --json`, for the handing-off session's `name` and `cwd`, by its `sessionId`. That folder, where the
    host already runs a session, is where the new one starts, never the brief's worktree; a session the listing does
@@ -408,7 +410,7 @@ Each step answers `unknown` when it cannot go on:
    parsed as JSON: the user settings, and the project's `.claude/settings.json` and `.claude/settings.local.json`.
    Claude Code reads `.claude/settings.json` in the session's folder, and `.claude/settings.local.json` at the root of
    its git repository, the main checkout's root for a worktree. The adapter reads both files in each of the session's
-   folder, the `cwd` of the ask; the nearest folder at or above it holding `.git`; and, when that `.git` is a file naming
+   folder, the `cwd` of the ask, the folder the run will work in; the nearest folder at or above it holding `.git`; and, when that `.git` is a file naming
    a worktree's git folder, the main checkout its `commondir` names. A file the host does not read can only turn a
    denial into `unknown`. A file that is there and is not a regular file, such as a named pipe, is too large, holds bad
    JSON, or is not an object cannot be read; a project file that is not there holds no rule, and a `cwd` that is not

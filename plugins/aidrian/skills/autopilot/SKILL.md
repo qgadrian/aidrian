@@ -23,15 +23,15 @@ Its `references/review-rules.md` defines a review round, when the bot is out, th
 
 - `<task>`: an issue key or URL, a plan path, or a one-line task description.
 - `--continue`: take over the work this session has under way. Words typed with it are launch words, never a new task.
-- `--base`: the branch the pull request targets; default: the implementing skill's pick.
+- `--base`: the pull request's target branch; default: the implementing skill's pick.
 - `--full-review`: run the `pr-review` skill in every review round, not only when `references/phases.md` § 3 says.
 - `--handoff`: write a handoff brief at each checkpoint, as § Checkpoints says.
 
 ## Before launch
 
-While the Human is here, record what the Human says at launch word for word, such as "skip the end-to-end run"
-or "five review rounds". The entry file of § Entry names what else to settle now.
-Run `aidrian push-preflight`. On exit 1, the host would refuse a push:
+While the Human is here, record the Human's launch words verbatim, such as "skip the end-to-end run".
+The entry file of § Entry names what else to settle now.
+Run `aidrian push-preflight --cwd <dir>` on the folder the run will work in. On exit 1, the host would refuse a push:
 tell the Human its printed line, and start no run unless the Human says to go on.
 
 ## Who decides
@@ -96,8 +96,8 @@ Write the brief first when checkpoints are allowed.
 
 ## Report
 
-Write for a reader who saw nothing of the run: plain words, no internal labels, and the Human and the AI named
-by the names the start hook gives, never "you" or "I". In this order:
+Write for a reader who saw nothing of the run: plain words, no internal labels, and the Human and the AI
+by the start hook's names, never "you" or "I". In this order:
 
 1. **What shipped**: one or two lines, the pull request link, and the merge: merged, or why not, as the line
    `aidrian pr auto-merge` printed or the stop line of the `pr-merge-when-green` skill.

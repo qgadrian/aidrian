@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { usageLines } from '../plugins/aidrian/lib/usage.mjs';
+
 const ROOT = path.resolve(import.meta.dirname, '..');
 const EXAMPLE = path.join(ROOT, 'examples/consumer');
 const CLI = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
@@ -87,9 +89,10 @@ test('the usage fits 100 columns, with one line for each form of a command and i
   assert.ok(lines.some((line) => line.startsWith('  aidrian session snapshot [--session ID] [--transcript PATH]')), 'the usage lists session snapshot');
   assert.ok(lines.includes('  aidrian commit-msg (--file PATH | --message TEXT) [--project DIR]'), 'a choice in parentheses is one form');
   assert.ok(lines.includes('  aidrian pre-commit [--project DIR]'));
-  const preflight = lines.indexOf('  aidrian push-preflight');
-  assert.notEqual(preflight, -1, 'a command that takes no argument is listed by its name alone');
+  const preflight = lines.indexOf('  aidrian push-preflight [--cwd DIR]');
+  assert.notEqual(preflight, -1, 'the push preflight takes the folder the run will work in');
   assert.match(lines[preflight + 1], /^ {6}say whether the host would let a session push to the remote origin/u);
+  assert.deepEqual(usageLines('push-preflight', ''), ['aidrian push-preflight'], 'a command that takes no argument is listed by its name alone');
   const lesson = lines.findIndex((line) => line.startsWith('  aidrian lesson add '));
   assert.match(lines[lesson + 1], /^ {10}\[/, 'a wrapped usage line sits deeper than the description');
   const misuse = spawnSync(CLI, ['worktree', 'bogus'], { cwd: EXAMPLE, encoding: 'utf8' });

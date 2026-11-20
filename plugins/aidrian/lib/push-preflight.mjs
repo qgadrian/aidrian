@@ -1,12 +1,15 @@
 // The push preflight (docs/handoff.md#the-push-preflight): before a run no Human attends starts work, whether the host
-// would let a session push to this repository's remote, `origin`. Two entry points ask it: the background route of the
-// handoff gate (lib/handoff-continue.mjs startInBackground), which falls back to the clear route on a denial, and
-// `aidrian push-preflight`, which the autopilot skill runs at launch. Only a clear denial stops a run: a host with no
-// answer, a remote this cannot read, or anything that throws answers `unknown`, and the run starts as before.
+// would let a session push to the remote, `origin`, of the folder the run will work in. Two entry points ask it: the
+// background route of the handoff gate (lib/handoff-continue.mjs startInBackground), on the folder the host starts the
+// new session in, which falls back to the clear route on a denial; and `aidrian push-preflight [--cwd DIR]`, which the
+// autopilot skill runs at launch. Only a clear denial stops a run: a host with no answer, a remote this cannot read, or
+// anything that throws answers `unknown`, and the run starts as before.
 // The host sees the remote only as `host/owner/repo` (project.mjs normalizeRemote), held to plain ASCII, so the user
 // name and password of its URL never reach an adapter or a message. This file names no host and no host setting: the
 // adapter's capabilities.pushPermission does (lib/hosts/index.mjs pushPermission). It never loads lib/forges/, since
 // every hook that loads the gate would load the forge adapter with it.
+
+import path from 'node:path';
 
 import { runGit } from './git.mjs';
 import { hasControl } from './handoff-markers.mjs';
@@ -58,17 +61,30 @@ export function pushPreflight({ cwd, env = process.env, host, session, git = run
   }
 }
 
+// `folder` as an absolute path, from the folder the command runs in, or undefined when that folder is gone, which
+// pushPreflight then reads as no remote.
+function absolute(folder) {
+  try {
+    return path.resolve(folder);
+  } catch {
+    return path.isAbsolute(folder) ? folder : undefined;
+  }
+}
+
 export const commands = {
   'push-preflight': {
-    usage: '',
+    usage: '[--cwd DIR]',
     about: 'say whether the host would let a session push to the remote origin, before a run no Human attends: '
-      + 'push: allowed or push: unknown exits 0; push: denied exits 1, with what to change on stderr',
+      + 'push: allowed or push: unknown exits 0; push: denied exits 1, with what to change on stderr; '
+      + '--cwd names the folder the run will work in, by default this one',
     run(args) {
-      if (args.length > 0) {
+      const named = args.length === 2 && args[0] === '--cwd' && args[1] !== '';
+      if (args.length > 0 && !named) {
         console.error(usageLines('push-preflight', commands['push-preflight'].usage, 'usage: ').join('\n'));
         return 2;
       }
-      const read = pushPreflight();
+      // A folder removed under the command, or one that is not there, reads no remote: unknown.
+      const read = named ? pushPreflight({ cwd: absolute(args[1]) }) : pushPreflight();
       console.log(`push: ${read.answer}`);
       if (read.answer !== 'denied') return 0;
       console.error(`aidrian push-preflight: ${read.message}`);

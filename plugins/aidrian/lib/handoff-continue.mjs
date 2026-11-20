@@ -267,8 +267,9 @@ function armed({ host, found, slug, chain, hash, store, session, now, route, fal
 // goes on by the clear route instead (progressOf), or, when the working config's maxChain cannot arm a clear at this
 // chain, by none: a person resumes the brief. A hop whose next floor CHAIN_CEILING cannot record (floorFits) goes on by
 // none too, since a clear would deliver the same chain. A host that would refuse the new session's push to the
-// repository's remote (pushPreflight) goes on by the clear route, before anything is kept, marked, or started: a run no
-// Human attends would do its work and then fail at the push. Otherwise the store keeps the checked bytes, the host starts a new
+// repository's remote (pushPreflight), that of the folder the host starts the new session in (`startFolder`), goes on by
+// the clear route, before anything is kept, marked, or started: a run no Human attends would do its work and then fail
+// at the push. Otherwise the store keeps the checked bytes, the host starts a new
 // session in the handing-off session's own folder, whose first message is backgroundPrompt on that copy, and the gate
 // records the new session's chain floor, under its full id or the short one the host printed, and its unattended mark
 // under the same id, which the hooks read wherever the session's calls run (lib/unattended-mark.mjs), then the start
@@ -294,8 +295,10 @@ function startInBackground(ready) {
   const progress = progressOf({ store, session, now, cwd, text: found.bytes.toString('utf8') });
   if (progress.stalls >= STALL_HOPS) return fallBack(`stuck: no new commits or finished steps over the last ${STALL_HOPS} handoffs`);
   if (!floorFits({ chain: chain + 1, done: progress.done })) return none(`${CEILING_WHY}; a person resumes the brief`);
-  // The denial names a settings file a session no Human attends must never edit: only the Human widens push trust.
-  const push = pushPreflight({ cwd, env, host, session });
+  // The denial names a settings file a session no Human attends must never edit: only the Human widens push trust. The
+  // remote judged is the one of the folder the host starts the new session in, else of the folder the gate runs in.
+  const folder = safely(() => handoff.startFolder?.({ session, env, run }));
+  const push = pushPreflight({ cwd: typeof folder === 'string' && path.isAbsolute(folder) ? folder : cwd, env, host, session });
   if (push.answer === 'denied') return fallBack(`no background session started, since ${push.message}`);
   const kept = keepBrief(store, found.bytes, hash);
   if (!kept || hasControl(kept)) return fallBack('the continuation store could not keep the checked brief for a background session');

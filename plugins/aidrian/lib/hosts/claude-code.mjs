@@ -189,10 +189,10 @@ export default {
         clear: 'type /clear, then any message',
         background: 'nothing to type, since a new session starts in the background and resumes from the brief by itself',
       },
-      startBackground: ({ session, slug, chain, env, prompt, hold, run, wait }) => startBackground({
-        session, slug, chain, env, prompt, hold, run, wait, agent: agentName(env), effort: effort(env), efforts: MODEL_CHOICES.effort,
+      startBackground: ({ session, slug, chain, env, prompt, hold, run, wait, start }) => startBackground({
+        session, slug, chain, env, prompt, hold, run, wait, start, agent: agentName(env), effort: effort(env), efforts: MODEL_CHOICES.effort,
       }),
-      // The folder startBackground would start the new session in, which the gate's push preflight judges.
+      // The folder startBackground would start the new session in, which the gate's push preflight judges and passes back.
       startFolder: ({ session, env, run }) => startFolder({ session, env, run }),
       stopBackground: ({ id, env, run }) => stopBackground({ id, env, run }),
       stopLine,

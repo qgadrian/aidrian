@@ -635,8 +635,8 @@ else console.log('backgrounded · abcd1234 · ' + args[args.indexOf('--name') + 
   assert.equal(result.out[0], 'continue: background');
   assert.match(result.out.join('\n'), /^say: The brief widget continues in the new background session abcd1234 'widget · 1'/mu);
   const calls = readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
-  // The first listing names the folder the push preflight judges, the second the folder the start uses.
-  assert.deepEqual(calls.map((call) => call.args[0]), ['agents', 'agents', '--bg', 'agents']);
+  // One listing names the folder the push preflight judges and the start uses: the start never reads it again.
+  assert.deepEqual(calls.map((call) => call.args[0]), ['agents', '--bg', 'agents']);
   assert.equal(readFrom(setting.store, NEW_SESSION).chain, 1);
 
   // No claude on PATH: node alone in a folder of its own, then the system folders, which hold no claude here.
@@ -1352,6 +1352,7 @@ test('the push preflight answers unknown when the host cannot name the new sessi
     assert.equal(result.out[0], 'continue: background', `${label}: ${result.out.join('\n')}`);
     assert.ok(!result.out.some((line) => line.startsWith('fallback:')), label);
     assert.equal(bgCalls(calls).length, 1, label);
+    assert.deepEqual(calls.slice(0, 3).map((call) => call.args[0]), ['agents', 'agents', '--bg'], `${label}: the start read the listing itself`);
   }
 });
 

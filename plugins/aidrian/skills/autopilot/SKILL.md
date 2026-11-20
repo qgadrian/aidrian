@@ -23,15 +23,15 @@ Its `references/review-rules.md` defines a review round, when the bot is out, th
 
 - `<task>`: an issue key or URL, a plan path, or a one-line task description.
 - `--continue`: take over the work this session has under way. Words typed with it are launch words, never a new task.
-- `--base`: the pull request's target branch; default: the implementing skill's pick.
+- `--base`: the pull request's target branch; default: the engine's pick.
 - `--full-review`: run the `pr-review` skill in every review round, not only when `references/phases.md` § 3 says.
 - `--handoff`: write a handoff brief at each checkpoint, as § Checkpoints says.
 
 ## Before launch
 
 While the Human is here, record the launch words verbatim, such as "skip the end-to-end run".
-The entry file of § Entry names what else to settle now.
-Run `aidrian push-preflight --cwd <dir>` with the folder the run will work in; before its worktree exists, it answers unknown.
+§ Entry's file names what else to settle now.
+Run `aidrian push-preflight --cwd <dir>` with the folder the run will work in; before its worktree exists, it answers unknown, so rerun it there once made.
 On exit 1, the host would refuse a push: tell the Human its printed line, and start no run unless the Human says to go on.
 
 ## Who decides
@@ -64,7 +64,7 @@ with the count of automatic quorum runs. A failed write never blocks the run.
 
 ## Phases
 
-Read `references/phases.md` before an engine starts, since its § 2 runs inside the engine's last phase,
+Read `references/phases.md` before an engine starts, since its § 2 runs in the engine's last phase,
 or before phase 2 on an adopted pull request, and follow it.
 
 1. The entry, as § Entry says: committed work on the task branch, or a pull request or skill taken over.

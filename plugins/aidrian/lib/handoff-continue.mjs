@@ -296,10 +296,11 @@ function startInBackground(ready) {
   if (progress.stalls >= STALL_HOPS) return fallBack(`stuck: no new commits or finished steps over the last ${STALL_HOPS} handoffs`);
   if (!floorFits({ chain: chain + 1, done: progress.done })) return none(`${CEILING_WHY}; a person resumes the brief`);
   // The denial names a settings file a session no Human attends must never edit: only the Human widens push trust. The
-  // remote judged is the one of the folder the host starts the new session in; when the host cannot say which folder
-  // that is, the answer is unknown, never that of the folder the gate runs in, which may be another repository.
-  const folder = safely(() => handoff.startFolder?.({ session, env, run }));
-  const push = typeof folder === 'string' && path.isAbsolute(folder) ? pushPreflight({ cwd: folder, env, host, session }) : { answer: 'unknown' };
+  // remote judged is the one of the folder the host starts the new session in, looked up once and passed to the start;
+  // when the host cannot say which folder that is, the answer is unknown, never that of the folder the gate runs in.
+  const place = safely(() => handoff.startFolder?.({ session, env, run }));
+  const start = typeof place?.cwd === 'string' && path.isAbsolute(place.cwd) ? place : undefined;
+  const push = start ? pushPreflight({ cwd: start.cwd, env, host, session }) : { answer: 'unknown' };
   if (push.answer === 'denied') return fallBack(`no background session started, since ${push.message}`);
   const kept = keepBrief(store, found.bytes, hash);
   if (!kept || hasControl(kept)) return fallBack('the continuation store could not keep the checked brief for a background session');
@@ -312,7 +313,7 @@ function startInBackground(ready) {
   const release = () => pending && safely(() => dropPending(pending));
   let started;
   try {
-    started = handoff.startBackground({ session, slug, chain: chain + 1, env, prompt, hold, run, wait });
+    started = handoff.startBackground({ session, slug, chain: chain + 1, env, prompt, hold, run, wait, start });
   } catch (error) {
     // Thrown after the hold, the start may have run.
     started = { problem: `the host's start failed (${error?.code ?? error?.message ?? 'no message'})`, uncertain: true };

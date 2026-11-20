@@ -37,5 +37,7 @@ Pick the engine by the input:
   through the `orchestration` skill § 1. The launch approves a new branch, so the `worktree-new` skill's question is answered
   for `branch_mode: new`. Its question about reusing an existing branch, and the question about changes in the main checkout,
   are not: stop, since no work can start without a workspace.
+  A worktree made here gets the push preflight of `SKILL.md` § Before launch again, inside it, before the engine's first slice:
+  on exit 1, stop and report its printed line.
 - The engine's slice plan, per-slice review, verification, and one commit per slice all hold.
   A "stop and ask" inside it becomes park and go on; when it leaves no independent slice, the engine stops and so does the run.

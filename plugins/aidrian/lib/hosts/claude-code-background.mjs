@@ -257,11 +257,14 @@ function ownFolder(list, session) {
 }
 
 // The folder startBackground would start the session that resumes the brief of the session `session` in, from one read
-// of `claude agents --json`: null when `claude` is not found, the listing does not answer, or it lists no such folder.
-// The gate's push preflight judges the remote of this folder (docs/handoff.md#the-push-preflight).
+// of `claude agents --json`: { cwd, listing }, or null when `claude` is not found, the listing does not answer, or it
+// lists no such folder. The gate's push preflight judges the remote of `cwd` (docs/handoff.md#the-push-preflight), then
+// passes this answer to startBackground as `start`, which starts there from `listing` and never reads the folder again.
 export function startFolder({ session, env, run = runCommand, resolve = claudeOnPath }) {
   const claude = resolve(env);
-  return claude ? ownFolder(listed(run, claude, undefined), session) : null;
+  const listing = claude ? listed(run, claude, undefined) : null;
+  const cwd = ownFolder(listing, session);
+  return cwd === null ? null : { cwd, listing };
 }
 
 // Starts the session that resumes a brief, in the background, in the folder of the handing-off session `session` as the
@@ -275,14 +278,15 @@ export function startFolder({ session, env, run = runCommand, resolve = claudeOn
 // cannot be read, starts nothing: the host's default may bypass permission checks. `hold({ cwd, known })`, the gate's, files the pending mark that holds
 // every session the host had not listed, `known` being the ids it had, until the new session's own mark is written; it
 // runs before `claude --bg`, and a start it does not confirm is none. `run` and `wait` are a test's stand-ins, and
-// `resolve` finds `claude` from `env`.
-export function startBackground({ session, slug, chain, agent, effort, efforts, prompt, env, hold, run = runCommand, wait = pause, resolve = claudeOnPath, readMode = sessionMode }) {
+// `resolve` finds `claude` from `env`. `start`, startFolder's answer the gate judged, gives the folder and the listing;
+// without it, the listing is read here.
+export function startBackground({ session, slug, chain, agent, effort, efforts, prompt, env, hold, start, run = runCommand, wait = pause, resolve = claudeOnPath, readMode = sessionMode }) {
   const claude = resolve(env);
   if (!claude) return { problem: '`claude` is not on PATH, in an absolute folder' };
-  const before = listed(run, claude, undefined);
+  const before = start?.listing ?? listed(run, claude, undefined);
   if (!before) return { problem: '`claude agents --json` did not answer, so the folder of this session is unknown' };
-  const own = before.find((each) => each.sessionId === session);
-  if (ownFolder(before, session) === null) return { problem: '`claude agents --json` does not list the folder of this session' };
+  const own = { ...before.find((each) => each.sessionId === session), cwd: start?.cwd ?? ownFolder(before, session) };
+  if (own.cwd === null) return { problem: '`claude agents --json` does not list the folder of this session' };
   const read = readMode({ session, cwd: own.cwd, env });
   if (read === BYPASS) {
     return { problem: 'this session runs with permission checks bypassed, and a session no Human attends never starts that way' };

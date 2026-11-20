@@ -271,9 +271,12 @@ test('the autopilot skill runs the push preflight before launch, and names no ho
   const launch = skill.slice(start, skill.indexOf('\n## ', start + 1)).replace(/\s+/gu, ' ');
   assert.ok(launch.includes('`aidrian push-preflight --cwd <dir>`'), launch);
   assert.match(launch, /the folder the run will work in/u, 'the folder judged is the one the run works in');
-  assert.match(launch, /before its worktree exists, it answers unknown/u, 'a folder not yet created answers unknown');
+  assert.match(launch, /before its worktree exists, it answers unknown, so rerun it there once made/u, 'a folder not yet created answers unknown, so it is judged again once made');
   const resume = readFileSync(path.join(ROOT, 'plugins/aidrian/skills/autopilot/references/entry-continue.md'), 'utf8').replace(/\s+/gu, ' ');
   assert.match(resume, /runs the push preflight with `--cwd` that worktree/u, 'a continued session judges the worktree of the work under way');
+  assert.match(resume, /so it runs again inside the new worktree before any work there: on exit 1, stop and report its printed line/u);
+  const task = readFileSync(path.join(ROOT, 'plugins/aidrian/skills/autopilot/references/entry-task.md'), 'utf8').replace(/\s+/gu, ' ');
+  assert.match(task, /A worktree made here gets the push preflight of `SKILL\.md` § Before launch again, inside it, before the engine's first slice: on exit 1, stop and report its printed line/u);
   assert.match(launch, /On exit 1/u);
   assert.match(launch, /tell the Human its printed line, and start no run unless the Human says to go on/u);
   for (const word of ['Claude Code', 'Codex', 'autoMode', 'settings.json', '$defaults']) assert.ok(!skill.includes(word), `the skill names ${word}`);

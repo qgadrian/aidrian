@@ -1209,16 +1209,18 @@ test('tickets: pull requests for two issues show both, the newest pull request`s
 test('tickets: past the deadline the branch`s key still shows, prs alone is in errors, and no second forge call starts', { skip: !POSIX }, (t) => {
   const env = withLedger(t, { branch: 'fix/42-login' });
   env.ledger([ledgerRow(env.dir, { kind: 'created', number: 7 })]);
-  // A first answer in time, so the fake gh has run once before a call is cut at 200 ms: the first run of a new
-  // executable can take longer than that, and would be cut before it logs.
   env.answer({ data: { r0: { pullRequest: prNode(7, { title: 'ABC-12' }) } } });
   assert.deepEqual(env.run(['--session', ID, '--ticket-prefixes', 'ABC']).json.tickets, [{ key: '#42', source: 'branch' }, { key: 'ABC-12', source: 'pr' }]);
   rmSync(path.join(env.folder, PRS_CACHE.name));
   env.answer({ data: {} }, { delay: 5000 });
   const late = env.run(['--session', ID, '--ticket-prefixes', 'ABC', '--deadline-ms', '200']);
-  assert.ok(late.ms < 10_000, `${late.ms} ms`);
+  // From gh's spawn, as the snapshot's own process recorded it, to the snapshot's exit: the node and git startups a loaded
+  // machine slows come before it.
+  const lateMs = late.endedAt - ghSpawned(env.log).at(-1).at;
+  assert.ok(lateMs < 4000, `${lateMs} ms`);
   assert.deepEqual([late.json.tickets, late.json.prs, late.json.errors], [[{ key: '#42', source: 'branch' }], null, ['prs']]);
-  assert.equal(env.calls().length, 2, 'the late snapshot started one forge call, and the tickets section none');
+  // Calls the snapshot made, counted in its process: the 200 ms deadline can stop a slowly started gh before it logs one.
+  assert.equal(env.spawns(), 2, 'the late snapshot started one forge call, and the tickets section none');
 });
 
 test('tickets: a closing reference of the forge gives #N; a key no prefix matches, and a #N in a title, give none', { skip: !POSIX }, (t) => {

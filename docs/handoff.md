@@ -625,16 +625,16 @@ aidrian session snapshot [--session ID] [--transcript PATH] [--ticket-prefixes A
 | `worktrees` | `{ owned, mergedNotCleaned }`, and `stale: true` when the merged count is a cached value past its minute. |
 | `decisions` | `{ provisional }`: the decision markers with status `unconfirmed` in the indexed docs, as `aidrian decisions list` reads them. |
 | `audits` | `{ untriaged }`: the untriaged persona-audit findings, as the session-start line counts them; null, and in `errors`, when the state folder is inside a checkout, or is not the user's own. |
-| `tickets` | A list of `{ key, source }`, 10 at most, `[]` when none: each key of `--ticket-prefixes`, such as `ABC-123`, or `#42`, that the current branch, a branch the session's ledger or an earlier session's recorded, or a pull request `prs` shows names; `source` is `branch`, `ledger`, or `pr` ([The tickets](#the-tickets)). Null, and in `errors`, for a bad prefix list. |
+| `tickets` | A list of `{ key, source }`, 10 at most, `[]` when none: each key of `--ticket-prefixes`, such as `ABC-123`, or `#42`, that the current branch, a branch the session's ledger or an earlier session's recorded, or a pull request `prs` shows names; `source` is `branch`, `ledger`, or `pr` ([The tickets](#the-tickets)). Null, and in `errors`, for a bad prefix list; when the session's own ledger or `links.jsonl` cannot be read, the keys of the other rules, with `tickets` in `errors`. |
 | `links` | `{ branch, worktree, source }` or null: the worktree the session created with `aidrian worktree new`, while git still lists it, `source` `own`, else the one an earlier session created, `inherited` ([The worktree](#the-worktree)). |
 | `errors` | The names of the sections that failed, never their error text. |
 
-Each section fails open: one that fails is null with its name in `errors`, and the command exits 0 whenever its
-arguments parse, so a status line never breaks. In a folder with no project every section but `session` is null,
-`errors` is empty, and nothing is written. Without `--session`, `handoff`, `prs`, `links`, and
-`worktrees.mergedNotCleaned` are null and `errors` does not name them, since what they read is kept per session; without
-`--transcript`, `handoff` is null the same way. A session id that fails `SESSION_ID` writes nothing, and names
-`handoff`, `prs`, `worktrees`, and `links` in `errors`.
+Each section fails open: one that fails is null, or keeps what it read, as `worktrees` and `tickets` do, with its name
+in `errors`, and the command exits 0 whenever its arguments parse, so a status line never breaks.
+In a folder with no project every section but `session` is null, `errors` is empty, and nothing is written.
+Without `--session`, `handoff`, `prs`, `links`, and `worktrees.mergedNotCleaned` are null and `errors` does not name
+them, since what they read is kept per session; without `--transcript`, `handoff` is null the same way.
+A session id that fails `SESSION_ID` writes nothing, and names `handoff`, `prs`, `worktrees`, and `links` in `errors`.
 More than 32 ticket prefixes, or one that is not a letter and up to 15 letters or digits, make `tickets` null.
 
 **The shared decision.** `handoffStatus` in `lib/session-length.mjs` decides the level, and the Stop hook's reminder
@@ -781,7 +781,7 @@ variables on its stdin, which is how it asks for them.
 A session a person resumes by typing, the first after `maxChain`, and every Codex session, which has no continue route,
 have no parent, and show their own rows alone.
 
-**The tickets.** One function, `ticketsOf` in `lib/session-links.mjs`, holds every rule. It adds keys in this order,
+<a id="the-tickets"></a>**The tickets.** One function, `ticketsOf` in `lib/session-links.mjs`, holds every rule. It adds keys in this order,
 each key once (compared in capitals, so `abc-12` and `ABC-12` take one place) with the `source` of the first rule that
 names it, and stops at 10:
 
@@ -801,7 +801,8 @@ names it, and stops at 10:
 5. Each inherited pull request `prs` shows, open ones alone, in its order, as in rule 3: `source: "pr"`.
 
 Which keys count. A branch gives a key of `--ticket-prefixes`, matched as `(^|/)(PREFIXES)-[0-9]+` in any letter case,
-else `#N` from a branch named `<type>/<N>-<slug>`. A closing reference is one the forge adapter reads in the same one
+else `#N` from a branch named `<type>/<N>-<slug>`, N without its leading zeros, so `fix/0042-login` and a closing
+`#42` take one place, and an N of zeros alone gives none. A closing reference is one the forge adapter reads in the same one
 call as `prs` ([Adding a forge](providers/adding-a-host.md#adding-a-forge)): `#N` for an issue of the pull request's
 own repository the forge itself links as closed, and a tracker-shaped key after one of the forge's closing keywords in
 the body of a pull request the signed-in user wrote, or a member of the repository; such a key counts only when its

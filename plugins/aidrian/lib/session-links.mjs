@@ -159,13 +159,14 @@ export function prefixList(prefixes) {
 // The ticket key a branch name holds, or null: a key of `prefixes`, a list prefixList gave, matched as
 // `(^|/)(PREFIXES)-[0-9]+` in any case and given as the configured prefix that matched, in ASCII capitals, so a letter
 // of another script that folds into a prefix, such as U+212A KELVIN SIGN, reaches no key; with none matching, `#N` from
-// a branch named `<type>/<N>-<slug>`.
+// a branch named `<type>/<N>-<slug>`, N without its leading zeros, as a closing reference spells it, so `fix/0042-x` and
+// `Fixes #42` take one place; an N of zeros alone gives none.
 export function keyOfBranch(branch, prefixes) {
   if (typeof branch !== 'string') return null;
   const escaped = prefixes.map((prefix) => `(${prefix.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')})`);
   const keyed = prefixes.length ? new RegExp(`(?:^|/)(?:${escaped.join('|')})-([0-9]+)`, 'iu').exec(branch) : null;
   if (keyed) return `${prefixes[keyed.slice(1, -1).findIndex((part) => part !== undefined)].toUpperCase()}-${keyed.at(-1)}`;
-  const numbered = /^[^/]+\/([0-9]+)-/u.exec(branch);
+  const numbered = /^[^/]+\/0*([1-9][0-9]*)-/u.exec(branch);
   return numbered ? `#${numbered[1]}` : null;
 }
 

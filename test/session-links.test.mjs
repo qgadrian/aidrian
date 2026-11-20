@@ -285,6 +285,19 @@ test('keyOfBranch gives the configured prefix in ASCII capitals: a lookalike let
   assert.equal(keyOfBranch('feat/kEy-12-x', prefixList('ABC|key')), 'KEY-12', 'the matching prefix, not the first');
 });
 
+test('ticketsOf: a zero-padded branch number and the closing reference of the same issue take one place; a number of zeros gives none', { skip: !POSIX }, () => {
+  const { state } = fixture();
+  const repo = path.join(ROOT, `repo-padded-${states}`);
+  mkdirSync(repo);
+  spawnSync('git', ['init', '-q', '-b', 'fix/0042-login'], { cwd: repo, env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
+  const own = sessionWith(state, 'kid-14', [ledgerRow({ branch: 'fix/042-again', at: at(2) }), ledgerRow({ branch: 'fix/000-none', at: at(1) })]);
+  sessionWith(state, 'mom-14', [ledgerRow({ branch: 'fix/00042-parent', at: at(30) }), ledgerRow({ branch: 'fix/007-parent', at: at(31) })]);
+  const changes = [{ host: 'github.com', repo: 'acme/notes', number: 1, inherited: false, closes: ['#42'], title: 'Change 1' }];
+  assert.deepEqual(keysOf(ticketsOf(repo, '', { rows: readerOf(state, own, [{ id: 'mom-14', hopAt: NOW }]), changes, origin: ORIGIN })).keys, ['#42 branch', '#7 ledger'],
+    'the branch, own, and inherited rows give #42 as the closing reference does; fix/000 gives no key');
+  assert.equal(keyOfBranch('fix/0-x', []), null);
+});
+
 // The tickets ticketsOf gives, each `key source`, and whether an own file could not be read.
 const keysOf = ({ tickets, unread }) => ({ keys: tickets.map(({ key, source }) => `${key} ${source}`), unread });
 // The current folder's origin, as ticketsOf asks for it: the repository the fixtures' rows record.

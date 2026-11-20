@@ -2071,10 +2071,14 @@ ended, so that session drives on: a `driver` row moves custody, and the session'
 A command whose ledger another process holds locked, and a `start` whose read of the team's policy the forge cannot
 answer now, exit 75 with a `retry:` line, a refusal that may pass. A policy the forge answers and refuses, such as
 `projectRun.allow` turned off on the default branch while the run's sessions run, makes `start` exit 1. Neither stops
-`wait`, which starts nothing: through a forge outage or rate limit as through a refusal, it prints a first
-`note policy: <why>` line and settles the run as before, exit 0, stopping each session past `projectRun.issueHours`:
-the lowest of the default, 6, its ceiling of 24, the base branch's local ref, and the forge's own when it answered, so
-a bound the forge no longer confirms never loosens. So the driver's halt wait reaches `idle` and `end` can follow.
+`wait`, which starts nothing: it prints a first line and settles the run as before, exit 0, stopping each session past
+its `projectRun.issueHours`. Each start row records the hours the team confirmed for it, as `issueHours`.
+On a refusal, the line is `note policy: <why>`, and the hours are the lowest of the default, 6, its ceiling of 24, the
+base branch's local ref, and the forge's own when it answered, so a bound the forge no longer confirms never loosens.
+Through a forge outage or rate limit, the line is `note outage: <why>`, and each session's hours are the lowest of
+those its start row recorded, the ceiling, and the base branch's local ref, or the default for a start row that
+recorded none, so one failed read stops no session the team gave longer.
+So the driver's halt wait reaches `idle` and `end` can follow.
 `resume` names a driver it cannot read as an ended background session, such as the first one the Human ran: the Human
 resumes that same host session, which keeps its id and custody.
 

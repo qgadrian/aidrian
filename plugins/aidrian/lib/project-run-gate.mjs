@@ -498,7 +498,8 @@ function launchStart(context, place) {
   } : undefined;
   const name = sessionName(run, key, attempt);
   const prompt = projectPrompt({ run, key, attempt, branch, clone: cwd, afterLimit, issueFile, confine: proving, note: safely(() => cap.sessionNote?.({ work: cwd, branch })) });
-  const base = { event: 'start', key, attempt, session, name, cwd, branch, ...(drop ? { drop } : {}), ...(pushUrl ? { pushUrl } : {}) };
+  // The hours the team confirmed for this start, which a wait the forge cannot answer holds the session to (settlePolicy).
+  const base = { event: 'start', key, attempt, session, name, cwd, branch, issueHours: context.policy.issueHours, ...(drop ? { drop } : {}), ...(pushUrl ? { pushUrl } : {}) };
   let proof = null;
   // Why the write-ahead row was refused under the ledger's lock, when the order or the cap moved since the start read it.
   const ahead = {};
@@ -663,8 +664,8 @@ function startLines({ result, state, run, key, attempt, session, base, proof, ca
 // `lingering KEY attempt N`, `paused until TIME` while a pause lasts, or `idle` when none runs or runs on.
 // `wait` starts nothing. A team policy the forge no longer confirms, such as projectRun.allow turned off on the default
 // branch while the run's sessions run, or one the forge cannot answer now, through an outage or a rate limit, refuses no
-// wait: it settles under settlePolicy, with a first `note policy:` line, so the driver's halt wait still stops overdue
-// sessions, takes in results, and reaches `idle`. Only `start` exits 75 on a read the forge cannot answer now.
+// wait: it settles under settlePolicy, with a first `note policy:` line for a refusal or `note outage:` for a read the
+// forge cannot answer now, so the driver's halt wait still stops overdue sessions, takes in results, and reaches `idle`. Only `start` exits 75 on a read the forge cannot answer now.
 // `pause` is a test's stand-in for the wait between reads.
 export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = process.env, home, now = Date.now(), forge = null, spawn, pause = pauseSync, clock = Date.now }) {
   const refuse = (why) => ({ exitCode: 1, out: [], err: [`aidrian project wait: ${why}`] });
@@ -714,16 +715,30 @@ export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = pr
 
 // The policy `wait` settles a run's issues under, from the team's policy `team` (teamPolicy): { policy, note }, where
 // `note` holds the line to print first, if any. A policy the forge confirms stands. One it no longer confirms, or cannot
-// answer now, leaves only issueHours, which every running session is held to: the lowest of the default, the CEILINGS
-// value, the base branch's own as this checkout's git holds it, and the hours both reads held when the forge answered
-// with its refusal. A bound the forge no longer confirms never loosens past the one it last did or the default.
+// answer now, leaves only issueHours, which every running session is held to (hoursOf):
+//   - a refusal, the forge answering and withdrawing projectRun.allow, `note policy:`: the lowest of the default, the
+//     CEILINGS value, the base branch's own as this checkout's git holds it, and the hours both reads held when the forge
+//     answered, so a bound the forge no longer confirms never loosens past the one it last did or the default;
+//   - a read the forge cannot answer now, through an outage or a rate limit, `note outage:`: for each session, the lowest
+//     of the hours its start row recorded as the team confirmed them, the CEILINGS value, and the base branch's own, or
+//     the default for a start row that recorded none, so one failed read stops no session the team gave longer.
 // Nothing here lets a session start: start reads teamPolicy itself.
 function settlePolicy(project, team) {
   if (!team.problem) return { policy: team, note: [] };
   const read = safely(() => baseBranchConfig(project, 'projectRun').config?.projectRun?.issueHours);
-  const issueHours = Math.min(...[DEFAULTS.projectRun.issueHours, CEILINGS.issueHours, read, team.issueHours].filter((hours) => Number.isFinite(hours) && hours > 0));
+  const lowest = (...hours) => Math.min(...hours.filter((each) => Number.isFinite(each) && each > 0));
+  if (team.transient) {
+    const cap = lowest(CEILINGS.issueHours, read);
+    const issueHours = lowest(DEFAULTS.projectRun.issueHours, cap);
+    const hoursOf = (start) => (Number.isFinite(start?.issueHours) && start.issueHours > 0 ? lowest(start.issueHours, cap) : issueHours);
+    return { policy: { issueHours, hoursOf }, note: [`note outage: ${team.problem}; wait starts nothing and settles the issues that run, stopping any past the projectRun.issueHours its start recorded, at most ${cap}${issueHours === cap ? '' : `, or ${issueHours} for a start that recorded none`}`] };
+  }
+  const issueHours = lowest(DEFAULTS.projectRun.issueHours, CEILINGS.issueHours, read, team.issueHours);
   return { policy: { issueHours }, note: [`note policy: ${team.problem}; wait starts nothing and settles the issues that run, stopping any past projectRun.issueHours, ${issueHours}`] };
 }
+
+// The hours `policy` (settlePolicy) holds the session of the start row `start` to.
+const hoursOf = (policy, start) => (typeof policy.hoursOf === 'function' ? policy.hoursOf(start) : policy.issueHours);
 
 // One read of `wait`: orphans, handed-over results, ended sessions, then sessions that run on after their issue
 // settled (project-linger.mjs), and the sweep of ended attempts' folders: { lines, lingering }.
@@ -752,7 +767,8 @@ function endedLines({ state, run, store, cap, env, home, spawn, policy, now }) {
     if (!start || startsOf(found, key).at(-1) !== start) continue;
     const dropped = typeof start.drop === 'string' && existsSync(path.join(start.drop, DROP_FILE));
     // Time the run spent paused on a limit counts toward no issue's hours.
-    const overdue = now - timeOf(start) - pausedTime(found, timeOf(start), now) > policy.issueHours * HOUR;
+    const hours = hoursOf(policy, start);
+    const overdue = now - timeOf(start) - pausedTime(found, timeOf(start), now) > hours * HOUR;
     if (dropped && !overdue) continue;
     const limited = dropped ? null : limitLine({ state, run, store, cap, env, home, spawn, key, start, found, now });
     if (limited?.line) lines.push(limited.line);
@@ -769,7 +785,7 @@ function endedLines({ state, run, store, cap, env, home, spawn, policy, now }) {
     }
     if (!reason) continue;
     const next = afterFailure(key, spentAttempts(found, key));
-    const why = reason === 'bad_result' ? { why: `the forge did not confirm the handed-over result within ${policy.issueHours} hours` } : {};
+    const why = reason === 'bad_result' ? { why: `the forge did not confirm the handed-over result within ${hours} hours` } : {};
     const written = safely(() => appendToRun(state, run, (fresh) => (fresh.states.get(key)?.state === 'running' && latestStart(fresh, key)?.attempt === start.attempt
       ? { rows: [{ event: 'ended', key, attempt: start.attempt, reason, ...why, at: iso(now) }, { ...next, at: iso(now) }] }
       : { rows: [] })));

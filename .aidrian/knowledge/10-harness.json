@@ -32,7 +32,7 @@
       "tags": []
     },
     "project-folder.md": {
-      "summary": ".aidrian/: init, check, lint, state, sessions, runs, hook-counts, issue-reads, worktrees, sources, decision markers, quorum route, quorum provisional, migrating",
+      "summary": ".aidrian/ init, state/sessions/runs/hook-counts, worktrees, local sources, decision markers, decisions list/set, quorum route, quorum provisional, migrating",
       "tags": []
     },
     "personas.md": {
@@ -40,7 +40,7 @@
       "tags": []
     },
     "review.md": {
-      "summary": "splits, flows, invariants, approvers, visual, reviewers, quota, rounds, lateRoundFrom, residuals, sign-off, owed, product feedback, merge trust, sign-off store.",
+      "summary": "splits, flows, invariants, approvers, visual, ingest, reviewers, quota, rounds, quiet, lateRoundFrom, residuals, --accept, owed, merge trust, sign-off store",
       "tags": []
     },
     "knowledge.md": {
@@ -60,7 +60,7 @@
       "tags": []
     },
     "config.md": {
-      "summary": "config.json: auto-merge, quorum roles/autoStart, decisions, authority, productFeedback, PR body, gate, solo, projectRun, project init/next/start/wait/preflight",
+      "summary": "auto-merge, quorum roles/autoStart, decisions, authority, productFeedback maxPersonas/allWidths/items/diff, projectRun next/start/wait/preflight/result/report",
       "tags": []
     },
     "dispatch-log.md": {

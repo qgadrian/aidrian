@@ -3,18 +3,14 @@
 // permission mode a classifier judges each action against `autoMode` in the user settings, whose `environment` lists
 // the trusted repositories as prose; with no `environment`, or with "$defaults" in it, the defaults trust the working
 // repository and its remotes (code.claude.com/docs/en/auto-mode-config, read on 2026-11-19 with Claude Code 2.1.328).
-// The classifier ignores `autoMode` in project and local settings, so `autoMode` is read from the user file alone. First
-// of all, a `permissions.deny` rule that matches the push the run makes refuses it, and a `permissions.ask` rule asks
-// before it, with no one there to answer in a run no Human attends: either answers `denied`, naming the rule, whatever
-// else the files say. A narrow `permissions.allow` rule that allows a `git push`, such as `Bash(git push:*)`, approves
-// the push before the classifier runs (code.claude.com/docs/en/permission-modes, read on 2026-11-19), so the rules of
-// the user file and of the project's `.claude/settings.json` and `.claude/settings.local.json` are read too: one that
-// allows the push the run makes answers `allowed`, and one for a narrower push, which may be that push, leaves
-// `unknown` where the answer would be `denied`. Beside a deny or ask rule, `denied` from auto mode is a prediction of a
-// prose classifier, given for one shape alone: a custom `environment` with no "$defaults" that names this repository in
-// no entry, though each entry names one other source-control host or path, and no rule that may allow a push. Every
-// other shape it cannot read answers `unknown`, and nothing here throws on one. It reads no network, starts no process,
-// and reads no file when loaded.
+// The classifier ignores `autoMode` in project and local settings, so `autoMode` is read from the user file alone.
+// A permission rule settles a command before the classifier does, and this file does not emulate how Claude Code
+// matches one: a `permissions.allow`, `permissions.deny`, or `permissions.ask` rule, in the user file or the project's
+// `.claude/settings.json` or `.claude/settings.local.json`, that may reach a `git push` only makes the answer `unknown`.
+// No rule answers `allowed` or `denied`. `denied` is a prediction of a prose classifier, given for one shape alone: a
+// custom `environment` with no "$defaults" that names this repository in no entry, though each entry names one other
+// source-control host or path, and no rule that may reach a push. Every other shape it cannot read answers `unknown`,
+// and nothing here throws on one. It reads no network, starts no process, and reads no file when loaded.
 
 import { closeSync, constants, existsSync, fstatSync, openSync, readSync } from 'node:fs';
 import path from 'node:path';
@@ -31,14 +27,10 @@ const DEFAULTS = '$defaults';
 const MISSING = Symbol('missing');
 // The project's settings files, in its `.claude` folder, whose permission rules the permission system reads.
 const PROJECT_FILES = ['settings.json', 'settings.local.json'];
-// A permission rule for the shell tool with a pattern, `Bash(<pattern>)`; bare `Bash` is read in shellGlobs.
-const SHELL_RULE = /^Bash\((.*)\)$/su;
-// The command the push rules are matched against: a plain push, alone or with arguments after a space.
+// The lists of permission rules a settings file may hold.
+const RULE_LISTS = ['allow', 'deny', 'ask'];
+// The command the run pushes with, which a rule that may reach a push mentions or starts.
 const PUSH = 'git push';
-// The remote the push preflight judges (docs/handoff.md#the-push-preflight), by the name a command gives it.
-const REMOTE = 'origin';
-// A character no command holds, which only a `*` of a glob matches (matchesAnyAfter).
-const MARK = '\u0000';
 // What may not touch a name on either side for it to be that name, and not part of a longer one.
 const NAME_CHAR = String.raw`[\p{L}\p{N}_.-]`;
 const NAME_TAIL = String.raw`[\p{L}\p{N}_-]`;
@@ -105,76 +97,38 @@ function namesRepository(repository) {
   return (entry) => [repo, owner, host].some((each) => each.test(entry.toLowerCase()));
 }
 
-// Whether the glob `glob`, where `*` is any text, matches all of `text`, compared by code point. It goes back only to
-// the last `*` it passed, so it takes at most the product of the two lengths. A regex with a `[\s\S]*` for each star
-// backtracks exponentially, and a project's checked-in settings file chooses the glob.
-function matchesAll(glob, text) {
-  const pattern = [...glob];
-  const chars = [...text];
-  let at = 0;
-  let next = 0;
-  let star = -1;
-  let resume = 0;
-  while (next < chars.length) {
-    if (pattern[at] === '*') {
-      star = at;
-      at += 1;
-      resume = next;
-    } else if (at < pattern.length && pattern[at] === chars[next]) {
-      at += 1;
-      next += 1;
-    } else if (star !== -1) {
-      at = star + 1;
-      resume += 1;
-      next = resume;
-    } else {
-      return false;
-    }
+// Whether the tool-name glob `glob`, where `*` is any text, matches all of `text`. Each run between stars is found in
+// order, the first at the start and the last at the end, so it never backtracks: a project's checked-in settings file
+// chooses the glob.
+function globMatches(glob, text) {
+  const parts = glob.split('*');
+  if (parts.length === 1) return glob === text;
+  const last = parts.at(-1);
+  if (!text.startsWith(parts[0]) || !text.endsWith(last)) return false;
+  let at = parts[0].length;
+  for (const part of parts.slice(1, -1)) {
+    const found = text.indexOf(part, at);
+    if (found === -1) return false;
+    at = found + part.length;
   }
-  while (pattern[at] === '*') at += 1;
-  return at === pattern.length;
+  return at <= text.length - last.length;
 }
 
-// Whether the glob `glob` matches some command that starts with `prefix`: its text before the first `*`, or all of it
-// when it has none, starts with `prefix`, or is itself the start of `prefix` and a `*` follows it.
-function matchesSomeStart(glob, prefix) {
-  const star = glob.indexOf('*');
-  const literal = star === -1 ? glob : glob.slice(0, star);
-  return literal.startsWith(prefix) || (star !== -1 && prefix.startsWith(literal));
+// Whether the permission rule `rule` may reach a `git push`, read in lower case with its spaces run together: it mentions
+// `git push`; or its tool is the shell tool, `Bash` or a tool-name glob that matches it, such as `B*` or `*`, with no
+// pattern, an empty one, or one whose text before its first `*`, less a final `:`, starts `git push`, such as
+// `Bash(*)`, `Bash(git:*)`, or `Bash(git *)`. It reads no rule the way Claude Code matches one: it only finds the rules
+// beside which this file gives no verdict.
+function mayReachPush(rule) {
+  const text = rule.trim().toLowerCase().replace(/\s+/gu, ' ');
+  if (text.includes(PUSH)) return true;
+  const open = text.indexOf('(');
+  if (!globMatches((open === -1 ? text : text.slice(0, open)).trim(), 'bash')) return false;
+  if (open === -1) return true;
+  const pattern = text.slice(open + 1).replace(/\)$/u, '').trim();
+  const star = pattern.indexOf('*');
+  return star === -1 ? pattern === '' : PUSH.startsWith(pattern.slice(0, star).replace(/:$/u, ''));
 }
-
-// Whether the glob `glob` matches `prefix` followed by any text at all. It is tried on `prefix` and one character the
-// glob does not hold: only a `*` can match that character, and only a `*` with nothing but `*` after it, which then
-// matches any text in its place.
-function matchesAnyAfter(glob, prefix) {
-  const mark = [MARK, '\u0001'].find((each) => !glob.includes(each));
-  return mark !== undefined && matchesAll(glob, `${prefix}${mark}`);
-}
-
-// The globs the permission rule `rule` matches a shell command by, from `Bash(<pattern>)`: the pattern, where a final
-// `:*` is a trailing ` *`, and, for a trailing ` *`, the command before it too. None for any other rule or an empty
-// pattern. Bare `Bash` matches every command; in `permissions.allow` (`allow`), auto mode drops it on entry, as it does
-// `Bash(*)` and a pattern that starts with `*`, so none of those allows anything there.
-function shellGlobs(rule, { allow }) {
-  const trimmed = rule.trim();
-  if (trimmed === 'Bash') return allow ? [] : ['*'];
-  const shell = SHELL_RULE.exec(trimmed);
-  if (!shell) return [];
-  const pattern = shell[1].trim();
-  if (pattern === '' || (allow && pattern.startsWith('*'))) return [];
-  const glob = pattern.endsWith(':*') ? `${pattern.slice(0, -2)} *` : pattern;
-  return glob.endsWith(' *') ? [glob, glob.slice(0, -2)] : [glob];
-}
-
-// Whether the globs `globs` match the push the run makes: a plain `git push`, for any remote, or `git push origin` with
-// any branch after it. `Bash(git push:*)`, `Bash(git push)`, `Bash(git *)`, and `Bash(git push origin:*)` do;
-// `Bash(git push origin main)`, `Bash(git push upstream:*)`, and `Bash(git push --force:*)` do not, since the run may
-// make another push.
-const coversPush = (globs) => globs.some((glob) => matchesAll(glob, PUSH) || matchesAnyAfter(glob, `${PUSH} ${REMOTE} `));
-
-// Whether the globs `globs` could match some `git push`, alone or with arguments, a remote or branch it names included:
-// `Bash(git push origin main)` does, and `Bash(git status)`, `Bash(git pushall)`, and `Bash(git:* push)` do not.
-const mayPush = (globs) => globs.some((glob) => matchesAll(glob, PUSH) || matchesSomeStart(glob, `${PUSH} `));
 
 // The main checkout of the worktree at `root`, whose `.git` is a file naming its git folder, from that folder's
 // `commondir`: null for a checkout whose `.git` is a folder, or any pointer this cannot read.
@@ -206,42 +160,16 @@ function projectFolders(cwd) {
   }
 }
 
-// The rules in `permissions[key]` of `settings`: none for a file that is not there, or that sets no such rules, and null
-// when `permissions` or its `key` has a shape this cannot read.
-function permissionRules(settings, key) {
-  if (settings === MISSING) return [];
-  if (settings === null) return null;
+// Whether the settings `settings` leave no verdict to give: a file that is there and cannot be read, whose `permissions`
+// is not an object, whose `allow`, `deny`, or `ask` is not a list of strings, or that holds a rule that may reach a push
+// (mayReachPush). A file that is not there, or that sets no such rules, leaves one.
+function standsAside(settings) {
+  if (settings === MISSING) return false;
+  if (settings === null) return true;
   const { permissions } = settings;
-  if (permissions === undefined) return [];
-  if (!isObject(permissions)) return null;
-  if (permissions[key] === undefined) return [];
-  return isStrings(permissions[key]) ? permissions[key] : null;
-}
-
-// The longest rule a denial quotes; a longer one, or one with any character but printable ASCII, is named without it.
-const MAX_QUOTED = 200;
-const quoted = (rule) => (rule.trim().length <= MAX_QUOTED && /^[\x20-\x7e]+$/u.test(rule.trim()) ? `the rule \`${rule.trim()}\`` : 'a rule');
-
-// The denial of the first `permissions.deny` rule, then the first `permissions.ask` rule, in `sources`, that matches the
-// push the run makes, or null when none does. A deny rule refuses a matching command in every permission mode, and an
-// ask rule asks before it, which a run no Human attends has no one to answer; both come before any allow rule and before
-// auto mode's classifier (code.claude.com/docs/en/permissions, read on 2026-11-20). A file whose rules cannot be read
-// holds no rule here.
-function refusal(sources) {
-  for (const [key, does] of [['deny', 'refuses that push'], ['ask', 'asks before that push, and a run no Human attends has no one to answer']]) {
-    for (const { file, settings } of sources) {
-      const rule = permissionRules(settings, key)?.find((each) => coversPush(shellGlobs(each, { allow: false })));
-      if (rule === undefined) continue;
-      return {
-        answer: 'denied',
-        setting: `permissions.${key}`,
-        file,
-        why: `holds ${quoted(rule)}, which ${does}`,
-        fix: `removes that rule, or narrows it so that it matches no push to ${REMOTE}`,
-      };
-    }
-  }
-  return null;
+  if (permissions === undefined) return false;
+  if (!isObject(permissions)) return true;
+  return RULE_LISTS.some((key) => permissions[key] !== undefined && (!isStrings(permissions[key]) || permissions[key].some(mayReachPush)));
 }
 
 // Whether the `environment` entry `entry` names exactly one source-control host or path, and nothing that could also
@@ -285,27 +213,15 @@ export function pushPermission({ repository, session, cwd, env = process.env, re
   const names = namesRepository(repository);
   if (!names) return UNKNOWN;
   const file = path.join(configDir(env), 'settings.json');
-  // A relative config folder would be read from wherever this process runs, and a denial could not name its file.
-  if (!path.isAbsolute(file)) return UNKNOWN;
-  const user = { file, settings: readSettings(file) };
-  // The project's settings are found from the session's folder; one that is not absolute would be read from wherever
-  // this process runs, and is not read.
-  const project = typeof cwd === 'string' && path.isAbsolute(cwd)
-    ? projectFolders(cwd).flatMap((folder) => PROJECT_FILES.map((name) => path.join(folder, '.claude', name)))
-      .map((each) => ({ file: each, settings: readSettings(each) }))
-    : null;
-  const sources = [user, ...(project ?? [])];
-  const refused = refusal(sources);
-  if (refused) return refused;
-  // A file whose deny or ask rules cannot be read may hold one that refuses the push.
-  if (sources.some(({ settings }) => permissionRules(settings, 'deny') === null || permissionRules(settings, 'ask') === null)) return UNKNOWN;
-  const allowRules = sources.map(({ settings }) => permissionRules(settings, 'allow'));
-  const globs = (rules) => rules.flatMap((rule) => shellGlobs(rule, { allow: true }));
-  const trust = environmentTrust(user.settings, repository, names);
-  if (trust === 'allowed' || allowRules.some((rules) => rules !== null && coversPush(globs(rules)))) return { answer: 'allowed' };
-  if (trust !== 'denied' || project === null) return UNKNOWN;
-  // A rule for a narrower push may be the very push the run makes, and one this cannot read may allow it.
-  if (allowRules.some((rules) => rules === null || mayPush(globs(rules)))) return UNKNOWN;
+  // A relative config folder would be read from wherever this process runs, and a denial could not name its file. The
+  // project's settings are found from the session's folder, and one that is not absolute would be read from there too:
+  // its rules unread, no answer stands.
+  if (!path.isAbsolute(file) || typeof cwd !== 'string' || !path.isAbsolute(cwd)) return UNKNOWN;
+  const user = readSettings(file);
+  const project = projectFolders(cwd).flatMap((folder) => PROJECT_FILES.map((name) => readSettings(path.join(folder, '.claude', name))));
+  if ([user, ...project].some(standsAside)) return UNKNOWN;
+  const trust = environmentTrust(user, repository, names);
+  if (trust !== 'denied') return trust === 'allowed' ? { answer: 'allowed' } : UNKNOWN;
   return {
     answer: 'denied',
     setting: 'autoMode.environment',

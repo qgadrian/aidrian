@@ -732,98 +732,49 @@ test('Claude Code reads auto mode from the user settings alone, never from the p
   assert.equal(read.file, path.join(config, 'settings.json'));
 });
 
-// A permission rule that allows the push the run will make approves it before auto mode's classifier runs, in the user
-// settings or in the project's `.claude/settings.json` or `.claude/settings.local.json`: a rule for any remote that
-// covers a plain `git push`, or one for `origin` with any branch. A narrower push rule settles nothing, but no denial
-// stands beside it either, since it may be the very push the run makes.
-const SETTLING_RULES = ['Bash(git push:*)', 'Bash(git push *)', 'Bash(git push)', 'Bash(git push*)', 'Bash(git:*)', 'Bash(git *)', ' Bash( git push:* ) ', 'Bash(git push origin:*)', 'Bash(git push origin *)', 'Bash(git push * *)'];
-const NARROWER_RULES = ['Bash(git push origin main)', 'Bash(git * main)', 'Bash(git push upstream:*)', 'Bash(git push upstream *)', 'Bash(git push --force:*)', 'Bash(git push -u origin:*)', 'Bash(git push origin feat/*)', 'Bash(git push origin)'];
+// A permission rule settles a command before auto mode's classifier does, and the adapter does not emulate how Claude
+// Code matches one: an allow, deny, or ask rule that may reach a `git push`, in the user file or the project's
+// `.claude/settings.json` or `.claude/settings.local.json`, only makes the answer unknown. No rule answers allowed or
+// denied.
+const PUSH_RULES = ['Bash(git push:*)', 'Bash(git push *)', 'Bash(git push)', 'Bash(GIT PUSH origin main)', 'Bash(git  push --force:*)', 'Bash(git pushall)', 'Bash(git:*)', 'Bash(git *)', 'Bash(g*)', 'Bash(git:* push)',
+  'Bash', 'Bash(*)', 'Bash()', 'Bash(* --version)', 'B*', '*', 'Ba*h', 'Bash(*)(git status)', 'mcp__shell__run(git push origin)'];
+const UNRELATED_RULES = ['Bash(git status)', 'Bash(git pull:*)', 'Bash(npm run *)', 'Bash(gh pr view:*)', 'Read(**)', 'WebFetch', 'mcp__github__push_files', 'mcp__github__*', 'R*', '*(git status)'];
 
-test('Claude Code answers allowed for a permission rule that allows the push the run makes, and unknown, not denied, for a narrower push rule', (t) => {
+test('Claude Code answers unknown, never denied, beside an allow, deny, or ask rule that may reach a git push, and never allowed for one', (t) => {
   const ONLY_OTHER = trusting(['Trusted repo: github.com/acme/other']);
-  const TRUSTED = trusting(['Trusted repo: github.com/acme/widget']);
-  const withRules = (environment, allow) => ({ ...environment, permissions: { allow } });
-  for (const rule of SETTLING_RULES) {
-    assert.deepEqual(askClaude(claudeSettings(t, withRules(ONLY_OTHER, ['Bash(git status)', rule]))), { answer: 'allowed' }, `settles: ${rule}`);
-    // With no auto mode list the rule still approves the push before any classifier reads one.
-    assert.deepEqual(askClaude(claudeSettings(t, { permissions: { allow: [rule] } })), { answer: 'allowed' }, `settles with no autoMode: ${rule}`);
+  for (const key of ['allow', 'deny', 'ask']) {
+    for (const rule of PUSH_RULES) {
+      assert.deepEqual(askClaude(claudeSettings(t, { ...ONLY_OTHER, permissions: { [key]: ['Bash(git status)', rule] } })), { answer: 'unknown' }, `${key} ${rule}`);
+      assert.deepEqual(askClaude(claudeSettings(t, { permissions: { [key]: [rule] } })), { answer: 'unknown' }, `${key} ${rule}, no autoMode`);
+      assert.deepEqual(askClaude(claudeSettings(t, { ...trusting(['$defaults']), permissions: { [key]: [rule] } })), { answer: 'unknown' }, `${key} ${rule}, "$defaults"`);
+    }
+    for (const rule of UNRELATED_RULES) {
+      assert.equal(askClaude(claudeSettings(t, { ...ONLY_OTHER, permissions: { [key]: [rule] } })).answer, 'denied', `${key} ${rule}`);
+      assert.deepEqual(askClaude(claudeSettings(t, { ...trusting(['$defaults']), permissions: { [key]: [rule] } })), { answer: 'allowed' }, `${key} ${rule}, "$defaults"`);
+    }
   }
-  for (const rule of NARROWER_RULES) {
-    assert.deepEqual(askClaude(claudeSettings(t, withRules(ONLY_OTHER, ['Bash(git status)', rule]))), { answer: 'unknown' }, `narrower, would deny: ${rule}`);
-    assert.deepEqual(askClaude(claudeSettings(t, withRules(TRUSTED, [rule]))), { answer: 'allowed' }, `narrower, a trusted remote: ${rule}`);
-    assert.deepEqual(askClaude(claudeSettings(t, { permissions: { allow: [rule] } })), { answer: 'unknown' }, `narrower, no autoMode: ${rule}`);
+  // With no rule that may reach a push, "$defaults" and an entry that names the remote still answer allowed.
+  assert.deepEqual(askClaude(claudeSettings(t, trusting(['$defaults']))), { answer: 'allowed' });
+  assert.deepEqual(askClaude(claudeSettings(t, { ...trusting(['Trusted repo: github.com/acme/widget']), permissions: { allow: ['Bash(git status)'] } })), { answer: 'allowed' });
+  // A file that cannot be read, or rules of another shape, may hold such a rule: unknown.
+  for (const settings of ['{"permissions": {', { ...ONLY_OTHER, permissions: 'Bash' }, { ...ONLY_OTHER, permissions: { deny: 'Bash(git push:*)' } }, { ...ONLY_OTHER, permissions: { ask: [7] } }, { ...ONLY_OTHER, permissions: { allow: [null] } }]) {
+    assert.deepEqual(askClaude(claudeSettings(t, settings)), { answer: 'unknown' }, JSON.stringify(settings));
   }
 });
 
-// A `permissions.deny` rule refuses a matching command in every mode, and a `permissions.ask` rule asks before it, with
-// no one there to answer in a run no Human attends; both come before auto mode's trust and before any allow rule.
-test('Claude Code answers denied for a deny or ask rule that matches the push the run makes, before trust and allow rules', (t) => {
-  const user = (settings) => {
-    const config = claudeSettings(t, settings);
-    return { config, read: askClaude(config) };
-  };
-  const environments = [
-    ['another remote', trusting(['Trusted repo: github.com/acme/other'])],
-    ['"$defaults"', trusting(['$defaults'])],
-    ['a trusted remote', trusting(['Trusted repo: github.com/acme/widget'])],
-    ['no autoMode', {}],
-  ];
-  for (const [key, setting] of [['deny', 'permissions.deny'], ['ask', 'permissions.ask']]) {
-    for (const rule of ['Bash(git push:*)', 'Bash(git push *)', 'Bash(git:*)', 'Bash(git push origin:*)', 'Bash', 'Bash(*)']) {
-      for (const [label, environment] of environments) {
-        const { config, read } = user({ ...environment, permissions: { allow: ['Bash(git push:*)'], [key]: ['Bash(git status)', rule] } });
-        assert.equal(read.answer, 'denied', `${key} ${rule}, ${label}`);
-        assert.equal(read.setting, setting, `${key} ${rule}, ${label}`);
-        assert.equal(read.file, path.join(config, 'settings.json'), `${key} ${rule}, ${label}`);
-        assert.ok(read.why.includes(`\`${rule}\``), `${key} ${rule}: ${read.why}`);
-        assert.deepEqual(pushPermission({ capabilities: { pushPermission: () => read } }, {}), read, 'the registry passes the denial on');
-      }
-    }
-    assert.match(user({ permissions: { [key]: ['Bash(git push:*)'] } }).read.fix, /removes that rule/u, key);
-    // A rule for another push settles nothing: the run may make a push it does not match.
-    for (const rule of ['Bash(git push origin main)', 'Bash(git push upstream:*)', 'Bash(git push --force:*)', 'Bash(git status)', 'Read(**)']) {
-      assert.deepEqual(user({ ...trusting(['$defaults']), permissions: { [key]: [rule] } }).read, { answer: 'allowed' }, `${key} ${rule}`);
-    }
-    // A rule too long to quote on one line is named without its text.
-    const long = user({ permissions: { [key]: [`Bash(git *${'*'.repeat(300)})`] } }).read;
-    assert.equal(long.answer, 'denied', key);
-    assert.ok(!long.why.includes('*'.repeat(300)) && long.why.includes('a rule'), `${key}: ${long.why}`);
+// The four rules the review named, each with an otherwise-denying setup, and with "$defaults", which no rule turns into
+// a denial either.
+test('Claude Code answers unknown for a deny, an ask, and an allow push rule, and for a B* rule, where it would deny', (t) => {
+  const ONLY_OTHER = trusting(['Trusted repo: github.com/acme/other']);
+  assert.equal(askClaude(claudeSettings(t, ONLY_OTHER)).answer, 'denied', 'the setup denies with no rule');
+  for (const permissions of [{ deny: ['Bash(git push:*)'] }, { ask: ['Bash(git push:*)'] }, { allow: ['Bash(git push:*)'] }, { allow: ['B*'] }]) {
+    assert.deepEqual(askClaude(claudeSettings(t, { ...ONLY_OTHER, permissions })), { answer: 'unknown' }, JSON.stringify(permissions));
   }
-  // Deny comes before ask: the deny rule is the one named.
-  assert.equal(user({ permissions: { ask: ['Bash(git push:*)'], deny: ['Bash(git push:*)'] } }).read.setting, 'permissions.deny');
-  // In the project's files, from the session's folder.
-  for (const name of ['settings.json', 'settings.local.json']) {
-    for (const key of ['deny', 'ask']) {
-      const config = claudeSettings(t, trusting(['$defaults']));
-      const root = path.join(config, 'work');
-      mkdirSync(path.join(root, '.claude'), { recursive: true });
-      mkdirSync(path.join(root, '.git'));
-      writeFileSync(path.join(root, '.claude', name), JSON.stringify({ permissions: { [key]: ['Bash(git push *)'] } }));
-      const read = askClaude(config, { cwd: root });
-      assert.deepEqual([read.answer, read.setting, read.file], ['denied', `permissions.${key}`, path.join(root, '.claude', name)], `${name} ${key}`);
-    }
-  }
-  // An unreadable file, or deny and ask rules of another shape, say nothing for certain: unknown.
-  for (const settings of ['{"permissions": {', { ...trusting(['$defaults']), permissions: { deny: 'Bash(git push:*)' } }, { ...trusting(['$defaults']), permissions: { ask: [7] } }, { ...trusting(['$defaults']), permissions: 'Bash' }]) {
-    assert.deepEqual(user(settings).read, { answer: 'unknown' }, JSON.stringify(settings));
-  }
-  const config = claudeSettings(t, trusting(['$defaults']));
-  const root = path.join(config, 'work');
-  mkdirSync(path.join(root, '.claude'), { recursive: true });
-  mkdirSync(path.join(root, '.git'));
-  writeFileSync(path.join(root, '.claude', 'settings.json'), '{"permissions": {"deny": ');
-  assert.deepEqual(askClaude(config, { cwd: root }), { answer: 'unknown' }, 'a project file that cannot be read');
+  assert.deepEqual(askClaude(claudeSettings(t, { ...trusting(['$defaults']), permissions: { allow: ['Bash(git status)'] } })), { answer: 'allowed' }, '"$defaults"');
 });
 
-test('Claude Code answers unknown, not denied, when a permission rule may allow a git push, in the user or the project settings', (t) => {
+test('Claude Code reads the push rules of the project\'s settings files too, from the session\'s folder, the repository root, and a worktree\'s main checkout', (t) => {
   const ONLY_OTHER = trusting(['Trusted repo: github.com/acme/other']);
-  const withRules = (allow) => ({ ...ONLY_OTHER, permissions: { allow } });
-  // Unrelated rules, and the broad ones auto mode drops on entry: bare `Bash`, `Bash(*)`, and a leading wildcard.
-  const unrelated = ['Bash(git status)', 'Bash(git pull:*)', 'Bash(git pushall)', 'Bash(git:* push)', 'Bash(npm run *)', 'Read(**)', 'WebFetch', 'Bash(gh pr view:*)', 'Bash', 'Bash(*)', 'Bash(* --version)', 'Bash()'];
-  for (const rule of SETTLING_RULES) assert.deepEqual(askClaude(claudeSettings(t, withRules(['Bash(git status)', rule]))), { answer: 'allowed' }, `user file: ${rule}`);
-  for (const rule of NARROWER_RULES) assert.deepEqual(askClaude(claudeSettings(t, withRules(['Bash(git status)', rule]))), { answer: 'unknown' }, `user file: ${rule}`);
-  for (const rule of unrelated) assert.equal(askClaude(claudeSettings(t, withRules([rule]))).answer, 'denied', `user file: ${rule}`);
-  // The project's files, in the session's folder and in the root of the repository it is in.
   const project = (files, { below = false } = {}) => {
     const config = claudeSettings(t, ONLY_OTHER);
     const root = path.join(config, 'work');
@@ -835,13 +786,13 @@ test('Claude Code answers unknown, not denied, when a permission rule may allow 
     return askClaude(config, { cwd });
   };
   for (const name of ['settings.json', 'settings.local.json']) {
-    assert.deepEqual(project({ [name]: { permissions: { allow: ['Bash(git push:*)'] } } }), { answer: 'allowed' }, name);
-    assert.deepEqual(project({ [name]: { permissions: { allow: ['Bash(git push *)'] } } }, { below: true }), { answer: 'allowed' }, `${name} at the repository root, from a folder below it`);
-    assert.deepEqual(project({ [name]: { permissions: { allow: ['Bash(git push origin main)'] } } }), { answer: 'unknown' }, `${name}: a narrower rule`);
-    assert.equal(project({ [name]: { permissions: { allow: ['Bash(git status)'] } } }).answer, 'denied', `${name}: an unrelated rule`);
-    assert.equal(project({ [name]: { permissions: { deny: ['Bash(git push:*)'] } } }).answer, 'denied', `${name}: a deny rule`);
+    for (const key of ['allow', 'deny', 'ask']) {
+      assert.deepEqual(project({ [name]: { permissions: { [key]: ['Bash(git push:*)'] } } }), { answer: 'unknown' }, `${name} ${key}`);
+      assert.deepEqual(project({ [name]: { permissions: { [key]: ['Bash(git push *)'] } } }, { below: true }), { answer: 'unknown' }, `${name} ${key} at the repository root, from a folder below it`);
+      assert.equal(project({ [name]: { permissions: { [key]: ['Bash(git status)'] } } }).answer, 'denied', `${name} ${key}: an unrelated rule`);
+    }
     // A project file that is there and cannot be read, or rules of another shape: no denial stands.
-    for (const settings of ['{"permissions": {', '[]', { permissions: 'Bash' }, { permissions: { allow: 'Bash(git push:*)' } }, { permissions: { allow: [7] } }]) {
+    for (const settings of ['{"permissions": {', '[]', { permissions: 'Bash' }, { permissions: { allow: 'Bash(git push:*)' } }, { permissions: { deny: [7] } }]) {
       assert.deepEqual(project({ [name]: settings }), { answer: 'unknown' }, `${name}: ${JSON.stringify(settings)}`);
     }
   }
@@ -856,22 +807,24 @@ test('Claude Code answers unknown, not denied, when a permission rule may allow 
   writeFileSync(path.join(main, '.git', 'worktrees', 'wt', 'commondir'), '../..\n');
   writeFileSync(path.join(worktree, '.git'), `gitdir: ${path.join(main, '.git', 'worktrees', 'wt')}\n`);
   assert.equal(askClaude(config, { cwd: worktree }).answer, 'denied', 'a worktree with no rule');
-  writeFileSync(path.join(main, '.claude', 'settings.local.json'), JSON.stringify({ permissions: { allow: ['Bash(git push *)'] } }));
-  assert.deepEqual(askClaude(config, { cwd: worktree }), { answer: 'allowed' }, 'the main checkout\'s local settings, from a worktree');
+  writeFileSync(path.join(main, '.claude', 'settings.local.json'), JSON.stringify({ permissions: { deny: ['Bash(git push *)'] } }));
+  assert.deepEqual(askClaude(config, { cwd: worktree }), { answer: 'unknown' }, 'the main checkout\'s local settings, from a worktree');
+  // A folder that is not absolute: the project's rules cannot be read, so no answer stands, "$defaults" included.
   assert.deepEqual(askClaude(claudeSettings(t, ONLY_OTHER), { cwd: 'work' }), { answer: 'unknown' }, 'a relative folder');
-  assert.deepEqual(askClaude(claudeSettings(t, { ...ONLY_OTHER, permissions: { allow: 'Bash' } })), { answer: 'unknown' }, 'user rules of another shape');
+  assert.deepEqual(askClaude(claudeSettings(t, trusting(['$defaults'])), { cwd: 'work' }), { answer: 'unknown' }, 'a relative folder, "$defaults"');
 });
 
-// A project's checked-in `.claude/settings.json` chooses its rules' globs, so matching one against `git push` takes time
-// linear in its length, never time that grows with its stars. Run in a child process, so a hang fails, not blocks.
+// A project's checked-in `.claude/settings.json` chooses its rules, so reading one takes time linear in its length, never
+// time that grows with its stars. Run in a child process, so a hang fails, not blocks.
 test('Claude Code answers unknown at once for a project allow rule with thousands of stars', (t) => {
   const config = claudeSettings(t, trusting(['Trusted repo: github.com/acme/other']));
   const root = path.join(config, 'work');
   mkdirSync(path.join(root, '.claude'), { recursive: true });
   mkdirSync(path.join(root, '.git'));
   const module = path.join(ROOT, 'plugins/aidrian/lib/hosts/claude-code-push.mjs');
-  // `g` starts some `git push`, so the rule may allow one: no denial stands beside it.
-  writeFileSync(path.join(root, '.claude', 'settings.json'), JSON.stringify({ permissions: { allow: [`Bash(g${'*'.repeat(10000)}z)`] } }));
+  // `g` starts `git push`, so the rule may reach one: no denial stands beside it. A tool-name glob of as many stars is
+  // read at once too.
+  writeFileSync(path.join(root, '.claude', 'settings.json'), JSON.stringify({ permissions: { allow: [`Bash(g${'*'.repeat(10000)}z)`, `${'*a'.repeat(10000)}`] } }));
   const script = `import { pushPermission } from ${JSON.stringify(module)};
 process.stdout.write(JSON.stringify(pushPermission({ repository: ${JSON.stringify(REPOSITORY)}, session: 's', cwd: ${JSON.stringify(root)}, env: { CLAUDE_CONFIG_DIR: ${JSON.stringify(config)} }, readMode: () => 'auto' })));`;
   const ran = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 5000 });

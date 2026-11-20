@@ -398,9 +398,10 @@ In the `auto` permission mode a classifier judges each action against `autoMode`
 lists the trusted repositories as prose, such as `"Trusted repo: github.com/acme/widget and its remotes"`
 ([auto mode configuration](https://code.claude.com/docs/en/auto-mode-config)). It reads `autoMode` from one file,
 `<config folder>/settings.json`, the user settings, where the config folder is `CLAUDE_CONFIG_DIR`, else `.claude` in
-the home folder. It also reads `permissions.deny`, `permissions.ask`, and `permissions.allow` from that file and from
-the project's `.claude/settings.json` and `.claude/settings.local.json`, since a rule there refuses, asks before, or
-approves a push before the classifier runs. It writes nothing.
+the home folder. It also reads `permissions.allow`, `permissions.deny`, and `permissions.ask` from that file and from
+the project's `.claude/settings.json` and `.claude/settings.local.json`, since a rule there settles a push before the
+classifier runs. It does not emulate how Claude Code matches a rule: a rule that may reach a push only makes the answer
+`unknown`, and no rule answers `allowed` or `denied`. It writes nothing.
 Each step answers `unknown` when it cannot go on:
 
 1. The session's permission mode, from its transcript, as the [background route](#the-background-route) reads it.
@@ -415,29 +416,22 @@ Each step answers `unknown` when it cannot go on:
    denial into `unknown`. A file that is there and is not a regular file, such as a named pipe, is too large, holds bad
    JSON, or is not an object cannot be read; a project file that is not there holds no rule, and a `cwd` that is not
    absolute reads no project file.
-3. `denied` when a `permissions.deny` rule in any of those files matches the push the run makes, as step 4 reads a
-   rule, then when a `permissions.ask` rule does: a deny rule refuses the push in every mode, and an ask rule asks
-   before it, with no one there to answer in a run no Human attends. This comes first, before auto mode's trust and
-   before any allow rule, so `"$defaults"` or an entry that names the remote does not change it. Bare `Bash` and
-   `Bash(*)` match every command here. The denial names `permissions.deny` or `permissions.ask`, the file that holds the
-   rule, and the rule itself when it is printable ASCII of at most 200 characters, and its fix removes that rule or
-   narrows it so that it matches no push to `origin`. A deny rule for another push, such as
-   `Bash(git push origin main)` or `Bash(git push --force:*)`, refuses nothing the run surely makes and is passed over.
-   Any file that cannot be read as in step 2, or whose `permissions` is not an object, or whose `permissions.deny` or
-   `permissions.ask` is not a list of strings, answers `unknown`.
-4. `allowed` when a `permissions.allow` rule in any of those files allows the push the run makes: a rule for any remote
-   that covers a plain `git push`, or one for `origin` with any branch. A rule `Bash(<pattern>)` is read as a glob,
-   where `*` is any text, a trailing ` *` also matches the command before it, and a final `:*` is the same as a
-   trailing ` *`. It allows the push the run makes when it matches `git push` itself, or `git push origin ` followed by
-   any text: `Bash(git push:*)`, `Bash(git push *)`, `Bash(git push)`, `Bash(git *)`, `Bash(git push origin:*)`, and
-   `Bash(git push origin *)` do. Bare `Bash`, `Bash(*)`, and a pattern that starts with `*` do not count: auto mode
-   drops them on entry ([permission modes](https://code.claude.com/docs/en/permission-modes)).
-5. The user settings cannot be read as in step 2, or `autoMode` is absent or not an object: `unknown`.
-6. `autoMode.environment` absent, not a list, empty, or holding a non-string: `unknown`.
+3. `unknown` when any of those files holds a `permissions.allow`, `permissions.deny`, or `permissions.ask` rule that may
+   reach a push. Each rule is read in lower case, with its spaces run together. It may reach a push when it mentions
+   `git push`, such as `Bash(git push:*)`, `Bash(git push origin main)`, or `Bash(git pushall)`; or when its tool is the
+   shell tool, `Bash` or a tool-name glob that matches it, such as `B*` or `*`, with no pattern, an empty one, or one
+   whose text before its first `*`, less a final `:`, starts `git push`, such as `Bash(*)`, `Bash(git:*)`,
+   `Bash(git *)`, or `Bash(g*)`. `Bash(git status)`, `Bash(npm run *)`, `Read(**)`, and `mcp__github__push_files` do
+   not. This comes first, before auto mode's trust, so `"$defaults"` or an entry that names the remote answers
+   `unknown` beside such a rule too. Any file that cannot be read as in step 2, or whose `permissions` is not an object,
+   or whose `permissions.allow`, `permissions.deny`, or `permissions.ask` is not a list of strings, answers `unknown`,
+   and so does a `cwd` that is not absolute, whose project files cannot be found.
+4. The user settings cannot be read as in step 2, or `autoMode` is absent or not an object: `unknown`.
+5. `autoMode.environment` absent, not a list, empty, or holding a non-string: `unknown`.
    `autoMode.allow`, when present, not a list of strings: `unknown`.
-7. `allowed` when `environment` holds `"$defaults"`, or an `environment` entry names the repository, or an `allow`
+6. `allowed` when `environment` holds `"$defaults"`, or an `environment` entry names the repository, or an `allow`
    entry names the repository and holds the word `push`, in any case, as in `pushes` or `git push`.
-8. `unknown` when an `environment` entry is not one the matchers understand. An entry is understood when it names
+7. `unknown` when an `environment` entry is not one the matchers understand. An entry is understood when it names
    exactly one source-control name and nothing else that could cover this remote. A source-control name is a host of
    labels of letters, digits, and `-` joined by dots, the last of two or more letters, with no letter, digit, `_`, `.`,
    `-`, `/`, `@`, or `:` before it, and an optional scheme, user, port, and path, such as `git.example.com`,
@@ -451,15 +445,11 @@ Each step answers `unknown` when it cannot go on:
    `"gitlab.example.com and bitbucket.org"`, or holds, outside its one name, the word for the remote's host, its label
    before the last, such as `github` for `github.com` in `"our GitHub org, and gitlab.example.com"`, may trust the remote
    in words no matcher reads, so a denial never stands beside it.
-9. `unknown` when a `permissions.allow` rule may allow a narrower push, which may be the very push the run makes: one
-   that matches `git push` followed by some text, such as `Bash(git push origin main)`, `Bash(git push upstream:*)`,
-   `Bash(git push --force:*)`, or `Bash(git push -u origin:*)`, but not `Bash(git status)`, `Bash(git pushall)`, or
-   `Bash(git:* push)`. Also `unknown` for a `cwd` that is not absolute, and for a file whose `permissions.allow` is not
-   a list of strings.
-10. Otherwise `denied`: `autoMode.environment` in that file replaces the default trusted repositories, with no
-    `"$defaults"` in its list, and names this remote in no entry, though each entry names one other source-control host
-    or path, such as `"Source control: github.example.com/other-org and all repos under it"`. The fix it gives
-    adds `"$defaults"` to that list, or an entry such as `"Trusted repo: github.com/acme/widget"`.
+8. Otherwise `denied`: `autoMode.environment` in that file replaces the default trusted repositories, with no
+   `"$defaults"` in its list, and names this remote in no entry, though each entry names one other source-control host
+   or path, such as `"Source control: github.example.com/other-org and all repos under it"`, and no file holds a rule
+   that may reach a push. The fix it gives adds `"$defaults"` to that list, or an entry such as
+   `"Trusted repo: github.com/acme/widget"`.
 
 An entry names the repository `github.com/acme/widget`, compared in lower case, when it holds any of:
 
@@ -486,11 +476,10 @@ verification. Four assumptions follow from the references:
 - `autoMode` is read from the user settings file alone. The classifier ignores `autoMode` in `.claude/settings.json`
   and `.claude/settings.local.json`, so a checked-in file cannot add its own rules, and counting them would count
   entries the host ignores.
-- A `permissions.allow` rule that matches a command approves it before the classifier runs, in every settings file the
-  permission system reads, so one that matches the push the run makes allows it, and one that may match it leaves no
-  denial to predict.
-- A `permissions.deny` rule that matches a command refuses it in every permission mode, and a `permissions.ask` rule
-  asks before it, ahead of any allow rule and of the classifier; a session no Human attends cannot answer that question.
+- A permission rule that matches a command settles it before the classifier runs, in every settings file the
+  permission system reads: an allow rule approves it, a deny rule refuses it, and an ask rule asks, which a session no
+  Human attends cannot answer. How a rule matches a command is the host's to decide, so a rule that may reach a push
+  leaves no answer to predict, and none is given.
 - `denied` from `autoMode.environment` is a prediction of what a prose classifier will do. A custom `environment` with no `"$defaults"` that names
   this repository in no entry is the shape of a run whose push was refused, and the only shape that answers `denied`.
 - `soft_deny` and `hard_deny` are never read: no pattern over prose says whether one forbids a push.
@@ -502,11 +491,10 @@ push, and the fix still works. The other way round, some
 entries that name another repository answer `allowed`: one on another host whose path is the same, such as
 `gitlab.example.com/acme/widget`, a name that goes on past a `.`, such as `acme/widget.site`, and an `allow` entry
 phrased as a refusal, such as `Never push to github.com/acme/widget`; the run then starts as it would without the
-check. A permission rule for another command that pushes, such as a script, reads as no push rule, and a rule in
-managed settings or a `--settings` value is not read; either can answer `denied` where the push would go through.
-A project rule counts before the Human has trusted the folder, where the host holds it back; the run starts in a folder
-a Human already worked in, so the folder is trusted there. A deny or ask rule outside `auto` mode is not read, nor one
-for another command that pushes; either can answer `unknown` where the push would not go through. A relative `CLAUDE_CONFIG_DIR`
+check. A permission rule that reaches a push some other way, such as a rule for a script that pushes or
+`Bash(git -C <dir> push:*)`, reads as no push rule, and a rule in managed settings or a `--settings` value is not
+read; either can answer `denied` where the push would go through. A deny or ask rule that refuses the push answers
+`unknown`, not `denied`: the run starts, as it did before the check, and stops at its push. A relative `CLAUDE_CONFIG_DIR`
 answers `unknown`. Every shape of `autoMode` the adapter does not know answers `unknown`.
 
 Verified on Claude Code by `node --test` on fixtures (`test/adapters.test.mjs`); not live: no denial of a real

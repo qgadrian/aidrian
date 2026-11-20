@@ -208,13 +208,14 @@ export default {
   // folder or its skills, agents, commands, hooks, workflows, or settings, or any SKILL.md (lib/unattended-write.mjs).
   nestedProtected,
   // The instruction files and folder it loads from the folder a session starts in and from each folder above it
-  // (code.claude.com/docs/en/memory), and its own user folder, which it reads for every session wherever it starts. A
-  // project run refuses a start under any other such file above its attempt's clone that a review did not see
-  // (lib/project-trust.mjs ancestorProblem).
+  // (code.claude.com/docs/en/memory), its own user folder, and `globalNames`, the files in that folder it loads as the
+  // user's own memory for every session wherever it starts: CLAUDE.md alone. A project run refuses a start under any
+  // other such file above its attempt's clone that a review did not see (lib/project-trust.mjs ancestorProblem).
   instructionFiles: {
     files: ['CLAUDE.md', 'CLAUDE.local.md', '.claude/CLAUDE.md'],
     folders: ['.claude'],
     userFolder: (env) => configDir(env),
+    globalNames: ['CLAUDE.md'],
   },
   // What a session in a linked worktree reads from the main checkout, wherever the worktree lies: the main checkout's
   // .claude/settings.local.json (code.claude.com/docs/en/settings), and, from 2.1.277, its .claude skills, agents, and

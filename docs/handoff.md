@@ -522,10 +522,13 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   base tip, or one git does not track or ignores: `the attempt's clone <path> is not started: it holds host config or
   instruction files git does not track, which no review saw: <files>`. It refuses too when a folder above the clone
   holds a host instruction file, such as a `CLAUDE.md`, that lies outside the main checkout, or that no review saw
-  there; move it away. Only a host's own user folder itself and its own top-level files, such as `~/.claude` and
-  `~/.claude/CLAUDE.md` above a state folder in the home folder, are the user's, which the host reads for every
-  session, and refuse no start, by their path or their real path; anything deeper, such as a `CLAUDE.md` in the runs
-  folder of a state folder inside `~/.claude`, is checked as any other. What a session no Human attends may never do is write those files in the main checkout
+  there; move it away. Only a host's own user folder itself, and the files in it that host loads as the user's own
+  instructions for every session (Claude Code's `CLAUDE.md`, Codex's `AGENTS.md` and `AGENTS.override.md`), such as
+  `~/.claude` and `~/.claude/CLAUDE.md` above a state folder in the home folder, refuse no start, each by its path or
+  its real path, and a link among them only when it leads to a file of such a name. Any other file there is checked as
+  any other: `~/.claude/CLAUDE.local.md` above the clone, another host's name such as `~/.codex/CLAUDE.md`, a
+  `~/.claude/CLAUDE.md` that is a link to `~/.claude/settings.json`, and a `CLAUDE.md` in the runs folder of a state
+  folder inside `~/.claude`. What a session no Human attends may never do is write those files in the main checkout
   ([agent gates](hooks.md#agent-gates)).
 
 ### Replacing the terminal

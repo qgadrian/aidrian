@@ -16,7 +16,7 @@
 // the same result in a plain shell, a Claude session, or a git hook. A test that needs one sets it itself.
 // The list lives in plugins/aidrian/lib/review/env.mjs, which local reviewers run under too. With GIT_DIR set, as a git
 // hook sets it, the tests' own `git init` calls would act on the developer's repository.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -24,6 +24,30 @@ import { DETECT_VARS } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { isolate } from '../plugins/aidrian/lib/review/env.mjs';
 
 export { isolate };
+
+// Leftover processes: a fake that a test starts detached, as a host session runs, appends its pid to this file, and
+// the process that made the state folder stops each one when it exits. A test's own cleanup can miss one, since a
+// fixture's cleanup may delete the files the test kept the pid in first; before this, a run left hundreds behind.
+export const SPAWNED_FILE = 'spawned-pids';
+
+// The file a fake appends its pid to, a line each, in the suite's state folder, which outlives every fixture.
+export const spawnedFile = () => path.join(process.env.AIDRIAN_TEST_STATE, SPAWNED_FILE);
+
+// Stops each pid the file `file` lists, a line each; a pid gone already is skipped.
+export function stopListed(file) {
+  if (!existsSync(file)) return;
+  for (const pid of readFileSync(file, 'utf8').split('\n').map(Number).filter((each) => Number.isInteger(each) && each > 0)) {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      // Gone already.
+    }
+  }
+}
+
+function stopSpawned(state) {
+  stopListed(path.join(state, SPAWNED_FILE));
+}
 
 isolate(process.env);
 // Which host runs the suite changes no answer, so a test that needs a host names it.
@@ -47,5 +71,8 @@ if (!process.env.AIDRIAN_TEST_STATE) {
   writeFileSync(gitconfig, '');
   process.env.GIT_CONFIG_GLOBAL = gitconfig;
   process.env.GIT_CONFIG_NOSYSTEM = '1';
-  process.on('exit', () => rmSync(state, { recursive: true, force: true }));
+  process.on('exit', () => {
+    stopSpawned(state);
+    rmSync(state, { recursive: true, force: true });
+  });
 }

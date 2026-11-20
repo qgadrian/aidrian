@@ -27,6 +27,7 @@ import { projectCommandDenial } from '../plugins/aidrian/lib/project-run-guard.m
 import { appendToRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { markFolder, markPending, markUnattended, noteBeacon, PENDING_AGE, readBeacon, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { DRIVER, runFixture } from './project-start-fixture.mjs';
+import { spawnedFile, stopListed } from '../scripts/test-state.mjs';
 
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-agent-gates.mjs');
 const HOOKS_JSON = path.resolve(import.meta.dirname, '../plugins/aidrian/hooks/hooks.json');
@@ -66,12 +67,18 @@ function codexConfig({ trusted = 'all', off = null, network = true, roots = null
 // codes in `<bin>/hook-results.json`; then it runs until it is stopped.
 function fakeCodex(t, bin, mode) {
   const record = path.join(bin, 'codex-call.json');
+  // Every pid the fake ran as, one a line, outside the fixture, whose cleanup deletes `bin` before this one runs: a test
+  // that starts a second attempt runs it twice, and the record keeps the last. The suite's file catches what this misses.
+  const pids = path.join(mkdtempSync(path.join(process.env.AIDRIAN_TEST_STATE, 'codex-pids-')), 'pids');
+  const suite = spawnedFile();
   rmSync(record, { force: true });
   writeFileSync(path.join(bin, 'codex-mode.json'), JSON.stringify({ tool: true, slow: 0, ...mode }));
   writeFileSync(path.join(bin, 'codex'), `#!${process.execPath}
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const mode = JSON.parse(fs.readFileSync(${JSON.stringify(path.join(bin, 'codex-mode.json'))}, 'utf8'));
+fs.appendFileSync(${JSON.stringify(pids)}, process.pid + '\\n');
+fs.appendFileSync(${JSON.stringify(suite)}, process.pid + '\\n');
 fs.writeFileSync(${JSON.stringify(record)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), pid: process.pid, inherited: process.env.CODEX_THREAD_ID ?? null, caches: Object.fromEntries(Object.entries(process.env).filter(([name]) => ${JSON.stringify(Object.keys(cacheVars('/c', {}, { registries: ['npm'] })))}.includes(name))) }));
 if (mode.reject) {
   console.error(mode.reject);
@@ -95,18 +102,11 @@ setTimeout(() => {
   fs.writeFileSync(${JSON.stringify(path.join(bin, 'hook-results.json'))}, JSON.stringify(results));
 }, mode.slow);
 setInterval(() => {}, 1000);
+// It ends itself after ten minutes, should the test that runs it die before its cleanup: a killed run left them for days.
+setTimeout(() => process.exit(0), 600000);
 `, { mode: 0o755 });
   const call = () => (existsSync(record) ? JSON.parse(readFileSync(record, 'utf8')) : null);
-  t.after(() => {
-    const pid = call()?.pid;
-    if (pid) {
-      try {
-        process.kill(pid, 'SIGKILL');
-      } catch {
-        // Stopped already.
-      }
-    }
-  });
+  t.after(() => stopListed(pids));
   return { call };
 }
 

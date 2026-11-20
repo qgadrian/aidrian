@@ -1821,7 +1821,7 @@ test('a host that would refuse the push stops the background start before work: 
   const setting = setup(t, { mode: 'auto' });
   const { env, marks } = preflighted(t, setting, { settings: ONLY_OTHER });
   // `aidrian handoff route` reads no host settings: it still answers the background route, and only the gate falls back.
-  assert.deepEqual(routeOf({ env, cwd: setting.dir }), { exitCode: 0, out: ['route: background'], err: [] });
+  assert.deepEqual(routeOf({ env, home: TEST_HOME, cwd: setting.dir }), { exitCode: 0, out: ['route: background'], err: [] });
   passCheck(setting);
   const { run, calls } = fakeRun({ own: setting.dir });
   const result = gate(setting, { run, env });

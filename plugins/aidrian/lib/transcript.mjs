@@ -1,12 +1,14 @@
 // Reads Claude Code transcripts (JSON Lines) for the dispatch log: token use per model, an estimated cost, the effort
 // and tool calls of each request, the subagent transcripts of a session, which files an agent read, and the skills,
-// draft pull requests, and review runs of a session. Counts, names, and paths only; no message text leaves this file.
+// draft pull requests, and review runs of a session or of its last turn. Counts, names, and paths only; no message text
+// leaves this file.
 
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { costUsd, priceFor, promptTokens } from './model-prices.mjs';
-import { readPrCall } from './rules/github/pr-body.mjs';
+import { isPrompt } from './names.mjs';
+import { readBodyCall, readPrCall } from './rules/github/pr-body.mjs';
 import { aidrianArgs, walkCommands } from './shell-lex.mjs';
 
 const TOKEN_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite5m', 'cacheWrite1h'];
@@ -229,23 +231,88 @@ const createsDraft = ({ segment }) => {
   return call?.subcommand === 'create' && call.draft;
 };
 
+// A pull request update: `gh pr edit`, which a pr-write run uses to publish into a pull request that is open already.
+const editsPr = ({ segment }) => readPrCall(segment)?.subcommand === 'edit';
+
+// The pull request a `gh pr edit` command names as its target, or null when it names none (the current branch's) or one
+// this cannot read.
+const editTarget = ({ segment }) => {
+  const target = readPrCall(segment)?.target;
+  return target && !target.dynamic ? prNumber(target.text) : null;
+};
+
 // Whether a walked command runs a review: `aidrian pr review` or `aidrian pr await-review`, by any path to aidrian.
 function runsReview({ invocation }) {
   const words = aidrianArgs(invocation);
   return words?.[0]?.text === 'pr' && ['review', 'await-review'].includes(words[1]?.text);
 }
 
-// Whether any command a Bash command line runs passes `test`; a line the lexer cannot read runs none.
-const runs = (command, test) => {
-  try {
-    return walkCommands(command, null).some(test);
-  } catch {
-    return false;
-  }
+// Whether a walked command runs the auto-merge gate, `aidrian pr auto-merge`, by any path to aidrian.
+function runsGate({ invocation }) {
+  const words = aidrianArgs(invocation);
+  return words?.[0]?.text === 'pr' && words[1]?.text === 'auto-merge';
+}
+
+// The pull request number a word names, as `12`, `#12`, or a pull request URL; null for any other word.
+const PR_ARGUMENT = /^(?:#?(\d+)|https?:\/\/\S+\/pull\/(\d+)\/?)$/u;
+const prNumber = (text) => {
+  const named = PR_ARGUMENT.exec(text);
+  return named ? Number(named[1] ?? named[2]) : null;
 };
 
-// A review round's own steps: the pr-review-loop and pr-review skills, and the commands that run a review.
+// The pull request an `aidrian pr <subcommand>` command was given, its first word after the subcommand that is no flag;
+// null when it names none or one this cannot read, such as a dynamic word.
+function aidrianTarget({ invocation }) {
+  const word = aidrianArgs(invocation).slice(2).find((token) => token.dynamic || !token.text.startsWith('-'));
+  return word && !word.dynamic ? prNumber(word.text) : null;
+}
+
+// The pull request a `gh pr merge` command that merges names: its number, or 0 for one it names none of (the current
+// branch's) or one this cannot read, such as a branch or a dynamic word; null for any other command, and for the forms
+// that merge nothing: its help, and `--auto` or `--disable-auto`, which only turn auto-merge on or off.
+function mergeTarget({ segment, invocation }) {
+  const call = readBodyCall(segment);
+  if (call?.noun !== 'pr' || call.subcommand !== 'merge' || call.help || togglesAutoMerge(invocation.args)) return null;
+  return (call.target && !call.target.dynamic ? prNumber(call.target.text) : null) ?? 0;
+}
+
+// The `gh pr merge` options that take the next word as their value, which is then no option.
+const MERGE_VALUES = new Set(['-b', '--body', '-F', '--body-file', '-t', '--subject', '-A', '--author-email', '--match-head-commit', '-R', '--repo']);
+const FALSE_WORDS = new Set(['false', 'f', '0', 'FALSE', 'False', 'F']);
+// Whether a `gh pr merge` command's words turn auto-merge on or off: `--auto` or `--disable-auto`, alone or with a
+// value that is not false. A dynamic value reads as false: a merge read as a merge can only miss a refusal.
+function togglesAutoMerge(args) {
+  for (let at = 0; at < args.length; at += 1) {
+    const { text, dynamic } = args[at];
+    if (text === '--') return false;
+    if (MERGE_VALUES.has(text)) {
+      at += 1;
+      continue;
+    }
+    const [flag, value] = text.includes('=') ? [text.slice(0, text.indexOf('=')), text.slice(text.indexOf('=') + 1)] : [text, null];
+    if (!['--auto', '--disable-auto'].includes(flag)) continue;
+    if (value === null || (!dynamic && !FALSE_WORDS.has(value))) return true;
+  }
+  return false;
+}
+
+// The commands a Bash command line runs that pass `test`; none for a line the lexer cannot read.
+const matching = (command, test) => {
+  try {
+    return walkCommands(command, null).filter(test);
+  } catch {
+    return [];
+  }
+};
+// Whether any command a Bash command line runs passes `test`.
+const runs = (command, test) => matching(command, test).length > 0;
+
+// A review round's own steps, as the health report counts them: the pr-review-loop and pr-review skills, and the commands
+// that run a review.
 const REVIEW_SKILLS = new Set(['pr-review-loop', 'pr-review']);
+// The review the review-loop check asks for: the pr-review-loop skill, and the commands that run a review. A pr-review run
+// is the integration review issue-implement runs before its report, and the loop it owes still follows it.
+const LOOP_SKILL = 'pr-review-loop';
 // A slash command as the host writes it into the user's turn. Only one that names this plugin's skill counts as a
 // skill run: the others are the host's own commands, such as clearing the conversation.
 const COMMAND_NAME = /<command-name>\/?([\w:.-]+)<\/command-name>/gu;
@@ -259,6 +326,20 @@ const isPluginSkill = (name) => {
   return pluginSkills.has(name.split(':').at(-1));
 };
 const PR_URL = /\/pull\/\d+/u;
+const PR_URLS = /\/pull\/(\d+)/gu;
+// The pull request numbers a command's output names by URL, as `gh pr create` and `gh pr edit` print it.
+const urlPulls = (output) => [...output.matchAll(PR_URLS)].map((match) => Number(match[1]));
+// The one pull request `pulls` names, or null for none, several, or one unknown (null).
+const onePull = (pulls) => {
+  const known = new Set(pulls);
+  return known.size === 1 && !known.has(null) ? [...known][0] : null;
+};
+// The pull request a skill's arguments name first, as `40 --await-codex`; null when its first word that is no flag names
+// none.
+const argsPull = (args) => {
+  const word = typeof args === 'string' ? args.trim().split(/\s+/u).find((each) => each && !each.startsWith('-')) : undefined;
+  return word ? prNumber(word) : null;
+};
 // What shows a review command ran: the one JSON object `aidrian pr review` and `aidrian pr await-review` print, which
 // opens with its `status`, one of these, and the pull request's `pr` (lib/review/run.mjs EXIT and `finish`, which
 // lib/review/step.mjs and lib/review/stages.mjs call, and lib/pr-await-review.mjs `result`; test/transcript.test.mjs holds the list to their source). An exit code cannot show
@@ -269,25 +350,101 @@ export const REVIEW_OUTPUT_STATUSES = Object.freeze([
   'review_required', 'extension_check', 'extension_ask',
 ]);
 const REVIEW_STATUS_SET = new Set(REVIEW_OUTPUT_STATUSES);
-const REVIEW_OUTPUT = /"status"\s*:\s*"([a-z_]+)"\s*,\s*"pr"\s*:\s*(?:\d+|null)\b/gu;
+const REVIEW_OUTPUT = /"status"\s*:\s*"([a-z_]+)"\s*,\s*"pr"\s*:\s*(\d+|null)\b/gu;
 // Whether a Bash call's result holds a review command's output. The command's own text is taken out first: a hook's
 // refusal or a permission denial quotes it, and a quoted command is no output.
-const printedReview = (output, command) =>
-  [...output.split(command).join('\n').matchAll(REVIEW_OUTPUT)].some((match) => REVIEW_STATUS_SET.has(match[1]));
+// A call's output without the lines that quote its command, as a hook's refusal or a permission denial does, dropped
+// whole: a line that holds the whole command or its first line, which a denial prefixes, and a line that is, trimmed,
+// another line of the command. Those others must match whole: a short one, such as `fi` or `}`, is part of many lines.
+const withoutCommand = (output, command) => {
+  const [first, ...rest] = command.split('\n').map((line) => line.trim());
+  const held = [command, first].filter(Boolean);
+  const whole = new Set(rest.filter(Boolean));
+  return output.split('\n').filter((line) => !held.some((part) => line.includes(part)) && !whole.has(line.trim())).join('\n');
+};
+// The pull requests of the review objects a call printed, null for one whose `pr` is null; none when it printed none.
+const printedReviews = (output, command) => [...withoutCommand(output, command).matchAll(REVIEW_OUTPUT)]
+  .filter((match) => REVIEW_STATUS_SET.has(match[1])).map((match) => (match[2] === 'null' ? null : Number(match[2])));
+
+// The verdicts `aidrian pr auto-merge` printed in a call's output: [{ pr, path }], one per verdict, where `path` is the
+// changed file of a refusal that names one, else null (lib/pr-auto-merge.mjs runAutoMerge prints them). A verdict is a
+// line that starts `auto-merge on for #<n> ` or `auto-merge off for #<n>: `, or, under --json, a line that is one object
+// with a boolean `effective` and a whole-number `pr`. A refusal names a path when its sentence, the `why` of the object
+// under `reason` "paths", opens `it changes "<path>",` as each refusal of pathsProblem that names a changed file does:
+// a guarded path, a policy file, a file the gate reads its policy from, the release script, a start-loaded knowledge doc,
+// and a file outside the project's folder. A refusal for a rename, a file count, or any other reason names none.
+// test/transcript.test.mjs builds those sentences from pathsProblem itself, so its wording and this reader stay in step.
+// The `s` flag lets the sentence hold a line separator, such as U+2028 in a path, which `.` would stop at.
+const GATE_LINE = /^auto-merge (on|off) for #(\d+)(?: at [0-9a-f]+: |: )(.*)$/su;
+const CHANGED_PATH = /^it changes ("(?:[^"\\]|\\.)*"),/u;
+const changedPath = (why) => {
+  const quoted = typeof why === 'string' ? CHANGED_PATH.exec(why)?.[1] : undefined;
+  if (!quoted) return null;
+  try {
+    return JSON.parse(quoted);
+  } catch {
+    return null;
+  }
+};
+export function gateVerdicts(output) {
+  const verdicts = [];
+  for (const line of output.split(/\r?\n/u)) {
+    const plain = GATE_LINE.exec(line);
+    if (plain) {
+      verdicts.push({ pr: Number(plain[2]), path: plain[1] === 'off' ? changedPath(plain[3]) : null });
+      continue;
+    }
+    if (!line.startsWith('{')) continue;
+    let object;
+    try {
+      object = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (typeof object?.effective !== 'boolean' || !Number.isSafeInteger(object.pr) || object.pr < 1) continue;
+    verdicts.push({ pr: object.pr, path: !object.effective && object.reason === 'paths' ? changedPath(object.why) : null });
+  }
+  return verdicts;
+}
+
+// The pull requests a merge call that ran merged: each target it named, and for a merge that named none, the number gh
+// printed in its `merged pull request <repo>#<n>` line, or null, a pull request it cannot tell, when it printed none:
+// gh prints that line on a terminal only.
+const MERGED_LINE = /merged pull request (?:[\w.-]+\/[\w.-]+)?#(\d+)/giu;
+function mergedPulls(targets, output) {
+  const merged = targets.flatMap((target) => {
+    if (target > 0) return [target];
+    const printed = [...output.matchAll(MERGED_LINE)].map((match) => Number(match[1]));
+    return printed.length ? printed : [null];
+  });
+  return [...new Set(merged)];
+}
 
 const resultText = (content) =>
   typeof content === 'string' ? content : Array.isArray(content) ? content.map((block) => (typeof block?.text === 'string' ? block.text : '')).join('\n') : '';
 
-// What a tool call does that sessionActions counts, or null: { skill, review, draft }.
+// What a tool call does that sessionActions or turnActions counts, or null:
+// { skill, review, loop, draft, edit, reviews, edits, gates, merges }. `loop` is a review the review-loop check counts:
+// a pr-review-loop Skill call, with `loopPull` the pull request its arguments name, or a review command. `reviews`,
+// `edits`, `gates`, and `merges` are the targets of its `aidrian pr review` or `await-review`, `gh pr edit`,
+// `aidrian pr auto-merge`, and `gh pr merge` commands, null for one it cannot read.
 function actionOf(block) {
   if (block.name === 'Skill' && typeof block.input?.skill === 'string') {
     const skill = block.input.skill.replace(/^\//u, '');
-    return { skill, review: REVIEW_SKILLS.has(skill.split(':').at(-1)), draft: false };
+    const loop = baseName(skill) === LOOP_SKILL;
+    return { skill, review: REVIEW_SKILLS.has(baseName(skill)), loop, loopPull: loop ? argsPull(block.input.args) : null, draft: false, edit: false, reviews: [], edits: [], gates: [], merges: [] };
   }
   if (block.name !== 'Bash' || typeof block.input?.command !== 'string') return null;
-  const review = runs(block.input.command, runsReview);
+  const reviews = matching(block.input.command, runsReview).map(aidrianTarget);
   const draft = runs(block.input.command, createsDraft);
-  return review || draft ? { skill: null, review, draft, command: block.input.command } : null;
+  const edits = matching(block.input.command, editsPr).map(editTarget);
+  const gates = matching(block.input.command, runsGate).map(aidrianTarget);
+  const merges = matching(block.input.command, (walked) => mergeTarget(walked) !== null).map(mergeTarget);
+  const review = reviews.length > 0;
+  const edit = edits.length > 0;
+  return review || draft || edit || gates.length || merges.length
+    ? { skill: null, review, loop: review, loopPull: null, draft, edit, reviews, edits, gates, merges, command: block.input.command }
+    : null;
 }
 
 // What a session did that the health report judges, over its transcripts: { skills, drafts_opened, review_runs }.
@@ -308,31 +465,11 @@ export function sessionActions(texts) {
   for (const text of texts) {
     for (const line of text.split('\n')) {
       const entry = parseLine(line);
-      const content = entry?.message?.content;
-      if (entry?.type === 'user') {
-        const typed = typeof content === 'string' ? content
-          : Array.isArray(content) ? content.filter((block) => block?.type === 'text').map((block) => block.text).join('\n') : '';
-        for (const match of typed.matchAll(COMMAND_NAME)) {
-          if (!isPluginSkill(match[1])) continue;
-          skills.add(match[1]);
-          if (REVIEW_SKILLS.has(match[1].split(':').at(-1))) commandReviews.add(entry.uuid ?? line);
-        }
+      for (const skill of typedSkills(entry)) {
+        skills.add(skill);
+        if (REVIEW_SKILLS.has(baseName(skill))) commandReviews.add(entry.uuid ?? line);
       }
-      if (!Array.isArray(content)) continue;
-      for (const block of content) {
-        if (block?.type === 'tool_use' && typeof block.id === 'string' && !calls.has(block.id)) {
-          const action = actionOf(block);
-          if (action) calls.set(block.id, { ...action, ran: false, opened: false, reviewed: false });
-        }
-        const call = block?.type === 'tool_result' ? calls.get(block.tool_use_id) : undefined;
-        if (!call) continue;
-        const output = resultText(block.content);
-        if (block.is_error !== true) {
-          call.ran = true;
-          if (call.draft && PR_URL.test(output)) call.opened = true;
-        }
-        call.reviewed ||= call.review && (call.skill ? call.ran : printedReview(output, call.command));
-      }
+      settleCalls(entry, calls);
     }
   }
   const all = [...calls.values()];
@@ -342,6 +479,186 @@ export function sessionActions(texts) {
     drafts_opened: all.filter((call) => call.opened).length,
     review_runs: commandReviews.size + all.filter((call) => call.reviewed).length,
   };
+}
+
+const baseName = (skill) => skill.split(':').at(-1);
+
+// This plugin's skills a slash command typed in a user entry names, as [{ skill, args }]; none for any other entry. Only
+// the entry's string or text blocks are read, so a tool result that quotes a command is none. `args` is the entry's
+// `<command-args>` text when it names one skill, else empty.
+const COMMAND_ARGS = /<command-args>([^<]*)<\/command-args>/u;
+function typedRuns(entry) {
+  if (entry?.type !== 'user') return [];
+  const content = entry.message?.content;
+  const typed = typeof content === 'string' ? content
+    : Array.isArray(content) ? content.filter((block) => block?.type === 'text').map((block) => block.text).join('\n') : '';
+  const skills = [...typed.matchAll(COMMAND_NAME)].map((match) => match[1]).filter(isPluginSkill);
+  const args = skills.length === 1 ? COMMAND_ARGS.exec(typed)?.[1] ?? '' : '';
+  return skills.map((skill) => ({ skill, args }));
+}
+const typedSkills = (entry) => typedRuns(entry).map(({ skill }) => skill);
+
+// Reads one entry's tool calls and results into `calls`, as sessionActions counts them: a call actionOf counts is added
+// under its id, once, and a result settles the call of its id. `ran` is a result that is no error, `opened` a draft
+// create's such result that names a pull request URL, and `reviewed` a review skill that ran or a review command whose
+// result printed its JSON. `pull` is the pull request a draft create or edit that ran names: an edit's target, else the
+// one URL its output names; null when that is none or several. `looped` are the pull requests a review the review-loop
+// check counts reviewed, null for one unknown: a pr-review-loop run's argument, or the `pr` of each object a review
+// command printed, else its target. `verdicts` are what a gate call printed (callVerdicts). `merged` are the pull
+// requests a merge call merged, when its result is no error. Returns the calls a result settled in this entry, in order.
+function settleCalls(entry, calls) {
+  const settled = [];
+  const content = entry?.message?.content;
+  if (!Array.isArray(content)) return settled;
+  for (const block of content) {
+    if (block?.type === 'tool_use' && typeof block.id === 'string' && !calls.has(block.id)) {
+      const action = actionOf(block);
+      if (action) calls.set(block.id, { ...action, ran: false, opened: false, reviewed: false, pull: null, looped: [], verdicts: [], merged: [] });
+    }
+    const call = block?.type === 'tool_result' ? calls.get(block.tool_use_id) : undefined;
+    if (!call) continue;
+    const output = resultText(block.content);
+    if (block.is_error !== true) {
+      call.ran = true;
+      if (call.draft && PR_URL.test(output)) call.opened = true;
+      const named = call.edits.filter((target) => target !== null);
+      // SHORTCUT: a call that publishes several pull requests prints several URLs and reads as one draft of no known
+      // pull request, which matches any review, so it can only skip a send-back; one call publishing several is
+      // contrived. Reading one draft per URL would replace it.
+      call.pull = named.length && named.length === call.edits.length ? onePull(named) : onePull(urlPulls(output));
+    }
+    const printed = call.skill ? [] : printedReviews(output, call.command);
+    call.reviewed ||= call.review && (call.skill ? call.ran : printed.length > 0);
+    if (call.loop && call.skill && call.ran) call.looped = [call.loopPull];
+    else if (call.loop && printed.length) call.looped = loopedPulls(printed, call.reviews);
+    if (call.gates.length) call.verdicts = callVerdicts(gateVerdicts(withoutCommand(output, call.command)), call.gates);
+    // SHORTCUT: a call whose result is no error counts each merge command in it as run, even one a shell expression
+    // skipped, as in `false && gh pr merge 12 || true`. It can only clear a refusal, never raise one, and such a line
+    // is contrived; reading which command ran would need its own output, which gh prints only on a terminal.
+    if (call.merges.length && block.is_error !== true) call.merged = mergedPulls(call.merges, output);
+    settled.push(call);
+  }
+  return settled;
+}
+
+// The pull requests a review call reviewed: those its printed objects name, else the one its commands were given, else
+// one unknown (null).
+function loopedPulls(printed, targets) {
+  const named = [...new Set(printed.filter((pr) => pr !== null))];
+  if (named.length) return named;
+  return [onePull(targets)];
+}
+
+// The verdicts of a gate call that count, in order, read from its output without the lines that quote the command,
+// error or not, since a refusal exits 1. A gate prints at most one verdict, and the gates run in the order the call
+// names them, so each verdict belongs to the next gate that could print it: one given its pull request, or one given
+// none, which reads the current branch's. Gates that never ran print none, as in `aidrian pr auto-merge 57 && aidrian
+// pr auto-merge 58`, where the first refusal exits 1 and the second gate never runs: fewer verdicts than gates count,
+// and a refusal is never dropped for the gates after it. Two gates on one pull request, a retry, print two verdicts,
+// and the later one stands where they are read. A verdict no gate is left for is another command's: one for a pull
+// request no gate names is dropped alone; one a gate could have printed leaves which is genuine unknown, so that pull
+// request's verdicts are dropped, and with a gate given none, every verdict is. A path that quotes the command drops
+// its line.
+function callVerdicts(read, gates) {
+  const counted = [];
+  const extra = [];
+  let next = 0;
+  for (const verdict of read) {
+    const at = gates.findIndex((target, index) => index >= next && (target === null || target === verdict.pr));
+    if (at === -1) {
+      extra.push(verdict);
+      continue;
+    }
+    counted.push(verdict);
+    next = at + 1;
+  }
+  if (!extra.length) return counted;
+  if (gates.includes(null)) return [];
+  const unknown = new Set(extra.map(({ pr }) => pr).filter((pr) => gates.includes(pr)));
+  return counted.filter(({ pr }) => !unknown.has(pr));
+}
+
+// The skills whose run opens or updates a pull request through a draft create or `gh pr edit`.
+const DRAFT_SKILLS = new Set(['pr-write']);
+
+// A prompt the Human wrote: a user entry names.mjs reads as a prompt, not the host's own (isMeta), a subagent's
+// (isSidechain), or a compaction summary, with no origin or a human one; or a message the Human typed while the agent
+// worked, which Claude Code writes as a `queued_command` attachment with no user entry (rules/review-extend.mjs names the
+// shape). A task notification marked as such is none. The reading is broad on purpose: a boundary it misses can only
+// send a turn back wrongly, while an extra one only narrows the turn, which keeps the check silent.
+const humanPrompt = (entry) => {
+  if (entry.type === 'attachment') return entry.attachment?.type === 'queued_command' && (entry.attachment.origin?.kind ?? 'human') === 'human';
+  return entry.type === 'user' && entry.isMeta !== true && entry.isSidechain !== true && entry.isCompactSummary !== true
+    && (entry.origin?.kind ?? 'human') === 'human' && isPrompt(entry.message?.content);
+};
+
+// The start of the text Claude Code writes into the transcript when a Stop hook sends a turn back: a `user` entry marked
+// isMeta, `Stop hook feedback:` then each blocking hook's command in brackets and its reason.
+export const SENT_BACK = 'Stop hook feedback:';
+
+// What the main session did since the Human's last prompt, in transcript order: { kind: 'draft' | 'review', pr },
+// { kind: 'gate', pr, path }, { kind: 'merge', pr }, { kind: 'reply', text }, and { kind: 'sent-back', text }, or the
+// whole transcript's with no such prompt. A `pr` of null is a pull request the transcript does not name.
+// A draft is a draft create that opened a pull request, the one its URL names, or a `gh pr edit` that ran after a
+// pr-write run (a Skill call that ran, or a typed command), of the pull request its target or its printed URL names,
+// with no review of that pull request earlier in the turn: a pr-write run that published nothing, such as one stopped on
+// a failed check, is none, and an update of a pull request reviewed earlier in the turn is the loop's own, as when it
+// copies residuals into the body, even when the turn started at the loop on an earlier turn's pull request. A draft
+// create after a review still counts, and so does an edit of another pull request. A review is a pr-review-loop run, a
+// Skill call that ran or a typed command, of the pull request its first argument names, or an `aidrian pr review` or
+// `aidrian pr await-review` call that printed its JSON, of each pull request it printed, else the one it was given;
+// a pr-review run is none. A review and a draft are of the same pull request when they name it, or either names none.
+// A call counts only by its result, as in sessionActions. A gate is one verdict an `aidrian pr auto-merge` call printed
+// (settleCalls): a call that printed none, such as an error exit, is none. A merge is a pull request a `gh pr merge`
+// call that ran merged, one with no help, `--auto`, or `--disable-auto`.
+// A reply is the text of an assistant message, for the merge hand-back check to find an item an earlier report of the
+// turn gave. A sent-back is the text of a Stop hook's send-back (SENT_BACK), for the stop hook to tell which of its
+// checks already sent the turn back. A subagent's entries are skipped. The stop hook's review-loop check reads it
+// (stop-review-loop.mjs), its merge hand-back check the gates, merges, and replies (stop-handback.mjs mergeHandBack), and
+// the hook the send-backs. It is read in the hook only: the replies and send-backs are the session's own text, and no
+// caller writes them anywhere.
+export function turnActions(text) {
+  const entries = text.split('\n').map(parseLine).filter((entry) => entry && entry.isSidechain !== true);
+  const start = Math.max(entries.findLastIndex(humanPrompt), 0);
+  const calls = new Map();
+  const actions = [];
+  let writing = false;
+  const reviewed = [];
+  const review = (pr) => {
+    actions.push({ kind: 'review', pr });
+    reviewed.push(pr);
+  };
+  // SHORTCUT: a loop run with no argument is of no known pull request and matches any later pr-write edit, and an edit
+  // of no known pull request matches any review, so an update of another pull request after them is read as the loop's
+  // own. It can only skip a send-back, which costs less than a false one; resolving the loop's pull request from the
+  // branch would replace it.
+  const reviewedBefore = (pr) => reviewed.some((each) => each === null || pr === null || each === pr);
+  for (const entry of entries.slice(start)) {
+    if (entry.type === 'user' && entry.isMeta === true) {
+      const text = resultText(entry.message?.content);
+      if (text.startsWith(SENT_BACK)) actions.push({ kind: 'sent-back', text });
+    }
+    if (entry.type === 'assistant' && Array.isArray(entry.message?.content)) {
+      for (const block of entry.message.content) {
+        if (block?.type === 'text' && typeof block.text === 'string' && block.text.trim()) actions.push({ kind: 'reply', text: block.text });
+      }
+    }
+    for (const { skill, args } of typedRuns(entry)) {
+      if (DRAFT_SKILLS.has(baseName(skill))) writing = true;
+      if (baseName(skill) === LOOP_SKILL) review(argsPull(args));
+    }
+    for (const call of settleCalls(entry, calls)) {
+      if (call.skill && call.ran && DRAFT_SKILLS.has(baseName(call.skill))) writing = true;
+      if (call.opened || (writing && call.edit && call.ran && !reviewedBefore(call.pull))) {
+        actions.push({ kind: 'draft', pr: call.pull });
+        writing = false;
+      }
+      for (const pr of call.looped) review(pr);
+      for (const { pr, path: file } of call.verdicts) actions.push({ kind: 'gate', pr, path: file });
+      for (const pr of call.merged) actions.push({ kind: 'merge', pr });
+    }
+  }
+  return actions;
 }
 
 // The text of the transcript's first user message: a subagent's brief, the prompt its dispatcher wrote. A string, or the

@@ -52,7 +52,7 @@
       "tags": []
     },
     "handoff.md": {
-      "summary": "Reminder, plan offer, break-even, continuation, background, maxChain, session-handoff, aidrian handoff check, aidrian handoff continue, brief sections, snapshot",
+      "summary": "Reminder, plan offer, break-even, continuation, background, maxChain, push-preflight, aidrian handoff check, aidrian handoff continue, brief sections, snapshot",
       "tags": []
     },
     "claude-mod.md": {
@@ -76,7 +76,7 @@
       "tags": []
     },
     "providers/claude-code.md": {
-      "summary": "Claude Code host: install, update, from a local checkout, running aidrian, hooks, models and effort, agent gates, limits.",
+      "summary": "Claude Code host: install, update, from a local checkout, running aidrian, hooks, models and effort, agent gates, push permission in auto mode, limits.",
       "tags": []
     },
     "providers/codex.md": {

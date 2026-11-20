@@ -1903,7 +1903,8 @@ Each start is written ahead: a start row with `pending: true` before the host st
 settles it, so a gate killed mid-start leaves a row `wait` finds and settles. A start row's `pushUrl` pins the URL the
 attempt's clone pushes to, read before its session starts, and a clone that pushes to more than one URL, as a second
 `remote.origin.pushurl` in the user's git config makes it, halts the start; the issue session's one push goes only there
-([hooks.md](hooks.md#agent-gates)). Every start is confined to a fresh
+([hooks.md](hooks.md#agent-gates)). A host that would refuse that push in the driver session's permission mode, which the session
+takes, halts the start too, before the host starts anything ([the push preflight](handoff.md#the-push-preflight)). Every start is confined to a fresh
 clone under its host's sandbox, and a host that is not halts the start. The session hands its
 result over in its attempt's `drop` folder, and `wait` records it as a `result` row with `via: "drop"`, or ends the
 attempt `bad_result`, as it does at once for a pull request the forge says it does not have; a result the forge cannot

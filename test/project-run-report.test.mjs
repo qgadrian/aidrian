@@ -592,6 +592,49 @@ test('preflight takes the team\'s acceptance of workflow secrets only when the d
   assert.equal(blocked({ projectRun: accepted }, narrow), null, 'no workflow scope, set on both');
 });
 
+test('preflight names the plan of a forge that offers no rule, and takes the team\'s acceptance of no forge protection only from the forge and the local ref both', (t) => {
+  const PLAN = { branch: 'main', protected: false, plan: true, why: 'the plan offers no branch protection or rulesets for a private repository: GitHub Pro, or a public repository, offers them', tags: [] };
+  const NOTE = 'the team accepts no forge protection (projectRun.forgeProtectionAccepted): a script an issue session runs can push to the default branch or a tag with the token, and only the hooks hold it';
+  const preflight = (options, protection = PLAN, working = null) => {
+    const fx = runFixture(t, { init: false, ...READY, ...options });
+    Object.assign(fx.forge, { reviewerSeen: () => ({ changes: 4, seen: true }), ciWorkflows: () => ['test'], workflowSecrets: () => NO_SECRETS });
+    if (protection === null) delete fx.forge.refProtection;
+    else fx.forge.refProtection = typeof protection === 'function' ? protection : () => protection;
+    if (working) {
+      const file = path.join(fx.dir, '.aidrian/config.json');
+      writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf8')), projectRun: working }));
+    }
+    const { out } = fx.cmd(['preflight']);
+    assert.ok(out.includes('ok policy'), out.join('\n'));
+    const line = (name) => out.find((each) => new RegExp(`^(?:ok|blocker|note|ask) ${name}(?::|$)`, 'u').test(each)) ?? null;
+    return { out, line };
+  };
+  // Not accepted: both blockers name the plan, its two remedies, and the key.
+  const plain = preflight({});
+  for (const name of ['branch-protection', 'release-tags']) {
+    assert.match(plain.line(name), /^blocker [a-z-]+: the forge offers no rule for this repository, since the plan offers no branch protection or rulesets for a private repository: GitHub Pro, or a public repository, offers them, .*default branch main.*make the repository public.*projectRun\.forgeProtectionAccepted/u, name);
+  }
+  assert.match(preflight({}, { branch: 'main', protected: false, why: 'it has no branch protection', tags: [] }).line('branch-protection'), /^blocker .*projectRun\.forgeProtectionAccepted$/u, 'an unprotected branch names the key');
+  // Accepted on the forge and the local ref: each line is a note naming the risk, and nothing blocks.
+  const accepted = { ...READY.projectRun, forgeProtectionAccepted: true };
+  const both = preflight({ projectRun: accepted });
+  assert.deepEqual([both.line('branch-protection'), both.line('release-tags')], [`note branch-protection: ${NOTE}`, `note release-tags: ${NOTE}`]);
+  assert.ok(!both.out.some((each) => /^blocker (?:branch-protection|release-tags):/u.test(each)), both.out.join('\n'));
+  assert.deepEqual([preflight({ projectRun: accepted }, GUARDED).line('branch-protection'), preflight({ projectRun: accepted }, GUARDED).line('release-tags')], ['ok branch-protection', 'ok release-tags'], 'a rule that holds is still ok');
+  const failing = preflight({ projectRun: accepted }, () => { throw new Error('gh: Forbidden (HTTP 403)'); });
+  assert.equal(failing.line('release-tags'), `note release-tags: ${NOTE}`, 'a read that fails');
+  const hidden = preflight({ projectRun: accepted }, { ...GUARDED, protected: null, why: 'GitHub shows the settings of its branch protection only to an administrator' });
+  assert.equal(hidden.line('branch-protection'), `note branch-protection: ${NOTE}`, 'no ask for a protection the team accepts going without');
+  const unread = preflight({ projectRun: accepted }, null);
+  assert.equal(unread.line('protection'), `note protection: ${NOTE}`, 'a forge with no read');
+  // The forge alone, the local ref alone, or a working copy: still blockers.
+  const committed = { version: 1, ...READY.config, projectRun: READY.projectRun };
+  const blockers = (run) => ['branch-protection', 'release-tags'].map((name) => run.line(name)?.split(':')[0]);
+  assert.deepEqual(blockers(preflight({ projectRun: accepted, forgeConfig: committed })), ['blocker branch-protection', 'blocker release-tags'], 'the local ref alone');
+  assert.deepEqual(blockers(preflight({ forgeConfig: { ...committed, projectRun: accepted } })), ['blocker branch-protection', 'blocker release-tags'], 'the forge alone');
+  assert.deepEqual(blockers(preflight({}, PLAN, accepted)), ['blocker branch-protection', 'blocker release-tags'], 'a working copy');
+});
+
 test('preflight notes a run with no tracker server, blocks a tracker-named server it cannot map, and no required checks', (t) => {
   const lines = (projectRun, github = READY.config.github, session = READY.config.session) => {
     const fx = runFixture(t, { init: false, ...READY, projectRun: { ...READY.projectRun, ...projectRun }, config: { ...READY.config, github, session } });

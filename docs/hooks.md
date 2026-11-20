@@ -1333,10 +1333,12 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   running in the background can still commit between the hook's read and the push, and git in the session's own
   checkout can move its copy of origin's default branch, the base the workflow diff starts from; the forge itself holds
   that, so `aidrian project preflight` blocks a run whose default branch asks the signed-in user, admin or not, for no
-  pull request, whose tags no rule that user cannot bypass stops being created or moved, or whose workflows see CI
-  secrets, whatever that token's `workflow` scope, unless the team sets `projectRun.workflowSecretsAccepted`
-  ([review.md](review.md)). A refusal of this rule, the write allowlist above, the remote rule, the `aidrian project`
-  command rule, or the guards' word, target, and time limits names the session as the issue session of a project run,
+  pull request, or whose tags no rule that user cannot bypass stops being created or moved, unless the team sets
+  `projectRun.forgeProtectionAccepted`, which removes that backstop, so a script the session runs can push to the
+  default branch or a tag; and one whose workflows see CI secrets, whatever that token's `workflow` scope, unless the
+  team sets `projectRun.workflowSecretsAccepted` ([review.md](review.md)).
+  A refusal of this rule, the write allowlist above, the remote rule, the `aidrian project` command rule,
+  or the guards' word, target, and time limits names the session as the issue session of a project run,
   with the run and the issue (`blocked for the issue session of a project run (launch, ENG-1)`), and a subagent as one
   of that session, never as the main session, and the remote rule says the session works an issue of a project run,
   not that the background handoff route started it. When the guards run out of their time budget, an issue

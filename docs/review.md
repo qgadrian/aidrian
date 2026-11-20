@@ -1402,7 +1402,9 @@ outside its own pull request and issues ([hooks.md](hooks.md#agent-gates)). A sc
 `curl` with the token, is outside every hook and can still push a tag, cut a release, start a workflow, or push another
 branch: that is an accepted residual, which only the forge closes. So `aidrian project preflight` blocks a run whose
 default branch asks the signed-in user, administrator or not, for no pull request, or whose tags no tag rule holds that
-names every tag, restricts creating and updating one, and that the signed-in user can never bypass. The forge also runs
+names every tag, restricts creating and updating one, and that the signed-in user can never bypass, unless the team
+sets `projectRun.forgeProtectionAccepted`, which removes that backstop: the hooks alone then hold the token, and a
+script the session runs can push to the default branch or a tag. The forge also runs
 a branch's own workflow files, with the repository's secrets, on every push: the hook refuses an issue session's push
 whose commits change them, release and deploy secrets belong in environments limited to protected branches and tags
 or held for a required reviewer who prevents self-review or is not the signed-in user, never in repository secrets or

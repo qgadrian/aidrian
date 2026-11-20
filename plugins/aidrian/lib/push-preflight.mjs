@@ -2,13 +2,15 @@
 // would let a session push to the remote, `origin`, of the folder the run will work in. Two entry points ask it: the
 // background route of the handoff gate (lib/handoff-continue.mjs startInBackground), on the folder the host starts the
 // new session in, which falls back to the clear route on a denial; and `aidrian push-preflight [--cwd DIR]`, which the
-// autopilot skill runs at launch. Only a clear denial stops a run: a host with no answer, a remote this cannot read, or
-// anything that throws answers `unknown`, and the run starts as before.
+// autopilot skill runs at launch. Only a clear denial stops a run: a host with no answer, a folder that is not there,
+// such as a worktree not yet created, a remote this cannot read, or anything that throws answers `unknown`, and the run
+// starts as before.
 // The host sees the remote only as `host/owner/repo` (project.mjs normalizeRemote), held to plain ASCII, so the user
 // name and password of its URL never reach an adapter or a message. This file names no host and no host setting: the
 // adapter's capabilities.pushPermission does (lib/hosts/index.mjs pushPermission). It never loads lib/forges/, since
 // every hook that loads the gate would load the forge adapter with it.
 
+import { statSync } from 'node:fs';
 import path from 'node:path';
 
 import { runGit } from './git.mjs';
@@ -39,8 +41,10 @@ const REPOSITORY = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a
 // fetch URL unless `remote.origin.pushurl` sets another. `git` is runGit's shape, which a test replaces.
 export function pushPreflight({ cwd, env = process.env, host, session, git = runGit } = {}) {
   try {
-    // In the try: a folder removed under the process answers unknown.
+    // In the try: a folder removed under the process answers unknown. A folder that is not there, such as the worktree
+    // of a run not yet created, has no remote of its own: one above it is not the run's.
     const folder = cwd ?? process.cwd();
+    if (!statSync(folder).isDirectory()) return UNKNOWN;
     const asked = host ?? detectHost({ env });
     const read = git(['remote', 'get-url', '--push', '--all', 'origin'], folder);
     if (read?.status !== 0 || typeof read.stdout !== 'string') return UNKNOWN;
@@ -62,7 +66,7 @@ export function pushPreflight({ cwd, env = process.env, host, session, git = run
 }
 
 // `folder` as an absolute path, from the folder the command runs in, or undefined when that folder is gone, which
-// pushPreflight then reads as no remote.
+// pushPreflight then reads as no remote. A folder that is not there answers unknown in pushPreflight.
 function absolute(folder) {
   try {
     return path.resolve(folder);
@@ -83,7 +87,7 @@ export const commands = {
         console.error(usageLines('push-preflight', commands['push-preflight'].usage, 'usage: ').join('\n'));
         return 2;
       }
-      // A folder removed under the command, or one that is not there, reads no remote: unknown.
+      // A folder removed under the command, or one that is not there yet, reads no remote: unknown.
       const read = named ? pushPreflight({ cwd: absolute(args[1]) }) : pushPreflight();
       console.log(`push: ${read.answer}`);
       if (read.answer !== 'denied') return 0;

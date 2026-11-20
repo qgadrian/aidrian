@@ -72,6 +72,20 @@ test('no remote, a remote on this machine, and a folder that is no repository an
   assert.deepEqual(asks, [], 'the host was never asked');
 });
 
+// The folder the run will work in may not be there yet, such as the worktree of a run before it is created: git would
+// read the remote of a folder above it, or of none, and neither is the run's.
+test('a folder that is not there, or is no folder, answers unknown, and never asks the host', (t) => {
+  const { asks, host } = answering(DENIAL);
+  const parent = repository(t, { origin: 'https://github.com/acme/widget.git' });
+  const file = path.join(parent, 'file');
+  writeFileSync(file, '');
+  for (const cwd of [path.join(parent, 'worktrees', 'not-yet'), file]) {
+    assert.deepEqual(pushPreflight({ cwd, host, session: SESSION, git: remote('https://github.com/acme/widget.git') }), { answer: 'unknown' }, cwd);
+  }
+  assert.deepEqual(asks, [], 'the host was never asked');
+  assert.equal(pushPreflight({ cwd: parent, host, session: SESSION, git: remote('https://github.com/acme/widget.git') }).answer, 'denied', 'the folder that is there');
+});
+
 test('only a network URL or an scp-style host:path is a network remote: a relative path that reads like one answers unknown, and never asks the host', (t) => {
   const { asks, host } = answering(DENIAL);
   const cwd = repository(t);
@@ -231,8 +245,9 @@ test('aidrian push-preflight --cwd judges the folder it names, not the folder it
   // From the denied folder, the trusted one named: allowed. A relative folder is read from where the command runs.
   assert.deepEqual([run(denied, ['--cwd', trusted], env).status, run(denied, ['--cwd', trusted], env).stdout], [0, 'push: allowed\n']);
   assert.equal(run(path.dirname(trusted), ['--cwd', path.basename(trusted)], env).stdout, 'push: allowed\n');
-  // A folder that is not there has no remote to read: unknown, and the run starts.
-  assert.deepEqual([run(trusted, ['--cwd', path.join(trusted, 'gone')], env).status, run(trusted, ['--cwd', path.join(trusted, 'gone')], env).stdout], [0, 'push: unknown\n']);
+  // A folder that is not there yet, inside a repository whose remote the settings refuse: unknown, and the run starts.
+  const notYet = run(denied, ['--cwd', path.join(denied, 'worktrees', 'not-yet')], env);
+  assert.deepEqual([notYet.status, notYet.stdout, notYet.stderr], [0, 'push: unknown\n', '']);
 });
 
 test('the autopilot skill runs the push preflight before launch, and names no host and no host setting there', () => {
@@ -241,6 +256,7 @@ test('the autopilot skill runs the push preflight before launch, and names no ho
   const launch = skill.slice(start, skill.indexOf('\n## ', start + 1)).replace(/\s+/gu, ' ');
   assert.ok(launch.includes('`aidrian push-preflight --cwd <dir>`'), launch);
   assert.match(launch, /the folder the run will work in/u, 'the folder judged is the one the run works in');
+  assert.match(launch, /before its worktree exists, it answers unknown/u, 'a folder not yet created answers unknown');
   const resume = readFileSync(path.join(ROOT, 'plugins/aidrian/skills/autopilot/references/entry-continue.md'), 'utf8').replace(/\s+/gu, ' ');
   assert.match(resume, /runs the push preflight with `--cwd` that worktree/u, 'a continued session judges the worktree of the work under way');
   assert.match(launch, /On exit 1/u);

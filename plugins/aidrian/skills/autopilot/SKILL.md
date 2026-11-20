@@ -7,11 +7,11 @@ disable-model-invocation: true
 # autopilot
 
 Take one task from implementation to a reviewed pull request while the Human is away, then report. It merges only when auto-merge is on.
-Launched with `--continue`, it takes over a session already under way instead of starting a task.
+With `--continue`, it takes over a session under way instead of starting a task.
 It runs other skills and adds two things: what to do with a decision nobody is there to make, and a bound on the review loop.
 It never redoes what the skills it runs already do.
 
-Before you start, follow the `knowledge` skill. Load your `product_sensitive` docs for the flows the project declares critical.
+Before you start, follow the `knowledge` skill. Load your `product_sensitive` docs for the project's critical flows.
 Load the `orchestration` skill too: it owns the worktree, the pull request, and review findings.
 Its `references/review-rules.md` defines a review round, when the bot is out, the fix-pass cap, proportion, and the disposition actions.
 
@@ -29,10 +29,10 @@ Its `references/review-rules.md` defines a review round, when the bot is out, th
 
 ## Before launch
 
-While the Human is here, record the Human's launch words verbatim, such as "skip the end-to-end run".
+While the Human is here, record the launch words verbatim, such as "skip the end-to-end run".
 The entry file of § Entry names what else to settle now.
-Run `aidrian push-preflight --cwd <dir>` on the folder the run will work in. On exit 1, the host would refuse a push:
-tell the Human its printed line, and start no run unless the Human says to go on.
+Run `aidrian push-preflight --cwd <dir>` with the folder the run will work in; before its worktree exists, it answers unknown.
+On exit 1, the host would refuse a push: tell the Human its printed line, and start no run unless the Human says to go on.
 
 ## Who decides
 
@@ -69,7 +69,7 @@ or before phase 2 on an adopted pull request, and follow it.
 
 1. The entry, as § Entry says: committed work on the task branch, or a pull request or skill taken over.
 2. Open the draft pull request through the `pr-write` skill.
-3. Review rounds: the bot review, when the project has a bot, through the `pr-review-loop` skill,
+3. Review rounds: the bot review, when the project has one, through the `pr-review-loop` skill,
    and the `pr-review` skill when the phase says so.
 4. Stop at sign-off, or at a bound; merge as § 4 allows.
 
@@ -114,7 +114,7 @@ by the start hook's names, never "you" or "I". In this order:
 
 ## Entry
 
-Read the launch's entry file at the start, and only that one.
+Read the launch's entry file first, and only that one.
 
 | Launch | Entry file |
 | --- | --- |

@@ -1331,6 +1331,41 @@ test('the push preflight judges the remote of the folder the new session starts 
   assert.equal(bgCalls(second.calls)[0]?.cwd, trusted, 'started in the folder judged');
 });
 
+// When the host cannot say which folder the new session starts in, the preflight answers unknown: the folder the gate
+// runs in may be another repository than the one the new session pushes from, so it is never judged in its place.
+test('the push preflight answers unknown when the host cannot name the new session\'s folder, and never judges the gate\'s folder instead', (t) => {
+  for (const [label, first] of [['a listing that fails', { status: 1, stdout: '', stderr: 'boom' }], ['a listing without this session', { status: 0, stdout: '[]', stderr: '' }]]) {
+    // The gate's folder pushes to a remote the settings refuse.
+    const setting = setup(t, { mode: 'auto' });
+    const { env } = preflighted(t, setting, { settings: ONLY_OTHER });
+    passCheck(setting);
+    const { run: listing, calls } = fakeRun({ own: setting.dir });
+    let looked = false;
+    // Only the first listing, the preflight's, fails; the start reads its own.
+    const run = (command, args, options) => {
+      if (args[0] !== 'agents' || looked) return listing(command, args, options);
+      looked = true;
+      calls.push({ command, args, cwd: options.cwd });
+      return first;
+    };
+    const result = gate(setting, { run, env });
+    assert.equal(result.out[0], 'continue: background', `${label}: ${result.out.join('\n')}`);
+    assert.ok(!result.out.some((line) => line.startsWith('fallback:')), label);
+    assert.equal(bgCalls(calls).length, 1, label);
+  }
+});
+
+test('the push preflight answers unknown for a new session\'s folder that is not there, and the session starts', (t) => {
+  const setting = setup(t, { mode: 'auto' });
+  const { env } = preflighted(t, setting, { settings: ONLY_OTHER });
+  passCheck(setting);
+  const { run, calls } = fakeRun({ own: path.join(setting.dir, 'worktrees', 'not-yet') });
+  const result = gate(setting, { run, env });
+  assert.equal(result.out[0], 'continue: background', result.out.join('\n'));
+  assert.ok(!result.out.some((line) => line.startsWith('fallback:')), result.out.join('\n'));
+  assert.equal(bgCalls(calls).length, 1);
+});
+
 test('a remote the host trusts starts the background session as before (AC3)', (t) => {
   const setting = setup(t, { mode: 'auto' });
   const { env } = preflighted(t, setting, { url: 'git@github.com:acme/widget.git', settings: TRUSTED });

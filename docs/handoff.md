@@ -275,7 +275,8 @@ The host's adapter answers
 through its `capabilities.pushPermission` ([the adapter's fields](providers/adding-a-host.md#the-adapters-fields)):
 
 - `allowed` and `unknown`: the run starts as before, and nothing is shown. A host that cannot tell, a session not in
-  the mode the host judges pushes in, settings it cannot read, no `origin`, and an `origin` on this machine, such as a
+  the mode the host judges pushes in, settings it cannot read, a folder that is not there yet, such as the worktree of a
+  run before it is created, no `origin`, and an `origin` on this machine, such as a
   path or a `file:` URL, all answer `unknown`: a host that cannot answer never stops a run. Only a URL whose scheme is
   `https`, `http`, `ssh`, `git`, `git+ssh`, `ssh+git`, `ftp`, or `ftps`, or the scp-style `[user@]host:path`, with a
   colon before any slash, is a remote on the network. git reads anything else as a path on this machine, so
@@ -302,13 +303,13 @@ Two entry points run it, both through `pushPreflight` in `lib/push-preflight.mjs
 
 | Entry point | On `denied` |
 | --- | --- |
-| The [background route](#the-background-route) of the gate, after the progress check and before it keeps the brief, on the folder the host starts the new session in: the handing-off session's own folder as the host lists it (the adapter's `handoffContinue.startFolder`), else the folder the gate runs in | `continue: clear` where the host has the clear route, `fallback: no background session started, since <the line>; this handoff goes on by the clear route`, and the clear route's `say:` line, exit 0. Nothing is kept, no pending mark is filed, no session starts, and no chain floor is written. In a session no Human attends, the chain ends there with the reason. |
-| The `autopilot` skill's launch, while the Human is still there, on the folder the run will work in, `--cwd <dir>`: with `--continue`, the folder of the work under way | `aidrian push-preflight --cwd <dir>` exits 1: the skill tells the Human the line and starts no run unless the Human says to go on. |
+| The [background route](#the-background-route) of the gate, after the progress check and before it keeps the brief, on the folder the host starts the new session in: the handing-off session's own folder as the host lists it (the adapter's `handoffContinue.startFolder`). When the host cannot name that folder, the answer is `unknown`, never that of the folder the gate runs in, which may be another repository | `continue: clear` where the host has the clear route, `fallback: no background session started, since <the line>; this handoff goes on by the clear route`, and the clear route's `say:` line, exit 0. Nothing is kept, no pending mark is filed, no session starts, and no chain floor is written. In a session no Human attends, the chain ends there with the reason. |
+| The `autopilot` skill's launch, while the Human is still there, on the folder the run will work in, `--cwd <dir>`: with `--continue`, the folder of the work under way. Before that folder's worktree exists, `aidrian push-preflight` prints `push: unknown` and exits 0 | `aidrian push-preflight --cwd <dir>` exits 1: the skill tells the Human the line and starts no run unless the Human says to go on. |
 
 `aidrian push-preflight [--cwd DIR]` needs no project folder. It judges the remote of `DIR`, from the folder it runs in
 when relative, else of the folder it runs in. It prints `push: allowed` or `push: unknown` and exits 0 with nothing on
 stderr, or prints `push: denied` and exits 1 with `aidrian push-preflight: <the line>` on stderr. A folder that is not
-there reads no remote and answers `unknown`. Any other argument, `--cwd` with no folder or an empty one, or a second
+there, such as a worktree not yet created, answers `unknown`, though the folder above it has a remote. Any other argument, `--cwd` with no folder or an empty one, or a second
 `--cwd`, prints its usage and exits 2. [`aidrian handoff route`](#the-route-the-host-runs) and the hooks
 never run it. A session the Human works in meets it at the `autopilot` launch, which runs it while the Human is there
 to decide, and at the gate of a handoff by the background route, whose denial falls back to the clear route there too.

@@ -247,7 +247,9 @@ The SessionEnd hook promotes the continuation before it hands the session row to
 The adapter's `startBackground` (`lib/hosts/claude-code-background.mjs`) runs `claude` by its absolute path, found on
 the absolute folders of PATH alone, so an empty or relative entry never runs a `claude` the folder holds. Before it,
 the gate's [push preflight](../handoff.md#the-push-preflight) reads the same folder through `startFolder`, one more
-`claude agents --json`, and judges that folder's remote:
+`claude agents --json`, and judges that folder's remote. When that listing does not answer or does not list the
+session's folder, or the folder is not there, the preflight answers `unknown`, and the gate never judges its own folder
+in its place:
 
 1. `claude agents --json`, for the handing-off session's `name` and `cwd`, by its `sessionId`. That folder, where the
    host already runs a session, is where the new one starts, never the brief's worktree; a session the listing does

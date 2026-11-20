@@ -17,6 +17,9 @@ npm run check    # what CI runs on the pushed head
 
 Push a change once its touched tests pass, and let CI run `npm run check`: a full local run on a loaded machine once
 held a fix back for two hours. Run it locally only when CI cannot, once, before marking ready.
+CI's Check job runs it on Node 22, 24, and 26, with a 20-minute timeout: twice the slowest measured pass.
+A job that hits the timeout is cancelled, and a cancelled required check fails the pull request.
+`test/ci-workflow.test.mjs` holds both; raise its slowest pass when a slower one is measured.
 This repository opts into [push first](hooks.md#push-first) and the [check-run record](hooks.md#check-runs):
 `.aidrian/config.json` sets
 `"testing": { "fullSuite": ["npm run check", "npm test", "npm run test"], "pushFirstMinutes": 5 }`, since `npm test`

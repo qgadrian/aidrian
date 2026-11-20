@@ -17,7 +17,8 @@ jobs:
   check:
     name: Check (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Twice the slowest measured pass (9m57s); test/ci-workflow.test.mjs holds it.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:

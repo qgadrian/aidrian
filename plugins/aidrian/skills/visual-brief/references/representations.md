@@ -7,7 +7,8 @@ Decide what the reader needs from the brief before choosing its layout.
 | Understand the takeaways | Answer first, then the evidence that explains or qualifies it | Timeline for dated events, directly labeled chart for numerical change, or headings for a few findings |
 | Review a change | State the examined scope, then order findings by impact and tie them to behavior and test coverage | Align before and after on like dimensions, with exact locations for findings |
 | Choose among options | Show the sourced constraints, the trade-offs, and a recommendation or unresolved choice | Compare the options on the same criteria in a table and label assumptions |
-| Understand how something works | Walk one representative case from input to outcome | Use a flow or state diagram where order, branches, or transitions matter |
+| Understand a system as a whole | Map the main parts and handoffs, then explain the paths that change the outcome. Use an example to ground a handoff. | Show who acts and what moves between them, with branches or loops where they matter |
+| Understand one behavior | Walk a representative case from input to outcome | Use a flow or state diagram where order, branches, or transitions matter |
 
 For a short supplied-note brief, use the answer, one representation, and a compact source list. Headings or a table can be enough.
 Use a linked contents list for longer documents. Label chart values directly with units, denominators, and time ranges. Explain every

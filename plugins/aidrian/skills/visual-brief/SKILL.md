@@ -28,6 +28,11 @@ proposed, or unresolved. Use a source label and section for supplied material, a
 revision or working-tree identity for code, a field or row for data, or a verified URL. Show the scope and any known date or revision
 in the brief. Surface disagreements and unknowns that could change the answer.
 
+For an unfamiliar system, trace its normal entry point through a completed outcome and one meaningful stop, fallback,
+or retry before drafting. Check who acts, which rules or inputs drive the choice, and what happens next. Read the
+implementation or other primary sources and check the trace against any relevant tests, existing output, or a safe
+local run. If the sources only document the expected behavior, describe it as such.
+
 For a new diff review, inspect the complete diff, surrounding behavior, and relevant tests. Identify the base and head, or name
 the working tree as the scope. When the diff or a key source is incomplete, state the actual coverage and withhold whole-change
 and root-cause conclusions. Attribute findings from an existing review to that review.

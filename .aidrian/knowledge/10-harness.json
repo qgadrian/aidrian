@@ -60,7 +60,7 @@
       "tags": []
     },
     "config.md": {
-      "summary": "config.json: auto-merge, quorum roles/autoStart, authority, productFeedback maxPersonas/allWidths/items/diff, projectRun next/start/wait/preflight/result/report",
+      "summary": "config.json: auto-merge, roles/autoStart, decisions, authority, productFeedback maxPersonas/allWidths/items/diff, projectRun next/start/preflight/result/report",
       "tags": []
     },
     "dispatch-log.md": {

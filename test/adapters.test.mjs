@@ -665,15 +665,36 @@ test('Claude Code reads auto mode from the user settings alone, never from the p
   assert.equal(read.file, path.join(config, 'settings.json'));
 });
 
-// A permission rule that allows a `git push` approves it before auto mode's classifier runs, so no denial stands
-// beside one, in the user settings or in the project's `.claude/settings.json` or `.claude/settings.local.json`.
-test('Claude Code answers unknown, not denied, when a permission rule allows a git push, in the user or the project settings', (t) => {
+// A permission rule that allows the push the run will make approves it before auto mode's classifier runs, in the user
+// settings or in the project's `.claude/settings.json` or `.claude/settings.local.json`: a rule for any remote that
+// covers a plain `git push`, or one for `origin` with any branch. A narrower push rule settles nothing, but no denial
+// stands beside it either, since it may be the very push the run makes.
+const SETTLING_RULES = ['Bash(git push:*)', 'Bash(git push *)', 'Bash(git push)', 'Bash(git push*)', 'Bash(git:*)', 'Bash(git *)', ' Bash( git push:* ) ', 'Bash(git push origin:*)', 'Bash(git push origin *)', 'Bash(git push * *)'];
+const NARROWER_RULES = ['Bash(git push origin main)', 'Bash(git * main)', 'Bash(git push upstream:*)', 'Bash(git push upstream *)', 'Bash(git push --force:*)', 'Bash(git push -u origin:*)', 'Bash(git push origin feat/*)', 'Bash(git push origin)'];
+
+test('Claude Code answers allowed for a permission rule that allows the push the run makes, and unknown, not denied, for a narrower push rule', (t) => {
+  const ONLY_OTHER = trusting(['Trusted repo: github.com/acme/other']);
+  const TRUSTED = trusting(['Trusted repo: github.com/acme/widget']);
+  const withRules = (environment, allow) => ({ ...environment, permissions: { allow } });
+  for (const rule of SETTLING_RULES) {
+    assert.deepEqual(askClaude(claudeSettings(t, withRules(ONLY_OTHER, ['Bash(git status)', rule]))), { answer: 'allowed' }, `settles: ${rule}`);
+    // With no auto mode list the rule still approves the push before any classifier reads one.
+    assert.deepEqual(askClaude(claudeSettings(t, { permissions: { allow: [rule] } })), { answer: 'allowed' }, `settles with no autoMode: ${rule}`);
+  }
+  for (const rule of NARROWER_RULES) {
+    assert.deepEqual(askClaude(claudeSettings(t, withRules(ONLY_OTHER, ['Bash(git status)', rule]))), { answer: 'unknown' }, `narrower, would deny: ${rule}`);
+    assert.deepEqual(askClaude(claudeSettings(t, withRules(TRUSTED, [rule]))), { answer: 'allowed' }, `narrower, a trusted remote: ${rule}`);
+    assert.deepEqual(askClaude(claudeSettings(t, { permissions: { allow: [rule] } })), { answer: 'unknown' }, `narrower, no autoMode: ${rule}`);
+  }
+});
+
+test('Claude Code answers unknown, not denied, when a permission rule may allow a git push, in the user or the project settings', (t) => {
   const ONLY_OTHER = trusting(['Trusted repo: github.com/acme/other']);
   const withRules = (allow) => ({ ...ONLY_OTHER, permissions: { allow } });
-  const pushing = ['Bash(git push:*)', 'Bash(git push *)', 'Bash(git push)', 'Bash(git:*)', 'Bash(git *)', 'Bash(git * main)', 'Bash(git push origin main)', ' Bash( git push:* ) '];
   // Unrelated rules, and the broad ones auto mode drops on entry: bare `Bash`, `Bash(*)`, and a leading wildcard.
   const unrelated = ['Bash(git status)', 'Bash(git pull:*)', 'Bash(git pushall)', 'Bash(git:* push)', 'Bash(npm run *)', 'Read(**)', 'WebFetch', 'Bash(gh pr view:*)', 'Bash', 'Bash(*)', 'Bash(* --version)', 'Bash()'];
-  for (const rule of pushing) assert.deepEqual(askClaude(claudeSettings(t, withRules(['Bash(git status)', rule]))), { answer: 'unknown' }, `user file: ${rule}`);
+  for (const rule of SETTLING_RULES) assert.deepEqual(askClaude(claudeSettings(t, withRules(['Bash(git status)', rule]))), { answer: 'allowed' }, `user file: ${rule}`);
+  for (const rule of NARROWER_RULES) assert.deepEqual(askClaude(claudeSettings(t, withRules(['Bash(git status)', rule]))), { answer: 'unknown' }, `user file: ${rule}`);
   for (const rule of unrelated) assert.equal(askClaude(claudeSettings(t, withRules([rule]))).answer, 'denied', `user file: ${rule}`);
   // The project's files, in the session's folder and in the root of the repository it is in.
   const project = (files, { below = false } = {}) => {
@@ -687,8 +708,9 @@ test('Claude Code answers unknown, not denied, when a permission rule allows a g
     return askClaude(config, { cwd });
   };
   for (const name of ['settings.json', 'settings.local.json']) {
-    assert.deepEqual(project({ [name]: { permissions: { allow: ['Bash(git push:*)'] } } }), { answer: 'unknown' }, name);
-    assert.deepEqual(project({ [name]: { permissions: { allow: ['Bash(git push *)'] } } }, { below: true }), { answer: 'unknown' }, `${name} at the repository root, from a folder below it`);
+    assert.deepEqual(project({ [name]: { permissions: { allow: ['Bash(git push:*)'] } } }), { answer: 'allowed' }, name);
+    assert.deepEqual(project({ [name]: { permissions: { allow: ['Bash(git push *)'] } } }, { below: true }), { answer: 'allowed' }, `${name} at the repository root, from a folder below it`);
+    assert.deepEqual(project({ [name]: { permissions: { allow: ['Bash(git push origin main)'] } } }), { answer: 'unknown' }, `${name}: a narrower rule`);
     assert.equal(project({ [name]: { permissions: { allow: ['Bash(git status)'] } } }).answer, 'denied', `${name}: an unrelated rule`);
     assert.equal(project({ [name]: { permissions: { deny: ['Bash(git push:*)'] } } }).answer, 'denied', `${name}: a deny rule`);
     // A project file that is there and cannot be read, or rules of another shape: no denial stands.
@@ -708,7 +730,7 @@ test('Claude Code answers unknown, not denied, when a permission rule allows a g
   writeFileSync(path.join(worktree, '.git'), `gitdir: ${path.join(main, '.git', 'worktrees', 'wt')}\n`);
   assert.equal(askClaude(config, { cwd: worktree }).answer, 'denied', 'a worktree with no rule');
   writeFileSync(path.join(main, '.claude', 'settings.local.json'), JSON.stringify({ permissions: { allow: ['Bash(git push *)'] } }));
-  assert.deepEqual(askClaude(config, { cwd: worktree }), { answer: 'unknown' }, 'the main checkout\'s local settings, from a worktree');
+  assert.deepEqual(askClaude(config, { cwd: worktree }), { answer: 'allowed' }, 'the main checkout\'s local settings, from a worktree');
   assert.deepEqual(askClaude(claudeSettings(t, ONLY_OTHER), { cwd: 'work' }), { answer: 'unknown' }, 'a relative folder');
   assert.deepEqual(askClaude(claudeSettings(t, { ...ONLY_OTHER, permissions: { allow: 'Bash' } })), { answer: 'unknown' }, 'user rules of another shape');
 });

@@ -396,36 +396,40 @@ In the `auto` permission mode a classifier judges each action against `autoMode`
 lists the trusted repositories as prose, such as `"Trusted repo: github.com/acme/widget and its remotes"`
 ([auto mode configuration](https://code.claude.com/docs/en/auto-mode-config)). It reads `autoMode` from one file,
 `<config folder>/settings.json`, the user settings, where the config folder is `CLAUDE_CONFIG_DIR`, else `.claude` in
-the home folder. Before a denial it also reads `permissions.allow` from that file and from the project's
-`.claude/settings.json` and `.claude/settings.local.json`, since a rule there approves a push before the classifier
-runs. It writes nothing. Each step answers `unknown` when it cannot go on:
+the home folder. It also reads `permissions.allow` from that file and from the project's `.claude/settings.json` and
+`.claude/settings.local.json`, since a rule there approves a push before the classifier runs. It writes nothing.
+Each step answers `unknown` when it cannot go on:
 
 1. The session's permission mode, from its transcript, as the [background route](#the-background-route) reads it.
    Anything but `auto`, a session with no id, and a transcript it cannot read, a named pipe in its place included,
    answer `unknown`, and no settings file is read.
-2. The settings file, following a symlink, opened without blocking and read as a regular file of at most 1 MB, parsed
-   as JSON. Missing, not a regular file, such as a named pipe, too large, bad JSON, or not an object: `unknown`.
-3. `autoMode` absent or not an object: `unknown`.
-4. `autoMode.environment` absent, not a list, empty, or holding a non-string: `unknown`.
-   `autoMode.allow`, when present, not a list of strings: `unknown`.
-5. `allowed` when `environment` holds `"$defaults"`, or an `environment` entry names the repository, or an `allow`
-   entry names the repository and holds the word `push`, in any case, as in `pushes` or `git push`.
-6. `unknown` when a `permissions.allow` rule would allow a `git push`, in the user settings or in the project's
-   `.claude/settings.json` or `.claude/settings.local.json`: such a rule approves the push before the classifier runs.
+2. The settings files, each following a symlink, opened without blocking and read as a regular file of at most 1 MB,
+   parsed as JSON: the user settings, and the project's `.claude/settings.json` and `.claude/settings.local.json`.
    Claude Code reads `.claude/settings.json` in the session's folder, and `.claude/settings.local.json` at the root of
    its git repository, the main checkout's root for a worktree. The adapter reads both files in each of the session's
    folder, the `cwd` of the ask; the nearest folder at or above it holding `.git`; and, when that `.git` is a file naming
    a worktree's git folder, the main checkout its `commondir` names. A file the host does not read can only turn a
-   denial into `unknown`. A rule `Bash(<pattern>)` allows a push when its pattern, where `*` is any text, a trailing
-   ` *` also matches the command before it, and a final `:*` is the same as a trailing ` *`, matches `git push` or some
-   `git push ...`: `Bash(git push:*)`, `Bash(git push *)`, `Bash(git push)`, `Bash(git *)`, and
-   `Bash(git push origin main)` do, and `Bash(git status)`, `Bash(git pushall)`, and `Bash(git:* push)` do not.
-   A rule that names a remote counts, since a remote's name in a command says nothing of the repository it points to.
-   Bare `Bash`, `Bash(*)`, and a pattern that starts with `*` do not count: auto mode drops them on entry
-   ([permission modes](https://code.claude.com/docs/en/permission-modes)). A `cwd` that is not absolute, and a project
-   file that is there and cannot be read as in step 2, or whose `permissions` is not an object or whose
-   `permissions.allow` is not a list of strings, answer `unknown`; a project file that is not there holds no rule.
-7. Otherwise `denied`: `autoMode.environment` in that file replaces the default trusted repositories, with no
+   denial into `unknown`. A file that is there and is not a regular file, such as a named pipe, is too large, holds bad
+   JSON, or is not an object cannot be read; a project file that is not there holds no rule, and a `cwd` that is not
+   absolute reads no project file.
+3. `allowed` when a `permissions.allow` rule in any of those files allows the push the run makes: a rule for any remote
+   that covers a plain `git push`, or one for `origin` with any branch. A rule `Bash(<pattern>)` is read as a glob,
+   where `*` is any text, a trailing ` *` also matches the command before it, and a final `:*` is the same as a
+   trailing ` *`. It allows the push the run makes when it matches `git push` itself, or `git push origin ` followed by
+   any text: `Bash(git push:*)`, `Bash(git push *)`, `Bash(git push)`, `Bash(git *)`, `Bash(git push origin:*)`, and
+   `Bash(git push origin *)` do. Bare `Bash`, `Bash(*)`, and a pattern that starts with `*` do not count: auto mode
+   drops them on entry ([permission modes](https://code.claude.com/docs/en/permission-modes)).
+4. The user settings cannot be read as in step 2, or `autoMode` is absent or not an object: `unknown`.
+5. `autoMode.environment` absent, not a list, empty, or holding a non-string: `unknown`.
+   `autoMode.allow`, when present, not a list of strings: `unknown`.
+6. `allowed` when `environment` holds `"$defaults"`, or an `environment` entry names the repository, or an `allow`
+   entry names the repository and holds the word `push`, in any case, as in `pushes` or `git push`.
+7. `unknown` when a `permissions.allow` rule may allow a narrower push, which may be the very push the run makes: one
+   that matches `git push` followed by some text, such as `Bash(git push origin main)`, `Bash(git push upstream:*)`,
+   `Bash(git push --force:*)`, or `Bash(git push -u origin:*)`, but not `Bash(git status)`, `Bash(git pushall)`, or
+   `Bash(git:* push)`. Also `unknown` for a `cwd` that is not absolute, and for a file that cannot be read as in step 2,
+   or whose `permissions` is not an object or whose `permissions.allow` is not a list of strings.
+8. Otherwise `denied`: `autoMode.environment` in that file replaces the default trusted repositories, with no
    `"$defaults"` in its list, and names this remote in no entry. The fix it gives adds `"$defaults"` to that list, or an
    entry such as `"Trusted repo: github.com/acme/widget"`.
 
@@ -448,7 +452,8 @@ verification. Four assumptions follow from the references:
   and `.claude/settings.local.json`, so a checked-in file cannot add its own rules, and counting them would count
   entries the host ignores.
 - A `permissions.allow` rule that matches a command approves it before the classifier runs, in every settings file the
-  permission system reads, so one that allows a `git push` leaves no denial to predict.
+  permission system reads, so one that matches the push the run makes allows it, and one that may match it leaves no
+  denial to predict.
 - `denied` is a prediction of what a prose classifier will do. A custom `environment` with no `"$defaults"` that names
   this repository in no entry is the shape of a run whose push was refused, and the only shape that answers `denied`.
 - `soft_deny` and `hard_deny` are never read: no pattern over prose says whether one forbids a push.

@@ -831,13 +831,28 @@ test('Claude Code answers unknown at once for a project deny rule with thousands
   mkdirSync(path.join(root, '.claude'), { recursive: true });
   mkdirSync(path.join(root, '.git'));
   const module = path.join(ROOT, 'plugins/aidrian/lib/hosts/claude-code-push.mjs');
-  // `g` starts `git push`, so the rule may reach one: no denial stands beside it. A tool-name glob of as many stars is
-  // read at once too.
-  writeFileSync(path.join(root, '.claude', 'settings.json'), JSON.stringify({ permissions: { deny: [`Bash(g${'*'.repeat(10000)}z)`, `${'*a'.repeat(10000)}`] } }));
+  // `g` starts `git push`, so the rule may reach one: no denial stands beside it.
+  writeFileSync(path.join(root, '.claude', 'settings.json'), JSON.stringify({ permissions: { deny: [`Bash(g${'*'.repeat(10000)}z)`] } }));
   const script = `import { pushPermission } from ${JSON.stringify(module)};
 process.stdout.write(JSON.stringify(pushPermission({ repository: ${JSON.stringify(REPOSITORY)}, session: 's', cwd: ${JSON.stringify(root)}, env: { CLAUDE_CONFIG_DIR: ${JSON.stringify(config)} }, readMode: () => 'auto' })));`;
   const ran = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 5000 });
   assert.deepEqual([ran.status, ran.signal, ran.stdout], [0, null, '{"answer":"unknown"}']);
+});
+
+// The tool-name glob alone, the only rule, so its match runs: a glob read by backtracking, as a regular expression of
+// `.*` runs would, takes time that grows with the stars, and the child process is stopped.
+test('Claude Code reads a project tool-name glob with thousands of stars at once', (t) => {
+  const config = claudeSettings(t, trusting(['Trusted repo: github.com/acme/other']));
+  const root = path.join(config, 'work');
+  mkdirSync(path.join(root, '.claude'), { recursive: true });
+  mkdirSync(path.join(root, '.git'));
+  const module = path.join(ROOT, 'plugins/aidrian/lib/hosts/claude-code-push.mjs');
+  writeFileSync(path.join(root, '.claude', 'settings.json'), JSON.stringify({ permissions: { deny: [`${'*'.repeat(10000)}x`] } }));
+  const script = `import { pushPermission } from ${JSON.stringify(module)};
+process.stdout.write(JSON.stringify(pushPermission({ repository: ${JSON.stringify(REPOSITORY)}, session: 's', cwd: ${JSON.stringify(root)}, env: { CLAUDE_CONFIG_DIR: ${JSON.stringify(config)} }, readMode: () => 'auto' })));`;
+  const ran = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 5000 });
+  assert.deepEqual([ran.status, ran.signal], [0, null], 'read within 5 seconds');
+  assert.equal(JSON.parse(ran.stdout).answer, 'denied', 'a glob that matches no shell tool leaves the denial');
 });
 
 test('Claude Code answers unknown at once for a named pipe at its user settings, alone or behind a symlink', { skip: process.platform === 'win32' }, (t) => {

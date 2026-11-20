@@ -20,7 +20,7 @@ const PLAIN_GLOBALS = new Set(['--no-pager', '-P', '-p', '--paginate', '--no-opt
 export const changesGitTarget = (invocation) => GIT_VARIABLES.some((name) => changesVariable(invocation, name));
 
 // Whether every git global option before `push` is `-C` with its folder or one of PLAIN_GLOBALS.
-function plainGlobals(globals) {
+export function plainGlobals(globals) {
   for (let i = 0; i < globals.length; i += 1) {
     if (globals[i].text === '-C') i += 1;
     else if (!PLAIN_GLOBALS.has(globals[i].text)) return false;

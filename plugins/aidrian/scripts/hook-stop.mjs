@@ -1,37 +1,42 @@
-// Stop hook: four checks that can send the main session back for one more turn. Claude Code and Codex both run it from
+// Stop hook: the checks that can send the main session back for one more turn. Claude Code and Codex both run it from
 // hooks.json, and both send `stop_hook_active` and `last_assistant_message` (docs/providers/codex.md#hooks).
+// - The result hold (lib/project-run-guard.mjs resultHoldReason): the newest session of a project run's issue stops
+//   before it recorded the issue's result. It is sent back once to record it, or to go on with the work. It goes first,
+//   and holds wherever the session's folder is: its unattended mark names the run's project.
 // - The announce check (lib/stop-announce.mjs): the turn's last message announces work the AI is about to start, such
 //   as "Starting now unless the Human says otherwise", and stops without starting it. The agent is sent back to do it,
-//   or to ask the Human with the question tool, named as the host's model calls it. It goes first: the Human is waiting
+//   or to ask the Human with the question tool, named as the host's model calls it. It goes second: the Human is waiting
 //   on that work now, and the session-length reminder writes its marker only when it fires, so it fires at the next stop.
 // - The review-loop check (lib/stop-review-loop.mjs): under config.json `github.reviewLoop` "auto", the turn opened or
 //   updated a draft pull request and ran no review after it, as lib/transcript.mjs turnActions reads the turn since the
-//   Human's last prompt. The agent is sent back to run the `pr-review-loop` skill. It comes second: work the run still
+//   Human's last prompt. The agent is sent back to run the `pr-review-loop` skill. It comes third: work the run still
 //   owes comes before the wording of its report. It reads Claude Code transcripts only.
 // - The merge hand-back check (lib/stop-handback.mjs mergeHandBack): an `aidrian pr auto-merge` run in the same turn
 //   refused a pull request because it changes a path the gate never merges, no merge of it ran after, and no report of
-//   the turn hands it to the Human, rated, for review and merge. The agent is sent back to add the item. It comes third: before the hand-back
+//   the turn hands it to the Human, rated, for review and merge. The agent is sent back to add the item. It comes fourth: before the hand-back
 //   check, whose rating it asks for too, so one send-back settles the item. It reads Claude Code transcripts only.
 // - The hand-back check (lib/stop-handback.mjs): the last message lists items for the Human, under a label such as
 //   "For Adrian", and an item says nothing of how critical it is. The agent is sent back to try each item, keep only
-//   real blocks, and rate each. It comes fourth: like the announce check, it is about the message the Human reads now.
+//   real blocks, and rate each. It comes fifth: like the announce check, it is about the message the Human reads now.
 // - The session-length reminder. Once continuing the main session costs config.json `session.handoff.costRatio` times
 //   what a fresh session started from a handoff brief would, or its context passes the optional `maxTokens` ceiling, the
 //   agent is sent back for one more turn to judge whether a handoff is worth it: in `ask` mode to ask the user, in `auto`
-//   mode to write the brief, or in either to do nothing (lib/session-length.mjs). A marker in the temporary folder holds
+//   mode to write the brief, or in either to do nothing (lib/session-length.mjs). A marker in the hooks' counts folder holds
 //   the ratio at the last cost firing and the ceiling's firings, so the cost reminder comes back once the ratio doubles
 //   in `ask` mode, or climbs one step in `auto` (lib/session-length.mjs nextRatio), and the ceiling once the context
 //   doubles. It reads Claude Code transcripts only. Its text follows the continue route the session's host can do
 //   (lib/session-length.mjs continuation): with `clear` or `background` the agent ends the turn after the brief, and on
 //   the background route in `auto` mode a Human who is not watching is no reason to skip the handoff. The marker's path
 //   is stopMarkerPath's, which `aidrian session snapshot` reads too; it is read no-follow, capped, and only when this user
-//   owns it, and written as a new temporary file, mode 0600, renamed over it, so no write follows a symlink there.
+//   owns it (fs.mjs readOwnText), and written, only in a counts folder this user owns (ownFolderSync), as a new temporary
+//   file, mode 0600, renamed over it, so no write follows a symlink there.
 // Each check sends a turn back at most once (checkReason). `stop_hook_active` is true on every stop after a turn's first
 // send-back, so on such a stop the checks run only when the turn's last send-back is one of theirs, as the transcript
 // shows it (lib/transcript.mjs SENT_BACK), and only those that have not sent the turn back yet: the stop that ends a
-// direct run's review loop, after the review-loop check sent it back, still checks its report. A payload without
-// `stop_hook_active` (a host that does not send it) is never sent back, so nothing can loop: each stop sends back at
-// most once, for one of the five, and a chain of stops this hook caused at most once per check.
+// direct run's review loop, after the review-loop check sent it back, still checks its report. The result hold runs
+// only on a stop no hook sent back, and its send-back is none of the checks', so the stop it causes runs none of them.
+// A payload without `stop_hook_active` (a host that does not send it) is never sent back, so nothing can loop: each stop
+// sends back at most once, for one of the six, and a chain of stops this hook caused at most once per check.
 // - The terminal hand-over (lib/terminal-replace.mjs endAfterTurn): on a stop no check sends back, sent back before or
 //   not, a session whose handoff gate asked to end itself once its turn ends does, so the terminal that ran it, or
 //   follows it, opens the background session that took the work; a background session no terminal follows only stops
@@ -42,10 +47,12 @@ import { renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { loadConfig } from '../lib/config.mjs';
-import { MARKER_CAP, noteFollow, readOwnFile, takeEnding } from '../lib/handoff-markers.mjs';
+import { ownFolderSync, readOwnText } from '../lib/fs.mjs';
+import { MARKER_CAP, noteFollow, takeEnding } from '../lib/handoff-markers.mjs';
 import { deny, runHook } from '../lib/hook-io.mjs';
 import { detectHost } from '../lib/hosts/index.mjs';
 import { findProject } from '../lib/project.mjs';
+import { resultHoldReason } from '../lib/project-run-guard.mjs';
 import { continuation, stopMarkerPath, stopReminder } from '../lib/session-length.mjs';
 import { ANNOUNCE_LEAD, announcedWork, QUESTION_TOOL } from '../lib/stop-announce.mjs';
 import { HAND_BACK_LEAD, handBack, MERGE_HAND_BACK_LEAD, mergeHandBack } from '../lib/stop-handback.mjs';
@@ -64,6 +71,11 @@ const HOOK_PREFIX = /^\[.*?\]: /u;
 await runHook(async (input) => {
   const settled = input.stop_hook_active === false;
   const caused = input.stop_hook_active === true;
+  // The result hold goes first, wherever the session's folder is.
+  if (settled) {
+    const held = resultHoldReason(input);
+    if (held) deny(held);
+  }
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (!project) return;
   const { config } = loadConfig(project);
@@ -81,7 +93,7 @@ await runHook(async (input) => {
   if (!settled) return;
   const { handoff } = session;
   if (handoff.mode === 'off' || !text) return;
-  const earlier = readOwnFile(marker, { cap: MARKER_CAP })?.text ?? null;
+  const earlier = readOwnText(marker, MARKER_CAP);
   // The route is read only on a stop that fires: on the background route it asks git for the base branch's config.
   if (!stopReminder(text, handoff, earlier)) return;
   const reminder = stopReminder(text, handoff, earlier, await continuation(handoff, host, project, config));
@@ -167,9 +179,10 @@ async function endsTerminal(host, project, config, id) {
   });
 }
 
-// Writes `text` to a new temporary file beside `file`, with a random suffix, then renames it over `file`. A write that
-// fails throws, and runHook lets the stop go on.
+// Writes `text` to a new temporary file beside `file`, with a random suffix, then renames it over `file`, in a folder
+// this user owns alone: none is written in another. A write that fails throws, and runHook lets the stop go on.
 function writeMarker(file, text) {
+  if (!ownFolderSync(path.dirname(file))) return;
   const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);
   writeFileSync(temporary, text, { flag: 'wx', mode: 0o600 });
   try {

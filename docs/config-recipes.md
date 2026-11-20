@@ -1,12 +1,13 @@
 # Config recipes
 
-Three starting configs for a project, from the most autonomous to the most hands-on, written for a developer working
+Four starting configs for a project, from the most autonomous to the most hands-on, written for a developer working
 alone. Pick the one closest to how the Human works, copy it, and change what the project needs. Each is checked by `test/config-recipes.test.mjs`:
 `aidrian check` passes on it, and this page shows each file in [`plugins/aidrian/recipes/`](../plugins/aidrian/recipes) exactly.
 The `harness-setup` skill offers them as its working-style question.
 
 | Recipe | The Human | Sessions stop for |
 | --- | --- | --- |
+| [Full autonomy, solo](#full-autonomy-solo) | Runs the project alone, and is not there for a whole tracker project | The same as full autonomy |
 | [Full autonomy](#full-autonomy) | Is not there | Security verdicts, critical-flow sign-offs, and hard product calls in a floor class |
 | [Autopilot](#autopilot) | Supervises several sessions from above | Product calls, extra review rounds, the floor classes |
 | [Hands-on](#hands-on) | Works beside each session | Every decision, the ready mark, the review loop, the handoff |
@@ -17,7 +18,11 @@ How to apply one:
    Its switches, such as `autoMerge.allow`, are read from the base branch, never from the working copy,
    so they count only once merged.
 2. Add the machine switches the recipe names, if any, to `.aidrian.local.json` in the main checkout.
-   A few switches live only there, so that a pull request can never turn them on; a subagent may not write them.
+   A few switches live only there, so a pull request alone never turns them on: [`solo`](config.md#solo), committed on
+   the default branch, turns the unset ones on, and only the Human merges the change that adds it. A subagent may not
+   write them.
+   No recipe sets one in `config.json`, and none opens a project run's sandbox further: a team adds
+   `projectRun.registries`, `unverifiedHosts`, `outsideSandbox`, or `mcpServers` itself, after reading its risk.
 3. Replace `"test"` in `github.requiredChecks` with the names of the project's CI checks. Auto-merge stays off without one.
    In a recipe that merges alone, replace the placeholder screen target too, `src/app/**` at `/`, with the project's
    web screen files and routes. With no web screen, leave out `review.visual`, and with no screen at all, both keys:
@@ -26,15 +31,78 @@ How to apply one:
    rejects keys it does not know.
 
 A recipe sets only the keys it changes; [config.md](config.md#keys) holds every key and its default.
-The two that merge alone, full autonomy and autopilot, also turn on a screen check: `review.visual` captures for the
-visual reviewers and `review.productFeedback` before the ready mark, around a placeholder target that setup replaces,
-as it replaces `"test"`. What each part needs to run, and what it does without it, is in the section below.
+The ones that merge alone, full autonomy, its solo form, and autopilot, also turn on a screen check: `review.visual`
+captures for the visual reviewers and `review.productFeedback` before the ready mark, around a placeholder target
+that setup replaces, as it replaces `"test"`. What each part needs to run, and what it does without it, is in the section below.
 Hands-on leaves that check out, since the Human tries the screens, and can add it:
 [Screens checked on every device](#screens-checked-on-every-device).
 It sets nothing about the host's own permissions: how often Claude Code or Codex asks before a tool runs is the host's
 setting, and the more autonomous recipes pay off only with a permission mode that does not stop each command.
 They also need the host to let a session push to the repository's remote, which the
 [push preflight](handoff.md#the-push-preflight) checks before a run no Human attends starts work.
+
+## Full autonomy, solo
+
+One person owns the project and runs whole tracker projects with no one watching, with the `project-autopilot`
+skill: one attended first turn, then a session per issue. It is the [full autonomy](#full-autonomy) recipe, with two
+keys more.
+
+`.aidrian/config.json`:
+
+```json
+{
+  "version": 1,
+  "solo": true,
+  "github": {
+    "requiredChecks": ["test"],
+    "markReady": "auto",
+    "reviewLoop": "auto",
+    "extraRounds": "auto",
+    "autoMerge": { "allow": true, "default": "on", "strategy": "squash", "deleteBranch": true, "deleteWorktree": true },
+    "unattendedWaiver": { "allow": true }
+  },
+  "review": {
+    "unattendedSignoff": { "allow": true },
+    "visual": { "platform": "web", "targets": [{ "files": ["src/app/**"], "routes": ["/"] }], "viewports": [390, 1024, 1440] },
+    "productFeedback": { "auto": true }
+  },
+  "decisions": {
+    "mode": "decide-reversible",
+    "maxMode": "decide-reversible",
+    "unattended": { "safeDefaults": "all" }
+  },
+  "quorum": { "product": { "autoStart": true, "approval": "review-later" } },
+  "session": { "handoff": { "mode": "auto", "continue": "background", "maxChain": 5 } },
+  "audits": { "triage": { "issueCreation": "auto" } },
+  "projectRun": { "allow": true }
+}
+```
+
+No machine switch: [`solo`](config.md#solo) turns on each of the three that full autonomy names, the unattended
+waiver, `unattendedSignoff`, and `handoff.background`, on every machine whose local file leaves it unset.
+A local `"off"`, or a local file that git tracks or that has an error, still wins on that machine.
+
+What it adds to full autonomy:
+
+- `solo` is read from the default branch on GitHub, and its local ref must say it too, so a working copy or a pull
+  request alone turns nothing on. A pull request that adds it changes a policy file, which auto-merge never lets
+  through: the Human merges it. Whoever can push to the default branch turns the switches on for every machine that
+  sets none, so protect it with no bypass.
+- [`projectRun.allow`](config.md#project-run) lets the `project-autopilot` skill start a run. Its other keys keep
+  their defaults: one issue at a time, at most 300 sessions a run, and 6 hours an issue.
+
+What a project run needs beyond this recipe; `aidrian project preflight`, in the run's first, attended turn, names each
+one missing as a blocker, but the registries:
+
+- `github.reviewer`, the review bot every unattended merge waits on, and `tracker.provider`.
+- `projectRun.unverifiedHosts: true`, set after reading its risk: no live run has verified either host's project
+  start yet ([Claude Code](providers/claude-code.md#project-start), [Codex](providers/codex.md#project-start)).
+- `projectRun.registries` for the package registries the project installs from, when its sessions install
+  dependencies; this recipe lists none, since each one widens the hosts the sandbox reaches, and most give a channel
+  out of it ([Project run](config.md#project-run)).
+- On Claude Code, `"autoContinueAtUsageLimit": true` in the user's own settings, since a usage limit stops the driver too.
+
+How a run relates to the handoff chain, and what stops it for a person, are in [Handoff](handoff.md#a-project-run).
 
 ## Full autonomy
 

@@ -75,7 +75,6 @@ or before phase 2 on an adopted pull request, and follow it.
 
 The engine ends at its draft, and these phases own what follows: the review loop runs once.
 The `orchestration` skill's § 3 rules apply inside phases 3 and 4, never as a second loop after them.
-The bounds of the review rounds, the bot, and the fix passes: `references/phases.md` § Bounds.
 
 ## Stop
 
@@ -120,3 +119,5 @@ Read the launch's entry file first, and only that one.
 | --- | --- |
 | `<task>`, or none | `references/entry-task.md` |
 | `--continue` | `references/entry-continue.md` |
+
+A first message that names a project run also reads that file's § Under a project run.

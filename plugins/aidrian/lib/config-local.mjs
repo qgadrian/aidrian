@@ -1,10 +1,13 @@
 // The local file's settings that a team's committed value caps: `decisions`, and the machine's auto-merge and
-// unattended-waiver switches.
+// unattended switches.
 
 import { merge } from './config-merge.mjs';
 import { DECISIONS_SCHEMA, LOCAL_DECISIONS_SCHEMA } from './config-schema.mjs';
 import { lowerMode } from './decisions.mjs';
 import { isObject } from './fs.mjs';
+// A cycle: project.mjs imports config.mjs, which re-exports this file. It is benign while each uses the other's exports
+// only inside functions.
+import { mayFollowTeamDefault } from './project.mjs';
 import { PUBLISH_DEFAULTS } from './review/config.mjs';
 
 // `team`, the `decisions` of config.json, with the local file's `decisions` over it, as `project.localDecisions` holds
@@ -55,9 +58,26 @@ export function resolveAutoMerge(github, local) {
   return { effective: true, reason: null };
 }
 
+// One unattended machine switch, `github.unattendedWaiver`, `unattendedSignoff`, or `handoff.background`, as the local
+// file sets it (`local`: "on", "off", or "unset", project.mjs), with the base branch's `solo` for a machine that sets
+// nothing: "on" when `local` is "unset", `solo` says true, and git says it tracks no local file in the main checkout
+// (mayFollowTeamDefault), as auto-merge's team default is followed; "off" when solo says true but the file is tracked;
+// else `local` as it is. A local "off", or a file that is broken or tracked, which reads "off" (project.mjs
+// machineSwitches), always wins. `solo` is a boolean or a function that reads it, called only for an unset switch, so a
+// caller pays for its reads only then; it must read the base branch only, never the working copy (lib/solo.mjs). The
+// team's own key for the switch still decides apart from this: solo replaces the machine's word alone. `mayFollow` is
+// mayFollowTeamDefault's answer when the caller read it already, as the merge guard does inside its deadline.
+export function machineSwitch(local, solo, project, mayFollow = () => mayFollowTeamDefault(project)) {
+  if (local !== 'unset') return local;
+  const on = (typeof solo === 'function' ? solo() : solo) === true;
+  if (!on) return 'unset';
+  return (typeof mayFollow === 'function' ? mayFollow() : mayFollow) === true ? 'on' : 'off';
+}
+
 // Whether the merge guard may take a recorded judge verdict (`aidrian pr waive`) in place of the Human's answer, from a
-// `github` config and the local file's switch (`project.localUnattendedWaiver`): { effective, reason }, as
-// resolveAutoMerge. There is no team default, so "unset" is off. `reason` is "team" or "local", null when it is on.
+// `github` config and the machine's switch: { effective, reason }, as resolveAutoMerge. `local` is
+// `project.localUnattendedWaiver`, or machineSwitch's answer for it under the base branch's `solo`; "unset" is off.
+// `reason` is "team" or "local", null when it is on.
 export function resolveUnattendedWaiver(github, local) {
   if (github?.unattendedWaiver?.allow !== true) return { effective: false, reason: 'team' };
   if (local !== 'on') return { effective: false, reason: 'local' };

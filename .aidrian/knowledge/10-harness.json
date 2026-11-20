@@ -8,7 +8,7 @@
       "tags": []
     },
     "contributing.md": {
-      "summary": "Building and checking the plugin: npm run build and check, what the tests hold, trying a branch, skill evals, releases and versions.",
+      "summary": "Building and checking the plugin: npm run build and check, load-independent deadlines, the test clock, trying a branch, skill evals, releases and versions.",
       "tags": ["harness_engineering", "docs"]
     },
     "architecture.md": {
@@ -24,7 +24,7 @@
       "tags": ["docs"]
     },
     "config-recipes.md": {
-      "summary": "Config recipes: full autonomy, autopilot, and hands-on starting configs and local files, checked by aidrian check; harness-setup offers them.",
+      "summary": "Recipes: full autonomy, solo with project runs, autopilot, and hands-on starting configs and local files, checked by aidrian check; harness-setup offers them.",
       "tags": []
     },
     "hooks.md": {
@@ -32,7 +32,7 @@
       "tags": []
     },
     "project-folder.md": {
-      "summary": ".aidrian/: init, check, lint, state, sessions/, worktrees, local sources, decision markers, decisions list/set, quorum route, quorum provisional, migrating.",
+      "summary": ".aidrian/ init, check, lint, state/sessions/runs/hook-counts, local sources, decision markers, decisions list/set, quorum route, quorum provisional, migrating",
       "tags": []
     },
     "personas.md": {
@@ -40,7 +40,7 @@
       "tags": []
     },
     "review.md": {
-      "summary": "splits, flows, invariants, approvers, visual, ingest, reviewers, quota, rounds, quiet, lateRoundFrom, residuals, sign-off, --accept, owed, product feedback.",
+      "summary": "splits, flows, invariants, approvers, visual, ingest, reviewers, quota, rounds, quiet, lateRoundFrom, residuals, --accept, owed, merge trust, sign-off store",
       "tags": []
     },
     "knowledge.md": {
@@ -60,7 +60,7 @@
       "tags": []
     },
     "config.md": {
-      "summary": "config.json: auto-merge, quorum roles/autoStart, decisions, authority, productFeedback maxPersonas/allWidths (every width), feedback items/diff, PR body, gate.",
+      "summary": "config.json: auto-merge, roles/autoStart, decisions, authority, productFeedback maxPersonas/allWidths/items/diff, projectRun next/start/preflight/result/report",
       "tags": []
     },
     "dispatch-log.md": {

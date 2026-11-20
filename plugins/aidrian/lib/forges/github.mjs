@@ -185,6 +185,154 @@ export const GITHUB_JSON = 'application/vnd.github+json';
 export const REVIEWS_PAGE = 100;
 // The longest body GitHub takes for a comment, a review, or a review comment, in characters.
 export const MAX_BODY = 65_536;
+
+// The forge CLI's subcommands that write the user's own config, which the agent gates hook refuses to a session no Human
+// attends (lib/unattended-write.mjs): gh's config, its extensions, and its login, and `gh auth setup-git`, which writes
+// the user's git config. Each is { programs, subcommands, valueOptions, what }, `valueOptions` gh's global options that
+// take the next word.
+const GH_VALUES = Object.freeze(['-R', '--repo', '--hostname', '-h']);
+export const CONFIG_COMMANDS = Object.freeze([
+  { programs: ['gh'], subcommands: [['config', 'set'], ['extension', 'install']], valueOptions: GH_VALUES, what: 'the forge CLI\'s own config' },
+  { programs: ['gh'], subcommands: [['auth', 'login'], ['auth', 'logout'], ['auth', 'switch'], ['auth', 'refresh']], valueOptions: GH_VALUES, what: 'the forge CLI\'s own login' },
+  { programs: ['gh'], subcommands: [['auth', 'setup-git']], valueOptions: GH_VALUES, what: 'the user\'s git config' },
+  { programs: ['gh'], subcommands: [['alias', 'set'], ['alias', 'import'], ['alias', 'delete']], valueOptions: GH_VALUES, what: 'the forge CLI\'s own config' },
+]);
+
+// The forge CLI's subcommands that change what the forge releases or runs, or the repository's own settings, which the
+// agent gate hook refuses to a project run's issue session (lib/issue-forge-guard.mjs): with the token its sandbox
+// keeps, one would publish a release, start a workflow with the repository's secrets, rerun a deploy, or make a
+// repository or gist to push the work to. Each is
+// { programs, subcommands, valueOptions, what }, as CONFIG_COMMANDS; the forms that only read, such as `gh release
+// list`, pass.
+export const REF_COMMANDS = Object.freeze([
+  { programs: ['gh'], subcommands: [['release', 'create'], ['release', 'delete'], ['release', 'edit'], ['release', 'upload'], ['release', 'delete-asset']], valueOptions: GH_VALUES, what: 'a release on the forge' },
+  { programs: ['gh'], subcommands: [['workflow', 'run'], ['workflow', 'enable'], ['workflow', 'disable']], valueOptions: GH_VALUES, what: 'a workflow on the forge, which runs with the repository\'s secrets' },
+  { programs: ['gh'], subcommands: [['run', 'rerun'], ['run', 'cancel'], ['run', 'delete']], valueOptions: GH_VALUES, what: 'a workflow run on the forge, which may run with the repository\'s secrets' },
+  { programs: ['gh'], subcommands: [['secret', 'set'], ['secret', 'delete'], ['secret', 'remove'], ['variable', 'set'], ['variable', 'delete']], valueOptions: GH_VALUES, what: 'the repository\'s secrets or variables' },
+  { programs: ['gh'], subcommands: [['repo', 'edit'], ['repo', 'delete'], ['repo', 'rename'], ['repo', 'archive'], ['repo', 'unarchive'], ['repo', 'sync'], ['repo', 'deploy-key', 'add'], ['repo', 'deploy-key', 'delete'], ['cache', 'delete']], valueOptions: GH_VALUES, what: 'the repository\'s settings, keys, or caches' },
+  { programs: ['gh'], subcommands: [['ssh-key', 'add'], ['ssh-key', 'delete'], ['gpg-key', 'add'], ['gpg-key', 'delete']], valueOptions: GH_VALUES, what: 'the keys of the forge account' },
+  { programs: ['gh'], subcommands: [['repo', 'create'], ['repo', 'fork'], ['gist', 'create']], valueOptions: GH_VALUES, what: 'a new repository, fork, or gist on the forge, where the token it keeps could copy the work and push anything' },
+]);
+
+// The folders of a repository whose files the forge runs, with the repository's secrets, on a push to any branch:
+// GitHub's workflows, and the actions a workflow calls from the repository. A project run's issue session never writes
+// them (lib/unattended-write.mjs).
+export const WORKFLOW_FOLDERS = Object.freeze(['.github/workflows', '.github/actions']);
+
+// gh api's options that take the next word, and those of them that send a field, which makes gh's default method POST.
+const API_VALUES = new Set(['-X', '--method', '-f', '--raw-field', '-F', '--field', '--input', '-H', '--header', '-q', '--jq', '-t', '--template', '-p', '--preview', '--hostname', '--cache']);
+const API_FIELDS = new Set(['-f', '--raw-field', '-F', '--field', '--input']);
+// The REST routes of a repository an issue session writes: its pull request's and issues' comments, reviews, labels, and
+// reviewers, and a pull request itself, but never a merge. Any other writing route, such as git refs, tags, releases,
+// dispatches, contents, statuses, Actions' secrets and variables, rulesets, or the repository's settings, is refused.
+const ISSUE_ROUTES = /^repos\/[^/]+\/[^/]+\/(?:pulls(?:\/\d+(?:\/(?:comments|reviews|requested_reviewers|update-branch)(?:\/[^/]+)*)?)?|pulls\/comments\/\d+(?:\/[^/]+)*|pulls\/\d+\/comments\/\d+\/replies|issues\/\d+(?:\/(?:comments|labels|reactions|assignees)(?:\/[^/]+)*)?|issues\/comments\/\d+(?:\/[^/]+)*)$/u;
+// The GraphQL mutations an issue session runs: on review threads, comments, reviews, reactions, labels, and its pull
+// request's draft state or reviewers. Any other, such as createRef, updateRefs, createCommitOnBranch,
+// mergePullRequest, or a ruleset's, is refused.
+const ISSUE_MUTATIONS = new Set([
+  'addComment', 'updateIssueComment', 'deleteIssueComment', 'minimizeComment', 'unminimizeComment', 'addReaction', 'removeReaction',
+  'addPullRequestReview', 'submitPullRequestReview', 'deletePullRequestReview', 'addPullRequestReviewComment', 'addPullRequestReviewThread',
+  'addPullRequestReviewThreadReply', 'updatePullRequestReviewComment', 'deletePullRequestReviewComment', 'resolveReviewThread', 'unresolveReviewThread',
+  'requestReviews', 'markPullRequestReadyForReview', 'convertPullRequestToDraft', 'addLabelsToLabelable', 'removeLabelsFromLabelable',
+]);
+
+// What a `gh api` call writes that a project run's issue session never writes, or null: a REST route outside
+// ISSUE_ROUTES with a writing method, which a field sent with no -X makes POST, or a GraphQL mutation outside
+// ISSUE_MUTATIONS, or one whose document cannot be read, as one read from a file or built at run time. `tokens` are
+// the call's words past `gh`, each { text, dynamic } as the shell lexer gives them: a word built at run time may name
+// any route or method, so a route or a method so built that may write is refused. Null for any other `program`.
+export function apiWrite(program, tokens) {
+  if (program !== 'gh') return null;
+  let at = 0;
+  while (at < tokens.length && tokens[at].text.startsWith('-') && !tokens[at].dynamic) at += GH_VALUES.includes(tokens[at].text) ? 2 : 1;
+  if (tokens[at]?.text !== 'api' || tokens[at].dynamic) return null;
+  let method = null;
+  let fields = false;
+  let route = null;
+  let named = false;
+  const sent = [];
+  const rest = tokens.slice(at + 1);
+  for (let i = 0; i < rest.length; i += 1) {
+    const { text: word, dynamic } = rest[i];
+    const [name, attached] = optionValue(word);
+    if (API_VALUES.has(name) && !dynamic) {
+      const given = attached === null ? rest[(i += 1)] : { text: attached, dynamic: false };
+      const value = { text: String(given?.text ?? ''), dynamic: given?.dynamic === true };
+      if (name === '-X' || name === '--method') method = value.dynamic ? '?' : value.text.toUpperCase();
+      if (API_FIELDS.has(name)) {
+        fields = true;
+        sent.push({ name, ...value });
+      }
+    } else if (word.startsWith('-') || (dynamic && named)) {
+      // An option built at run time may be a method or a field, and one that takes no value is a switch.
+      if (dynamic) method = '?';
+    } else if (!named) {
+      named = true;
+      route = dynamic ? null : word.replace(/^\/+/u, '').split('?')[0];
+    }
+  }
+  if (route === 'graphql') return graphqlWrite(sent);
+  const writes = method === null ? fields : method !== 'GET' && method !== 'HEAD';
+  if (!writes) return null;
+  if (route === null) return 'a forge API route built at run time, with a method that writes';
+  return ISSUE_ROUTES.test(route.replace(/^repos\/\{owner\}\/\{repo\}\//u, 'repos/o/r/')) ? null : `the forge API route ${route.slice(0, 120)}, which only the Human writes`;
+}
+
+// An option word of gh api as [name, attached value]: `--name=value`, a short option glued to its value, as `-XPOST`,
+// or the word alone with null.
+function optionValue(word) {
+  if (word.startsWith('--') && word.includes('=')) return [word.slice(0, word.indexOf('=')), word.slice(word.indexOf('=') + 1)];
+  if (/^-[XfFHqtp]./u.test(word)) return [word.slice(0, 2), word.slice(2)];
+  return [word, null];
+}
+
+// What the GraphQL call whose fields are `sent` writes that an issue session never writes, or null (apiWrite).
+function graphqlWrite(sent) {
+  if (sent.some(({ name }) => name === '--input')) return 'a GraphQL document read from a file or the input, which may hold any mutation';
+  const query = sent.find(({ text }) => /^query=/u.test(text));
+  if (!query) return sent.some(({ dynamic, text }) => dynamic && !/^\w+=/u.test(text)) ? 'a GraphQL field built at run time, which may be its document' : null;
+  const text = query.text.slice('query='.length);
+  if (query.dynamic) return 'a GraphQL document built at run time, which may hold any mutation';
+  if (query.name !== '-f' && query.name !== '--raw-field' && text.startsWith('@')) return 'a GraphQL document read from a file, which may hold any mutation';
+  const fields = mutationFields(text);
+  if (fields === null) return 'a GraphQL mutation whose fields cannot be read';
+  const other = fields.find((field) => !ISSUE_MUTATIONS.has(field));
+  return other ? `the forge's GraphQL mutation ${other.slice(0, 80)}, which only the Human runs` : null;
+}
+
+// The top-level fields of every mutation in the GraphQL document `text`, with strings and comments skipped and an
+// alias's own name read: [] for a document with no mutation, null for one this cannot read.
+function mutationFields(text) {
+  const tokens = text.replace(/"""[\s\S]*?"""|"(?:\\.|[^"\\])*"|#[^\n]*/gu, ' " ').match(/[A-Za-z_][A-Za-z0-9_]*|\.\.\.|[{}():]|\S/gu) ?? [];
+  const fields = [];
+  let depth = 0;
+  let parens = 0;
+  let mutation = false;
+  let inside = false;
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (token === '(') parens += 1;
+    else if (token === ')') parens -= 1;
+    else if (token === '{') {
+      depth += 1;
+      if (depth === 1) inside = mutation;
+    } else if (token === '}') {
+      depth -= 1;
+      if (depth === 0) [mutation, inside] = [false, false];
+    } else if (depth === 0 && parens === 0 && token === 'mutation') mutation = true;
+    else if (depth === 0 && parens === 0 && /^(?:query|subscription|fragment)$/u.test(token)) mutation = false;
+    else if (inside && depth === 1 && parens === 0) {
+      if (token === '...') return null;
+      if (!/^[A-Za-z_]/u.test(token)) continue;
+      if (tokens[i + 1] === ':') {
+        i += 1;
+        continue;
+      }
+      fields.push(token);
+    }
+  }
+  return depth === 0 && parens === 0 ? fields : null;
+}
 const REVIEWS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
@@ -225,6 +373,76 @@ const NODE_QUERY = 'query($id:ID!){node(id:$id){... on PullRequest{url}}}';
 // When a pull request's body and title last changed: the body's last edit and the newest title rename, as the ready
 // checks hold reads whether a check an edit re-queues has had time to show.
 const EDITS_QUERY = 'query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){lastEditedAt timelineItems(last:1,itemTypes:[RENAMED_TITLE_EVENT]){nodes{... on RenamedTitleEvent{createdAt}}}}}}';
+// What an unattended merge confirms on the forge (lib/review/merge-trust.mjs), in one call: the user's login; the
+// default branch's name, and its config pointer, config.json, and knowledge folder at the paths given; and the pull
+// request's head, base, author, draft state, review decision, latest reviews, the head's checks, the changed files, the
+// newest reviews, and the first conversation comments, each with the login of every edit to it, and the base branch's
+// pointer and config.json; and the head branch, title, body, and first commits' messages, for the closing-word check.
+// A login GraphQL gives a bot carries no `[bot]`; `__typename` says whether the author is a bot.
+export const TRAIL_PAGE = 100;
+const BLOB = '... on Blob { text isTruncated }';
+const POLICY_FILES = `pointer: file(path: $pointer) { object { ${BLOB} } } config: file(path: $config) { object { ${BLOB} } }`;
+const TRAIL_QUERY = `query($o: String!, $r: String!, $n: Int!, $pointer: String!, $config: String!, $knowledge: String!) {
+  viewer { login }
+  repository(owner: $o, name: $r) {
+    defaultBranchRef {
+      name
+      target { ... on Commit { ${POLICY_FILES} knowledge: file(path: $knowledge) { object { ... on Tree { entries { name type object { ${BLOB} } } } } } } }
+    }
+    pullRequest(number: $n) {
+      headRefOid
+      headRefName
+      baseRefName
+      title
+      body
+      isDraft
+      reviewDecision
+      author { login }
+      baseRef { name target { ... on Commit { ${POLICY_FILES} } } }
+      latestReviews(first: ${TRAIL_PAGE}) { nodes { author { login } state } }
+      history: commits(first: ${TRAIL_PAGE}) { totalCount nodes { commit { oid message } } }
+      commits(last: 1) {
+        nodes { commit { oid statusCheckRollup { contexts(first: ${TRAIL_PAGE}) { totalCount nodes { __typename ... on CheckRun { name status conclusion } ... on StatusContext { context state } } } } } }
+      }
+      files(first: ${TRAIL_PAGE}) { totalCount nodes { path changeType } }
+      reviews(last: ${TRAIL_PAGE}) { totalCount nodes { author { login __typename } authorAssociation state commit { oid } submittedAt } }
+      comments(first: ${TRAIL_PAGE}) {
+        totalCount
+        nodes { fullDatabaseId author { login __typename } authorAssociation editor { login } body updatedAt userContentEdits(first: ${TRAIL_PAGE}) { totalCount nodes { editor { login } deletedBy { login } } } }
+      }
+    }
+  }
+}`;
+// One GraphQL node's author as the trail gives it: { login, bot }, with a deleted account's login null.
+const trailAuthor = (author) => ({ login: typeof author?.login === 'string' ? author.login : null, bot: author?.__typename === 'Bot' });
+// A GraphQL connection's nodes, and whether they are all of it.
+const trailNodes = (connection) => {
+  const nodes = Array.isArray(connection?.nodes) ? connection.nodes : [];
+  return { nodes, complete: Number.isSafeInteger(connection?.totalCount) && connection.totalCount <= nodes.length };
+};
+// A file the trail read: its text, null when the branch has none, or false when GitHub gave only part of it or no text.
+const blobText = (entry) => {
+  if (entry === null || entry === undefined) return null;
+  const object = entry.object;
+  return object && object.isTruncated === false && typeof object.text === 'string' ? object.text : false;
+};
+// A branch's policy files as the trail gives them: { name, pointer, config }, and `knowledge`, the folder's entries
+// [{ name, type, text }] or null with no such folder, for the default branch.
+const branchFiles = (name, target, knowledge = false) => ({
+  name: typeof name === 'string' ? name : null,
+  pointer: blobText(target?.pointer),
+  config: blobText(target?.config),
+  ...(knowledge ? {
+    knowledge: target?.knowledge === null || target?.knowledge === undefined ? null
+      : (Array.isArray(target.knowledge.object?.entries) ? target.knowledge.object.entries.map((entry) => ({ name: entry?.name, type: entry?.type, text: blobText(entry) })) : false),
+  } : {}),
+});
+// One check of the head as `forge.checks` rows give it: { name, state }, a check run's conclusion once it completed,
+// else its status, and a status context's state.
+const checkOf = (node) => (node?.__typename === 'StatusContext'
+  ? { name: String(node.context ?? ''), state: String(node.state ?? '') }
+  : { name: String(node?.name ?? ''), state: String((node?.status === 'COMPLETED' ? node.conclusion : node?.status) ?? '') });
+
 // How long an upload of images may take: a pull request's captures go up in one call.
 export const UPLOAD_TIMEOUT_MS = 10 * 60_000;
 
@@ -237,6 +455,19 @@ const namesItem = (apiUrl, kind, repo, n) => {
 
 // gh's default host, which a call names only when it is another.
 const DEFAULT_HOST = 'github.com';
+
+// The network hosts a session pushing to and reading from the forge at `host` must reach: the host itself, for git over
+// HTTPS, and, for github.com, its API host, which gh calls; a GitHub Enterprise host serves its API under its own name.
+// A sandbox's allowlist of a confined project session holds these and nothing else (lib/hosts/claude-code-sandbox.mjs).
+export function domains(host) {
+  const named = String(host ?? '').toLowerCase();
+  return named === DEFAULT_HOST ? [named, 'api.github.com'] : [named];
+}
+
+// The environment variables gh reads its token from (`gh help environment`): the one credential a confined project
+// session keeps in its sandbox, since it pushes and opens pull requests through gh; every other credential-named
+// variable is unset there (lib/hosts/claude-code-sandbox.mjs).
+export const TOKEN_VARS = Object.freeze(['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']);
 
 // A pull request or comment number as a route takes it: a safe positive integer, given as a number or as digits alone.
 // Anything else throws before any call, so no route is built from text a pull request supplies.
@@ -257,6 +488,10 @@ const graphNumber = (value) => {
 const clientError = (error) => /\(HTTP 4\d\d\)/u.test(`${error?.message ?? ''} ${error?.stderr ?? ''}`);
 // Whether gh failed on GitHub's 404.
 const notFound = (error) => /\(HTTP 404\)/u.test(`${error?.message ?? ''} ${error?.stderr ?? ''}`);
+// Whether a `change` call failed because GitHub has no such pull request: a 404 from REST, or GraphQL's answer that it
+// could not resolve the number, which `gh pr view` gives. Any other failure, such as a network error, may pass.
+export const changeNotFound = (error) => notFound(error)
+  || /Could not resolve to a PullRequest with the number/u.test(`${error?.message ?? ''} ${error?.stderr ?? ''}`);
 
 // One `gh pr checks` row in the forge's shape: its name and state, the workflow, event, and run that reported it, and
 // `workflowId`, the workflow file's id (filled in by workflowIds), null until it is read. `host` and `repo` name the
@@ -300,6 +535,97 @@ function workflowIds(rows, listRuns) {
   }
   for (const row of rows) row.workflowId = row.run === null ? null : ids.get(`${key(row.host, row.repo)}#${row.run}`) ?? null;
   return rows;
+}
+
+// The tag rule patterns that name every tag: GitHub's own `~ALL`, and `refs/tags/**/*`. A rule's `*` and `**` stop at a
+// slash, as fnmatch's do, so `refs/tags/*` and `refs/tags/**` let a tag such as `release/v1` through.
+const ALL_TAGS = new Set(['~ALL', 'refs/tags/**/*']);
+
+// The names of the environments of `repo` a workflow on any branch may deploy to, and so read the secrets of: those with
+// no deployment branch policy and no required reviewers rule that holds the signed-in user `login` (heldForReviewer).
+// A repository GitHub keeps no environments for has none.
+// SHORTCUT: an environment limited by custom branch patterns counts as held, though a pattern may match an issue's branch,
+// and so does one limited to protected branches, though a branch protection's pattern may match an issue's branch too;
+// an environment whose admins may bypass its rules (`can_admins_bypass`, true by default) counts as held, though an
+// admin's token, as the session's may be, deploys past them through a script. Listing each pattern against the branch
+// names issues get, and reading the bypass, would replace this when a team keeps secrets so.
+function openEnvironments(list, repo, host, login) {
+  let pages;
+  try {
+    pages = list(`repos/${repo}/environments`, { host });
+  } catch (error) {
+    if (notFound(error)) return [];
+    throw error;
+  }
+  const environments = pages.flatMap((page) => (Array.isArray(page?.environments) ? page.environments : []));
+  const reviewed = (each) => (Array.isArray(each?.protection_rules) ? each.protection_rules : []).some((rule) => heldForReviewer(rule, login));
+  return environments.filter((each) => typeof each?.name === 'string' && !each.deployment_branch_policy && !reviewed(each)).map((each) => each.name);
+}
+
+// Whether an environment's protection rule holds a deployment for a reviewer other than the signed-in user `login`
+// (null when it cannot be told): a required reviewers rule that prevents self-review, or that names reviewers, none of
+// them that user. A team may hold the user, so a rule naming one holds nothing, nor does one that names no reviewer:
+// the user who pushed the branch could approve the deployment, and its secrets, alone.
+function heldForReviewer(rule, login) {
+  if (rule?.type !== 'required_reviewers') return false;
+  if (rule.prevent_self_review === true) return true;
+  const reviewers = Array.isArray(rule.reviewers) ? rule.reviewers : [];
+  const other = (each) => each?.type === 'User' && typeof each.reviewer?.login === 'string' && typeof login === 'string' && login !== '' && each.reviewer.login.toLowerCase() !== login.toLowerCase();
+  return reviewers.length > 0 && reviewers.every(other);
+}
+
+// The signed-in user's login from `gh api --include user`'s answer, its headers then its body, or null.
+function signedInLogin(answer) {
+  const body = answer.split(/\r?\n\r?\n/u).slice(1).join('\n\n');
+  try {
+    const login = JSON.parse(body)?.login;
+    return typeof login === 'string' && login !== '' ? login : null;
+  } catch {
+    return null;
+  }
+}
+
+// One tag ruleset, as GitHub answers it, in the preflight's shape: { name, all, creation, update, bypass }: whether it
+// names every tag and excludes none, whether it restricts creating and updating a matching tag, and whether the
+// signed-in user may bypass it ('never', 'pull_requests_only', 'always', or 'exempt', as GitHub answers; null when it
+// says nothing).
+function tagRule(ruleset) {
+  const names = (key) => (Array.isArray(ruleset?.conditions?.ref_name?.[key]) ? ruleset.conditions.ref_name[key].map(String) : []);
+  const types = new Set((Array.isArray(ruleset?.rules) ? ruleset.rules : []).map((rule) => rule?.type));
+  return {
+    name: String(ruleset?.name ?? ''),
+    all: names('include').some((pattern) => ALL_TAGS.has(pattern)) && names('exclude').length === 0,
+    creation: types.has('creation'),
+    update: types.has('update'),
+    bypass: typeof ruleset?.current_user_can_bypass === 'string' ? ruleset.current_user_can_bypass : null,
+  };
+}
+
+// Whether the default branch's protection (not a ruleset) holds the signed-in user to a pull request: { held, why },
+// `held` true, false, or null when GitHub would not show its settings, `why` the reason it is not true. `read(route)`
+// reads a route under the branch; `admin` is whether that user administers the repository, which GitHub's default lets
+// past a protection that does not include administrators; `viewer()` gives the user's login. A protection that lets
+// named people skip its pull request holds only when that user is not one of them and no team or app is named, since a
+// team may hold that user.
+function branchHold(read, admin, viewer) {
+  if (read('')?.protected !== true) return { held: false, why: 'it has no branch protection' };
+  let rules;
+  try {
+    rules = read('/protection');
+  } catch (error) {
+    if (clientError(error)) return { held: null, why: 'GitHub shows the settings of its branch protection only to an administrator' };
+    throw error;
+  }
+  const reviews = rules?.required_pull_request_reviews;
+  if (!reviews) return { held: false, why: 'its branch protection does not ask for a pull request' };
+  if (admin && rules?.enforce_admins?.enabled !== true) return { held: false, why: 'its branch protection does not include administrators, and the signed-in user is one' };
+  const skip = reviews.bypass_pull_request_allowances ?? {};
+  const named = (key) => (Array.isArray(skip[key]) ? skip[key] : []);
+  if (named('teams').length > 0) return { held: false, why: 'its branch protection lets a team skip the pull request, which may hold the signed-in user' };
+  if (named('users').length > 0 && named('users').some((user) => String(user?.login ?? '').toLowerCase() === String(viewer() ?? '').toLowerCase())) {
+    return { held: false, why: 'its branch protection lets the signed-in user skip the pull request' };
+  }
+  return { held: true, why: null };
 }
 
 // The adapter for the repository at `cwd`. `run` is gh, the test seam: the adapter's methods call it, and it stays in
@@ -461,6 +787,75 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     repo: () => json(['repo', 'view', '--json', 'nameWithOwner']).nameWithOwner,
     // The repository itself, such as its `default_branch`.
     repository: (repo, { host } = {}) => rest(`repos/${repo}`, { host }),
+    // Whether the reviewer `login` reviewed any of the repository's last `limit` pull requests, for a project run's
+    // preflight: { changes, seen }, with a bot's login compared with or without its `[bot]` suffix.
+    reviewerSeen: (repo, login, { host, limit = 20 } = {}) => {
+      const list = json(['pr', 'list', '--repo', host ? `${host}/${repo}` : repo, '--state', 'all', '--limit', String(limit), '--json', 'number,reviews']);
+      const bare = (name) => String(name ?? '').replace(/\[bot\]$/u, '').toLowerCase();
+      const seen = Array.isArray(list) && list.some((change) => (change.reviews ?? []).some((review) => bare(review.author?.login) === bare(login)));
+      return { changes: Array.isArray(list) ? list.length : 0, seen };
+    },
+    // The names of the repository's active CI workflows, for a project run's preflight.
+    ciWorkflows: (repo, { host } = {}) => (rest(`repos/${repo}/actions/workflows`, { host })?.workflows ?? [])
+      .filter((workflow) => workflow?.state === 'active').map((workflow) => String(workflow.name)),
+    // What guards the default branch and the tags of `repo` from the signed-in user, whose token a project run's issue
+    // session keeps, for the run's preflight: { branch, protected, why, tags }. `branch` is the default branch's name;
+    // `protected` true when an active ruleset that asks for a pull request there may never be bypassed by that user, or
+    // branch protection asks for one and binds that user (branchHold), false when neither does, and null when only branch
+    // protection could hold and GitHub shows its settings to admins alone; `why` says why it is not true. `tags` holds
+    // each active tag ruleset (tagRule).
+    refProtection: (repo, { host } = {}) => {
+      const about = rest(`repos/${repo}`, { host });
+      const branch = about?.default_branch;
+      if (typeof branch !== 'string' || branch === '') throw new Error('GitHub named no default branch');
+      const rulesets = new Map();
+      const ruleset = (id) => {
+        if (!rulesets.has(id)) rulesets.set(id, rest(`repos/${repo}/rulesets/${id}`, { host }));
+        return rulesets.get(id);
+      };
+      const asks = list(`repos/${repo}/rules/branches/${encodeURIComponent(branch)}`, { host })
+        .filter((rule) => rule?.type === 'pull_request' && Number.isSafeInteger(rule.ruleset_id));
+      const ruled = [...new Set(asks.map((rule) => rule.ruleset_id))].map(ruleset).filter((each) => each?.enforcement === 'active');
+      const tags = list(`repos/${repo}/rulesets?targets=tag&includes_parents=true`, { host })
+        .filter((each) => each?.enforcement === 'active' && each?.target === 'tag' && Number.isSafeInteger(each?.id))
+        .map((each) => ruleset(each.id)).filter((each) => each?.enforcement === 'active').map(tagRule);
+      if (ruled.some((each) => each.current_user_can_bypass === 'never')) return { branch, protected: true, why: null, tags };
+      const read = (route) => rest(`repos/${repo}/branches/${encodeURIComponent(branch)}${route}`, { host });
+      const classic = branchHold(read, about?.permissions?.admin !== false, () => rest('user', { host })?.login);
+      const bypassed = ruled.map((each) => `the ruleset ${JSON.stringify(String(each.name ?? each.id))} asks for a pull request, and lets the signed-in user bypass it (${String(each.current_user_can_bypass ?? 'not said')})`);
+      const why = classic.held === true ? null : [...bypassed, classic.why].filter(Boolean).join('; ');
+      return { branch, protected: classic.held, why, tags };
+    },
+    // What a project run's issue session's token could run with the repository's secrets, for the run's preflight:
+    // { secrets, workflowPush }. `secrets` counts the Actions secrets of the repository, those its organization
+    // shares with it (none for a repository with no organization), and those of each environment any branch may deploy
+    // to without a reviewer other than the signed-in user (openEnvironments); `workflowPush` is whether the signed-in
+    // token's scopes include `workflow`, which GitHub asks of a push that changes a workflow file, or null for a token
+    // that names no scopes, as a fine-grained one.
+    workflowSecrets: (repo, { host } = {}) => {
+      const count = (route) => {
+        const total = rest(route, { host })?.total_count;
+        if (!Number.isSafeInteger(total)) throw new Error('GitHub answered no count of secrets');
+        return total;
+      };
+      let shared = 0;
+      try {
+        shared = count(`repos/${repo}/actions/organization-secrets`);
+      } catch (error) {
+        if (!notFound(error)) throw error;
+      }
+      const answer = String(gh(['api', '--include', ...(host ? ['--hostname', host] : []), 'user']));
+      const line = answer.split(/\r?\n/u).find((each) => /^x-oauth-scopes:/iu.test(each));
+      const scopes = line === undefined ? null : line.slice(line.indexOf(':') + 1).split(',').map((each) => each.trim());
+      const open = openEnvironments(list, repo, host, signedInLogin(answer)).reduce((sum, name) => sum + count(`repos/${repo}/environments/${encodeURIComponent(name)}/secrets`), 0);
+      const secrets = count(`repos/${repo}/actions/secrets`) + shared + open;
+      return { secrets, workflowPush: scopes === null ? null : scopes.includes('workflow') };
+    },
+    // The commit the branch `branch` of `repo` points to now, as a full SHA, or null when the answer names none.
+    branchHead: (repo, branch, { host } = {}) => {
+      const sha = rest(`repos/${repo}/branches/${encodeURIComponent(branch)}`, { host })?.commit?.sha;
+      return typeof sha === 'string' && /^[0-9a-f]{40}$/u.test(sha) ? sha : null;
+    },
     // One file of `repo` at `ref`, such as `refs/heads/main`: `{ type, encoding, content }`, its content base64.
     contents: (repo, file, ref, { host } = {}) => rest(`repos/${repo}/contents/${file.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(ref)}`, { host }),
     // One folder of a commit's tree, not recursive: `{ sha, tree: [{ path, mode, type, sha }], truncated }`, each entry's
@@ -647,6 +1042,85 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
       const [owner, name] = repo.split('/');
       return json(['api', 'graphql', '-f', `query=${THREADS_QUERY}`, '-f', `o=${owner}`, '-f', `r=${name}`, '-F', `n=${number}`, ...(after ? ['-f', `after=${after}`] : [])]);
     },
+    // What an unattended merge of pull request `n` of `repo` confirms on the forge, in the facade's shape: { viewer, head,
+    // base, author, draft, reviewDecision, latestReviews: [{ author: { login }, state }], checks: { head, rows, complete },
+    // files: [{ path, changeType }], filesTotal, filesComplete, reviews: [{ login, bot, association, state, commit, at }], reviewsComplete,
+    // comments: [{ id, login, bot, association, body, at, editors, editsComplete }], commentsComplete, branches: { default,
+    // base } }. `reviews` are the newest TRAIL_PAGE, `comments` and `files` the first TRAIL_PAGE; `editors` holds the
+    // login of the comment's last editor, of every edit of it, and of whoever deleted an edit from its history, null for a
+    // deleted account or an edit with no editor. `paths` are the pointer file, config.json, and knowledge folder to read on
+    // the default branch, and the first two on the base, from the top of the repository. `host` names the GitHub host.
+    // An answer with no pull request throws.
+    reviewTrail: (repo, n, { host, paths } = {}) => {
+      const number = idOf(n, 'a pull request number');
+      const [owner, name, ...extra] = String(repo).split('/');
+      if (!owner || !name || extra.length) throw new Error('a repository is owner/name');
+      const { pointer, config, knowledge } = paths ?? {};
+      if (![pointer, config, knowledge].every((each) => typeof each === 'string' && each !== '')) throw new Error('the review trail needs the paths of the policy files it reads');
+      const args = ['api', 'graphql', ...(host ? ['--hostname', host] : []), '-f', `query=${TRAIL_QUERY}`, '-f', `o=${owner}`, '-f', `r=${name}`, '-F', `n=${number}`,
+        '-f', `pointer=${pointer}`, '-f', `config=${config}`, '-f', `knowledge=${knowledge}`];
+      let answer;
+      try {
+        answer = json(args);
+      } catch (error) {
+        // A policy file the branch has not is GraphQL's NOT_FOUND on that field, and gh then exits 1 with the answer on
+        // stdout: the answer stands, with that field null. Any other error throws as gh threw it.
+        let partial = null;
+        try {
+          partial = JSON.parse(error?.stdout ?? '');
+        } catch {}
+        const missing = (each) => each?.type === 'NOT_FOUND' && ['pointer', 'config', 'knowledge'].includes(each?.path?.at(-1));
+        if (!partial?.data || !Array.isArray(partial.errors) || !partial.errors.every(missing)) throw error;
+        answer = partial;
+      }
+      const data = answer?.data;
+      const pr = data?.repository?.pullRequest;
+      if (!pr || typeof pr !== 'object') throw new Error(`GitHub answered no pull request #${number} of ${repo}`);
+      const files = trailNodes(pr.files);
+      const reviews = trailNodes(pr.reviews);
+      const comments = trailNodes(pr.comments);
+      const commit = pr.commits?.nodes?.at(-1)?.commit ?? null;
+      const history = trailNodes(pr.history);
+      const contexts = trailNodes(commit?.statusCheckRollup?.contexts);
+      const association = (each) => (typeof each?.authorAssociation === 'string' ? each.authorAssociation : null);
+      return {
+        viewer: typeof data?.viewer?.login === 'string' ? data.viewer.login : null,
+        head: typeof pr.headRefOid === 'string' ? pr.headRefOid : null,
+        headRef: typeof pr.headRefName === 'string' ? pr.headRefName : null,
+        title: typeof pr.title === 'string' ? pr.title : null,
+        body: typeof pr.body === 'string' ? pr.body : null,
+        // Every commit's message, for the closing-word check (lib/closing-words.mjs); complete only when all are here.
+        messages: history.nodes.map((each) => ({ oid: each?.commit?.oid ?? null, message: typeof each?.commit?.message === 'string' ? each.commit.message : null })),
+        messagesComplete: history.complete,
+        base: typeof pr.baseRefName === 'string' ? pr.baseRefName : null,
+        author: typeof pr.author?.login === 'string' ? pr.author.login : null,
+        draft: pr.isDraft === true,
+        reviewDecision: typeof pr.reviewDecision === 'string' ? pr.reviewDecision : '',
+        latestReviews: trailNodes(pr.latestReviews).nodes.map((each) => ({ author: { login: each?.author?.login ?? null }, state: each?.state ?? null })),
+        // No rollup is no check reported: an empty, whole list.
+        checks: { head: typeof commit?.oid === 'string' ? commit.oid : null, rows: contexts.nodes.map(checkOf), complete: commit?.statusCheckRollup ? contexts.complete : true },
+        files: files.nodes.filter((each) => typeof each?.path === 'string').map(({ path, changeType }) => ({ path, changeType: typeof changeType === 'string' ? changeType : null })),
+        filesTotal: Number.isSafeInteger(pr.files?.totalCount) ? pr.files.totalCount : null,
+        filesComplete: files.complete,
+        reviews: reviews.nodes.map((each) => ({ ...trailAuthor(each?.author), association: association(each), state: each?.state ?? null, commit: each?.commit?.oid ?? null, at: each?.submittedAt ?? null })),
+        reviewsComplete: reviews.complete,
+        comments: comments.nodes.map((each) => {
+          const edits = trailNodes(each?.userContentEdits);
+          return {
+            id: restId(each?.fullDatabaseId), ...trailAuthor(each?.author), association: association(each), body: typeof each?.body === 'string' ? each.body : '', at: each?.updatedAt ?? null,
+            // The comment's last editor, each edit's editor, and whoever deleted an edit from its history.
+            editors: [...(each?.editor ? [each.editor] : []), ...edits.nodes.flatMap((edit) => [edit?.editor ?? null, ...(edit?.deletedBy ? [edit.deletedBy] : [])])]
+              .map((actor) => (typeof actor?.login === 'string' ? actor.login : null)),
+            editsComplete: edits.complete,
+          };
+        }),
+        commentsComplete: comments.complete,
+        branches: {
+          default: branchFiles(data?.repository?.defaultBranchRef?.name, data?.repository?.defaultBranchRef?.target, true),
+          base: branchFiles(pr.baseRef?.name, pr.baseRef?.target),
+        },
+      };
+    },
     // When the body of pull request `n` of `repo` was last edited and its title last renamed, GitHub's GraphQL answer:
     // `data.repository.pullRequest` with `lastEditedAt` (null when never edited) and `timelineItems.nodes`, the newest
     // rename's `createdAt` or none.
@@ -687,5 +1161,46 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // Uploads image files to `repo` through the gh-image extension and returns what it prints: one Markdown image a file.
     // It may take UPLOAD_TIMEOUT_MS.
     uploadImages: (repo, files) => gh(['image', '--repo', repo, ...files], { timeoutMs: UPLOAD_TIMEOUT_MS }),
+    // What an auto-merge stop reads and does (lib/project-stops.mjs), and what the closing-word check reads
+    // (lib/pr-auto-merge.mjs closingProblem).
+    // Where pull request `ref` of `repo` stands for a merge: `ref` is its number or its head branch, and `repo` may name
+    // its host, `host/owner/name`. GitHub's view with MERGE_STATE_FIELDS: `mergeable` is MERGEABLE, CONFLICTING, or
+    // UNKNOWN, and `mergeStateStatus` is BEHIND, DIRTY, BLOCKED, CLEAN, UNSTABLE, HAS_HOOKS, DRAFT, or UNKNOWN.
+    mergeState: (repo, ref) => json(['pr', 'view', String(ref), '--repo', repo, '--json', MERGE_STATE_FIELDS]),
+    // Starts the failed jobs of each Actions workflow run of `repo` in `runs`, by id, again; returns the ids it asked for.
+    rerunFailedChecks: (repo, runs, { host } = {}) => runs.map((run) => {
+      const id = idOf(run, 'a workflow run id');
+      rest(`repos/${repo}/actions/runs/${id}/rerun-failed-jobs`, { method: 'POST', empty: true, host });
+      return id;
+    }),
+    // Whether a push that is no fast-forward may land on the branch `branch` of `repo`: false when GitHub protects the
+    // branch, whose protection only an admin may read, or a ruleset that applies to it forbids one (`non_fast_forward`).
+    branchAllowsForce: (repo, branch, { host } = {}) => {
+      const name = encodeURIComponent(branch);
+      if (rest(`repos/${repo}/branches/${name}`, { host })?.protected !== false) return false;
+      const rules = rest(`repos/${repo}/rules/branches/${name}`, { paginate: true, host });
+      return Array.isArray(rules) && rules.every((rule) => typeof rule?.type === 'string' && rule.type !== 'non_fast_forward');
+    },
+    // Brings pull request `n` of `repo` up to date with its base on the forge, only while its head is `expectedHead`:
+    // `merge` merges the base in, one new commit on top; `rebase` puts its commits on the base, which replaces them, a
+    // push that is no fast-forward. Throws what gh throws, such as GitHub's 422 for a conflict or a head that moved.
+    updateBranch: (repo, n, { host, expectedHead, method = 'merge' } = {}) => {
+      const number = idOf(n, 'a pull request number');
+      if (typeof expectedHead !== 'string' || !/^[0-9a-f]{40}$/u.test(expectedHead)) throw new Error('an update names the head it expects, a full commit SHA');
+      if (method === 'merge') return rest(`repos/${repo}/pulls/${number}/update-branch`, { method: 'PUT', fields: { expected_head_sha: expectedHead }, host });
+      if (method !== 'rebase') throw new Error('an update merges the base in or rebases onto it');
+      const id = rest(`repos/${repo}/pulls/${number}`, { host })?.node_id;
+      if (typeof id !== 'string' || !NODE_ID.test(id)) throw new Error(`GitHub gave no node id for pull request #${number}`);
+      return json(['api', 'graphql', ...(host ? ['--hostname', host] : []), '-f', `query=${REBASE_MUTATION}`, '-f', `id=${id}`, '-f', `head=${expectedHead}`]);
+    },
+    // One Actions workflow run of `repo`, by id: its `head_sha`, `head_branch`, `head_repository`, and `run_attempt`.
+    workflowRun: (repo, id, { host } = {}) => rest(`repos/${repo}/actions/runs/${idOf(id, 'a workflow run id')}`, { host }),
+    // The commits of pull request `n` of `repo`, every page, each with its `commit.message`: GitHub lists at most 250.
+    changeCommits: (repo, n, { host } = {}) => list(`repos/${repo}/pulls/${idOf(n, 'a pull request number')}/commits?per_page=100`, { host }),
   });
 }
+
+// The fields mergeState reads.
+export const MERGE_STATE_FIELDS = 'number,url,state,isDraft,mergeable,mergeStateStatus,headRefOid,headRefName,baseRefName,isCrossRepository,reviewDecision,latestReviews';
+// updateBranch's rebase, which GitHub's REST route does not offer.
+const REBASE_MUTATION = 'mutation($id:ID!,$head:GitObjectID!){updatePullRequestBranch(input:{pullRequestId:$id,expectedHeadOid:$head,updateMethod:REBASE}){pullRequest{headRefOid}}}';

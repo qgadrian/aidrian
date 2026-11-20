@@ -126,9 +126,31 @@ export const isFileEditTool = (tool) => HOSTS.some((host) => host.fileEditTools.
 //   edit      { file, edits, newText, replaceAll }: replacements in a file
 //   notebook  { file }: a cell of a notebook
 //   patch     { text, files: [{ file, added }] }: a patch naming its files, whose text is never known here
+// Every path in it is as the host's file tool resolves it (hostPath), as a leading `~` the host expands: the one resolver
+// every guard of a file tool reads it through.
 export function fileEditOf({ tool_name: tool, tool_input: given }) {
   const host = HOSTS.find((each) => each.fileEditTools.includes(tool));
-  return host ? host.fileEdit(tool, given ?? {}) : null;
+  const edit = host ? host.fileEdit(tool, given ?? {}) : null;
+  if (!edit) return edit;
+  const resolve = (file) => hostPath(host, file);
+  return {
+    ...edit,
+    ...(edit.file === undefined ? {} : { file: resolve(edit.file) }),
+    ...(Array.isArray(edit.files) ? { files: edit.files.map((each) => ({ ...each, file: resolve(each.file) })) } : {}),
+    targets: (edit.targets ?? []).map(resolve),
+  };
+}
+
+// A path a file tool of `host` names, as the host resolves it: its `filePath`, such as Claude Code's expansion of a
+// leading `~`, or the path as it is.
+const hostPath = (host, file) => (typeof file === 'string' && typeof host.filePath === 'function' ? host.filePath(file) : file);
+
+// The paths a file-tool read in a tool call names, as the tool names them, a null one standing for the call's folder,
+// or null when the tool reads no file through the host's own file tools: a host lists its read tools in
+// `fileReadTools` and names their paths with `fileRead(tool, input)`. A host whose reads all run in its shell lists none.
+export function fileReadOf({ tool_name: tool, tool_input: given }) {
+  const host = HOSTS.find((each) => (each.fileReadTools ?? []).includes(tool));
+  return host ? host.fileRead(tool, given ?? {}).map((file) => hostPath(host, file)) : null;
 }
 
 // The folders a project keeps `kind` (skills or agents) in, on every host that reads them.
@@ -139,6 +161,42 @@ export const modelChoices = () => Object.fromEntries(HOSTS.map((host) => [host.m
 
 // Every host's model prices, as { host, models, rows }: the data lib/model-prices.mjs reads. A host with none has no rows.
 export const priceTables = (hosts = HOSTS) => hosts.map((host) => ({ host: host.id, models: host.modelPrices?.models ?? [], rows: host.modelPrices?.rows ?? [] }));
+
+// The host instruction files and folders every host loads from the folders above where a session starts, as { files,
+// folders, users }: the names of each, and each host's own user folder under `env`, which it reads for every session,
+// with the names of the files in it that host loads as the user's own instructions, each { folder, names }.
+export function instructionNames(env = process.env, hosts = HOSTS) {
+  const declared = hosts.map((host) => host.instructionFiles).filter(Boolean);
+  return {
+    files: [...new Set(declared.flatMap((each) => each.files ?? []))],
+    folders: [...new Set(declared.flatMap((each) => each.folders ?? []))],
+    users: declared.map((each) => ({ folder: each.userFolder?.(env), names: each.globalNames ?? [] })).filter(({ folder }) => typeof folder === 'string' && folder !== ''),
+  };
+}
+
+// The main checkout's paths every host reads from a session in a linked worktree, as { folders, settings }: the
+// folders, from the checkout's root, and the settings files, each { file }.
+export function mainCheckoutPaths(hosts = HOSTS) {
+  const declared = hosts.map((host) => host.mainCheckoutPaths).filter(Boolean);
+  return {
+    folders: [...new Set(declared.flatMap((each) => each.folders ?? []))],
+    settings: declared.flatMap((each) => each.settings ?? []).filter((each) => typeof each?.file === 'string'),
+  };
+}
+
+// The host programs' subcommands that write the host's own config, as { programs, subcommands, valueOptions }, from
+// each adapter's `configCommands`: each subcommand a list of words, as `['mcp', 'add']`, and `valueOptions` the global
+// options that take the next word, skipped before it. A host that names none adds none.
+export const configCommands = (hosts = HOSTS) => hosts.map((host) => host.configCommands)
+  .filter((each) => Array.isArray(each?.programs) && Array.isArray(each.subcommands));
+
+// The host files of a checkout no session no Human attends writes, from its root, as every host declares them
+// (`protectedPaths`): their union, so a session of one host cannot plant what another loads.
+export const protectedPaths = (hosts = HOSTS) => [...new Set(hosts.flatMap((host) => host.protectedPaths ?? []))];
+
+// Whether the path whose parts from a confined attempt's clone root are `segments` is a host file some host loads from
+// any depth (`nestedProtected`), which no session no Human attends writes there.
+export const nestedProtected = (segments, hosts = HOSTS) => hosts.some((host) => typeof host.nestedProtected === 'function' && host.nestedProtected(segments) === true);
 
 // The handoff continue routes `host` can do, of CONTINUE_ROUTES in lib/config-schema.mjs; none for a host that names none.
 export const continueRoutes = (host) => host.capabilities.handoffContinue?.routes ?? [];

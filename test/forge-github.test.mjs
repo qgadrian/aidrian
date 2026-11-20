@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { runGh } from '../plugins/aidrian/lib/forges/github-cli.mjs';
-import { createGithubForge, FORGE_HOSTS, GITHUB_JSON, isTrustedCommenter, MAX_CHANGE_REFS, REVIEWS_PAGE, servedRepository, UPLOAD_TIMEOUT_MS } from '../plugins/aidrian/lib/forges/github.mjs';
+import { createGithubForge, domains, FORGE_HOSTS, GITHUB_JSON, isTrustedCommenter, MAX_CHANGE_REFS, REVIEWS_PAGE, servedRepository, UPLOAD_TIMEOUT_MS } from '../plugins/aidrian/lib/forges/github.mjs';
 import { remoteIdentity, repoIdentity } from '../plugins/aidrian/lib/forges/identity.mjs';
 import * as facade from '../plugins/aidrian/lib/forges/index.mjs';
 import { forgeFor } from '../plugins/aidrian/lib/forges/index.mjs';
@@ -19,11 +19,13 @@ import { viewForge, viewPrAt } from '../plugins/aidrian/lib/rules/github/merge-r
 // Every name the facade gives its callers.
 const FACADE = [
   'id', 'cwd', 'isTrustedCommenter', 'hosts', 'changeRef', 'changesState', 'changeUrl',
-  'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'contents', 'tree', 'visibility', 'viewer',
+  'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'branchHead', 'contents', 'tree', 'visibility', 'viewer',
   'conversationComments', 'comment', 'postComment', 'editComment', 'deleteComment', 'reactions',
-  'pull', 'diff', 'nodeChange', 'changeEdits', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',
+  'pull', 'diff', 'nodeChange', 'changeEdits', 'reviewTrail', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',
   'postReview', 'reviewComment', 'deleteReviewComment', 'findingThreads', 'replyToReviewComment', 'resolveThread', 'unresolveThread',
   'commit', 'checkRuns', 'compare', 'compareUrl', 'deployments', 'deploymentStatuses', 'uploadImages',
+  'mergeState', 'rerunFailedChecks', 'branchAllowsForce', 'updateBranch', 'changeCommits', 'workflowRun',
+  'reviewerSeen', 'ciWorkflows', 'refProtection', 'workflowSecrets',
 ];
 
 // The adapter over a recording gh: `answer(args)` is what gh prints for one call. Each call is kept with its options.
@@ -168,8 +170,19 @@ test('docs/providers/adding-a-host.md names every method a forge adapter impleme
 });
 
 test('the facade index gives shared code forgeFor and its helpers, and nothing of GitHub`s by name', () => {
-  assert.deepEqual(Object.keys(facade).sort(), ['MAX_BODY', 'REVIEWS_PAGE', 'forgeFor', 'isLogin', 'isTrustedCommenter', 'remoteIdentity', 'repoIdentity', 'servedRepository']);
+  assert.deepEqual(Object.keys(facade).sort(), ['MAX_BODY', 'REVIEWS_PAGE', 'changeNotFound', 'forgeApiWrite', 'forgeConfigCommands', 'forgeDomains', 'forgeFor', 'forgeRefCommands', 'forgeTokenVars', 'forgeWorkflowFolders', 'isLogin', 'isTrustedCommenter', 'remoteIdentity', 'repoIdentity', 'servedRepository']);
   assert.equal(facade.servedRepository, servedRepository);
+  // The forge CLI's subcommands that write the user's config, for the unattended write allowlist.
+  const commands = facade.forgeConfigCommands();
+  assert.ok(commands.every((each) => each.programs.includes('gh') && typeof each.what === 'string'));
+  assert.deepEqual(commands.flatMap((each) => each.subcommands.map((sub) => sub.join(' '))).sort(), ['alias delete', 'alias import', 'alias set', 'auth login', 'auth logout', 'auth refresh', 'auth setup-git', 'auth switch', 'config set', 'extension install']);
+  assert.ok(commands.every((each) => each.valueOptions.includes('-R')), 'gh\'s repository option is skipped before the subcommand');
+  // A pull request the forge has not: final. A forge that could not answer: not.
+  const failed = (text) => Object.assign(new Error(text), { stderr: text });
+  assert.equal(facade.changeNotFound(failed('gh: Not Found (HTTP 404)')), true);
+  assert.equal(facade.changeNotFound(failed('GraphQL: Could not resolve to a PullRequest with the number of 999. (repository.pullRequest)')), true);
+  assert.equal(facade.changeNotFound(failed('error connecting to api.github.com')), false);
+  assert.equal(facade.changeNotFound(failed('gh: Server Error (HTTP 502)')), false);
   assert.deepEqual(['amy', 'amy-d2', 'A'.repeat(39)].filter(facade.isLogin).length, 3);
   assert.deepEqual(['', '-amy', 'amy-', 'a--b', 'amy d', 'A'.repeat(40), null].filter(facade.isLogin), [], 'not a login');
   assert.equal(facade.isTrustedCommenter, isTrustedCommenter);
@@ -177,6 +190,118 @@ test('the facade index gives shared code forgeFor and its helpers, and nothing o
   assert.equal(facade.remoteIdentity, remoteIdentity);
   assert.equal(facade.REVIEWS_PAGE, REVIEWS_PAGE);
   assert.equal(facade.MAX_BODY, 65_536, 'the adapter names GitHub\'s longest body, and the facade gives it to shared code');
+});
+
+// A recording gh that answers each REST route from `answers`, by the route's word, an Error thrown as gh would.
+function routed(answers) {
+  return recorded((call) => {
+    const route = call.find((each) => each.startsWith('repos/') || each === 'user');
+    const answer = answers[route];
+    if (answer instanceof Error) throw answer;
+    return typeof answer === 'string' ? answer : JSON.stringify(answer ?? null);
+  });
+}
+
+// What GitHub answers for a repository whose default branch a ruleset with no bypass holds to a pull request, and whose
+// tags a ruleset over all of them, with no bypass, holds against creation and update.
+const HELD = {
+  'repos/acme/notes': { default_branch: 'main', permissions: { admin: true } },
+  'repos/acme/notes/rules/branches/main': [[{ type: 'pull_request', ruleset_id: 1 }, { type: 'deletion', ruleset_id: 1 }]],
+  'repos/acme/notes/rulesets/1': { id: 1, name: 'main', enforcement: 'active', current_user_can_bypass: 'never' },
+  'repos/acme/notes/rulesets?targets=tag&includes_parents=true': [[{ id: 7, target: 'tag', enforcement: 'active' }, { id: 8, target: 'tag', enforcement: 'evaluate' }, { id: 9, target: 'branch', enforcement: 'active' }]],
+  'repos/acme/notes/rulesets/7': { name: 'tags', enforcement: 'active', conditions: { ref_name: { include: ['~ALL'], exclude: [] } }, rules: [{ type: 'creation' }, { type: 'update' }, { type: 'deletion' }], current_user_can_bypass: 'never' },
+};
+const ALL_HELD = { name: 'tags', all: true, creation: true, update: true, bypass: 'never' };
+
+test('refProtection holds the default branch protected only by a rule the signed-in user cannot bypass, and reads each active tag ruleset', () => {
+  const { forge, args } = routed(HELD);
+  assert.deepEqual(forge.refProtection('acme/notes', { host: 'github.com' }), { branch: 'main', protected: true, why: null, tags: [ALL_HELD] });
+  assert.ok(args().every((each) => each.includes('--hostname')), 'the pinned host');
+  assert.ok(!args().some((each) => each.some((word) => word.includes('/protection'))), 'a ruleset that holds needs no read of branch protection');
+  // A ruleset whose pull request the signed-in user may bypass holds nothing, and branch protection is read instead.
+  for (const bypass of ['always', 'pull_requests_only', 'exempt', undefined]) {
+    const read = routed({ ...HELD, 'repos/acme/notes/rulesets/1': { ...HELD['repos/acme/notes/rulesets/1'], current_user_can_bypass: bypass }, 'repos/acme/notes/branches/main': { protected: false } }).forge.refProtection('acme/notes');
+    assert.equal(read.protected, false, String(bypass));
+    assert.match(read.why, /the ruleset "main" asks for a pull request, and lets the signed-in user bypass it.*it has no branch protection/u, String(bypass));
+  }
+  // Branch protection alone: it holds an administrator only when it includes administrators.
+  const classic = (protection, about = HELD['repos/acme/notes'], more = {}) => routed({
+    ...HELD, 'repos/acme/notes': about, 'repos/acme/notes/rules/branches/main': [[]], 'repos/acme/notes/branches/main': { protected: true },
+    'repos/acme/notes/branches/main/protection': protection, user: { login: 'octo' }, ...more,
+  }).forge.refProtection('acme/notes');
+  const reviews = { required_approving_review_count: 1 };
+  assert.deepEqual([classic({ required_pull_request_reviews: reviews, enforce_admins: { enabled: false } }).protected, classic({ required_pull_request_reviews: reviews, enforce_admins: { enabled: false } }).why],
+    [false, 'its branch protection does not include administrators, and the signed-in user is one'], 'an admin past a protection that does not include administrators');
+  assert.equal(classic({ required_pull_request_reviews: reviews, enforce_admins: { enabled: true } }).protected, true, 'administrators included');
+  assert.equal(classic({ required_pull_request_reviews: reviews, enforce_admins: { enabled: false } }, { default_branch: 'main', permissions: { admin: false, push: true } }).protected, true, 'a user with no admin rights');
+  assert.equal(classic({ required_pull_request_reviews: reviews, enforce_admins: { enabled: false } }, { default_branch: 'main' }).protected, false, 'no permissions said: counted an admin');
+  assert.equal(classic({ enforce_admins: { enabled: true } }).protected, false, 'no pull request asked');
+  assert.equal(classic({ required_pull_request_reviews: { ...reviews, bypass_pull_request_allowances: { users: [{ login: 'Octo' }] } }, enforce_admins: { enabled: true } }).protected, false, 'the user may skip it');
+  assert.equal(classic({ required_pull_request_reviews: { ...reviews, bypass_pull_request_allowances: { users: [{ login: 'other' }], teams: [] } }, enforce_admins: { enabled: true } }).protected, true, 'another user may skip it');
+  assert.equal(classic({ required_pull_request_reviews: { ...reviews, bypass_pull_request_allowances: { teams: [{ slug: 'ops' }] } }, enforce_admins: { enabled: true } }).protected, false, 'a team may hold the user');
+  const hidden = classic(new Error('gh: Not Found (HTTP 404)'), { default_branch: 'main', permissions: { admin: false } });
+  assert.deepEqual([hidden.protected, hidden.why], [null, 'GitHub shows the settings of its branch protection only to an administrator']);
+  assert.throws(() => classic(new Error('gh: connection reset')), /connection reset/u, 'any other failure throws');
+  // A tag rule names every tag, excluding none, and says what it restricts and who may bypass it.
+  const tag = (ruleset) => routed({ ...HELD, 'repos/acme/notes/rulesets/7': { ...HELD['repos/acme/notes/rulesets/7'], ...ruleset } }).forge.refProtection('acme/notes').tags[0];
+  assert.equal(tag({ conditions: { ref_name: { include: ['refs/tags/**/*'] } } }).all, true);
+  // A rule's `*` and `**` stop at a slash, so these let a tag such as release/v1 through.
+  for (const pattern of ['refs/tags/*', 'refs/tags/**', 'refs/tags/v*']) assert.equal(tag({ conditions: { ref_name: { include: [pattern] } } }).all, false, pattern);
+  assert.equal(tag({ conditions: { ref_name: { include: ['refs/tags/foo-*'] } } }).all, false, 'a narrow pattern');
+  assert.equal(tag({ conditions: { ref_name: { include: ['~ALL'], exclude: ['refs/tags/v*'] } } }).all, false, 'an exclusion');
+  assert.deepEqual(tag({ rules: [{ type: 'creation' }], current_user_can_bypass: 'always' }), { ...ALL_HELD, update: false, bypass: 'always' });
+  assert.equal(tag({ enforcement: 'evaluate' }), undefined, 'a ruleset the detail names inactive');
+  assert.throws(() => recorded(() => '{}').forge.refProtection('acme/notes'), /named no default branch/u);
+});
+
+test('workflowSecrets counts the repository\'s and its organization\'s Actions secrets, and reads the token\'s workflow scope', () => {
+  const headers = (scopes) => `HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n${scopes === null ? '' : `X-Oauth-Scopes: ${scopes}\r\n`}\r\n{"login":"octo"}`;
+  const secrets = (more) => routed({
+    'repos/acme/notes/actions/secrets': { total_count: 2 }, 'repos/acme/notes/actions/organization-secrets': { total_count: 1 }, 'repos/acme/notes/environments': [{ total_count: 0, environments: [] }],
+    user: headers('gist, read:org, repo, workflow'), ...more,
+  });
+  const { forge, args } = secrets();
+  assert.deepEqual(forge.workflowSecrets('acme/notes', { host: 'github.com' }), { secrets: 3, workflowPush: true });
+  assert.ok(args().some((each) => each.includes('--include') && each.includes('user')), 'the scopes come from the user read\'s headers');
+  assert.deepEqual(secrets({ user: headers('repo, read:org') }).forge.workflowSecrets('acme/notes'), { secrets: 3, workflowPush: false });
+  assert.deepEqual(secrets({ user: headers(null) }).forge.workflowSecrets('acme/notes'), { secrets: 3, workflowPush: null }, 'a token that names no scopes');
+  assert.deepEqual(secrets({ 'repos/acme/notes/actions/organization-secrets': new Error('gh: Not Found (HTTP 404)') }).forge.workflowSecrets('acme/notes').secrets, 2, 'no organization');
+  assert.throws(() => secrets({ 'repos/acme/notes/actions/secrets': new Error('gh: Forbidden (HTTP 403)') }).forge.workflowSecrets('acme/notes'), /Forbidden/u);
+  assert.throws(() => secrets({ 'repos/acme/notes/actions/secrets': {} }).forge.workflowSecrets('acme/notes'), /no count of secrets/u);
+});
+
+test('workflowSecrets counts the secrets of an environment any branch may deploy to, and not those of one held to protected branches or reviewers', () => {
+  const headers = 'HTTP/2.0 200 OK\r\nX-Oauth-Scopes: repo, workflow\r\n\r\n{"login":"octo"}';
+  const open = { name: 'prod deploy', deployment_branch_policy: null, protection_rules: [{ type: 'wait_timer', wait_timer: 5 }] };
+  const branches = { name: 'staging', deployment_branch_policy: { protected_branches: true, custom_branch_policies: false }, protection_rules: [{ type: 'branch_policy' }] };
+  const user = (login) => ({ type: 'User', reviewer: { login } });
+  const reviewers = (prevent, ...named) => ({ name: 'release', deployment_branch_policy: null, protection_rules: [{ type: 'required_reviewers', prevent_self_review: prevent, reviewers: named }] });
+  const reviewed = reviewers(true, user('Octo'));
+  const read = (environments, more = {}) => routed({
+    'repos/acme/notes/actions/secrets': { total_count: 0 }, 'repos/acme/notes/actions/organization-secrets': { total_count: 0 }, user: headers,
+    'repos/acme/notes/environments': [{ total_count: environments.length, environments }],
+    'repos/acme/notes/environments/prod%20deploy/secrets': { total_count: 4 }, 'repos/acme/notes/environments/staging/secrets': { total_count: 2 },
+    'repos/acme/notes/environments/release/secrets': { total_count: 3 }, ...more,
+  });
+  // Every secret in an environment no rule holds: the preflight sees them.
+  const { forge, args } = read([open]);
+  assert.deepEqual(forge.workflowSecrets('acme/notes', { host: 'github.com' }), { secrets: 4, workflowPush: true });
+  assert.ok(args().some((each) => each.includes('repos/acme/notes/environments/prod%20deploy/secrets')), 'the name of the environment is encoded in its route');
+  // Held to protected branches, or to a reviewer: not counted.
+  assert.equal(read([branches, reviewed]).forge.workflowSecrets('acme/notes').secrets, 0);
+  assert.ok(!read([branches, reviewed]).args().some((each) => each.some((word) => /environments\/.+\/secrets/u.test(word))), 'a held environment\'s secrets are not read');
+  assert.equal(read([open, branches]).forge.workflowSecrets('acme/notes').secrets, 4);
+  // A reviewer rule holds only when the signed-in user cannot approve alone: self-review prevented, or every reviewer
+  // another user. The user named, a team that may hold the user, or no reviewer at all: counted.
+  const counted = (environment) => read([environment]).forge.workflowSecrets('acme/notes').secrets;
+  assert.deepEqual([counted(reviewers(false, user('Octo'))), counted(reviewers(false, user('ada'), user('octo'))), counted(reviewers(false, { type: 'Team', reviewer: { slug: 'ops' } })), counted(reviewers(false)), counted(reviewers(undefined, user('octo')))], [3, 3, 3, 3, 3]);
+  assert.deepEqual([counted(reviewers(true, user('octo'))), counted(reviewers(false, user('ada'))), counted(reviewers(false, user('ada'), user('grace')))], [0, 0, 0]);
+  // A login the forge does not name may be any reviewer's.
+  const anonymous = read([reviewers(false, user('ada'))], { user: 'HTTP/2.0 200 OK\r\nX-Oauth-Scopes: repo\r\n\r\nnot json' });
+  assert.equal(anonymous.forge.workflowSecrets('acme/notes').secrets, 3);
+  // A repository GitHub keeps no environments for has none; any other failure throws.
+  assert.equal(read([], { 'repos/acme/notes/environments': new Error('gh: Not Found (HTTP 404)') }).forge.workflowSecrets('acme/notes').secrets, 0);
+  assert.throws(() => read([open], { 'repos/acme/notes/environments/prod%20deploy/secrets': new Error('gh: Forbidden (HTTP 403)') }).forge.workflowSecrets('acme/notes'), /Forbidden/u);
 });
 
 test('mergedChanges takes a repo option, as openChanges does, and the repository check names only a repository the adapter serves', () => {
@@ -429,6 +554,15 @@ test('checks: gh pr checks as aidrian pr checks ran it, and the rows gh prints w
   assert.throws(() => recorded(() => 'not json').forge.checks('7'), SyntaxError, 'a success that prints no JSON throws');
 });
 
+test('branchHead reads the commit a branch points to on its host, and gives null for an answer that names none', () => {
+  const sha = 'abcdef1234567890abcdef1234567890abcdef12';
+  const { forge, args } = recorded(() => JSON.stringify({ name: 'main', commit: { sha } }));
+  assert.equal(forge.branchHead('acme/notes', 'release/1.0', { host: 'ghe.acme.io' }), sha);
+  assert.deepEqual(args(), [['api', '--hostname', 'ghe.acme.io', 'repos/acme/notes/branches/release%2F1.0']]);
+  assert.equal(recorded(() => JSON.stringify({ commit: { sha: 'short' } })).forge.branchHead('acme/notes', 'main'), null);
+  assert.equal(recorded(() => '{}').forge.branchHead('acme/notes', 'main'), null);
+});
+
 test('aidrian pr auto-merge`s calls: --hostname on every REST call, the contents route encoded, and every page of the lists', () => {
   const H = ['--hostname', 'ghe.acme.io'];
   const { forge, args } = recorded((call) => (call.includes('--slurp') ? '[[{"id":1}],[{"id":2}]]' : '{"login":"me","default_branch":"main"}'));
@@ -591,6 +725,77 @@ test('the ready checks hold`s edit times: one GraphQL call, naming a host only w
   const query = 'query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){lastEditedAt timelineItems(last:1,itemTypes:[RENAMED_TITLE_EVENT]){nodes{... on RenamedTitleEvent{createdAt}}}}}}';
   const tail = ['-f', `query=${query}`, '-f', 'o=acme', '-f', 'r=notes', '-F', 'n=12'];
   assert.deepEqual(args(), [['api', 'graphql', ...tail], ['api', 'graphql', '--hostname', 'ghe.example.com', ...tail]]);
+});
+
+test('the review trail: one GraphQL call naming the host and the policy paths it is given, answered in the facade`s shape', () => {
+  const sha = 'a'.repeat(40);
+  const blob = (text) => ({ object: { text, isTruncated: false } });
+  const answer = {
+    data: {
+      viewer: { login: 'adrian' },
+      repository: {
+        defaultBranchRef: { name: 'main', target: { pointer: null, config: blob('{"version":1}'), knowledge: { object: { entries: [{ name: '10-x.json', type: 'blob', object: { text: '{}', isTruncated: false } }] } } } },
+        pullRequest: {
+          headRefOid: sha,
+          headRefName: 'feat/x',
+          baseRefName: 'release',
+          title: 'feat: x',
+          body: 'Fixes ENG-1',
+          history: { totalCount: 101, nodes: [{ commit: { oid: sha, message: 'feat: x' } }] },
+          isDraft: false,
+          reviewDecision: 'APPROVED',
+          author: { login: 'adrian' },
+          baseRef: { name: 'release', target: { pointer: { object: { text: 'cut', isTruncated: true } }, config: blob('{}') } },
+          latestReviews: { nodes: [{ author: { login: 'lead' }, state: 'APPROVED' }] },
+          commits: { nodes: [{ commit: { oid: sha, statusCheckRollup: { contexts: { totalCount: 2, nodes: [{ __typename: 'CheckRun', name: 'e2e', status: 'IN_PROGRESS', conclusion: null }, { __typename: 'StatusContext', context: 'deploy', state: 'SUCCESS' }] } } } }] },
+          files: { totalCount: 2, nodes: [{ path: 'src/a.js', changeType: 'MODIFIED' }] },
+          reviews: { totalCount: 1, nodes: [{ author: { login: 'review-bot', __typename: 'Bot' }, authorAssociation: 'NONE', state: 'APPROVED', commit: { oid: sha }, submittedAt: '2026-11-18T10:00:00Z' }] },
+          comments: {
+            totalCount: 2,
+            nodes: [
+              { fullDatabaseId: '42', author: { login: 'review-bot', __typename: 'Bot' }, authorAssociation: 'NONE', editor: { login: 'adrian' }, body: 'card', updatedAt: '2026-11-18T10:01:00Z', userContentEdits: { totalCount: 2, nodes: [{ editor: { login: 'review-bot' }, deletedBy: null }, { editor: null, deletedBy: { login: 'adrian' } }] } },
+              { fullDatabaseId: '43', author: null, authorAssociation: 'NONE', editor: null, body: 'gone', updatedAt: '2026-11-18T10:02:00Z', userContentEdits: { totalCount: 101, nodes: [] } },
+            ],
+          },
+        },
+      },
+    },
+  };
+  const { forge, args } = recorded(() => JSON.stringify(answer));
+  const paths = { pointer: '.aidrian.json', config: '.aidrian/config.json', knowledge: '.aidrian/knowledge' };
+  assert.deepEqual(forge.reviewTrail('acme/notes', 7, { paths }), {
+    viewer: 'adrian', head: sha, headRef: 'feat/x', title: 'feat: x', body: 'Fixes ENG-1', messages: [{ oid: sha, message: 'feat: x' }], messagesComplete: false,
+    base: 'release', author: 'adrian', draft: false, reviewDecision: 'APPROVED',
+    latestReviews: [{ author: { login: 'lead' }, state: 'APPROVED' }],
+    checks: { head: sha, rows: [{ name: 'e2e', state: 'IN_PROGRESS' }, { name: 'deploy', state: 'SUCCESS' }], complete: true },
+    files: [{ path: 'src/a.js', changeType: 'MODIFIED' }], filesTotal: 2, filesComplete: false,
+    reviews: [{ login: 'review-bot', bot: true, association: 'NONE', state: 'APPROVED', commit: sha, at: '2026-11-18T10:00:00Z' }], reviewsComplete: true,
+    comments: [
+      { id: 42, login: 'review-bot', bot: true, association: 'NONE', body: 'card', at: '2026-11-18T10:01:00Z', editors: ['adrian', 'review-bot', null, 'adrian'], editsComplete: true },
+      { id: 43, login: null, bot: false, association: 'NONE', body: 'gone', at: '2026-11-18T10:02:00Z', editors: [], editsComplete: false },
+    ],
+    commentsComplete: true,
+    branches: {
+      default: { name: 'main', pointer: null, config: '{"version":1}', knowledge: [{ name: '10-x.json', type: 'blob', text: '{}' }] },
+      base: { name: 'release', pointer: false, config: '{}' },
+    },
+  }, 'the last editor, each edit`s editor, whoever deleted an edit, and a file given only in part as false');
+  forge.reviewTrail('acme/notes', 7, { host: 'ghe.example.com', paths: { pointer: 'web/.aidrian.json', config: 'web/.aidrian/config.json', knowledge: 'web/.aidrian/knowledge' } });
+  const [plain, enterprise] = args();
+  assert.deepEqual(plain.slice(0, 2), ['api', 'graphql']);
+  assert.deepEqual(plain.slice(-12), ['-f', 'o=acme', '-f', 'r=notes', '-F', 'n=7', '-f', 'pointer=.aidrian.json', '-f', 'config=.aidrian/config.json', '-f', 'knowledge=.aidrian/knowledge']);
+  assert.deepEqual(enterprise.slice(0, 4), ['api', 'graphql', '--hostname', 'ghe.example.com']);
+  assert.deepEqual(enterprise.slice(-6), ['-f', 'pointer=web/.aidrian.json', '-f', 'config=web/.aidrian/config.json', '-f', 'knowledge=web/.aidrian/knowledge']);
+  assert.throws(() => forge.reviewTrail('acme/notes', '7; rm', { paths }), /positive whole number/u, 'no number from text');
+  assert.throws(() => forge.reviewTrail('acme', 7, { paths }), /owner\/name/u);
+  assert.throws(() => forge.reviewTrail('acme/notes', 7), /needs the paths of the policy files/u, 'the caller names the paths');
+  assert.throws(() => recorded(() => '{"data":{"repository":{"pullRequest":null}}}').forge.reviewTrail('acme/notes', 7, { paths }), /no pull request #7/u);
+  // A policy file the branch has not is GraphQL's NOT_FOUND on that field, with gh exiting 1: the answer stands.
+  const missing = { data: { ...answer.data, repository: { ...answer.data.repository, defaultBranchRef: { name: 'main', target: { pointer: null, config: blob('{}'), knowledge: null } } } }, errors: [{ type: 'NOT_FOUND', path: ['repository', 'defaultBranchRef', 'target', 'pointer'] }] };
+  const partial = createGithubForge({ cwd: '/repo', run: () => { throw Object.assign(new Error('exit 1'), { stdout: JSON.stringify(missing) }); } });
+  assert.equal(partial.reviewTrail('acme/notes', 7, { paths }).branches.default.knowledge, null);
+  const other = createGithubForge({ cwd: '/repo', run: () => { throw Object.assign(new Error('exit 1'), { stdout: JSON.stringify({ ...missing, errors: [{ type: 'FORBIDDEN', path: ['repository'] }] }) }); } });
+  assert.throws(() => other.reviewTrail('acme/notes', 7, { paths }), /exit 1/u, 'any other error throws');
 });
 
 test('compareUrl: a link from two full-hex SHAs on the forge`s own address of the repository, read once, and none from anything else', () => {
@@ -874,6 +1079,15 @@ test('runGh hands a request body to a real gh child on its stdin, and gives a ca
   const sha = 'a'.repeat(40);
   assert.deepEqual(forge.postReview('o/r', 7, { commitId: sha, body: '@/etc/passwd', comments: [{ path: '@a.js', line: 2, side: 'RIGHT', body: 'true' }] }), { refused: false, id: 5, login: null, comments: [] });
   assert.deepEqual(JSON.parse(read()[2]), { commit_id: sha, body: '@/etc/passwd', event: 'COMMENT', comments: [{ path: '@a.js', line: 2, side: 'RIGHT', body: 'true' }] });
+});
+
+// The hosts a confined project session's sandbox may reach (lib/hosts/claude-code-sandbox.mjs): git over HTTPS to the
+// host, and gh's API host for github.com; an Enterprise host serves its API under its own name.
+test('the forge\'s network hosts are the host and, for github.com, its API host', () => {
+  assert.deepEqual(domains('github.com'), ['github.com', 'api.github.com']);
+  assert.deepEqual(domains('GitHub.com'), ['github.com', 'api.github.com']);
+  assert.deepEqual(domains('ghe.example.com'), ['ghe.example.com']);
+  assert.deepEqual(facade.forgeDomains({ host: 'github.com', owner: 'o', name: 'r' }), ['github.com', 'api.github.com']);
 });
 
 // changesState's batched read. test/fixtures/forges/github/changes-state.json records one answer GitHub gave to it,

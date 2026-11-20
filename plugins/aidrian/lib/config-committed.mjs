@@ -3,20 +3,24 @@
 
 import { spawnSync } from 'node:child_process';
 
+import { cloneGitProblem } from './attempt-clone.mjs';
 import { DEFAULTS, deepFreeze } from './config-defaults.mjs';
 import { handoffContinueDefault, legacyHandoff, merge } from './config-merge.mjs';
 import { NO_REVIEWER, SCHEMA } from './config-schema.mjs';
 import { versionProblem } from './config-version.mjs';
 import { isObject } from './fs.mjs';
-import { runGit } from './git.mjs';
+import { hardenedArgs, hardenedEnv, runGit } from './git.mjs';
 
 // The project config as committed at `commit`, with no machine settings: what a pull request cannot change from its
 // own working copy, such as github.maxReviewRounds. A commit with no config, or one that does not parse, gives
 // DEFAULTS; a value that fails its check keeps its default, as loadConfig does, and goes to `errors` when the caller
-// passes that list. `options` overrides the spawn's, such as a hook's shorter timeout.
+// passes that list. `options` overrides the spawn's, such as a hook's shorter timeout. In a project run's attempt clone
+// that runGit would refuse (attempt-clone.mjs cloneGitProblem), it runs no git and throws, as when git fails.
 export function committedConfig(project, commit, errors = [], options = {}) {
+  const refused = cloneGitProblem(project.root);
+  if (refused) throw new Error(`git show ${commit}:./${project.paths.config} failed: ${refused}`);
   // `./`: the path from project.root, where git runs, so a project below the repository root reads its own file.
-  const shown = spawnSync('git', ['show', `${commit}:./${project.paths.config}`], { cwd: project.root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 15_000, ...options });
+  const shown = spawnSync('git', hardenedArgs(['show', `${commit}:./${project.paths.config}`]), { cwd: project.root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 15_000, ...options, env: hardenedEnv(options.env) });
   if (shown.error || shown.signal) throw new Error(`git show ${commit}:./${project.paths.config} failed: ${shown.error?.message ?? shown.signal}`);
   return configFromText(shown.status === 0 ? shown.stdout : null, project.paths.config, errors);
 }
@@ -39,18 +43,18 @@ export const originDefaultTip = (root, git = () => undefined) => firstTip(root, 
 // The commit of the base branch, from names the working copy cannot set (originDefaultTip). A branch that names itself in
 // config.json `git.defaultBranch` is not its own base. With no remote at all, a local branch of the plugin's default name
 // is the only record of the base; with any remote, whatever its name, a local branch can hold commits no one reviewed, so
-// it never stands in. null when none resolves, or when git fails on one.
-export function baseBranchTip(root) {
+// it never stands in. null when none resolves, or when git fails on one. `git` gives each read's options, as firstTip's.
+export function baseBranchTip(root, git = () => undefined) {
   try {
-    const origin = originDefaultTip(root);
+    const origin = originDefaultTip(root, git);
     if (origin) return origin;
+    const remotes = runGit(['remote'], root, git());
+    if (remotes.status !== 0 || remotes.stdout.trim() !== '') return null;
+    const local = runGit(['rev-parse', '--verify', '--quiet', `refs/heads/${DEFAULTS.git.defaultBranch}^{commit}`], root, git());
+    return local.status === 0 ? local.stdout.trim() : null;
   } catch {
     return null;
   }
-  const remotes = runGit(['remote'], root);
-  if (remotes.status !== 0 || remotes.stdout.trim() !== '') return null;
-  const local = runGit(['rev-parse', '--verify', '--quiet', `refs/heads/${DEFAULTS.git.defaultBranch}^{commit}`], root);
-  return local.status === 0 ? local.stdout.trim() : null;
 }
 
 // Why a record read through the working copy's `state.dir` is not the one the committed config names, or null. `working`

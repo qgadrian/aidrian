@@ -24,6 +24,7 @@ const COMMANDS = {
   quorum: './quorum.mjs',
   decisions: './decisions-cli.mjs',
   report: './report.mjs',
+  project: './project-run-cli.mjs',
   'shell-init': './shell-init.mjs',
   test: './test-changed.mjs',
 };

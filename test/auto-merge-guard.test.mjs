@@ -129,6 +129,18 @@ test('every plugin file the gate, its command, its review, and the hooks load ke
   assert.deepEqual(EXCEPTIONS.filter((each) => !used.has(each)).map(({ file, line }) => `${file} ${line}`), [], 'exceptions nothing needs any more');
 });
 
+// Every module GUARDED_LIB names, as a path from the repository root: a guarded module is the gate's machinery, so what
+// it loads is too, even when the walk from the entries reaches it only through a command dispatch it does not follow.
+const guardedModules = () => readdirSync(path.join(ROOT, PLUGIN, 'lib')).map((name) => `${PLUGIN}/lib/${name}`).filter((file) => file.endsWith('.mjs') && guarded(file));
+
+test('every plugin file a guarded module loads is guarded too, so the guarded set is closed under its imports', () => {
+  const entries = guardedModules();
+  assert.ok(entries.includes(`${PLUGIN}/lib/project-run-cli.mjs`), 'the guarded modules include the project run command');
+  const { files } = closure(entries);
+  const open = files.filter((file) => file.startsWith(`${PLUGIN}/`) && !guarded(file));
+  assert.deepEqual(open, [], 'files a guarded module loads that a pull request could change under auto-merge: add each to GUARDED_LIB or GUARDED_PLUGIN in plugins/aidrian/lib/project.mjs');
+});
+
 test('the walk fails closed on a load it cannot follow, and on a hook it cannot read', () => {
   const module = (source) => () => closure([`${PLUGIN}/lib/new-module.mjs`], (file) => (file.endsWith('new-module.mjs') ? source : readFileSync(path.join(ROOT, file), 'utf8')));
   for (const source of [

@@ -231,6 +231,13 @@ export async function prepareStep(s) {
     baseMerge = null;
     mergeNote = `the merge from ${info.baseRefName} could not be read (${stderrTail(error.message, { chars: 200 })}): the whole change is reviewed`;
   }
+  // A head last reviewed by its resolutions alone (`state.remerge`) that this step reviews whole: each result recorded
+  // on it was judged on the resolution only, so it is marked and never reused (resultFor), and the record stops naming
+  // the head as a resolution-only review, so a later step on it reuses what the whole review records.
+  if (mergeNote && sameCommit(state.remerge?.head, head)) {
+    for (const result of Object.values(state.passes)) if (isObject(result) && sameCommit(result.head, head)) result.remerge = true;
+    delete state.remerge;
+  }
   if (baseMerge?.clean) {
     // A carried review answers the closed findings' threads as a finished step does (replies.mjs answerThreads), before
     // the record is written, so their marks are kept and posted.
@@ -276,9 +283,7 @@ export async function prepareStep(s) {
   // Accepted residual (tracked on pull request #457): the plan reads `changes`, the merge-base diff, so a file whose
   // conflict a merge resolved exactly to the base's text, or that a plain push took back to the base's text, is not in
   // it. A delta pass still reads that resolution (boundFor `resolved`) or rollback (boundFor `rolledBack`), but in a split
-  // review the file gets no slice of its own, and it triggers no flow by its path. And a slice a fix repacked restarts
-  // from the base (sameFiles), so it reads no bound delta: an open finding assigned to it on a file it lost is not in its
-  // `files` (dispatch.mjs passInput keeps an open finding's file only in a bound delta), and it cannot raise it again.
+  // review the file gets no slice of its own, and it triggers no flow by its path.
   const traced = contentFlows({ root, head, changes, addedLines, flows: review.flows });
   const planFor = (minDepth) => buildPlan({
     head, base, changes, addedLines, removedFiles, config: effective, harnessChanged: [...new Set(harnessChanged)], extraFlows: traced,
@@ -367,7 +372,7 @@ export async function prepareStep(s) {
       // A bounded file the merge-base diff no longer holds, yet changed since `from`: a push, or a resolution, took it
       // back to the base's text. Its diff from the merge base is empty, and its diff from `from` to the head holds the
       // base's own edits to it since `earlierBase`, so the reviewer reads the rollback as the reverse of the pull
-      // request's own change at `from`, `git diff <from> <earlierBase> -- <file>`.
+      // request's own change at `from`, `git --literal-pathspecs diff <from> <earlierBase> -- <file>`.
       // Accepted residuals (tracked on pull request #457): a base that adopts one of the pull request's earlier edits
       // can make a file read as rolled back though the pull request took nothing back, and a partial rollback within a
       // file that keeps other edits stays in `changes`, so it is not listed as rolled back; its diff from the merge base
@@ -408,13 +413,11 @@ export async function prepareStep(s) {
   // reads. A copy that is not private is never built on (state.mjs readRecord). An earlier result whose range merged the
   // base branch where the whole change must be reviewed (boundFor's `files` null: the base changed how the project is
   // reviewed, a merge git cannot read, or `mergeNote`) is never reused, whatever files the pass covers: it was judged
-  // without that rule, or on a range nobody could read.
-  // Accepted residual (tracked on pull request #457): after a resolution-only review, a commit on the base branch that
-  // changes how the project is reviewed, while the pull request's head stays the same, runs no pass again: a result for
-  // this head is reused by its head alone.
+  // without that rule, or on a range nobody could read. Nor is a result a resolution-only review recorded on a head the
+  // step now reviews whole (`remerge` on the result): it judged the resolution alone.
   const resultFor = (pass) => {
     const result = state.passes[pass.id];
-    if (!result || result.evidenceWithheld === true || result.notesWithheld === true || !sameFiles(pass, result)) return null;
+    if (!result || result.remerge === true || result.evidenceWithheld === true || result.notesWithheld === true || !sameFiles(pass, result)) return null;
     if (result.head === head) return result;
     const since = delta(result.head);
     if (!since || touches(since, pass.files) || result.open !== 0) return null;

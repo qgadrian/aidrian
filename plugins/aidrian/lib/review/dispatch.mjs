@@ -222,15 +222,16 @@ export function passInput(s, pass, stage) {
   // A delta whose range merged the base branch reads only this pull request's own files (step.mjs boundFor): the pass's
   // own list, else the bounded delta's. With none left, or a merge git cannot read, it reads the whole change instead.
   // A blocking finding the pass reads in `earlier`, its own or one handed to it, keeps its file in the list though that
-  // file changed nothing since, or lies outside a scoped pass's own files (a slice, a flow pass): dropped from the list,
+  // file changed nothing since, or lies outside a scoped pass's own files (a slice, a flow pass), on any range: a slice
+  // a fix repacked restarts from the base (sameFiles) and still reads the findings listed to it. Dropped from the list,
   // the reviewer could not raise it again, and it would close unfixed.
   const bound = from !== base ? s.boundFor?.(from) ?? null : null;
-  const openFiles = bound?.files ? earlier.filter(blocks).map((finding) => finding.file).filter((file) => typeof file === 'string') : [];
+  const openFiles = earlier.filter(blocks).map((finding) => finding.file).filter((file) => typeof file === 'string');
   const ownFiles = bound?.files ? [...new Set([...s.delta(from).map((change) => change.file), ...openFiles])] : null;
-  const scopedFiles = bound?.files && pass.files ? [...new Set([...pass.files, ...openFiles])] : pass.files;
+  const scopedFiles = pass.files ? [...new Set([...pass.files, ...openFiles])] : pass.files;
   if (bound && (!bound.files || !(scopedFiles ?? ownFiles).length)) from = base;
   const merged = bound && from !== base ? bound : null;
-  const files = (merged ? scopedFiles : pass.files) ?? (scope ? scope.changes.map((change) => change.file) : merged ? ownFiles : null);
+  const files = scopedFiles ?? (scope ? scope.changes.map((change) => change.file) : merged ? ownFiles : null);
   const flows = plan.flows.filter((flow) => (pass.flows ?? []).includes(flow.id) || stage.name !== 'local').map((flow) => ({
     id: flow.id,
     invariants: flow.invariants,
@@ -259,7 +260,8 @@ export function passInput(s, pass, stage) {
     // base branch's code, and an exec reviewer diffs `base` to `head` as it reads them. `baseMerged.from` names the
     // earlier head the delta runs from, `baseMerged.earlierBase` that head's merge base, and `baseMerged.rolledBack` the
     // listed files a push took back to the base's text since it: the diff from the merge base holds nothing there, and
-    // the one from `from` to the head holds the base's own edits, so the reviewer reads `git diff <from> <earlierBase>`.
+    // the one from `from` to the head holds the base's own edits, so the reviewer reads
+    // `git --literal-pathspecs diff <from> <earlierBase> -- <file>`.
     pr: n, repo, base: merged ? merged.base : from, head, context: from === base ? 'full' : 'delta', files, flows,
     ...(merged ? { baseMerged: { base: merged.base, from, earlierBase: merged.earlierBase, merges: merged.merges, rolledBack: (merged.rolledBack ?? []).filter((file) => files.includes(file)) } } : {}),
     // Only the ids listed to this pass show: the only ones a finding it returns may take.

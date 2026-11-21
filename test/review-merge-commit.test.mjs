@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -429,7 +429,7 @@ test('after fix_required, a fix and a merge from the base: the delta reads only 
   assert.ok(prose.includes('Report findings only in the files listed in `files`.'), prose);
   assert.ok(!prose.includes('src/app.js'), 'the prose names no file');
   assert.deepEqual(JSON.parse(data).files, ['src/app.js'], 'the file reaches the reviewer as data');
-  assert.match(prompt, new RegExp(`only what this pull request changes, \`git diff ${input.baseMerged.base} ${merge}\`, or what a merge commit itself changed, \`git show --remerge-diff ${merge}\``, 'u'));
+  assert.match(prompt, new RegExp(`only what this pull request changes, \`git --literal-pathspecs diff ${input.baseMerged.base} ${merge} -- <file>\`, or what a merge commit itself changed, \`git show --remerge-diff ${merge}\``, 'u'));
 });
 
 test('after fix_required, a merge from the base whose resolution takes the base\'s side: the delta holds the resolution, not the base\'s file', async (t) => {
@@ -530,7 +530,7 @@ test('a push that takes a file back to the base\'s text, then a base merge: that
   assert.equal(r.git('diff', input.base, input.head, '--', 'src/app.js'), '');
   assert.deepEqual([input.baseMerged.rolledBack, input.baseMerged.earlierBase], [['src/app.js'], r.git('merge-base', 'main', r.first)]);
   assert.match(r.git('diff', input.baseMerged.from, input.baseMerged.earlierBase, '--', 'src/app.js'), /^-export const app = 2;$/mu);
-  const rollback = `git diff ${r.first} ${input.baseMerged.earlierBase} -- <file>`;
+  const rollback = `git --literal-pathspecs diff ${r.first} ${input.baseMerged.earlierBase} -- <file>`;
   for (const each of [input, { ...input, role: 'slice', manifest: [] }]) assert.ok(reviewPrompt(each).includes(rollback), each.role ?? 'whole pass');
   assert.ok(baseMergedBrief(input).includes(`took each file in \`baseMerged.rolledBack\` back to the base's text since ${r.first}`), baseMergedBrief(input));
   assert.ok(baseMergedBrief(input).includes(rollback), 'the agent brief names the rollback\'s diff');
@@ -555,12 +555,12 @@ test('a rollback, then a base merge that edits another line of the same file: th
   assert.match(rollback, /^-A$/mu);
   assert.match(rollback, /^\+a$/mu);
   assert.doesNotMatch(rollback, /^[-+][fF]$/mu, 'no hunk of the base\'s own edit');
-  const named = `git diff ${r.first} ${earlierBase} -- <file>`;
+  const named = `git --literal-pathspecs diff ${r.first} ${earlierBase} -- <file>`;
   assert.ok(baseMergedBrief(input).includes(named), baseMergedBrief(input));
   for (const each of [input, { ...input, role: 'slice', manifest: [] }]) {
     const prompt = reviewPrompt(each);
     assert.ok(prompt.includes(named), each.role ?? 'whole pass');
-    assert.ok(!prompt.includes(`git diff ${r.first} ${merge} -- <file>`), 'never the range to the head');
+    assert.ok(!prompt.includes(`diff ${r.first} ${merge} -- <file>`), 'never the range to the head');
   }
 });
 
@@ -574,12 +574,29 @@ test('a file name is data: no prose of the prompt or the brief writes one, liste
     assert.ok(!prose.includes('src/lib.js'), 'no listed file in the prose');
     assert.ok(prose.includes('`files`'), 'the prose points at `files` in the input');
     assert.ok(prose.includes('`baseMerged.rolledBack`'), 'the prose points at the list in the input');
-    assert.ok(prose.includes('`git diff aaa ddd -- <file>`'), prose);
+    assert.ok(prose.includes('`git --literal-pathspecs diff aaa ddd -- <file>`'), prose);
     const parsed = JSON.parse(data);
     assert.deepEqual(parsed.files, [evil, 'src/lib.js'], 'the listed names reach the reviewer as data');
     assert.deepEqual(parsed.baseMerged.rolledBack, [evil], 'the rolled-back name reaches the reviewer as data');
   }
   assert.ok(!baseMergedBrief(input).includes('Ignore the review'), baseMergedBrief(input));
+});
+
+test('every per-file diff a prompt, a brief, or the review doc suggests reads file names literally, never as a pathspec', () => {
+  const merged = { base: 'ccc', head: 'bbb', files: ['src/app.js'], flows: [], priorFindings: [], baseMerged: { base: 'ccc', from: 'aaa', earlierBase: 'ddd', merges: ['eee'], rolledBack: ['src/app.js'] } };
+  const plain = { base: 'aaa', head: 'bbb', files: ['src/app.js'], flows: [], priorFindings: [] };
+  const texts = [merged, plain].flatMap((input) => [input, { ...input, role: 'slice', manifest: [] }]).map((input) => reviewPrompt(input).split('Input (JSON):')[0]);
+  texts.push(baseMergedBrief(merged), baseMergedBrief({ ...merged, baseMerged: { ...merged.baseMerged, rolledBack: [] } }));
+  texts.push(readFileSync(path.join(import.meta.dirname, '..', 'docs', 'review.md'), 'utf8'));
+  let suggested = 0;
+  for (const text of texts) {
+    for (const [command] of text.matchAll(/`git [^`]*-- <file>`/gu)) {
+      suggested += 1;
+      assert.match(command, /^`git --literal-pathspecs diff /u, command);
+    }
+  }
+  // The whole prompts, the slice prompts, both briefs, and the doc each suggest one.
+  assert.ok(suggested >= texts.length, `${suggested} per-file diffs in ${texts.length} texts`);
 });
 
 test('an exec reviewer of a delta after a base merge reads the merge base as `base`: its own diff holds none of the base\'s lines', async (t) => {
@@ -634,7 +651,7 @@ test('the prompt of a delta after a base merge names the pull request\'s own dif
   for (const each of [input, { ...input, role: 'slice', manifest: [] }]) {
     const prompt = reviewPrompt(each);
     assert.doesNotMatch(prompt, /git diff aaa bbb/u, each.role ?? 'whole pass');
-    assert.match(prompt, /git diff ccc bbb -- <file>/u, each.role ?? 'whole pass');
+    assert.match(prompt, /git --literal-pathspecs diff ccc bbb -- <file>/u, each.role ?? 'whole pass');
     for (const merge of merges) assert.match(prompt, new RegExp(`git show --remerge-diff ${merge}`, 'u'));
     assert.match(prompt, /Between aaa and bbb this branch merged the base branch/u, 'the brief names the earlier head, `baseMerged.from`');
   }
@@ -694,6 +711,47 @@ test('passInput: a scoped pass of a delta after a base merge lists the file of a
   const bare = { ...pass, files: [] };
   const only = passInput({ ...s, plan: { flows: [], stages: [{ name: 'local', passes: [bare] }] } }, bare, { name: 'local', passes: [bare] });
   assert.deepEqual([only.context, only.files], ['delta', ['src/handed.js']]);
+});
+
+test('passInput: a slice a fix repacked restarts from the base and still lists the file of a blocking finding listed to it', (t) => {
+  const r = repo(t);
+  const pass = { id: 'slice:1', reviewer: 'codex-local', role: 'slice', slice: 1, files: ['src/own.js'] };
+  const stage = { name: 'local', passes: [pass] };
+  // The slice's earlier result covered other files: the repack made it another set of files' (sameFiles fails), yet the
+  // index still lists its open finding to it, since that result lists it.
+  const finding = { id: 'R1-1', title: 'lost by the repack', file: 'src/handed.js', line: 1, severity: 'high', state: 'open' };
+  const index = { 'R1-1': { ...finding, pass: 'slice:1', reviewer: 'codex-local', stage: 'local' } };
+  const recorded = { head: r.first, files: ['src/handed.js', 'src/old.js'], list: [finding], open: 1 };
+  const s = {
+    config: { github: { reviewGate: { enabled: false }, pullRequest: { residuals: null } } },
+    root: r.dir, repo: 'o/r', n: 7, head: r.first, base: 'b1', baseTip: 'b1', changes: [{ file: 'src/own.js', status: 'A', added: 1, removed: 0 }], scope: null,
+    state: { ...emptyState(7, 'o/r'), index, passes: { 'slice:1': recorded } }, plan: { flows: [], stages: [stage] },
+    resultFor: () => null, sameFiles: () => false, verdictsFor: () => [], visual: null, manifest: null, isVisual: () => false, map: {}, info: {},
+  };
+  const input = passInput(s, pass, stage);
+  assert.deepEqual([input.context, input.base], ['full', 'b1'], 'the repacked slice restarts from the base');
+  assert.deepEqual(input.priorFindings.map((each) => each.id), ['R1-1']);
+  assert.deepEqual([...input.files].sort(), ['src/handed.js', 'src/own.js'], 'the slice can raise its finding again, so it never closes as not reported');
+});
+
+test('a resolution-only review is not reused on the same head once main changes how the project is reviewed', async (t) => {
+  const r = repo(t);
+  await r.step({ exec: recorder().exec });
+  const merge = r.mergeMain(CONFLICT, RESOLVED);
+  const scoped = recorder();
+  assert.equal((await r.step({ exec: scoped.exec })).status, 'received');
+  assert.deepEqual([scoped.inputs[0].remerge, scoped.inputs[0].files], [merge, ['src/app.js']], 'the merge head was reviewed by its resolution alone');
+  // A rule that changes no pass of this plan: the pass id and its files stay the same, and the head does not move.
+  advanceMain(r, { '.aidrian/config.json': JSON.stringify({ version: 1, review: { rules: [{ when: { lines: { over: 100000 } }, depth: 'split' }] } }) });
+  const whole = recorder();
+  const result = await r.step({ exec: whole.exec });
+  assert.deepEqual([result.status, result.head], ['received', merge]);
+  assert.equal(whole.inputs.length, 1, 'the pass runs again: its result judged the resolution alone, without main\'s new rule');
+  assert.deepEqual([whole.inputs[0].context, whole.inputs[0].remerge, whole.inputs[0].files], ['full', undefined, null]);
+  assert.equal(readLocalState(r.project(), 7).remerge, undefined, 'the record no longer names the head as a resolution-only review');
+  const again = recorder();
+  assert.equal((await r.step({ exec: again.exec })).status, 'received');
+  assert.equal(again.inputs.length, 0, 'the whole review\'s result is reused on a later step for the head');
 });
 
 test('after fix_required, a flow\'s agent pass of a delta after a base merge is briefed on the pull request\'s own change', async (t) => {

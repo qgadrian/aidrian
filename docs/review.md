@@ -66,7 +66,8 @@ diff. `depth: "split"` cuts the change into slices that run in parallel, then on
   over its own partitions as passes.
 - **A slice** reads its own files' diff, a manifest of every changed file, and the repository at the head. It reports
   findings in its files only, the contracts its files change (signatures, types, schemas, routes, events), and notes
-  about what other files must agree with.
+  about what other files must agree with. Its `files` also hold the file of each blocking finding listed to it, even
+  after a fix repacks the slices and it restarts from the merge base, so it can raise that finding again.
 - **The cross-cutting pass** runs after every slice. It reads each slice's contracts, notes, and findings, plus any
   interface files a plan command flags, and reports only bugs that cross slices. It always runs again after a fix.
 - **Findings** that two passes report (same file, lines within 3, same title words) are listed once, at the higher
@@ -680,9 +681,10 @@ A project adds its own in `review.reviewers`:
   `acceptedResiduals`, and, when they apply, `flowBase`, the merge base a delta pass judges its flows from, `remerge`,
   the merge head whose own changes are the review, and `baseMerged`, the merge base, the earlier head as `from`, that
   head's merge base as `earlierBase`, the merges, and `rolledBack`, of a delta whose range merged the base branch, as
-  [Rounds](#rounds) says; there `base` is the merge base, so `git diff <base> <head> -- <file>` over `files` is the pull
+  [Rounds](#rounds) says; there `base` is the merge base, so `git --literal-pathspecs diff <base> <head> -- <file>` over `files` is the pull
   request's own change, except for each file in `rolledBack`, which the pull request took back to the base's text: read
-  it with `git diff <from> <earlierBase> -- <file>`, the reverse of its own change at `from`)
+  it with `git --literal-pathspecs diff <from> <earlierBase> -- <file>`, the reverse of its own change at `from`;
+  `--literal-pathspecs` reads a file name such as `*` or `:(exclude)x` as a name, never a pathspec)
   and prints `{ "findings": [{ id, file, line, title, body, severity, already_ruled, security }], "verdicts": [...] }`;
   a finding keeps only those keys, and `id`, `already_ruled`, and `security` may be left out. `id` is the id of the
   `priorFindings` entry a finding reports again, reworded or not, and empty for a new finding (Codex's schema requires
@@ -888,7 +890,10 @@ plus every path git's merge conflicts on, with no lines when the resolution show
 of a modify/delete). A pass of every changed file reads only those files, the pass input carries `remerge` with the
 head, and the reviewer is told to review that diff alone; a pass the merge does not touch carries forward, and one that
 dropped what the base brought, as `git merge -s ours` does, is touched. It counts as a round. Later steps on the same
-merge head keep that scope, through the `remerge` entry of the record.
+merge head keep that scope, through the `remerge` entry of the record. Once the base branch changes how the project is
+reviewed, as below, a later step on that same head reviews it whole: each pass result the resolution-only round recorded
+on it is marked `remerge` and never reused, and the record's `remerge` entry is removed, so the next step reuses what
+the whole review records.
 
 Neither the carry nor the resolution-only round applies when the base branch, from the merge base of the reviewed head
 and the merge's base parent to the base branch's current tip, changes how the project is reviewed: a rule that lands on
@@ -915,10 +920,11 @@ reviewer is told to report nothing the base alone wrote. The merges are those th
 and was merged in since counts, and one inside the base branch's own history never does. A resolution that keeps the branch's side is listed though it changed nothing since the
 earlier head, and so is the file of each open finding the pass reads, its own or one handed to it, even outside the files
 of a scoped pass such as a slice, so the reviewer can raise it again and it never
-closes unfixed. The prompt names that own diff, `git diff <merge base> HEAD -- <file>`, never the range from the earlier head.
+closes unfixed. The prompt names that own diff, `git --literal-pathspecs diff <merge base> HEAD -- <file>`, never the range from the earlier head;
+every per-file diff the prompt and the brief suggest passes `--literal-pathspecs`, so a file name is never read as a pathspec.
 A listed file the pull request took back to the base's text has no diff from the merge base, so `baseMerged.rolledBack`
 names it, and the prompt and the agent brief point at the rollback as the reverse of the pull request's own change at
-the earlier head, `git diff <earlier head> <its merge base> -- <file>`, with that merge base in `baseMerged.earlierBase`:
+the earlier head, `git --literal-pathspecs diff <earlier head> <its merge base> -- <file>`, with that merge base in `baseMerged.earlierBase`:
 the range from the earlier head to `HEAD` would hold the base's own edits to the file. The prompt and the brief refer to
 `files`, `baseMerged.rolledBack`, and `checklist` in the input and never write a file name or path into their prose,
 since a file name may hold a newline and any text. A flow's brief points at that own change too, and judges the invariants on the whole change. A file only the

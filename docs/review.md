@@ -678,9 +678,10 @@ A project adds its own in `review.reviewers`:
 
 - `exec`: the command reads the pass as JSON on stdin (`base`, `head`, `files`, `flows`, `priorFindings`,
   `acceptedResiduals`, and, when they apply, `flowBase`, the merge base a delta pass judges its flows from, `remerge`,
-  the merge head whose own changes are the review, and `baseMerged`, the merge base, the earlier head as `from`, and the
-  merges of a delta whose range merged the base branch, as [Rounds](#rounds) says; there `base` is the merge base, so
-  `git diff <base> <head> -- <file>` over `files` is the pull request's own change)
+  the merge head whose own changes are the review, and `baseMerged`, the merge base, the earlier head as `from`, the
+  merges, and `rolledBack`, of a delta whose range merged the base branch, as [Rounds](#rounds) says; there `base` is the
+  merge base, so `git diff <base> <head> -- <file>` over `files` is the pull request's own change, except for each file
+  in `rolledBack`, which the pull request took back to the base's text: read it with `git diff <from> <head> -- <file>`)
   and prints `{ "findings": [{ id, file, line, title, body, severity, already_ruled, security }], "verdicts": [...] }`;
   a finding keeps only those keys, and `id`, `already_ruled`, and `security` may be left out. `id` is the id of the
   `priorFindings` entry a finding reports again, reworded or not, and empty for a new finding (Codex's schema requires
@@ -911,8 +912,11 @@ reviewed, and of each merge commit's own changes in the range, `git show --remer
 reviewer is told to report nothing the base alone wrote. The merges are those the branch made since the earlier head,
 `git rev-list --merges <earlier head>..HEAD ^<base tip>`: one on a topic branch that forked before the earlier head
 and was merged in since counts, and one inside the base branch's own history never does. A resolution that keeps the branch's side is listed though it changed nothing since the
-earlier head, and so is the file of each open finding the pass reads, its own or one handed to it, so the reviewer can raise it again and it never
-closes unfixed. The prompt names that own diff, `git diff <merge base> HEAD -- <file>`, never the range from the earlier head. A flow's brief points at that own change too, and judges the invariants on the whole change. A file only the
+earlier head, and so is the file of each open finding the pass reads, its own or one handed to it, even outside the files
+of a scoped pass such as a slice, so the reviewer can raise it again and it never
+closes unfixed. The prompt names that own diff, `git diff <merge base> HEAD -- <file>`, never the range from the earlier head.
+A listed file the pull request took back to the base's text has no diff from the merge base, so `baseMerged.rolledBack`
+names it, and the prompt and the agent brief point at the rollback, `git diff <earlier head> HEAD -- <file>`. A flow's brief points at that own change too, and judges the invariants on the whole change. A file only the
 base changed is neither reviewed nor counted against a pass's earlier result. A pass with no such file left, or a range
 holding a merge git cannot read this way, such as an octopus merge, reviews the whole change from the merge base
 instead; so does every pass when the step reviews the whole change for the merge, and every pass when the base branch,

@@ -423,7 +423,7 @@ test('after fix_required, a fix and a merge from the base: the delta reads only 
   assert.deepEqual([result.status, result.round, result.carried_from], ['received', 2, undefined]);
   const [input] = seen.inputs;
   assert.deepEqual([input.base, input.head, input.context, input.files, input.remerge], [r.git('rev-parse', 'main'), merge, 'delta', ['src/app.js'], undefined], 'src/lib.js came from main alone');
-  assert.deepEqual(input.baseMerged, { base: r.git('rev-parse', 'main'), from: r.first, merges: [merge] });
+  assert.deepEqual(input.baseMerged, { base: r.git('rev-parse', 'main'), from: r.first, merges: [merge], rolledBack: [] });
   const prompt = reviewPrompt(input);
   assert.match(prompt, /Report findings only in these files: src\/app\.js\./u);
   assert.match(prompt, new RegExp(`only what this pull request changes, \`git diff ${input.baseMerged.base} ${merge}\`, or what a merge commit itself changed, \`git show --remerge-diff ${merge}\``, 'u'));
@@ -523,6 +523,14 @@ test('a push that takes a file back to the base\'s text, then a base merge: that
   assert.equal(seen.inputs.length, 1, 'the earlier head\'s clean result is not reused: the rollback is the pull request\'s change');
   const [input] = seen.inputs;
   assert.deepEqual([result.status, input.context, input.files, input.base, input.baseMerged.from, input.baseMerged.merges], ['received', 'delta', ['src/app.js'], r.git('rev-parse', 'main'), r.first, [merge]]);
+  // The diff from the merge base is empty there: the reviewer reads the rollback from the earlier head.
+  assert.equal(r.git('diff', input.base, input.head, '--', 'src/app.js'), '');
+  assert.deepEqual(input.baseMerged.rolledBack, ['src/app.js']);
+  assert.match(r.git('diff', input.baseMerged.from, input.head, '--', 'src/app.js'), /^-export const app = 2;$/mu);
+  const rollback = `git diff ${r.first} ${merge} -- <file>`;
+  for (const each of [input, { ...input, role: 'slice', manifest: [] }]) assert.ok(reviewPrompt(each).includes(rollback), each.role ?? 'whole pass');
+  assert.ok(baseMergedBrief(input).includes(`took src/app.js back to the base's text since ${r.first}`), baseMergedBrief(input));
+  assert.ok(baseMergedBrief(input).includes(rollback), 'the agent brief names the rollback\'s diff');
 });
 
 test('an exec reviewer of a delta after a base merge reads the merge base as `base`: its own diff holds none of the base\'s lines', async (t) => {
@@ -607,6 +615,35 @@ test('passInput: a blocking finding handed to the pass from another keeps its fi
   assert.deepEqual(input.priorFindings.map((finding) => finding.id), ['R1-1']);
 });
 
+test('passInput: a scoped pass of a delta after a base merge lists the file of a blocking finding it holds outside its own files', (t) => {
+  const r = repo(t);
+  r.write('src/own.js', 'export const own = 1;\n');
+  const head = r.commit('more');
+  const pass = { id: 'slice:1', reviewer: 'codex-local', role: 'slice', slice: 1, files: ['src/own.js'] };
+  const stage = { name: 'local', passes: [pass] };
+  // The slice's own earlier result holds a blocking finding on a file outside its files, so the index keeps it there.
+  const finding = { id: 'R1-1', title: 'outside the slice', file: 'src/handed.js', line: 1, severity: 'high', state: 'open' };
+  const index = { 'R1-1': { ...finding, pass: 'slice:1', reviewer: 'codex-local', stage: 'local' } };
+  const prior = { head: r.first, files: ['src/own.js'], list: [finding], open: 1 };
+  const s = {
+    config: { github: { reviewGate: { enabled: false }, pullRequest: { residuals: null } } },
+    root: r.dir, repo: 'o/r', n: 7, head, base: 'b1', baseTip: 'b1', changes: [{ file: 'src/own.js', status: 'A', added: 1, removed: 0 }], scope: null,
+    state: { ...emptyState(7, 'o/r'), index, passes: { 'slice:1': prior } }, plan: { flows: [], stages: [stage] },
+    resultFor: () => prior, sameFiles: () => true, verdictsFor: () => [], visual: null, manifest: null, isVisual: () => false, map: {}, info: {},
+    boundFor: () => ({ base: 'b1', merges: [head], files: new Set(['src/own.js']), resolved: [], rolledBack: [] }),
+    delta: () => [{ file: 'src/own.js', status: 'A', added: 1, removed: 0 }],
+  };
+  const input = passInput(s, pass, stage);
+  assert.equal(input.context, 'delta');
+  assert.deepEqual([...input.files].sort(), ['src/handed.js', 'src/own.js'], 'the slice can raise its finding again, so it never closes as not reported');
+  assert.deepEqual(input.priorFindings.map((finding) => finding.id), ['R1-1']);
+  assert.match(reviewPrompt(input), /Review the diff of these files only: src\/own\.js, src\/handed\.js/u);
+  // A pass with no file of its own left but the finding's still reads a delta, not the whole change.
+  const bare = { ...pass, files: [] };
+  const only = passInput({ ...s, plan: { flows: [], stages: [{ name: 'local', passes: [bare] }] } }, bare, { name: 'local', passes: [bare] });
+  assert.deepEqual([only.context, only.files], ['delta', ['src/handed.js']]);
+});
+
 test('after fix_required, a flow\'s agent pass of a delta after a base merge is briefed on the pull request\'s own change', async (t) => {
   const r = await fixRequired(t, { baseConfig: { version: 1, review: { flows: { app: { files: ['src/**'] } } } } });
   r.write('src/app.js', 'export const app = 3;\n');
@@ -617,7 +654,7 @@ test('after fix_required, a flow\'s agent pass of a delta after a base merge is 
   const pass = result.dispatch.find((each) => each.flows.length);
   assert.ok(pass, JSON.stringify(result.dispatch.map((each) => each.pass)));
   assert.deepEqual([pass.base, pass.context, pass.files, pass.flowBase], [r.git('rev-parse', 'main'), 'delta', ['src/app.js'], r.git('rev-parse', 'main')]);
-  assert.deepEqual(pass.baseMerged, { base: r.git('rev-parse', 'main'), from: r.first, merges: [result.head] });
+  assert.deepEqual(pass.baseMerged, { base: r.git('rev-parse', 'main'), from: r.first, merges: [result.head], rolledBack: [] });
   assert.ok(pass.brief.includes(baseMergedBrief(pass)), pass.brief);
   assert.ok(pass.brief.includes(flowBaseBrief(pass)), pass.brief);
   assert.match(pass.brief, /Find bugs in this pull request's own change in the listed files/u);

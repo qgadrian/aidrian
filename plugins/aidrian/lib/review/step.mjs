@@ -361,7 +361,11 @@ export async function prepareStep(s) {
           if (!resolved.some((each) => each.file === change.file)) resolved.push(change);
         }
       }
-      return { base, merges, files, resolved };
+      // A bounded file the merge-base diff no longer holds, yet changed since `from`: a push, or a resolution, took it
+      // back to the base's text. Its diff from the merge base is empty, so the reviewer reads it from `from` instead.
+      const inChanges = new Set(changes.map((change) => change.file));
+      const rolledBack = changeSince(from).map((change) => change.file).filter((file) => files.has(file) && !inChanges.has(file));
+      return { base, merges, files, resolved, rolledBack };
     } catch {
       return { base, merges, files: null };
     }
@@ -396,6 +400,9 @@ export async function prepareStep(s) {
   // base branch where the whole change must be reviewed (boundFor's `files` null: the base changed how the project is
   // reviewed, a merge git cannot read, or `mergeNote`) is never reused, whatever files the pass covers: it was judged
   // without that rule, or on a range nobody could read.
+  // Accepted residual (tracked on pull request #457): after a resolution-only review, a commit on the base branch that
+  // changes how the project is reviewed, while the pull request's head stays the same, runs no pass again: a result for
+  // this head is reused by its head alone.
   const resultFor = (pass) => {
     const result = state.passes[pass.id];
     if (!result || result.evidenceWithheld === true || result.notesWithheld === true || !sameFiles(pass, result)) return null;

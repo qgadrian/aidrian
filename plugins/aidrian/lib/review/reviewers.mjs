@@ -196,10 +196,17 @@ export function flowBaseBrief(input) {
 // (lib/review/run.mjs): those changes are the review, and the rest of the diff was reviewed before.
 export const remergeBrief = (input) => `This head is a merge from the base branch: review only the changes the merge commit itself made, its conflict resolutions and any other edit, \`git show --remerge-diff ${input.head}\`. A file listed with no lines there had a conflict whose resolution shows no lines, such as a binary file or a kept side of a modify/delete: check that side was the right one. The rest of \`git diff ${input.base} ${input.head}\` was reviewed before, on this pull request's earlier heads or on the base branch.`;
 
+// The listed files this pull request took back to the base's text since `baseMerged.from` (step.mjs boundFor).
+const rolledBack = (input) => (Array.isArray(input.baseMerged?.rolledBack) ? input.baseMerged.rolledBack : []);
+// The diff command a prompt's file list names for the rolled-back files, after the one from the merge base.
+const rolledBackDiff = (input) => (rolledBack(input).length ? `, and for ${rolledBack(input).join(', ')}, which it took back to the base's text, \`git diff ${input.baseMerged.from} ${input.head} -- <file>\`` : '');
+
 // What a reviewer of a delta whose range merged the base branch reads (lib/review/step.mjs boundFor): the base's own
 // changes in that range are not this pull request's, so `files` lists only its own, and within them only its own lines
 // count. The input's `base` is then the merge base, and `baseMerged.from` the earlier head the delta runs from.
-export const baseMergedBrief = (input) => `Between ${input.baseMerged.from} and ${input.head} this branch merged the base branch (${input.baseMerged.merges.join(', ')}): what the base brought was reviewed there and is not this pull request's change. Review only the listed files, and in them only what this pull request changes, \`git diff ${input.baseMerged.base} ${input.head}\`, or what a merge commit itself changed, ${input.baseMerged.merges.map((merge) => `\`git show --remerge-diff ${merge}\``).join(', ')}. Report nothing the base branch alone wrote.`;
+// `baseMerged.rolledBack` lists the files this pull request took back to the base's text since `from`: the diff from the
+// merge base holds nothing there, so the rollback is read from `from` (rolledBackDiff).
+export const baseMergedBrief = (input) => `Between ${input.baseMerged.from} and ${input.head} this branch merged the base branch (${input.baseMerged.merges.join(', ')}): what the base brought was reviewed there and is not this pull request's change. Review only the listed files, and in them only what this pull request changes, \`git diff ${input.baseMerged.base} ${input.head}\`, or what a merge commit itself changed, ${input.baseMerged.merges.map((merge) => `\`git show --remerge-diff ${merge}\``).join(', ')}.${rolledBack(input).length ? ` This pull request took ${rolledBack(input).join(', ')} back to the base's text since ${input.baseMerged.from}, so the diff from the merge base shows nothing there: review that rollback, \`git diff ${input.baseMerged.from} ${input.head} -- <file>\`.` : ''} Report nothing the base branch alone wrote.`;
 
 // What a reviewer of a project below the repository root reads, with `prefix` the project's folder from the top: a plain
 // `git diff` lists repository-root paths and files outside the project, and a citation of one is refused.
@@ -215,7 +222,7 @@ export function reviewPrompt(input, prefix = '') {
   let lead = `Review the diff from ${input.base} to ${input.head} (run \`git diff ${input.base} ${input.head}\`; read any file at ${input.head} you need).`;
   if (input.baseMerged) {
     const remerges = input.baseMerged.merges.map((merge) => `\`git show --remerge-diff ${merge}\``).join(', ');
-    lead = `Review this pull request's own change in the listed files (run \`git diff ${from} ${input.head} -- <file>\`) and what each merge commit itself changed (${remerges}); read any file at ${input.head} you need.`;
+    lead = `Review this pull request's own change in the listed files (run \`git diff ${from} ${input.head} -- <file>\`${rolledBackDiff(input)}) and what each merge commit itself changed (${remerges}); read any file at ${input.head} you need.`;
   }
   return [
     'You are reviewing a pull request. You did not write it. Read-only: change nothing.',
@@ -223,7 +230,7 @@ export function reviewPrompt(input, prefix = '') {
     lead,
     prefix ? belowRootBrief(prefix) : '',
     input.role === 'slice'
-      ? `This is one slice of a large change. Review the diff of these files only: ${input.files.join(', ')} (\`git diff ${from} ${input.head} -- <file>\`); \`manifest\` lists every changed file, and you may read any file at ${input.head}. Report findings only in your files. In \`contracts\`, list every exported or behavioural contract your files change (signatures, types, schemas, routes, events, config); in \`cross_notes\`, anything you saw that other changed files must agree with.`
+      ? `This is one slice of a large change. Review the diff of these files only: ${input.files.join(', ')} (\`git diff ${from} ${input.head} -- <file>\`${rolledBackDiff(input)}); \`manifest\` lists every changed file, and you may read any file at ${input.head}. Report findings only in your files. In \`contracts\`, list every exported or behavioural contract your files change (signatures, types, schemas, routes, events, config); in \`cross_notes\`, anything you saw that other changed files must agree with.`
       : input.role === 'cross'
         ? 'This is the cross-cutting pass of a review split into slices. `slices` holds each slice\'s contracts, notes, and findings. Report only bugs that cross slices: a changed contract a caller in another slice does not follow, a schema and its users disagreeing, an assumption one slice makes that another breaks. Do not repeat a slice\'s findings.'
         : input.files ? `Report findings only in these files: ${input.files.join(', ')}.` : 'Report findings in any changed file.',

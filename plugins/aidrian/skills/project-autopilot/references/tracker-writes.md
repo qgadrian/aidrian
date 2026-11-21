@@ -15,8 +15,9 @@ For the driver and an issue's session, every call on the tracker's server is a w
 
 Once `aidrian project start` starts an issue, it owes a `started` report while it runs: the adapter's started status
 type (Linear `started`, the team's first started status) alone, no label and no comment. It is owed once a run, never
-again after `recorded`, and only for an issue the run's snapshot read before started, so it never moves a status back.
-An issue that settles before it lands owes the settle report instead.
+again after `recorded`, and only for an issue the run's snapshot read before started. Write it right after the start,
+before the issue's session can open a pull request. One still owed when the issue settles is dropped: `report` lists
+it under `dropped`, the settle report supersedes it, and the final report names it.
 
 An issue owes one report when it settles for good: done after a merge the forge confirmed, or parked.
 A failed attempt with attempts left owes nothing: the issue starts again.
@@ -34,17 +35,16 @@ no link, mention, HTML, or hidden character survives, and a file or host name st
 
 ## Writing one
 
-1. `aidrian project report <run> --json` lists each owed report: `key`, `outcome`, `status`, `label`, `body`, `sha256`,
-   and `calls`, the exact tool calls for the base branch's tracker, such as Linear's `save_issue` and `save_comment`.
+1. `aidrian project report <run> --json` lists each owed report: `key`, `kind`, `outcome`, `status`, `label`, `body`,
+   `sha256`, and `calls`, the exact tool calls for the base branch's tracker, such as Linear's `save_issue` and `save_comment`.
 2. Make the calls in `calls`, in order, as given, on the tracker's connected server: the tool, and its input byte for
    byte. The issue call comes before the comment. Stop at the first call that fails: leave the report owed, and name the
    failure in the final report, such as a label the team lacks.
    With no `calls`, the tracker has no run tools: report each owed write to the Human instead.
-   A `started` report has one call, the status. Read the issue first: when it already reads as started or later, such
-   as In Review, which the forge's integration may set once a pull request opens, make no call, since the write would
-   move it back.
-3. After every call succeeds, or a `started` report needed none, run `aidrian project recorded <run> <key>`.
-   The guard then refuses any further write of that report.
+   A `started` report has one call, the status. A call that fails leaves it owed: the next `report` lists it again.
+3. After every call succeeds, run `aidrian project recorded <run> <key> --kind <kind>`, with the report's `kind`.
+   The guard then refuses any further write of that report. A refusal that the run owes no report of that kind means
+   the issue moved on, such as a settle the last `wait` took in: run `report` again and write what it owes.
 
 A refusal from the guard names what differs: fix the call to match the report, never the report.
 

@@ -2087,18 +2087,22 @@ its session, it owes one `started` report, once a run: the adapter's started sta
 the tracker maps to the team's first started status), with no label and no comment, so the issue reads as in progress
 however its own session fares. It is owed only for an issue the snapshot holds in a status before started (triage,
 backlog, or unstarted), never once the issue settles, is open again, or runs a start the gate could not confirm, and
-not again on a later attempt once recorded. The report reads no tracker, so the driver reads the issue before it
-writes one, and makes no call on an issue that already reads as started or later, such as In Review once a pull
-request opened: the write never moves a status back. A tracker whose adapter names no started status, as for GitHub
-Issues, which has no adapter, owes none. Each issue that settled for good, done after a forge-confirmed merge or
+not again on a later attempt once recorded. The report reads no tracker, only the snapshot's status, so the driver
+writes it right after each start, before the issue's session can have opened a pull request. A race remains, seconds
+wide: if the tracker moves the issue on in that time, such as to In Review, the write moves it back to the first
+started status. Linear's issue update takes no condition on the current status, so no write closes that race. One
+still owed when the issue settles is dropped, since the settle report supersedes it: `report` lists it under
+`dropped` (`dropped ISSUE attempt N started` in text), and the driver's final report names it. A tracker whose
+adapter names no started status, as for GitHub Issues, which has no adapter, owes none. Each issue that settled for good, done after a forge-confirmed merge or
 parked, owes a report too: a status (the adapter's done status type for a merge, `projectRun.blockedStatus` for a
 blocked issue), `projectRun.decisionLabel` for any other, and a comment body with its sha256, with `--json` adding the
 exact tool `calls` for the base branch's tracker. Both values come from the base branch's config. The body is built
 from the ledger and from `results/ISSUE.json`, read again with no symlink followed, under its size cap, matched to the
 ledger's run, issue, attempt, status, and pull request, and checked again; a file that fails gives a body from the
-ledger alone that says so. `recorded RUN ISSUE` closes one, with a `recorded` row holding its attempt and sha256,
-and `kind: "started"` for a started report, whose sha256 is null; a started row never closes the settle report.
-An issue owes at most one report at a time.
+ledger alone that says so. Each report names its `kind`, `started` or `settle`. `recorded RUN ISSUE --kind KIND`
+closes the report of that kind, with a `recorded` row holding its kind, attempt, and sha256, null for a started report;
+the kind is required, and a started row never closes the settle report. It refuses, under the ledger's lock, an issue
+that owes no report of that kind: a settle report a `wait` took in after the driver wrote the started status stays owed.
 `end RUN` refuses while any issue still runs, naming them, or while a session runs on after its issue settled.
 
 Every session a start held counts toward the run's caps until the host lists it ended, not only the session of an issue

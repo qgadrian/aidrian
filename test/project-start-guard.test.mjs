@@ -173,7 +173,7 @@ test('every subcommand the command takes has a hook rule, and one with no rule i
 test('report and recorded are the driver\'s; preflight is read-only, and a subagent runs none of them', (t) => {
   const fx = runFixture(t);
   const ask = (command, session, more = {}) => projectCommandDenial(bash(command, { session_id: session, cwd: fx.dir, ...more }), fx.config, { unattended: attended, home: fx.home });
-  for (const command of ['aidrian project report launch', 'aidrian project report launch --json', 'aidrian project recorded launch ENG-1']) {
+  for (const command of ['aidrian project report launch', 'aidrian project report launch --json', 'aidrian project recorded launch ENG-1 --kind started']) {
     assert.equal(ask(command, DRIVER), null, command);
     assert.match(ask(command, OTHER)?.reason ?? '', /is the driver's, and this session is not the driver of the run launch/u, command);
     assert.match(ask(command, DRIVER, { agent_id: 'agent-7' })?.reason ?? '', /a subagent runs only `aidrian project next`/u, command);

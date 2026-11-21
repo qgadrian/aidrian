@@ -3,8 +3,10 @@
 // owes one report on that issue, built here from the ledger and the result file alone, never from the tracker: a status,
 // a label, and a comment body, with the body's sha256. Before that, an issue whose start held its session owes one
 // `started` report, once a run: the adapter's started status alone, with no label and no comment, while the issue still
-// runs, and only for an issue the snapshot holds in a status before started, so the write never moves a status back.
-// The driver posts exactly what is owed, then runs `aidrian project recorded`, which closes it;
+// runs, and only for an issue the snapshot holds in a status before started. It reads no tracker, so a status the
+// tracker moved on since the start, such as In Review, is not seen: the driver writes it right after the start, which
+// leaves that race seconds wide. One still owed when the issue settles is dropped, and `report` lists it as dropped.
+// The driver posts exactly what is owed, then runs `aidrian project recorded --kind <kind>`, which closes it;
 // lib/tracker-guard.mjs runWriteRefusal refuses the driver any other tracker write.
 //
 // The result file is read again as untrusted: `results/<issue>.json` is read without following a link, under
@@ -37,8 +39,11 @@ const SETTLES = new Set(['result', 'ended', 'orphan']);
 const FINAL = new Set(['done', 'parked']);
 // The snapshot status types before a started one: only an issue the run read in one owes the started report.
 const BEFORE_STARTED = new Set(['triage', 'backlog', 'unstarted']);
-// The outcome of the report a start owes, and the `kind` of the `recorded` row that closes it.
+// The outcome of the report a start owes, and the `kind` of the `recorded` row that closes it; SETTLE the kind of any
+// other report, and of a `recorded` row that names no kind, as rows written before kinds did.
 export const STARTED = 'started';
+export const SETTLE = 'settle';
+export const REPORT_KINDS = Object.freeze([STARTED, SETTLE]);
 // How an `ended` row's reason reads in a body.
 const ENDED = {
   no_result: 'ended with no result recorded',
@@ -79,14 +84,20 @@ export function rereadResult(state, run, key, row) {
   return checked.result ? { result: checked.result } : { problem: 'the session\'s result file fails its checks' };
 }
 
-// The reports run `run`, as `found` (readRun) holds it, owes and has not recorded, in ledger order: each
-// { key, attempt, outcome, pr, status, label, body, sha256 }, where a started report has outcome `started` and a null
-// label, body, and sha256. `policy` is reportPolicy's. A `recorded` row of kind `started` closes the started report
-// alone; any other closes the settle report.
-export function owedReports({ state, run, found, policy }) {
-  const issues = new Map(found.snapshot.issues.map((issue) => [issue.key, issue]));
+// The keys each kind of `recorded` row of `found` closes: { settle, started }.
+const recordedKeys = (found) => {
   const recorded = { settle: new Set(), started: new Set() };
   for (const row of found.rows) if (row.event === 'recorded') recorded[row.kind === STARTED ? 'started' : 'settle'].add(row.key);
+  return recorded;
+};
+
+// The reports run `run`, as `found` (readRun) holds it, owes and has not recorded, in ledger order: each
+// { key, kind, attempt, outcome, pr, status, label, body, sha256 }, where a started report has kind and outcome
+// `started` and a null label, body, and sha256, and any other has kind `settle`. `policy` is reportPolicy's. A
+// `recorded` row of kind `started` closes the started report alone; any other closes the settle report.
+export function owedReports({ state, run, found, policy }) {
+  const issues = new Map(found.snapshot.issues.map((issue) => [issue.key, issue]));
+  const recorded = recordedKeys(found);
   const settled = new Map();
   found.rows.forEach((cause, at) => {
     const after = found.rows[at + 1];
@@ -116,7 +127,23 @@ function startedOwed({ found, key, issue, policy, recorded }) {
   return start?.outcome === 'started' && Number.isInteger(start.attempt) && start.attempt >= 1 ? start : null;
 }
 
-const startedReport = (key, attempt, status) => ({ key, attempt, outcome: STARTED, pr: null, status, label: null, body: null, sha256: null });
+const startedReport = (key, attempt, status) => ({ key, kind: STARTED, attempt, outcome: STARTED, pr: null, status, label: null, body: null, sha256: null });
+
+// The started reports run `found` dropped: [{ key, attempt }], each issue that settled for good with a start that held
+// its session, the latest such start's attempt, and no `recorded` row of kind `started`: the settle report supersedes
+// it. Only where startedOwed would have owed one: an adapter that names a started status and an issue the snapshot
+// holds before started. The driver's final report names them.
+export function droppedStarted({ found, policy }) {
+  if (typeof policy.started !== 'string' || policy.started === '') return [];
+  const { started } = recordedKeys(found);
+  const dropped = [];
+  for (const issue of found.snapshot.issues) {
+    if (started.has(issue.key) || !BEFORE_STARTED.has(issue.status) || !FINAL.has(found.states.get(issue.key)?.state)) continue;
+    const held = startsOf(found, issue.key).filter((row) => row.outcome === 'started').at(-1);
+    if (held) dropped.push({ key: issue.key, attempt: held.attempt });
+  }
+  return dropped;
+}
 
 function buildReport({ state, run, key, cause, after, policy }) {
   const facts = { key, attempt: cause.attempt, pr: null, decisions: [], stop: null, note: null };
@@ -136,7 +163,7 @@ function buildReport({ state, run, key, cause, after, policy }) {
   const status = facts.outcome === 'merged' ? policy.done : facts.outcome === 'blocked' ? policy.blockedStatus : null;
   const label = facts.outcome === 'merged' ? null : policy.label;
   const body = reportBody(run, facts, after.decision === 'attempts');
-  return { key, attempt: facts.attempt, outcome: facts.outcome, pr: facts.pr, status, label, body, sha256: bodyHash(body) };
+  return { key, kind: SETTLE, attempt: facts.attempt, outcome: facts.outcome, pr: facts.pr, status, label, body, sha256: bodyHash(body) };
 }
 
 // The comment a report posts: what happened, then what the issue's session wrote, each text quoted as data.
@@ -204,39 +231,43 @@ function openForDriver({ project, config, run, env, home, base }) {
   return { state: place.state, found, base: read, policy, session };
 }
 
-// `aidrian project report RUN [--json]`: the reports the run owes, as { exitCode, out, err }. `base` is a test's stand-in
-// for the base branch's config read.
+// `aidrian project report RUN [--json]`: the reports the run owes, and the started reports it dropped (droppedStarted),
+// as { exitCode, out, err }. `base` is a test's stand-in for the base branch's config read.
 export function reportCommand({ project, config, run, json = false, env = process.env, home, base }) {
   const opened = openForDriver({ project, config, run, env, home, base });
   if (opened.problem) return { exitCode: 1, out: [], err: [`aidrian project report: ${opened.problem}`] };
   const { adapter } = opened.policy;
   const owed = owedReports({ state: opened.state, run, found: opened.found, policy: opened.policy })
     .map((report) => ({ ...report, calls: reportCalls(report, adapter) }));
-  if (json) return { exitCode: 0, out: [JSON.stringify({ run, owed }, null, 2)], err: [] };
-  if (owed.length === 0) return { exitCode: 0, out: ['none'], err: [] };
-  const lines = [];
+  const dropped = droppedStarted({ found: opened.found, policy: opened.policy });
+  if (json) return { exitCode: 0, out: [JSON.stringify({ run, owed, dropped }, null, 2)], err: [] };
+  const lines = owed.length === 0 ? ['none'] : [];
   for (const report of owed) {
-    lines.push(`owed ${report.key} attempt ${report.attempt} ${report.outcome}`);
+    lines.push(`owed ${report.key} attempt ${report.attempt} ${report.outcome}`, `  recorded --kind ${report.kind}`);
     if (report.status !== null) lines.push(`  status ${report.status}`);
     if (report.label !== null) lines.push(`  label ${report.label}`);
     if (report.body !== null) lines.push(`  comment sha256 ${report.sha256}`, ...report.body.split('\n').map((line) => `  | ${line}`));
     for (const call of report.calls) lines.push(`  call ${call.tool} ${JSON.stringify(call.input)}`);
   }
+  for (const { key, attempt } of dropped) lines.push(`dropped ${key} attempt ${attempt} started: the issue settled before its started status was written`);
   return { exitCode: 0, out: lines, err: [] };
 }
 
-// `aidrian project recorded RUN ISSUE`: closes the report the run owes on ISSUE once the driver wrote it, with a
-// `recorded` row naming its attempt and body's sha256, and kind `started` for a started report, which has no body.
-// An issue owes at most one report at a time: a started one while it runs, a settle one once it settles for good.
-// Refuses an issue that owes none.
-export function recordedCommand({ project, config, run, key, env = process.env, home, base, now = Date.now() }) {
+// `aidrian project recorded RUN ISSUE --kind KIND`: closes the report of kind KIND, `started` or `settle`, that the run
+// owes on ISSUE once the driver wrote it, with a `recorded` row naming its kind, attempt, and body's sha256, null for a
+// started report, which has no body. KIND is required. Under the ledger's lock it refuses an issue that owes no report
+// of that kind, so a settle report a `wait` took in after the driver wrote the started status stays owed.
+export function recordedCommand({ project, config, run, key, kind, env = process.env, home, base, now = Date.now() }) {
   const refuse = (why) => ({ exitCode: 1, out: [], err: [`aidrian project recorded: ${why}`] });
+  if (!REPORT_KINDS.includes(kind)) {
+    return refuse(`--kind takes ${REPORT_KINDS.join(' or ')}, the kind \`aidrian project report\` printed${kind === undefined ? '' : `, not ${JSON.stringify(String(kind).slice(0, 20))}`}`);
+  }
   const opened = openForDriver({ project, config, run, env, home, base });
   if (opened.problem) return refuse(opened.problem);
   const written = appendToRun(opened.state, run, (fresh) => {
-    const report = owedReports({ state: opened.state, run, found: fresh, policy: opened.policy }).find((each) => each.key === key);
-    if (!report) return { problem: `the run ${run} owes no report on ${typeof key === 'string' ? key.slice(0, 40) : 'that issue'}; \`aidrian project report ${run}\` lists what it owes` };
-    return { rows: [{ event: 'recorded', key, attempt: report.attempt, ...(report.outcome === STARTED ? { kind: STARTED } : {}), sha256: report.sha256, session: opened.session, at: iso(now) }] };
+    const report = owedReports({ state: opened.state, run, found: fresh, policy: opened.policy }).find((each) => each.key === key && each.kind === kind);
+    if (!report) return { problem: `the run ${run} owes no ${kind} report on ${typeof key === 'string' ? key.slice(0, 40) : 'that issue'}; \`aidrian project report ${run}\` lists what it owes` };
+    return { rows: [{ event: 'recorded', key, kind, attempt: report.attempt, sha256: report.sha256, session: opened.session, at: iso(now) }] };
   });
   if (written.problem) return refuse(written.problem);
   return { exitCode: 0, out: [`recorded ${key}`], err: [] };

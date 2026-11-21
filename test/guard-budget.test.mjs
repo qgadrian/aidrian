@@ -14,6 +14,7 @@ import { foldCase, globParts } from '../plugins/aidrian/lib/fs.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { isolate } from '../plugins/aidrian/lib/review/env.mjs';
 import { dropPending, markDriver, markPending, markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
+import { hookCall } from './hook-call.mjs';
 
 // The hooks this file runs record their blocks in the state folder; keep those rows out of the real one.
 process.env.XDG_STATE_HOME = mkdtempSync(path.join(tmpdir(), 'aidrian-state-'));
@@ -88,16 +89,27 @@ test('60 Bash(prefix) patterns read a 120 KB command once, so the gates answer i
   assert.ok(sixty < one * 10, `60 patterns took ${Math.round(sixty)} ms, one took ${Math.round(one)} ms`);
 });
 
-test(`a subagent's Bash call that writes more than ${WRITE_TARGETS} targets is refused in time; the main session's runs`, (t) => {
+// In the test's process, with performance.now held still, so the guards' 2.5 second budget cannot run out on a loaded
+// machine and the limit is judged by the count alone; "in time" is the refused call's processor time, which a busy
+// machine does not stretch as it stretches the wall clock.
+test(`a subagent's Bash call that writes more than ${WRITE_TARGETS} targets is refused in time; the main session's runs`, async (t) => {
   const dir = project(t);
-  const command = Array.from({ length: 20000 }, (_, i) => `: > a${i}`).join('; ');
-  const refused = run(subagent(dir, 'Bash', command));
-  inTime(refused, 'subagent');
+  const held = performance.now();
+  t.mock.method(performance, 'now', () => held);
+  const call = (input) => hookCall(HOOK, { input: JSON.stringify(input), cwd: input.cwd });
+  const writes = (count) => Array.from({ length: count }, (_, i) => `: > a${i}`).join('; ');
+  const before = process.cpuUsage();
+  const refused = await call(subagent(dir, 'Bash', writes(20000)));
+  const { user, system } = process.cpuUsage(before);
+  const took = (user + system) / 1000;
+  assert.ok(took < WELL_INSIDE, `subagent: took ${Math.round(took)} ms of processor time`);
   assert.equal(refused.status, 2);
   assert.match(refused.stderr, new RegExp(`its command writes 20000 targets, counting each folder a path may be in, and the guards read at most ${WRITE_TARGETS} in one call`, 'u'));
-  const few = Array.from({ length: WRITE_TARGETS }, (_, i) => `: > a${i}`).join('; ');
-  assert.equal(run(subagent(dir, 'Bash', few)).status, 0, 'as many as the guards read');
-  assert.equal(run(main(subagent(dir, 'Bash', command))).status, 0, 'the main session may');
+  assert.equal((await call(subagent(dir, 'Bash', writes(WRITE_TARGETS)))).status, 0, 'as many as the guards read');
+  // One past the limit: refused for a subagent, run for the main session. With the clock held, the guards read every
+  // target the main session's call writes, which for 20,000 takes many seconds.
+  assert.equal((await call(subagent(dir, 'Bash', writes(WRITE_TARGETS + 1)))).status, 2, 'one past the limit');
+  assert.equal((await call(main(subagent(dir, 'Bash', writes(WRITE_TARGETS + 1))))).status, 0, 'the main session may');
 });
 
 test('a guard past its time budget refuses a subagent\'s call and lets the main session\'s run', (t) => {

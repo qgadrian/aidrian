@@ -334,7 +334,7 @@ export default {
       verified: 'unverified',
       evidence: 'fixtures and the host docs; no live run',
       confined: true,
-      access: ({ env, home, guarded, pushUrl, platform, allowed, helpers }) => accessProblem({ env, home, guarded, pushUrl, platform, allowed, helpers }),
+      access: ({ env, home, guarded, pushUrl, platform, allowed, helpers, localBinding }) => accessProblem({ env, home, guarded, pushUrl, platform, allowed, helpers, localBinding }),
       cloneProblem: ({ work, allowed }) => cloneProblem({ work, allowed }),
       // Whether a driver on this host would carry on by itself after a usage limit (aidrian project preflight).
       limitContinue: ({ env, home, project }) => limitContinueProblem({ env, home, project }),
@@ -350,8 +350,8 @@ export default {
       confineReads: ({ env, home }) => confineReads({ env, home }),
       // The allowedDomains the user's and the organization's settings add, which the proof's unlisted host stays outside.
       confineDomains: ({ env, home, platform }) => confineDomains({ env, home, platform }),
-      start: ({ session, cwd, name, prompt, env, hold, identify, beacon, confined, git, grants, domains, main, mainGit, tokens, guarded, mcp, home, platform, run, wait }) => startProject({
-        session, cwd, name, prompt, env, hold, identify, beacon, confined, sandbox: { git, grants, domains, main, mainGit, tokens, guarded }, mcp, home, platform, run, wait, effort: effort(env), efforts: MODEL_CHOICES.effort,
+      start: ({ session, cwd, name, prompt, env, hold, identify, beacon, confined, git, grants, domains, main, mainGit, tokens, guarded, mcp, localBinding, home, platform, run, wait }) => startProject({
+        session, cwd, name, prompt, env, hold, identify, beacon, confined, sandbox: { git, grants, domains, main, mainGit, tokens, guarded, localBinding }, mcp, home, platform, run, wait, effort: effort(env), efforts: MODEL_CHOICES.effort,
       }),
       stop: ({ id, env, run }) => stopBackground({ id, env, run }),
       ended: ({ id, session, env, run }) => sessionFinished({ id, session, env, run }),

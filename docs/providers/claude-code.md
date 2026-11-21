@@ -427,7 +427,7 @@ whole). A scalar passed with `--settings` wins over the user's settings; a list 
 | `sandbox.filesystem.denyWrite` | the clone's `.git` pointer, its git folder's `config`, `hooks`, `commondir`, and `config.worktree`, on every platform, each a placeholder there at launch; each protected host file of the clone: `.claude/settings.json`, `.claude/settings.local.json`, `.claude/skills`, `.claude/agents`, `.claude/commands`, `.claude/hooks`, `.claude/workflows`, `.claude/scheduled_tasks.json`, and `.mcp.json`; and, as `**` globs, any `.claude` folder itself at any depth, so none is made or made a link, those of each, its `settings*.json`, and any `SKILL.md`; the [sign-off store](../review.md#merge-trust)'s folders, `$XDG_STATE_HOME/aidrian/signoffs` and `~/.local/state/aidrian/signoffs`, the gate's `guarded`, by their real paths, the first made owner-only before the start, so no user `allowWrite` opens them; `permissions.deny` adds an `Edit` rule for each, for the file tools, which run outside the sandbox; and the keep file `.keep-attempt` of the attempt's `drop` and `cache` folders, there at launch, so neither can be emptied and removed, and a link put in its place |
 | `sandbox.filesystem.denyRead` | the user's credential stores, below, and the main checkout, whose git-ignored files, such as env files, a session never reads |
 | `sandbox.filesystem.allowRead` | the main checkout's git folder, when it lies in the main checkout: the clone borrows its objects |
-| `sandbox.network` | `strictAllowlist: true`, `allowedDomains` the forge's hosts (`github.com` and its API host for GitHub) and the hosts of each registry the base branch's [`projectRun.registries`](../config.md#project-run) lists, none by default, `allowAllUnixSockets: false`, `allowLocalBinding: false`; no `allowUnixSockets` |
+| `sandbox.network` | `strictAllowlist: true`, `allowedDomains` the forge's hosts (`github.com` and its API host for GitHub) and the hosts of each registry the base branch's [`projectRun.registries`](../config.md#project-run) lists, none by default, `allowAllUnixSockets: false`, `allowLocalBinding: false`, or `true` where the base branch sets [`projectRun.localBinding`](../config.md#project-run); no `allowUnixSockets` |
 | `sandbox.credentials.envVars` | `{ name, mode: "deny" }`, so the variable is unset before each sandboxed command, for each variable of the driver's environment whose name says it holds a credential (`TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, `AUTH`, and the like) and the well-known ones, such as `AWS_SECRET_ACCESS_KEY`, `NPM_TOKEN`, and `SSH_AUTH_SOCK`, but the forge CLI's own token variables (`GH_TOKEN`, `GITHUB_TOKEN`, and their Enterprise forms) |
 | `permissions.deny` | `Read(//<path>)` and `Read(//<path>/**)` for each credential store and the main checkout, since the file tools run outside the sandbox |
 | `disableClaudeAiConnectors` | `true`: the claude.ai connectors, which `--strict-mcp-config` leaves on, neither load nor connect; a `true` from any source wins |
@@ -436,7 +436,10 @@ whole). A scalar passed with `--settings` wins over the user's settings; a list 
 
 `allowLocalBinding: false` has a cost on macOS, where it is the switch for localhost: a test that listens on a local
 port, or connects to one, fails in a confined session. On Linux it has no effect, and the network namespace keeps a
-sandboxed command off the host's localhost.
+sandboxed command off the host's localhost. An issue whose checks need a database, an API server, a worker, or a
+browser on localhost cannot run them so; a team whose issues need them sets
+[`projectRun.localBinding`](../config.md#project-run) on the default branch, which the forge and the local ref must
+both set, and the session starts with `allowLocalBinding: true`. No clone or local file turns it on.
 
 No `sandbox.excludedCommands` is passed. Three conditions hold on top of the sandbox:
 
@@ -527,6 +530,12 @@ Residual risks, each known and accepted:
 - A `.claude` link a session's git makes, as by checking out a branch that holds one, is denied by the `**/.claude`
   glob, and the hook refuses a write through it or, while git's index lists it, to the folder it leads to; a link git
   does not list is judged by the path as written alone.
+- With [`projectRun.localBinding`](../config.md#project-run) set, a service an issue session starts, such as a
+  database or an API server for its tests, listens on this machine's loopback, where any other local process of any
+  user can reach it; and on macOS, where `allowLocalBinding` is the switch for localhost, the session's sandboxed
+  commands reach every service listening there too, such as the user's own databases, development servers, and any
+  local admin port, outside the network allowlist. No host's sandbox proof probes the loopback then. A team sets it
+  only on a machine where that is acceptable.
 - Each registry `projectRun.registries` lists is a host a sandboxed command can send data to, an accepted channel;
   [Dependency installs](#dependency-installs) names each one's path and the ruling. Hosts an install reaches beyond its registry, such as a
   native module's prebuilt binary, node-gyp's headers, or a toolchain download, stay refused.
@@ -576,7 +585,8 @@ Before `verified` changes, a live Claude Code must show every one of these, each
 11. `claude --bg` or `claude -p` from inside the sandbox starts nothing outside it.
 12. The plugin's hooks still run under `--setting-sources user`, with the plugin installed at user scope.
 13. A sandboxed process cannot connect to a localhost listener outside the sandbox, on macOS with
-    `allowLocalBinding: false`.
+    `allowLocalBinding: false`; with `projectRun.localBinding` set, a sandboxed command can listen on a local port and
+    connect to it, on macOS and on Linux.
 14. `cat ~/.ssh/*` and a Read of it fail, and so do `cat ~/.git-credentials`, a read of the main checkout's `.env`,
     and `echo $NPM_TOKEN` with it set in the driver's environment.
 15. The session lists no claude.ai connector and no other plugin's MCP server, and only the `projectRun.mcpServers`
@@ -649,7 +659,9 @@ its start stays as [its page](codex.md#project-start) says.
    already counting as made; to open the clone's git `config` and `.claude/settings.json` for writing; to remove the
    keep file of `cache` and of `drop`; to move each folder away, or else to put a link beside it, and to write through
    the link; to read each store in the plan; to connect to the unlisted host, directly and through each HTTP proxy the
-   shell's environment names; and to connect to the listener. It also checks that each cache variable is in force in
+   shell's environment names; and to connect to the listener. Where the base branch sets `projectRun.localBinding`, the
+   session may reach the machine's loopback, so the start runs no listener, the plan's `local` is `null`, and the
+   proof neither probes nor judges a listener; the start takes that from the team's policy, never from the plan. It also checks that each cache variable is in force in
    the shell with the value the start wrote. Any write, removal, move, link, or connection that succeeds is undone and
    fails the proof, and so does one whose target is not there. A read that opens is not yet a landed read: on Linux
    the host masks a denied folder with an empty one and a denied file with an empty one, so the proof hands what each
@@ -686,7 +698,8 @@ sandbox. Before a start, the start reads each managed source the host documents 
 `/Library/Managed Preferences/com.anthropic.claudecode.plist` and the same under the user's own folder there, read
 through `plutil`. Each is judged by the user settings' rules for `sandbox` keys, granted folders, and commands, with
 one more: a scalar the session's own settings set, such as `allowUnsandboxedCommands`, passes only at the session's
-value, and `allowManagedPermissionRulesOnly` halts, since the host then drops the session's own permission rules that
+value, but `network.allowLocalBinding`, which passes at `false` too where `projectRun.localBinding` sets the session's
+`true`, since `false` only narrows it, and `allowManagedPermissionRulesOnly` halts, since the host then drops the session's own permission rules that
 keep its file tools from the stores its sandbox hides. Its `enabledPlugins` switches count over the user's for the plugin checks. A source that is there and cannot
 be read halts the start; a platform with no documented sources halts it too.
 

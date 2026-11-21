@@ -43,6 +43,8 @@ const NO_REVIEWER = new Set([null, undefined, '', 'none']);
 // What a `note` says in place of a branch-protection or release-tags blocker the team accepts through
 // projectRun.forgeProtectionAccepted.
 const ACCEPTED_PROTECTION = 'the team accepts no forge protection (projectRun.forgeProtectionAccepted): a script an issue session runs can push to the default branch or a tag with the token, and only the hooks hold it';
+// What a `note` says when the team lets issue sessions bind local ports through projectRun.localBinding.
+export const LOCAL_BINDING_NOTE = 'note local-binding: the team lets issue sessions bind local ports (projectRun.localBinding), so a service a session starts listens on this machine\'s loopback, where any other local process can reach it, and on macOS the session reaches every service listening there too';
 
 // Runs every check for `project`, whose loaded config is `config`, with `run` the run these checks are for, which the
 // active-run check leaves out, and returns { exitCode, out, err }: a line `ok NAME`,
@@ -79,11 +81,12 @@ export function preflightCommand({ project, config, run = null, env = process.en
   if (cap && repository && !place.problem) {
     let access;
     try {
-      access = accessProblem({ cap, forge: facade, repository, env, home, guarded: guardedFolders({ main, state: place.state, env, home }), main, platform, allowed: policy.outsideSandbox });
+      access = accessProblem({ cap, forge: facade, repository, env, home, guarded: guardedFolders({ main, state: place.state, env, home }), main, platform, allowed: policy.outsideSandbox, localBinding: policy.localBinding === true });
     } catch (error) {
       access = { halt: `the access check failed (${String(error?.message ?? error).split('\n')[0]})` };
     }
     check('access', access?.halt ?? access?.refuse ?? null);
+    if (policy.localBinding === true) lines.push(LOCAL_BINDING_NOTE);
   } else {
     check('access', 'it needs the repository, the state folder, and a host that starts project sessions, which the lines above name');
   }

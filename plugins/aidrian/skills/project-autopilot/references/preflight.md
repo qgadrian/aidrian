@@ -44,6 +44,8 @@ secrets: keep release and deploy secrets in environments held for a reviewer who
 the preflight counts a branch-limited environment as open, and trust a cloud role
 through OIDC only for a protected branch or such an environment, never `repo:<owner>/<name>:*`. A `note triggers` line names other services,
 such as preview deploys and ChatOps bots, that act on an issue's push or comment.
+A `note local-binding` line says the team set `projectRun.localBinding`, so issue sessions may run local services, such as
+a database or an API server for their tests, which other local processes can reach; it blocks nothing.
 `ask labels` names the tracker's label and status reads: the decision label, and `projectRun.blockedStatus` when set,
 must exist in the team.
 

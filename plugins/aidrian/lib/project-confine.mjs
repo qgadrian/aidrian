@@ -17,7 +17,8 @@
 // The probes: create a file in each unattended mark folder, the attempt's folder, and the home folder; open the clone's
 // git config and its `.claude/settings.json` for writing; remove the keep file of `cache` and `drop`; move each away,
 // put a link in its place, and write through it; read each credential store and the main checkout; connect to a host
-// outside every allowed domain, directly and through the sandbox's proxy; and connect to the listener. And the cache
+// outside every allowed domain, directly and through the sandbox's proxy; and connect to the listener, which does not
+// run where the team's projectRun.localBinding lets the session reach the machine's loopback. And the cache
 // variables (project-registries.mjs cacheVars) must be in force in the shell, each with the value the gate wrote.
 // A read the sandbox hides may still open: on Linux the host masks a denied folder with an empty one and a denied file
 // with an empty one. So a read counts as landed only when what it saw matches what the start saw outside the sandbox: an
@@ -173,10 +174,11 @@ function fingerprint(file, nonce, reopened = []) {
 // organization's settings add (capabilities.projectStart.confineDomains); `reads` the credential stores the host's
 // sandbox denies reading (capabilities.projectStart.confineReads); `main` the main checkout and `mainGit` its git
 // folder, which the sandbox opens again; `env` and `home` the environment and home folder the mark folders are named
-// under. { plan, listener, prints } or { problem }, with the listener stopped; `prints` maps each read target to its
-// fingerprint, for confineCheck.
-export function prepareConfine({ folder, run, key, attempt, work, git, drop, cache, domains, reads = [], main = null, mainGit = null, env = process.env, home, listen = startListener, watch = WATCH }) {
-  const unwatched = watchProblem(watch);
+// under. `loopback` is the team's projectRun.localBinding: such a session may reach the machine's loopback, so no
+// listener runs and the plan's `local` is null. { plan, listener, prints } or { problem }, with the listener stopped;
+// `prints` maps each read target to its fingerprint, for confineCheck.
+export function prepareConfine({ folder, run, key, attempt, work, git, drop, cache, domains, reads = [], main = null, mainGit = null, env = process.env, home, listen = startListener, watch = WATCH, loopback = false }) {
+  const unwatched = loopback ? null : watchProblem(watch);
   if (unwatched) return { problem: unwatched };
   const unlisted = unlistedHost(domains);
   if (!unlisted) return { problem: `every host the proof names as unlisted (${UNLISTED.join(', ')}) is an allowed domain of the session, the user's settings, or the organization's, so no probe can show an unlisted host refused; remove "*" or the example domains from sandbox.network.allowedDomains` };
@@ -192,16 +194,16 @@ export function prepareConfine({ folder, run, key, attempt, work, git, drop, cac
   const stores = (Array.isArray(reads) ? reads : []).filter((each) => typeof each === 'string' && path.isAbsolute(each));
   const reopened = main && mainGit && path.dirname(mainGit) === main ? [path.basename(mainGit)] : [];
   const seen = [...(main ? [fingerprint(main, nonce, reopened)] : []), ...stores.filter(exists).map((each) => fingerprint(each, nonce))].filter(Boolean).slice(0, READ_CAP + 1);
-  const listener = listen(folder);
-  if (listener.problem) return { problem: listener.problem };
+  const listener = loopback ? null : listen(folder);
+  if (listener?.problem) return { problem: listener.problem };
   const plan = {
     version: 1, run, key, attempt, nonce, folder, work, git, drop, cache, marks, home: home ?? homedir(),
     reads: seen.map((each) => each.target), unreadable: [...new Set([...(main ? [main] : []), ...stores])],
-    unlisted: { host: unlisted, port: 443 }, local: { host: '127.0.0.1', port: listener.port, pid: listener.pid ?? null },
+    unlisted: { host: unlisted, port: 443 }, local: listener ? { host: '127.0.0.1', port: listener.port, pid: listener.pid ?? null } : null,
   };
   const written = writeJson(path.join(folder, CONFINE_PLAN), plan);
   if (written) {
-    listener.stop();
+    listener?.stop();
     return { problem: `the sandbox proof's plan: ${written}` };
   }
   return { plan, listener, prints: Object.fromEntries(seen.map((each) => [each.target.path, each.print])) };
@@ -378,7 +380,7 @@ export async function probeAll(plan, env) {
   }
   const network = [
     connectProbe(plan.unlisted.host, plan.unlisted.port).then((outcome) => note('reach', `${plan.unlisted.host}:${plan.unlisted.port}`, outcome)),
-    connectProbe(plan.local.host, plan.local.port).then((outcome) => note('reach', `${plan.local.host}:${plan.local.port}, a localhost listener outside the sandbox`, outcome)),
+    ...(plan.local ? [connectProbe(plan.local.host, plan.local.port).then((outcome) => note('reach', `${plan.local.host}:${plan.local.port}, a localhost listener outside the sandbox`, outcome))] : []),
     ...proxies(env).map((proxy) => proxyProbe(proxy, plan.unlisted.host, plan.unlisted.port).then((outcome) => note('reach', `${plan.unlisted.host}:${plan.unlisted.port} through the proxy ${proxy.host}`, outcome))),
   ];
   await Promise.all(network);
@@ -471,8 +473,10 @@ export function alive(pid, watch = WATCH) {
 // refused, no read whose sight matches its fingerprint, the listener the start runs alive on its port with no
 // connection, no probe path left, and `cache` and `drop` plain folders with their keep files. It reads the listener's
 // connections once a verdict is there, through sentinelHits, which adds one connection of its own, so it is asked once
-// a verdict: a later call counts the earlier sentinel as a hit, and fails. `isAlive` and `sentinel` are a test's.
-export function confineCheck({ folder, session, prints = {}, isAlive = alive, sentinel = sentinelHits }) {
+// a verdict: a later call counts the earlier sentinel as a hit, and fails. `loopback`, the team's
+// projectRun.localBinding as the start read it, never the plan, is the one case with no listener to judge.
+// `isAlive` and `sentinel` are a test's.
+export function confineCheck({ folder, session, prints = {}, isAlive = alive, sentinel = sentinelHits, loopback = false }) {
   const plan = readSmallJson(path.join(folder, CONFINE_PLAN));
   if (!plan || !NONCE.test(plan.nonce ?? '')) return { pass: false, problem: `the sandbox proof's plan in ${folder} cannot be read` };
   const verdict = readSmallJson(path.join(folder, 'drop', CONFINE_VERDICT), VERDICT_CAP);
@@ -484,11 +488,8 @@ export function confineCheck({ folder, session, prints = {}, isAlive = alive, se
   const reads = Array.isArray(verdict.reads) ? verdict.reads : [];
   const landed = Object.entries(prints).find(([target, print]) => reads.some((each) => each?.target === target && Array.isArray(each.seen) && each.seen.includes(print)));
   if (landed) return { pass: false, problem: `read ${landed[0]}, which the sandbox should hide` };
-  const listener = readSmallJson(path.join(folder, LISTENER_FILE));
-  if (!listener || listener.port !== plan.local?.port || listener.pid !== plan.local?.pid || !isAlive(plan.local?.pid)) return { pass: false, problem: 'the localhost listener outside the sandbox is not the one the start ran, alive on its port, so a refused connection to it proves nothing' };
-  const hits = sentinel({ folder, host: plan.local.host, port: plan.local.port });
-  if (hits.problem) return { pass: false, problem: hits.problem };
-  if (hits.others > 0) return { pass: false, problem: 'a connection reached the localhost listener outside the sandbox' };
+  const heard = loopback ? null : listenerProblem({ folder, plan, isAlive, sentinel });
+  if (heard) return { pass: false, problem: heard };
   const paths = probePaths({ ...plan, folder });
   const left = [...paths.creates, ...paths.moves.flatMap((each) => [each.to, each.link])].find(exists);
   if (left) return { pass: false, problem: `a probe left ${left}, so a write the sandbox should refuse landed` };
@@ -502,6 +503,16 @@ export function confineCheck({ folder, session, prints = {}, isAlive = alive, se
     if (!stat?.isDirectory() || !exists(path.join(folder, name, ATTEMPT_KEEP))) return { pass: false, problem: `the attempt's ${name} folder or its keep file is no longer as the start made it` };
   }
   return { pass: true };
+}
+
+// Why the localhost listener of `plan`, in the attempt's folder `folder`, shows no refused connection, or null: it is
+// not the one the start ran, alive on its port, or it noted a connection but the start's own sentinel.
+function listenerProblem({ folder, plan, isAlive, sentinel }) {
+  const listener = readSmallJson(path.join(folder, LISTENER_FILE));
+  if (!listener || listener.port !== plan.local?.port || listener.pid !== plan.local?.pid || !isAlive(plan.local?.pid)) return 'the localhost listener outside the sandbox is not the one the start ran, alive on its port, so a refused connection to it proves nothing';
+  const hits = sentinel({ folder, host: plan.local.host, port: plan.local.port });
+  if (hits.problem) return hits.problem;
+  return hits.others > 0 ? 'a connection reached the localhost listener outside the sandbox' : null;
 }
 
 // The connections the listener at `host`:`port`, whose hits file is in the attempt's folder `folder`, noted besides the

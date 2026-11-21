@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -83,21 +83,37 @@ test('without AIDRIAN_TEST_LOG the test setup leaves node:child_process as it is
   assert.equal(probeRun(t, {}).source, plain);
 });
 
-test('with AIDRIAN_TEST_LOG the test setup appends the test file`s time and child processes, each counted once', (t) => {
+test('with AIDRIAN_TEST_LOG the test setup appends the test file`s start, then its time and child processes, each counted once', (t) => {
   const log = path.join(realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-test-log-'))), 'files.jsonl');
   t.after(() => rmSync(path.dirname(log), { recursive: true, force: true }));
   probeRun(t, { AIDRIAN_TEST_LOG: log });
-  const [row, ...more] = readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  const [start, row, ...more] = readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
   assert.deepEqual(more, []);
+  assert.deepEqual(start, { file: 'probe.test.mjs', started: true });
   assert.deepEqual({ file: row.file, git: row.git, other: row.other }, { file: 'probe.test.mjs', git: 3, other: 0 });
   assert.ok(Number.isInteger(row.ms) && row.ms > 0, JSON.stringify(row));
 });
 
-test('a timing log that cannot be written leaves a passing test file`s exit status 0', (t) => {
-  const gone = path.join(realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-test-log-'))), 'gone');
-  t.after(() => rmSync(path.dirname(gone), { recursive: true, force: true }));
-  // probeRun asserts the status: before the fix, the failed append in the exit listener made it 1.
-  probeRun(t, { AIDRIAN_TEST_LOG: path.join(gone, 'files.jsonl') });
+test('a timing log that cannot be written when the file exits leaves a passing test file`s exit status 0', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-test-log-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const gone = path.join(dir, 'gone');
+  mkdirSync(gone);
+  // The file removes the log's folder after its start is logged: before the fix, the failed append in the exit listener
+  // made the status 1. scripts/run-tests.mjs fails the run for the row it lost.
+  writeFileSync(path.join(dir, 'drops.test.mjs'), "import { rmSync } from 'node:fs';\nrmSync(process.env.DROP, { recursive: true });\n");
+  const run = spawnSync(process.execPath, ['--import', SETUP, 'drops.test.mjs'], { cwd: dir, encoding: 'utf8', env: { ...process.env, AIDRIAN_TEST_LOG: path.join(gone, 'files.jsonl'), DROP: gone } });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(existsSync(gone), false, 'the folder went');
+});
+
+test('a timing log that cannot be written as the file loads fails the file, so no file runs unlogged', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-test-log-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(path.join(dir, 'quiet.test.mjs'), '');
+  const run = spawnSync(process.execPath, ['--import', SETUP, 'quiet.test.mjs'], { cwd: dir, encoding: 'utf8', env: { ...process.env, AIDRIAN_TEST_LOG: path.join(dir, 'gone', 'files.jsonl') } });
+  assert.equal(run.status, 1, run.stderr);
+  assert.match(run.stderr, /ENOENT/u);
 });
 
 test('a test file that removes the folder it runs in still exits 0 and logs its row', (t) => {
@@ -114,7 +130,9 @@ test('a test file that removes the folder it runs in still exits 0 and logs its 
   const log = path.join(dir, 'files.jsonl');
   const run = spawnSync(process.execPath, ['--import', SETUP, 'gone.test.mjs'], { cwd: dir, encoding: 'utf8', env: { ...process.env, AIDRIAN_TEST_LOG: log } });
   assert.equal(run.status, 0, run.stderr);
-  assert.equal(JSON.parse(readFileSync(log, 'utf8')).file, 'gone.test.mjs', 'the path from the folder the run started in');
+  const lines = readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(lines.map((line) => line.file), ['gone.test.mjs', 'gone.test.mjs'], 'the start and the row, by the path from the folder the run started in');
+  assert.ok(Number.isInteger(lines[1].ms), JSON.stringify(lines));
 });
 
 test('every test file imports the setup first, so a file run alone with `node --test` is kept apart too', () => {

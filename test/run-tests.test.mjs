@@ -64,6 +64,29 @@ const FILES = {
     "  appendFileSync(path.join(tmpdir(), name, 'files.jsonl'), 'null\\n');",
     '});',
   ],
+  // Passes, and makes every append of its process throw, so its row is lost when it exits.
+  'loses.test.mjs': [
+    "import fs from 'node:fs';",
+    "import { syncBuiltinESMExports } from 'node:module';",
+    "import test from 'node:test';",
+    "test('loses its row', () => {",
+    "  fs.appendFileSync = () => { throw new Error('the log is gone'); };",
+    '  syncBuiltinESMExports();',
+    '});',
+  ],
+  // Passes, and puts a folder where the script's log was, so the script cannot read it.
+  'hides.test.mjs': [
+    "import { mkdirSync, readdirSync, rmSync } from 'node:fs';",
+    "import { tmpdir } from 'node:os';",
+    "import path from 'node:path';",
+    "import test from 'node:test';",
+    "test('hides the log', () => {",
+    "  const [name] = readdirSync(tmpdir()).filter((entry) => entry.startsWith('aidrian-test-log-'));",
+    "  const log = path.join(tmpdir(), name, 'files.jsonl');",
+    '  rmSync(log);',
+    '  mkdirSync(log);',
+    '});',
+  ],
 };
 
 // A folder holding the test files, and an empty temporary folder for the script's own files. `budget`, when given, is
@@ -201,6 +224,30 @@ test('a runner that failed keeps its status, and the budget is not judged', (t) 
   const run = runTests(folder(t, { default: 0, files: {} }), ['fails.test.mjs', 'trio.test.mjs']);
   assert.equal(run.status, 1);
   assert.doesNotMatch(run.stderr, /over its budget/u);
+});
+
+test('a file that started and left no row fails a run whose runner passed, naming the file, within budget or not', (t) => {
+  for (const budget of [undefined, { default: 300, files: { 'loses.test.mjs': 0 } }]) {
+    const where = folder(t, budget);
+    const run = runTests(where, ['loses.test.mjs', 'quiet.test.mjs']);
+    assert.equal(run.status, 1, run.stdout + run.stderr);
+    assert.match(run.stdout, /pass 2/u, 'the runner itself passed');
+    assert.match(run.stderr, /^loses\.test\.mjs left no row of its child processes in the test log, so its budget cannot be judged: run it again\.$/mu);
+    assert.doesNotMatch(run.stderr, /quiet\.test\.mjs left no row/u);
+    assert.deepEqual(Object.keys(rows(run.stderr)), ['quiet.test.mjs'], run.stderr);
+    assert.deepEqual(readdirSync(where.temp), []);
+  }
+  const failed = runTests(folder(t), ['loses.test.mjs', 'fails.test.mjs']);
+  assert.equal(failed.status, 1);
+  assert.doesNotMatch(failed.stderr, /left no row/u, 'a runner that failed is not judged');
+});
+
+test('a test log that cannot be read fails a run whose runner passed, and the script still removes its folder', (t) => {
+  const where = folder(t);
+  const run = runTests(where, ['hides.test.mjs']);
+  assert.equal(run.status, 1, run.stdout + run.stderr);
+  assert.match(run.stderr, /^Could not read the test log \S+files\.jsonl: /mu);
+  assert.deepEqual(readdirSync(where.temp), []);
 });
 
 test('a budget file that cannot be read fails a run whose runner passed, and the script still removes its folder', (t) => {

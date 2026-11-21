@@ -36,7 +36,8 @@ How to build, check, and release a change is in [contributing.md](contributing.m
   when an agent or skill is added, renamed, or removed.
 - A pull request never changes the version: the release workflow raises it on main after the merge, at the level
   the pull request's Conventional Commit title calls for ([Versions](contributing.md#versions)).
-- `aidrian test changed` passes before a push; CI runs `npm run check` on the pushed head, and it is green before ready.
+- `aidrian test changed` passes before a push; CI runs the commands of `npm run check` on the pushed head, the tests in
+  two jobs a Node version ([Build and check](contributing.md#build-and-check)), and every `Check (Node N)` is green before ready.
 
 ## This repository's knowledge
 

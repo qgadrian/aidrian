@@ -13,21 +13,25 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# The commands of `npm run check`, in jobs that run at once: `npm run check:static` in one job a Node version, and the
+# test files in two shards a Node version. `Check (Node N)`, the name the required checks list, passes only when all of
+# them passed.
 jobs:
-  check:
-    name: Check (Node ${{ matrix.node }})
+  test:
+    name: Tests (Node ${{ matrix.node }}, ${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 8
     strategy:
       fail-fast: false
       matrix:
         node: [22, 24, 26]
+        shard: [1, 2]
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # origin/main and the history to it: npm run check fails a pull request that changes the plugin version.
+          # The full history, as the one job before this split had, so a test sees the checkout it always saw.
           fetch-depth: 0
 
       - name: Set up Node.js
@@ -40,5 +44,60 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Check generated files, the example buckets, and tests
-        run: npm run check
+      # node --test splits by file, so each file still runs whole in one shard and is held to its child-process budget there.
+      - name: Run the tests of this shard
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: npm test -- --test-shard="$SHARD/2"
+
+  static:
+    name: Static checks (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24, 26]
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # origin/main and the history to it: the version check fails a pull request that changes the plugin version.
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check generated files, the example buckets, lint, the version, and code shape
+        run: npm run check:static
+
+  check:
+    name: Check (Node ${{ matrix.node }})
+    needs: [test, static]
+    # Always, so a failed or cancelled job above fails this one instead of skipping it.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    # It only reads the results above: no token.
+    permissions: {}
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24, 26]
+    steps:
+      # A result covers every Node version of that job, so a failure anywhere fails all three.
+      - name: Require every test shard and static check to pass
+        env:
+          TESTS: ${{ needs.test.result }}
+          STATIC: ${{ needs.static.result }}
+        run: |
+          echo "Tests: $TESTS. Static checks: $STATIC."
+          test "$TESTS" = success && test "$STATIC" = success

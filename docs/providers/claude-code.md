@@ -507,9 +507,27 @@ config makes it, or that pushes to more than one URL (`git remote get-url --push
 `remote.origin.pushurl` there makes it, halts too. On Linux, `bwrap` and `socat` must be on an absolute folder of PATH. A state folder that
 lies in the main checkout starts nothing, since the session may not read the main checkout.
 
-In a folder the host has not trusted, `claude --bg` exits with `Workspace not trusted` and starts nothing; the start
-says to trust the project's runs folder, `<state>/runs`, once, by running `claude` there and accepting its trust
-question. Trust there covers every attempt's clone, and nothing else of the state folder.
+In a folder the host has not trusted, `claude --bg` exits with `Workspace not trusted` and starts nothing. The Human
+trusts the project's runs folder, `<state>/runs`, once: `mkdir -p` it when the run's init has not made it yet, then run
+`claude` there and accept its trust question. Inside a git repository the host looks trust up at the repository's own
+root alone (2.1.330, checked live), so an attempt's clone, a repository of its own, never inherits that trust: each
+start records the host's trust for its own clone in the host's trust record, `.claude.json` in `CLAUDE_CONFIG_DIR` or
+the home folder, and only when that record trusts the runs folder itself or a folder above it at that moment, as
+preflight checks it: an entry for one run's folder below it, or one an earlier start left for the same clone path,
+never stands in for that consent. Nothing else of the state folder is trusted. The consent and the update come from one
+read of the record; the new record is staged in `.claude-trust-stage` beside it, a sandbox read barrier as the record
+is and never a link, under a lock file there that keeps two starts from undoing each other's update, and renamed
+over it only when the file still holds what was read. The lock holds its start's process id, only its holder removes
+it, and it is never taken over: a lock a start left when it ended is named for the Human to remove. A clone the record
+trusts already needs neither the stage nor the lock. The stage and the record lie in the user's own config folder,
+which no confined session may write, so only a process outside the sandbox could swap the stage for a link between
+its check and the write, and such a process can read the record itself. That narrows, but cannot close,
+the race with a host session that saves the record in the instant between that check and the rename, since the host
+takes no lock a writer outside it could share: such a save can lose the new entry, so that start refuses with
+`Workspace not trusted` and the same trust step, or be lost itself. A session started by an earlier plugin version,
+whose settings predate the staging folder's read barrier, could read the staged copy while it exists. `aidrian project preflight` reads the record
+and blocks a runs folder that neither it nor a folder above it trusts; a record it cannot read is only a note, since
+the file is the host's own and undocumented.
 
 Residual risks, each known and accepted:
 

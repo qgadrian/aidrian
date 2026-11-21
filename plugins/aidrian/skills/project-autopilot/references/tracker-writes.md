@@ -5,7 +5,7 @@ run to its part, whatever the working copy's `tracker.enabled` says. Who a sessi
 
 | Who | May write |
 | --- | --- |
-| The driver | only the writes `aidrian project report` owes: a settled issue's status, label, and comment, exactly as printed |
+| The driver | only the writes `aidrian project report` owes: a settled issue's status, label, and comment, exactly as printed; and, once right after a start, that issue's started status |
 | An issue's session | optionally, when its tracker server answers: only its own issue, by its key: status `started`, an estimate, a patch of its body, and a new comment, each in plain text with no mention, link, address, image, or HTML, and a file or host name in backticks |
 | Any session | no tracker tool that merges code or marks a pull request ready: `gh pr merge` and `gh pr ready` are the routes their guards judge, and a session no Human attends merges only through `pr-auto-merge` |
 
@@ -25,6 +25,16 @@ A failed attempt with attempts left owes nothing: the issue starts again.
 The label and status come from the base branch's config, never the working copy's.
 The comment quotes what the issue's session wrote, after the run has read its result file again and checked it:
 no link, mention, HTML, or hidden character survives, and a file or host name stays as code text.
+
+## The started status
+
+Right after `aidrian project start` succeeds, set the issue's started status once: the adapter's issue tool with the
+issue's key and its started status type alone, such as Linear `save_issue` with `id` and `state: "started"`. No other
+field, and no comment. It owes no report, and needs no `recorded`. When the call fails, make it again at most twice,
+right away, with no wait. If it still fails, go on, and name the issue in the final report as one whose started status
+was not set; the issue's own session sets the status too. Only this driver session knows of its failed writes: a
+driver that takes the run over does not learn of an earlier one's, so its final report names only its own. With no
+tracker run tools, skip it.
 
 ## Writing one
 

@@ -61,7 +61,7 @@ attempt <n>`. No Human attends it, and the run's hooks hold it to that issue. Ev
 - **Tracker writes are optional.** When the tracker's tools answer, write only the issue's own, by its key: status
   `started`, an estimate, a patch of its body, and new comments, in plain text with no mention, link, address, image, or
   HTML, and a file or host name in backticks. When they do not answer, skip them: that never fails the issue, since the
-  driver's report is the run's tracker record. No label, no done status, no new issue, and nothing on another issue: the
+  driver sets the started status too, and its report is the run's tracker record. No label, no done status, no new issue, and nothing on another issue: the
   tracker guard refuses those. A follow-up goes in the result's `stop` or `decisions`.
 - **Merges.** Only through the `pr-auto-merge` skill, never through a tracker tool. When the merge stops, follow
   `references/phases.md` § When the merge stops: run `aidrian project stop-action <run> <key>`, and do what its one line

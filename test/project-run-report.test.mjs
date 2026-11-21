@@ -474,8 +474,11 @@ test('preflight names every blocker at once, and starts nothing', (t) => {
   assert.equal(asked?.counts?.('<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn\'t find any major issues.'), true, 'a clean receipt counts');
   const card = (status) => `<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1 {"code_review":{"status":"${status}"}} -->\n\n## Codex Review Summary`;
   assert.equal(asked?.counts?.(card('running')), false, 'a status card the bot posts as it starts shows no review');
-  assert.equal(asked?.counts?.('<!-- codex-pull-request-review-summary -->\n\n| 📝 **Code Review** | 🔄 **Running** |'), false, 'nor a card with no state');
+  const older = (row) => `<!-- codex-pull-request-review-summary -->\n\n## Codex Review Summary\n\n| Review | Status | Commit | Review trigger |\n| --- | --- | --- | --- |\n| 📝 **Code Review** | ${row} | \`c9de3bc\` | Manual request |`;
+  assert.equal(asked?.counts?.(older('🔄 **Running** since <relative-time datetime="2026-09-02T14:52:49Z">x</relative-time>')), false, 'nor an older card, with no state, still running');
+  assert.equal(asked?.counts?.(older('✅ **Completed** <relative-time datetime="2026-09-02T15:01:04Z">x</relative-time>')), true, 'an older card whose row says completed counts');
   assert.equal(asked?.counts?.(card('completed')), true, 'a card whose review completed counts');
+  assert.equal(asked?.counts?.('The card opens with `<!-- codex-pull-request-review-summary -->`, so match it at the start.'), true, 'a review that quotes the card marker counts');
   assert.deepEqual(ok.out.filter((line) => !/^(ask|note) /u.test(line)), ['ok repository', 'ok state', 'ok run', 'ok instructions', 'ok policy', 'ok machine', 'ok host', 'ok access', 'ok usage-limit', 'ok tracker', 'ok auto-merge', 'ok handoff', 'ok reviewer', 'ok reviewer-seen', 'ok ci', 'ok branch-protection', 'ok release-tags', 'ok workflow-secrets'], ok.out.join('\n'));
   assert.equal(ok.exitCode, 0);
   assert.deepEqual(ok.out.filter((line) => line.startsWith('ask ')).map((line) => line.split(':')[0]), ['ask labels']);
@@ -499,7 +502,7 @@ test('preflight names every blocker at once, and starts nothing', (t) => {
   assert.deepEqual(blockers, ['blocker run', 'blocker policy', 'blocker machine', 'blocker host', 'blocker access', 'blocker usage-limit', 'blocker tracker', 'blocker auto-merge', 'blocker handoff', 'blocker reviewer'], blocked.out.join('\n'));
   assert.match(blocked.out.find((line) => line.startsWith('blocker host')), /projectRun\.unverifiedHosts/u);
   assert.match(blocked.out.find((line) => line.startsWith('blocker access')), /goes over SSH/u);
-  assert.match(blocked.out.find((line) => line.startsWith('blocker usage-limit')), /do not set "autoContinueAtUsageLimit": true, so a usage limit would stop the driver for good/u);
+  assert.match(blocked.out.find((line) => line.startsWith('blocker usage-limit')), /do not set "autoContinueAtUsageLimit": true, which a project run asks for so that a usage limit does not stop the driver for good/u);
   assert.match(blocked.out.find((line) => line.startsWith('blocker tracker')), /names no tracker the plugin knows/u);
   assert.match(blocked.out.find((line) => line.startsWith('blocker auto-merge')), /does not set github\.autoMerge\.allow/u);
   const local = runFixture(t, { init: false, ...READY, local: { handoff: { background: 'on' } } });

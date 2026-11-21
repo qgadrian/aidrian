@@ -801,8 +801,8 @@ test('limitContinueProblem: a project settings file that sets autoContinueAtUsag
   mkdirSync(path.join(project, '.claude'), { recursive: true });
   const env = { CLAUDE_CONFIG_DIR: config };
   const plain = limitContinueProblem({ env, home: root, project });
-  const scope = ' (this check reads the user settings only, not managed policy or --settings)';
-  assert.ok(plain.endsWith(`do not set "autoContinueAtUsageLimit": true, so a usage limit would stop the driver for good; add it${scope}`), `no project file: ${plain}`);
+  const scope = ' (this check reads that file only; managed policy and --settings, which can set or override the key, go unverified)';
+  assert.ok(plain.endsWith(`do not set "autoContinueAtUsageLimit": true, which a project run asks for so that a usage limit does not stop the driver for good; add it${scope}`), `no project file: ${plain}`);
   for (const name of ['settings.json', 'settings.local.json']) {
     const file = path.join(project, '.claude', name);
     writeFileSync(file, JSON.stringify({ autoContinueAtUsageLimit: true }));

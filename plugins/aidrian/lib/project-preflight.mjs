@@ -34,7 +34,7 @@ import { activeRuns, nextLines, pinnedRepository, planRun, readSnapshotInput, re
 import { runParallel, teamPolicy } from './project-run-gate.mjs';
 import { accessProblem, guardedFolders, hostStartProblem } from './project-start.mjs';
 import { ancestorProblem } from './project-trust.mjs';
-import { cardState, isReviewSummaryCard } from './review/bot-card.mjs';
+import { cardState, REVIEW_SUMMARY_CARD_MARKER } from './review/bot-card.mjs';
 import { trackerOfEndpoint } from './tracker-guard.mjs';
 import { knownServers, trackerById, trackerOfTools, TRACKERS } from './trackers/index.mjs';
 
@@ -168,15 +168,21 @@ function autoMergeProblem({ project, repository, facade }) {
   return null;
 }
 
-// The reviewer bot seen on a recent pull request, and CI workflows, through the forge's own reads, or `ask` lines for a
-// forge with none. With no pull request yet, the first one proves the bot, and the merge's trust check holds it until then.
 // Whether a comment by the review bot's login shows a review it finished: its usage-limit notice does not, and nor does
-// its status card until the card's state says the code review completed, since the bot posts the card when it starts.
+// its status card, which the bot posts when a review starts, until the card says the code review completed: in its
+// machine state, or, on an older card with none, in its visible Code Review row. Only a comment that opens with the
+// card's marker is the card, so a review that quotes the marker still counts.
 export const showsReview = (body) => {
   if (isQuotaNotice(body)) return false;
-  if (isReviewSummaryCard(body)) return cardState(body)?.code_review?.status === 'completed';
+  if (typeof body === 'string' && body.trimStart().startsWith(REVIEW_SUMMARY_CARD_MARKER)) {
+    const state = cardState(body);
+    return state ? state.code_review?.status === 'completed' : /\*\*Code Review\*\*\s*\|\s*✅\s*\*\*Completed\*\*/u.test(body);
+  }
   return true;
 };
+
+// The reviewer bot seen on a recent pull request, and CI workflows, through the forge's own reads, or `ask` lines for a
+// forge with none. With no pull request yet, the first one proves the bot, and the merge's trust check holds it until then.
 
 function forgeLines({ facade, repository, reviewer, lines, check, asks }) {
   const bot = NO_REVIEWER.has(reviewer) ? null : reviewer;

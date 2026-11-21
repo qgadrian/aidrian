@@ -547,7 +547,7 @@ function launchStart(context, place) {
         if (started?.proof) proof = started.problem;
         return started;
       },
-      stop: (id, session) => cap.stop({ id: session ?? id, started: id, env, run: spawn }),
+      stop: (id) => cap.stop({ id, env, run: spawn }),
       ended: (earlier) => earlierEnded({ cap, store, earlier, env, spawn, state, run }),
       intent: () => writeAhead({ state, run, base, held, session, now: Date.now(), found: context.found, env, parallel: parallelOf(context.policy), refused: ahead }),
       store,

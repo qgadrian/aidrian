@@ -18,8 +18,11 @@ gives the snapshot's line without it.
 
 - **The band.** The model and effort, context use, the prompt cache time left, the 5-hour and 7-day limits (each only
   once Claude Code reports it, so a plan with no 5-hour limit shows none), the branch
-  or linked worktree (`detached` with no branch), the branch's ticket with its title and state, and the running
-  subagents. Two rows below them are `aidrian session snapshot` ([The snapshot](handoff.md#the-snapshot)): first the handoff verdict the Stop hook would give
+  or linked worktree (`detached` with no branch), the session's tickets, and the running subagents. The tickets are
+  the snapshot's `tickets`, from the branch, the session ledger, and the pull requests the session touched
+  ([The snapshot](handoff.md#the-snapshot)): one shows its key with its title and state; two or more show the first
+  three keys and `+N` for the rest, `ABC-12, ABC-15, #42, +2`.
+  Two rows below them are `aidrian session snapshot` ([The snapshot](handoff.md#the-snapshot)): first the handoff verdict the Stop hook would give
   and the harness signals to act on, P1 lessons, provisional decisions, merged worktrees to clean, and untriaged
   persona findings; then, on a row of their own so a long list never cuts the signals off, the pull requests the
   session touched: the check counts first, so a narrow terminal cuts numbers and never a failure, then up to five
@@ -37,8 +40,9 @@ gives the snapshot's line without it.
   short number such as `#1` for a larger `+N` can free no room.
   The band's numbers are always the first of the line's.
   The line keeps one row: the handoff, then the pull requests, then the harness signals.
-- **The pane.** `/aidrian-mod` shows the same data with one row per pull request and a link to it, the ticket's
-  link, and one row per subagent. Each pull request's row starts with its number as the band lists it, `PR a#42`,
+- **The pane.** `/aidrian-mod` shows the same data with one row per ticket, its key, title, and state, and a link to
+  its issue, one row per pull request and a link to it, and one row per subagent.
+  Each pull request's row starts with its number as the band lists it, `PR a#42`,
   then its repository, so each letter shows beside the repository it names.
   `/aidrian-mod hide` closes the pane. When there is no snapshot, the pane says why, in
   one of six notices: the `aidrian` plugin is not installed for the folder, is off for it, or failed the mod's safety
@@ -75,7 +79,7 @@ Each is a row of Claude Code's config menu, from `userConfig` in the mod's
 | `notifyMinTurnSeconds` | `20` | A turn shorter than this ends with no Done alert. |
 | `focusCheck`, `focusApp` | `true`, `kitty` | Skip desktop notifications while the app named `focusApp` is in front. |
 | `sounds`, `volume` | `true`, `0.5` | The sounds, and their gain from 0 to 4. |
-| `ticketPrefixes` | empty | Pipe-separated issue key prefixes found in the branch name, such as `ABC\|XY`: at most 32, each a letter and up to 15 letters or digits. A key they match is looked up in Linear. When none matches, a `#N` from a `<type>/<N>-slug` branch shows as it is. |
+| `ticketPrefixes` | empty | Pipe-separated issue key prefixes, such as `ABC\|XY`: at most 32, each a letter and up to 15 letters or digits. The snapshot reads a key they match in the branch name and in the session's pull requests, their titles and the keys their bodies say they close, in any letter case, so a short prefix such as `PR` also reads `pr-12` in a title. Each key they match is looked up in Linear. A `#N`, from a `<type>/<N>-slug` branch or an issue a pull request closes, shows as it is. |
 | `cacheTtlSeconds` | `3600` | The prompt cache lifetime until the transcript shows the real one. |
 
 ## How it runs
@@ -85,6 +89,13 @@ Each is a row of Claude Code's config menu, from `userConfig` in the mod's
   With the plugin enabled but no entry for the folder, or when the mod runs outside a plugin cache, as with
   `--plugin-dir`, it runs instead the `lib/cli.mjs` beside an `aidrian` command on a checked PATH folder: a regular
   file, not a link, below that plugin folder, and outside the session's folder.
+  The mod reads the snapshot's `tickets`, and its `ticket` only from an `aidrian` plugin that prints no `tickets`, so
+  a snapshot with both draws each ticket once and looks each key up once.
+  A mod older than this one reads the deprecated `ticket` alone, so with a newer plugin it shows the session's first
+  ticket only. The plugin keeps `ticket` for those older mods alone, and removes it 30 days after the `aidrian-mod`
+  release that reads `tickets` ships, or at the next major version of `aidrian` or `aidrian-mod`, whichever comes first.
+  <!-- aidrian:decision id=snapshot-legacy-ticket-mod status=unconfirmed class=product-behaviour domain=product date=2026-11-20 pr=439 -->
+  <!-- aidrian:decision-new id=snapshot-legacy-ticket-mod text="  A mod older than this one reads the deprecated `ticket` alone, so with a newer plugin it shows the session's first\n  ticket only. The plugin keeps `ticket` for those older mods alone, and removes it 30 days after the `aidrian-mod`\n  release that reads `tickets` ships, or at the next major version of `aidrian` or `aidrian-mod`, whichever comes first." -->
 - **Processes.** Every process starts by an absolute path through one resolver, never through a shell: `node` and
   `git` from PATH folders outside the session's folder, and `/usr/bin/osascript` with one constant script for the
   focus check. `focusApp` is only compared with what that script prints. Each process gets as its PATH only those
@@ -99,10 +110,13 @@ Each is a row of Claude Code's config menu, from `userConfig` in the mod's
   same probe saw `session.start` within 10 s. So the mod starts its processes from `session.start`, with no wait for
   the first prompt. This holds by observation on Claude Code 2.1.327, not by a documented contract; a later version
   is not verified.
-- **What reaches the model.** Nothing the mod reads. Its one MCP call is `get_issue` with the ticket key, and
-  `/aidrian-mod` answers with constant text.
+- **What reaches the model.** Nothing the mod reads. Its one MCP call is `get_issue` with `{ id }`, once per ticket
+  key a prefix matched, at most 10 a draw, all started at once. Each answer is reused for 5 minutes from when it was
+  asked, through a snapshot that fails or a draw its key is not in, and at most 20 are kept, the oldest of keys not
+  drawn forgotten first; only the current snapshot's keys are drawn. The key is a tool argument, never part of a
+  command or a URL. `/aidrian-mod` answers with constant text.
 - **Text.** Every text it draws or sends passes one filter that removes control, format, and bidi characters. A link
-  is drawn only for a pull request URL that matches its row, or the Linear page of the ticket looked up.
+  is drawn only for a pull request URL that matches its row, or the Linear page of the ticket key it was looked up for.
 
 ## The forge seam
 
@@ -195,6 +209,12 @@ And point the status line at it in `~/.claude/settings.json`:
 - **Pull requests opened outside gh.** The [session ledger](hooks.md#session-ledger) records a `created` row only for
   `gh pr create`. One opened another way, such as through a GitHub MCP server or the web, shows once a `git push` or
   a `gh pr` command of the session records its branch or number.
+- **Tickets from pull requests.** A pull request gives the keys its title names and the keys its body says it closes
+  after one of the forge's own closing keywords (on GitHub `close`, `fix`, or `resolve` and their forms), and `#N` for
+  an issue of its own repository the forge links as closed; no tracker's own words, such as Linear's `part of`, count.
+  The snapshot holds 10 keys at most, and reads pull requests only on the hosts a forge adapter declares, github.com
+  today. A key in a pull request's title or body is the text of whoever wrote it ([The snapshot](handoff.md#the-snapshot)
+  says whose bodies count), so its title in the pane is whatever the tracker answers for that key.
 - **One project's ledger.** The ledger is kept per project, so the band shows the pull requests of the project at the
   session's folder.
 - **The background hand-off.** After a hand-off on the

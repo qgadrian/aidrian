@@ -114,6 +114,7 @@ export const isFullSuite = (invocation, testing = {}) => !invocation.dynamic && 
 // The test runs on the top level of `command`, as { key, folder, carries }: `folder` the folder it runs in (shell-lex
 // walkCommands), and `carries` whether the line's exit status of 0 says the run exited 0: no separator before or after it
 // but `&&`. After `;` or `||` the run may not have run at all, or another command's status is the line's.
+// A run the lexer marks `uncertain`, which the shell may never run, as behind `repeat 0`, is no run.
 // A run inside a substitution or a nested shell is not read.
 export function testRuns(command, cwd, testing = {}) {
   const { segments, separators } = lexPipeline(command);
@@ -126,7 +127,7 @@ export function testRuns(command, cwd, testing = {}) {
     if (CHANGES_DIRECTORY.has(invocation.program)) return;
     const entry = entries[next];
     next += 1;
-    if (segment.length === 0 || !isTestRun(invocation, testing)) return;
+    if (segment.length === 0 || invocation.uncertain || !isTestRun(invocation, testing)) return;
     const carries = separators.every((separator) => separator === '&&' || separator === null || separator === undefined);
     runs.push({ key: commandKey(invocation), folder: entry?.folder ?? null, carries });
   });

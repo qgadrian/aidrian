@@ -58,6 +58,8 @@ export function changeRef(fields) {
 
 // The most refs one changesState call reads, as the security gate set it.
 export const MAX_CHANGE_REFS = 25;
+// The most entries a row's `closes` holds, and the most closing references the read asks for.
+const MAX_CLOSES = 10;
 // The one host changesState asks, named to gh as a constant, so neither GH_HOST nor any ref's text picks another: gh sends
 // GH_ENTERPRISE_TOKEN to any host but github.com.
 const CHANGES_HOST = 'github.com';
@@ -68,22 +70,47 @@ const CHANGES_HOST = 'github.com';
 // a pick of the top class and shows nothing otherwise. Enough for display data; paging until the row's own head repository answers would replace it.
 // (Ref.associatedPullRequests lists other forks' pull requests too, and ignores orderBy, so it is no fix.)
 const HEAD_CHANGES = 5;
+// The most pull requests one changesState call reads the body text of, so the answer stays bounded before gh returns it:
+// a body is up to MAX_BODY characters, and the 250 a call of 25 branches would ask for could pass gh's stdout ceiling.
+// Refs in order, newest first, each costs the pull requests it asks for, 1 for a number and 2 * HEAD_CHANGES for a
+// branch, and reads bodies while its cost still fits: so every ref of 25 numbers, or the first 3 branches. A ref past it
+// gives the forge's closing references and no body key; the tickets take at most 3 keys a pull request and 10 in all,
+// so the newest refs give them first anyway.
+// SHORTCUT: a branch's body read covers every pull request of its pages, the pick's and the others', since picking
+// first and reading the pick's body after would need a second call, which the snapshot's one batched read rules out.
+export const MAX_BODY_NODES = 30;
 // What changesState reads of one pull request. statusCheckRollup's counts by state cover every check of the head commit,
 // however many, with no page of them read (GitHub's StatusCheckRollupContextConnection).
 // SHORTCUT: unresolvedThreads counts the unresolved threads among the first 100 alone. Enough for display data; paging
 // reviewThreads, as findingThreads does, would replace it.
+// closingIssuesReferences, and bodyText where MAX_BODY_NODES allows it (BODY), give the row's `closes` (closesOf), with
+// viewerDidAuthor and authorAssociation, which say whose body it is; bodyText holds no HTML comment, so a pull request
+// template's commented placeholder never matches, and the body itself never leaves the adapter.
 const CHANGE_FIELDS = 'fragment change on PullRequest { number title url isDraft state mergeable reviewDecision createdAt headRefName viewerDidAuthor authorAssociation '
+  + `closingIssuesReferences(first: ${MAX_CLOSES}) { nodes { number repository { name owner { login } } } } `
   + 'headRepository { name owner { login } } repository { name owner { login } } reviewThreads(first: 100) { nodes { isResolved } } '
   + 'commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 1) { checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } } }';
-const headChanges = (index) => `pullRequests(headRefName: $b${index}, first: ${HEAD_CHANGES}, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { ...change } pageInfo { hasNextPage } }`;
+const BODY = ' bodyText';
+const headChanges = (index, body) => `pullRequests(headRefName: $b${index}, first: ${HEAD_CHANGES}, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { ...change${body} } pageInfo { hasNextPage } }`;
+// For each of `refs`, in order, BODY when its pull requests still fit MAX_BODY_NODES, else ''.
+function bodyReads(refs) {
+  let left = MAX_BODY_NODES;
+  return refs.map((ref) => {
+    const cost = ref.number === null ? 2 * HEAD_CHANGES : 1;
+    if (cost > left) return '';
+    left -= cost;
+    return BODY;
+  });
+}
 
 // The one query operation for `refs`, as changeRef gave them: its text is built from each ref's index and kind alone, a
-// number or a branch, and every value is a variable (changesVariables). No root field: a non-null one a token cannot
+// number or a branch, those kinds also saying which refs read bodies (bodyReads), and every value is a variable (changesVariables). No root field: a non-null one a token cannot
 // resolve, such as an app installation token's viewer, nulls the whole `data`; each pull request says itself whether the
 // token's user wrote it (viewerDidAuthor), which ranks a branch's pull requests (answeredChange). Never a mutation.
 function changesQuery(refs) {
   const head = refs.map((ref, i) => `$o${i}: String!, $n${i}: String!, ${ref.number === null ? `$b${i}: String!` : `$p${i}: Int!`}`);
-  const body = refs.map((ref, i) => `r${i}: repository(owner: $o${i}, name: $n${i}) { ${ref.number === null ? `${headChanges(i)} parent { ${headChanges(i)} }` : `pullRequest(number: $p${i}) { ...change }`} }`);
+  const bodies = bodyReads(refs);
+  const body = refs.map((ref, i) => `r${i}: repository(owner: $o${i}, name: $n${i}) { ${ref.number === null ? `${headChanges(i, bodies[i])} parent { ${headChanges(i, bodies[i])} }` : `pullRequest(number: $p${i}) { ...change${bodies[i]} }`} }`);
   return `query changes(${head.join(', ')}) { ${body.join(' ')} }\n${CHANGE_FIELDS}`;
 }
 const changesVariables = (refs) => Object.assign({}, ...refs.map((ref, i) => ({ [`o${i}`]: ref.owner, [`n${i}`]: ref.name, ...(ref.number === null ? { [`b${i}`]: ref.branch } : { [`p${i}`]: ref.number }) })));
@@ -159,9 +186,46 @@ function checkCounts(contexts) {
   return counts;
 }
 
+// GitHub's closing keywords (docs.github.com, "Linking a pull request to an issue"), compared in lower case.
+const CLOSING_WORDS = new Set(['close', 'closes', 'closed', 'fix', 'fixes', 'fixed', 'resolve', 'resolves', 'resolved']);
+// A word not preceded by a letter or digit, an optional `:`, 1 to 8 spaces or tabs, then a tracker-shaped key not
+// followed by a letter or digit. ASCII classes with no `i` flag, so no other script's letter folds into one; every
+// quantifier is bounded, so the scan is linear in the text's length. Which words count is CLOSING_WORDS'.
+const CLOSING_KEY = /(?<![A-Za-z0-9])([A-Za-z]{3,8}):?[ \t]{1,8}([A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9})(?![A-Za-z0-9])/gu;
+
+// The issue references a pull request says it closes, at most MAX_CLOSES distinct, in order: `#<n>` for each of GitHub's
+// closing references to an issue of the pull request's own repository (`owner`, `name`), a number GraphQL's Int holds
+// (isChangeNumber), from any author, unlike a body key, since GitHub itself made them and they are display only, never
+// looked up (a `#N` has no lookup). GitHub links an issue a closing keyword names only
+// for a pull request into the default branch; an issue linked by hand in the sidebar has no branch rule. Then, only
+// when the token's user wrote the pull request or its author belongs to the repository (own, trusted: anyone can open
+// a pull request and write its body),
+// each key of the first MAX_BODY characters of its body text that follows one of GitHub's closing keywords, as written.
+// A body longer than MAX_BODY is cut there, so a key that ends at the cut may be the start of a longer one, and is
+// dropped. Each key needs its own keyword, as GitHub's own rule for issues. No prefix list: shared code keeps the keys its
+// project tracks. Only the keys leave: no other character of the body.
+function closesOf(node, owner, name) {
+  const refs = Array.isArray(node?.closingIssuesReferences?.nodes) ? node.closingIssuesReferences.nodes : [];
+  const same = refs.filter((ref) => sameName(ref?.repository?.owner?.login, owner) && sameName(ref?.repository?.name, name) && isChangeNumber(ref.number));
+  const closes = new Set(same.map((ref) => `#${ref.number}`));
+  // Membership is judged on the pull request's own repository, so a third-party repository's owner is trusted there:
+  // accepted, as it reaches no further than the title rule does (prefix-matched, at most 3 keys a pull request).
+  const text = (own(node) || trusted(node)) && typeof node.bodyText === 'string' ? node.bodyText : '';
+  const body = text.slice(0, MAX_BODY);
+  const cut = text.length > body.length;
+  for (const match of body.matchAll(CLOSING_KEY)) {
+    // SHORTCUT: the cap applies before shared code filters by prefix and origin, so ten other entries, or case variants
+    // of one key, crowd out an eligible key. Accepted as contrived: a pull request rarely links ten issues.
+    if (closes.size >= MAX_CLOSES) break;
+    if (cut && match.index + match[0].length === body.length) continue;
+    if (CLOSING_WORDS.has(match[1].toLowerCase())) closes.add(match[2]);
+  }
+  return [...closes].slice(0, MAX_CLOSES);
+}
+
 // One pull request as the forge-neutral row (docs/providers/adding-a-host.md#adding-a-forge), or null when its owner,
 // name, number, or state has no GitHub shape. `url` is built from the owner, name, and number GitHub answered, and kept
-// only when GitHub's own url equals it.
+// only when GitHub's own url equals it. `closes` is closesOf's, `[]` when the pull request names none.
 function changeRow(node) {
   const owner = node?.repository?.owner?.login;
   const name = node?.repository?.name;
@@ -174,7 +238,7 @@ function changeRow(node) {
     forge: FORGE_ID, host: CHANGES_HOST, repo: `${owner}/${name}`.toLowerCase(), number, title: typeof node.title === 'string' ? node.title : '',
     url: node.url === url ? url : null, isDraft: node.isDraft === true, state: pick(STATES, node.state), mergeable: pick(MERGEABLE, node.mergeable),
     reviewDecision: pick(DECISIONS, node.reviewDecision), unresolvedThreads: threads.filter((thread) => thread?.isResolved === false).length,
-    checks: checkCounts(node.commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts),
+    checks: checkCounts(node.commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts), closes: closesOf(node, owner, name),
   };
 }
 
@@ -183,7 +247,8 @@ export const GITHUB_JSON = 'application/vnd.github+json';
 
 // The review rounds of one pull request with their comments, at most PAGE of each, in one GraphQL call.
 export const REVIEWS_PAGE = 100;
-// The longest body GitHub takes for a comment, a review, or a review comment, in characters.
+// The longest body GitHub takes for a comment, a review, or a review comment, in characters; and the most characters of
+// a pull request's body text closesOf scans for closing keys, a bound GitHub's own pull request body limit matches.
 export const MAX_BODY = 65_536;
 
 // The forge CLI's subcommands that write the user's own config, which the agent gates hook refuses to a session no Human
@@ -913,6 +978,26 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
         throw error;
       }
       return namesItem(found?.issue_url, 'issues', repo, number) ? found : null;
+    },
+    // One issue by its number, in the forge-neutral shape: { number, state: 'open' | 'closed', title, body, url, change,
+    // created }, `change` true when the number is a pull request (GitHub numbers both in one list, and answers a pull
+    // request here with a `pull_request` key), a missing title or body '', and `created` the ISO time it was opened, or
+    // null. Null when GitHub does not find it (HTTP 404); any other failure throws.
+    issue: (repo, n, { host } = {}) => {
+      const route = `repos/${repo}/issues/${idOf(n, 'an issue number')}`;
+      let found;
+      try {
+        found = rest(route, { host });
+      } catch (error) {
+        if (notFound(error)) return null;
+        throw error;
+      }
+      const text = (value) => (typeof value === 'string' ? value : '');
+      return {
+        number: Number.isSafeInteger(found?.number) ? found.number : null, state: found?.state === 'open' ? 'open' : 'closed', title: text(found?.title),
+        body: text(found?.body), url: typeof found?.html_url === 'string' ? found.html_url : null, change: Boolean(found) && Object.hasOwn(found, 'pull_request'),
+        created: typeof found?.created_at === 'string' ? found.created_at : null,
+      };
     },
     postComment: (repo, n, body, { host } = {}) => rest(`repos/${repo}/issues/${idOf(n, 'a pull request number')}/comments`, { method: 'POST', fields: { body }, host }),
     editComment: (repo, id, body, { host } = {}) => rest(`repos/${repo}/issues/comments/${idOf(id, 'a comment id')}`, { method: 'PATCH', fields: { body }, host }),

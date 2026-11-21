@@ -192,6 +192,17 @@ dispatch log were both the main session's id, never another one; the live runs u
 snapshot's [worktree links](adding-a-host.md#session-links) are still written by the PostToolUse Bash hook, under the
 payload's `session_id`, since Codex's shell variable is not its hooks' id in a subagent, and one writer serves both hosts.
 
+## Answers the Human gave
+
+The adapter's `humanAnswer` says whether an AskUserQuestion result entry of the transcript is the Human's own answer in
+the terminal: `isSidechain` false (not merely absent), not a meta entry or a compaction summary, `entrypoint` `cli`, and
+`permissionDecision.source` `user_temporary`. Read from local transcripts on 2026-11-19 and 2026-11-20: every answer on
+Claude Code 2.1.295 to 2.1.328 from the terminal carries all three, the desktop app writes `entrypoint`
+`claude-desktop`, and before 2.1.295 no entry carries the permission decision. No host document states the shape, so a
+shape the adapter does not know never counts. Whether an SDK callback or a hook that answers the question writes other
+marks is not verified: its entry counts only if it carries all three. The
+[round limit delegation rule](../hooks.md#bash-rules) reads it.
+
 ## Handoff continuation
 
 Claude Code does the `clear` route of [`session.handoff.continue`](../handoff.md#continue): after the brief, the Human
@@ -258,7 +269,7 @@ the handoff goes on by the clear route:
    not place starts nothing. The adapter then calls the gate's `hold` with that folder and the `sessionId` of every
    listed session, which files the pending mark that holds every other session until the new one's id is listed;
    when that fails, nothing starts.
-2. `claude --bg --name '<name> · <n>' [--agent <agent>] [--effort <effort>] [--permission-mode <mode>] <prompt>` there,
+2. `claude --bg --name '<name> · <n>' [--agent <agent>] [--effort <effort>] [--permission-mode <mode>] -- <prompt>` there,
    where the name is that session's, else the brief's slug. A name that ends in ` · <n - 1>` loses that count and
    any before it that count down by one, so a second hop names `widget-work · 2`, not `widget-work · 1 · 2`;
    any other name stays whole, such as `release · 2026`. `<n>` is the continuation's number; the agent is
@@ -359,7 +370,7 @@ How issue sessions and the driver relate to the cap of five background continuat
   attempt cuts the issue's branch from the base tip, and is refused when the forge has that branch already. A clone
   that could not be made, or is refused so, leaves no attempt folder.
 - The session starts with `claude --bg --name '<run> · <issue> · <attempt>' --permission-mode <the driver's>
-  --setting-sources user --settings '<sandbox JSON>' --strict-mcp-config --mcp-config '<servers JSON>' <prompt>`, in the
+  --setting-sources user --settings '<sandbox JSON>' --strict-mcp-config --mcp-config '<servers JSON>' -- <prompt>`, in the
   clone, with no agent. The settings are inline: no settings file is written.
 - Before the launch, the start makes placeholders for the protected host files that can be there harmlessly, since on
   Linux a sandbox write denial holds only on a path there at launch: in the clone's git folder, an empty

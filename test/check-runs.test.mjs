@@ -219,6 +219,10 @@ test('a row a finished run, with the status the line carries', () => {
   assert.deepEqual(row('git status', ''), []);
   assert.deepEqual(checkRows({ command: 'npm test', cwd: '/w', output: '', exitZero: true, tree: () => ({ tree: null, trackedTree: null }), at: 't' }),
     [{ at: 't', agentId: null, command: 'npm test', tree: null, trackedTree: null, untrackedCode: [], status: 'passed', pass: null, fail: null }], 'no tree: the row says so');
+  // A run behind a word the shell may not run, as a zero count, may never have run: it records no row.
+  for (const command of ['repeat 0 npm test', 'noglob npm test', 'case $x in a ) npm test ;; esac']) assert.deepEqual(row(command, ''), [], command);
+  assert.equal(row('command npm test', '').length, 1, 'command runs an external program in every shell: the run keeps its row');
+  assert.equal(row('repeat 0 npm test && npm run check', 'ℹ pass 4\nℹ fail 0').map((each) => each.command).join(), 'npm run check', 'the run that certainly ran keeps its row');
 });
 
 const BODY = (lines) => `## Summary\n\n- x\n\n## Tests run\n\n${lines.join('\n')}\n`;

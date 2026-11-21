@@ -61,6 +61,7 @@ neither was run here, neither is supported, and their cases have no code yet.
 | `toolResponse(response)` | The objects a tool's response holds, the most direct first |
 | `shellOutput(response)` | Optional: a shell call's response as `{ output, interrupted }`: `output` the text the command printed, or null when the response holds none it can read, and `interrupted` whether the host stopped the call. The [session ledger](../hooks.md#session-ledger) reads a created pull request's link from `output` alone, so no shared code reads a payload field. A host without it records no created pull request, and a process no adapter claims reads it through every adapter's, the first output one reads, interrupted when any says so |
 | `hookInput(input)` | The hook payload in the standard field names, with `raw_tool_name` holding what it sent when that differs. A standard payload stays as it is. A call of a tool the host runs under another tool's permission rules may carry `permission_tool_name`, that tool's standard name, which a bare deny of it then covers (`deniedNames` in `lib/hosts/index.mjs`). A shell call that asks the host to run it outside its sandbox carries `sandbox_escape: true` (Claude Code's `dangerouslyDisableSandbox`), which the agent gate hook refuses to a session no Human attends |
+| `humanAnswer(entry)` | Optional: whether an AskUserQuestion result entry of its session transcript carries its positive marks of an answer the Human gave in its terminal, never one a subagent, an app, or a hook gave. Shared code asks it through `humanAnswer` in `lib/hosts/index.mjs`, which is true when an adapter says so; a host without it never gives such an answer, so the [round limit delegation rule](../hooks.md#bash-rules) hands the command to the Human's own shell there. `test/host-coupling.test.mjs` fails on shared code that reads those marks itself |
 | `opaqueShellTools` | Optional: its tools that run `tool_input.command` in a shell the shared lexer cannot read, such as PowerShell. They keep their own name, so no `Bash(<prefix>)` pattern admits them, and the guards read the command as opaque text, failing closed for a subagent (`opaqueShellCommand` in `lib/hosts/index.mjs`). Every `Bash` and `Bash(<prefix>)` deny covers them (`deniedNames`) |
 | `sessionStart` | Optional: `{ programs, starts(args) }`, the host's own command that starts or resumes a session. `programs` are the command's names; `starts` takes the lexer's argument tokens after the name, each `{ text, dynamic }`, and says whether that command line starts or resumes one, failing closed on a word it does not know. The agent gates hook refuses such a command to a subagent and to a session the background handoff route started, for every host's command whatever host runs the session (`hostSessionStartDenial` in `lib/handoff-guard.mjs`) |
 | `fileEditTools`, `fileEdit(tool, input)` | Its file edit tools, and each call in a shape `fileEditOf` in `lib/hosts/index.mjs` lists |
@@ -107,8 +108,9 @@ Only a live session with the hooks running proves a guard holds.
 
 ### Session links
 
-The [snapshot](../handoff.md#across-a-handoff) shows the pull requests and the ticket of the sessions a handoff came
-from, through the `parent` a chain floor names, and the [worktree](../handoff.md#the-worktree) a session created. A
+The [snapshot](../handoff.md#across-a-handoff) shows the pull requests and the tickets of the sessions a handoff came
+from, through the `parent` a chain floor names, and the [worktree](../handoff.md#the-worktree) a session created; its
+[tickets](../handoff.md#the-tickets) also hold the keys those pull requests name, from the forge's one call. A
 host gets the first only through its continue routes. The second is written by the ledger's PostToolUse Bash hook,
 under the session id of the hook's payload ([Session ledger](../hooks.md#session-ledger)), on every host.
 
@@ -221,13 +223,35 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   `MEMBER`, or `COLLABORATOR`; any other is an outsider's), then an open one, then the newest, never one from a fork
   with a branch of the same name. The read names no field of the signed-in user at the query's root, which a token
   that cannot resolve it, such as an app's installation token, would turn into no answer at all. The row is
-  `{ forge, host, repo, number, title, url, isDraft, state, mergeable, reviewDecision, unresolvedThreads, checks }`:
+  `{ forge, host, repo, number, title, url, isDraft, state, mergeable, reviewDecision, unresolvedThreads, checks, closes }`:
   `forge` the adapter's `id`; `host` and `repo` the repository as `repoIdentity` reads it, `repo` its path; `state`
   `open`, `closed`, or `merged`; `isDraft` a boolean; `mergeable` true, false, or null while the forge has not worked it
   out; `reviewDecision` `approved`, `changes_requested`, `review_required`, or null; `unresolvedThreads` a count;
   `checks` `{ passed, failed, pending, skipped }`, counts of every check of the head, with no check-name rule; and `url`
-  the change request's link, built by the adapter from the owner, name, and number the forge answered, or null. One
-  call for all the refs, which never holds a value in its text or its arguments: GitHub's sends one GraphQL query, its
+  the change request's link, built by the adapter from the owner, name, and number the forge answered, or null; and
+  `closes` the issue references the change request says it closes, at most 10 distinct, `[]` when none: first `#<n>`
+  for each issue of the change request's own repository the forge itself links as closed by it, whoever wrote the
+  change request (GitHub's `closingIssuesReferences`, which a token that may not read issues answers as null, giving
+  none). GitHub links an issue a closing keyword names only for a pull request into the repository's default branch
+  (an issue linked by hand in the pull request's sidebar has no branch rule), so `Fixes #12` in a pull request into a
+  task branch gives no `#12`, while `Fixes ABC-12` there still gives `ABC-12`. Then, only when the forge's signed-in
+  user wrote the change request or its author belongs to the repository (the ranking's `viewerDidAuthor` and
+  `authorAssociation`, read in the same call), each tracker-shaped key
+  (`[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}`, as written) that follows one of the forge's closing keywords in the first
+  65,536 characters of the body text (GitHub's `close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`,
+  `resolves`, `resolved`, in any letter case, then an optional `:` and 1 to 8 spaces or tabs; each key needs its own
+  keyword). Anyone can open a pull request and write its body, so an outsider's `Fixes ABC-1` gives no key. A key that
+  ends where a longer body is cut may be the start of a longer one, and is dropped. GitHub's `bodyText` holds no HTML
+  comment, so a template's commented placeholder never matches. The adapter knows no prefix list: it keeps any key of
+  that shape, and shared code keeps the ones its project tracks. One call reads the body text of 30 pull requests at
+  most (`MAX_BODY_NODES`), the newest refs first, a number counting 1 and a branch the 10 of its two pages, so the
+  answer stays bounded before gh returns it; a ref past that gives its `#<n>` references and no body key.
+  The body text never leaves the adapter: it is in no row, cache, or log. A row with no `closes`, as a cache an
+  older plugin wrote, reads as none, and one whose `closes` has any other shape is no row (`isChangeRow` in
+  `lib/session-prs.mjs`). The recorded answer in `test/fixtures/forges/github/` predates the `bodyText` and
+  `closingIssuesReferences` fields, so its rows give `closes: []`; those fields were checked by a read-only call on
+  github.com on 2026-11-19, and the tests replay hand-built nodes for them.
+  One call for all the refs, which never holds a value in its text or its arguments: GitHub's sends one GraphQL query, its
   aliases built from indexes, every value a variable in a JSON body on gh's stdin, to the constant `--hostname
   github.com`. An answer that holds errors still gives the rows that resolved; one that does not parse throws. Shared
   code reads no field of the forge's answer, only this row.
@@ -253,6 +277,9 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
 - Conversation: `conversationComments`, the comments on the pull request rather than on its diff, `comment(repo, id, { host, pr })`,
   one of them by id, held to pull request `pr` when the option names it (null for a comment of any other, or one the forge
   does not find), `postComment`, `editComment`, `deleteComment(repo, id)`, and `reactions`.
+  `issue(repo, n, { host })` reads one issue as `{ number, state: 'open' | 'closed', title, body, url, change, created }`,
+  with `change` true when the number is a pull request, a missing title or body `''`, and `created` the ISO time it was
+  opened, or null; it is null when the forge does not find the issue, and any other failure throws. `aidrian pr delegate` reads the follow-up issue through it.
 - Review: `reviews`, `reviewComments`, `reviewsWithComments`, and `reviewThreads`, and `changeEvidence(repo, n, url, { host, withBody })`, which says whether a URL on the pull request's host is one of its comments, reviews, or review comments, found by its id, and with `withBody` gives that item's text too, so the sign-off check refuses an engine post.
 - Inline review: `postReview(repo, n, { commitId, body, comments })`, one review of the head with its inline comments
   (`{ path, line, side, body }`), always a plain comment: the adapter sets the event, and takes none. It answers

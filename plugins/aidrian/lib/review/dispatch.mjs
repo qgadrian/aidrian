@@ -14,7 +14,7 @@ import { stateDir } from '../project.mjs';
 import { resolvePublish } from '../config-local.mjs';
 import { fileAt, isAncestor } from './diff.mjs';
 import { blocks, isFindingId, listedTo, recordedFindings } from './findings.mjs';
-import { belowRootBrief, flowBaseBrief, ID_BRIEF, remergeBrief, VERDICT_MEANING } from './reviewers.mjs';
+import { baseMergedBrief, belowRootBrief, flowBaseBrief, ID_BRIEF, remergeBrief, VERDICT_MEANING } from './reviewers.mjs';
 import { contextFindings, idCopy, recordSettled, residualTexts } from './settled.mjs';
 import { patternsOf, textChecker } from './publish.mjs';
 import * as quota from './quota.mjs';
@@ -208,7 +208,30 @@ export function passInput(s, pass, stage) {
   const { config, root, repo, n, head, base, baseTip, changes, scope, state, plan, resultFor, sameFiles, verdictsFor, visual, manifest, isVisual } = s;
   const recorded = state.passes[pass.id];
   const prior = resultFor(pass) ?? (recorded && sameFiles(pass, recorded) ? recorded : null);
-  const from = prior && prior.head !== head && isAncestor(root, prior.head, head) ? prior.head : base;
+  // The pass's own last list, then the open entries listed to it that the list does not hold (a cut that moved them
+  // here, or halves), then a fallback's kept findings: each once by id.
+  const seen = new Set();
+  const listed = new Set(listedFor(s, pass));
+  const earlier = [...(prior?.list ?? []), ...listedFindings(s, pass), ...keptFindings(state, pass)].filter((finding) => {
+    if (!isFindingId(finding?.id)) return true;
+    if (seen.has(finding.id)) return false;
+    seen.add(finding.id);
+    return true;
+  });
+  let from = prior && prior.head !== head && isAncestor(root, prior.head, head) ? prior.head : base;
+  // A delta whose range merged the base branch reads only this pull request's own files (step.mjs boundFor): the pass's
+  // own list, else the bounded delta's. With none left, or a merge git cannot read, it reads the whole change instead.
+  // A blocking finding the pass reads in `earlier`, its own or one handed to it, keeps its file in the list though that
+  // file changed nothing since, or lies outside a scoped pass's own files (a slice, a flow pass), on any range: a slice
+  // a fix repacked restarts from the base (sameFiles) and still reads the findings listed to it. Dropped from the list,
+  // the reviewer could not raise it again, and it would close unfixed.
+  const bound = from !== base ? s.boundFor?.(from) ?? null : null;
+  const openFiles = earlier.filter(blocks).map((finding) => finding.file).filter((file) => typeof file === 'string');
+  const ownFiles = bound?.files ? [...new Set([...s.delta(from).map((change) => change.file), ...openFiles])] : null;
+  const scopedFiles = pass.files ? [...new Set([...pass.files, ...openFiles])] : pass.files;
+  if (bound && (!bound.files || !(scopedFiles ?? ownFiles).length)) from = base;
+  const merged = bound && from !== base ? bound : null;
+  const files = scopedFiles ?? (scope ? scope.changes.map((change) => change.file) : merged ? ownFiles : null);
   const flows = plan.flows.filter((flow) => (pass.flows ?? []).includes(flow.id) || stage.name !== 'local').map((flow) => ({
     id: flow.id,
     invariants: flow.invariants,
@@ -230,20 +253,18 @@ export function passInput(s, pass, stage) {
   } : {};
   const visualChecklist = visual?.checklist ? { path: visual.checklist, text: fileAt(root, baseTip, visual.checklist.split('#')[0]) } : null;
   const residuals = passResiduals(s, pass);
-  // The pass's own last list, then the open entries listed to it that the list does not hold (a cut that moved them
-  // here, or halves), then a fallback's kept findings: each once by id.
-  const seen = new Set();
-  const listed = new Set(listedFor(s, pass));
-  const earlier = [...(prior?.list ?? []), ...listedFindings(s, pass), ...keptFindings(state, pass)].filter((finding) => {
-    if (!isFindingId(finding?.id)) return true;
-    if (seen.has(finding.id)) return false;
-    seen.add(finding.id);
-    return true;
-  });
   return {
     ...split,
-    // A merge's resolutions are the whole review: a pass of every changed file reads only the resolved ones.
-    pr: n, repo, base: from, head, context: from === base ? 'full' : 'delta', files: pass.files ?? (scope ? scope.changes.map((change) => change.file) : null), flows,
+    // A merge's resolutions are the whole review: a pass of every changed file reads only the resolved ones. A bounded
+    // delta's `base` is the merge base, not the earlier head: `git diff <base> <head>` from the earlier head holds the
+    // base branch's code, and an exec reviewer diffs `base` to `head` as it reads them. `baseMerged.from` names the
+    // earlier head the delta runs from, `baseMerged.earlierBase` that head's merge base, and `baseMerged.rolledBack` the
+    // listed files a push took back to the base's text since it: the diff from the merge base holds nothing there, and
+    // the one from `from` to the head holds the base's own edits, so the reviewer reads
+    // `git --literal-pathspecs diff <from> <earlierBase> -- <file>`, each file name one argument quoted for the shell
+    // (reviewers.mjs QUOTED_NAMES), as `-- 'name'`.
+    pr: n, repo, base: merged ? merged.base : from, head, context: from === base ? 'full' : 'delta', files, flows,
+    ...(merged ? { baseMerged: { base: merged.base, from, earlierBase: merged.earlierBase, merges: merged.merges, rolledBack: (merged.rolledBack ?? []).filter((file) => files.includes(file)) } } : {}),
     // Only the ids listed to this pass show: the only ones a finding it returns may take.
     priorFindings: residuals ? [...contextFindings(earlier, listed), ...recordSettled(state, prior, residuals)] : earlier.map((finding) => idCopy(finding, listed)),
     ...(residuals ? { acceptedResiduals: residuals } : {}),
@@ -295,11 +316,12 @@ export function dispatchFor(s, pass, stage) {
   const prefix = showPrefix(root);
   const briefs = [
     prefix ? belowRootBrief(prefix) : null,
-    input.checklist ? `Review the diff against the checklist in ${input.checklist.path} as well as for bugs.` : null,
+    input.checklist ? 'Review the diff against the checklist, `checklist` in the input, its `path` and `text`, as well as for bugs.' : null,
     input.flows.some((flow) => (flow.invariants ?? []).some((invariant) => invariant.source)) ? 'Judge each invariant against its `source`, the section of the project doc it cites; `text` is only the question.' : null,
     input.flows.length ? VERDICT_MEANING : null,
     input.flowBase ? flowBaseBrief(input) : null,
     input.remerge ? remergeBrief(input) : null,
+    input.baseMerged ? baseMergedBrief(input) : null,
     input.visual ? 'Review the captures in `visual` (open each `file`), with their measured facts, as well as the diff.' : null,
     pass.fallback ? `${quota.owner(pass.fallback.replaces)} is out of quota, and the Human chose this pass as the second look in its place: review the whole change through your own lens. It is recorded as a fallback, not as an independent review.` : null,
     FINDINGS_FILE_BRIEF,

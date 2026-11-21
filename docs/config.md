@@ -2149,15 +2149,17 @@ An older plugin rejects the `testing` keys as unknown, so set [`requires.aidrian
 `aidrian session snapshot [--session ID] [--transcript PATH] [--ticket-prefixes A|B] [--deadline-ms N] [--json|--line]`
 prints what a status line shows for a session: its handoff numbers, from `session.handoff`, the pull requests it
 touched (`prs`), and the project's open lessons, worktrees, provisional decisions, untriaged audit findings, and the
-branch's ticket ([Handoff](handoff.md#the-snapshot)).
+session's tickets ([Handoff](handoff.md#the-snapshot)).
 `prs` shows the pull requests of the session's [ledger](hooks.md#session-ledger) only on the hosts a forge adapter
 declares, github.com today, read in one forge call. The ledger hook records rows only on those hosts, so an unsupported
 row, on any other host, appears only from a ledger written another way, such as by a later adapter. It reads at most 25
 refs, the newest: each ref is a pull request number or a branch, counted before branches resolve, so a branch with no
 pull request uses one, and fewer than 25 pull requests can show while an older one is left out.
 After a handoff, `prs` also shows the open pull requests the sessions it came from created or pushed, each
-`inherited: true`, and `ticket` comes from the current branch (`source: "branch"`), else from a branch the session's
-ledger, or an earlier session's, recorded (`source: "ledger"`) ([Across a handoff](handoff.md#across-a-handoff)).
+`inherited: true`. `tickets` lists up to 10 keys, `[]` when none: the current branch's (`source: "branch"`), those of
+the branches the session's ledger, or an earlier session's, recorded (`source: "ledger"`), and those the pull requests
+`prs` shows name in their closing references or their titles (`source: "pr"`), read in the same one forge call
+([The tickets](handoff.md#the-tickets)).
 `links` shows the worktree the session, or an earlier one, created with `aidrian worktree new`, while git still lists
 it ([The worktree](handoff.md#the-worktree)).
 Unlike the other commands it never stops on a `config.json` with errors: like the hooks, it uses the default in place

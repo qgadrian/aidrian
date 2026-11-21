@@ -341,9 +341,9 @@ export const isRepository = (host, repoPath) => typeof host === 'string' && HOST
 const isUnsupportedRow = ({ host, path: repoPath, number = null, branch = null, cwd }) => typeof host === 'string' && HOST_NAME.test(host)
   && isRepoPath(repoPath) && validCwd(cwd) && isNumber(number) && isBranch(branch) && (number !== null || branch !== null);
 // The check of a ledger row under the adapter `forge`, which lib/session-links.mjs runs on each row of a ledger, the
-// session's own and an earlier session's, before the ticket or any other reader takes it, and groupRefs too: a known
+// session's own and an earlier session's, before the tickets or any other reader takes it, and groupRefs too: a known
 // kind and a time that parses; on a host the adapter declares, its own ref check (changeRef, which also bounds a number
-// as its API takes one) and the cwd check; on any other host, isUnsupportedRow. So the ticket comes only from a row the
+// as its API takes one) and the cwd check; on any other host, isUnsupportedRow. So the tickets come only from rows the
 // writer could have written.
 export const ledgerRowCheck = (forge) => (row) => row !== null && typeof row === 'object' && KINDS.has(row.kind) && typeof row.at === 'string'
   && Number.isFinite(Date.parse(row.at)) && (Array.isArray(forge?.hosts) && forge.hosts.includes(row.host)
@@ -457,10 +457,16 @@ const DECISIONS = new Set(['approved', 'changes_requested', 'review_required']);
 const CHECKS = ['passed', 'failed', 'pending', 'skipped'];
 const isCount = (value) => Number.isSafeInteger(value) && value >= 0;
 const isText = (value) => typeof value === 'string' && value.length <= PATH_MAX_BYTES;
+// A row's `closes`: absent, as a cache an older plugin wrote holds it, or at most MAX_CLOSES entries, each a forge's own
+// issue number `#<n>` or a tracker-shaped key, so a tampered cache names no other text.
+const MAX_CLOSES = 10;
+const CLOSES_ENTRY = /^(?:#[1-9][0-9]{0,9}|[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9})$/u;
+const isCloses = (row) => !Object.hasOwn(row, 'closes')
+  || (Array.isArray(row.closes) && row.closes.length <= MAX_CLOSES && row.closes.every((entry) => typeof entry === 'string' && CLOSES_ENTRY.test(entry)));
 
 // Whether `row` has the forge-neutral shape of a change request (docs/providers/adding-a-host.md#adding-a-forge), as a
 // row the forge answers, or a cached one, must before it is shown.
-export const isChangeRow = (row) => row !== null && typeof row === 'object' && isText(row.forge) && isText(row.host) && isText(row.repo)
+export const isChangeRow = (row) => row !== null && typeof row === 'object' && isCloses(row) && isText(row.forge) && isText(row.host) && isText(row.repo)
   && Number.isSafeInteger(row.number) && row.number > 0 && isText(row.title) && (row.url === null || isText(row.url))
   && typeof row.isDraft === 'boolean' && STATES.has(row.state) && [true, false, null].includes(row.mergeable)
   && (row.reviewDecision === null || DECISIONS.has(row.reviewDecision)) && isCount(row.unresolvedThreads)

@@ -1,5 +1,5 @@
 // What the Claude mod draws from an `aidrian session snapshot` object: the band's segments, the pane's rows, the
-// ticket, the alerts, and the notice for a snapshot it could not read. Every part is `{ text, color }`, the color a
+// tickets, the alerts, and the notice for a snapshot it could not read. Every part is `{ text, color }`, the color a
 // name the mod's Text takes (COLORS), so no part holds an escape sequence. Every string drawn passes displayText here,
 // though the snapshot already applied it, and a number is drawn only when it is a finite number (a count, a safe
 // integer). The words match `aidrian session snapshot --line` (docs/handoff.md#the-snapshot).
@@ -250,6 +250,39 @@ export function ticketRow(ticket, issue = null) {
   const parts = [part(key), ...(title ? [part(title)] : []), ...(status ? [part(status, COLORS.muted)] : [])];
   return { parts, link: isIssueLink(found.url, ticket.key) ? found.url : null };
 }
+
+// The most tickets the mod reads from a snapshot, as the snapshot's own cap (its lib/session-links.mjs MAX_TICKETS), so
+// one draw starts that many lookups at most.
+export const MAX_TICKETS = 10;
+
+// How many ticket keys the band lists before it counts the rest as `+N`.
+export const LISTED_TICKETS = 3;
+
+// The snapshot's tickets: the objects of its `tickets` list, the first MAX_TICKETS; else the one `ticket` an older
+// aidrian plugin installed for the folder still prints; else none.
+export function ticketsOf(snapshot) {
+  if (!isObject(snapshot)) return [];
+  if (Array.isArray(snapshot.tickets)) return snapshot.tickets.filter(isObject).slice(0, MAX_TICKETS);
+  return isObject(snapshot.ticket) ? [snapshot.ticket] : [];
+}
+
+// One ticketRow a ticket with a key, each with the issue of `issues` whose `key` is its own. A key shown once already,
+// compared in capitals as the snapshot compares keys, gives no second row.
+export function ticketRows(tickets, issues = []) {
+  const answers = Array.isArray(issues) ? issues.filter(isObject) : [];
+  const shown = new Set();
+  const rows = [];
+  for (const ticket of Array.isArray(tickets) ? tickets : []) {
+    const key = isObject(ticket) ? textOf(ticket.key, DISPLAY_CAPS.name).toUpperCase() : '';
+    if (key === '' || shown.has(key)) continue;
+    shown.add(key);
+    rows.push(ticketRow(ticket, answers.find((issue) => issue.key === ticket.key) ?? null));
+  }
+  return rows;
+}
+
+// The rows the band lists, the first LISTED_TICKETS, and how many it counts as `+N`.
+export const ticketsSummary = (rows) => ({ listed: rows.slice(0, LISTED_TICKETS), more: Math.max(0, rows.length - LISTED_TICKETS) });
 
 // An alert's text and title, as $.ui.toast, $.ui.notify, and $.ui.log get them: the one filter on that path.
 export const alertText = ({ text = '', title = '' } = {}) => ({ text: textOf(text, DISPLAY_CAPS.title), title: textOf(title, DISPLAY_CAPS.name) });

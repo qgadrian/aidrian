@@ -62,6 +62,16 @@ test('a sign-off inside a shell wrapper is denied', (t) => {
   }
 });
 
+test('a sign-off in a case arm whose pattern is a glob or a variable, or behind builtin, is denied', (t) => {
+  const cwd = project(t);
+  for (const command of [
+    'case $x in *) aidrian pr signoff 5 --last ;; esac', 'case $x in "$y") aidrian pr signoff 5 --last ;; esac', 'case $x in ?) aidrian pr signoff 5 ;; esac',
+    'builtin command aidrian pr signoff 5 --last', 'builtin exec aidrian pr signoff 5 --last', 'builtin eval "aidrian pr signoff 5 --last"',
+    'case $x in a ) aidrian pr signoff 5 --last ;; esac', 'f () { aidrian pr signoff 5 --last; }; f',
+  ]) assert.equal(check(command, { cwd }), REASON, command);
+  assert.equal(check('case $x in *) aidrian pr review 5 ;; esac', { cwd }), null, 'another command');
+});
+
 test('an agent may dry-run a sign-off with --check, and every other sign-off is still denied', (t) => {
   const cwd = project(t);
   for (const command of [

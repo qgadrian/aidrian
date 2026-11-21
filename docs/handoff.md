@@ -282,7 +282,7 @@ start context names; a session a person started by typing the resume writes 0.
   With `maxChain: "unlimited"` no count makes it fall back; on the background route the progress check still does.
 - A floor may name its `parent`, the session that handed off: the clear route writes the session that armed the clear,
   and the background route the session that ran the gate. A parent is written only when it is a session id and not the
-  id the floor is filed under. Only [the snapshot](#the-snapshot) reads it, to show the pull requests and the ticket of
+  id the floor is filed under. Only [the snapshot](#the-snapshot) reads it, to show the pull requests and the tickets of
   the sessions a handoff came from; no check, gate, or guard does, so a floor with no parent, or a malformed one, holds
   the same chain.
 
@@ -818,17 +818,20 @@ aidrian session snapshot [--session ID] [--transcript PATH] [--ticket-prefixes A
 | `worktrees` | `{ owned, mergedNotCleaned }`, and `stale: true` when the merged count is a cached value past its minute. |
 | `decisions` | `{ provisional }`: the decision markers with status `unconfirmed` in the indexed docs, as `aidrian decisions list` reads them. |
 | `audits` | `{ untriaged }`: the untriaged persona-audit findings, as the session-start line counts them; null, and in `errors`, when the state folder is inside a checkout, or is not the user's own. |
-| `ticket` | `{ key, source }` or null: a key of `--ticket-prefixes` in a branch name, such as `ABC-123`, else `#42` from a branch named `fix/42-slug`; `source` is `branch` for the current branch, `ledger` for a branch the session's ledger, or an earlier session's, recorded ([The ticket](#the-ticket)). |
+| `tickets` | A list of `{ key, source }`, 10 at most, `[]` when none: each key of `--ticket-prefixes`, such as `ABC-123`, or `#42`, that the current branch, a branch the session's ledger or an earlier session's recorded, or a pull request `prs` shows names; `source` is `branch`, `ledger`, or `pr` ([The tickets](#the-tickets)). Null, and in `errors`, for a bad prefix list; when the session's own ledger or `links.jsonl` cannot be read, the keys of the other rules, with `tickets` in `errors`. |
+| `ticket` | Deprecated: the first entry of `tickets`, the same `{ key, source }` object, or null when `tickets` is `[]` or null, and never in `errors`. Kept only for an `aidrian-mod` older than the one that reads `tickets`, which reads this key alone; removed 30 days after the `aidrian-mod` release that reads `tickets` ships, or at the next major version of `aidrian` or `aidrian-mod`, whichever comes first. |
 | `links` | `{ branch, worktree, source }` or null: the worktree the session created with `aidrian worktree new`, while git still lists it, `source` `own`, else the one an earlier session created, `inherited` ([The worktree](#the-worktree)). |
 | `errors` | The names of the sections that failed, never their error text. |
+<!-- aidrian:decision id=snapshot-legacy-ticket status=unconfirmed class=product-behaviour domain=product date=2026-11-20 pr=439 -->
+<!-- aidrian:decision-new id=snapshot-legacy-ticket text="| `ticket` | Deprecated: the first entry of `tickets`, the same `{ key, source }` object, or null when `tickets` is `[]` or null, and never in `errors`. Kept only for an `aidrian-mod` older than the one that reads `tickets`, which reads this key alone; removed 30 days after the `aidrian-mod` release that reads `tickets` ships, or at the next major version of `aidrian` or `aidrian-mod`, whichever comes first. |" -->
 
-Each section fails open: one that fails is null with its name in `errors`, and the command exits 0 whenever its
-arguments parse, so a status line never breaks. In a folder with no project every section but `session` is null,
-`errors` is empty, and nothing is written. Without `--session`, `handoff`, `prs`, `links`, and
-`worktrees.mergedNotCleaned` are null and `errors` does not name them, since what they read is kept per session; without
-`--transcript`, `handoff` is null the same way. A session id that fails `SESSION_ID` writes nothing, and names
-`handoff`, `prs`, `worktrees`, and `links` in `errors`.
-More than 32 ticket prefixes, or one that is not a letter and up to 15 letters or digits, make `ticket` null.
+Each section fails open: one that fails is null, or keeps what it read, as `worktrees` and `tickets` do, with its name
+in `errors`, and the command exits 0 whenever its arguments parse, so a status line never breaks.
+In a folder with no project every section but `session` is null, `errors` is empty, and nothing is written.
+Without `--session`, `handoff`, `prs`, `links`, and `worktrees.mergedNotCleaned` are null and `errors` does not name
+them, since what they read is kept per session; without `--transcript`, `handoff` is null the same way.
+A session id that fails `SESSION_ID` writes nothing, and names `handoff`, `prs`, `worktrees`, and `links` in `errors`.
+More than 32 ticket prefixes, or one that is not a letter and up to 15 letters or digits, make `tickets` null.
 
 **The shared decision.** `handoffStatus` in `lib/session-length.mjs` decides the level, and the Stop hook's reminder
 calls it for its own trigger, so the two never disagree. The first that holds wins:
@@ -927,6 +930,11 @@ the snapshot's own checks (a host name, an absolute folder, a positive number, a
 `unsupported: true`, no `forge`, and null for what the forge would answer; it starts no forge call. The ledger hook
 records rows only on a declared host, so such a row appears only from a ledger written another way, such as by a later
 adapter.
+The same call also reads each pull request's closing references, the row's `closes`, which [the tickets](#the-tickets)
+read and `prs` never shows; the body text it reads them from stays in the adapter. It asks for the body text of 30
+pull requests at most, so the answer stays bounded before gh returns it: refs in order, newest first, a number counting
+1 and a branch 10 (its two pages of 5), each read while it still fits, so every one of 25 numbers, or the first 3
+branches. A ref past that gives the forge's own closing references and no body key.
 The answer is cached for a minute in `prs-cache.json`, with the refs it answered, under the merged heads' rules: one
 forge call a minute at most, a 1 MiB read, and the 4 s budget, which the two reads share, this one first. A cached
 answer shows only for the refs the ledger still selects, so a pull request pushed out of the newest 25 leaves, and the
@@ -939,7 +947,7 @@ pull requests that resolved; only one that does not parse, or the deadline, fail
 A ledger with no row, or whose rows resolve to none, gives `[]`. A ledger that cannot be read, such as a named pipe or
 a symlink there, makes `prs` null with `prs` in `errors`.
 A row whose time does not parse, or is more than 60 seconds after the snapshot's clock, is dropped where the rows are
-read, so a row dated next year cannot hold the first of the 25 places, or the ticket. After the clock is set back, the
+read, so a row dated next year cannot hold the first of the 25 places, or a ticket. After the clock is set back, the
 rows written before it stay hidden until the clock passes them.
 
 **Across a handoff.** A session a handoff started shows the pull requests of the sessions it came from too. The
@@ -966,26 +974,62 @@ closed is not shown, but its ref still used one of the 25 places, so fewer than 
 left out. An inherited row on a host no adapter declares shows, since nothing says it closed. The cache keeps its one
 key, its age: when a session cached its own rows before its floor was written, the earlier session's show up to 60
 seconds late. No row value reaches a process's argv, environment, or working folder: the forge still runs in the
-session's folder, and the remotes read and the ticket's branch read run in the current folder with constant
+session's folder, and the remotes read and the tickets' branch read run in the current folder with constant
 arguments. The forge's one call does carry the selected refs, each repository, branch, and number, as GraphQL
 variables on its stdin, which is how it asks for them.
 A session a person resumes by typing, the first after `maxChain`, and every Codex session, which has no continue route,
 have no parent, and show their own rows alone.
 
-**The ticket.** One function, `ticketOf` in `lib/session-links.mjs`, holds every rule; the first that gives a key wins:
+<a id="the-tickets"></a>**The tickets.** One function, `ticketsOf` in `lib/session-links.mjs`, holds every rule. It adds keys in this order,
+each key once (compared in capitals, so `abc-12` and `ABC-12` take one place) with the `source` of the first rule that
+names it, and stops at 10:
 
-1. The branch of the current folder: `source: "branch"`. This rule never reads a ledger, so a ledger that cannot be
-   read never hides the branch's ticket.
-2. With `--session`, the newest row of the session's ledger or of its `links.jsonl` whose branch holds a key; with none
-   there, the nearest earlier session's rows, as it hands them down, and so on: `source: "ledger"`. The newest is the
-   latest `at`, then on a tie a row of `links.jsonl` before one of the ledger, then the later line. A row of either
-   file is read only when it has the shape its writer gives it, each field checked, a ledger row on a host the forge
-   adapter serves by that adapter's own ref check (`ledgerRowCheck` in `lib/session-prs.mjs`), so a malformed row, the
-   session's own or an earlier session's, gives no ticket. The ledger leaves out a repeat within a minute of the row it repeats,
-   keeping that row's time, so a branch pushed again at once does not move forward; one pushed again later is written
-   with its new time, and its ticket is the newest.
-   A ledger or `links.jsonl` of the session's own that cannot be read makes `ticket` null with `ticket` in `errors`;
-   without `--session`, or with no session folder, this rule does not run.
+1. The branch of the current folder: `source: "branch"`.
+2. With `--session`, every row of the session's ledger and of its `links.jsonl` whose branch holds a key, newest first:
+   `source: "ledger"`. The newest is the latest `at`, then on a tie a row of `links.jsonl` before one of the ledger,
+   then the later line. A row of either file is read only when it has the shape its writer gives it, each field
+   checked, a ledger row on a host the forge adapter serves by that adapter's own ref check (`ledgerRowCheck` in
+   `lib/session-prs.mjs`), so a malformed row, the session's own or an earlier session's, gives no ticket. The ledger
+   leaves out a repeat within a minute of the row it repeats, keeping that row's time, so a branch pushed again at once
+   does not move forward; one pushed again later is written with its new time, and its key comes first.
+3. Each pull request of the session's own that `prs` shows, in its order: its closing references, then the keys of
+   its title, left to right: `source: "pr"`. One pull request adds at most 3 keys not already listed, its closing
+   references and title together, so a title that names many keys does not push out the rules after it.
+4. Each earlier session's rows, as it hands them down, nearest first, each newest first, as in rule 2:
+   `source: "ledger"`. An earlier session's files are read only while there are fewer than 10 keys.
+5. Each inherited pull request `prs` shows, open ones alone, in its order, as in rule 3: `source: "pr"`.
+
+Which keys count. A branch gives a key of `--ticket-prefixes`, matched as `(^|/)(PREFIXES)-[0-9]+` in any letter case,
+else `#N` from a branch named `<type>/<N>-<slug>`, N without its leading zeros, so `fix/0042-login` and a closing
+`#42` take one place, and an N of zeros alone gives none. A closing reference is one the forge adapter reads in the same one
+call as `prs` ([Adding a forge](providers/adding-a-host.md#adding-a-forge)): `#N` for an issue of the pull request's
+own repository the forge itself links as closed, and a tracker-shaped key after one of the forge's closing keywords in
+the body of a pull request the signed-in user wrote, or a member of the repository; such a key counts only when its
+prefix is one of `--ticket-prefixes`, in any letter case. A title gives each `<PREFIX>-<digits>` of the list, 1 to 9
+digits, in any letter case, not next to a letter or digit, whoever wrote the pull request; a `#N` in a title is never a
+key, since there it is as often a pull request's number. Every tracker key is given as the configured prefix in ASCII
+capitals and its digits, and a `#N` as its digits, rebuilt from what matched, so no other character of a branch, a
+title, or a body reaches the output, not even a letter of another script that folds into a prefix. A cached row with no
+closing references, as an older plugin wrote it, gives none, and a cached row whose closing references have any other
+shape is no row, so no key of it shows.
+
+An issue number names an issue only within one repository, so a `#N` shows only where it names one of the current
+folder's: that of its origin, as the ledger's writers record it, the URL in the git config with no
+`url.<base>.insteadOf` rewrite, from the same one `git config` read that gives the remotes an earlier session hands
+rows down on. So a rewrite, such as a short alias or a fetch mirror, changes neither side of the comparison, though
+`worktrees`, which asks the forge as git fetches, reads origin after it. The current branch's `#N` always counts. A
+ledger or `links.jsonl` row's `#N` counts when the row's repository is origin's, or when the row records none; a pull
+request's closing `#N` counts when the pull request is of origin's repository. So a session that viewed a pull request
+of another repository, which closes that repository's issue 5, shows no `#5`; its tracker keys still count. With no
+origin, one git reads as a folder on disk, or a config git cannot read, only the current branch's `#N` and that of a
+row that records no repository show, and `tickets` adds no error.
+
+What a failure does. A bad prefix list makes `tickets` null with `tickets` in `errors`. A ledger or `links.jsonl` of
+the session's own that cannot be read gives no key of rule 2 and names `tickets` in `errors`, while the keys of the
+other rules still show. When `prs` is null or stale, rules 3 and 5 use what it shows, none when it is null, and `tickets`
+adds no error of its own: `prs` names the failure. The tickets read the pull requests the `prs` section read, so the
+forge is still asked once a snapshot. Without `--session` only rule 1 runs; in a folder with no project `tickets` is
+null like every section.
 
 **The worktree.** `links` reads the session's `links.jsonl`, the worktrees its `aidrian worktree new` calls created
 ([Session ledger](hooks.md#session-ledger)). It keeps the newest row of each key, `host/path:branch`, drops each whose

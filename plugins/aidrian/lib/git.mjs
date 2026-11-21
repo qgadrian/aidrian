@@ -160,6 +160,17 @@ export const readRemoteUrls = (cwd, options) => readFact(['config', '--get-regex
 
 const lineOf = (result) => (result.status === 0 ? result.stdout.trim() : null);
 
+// A runGit with `options` that runs each command once, by its arguments and folder, and gives its result again: for the
+// readers of one process that share a read, such as a snapshot's remotes and its origin (lib/session-links.mjs).
+export function memoGit(options = {}) {
+  const results = new Map();
+  return (args, cwd) => {
+    const key = JSON.stringify([args, cwd]);
+    if (!results.has(key)) results.set(key, runGit(args, cwd, options));
+    return results.get(key);
+  };
+}
+
 // runGit for the project run's start gate (lib/project-run-gate.mjs and the modules it uses), with GATE_TIMEOUT_MS by
 // default. `options.env` is the environment (this process's by default); the rest are runGit's.
 export function gateGit(args, cwd, { env = process.env, ...options } = {}) {

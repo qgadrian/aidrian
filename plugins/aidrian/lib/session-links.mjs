@@ -1,21 +1,21 @@
-// What `aidrian session snapshot` (lib/session-snapshot.mjs) reads of the sessions a handoff came from, and the ticket
+// What `aidrian session snapshot` (lib/session-snapshot.mjs) reads of the sessions a handoff came from, and the tickets
 // (docs/handoff.md#the-snapshot). Display data only: no hook, gate, skill, or agent decides anything from it.
 //
 // A chain floor names the session that handed off as its `parent` (lib/handoff-markers.mjs noteFrom). `lineage` walks
 // those names back, nearest first; `rowReader` reads the rows of the session's own files, then each ancestor's, each
 // file at most once a snapshot, and gives an ancestor's rows only as they were when it handed off, and only those it
-// hands down: a created, pushed, or worktree row on a repository the project's remotes name. `ticketOf` holds every rule
-// of the ticket, and `linksOf` the snapshot's worktree, from the rows of `links.jsonl` that lib/session-links-writer.mjs
+// hands down: a created, pushed, or worktree row on a repository the project's remotes name. `ticketsOf` holds every rule
+// of the tickets, and `linksOf` the snapshot's worktree, from the rows of `links.jsonl` that lib/session-links-writer.mjs
 // gives the ledger's hook. Nothing here starts a process on a row's value, or makes a filesystem call on one; an ancestor's folder
 // is found by its full id alone, through existingSessionFolder, which creates and sweeps nothing. This file names no
 // host, forge, or tracker.
 
-import { runGit } from './git.mjs';
+import { memoGit, runGit } from './git.mjs';
 import { foldCase } from './fs.mjs';
 import { openStore, readHop, SESSION_ID, storeNames } from './handoff-markers.mjs';
 import { existingSessionFolder, sessionFolderNames } from './session-folder.mjs';
 import { isWorktreeRow, LINKS } from './session-links-writer.mjs';
-import { LEDGER, ledgerRowCheck, remoteRepos } from './session-prs.mjs';
+import { LEDGER, ledgerRowCheck, remoteRepos, remoteRepository } from './session-prs.mjs';
 import { readRows } from './session-rows.mjs';
 
 export { LINKS, LINKS_MAX_BYTES } from './session-links-writer.mjs';
@@ -27,8 +27,7 @@ export const MAX_FLOOR_READS = 16;
 export const ANCESTOR_MAX_BYTES = 64 * 1024;
 // How far ahead of the snapshot's clock a row's time may be, for two processes of one machine that read it apart.
 export const AHEAD_MS = 60_000;
-// The kinds of row an ancestor hands down. A touched row, written when a session only views or comments on a pull
-// request, stays with its own session.
+// The kinds of row an ancestor hands down; a touched row, from only viewing or commenting on a pull request, stays.
 const HANDED_DOWN = new Set(['created', 'pushed', 'worktree']);
 
 // The sessions `session` came from, nearest first: [{ id, hopAt }], where `hopAt` is the time of the floor that names
@@ -123,24 +122,27 @@ export function rowReader({ own, files, chain, remotes, state, checkouts, checks
   return { own: ownRows, ancestor, inherited };
 }
 
-// What one snapshot of the session `session` shares between its sections: { store(), names(), rows }. `store()` is the
-// continuation store of the state folder `state`, opened once, and `names()` its one listing (storeNames), which the
-// handoff section and the lineage both read. `rows` is the rowReader of the session's own folder `folder`, null with
-// none, over the files of `files`; its remotes are read in `cwd`, the process's own folder, with `git`, runGit's
-// options, and each ledger row passes the ref check of `forge`, the adapter forgeFor gives (session-prs.mjs
-// ledgerRowCheck). `io` replaces storeNames, sessionFolderNames, and readRows for a test that counts their calls.
+// What one snapshot of the session `session` shares between its sections: { store(), names(), rows, origin() }. `store()`
+// is the continuation store of the state folder `state`, opened once, and `names()` its one listing (storeNames), which
+// the handoff section and the lineage both read. `rows` is the rowReader of the session's own folder `folder`, null with
+// none, over the files of `files`, a ledger row passing the ref check of `forge` (session-prs.mjs ledgerRowCheck), and
+// `origin()` origin's `{ host, path }` or null, as originRepository records it, with no `url.<base>.insteadOf` rewrite,
+// read once, when first asked: it and the rows' remotes share one `git config` read in `cwd`, with `git`, runGit's
+// options. `io` replaces storeNames, sessionFolderNames, and readRows for a test that counts their calls.
 export function sessionLinks({ state, checkouts, maxChain, folder, session, cwd, files, forge = null, git = {}, now = Date.now(), io = {} }) {
   let store;
   let names;
+  let origin;
   const storeOf = () => (store ??= openStore(state, { checkouts, maxChain }));
   const namesOf = () => (names ??= (io.storeNames ?? storeNames)(storeOf()));
   const sessionNames = () => (io.sessionNames ?? sessionFolderNames)(state, { checkouts });
+  const config = memoGit(git);
   const rows = folder === null ? null : rowReader({
     own: folder, files, now, state, checkouts, checks: { [LINKS]: isWorktreeRow, [LEDGER]: ledgerRowCheck(forge) }, read: io.readRows,
     chain: () => lineage(storeOf(), session, { now, names: namesOf(), sessionNames }),
-    remotes: () => remoteRepos(cwd, (args, dir) => runGit(args, dir, git)),
+    remotes: () => remoteRepos(cwd, config),
   });
-  return { store: storeOf, names: namesOf, rows };
+  return { store: storeOf, names: namesOf, rows, origin: () => (origin ??= { repo: remoteRepository(cwd, 'origin', config) }).repo };
 }
 
 // Ticket prefixes: at most 32, each a letter and up to 15 letters or digits.
@@ -155,55 +157,108 @@ export function prefixList(prefixes) {
 }
 
 // The ticket key a branch name holds, or null: a key of `prefixes`, a list prefixList gave, matched as
-// `(^|/)(PREFIXES)-[0-9]+` in any case and given in capitals; with none matching, `#N` from a branch named
-// `<type>/<N>-<slug>`.
+// `(^|/)(PREFIXES)-[0-9]+` in any case and given as the configured prefix that matched, in ASCII capitals, so a letter
+// of another script that folds into a prefix, such as U+212A KELVIN SIGN, reaches no key; with none matching, `#N` from
+// a branch named `<type>/<N>-<slug>`, N without its leading zeros, as a closing reference spells it, so `fix/0042-x` and
+// `Fixes #42` take one place; an N of zeros alone gives none.
 export function keyOfBranch(branch, prefixes) {
   if (typeof branch !== 'string') return null;
-  const escaped = prefixes.map((prefix) => prefix.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'));
-  const keyed = prefixes.length ? new RegExp(`(?:^|/)(${escaped.join('|')})-([0-9]+)`, 'iu').exec(branch) : null;
-  if (keyed) return `${keyed[1].toUpperCase()}-${keyed[2]}`;
-  const numbered = /^[^/]+\/([0-9]+)-/u.exec(branch);
+  const escaped = prefixes.map((prefix) => `(${prefix.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')})`);
+  const keyed = prefixes.length ? new RegExp(`(?:^|/)(?:${escaped.join('|')})-([0-9]+)`, 'iu').exec(branch) : null;
+  if (keyed) return `${prefixes[keyed.slice(1, -1).findIndex((part) => part !== undefined)].toUpperCase()}-${keyed.at(-1)}`;
+  const numbered = /^[^/]+\/0*([1-9][0-9]*)-/u.exec(branch);
   return numbered ? `#${numbered[1]}` : null;
 }
 
-// The files whose rows give the ticket, in the order a tie of times goes: an earlier one wins.
-const TICKET_FILES = ['links.jsonl', 'prs.jsonl'];
+// Whether `key`, of a row on the repository `host` and `repoPath`, counts: a tracker key always; a `#N` only when the row
+// records no repository, or the one `origin()` gives, asked only then: an issue number names an issue in one repository.
+const counts = (key, origin, host, repoPath) => key !== null && (!key.startsWith('#') || (host === null && repoPath === null) || ofRepo(origin(), host, repoPath));
+const ofRepo = (repo, host, repoPath) => Boolean(repo) && host === repo.host && typeof repoPath === 'string' && repoPath.toLowerCase() === String(repo.path).toLowerCase();
 
-// The key of the newest row of `groups`, one row list a file in TICKET_FILES order, whose branch holds one: the latest
-// `at`, then the earlier file, then the later line.
-function newestKey(groups, prefixes) {
-  let best = null;
-  groups.forEach((rows, file) => rows.forEach((row, line) => {
-    const key = keyOfBranch(row.branch, prefixes);
-    const at = Date.parse(row.at);
-    if (key === null) return;
-    if (!best || at > best.at || (at === best.at && (file < best.file || (file === best.file && line > best.line)))) best = { key, at, file, line };
-  }));
-  return best?.key ?? null;
+// The files whose rows give tickets, in the order a tie of times goes: an earlier one first.
+const TICKET_FILES = ['links.jsonl', 'prs.jsonl'];
+// The most tickets a snapshot shows.
+export const MAX_TICKETS = 10;
+
+// The keys of the rows of `groups`, one row list a file in TICKET_FILES order, whose branch holds one that counts, newest
+// first: the latest `at`, then the earlier file, then the later line.
+function newestKeys(groups, prefixes, origin) {
+  const keyed = groups.flatMap((rows, file) => rows.map((row, line) => ({ row, key: keyOfBranch(row.branch, prefixes), at: Date.parse(row.at), file, line })));
+  return keyed.filter(({ row, key }) => counts(key, origin, row.host, row.path)).sort((a, b) => b.at - a.at || a.file - b.file || b.line - a.line).map(({ key }) => key);
 }
 
-// The snapshot's ticket: { key, source } or null, by the first rule that gives a key.
+// A change row's `closes` entry, as a ticket: `#<n>`, the forge's own closing reference, as it is; a tracker-shaped key
+// only when a prefix of `prefixes` is its prefix, in any letter case, given as that prefix in capitals and its digits;
+// else null. The entry is checked again here, so no other character of a row reaches a key.
+const CLOSES_NUMBER = /^#([1-9][0-9]{0,9})$/u;
+const CLOSES_KEY = /^([A-Za-z][A-Za-z0-9]{0,15})-([0-9]{1,9})$/u;
+function closesKey(entry, prefixes) {
+  if (typeof entry !== 'string') return null;
+  const number = CLOSES_NUMBER.exec(entry);
+  if (number) return `#${number[1]}`;
+  const keyed = CLOSES_KEY.exec(entry);
+  const prefix = keyed && prefixes.find((each) => each.toUpperCase() === keyed[1].toUpperCase());
+  return prefix ? `${prefix.toUpperCase()}-${keyed[2]}` : null;
+}
+
+// A key-shaped run of a title: not preceded or followed by an ASCII letter or digit. ASCII classes with no `i` flag, so
+// no other script's letter folds into a prefix; every quantifier is bounded.
+const TITLE_KEY = /(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9]{0,15})-([0-9]{1,9})(?![A-Za-z0-9])/gu;
+// The keys of `prefixes` a change row's title holds, left to right, each a prefix in capitals and its digits. A `#N` in a
+// title is never a key: there it is as often a change request's number. Accepted residual: a title's keys count from any
+// author, since they are display only, matched by a configured prefix alone, and rebuilt in ASCII.
+const titleKeys = (title, prefixes) => {
+  if (typeof title !== 'string' || prefixes.length === 0) return [];
+  const upper = new Set(prefixes.map((prefix) => prefix.toUpperCase()));
+  return [...title.matchAll(TITLE_KEY)].filter((match) => upper.has(match[1].toUpperCase())).map((match) => `${match[1].toUpperCase()}-${match[2]}`);
+};
+
+// The keys a change row names: its `closes` that count, in order, then its title's. A row with no `closes`, as a cache an
+// older plugin wrote holds, gives no closing reference.
+const changeKeys = (row, prefixes, origin) => [
+  ...(Array.isArray(row?.closes) ? row.closes : []).map((entry) => closesKey(entry, prefixes)).filter((key) => counts(key, origin, row.host, row.repo)),
+  ...titleKeys(row?.title, prefixes),
+];
+// The most new keys one change request adds, its `closes` and title together, so one title cannot fill every place.
+export const MAX_CHANGE_KEYS = 3;
+
+// The snapshot's tickets: { tickets, unread }. `tickets` is a list of { key, source }, MAX_TICKETS at most, each key once,
+// compared in capitals, with the `source` of the first rule that names it, in this order:
 // 1. The branch of the folder `cwd`, from one `git symbolic-ref` there with constant arguments: source `branch`.
-// 2. With `rows`, a rowReader of the session, the newest row of the session's own files whose branch holds a key; with
-//    none there, the nearest ancestor's rows as rowReader hands them down, and so on: source `ledger`. A session file
-//    of its own that cannot be read throws, so the section fails; an ancestor's that cannot be read ends the walk.
-// `prefixes` is the `--ticket-prefixes` text; a bad one throws. `git` options are runGit's.
-export function ticketOf(cwd, prefixes, { rows = null, git = {} } = {}) {
+// 2. With `rows`, a rowReader of the session, the key of every row of the session's own files whose branch holds one,
+//    newest first: source `ledger`. A session file of its own that cannot be read gives none here, and `unread` true.
+// 3. With `changes`, the change requests the snapshot shows (session-prs.mjs shownChanges), each of the session's own
+//    in order: its `closes`, then its title's keys, MAX_CHANGE_KEYS new ones at most: source `pr`.
+// 4. Each ancestor's rows as rowReader hands them down, nearest first, each newest first, read only while the list is
+//    not full: source `ledger`. An ancestor's that cannot be read ends the walk.
+// 5. Each inherited change request of `changes`, in order, as in rule 3: source `pr`.
+// `origin()` gives origin's `{ host, path }`, spelled as the rows are (sessionLinks' origin()), or null: a `#N` of rules
+// 2 to 5 counts only from a row of its repository, or one that records none. `prefixes` is the `--ticket-prefixes` text;
+// a bad one throws. `git` options are runGit's. Every rule gives its keys in capitals: a key is its own comparison.
+export function ticketsOf(cwd, prefixes, { rows = null, changes = null, origin = () => null, git = {} } = {}) {
   const list = prefixList(prefixes);
+  const held = new Map();
+  const full = () => held.size >= MAX_TICKETS;
+  const add = (keys, source, most = MAX_TICKETS) => {
+    for (const key of [...new Set(keys)].filter((each) => !held.has(each)).slice(0, most)) if (!full()) held.set(key, { key, source });
+  };
   const head = runGit(['symbolic-ref', '--quiet', '--short', 'HEAD'], cwd, git);
   const branchKey = head.status === 0 ? keyOfBranch(head.stdout.trim(), list) : null;
-  if (branchKey !== null) return { key: branchKey, source: 'branch' };
-  if (rows === null) return null;
-  const own = TICKET_FILES.map((name) => rows.own(name));
-  if (own.some((each) => each === null)) throw new Error('own rows');
-  const found = newestKey(own, list);
-  if (found !== null) return { key: found, source: 'ledger' };
-  for (let index = 0; ; index += 1) {
+  if (branchKey !== null) add([branchKey], 'branch');
+  let unread = false;
+  const own = rows === null ? [] : TICKET_FILES.map((name) => rows.own(name));
+  if (own.some((each) => each === null)) unread = true;
+  else add(newestKeys(own, list, origin), 'ledger');
+  const shown = Array.isArray(changes) ? changes : [];
+  const pullRequests = (inherited) => shown.filter((row) => (row?.inherited === true) === inherited).forEach((row) => add(changeKeys(row, list, origin), 'pr', MAX_CHANGE_KEYS));
+  pullRequests(false);
+  for (let index = 0; rows !== null && !full(); index += 1) {
     const groups = TICKET_FILES.map((name) => rows.ancestor(index, name));
-    if (groups.every((each) => each === null)) return null;
-    const key = newestKey(groups.map((each) => each ?? []), list);
-    if (key !== null) return { key, source: 'ledger' };
+    if (groups.every((each) => each === null)) break;
+    add(newestKeys(groups.map((each) => each ?? []), list, origin), 'ledger');
   }
+  pullRequests(true);
+  return { tickets: [...held.values()], unread };
 }
 
 // The read-time key of a worktree row: `host/path:branch`, or the branch alone with no repository.
@@ -222,10 +277,9 @@ function newestOfKeys(rows) {
 
 // The snapshot's `links` section: { branch, worktree, source } or null. Of the session's own worktree rows, the newest of
 // each key whose `cwd` is, string for string, the path of an entry of `worktrees()`, the snapshot's one worktree list,
-// that is not prunable, the newest: `source: "own"`. With none, the same for each earlier session's rows as rowReader
-// hands them down, nearest first: `source: "inherited"`. The list is read only when a row needs it, and no filesystem
-// call is made on a row's value. Throws, so the section fails, with no reader, when the session's own file cannot be
-// read, and when the list cannot.
+// not prunable, the newest: `source: "own"`. With none, the same for each earlier session's rows as rowReader hands
+// them down, nearest first: `source: "inherited"`. The list is read only when a row needs it, with no filesystem call on
+// a row's value. Throws, so the section fails, with no reader, or when the session's own file or the list cannot be read.
 export function linksOf(rows, worktrees) {
   if (rows === null) throw new Error('no session');
   const own = rows.own(LINKS);

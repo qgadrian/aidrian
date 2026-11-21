@@ -152,7 +152,8 @@ Never cite an engine post, a finding's, the review summary, or the product feedb
   the final stage. `extension` says why no extra round: `off`, the ceiling, the judge, or the Human. A red flag
   never stops it alone: it goes to the judge. With `unreviewed_head: true`, the head is a fix no round reviewed: say so when reporting
   the stop, so the Human does not merge it as reviewed. A session the Human told to merge, and then left, and a run
-  under `autopilot`, read § At the cap: a judge's waiver before reporting the stop.
+  under `autopilot`, read § At the cap: a judge's waiver before reporting the stop. When the Human answers the merge
+  guard's question by leaving the decision to the session, read § At the cap: the Human leaves it to the session.
 
 ## Out of quota: `blocked_quota`
 
@@ -189,6 +190,27 @@ With `github.extraRounds` on, the cap first checks whether one more round is wor
   starts with "Approve", `--human deny` otherwise. The `review-extend` rule refuses an approval the Human did not give
   in this session. Under `autopilot`, nobody is there to ask: park it as a Decision for the Human.
 - A grant is one round: the step then returns `fix_required` for the same head. At the next cap the check runs again.
+
+## At the cap: the Human leaves it to the session
+
+Only on the Human's own answer, typed in the terminal, to the merge guard's round-limit question as its denial words it,
+with its two options, when the whole answer leaves the decision to the session, such as "whatever you recommend", and
+only when the guard's denial names `aidrian pr delegate`, which it does only while every open finding of the head is
+low. An answer with a condition or a lean, such as "up to you if CI is green", is not one: ask what the condition
+means. Not under `autopilot`, where nobody answers, and never from a subagent. Never put the question again to get
+such an answer, and never change its words or add an option to it.
+
+- Decide to ship only then: the denial without that route means a finding of medium or higher is open, and only
+  "Merge with the findings filed" or "Grant more review rounds" decides it.
+- File what the review left open as one new open follow-up issue in the pull request's own repository, after the
+  review stopped, naming the pull request as `#<n>` or by its URL and listing each open finding's id, such as `R2-1`. An older issue, one in another repository, or one in
+  a tracker the command cannot read does not count: ask the guard's question again.
+- Run `aidrian pr delegate <n> --issue <issue> --head <sha>` as its own command, as the denial words it: the
+  `review-delegate` rule lets it run only on that answer in this session. It refuses a closed issue, one that does not
+  name the pull request or list every open finding, a moved head, or a finding above low; fix the issue and run it again, or ask the guard's
+  question again for the rest.
+- Merge from the session that recorded it: the guard passes over an answer another session recorded.
+- Merge naming the head and repository, as its `next` says: `gh pr merge <n> --repo <owner>/<name> --match-head-commit <sha>`.
 
 ## At the cap: a judge's waiver
 

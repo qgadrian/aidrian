@@ -1,6 +1,6 @@
 {
   "name": "aidrian-mod",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Optional Claude Code mod for the aidrian plugin: a band above the prompt, an aidrian-mod pane, and notifications. Requires the aidrian plugin.",
   "author": {
     "name": "aidrian"
@@ -53,7 +53,7 @@
     "ticketPrefixes": {
       "type": "string",
       "title": "Ticket key prefixes",
-      "description": "Pipe-separated issue key prefixes found in the branch name, at most 32; empty reads a GitHub #N",
+      "description": "Pipe-separated issue key prefixes read in the branch and the session's pull requests, at most 32; a GitHub #N needs none",
       "default": ""
     },
     "cacheTtlSeconds": {

@@ -77,6 +77,16 @@ const shellWatch = (input) => SHELL_TOOLS.includes(input.tool_name) && typeof in
 // docs/providers/claude-code.md#powershell-commands.
 const OPAQUE_SHELL_TOOLS = Object.freeze(['PowerShell']);
 
+// Whether an AskUserQuestion result entry of its transcript carries its positive marks of an answer the Human gave in the
+// terminal: not a sidechain (`isSidechain` false, not merely absent), no meta entry or compaction summary, the terminal
+// CLI's `entrypoint`, and a permission decision the user made (`permissionDecision.source` "user_temporary"). Read on
+// Claude Code 2.1.295 to 2.1.328, where every such entry carries all three; before 2.1.295 none carries the permission
+// decision, and the desktop app's `entrypoint` is "claude-desktop". A shape this reader does not know never counts.
+// Whether an SDK callback or a hook that answers the question writes other marks is not verified: its entry counts only
+// if it carries all three. docs/providers/claude-code.md#answers-the-human-gave.
+const humanAnswer = (entry) => entry !== null && typeof entry === 'object' && entry.isSidechain === false && entry.isMeta !== true &&
+  entry.isCompactSummary !== true && entry.entrypoint === 'cli' && entry.permissionDecision?.source === 'user_temporary';
+
 // Its command line that starts or resumes a session, which lib/handoff-guard.mjs hostSessionStartDenial refuses a
 // subagent and a session the background handoff route started, so no session starts outside the handoff gate.
 // `claude` with no subcommand starts one, as do `-p`, `--bg`, `--resume`, `--continue`, and a prompt; so does any word
@@ -185,6 +195,7 @@ export default {
     return escape === undefined || escape === null || escape === false ? mapped : { ...mapped, sandbox_escape: true };
   },
   opaqueShellTools: OPAQUE_SHELL_TOOLS,
+  humanAnswer,
   sessionStart: { programs: ['claude'], starts: startsSession },
   // The subcommands of its program that write its own user or project config: MCP servers, settings, and plugins, and
   // its global options that take the next word. The agent gate hook refuses them to a session no Human attends

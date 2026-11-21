@@ -143,9 +143,10 @@ const CAUSE_ITEMS = 50;
 
 // What stopped the review at the round cap on `head`, kept on the outcome (state.mjs noteOutcome) for a judge's waiver
 // (waiver.mjs capProblem), which takes it only when open findings of this machine's reviewers are the whole cause:
-// { head, reviewed, items, counted, itemized, unrun, unsigned, flows, tests_removed, checks_failing, bot, human }.
+// { head, reviewed, items, counted, itemized, unrun, waiting, unsigned, flows, tests_removed, checks_failing, bot, human }.
 // `reviewed` is the head the last round reviewed. When it is `head`, the items are the open findings of every pass with
-// a result for it, each with its pass's stage and reviewer, `unrun` the passes of this machine with none, and `flows`
+// a result for it, each with its pass's stage and reviewer, `unrun` the passes of this machine with none, `waiting` the
+// remote passes with none, and `flows`
 // every flow of the plan whose invariants are not all held, whichever stage answers for it (evidence.mjs flowStatus).
 // That whole cause is kept on the round too (`round.cap`). When the last round reviewed another head (a fix pushed that
 // no round reviewed), the cause is that round's kept one, its flows as `unsigned`; a round with none kept gives
@@ -180,6 +181,8 @@ function capCause(s, extra) {
     head, reviewed: head, items: items.slice(0, CAUSE_ITEMS), counted: listed.reduce((total, each) => total + each.open, 0),
     itemized: listed.every((each) => each.list !== null && each.list.length >= each.open) && items.length <= CAUSE_ITEMS,
     unrun: passes.filter(({ pass }) => map[pass.reviewer]?.kind !== 'remote' && !resultFor(pass)).map(({ pass }) => pass.id),
+    // The remote passes with no result on `head` yet, such as the review bot asked early and awaited last.
+    waiting: passes.filter(({ pass }) => map[pass.reviewer]?.kind === 'remote' && !resultFor(pass)).map(({ pass }) => pass.id),
     unsigned: [],
     // Every flow whose invariants are not all held, not only the flows of the stage the cap was judged at.
     flows: [...new Set([...(extra.flows ?? []).map((flow) => flow.flow), ...plan.flows.filter((flow) => typeof flowStatus !== 'function' || !flowStatus(flow).signed).map((flow) => flow.id)])],

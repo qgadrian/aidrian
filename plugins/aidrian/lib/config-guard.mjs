@@ -21,7 +21,7 @@ import { folderOf, GLOB_WORD, globLinksTo, globStarts, linkBelow, linkReaches, l
 import { fileEditOf, isFileEditTool, opaqueShellCommand } from './hosts/index.mjs';
 import { configFiles } from './project.mjs';
 import { bashWrites, canonical, toolTargets } from './rules/main-checkout.mjs';
-import { commandLines, inlineShellCommand, lexInputs, readGit, readInvocation, readShortOptions, shellRedirections, SUBSTITUTION_DEPTH_LIMIT, walkCommands } from './shell-lex.mjs';
+import { commandLines, givenCode, inlineShellCommand, interpreterOf, lexInputs, readGit, readInvocation, shellRedirections, SUBSTITUTION_DEPTH_LIMIT, walkCommands } from './shell-lex.mjs';
 
 // A quoted text with no quote, backslash, `$`, or backtick in it, such as a path.
 const TEXT = String.raw`(?:'[^'"\\$\x60\n]*'|"[^'"\\$\x60\n]*")`;
@@ -33,19 +33,12 @@ const PYTHON_READ = String.raw`(?:json\.load\(\s*OPEN\s*\)|OPEN\.read\(\s*\))(?:
   .replaceAll('OPEN', String.raw`open\(\s*${TEXT}(?:\s*,\s*(?:'[rbt]+'|"[rbt]+"))?\s*\)`);
 const NODE_FILE = String.raw`(?:(?:require\(\s*${FS}\s*\)|fs)\s*\.\s*)?readFileSync\(\s*${TEXT}(?:\s*,\s*${TEXT})?\s*\)`;
 const NODE_READ = String.raw`(?:require\(\s*${TEXT}\s*\)|JSON\.parse\(\s*${NODE_FILE}\s*\)|${NODE_FILE})(?:\s*\.\s*[A-Za-z_$][\w$]*|\s*\[\s*(?:${TEXT}|\d+)\s*\])*`;
+// The code of each interpreter (shell-lex.mjs INTERPRETERS) that only reads, by its name; perl and ruby have none, as
+// ruby's `open('|rm x')` runs a command.
 const READS = {
   python: new RegExp(String.raw`^(?:import\s+json|print\(\s*(?:json\.dumps\(\s*${PYTHON_READ}(?:\s*,\s*indent\s*=\s*\d+)?\s*\)|${PYTHON_READ})\s*\)|${PYTHON_READ})$`, 'u'),
   node: new RegExp(String.raw`^(?:(?:const|let|var)\s+(?:fs|\{\s*readFileSync\s*\})\s*=\s*require\(\s*${FS}\s*\)|console\.log\(\s*(?:JSON\.stringify\(\s*${NODE_READ}(?:\s*,\s*(?:null|\d+))*\s*\)|${NODE_READ})\s*\)|${NODE_READ})$`, 'u'),
 };
-// Interpreters, the options that hand them code on the command line, a short one also inside a cluster, and the code
-// of theirs that only reads; perl and ruby have none, as ruby's `open('|rm x')` runs a command. node takes `-pe` as one
-// option, so its code is the next word, not `e`.
-const INTERPRETERS = [
-  [/^python[\d.]*$/u, ['-c'], READS.python],
-  [/^(?:node|nodejs|bun)$/u, ['-e', '-p', '-pe', '--eval', '--print'], READS.node],
-  [/^perl[\d.]*$/u, ['-e', '-E'], null],
-  [/^ruby[\d.]*$/u, ['-e'], null],
-];
 
 // Why the subagent call in `input`, a PreToolUse payload, may not run because it changes one of `project`'s config files,
 // or null: { match, reason }. `match` names the file, as in `changes <project folder>/config.json`; `reason` tells the agent.
@@ -543,8 +536,10 @@ function interpretedCode(command) {
         const invocation = readInvocation(segment);
         const inner = depth < SUBSTITUTION_DEPTH_LIMIT ? inlineShellCommand(invocation) : null;
         if (inner !== null) read(inner, depth + 1);
-        const [, options, reads] = INTERPRETERS.find(([program]) => program.test(invocation.program)) ?? [];
-        if (!options) continue;
+        const interpreter = interpreterOf(invocation.program);
+        if (!interpreter) continue;
+        const { options } = interpreter;
+        const reads = READS[interpreter.name];
         const words = invocation.args.map((token) => token.text);
         const at = words.findIndex((word) => givenCode(word, options) !== undefined);
         let code;
@@ -569,18 +564,6 @@ function interpretedCode(command) {
 function onlyReads(code, reads) {
   const statements = code.split(/[;\n]/u).map((each) => each.trim()).filter(Boolean);
   return statements.length > 0 && statements.every((each) => reads.test(each));
-}
-
-// The code the word gives when it is one of `options`, or, for a short one, a cluster of short options that holds it, as
-// `-Bc` holds `-c`: the rest of the word, as in `--eval=<code>`, `-c<code>`, or `-Bc<code>`, or null when the code is the
-// next word. Undefined when the word gives none.
-function givenCode(word, options) {
-  if (options.includes(word)) return null;
-  const long = options.find((option) => option.startsWith('--') && word.startsWith(`${option}=`));
-  if (long) return word.slice(long.length + 1);
-  if (!/^-[^-]/u.test(word)) return undefined;
-  const { value } = readShortOptions(word, new Set(options.filter((option) => /^-\w$/u.test(option))));
-  return value ? value.attached : undefined;
 }
 
 function blocked(input, file, verb, human) {

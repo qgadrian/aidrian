@@ -4,7 +4,10 @@
 // a guarded main checkout, a `cd`, `pushd`, or `popd` is trusted only when it names folders that exist, each in a
 // checkout of the same repository. Into a linked worktree, nothing after it is judged, as before; inside the main
 // checkout, the shell is there whether it works or not, so what follows is judged at the folders before and after it.
-// Any other `cd` is untrusted: what follows is judged against the folders before it, for the rest of the line.
+// Any other `cd` is untrusted: what follows is judged against the folders before it, for the rest of the line. So is
+// one the shell may never run, which the lexer marks `uncertain`, as behind `repeat 0`, zsh's `noglob` in bash, or a
+// case arm or function body spaced from its parentheses. So is one through `command` (`viaCommand`): zsh's `command` runs
+// no builtin, only a `cd` program, and the shell stays where it was.
 
 import { statSync } from 'node:fs';
 import path from 'node:path';
@@ -40,11 +43,11 @@ export function mainsOf(dirs) {
   return mains;
 }
 
-// How the directory change `change` ({ program, to }) moves a shell that may be in any of `from`, when one of them is
+// How the directory change `change` ({ program, to, uncertain, viaCommand }) moves a shell that may be in any of `from`, when one of them is
 // a guarded main checkout in `mains`: { kind: 'worktree' }, { kind: 'main', dests }, or { kind: 'untrusted' }.
 export function trustOf(change, from, mains) {
-  const { program, to } = change;
-  if (program === 'popd' || !to || to.dynamic || to.text.startsWith('~')) return { kind: 'untrusted' };
+  const { program, to, uncertain = false, viaCommand = false } = change;
+  if (uncertain || viaCommand || program === 'popd' || !to || to.dynamic || to.text.startsWith('~')) return { kind: 'untrusted' };
   const dests = path.isAbsolute(to.text) ? [to.text] : from.map((dir) => path.resolve(dir, to.text));
   if (!dests.length) return { kind: 'untrusted' };
   let inMain = false;
@@ -66,17 +69,18 @@ export function directoryChange(invocation) {
 }
 
 // The directory change `{ program, args }` (from directoryChange), as bashWrites records it: { from, to, program,
-// shown }, `shown` the change as the deny reason names it.
-export function cdChange({ program, args, builtin = false }, from) {
+// shown, uncertain, viaCommand }, `shown` the change as the deny reason names it, `uncertain` the lexer's mark that the
+// shell may never run it, and `viaCommand` whether it runs through `command`, which in zsh runs no builtin.
+export function cdChange({ program, args, builtin = false, uncertain = false, viaCommand = false }, from) {
   const to = program === 'popd' ? null : operand(args);
   const word = to ?? args.find((token) => !token.dynamic && /^(?:-|[+-]\d+)$/u.test(token.text));
   const name = builtin ? `builtin ${program}` : program;
-  if (!word || word.text === '') return { from, to, program, shown: name };
+  if (!word || word.text === '') return { from, to, program, shown: name, uncertain, viaCommand };
   // The lexer drops quotes: a quoted expansion, or a literal word with a shell metacharacter in it, is shown quoted again.
   let text = word.text;
   if (word.dynamic && !word.splits && /[$`]/u.test(text)) text = `"${text}"`;
   else if (!word.dynamic && /[\s$`'"\\]/u.test(text)) text = text.includes("'") ? `"${text.replace(/["$`\\]/gu, '\\$&')}"` : `'${text}'`;
-  return { from, to, program, shown: `${name} ${text}` };
+  return { from, to, program, shown: `${name} ${text}`, uncertain, viaCommand };
 }
 
 // Where a target after the changes `cds` is judged, or null when it is not: { at, cd, last }, `at` the folders the

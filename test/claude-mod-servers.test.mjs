@@ -399,10 +399,12 @@ test('the real aidrian cli, run with the argv the client builds, gives an object
   assert.equal(io.calls.length, 1);
   assert.equal(io.calls[0].argv[1], realpathSync(path.join(ROOT, 'plugins/aidrian/lib/cli.mjs')));
   const { snapshot } = result;
-  for (const name of ['handoff', 'prs', 'lessons', 'worktrees', 'decisions', 'audits', 'ticket']) assert.ok(Object.hasOwn(snapshot, name), name);
+  for (const name of ['handoff', 'prs', 'lessons', 'worktrees', 'decisions', 'audits', 'tickets']) assert.ok(Object.hasOwn(snapshot, name), name);
   assert.equal(snapshot.session.transcript, realpathSync(path.join(config, 'projects/-project', `${ID}.jsonl`)));
   assert.notEqual(snapshot.handoff, null, JSON.stringify(snapshot.errors));
-  assert.deepEqual(snapshot.ticket, { key: 'ABC-7', source: 'branch' });
+  assert.deepEqual(snapshot.tickets, [{ key: 'ABC-7', source: 'branch' }]);
+  assert.deepEqual(snapshot.ticket, { key: 'ABC-7', source: 'branch' }, 'the deprecated ticket an older mod reads');
+  assert.deepEqual(issueLookup(snapshot.ticket, 'ABC'), { id: 'ABC-7' }, 'the lookup an older mod starts from it');
   assert.deepEqual(changesParts(snapshot.prs), []);
   assert.deepEqual(bandSegments(snapshot).map((segment) => segment.id), ['handoff']);
 });

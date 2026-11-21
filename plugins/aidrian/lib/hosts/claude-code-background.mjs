@@ -514,7 +514,9 @@ function launch({ claude, before, cwd, prompt, name, mode, agent, effort, effort
   args.push('--permission-mode', mode);
   if (settings !== null) args.push('--setting-sources', 'user', '--settings', JSON.stringify(settings));
   if (mcp !== null) args.push('--strict-mcp-config', '--mcp-config', JSON.stringify(mcp));
-  const result = run(claude, [...args, prompt], { cwd, timeout: START_TIMEOUT });
+  // `--` ends the options: --mcp-config takes several values (`<configs...>`), so a prompt right after its JSON would be
+  // read as a second config, and 2.1.330 refuses the start (`was read as a value of --mcp-config, not as a prompt`).
+  const result = run(claude, [...args, '--', prompt], { cwd, timeout: START_TIMEOUT });
   const printed = STARTED.exec(String(result.stdout ?? ''))?.[1] ?? null;
   const want = { before: new Set(before.map((each) => each.sessionId)), cwd, id: printed, name };
   const { entry, list } = awaitSession({ run, claude, wait, ...want });

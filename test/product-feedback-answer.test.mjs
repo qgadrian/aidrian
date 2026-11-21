@@ -175,6 +175,8 @@ test('each spelling of a call is read: refused with no answer in the transcript,
     `"$AIDRIAN" ${TAIL}`,
     `$B ${TAIL}`,
     `$(command -v aidrian) ${TAIL}`,
+    // Quoted, the substitution is still the program, read as dynamic, never as a case arm's pattern (shell-lex readInvocation).
+    `"$(command -v aidrian)" ${TAIL}`,
     `\`command -v aidrian\` ${TAIL}`,
     `sh -c 'aidrian ${TAIL}'`,
     `echo $(aidrian ${TAIL})`,
@@ -218,7 +220,6 @@ test('what the rule cannot read as one call is refused, whatever the transcript 
     'aidrian pr product-feedback $S',
     'aidrian "$@"',
     '"$AIDRIAN" $S',
-    `"$(command -v aidrian)" ${TAIL}`,
   ];
   for (const command of refused) assert.ok(g.run(command), `with no answer: ${command}`);
   g.answer(QUESTION, 'Drop');

@@ -42,8 +42,9 @@ How to build, check, and release a change is in [contributing.md](contributing.m
   through `pr-auto-merge` once every review signed off and every check is `SUCCESS`, without asking Adrian.
   Where that gate or the [merge guard](hooks.md#merge-guard) refuses, as for a guarded path such as a workflow,
   knowledge, or a guard rule, or a pull request an earlier session in a handoff chain marked ready, the session never
-  works around it: it reports the gate that refused and the one command Adrian runs,
-  `gh pr merge <n> --squash --match-head-commit <sha>`. A handoff brief carries the ownership to the next session,
+  works around it. A refusal it can clear, such as a timed-out read, a pending check, or open review work, it retries
+  or clears; one that needs Adrian's review, such as a guarded path, it reports with the gate that refused and the one
+  command Adrian runs, `gh pr merge <n> --squash --match-head-commit <sha>`. A handoff brief carries the ownership to the next session,
   which asks the gate again: a ready state it inherits is never permission to merge.
 
 ## This repository's knowledge

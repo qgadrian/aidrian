@@ -35,6 +35,7 @@ import { projectCommandDenial } from '../plugins/aidrian/lib/project-run-guard.m
 import { REGISTRY_NAMES, registryHosts } from '../plugins/aidrian/lib/project-registries.mjs';
 import { SHELL_VARS as START_SHELL_VARS } from '../plugins/aidrian/lib/project-start.mjs';
 import { markFolder, markFolders, markPending, markUnattended, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
+import { hookCall } from './hook-call.mjs';
 import { fakeClaude, OTHER, OWN_PLUGIN, passVerdict, runFixture, STARTED } from './project-start-fixture.mjs';
 
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-agent-gates.mjs');
@@ -372,7 +373,7 @@ test('a session a proof plan holds never reads a hidden store with the file tool
   assert.equal(fileReadOf({ tool_name: 'Bash', tool_input: { command: 'cat x' } }), null);
 });
 
-test('a session no Human attends never asks the host to run a command outside its sandbox', (t) => {
+test('a session no Human attends never asks the host to run a command outside its sandbox', async (t) => {
   const map = (more) => claudeCode.hookInput({ session_id: SESSION, tool_name: 'Bash', tool_input: { command: 'ls', ...more } });
   assert.equal(map({ dangerouslyDisableSandbox: true }).sandbox_escape, true);
   assert.equal(map({ dangerouslyDisableSandbox: false }).sandbox_escape, undefined);
@@ -383,16 +384,16 @@ test('a session no Human attends never asks the host to run a command outside it
   assert.match(sandboxEscapeDenial(escape, { mark: { root: null, pending: true } }).reason, /outside/u);
   assert.equal(sandboxEscapeDenial(escape, { mark: null }), null, 'an attended session');
   assert.equal(sandboxEscapeDenial(bash('ls', '/'), { mark: { root: '/r' } }), null);
-  // Through the hook, as the host runs it.
+  // Through the hook, called in this process as the host runs its script.
   const at = attempt(t);
   plan(at);
   assert.ok(markUnattended(SESSION, { root: at.root, cwd: at.work, env: at.env, tags: { project: 'launch', issue: 'ENG-1', confine: 'passed' } }));
-  const hook = (more) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(bash('ls', at.work, SESSION, more)), encoding: 'utf8', env: { ...process.env, ...at.env, CLAUDECODE: '1', AIDRIAN_TELEMETRY: '0' } });
-  const refused = hook({ dangerouslyDisableSandbox: true });
+  const hook = (more) => hookCall(HOOK, { input: JSON.stringify(bash('ls', at.work, SESSION, more)), env: { ...process.env, ...at.env, CLAUDECODE: '1', AIDRIAN_TELEMETRY: '0' } });
+  const refused = await hook({ dangerouslyDisableSandbox: true });
   assert.equal(refused.status, 2, refused.stderr);
   assert.match(refused.stderr, /outside the host's sandbox/u);
-  assert.equal(hook({ dangerouslyDisableSandbox: false }).status, 0);
-  assert.equal(hook({}).status, 0);
+  assert.equal((await hook({ dangerouslyDisableSandbox: false })).status, 0);
+  assert.equal((await hook({})).status, 0);
 });
 
 test('the hook fails the proof when its own environment, the host process\'s, holds the session\'s cache variables', (t) => {

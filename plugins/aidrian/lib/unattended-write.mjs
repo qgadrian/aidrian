@@ -23,7 +23,7 @@ import { checkDeadline, PastDeadline, remainingMs } from './deadline.mjs';
 import { isManifestPath } from './finding-disposition.mjs';
 import { forgeWorkflowFolders } from './forges/index.mjs';
 import { foldCase, isWithin } from './fs.mjs';
-import { gitConfigFiles, gitFolders, repositoryCheckouts, runGit, underGit } from './git.mjs';
+import { gitConfigFiles, gitFolders, repositoryCheckouts, runGit, underGit, withGitFacts } from './git.mjs';
 import { GLOB_WORD, globStarts, sameFile } from './glob-links.mjs';
 import { globReaches, modeTargets, startedFolder, stateFolders } from './handoff-guard.mjs';
 import { fileEditOf, nestedProtected, opaqueShellCommand, protectedPaths } from './hosts/index.mjs';
@@ -118,7 +118,13 @@ const refuser = (list) => (file, what, folder = false, allows = null, always = f
 //     (git.mjs gitConfigFiles), read only for a target that would pass.
 // Null when the mark names a main checkout but no project can be read there, or a read fails. `env` is the hook's, and
 // `session` the hook payload's session id, which finds the start record of a mark that names no start folder.
-export function unattendedPlaces({ cwd, mark, project, config, base, own = null, env = process.env, home, temp, session = null } = {}) {
+// One call reads each folder's roots, prefix, and remote URLs once (lib/git.mjs withGitFacts), or as the open call does;
+// `later()` runs after it, outside it.
+export function unattendedPlaces(options = {}) {
+  return withGitFacts(() => placesOf(options));
+}
+
+function placesOf({ cwd, mark, project, config, base, own = null, env = process.env, home, temp, session = null }) {
   if (!mark) return null;
   const limited = mark.pending === true || typeof mark.root !== 'string';
   if (!limited && !project) return null;

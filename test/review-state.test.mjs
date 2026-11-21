@@ -1,12 +1,11 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { GATE_CONFIG } from '../plugins/aidrian/lib/git.mjs';
 import { reviewProblem } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { splitPasses } from '../plugins/aidrian/lib/review/split.mjs';
@@ -16,6 +15,8 @@ import { recordPass } from '../plugins/aidrian/lib/review/record.mjs';
 import {
   BODY_LIMIT, clip, emptyState, HELD_LINE, heldMessage, heldRevision, prunePasses, publishState, readLocalState, readRecord, refreshSummary, stateFromComment, summaryBody, writeLocalState,
 } from '../plugins/aidrian/lib/review/state.mjs';
+
+import { FACT_READS, factReads, READING_MARK, tally } from './git-call-log.mjs';
 
 const LIMIT = 65_536;
 // A write on a private repository, from inside the team, whose checks pass every string: these tests are about the
@@ -802,44 +803,6 @@ test('the record with 200 itemized findings in one pass, each with a full body a
   if (record) assert.deepEqual([record.passes['engine:codex-local'].list.length, Object.keys(record.index).length], [200, 200]);
   else assert.equal(heldRevision(body), 3, 'held, as before');
 });
-
-// The four reads lib/git.mjs withGitFacts remembers, by name, with their arguments as a plugin call gives them.
-const FACT_READS = {
-  roots: 'rev-parse --path-format=absolute --git-common-dir --git-dir --show-toplevel',
-  prefix: 'rev-parse --show-prefix',
-  origin: 'config --get remote.origin.url',
-  remotes: 'config --get-regexp ^remote\\..*\\.url$',
-};
-// The line a test's forge reading writes to the git log, so a fact read after it shows.
-const READING_MARK = 'forge reading';
-
-// The log of the git calls `act(mark)` makes while a `git` that logs each call and runs the real one comes first on PATH:
-// each fact read as `<working folder> <fact name>`, and READING_MARK each time `act` calls `mark()`. Other calls are left out.
-function factReads(t, act) {
-  const bin = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-git-log-')));
-  t.after(() => rmSync(bin, { recursive: true, force: true }));
-  const log = path.join(bin, 'calls.log');
-  const real = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
-  writeFileSync(path.join(bin, 'git'), `#!/bin/sh\nprintf '%s %s\\n' "$(pwd -P)" "$*" >> "${log}"\nexec "${real}" "$@"\n`, { mode: 0o755 });
-  const before = process.env.PATH;
-  process.env.PATH = `${bin}${path.delimiter}${before}`;
-  try {
-    act(() => writeFileSync(log, `${READING_MARK}\n`, { flag: 'a' }));
-  } finally {
-    process.env.PATH = before;
-  }
-  // Every plugin git call runs hardened (lib/git.mjs GATE_CONFIG): the log shows each call's own arguments after it.
-  const hardened = ` ${GATE_CONFIG.join(' ')}`;
-  const lines = existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : [];
-  return lines.map((line) => line.replace(hardened, '')).flatMap((line) => {
-    if (line === READING_MARK) return [line];
-    const fact = Object.entries(FACT_READS).find(([, args]) => line.endsWith(` ${args}`));
-    return fact ? [`${line.slice(0, -fact[1].length - 1)} ${fact[0]}`] : [];
-  });
-}
-
-// How many times each line of `reads` occurs, as an object.
-const tally = (reads) => Object.fromEntries([...new Set(reads)].map((line) => [line, reads.filter((each) => each === line).length]));
 
 // Each call of the review record this test makes, on pull request 7 of o/r at `head`.
 function recordCalls(project, head) {

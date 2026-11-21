@@ -27,6 +27,7 @@ import { findProject, projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { placeHolders } from '../plugins/aidrian/lib/project-start.mjs';
 import { markPending, markUnattended, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 
+import { factReads, tally } from './git-call-log.mjs';
 import { hookCall } from './hook-call.mjs';
 
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-agent-gates.mjs');
@@ -751,6 +752,14 @@ test('the start record scan checks the guards\' deadline on each file it reads',
   assert.throws(() => withinDeadline(performance.now() - 1, () => startedFolders(store, SESSION)), PastDeadline);
   // And the places read through it give the deadline's refusal, never a worktree.
   assert.throws(() => withinDeadline(performance.now() - 1, () => unattendedPlaces({ cwd: fx.worktree, mark: { root: fx.dir }, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.temp], session: SESSION })), PastDeadline);
+});
+
+test('one call of the places reads each checkout\'s roots once, though its state folders and its worktree each ask for them', (t) => {
+  const fx = fixture(t);
+  const reads = factReads(t, () => assert.ok(unattendedPlaces({ cwd: fx.worktree, mark: fx.mark, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.temp], session: SESSION })?.worktree));
+  const roots = reads.filter((line) => line.endsWith(' roots'));
+  assert.ok(roots.includes(`${fx.dir} roots`) && roots.includes(`${fx.worktree} roots`), `both checkouts' roots are read: ${roots.join(' | ')}`);
+  assert.deepEqual(tally(roots), Object.fromEntries(roots.map((line) => [line, 1])), 'each folder\'s roots once');
 });
 
 test('a `.git` entry in an attempt folder or a state folder a session writes is refused too', (t) => {

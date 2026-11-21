@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -268,6 +268,18 @@ test('inside withGitFacts a read given an option but a timeout asks git, so its 
     assert.equal(knownPrefix(src, Object.create({ env: process.env })), 'src/', 'an inherited env asks git too');
   });
   assert.equal(git.count('--show-prefix'), 5);
+});
+
+test('inside withGitFacts a folder is keyed by where the system lands, so a `..` after a link never takes another folder`s answer', (t) => {
+  const { dir } = repo(t);
+  const other = repo(t).dir;
+  // `<dir>/link/..` reads as `<dir>` by its text, but the system follows the link first and lands in `<other>`.
+  symlinkSync(path.join(other, 'src'), path.join(dir, 'link'));
+  const through = `${dir}${path.sep}link${path.sep}..`;
+  withGitFacts(() => {
+    assert.deepEqual(checkoutRoots(dir), { main: dir, current: dir });
+    assert.deepEqual(checkoutRoots(through), { main: other, current: other }, 'the folder git ran in, never the text\'s');
+  });
 });
 
 test('a nested withGitFacts shares the open scope, and two scopes in a row share nothing', async (t) => {

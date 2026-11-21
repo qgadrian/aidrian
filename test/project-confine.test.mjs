@@ -386,6 +386,9 @@ test('a session a proof plan holds never reads a hidden store with the file tool
     symlinkSync(path.join(at.home, 'side'), path.join(at.work, 'side'));
     assert.match(call('Glob', { pattern: '../.ssh/*', path: path.join(at.work, 'side') })?.reason ?? '', /hides/u, 'a Glob climbing from a link');
     assert.match(call('Glob', { pattern: '../.ssh/*', path: 'side' })?.reason ?? '', /hides/u, 'the same, relative to the call\'s folder');
+    // An empty `path` is the call's folder: a pattern that climbs from there to a store reaches it.
+    const climb = `${path.relative(at.work, at.keys)}/*`;
+    assert.match(call('Glob', { pattern: climb, path: '' })?.reason ?? '', /hides/u, 'an empty path, the call\'s folder');
     if (confine === 'passed') {
       assert.equal(call('Read', { file_path: path.join(at.work, 'README.md') }), null);
       assert.equal(call('Grep', { pattern: 'x' }), null, 'the call`s folder, the clone');
@@ -393,6 +396,7 @@ test('a session a proof plan holds never reads a hidden store with the file tool
   }
   assert.deepEqual(fileReadOf({ tool_name: 'Glob', tool_input: { pattern: '/a/b/*.pem', path: '/c' } }), ['/c', '/a/b/']);
   assert.deepEqual(fileReadOf({ tool_name: 'Glob', tool_input: { pattern: '../x/*.pem', path: '/c/l/' } }), ['/c/l/', '/c/l/../x/'], 'joined as text, not folded');
+  assert.deepEqual(fileReadOf({ tool_name: 'Glob', tool_input: { pattern: '../x/*.pem', path: '' } }), ['', '../x/'], 'an empty path, the call\'s folder');
   assert.equal(fileReadOf({ tool_name: 'Bash', tool_input: { command: 'cat x' } }), null);
 });
 

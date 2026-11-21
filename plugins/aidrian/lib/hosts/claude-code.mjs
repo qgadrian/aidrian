@@ -127,8 +127,12 @@ function fileRead(tool, given) {
 }
 
 // `file` under the folder `folder`, joined as text and never folded: a `..` after a link in `folder` climbs from the
-// link's target, which the confine guard's read check resolves (lib/confine-guard.mjs readsStore).
-const textJoin = (folder, file) => (file === '' ? folder : `${folder.replace(/\/+$/u, '')}/${file}`);
+// link's target, which the confine guard's read check resolves (lib/confine-guard.mjs readsStore). An empty `folder`
+// is the call's folder, so `file` stays relative to it.
+function textJoin(folder, file) {
+  if (folder === '') return file;
+  return file === '' ? folder : `${folder.replace(/\/+$/u, '')}/${file}`;
+}
 
 // A path its file tools name, as they resolve it: a leading `~` or `~/` is the home folder of the user the host runs as
 // (live check 23). Every other path is as it is, relative ones from the call's folder.

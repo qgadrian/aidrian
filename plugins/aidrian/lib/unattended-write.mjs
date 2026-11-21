@@ -604,6 +604,8 @@ function renameProblem(write, file, files) {
 // sees, plus what shellWrites reads.
 export function unattendedWriteDenial(input, { names: { human } }, { mark = null, places = () => null, env = process.env } = {}) {
   if (!mark) return null;
+  // Accepted residual, tracked in #513: each write target is judged folded as text (writeTargets resolves it with
+  // path.resolve), so a `..` after a link counts where the spelling folds, not where the system lands.
   const { files, names, globs } = writeTargets(input);
   const modes = modeTargets(input);
   const command = bashCall(input) && typeof input.tool_input?.command === 'string' ? input.tool_input.command : null;

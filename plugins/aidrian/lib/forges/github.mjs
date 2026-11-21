@@ -6,6 +6,7 @@
 import { isRefName } from '../git.mjs';
 import { hasHidden } from '../hidden-text.mjs';
 import { runGh } from './github-cli.mjs';
+import { receivePackStatus, tokenMayPush } from './github-token.mjs';
 
 // The author associations GitHub gives the people who belong to a repository.
 // Frozen, with no add, and compared by === rather than through a prototype method, so no module in the gate's process
@@ -713,7 +714,7 @@ function branchHold(read, admin, viewer) {
 // `killSignal` stops a call at that bound with another signal, such as SIGKILL; null keeps gh's runner's default.
 // A method that takes `{ host }` names that host to every REST call it makes (`--hostname`), as `aidrian pr auto-merge`
 // does with the host of the pull request's URL; without one, gh picks its default host.
-export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutMs = null, killSignal = null } = {}) {
+export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutMs = null, killSignal = null, probe = receivePackStatus } = {}) {
   const gh = (args, { timeoutMs: limit = timeoutMs, input } = {}) =>
     run(args, { cwd, ...(limit === null ? {} : { timeoutMs: limit }), ...(killSignal === null ? {} : { killSignal }), ...(input === undefined ? {} : { input }) });
   const json = (args) => JSON.parse(gh(args));
@@ -962,6 +963,12 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     visibility: (repo) => json(['repo', 'view', repo, '--json', 'visibility']).visibility,
     // The login gh is signed in as.
     viewer: ({ host } = {}) => rest('user', { host })?.login,
+    // The token gh signs in to `host` with, from its own login wherever gh keeps it, the system keyring included, or
+    // from its token variables: no network call. Throws when gh has none.
+    authToken: ({ host } = {}) => gh(['auth', 'token', ...(host ? ['--hostname', host] : [])]).trim(),
+    // Whether `token` may push to `repo` on `host` (default github.com), by a probe that writes nothing: { may, why }, or
+    // a throw when the forge's answer says neither (github-token.mjs tokenMayPush).
+    tokenCanPush: (repo, { host = DEFAULT_HOST, token } = {}) => tokenMayPush(repo, { host, token, probe }),
     // The comments on the pull request's conversation, not those on its diff (reviewComments).
     conversationComments: (repo, n, { host } = {}) => list(`repos/${repo}/issues/${n}/comments`, { host }),
     // One comment of a conversation, by its id. With `pr`, it is held to that pull request of `repo`: a comment whose

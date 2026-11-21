@@ -349,6 +349,9 @@ export default {
       // The package managers' caches reach the session's sandboxed commands alone: the SessionStart hook appends them to
       // the file the host sources before each Bash command, never the settings' `env`, which its hooks and MCP servers get.
       shellEnv: ({ env, vars }) => writeEnvFile(env.CLAUDE_ENV_FILE, vars),
+      // The sandbox hides the system keyring, where the forge CLI may keep its login: the start reads the forge token
+      // outside it, and the SessionStart hook hands it to the sandboxed commands through shellEnv (lib/project-token.mjs).
+      forgeTokenEnv: true,
       // Each start proves, from inside the session, that the sandbox holds (lib/project-confine.mjs): its first call runs
       // `aidrian project confine`, which tries what the sandbox must refuse, and the start holds the session only once the
       // gate confirmed the verdict (`confined`). `confineReads` are the credential stores the proof tries to read.
@@ -360,8 +363,8 @@ export default {
       // localhost listener: macOS alone; Linux keeps the session in a network namespace of its own.
       confineLoopback: ({ platform, localBinding }) => loopbackReach({ platform, localBinding }),
       localBindingRisk,
-      start: ({ session, cwd, name, prompt, env, hold, identify, beacon, confined, git, grants, domains, main, mainGit, tokens, guarded, mcp, localBinding, home, platform, run, wait, runs }) => startProject({
-        session, cwd, runs, name, prompt, env, hold, identify, beacon, confined, sandbox: { git, grants, domains, main, mainGit, tokens, guarded, localBinding }, mcp, home, platform, run, wait, effort: effort(env), efforts: MODEL_CHOICES.effort,
+      start: ({ session, cwd, name, prompt, env, hold, identify, beacon, confined, git, grants, domains, main, mainGit, tokens, guarded, mcp, localBinding, home, platform, run, wait, runs, claimVars }) => startProject({
+        session, cwd, runs, name, prompt, env, hold, identify, beacon, confined, sandbox: { git, grants, domains, main, mainGit, tokens, guarded, localBinding }, mcp, home, platform, run, wait, effort: effort(env), efforts: MODEL_CHOICES.effort, claimVars,
       }),
       stop: ({ id, env, run }) => stopBackground({ id, env, run }),
       ended: ({ id, session, env, run }) => sessionFinished({ id, session, env, run }),

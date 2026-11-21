@@ -9,8 +9,8 @@
 // temporary folder, such as a hook's block counts, goes there too; the process that made the folder deletes it when it
 // exits. Without this, every run left its files behind in the system's temporary folder.
 //
-// Network: a forge command that always fails comes first on PATH, so no test reads a real pull request. A test's own fake, put
-// before it, still wins.
+// Network: a forge command that always fails comes first on PATH, so no test reads a real pull request, and a keychain
+// tool that finds no entry, so none reads this machine's keychain. A test's own fake, put before them, still wins.
 //
 // Environment: a test sees none of the variables that change what the code under test does, so the suite gives
 // the same result in a plain shell, a Claude session, or a git hook. A test that needs one sets it itself.
@@ -49,6 +49,8 @@ if (!process.env.AIDRIAN_TEST_STATE) {
   const bin = path.join(state, 'bin');
   mkdirSync(bin);
   writeFileSync(path.join(bin, 'gh'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  // macOS's keychain tool, which finds no entry, so no test reads this machine's keychain (lib/project-token.mjs).
+  writeFileSync(path.join(bin, 'security'), '#!/bin/sh\nexit 44\n', { mode: 0o755 });
   process.env.PATH = `${bin}${path.delimiter}${process.env.PATH}`;
   // The developer's git config is never read: an empty global file and no system file.
   const gitconfig = path.join(state, 'gitconfig');

@@ -134,7 +134,7 @@ function guardedStore({ env, home }) {
 
 // The team's projectRun for `project`, as the base branch commits it: through this checkout's git, which only refuses,
 // and through the forge at the repository init pinned, `repository`. { maxParallel, maxStarts, issueHours, solo,
-// unverifiedHosts, workflowSecretsAccepted, forgeProtectionAccepted, outsideSandbox, mcpServers, registries } with each number the lowest of the two reads and its
+// unverifiedHosts, workflowSecretsAccepted, forgeProtectionAccepted, outsideSandbox, mcpServers, registries, localBinding } with each number the lowest of the two reads and its
 // CEILINGS value, each switch true only when both reads set it, outsideSandbox and registries the names both reads
 // list, and mcpServers the servers both reads define alike, or { problem }: with `transient` when the forge could not
 // answer now, and with issueHours when it answered and withdrew projectRun.allow. A forge read that fails refuses.
@@ -161,6 +161,7 @@ export function teamPolicy(project, repository, forge) {
     outsideSandbox: bothList(local.config.projectRun.outsideSandbox, policies.policy.projectRun.outsideSandbox),
     mcpServers: bothServers(local.config.projectRun.mcpServers, policies.policy.projectRun.mcpServers),
     registries: bothList(local.config.projectRun.registries, policies.policy.projectRun.registries),
+    localBinding: local.config.projectRun.localBinding === true && policies.policy.projectRun.localBinding === true,
   };
 }
 
@@ -381,7 +382,7 @@ function startPlace(context) {
   const early = heldProblem({ store, session, cap, env, spawn, state, run });
   if (early) return refuse(early, orphans);
   const access = accessProblem({
-    cap, forge: facade, repository: found.init.repository, env, home, guarded: guardedFolders({ main, state, env, home }), main, platform: context.platform, allowed: policy.outsideSandbox,
+    cap, forge: facade, repository: found.init.repository, env, home, guarded: guardedFolders({ main, state, env, home }), main, platform: context.platform, allowed: policy.outsideSandbox, localBinding: policy.localBinding,
   });
   if (access?.refuse) return refuse(access.refuse, orphans);
   const tripped = access?.halt ?? linkTripwire({ state, run, store, env, home, main });
@@ -478,6 +479,10 @@ function issueFileFor(state, run, key, folder) {
 function launchStart(context, place) {
   const { run, key, env, home, session, store, cap, spawn, wait, state, held, noted } = context;
   const { folder, attempt, branch, cwd, git, grants, drop, cache, vars, log, main, mainGit, afterLimit, issueFile, pushUrl } = place;
+  const localBinding = context.policy.localBinding === true;
+  // Whether the team's switch reaches this machine's loopback on this host and platform, as the host declares it: one
+  // that keeps its commands off the loopback all the same, as Claude Code on Linux, keeps the proof's listener.
+  const loopback = localBinding && safely(() => cap.confineLoopback?.({ env, home, platform: context.platform, localBinding })) === true;
   // The forge's hosts, and the registries the team lists (projectRun.registries).
   const domains = [...forgeDomains(context.found.init.repository), ...registryHosts(context.policy.registries)];
   const proving = cap.confineProof === true;
@@ -485,8 +490,9 @@ function launchStart(context, place) {
   if (proving) {
     // The unlisted host must be outside the domains the user's and the organization's settings add too.
     const added = safely(() => cap.confineDomains?.({ env, home, platform: context.platform }));
+    // A session that reaches this machine's loopback would reach the listener too, so the proof probes none there.
     confine = prepareConfine({
-      folder, run, key, attempt, work: cwd, git, drop, cache, domains: [...domains, ...(Array.isArray(added) ? added : [])], main, mainGit, env, home,
+      folder, run, key, attempt, work: cwd, git, drop, cache, domains: [...domains, ...(Array.isArray(added) ? added : [])], main, mainGit, env, home, loopback,
       ...(context.listen ? { listen: context.listen } : {}), reads: safely(() => cap.confineReads?.({ env, home })) ?? [],
     });
     if (confine.problem) {
@@ -500,7 +506,7 @@ function launchStart(context, place) {
   const fileProof = (own, result) => safely(() => markUnattended(own, { root: context.main, cwd: resolvedPath(cwd) ?? cwd, env, tags: { ...tags, confine: result } }));
   const confined = proving ? (own) => {
     proved = own;
-    const answer = confineCheck({ folder, session: own, prints: confine.prints });
+    const answer = confineCheck({ folder, session: own, prints: confine.prints, loopback });
     if (answer === null) return null;
     const filed = fileProof(own, answer.pass ? 'passed' : 'failed');
     if (!answer.pass) {
@@ -528,7 +534,7 @@ function launchStart(context, place) {
           runs: runsFolder(state),
           // The sign-off store, which a merge no Human asks for reads as the Human's word: no confined session writes it.
           guarded: guardedStore({ env, home }),
-          mcp: context.policy.mcpServers, home, platform: context.platform, beacon: (id) => readBeacon(id, { env, home, since }), confined,
+          mcp: context.policy.mcpServers, localBinding, home, platform: context.platform, beacon: (id) => readBeacon(id, { env, home, since }), confined,
         });
         // A failed proof halts the run whatever came of stopping its session (startLines).
         if (started?.proof) proof = started.problem;
@@ -546,7 +552,7 @@ function launchStart(context, place) {
       now: context.now,
     });
   } finally {
-    confine?.listener.stop();
+    confine?.listener?.stop();
   }
   // A session the start stopped for its proof keeps a failed proof in its mark, so the hook refuses its every call.
   if (proving && proved && result.outcome !== 'started') fileProof(proved, 'failed');

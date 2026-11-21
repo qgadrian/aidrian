@@ -73,12 +73,13 @@ export function hostStartProblem(cap, policy, env) {
 
 // What stands between a session started now and pushing its branch: { halt } when the forge, asked through gh, does not
 // let this user push to the pinned `repository`, or the host's `access({ env, home, guarded, pushUrl, platform,
-// allowed, helpers })` says its session could not push, reach the forge, or run as confined as it is meant to, or would
+// allowed, helpers, localBinding })` says its session could not push, reach the forge, or run as confined as it is meant to, or would
 // be let write one of `guarded`; { refuse } when the forge cannot be asked now; null, or { pushUrl } when the host was
 // asked. `main` is the main checkout, whose origin URL the attempt's clone takes (prepareAttempt), so it is the URL the
 // session pushes to (`pushUrl`, which confinedRoom holds the clone to); `helpers` are the git credential helpers its
-// config names; `platform` the operating system, and `allowed` the base branch's projectRun.outsideSandbox.
-export function accessProblem({ cap, forge, repository, env, home, guarded, main, platform = process.platform, allowed = [] }) {
+// config names; `platform` the operating system, `allowed` the base branch's projectRun.outsideSandbox, and
+// `localBinding` its projectRun.localBinding, which lets the host's settings allow local binding too.
+export function accessProblem({ cap, forge, repository, env, home, guarded, main, platform = process.platform, allowed = [], localBinding = false }) {
   const named = `${repository.host}/${repository.owner}/${repository.name}`;
   let view;
   try {
@@ -95,7 +96,7 @@ export function accessProblem({ cap, forge, repository, env, home, guarded, main
   // An access check that throws halts: a check the gate cannot run is no check passed.
   let host;
   try {
-    host = cap.access({ env, home, guarded, pushUrl, platform, allowed, helpers });
+    host = cap.access({ env, home, guarded, pushUrl, platform, allowed, helpers, localBinding: localBinding === true });
   } catch (error) {
     host = `the host's access check failed (${String(error?.message ?? error).split('\n')[0]})`;
   }

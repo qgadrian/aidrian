@@ -484,6 +484,22 @@ test('start on Codex allows through its network proxy exactly the forge\'s hosts
   assert.ok(argv.includes(`shell_environment_policy.set.COREPACK_HOME=${JSON.stringify(path.join(fx.attempt(), 'cache', 'corepack'))}`));
 });
 
+test('start on Codex lets the proxy allow local binding only where the forge and the local ref both set projectRun.localBinding', (t) => {
+  const flag = 'features.network_proxy.allow_local_binding=true';
+  const argvOf = (options) => {
+    const fx = codexRun(t, options);
+    assert.equal(fx.cmd(['start', 'launch', 'ENG-1'], { wait: fx.ready() }).exitCode, 0);
+    return fx.fake.call().argv;
+  };
+  const on = { allow: true, unverifiedHosts: true, localBinding: true };
+  const argv = argvOf({ projectRun: on });
+  assert.equal(argv[argv.indexOf(flag) - 1], '-c');
+  assert.ok(!argvOf({}).some((each) => each.includes('allow_local_binding')), 'off by default');
+  assert.ok(!argvOf({ projectRun: on, forgeConfig: { version: 1, projectRun: { allow: true, unverifiedHosts: true } } }).some((each) => each.includes('allow_local_binding')), 'the local ref alone');
+  assert.deepEqual(configFlags({ domains: DOMAINS }).filter((each) => each.includes('allow_local_binding')), []);
+  assert.deepEqual(configFlags({ domains: DOMAINS, localBinding: true }).slice(4, 6), ['-c', flag]);
+});
+
 test('a confined session hands its result over in its drop folder, and the driver\'s wait takes it in, then removes the attempt once the session ends', (t) => {
   const fx = codexRun(t);
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1'], { wait: fx.ready() }).exitCode, 0);

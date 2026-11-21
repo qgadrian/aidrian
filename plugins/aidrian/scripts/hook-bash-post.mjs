@@ -13,7 +13,7 @@
 
 import path from 'node:path';
 
-import { runHook } from '../lib/hook-io.mjs';
+import { isMain, runHook } from '../lib/hook-io.mjs';
 import { detectHost } from '../lib/hosts/index.mjs';
 
 // A command that holds none of these words can record no pull request or link; one of only programs that run no tests,
@@ -23,7 +23,8 @@ const MAY_RECORD = /push|\bpr\b|\bworktree\b/u;
 // and both must end inside the host's 5 second hook timeout.
 const LINKS_BUDGET_MS = 1000;
 
-await runHook(async (input) => {
+// The hook's body, for the payload `input` (lib/hook-io.mjs callHook).
+export async function handle(input) {
   const command = input.tool_input?.command;
   if (typeof command !== 'string') return;
   if (typeof input.session_id !== 'string' || typeof input.cwd !== 'string' || !path.isAbsolute(input.cwd)) return;
@@ -62,7 +63,9 @@ await runHook(async (input) => {
   } catch {
     // Display data: a link that cannot be recorded is left out.
   }
-});
+}
+
+if (isMain(import.meta.url)) await runHook(handle);
 
 // The check-run rows of a finished call, appended to the session's record.
 async function recordCheckRuns(input, command) {

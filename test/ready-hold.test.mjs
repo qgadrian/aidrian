@@ -18,6 +18,7 @@ import { findProject, projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { emptyState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { check, checkMcp, DEADLINE_MS, FED_REASON, HOOK_BUDGET_MS, MANY_REASON, OVERRIDE } from '../plugins/aidrian/lib/rules/github/ready-hold.mjs';
 import { answer, URL7 } from './fixtures/ready-hold/gh.mjs';
+import { hookCall } from './hook-call.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const FAKE_GH = path.join(ROOT, 'test/fixtures/ready-hold/gh.mjs');
@@ -501,76 +502,86 @@ test('the pull request is viewed once, and origin/HEAD names the default branch 
   }
 });
 
-// The hooks as programs, with the fake gh first on PATH. `frozen` runs the shipped hook under test/fixtures/frozen-clock.mjs,
-// for a run that does not test the deadline itself: each fake gh is a node process a loaded machine starts slowly, and the
-// hook's own start counts too, so on the real clock the hold could run out of time and let the call run.
-function hookRun(dir, script, payload, spec, env = {}, { frozen = false } = {}) {
+// The hooks, called in this process as the host runs their scripts, with the fake gh first on PATH; `spawn` starts the
+// script as its own program instead, for a test of the time the hook's process takes. `frozen` holds Date.now still from
+// the call's start, as test/fixtures/frozen-clock.mjs does for a program, for a run that does not test the deadline
+// itself: each fake gh is a node process a loaded machine starts slowly, so on the real clock the hold could run out of
+// time and let the call run.
+async function hookRun(dir, script, payload, spec, env = {}, { frozen = false, spawn = false } = {}) {
   const bin = path.join(dir, 'bin');
   mkdirSync(bin, { recursive: true });
   writeFileSync(path.join(bin, 'gh'), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_GH}" "$@"\n`, { mode: 0o755 });
   writeFileSync(path.join(dir, 'spec.json'), JSON.stringify({ config: configText(ON), ...spec }));
-  const started = Date.now();
-  const result = spawnSync(process.execPath, [...(frozen ? ['--import', FROZEN_CLOCK] : []), path.join(ROOT, 'plugins/aidrian/scripts', script)], {
+  const file = path.join(ROOT, 'plugins/aidrian/scripts', script);
+  const options = {
     input: JSON.stringify({ session_id: 's', hook_event_name: 'PreToolUse', ...payload, cwd: dir }),
     encoding: 'utf8',
     env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, READY_GH_SPEC: path.join(dir, 'spec.json'), AIDRIAN_TELEMETRY: '0', ...env },
-  });
-  return { ...result, ms: Date.now() - started };
+  };
+  const started = Date.now();
+  if (spawn) return { ...spawnSync(process.execPath, [...(frozen ? ['--import', FROZEN_CLOCK] : []), file], options), ms: Date.now() - started };
+  const realNow = Date.now;
+  if (frozen) Date.now = () => started;
+  try {
+    return { ...(await hookCall(file, options)), ms: realNow() - started };
+  } finally {
+    Date.now = realNow;
+  }
 }
 
-test('the Bash hook holds gh pr ready while owed, and a stalled gh lets it run inside the hook\'s time', (t) => {
+test('the Bash hook holds gh pr ready while owed, and a stalled gh lets it run inside the hook\'s time', async (t) => {
   const dir = repo(t);
   const bash = (command, spec, env, options) => hookRun(dir, 'hook-bash.mjs', { tool_name: 'Bash', tool_input: { command } }, spec, env, options);
-  const held = bash('gh pr ready 7', { head: HEAD }, {}, { frozen: true });
+  const held = await bash('gh pr ready 7', { head: HEAD }, {}, { frozen: true });
   assert.equal(held.status, 2, held.stderr);
   assert.match(held.stderr, /product feedback is still owed/u);
-  assert.equal(bash('gh pr ready 7', { head: HEAD }, { [OVERRIDE]: '1' }).status, 0, 'the override in the session environment');
-  const stalled = bash('gh pr ready 7', { head: HEAD, sleepMs: 20_000 });
+  assert.equal((await bash('gh pr ready 7', { head: HEAD }, { [OVERRIDE]: '1' })).status, 0, 'the override in the session environment');
+  const stalled = await bash('gh pr ready 7', { head: HEAD, sleepMs: 20_000 }, {}, { spawn: true });
   assert.equal(stalled.status, 0, stalled.stderr);
   assert.ok(stalled.ms < 5000, `the hook took ${stalled.ms} ms`);
 });
 
-test('a command that marks ready and merges leaves the merge guard its time: a stalled gh still refuses the merge inside 5 s', (t) => {
+test('a command that marks ready and merges leaves the merge guard its time: a stalled gh still refuses the merge inside 5 s', async (t) => {
   const dir = repo(t);
   // A review record the merge guard reads, so it needs the head from gh.
   const state = emptyState(7, 'acme/notes');
   state.rounds.push({ head: HEAD });
   state.outcome = { status: 'received', head: HEAD, at: '2026-11-03T14:00:00.000Z' };
   writeLocalState(projectAt(dir), state);
-  const both = hookRun(dir, 'hook-bash.mjs', { tool_name: 'Bash', tool_input: { command: 'gh pr ready 7 && gh pr merge 7 --squash' } }, { head: HEAD, sleepMs: 20_000 });
+  const both = await hookRun(dir, 'hook-bash.mjs', { tool_name: 'Bash', tool_input: { command: 'gh pr ready 7 && gh pr merge 7 --squash' } }, { head: HEAD, sleepMs: 20_000 }, {}, { spawn: true });
   assert.equal(both.status, 2, both.stderr);
   assert.match(both.stderr, /merge guard could not read its head commit/u);
   assert.ok(both.ms < 5000, `the hook took ${both.ms} ms`);
 });
 
-test('the GitHub MCP hook holds the server\'s tools and Codex\'s connector tool that marks ready', (t) => {
+test('the GitHub MCP hook holds the server\'s tools and Codex\'s connector tool that marks ready', async (t) => {
   const dir = repo(t);
   const mcp = (tool_name, tool_input) => hookRun(dir, 'hook-mcp-github.mjs', { tool_name, tool_input }, { head: HEAD }, {}, { frozen: true });
   const given = { owner: 'acme', repo: 'notes', pullNumber: 7 };
   for (const name of ['mcp__github__update_pull_request', 'mcp__github__update_pull_request_draft_state']) {
-    const held = mcp(name, { ...given, draft: false });
+    const held = await mcp(name, { ...given, draft: false });
     assert.equal(held.status, 2, `${name}: ${held.stderr}`);
     assert.match(held.stderr, /#7 ready/u);
-    assert.equal(mcp(name, { ...given, draft: true }).status, 0, name);
+    assert.equal((await mcp(name, { ...given, draft: true })).status, 0, name);
   }
   for (const call of [RECORDED.ready, { ...RECORDED.ready, tool_name: 'mcp__codex_apps__github_mark_pull_request_ready_for_review' }]) {
-    const held = hookRun(dir, 'hook-mcp-github.mjs', { ...RECORDED.pre, tool_name: call.tool_name, tool_input: { ...call.tool_input, repository_full_name: 'acme/notes', pr_number: 7 } },
-      { head: HEAD }, RECORDED.env, { frozen: true });
+    const held = await hookRun(dir, 'hook-mcp-github.mjs', { ...RECORDED.pre, tool_name: call.tool_name, tool_input: { ...call.tool_input, repository_full_name: 'acme/notes', pr_number: 7 } },
+      { head: HEAD }, RECORDED.env, { frozen: true, spawn: call === RECORDED.ready });
     assert.equal(held.status, 2, `${call.tool_name}: ${held.stderr}`);
     assert.match(held.stderr, /#7 ready/u);
   }
 });
 
-test('the GitHub MCP hook holds a ready through a GitHub MCP server a Claude Code plugin installs, under its plugin name', (t) => {
+test('the GitHub MCP hook holds a ready through a GitHub MCP server a Claude Code plugin installs, under its plugin name', async (t) => {
   const dir = repo(t);
   const mcp = (tool_name, tool_input, env) => hookRun(dir, 'hook-mcp-github.mjs', { tool_name, tool_input }, { head: HEAD }, env, { frozen: true });
   const given = { owner: 'acme', repo: 'notes', pullNumber: 7 };
   for (const name of ['mcp__plugin_github_github__update_pull_request', 'mcp__plugin_github_github__update_pull_request_draft_state']) {
     for (const env of [{}, { CLAUDECODE: '1' }]) {
-      const held = mcp(name, { ...given, draft: false }, env);
+      const held = await mcp(name, { ...given, draft: false }, env);
       assert.equal(held.status, 2, `${name} ${JSON.stringify(env)}: ${held.stderr}`);
       assert.match(held.stderr, /#7 ready/u);
     }
-    assert.equal(mcp(name, { ...given, draft: true }).status, 0, name);
+    assert.equal((await mcp(name, { ...given, draft: true })).status, 0, name);
   }
 });

@@ -9,14 +9,17 @@
 import { loadConfig } from '../lib/config.mjs';
 import { appendEvent } from '../lib/dispatch-log.mjs';
 import { sessionRow } from '../lib/dispatch-rows.mjs';
-import { runHook } from '../lib/hook-io.mjs';
+import { isMain, runHook } from '../lib/hook-io.mjs';
 import { findProject } from '../lib/project.mjs';
 
-await runHook((input) => {
+// The hook's body, for the payload `input` (lib/hook-io.mjs callHook).
+export async function handle(input) {
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   const config = project && loadConfig(project).config;
   if (!config?.telemetry.enabled) return;
   const now = Number.isFinite(input.ended_at) ? input.ended_at : Date.now();
   const row = sessionRow(input, project, { docReads: config.telemetry.docReads, now });
   if (row.models.length) appendEvent(project, config, row);
-});
+}
+
+if (isMain(import.meta.url)) await runHook(handle);

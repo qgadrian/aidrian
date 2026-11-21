@@ -478,6 +478,30 @@ export function readStarted(store, session, { now = Date.now(), window } = {}) {
   return readMarker(store, sessionFile('started', session), { now, field: 'at', shape: isStarted, ...(window ? { window } : {}) });
 }
 
+// A start record's file, `started-<the session that ran the gate>.json`, and the shortest id a host prints for a session
+// it started before it lists the full one, as a chain floor is filed under one (SHORT_FROM).
+const STARTED_FILE = new RegExp(String.raw`^started-(${SESSION_PART})\.json$`, 'u');
+const SHORT_ID = 4;
+
+// The folders of the background starts in the last day whose record names the new session `session`: by its full id,
+// or, for a record that names none, by the id the host printed, which `session` starts with, in the case the disk folds
+// to. Each start record's `cwd`, once; [] for a refused store or a session id of the wrong shape. The store is listed
+// here, from its own listing, as a gate's floor reads are.
+export function startedFolders(store, session, { now = Date.now() } = {}) {
+  if (store.refused || typeof session !== 'string' || !SESSION_ID.test(session)) return [];
+  const own = foldCase(session);
+  const names = (record) => (record.session === null
+    ? foldCase(record.id) === own || (record.id.length >= SHORT_ID && own.startsWith(foldCase(record.id)))
+    : foldCase(record.session) === own);
+  const folders = new Set();
+  for (const name of listStore(store)) {
+    const ran = STARTED_FILE.exec(name)?.[1];
+    const record = ran ? readStarted(store, ran, { now }) : null;
+    if (record && names(record)) folders.add(record.cwd);
+  }
+  return [...folders];
+}
+
 // readStarted's record with the modification time of its file: { record, mtimeMs }, or null. A project run moves its
 // driver's custody on a start record dated, by both, after the row that made that session the driver.
 export function readStartedDated(store, session, { now = Date.now() } = {}) {

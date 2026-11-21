@@ -25,7 +25,7 @@ import { forgeWorkflowFolders } from './forges/index.mjs';
 import { foldCase, isWithin } from './fs.mjs';
 import { gitConfigFiles, gitFolders, runGit } from './git.mjs';
 import { GLOB_WORD, sameFile } from './glob-links.mjs';
-import { globPaths, globReaches, modeTargets, stateFolders } from './handoff-guard.mjs';
+import { globPaths, globReaches, modeTargets, startedFolder, stateFolders } from './handoff-guard.mjs';
 import { fileEditOf, nestedProtected, opaqueShellCommand, protectedPaths } from './hosts/index.mjs';
 import { issueForgeDenial } from './issue-forge-guard.mjs';
 import { ownIssue } from './project-run-guard.mjs';
@@ -112,8 +112,9 @@ const refuser = (list) => (file, what, folder = false, allows = null) => list.pu
 //     and `reviews` pass, even inside a temporary folder, as a state folder under /tmp is.
 //   - refused, each refused wherever it lies, and `later()`, the user's and the system's git config as git names them
 //     (git.mjs gitConfigFiles), read only for a target that would pass.
-// Null when the mark names a main checkout but no project can be read there, or a read fails. `env` is the hook's.
-export function unattendedPlaces({ cwd, mark, project, config, base, own = null, env = process.env, home, temp } = {}) {
+// Null when the mark names a main checkout but no project can be read there, or a read fails. `env` is the hook's, and
+// `session` the hook payload's session id, which finds the start record of a mark that names no start folder.
+export function unattendedPlaces({ cwd, mark, project, config, base, own = null, env = process.env, home, temp, session = null } = {}) {
   if (!mark) return null;
   const limited = mark.pending === true || typeof mark.root !== 'string';
   if (!limited && !project) return null;
@@ -125,7 +126,7 @@ export function unattendedPlaces({ cwd, mark, project, config, base, own = null,
     let named;
     places.later = () => (named ??= laterRefused(env));
     if (limited) limitedPlaces(places, { cwd, mark, project, config, base, home }, refuse);
-    else ownPlaces(places, { mark, project, config, base, own, home, temp }, refuse);
+    else ownPlaces(places, { mark, project, config, base, own, home, temp, session }, refuse);
     return places;
   } catch (error) {
     if (error instanceof PastDeadline) throw error;
@@ -174,23 +175,23 @@ function gitRefused(refuse, { common, gitDir, top }) {
 const stateOptions = (base, home) => ({ ...(base ? { base } : {}), ...(home ? { home } : {}) });
 
 // The folder a session its own mark holds started in, whose checkout is its worktree: the mark's `cwd`. A mark a gate
-// filed before it recorded the start folder names none. Such a gate started the session in the folder of the session
-// that ran it, the main checkout the mark names for a session a Human opened there, so that checkout stands in, as a
-// mark naming it would. A project run's issue session works in its attempt's clone, which its mark names: one whose
-// mark names none, or cannot be read, gets no worktree.
-function startFolder(mark, issueHeld) {
+// filed before it recorded the start folder names none, and its `root` is the main checkout even for a session started
+// in a linked worktree, so it never stands in: the folder is the one the gate's start record names (`recorded()`,
+// handoff-guard.mjs startedFolder), or none. A project run's issue session works in its attempt's clone, which its mark
+// names: one whose mark names none, or cannot be read, gets no worktree.
+function startFolder(mark, issueHeld, recorded) {
   if (absolute(mark.cwd)) return mark.cwd;
-  return issueHeld ? null : mark.root;
+  return issueHeld ? null : recorded();
 }
 
 // The places of a session its own mark holds (unattendedPlaces).
-function ownPlaces(places, { mark, project, config, base, own, home, temp }, refuse) {
+function ownPlaces(places, { mark, project, config, base, own, home, temp, session }, refuse) {
   checkDeadline();
   const repo = gitFolders(mark.root, gitBudget());
   if (repo) gitRefused(refuse, repo);
   checkDeadline();
-  const from = startFolder(mark, places.issueHeld);
-  const start = repo && from ? gitFolders(from, gitBudget()) : null;
+  const from = repo ? startFolder(mark, places.issueHeld, () => startedFolder(project, config, session, stateOptions(base, home))) : null;
+  const start = from ? gitFolders(from, gitBudget()) : null;
   if (places.issueHeld) places.issue = ownIssue(project, config, mark, stateOptions(base, home));
   if (start && real(start.common) === real(repo.common)) {
     places.worktree = real(start.top);

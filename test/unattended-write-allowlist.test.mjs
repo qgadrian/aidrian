@@ -16,6 +16,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { anchorClones, cloneConfigProblem, cloneGitProblem, GIT_PLACEHOLDERS } from '../plugins/aidrian/lib/attempt-clone.mjs';
+import { noteStarted, openStore } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { committedConfig } from '../plugins/aidrian/lib/config-committed.mjs';
 import { runGit } from '../plugins/aidrian/lib/git.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
@@ -68,7 +69,7 @@ function fixture(t) {
   const ask = (input, { held = mark, cwd = worktree, own = null, places, owner = project } = {}) => unattendedWriteDenial({ session_id: SESSION, cwd, ...input }, config, {
     mark: held,
     env,
-    places: places ?? (() => unattendedPlaces({ cwd, mark: held, project: owner, config, env, home, temp: [temp], own })),
+    places: places ?? (() => unattendedPlaces({ cwd, mark: held, project: owner, config, env, home, temp: [temp], own, session: SESSION })),
   });
   return { root, dir, state, home, temp, xdg, worktree, system, attempt, env, mark, project, config, ask };
 }
@@ -502,8 +503,9 @@ test('the session\'s own worktree is the folder its mark says it started in, nev
   gitIn(fx.dir)('worktree', 'add', '-q', '-b', 'feat/y', second);
   assert.match(fx.ask(write(path.join(second, 'a.txt')), { cwd: second })?.reason ?? '', /outside the places/u, 'another worktree of the same repository');
   assert.match(fx.ask(write(path.join(fx.dir, 'a.txt')), { cwd: fx.dir })?.reason ?? '', /outside the places/u, 'the main checkout');
-  // A mark filed before the start folder was recorded starts in its main checkout: a worktree beside it stays outside.
+  // A mark filed before the start folder was recorded, with no start record to name that folder, has no worktree.
   assert.match(fx.ask(write(path.join(fx.worktree, 'a.txt')), { held: { root: fx.dir } })?.reason ?? '', /outside the places/u);
+  assert.match(fx.ask(write(path.join(fx.dir, 'a.txt')), { held: { root: fx.dir }, cwd: fx.dir })?.reason ?? '', /outside the places/u);
   // A repository under a dot folder of the home folder writes itself, but never its git folder.
   const dotfiles = path.join(fx.home, '.dotfiles');
   mkdirSync(dotfiles);
@@ -525,42 +527,86 @@ test('the session\'s own worktree is the folder its mark says it started in, nev
 // catch-all, a route group, a parallel route slot, and intercepting routes.
 const SEGMENTS = ['[uid]', '[...slug]', '[[...slug]]', '(group)', '@slot', '(.)photo', '(..)(..)feed'];
 
-test('a mark filed before the start folder was recorded takes its main checkout as that folder: a task worktree inside it passes, whatever its folders are named', (t) => {
+// The start record a gate files for the session it started (handoff-markers.mjs noteStarted), in the store of the state
+// folder `state`: `id` and `session` name the new session, `cwd` the folder it started in.
+function recordStart(fx, { cwd, id = SESSION, session = SESSION, ran = 'feed00aa-0000-4000-8000-0000000000bb' }) {
+  const store = openStore(fx.state, { checkouts: fx.project.checkouts, maxChain: fx.config.session.handoff.maxChain });
+  const brief = path.join(fx.state, 'handoffs', '2026-11-21-eng-1.md');
+  assert.ok(noteStarted(store, ran, { sha256: 'a'.repeat(64), slug: 'eng-1', brief, chain: 1, id, session, name: null, cwd }));
+}
+
+// Two task worktrees nested in the fixture's main checkout, as Claude Code's own worktrees under `.claude/worktrees/` are.
+function nestedWorktrees(fx) {
+  const [first, second] = ['eng-1-hours', 'eng-2-billing'].map((name) => path.join(fx.dir, '.claude', 'worktrees', name));
+  gitIn(fx.dir)('worktree', 'add', '-q', '-b', 'feat/hours', first);
+  gitIn(fx.dir)('worktree', 'add', '-q', '-b', 'feat/billing', second);
+  return { first, second };
+}
+
+test('a mark filed before the start folder was recorded writes only the worktree its start record names, whatever its folders are named, and none with no record', (t) => {
   const fx = fixture(t);
-  const nested = path.join(fx.dir, '.claude', 'worktrees', 'eng-1-hours');
-  gitIn(fx.dir)('worktree', 'add', '-q', '-b', 'feat/hours', nested);
-  const files = SEGMENTS.map((segment) => path.join(nested, 'src', 'app', 'api', segment, 'route.ts'));
+  const { first, second } = nestedWorktrees(fx);
+  const files = SEGMENTS.map((segment) => path.join(first, 'src', 'app', 'api', segment, 'route.ts'));
   const edit = (file) => ({ tool_name: 'Edit', tool_input: { file_path: file, old_string: 'a', new_string: 'b' } });
-  // The mark an older gate filed, { root, at }, and the marks a gate files now, naming the main checkout or the worktree.
-  for (const held of [{ root: fx.dir }, { root: fx.dir, cwd: fx.dir }, { root: fx.dir, cwd: nested }]) {
-    const label = JSON.stringify(held);
-    // The places, told once for the mark, as one hook call tells them.
-    const found = unattendedPlaces({ cwd: nested, mark: held, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.temp] });
-    const ask = (input) => fx.ask(input, { held, cwd: nested, places: () => found })?.reason ?? null;
+  // The mark an older gate filed, { root, at }, whose root is the main checkout wherever the session started.
+  const held = { root: fx.dir };
+  // The places, told once for the mark and its session, as one hook call tells them.
+  const told = (session = SESSION) => unattendedPlaces({ cwd: first, mark: held, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.temp], session });
+  const askWith = (found) => (input, cwd = first) => fx.ask(input, { held, cwd, places: () => found })?.reason ?? null;
+
+  // No start record: the session cannot tell where it started, so it writes no checkout, nested or not.
+  const none = askWith(told());
+  for (const file of [files[0], path.join(second, 'a.ts'), path.join(fx.dir, 'README.md')]) assert.match(none(write(file)) ?? '', /outside the places/u, `no record: ${file}`);
+
+  // A record of another session names no folder of this one's.
+  recordStart(fx, { cwd: second, id: 'feed00aa-0000-4000-8000-0000000000cc', session: 'feed00aa-0000-4000-8000-0000000000cc', ran: 'feed00aa-0000-4000-8000-0000000000c0' });
+  assert.match(askWith(told())(write(files[0])) ?? '', /outside the places/u, 'another session\'s record');
+
+  // The record of its own start, by its full id or by the short id the host printed, names the worktree it started in.
+  for (const [id, session] of [[SESSION, SESSION], [SESSION.slice(0, 8), null]]) {
+    recordStart(fx, { cwd: first, id, session });
+    const ask = askWith(told());
     for (const file of files) {
-      for (const input of [edit(file), write(file), write(file, { agent_id: 'a5f0c1' })]) assert.equal(ask(input), null, `${label} ${input.tool_name} ${file}`);
-      const spelled = path.relative(nested, file);
-      for (const command of [`printf x > '${spelled}'`, `printf x > "${file}"`, `sed -i '' 's/a/b/' '${spelled}'`]) assert.equal(ask(bash(command)), null, `${label} ${command}`);
+      for (const input of [edit(file), write(file), write(file, { agent_id: 'a5f0c1' })]) assert.equal(ask(input), null, `${id} ${input.tool_name} ${file}`);
+      const spelled = path.relative(first, file);
+      for (const command of [`printf x > '${spelled}'`, `printf x > "${file}"`, `sed -i '' 's/a/b/' '${spelled}'`]) assert.equal(ask(bash(command)), null, `${id} ${command}`);
+    }
+    // The other task worktree, another session's, and the main checkout around it stay outside.
+    for (const file of [path.join(second, 'src', 'a.ts'), path.join(fx.dir, 'README.md'), path.join(fx.worktree, 'a.ts')]) {
+      assert.match(ask(write(file)) ?? '', /outside the places/u, `${id} ${file}`);
+      assert.match(ask(bash(`printf x > "${file}"`)) ?? '', /outside the places/u, `${id} shell ${file}`);
     }
     // The same names outside every place, and the entries refused wherever they lie, stay refused.
-    for (const segment of SEGMENTS) {
-      const outside = path.join(fx.root, 'elsewhere', segment, 'route.ts');
-      assert.match(ask(edit(outside)) ?? '', /outside the places/u, `${label} ${outside}`);
-      assert.match(ask(bash(`printf x > "${outside}"`)) ?? '', /outside the places/u, `${label} shell ${outside}`);
-    }
-    // The worktree beside the main checkout is not this session's, so its `.git` pointer is refused as outside instead.
-    for (const [file, reason] of refusedOf(fx)) assert.match(ask(write(file)) ?? '', file.startsWith(fx.worktree) ? /outside the places/u : reason, `${label} ${file}`);
-    assert.match(ask(write(path.join(nested, '.git'))) ?? '', /pointer to its git folder|git folder/u, label);
+    for (const segment of SEGMENTS) assert.match(ask(edit(path.join(fx.root, 'elsewhere', segment, 'route.ts'))) ?? '', /outside the places/u, `${id} ${segment}`);
+    for (const [file, reason] of refusedOf(fx)) assert.match(ask(write(file)) ?? '', file.startsWith(fx.worktree) ? /outside the places/u : reason, `${id} ${file}`);
+    assert.match(ask(write(path.join(first, '.git'))) ?? '', /pointer to its git folder/u, id);
+    assert.match(ask(write(path.join(first, '.claude', 'settings.json'))) ?? '', /a host file a later session/u, id);
+    rmSync(path.join(fx.state, 'handoffs', '.continue', 'started-feed00aa-0000-4000-8000-0000000000bb.json'));
   }
-  // Only the checkout a start folder gives passes: a worktree beside the main checkout stays outside for the older mark.
-  assert.match(fx.ask(write(path.join(fx.worktree, SEGMENTS[0], 'a.ts')), { held: { root: fx.dir }, cwd: fx.worktree })?.reason ?? '', /outside the places/u);
-  // The host files a later session in the main checkout loads stay refused.
-  assert.match(fx.ask(write(path.join(fx.dir, '.claude', 'settings.json')), { held: { root: fx.dir }, cwd: nested })?.reason ?? '', /a host file a later session/u);
+
+  // Two records of its start that name two folders tell none.
+  recordStart(fx, { cwd: first });
+  recordStart(fx, { cwd: second, ran: 'feed00aa-0000-4000-8000-0000000000b1' });
+  assert.match(askWith(told())(write(files[0])) ?? '', /outside the places/u, 'records that disagree');
+
   // A project run's issue session works in its attempt's clone, which its mark names: one whose mark names no start
-  // folder gets no worktree, so not the main checkout either.
+  // folder gets no worktree, whatever a start record says.
   const issue = { root: fx.dir, project: 'launch', issue: 'ENG-1' };
-  assert.match(fx.ask(write(files[0]), { held: issue, cwd: nested })?.reason ?? '', /outside the places/u);
+  assert.match(fx.ask(write(files[0]), { held: issue, cwd: first })?.reason ?? '', /outside the places/u);
   assert.match(fx.ask(write(path.join(fx.dir, 'README.md')), { held: issue, cwd: fx.dir })?.reason ?? '', /outside the places/u);
+});
+
+test('the agent gate hook finds the start record of a session whose mark names no start folder by the payload\'s session id', async (t) => {
+  const fx = fixture(t);
+  const { first, second } = nestedWorktrees(fx);
+  assert.ok(markUnattended(SESSION, { root: fx.dir, env: fx.env }));
+  recordStart(fx, { cwd: first });
+  const run = (file) => hookCall(HOOK, { input: JSON.stringify({ session_id: SESSION, cwd: first, ...write(file) }), cwd: first, env: fx.env, encoding: 'utf8' });
+  const own = await run(path.join(first, 'src', 'a.ts'));
+  assert.equal(own.status, 0, own.stderr);
+  const other = await run(path.join(second, 'src', 'a.ts'));
+  assert.equal(other.status, 2, other.stderr);
+  assert.match(other.stderr, /outside the places/u);
 });
 
 test('the agent gate hook holds a marked session to its places, a pending hold to the refused entries, and lets a call run when it cannot read its input', async (t) => {

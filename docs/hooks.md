@@ -1158,9 +1158,13 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   - its own worktree: the checkout of the folder its mark says the gate started it in, when that checkout shares its git
     folder with the main checkout the mark names; never the call's folder, so another worktree of the same repository
     is outside, unless it lies inside that checkout, as a task worktree under the main checkout's `.claude/worktrees/`
-    does for a session started in the main checkout. A mark filed before the start folder was recorded, by an older
-    gate, which started the session in the folder of the session that ran it, takes the main checkout it names as that
-    folder; a project run's issue session whose mark names no start folder gets no worktree;
+    does for a session started in the main checkout. A mark filed before
+    the start folder was recorded, by an older gate, names the main checkout as its root wherever the session started,
+    so that checkout never stands in: the start folder is the one the gate's start record in the continuation store
+    names for the session, by the payload's full id or the short id the host printed (`lib/handoff-guard.mjs
+    startedFolder`), and with no such record, or records that name two folders, the session gets no worktree, so it
+    writes none of the main checkout's task worktrees. A start record lasts a day. A project run's issue session whose
+    mark names no start folder gets no worktree;
   - its issue's running attempt folders `work`, `drop`, and `cache`, under `<state>/runs/<run>/attempts/`, each only
     while it is a plain folder: one replaced by a link is refused, and so is the keep file `.keep-attempt` in `drop`
     and `cache`;

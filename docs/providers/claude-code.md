@@ -497,8 +497,9 @@ No `sandbox.excludedCommands` is passed. Three conditions hold on top of the san
   the start reads it outside the sandbox, from the first of the project's keychain entry
   ([`projectRun.forgeTokenKeychain`](../config.md#project-run) in `.aidrian.local.json`), the machine's default entry,
   service `aidrian-project-run`, both on macOS, the default entry for a github.com run alone, so no github.com token
-  reaches another host, and `gh auth token --hostname <host>`. It halts when none gives one, or when that very token
-  may not push, whatever the driver's own login may do: the start asks GitHub for the
+  reaches another host, and `gh auth token --hostname <host>`. It halts when none gives one, when the token belongs
+  to another account than gh's own login, `gh api user` asked with the token (the preflight checks the forge's rules
+  for that login alone), or when that very token may not push, whatever the driver's own login may do: the start asks GitHub for the
   repository's receive-pack advertisement, `https://<host>/<owner>/<name>.git/info/refs?service=git-receive-pack`,
   with the token as basic auth, from a Node process with no shell that gets the token in its environment. GitHub
   answers 200 with `application/x-git-receive-pack-advertisement` only to a token that may write the contents, and
@@ -527,7 +528,8 @@ No `sandbox.excludedCommands` is passed. Three conditions hold on top of the san
   so git's HTTPS push signs in with it too. `sandbox.excludedCommands` for gh or git is no channel either: git runs
   hooks the session can write. Git's `store` credential helper keeps the push token in
   `~/.git-credentials`, which the sandbox hides, so a main checkout whose git config names it halts the start: use the
-  forge CLI's helper, `gh auth setup-git`.
+  forge CLI's helper, `gh auth setup-git`, which leaves a `store` entry in place, and remove that entry from the file
+  that defines it ([Origin over HTTPS](../project-run-setup.md#origin-over-https)).
 
 The start also halts, recording nothing, when the user's settings are not a JSON object; set any `sandbox` key but
 those that only narrow it (`filesystem.denyRead`, `filesystem.denyWrite`, `network.deniedDomains`, and

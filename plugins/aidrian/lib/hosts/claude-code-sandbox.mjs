@@ -601,10 +601,10 @@ export function accessProblem({ env, home, guarded = [], pushUrl, platform, allo
   if (components) return components;
   if (typeof pushUrl !== 'string' || pushUrl === '') return 'git names no URL origin pushes to in the main checkout, so whether the session could push cannot be told';
   if (overSsh(pushUrl)) {
-    return `origin's URL, which the attempt's clone pushes to, goes over SSH (${pushUrl.slice(0, 80)}), and the host's sandbox hides ~/.ssh and refuses SSH, so the session could not push its branch; set an HTTPS URL, \`git remote set-url origin https://<host>/<owner>/<name>.git\`, and remove any url.<base>.insteadOf rule in the git config that rewrites it to SSH, which \`git config --get-regexp 'insteadof$'\` lists`;
+    return `origin's URL, which the attempt's clone pushes to, goes over SSH (${pushUrl.slice(0, 80)}), and the host's sandbox hides ~/.ssh and refuses SSH, so the session could not push its branch; set an HTTPS URL, \`git remote set-url origin https://<host>/<owner>/<name>.git\`, and remove any url.<base>.insteadOf rule that rewrites it to SSH from the file that defines it, which \`git config --show-origin --show-scope --get-regexp 'insteadof$'\` names`;
   }
   if (helpers.some((each) => typeof each === 'string' && storeHelper(each))) {
-    return 'git\'s credential helper `store` keeps the push token in ~/.git-credentials, which the sandbox hides from the session, so it could not push; use the forge CLI\'s helper instead, `gh auth setup-git`, and remove the `store` helper from the git config';
+    return 'git\'s credential helper `store` keeps the push token in ~/.git-credentials, which the sandbox hides from the session, so it could not push; use the forge CLI\'s helper instead, `gh auth setup-git`, which leaves the `store` helper in place, and remove that one from the file that defines it, which `git config --show-origin --show-scope --get-regexp \'^credential\\..*helper$\'` names';
   }
   if (platform === 'linux') {
     const missing = ['bwrap', 'socat'].find((name) => !programOnPath(env, programNames(name)));

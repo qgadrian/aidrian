@@ -24,6 +24,7 @@ import path from 'node:path';
 
 import { baseBranchTip, machineSwitch } from './config.mjs';
 import { resolveAutoMerge } from './config-local.mjs';
+import { pluginRepository } from './config-version.mjs';
 import { forgeFor } from './forges/index.mjs';
 import { knownPrefix } from './git.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
@@ -50,9 +51,15 @@ const LOCAL_BINDING_RISK = 'a service a session starts may listen on this machin
 
 // The setup doc of a project run, and its section that clears each check's blocker, by the check's name: every blocker
 // line, and the labels `ask`, ends with a pointer to it (setupPointer). `token` is the access check's section when no
-// source gives a forge token, or that token may not push. test/project-run-report.test.mjs holds each anchor to a
-// heading of the doc.
+// source gives a forge token, that token may not push, or it is not the forge CLI's own user's.
+// test/project-run-report.test.mjs holds each anchor to a heading of the doc.
 export const SETUP_DOC = 'docs/project-run-setup.md';
+// The doc's address on the main branch of the repository the plugin's manifest names, so a fork points at its own: a
+// project's checkout has no copy of the doc. Its path alone when the manifest names no repository.
+export function setupDocUrl() {
+  const repository = pluginRepository();
+  return repository ? `${repository.replace(/(?:\.git)?\/*$/u, '')}/blob/main/${SETUP_DOC}` : SETUP_DOC;
+}
 export const SETUP_SECTIONS = Object.freeze({
   repository: 'origin-over-https', state: 'state-folder', run: 'after-a-halt-or-a-stop', instructions: 'state-folder',
   policy: 'team-config', machine: 'this-machine', host: 'host-start', trust: 'trust-the-runs-folder', access: 'host-settings',
@@ -60,7 +67,7 @@ export const SETUP_SECTIONS = Object.freeze({
   handoff: 'team-config', reviewer: 'review-bot', 'reviewer-seen': 'review-bot', ci: 'auto-merge-and-ci',
   'branch-protection': 'forge-rules', 'release-tags': 'forge-rules', 'workflow-secrets': 'forge-rules', labels: 'the-decision-label',
 });
-export const setupPointer = (section) => ` (setup: ${SETUP_DOC}#${SETUP_SECTIONS[section]})`;
+export const setupPointer = (section) => ` (setup: ${setupDocUrl()}#${SETUP_SECTIONS[section]})`;
 const blockerLine = (name, problem, section = name) => `blocker ${name}: ${problem}${setupPointer(section)}`;
 
 // The `note` preflight prints when the team lets issue sessions bind local ports through projectRun.localBinding: the
@@ -78,7 +85,7 @@ export function localBindingNote(cap, platform) {
 
 // Runs every check for `project`, whose loaded config is `config`, with `run` the run these checks are for, which the
 // active-run check leaves out, and returns { exitCode, out, err }: a line `ok NAME`,
-// `blocker NAME: WHY (setup: DOC#SECTION)`, or `ask NAME: WHAT` per check, exit 1 when any blocker. `forge`, `home`, `platform`, and `exec`,
+// `blocker NAME: WHY (setup: URL#SECTION)`, or `ask NAME: WHAT` per check, exit 1 when any blocker. `forge`, `home`, `platform`, and `exec`,
 // the keychain read's execFileSync, are a test's.
 export function preflightCommand({ project, config, run = null, env = process.env, home, forge, platform = process.platform, exec }) {
   const lines = [];
@@ -166,7 +173,8 @@ function accessLines({ cap, facade, repository, env, home, main, state, platform
     access = { halt: `the access check failed (${String(error?.message ?? error).split('\n')[0]})` };
   }
   const problem = access?.halt ?? access?.refuse ?? null;
-  // A halt that carries the token's record is the token's own: no source gave one, or it may not push.
+  // A halt that carries the token's record is the token's own: no source gave one, it may not push, or it is not the
+  // forge CLI's own user's.
   const lines = [problem ? blockerLine('access', problem, access?.token ? 'token' : 'access') : 'ok access'];
   if (access?.token?.source) lines.push(`note token: ${access.token.source} gives the issue sessions their forge token`);
   for (const note of access?.token?.notes ?? []) lines.push(`note token: ${note}`);

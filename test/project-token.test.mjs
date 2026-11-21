@@ -191,6 +191,30 @@ test('a start whose token may not push halts, though the driver\'s own login may
   assert.equal(other.cmd(['start', 'launch', 'ENG-1']).out[0], 'halt whether the forge token from the forge CLI\'s login for github.com may push to github.com/acme/widgets cannot be told (the forge answered the push probe with 500); start again');
 });
 
+test('a start whose token belongs to another user than the forge CLI\'s login halts, since the preflight checks the forge\'s rules for that login alone', (t) => {
+  const fx = runFixture(t);
+  // A token of another account, which may push, where the driver's login is held by every rule the preflight reads.
+  fx.forge.tokenUser = () => 'mallory';
+  const halted = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(halted.exitCode, 1, halted.out.join('\n'));
+  assert.equal(halted.out[0], 'halt the forge token from the forge CLI\'s login for github.com belongs to "mallory", not "octo", the forge CLI\'s login, for whom the preflight checks branch protection, tag rules, and environment reviewers, so those checks say nothing of what the token may bypass; give that source a token of "octo", or sign the forge CLI in as "mallory"');
+  assert.deepEqual(fx.claude.starts(), [], 'no claude --bg');
+  assert.ok(fx.forge.calls.some(([name, options]) => name === 'tokenLogin' && options.host === 'github.com' && options.token === 'given'), 'the forge was asked with that very token');
+  assert.ok(fx.forge.calls.some(([name, options]) => name === 'viewer' && options.host === 'github.com'));
+  // Fails closed: a token the forge names no user for, as an app's installation token, halts as well.
+  const app = runFixture(t);
+  app.forge.tokenUser = () => { throw new Error('gh: Resource not accessible by integration (HTTP 403)'); };
+  assert.match(app.cmd(['start', 'launch', 'ENG-1']).out[0], /^halt the forge cannot say which user the forge token from the forge CLI's login for github\.com belongs to \(gh: Resource not accessible by integration \(HTTP 403\)\), .*; give that source a token of the user the forge CLI is signed in as, then start again$/u);
+  assert.deepEqual(app.claude.starts(), []);
+  const unread = runFixture(t);
+  unread.forge.viewerLogin = () => null;
+  assert.match(unread.cmd(['start', 'launch', 'ENG-1']).out[0], /^halt the forge cannot say which user the forge CLI is signed in as \(the forge named no user\)/u);
+  // Logins match whatever their case: the same user starts.
+  const same = runFixture(t);
+  same.forge.tokenUser = () => 'OCTO';
+  assert.equal(same.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+});
+
 test('the push probe asks GitHub for the receive-pack advertisement, with the token in the environment under the host\'s variable, never an argument', () => {
   const calls = [];
   const exec = (program, args, options) => (calls.push({ program, args, options }), '403 text/plain; charset=utf-8');

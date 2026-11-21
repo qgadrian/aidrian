@@ -14,7 +14,8 @@ import { slugOf } from '../plugins/aidrian/lib/audits.mjs';
 import { cleanText, textProblem } from '../plugins/aidrian/lib/clean-text.mjs';
 import { createGithubForge } from '../plugins/aidrian/lib/forges/github.mjs';
 import { baseReader } from '../plugins/aidrian/lib/handoff-guard.mjs';
-import { SETUP_DOC, SETUP_SECTIONS } from '../plugins/aidrian/lib/project-preflight.mjs';
+import { SETUP_DOC, SETUP_SECTIONS, setupDocUrl } from '../plugins/aidrian/lib/project-preflight.mjs';
+import { pluginRepository } from '../plugins/aidrian/lib/config-version.mjs';
 import { owedReports, reportBody, reportCalls, runWriter } from '../plugins/aidrian/lib/project-report.mjs';
 import { runFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { bodyHash } from '../plugins/aidrian/lib/tracker-guard.mjs';
@@ -523,9 +524,12 @@ test('every preflight blocker line, and the labels ask, ends with the setup doc 
   const doc = readFileSync(path.resolve(import.meta.dirname, '..', SETUP_DOC), 'utf8');
   const anchors = new Set(doc.split('\n').map((line) => /^#{2,3} (.+)$/u.exec(line)?.[1]).filter(Boolean).map(slugOf));
   for (const [name, anchor] of Object.entries(SETUP_SECTIONS)) assert.ok(anchors.has(anchor), `${name}: ${SETUP_DOC} has no heading #${anchor}`);
+  // A project's checkout has no copy of the doc: the pointer is its address in the repository the manifest names.
+  assert.equal(setupDocUrl(), `${pluginRepository()}/blob/main/${SETUP_DOC}`);
+  assert.match(setupDocUrl(), /^https:\/\/[^/]+\/[^/]+\/[^/]+\/blob\/main\/docs\/project-run-setup\.md$/u);
   const pointed = (out) => out.filter((line) => line.startsWith('blocker ') || line.startsWith('ask labels:')).map((line) => {
     const found = / \(setup: (\S+)#([a-z0-9-]+)\)$/u.exec(line);
-    assert.ok(found && found[1] === SETUP_DOC && anchors.has(found[2]), `no setup section: ${line}`);
+    assert.ok(found && found[1] === setupDocUrl() && anchors.has(found[2]), `no setup section: ${line}`);
     return [line.slice(0, line.indexOf(':')), found[2]];
   });
   // Every check the start gate makes blocks at once here: no policy, no switch, an SSH origin, no tracker, no reviewer.
@@ -549,6 +553,10 @@ test('every preflight blocker line, and the labels ask, ends with the setup doc 
   // An access halt of the token's own points at the keychain step, not the host's settings.
   const none = ready.cmd(['preflight'], { forge: { ...ready.forge, authToken: () => { throw new Error('not logged in'); } } }).out;
   assert.deepEqual(pointed(none).find(([name]) => name === 'blocker access'), ['blocker access', 'forge-token-in-the-keychain']);
+  // So does a token of another user than the forge CLI's login, which the forge rules above were checked for.
+  const other = ready.cmd(['preflight'], { forge: { ...ready.forge, tokenLogin: () => 'mallory' } }).out;
+  assert.deepEqual(pointed(other).find(([name]) => name === 'blocker access'), ['blocker access', 'forge-token-in-the-keychain']);
+  assert.match(other.find((line) => line.startsWith('blocker access:')), /belongs to "mallory", not "octo"/u);
 });
 
 test('preflight blocks a runs folder the host does not trust, passes one under a trusted folder, and only notes a trust record it cannot read', (t) => {
@@ -578,7 +586,7 @@ test('preflight blocks a host instruction file above the runs folder, which ever
   const line = out.out.find((each) => each.startsWith('blocker instructions:'));
   assert.ok(line, out.out.join('\n'));
   assert.ok(line.includes(`the host loads ${file}, in a folder above the attempt's clone, and it lies outside the main checkout`), line);
-  assert.match(line, /move it away, or set state\.dir to a folder with no host instruction file above it \(setup: docs\/project-run-setup\.md#state-folder\)$/u);
+  assert.match(line, /move it away, or set state\.dir to a folder with no host instruction file above it \(setup: \S+\/docs\/project-run-setup\.md#state-folder\)$/u);
 });
 
 test('preflight passes the host\'s own user memory in a home folder above the runs folder, and blocks a project file in that home', (t) => {
@@ -631,7 +639,7 @@ test('preflight blocks a default branch no rule holds the signed-in user to, rel
   });
   // A read that fails, or an answer the adapter does not recognize, names the option the team has, as every other line does.
   for (const name of ['branch-protection', 'release-tags']) {
-    assert.match(blocker(failed, name), /the forge cannot say what guards the default branch and the tags \(gh: Not Found \(HTTP 404\)\); check them on the forge and add the rules the run needs, or the default branch sets projectRun\.forgeProtectionAccepted \(setup: docs\/project-run-setup\.md#forge-rules\)$/u, name);
+    assert.match(blocker(failed, name), /the forge cannot say what guards the default branch and the tags \(gh: Not Found \(HTTP 404\)\); check them on the forge and add the rules the run needs, or the default branch sets projectRun\.forgeProtectionAccepted \(setup: \S+\/docs\/project-run-setup\.md#forge-rules\)$/u, name);
   }
   // Workflow secrets: a blocker whatever the token's scopes, since the workflows run the branch's own code; the scope
   // only widens or narrows what the blocker says.
@@ -645,7 +653,7 @@ test('preflight blocks a default branch no rule holds the signed-in user to, rel
   assert.equal(secrets({ secrets: 0, workflowPush: true }), null, 'no secret');
   assert.match(secrets(() => {
     throw new Error('gh: Forbidden (HTTP 403)');
-  }), /the forge cannot say which CI secrets the repository's workflows see \(gh: Forbidden \(HTTP 403\)\); projectRun\.workflowSecretsAccepted on the default branch skips the workflow secrets read whole: it accepts all current and future workflow secret exposure for project runs, the repository's, its organization's, and every environment's secrets, so a team sets it only when that is acceptable \(setup: docs\/project-run-setup\.md#forge-rules\)$/u);
+  }), /the forge cannot say which CI secrets the repository's workflows see \(gh: Forbidden \(HTTP 403\)\); projectRun\.workflowSecretsAccepted on the default branch skips the workflow secrets read whole: it accepts all current and future workflow secret exposure for project runs, the repository's, its organization's, and every environment's secrets, so a team sets it only when that is acceptable \(setup: \S+\/docs\/project-run-setup\.md#forge-rules\)$/u);
 });
 
 test('preflight takes the team\'s acceptance of workflow secrets only when the default branch sets it on the forge and the local ref', (t) => {
@@ -690,7 +698,7 @@ test('preflight names the plan of a forge that offers no rule, and takes the tea
   for (const name of ['branch-protection', 'release-tags']) {
     assert.match(plain.line(name), /^blocker [a-z-]+: the forge offers no rule for this repository, since the plan offers no branch protection or rulesets for a private repository: GitHub Team, or a public repository, offers them, .*default branch main.*make the repository public.*projectRun\.forgeProtectionAccepted/u, name);
   }
-  assert.match(preflight({}, { branch: 'main', protected: false, why: 'it has no branch protection', tags: [] }).line('branch-protection'), /^blocker .*projectRun\.forgeProtectionAccepted \(setup: docs\/project-run-setup\.md#forge-rules\)$/u, 'an unprotected branch names the key');
+  assert.match(preflight({}, { branch: 'main', protected: false, why: 'it has no branch protection', tags: [] }).line('branch-protection'), /^blocker .*projectRun\.forgeProtectionAccepted \(setup: \S+\/docs\/project-run-setup\.md#forge-rules\)$/u, 'an unprotected branch names the key');
   // Accepted on the forge and the local ref: each line is a note naming the risk, and nothing blocks.
   const accepted = { ...READY.projectRun, forgeProtectionAccepted: true };
   const both = preflight({ projectRun: accepted });
@@ -739,7 +747,7 @@ test('preflight counts the secrets of every environment no other reviewer holds,
     assert.ok(out.includes('ok policy'), out.join('\n'));
     return out.find((line) => /^(?:ok|blocker) workflow-secrets(?::|$)/u.test(line));
   };
-  const blocked = /^blocker workflow-secrets: the repository's workflows see 2 CI secrets, .*move the secrets to environments held for a reviewer who is not the signed-in user, when the signed-in user is not an admin of the repository \(an admin's token can edit the rule\), since a deployment branch rule is no hold against code the run pushes; projectRun\.workflowSecretsAccepted on the default branch skips the workflow secrets read whole: it accepts all current and future workflow secret exposure for project runs, the repository's, its organization's, and every environment's secrets, so a team sets it only when that is acceptable \(setup: docs\/project-run-setup\.md#forge-rules\)$/u;
+  const blocked = /^blocker workflow-secrets: the repository's workflows see 2 CI secrets, .*move the secrets to environments held for a reviewer who is not the signed-in user, when the signed-in user is not an admin of the repository \(an admin's token can edit the rule\), since a deployment branch rule is no hold against code the run pushes; projectRun\.workflowSecretsAccepted on the default branch skips the workflow secrets read whole: it accepts all current and future workflow secret exposure for project runs, the repository's, its organization's, and every environment's secrets, so a team sets it only when that is acceptable \(setup: \S+\/docs\/project-run-setup\.md#forge-rules\)$/u;
   const custom = { protected_branches: false, custom_branch_policies: true };
   const protectedOnly = { protected_branches: true, custom_branch_policies: false };
   const reviewer = (prevent) => [{ type: 'required_reviewers', prevent_self_review: prevent, reviewers: [{ type: 'User', reviewer: { login: 'octo' } }] }];

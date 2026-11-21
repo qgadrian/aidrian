@@ -6,7 +6,7 @@
 import { isRefName } from '../git.mjs';
 import { hasHidden } from '../hidden-text.mjs';
 import { runGh } from './github-cli.mjs';
-import { receivePackStatus, tokenMayPush } from './github-token.mjs';
+import { receivePackStatus, tokenMayPush, tokenVarFor } from './github-token.mjs';
 
 // The author associations GitHub gives the people who belong to a repository.
 // Frozen, with no add, and compared by === rather than through a prototype method, so no module in the gate's process
@@ -715,8 +715,8 @@ function branchHold(read, admin, viewer) {
 // A method that takes `{ host }` names that host to every REST call it makes (`--hostname`), as `aidrian pr auto-merge`
 // does with the host of the pull request's URL; without one, gh picks its default host.
 export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutMs = null, killSignal = null, probe = receivePackStatus } = {}) {
-  const gh = (args, { timeoutMs: limit = timeoutMs, input } = {}) =>
-    run(args, { cwd, ...(limit === null ? {} : { timeoutMs: limit }), ...(killSignal === null ? {} : { killSignal }), ...(input === undefined ? {} : { input }) });
+  const gh = (args, { timeoutMs: limit = timeoutMs, input, env } = {}) =>
+    run(args, { cwd, ...(limit === null ? {} : { timeoutMs: limit }), ...(killSignal === null ? {} : { killSignal }), ...(input === undefined ? {} : { input }), ...(env === undefined ? {} : { env }) });
   const json = (args) => JSON.parse(gh(args));
   const given = (ref) => ref !== undefined && ref !== null && ref !== '';
   // One REST route. `paginate` reads every page and joins them into one list; `fields` are sent as `-f key=value`, each
@@ -969,6 +969,14 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // Whether `token` may push to `repo` on `host` (default github.com), by a probe that writes nothing: { may, why }, or
     // a throw when the forge's answer says neither (github-token.mjs tokenMayPush).
     tokenCanPush: (repo, { host = DEFAULT_HOST, token } = {}) => tokenMayPush(repo, { host, token, probe }),
+    // The login of the user `token` belongs to on `host` (default github.com), asked of the forge with that very token in
+    // gh's token variable for the host, never an argument; null when the answer names none. Throws what gh throws, such
+    // as for an app's installation token, which GitHub names no user for.
+    tokenLogin: ({ host = DEFAULT_HOST, token } = {}) => {
+      if (typeof token !== 'string' || token === '') throw new Error('no token to ask the forge with');
+      const login = JSON.parse(gh(['api', '--hostname', host, 'user'], { env: { [tokenVarFor(host)]: token } }) || 'null')?.login;
+      return typeof login === 'string' && login !== '' ? login : null;
+    },
     // The comments on the pull request's conversation, not those on its diff (reviewComments).
     conversationComments: (repo, n, { host } = {}) => list(`repos/${repo}/issues/${n}/comments`, { host }),
     // One comment of a conversation, by its id. With `pr`, it is held to that pull request of `repo`: a comment whose

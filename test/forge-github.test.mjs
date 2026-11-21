@@ -20,7 +20,7 @@ import { viewForge, viewPrAt } from '../plugins/aidrian/lib/rules/github/merge-r
 // Every name the facade gives its callers.
 const FACADE = [
   'id', 'cwd', 'isTrustedCommenter', 'hosts', 'changeRef', 'changesState', 'changeUrl',
-  'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'branchHead', 'contents', 'tree', 'visibility', 'viewer', 'authToken', 'tokenCanPush',
+  'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'branchHead', 'contents', 'tree', 'visibility', 'viewer', 'authToken', 'tokenCanPush', 'tokenLogin',
   'conversationComments', 'comment', 'issue', 'postComment', 'editComment', 'deleteComment', 'reactions',
   'pull', 'diff', 'nodeChange', 'changeEdits', 'reviewTrail', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',
   'postReview', 'reviewComment', 'deleteReviewComment', 'findingThreads', 'replyToReviewComment', 'resolveThread', 'unresolveThread',
@@ -185,6 +185,31 @@ test('tokenCanPush: the push probe the adapter was given, for the repository and
   assert.deepEqual(forge.tokenCanPush('acme/widgets', { host: 'github.com', token: 'github_pat_RO' }), { may: false, why: 'the forge answered 403' });
   assert.deepEqual(forge.tokenCanPush('acme/widgets', { token: 'github_pat_RO' }), { may: false, why: 'the forge answered 403' });
   assert.deepEqual(asked, [['acme/widgets', { host: 'github.com', token: 'github_pat_RO' }], ['acme/widgets', { host: 'github.com', token: 'github_pat_RO' }]]);
+});
+
+test('tokenLogin: gh api user on the host with the token in gh`s token variable, never an argument, and its login', () => {
+  const { forge, calls } = recorded(() => '{"login":"octo"}');
+  assert.equal(forge.tokenLogin({ host: 'github.com', token: 'github_pat_X' }), 'octo');
+  assert.equal(forge.tokenLogin({ host: 'ghe.example.com', token: 'ghp_Y' }), 'octo');
+  assert.deepEqual(calls.map((call) => [call.args, call.options.env]), [
+    [['api', '--hostname', 'github.com', 'user'], { GH_TOKEN: 'github_pat_X' }],
+    [['api', '--hostname', 'ghe.example.com', 'user'], { GH_ENTERPRISE_TOKEN: 'ghp_Y' }],
+  ]);
+  assert.ok(calls.every((call) => !call.args.some((arg) => arg.includes('github_pat_X') || arg.includes('ghp_Y'))), 'no argument carries the token');
+  assert.equal(recorded(() => '{}').forge.tokenLogin({ token: 'github_pat_X' }), null, 'an answer with no login');
+  assert.throws(() => recorded().forge.tokenLogin({ host: 'github.com' }), /no token/u, 'no token is never gh`s own login');
+  const app = createGithubForge({ run: () => { throw new Error('gh: Resource not accessible by integration (HTTP 403)'); } });
+  assert.throws(() => app.tokenLogin({ token: 'ghs_APP' }), /HTTP 403/u);
+});
+
+test('runGh hands gh the variables of `env` over this process`s own, and the environment untouched without it', () => {
+  const seen = [];
+  const exec = (file, args, options) => (seen.push(options.env), '');
+  runGh(['api', 'user'], { exec, env: { GH_TOKEN: 'github_pat_X' } });
+  runGh(['api', 'user'], { exec });
+  assert.equal(seen[0].GH_TOKEN, 'github_pat_X');
+  assert.equal(seen[0].PATH, process.env.PATH, 'the rest of the environment stays');
+  assert.equal(seen[1], undefined, 'no env option inherits the environment');
 });
 
 test('the forge token helpers: GH_TOKEN, which gh and its git helper read, the login step, and a note on any token but a fine-grained one', () => {

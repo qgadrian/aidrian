@@ -178,9 +178,9 @@ export function startRows(found) {
 export const startsOf = (found, key) => startRows(found).filter((row) => row.key === key);
 
 // The attempts of issue `key` that count toward ISSUE_ATTEMPTS: each start not given back (`void`), but one a usage or
-// rate limit ended (an `ended` row with reason `limit`).
+// rate limit ended (an `ended` row with reason `limit`), or one whose result was `environment`, which halted the run.
 export function spentAttempts(found, key) {
-  const limited = new Set(found.rows.filter((row) => row.event === 'ended' && row.key === key && row.reason === 'limit').map((row) => row.attempt));
+  const limited = new Set(found.rows.filter((row) => row.key === key && ((row.event === 'ended' && row.reason === 'limit') || (row.event === 'result' && row.status === 'environment'))).map((row) => row.attempt));
   return startsOf(found, key).filter((row) => row.outcome !== 'void' && !limited.has(row.attempt)).length;
 }
 
@@ -477,7 +477,7 @@ export function resultHoldReason(input, { home, env = process.env } = {}) {
     if (!newest(issueChain(runStore(project, config, place.state), start), session)) return null;
     return `This session works the issue ${mark.issue} of the project run ${mark.project}, and it has not recorded the issue's result, which the run's driver waits on. ` +
       `Before stopping, write the result as JSON to a file outside the state folder and run \`aidrian project result ${mark.project} ${mark.issue} --file <that file>\`: ` +
-      'status merged, pr_open, parked, blocked, or failed, the pull request number or null, any decisions the issue waits on, and, when the work stopped, why. ' +
+      'status merged, pr_open, parked, blocked, environment, or failed, the pull request number or null, any decisions the issue waits on, and, when the work stopped, why. ' +
       'When the work can still go on, go on with it instead, and record the result when it ends.';
   } catch {
     return null;

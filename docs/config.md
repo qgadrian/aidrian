@@ -1884,6 +1884,12 @@ session that never named itself, whose hooks never ran, or whose sandbox proof f
 again) and writes a `halt` row: every later start refuses, however long ago it was written, until the Human's own shell,
 or another session a person attends that never drove the run, runs `aidrian project resume RUN`, which writes a `resume`
 row. The driver never runs it, and the hooks and the command refuse it to every session of the run's custody. `next` prints `halted <cause>` first, and `--json` adds `halt`.
+An issue's session that finds its own environment broken, such as a sandbox that refuses what the work needs, a forge
+sign-in or push that fails, or a host tool that fails, records the result `environment`, with the failing command and
+its error as its `stop`, which it must name. The driver's `wait` prints `result ISSUE environment -> open`, keeps the
+issue open, and writes a `halt` row whose cause is that stop, so the cause is fixed once for the whole run, not once
+per issue: the attempt does not count toward the issue's 3, and after `aidrian project resume RUN` the next start
+takes the same issue up again.
 When an issue's pull request does not merge, its session runs `aidrian project stop-action RUN ISSUE`, as the
 autopilot skill's phases say. Only the issue's own session runs it: the newest session of the chain of the issue's
 latest start, while the issue runs, whose mark names that run and issue; never the driver. It finds the pull request

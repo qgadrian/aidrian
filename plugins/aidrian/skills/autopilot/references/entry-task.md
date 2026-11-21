@@ -81,9 +81,9 @@ attempt <n>`. No Human attends it, and the run's hooks hold it to that issue. Ev
 
   | Field | Value |
   | --- | --- |
-  | `status` | `merged` when `pr-auto-merge` merged it; `pr_open` when review ended with the pull request open and nothing more this session can do; `parked` on a decision, including a sign-off park; `blocked` when access is missing; `failed` otherwise |
+  | `status` | `merged` when `pr-auto-merge` merged it; `pr_open` when review ended with the pull request open and nothing more this session can do; `parked` on a decision, including a sign-off park; `blocked` when access the issue needs is missing; `environment` when this session's own environment keeps it from the work, such as the sandbox refusing what the work needs, the forge sign-in or push failing, or a host tool failing, which halts the run until a person fixes it; `failed` otherwise |
   | `pr` | the pull request's number, or `null` |
   | `decisions` | each parked decision: `question`, 2 to 6 `options`, `recommended` (the index of the safest), and `class`: `product`, `ux`, `architecture`, `security`, `scope`, or `other` |
-  | `stop` | why the work stopped, in one line, or `null` |
+  | `stop` | why the work stopped, in one line, or `null`; for `environment`, the failing command and its error |
 
   The driver reads only these fields, cleaned: put nothing else in them, and no link, address, or mention.

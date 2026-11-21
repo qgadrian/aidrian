@@ -17,8 +17,8 @@ import { noteStarted } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { cleanText, RESULT_CAP, validateResult } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { DROP_FILE } from '../plugins/aidrian/lib/project-result.mjs';
 import { LINGER_GRACE } from '../plugins/aidrian/lib/project-linger.mjs';
-import { appendToRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
-import { DROP_FILE as GUARD_DROP_FILE, resultHoldReason } from '../plugins/aidrian/lib/project-run-guard.mjs';
+import { appendToRun, readRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
+import { DROP_FILE as GUARD_DROP_FILE, resultHoldReason, spentAttempts } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { DRIVER, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
 
@@ -268,4 +268,21 @@ test('wait records a failed issue session as ended with no result', (t) => {
 test('result text loses character references that spell a mention marker, before the mention pass', () => {
   assert.equal(cleanText('ping &#64;admin, &#x40;team, &#X40;ops, &commat;lead, and &#64&#64;owner', 99), 'ping admin, team, ops, lead, and owner');
   assert.equal(cleanText('Tom&Jerry and R&D stay', 99), 'Tom&Jerry and R&D stay');
+});
+
+test('an environment result halts the run with its stop, keeps the issue open, and its attempt does not count', (t) => {
+  const fx = started(t);
+  assert.match(fx.result({ status: 'environment', stop: null }).err.join('\n'), /an environment result names in "stop" what failed/u);
+  assert.deepEqual(fx.recorded({ status: 'environment', stop: 'git push: could not read Username for github.com' }).out, ['result ENG-1 environment -> open']);
+  const halts = fx.rows().filter((row) => row.event === 'halt');
+  assert.deepEqual(halts.map((row) => row.cause), ['ENG-1 attempt 1 found its environment broken: git push: could not read Username for `github.com`']);
+  assert.equal(spentAttempts(readRun(fx.state, 'launch'), 'ENG-1'), 0);
+  fx.claude.states[CHILD] = 'done';
+  assert.match(fx.cmd(['next', 'launch']).out[0], /^halted ENG-1 attempt 1 found its environment broken/u);
+  assert.match(fx.cmd(['start', 'launch', 'ENG-1']).out[0], /^halt the run is halted/u);
+  const resumed = fx.cmd(['resume', 'launch'], { session: OTHER });
+  assert.equal(resumed.exitCode, 0, resumed.err.join('\n'));
+  const next = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(next.exitCode, 0, next.err.join('\n'));
+  assert.ok(next.out.includes('started ENG-1 attempt 2 session c0ffee02'), next.out.join('\n'));
 });

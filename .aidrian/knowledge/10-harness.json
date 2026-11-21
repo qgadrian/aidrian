@@ -8,8 +8,12 @@
       "tags": []
     },
     "contributing.md": {
-      "summary": "npm run build and check, deadlines, the test clock, hooks and commands in the test's process (hookCall, cliCall), trying a branch, skill evals, versions.",
+      "summary": "npm run build and check, the CI jobs, deadlines, the test clock, hooks in the test's process (hookCall), trying a branch, skill evals, versions.",
       "tags": ["harness_engineering", "docs"]
+    },
+    "test-processes.md": {
+      "summary": "The child-process budget of each test file and its rule, and commands in the test's process (cliCall, runCli).",
+      "tags": []
     },
     "architecture.md": {
       "summary": "Repository layout and how agents-src, providers, generated agents, skills, hooks, lib, and the aidrian command connect.",

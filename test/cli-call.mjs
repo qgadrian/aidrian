@@ -1,7 +1,7 @@
 // Runs an `aidrian` command in the test's own process, through runCli (lib/cli.mjs), the code bin/aidrian runs, without
 // starting a node process for each call: { status, stdout, stderr }, the shape a spawnSync of bin/aidrian gives with
 // encoding 'utf8'. `options` are spawnSync's `cwd` and `env`; `input` throws, since a command that reads stdin runs as a
-// process. Calls run one at a time, as a test file's tests do. docs/contributing.md#commands-in-the-tests-process says
+// process. Calls run one at a time, as a test file's tests do. docs/test-processes.md#commands-in-the-tests-process says
 // when a test keeps a process run instead.
 // First, so lib/cli.mjs finds its switch set when it loads, and exposes runCli without running a command.
 import './cli-in-process.mjs';

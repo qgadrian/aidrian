@@ -16,7 +16,7 @@ import { cliCall } from './cli-call.mjs';
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
 
 // An `aidrian` command run from `cwd`: in the test's process (cliCall), or, with `asProcess`, as a process of bin/aidrian,
-// which a test asks for only where a process shows what a call cannot (docs/contributing.md#commands-in-the-tests-process).
+// which a test asks for only where a process shows what a call cannot (docs/test-processes.md#commands-in-the-tests-process).
 export async function cli(args, { cwd, env = process.env, asProcess = false }) {
   if (asProcess) return spawnSync(CLI, args, { cwd, env, encoding: 'utf8', timeout: 30_000 });
   return cliCall(args, { cwd, env });

@@ -120,5 +120,6 @@ test('the script prints each warning with its place and a summary on stderr, and
 
 test('npm run check runs the scan', () => {
   const pkg = JSON.parse(readFileSync(path.resolve(import.meta.dirname, '../package.json'), 'utf8'));
-  assert.match(pkg.scripts.check, /node scripts\/code-shape\.mjs/u);
+  assert.match(pkg.scripts.check, /^npm run check:static && /u, 'npm run check starts with the static checks');
+  assert.match(pkg.scripts['check:static'], /node scripts\/code-shape\.mjs/u);
 });

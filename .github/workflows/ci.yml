@@ -13,21 +13,27 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# The commands of `npm run check`, in jobs that run at once: `npm run check:static` in one job a Node version, and the
+# test files in two shards a Node version. Each of those jobs that passed uploads a record of it, kept the 30 days GitHub
+# lets a failed job be rerun in, since a partial rerun's checks read the earlier jobs' records. `Check (Node N)`, the
+# name the required checks list, passes only when all of them passed and it finds every one's record: a matrix job's
+# result can read success when one of its jobs was cancelled before a runner took it, so the result alone is not proof.
 jobs:
-  check:
-    name: Check (Node ${{ matrix.node }})
+  test:
+    name: Tests (Node ${{ matrix.node }}, ${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 7
     strategy:
       fail-fast: false
       matrix:
         node: [22, 24, 26]
+        shard: [1, 2]
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # origin/main and the history to it: npm run check fails a pull request that changes the plugin version.
+          # The full history, as the one job before this split had, so a test sees the checkout it always saw.
           fetch-depth: 0
 
       - name: Set up Node.js
@@ -40,5 +46,106 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Check generated files, the example buckets, and tests
-        run: npm run check
+      # node --test splits by file, so each file still runs whole in one shard and is held to its child-process budget there.
+      - name: Run the tests of this shard
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: npm test -- --test-shard="$SHARD/2"
+
+      - name: Write the record that this shard passed
+        run: echo passed > "$RUNNER_TEMP/passed"
+
+      - name: Upload the record
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: passed-tests-node${{ matrix.node }}-shard${{ matrix.shard }}
+          path: ${{ runner.temp }}/passed
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+
+  static:
+    name: Static checks (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24, 26]
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # origin/main and the history to it: the version check fails a pull request that changes the plugin version.
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check generated files, the example buckets, lint, the version, and code shape
+        run: npm run check:static
+
+      - name: Write the record that the static checks passed
+        run: echo passed > "$RUNNER_TEMP/passed"
+
+      - name: Upload the record
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: passed-static-node${{ matrix.node }}
+          path: ${{ runner.temp }}/passed
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+
+  check:
+    name: Check (Node ${{ matrix.node }})
+    needs: [test, static]
+    # Always, so a failed or cancelled job above fails this one instead of skipping it.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    # It only reads the results and the records above: no token, since a record of this run needs none.
+    permissions: {}
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24, 26]
+    steps:
+      # Each record lands in a folder of its own name, which the next step looks for.
+      - name: Download the records of the jobs that passed
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: passed-*
+          path: ${{ runner.temp }}/passed
+
+      # A result covers every Node version of that job, so a failure anywhere fails all three. RECORDS lists every
+      # job above, one record each; test/ci-workflow.test.mjs holds it to their matrices.
+      - name: Require every test shard and static check to pass, and its record
+        shell: bash
+        env:
+          TESTS: ${{ needs.test.result }}
+          STATIC: ${{ needs.static.result }}
+          PASSED: ${{ runner.temp }}/passed
+          RECORDS: >-
+            passed-tests-node22-shard1 passed-tests-node22-shard2 passed-tests-node24-shard1 passed-tests-node24-shard2
+            passed-tests-node26-shard1 passed-tests-node26-shard2 passed-static-node22 passed-static-node24
+            passed-static-node26
+        run: |
+          echo "Tests: $TESTS. Static checks: $STATIC."
+          failed=0
+          if [ "$TESTS" != success ] || [ "$STATIC" != success ]; then failed=1; fi
+          for record in $RECORDS; do
+            if [ ! -f "$PASSED/$record/passed" ]; then
+              echo "No record of $record: that job did not pass, or never ran."
+              failed=1
+            fi
+          done
+          exit "$failed"

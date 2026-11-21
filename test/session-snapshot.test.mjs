@@ -21,6 +21,8 @@ const CLI = path.join(ROOT, 'plugins/aidrian/lib/cli.mjs');
 const HOOK = path.join(ROOT, 'plugins/aidrian/scripts/hook-stop.mjs');
 // The preload that records each gh call in the snapshot's own process, before gh is spawned (test/fixtures/gh-spawns.mjs).
 const GH_SPAWNS = path.join(ROOT, 'test/fixtures/gh-spawns.mjs');
+// The preload that writes the snapshot's processor time when it exits (test/fixtures/cpu-used.mjs).
+const CPU_USED = path.join(ROOT, 'test/fixtures/cpu-used.mjs');
 const LIB = path.join(ROOT, 'plugins/aidrian/lib');
 const FIXTURES = path.join(ROOT, 'test/fixtures/transcripts');
 const POSIX = process.platform !== 'win32';
@@ -100,11 +102,15 @@ function setup(t, { config = {}, origin = null, branch = 'main', name = 'project
   const log = path.join(base, 'gh.log');
   fakeGh(path.join(base, 'bin'), { log, ...gh });
   const env = { ...process.env, ...GIT_CONFIG_NONE, XDG_STATE_HOME: state, TMPDIR: temp, PATH: `${path.join(base, 'bin')}${path.delimiter}${process.env.PATH}` };
+  // `cpuMs` is the processor time the snapshot's own process spent, null when it wrote none (killed at the 30 s limit).
   const run = (args = [], { cwd = dir, extraEnv = {} } = {}) => {
+    const cpuLog = `${log}.cpu`;
+    rmSync(cpuLog, { force: true });
     const started = Date.now();
-    const result = spawnSync(process.execPath, ['--import', GH_SPAWNS, CLI, 'session', 'snapshot', ...args], { cwd, env: { ...env, GH_SPAWN_LOG: `${log}.spawns`, ...extraEnv }, encoding: 'utf8', timeout: 30_000 });
+    const result = spawnSync(process.execPath, ['--import', GH_SPAWNS, '--import', CPU_USED, CLI, 'session', 'snapshot', ...args], { cwd, env: { ...env, GH_SPAWN_LOG: `${log}.spawns`, CPU_USED_LOG: cpuLog, ...extraEnv }, encoding: 'utf8', timeout: 30_000 });
     const endedAt = Date.now();
-    return { ...result, ms: endedAt - started, endedAt, json: args.includes('--line') || result.status !== 0 ? null : JSON.parse(result.stdout) };
+    const cpu = existsSync(cpuLog) ? JSON.parse(readFileSync(cpuLog, 'utf8')) : null;
+    return { ...result, ms: endedAt - started, endedAt, cpuMs: cpu && (cpu.user + cpu.system) / 1000, json: args.includes('--line') || result.status !== 0 ? null : JSON.parse(result.stdout) };
   };
   const projectState = () => spawnSync(process.execPath, [CLI, 'state'], { cwd: dir, env, encoding: 'utf8' }).stdout.trim();
   return { base, dir, state, temp, env, run, log, projectState };
@@ -680,19 +686,24 @@ test('a warm cache answers a 60 MB transcript fast, and a cold one stops gh at t
   }
   writeFileSync(transcript, `${lines.join('\n')}\n`);
   assert.ok(statSync(transcript).size >= 60 * 1000 * 1000);
-  fakeGh(path.join(env.base, 'bin'), { log: env.log, answer: '[]' });
-  const baseline = env.run(['--session', 'baseline-1', '--transcript', transcript, '--deadline-ms', '200']);
   fakeGh(path.join(env.base, 'bin'), { log: env.log, delay: 10_000, trap: true });
+  const before = ghSpawned(env.log).length;
   const cold = env.run(['--session', ID, '--transcript', transcript, '--deadline-ms', '200']);
   assert.equal(cold.status, 0);
-  assert.ok(cold.ms < baseline.ms + 200 + 1500, `with a cold merged-heads cache gh is stopped at the deadline: ${cold.ms} ms against ${baseline.ms} ms with a fast gh`);
+  // With a cold merged-heads cache, what the snapshot asked of gh, recorded in its own process before the spawn: at most
+  // the 200 ms deadline, and SIGKILL, which the fake gh's TERM trap cannot ignore. Load cannot change what is asked, so no
+  // wall time is compared: when the kill lands is the scheduler's, and 'a gh that ignores SIGTERM' shows it lands.
+  // The first call gets the whole budget, and a gh killed at 200 ms or later leaves none for another (forgeBudget).
+  const asked = ghSpawned(env.log).slice(before);
+  assert.deepEqual(asked.map(({ timeout, killSignal }) => ({ timeout, killSignal })), [{ timeout: 200, killSignal: 'SIGKILL' }]);
   assert.equal(cold.json.worktrees.mergedNotCleaned, null);
   const cache = path.join(env.projectState(), 'sessions', ID, MERGED_HEADS.name);
   writeFileSync(cache, JSON.stringify({ value: { repo: 'github.com/acme/notes', pairs: [['feat/x', env.head]] }, valueAt: Date.now(), attemptAt: Date.now() }));
   const calls = ghCalls(env.log).length;
   const warm = env.run(['--session', ID, '--transcript', transcript]);
-  t.diagnostic(`warm snapshot of a 60 MB transcript: ${warm.ms} ms; cold: ${cold.ms} ms; cold with a fast gh: ${baseline.ms} ms`);
-  assert.ok(warm.ms < 2000, `${warm.ms} ms`);
+  t.diagnostic(`warm snapshot of a 60 MB transcript: ${warm.cpuMs} ms of processor time in ${warm.ms} ms; cold: ${cold.ms} ms`);
+  // Processor time, not wall time: the work the warm read does, which a loaded machine barely stretches.
+  assert.ok(warm.cpuMs !== null && warm.cpuMs < 2000, `${warm.cpuMs} ms of processor time`);
   assert.equal(warm.json.handoff.context, 30_000 + 1999 * 50 + 101);
   assert.equal(warm.json.worktrees.mergedNotCleaned, 1);
   assert.equal(ghCalls(env.log).length, calls, 'the warm snapshot started no gh call');

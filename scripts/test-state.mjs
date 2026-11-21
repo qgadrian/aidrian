@@ -18,8 +18,9 @@
 // hook sets it, the tests' own `git init` calls would act on the developer's repository.
 //
 // Timing: with AIDRIAN_TEST_LOG set, as scripts/run-tests.mjs sets it, and a test file as the main script, the setup
-// counts the child processes the file starts, git apart from the others, and appends one JSON line
-// { file, ms, git, other } to that file when the process exits, if it can. It removes the variable, so nothing a test
+// counts the child processes the file starts, git apart from the others. It appends one JSON line { file, started: true }
+// to that file as it loads, and the file fails there when it cannot, then { file, ms, git, other } when the process exits,
+// if it can: the script fails a run in which a file that started left no row. It removes the variable, so nothing a test
 // starts inherits it; without it, node:child_process stays as it is.
 import childProcess from 'node:child_process';
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -98,11 +99,14 @@ function countChildProcesses(log, main) {
   syncBuiltinESMExports();
   // The folder the run started in: a test may leave the process in a folder it then removes.
   const start = process.cwd();
-  // Best effort: a log that cannot be written, as when its folder is gone, loses the row, never the file's exit status.
+  const file = path.relative(start, main);
+  // Not caught: a file whose start cannot be logged fails as it loads, so no file runs that the script cannot judge.
+  appendFileSync(log, `${JSON.stringify({ file, started: true })}\n`);
+  // Best effort: a log that cannot be written, as when its folder is gone, loses the row, never the file's exit status;
+  // the script then fails the run for the started file with no row.
   process.on('exit', () => {
     try {
-      const row = { file: path.relative(start, main), ms: Math.round(process.uptime() * 1000), ...counts };
-      appendFileSync(log, `${JSON.stringify(row)}\n`);
+      appendFileSync(log, `${JSON.stringify({ file, ms: Math.round(process.uptime() * 1000), ...counts })}\n`);
     } catch {
       // The table leaves this file out.
     }

@@ -36,7 +36,16 @@ How to build, check, and release a change is in [contributing.md](contributing.m
   when an agent or skill is added, renamed, or removed.
 - A pull request never changes the version: the release workflow raises it on main after the merge, at the level
   the pull request's Conventional Commit title calls for ([Versions](contributing.md#versions)).
-- `aidrian test changed` passes before a push; CI runs `npm run check` on the pushed head, and it is green before ready.
+- `aidrian test changed` passes before a push; CI runs the commands of `npm run check` on the pushed head, the tests in
+  two jobs a Node version ([Build and check](contributing.md#build-and-check)), and every `Check (Node N)` is green before ready.
+- The session that opens a pull request owns it to the end: it runs the review loop, marks it ready, and merges it
+  through `pr-auto-merge` once every review signed off and every check is `SUCCESS`, without asking Adrian.
+  Where that gate or the [merge guard](hooks.md#merge-guard) refuses, as for a guarded path such as a workflow,
+  knowledge, or a guard rule, or a pull request an earlier session in a handoff chain marked ready, the session never
+  works around it. A refusal it can clear, such as a timed-out read, a pending check, or open review work, it retries
+  or clears; one that needs Adrian's review, such as a guarded path, it reports with the gate that refused and the one
+  command Adrian runs, `gh pr merge <n> --squash --match-head-commit <sha>`. A handoff brief carries the ownership to the next session,
+  which asks the gate again: a ready state it inherits is never permission to merge.
 
 ## This repository's knowledge
 

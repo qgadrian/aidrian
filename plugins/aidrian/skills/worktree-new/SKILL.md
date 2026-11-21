@@ -31,6 +31,9 @@ A thin adapter for `aidrian worktree new`. The command owns the git and setup st
 4. On `"status": "created"`, report `worktree_path`, `branch`, and `branch_mode`, and run every later command inside `worktree_path`:
    `git -C <worktree_path> …` or `env -C <worktree_path> …`, with files edited by absolute path. Never `cd` there: the host
    carries a `cd` into later calls, and the run record credits nothing inside a subshell `(cd …)` to the worktree.
+   The wrapper moves only the command it runs: the calling shell still reads redirects, globs, and other pipeline
+   commands from where it is, so give those absolute worktree paths. Where `env` takes no `-C`, as BusyBox's, use the
+   tool's own root flag (`npm --prefix <worktree_path>`) or `sh -c 'cd <worktree_path> && …'`.
    Never move the whole session there with a host tool: the host asks a person first, which stops a session no one attends.
 5. On `"status": "blocked"`, relay `phase`, `reason`, and `next_step` as they are.
    After a failed fetch, offer the same run without `--fetch`. Never delete what a failed run left: a failed bootstrap keeps the worktree.

@@ -38,6 +38,9 @@ How to build, check, and release a change is in [contributing.md](contributing.m
   the pull request's Conventional Commit title calls for ([Versions](contributing.md#versions)).
 - `aidrian test changed` passes before a push; CI runs the commands of `npm run check` on the pushed head, the tests in
   two jobs a Node version ([Build and check](contributing.md#build-and-check)), and every `Check (Node N)` is green before ready.
+- The session that opens a pull request owns it to the end: it runs the review loop, marks it ready, and merges it
+  through `pr-auto-merge` once reviews sign off and every check is green, without asking Adrian. A handoff brief
+  carries that ownership to the next session; it never hands the merge back to Adrian.
 
 ## This repository's knowledge
 

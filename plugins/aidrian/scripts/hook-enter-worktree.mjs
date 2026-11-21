@@ -12,11 +12,11 @@ const REASON = 'Blocked: EnterWorktree moves the whole session into the worktree
   'running agent with it. Create the task worktree with `aidrian worktree new`, then run each command with its absolute ' +
   'path (`git -C <worktree>`, `cd <worktree> && …` in the same call) and edit files by absolute path.';
 
-const EXISTING = 'Blocked: entering an existing worktree outside the repository\'s .claude/worktrees/ makes the host ask ' +
-  'the Human first, and no rule answers that question, so a session no Human attends would stop on it. Stay where you ' +
-  'are and work in the worktree by absolute path: the host lets a session edit files in a linked worktree, such as one ' +
-  '`aidrian worktree new` made. Run each command with `git -C <worktree>` or `cd <worktree> && …` in the same call, and ' +
-  'edit files by absolute path.';
+const EXISTING = 'Blocked: this project never enters an existing worktree by path, wherever it lies. Outside the ' +
+  'repository\'s .claude/worktrees/ the host asks the Human before the move, and no rule answers that question, so a ' +
+  'session no Human attends would stop on it; inside, the move is not needed either. Stay where you are and work in the ' +
+  'worktree by absolute path: the host lets a session edit files in a linked worktree, such as one `aidrian worktree new` ' +
+  'made. Run each command with `git -C <worktree>` or `cd <worktree> && …` in the same call, and edit files by absolute path.';
 
 // The hook's body, for the payload `input` (lib/hook-io.mjs callHook).
 export async function handle(input) {

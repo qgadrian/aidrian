@@ -637,8 +637,9 @@ export const findLine = () => '`claude agents` lists the background sessions, wi
 // Stops the background session `id`, as `claude stop` does: whether it exited 0. `claude stop` takes the listing's short
 // `id` and refuses a full `sessionId` ("No session matching", exit 1, seen on 2.1.330). So `started`, the id the
 // session's start printed when a caller recorded one, and then `id`, each go to `claude stop` as they are, with no
-// listing, unless it is a full `sessionId`. Only when none of those stopped it is the listing read once, and each of
-// the two turned into the short `id` of the one listed row whose `sessionId` is it or starts with it, and tried.
+// listing, unless it is a full `sessionId`. Only when none of those stopped it is the listing read once, and a full
+// `sessionId` given turned into the short `id` of the one listed row whose `sessionId` is exactly it, and tried. No
+// prefix is matched: a prefix another session shares would stop that session instead.
 export function stopBackground({ id, started = null, env, run = runCommand, resolve = claudeOnPath }) {
   const claude = resolve(env);
   if (!claude || typeof id !== 'string' || !ID.test(id)) return false;
@@ -652,8 +653,8 @@ export function stopBackground({ id, started = null, env, run = runCommand, reso
   };
   if (given.some((each) => !FULL_ID.test(each) && stop(each))) return true;
   const rows = listed(run, claude, undefined, ['--all']) ?? [];
-  return given.some((each) => {
-    const holds = rows.filter((row) => typeof row.sessionId === 'string' && (row.sessionId === each || row.sessionId.startsWith(each)));
+  return given.filter((each) => FULL_ID.test(each)).some((each) => {
+    const holds = rows.filter((row) => row.sessionId === each);
     const short = holds.length === 1 && typeof holds[0].id === 'string' && ID.test(holds[0].id) ? holds[0].id : each;
     return stop(short);
   });

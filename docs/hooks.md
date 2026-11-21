@@ -1221,7 +1221,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   stands before every git call of the plugin, in a hook or a command, whose folder lies in a clone's work or git folder:
   `lib/git.mjs runGit` and `gateGit`, the committed config's `git show` (`lib/config-committed.mjs`), the review
   selector's reads (`lib/review/content.mjs`), and `aidrian worktree` (`lib/worktree.mjs`), each through
-  `lib/attempt-clone.mjs cloneGitProblem`; while it fails, the call runs no git and answers as git failing. Every git
+  `lib/attempt-clone.mjs cloneGitProblem`; while it fails, the call runs no git and answers as git failing. The call's
+  folder and the `.git` pointer's target are each resolved as the system resolves them, where git lands, so a `..`
+  after a link, as in `<folder>/link/..`, climbs from the link's target and is never folded as text first. Every git
   call of the plugin runs with `core.fsmonitor`, `core.hooksPath`, submodule recursion, the `ext::` transport, and
   signature display turned off (`lib/git.mjs`), the start gate's that make each attempt clone among them; another
   `commondir` would lead git to a config those settings do not cover. One call runs as the person's own git would:

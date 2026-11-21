@@ -4,10 +4,10 @@
 // docs/providers/claude-code.md#the-sandbox-proof.
 
 import { randomBytes } from 'node:crypto';
-import { lstatSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { attemptOf } from './attempt-clone.mjs';
+import { attemptOf, systemReal } from './attempt-clone.mjs';
 import { bashCall } from './config-guard.mjs';
 import { readSmallJson } from './fs.mjs';
 import { fileReadOf } from './hosts/index.mjs';
@@ -24,13 +24,8 @@ export const SHELL_VARS = 'shell-env.json';
 // The largest verdict read: one with every read's salted sight.
 export const VERDICT_CAP = 1024 * 1024;
 
-export const real = (file) => {
-  try {
-    return realpathSync(file);
-  } catch {
-    return null;
-  }
-};
+// The real path of `file` where the system lands (attempt-clone.mjs systemReal), or null.
+const real = systemReal;
 // Whether `file` is `folder` or under it, the file system's root included.
 export const within = (folder, file) => file === folder || file.startsWith(folder.endsWith(path.sep) ? folder : `${folder}${path.sep}`);
 // Whether something is at `file`; a path that cannot be checked counts as there.
@@ -112,15 +107,17 @@ function realOf(file) {
 
 // The store of `unreadable` a file-tool read in `input` reaches, a folder it names holding one, or one holding it, or
 // null: the host names its read tools and their paths (hosts/index.mjs fileReadOf), a path with none being the call's
-// folder.
+// folder. Each path is read both ways a tool may: folded as text first, and as the system resolves it, where a `..`
+// after a link climbs from the link's target.
 function readsStore(input, unreadable) {
   const targets = fileReadOf(input);
   if (!targets) return null;
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
   const stores = unreadable.filter((each) => typeof each === 'string' && path.isAbsolute(each)).map((each) => realOf(each));
   for (const target of targets) {
-    const file = realOf(path.resolve(cwd, typeof target === 'string' && target !== '' ? target : '.'));
-    const store = stores.find((each) => within(each, file) || within(file, each));
+    const spelled = typeof target === 'string' && target !== '' ? target : '.';
+    const files = [realOf(path.resolve(cwd, spelled)), real(path.isAbsolute(spelled) ? spelled : `${cwd}/${spelled}`)].filter(Boolean);
+    const store = stores.find((each) => files.some((file) => within(each, file) || within(file, each)));
     if (store) return store;
   }
   return null;

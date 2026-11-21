@@ -22,10 +22,10 @@
 //     probe that a commit works in a clone made so.
 // Every git call goes through gateGit (lib/git.mjs).
 
-import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { ATTEMPT_KEEP, attemptOf, GIT_PLACEHOLDERS, KEPT_FOLDERS } from './attempt-clone.mjs';
+import { ATTEMPT_KEEP, attemptOf, GIT_PLACEHOLDERS, KEPT_FOLDERS, systemReal } from './attempt-clone.mjs';
 import { isWithin, readSmallJson, resolvedPath } from './fs.mjs';
 import { gateGit } from './git.mjs';
 import { claimedSource, forgeToken, gitCredentialVars, sessionToken, tokenDigest, tokenVars } from './project-token.mjs';
@@ -528,13 +528,8 @@ function confinedAttempt({ session, cwd, env, home }) {
   const attempt = typeof cwd === 'string' && path.isAbsolute(cwd) ? attemptOf(cwd) : null;
   if (!attempt) return null;
   const mark = readUnattendedMark(session, { env, ...(home ? { home } : {}) });
-  const real = (file) => {
-    try {
-      return realpathSync(file);
-    } catch {
-      return null;
-    }
-  };
+  // Every path resolved as attemptOf resolves `cwd`, where the system lands.
+  const real = systemReal;
   const starting = mark?.pending === true && typeof mark.cwd === 'string' && real(mark.cwd) === real(attempt.work);
   if (!starting && !recordedAttempt(mark, attempt, real, home)) return null;
   return { attempt, mark };
@@ -547,5 +542,5 @@ function recordedAttempt(mark, attempt, real, home) {
   const project = findProject(mark.root);
   if (!project) return false;
   const own = ownAttemptFolder(project, loadConfig(project).config, mark, home ? { home } : {});
-  return own !== null && own === real(attempt.folder);
+  return own !== null && real(own) === real(attempt.folder);
 }

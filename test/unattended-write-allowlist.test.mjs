@@ -949,6 +949,21 @@ test('a call in an attempt clone whose .git points at another git folder is refu
   assert.match(cloneConfigProblem(work) ?? '', /is not a pointer file to its own git folder/u);
 });
 
+test('a .git pointer whose `..` follows a link is read where git lands, past the link\'s target, not folded before it', (t) => {
+  const root = tempRoot(t, 'aidrian-pointer-dots-');
+  const { attempt, work } = clone({ state: path.join(root, 'state'), main: path.join(root, 'main') });
+  // `away/git` is another git folder; `work/l` leads to `away/a/b`, so `l/../../git` is `attempt/git` to the eye and
+  // `away/git` to git.
+  const away = path.join(root, 'away');
+  mkdirSync(path.join(away, 'a', 'b'), { recursive: true });
+  execFileSync('git', ['init', '-q', '--bare', path.join(away, 'git')], { stdio: 'pipe' });
+  symlinkSync(path.join(away, 'a', 'b'), path.join(work, 'l'));
+  writeFileSync(path.join(work, '.git'), 'gitdir: l/../../git\n');
+  assert.equal(path.resolve(work, 'l/../../git'), path.join(attempt, 'git'), 'folded, the spelling names the attempt\'s own');
+  assert.equal(execFileSync('git', ['rev-parse', '--absolute-git-dir'], { cwd: work, encoding: 'utf8' }).trim(), realpathSync(path.join(away, 'git')), 'git runs on the other one');
+  assert.match(cloneConfigProblem(work) ?? '', /points at another git folder than its own/u);
+});
+
 test('a call in an attempt clone whose git folder holds a commondir or config.worktree file is refused, and the clone links to no main checkout', (t) => {
   const root = tempRoot(t, 'aidrian-extras-');
   const env = { ...process.env, XDG_STATE_HOME: path.join(root, 'marks') };
@@ -1084,6 +1099,26 @@ test('every plugin git call in an attempt clone whose git folder holds a commond
   writeFileSync(planted, GIT_PLACEHOLDERS.commondir);
   assert.equal(runGit(['rev-parse', '--git-dir'], work).status, 0, 'the gate\'s placeholder passes');
   assert.doesNotThrow(() => committedConfig(project, 'HEAD'));
+});
+
+test('a git call whose folder reaches an attempt clone through a link and `..` is refused where the system lands, not where the spelling folds', (t) => {
+  const root = tempRoot(t, 'aidrian-rungit-dots-');
+  const state = path.join(root, 'state');
+  const main = path.join(root, 'main');
+  onMain(main, { version: 1, state: { dir: state } });
+  const { attempt, work } = clone({ state, main });
+  mkdirSync(path.join(work, 'sub'));
+  const outside = path.join(root, 'x');
+  mkdirSync(outside);
+  symlinkSync(path.join(work, 'sub'), path.join(outside, 'link'));
+  // `x/link/..` folds to `x` as text, and is `work` to the system: git runs in the clone.
+  const cwd = `${outside}/link/..`;
+  assert.equal(path.resolve(cwd), outside);
+  assert.equal(spawnSync('git', ['rev-parse', '--absolute-git-dir'], { cwd, encoding: 'utf8' }).stdout.trim(), realpathSync(path.join(attempt, 'git')), 'git runs in the clone');
+  writeFileSync(path.join(attempt, 'git', 'commondir'), `${path.join(main, '.git')}\n`);
+  assert.match(cloneGitProblem(cwd) ?? '', /holds .*commondir, through which git reads another config/u);
+  const refused = runGit(['rev-parse', '--git-dir'], cwd);
+  assert.deepEqual([refused.status, refused.error?.code], [null, 'EREFUSED']);
 });
 
 test('a confined session never writes a host file its clone loads from any depth, by the write tool, the shell, a link, or a glob', (t) => {

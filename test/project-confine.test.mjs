@@ -347,6 +347,9 @@ test('with no readable mark of its own, whichever pending mark it reads, a call 
   }
   assert.equal(confineDenial(bash('aidrian project confine launch ENG-1', at.work), { mark: read, env: {} }), null);
   assert.equal(confineDenial(bash('ls', at.root), { mark: read, env: {} }), null, 'a call outside every clone');
+  // A folder spelled `<x>/link/..`, with the link into the clone, is the clone to the system, which runs the call there.
+  symlinkSync(path.join(at.work, '.claude'), path.join(other, 'link'));
+  assert.match(confineDenial(bash('ls', `${other}/link/..`), { mark: null, env: {} })?.reason ?? '', /its first call must be exactly/u, 'a link and `..` into the clone');
   writeVerdict(at, { pass: false, failed: ['write /x'] });
   assert.match(confineDenial(bash('aidrian project confine launch ENG-1', at.work), { mark: null, env: {} }).reason, /refuses every later call/u);
 });
@@ -365,6 +368,11 @@ test('a session a proof plan holds never reads a hidden store with the file tool
     rmSync(path.join(at.work, 'key'), { force: true });
     symlinkSync(path.join(at.keys, 'id_test'), path.join(at.work, 'key'));
     assert.match(call('Read', { file_path: path.join(at.work, 'key') })?.reason ?? '', /hides/u);
+    // `link/..`, with the link into a store's folder, is that folder's parent to the system, though it folds to the clone.
+    rmSync(path.join(at.work, 'keys'), { force: true });
+    symlinkSync(at.keys, path.join(at.work, 'keys'));
+    assert.match(call('Read', { file_path: `${at.work}/keys/../.npmrc` })?.reason ?? '', /hides/u, 'a link and `..` to a store');
+    assert.match(call('Read', { file_path: 'keys/../.npmrc' })?.reason ?? '', /hides/u, 'the same, relative to the call\'s folder');
     if (confine === 'passed') {
       assert.equal(call('Read', { file_path: path.join(at.work, 'README.md') }), null);
       assert.equal(call('Grep', { pattern: 'x' }), null, 'the call`s folder, the clone');

@@ -14,7 +14,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
-import { attemptOf } from './attempt-clone.mjs';
+import { attemptOf, systemReal } from './attempt-clone.mjs';
 import { bashCall, opaqueTexts } from './config-guard.mjs';
 import { loadConfig } from './config.mjs';
 import { BACKGROUND_HOPS } from './handoff-continue.mjs';
@@ -407,7 +407,8 @@ const RULES = Object.freeze({
     const run = found.init.run;
     if (mark && !mark.pending && mark.project === run && mark.issue === key) return null;
     const at = typeof input?.cwd === 'string' ? attemptOf(input.cwd) : null;
-    const clone = mark?.pending && typeof mark.cwd === 'string' ? resolvedPath(mark.cwd) : null;
+    // Resolved as attemptOf resolves the call's folder, where the system lands.
+    const clone = mark?.pending && typeof mark.cwd === 'string' ? systemReal(mark.cwd) : null;
     if (at && clone && at.run === run && at.key === key && at.work === clone) return null;
     return `\`aidrian project confine\` proves the sandbox of the session the run started for the issue ${key}, and this session is not that one`;
   },

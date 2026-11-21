@@ -20,7 +20,7 @@ import { safely } from './session-start-gate.mjs';
 
 // What a session records of its issue, and how each decision it parks on is classed. `environment` says the session's
 // own environment kept it from the work, such as its sandbox, its forge sign-in, or its host: the run halts on its stop
-// (environmentHalt), and the issue stays open for the attempt after `aidrian project resume`.
+// (environmentHalt), and the issue goes on as after `failed`.
 export const RESULT_STATUSES = Object.freeze(['merged', 'pr_open', 'parked', 'blocked', 'failed', 'environment']);
 export const DECISION_CLASSES = Object.freeze(['product', 'ux', 'architecture', 'security', 'scope', 'other']);
 // The largest result file read, the most decisions and options it keeps, and each text field's length.
@@ -105,12 +105,10 @@ export function mergeProblem({ forge, repository, pr, branch, since }) {
 
 // What the ledger records of issue `key` after attempt `attempt` ended with `status`: merged is done; parked, pr_open,
 // and blocked park it on a decision named for the status; failed opens it again while attempts remain, of the `spent`
-// that count (afterFailure); environment opens it again, an attempt that does not count (project-run-guard.mjs
-// spentAttempts), with the run halted (environmentHalt).
+// that count (afterFailure); environment does the same, with the run halted (environmentHalt).
 export function afterResult(key, attempt, status, spent = attempt) {
   if (status === 'merged') return { event: 'issue', key, state: 'done' };
-  if (status === 'environment') return { event: 'issue', key, state: 'open' };
-  if (status === 'failed') return afterFailure(key, spent);
+  if (status === 'failed' || status === 'environment') return afterFailure(key, spent);
   return { event: 'issue', key, state: 'parked', decision: { parked: `decision-${attempt}`, pr_open: 'pr-open', blocked: 'blocked' }[status] };
 }
 
@@ -239,6 +237,14 @@ function dropRows({ run, key, start, spent, branch, forge, repository, now }) {
   };
 }
 
+// The rows of `taken` (dropRows) that the run `fresh` does not hold yet, so a wait cut part way through takes the drop in
+// again without writing a halt or a result twice: the halt row, when this attempt has none, then the result row, when
+// it has none, then the issue row.
+function missingRows(fresh, { halt, rows: [result, issue] }) {
+  const has = (event) => fresh.rows.some((row) => row.event === event && row.key === result.key && row.attempt === result.attempt);
+  return [...(halt && !has('halt') ? [halt] : []), ...(has('result') ? [] : [result]), issue];
+}
+
 // Takes in the results the sessions of the running issues of `found` handed over in their drop folders, as the driver's
 // `wait` does before it reads how sessions ended: each recorded, with `results/<issue>.json`, while its issue still runs
 // that attempt. Returns the lines: `result KEY STATUS -> STATE`, or `ended KEY bad_result -> STATE`.
@@ -252,7 +258,7 @@ export function ingestDrops({ state, run, found, forge, now }) {
     const taken = dropRows({ run, key, start, spent: spentAttempts(found, key), branch, forge, repository: found.init.repository, now });
     if (!taken) continue;
     const written = safely(() => appendToRun(state, run, (fresh) => (fresh.states.get(key)?.state === 'running' && latestStart(fresh, key)?.attempt === start.attempt
-      ? { rows: taken.halt ? [taken.halt, ...taken.rows] : taken.rows } : { rows: [] })));
+      ? { rows: missingRows(fresh, taken) } : { rows: [] })));
     if (!written?.rows?.length) continue;
     if (taken.kept) safely(() => writeResultFile(state, run, key, taken.kept));
     const after = taken.rows[1];

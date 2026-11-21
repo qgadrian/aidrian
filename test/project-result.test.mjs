@@ -16,6 +16,7 @@ import test from 'node:test';
 import { noteStarted } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { cleanText, RESULT_CAP, validateResult } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { DROP_FILE } from '../plugins/aidrian/lib/project-result.mjs';
+import { stderrTail } from '../plugins/aidrian/lib/review/base-worktree.mjs';
 import { LINGER_GRACE } from '../plugins/aidrian/lib/project-linger.mjs';
 import { appendToRun, readRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { DROP_FILE as GUARD_DROP_FILE, resultHoldReason, spentAttempts } from '../plugins/aidrian/lib/project-run-guard.mjs';
@@ -270,7 +271,7 @@ test('result text loses character references that spell a mention marker, before
   assert.equal(cleanText('Tom&Jerry and R&D stay', 99), 'Tom&Jerry and R&D stay');
 });
 
-test('an environment result halts the run with its stop, keeps the issue open, and its attempt does not count', (t) => {
+test('an environment result halts the run with its stop, and the issue goes on as after failed', (t) => {
   const fx = started(t);
   assert.match(fx.result({ status: 'environment', stop: null }).err.join('\n'), /an environment result names in "stop" what failed/u);
   const stop = 'git push: could not read Username for github.com, token ghp_abcdefghijklmnopqrstuvwxyz0123';
@@ -279,7 +280,7 @@ test('an environment result halts the run with its stop, keeps the issue open, a
   const halt = rows.findIndex((row) => row.event === 'halt');
   assert.ok(halt >= 0 && halt < rows.findIndex((row) => row.event === 'result'), 'the halt row comes before the result row');
   assert.deepEqual(rows.filter((row) => row.event === 'halt').map((row) => row.cause), ['ENG-1 attempt 1 found its environment broken: git push: could not read Username for `github.com`, token [redacted]']);
-  assert.equal(spentAttempts(readRun(fx.state, 'launch'), 'ENG-1'), 0);
+  assert.equal(spentAttempts(readRun(fx.state, 'launch'), 'ENG-1'), 1);
   fx.claude.states[CHILD] = 'done';
   assert.match(fx.cmd(['next', 'launch']).out[0], /^halted ENG-1 attempt 1 found its environment broken/u);
   assert.match(fx.cmd(['start', 'launch', 'ENG-1']).out[0], /^halt the run is halted/u);
@@ -293,24 +294,43 @@ test('an environment result halts the run with its stop, keeps the issue open, a
   assert.ok(next.out.includes('started ENG-1 attempt 2 session c0ffee02'), next.out.join('\n'));
 });
 
-test('only the first 3 environment attempts of an issue go uncounted', (t) => {
+test('an environment result that spends the last attempt parks the issue on attempts, and the run still halts', (t) => {
   const fx = started(t);
-  for (let n = 0; n < 4; n += 1) {
+  for (let n = 0; n < 3; n += 1) {
     const session = STARTED[n].session;
     if (n > 0) {
       assert.equal(fx.cmd(['resume', 'launch'], { session: OTHER }).exitCode, 0);
       const again = fx.cmd(['start', 'launch', 'ENG-1']);
       assert.equal(again.exitCode, 0, again.err.join('\n'));
     }
-    assert.deepEqual(fx.recorded({ status: 'environment', stop: `no network, try ${n + 1}` }, session).out, ['result ENG-1 environment -> open']);
+    const expected = n < 2 ? 'result ENG-1 environment -> open' : 'result ENG-1 environment -> parked attempts';
+    assert.deepEqual(fx.recorded({ status: 'environment', stop: `no network, try ${n + 1}` }, session).out, [expected]);
     fx.claude.states[session] = 'done';
   }
-  assert.equal(spentAttempts(readRun(fx.state, 'launch'), 'ENG-1'), 1);
+  assert.equal(fx.rows().filter((row) => row.event === 'halt').length, 3);
+});
+
+test('a wait cut part way through an environment result writes only the rows still missing', (t) => {
+  const fx = started(t);
+  assert.equal(fx.result({ status: 'environment', stop: 'no network' }).exitCode, 0);
+  const at = new Date().toISOString();
+  // The halt and the result rows were written, and the wait stopped before the issue row.
+  appendToRun(fx.state, 'launch', () => ({ rows: [
+    { event: 'halt', cause: 'ENG-1 attempt 1 found its environment broken: no network', key: 'ENG-1', attempt: 1, at },
+    { event: 'result', key: 'ENG-1', attempt: 1, session: CHILD, via: 'drop', status: 'environment', pr: null, verified: false, at },
+  ] }));
+  const waited = fx.cmd(['wait', 'launch', '--max-wait', '0']);
+  assert.ok(waited.out.includes('result ENG-1 environment -> open'), waited.out.join('\n'));
+  const rows = fx.rows();
+  assert.equal(rows.filter((row) => row.event === 'halt').length, 1);
+  assert.equal(rows.filter((row) => row.event === 'result').length, 1);
+  assert.equal(readRun(fx.state, 'launch').states.get('ENG-1').state, 'open');
 });
 
 test('a result stop has credentials masked', () => {
-  const { result } = validateResult({ status: 'failed', stop: 'push to https://bob:hunter2pass@example.test/x failed; Authorization: Bearer abcdefghijklmnop; key AKIAABCDEFGHIJKL' });
-  assert.doesNotMatch(result.stop, /hunter2pass|abcdefghijklmnop|AKIAABCDEFGHIJKL/u);
+  const { result } = validateResult({ status: 'failed', stop: 'push to https://bob:hunter2pass@example.test/x failed; Authorization: Bearer abcdefghijklmnop; authorization: Basic eDp5; key AKIAABCDEFGHIJKL' });
+  assert.doesNotMatch(result.stop, /hunter2pass|abcdefghijklmnop|eDp5|AKIAABCDEFGHIJKL/u);
+  assert.doesNotMatch(stderrTail('fatal: header Authorization: Basic eDp5 refused'), /eDp5/u);
   assert.match(result.stop, /\[redacted\]/u);
 });
 

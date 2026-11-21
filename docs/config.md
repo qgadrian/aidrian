@@ -1889,9 +1889,10 @@ sign-in or push that fails, or a host tool that fails, records the result `envir
 its error as its `stop`, which it must name. Every result's `stop` has anything shaped like a token, a URL's password,
 or an Authorization value masked as `[redacted]` before it is kept. The driver's `wait` writes a `halt` row whose
 cause is that stop first, then prints `result ISSUE environment -> open` and keeps the issue open, so the cause is
-fixed once for the whole run, not once per issue; a `start` checks for a halt again under the ledger's lock. The
-first 3 such attempts of an issue do not count toward its 3, and after `aidrian project resume RUN` the next start
-takes the same issue up again. The attempt's folder stays until its issue is done or parked, so work its clone holds
+fixed once for the whole run, not once per issue; a `start` checks for a halt again under the ledger's lock, and a
+`wait` cut part way through writes only the rows still missing. The attempt counts toward the issue's 3, as after
+`failed`: with attempts left, `aidrian project resume RUN` lets the next start take the same issue up again. When
+`stop-action` has retried a failing forge call as often as it may, its `park` line asks for `environment` too. The attempt's folder stays until its issue is done or parked, so work its clone holds
 that a failed push never sent can be recovered from `<state>/runs/RUN/attempts/ISSUE.ATTEMPT/work`.
 When an issue's pull request does not merge, its session runs `aidrian project stop-action RUN ISSUE`, as the
 autopilot skill's phases say. Only the issue's own session runs it: the newest session of the chain of the issue's

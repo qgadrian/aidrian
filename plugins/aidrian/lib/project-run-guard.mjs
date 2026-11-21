@@ -41,9 +41,7 @@ export const ISSUE_ATTEMPTS = 3;
 // The most pauses on a usage or rate limit one run waits out (lib/project-limit.mjs); the next limit halts it.
 export const LIMIT_WAITS = 24;
 // The highest attempt number a start row may carry: every attempt that counts, and one per pause besides.
-// The attempts of an issue an environment result ended that do not count toward ISSUE_ATTEMPTS; a later one counts.
-export const ENVIRONMENT_RETRIES = 3;
-export const ATTEMPT_CEILING = ISSUE_ATTEMPTS + LIMIT_WAITS + ENVIRONMENT_RETRIES;
+export const ATTEMPT_CEILING = ISSUE_ATTEMPTS + LIMIT_WAITS;
 // Every `aidrian project` subcommand, today's and those a later step adds: a command that names one is the run's.
 export const SUBCOMMANDS = PROJECT_SUBCOMMANDS;
 // The subcommands a subagent may run.
@@ -180,12 +178,9 @@ export function startRows(found) {
 export const startsOf = (found, key) => startRows(found).filter((row) => row.key === key);
 
 // The attempts of issue `key` that count toward ISSUE_ATTEMPTS: each start not given back (`void`), but one a usage or
-// rate limit ended (an `ended` row with reason `limit`), or one of the first ENVIRONMENT_RETRIES whose result was
-// `environment`, which halted the run.
+// rate limit ended (an `ended` row with reason `limit`).
 export function spentAttempts(found, key) {
-  const limited = new Set(found.rows.filter((row) => row.key === key && row.event === 'ended' && row.reason === 'limit').map((row) => row.attempt));
-  const environment = [...new Set(found.rows.filter((row) => row.key === key && row.event === 'result' && row.status === 'environment').map((row) => row.attempt))];
-  for (const attempt of environment.slice(0, ENVIRONMENT_RETRIES)) limited.add(attempt);
+  const limited = new Set(found.rows.filter((row) => row.event === 'ended' && row.key === key && row.reason === 'limit').map((row) => row.attempt));
   return startsOf(found, key).filter((row) => row.outcome !== 'void' && !limited.has(row.attempt)).length;
 }
 

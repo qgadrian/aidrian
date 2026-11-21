@@ -547,6 +547,12 @@ test('reviewerSeen: a bot that only comments on a clean head is seen, and so is 
   const quoted = seen([{ number: 7, reviews: [{ author: { login: 'adrian' } }], comments: [{ author: { login: 'adrian' }, body: `> ${receipt}` }] }]);
   assert.deepEqual(quoted.result, { changes: 1, seen: false }, 'another login quoting the receipt');
   assert.deepEqual(seen([{ number: 8 }]).result, { changes: 1, seen: false }, 'no reviews or comments listed');
+  const notice = [{ number: 9, reviews: [], comments: [{ author: { login: 'chatgpt-codex-connector' }, body: 'You have reached your Codex usage limits.' }] }];
+  const { forge } = recorded(() => JSON.stringify(notice));
+  const counts = (body) => !/usage limits/u.test(body);
+  assert.equal(forge.reviewerSeen('acme/notes', 'chatgpt-codex-connector', { counts }).seen, false, 'a comment counts refuses is not seen');
+  const reviewed = [{ ...notice[0], reviews: [{ author: { login: 'chatgpt-codex-connector' } }] }];
+  assert.equal(recorded(() => JSON.stringify(reviewed)).forge.reviewerSeen('acme/notes', 'chatgpt-codex-connector', { counts }).seen, true, 'counts reads comments only');
 });
 
 test('reviewsWithComments: the reviews report`s GraphQL call, query and variables as it sent them', () => {

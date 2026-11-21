@@ -807,7 +807,7 @@ test('limitContinueProblem: a project settings file that sets autoContinueAtUsag
     writeFileSync(file, JSON.stringify({ autoContinueAtUsageLimit: true }));
     const named = limitContinueProblem({ env, home: root, project });
     assert.ok(named.startsWith(plain), named);
-    assert.ok(named.endsWith(`there: ${file} sets it, but the host reads this key from the user's settings only, so a project file does not count`), named);
+    assert.ok(named.endsWith(`there: ${file} sets it, but the host ignores this key in a project's settings, so a project file does not count`), named);
     rmSync(file);
   }
   writeFileSync(path.join(project, '.claude', 'settings.json'), JSON.stringify({ other: true }));

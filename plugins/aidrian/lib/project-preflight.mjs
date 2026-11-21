@@ -26,6 +26,7 @@ import { forgeFor } from './forges/index.mjs';
 import { knownPrefix } from './git.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
 import { continueRoutes, detectHost } from './hosts/index.mjs';
+import { isQuotaNotice } from './pr-await-review.mjs';
 import { branchPolicies } from './pr-auto-merge.mjs';
 import { mayFollowTeamDefault } from './project.mjs';
 import { recordedTexts } from './project-issue-text.mjs';
@@ -173,7 +174,8 @@ function forgeLines({ facade, repository, reviewer, lines, check, asks }) {
   const named = repository ? `${repository.owner}/${repository.name}` : null;
   if (typeof facade.reviewerSeen === 'function' && named && bot) {
     try {
-      const { changes, seen } = facade.reviewerSeen(named, bot, { host: repository.host });
+      // A usage-limit notice comes from the bot's own login, but shows no review.
+      const { changes, seen } = facade.reviewerSeen(named, bot, { host: repository.host, counts: (body) => !isQuotaNotice(body) });
       if (changes === 0) lines.push(`note reviewer-seen: no pull request yet, so the first one shows whether ${bot} reviews; the merge's trust check holds every merge until it has`);
       else check('reviewer-seen', seen ? null : `${bot} reviewed none of the last ${changes} pull requests; install it on the repository and request one review`);
     } catch (error) {

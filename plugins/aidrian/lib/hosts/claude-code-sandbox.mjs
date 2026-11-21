@@ -722,17 +722,16 @@ export const sessionNote = ({ work, branch }) => `This session runs in Claude Co
 
 // Why the host would not carry on by itself after a usage limit, or null: a limit is account-wide, so it stops a project
 // run's driver at the same moment as the issues' sessions, and only a driver whose host continues on its own takes the
-// run on once the limit lifts. The user's settings must set `autoContinueAtUsageLimit` to true. It reads only the user's
-// settings, where the host's own code honors the key; a project or managed setting is not read, and is no answer.
-// When the checkout `project` sets the key in a settings file of its own, the reason names that file, which the host
-// ignores for this key.
+// run on once the limit lifts. The user's settings must set `autoContinueAtUsageLimit` to true. The host also takes the
+// key from managed policy and `--settings`, which this check does not read, and ignores it in a project's settings. When
+// the checkout `project` sets the key in a settings file of its own, the reason names that file and says it is ignored.
 export function limitContinueProblem({ env, home, project }) {
   const settings = userSettings(configFolder(env, home ?? env.HOME ?? homedir()));
   if (settings.problem) return settings.problem;
   if (settings.value.autoContinueAtUsageLimit === true) return null;
   const why = `the host's user settings ${settings.file} do not set "autoContinueAtUsageLimit": true, so a usage limit would stop the driver for good; add it`;
   const local = projectLimitFile(project);
-  return local ? `${why} there: ${local} sets it, but the host reads this key from the user's settings only, so a project file does not count` : why;
+  return local ? `${why} there: ${local} sets it, but the host ignores this key in a project's settings, so a project file does not count` : why;
 }
 
 // The settings file of the checkout `project` that sets `autoContinueAtUsageLimit`, or null.

@@ -523,13 +523,16 @@ export function confinedTokenVars({ session, cwd, env = process.env, home, token
   }
 }
 
-// The confined attempt `cwd` lies in and the mark of `session`, its session, or null (confinedShellVars).
+// The confined attempt `cwd` lies in and the mark of `session`, its session, or null (confinedShellVars). `cwd` must
+// resolve inside the attempt's clone: a folder that is not there, or one beside the clone, as its drop folder, is none.
 function confinedAttempt({ session, cwd, env, home }) {
   const attempt = typeof cwd === 'string' && path.isAbsolute(cwd) ? attemptOf(cwd) : null;
   if (!attempt) return null;
-  const mark = readUnattendedMark(session, { env, ...(home ? { home } : {}) });
   // Every path resolved as attemptOf resolves `cwd`, where the system lands.
   const real = systemReal;
+  const [here, work] = [real(cwd), real(attempt.work)];
+  if (here === null || work === null || !isWithin(work, here)) return null;
+  const mark = readUnattendedMark(session, { env, ...(home ? { home } : {}) });
   const starting = mark?.pending === true && typeof mark.cwd === 'string' && same(real, mark.cwd, attempt.work);
   if (!starting && !recordedAttempt(mark, attempt, real, home)) return null;
   return { attempt, mark };

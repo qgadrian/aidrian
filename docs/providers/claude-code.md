@@ -817,7 +817,8 @@ driver's `wait` removes it with the attempt. The variables reach the session's s
 host's own process, whose hooks, MCP servers, language servers, and status line run outside the sandbox. The gate
 writes them to `shell-env.json` in the attempt's folder, which no confined session writes, before the launch; the
 plugin's SessionStart hook, for a session whose own mark names a run and issue whose ledger gives it exactly that
-attempt's folder, or whose pending mark starts it in that very clone, appends one `export NAME='value'` line for each
+attempt's folder, or whose pending mark starts it in that very clone, and whose folder resolves, as the system lands
+there, inside that clone, never a folder that is not there or one beside the clone, appends one `export NAME='value'` line for each
 name the gate gives, and no other, single-quoted with each quote escaped, to the
 file the host names in `CLAUDE_ENV_FILE`, which it reads and runs ahead of each Bash command. No package manager
 variable is passed in the settings' `env`, whose one key is the start's claim (Project start, above). On Codex the same variables reach its sandboxed commands through `shell_environment_policy.set`.

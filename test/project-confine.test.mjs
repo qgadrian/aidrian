@@ -521,6 +521,13 @@ test('`aidrian project confine` runs only in its issue`s clone, and its hook rul
   assert.ok(markPending('pending-driver', { cwd: work, root: fx.dir, known: [], env: fx.env }));
   assert.equal(confine('unlisted-new-1'), null);
   assert.match(confine('unlisted-new-1', fx.dir)?.reason ?? '', /not that one/u);
+  // A folder in the clone that is there runs it; one that is not there, or one beside the clone that a link in it
+  // reaches, as its drop folder, does not.
+  assert.equal(confine('unlisted-new-1', path.join(work, '.claude')), null);
+  symlinkSync(path.join(path.dirname(work), 'drop'), path.join(work, 'beside'));
+  for (const cwd of [path.join(work, 'missing'), path.join(work, 'beside'), path.join(work, 'gone', 'deeper')]) {
+    assert.match(confine('unlisted-new-1', cwd)?.reason ?? '', /not that one/u, cwd);
+  }
 });
 
 test('a start writes the plan, holds the session once its proof passed, and files the pass in its mark; the listener stops', async (t) => {

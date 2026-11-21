@@ -44,7 +44,7 @@ A file edit is an Edit, Write, or NotebookEdit call, or Codex's `apply_patch`.
 ## Start lines
 
 Before anything else, in a main session whose own mark names a run and issue whose ledger gives it the confined
-attempt it starts in, or whose pending mark starts it in that attempt's clone, the hook hands the host the environment that attempt's sandboxed commands get,
+attempt it starts in, or whose pending mark starts it in that attempt's clone, and whose folder resolves inside that clone, the hook hands the host the environment that attempt's sandboxed commands get,
 the package managers' caches in its `cache` folder, on a host that takes it: Claude Code, through the file it names in
 `CLAUDE_ENV_FILE` ([Dependency installs](providers/claude-code.md#dependency-installs)). On a host that declares
 `forgeTokenEnv`, as Claude Code does, it then hands over the forge token as `GH_TOKEN` the same way, only to a session
@@ -1092,7 +1092,7 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   with a `..` segment past its literal folder climbs from wherever a glob matched, so it reaches the file system's root
   and is refused. The hook also refuses the confine command, and writes a failed verdict, when
   its own environment, the host process's, holds a variable whose value names the attempt's `cache` folder. Only that
-  issue's session may run the confine command (`lib/project-run-guard.mjs`). A session with no proof in its mark
+  issue's session may run the confine command (`lib/project-run-guard.mjs`), and one its pending mark starts only from a folder that resolves inside its clone. A session with no proof in its mark
   and no plan beside its clone, as Codex's, is not held so. And a session an unattended mark holds never runs a call
   that asks the host to run it outside its sandbox (`sandbox_escape`, Claude Code's `dangerouslyDisableSandbox`).
 - With or without gates or a project, a subagent, and a main session the background handoff route started, may not

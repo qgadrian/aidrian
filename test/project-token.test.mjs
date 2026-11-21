@@ -346,6 +346,26 @@ test('a pending mark whose folder is missing never matches a call in an attempt 
   assert.equal(confinedShellVars({ session: stranger, cwd: work, env }), null);
 });
 
+test('a call whose folder is missing, or beside the clone in its attempt`s folder, gets neither the shell environment nor the token', (t) => {
+  const fx = runFixture(t);
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  const claim = claimOf(fx);
+  const work = path.join(runsFolder(fx.state), 'launch', 'attempts', 'ENG-1.1', 'work');
+  const token = () => ({ token: FIXTURE_TOKEN, source: 'the login' });
+  const env = { ...fx.env, [CLAIM_VAR]: claim };
+  const pending = 'abcd1234-0000-4000-8000-00000000fc01';
+  assert.ok(markPending(DRIVER, { cwd: work, root: fx.dir, known: [DRIVER], env: fx.env }));
+  // The session the run recorded, and one the pending mark starts in the clone: each gets both in its clone.
+  for (const session of [STARTED[0].session, pending]) {
+    assert.equal(confinedTokenVars({ session, cwd: work, env, token }).vars.GH_TOKEN, FIXTURE_TOKEN, session);
+    assert.ok(confinedShellVars({ session, cwd: work, env }), session);
+    for (const cwd of [path.join(work, 'missing'), path.join(path.dirname(work), 'drop'), path.join(path.dirname(work), 'missing')]) {
+      assert.equal(confinedTokenVars({ session, cwd, env, token }), null, `${session} ${cwd}`);
+      assert.equal(confinedShellVars({ session, cwd, env }), null, `${session} ${cwd}`);
+    }
+  }
+});
+
 test('the hook reads only the source the start checked: a project entry that fails then gives no token, with no fall back', () => {
   const forge = login();
   const failed = forgeToken({ forge, repository: REPOSITORY, keychain: ENTRY, platform: 'darwin', exec: keychain(exit(44)).exec, only: 'project' });

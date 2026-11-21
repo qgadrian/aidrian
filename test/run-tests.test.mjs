@@ -42,6 +42,17 @@ const FILES = {
     '  chmodSync(locked, 0o500);',
     '});',
   ],
+  // Passes, and appends a row the table cannot render to the script's log.
+  'breaks.test.mjs': [
+    "import { appendFileSync, readdirSync } from 'node:fs';",
+    "import { tmpdir } from 'node:os';",
+    "import path from 'node:path';",
+    "import test from 'node:test';",
+    "test('breaks the table', () => {",
+    "  const [name] = readdirSync(tmpdir()).filter((entry) => entry.startsWith('aidrian-test-log-'));",
+    "  appendFileSync(path.join(tmpdir(), name, 'files.jsonl'), 'null\\n');",
+    '});',
+  ],
 };
 
 // A folder holding the test files, and an empty temporary folder for the script's own files.
@@ -115,6 +126,15 @@ test('a log folder the script cannot remove leaves the runner`s status, and the 
   }
   assert.equal(run.status, 0, run.stdout + run.stderr);
   assert.deepEqual(Object.keys(rows(run.stderr)), ['locks.test.mjs'], run.stderr);
+});
+
+test('a table that cannot be rendered is named on stderr, and the script still removes its folder', (t) => {
+  const where = folder(t);
+  const run = runTests(where, ['breaks.test.mjs']);
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  assert.match(run.stderr, /^Could not print the table of test files: /mu);
+  assert.doesNotMatch(run.stderr, /Could not remove/u);
+  assert.deepEqual(readdirSync(where.temp), []);
 });
 
 test('this repository`s config records the script as a test run, and the script alone as the full suite', () => {

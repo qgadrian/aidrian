@@ -63,14 +63,17 @@ const runner = spawn(process.execPath, ['--test', '--import', SETUP, ...process.
 });
 // Ctrl-C reaches the runner too: this script waits for it to end, then cleans up.
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => runner.kill(signal));
-// The table and the cleanup are best effort: a folder that cannot be removed is named on stderr, and the status stays the runner's.
-runner.on('exit', (code) => {
+// The table and the cleanup are each best effort: the one that fails is named on stderr, the other still runs, and the
+// status stays the runner's.
+function attempt(what, step) {
   try {
-    process.stderr.write(formatTable(readRows(log)));
-    rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+    step();
   } catch (error) {
-    process.stderr.write(`Could not remove the test log folder ${dir}: ${error.message}\n`);
-  } finally {
-    process.exit(code ?? 1);
+    process.stderr.write(`Could not ${what}: ${error.message}\n`);
   }
+}
+runner.on('exit', (code) => {
+  attempt('print the table of test files', () => process.stderr.write(formatTable(readRows(log))));
+  attempt(`remove the test log folder ${dir}`, () => rmSync(dir, { recursive: true, force: true, maxRetries: 3 }));
+  process.exit(code ?? 1);
 });

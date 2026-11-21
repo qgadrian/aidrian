@@ -100,6 +100,23 @@ test('a timing log that cannot be written leaves a passing test file`s exit stat
   probeRun(t, { AIDRIAN_TEST_LOG: path.join(gone, 'files.jsonl') });
 });
 
+test('a test file that removes the folder it runs in still exits 0 and logs its row', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-test-state-gone-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(path.join(dir, 'gone.test.mjs'), [
+    "import { mkdirSync, rmSync } from 'node:fs';",
+    "import path from 'node:path';",
+    "const away = path.join(process.cwd(), 'away');",
+    'mkdirSync(away);',
+    'process.chdir(away);',
+    'rmSync(away, { recursive: true });',
+  ].join('\n'));
+  const log = path.join(dir, 'files.jsonl');
+  const run = spawnSync(process.execPath, ['--import', SETUP, 'gone.test.mjs'], { cwd: dir, encoding: 'utf8', env: { ...process.env, AIDRIAN_TEST_LOG: log } });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(JSON.parse(readFileSync(log, 'utf8')).file, 'gone.test.mjs', 'the path from the folder the run started in');
+});
+
 test('every test file imports the setup first, so a file run alone with `node --test` is kept apart too', () => {
   const dir = import.meta.dirname;
   const late = readdirSync(dir).filter((name) => name.endsWith('.test.mjs')).filter((name) => {

@@ -135,7 +135,7 @@ export function withoutGitFacts(body) {
 // call is open, as by a rename or a new `.git`, keeps its old answers, though the clone refusal still runs first.
 function readFact(args, cwd, options = {}, config = false) {
   const scope = gitFacts.getStore();
-  if (!scope?.open || Object.keys(options).some((key) => key !== 'timeout')) return runGit(args, cwd, options);
+  if (!scope?.open || options.env !== undefined || Object.keys(options).some((key) => key !== 'timeout')) return runGit(args, cwd, options);
   const held = heldBack(cwd, options);
   if (held) return held;
   const folder = path.resolve(cwd ?? process.cwd());

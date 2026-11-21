@@ -265,8 +265,9 @@ test('inside withGitFacts a read given an option but a timeout asks git, so its 
     assert.ok(Buffer.isBuffer(readPrefix(src, { encoding: 'buffer' }).stdout));
     assert.equal(showPrefix(src), 'src/', 'a default read after a buffer read');
     assert.equal(knownPrefix(src, { timeout: GIT_TIMEOUT_MS }), 'src/', 'a timeout alone keeps the remembered answer');
+    assert.equal(knownPrefix(src, Object.create({ env: process.env })), 'src/', 'an inherited env asks git too');
   });
-  assert.equal(git.count('--show-prefix'), 4);
+  assert.equal(git.count('--show-prefix'), 5);
 });
 
 test('a nested withGitFacts shares the open scope, and two scopes in a row share nothing', async (t) => {

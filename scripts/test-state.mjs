@@ -94,10 +94,12 @@ function countChildProcesses(log, main) {
     childProcess[name] = wrapper;
   }
   syncBuiltinESMExports();
+  // The folder the run started in: a test may leave the process in a folder it then removes.
+  const start = process.cwd();
   // Best effort: a log that cannot be written, as when its folder is gone, loses the row, never the file's exit status.
   process.on('exit', () => {
-    const row = { file: path.relative(process.cwd(), main), ms: Math.round(process.uptime() * 1000), ...counts };
     try {
+      const row = { file: path.relative(start, main), ms: Math.round(process.uptime() * 1000), ...counts };
       appendFileSync(log, `${JSON.stringify(row)}\n`);
     } catch {
       // The table leaves this file out.

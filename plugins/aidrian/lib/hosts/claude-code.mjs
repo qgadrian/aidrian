@@ -353,8 +353,8 @@ export default {
       confineReads: ({ env, home }) => confineReads({ env, home }),
       // The allowedDomains the user's and the organization's settings add, which the proof's unlisted host stays outside.
       confineDomains: ({ env, home, platform }) => confineDomains({ env, home, platform }),
-      start: ({ session, cwd, name, prompt, env, hold, identify, beacon, confined, git, grants, domains, main, mainGit, tokens, guarded, mcp, home, platform, run, wait }) => startProject({
-        session, cwd, name, prompt, env, hold, identify, beacon, confined, sandbox: { git, grants, domains, main, mainGit, tokens, guarded }, mcp, home, platform, run, wait, effort: effort(env), efforts: MODEL_CHOICES.effort,
+      start: ({ session, cwd, name, prompt, env, hold, identify, beacon, confined, git, grants, domains, main, mainGit, tokens, guarded, mcp, home, platform, run, wait, runs }) => startProject({
+        session, cwd, runs, name, prompt, env, hold, identify, beacon, confined, sandbox: { git, grants, domains, main, mainGit, tokens, guarded }, mcp, home, platform, run, wait, effort: effort(env), efforts: MODEL_CHOICES.effort,
       }),
       stop: ({ id, env, run }) => stopBackground({ id, env, run }),
       ended: ({ id, session, env, run }) => sessionFinished({ id, session, env, run }),

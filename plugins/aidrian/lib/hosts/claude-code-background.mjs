@@ -74,10 +74,9 @@ const DOMAIN = /^(?:\*\.)?[a-z0-9.-]+$/iu;
 // What a start the host refused for an untrusted folder tells the Human to do once: trust the run's runs folder, the
 // folder of every attempt's clone, `<state>/runs`, four folders above the clone `work`
 // (`runs/<run>/attempts/<issue>.<attempt>/work`), never the whole state folder.
-// The runs folder of an attempt's clone, `<runs>/<run>/attempts/<issue>.<n>/work`.
+// The runs folder of an attempt's clone, `<runs>/<run>/attempts/<issue>.<n>/work`, when the gate names none.
 const runsOf = (work) => path.resolve(work, '../../../..');
-const trustStep = (work) => {
-  const runs = runsOf(work);
+const trustStep = (runs) => {
   const named = path.basename(runs) === 'runs' ? `the project's runs folder, ${runs},` : 'the folder that holds the run\'s attempts';
   return `trust ${named} once by running \`claude\` there and accepting its trust question, then start again`;
 };
@@ -348,7 +347,7 @@ function ownMode({ session, list, env, readMode, cwd = ownFolder(list, session) 
 // `beacon(session)`, the agent gate hook's beacon, shows the plugin's hooks run for it, within BEACON_WAIT: else the
 // session is stopped, and the answer names the failed proof (`proof`). Returns startIn's answer, or { problem,
 // uncertain, proof }. `hold`, `run`, `wait`, and `resolve` are startBackground's.
-export function startProject({ session, cwd, prompt, name, effort, efforts = [], env, hold, identify, beacon, confined, sandbox, mcp, home, platform = process.platform, run = runCommand, wait = pause, resolve = claudeOnPath, readMode = sessionMode }) {
+export function startProject({ session, cwd, runs, prompt, name, effort, efforts = [], env, hold, identify, beacon, confined, sandbox, mcp, home, platform = process.platform, run = runCommand, wait = pause, resolve = claudeOnPath, readMode = sessionMode }) {
   const box = sandboxInputs(sandbox);
   if (box.problem) return { problem: box.problem };
   if (typeof beacon !== 'function') return { problem: 'the gate gave no way to read the agent gate hook\'s beacon' };
@@ -370,10 +369,11 @@ export function startProject({ session, cwd, prompt, name, effort, efforts = [],
   const user = home ?? homedir();
   const settings = sandboxSettings({ ...box, work, temp: tempFolders(), home: user, config: configFolder(env, user), platform, secrets: secretVars(env, box.tokens), stores: npmGlobalConfigs(env) });
   // The clone is a repository of its own, so it never inherits the runs folder's trust: the start records it.
-  const trust = recordTrust({ work, runs: runsOf(work), env, home: user });
-  if (trust) return { problem: `${trust.problem}; ${trustStep(work)}` };
+  const consent = typeof runs === 'string' && runs ? runs : runsOf(work);
+  const trust = recordTrust({ work, runs: consent, env, home: user });
+  if (trust) return { problem: `${trust.problem}; ${trustStep(consent)}` };
   const started = startIn({ cwd: work, prompt, name, mode: read.mode, effort, efforts, settings, mcp: mcpConfig(mcp), env, hold, run, wait, resolve: () => claude });
-  if (started.problem) return REFUSED.test(started.problem) && started.uncertain === false ? { ...started, problem: `${started.problem}; ${trustStep(work)}` } : started;
+  if (started.problem) return REFUSED.test(started.problem) && started.uncertain === false ? { ...started, problem: `${started.problem}; ${trustStep(consent)}` } : started;
   return proveHooks({ started, identify, beacon, confined, env, run, wait, claude });
 }
 

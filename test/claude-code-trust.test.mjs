@@ -1,5 +1,6 @@
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -112,12 +113,12 @@ test('a staging folder that is a link or a file refuses the update and leaves th
   const elsewhere = path.join(path.dirname(fx.config), 'elsewhere');
   mkdirSync(elsewhere);
   symlinkSync(elsewhere, path.join(fx.config, TRUST_STAGE));
-  assert.match(recordTrust({ work: fx.work, runs: fx.runs, env: fx.env }).problem, /could not be written \(.*is not a folder\)/u);
+  assert.match(recordTrust({ work: fx.work, runs: fx.runs, env: fx.env }).problem, /could not be updated \(.*is not a folder\)/u);
   assert.deepEqual(readdirSync(elsewhere), [], 'no copy outside the barrier');
   assert.equal(readFileSync(fx.file, 'utf8'), before);
   rmSync(path.join(fx.config, TRUST_STAGE));
   writeFileSync(path.join(fx.config, TRUST_STAGE), 'a file');
-  assert.match(recordTrust({ work: fx.work, runs: fx.runs, env: fx.env }).problem, /could not be written \((EEXIST|ENOTDIR|.*is not a folder)\)/u);
+  assert.match(recordTrust({ work: fx.work, runs: fx.runs, env: fx.env }).problem, /could not be updated \((EEXIST|ENOTDIR|.*is not a folder)\)/u);
   assert.equal(readFileSync(path.join(fx.config, TRUST_STAGE), 'utf8'), 'a file', 'nothing of its own removed');
 });
 
@@ -126,4 +127,34 @@ test('the consent step quotes a runs folder a shell would split', (t) => {
   fx.write({});
   const spaced = path.join(path.dirname(fx.runs), "it's runs");
   assert.ok(trustProblem({ folder: spaced, env: fx.env }).problem.includes(`mkdir -p '${spaced.replaceAll("'", "'\\''")}'`));
+});
+
+test('two starts never update the record at once: a held stage waits, and a crashed start\'s stale hold is taken over', (t) => {
+  const fx = layout(t);
+  fx.write({ [fx.runs]: { hasTrustDialogAccepted: true } });
+  const lock = path.join(fx.config, TRUST_STAGE, 'lock');
+  mkdirSync(lock, { recursive: true });
+  const old = new Date(Date.now() - 60_000);
+  utimesSync(lock, old, old);
+  assert.equal(recordTrust({ work: fx.work, runs: fx.runs, env: fx.env }), null, 'a stale hold is taken over');
+  assert.equal(existsSync(lock), false, 'and released');
+  assert.equal(fx.read().projects[fx.work].hasTrustDialogAccepted, true);
+});
+
+test('a copy that cannot be renamed over the record is removed, and the trust error is kept', (t) => {
+  const fx = layout(t);
+  fx.write({ [fx.runs]: { hasTrustDialogAccepted: true } });
+  // A folder at the record's path makes the rename fail after the copy is made.
+  const record = readFileSync(fx.file, 'utf8');
+  rmSync(fx.file);
+  mkdirSync(fx.file);
+  writeFileSync(path.join(fx.file, 'x'), '');
+  assert.match(recordTrust({ work: fx.work, runs: fx.runs, env: fx.env }).problem, /cannot be read \(EISDIR\)/u);
+  rmSync(fx.file, { recursive: true, force: true });
+  writeFileSync(fx.file, record);
+  chmodSync(fx.config, 0o500);
+  t.after(() => existsSync(fx.config) && chmodSync(fx.config, 0o700));
+  assert.match(recordTrust({ work: fx.work, runs: fx.runs, env: fx.env }).problem, /could not be (written|updated) \(EACCES\)/u);
+  chmodSync(fx.config, 0o700);
+  assert.deepEqual(readdirSync(path.join(fx.config, TRUST_STAGE)), [], 'no copy left behind');
 });

@@ -4,6 +4,7 @@
 import { forgeFor } from '../forges/index.mjs';
 import { overruleRefusal } from './approvals.mjs';
 import { isObject } from '../fs.mjs';
+import { withGitFacts, withoutGitFacts } from '../git.mjs';
 import { notedPlan, parseFindings, recordFindings } from './findings.mjs';
 import { parseVerdicts } from './flows.mjs';
 import { closingRange, readReading } from './dispatch.mjs';
@@ -20,8 +21,11 @@ const SHA_FULL = /^[0-9a-f]{40}$/iu;
 // function that reads it (remoteReading): on one that is not private, a newer copy gives a restart or a hold, never a
 // record to build on.
 // A record of another repository with this number is refused (state.mjs otherRecordRepo): no entry lands on it.
+// A reading function, which may wait on the forge, runs outside the call's git facts (lib/git.mjs withoutGitFacts), so
+// the write after it reads them again; it is still called only when readRecord needs it.
 function current(project, pr, repo, remote, reading) {
-  const record = readRecord(project, pr, remote ?? [], repo, reading);
+  const read = typeof reading === 'function' ? () => withoutGitFacts(reading) : reading;
+  const record = readRecord(project, pr, remote ?? [], repo, read);
   if (record.held !== undefined) throw new Error(heldMessage(pr, record.held, record.why, record.finding));
   const other = otherRecordRepo(record.state, repo);
   if (other) throw new Error(otherRecordMessage(pr, other, repo, 'this command records on'));
@@ -49,7 +53,12 @@ export function remoteState(repo, pr, forge = forgeFor(undefined), config = null
 // decides which stay open (lib/review/findings.mjs). The result replaces the pass's counts and list, and keeps the waivers
 // the record held (`ruled`, `carried`), which no count reads: only a pass that re-runs, or a listing of the finding as
 // fixed, ends one (lib/review/settled.mjs).
-export function recordPass(project, { pr, repo, pass, head, reviewer, findings, fixed, accepted = 0, verdictsText = null, findingsText = null, remote = null, reading = undefined }) {
+// The read and the write share one call's git facts (lib/git.mjs withGitFacts): each folder's roots, prefix, and remotes.
+export function recordPass(project, args) {
+  return withGitFacts(() => writePass(project, args));
+}
+
+function writePass(project, { pr, repo, pass, head, reviewer, findings, fixed, accepted = 0, verdictsText = null, findingsText = null, remote = null, reading = undefined }) {
   const itemized = findingsText === null ? null : parseFindings(findingsText);
   if (itemized) ({ findings, fixed, accepted } = itemized);
   if (fixed + accepted > findings) throw new Error('--fixed and --accepted together cannot exceed --findings');

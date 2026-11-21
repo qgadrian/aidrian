@@ -527,7 +527,8 @@ Limits:
   - a host session started outside the gate, such as `claude -p`, `claude --bg`, or `claude --resume`, by the matcher
     each host adapter declares (`sessionStart`, [Adding a host](providers/adding-a-host.md));
   - an `aidrian handoff continue` or `aidrian handoff route` whose command line sets or unsets `XDG_STATE_HOME`, `HOME`,
-    `PATH`, or a variable a host names a session or an agent by, as `env -u`, `env -i`, `sudo`, and `unset` do, which
+    `PATH`, or a variable a host names a session, its agent, or its host process by, or says a Human attends it with,
+    as `env -u`, `env -i`, `sudo`, and `unset` do, which
     would move the store, the session the gate reads floors for, or the host command it runs.
   A store the hook cannot read finds no floor, and the session's call runs: only what the session can cause itself is
   closed.

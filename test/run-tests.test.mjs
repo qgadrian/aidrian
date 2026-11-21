@@ -1,0 +1,160 @@
+import '../scripts/test-state.mjs';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import { pathToFileURL } from 'node:url';
+
+import { isFullSuite, testRuns } from '../plugins/aidrian/lib/check-runs.mjs';
+import { lexPipeline, readInvocation } from '../plugins/aidrian/lib/shell-lex.mjs';
+
+const ROOT = path.resolve(import.meta.dirname, '..');
+const SCRIPT = path.join(import.meta.dirname, '../scripts/run-tests.mjs');
+
+// Small test files: one starts 3 git and 2 other child processes, one starts none, one fails, and one kills its runner.
+const FILES = {
+  'busy.test.mjs': [
+    "import { execFileSync, execSync, spawnSync } from 'node:child_process';",
+    "import test from 'node:test';",
+    "test('starts processes', () => {",
+    "  execFileSync('git', ['--version']);",
+    "  spawnSync('git', ['--version']);",
+    "  execSync('git --version');",
+    "  execFileSync(process.execPath, ['-e', '']);",
+    "  spawnSync(process.execPath, ['-e', '']);",
+    '});',
+  ],
+  'quiet.test.mjs': ["import test from 'node:test';", "test('does nothing', () => {});"],
+  'fails.test.mjs': ["import test from 'node:test';", "test('fails', () => { throw new Error('a failure'); });"],
+  'kills.test.mjs': ["import test from 'node:test';", "test('kills its runner', () => { process.kill(process.ppid, 'SIGKILL'); });"],
+  // Passes, and leaves a read-only folder holding a file in the script's log folder, so the script cannot remove it.
+  'locks.test.mjs': [
+    "import { chmodSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';",
+    "import { tmpdir } from 'node:os';",
+    "import path from 'node:path';",
+    "import test from 'node:test';",
+    "test('locks the log folder', () => {",
+    "  const [name] = readdirSync(tmpdir()).filter((entry) => entry.startsWith('aidrian-test-log-'));",
+    "  const locked = path.join(tmpdir(), name, 'locked');",
+    '  mkdirSync(locked);',
+    "  writeFileSync(path.join(locked, 'file'), '');",
+    '  chmodSync(locked, 0o500);',
+    '});',
+  ],
+  // Passes, and appends a row the table cannot render to the script's log.
+  'breaks.test.mjs': [
+    "import { appendFileSync, readdirSync } from 'node:fs';",
+    "import { tmpdir } from 'node:os';",
+    "import path from 'node:path';",
+    "import test from 'node:test';",
+    "test('breaks the table', () => {",
+    "  const [name] = readdirSync(tmpdir()).filter((entry) => entry.startsWith('aidrian-test-log-'));",
+    "  appendFileSync(path.join(tmpdir(), name, 'files.jsonl'), 'null\\n');",
+    '});',
+  ],
+};
+
+// A folder holding the test files, and an empty temporary folder for the script's own files.
+function folder(t) {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-run-tests-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  for (const [name, lines] of Object.entries(FILES)) writeFileSync(path.join(dir, name), `${lines.join('\n')}\n`);
+  const temp = path.join(dir, 'tmp');
+  mkdirSync(temp);
+  return { dir, temp };
+}
+
+// The script run in `dir`. A runner started inside a test reports as that test's child unless NODE_TEST_CONTEXT is gone.
+// `node` holds node's own arguments for the script's process, such as an --import.
+function runTests({ dir, temp }, args, node = []) {
+  const env = { ...process.env, TMPDIR: temp };
+  delete env.NODE_TEST_CONTEXT;
+  return spawnSync(process.execPath, [...node, SCRIPT, ...args], { cwd: dir, encoding: 'utf8', env });
+}
+
+// The table's rows, by file: { seconds, git, other }.
+function rows(stderr) {
+  const found = {};
+  for (const [, seconds, git, other, file] of stderr.matchAll(/^\s*(\d+\.\d)\s+(\d+)\s+(\d+)\s+(\S+\.test\.mjs)$/gmu)) {
+    found[file] = { seconds: Number(seconds), git: Number(git), other: Number(other) };
+  }
+  return found;
+}
+
+test('the run prints each test file with its git calls and other child processes, and the totals', (t) => {
+  const where = folder(t);
+  const run = runTests(where, ['busy.test.mjs', 'quiet.test.mjs']);
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  const table = rows(run.stderr);
+  assert.deepEqual(Object.keys(table).sort(), ['busy.test.mjs', 'quiet.test.mjs'], run.stderr);
+  assert.deepEqual([table['busy.test.mjs'].git, table['busy.test.mjs'].other], [3, 2]);
+  assert.deepEqual([table['quiet.test.mjs'].git, table['quiet.test.mjs'].other], [0, 0]);
+  assert.match(run.stderr, /^Summed over 2 test files: \d+\.\d s, 3 git calls, 2 other child processes$/mu);
+  assert.match(run.stdout, /pass 2/u, 'the runner`s own output passes through');
+  assert.deepEqual(readdirSync(where.temp), [], 'the script removes its temporary folder');
+});
+
+test('the arguments after the script reach the runner', (t) => {
+  const run = runTests(folder(t), ['--test-reporter=tap', 'quiet.test.mjs']);
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  assert.match(run.stdout, /^TAP version/mu);
+  assert.deepEqual(Object.keys(rows(run.stderr)), ['quiet.test.mjs']);
+});
+
+test('the run exits with the runner`s status, and 1 when a signal ended the runner', (t) => {
+  const where = folder(t);
+  assert.equal(runTests(where, ['fails.test.mjs']).status, 1);
+  const killed = runTests(where, ['kills.test.mjs']);
+  assert.equal(killed.status, 1, killed.stderr);
+  assert.deepEqual(readdirSync(where.temp), []);
+});
+
+test('a log folder the script cannot remove leaves the runner`s status, and the table still prints', (t) => {
+  const where = folder(t);
+  // Writable again before the folder is removed, whether or not the run locked it.
+  const unlock = () => {
+    for (const name of readdirSync(where.temp)) {
+      const locked = path.join(where.temp, name, 'locked');
+      if (existsSync(locked)) chmodSync(locked, 0o700);
+    }
+  };
+  let run;
+  try {
+    run = runTests(where, ['locks.test.mjs']);
+  } finally {
+    unlock();
+  }
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  assert.deepEqual(Object.keys(rows(run.stderr)), ['locks.test.mjs'], run.stderr);
+});
+
+test('a table that cannot be rendered is named on stderr, and the script still removes its folder', (t) => {
+  const where = folder(t);
+  const run = runTests(where, ['breaks.test.mjs']);
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  assert.match(run.stderr, /^Could not print the table of test files: /mu);
+  assert.doesNotMatch(run.stderr, /Could not remove/u);
+  assert.deepEqual(readdirSync(where.temp), []);
+});
+
+test('a stderr that throws on every write leaves the runner`s status, and the script still removes its folder', (t) => {
+  const where = folder(t);
+  // Loaded into the script's process alone: the runner it starts writes to stderr as usual.
+  const broken = path.join(where.dir, 'broken-stderr.mjs');
+  writeFileSync(broken, "process.stderr.write = () => { throw new Error('stderr is closed'); };\n");
+  const run = runTests(where, ['quiet.test.mjs'], ['--import', pathToFileURL(broken).href]);
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  assert.deepEqual(readdirSync(where.temp), []);
+});
+
+test('this repository`s config records the script as a test run, and the script alone as the full suite', () => {
+  const { testing } = JSON.parse(readFileSync(path.join(ROOT, '.aidrian/config.json'), 'utf8'));
+  for (const command of ['node scripts/run-tests.mjs', 'node scripts/run-tests.mjs test/git.test.mjs']) {
+    assert.equal(testRuns(command, ROOT, testing).length, 1, command);
+  }
+  const invocation = (command) => readInvocation(lexPipeline(command).segments[0]);
+  assert.equal(isFullSuite(invocation('node scripts/run-tests.mjs'), testing), true);
+  assert.equal(isFullSuite(invocation('node scripts/run-tests.mjs test/git.test.mjs'), testing), false);
+});

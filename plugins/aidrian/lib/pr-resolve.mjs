@@ -23,7 +23,7 @@ import { readFileSync } from 'node:fs';
 
 import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
 import { isObject } from './fs.mjs';
-import { runGit } from './git.mjs';
+import { readPrefix } from './git.mjs';
 import { loadKnowledge } from './knowledge.mjs';
 import { ACCESS_DOC, personaDocs, previewPatterns } from './personas.mjs';
 import { checkoutRemotes } from './pr-checks.mjs';
@@ -157,7 +157,7 @@ function deploymentPreview({ host, repo, head }, patterns, forge) {
 // The project's folder from the top of its repository, with a trailing slash, '' at the top, or null when git fails.
 // Only git's line end is cut: a folder name may start with a space, as ` web/` does.
 export function projectFolder(root) {
-  const shown = runGit(['rev-parse', '--show-prefix'], root);
+  const shown = readPrefix(root);
   return shown.status === 0 ? shown.stdout.replace(/\r?\n$/u, '') : null;
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "aidrian-harness",
-  "version": "0.80.1",
+  "version": "0.80.3",
   "private": true,
   "description": "Shared AI harness for Claude Code and Codex: agents, skills, hooks, the aidrian command, and a project-folder contract",
   "engines": {
@@ -9,8 +9,8 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "bump": "node scripts/version.mjs",
-    "check": "node scripts/build.mjs --check && node plugins/aidrian/lib/cli.mjs check --project examples/consumer && node plugins/aidrian/lib/cli.mjs check --project . && npm run lint && node --test --import ./scripts/test-state.mjs && node scripts/version.mjs --check && node scripts/code-shape.mjs",
-    "test": "node --test --import ./scripts/test-state.mjs",
+    "check": "node scripts/build.mjs --check && node plugins/aidrian/lib/cli.mjs check --project examples/consumer && node plugins/aidrian/lib/cli.mjs check --project . && npm run lint && node scripts/run-tests.mjs && node scripts/version.mjs --check && node scripts/code-shape.mjs",
+    "test": "node scripts/run-tests.mjs",
     "lint": "node plugins/aidrian/lib/cli.mjs lint skills plugins/aidrian/skills && node plugins/aidrian/lib/cli.mjs lint skills .claude/skills && node plugins/aidrian/lib/cli.mjs lint agents plugins/aidrian/agents && node plugins/aidrian/lib/cli.mjs lint paths && node plugins/aidrian/lib/cli.mjs lint --project examples/consumer"
   },
   "devDependencies": {

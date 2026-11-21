@@ -33,6 +33,7 @@ import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdi
 import path from 'node:path';
 
 import { CONTINUE_ROUTES } from './config-schema.mjs';
+import { checkDeadline } from './deadline.mjs';
 import { checkoutHolding, foldCase, isObject, processUid, resolvedPath } from './fs.mjs';
 
 // A session id that may name a file.
@@ -476,6 +477,33 @@ export function noteStarted(store, session, started, { now = Date.now() } = {}) 
 // not removed it, as a project run walks the chain of an issue's sessions.
 export function readStarted(store, session, { now = Date.now(), window } = {}) {
   return readMarker(store, sessionFile('started', session), { now, field: 'at', shape: isStarted, ...(window ? { window } : {}) });
+}
+
+// A start record's file, `started-<the session that ran the gate>.json`, and the shortest id a host prints for a session
+// it started before it lists the full one, as a chain floor is filed under one (SHORT_FROM).
+const STARTED_FILE = new RegExp(String.raw`^started-(${SESSION_PART})\.json$`, 'u');
+const SHORT_ID = 4;
+
+// The folders of the background starts in the last day whose record names the new session `session`: by its full id,
+// or, for a record that names none, by the id the host printed, which `session` starts with, in the case the disk folds
+// to. Each start record's `cwd`, once; [] for a refused store or a session id of the wrong shape. The store is listed
+// here, from its own listing, as a gate's floor reads are, and each file read checks the guards' deadline
+// (deadline.mjs), so a store of many files cannot run a hook past its budget.
+export function startedFolders(store, session, { now = Date.now() } = {}) {
+  if (store.refused || typeof session !== 'string' || !SESSION_ID.test(session)) return [];
+  const own = foldCase(session);
+  const names = (record) => (record.session === null
+    ? foldCase(record.id) === own || (record.id.length >= SHORT_ID && own.startsWith(foldCase(record.id)))
+    : foldCase(record.session) === own);
+  const folders = new Set();
+  // Accepted residual: the store's one listing runs before the first deadline check; each file read after it checks.
+  for (const name of listStore(store)) {
+    checkDeadline();
+    const ran = STARTED_FILE.exec(name)?.[1];
+    const record = ran ? readStarted(store, ran, { now }) : null;
+    if (record && names(record)) folders.add(record.cwd);
+  }
+  return [...folders];
 }
 
 // readStarted's record with the modification time of its file: { record, mtimeMs }, or null. A project run moves its

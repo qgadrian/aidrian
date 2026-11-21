@@ -245,6 +245,10 @@ export function runFixture(t, { projectRun = { allow: true, unverifiedHosts: tru
   // This plugin, installed at user scope, as a session started with --setting-sources user loads it.
   mkdirSync(path.join(claudeConfig, 'plugins'), { recursive: true });
   writeFileSync(path.join(claudeConfig, 'plugins', 'installed_plugins.json'), JSON.stringify({ version: 2, plugins: { [OWN_PLUGIN]: [{ scope: 'user', installPath: PLUGIN }] } }));
+  // The Human trusted the state folder once, as they trust the runs folder: each start records it for its clone.
+  mkdirSync(state, { recursive: true });
+  const trusted = { hasTrustDialogAccepted: true };
+  writeFileSync(path.join(claudeConfig, '.claude.json'), JSON.stringify({ projects: { [state]: trusted, [realpathSync(state)]: trusted } }));
   const env = {
     ...process.env, CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: DRIVER, CLAUDE_CONFIG_DIR: claudeConfig, PATH: `${bin}${path.delimiter}${process.env.PATH}`,
     XDG_STATE_HOME: path.join(home, '.local/state'), GIT_EXEC_PATH: fixtureExecPath(), FIXTURE_REMOTE: bare,

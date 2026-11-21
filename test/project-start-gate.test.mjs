@@ -124,7 +124,7 @@ test('start refuses a run the base branch has not switched on, by its local ref 
 test('the team policy is the lowest of the local ref, the forge, and the ceilings', (t) => {
   const fx = runFixture(t, { projectRun: { allow: true, maxStarts: 900, issueHours: 24 }, forgeConfig: { version: 1, projectRun: { allow: true, maxStarts: 50, issueHours: 30 } } });
   const policy = teamPolicy(fx.project, { host: 'github.com', owner: 'acme', name: 'widgets' }, fx.forge);
-  assert.deepEqual(policy, { maxParallel: 1, maxStarts: 50, issueHours: 6, solo: false, unverifiedHosts: false, workflowSecretsAccepted: false, forgeProtectionAccepted: false, outsideSandbox: [], mcpServers: {}, registries: [] }, 'issueHours 30 fails its check on the forge and reads as the default 6, the lowest of 24, 6, and the ceiling');
+  assert.deepEqual(policy, { maxParallel: 1, maxStarts: 50, issueHours: 6, solo: false, unverifiedHosts: false, workflowSecretsAccepted: false, forgeProtectionAccepted: false, outsideSandbox: [], mcpServers: {}, registries: [], localBinding: false }, 'issueHours 30 fails its check on the forge and reads as the default 6, the lowest of 24, 6, and the ceiling');
   const ceiling = runFixture(t, { projectRun: { allow: true, maxStarts: 1000 }, forgeConfig: { version: 1, projectRun: { allow: true, maxStarts: 1000 } } });
   assert.equal(teamPolicy(ceiling.project, { host: 'github.com', owner: 'acme', name: 'widgets' }, ceiling.forge).maxStarts, 1000);
 });
@@ -513,6 +513,8 @@ test('the host\'s own user memory in a home folder above the state folder refuse
   const fx = runFixture(t);
   const user = path.join(fx.root, '.claude');
   renameSync(fx.env.CLAUDE_CONFIG_DIR, user);
+  // With CLAUDE_CONFIG_DIR unset, the host keeps its trust record in the home folder itself.
+  renameSync(path.join(user, '.claude.json'), path.join(fx.root, '.claude.json'));
   const env = { ...fx.env, HOME: fx.root };
   delete env.CLAUDE_CONFIG_DIR;
   writeFileSync(path.join(user, 'CLAUDE.md'), 'The user\'s own rules.\n');

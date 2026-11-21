@@ -1,6 +1,7 @@
 // The environment a reviewer, a plan command, or a test runs in: none of the variables that change what the code
 // they read does. scripts/test-state.mjs uses the same list for the test suite.
-// - IDENTITY_VARS of lib/hosts/: the running session's identity, as each host names it.
+// - IDENTITY_VARS of lib/hosts/: the running session's identity, whether a Human attends it, and its host process,
+//   as each host names them.
 // - AIDRIAN_ALLOW_*: the escape hatches that switch a rule off; a reviewer never runs with one.
 // - AIDRIAN_GUARD_BUDGET_MS: a lower time budget for the agent gate hook's guards, which refuses more.
 // - AIDRIAN_SHELL_PID: the shell whose function started the session (lib/terminal-replace.mjs), which lets a session end itself.

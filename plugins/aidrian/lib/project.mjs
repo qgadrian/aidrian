@@ -13,7 +13,7 @@ import { anchorReaders } from './attempt-clone.mjs';
 import { loadConfig, pluginRepository } from './config.mjs';
 import { localForgeTokenKeychain } from './config-local.mjs';
 import { insidePath, isDirectory, isFile, isObject, isWithin, joinedInside, readJson } from './fs.mjs';
-import { checkoutRoots, mainRoot, repositoryCheckouts, runGit } from './git.mjs';
+import { checkoutRoots, mainRoot, readOriginUrl, readPrefix, readRemoteUrls, repositoryCheckouts, runGit } from './git.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { readUnattendedMark } from './unattended-mark.mjs';
 
@@ -658,9 +658,9 @@ export function repoRoot(project, options) {
 // path from that root to the hash, so two projects in one repository keep apart; a project at the root keeps its id.
 // `read` gives the options of each git read, as for stateDir.
 export function projectId(project, read = defaultRead) {
-  const { status, stdout } = runGit(['config', '--get', 'remote.origin.url'], project.root, read());
+  const { status, stdout } = readOriginUrl(project.root, read());
   const repository = (status === 0 && normalizeRemote(stdout)) || realPath(repoRoot(project, read()));
-  const prefix = runGit(['rev-parse', '--show-prefix'], project.root, read());
+  const prefix = readPrefix(project.root, read());
   const below = prefix.status === 0 ? prefix.stdout.replace(/\/?\n$/u, '') : '';
   return repositoryId(repository, below);
 }
@@ -673,9 +673,9 @@ export function projectId(project, read = defaultRead) {
 export function remoteStateDirs(project, { config = loadConfig(project).config, env = process.env, read = defaultRead } = {}) {
   if (config.state.dir) return [];
   const own = stateDir(project, { config, env, read });
-  const urls = runGit(['config', '--get-regexp', '^remote\\..*\\.url$'], project.root, read());
+  const urls = readRemoteUrls(project.root, read());
   if (urls.status !== 0) return [];
-  const prefix = runGit(['rev-parse', '--show-prefix'], project.root, read());
+  const prefix = readPrefix(project.root, read());
   const below = prefix.status === 0 ? prefix.stdout.replace(/\/?\n$/u, '') : '';
   const dirs = urls.stdout.split('\n').map((line) => line.slice(line.indexOf(' ') + 1).trim()).filter(Boolean)
     .map((url) => path.join(stateRoot(env), 'projects', repositoryId(normalizeRemote(url), below)));

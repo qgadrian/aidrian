@@ -3,7 +3,8 @@
 // attended session before `aidrian project init`, so the Human sees each blocker before walking away. It reads and
 // starts nothing. Each check is the start gate's own (lib/project-run-gate.mjs, lib/project-start.mjs): the repository
 // origin names, the state folder and any other active run, a host instruction file above the runs folder, the team's projectRun through the forge, the machine's
-// switch, the host's start (confined, verified or allowed through projectRun.unverifiedHosts, hooks trusted), and the
+// switch, the host's start (confined, verified or allowed through projectRun.unverifiedHosts, hooks trusted), the host's
+// trust in the runs folder, and the
 // host's access check (push rights, an HTTPS origin the sandbox can push to, and nothing that would run outside the
 // sandbox: other enabled plugins, user hooks, a status line, a credential helper it cannot reach; and, on a host that
 // hands its sessions the forge token, a token to hand, with a note naming its source), and whether the host
@@ -44,6 +45,21 @@ const NO_REVIEWER = new Set([null, undefined, '', 'none']);
 // What a `note` says in place of a branch-protection or release-tags blocker the team accepts through
 // projectRun.forgeProtectionAccepted.
 const ACCEPTED_PROTECTION = 'the team accepts no forge protection (projectRun.forgeProtectionAccepted): a script an issue session runs can push to the default branch or a tag with the token, and only the hooks hold it';
+// The risk of projectRun.localBinding where the host names none of its own.
+const LOCAL_BINDING_RISK = 'a service a session starts may listen on this machine\'s network interfaces, where other local processes, and other machines the firewall lets through, reach it, and the session may reach the services listening on this machine';
+
+// The `note` preflight prints when the team lets issue sessions bind local ports through projectRun.localBinding: the
+// risk as the host `cap` says it is on `platform` (capabilities.projectStart.localBindingRisk), and the remedy.
+export function localBindingNote(cap, platform) {
+  let risk = null;
+  try {
+    risk = cap?.localBindingRisk?.({ platform });
+  } catch {
+    risk = null;
+  }
+  const said = typeof risk === 'string' && risk ? risk : LOCAL_BINDING_RISK;
+  return `note local-binding: the team lets issue sessions bind local ports (projectRun.localBinding): ${said}; bind each test server to 127.0.0.1, never 0.0.0.0`;
+}
 
 // Runs every check for `project`, whose loaded config is `config`, with `run` the run these checks are for, which the
 // active-run check leaves out, and returns { exitCode, out, err }: a line `ok NAME`,
@@ -78,8 +94,15 @@ export function preflightCommand({ project, config, run = null, env = process.en
   else if (cap.confined !== true) host = 'this host\'s project start is not confined to a fresh clone under its own sandbox';
   else host = hostStartProblem(cap, policy, env);
   check('host', host);
+  // A start in a folder the host has not trusted starts nothing, so a host that can read its trust says so for the runs folder.
+  if (typeof cap?.trust === 'function' && !place.problem) {
+    const trust = cap.trust({ folder: runsFolder(place.state), env, home });
+    if (trust?.note) lines.push(`note trust: ${trust.note}`);
+    else check('trust', trust?.problem ?? null);
+  }
   if (cap && repository && !place.problem) {
-    lines.push(...accessLines({ cap, facade, repository, env, home, main, state: place.state, platform, allowed: policy.outsideSandbox, keychain: project.localForgeTokenKeychain, exec }));
+    lines.push(...accessLines({ cap, facade, repository, env, home, main, state: place.state, platform, allowed: policy.outsideSandbox, localBinding: policy.localBinding === true, keychain: project.localForgeTokenKeychain, exec }));
+    if (policy.localBinding === true) lines.push(localBindingNote(cap, platform));
   } else {
     check('access', 'it needs the repository, the state folder, and a host that starts project sessions, which the lines above name');
   }
@@ -120,10 +143,10 @@ export function preflightCommand({ project, config, run = null, env = process.en
 // The access check, the start gate's own (project-start.mjs accessProblem): `ok access` or its blocker, then, on a host
 // that hands its sessions the forge token, a `note token:` line naming the source the token came from, and one for each
 // note on it, such as a token that reaches more than this repository. Never the token itself.
-function accessLines({ cap, facade, repository, env, home, main, state, platform, allowed, keychain, exec }) {
+function accessLines({ cap, facade, repository, env, home, main, state, platform, allowed, localBinding, keychain, exec }) {
   let access;
   try {
-    access = accessProblem({ cap, forge: facade, repository, env, home, guarded: guardedFolders({ main, state, env, home }), main, platform, allowed, keychain, ...(exec ? { exec } : {}) });
+    access = accessProblem({ cap, forge: facade, repository, env, home, guarded: guardedFolders({ main, state, env, home }), main, platform, allowed, localBinding, keychain, ...(exec ? { exec } : {}) });
   } catch (error) {
     access = { halt: `the access check failed (${String(error?.message ?? error).split('\n')[0]})` };
   }

@@ -114,7 +114,9 @@ export async function callHook(handle, payload, { cwd = process.cwd(), env = pro
   return { status, stderr: capture.stderr, stdout: capture.stdout };
 }
 
-function replaceEnv(env) {
+// Makes process.env hold exactly `env`, in place, so code that kept a reference to process.env sees the change.
+// Only for tests, as callHook and test/cli-call.mjs swap a call's environment in and back out.
+export function replaceEnv(env) {
   // A value of undefined leaves the variable out, as spawnSync does.
   const next = Object.fromEntries(Object.entries(env).filter(([, value]) => value !== undefined));
   for (const name of Object.keys(process.env)) if (!Object.hasOwn(next, name)) delete process.env[name];

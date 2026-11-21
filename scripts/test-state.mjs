@@ -16,9 +16,17 @@
 // the same result in a plain shell, a Claude session, or a git hook. A test that needs one sets it itself.
 // The list lives in plugins/aidrian/lib/review/env.mjs, which local reviewers run under too. With GIT_DIR set, as a git
 // hook sets it, the tests' own `git init` calls would act on the developer's repository.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+//
+// Timing: with AIDRIAN_TEST_LOG set, as scripts/run-tests.mjs sets it, and a test file as the main script, the setup
+// counts the child processes the file starts, git apart from the others, and appends one JSON line
+// { file, ms, git, other } to that file when the process exits, if it can. It removes the variable, so nothing a test
+// starts inherits it; without it, node:child_process stays as it is.
+import childProcess from 'node:child_process';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
 import { DETECT_VARS } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { isolate } from '../plugins/aidrian/lib/review/env.mjs';
@@ -52,4 +60,51 @@ if (!process.env.AIDRIAN_TEST_STATE) {
   process.env.GIT_CONFIG_GLOBAL = gitconfig;
   process.env.GIT_CONFIG_NOSYSTEM = '1';
   process.on('exit', () => rmSync(state, { recursive: true, force: true }));
+}
+
+const testLog = process.env.AIDRIAN_TEST_LOG;
+delete process.env.AIDRIAN_TEST_LOG;
+if (testLog && process.argv[1]?.endsWith('.test.mjs')) countChildProcesses(testLog, process.argv[1]);
+
+// The program a node:child_process call starts: its file, the first word of an exec command, and node for fork.
+function programOf(name, first) {
+  if (name === 'fork') return process.execPath;
+  const file = String(first ?? '');
+  return name === 'exec' || name === 'execSync' ? file.trim().split(/\s+/u)[0] : file;
+}
+
+// Wraps every function of node:child_process that starts a process, and its promisified form where it has one, and
+// writes the counts when the process exits. exec calls execFile through the module, so a call made inside another
+// wrapped call is not counted again.
+function countChildProcesses(log, main) {
+  const counts = { git: 0, other: 0 };
+  let depth = 0;
+  const counted = (name, real) => function (...args) {
+    const kind = path.basename(programOf(name, args[0])) === 'git' ? 'git' : 'other';
+    if (depth === 0) counts[kind] += 1;
+    depth += 1;
+    try {
+      return real.apply(this, args);
+    } finally {
+      depth -= 1;
+    }
+  };
+  for (const name of ['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork']) {
+    const real = childProcess[name];
+    const wrapper = counted(name, real);
+    if (real[promisify.custom]) wrapper[promisify.custom] = counted(name, real[promisify.custom]);
+    childProcess[name] = wrapper;
+  }
+  syncBuiltinESMExports();
+  // The folder the run started in: a test may leave the process in a folder it then removes.
+  const start = process.cwd();
+  // Best effort: a log that cannot be written, as when its folder is gone, loses the row, never the file's exit status.
+  process.on('exit', () => {
+    try {
+      const row = { file: path.relative(start, main), ms: Math.round(process.uptime() * 1000), ...counts };
+      appendFileSync(log, `${JSON.stringify(row)}\n`);
+    } catch {
+      // The table leaves this file out.
+    }
+  });
 }

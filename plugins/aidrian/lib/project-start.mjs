@@ -74,18 +74,19 @@ export function hostStartProblem(cap, policy, env) {
 
 // What stands between a session started now and pushing its branch: { halt } when the forge, asked through gh, does not
 // let this user push to the pinned `repository`, or the host's `access({ env, home, guarded, pushUrl, platform,
-// allowed, helpers })` says its session could not push, reach the forge, or run as confined as it is meant to, or would
+// allowed, helpers, localBinding })` says its session could not push, reach the forge, or run as confined as it is meant to, or would
 // be let write one of `guarded`; { refuse } when the forge cannot be asked now; null, or { pushUrl } when the host was
 // asked. `main` is the main checkout, whose origin URL the attempt's clone takes (prepareAttempt), so it is the URL the
 // session pushes to (`pushUrl`, which confinedRoom holds the clone to); `helpers` are the git credential helpers its
-// config names; `platform` the operating system, and `allowed` the base branch's projectRun.outsideSandbox.
+// config names; `platform` the operating system, `allowed` the base branch's projectRun.outsideSandbox, and
+// `localBinding` its projectRun.localBinding, which lets the host's settings allow local binding too.
 // On a host that hands its session the forge token (`forgeTokenEnv`), a start halts too when no source gives a token
 // (lib/project-token.mjs: the keychain entry `keychain`, the machine's default entry, or the forge CLI's login), or when
 // the forge, asked with that very token, does not let it push to the repository; { pushUrl, token } then names its
 // source `id`, its `source` label, and `notes`, never the token, which the session's SessionStart hook reads again from
 // that one source.
-export function accessProblem({ cap, forge, repository, env, home, guarded, main, platform = process.platform, allowed = [], keychain = null, exec }) {
-  const pushed = pushAccess({ cap, forge, repository, env, home, guarded, main, platform, allowed });
+export function accessProblem({ cap, forge, repository, env, home, guarded, main, platform = process.platform, allowed = [], localBinding = false, keychain = null, exec }) {
+  const pushed = pushAccess({ cap, forge, repository, env, home, guarded, main, platform, allowed, localBinding });
   if (!pushed?.pushUrl || cap.forgeTokenEnv !== true) return pushed;
   const read = forgeToken({ forge, repository, keychain, platform, env, ...(exec ? { exec } : {}) });
   if (read.problem) return { halt: read.problem, token: { notes: read.notes } };
@@ -107,7 +108,7 @@ function tokenPushProblem({ forge, repository, read }) {
   return `the forge token from ${read.source} may not push to ${named}, as the forge's push probe with it answers; give that source a token that may write the repository's contents`;
 }
 
-function pushAccess({ cap, forge, repository, env, home, guarded, main, platform, allowed }) {
+function pushAccess({ cap, forge, repository, env, home, guarded, main, platform, allowed, localBinding }) {
   const named = `${repository.host}/${repository.owner}/${repository.name}`;
   let view;
   try {
@@ -124,7 +125,7 @@ function pushAccess({ cap, forge, repository, env, home, guarded, main, platform
   // An access check that throws halts: a check the gate cannot run is no check passed.
   let host;
   try {
-    host = cap.access({ env, home, guarded, pushUrl, platform, allowed, helpers });
+    host = cap.access({ env, home, guarded, pushUrl, platform, allowed, helpers, localBinding: localBinding === true });
   } catch (error) {
     host = `the host's access check failed (${String(error?.message ?? error).split('\n')[0]})`;
   }

@@ -12,7 +12,8 @@ import { pushPermission } from './claude-code-push.mjs';
 import { attended, END_SIGNAL, hasClient, hostProcess, isWrappedHost, PROGRAM } from './claude-code-terminal.mjs';
 import modelPrices from './claude-code-prices.mjs';
 import { transcriptLimit } from './claude-code-limit.mjs';
-import { accessProblem, cloneProblem, confineDomains, confineReads, limitContinueProblem, nestedProtected, PLACEHOLDERS, PROTECTED_PATHS, sessionNote, writeEnvFile } from './claude-code-sandbox.mjs';
+import { accessProblem, cloneProblem, confineDomains, confineReads, limitContinueProblem, localBindingRisk, loopbackReach, nestedProtected, PLACEHOLDERS, PROTECTED_PATHS, sessionNote, writeEnvFile } from './claude-code-sandbox.mjs';
+import { trustProblem } from './claude-code-trust.mjs';
 import { responseObjects } from './response.mjs';
 
 const MODEL_CHOICES = { model: ['sonnet', 'opus', 'haiku', 'fable'], effort: ['low', 'medium', 'high', 'xhigh', 'max'] };
@@ -150,7 +151,10 @@ export default {
   modelChoices: MODEL_CHOICES,
   // Its models' prices, for the cost of the transcripts it writes (lib/model-prices.mjs).
   modelPrices,
-  identityVars: ['CLAUDE_CODE_AGENT', 'CLAUDE_CODE_SESSION_ID'],
+  // CLAUDE_CODE_SESSION_ATTENDED and CLAUDE_PID say whether a Human attends the session and which process hosts it
+  // (claude-code-terminal.mjs): a reviewer or a test that inherited CLAUDE_CODE_SESSION_ATTENDED=1 would take itself
+  // for that attended session.
+  identityVars: ['CLAUDE_CODE_AGENT', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_SESSION_ATTENDED', 'CLAUDE_PID'],
   detectVars: ['CLAUDECODE', ...MARKERS],
   detect: ({ env }) => env.CLAUDECODE === '1' || MARKERS.some((name) => Boolean(env[name])),
   sessionId: (env) => env.CLAUDE_CODE_SESSION_ID || null,
@@ -334,10 +338,12 @@ export default {
       verified: 'unverified',
       evidence: 'fixtures and the host docs; no live run',
       confined: true,
-      access: ({ env, home, guarded, pushUrl, platform, allowed, helpers }) => accessProblem({ env, home, guarded, pushUrl, platform, allowed, helpers }),
+      access: ({ env, home, guarded, pushUrl, platform, allowed, helpers, localBinding }) => accessProblem({ env, home, guarded, pushUrl, platform, allowed, helpers, localBinding }),
       cloneProblem: ({ work, allowed }) => cloneProblem({ work, allowed }),
       // Whether a driver on this host would carry on by itself after a usage limit (aidrian project preflight).
       limitContinue: ({ env, home, project }) => limitContinueProblem({ env, home, project }),
+      // Whether the host trusts the runs folder, where every attempt's clone lies (aidrian project preflight).
+      trust: ({ folder, env, home }) => trustProblem({ folder, env, home }),
       placeholders: PLACEHOLDERS,
       sessionNote,
       // The package managers' caches reach the session's sandboxed commands alone: the SessionStart hook appends them to
@@ -353,8 +359,12 @@ export default {
       confineReads: ({ env, home }) => confineReads({ env, home }),
       // The allowedDomains the user's and the organization's settings add, which the proof's unlisted host stays outside.
       confineDomains: ({ env, home, platform }) => confineDomains({ env, home, platform }),
-      start: ({ session, cwd, name, prompt, env, hold, identify, beacon, confined, git, grants, domains, main, mainGit, tokens, guarded, mcp, home, platform, run, wait, claimVars }) => startProject({
-        session, cwd, name, prompt, env, hold, identify, beacon, confined, sandbox: { git, grants, domains, main, mainGit, tokens, guarded }, mcp, home, platform, run, wait, effort: effort(env), efforts: MODEL_CHOICES.effort, claimVars,
+      // Whether the session's binding reaches this machine's loopback under projectRun.localBinding, so the proof runs no
+      // localhost listener: macOS alone; Linux keeps the session in a network namespace of its own.
+      confineLoopback: ({ platform, localBinding }) => loopbackReach({ platform, localBinding }),
+      localBindingRisk,
+      start: ({ session, cwd, name, prompt, env, hold, identify, beacon, confined, git, grants, domains, main, mainGit, tokens, guarded, mcp, localBinding, home, platform, run, wait, runs, claimVars }) => startProject({
+        session, cwd, runs, name, prompt, env, hold, identify, beacon, confined, sandbox: { git, grants, domains, main, mainGit, tokens, guarded, localBinding }, mcp, home, platform, run, wait, effort: effort(env), efforts: MODEL_CHOICES.effort, claimVars,
       }),
       stop: ({ id, env, run }) => stopBackground({ id, env, run }),
       ended: ({ id, session, env, run }) => sessionFinished({ id, session, env, run }),

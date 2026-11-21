@@ -4,8 +4,9 @@
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import childProcess, { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -785,6 +786,28 @@ function fakeGit(t, match, act) {
   return `${bin}:${process.env.PATH}`;
 }
 
+// The git calls `act()` makes in this process that fakeGit's `match`, a case pattern such as `*" show "*`, picks out,
+// each recorded before git starts, so a call the guard stopped before its git ran a command still shows. The fake git
+// matches its arguments padded with a space, `" $* "`, and so does this.
+function matchedGitCalls(match, act) {
+  const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  const pattern = new RegExp(`^${match.replace(/"/gu, '').split('*').map(escape).join('.*')}$`, 'su');
+  const real = childProcess.spawnSync;
+  const calls = [];
+  childProcess.spawnSync = function (file, args, ...rest) {
+    if (file === 'git' && Array.isArray(args) && pattern.test(` ${args.join(' ')} `)) calls.push(args);
+    return real.call(this, file, args, ...rest);
+  };
+  syncBuiltinESMExports();
+  try {
+    act();
+  } finally {
+    childProcess.spawnSync = real;
+    syncBuiltinESMExports();
+  }
+  return calls;
+}
+
 // A `git` that logs each call first on PATH, each as `line` prints it: by default `<working folder> <args>`. `stop()`
 // puts PATH back; `calls()` reads the log.
 function gitLog(t, line = '"$(pwd -P)" "$*"') {
@@ -1020,28 +1043,31 @@ for (const [name, match, make] of [
   ['the checkout list, with state.dir unset', '*" worktree list "*', (t) => stateUnset(t).r],
 ]) {
   // The guard runs in the test's process with its clock stopped at its start, so its 4 s budget never runs out before
-  // the stalled read, however slow the machine: the mark shows the read began. The stalled git writes `finished` only
-  // after its 30 s sleep, and the sleep keeps no pipe to the guard, so a read the guard stopped leaves no `finished`.
+  // the stalled read, however slow the machine: the call recorded in this process before git starts shows the guard
+  // made the read, even when git is stopped before it runs a command. The stalled git writes `finished` only after its
+  // 30 s sleep, and the sleep keeps no pipe to the guard, so a read the guard stopped leaves no `finished`.
   // A read stopped by git's own timeout holds back every later call in the process (lib/git.mjs runGit), so the test
   // clears that before and after, as hookCall does.
   test(`a git that stalls on ${name} is stopped, and the merge goes on`, (t) => {
     const r = make(t);
     rmSync(path.join(r.dir, HEAD_RECORD), { force: true });
     tracking(r);
-    const marks = folderFor(t);
-    const [mark, finished] = [path.join(marks, 'stalled'), path.join(marks, 'finished')];
+    const finished = path.join(folderFor(t), 'finished');
     const before = process.env.PATH;
-    process.env.PATH = fakeGit(t, match, `: > "${mark}"; sleep 30 </dev/null >/dev/null 2>&1; : > "${finished}"`);
+    process.env.PATH = fakeGit(t, match, `sleep 30 </dev/null >/dev/null 2>&1; : > "${finished}"`);
     const startedAt = Date.now();
     let reason;
+    let stalled = [];
     resetGitStall();
     try {
-      reason = check(`gh pr merge 7 --match-head-commit ${r.head}`, { cwd: r.dir, env: {}, viewPr: unused, startedAt, now: () => startedAt });
+      stalled = matchedGitCalls(match, () => {
+        reason = check(`gh pr merge 7 --match-head-commit ${r.head}`, { cwd: r.dir, env: {}, viewPr: unused, startedAt, now: () => startedAt });
+      });
     } finally {
       process.env.PATH = before;
       resetGitStall();
     }
-    assert.ok(existsSync(mark), 'the git stalled');
+    assert.ok(stalled.length > 0, 'the guard made the read the git stalls on');
     assert.equal(existsSync(finished), false, 'the guard stopped the stalled git');
     assert.equal(reason, null);
   });
@@ -1300,7 +1326,6 @@ test('with no base from the forge, attest and signoff read no comment, and the r
 // The review bot, asked when a round opens: the request goes out, and no answer has arrived yet.
 const unanswered = async () => ({ status: 'timed_out', requested: true, signal: null });
 const stepFrom = (checkout, r, codex = () => ({ ok: true })) => reviewStep({ pr: '7' }, { project: checkout.project, config: loadConfig(checkout.project).config, forge: r.forge, codex, exec: clean, awaitBot: unanswered });
-const OUTSIDE_HEAD = { version: 1, state: { dir: '../head-state' } };
 const pinned = (engine, state = '../state') => ({ version: 1, state: { dir: state }, review: { engine } });
 
 test('on a pull request whose head differs from its base, a local reviewer walks head, base, head and meets one limit that stops the retries', async (t) => {

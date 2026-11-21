@@ -89,25 +89,32 @@ test('60 Bash(prefix) patterns read a 120 KB command once, so the gates answer i
   assert.ok(sixty < one * 10, `60 patterns took ${Math.round(sixty)} ms, one took ${Math.round(one)} ms`);
 });
 
-// In the test's process, with performance.now held still, so the guards' 2.5 second budget cannot run out on a loaded
-// machine and the limit is judged by the count alone; "in time" is the refused call's processor time, which a busy
-// machine does not stretch as it stretches the wall clock.
-test(`a subagent's Bash call that writes more than ${WRITE_TARGETS} targets is refused in time; the main session's runs`, async (t) => {
+// In the test's process. "In time" is a call's processor time, which a busy machine does not stretch as it stretches the
+// wall clock. The main session's 20,000-target call runs first, on the real clock, so the guards' 2.5 second budget
+// bounds it; the rest run with performance.now held still, so that budget cannot run out on a loaded machine and the
+// limit is judged by the count alone.
+test(`a subagent's Bash call that writes more than ${WRITE_TARGETS} targets is refused in time; the main session's runs in time`, async (t) => {
   const dir = project(t);
-  const held = performance.now();
-  t.mock.method(performance, 'now', () => held);
   const call = (input) => hookCall(HOOK, { input: JSON.stringify(input), cwd: input.cwd });
   const writes = (count) => Array.from({ length: count }, (_, i) => `: > a${i}`).join('; ');
-  const before = process.cpuUsage();
-  const refused = await call(subagent(dir, 'Bash', writes(20000)));
-  const { user, system } = process.cpuUsage(before);
-  const took = (user + system) / 1000;
-  assert.ok(took < WELL_INSIDE, `subagent: took ${Math.round(took)} ms of processor time`);
+  const timed = async (input) => {
+    const before = process.cpuUsage();
+    const result = await call(input);
+    const { user, system } = process.cpuUsage(before);
+    return { ...result, took: (user + system) / 1000 };
+  };
+  const ran = await timed(main(subagent(dir, 'Bash', writes(20000))));
+  assert.equal(ran.status, 0, `the main session may: ${ran.stderr}`);
+  assert.ok(ran.took < WELL_INSIDE, `main session: took ${Math.round(ran.took)} ms of processor time`);
+  const held = performance.now();
+  t.mock.method(performance, 'now', () => held);
+  const refused = await timed(subagent(dir, 'Bash', writes(20000)));
+  assert.ok(refused.took < WELL_INSIDE, `subagent: took ${Math.round(refused.took)} ms of processor time`);
   assert.equal(refused.status, 2);
   assert.match(refused.stderr, new RegExp(`its command writes 20000 targets, counting each folder a path may be in, and the guards read at most ${WRITE_TARGETS} in one call`, 'u'));
   assert.equal((await call(subagent(dir, 'Bash', writes(WRITE_TARGETS)))).status, 0, 'as many as the guards read');
-  // One past the limit: refused for a subagent, run for the main session. With the clock held, the guards read every
-  // target the main session's call writes, which for 20,000 takes many seconds.
+  // One past the limit: refused for a subagent, run for the main session. With the clock held the guards read every
+  // target a main session's call writes, so the 20,000-target call above runs before the clock is held.
   assert.equal((await call(subagent(dir, 'Bash', writes(WRITE_TARGETS + 1)))).status, 2, 'one past the limit');
   assert.equal((await call(main(subagent(dir, 'Bash', writes(WRITE_TARGETS + 1))))).status, 0, 'the main session may');
 });

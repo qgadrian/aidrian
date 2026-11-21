@@ -42,7 +42,8 @@ test('Check (Node N) waits for every other job, and its step passes only when ev
     assert.ok(variable, `the step reads needs.${id}.result through env`);
     return variable;
   });
-  // As GitHub runs a run: body with shell bash.
+  // The step names shell: bash, so GitHub runs its body as below; with no shell it runs bash -e, without pipefail.
+  assert.equal(step.shell, 'bash', 'the step runs with shell: bash');
   for (const results of combinations(variables)) {
     const run = spawnSync('bash', ['--noprofile', '--norc', '-eo', 'pipefail', '-c', step.run], { env: { PATH: process.env.PATH, ...results }, encoding: 'utf8' });
     const passes = Object.values(results).every((result) => result === 'success');

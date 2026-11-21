@@ -95,6 +95,7 @@ jobs:
     steps:
       # A result covers every Node version of that job, so a failure anywhere fails all three.
       - name: Require every test shard and static check to pass
+        shell: bash
         env:
           TESTS: ${{ needs.test.result }}
           STATIC: ${{ needs.static.result }}

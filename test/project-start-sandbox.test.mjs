@@ -750,6 +750,9 @@ test('the user\'s sandbox settings pass only with keys that narrow it, and netwo
   assert.match(ask({}, { pushUrl: null }), /git names no URL origin pushes to/u);
   assert.equal(ask({}, { platform: 'darwin' }), null, 'HTTPS on macOS');
   assert.match(ask({}, { helpers: ['store'] }), /git's credential helper `store` keeps the push token in ~\/\.git-credentials.*`gh auth setup-git`/u);
+  // gh's setup leaves a `store` entry in place, and the check reads every scope: the fix names the file that holds it.
+  assert.match(ask({}, { helpers: ['store'] }), /`gh auth setup-git`, which leaves the `store` helper in place, and remove that one from the file that defines it, which `git config --show-origin --show-scope --get-regexp '\^credential\\\.\.\*helper\$'` names$/u);
+  assert.match(ask({}, { pushUrl: 'git@github.com:acme/widgets.git' }), /remove any url\.<base>\.insteadOf rule that rewrites it to SSH from the file that defines it, which `git config --show-origin --show-scope --get-regexp 'insteadof\$'` names$/u);
   assert.match(ask({}, { helpers: ['store --file ~/.creds'] }), /credential helper `store`/u);
   assert.equal(ask({}, { helpers: ['!gh auth git-credential', 'osxkeychain'] }), null, 'the forge CLI\'s helper and the keychain');
   assert.match(ask({}, { env: { ...fx.env, PATH: '/nowhere' } }), /bwrap is not on PATH/u);
@@ -778,7 +781,7 @@ test('an HTTPS origin that the user\'s git config rewrites to SSH with url.<base
   const global = testGlobalConfig(t);
   writeFileSync(global, '[url "git@github.com:"]\n\tinsteadOf = https://github.com/\n');
   const fx = runFixture(t);
-  halted(fx, fx.cmd(['start', 'launch', 'ENG-1']), /goes over SSH \(git@github\.com:acme\/widgets\.git\).*remove any url\.<base>\.insteadOf rule in the git config that rewrites it to SSH/u);
+  halted(fx, fx.cmd(['start', 'launch', 'ENG-1']), /goes over SSH \(git@github\.com:acme\/widgets\.git\).*remove any url\.<base>\.insteadOf rule that rewrites it to SSH from the file that defines it/u);
 });
 
 test('a clone that would push to another URL than the access check read, through the user\'s pushInsteadOf, halts the start', (t) => {

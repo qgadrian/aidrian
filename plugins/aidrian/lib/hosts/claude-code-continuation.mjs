@@ -8,9 +8,9 @@
 // The row grants nothing by itself: it says the old session runs no more, so an attended `aidrian project resume` may
 // take custody, as for a driver the host lists as ended.
 // The transcript is `<config folder>/projects/<start folder, each character but a letter or digit as ->/<session>.jsonl`,
-// read in the folder of `cwd` first, else in any project folder there, as lib/hosts/claude-code-limit.mjs reads it.
+// When several project folders hold one, the last written is read: the host writes the row last in the live copy.
 
-import { readdirSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { tailObjects } from '../fs.mjs';
@@ -20,36 +20,42 @@ import { configFolder } from './claude-code-sandbox.mjs';
 const TAIL = 64 * 1024;
 const ID = /^[0-9A-Za-z][\w-]{3,127}$/u;
 
-// The transcript files of `session`, the one of `cwd`'s folder first.
-function transcriptFiles({ session, cwd, env, home }) {
+// The transcript of `session` last written, in any project folder of the host's config folder, or null.
+function transcriptFile({ session, env, home }) {
   const projects = path.join(configFolder(env, home), 'projects');
-  const name = `${session}.jsonl`;
-  const first = typeof cwd === 'string' ? [path.join(projects, cwd.replace(/[^A-Za-z0-9]/gu, '-'), name)] : [];
   let folders = [];
   try {
     folders = readdirSync(projects);
   } catch {
-    // No projects folder: no transcript.
+    return null;
   }
-  return [...new Set([...first, ...folders.map((folder) => path.join(projects, folder, name))])];
+  let newest = null;
+  for (const folder of folders) {
+    const file = path.join(projects, folder, `${session}.jsonl`);
+    let mtime;
+    try {
+      mtime = statSync(file).mtimeMs;
+    } catch {
+      continue;
+    }
+    if (!newest || mtime > newest.mtime) newest = { file, mtime };
+  }
+  return newest?.file ?? null;
 }
 
-// The session `session` was continued in, as { id, at }, `at` the row's time in milliseconds, or null when the first
-// transcript of it that can be read records none. `cwd` is the folder it likely started in; `env` and `home` find the
-// host's config folder.
-export function continuedIn({ session, cwd, env = process.env, home } = {}) {
+// The session `session` was continued in, as { id, at }, `at` the row's time in milliseconds, or null when its
+// transcript records none, or cannot be read. `env` and `home` find the host's config folder.
+export function continuedIn({ session, env = process.env, home } = {}) {
   if (typeof session !== 'string' || !ID.test(session)) return null;
-  for (const file of transcriptFiles({ session, cwd, env, home })) {
-    const rows = tailObjects(file, TAIL);
-    if (rows === null) continue;
-    const index = rows.findLastIndex((row) => row.type === 'continued-in' && row.sessionId === session);
-    if (index < 0) return null;
-    const row = rows[index];
-    const went = rows.slice(index + 1).some((later) => (later.type === 'user' || later.type === 'assistant') && later.sessionId === session);
-    const at = typeof row.timestamp === 'string' ? Date.parse(row.timestamp) : Number.NaN;
-    const id = row.continuedInSessionId;
-    if (went || !Number.isFinite(at) || typeof id !== 'string' || !ID.test(id) || id === session) return null;
-    return { id, at };
-  }
-  return null;
+  const file = transcriptFile({ session, env, home });
+  const rows = file ? tailObjects(file, TAIL) : null;
+  if (rows === null) return null;
+  const index = rows.findLastIndex((row) => row.type === 'continued-in' && row.sessionId === session);
+  if (index < 0) return null;
+  const row = rows[index];
+  const went = rows.slice(index + 1).some((later) => (later.type === 'user' || later.type === 'assistant') && later.sessionId === session);
+  const at = typeof row.timestamp === 'string' ? Date.parse(row.timestamp) : Number.NaN;
+  const id = row.continuedInSessionId;
+  if (went || !Number.isFinite(at) || typeof id !== 'string' || !ID.test(id) || id === session) return null;
+  return { id, at };
 }

@@ -93,15 +93,15 @@ export const isMember = (member, session) => isSession(session)
   && (member.session === session || member.id === session || (member.session === null && typeof member.id === 'string' && session.startsWith(member.id)));
 
 // Where the host continued the driver of the run `found` under a new id, as { id, at }, when it recorded that after the
-// row that made the driver (`capabilities.continuedIn`, read in the run's main checkout's folder first), else null. It
-// grants nothing: it strands the run, so an attended `aidrian project resume` may take custody (project-run-gate.mjs).
+// row that made the driver (`capabilities.continuedIn`), else null. It grants nothing: it strands the run, so the
+// session it names, when a person attends it, may take custody with `aidrian project resume` (project-run-gate.mjs).
 export function hostContinued(found, { env = process.env, home } = {}) {
   const read = detectHost({ env }).capabilities?.continuedIn;
   if (typeof read !== 'function') return null;
   const driver = driverOf(found);
   let moved = null;
   try {
-    moved = read({ session: driver.session, cwd: found.init.main, env, ...(home ? { home } : {}) });
+    moved = read({ session: driver.session, env, ...(home ? { home } : {}) });
   } catch {
     return null;
   }

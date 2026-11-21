@@ -566,8 +566,10 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   Claude Code, a `continued-in` row last in the old session's transcript, dated after the ledger row that made the
   driver, with no turn of the old session after it) grants nothing. It strands the run, as a driver the host lists as
   ended does, so the driver's commands are refused to the new id with the way out named: `aidrian project resume <run>`
-  from a session a person attends that never drove the run, such as the continued one. That moves custody with a
-  `driver` row and files the driver mark, and the session drives on.
+  from that continued session, when a person attends it; any other session is refused. Under the ledger's lock it
+  checks again that the run is live and the host still records the continuation, files the driver mark, and moves
+  custody with a `driver` row, and the session drives on. When several project folders hold the old transcript, the
+  one last written is read.
 - **`maxChain` binds the driver's chain alone.** The driver's hops count as any session's, up to the base branch's
   `session.handoff.maxChain`, at most 5 unless it is `"unlimited"`. At the limit the gate prints `continue: none`,
   and the driver keeps driving in its own session, which the host compacts; it does the same on `continue: clear`,

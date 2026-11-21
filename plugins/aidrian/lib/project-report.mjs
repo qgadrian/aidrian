@@ -189,7 +189,7 @@ function openForDriver({ project, config, run, env, home, base }) {
   if (place.problem) return { problem: place.problem };
   const found = readRun(place.state, run);
   if (found.problem) return { problem: found.problem };
-  const held = custody({ found, store: runStore(project, config, place.state), session });
+  const held = custody({ found, store: runStore(project, config, place.state), session, env });
   if (held.problem) return { problem: held.problem };
   if (held.role !== 'driver') return { problem: `custody of the run ${run} moves to this session on its first \`aidrian project wait ${run}\`; run that first` };
   const read = base ?? baseReader(project)();

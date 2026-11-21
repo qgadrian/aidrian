@@ -924,7 +924,7 @@ export function recordHandoff({ project, config, run, brief, env = process.env, 
   const opened = openRun(project, config, run, { env, home });
   if (opened.problem) return refuse(opened.problem);
   const { state, found, store } = opened;
-  const held = custody({ found, store, session, now });
+  const held = custody({ found, store, session, now, env });
   if (held.problem) return refuse(held.problem);
   if (store.refused) return refuse(store.refused);
   const read = readContainedBrief(store, brief);
@@ -949,7 +949,7 @@ export function endRun({ project, config, run, env = process.env, home, now = Da
   if (opened.problem) return refuse(opened.problem);
   const { state, found, store } = opened;
   if (endedIn(found)) return refuse(`the run ${run} ended already`);
-  const held = custody({ found, store, session, now });
+  const held = custody({ found, store, session, now, env });
   if (held.problem) return refuse(held.problem);
   // A session that ran on after its issue settled and that the host now lists as ended is recorded gone first.
   const cap = detectHost({ env }).capabilities.projectStart;
@@ -986,7 +986,9 @@ export function resumeRun({ project, config, run, env = process.env, home, now =
   }
   if (endedIn(opened.found)) return refuse(`the run ${run} ended`);
   // A run whose driver chain the host lists as ended is stranded: the attended session that resumes it takes custody.
-  const stranded = named && strandedDriver({ found: opened.found, env, home, spawn });
+  const continued = named ? hostContinued(opened.found, { env, home }) : null;
+  if (continued && continued.id !== session) return refuse(`the host continued the run's driver ${driverOf(opened.found).session} as ${continued.id}, and only that session takes custody this way`);
+  const stranded = named && strandedDriver({ found: opened.found, env, spawn, continued });
   if (!haltOf(opened.found) && !stranded) {
     // A driver the host does not list as an ended background session may be an interactive session that closed, which
     // keeps its id: the Human resumes that same session, and it keeps custody.
@@ -999,6 +1001,9 @@ export function resumeRun({ project, config, run, env = process.env, home, now =
   if (stranded && !markCustodian(session, opened.found, run, opened.state, env)) return refuse('this session\'s driver mark cannot be filed, so custody stays where it is; run resume again');
   const written = appendToRun(opened.state, run, (fresh) => {
     const driver = driverOf(fresh);
+    // Under the lock, the run must still be live, and a continuation still the host's word for this session.
+    if (endedIn(fresh)) return { problem: `the run ${run} ended` };
+    if (continued && hostContinued(fresh, { env, home })?.id !== session) return { problem: 'the host no longer records that it continued the run\'s driver as this session; run resume again' };
     const take = stranded && driver.session === stranded ? [{ event: 'driver', session, from: driver.session, sha256: sha256(Buffer.from(`resume ${run} ${session} ${iso(now)}`)), via: 'resume', at: iso(now) }] : [];
     return { rows: [...(haltOf(fresh) ? [{ event: 'resume', session, at: iso(now) }] : []), ...take] };
   });
@@ -1007,14 +1012,14 @@ export function resumeRun({ project, config, run, env = process.env, home, now =
   return { exitCode: 0, out: [...(written.rows.some((row) => row.event === 'resume') ? [`resumed ${run}`] : []), ...(took ? [`custody: this session now drives the run ${run}; its last driver ended`] : [])], err: [] };
 }
 
-// The session of the run `found`'s driver when the host lists it as ended, or recorded that it continued it under a new
-// id after the row that made it driver (hostContinued), so no one drives the run, or null: a host with no listing, or
-// one that gives no answer, never strands it. Only the driver's own session is read: its start records name the issues'
-// sessions it started, which are not drivers. A continuation it started and that never took custody loses it: its next
-// command meets a ledger whose driver is another session.
-function strandedDriver({ found, env, home, spawn }) {
+// The session of the run `found`'s driver when the host lists it as ended, or, with `continued`, recorded that it
+// continued it as the session that resumes (hostContinued; resumeRun refuses any other), so no one drives the run, or
+// null: a host with no listing, or one that gives no answer, never strands it. Only the driver's own session is read: its
+// start records name the issues' sessions it started, which are not drivers. A continuation it started and that never
+// took custody loses it: its next command meets a ledger whose driver is another session.
+function strandedDriver({ found, env, spawn, continued }) {
   const driver = driverOf(found);
-  if (hostContinued(found, { env, home })) return driver.session;
+  if (continued) return driver.session;
   const cap = detectHost({ env }).capabilities.projectStart;
   if (!cap || typeof cap.ended !== 'function') return null;
   return safely(() => cap.ended({ id: driver.session, session: driver.session, env, run: spawn })) === true ? driver.session : null;

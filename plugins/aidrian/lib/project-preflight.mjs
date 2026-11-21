@@ -26,6 +26,7 @@ import { forgeFor } from './forges/index.mjs';
 import { knownPrefix } from './git.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
 import { continueRoutes, detectHost } from './hosts/index.mjs';
+import { isQuotaNotice } from './pr-await-review.mjs';
 import { branchPolicies } from './pr-auto-merge.mjs';
 import { mayFollowTeamDefault } from './project.mjs';
 import { recordedTexts } from './project-issue-text.mjs';
@@ -33,6 +34,7 @@ import { activeRuns, nextLines, pinnedRepository, planRun, readSnapshotInput, re
 import { runParallel, teamPolicy } from './project-run-gate.mjs';
 import { accessProblem, guardedFolders, hostStartProblem } from './project-start.mjs';
 import { ancestorProblem } from './project-trust.mjs';
+import { cardState, REVIEW_SUMMARY_CARD_MARKER } from './review/bot-card.mjs';
 import { trackerOfEndpoint } from './tracker-guard.mjs';
 import { knownServers, trackerById, trackerOfTools, TRACKERS } from './trackers/index.mjs';
 
@@ -90,7 +92,7 @@ export function preflightCommand({ project, config, run = null, env = process.en
   let limit = null;
   if (typeof cap?.limitContinue === 'function') {
     try {
-      limit = cap.limitContinue({ env, home });
+      limit = cap.limitContinue({ env, home, project: main });
     } catch (error) {
       limit = `the host's usage-limit setting cannot be read (${String(error?.message ?? error).split('\n')[0]})`;
     }
@@ -166,14 +168,29 @@ function autoMergeProblem({ project, repository, facade }) {
   return null;
 }
 
+// Whether a comment by the review bot's login shows a review it finished: its usage-limit notice does not, and nor does
+// its status card, which the bot posts when a review starts, until the card says the code review completed: in its
+// machine state, or, on an older card with no state marker, in its visible Code Review table row. A state that does not
+// parse shows nothing. Only a comment that opens with the card's marker is the card, so a review that quotes it counts.
+const STATE_MARKER = /<!--\s*codex-review-state:v1\b/u;
+export const showsReview = (body) => {
+  if (isQuotaNotice(body)) return false;
+  if (typeof body === 'string' && body.trimStart().startsWith(REVIEW_SUMMARY_CARD_MARKER)) {
+    if (STATE_MARKER.test(body)) return cardState(body)?.code_review?.status === 'completed';
+    return /^\|\s*📝\s*\*\*Code Review\*\*\s*\|\s*✅\s*\*\*Completed\*\*/mu.test(body);
+  }
+  return true;
+};
+
 // The reviewer bot seen on a recent pull request, and CI workflows, through the forge's own reads, or `ask` lines for a
 // forge with none. With no pull request yet, the first one proves the bot, and the merge's trust check holds it until then.
+
 function forgeLines({ facade, repository, reviewer, lines, check, asks }) {
   const bot = NO_REVIEWER.has(reviewer) ? null : reviewer;
   const named = repository ? `${repository.owner}/${repository.name}` : null;
   if (typeof facade.reviewerSeen === 'function' && named && bot) {
     try {
-      const { changes, seen } = facade.reviewerSeen(named, bot, { host: repository.host });
+      const { changes, seen } = facade.reviewerSeen(named, bot, { host: repository.host, counts: showsReview });
       if (changes === 0) lines.push(`note reviewer-seen: no pull request yet, so the first one shows whether ${bot} reviews; the merge's trust check holds every merge until it has`);
       else check('reviewer-seen', seen ? null : `${bot} reviewed none of the last ${changes} pull requests; install it on the repository and request one review`);
     } catch (error) {

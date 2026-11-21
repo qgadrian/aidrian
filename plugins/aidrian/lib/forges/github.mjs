@@ -817,12 +817,16 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     repo: () => json(['repo', 'view', '--json', 'nameWithOwner']).nameWithOwner,
     // The repository itself, such as its `default_branch`.
     repository: (repo, { host } = {}) => rest(`repos/${repo}`, { host }),
-    // Whether the reviewer `login` reviewed any of the repository's last `limit` pull requests, for a project run's
-    // preflight: { changes, seen }, with a bot's login compared with or without its `[bot]` suffix.
-    reviewerSeen: (repo, login, { host, limit = 20 } = {}) => {
-      const list = json(['pr', 'list', '--repo', host ? `${host}/${repo}` : repo, '--state', 'all', '--limit', String(limit), '--json', 'number,reviews']);
+    // Whether the reviewer `login` reviewed or commented on any of the repository's last `limit` pull requests, for a
+    // project run's preflight: { changes, seen }, with a bot's login compared with or without its `[bot]` suffix. A
+    // review bot that finds nothing on a clean head may post only a conversation comment, and no formal review. A
+    // comment counts only when `counts(body)` says so, such as one that is not the bot's usage-limit notice. gh lists
+    // at most 100 comments of each pull request.
+    reviewerSeen: (repo, login, { host, limit = 20, counts = () => true } = {}) => {
+      const list = json(['pr', 'list', '--repo', host ? `${host}/${repo}` : repo, '--state', 'all', '--limit', String(limit), '--json', 'number,reviews,comments']);
       const bare = (name) => String(name ?? '').replace(/\[bot\]$/u, '').toLowerCase();
-      const seen = Array.isArray(list) && list.some((change) => (change.reviews ?? []).some((review) => bare(review.author?.login) === bare(login)));
+      const by = (entry) => bare(entry?.author?.login) === bare(login);
+      const seen = Array.isArray(list) && list.some((change) => (change.reviews ?? []).some(by) || (change.comments ?? []).some((comment) => by(comment) && counts(comment?.body)));
       return { changes: Array.isArray(list) ? list.length : 0, seen };
     },
     // The names of the repository's active CI workflows, for a project run's preflight.

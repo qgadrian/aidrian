@@ -2009,7 +2009,7 @@ state folder and any other active run but `RUN`, a host instruction file, such a
 runs folder, which every attempt's clone would load, `projectRun.allow` through the forge, the machine's switch, the host's
 start and its `projectRun.unverifiedHosts`, the host's access check (push rights, an HTTPS origin, nothing outside the
 sandbox that `projectRun.outsideSandbox` does not name), and whether the host carries on by itself after a usage limit
-(in Claude Code, `"autoContinueAtUsageLimit": true` in the user's own settings, the only place the host reads it), since
+(in Claude Code, `"autoContinueAtUsageLimit": true` in the user's own settings, the one source preflight reads, so managed policy and `--settings` go unverified; the host ignores it in a project's settings), since
 a limit is the account's and stops the driver with the issues' sessions. Then what the run needs to finish with no one:
 the base branch's tracker, with no server in `projectRun.mcpServers` named like a tracker whose endpoint no adapter maps
 (no tracker server there is a `note`: issue sessions then write no tracker, and the driver reports; a `note mcp-servers`

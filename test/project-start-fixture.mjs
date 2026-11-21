@@ -98,8 +98,7 @@ const gitIn = (dir) => (...args) => execFileSync('git', ['-c', 'user.name=t', '-
 // `.aidrian/config.json` (`config`, as text), no `.aidrian.json`, the pull requests in `views`, by number, the push
 // permission `push()` gives, and the forge CLI's login token `token()` gives, a fine-grained one by default; a `token`
 // that throws is a CLI with no login. The push probe with a token, as the start checks the issue session's, answers what
-// `tokenPush(token)` gives: true, false (the forge's 403), or a throw. `withToken(token)` gives this forge bound to that
-// token, each method call through it recorded as ['token', name] before the method's own record. `calls` records each call.
+// `tokenPush(token)` gives: true, false (the forge's 403), or a throw. `calls` records each call.
 export const FIXTURE_TOKEN = 'github_pat_FIXTURE0123456789';
 export function fakeForge(config, head, views = {}, { push = () => true, token = () => FIXTURE_TOKEN, tokenPush = () => true } = {}) {
   const calls = [];
@@ -115,15 +114,6 @@ export function fakeForge(config, head, views = {}, { push = () => true, token =
       calls.push(['tokenCanPush', repo, { host: options?.host, token: typeof options?.token === 'string' ? 'given' : 'none' }]);
       const may = forge.tokenPush(options.token);
       return { may, why: may ? null : 'the forge answered 403' };
-    },
-    withToken: (given) => {
-      calls.push(['withToken', given === FIXTURE_TOKEN ? 'fixture' : 'other']);
-      return new Proxy(forge, {
-        get: (target, key) => {
-          const value = target[key];
-          return typeof value === 'function' && key !== 'withToken' ? (...args) => (calls.push(['token', key]), value(...args)) : value;
-        },
-      });
     },
     contents: (repo, file, ref, options) => {
       calls.push(['contents', repo, file, ref, options]);

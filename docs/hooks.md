@@ -47,8 +47,8 @@ Before anything else, in a main session whose own mark names a run and issue who
 attempt it starts in, or whose pending mark starts it in that attempt's clone, the hook hands the host the environment that attempt's sandboxed commands get,
 the package managers' caches in its `cache` folder, on a host that takes it: Claude Code, through the file it names in
 `CLAUDE_ENV_FILE` ([Dependency installs](providers/claude-code.md#dependency-installs)). On a host that declares
-`forgeTokenEnv`, as Claude Code does, it then hands over the forge token in every variable gh reads one from, such
-as `GH_TOKEN`, the same way, only to a session whose environment holds the claim the start gave the session it launched, read again outside the sandbox from the one
+`forgeTokenEnv`, as Claude Code does, it then hands over the forge token as `GH_TOKEN` the same way, only to a session
+whose environment holds the claim the start gave the session it launched, read again outside the sandbox from the one
 source the start checked, and only the token the start checked, by its SHA-256, with git's command-scope config that
 makes git take it from gh's own credential helper alone, for the forge's host only
 ([Project start](providers/claude-code.md#project-start)). It records in the attempt's folder whether it handed the

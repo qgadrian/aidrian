@@ -18,9 +18,7 @@ export const GH_EXEC_OPTIONS = Object.freeze({ encoding: 'utf8', stdio: ['ignore
 // signal that stops gh at the limit, such as SIGKILL for a hook that cannot wait on a gh that ignores the default.
 // `input` is gh's stdin, such as a request body for `gh api --input -`: the text goes as it is, never read as a flag's value.
 // Node hands `input` to the child only through a piped stdin, so a call with one pipes it; every other call ignores stdin.
-// `env` adds variables to gh's environment, over this process's own, such as a token to ask the forge with, which no
-// argument then carries; a variable it sets to undefined is left out.
-export function runGh(args, { cwd, exec = execFileSync, timeoutMs = GH_TIMEOUT_MS, killSignal = null, input, env } = {}) {
+export function runGh(args, { cwd, exec = execFileSync, timeoutMs = GH_TIMEOUT_MS, killSignal = null, input } = {}) {
   try {
     return exec('gh', args, {
       ...GH_EXEC_OPTIONS,
@@ -28,7 +26,6 @@ export function runGh(args, { cwd, exec = execFileSync, timeoutMs = GH_TIMEOUT_M
       ...(timeoutMs === GH_TIMEOUT_MS ? {} : { timeout: timeoutMs }),
       ...(killSignal === null ? {} : { killSignal }),
       ...(input === undefined ? {} : { input, stdio: ['pipe', 'pipe', 'pipe'] }),
-      ...(env === undefined ? {} : { env: { ...process.env, ...env } }),
     });
   } catch (err) {
     if (err?.code === 'ETIMEDOUT') {

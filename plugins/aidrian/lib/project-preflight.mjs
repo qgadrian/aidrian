@@ -1,8 +1,7 @@
 // `aidrian project preflight`: every check that would refuse or halt a project run's start but the push preflight, which
 // reads the attempt's clone no preflight has (project-run-gate.mjs confinedRoom), run at once from the
 // attended session before `aidrian project init`, so the Human sees each blocker before walking away. It reads and
-// starts nothing. On a host that hands its sessions a forge token, every forge read but the access check's runs with
-// that token alone (forgeChecks), so the rules it reads are those that hold the account the session acts as. Each check is the start gate's own (lib/project-run-gate.mjs, lib/project-start.mjs): the repository
+// starts nothing. Each check is the start gate's own (lib/project-run-gate.mjs, lib/project-start.mjs): the repository
 // origin names, the state folder and any other active run, a host instruction file above the runs folder, the team's projectRun through the forge, the machine's
 // switch, the host's start (confined, verified or allowed through projectRun.unverifiedHosts, hooks trusted), the host's
 // trust in the runs folder, and the
@@ -37,7 +36,6 @@ import { recordedTexts } from './project-issue-text.mjs';
 import { activeRuns, nextLines, pinnedRepository, planRun, readSnapshotInput, refNames, runPlace, runsFolder, teamsNote } from './project-run.mjs';
 import { runParallel, teamPolicy } from './project-run-gate.mjs';
 import { accessProblem, guardedFolders, hostStartProblem } from './project-start.mjs';
-import { forgeToken } from './project-token.mjs';
 import { ancestorProblem } from './project-trust.mjs';
 import { cardState, REVIEW_SUMMARY_CARD_MARKER } from './review/bot-card.mjs';
 import { trackerOfEndpoint } from './tracker-guard.mjs';
@@ -53,8 +51,8 @@ const LOCAL_BINDING_RISK = 'a service a session starts may listen on this machin
 
 // The setup doc of a project run, and its section that clears each check's blocker, by the check's name: every blocker
 // line, and the labels `ask`, ends with a pointer to it (setupPointer). `token` is the access check's section when no
-// source gives a forge token, that token may not push, or it is not the forge CLI's own user's.
-// test/project-run-report.test.mjs holds each anchor to a heading of the doc.
+// source gives a forge token, or that token may not push. test/project-run-report.test.mjs holds each anchor to a
+// heading of the doc.
 export const SETUP_DOC = 'docs/project-run-setup.md';
 // The doc's address on the main branch of the repository the plugin's manifest names, so a fork points at its own: a
 // project's checkout has no copy of the doc. Its path alone when the manifest names no repository.
@@ -105,15 +103,14 @@ export function preflightCommand({ project, config, run = null, env = process.en
   }
   const base = baseBranchTip(project.root) ? baseBranchConfig(project, 'projectRun') : { why: 'git names no base branch commit' };
   const facade = forge ?? forgeFor(project.root);
-  const cap = detectHost({ env }).capabilities.projectStart;
-  const checks = forgeChecks({ cap, facade, repository, keychain: project.localForgeTokenKeychain, platform, env, exec });
-  const read = repository ? teamPolicy(project, repository, checks) : { problem: 'the repository is unknown, so the forge\'s config cannot be read' };
+  const read = repository ? teamPolicy(project, repository, facade) : { problem: 'the repository is unknown, so the forge\'s config cannot be read' };
   check('policy', read.problem ?? null);
   // The base branch's word alone stands in for a policy the forge could not confirm: it only finds more blockers.
   const fallback = base.config?.projectRun ?? {};
   const policy = read.problem ? { solo: base.config?.solo === true, unverifiedHosts: fallback.unverifiedHosts === true, outsideSandbox: fallback.outsideSandbox ?? [] } : read;
   const machine = machineSwitch(project.localHandoffBackground, () => policy.solo === true, project);
   check('machine', machine === 'on' ? null : 'this machine has not turned on sessions no Human attends: add "handoff": { "background": "on" } to its git-ignored local file, or the team sets solo');
+  const cap = detectHost({ env }).capabilities.projectStart;
   let host = null;
   if (!cap) host = 'this host declares no way to start a project run\'s session';
   else if (cap.confined !== true) host = 'this host\'s project start is not confined to a fresh clone under its own sandbox';
@@ -145,7 +142,7 @@ export function preflightCommand({ project, config, run = null, env = process.en
   const asks = [];
   const tracker = trackerLines(base, policy, read.problem ? (fallback.mcpServers ?? {}) : policy.mcpServers);
   lines.push(...tracker.lines);
-  check('auto-merge', autoMergeProblem({ project, repository, facade: checks }));
+  check('auto-merge', autoMergeProblem({ project, repository, facade }));
   const route = base.config?.session?.handoff?.continue;
   check('handoff', base.why ? `the base branch's config.json cannot be read (${base.why})` : route === 'background' ? null
     : route === 'clear' ? 'the base branch\'s session.handoff.continue is "clear", and the clear route needs a person to start the next session; set it to "background" on the default branch'
@@ -153,8 +150,8 @@ export function preflightCommand({ project, config, run = null, env = process.en
   if (!continueRoutes(detectHost({ env })).some((route) => ['background', 'clear'].includes(route))) lines.push('note handoff: this host lists no route that continues a session, so the driver keeps driving in this one session, which the host compacts');
   const reviewer = base.config?.github?.reviewer;
   check('reviewer', base.why ? `the base branch's config.json cannot be read (${base.why})` : NO_REVIEWER.has(reviewer) ? 'the base branch sets no github.reviewer, so no bot reviews an issue\'s pull request before an unattended merge' : null);
-  forgeLines({ facade: checks, repository, reviewer, lines, check, asks });
-  protectionLines({ facade: checks, repository, policy, lines, check, asks });
+  forgeLines({ facade, repository, reviewer, lines, check, asks });
+  protectionLines({ facade, repository, policy, lines, check, asks });
   if (tracker.adapter?.run?.labelRead) {
     const status = base.config?.projectRun?.blockedStatus;
     asks.push(`ask labels: confirm with ${tracker.adapter.run.labelRead} that the team has the label ${JSON.stringify(base.config?.projectRun?.decisionLabel)}${typeof status === 'string' ? `, and with ${tracker.adapter.run.statusRead} the status ${JSON.stringify(status)}` : ''}; a missing one is a blocker${setupPointer('labels')}`);
@@ -163,16 +160,6 @@ export function preflightCommand({ project, config, run = null, env = process.en
   if (typeof cap?.limitContinue !== 'function') lines.push('ask usage-limit: confirm this host carries on by itself after a usage limit, since a limit stops the driver too');
   const blocked = lines.some((line) => line.startsWith('blocker '));
   return { exitCode: blocked ? 1 : 0, out: lines, err: blocked ? ['aidrian project preflight: fix each blocker line, then run it again'] : [] };
-}
-
-// The facade the forge checks read with: on a host that hands its issue sessions a forge token (`forgeTokenEnv`), one
-// that makes every call with the token the start would hand them, from the same sources in the same order
-// (lib/project-token.mjs forgeToken), so the rules read are those that hold the account the session acts as; otherwise,
-// or with no token to read, which the access check names, `facade` itself, gh's own login.
-function forgeChecks({ cap, facade, repository, keychain, platform, env, exec }) {
-  if (cap?.forgeTokenEnv !== true || !repository || typeof facade.withToken !== 'function') return facade;
-  const read = forgeToken({ forge: facade, repository, keychain, platform, env, ...(exec ? { exec } : {}) });
-  return read.token ? facade.withToken(read.token) : facade;
 }
 
 // The access check, the start gate's own (project-start.mjs accessProblem): `ok access` or its blocker, then, on a host

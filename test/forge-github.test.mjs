@@ -20,7 +20,7 @@ import { viewForge, viewPrAt } from '../plugins/aidrian/lib/rules/github/merge-r
 // Every name the facade gives its callers.
 const FACADE = [
   'id', 'cwd', 'isTrustedCommenter', 'hosts', 'changeRef', 'changesState', 'changeUrl',
-  'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'branchHead', 'contents', 'tree', 'visibility', 'viewer', 'authToken', 'tokenCanPush', 'withToken',
+  'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'branchHead', 'contents', 'tree', 'visibility', 'viewer', 'authToken', 'tokenCanPush',
   'conversationComments', 'comment', 'issue', 'postComment', 'editComment', 'deleteComment', 'reactions',
   'pull', 'diff', 'nodeChange', 'changeEdits', 'reviewTrail', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',
   'postReview', 'reviewComment', 'deleteReviewComment', 'findingThreads', 'replyToReviewComment', 'resolveThread', 'unresolveThread',
@@ -185,53 +185,6 @@ test('tokenCanPush: the push probe the adapter was given, for the repository and
   assert.deepEqual(forge.tokenCanPush('acme/widgets', { host: 'github.com', token: 'github_pat_RO' }), { may: false, why: 'the forge answered 403' });
   assert.deepEqual(forge.tokenCanPush('acme/widgets', { token: 'github_pat_RO' }), { may: false, why: 'the forge answered 403' });
   assert.deepEqual(asked, [['acme/widgets', { host: 'github.com', token: 'github_pat_RO' }], ['acme/widgets', { host: 'github.com', token: 'github_pat_RO' }]]);
-});
-
-test('withToken: every call of the adapter is gh`s with that token alone, in every variable gh reads one from, never an argument', () => {
-  const { forge, calls } = recorded(() => '{"login":"octo"}');
-  const bound = forge.withToken('github_pat_X');
-  // gh reads www.github.com as github.com, from GH_TOKEN, where the host's own variable would be GH_ENTERPRISE_TOKEN:
-  // with the token in every variable and no GH_HOST, gh's pick of one never falls back on its stored login.
-  assert.equal(bound.viewer({ host: 'www.github.com' }), 'octo');
-  bound.repository('acme/widgets', { host: 'ghe.example.com' });
-  forge.viewer();
-  const every = { GH_TOKEN: 'github_pat_X', GITHUB_TOKEN: 'github_pat_X', GH_ENTERPRISE_TOKEN: 'github_pat_X', GITHUB_ENTERPRISE_TOKEN: 'github_pat_X', GH_HOST: undefined };
-  assert.deepEqual(calls.map((call) => call.options.env), [every, every, undefined], 'the unbound adapter keeps gh`s own login');
-  assert.ok(calls.every((call) => !call.args.some((arg) => arg.includes('github_pat_X'))), 'no argument carries the token');
-  assert.throws(() => forge.withToken(''), /no token/u);
-});
-
-test('withToken: a read GitHub refuses the fine-grained token throws naming the permission to add, and branch protection is no administrator`s ask then', () => {
-  const denied = () => Object.assign(new Error('Command failed: gh api\ngh: Resource not accessible by personal access token (HTTP 403)'), { stderr: 'gh: Resource not accessible by personal access token (HTTP 403)' });
-  const answers = { ...HELD, 'repos/acme/notes': { default_branch: 'main', permissions: { admin: false } }, 'repos/acme/notes/rules/branches/main': [[]], 'repos/acme/notes/branches/main': { protected: true } };
-  const read = (route, bind) => {
-    const { forge } = routed({ ...answers, [route]: denied() });
-    return () => (bind ? forge.withToken('github_pat_X') : forge);
-  };
-  assert.throws(() => read('repos/acme/notes/branches/main/protection', true)().refProtection('acme/notes'), /^Error: the forge token lacks the fine-grained permission Administration: read, which GitHub asks of this read \(Resource not accessible by personal access token, HTTP 403\); give the token Administration: read when creating it$/u);
-  assert.equal(read('repos/acme/notes/branches/main/protection', false)().refProtection('acme/notes').protected, null, 'gh`s own login: the administrator`s ask, as before');
-  const secrets = { 'repos/acme/notes': { default_branch: 'main', owner: { type: 'User' }, permissions: { admin: true } }, user: { login: 'octo' }, 'repos/acme/notes/environments': [[]], 'repos/acme/notes/actions/secrets': { total_count: 0 } };
-  const named = (route, permission) => {
-    const { forge } = routed({ ...secrets, [route]: denied() });
-    assert.throws(() => forge.withToken('github_pat_X').workflowSecrets('acme/notes'), new RegExp(`lacks the fine-grained permission ${permission}, `, 'u'), route);
-  };
-  named('repos/acme/notes/actions/secrets', 'Secrets: read');
-  named('repos/acme/notes/environments', 'Actions: read');
-  const { forge } = routed({ 'repos/acme/notes/actions/workflows': denied() });
-  assert.throws(() => forge.withToken('github_pat_X').ciWorkflows('acme/notes'), /lacks the fine-grained permission Actions: read, /u);
-  assert.throws(() => routed({ 'repos/acme/notes/actions/workflows': denied() }).forge.ciWorkflows('acme/notes'), /^Error: Command failed/u, 'gh`s own login: GitHub`s refusal as it is');
-});
-
-test('runGh hands gh the variables of `env` over this process`s own, and the environment untouched without it', () => {
-  const seen = [];
-  const exec = (file, args, options) => (seen.push(options.env), '');
-  runGh(['api', 'user'], { exec, env: { GH_TOKEN: 'github_pat_X' } });
-  runGh(['api', 'user'], { exec });
-  runGh(['api', 'user'], { exec, env: { GH_HOST: undefined } });
-  assert.equal(seen[0].GH_TOKEN, 'github_pat_X');
-  assert.ok(Object.hasOwn(seen[2], 'GH_HOST') && seen[2].GH_HOST === undefined, 'a variable set to undefined, which execFileSync leaves out');
-  assert.equal(seen[0].PATH, process.env.PATH, 'the rest of the environment stays');
-  assert.equal(seen[1], undefined, 'no env option inherits the environment');
 });
 
 test('the forge token helpers: GH_TOKEN, which gh and its git helper read, the login step, and a note on any token but a fine-grained one', () => {

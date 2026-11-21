@@ -10,7 +10,7 @@
 // may push, and records the source's id and the token's digest, with the digest of a claim it gives the session it
 // launches (writeClaim). The session's SessionStart hook then reads that one source again, outside the sandbox, only for
 // a session that holds the claim, and hands the sandboxed commands alone the token whose digest the start recorded, as
-// every variable the forge CLI reads a token from (forgeTokenVars); it records whether it did (writeHandoff), which the
+// the forge CLI's token variable for the host (forgeTokenVar); it records whether it did (writeHandoff), which the
 // sandbox proof's check reads. No file of the run, argv, or printed line holds the token.
 
 import { execFileSync } from 'node:child_process';
@@ -18,7 +18,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { forgeFor, forgeGitHelper, forgeLoginStep, forgeTokenNote, forgeTokenVars } from './forges/index.mjs';
+import { forgeFor, forgeGitHelper, forgeLoginStep, forgeTokenNote, forgeTokenVar } from './forges/index.mjs';
 import { writeJson } from './confine-guard.mjs';
 import { readSmallJson } from './fs.mjs';
 import { programNames, programOnPath } from './hosts/process.mjs';
@@ -111,10 +111,8 @@ function recovery({ host, platform }) {
   return [...steps, `name one in projectRun.forgeTokenKeychain of ${LOCAL_FILE}`];
 }
 
-// The variables that hand `token` to the session's sandboxed commands: every variable the forge CLI reads a token from
-// (forgeTokenVars), the ones the sandbox keeps, so the CLI's own pick of one for the session's host, which can differ
-// from forgeTokenVar's, as gh reads www.github.com as github.com, always finds it.
-export const tokenVars = (token) => Object.fromEntries(forgeTokenVars().map((name) => [name, token]));
+// The variables that hand `token` to the session's sandboxed commands: the forge CLI's token variable for `host` alone.
+export const tokenVars = (token, host) => ({ [forgeTokenVar(host)]: token });
 
 // The command-scope git config that makes git take that token from the forge CLI's credential helper, for the session's
 // sandboxed commands, after the entries `env` already counts in GIT_CONFIG_COUNT, both scoped to `https://<host>`, the

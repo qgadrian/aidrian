@@ -414,7 +414,7 @@ export function confinedTokenVars({ session, cwd, env = process.env, home, token
     // git takes the token only through the forge CLI's helper, set in the same handoff, in the command scope.
     const git = gitCredentialVars(env, repository.host);
     if (!git) return { problem: 'the forge CLI is not on an absolute folder of PATH, or the forge has no plain host name, so git could not take the token through it', folder };
-    return { vars: { ...tokenVars(read.token), ...git }, folder };
+    return { vars: { ...tokenVars(read.token, repository.host), ...git }, folder };
   } catch (error) {
     return { problem: `the token could not be read (${String(error?.message ?? error).split('\n')[0].slice(0, 200)})`, folder };
   }

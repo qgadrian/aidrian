@@ -15,7 +15,6 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { localForgeTokenKeychain } from '../plugins/aidrian/lib/config-local.mjs';
-import { forgeTokenVars } from '../plugins/aidrian/lib/forges/index.mjs';
 import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import { confineReads, sandboxSettings, writeEnvFile } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
@@ -114,11 +113,10 @@ test('no token from either source is a problem naming both and the fix, and a br
   const classic = forgeToken({ forge: login('gho_classic0123456789'), repository: REPOSITORY, platform: 'linux' });
   assert.deepEqual(classic.notes, ['it is an OAuth token of gh\'s own login, which reaches every repository and scope its user has, not only this one; a fine-grained token limited to this repository narrows that']);
   assert.ok(!JSON.stringify({ ...classic, token: null }).includes('gho_classic'), 'only `token` holds it');
-  // Every variable gh reads a token from, whichever it picks for the session's host: gh reads www.github.com as
-  // github.com, from GH_TOKEN, where the host's own variable would be GH_ENTERPRISE_TOKEN. The sandbox keeps each.
-  const every = { GH_TOKEN: 'x', GITHUB_TOKEN: 'x', GH_ENTERPRISE_TOKEN: 'x', GITHUB_ENTERPRISE_TOKEN: 'x' };
-  assert.deepEqual(tokenVars('x'), every);
-  assert.deepEqual(Object.keys(every).filter((name) => !forgeTokenVars().includes(name)), [], 'the sandbox keeps every one');
+  assert.deepEqual(tokenVars('x', 'github.com'), { GH_TOKEN: 'x' });
+  // gh reads a GitHub Enterprise Server host's token from GH_ENTERPRISE_TOKEN, and a ghe.com tenancy's from GH_TOKEN.
+  assert.deepEqual(tokenVars('x', 'ghe.example.com'), { GH_ENTERPRISE_TOKEN: 'x' });
+  assert.deepEqual(tokenVars('x', 'acme.ghe.com'), { GH_TOKEN: 'x' });
 });
 
 test('the local file\'s projectRun.forgeTokenKeychain is checked, and read only from the main checkout\'s untracked file', (t) => {

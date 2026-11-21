@@ -102,8 +102,7 @@ read is a `note`, since the file is the host's own.
 ## Forge token in the keychain
 
 Claude Code's sandbox hides the system keyring, where gh keeps its login, so the start reads a forge token outside it
-and the session's SessionStart hook hands it to the sandboxed commands in every variable gh reads one from, such as
-`GH_TOKEN` (`lib/project-token.mjs`).
+and the session's SessionStart hook hands it to the sandboxed commands as `GH_TOKEN` (`lib/project-token.mjs`).
 The first of three sources that gives a token is used:
 
 1. The project's keychain entry, on macOS: the entry `.aidrian.local.json` names in `projectRun.forgeTokenKeychain`.
@@ -111,18 +110,16 @@ The first of three sources that gives a token is used:
    account, shared by every project on the machine.
 3. The forge CLI's own login, `gh auth token --hostname <host>`.
 
-The preflight reads the same token, from the same sources in the same order, and runs every forge check with it: the
-policy read, auto-merge, the review bot, CI, branch and tag protection, and the workflow secrets. It puts the token in
-every variable gh reads one from (`GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN`) with no
-`GH_HOST`, as the start hands it to the issue session, so the rules it reads are those that hold the account the
-session acts as. With no source giving a token, the checks read as gh's own login, and `blocker access` says why.
+Whichever source gives it, the token must belong to the same GitHub account as the driver's gh login. The preflight
+checks branch protection, the tag rules, and the environment reviewers as that login, so those checks say nothing of a
+token of another account, which may bypass them. The start does not check that the two match yet (issue
+#496 of the plugin's repository), so a token of another account would pass the push probe.
 
 An entry that is not there passes to the next source. A token that is there but may not push does not: the start
 halts. Push rights are checked twice: the forge must let gh's own login push to the repository (the access check asks
 it as gh is signed in, whichever source gives the token), and the token itself must pass a receive-pack probe, a
-request for
-`https://<host>/<owner>/<name>.git/info/refs?service=git-receive-pack` with the token, which GitHub answers 200 with a
-receive-pack advertisement only for a token that may write the contents, and which writes nothing
+request for `https://<host>/<owner>/<name>.git/info/refs?service=git-receive-pack` with the token, which GitHub
+answers 200 with a receive-pack advertisement only for a token that may write the contents, and which writes nothing
 (`lib/forges/github-token.mjs`). The preflight prints `note token:` with the source it used, and a second note for a
 gh login or a classic token, which reach every repository the user can.
 
@@ -136,12 +133,8 @@ Fine-grained tokens, Generate new token:
 - **Permissions**: Contents read and write (push, merge), Pull requests read and write (open one, comment, answer
   review threads, update its branch), Actions read and write (read runs, rerun failed jobs), Checks read, and Commit
   statuses read; Metadata read comes with them. Leave Workflows off, so the token cannot push a change to a workflow
-  file. The preflight's checks, which read with this token, ask for three more, all read only: Administration read
-  (branch protection's settings), Secrets read (how many repository and organization secrets the workflows see, never
-  their values), and Environments read (each environment's secrets). A check whose read the token lacks a permission
-  for is a blocker that names the permission to add when creating the token. This list follows the calls an issue
-  session and the preflight make through `lib/forges/github.mjs`; no live run has checked a token with exactly these
-  permissions.
+  file. This list follows the calls an issue session makes through `lib/forges/github.mjs`; no live run has checked
+  a token with exactly these permissions.
 - **Expiration**: a token that expires fails the probe, and the preflight names it as `blocker access`.
 
 Store it with macOS's `security`, `-w` last so it asks for the token instead of taking it on the command line:
@@ -247,10 +240,10 @@ and with no pull request yet a `note` says the first one proves it.
 
 ## Forge rules
 
-An issue's session gets the forge token the start read ([Forge token in the keychain](#forge-token-in-the-keychain)),
-which may be a keychain entry's rather than gh's own login. The preflight reads these rules with that very token, so
-they are the rules that hold the account it belongs to, and the forge must hold what a script the session runs could
-do with it:
+An issue's session gets the forge token the start read ([Forge token in the keychain](#forge-token-in-the-keychain)).
+The preflight reads these rules as the driver's gh login, so they hold the session only while that token belongs to
+the same account (issue #496 of the plugin's repository). The forge must hold what a script the session runs could do
+with it:
 
 - `branch-protection`: a rule on the default branch that asks for a pull request, includes administrators, and lets
   that user bypass nothing.

@@ -555,31 +555,6 @@ test('every preflight blocker line, and the labels ask, ends with the setup doc 
   assert.deepEqual(pointed(none).find(([name]) => name === 'blocker access'), ['blocker access', 'forge-token-in-the-keychain']);
 });
 
-test('preflight reads every forge check with the token the issue sessions get, gh`s own login with none, and names a permission the token lacks', (t) => {
-  const ready = runFixture(t, { init: false, ...READY });
-  writeFileSync(path.join(ready.env.CLAUDE_CONFIG_DIR, 'settings.json'), JSON.stringify({ autoContinueAtUsageLimit: true }));
-  Object.assign(ready.forge, { reviewerSeen: () => ({ changes: 4, seen: true }), ciWorkflows: () => ['test'], refProtection: () => GUARDED, workflowSecrets: () => NO_SECRETS });
-  const through = () => new Set(ready.forge.calls.filter(([name]) => name === 'token').map(([, key]) => key));
-  const ok = ready.cmd(['preflight']);
-  assert.ok(ok.out.includes('ok branch-protection') && ok.out.includes('ok workflow-secrets'), ok.out.join('\n'));
-  assert.ok(ready.forge.calls.some(([name, which]) => name === 'withToken' && which === 'fixture'), 'bound to the token the start would hand over');
-  // The policy read, auto-merge, the reviewer, CI, branch and tag protection, and the secrets: all as the token's account.
-  for (const name of ['contents', 'refProtection', 'workflowSecrets', 'reviewerSeen', 'ciWorkflows']) assert.ok(through().has(name), `${name} reads with the token`);
-  // The access check stays the start's own: gh's login gives a token source and is asked for push rights, the token's
-  // own push by its probe.
-  const plain = ready.forge.calls.filter(([name], index) => name === 'repository' && ready.forge.calls[index - 1]?.[0] !== 'token');
-  assert.ok(plain.length > 0 && !through().has('authToken') && !through().has('tokenCanPush'), [...through()].join(', '));
-  // With no source giving a token, every check reads as gh's own login, and the access line says why.
-  ready.forge.calls.length = 0;
-  const none = ready.cmd(['preflight'], { forge: { ...ready.forge, authToken: () => { throw new Error('not logged in'); } } });
-  assert.ok(none.out.some((line) => line.startsWith('blocker access:')), none.out.join('\n'));
-  assert.deepEqual([...through()], [], 'no read with a token');
-  // A read the token lacks a permission for, as the adapter names it, is that check's blocker, naming the permission.
-  ready.forge.refProtection = () => { throw new Error('the forge token lacks the fine-grained permission Administration: read, which GitHub asks of this read (Resource not accessible by personal access token, HTTP 403); give the token Administration: read when creating it'); };
-  const lacking = ready.cmd(['preflight']).out.find((line) => line.startsWith('blocker branch-protection:'));
-  assert.match(lacking, /give the token Administration: read when creating it/u, lacking);
-});
-
 test('preflight blocks a runs folder the host does not trust, passes one under a trusted folder, and only notes a trust record it cannot read', (t) => {
   const fx = runFixture(t, { init: false, ...READY });
   const record = path.join(fx.env.CLAUDE_CONFIG_DIR, '.claude.json');

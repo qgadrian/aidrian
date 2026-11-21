@@ -557,23 +557,6 @@ const notFound = (error) => /\(HTTP 404\)/u.test(`${error?.message ?? ''} ${erro
 // Whether gh failed on GitHub's 403 for a feature the account's plan lacks, as the rules, rulesets, and branch protection
 // routes answer for a private repository on the free plan.
 const planGated = (error) => /Upgrade to GitHub Pro or make this repository public[^\n]*\(HTTP 403\)/u.test(`${error?.message ?? ''} ${error?.stderr ?? ''}`);
-// Whether gh failed on GitHub's 403 for a permission a fine-grained token was not given.
-const tokenDenied = (error) => /Resource not accessible by personal access token/u.test(`${error?.message ?? ''} ${error?.stderr ?? ''}`);
-// The fine-grained token permission each read a project run's preflight makes asks for, by its gh arguments, as GitHub's
-// "Permissions required for fine-grained personal access tokens" lists them, first match wins; null for one not listed.
-const TOKEN_PERMISSIONS = Object.freeze([
-  [/\/branches\/[^/]+\/protection/u, 'Administration: read'],
-  [/\/environments\/[^/]+\/secrets/u, 'Environments: read'],
-  [/\/actions\/(?:organization-)?secrets/u, 'Secrets: read'],
-  [/\/environments(?:[/?]|$)|\/actions\//u, 'Actions: read'],
-  [/\/contents\//u, 'Contents: read'],
-  [/^pr$|\/pulls(?:[/?]|$)/u, 'Pull requests: read'],
-  [/^repos\/[^/]+\/[^/]+(?:[/?]|$)/u, 'Metadata: read'],
-]);
-const tokenPermission = (args) => {
-  const route = args[0] === 'api' ? args.find((arg, index) => index > 0 && /^(?:repos|user)\b/u.test(arg)) ?? '' : String(args[0] ?? '');
-  return TOKEN_PERMISSIONS.find(([pattern]) => pattern.test(route))?.[1] ?? null;
-};
 // What refProtection says of a repository whose plan offers no rule on its branches or tags, owned by an account of
 // `ownerType` as GitHub answers it: GitHub Pro is a personal account's plan, and an organization needs GitHub Team.
 const planWhy = (ownerType) => {
@@ -705,7 +688,7 @@ function branchHold(read, admin, viewer) {
   try {
     rules = read('/protection');
   } catch (error) {
-    if (clientError(error) && !planGated(error) && !error?.tokenPermission) return { held: null, why: 'GitHub shows the settings of its branch protection only to an administrator' };
+    if (clientError(error) && !planGated(error)) return { held: null, why: 'GitHub shows the settings of its branch protection only to an administrator' };
     throw error;
   }
   const reviews = rules?.required_pull_request_reviews;
@@ -731,20 +714,9 @@ function branchHold(read, admin, viewer) {
 // `killSignal` stops a call at that bound with another signal, such as SIGKILL; null keeps gh's runner's default.
 // A method that takes `{ host }` names that host to every REST call it makes (`--hostname`), as `aidrian pr auto-merge`
 // does with the host of the pull request's URL; without one, gh picks its default host.
-// `token`, which withToken sets, makes every call gh's with that token alone: in every variable gh reads one from, with
-// no GH_HOST, so gh's own pick of a variable for a host never falls back on its stored login. A read GitHub refuses
-// the fine-grained token for then throws naming the permission it asks for (tokenPermission).
-export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutMs = null, killSignal = null, probe = receivePackStatus, token = null } = {}) {
-  const tokenEnv = token === null ? null : { ...Object.fromEntries(TOKEN_VARS.map((name) => [name, token])), GH_HOST: undefined };
-  const gh = (args, { timeoutMs: limit = timeoutMs, input } = {}) => {
-    try {
-      return run(args, { cwd, ...(limit === null ? {} : { timeoutMs: limit }), ...(killSignal === null ? {} : { killSignal }), ...(input === undefined ? {} : { input }), ...(tokenEnv === null ? {} : { env: tokenEnv }) });
-    } catch (error) {
-      const permission = tokenEnv !== null && tokenDenied(error) ? tokenPermission(args) : null;
-      if (!permission) throw error;
-      throw Object.assign(new Error(`the forge token lacks the fine-grained permission ${permission}, which GitHub asks of this read (Resource not accessible by personal access token, HTTP 403); give the token ${permission} when creating it`), { stderr: error?.stderr, tokenPermission: permission });
-    }
-  };
+export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutMs = null, killSignal = null, probe = receivePackStatus } = {}) {
+  const gh = (args, { timeoutMs: limit = timeoutMs, input } = {}) =>
+    run(args, { cwd, ...(limit === null ? {} : { timeoutMs: limit }), ...(killSignal === null ? {} : { killSignal }), ...(input === undefined ? {} : { input }) });
   const json = (args) => JSON.parse(gh(args));
   const given = (ref) => ref !== undefined && ref !== null && ref !== '';
   // One REST route. `paginate` reads every page and joins them into one list; `fields` are sent as `-f key=value`, each
@@ -997,12 +969,6 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // Whether `token` may push to `repo` on `host` (default github.com), by a probe that writes nothing: { may, why }, or
     // a throw when the forge's answer says neither (github-token.mjs tokenMayPush).
     tokenCanPush: (repo, { host = DEFAULT_HOST, token } = {}) => tokenMayPush(repo, { host, token, probe }),
-    // This adapter with every call made with `token` alone instead of gh's own login (createGithubForge's `token`), so a
-    // read answers for the account the token belongs to, as a project run's preflight reads the forge's rules.
-    withToken: (given) => {
-      if (typeof given !== 'string' || given === '') throw new Error('no token to ask the forge with');
-      return createGithubForge({ cwd, run, mediaType, timeoutMs, killSignal, probe, token: given });
-    },
     // The comments on the pull request's conversation, not those on its diff (reviewComments).
     conversationComments: (repo, n, { host } = {}) => list(`repos/${repo}/issues/${n}/comments`, { host }),
     // One comment of a conversation, by its id. With `pr`, it is held to that pull request of `repo`: a comment whose

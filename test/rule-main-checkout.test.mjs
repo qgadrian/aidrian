@@ -9,6 +9,8 @@ import test, { after } from 'node:test';
 import { findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { bashTargets, bashWrites, canonical, check, checkTool } from '../plugins/aidrian/lib/rules/main-checkout.mjs';
 
+import { hookCall } from './hook-call.mjs';
+
 // The hooks this file runs record their blocks in the state folder; keep those rows out of the real one.
 process.env.XDG_STATE_HOME = mkdtempSync(path.join(tmpdir(), 'aidrian-state-'));
 after(() => rmSync(process.env.XDG_STATE_HOME, { recursive: true, force: true }));
@@ -278,16 +280,15 @@ test('Bash commands are judged like tool writes', (t) => {
   assert.equal(check('echo x > src/app.js', { cwd: repo, env: { AIDRIAN_ALLOW_MAIN_WRITE: '1' } }), null);
 });
 
-test('when git cannot tell, a tool write is denied and a Bash command runs', (t) => {
+test('when git cannot tell, a tool write is denied and a Bash command runs', async (t) => {
   const { base, repo } = fixture(t);
   const corrupt = path.join(base, 'corrupt-index');
   writeFileSync(corrupt, 'not an index');
-  const run = (script, input) =>
-    spawnSync(process.execPath, [path.join(SCRIPTS, script)], { input: JSON.stringify(input), encoding: 'utf8', env: { ...process.env, GIT_INDEX_FILE: corrupt } });
-  const tool = run('hook-write.mjs', { tool_name: 'Edit', tool_input: { file_path: path.join(repo, 'src/app.js') }, cwd: repo });
+  const run = (script, input) => hookCall(path.join(SCRIPTS, script), { input: JSON.stringify(input), env: { ...process.env, GIT_INDEX_FILE: corrupt } });
+  const tool = await run('hook-write.mjs', { tool_name: 'Edit', tool_input: { file_path: path.join(repo, 'src/app.js') }, cwd: repo });
   assert.equal(tool.status, 2);
   assert.match(tool.stderr, /^Blocked: git could not tell whether 'src\/app\.js' is tracked/);
-  const bash = run('hook-bash.mjs', { tool_name: 'Bash', tool_input: { command: 'echo x > src/app.js' }, cwd: repo });
+  const bash = await run('hook-bash.mjs', { tool_name: 'Bash', tool_input: { command: 'echo x > src/app.js' }, cwd: repo });
   assert.deepEqual([bash.status, bash.stderr], [0, '']);
 });
 

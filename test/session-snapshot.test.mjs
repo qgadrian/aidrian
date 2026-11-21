@@ -14,6 +14,8 @@ import { reserveSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
 import { DISPLAY_CAPS, displayText, MERGED_HEADS, PRS_CACHE, snapshotLine } from '../plugins/aidrian/lib/session-snapshot.mjs';
 import { auditsSection, lessonsSection, snapshotContext } from '../plugins/aidrian/lib/session-snapshot-state.mjs';
 
+import { hookCall } from './hook-call.mjs';
+
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CLI = path.join(ROOT, 'plugins/aidrian/lib/cli.mjs');
 const HOOK = path.join(ROOT, 'plugins/aidrian/scripts/hook-stop.mjs');
@@ -114,11 +116,14 @@ function turnsOf(name) {
   return lines.flatMap((line, index) => (JSON.parse(line).type === 'assistant' ? [`${lines.slice(0, index + 1).join('\n')}\n`] : []));
 }
 
-const stopHook = ({ dir, env }, transcript) => spawnSync(process.execPath, [HOOK], {
+// The Stop hook for one turn: `inHook` calls its body in this process, as hook-call.mjs does; `stopHook` starts the script.
+const stopOptions = ({ dir, env }, transcript) => ({
   input: JSON.stringify({ hook_event_name: 'Stop', session_id: ID, transcript_path: transcript, cwd: dir, stop_hook_active: false }), cwd: dir, env, encoding: 'utf8',
 });
+const inHook = (at, transcript) => hookCall(HOOK, stopOptions(at, transcript));
+const stopHook = (at, transcript) => spawnSync(process.execPath, [HOOK], stopOptions(at, transcript));
 
-test('the JSON object and the line at each handoff level, with the Stop hook`s own marker giving reminded', (t) => {
+test('the JSON object and the line at each handoff level, with the Stop hook`s own marker giving reminded', async (t) => {
   const cost = setup(t);
   const transcript = path.join(cost.base, 'session.jsonl');
   const at = (env, turn, fixture = 'handoff-cost') => {
@@ -141,7 +146,7 @@ test('the JSON object and the line at each handoff level, with the Stop hook`s o
   assert.equal(due.json.handoff.level, 'due');
   const dueWords = `${due.json.handoff.ratio.toFixed(1)}x · handoff due, pays back in ~${Math.round(due.json.handoff.breakEven)} calls\n`;
   assert.equal(dueLine.stdout, dueWords);
-  assert.equal(stopHook(cost, transcript).status, 2, 'the Stop hook reminds on this turn and writes its marker');
+  assert.equal((await inHook(cost, transcript)).status, 2, 'the Stop hook reminds on this turn and writes its marker');
   const [reminded, remindedLine] = at(cost, 4);
   assert.equal(reminded.json.handoff.level, 'reminded', 'read from the marker at the hook`s own path');
   assert.equal(remindedLine.stdout, dueWords);
@@ -713,12 +718,12 @@ test('a value whose text passes the cap is not stored, but its attempt is, so th
   assert.equal(calls, 0, 'inside the window');
 });
 
-test('SessionEnd removes the marker only by stopMarkerPath', (t) => {
+test('SessionEnd removes the marker only by stopMarkerPath', async (t) => {
   const env = setup(t);
   const long = 'x'.repeat(129);
   for (const id of [ID, long]) writeFileSync(path.join(countsOf(env), `aidrian-session-length-${id}`), '{}\n');
   const end = path.join(ROOT, 'plugins/aidrian/scripts/hook-session-end.mjs');
-  for (const id of [ID, long]) spawnSync(process.execPath, [end], { input: JSON.stringify({ session_id: id, cwd: env.base }), cwd: env.base, env: env.env, encoding: 'utf8' });
+  for (const id of [ID, long]) await hookCall(end, { input: JSON.stringify({ session_id: id, cwd: env.base }), cwd: env.base, env: env.env });
   assert.deepEqual(readdirSync(countsOf(env)).filter((name) => name.startsWith('aidrian-session-length-')), [`aidrian-session-length-${long}`]);
 });
 

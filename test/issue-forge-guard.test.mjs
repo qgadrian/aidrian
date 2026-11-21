@@ -19,6 +19,7 @@ import { appendToRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs'
 import { ownAttemptFolder, ownIssue } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { issueHeld, markUnattended, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { unattendedPlaces, unattendedWriteDenial } from '../plugins/aidrian/lib/unattended-write.mjs';
+import { hookCall } from './hook-call.mjs';
 import { DRIVER, runFixture } from './project-start-fixture.mjs';
 
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-agent-gates.mjs');
@@ -96,11 +97,14 @@ function issueFixture(t, options = {}) {
     env: fx.env,
     places: () => unattendedPlaces({ cwd, mark: held, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [temp], own: () => ownAttemptFolder(fx.project, fx.config, held, { home: fx.home }) }),
   });
-  // The real hook, as the host runs it, for `session`'s call.
-  const hook = (input, { session = SESSION, cwd = work } = {}) => spawnSync(process.execPath, [HOOK], {
+  // The real hook for `session`'s call: `hook` calls its body in this process, as hook-call.mjs does; `spawn` starts
+  // the script as the host runs it.
+  const hookOptions = (input, { session = SESSION, cwd = work } = {}) => ({
     input: JSON.stringify({ session_id: session, cwd, ...input }), encoding: 'utf8', env: { ...fx.env, CLAUDECODE: '1', AIDRIAN_TELEMETRY: '0', TMPDIR: temp },
   });
-  return { ...fx, attempt, work, mark, ask, hook };
+  const hook = (input, options) => hookCall(HOOK, hookOptions(input, options));
+  const spawn = (input, options) => spawnSync(process.execPath, [HOOK], hookOptions(input, options));
+  return { ...fx, attempt, work, mark, ask, hook, spawn };
 }
 
 const bash = (command) => ({ tool_name: 'Bash', tool_input: { command } });
@@ -124,7 +128,7 @@ test('an issue session pushes only its own branch to origin, and asks the forge 
   assert.match(fx.ask(bash(EXACT))?.reason ?? '', /no running start of its issue names the branch it may push/u);
 });
 
-test('an attended session, a run\'s driver, a pending hold, and an unattended session no issue names are not held by the issue session\'s forge rule', (t) => {
+test('an attended session, a run\'s driver, a pending hold, and an unattended session no issue names are not held by the issue session\'s forge rule', async (t) => {
   const fx = issueFixture(t);
   const ask = (mark, command) => issueForgeDenial({ session_id: SESSION, cwd: fx.work, ...bash(command) }, NAMES, { mark, cwd: fx.work, issue: () => null, roots: () => [] });
   for (const command of ['git push --tags', 'gh release create v1', 'gh api -X POST repos/acme/widgets/git/refs -f ref=refs/tags/v1']) {
@@ -136,7 +140,7 @@ test('an attended session, a run\'s driver, a pending hold, and an unattended se
   // Through the hook: the driver, and an attended session, push tags and run releases as before.
   for (const session of [DRIVER, 'feed00aa-0000-4000-8000-0000000000ac']) {
     for (const command of ['git push --tags', 'gh release create v1']) {
-      const ran = fx.hook(bash(command), { session, cwd: fx.dir });
+      const ran = await fx.hook(bash(command), { session, cwd: fx.dir });
       assert.equal(ran.status, 0, `${session} ${command}: ${ran.stderr}`);
     }
   }
@@ -147,21 +151,21 @@ test('the agent gate hook, run as the host runs it, refuses an issue session eac
   for (const command of ['git push origin v9.9.9', 'git push --tags', 'git push origin HEAD:refs/heads/main', 'git push origin HEAD:refs/heads/release/1.0',
     `git push https://github.com/acme/widgets.git HEAD:refs/heads/${BRANCH}`, 'gh release create v9.9.9', 'gh workflow run deploy.yml',
     'gh api -X POST repos/acme/widgets/git/refs -f ref=refs/tags/v9.9.9 -f sha=abc']) {
-    const ran = fx.hook(bash(command));
+    const ran = fx.spawn(bash(command));
     assert.equal(ran.status, 2, `${command}: ${ran.stderr}`);
     assert.match(ran.stderr, /a project run's issue session never does that/u, command);
   }
   for (const command of [EXACT, `git push -u origin HEAD:refs/heads/${BRANCH}`]) {
-    const ran = fx.hook(bash(command));
+    const ran = fx.spawn(bash(command));
     assert.equal(ran.status, 0, `${command}: ${ran.stderr}`);
   }
   // The remote rule, past the forge rule, names the session by its mark too, never as one the handoff route started.
-  const moved = fx.hook(bash('git fetch . +HEAD:refs/remotes/origin/main'));
+  const moved = fx.spawn(bash('git fetch . +HEAD:refs/remotes/origin/main'));
   assert.equal(moved.status, 2, moved.stderr);
   assert.match(moved.stderr, /blocked for the issue session of a project run \(launch, ENG-1\) in this project: .*or a remote-tracking ref.*this session works an issue of a project run/u);
 });
 
-test('an issue session\'s exact push is refused when its commits change a workflow file, however it got there, and not for a merge of the default branch', (t) => {
+test('an issue session\'s exact push is refused when its commits change a workflow file, however it got there, and not for a merge of the default branch', async (t) => {
   const fx = issueFixture(t);
   const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8', stdio: 'pipe' });
   const push = () => fx.ask(bash(EXACT))?.reason ?? null;
@@ -183,7 +187,7 @@ test('an issue session\'s exact push is refused when its commits change a workfl
   git(fx.work, 'apply', '--cached', patch);
   git(fx.work, 'commit', '-q', '-m', 'chore: tidy');
   assert.match(push(), /it pushes commits that change \.github\/workflows\/leak\.yml, a workflow file the forge runs with the repository's secrets on that push/u);
-  const hooked = fx.hook(bash(EXACT));
+  const hooked = await fx.hook(bash(EXACT));
   assert.equal(hooked.status, 2, hooked.stderr);
   assert.match(hooked.stderr, /\.github\/workflows\/leak\.yml/u);
   // A change to the actions a workflow calls counts the same; taking the leak back out lets the push run.
@@ -193,19 +197,19 @@ test('an issue session\'s exact push is refused when its commits change a workfl
   git(fx.work, 'add', '--', 'src');
   git(fx.work, 'commit', '-q', '-m', 'chore: undo');
   assert.equal(push(), null, 'the leak taken out, and a folder of that name below the root');
-  const ran = fx.hook(bash(EXACT));
+  const ran = await fx.hook(bash(EXACT));
   assert.equal(ran.status, 0, ran.stderr);
   git(fx.work, 'update-ref', '-d', 'refs/remotes/origin/HEAD');
   git(fx.work, 'update-ref', '-d', 'refs/remotes/origin/main');
   const lost = push();
   assert.match(lost, /git names no merge base with origin's default branch/u, 'no base to compare with');
   // The advice runs: the remote-change rule lets an issue session run both commands, and the fetch alone repairs the base.
-  for (const advised of lost.match(/`git (?:fetch|remote)[^`]*`/gu).map((each) => each.slice(1, -1))) assert.equal(fx.hook(bash(advised)).status, 0, advised);
+  for (const advised of lost.match(/`git (?:fetch|remote)[^`]*`/gu).map((each) => each.slice(1, -1))) assert.equal((await fx.hook(bash(advised))).status, 0, advised);
   git(fx.work, 'fetch', '-q', 'origin');
   assert.equal(push(), null, 'git fetch origin gives the push its base again');
 });
 
-test('an issue session pushes in a call of its own, so no command beside it changes the commits it carries after the guard read them', (t) => {
+test('an issue session pushes in a call of its own, so no command beside it changes the commits it carries after the guard read them', async (t) => {
   const fx = issueFixture(t);
   const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8', stdio: 'pipe' });
   const patch = path.join(fx.root, 'scratch', 'leak.patch');
@@ -234,7 +238,7 @@ test('an issue session pushes in a call of its own, so no command beside it chan
   for (const command of [`GIT_SSH_COMMAND=./x ${EXACT}`, `GIT_TRACE=/tmp/trace ${EXACT}`, `env GIT_TRACE=1 ${EXACT}`, `env -u LANG ${EXACT}`, `git status && GIT_SSH=./x ${EXACT}`]) {
     assert.match(fx.ask(bash(command))?.reason ?? '', /for the push, and a variable such as GIT_SSH_COMMAND runs a program/u, command);
   }
-  const hooked = fx.hook(bash(`git commit --allow-empty -qm x && ${EXACT}`));
+  const hooked = await fx.hook(bash(`git commit --allow-empty -qm x && ${EXACT}`));
   assert.equal(hooked.status, 2, hooked.stderr);
   assert.match(hooked.stderr, /in a call of its own/u);
   // Alone, a read whose output names the clone's git folder is refused by the write rule.
@@ -316,7 +320,7 @@ test('the workflow-file reads take both paths of a rename, from git\'s NUL-ended
   ]);
 });
 
-test('an issue session pushes only from its own clone\'s repository, to the URL its start pinned, never from a clone nested in it', (t) => {
+test('an issue session pushes only from its own clone\'s repository, to the URL its start pinned, never from a clone nested in it', async (t) => {
   const fx = issueFixture(t);
   const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8', stdio: 'pipe' });
   // Another repository, cloned inside the attempt's clone, whose origin is anywhere.
@@ -328,7 +332,7 @@ test('an issue session pushes only from its own clone\'s repository, to the URL 
   for (const command of [`cd sub && ${EXACT}`, `git -C sub push origin HEAD:refs/heads/${BRANCH}`]) {
     assert.match(fx.ask(bash(command))?.reason ?? '', /a folder inside its clone or worktree that is another repository/u, command);
   }
-  const hooked = fx.hook(bash(`cd sub && ${EXACT}`));
+  const hooked = await fx.hook(bash(`cd sub && ${EXACT}`));
   assert.equal(hooked.status, 2, hooked.stderr);
   assert.equal(fx.ask(bash(EXACT)), null, 'the clone itself');
   // The clone's origin made to push elsewhere, past the guards, as a config write by a program would.
@@ -347,7 +351,7 @@ test('an issue session whose start pinned no push URL pushes nothing', (t) => {
   assert.match(fx.ask(bash(EXACT))?.reason ?? '', /its issue's start recorded no URL its clone pushes to/u);
 });
 
-test('an issue session writes no workflow file, no handoff brief or snapshot, no quorum ledger, and only its own issue\'s plans, scratch files, and handoffs', (t) => {
+test('an issue session writes no workflow file, no handoff brief or snapshot, no quorum ledger, and only its own issue\'s plans, scratch files, and handoffs', async (t) => {
   const fx = issueFixture(t);
   const refused = [
     [path.join(fx.work, '.github', 'workflows', 'leak.yml'), /the forge's workflow files, which the forge runs with the repository's secrets/u],
@@ -378,11 +382,11 @@ test('an issue session writes no workflow file, no handoff brief or snapshot, no
     assert.equal(fx.ask(write(file), { held: plain, cwd: fx.dir }), null, file);
   }
   // Through the hook, as the host runs it.
-  const brief = fx.hook(write(path.join(fx.state, 'handoffs', '2026-11-19-project-launch.md')));
+  const brief = await fx.hook(write(path.join(fx.state, 'handoffs', '2026-11-19-project-launch.md')));
   assert.equal(brief.status, 2, brief.stderr);
-  const workflow = fx.hook(write(path.join(fx.work, '.github', 'workflows', 'leak.yml')));
+  const workflow = await fx.hook(write(path.join(fx.work, '.github', 'workflows', 'leak.yml')));
   assert.equal(workflow.status, 2, workflow.stderr);
-  const plan = fx.hook(write(path.join(fx.state, 'plans', 'eng-1-implementation.md')));
+  const plan = await fx.hook(write(path.join(fx.state, 'plans', 'eng-1-implementation.md')));
   assert.equal(plan.status, 0, plan.stderr);
   // A state folder inside a temporary folder, as on Linux where the hook's /tmp holds it, keeps its own rules there.
   const inTemp = (file) => unattendedWriteDenial({ session_id: SESSION, cwd: fx.work, ...write(file) }, fx.config, {

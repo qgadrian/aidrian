@@ -27,7 +27,7 @@ import { findProject, projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { placeHolders } from '../plugins/aidrian/lib/project-start.mjs';
 import { markPending, markUnattended, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 
-import { factReads, tally } from './git-call-log.mjs';
+import { factReads, gitLog, tally } from './git-call-log.mjs';
 import { hookCall } from './hook-call.mjs';
 
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-agent-gates.mjs');
@@ -760,6 +760,28 @@ test('one call of the places reads each checkout\'s roots once, though its state
   const roots = reads.filter((line) => line.endsWith(' roots'));
   assert.ok(roots.includes(`${fx.dir} roots`) && roots.includes(`${fx.worktree} roots`), `both checkouts' roots are read: ${roots.join(' | ')}`);
   assert.deepEqual(tally(roots), Object.fromEntries(roots.map((line) => [line, 1])), 'each folder\'s roots once');
+});
+
+// The git commands a guard reads with, as `<command> <first arguments>`: a logged call outside them writes.
+const GIT_READS = [/^rev-parse\b/u, /^config --get\b/u, /^config --get-regexp\b/u, /^config --file\b/u, /^worktree list\b/u, /^remote$/u, /^show\b/u, /^var\b/u, /^ls-files\b/u, /^cat-file\b/u];
+
+test('one agent gate hook call of a marked session\'s write in its worktree runs only git reads, and no more of them than it measured', async (t) => {
+  const fx = fixture(t);
+  const git = gitLog(t);
+  const file = path.join(fx.worktree, 'notes.md');
+  const result = await hookCall(HOOK, { input: JSON.stringify({ session_id: SESSION, cwd: fx.worktree, ...write(file) }), cwd: fx.worktree, env: { ...fx.env, PATH: git.path }, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  // Each line is `<working folder> <arguments>`, its folder one of the fixture's, or the root folder where git names
+  // its config files.
+  const calls = git.calls().map((line) => {
+    if (line.startsWith(`${path.sep} `)) return line.slice(2);
+    assert.ok(line.startsWith(`${fx.root}${path.sep}`), `a git call in the fixture or the root folder: ${line}`);
+    return line.slice(line.indexOf(' ', fx.root.length) + 1);
+  });
+  assert.ok(calls.length > 0, 'the hook reads git');
+  for (const call of calls) assert.ok(GIT_READS.some((read) => read.test(call)), `a git read: ${call}`);
+  // 45 before the places read each checkout's facts once, 32 after.
+  assert.ok(calls.length <= 32, `at most 32 git calls, as measured once the places read each checkout's facts once: ${calls.length}`);
 });
 
 test('a `.git` entry in an attempt folder or a state folder a session writes is refused too', (t) => {

@@ -2138,11 +2138,14 @@ The guard allows it on an issue whose latest ledger state is running on a start 
 `started`), and that the snapshot holds as triage, backlog, or unstarted, as the adapter's issue tool with the issue's
 key and the adapter's started status type alone (Linear `save_issue` with `id` and `state: "started"`, which the tracker
 maps to the team's first started status). Any other field or status, a comment, or an issue that is queued, settled, or
-open again is refused as any other write is. It owes no report and leaves no record: the write is idempotent, so a
-repeat does no harm, and nothing retries one that fails, since the issue's own session sets `started` too, as its backup.
-A tracker whose adapter names no started status, as GitHub Issues, which has no adapter, gets no such write. The
-snapshot is taken at init and the guard reads no tracker, so a status a person moved after init, such as an issue moved
-on by hand, can be set back to started once; in a run no Human attends, nobody moves its queued issues. A driver mark the ledger does not confirm, as a continuation's
+open again is refused as any other write is. It owes no report and leaves no record. The loop tries a failed write at
+most twice more right away, and the run's final report names an issue whose started status was never set; the issue's
+own session sets `started` too, as its backup. A tracker whose adapter names no started status, as GitHub Issues, which
+has no adapter, gets no such write. The write does not check the tracker's current status: the snapshot is taken at
+init and the guard reads no tracker. So each write can set the issue back to the first started status once, when the
+status moved after init, such as an issue a person moved on by hand, or between attempts, such as an issue the tracker
+moved to In Review when an earlier attempt's pull request opened. In a run no Human attends, nobody moves its queued
+issues. A driver mark the ledger does not confirm, as a continuation's
 before its first `wait`, is held, and writes nothing: the background route files the driver's mark for a driver's
 continuation as it starts it. For both, every call on the tracker's server is a write unless
 its name says it reads, and the tracker's servers include those of `projectRun.mcpServers` whose endpoint an adapter

@@ -86,7 +86,7 @@ when the host continues nothing.
 At the end, or at a halt, for a reader who saw nothing of the run, naming the Human and the AI as the start hook does:
 
 1. **Outcome**: the counts `aidrian project summary <run>` prints, and the path of its summary.md.
-2. **Merged**: each issue with its pull request.
+2. **Merged**: each issue with its pull request. Then each issue whose started status could not be set.
 3. **Decisions for the Human**: each parked issue, its decisions with their options and the recommendation, and the
    issues skipped because they wait on it. Each sign-off a pull request waits on, with its number, comes first:
    the Human gives it in a separate session the Human attends, never in this one.

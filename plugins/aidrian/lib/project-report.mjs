@@ -4,7 +4,8 @@
 // a label, and a comment body, with the body's sha256. The driver posts exactly that, then runs `aidrian project
 // recorded`, which closes it; lib/tracker-guard.mjs runWriteRefusal refuses the driver any other tracker write but one:
 // the started status of an issue that runs (startedWrites), which it sets once right after the start. That write owes
-// no report and leaves no record: it is idempotent, and nothing retries one that fails.
+// no report and leaves no record. It does not check the tracker's current status, so each write can set the issue back
+// to started once, when the status moved after init or between attempts.
 //
 // The result file is read again as untrusted: `results/<issue>.json` is read without following a link, under
 // RESULT_CAP, must name this run, issue, and attempt, and passes validateResult again, whose cleanText strips control,
@@ -79,7 +80,8 @@ export function rereadResult(state, run, key, row) {
 // { key, attempt, outcome, pr, status, label, body, sha256 }. `policy` is reportPolicy's.
 export function owedReports({ state, run, found, policy }) {
   const keys = new Set(found.snapshot.issues.map((issue) => issue.key));
-  const recorded = new Set(found.rows.filter((row) => row.event === 'recorded').map((row) => row.key));
+  // A `recorded` row of kind `started`, as a build that acknowledged the started status wrote, closes no settle report.
+  const recorded = new Set(found.rows.filter((row) => row.event === 'recorded' && row.kind !== 'started').map((row) => row.key));
   const settled = new Map();
   found.rows.forEach((cause, at) => {
     const after = found.rows[at + 1];
@@ -119,7 +121,8 @@ function buildReport({ state, run, key, cause, after, policy }) {
 // The started status writes the driver may make on run `found`, as [{ key, status }]: each issue that runs on a start
 // that held its session, its latest start's outcome `started`, and that the snapshot holds in a status before started.
 // `status` is the adapter's started status type (`run.issue.started`), none when `policy.adapter` names none. The
-// snapshot is read at init, so a status a person moved since is not seen.
+// snapshot is read at init and no tracker is read here, so a status that moved since, after init or between attempts,
+// is not seen: each write can set the issue back to started once.
 export function startedWrites({ found, policy }) {
   const status = policy.adapter?.run?.issue?.started;
   if (typeof status !== 'string' || status === '') return [];

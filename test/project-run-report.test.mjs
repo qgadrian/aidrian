@@ -6,7 +6,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -88,6 +88,14 @@ test('a merged issue owes its completed status and one comment; recorded closes 
   assert.deepEqual([row.event, row.key, row.attempt, row.sha256, row.session], ['recorded', 'ENG-1', 1, report.sha256, DRIVER]);
   assert.deepEqual(fx.report().out, ['none']);
   assert.match(fx.cmd(['recorded', 'launch', 'ENG-1']).err[0], /the run launch owes no report on ENG-1/u);
+});
+
+test('a recorded row of kind started closes no settle report', (t) => {
+  const fx = started(t);
+  // A build that acknowledged the started status wrote such a row; one may still sit in a run's ledger.
+  appendFileSync(path.join(runFolder(fx.state, 'launch'), 'ledger.jsonl'), `${JSON.stringify({ event: 'recorded', key: 'ENG-1', kind: 'started', attempt: 1, sha256: null, session: DRIVER, at: new Date().toISOString() })}\n`);
+  fx.settle({ status: 'merged', pr: 12 });
+  assert.deepEqual(fx.owed().map((each) => [each.key, each.outcome, each.status]), [['ENG-1', 'merged', 'completed']], 'the settle report is still owed');
 });
 
 test('a parked issue owes the decision label and a comment that quotes its cleaned decisions as data', (t) => {

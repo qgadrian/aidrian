@@ -19,6 +19,7 @@ import { defaultStateDir, findProject, projectCheckouts, stateDir } from '../plu
 import { GIT_VARS } from '../plugins/aidrian/lib/review/env.mjs';
 import { dropPending, MARK_AGE, markFolder, markPending, markUnattended, PENDING_AGE, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { TEST_HOME } from './fixtures/test-home.mjs';
+import { hookCall } from './hook-call.mjs';
 
 // The hooks this file runs record their blocks, and the gate's marks, in the state root; keep them in a folder of its own.
 process.env.XDG_STATE_HOME = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-state-')));
@@ -121,7 +122,7 @@ test('a mark holds under its own id or a short one, for 30 days; a write sweeps 
   assert.deepEqual(read('face0001'), { root });
 });
 
-test('a marked session is held from a folder outside its project, and in another project, before any refusal; an attended one is not', (t) => {
+test('a marked session is held from a folder outside its project, and in another project, before any refusal; an attended one is not', async (t) => {
   const dir = project(t);
   const outside = folder(t, 'aidrian-outside-');
   assert.equal(findProject(outside), null, 'the folder is no project');
@@ -135,7 +136,7 @@ test('a marked session is held from a folder outside its project, and in another
   // A mark whose project is gone still holds the session to what holds outside any project.
   assert.ok(markUnattended(gone, { root: path.join(outside, 'no-such-project') }));
   const marks = markFolder();
-  const run = (session, command, { cwd = outside, agent = false } = {}) => spawnSync(process.execPath, [HOOK], {
+  const run = (session, command, { cwd = outside, agent = false } = {}) => hookCall(HOOK, {
     input: JSON.stringify({ session_id: session, tool_name: 'Bash', tool_input: { command }, cwd, ...(agent ? { agent_id: 'a5f0c1', agent_type: 'aidrian:explorer' } : {}) }),
     cwd, encoding: 'utf8',
   });
@@ -155,30 +156,30 @@ test('a marked session is held from a folder outside its project, and in another
   const allowed = ['ls', 'claude agents --json', `rm -f ${outside}/x`, 'echo hi > note.txt', 'aidrian handoff continue b.md'];
   for (const session of [full, short]) {
     for (const [command, reason] of refused) {
-      const result = run(session, command);
+      const result = await run(session, command);
       assert.equal(result.status, 2, `${session}: ${command}`);
       assert.match(result.stderr, reason, command);
       assert.match(result.stderr, /the background handoff route started this (?:session|one), with no Human/u, command);
     }
-    for (const command of allowed) assert.equal(run(session, command).status, 0, `${session}: ${command}`);
+    for (const command of allowed) assert.equal((await run(session, command)).status, 0, `${session}: ${command}`);
     // In another project, the marked project's store and switches stay guarded.
-    assert.equal(run(session, `rm ${store}/from-${full}.json`, { cwd: other }).status, 2, `${session}: the marked project's store from another project`);
-    assert.equal(run(session, `echo '{"handoff":{"background":"on"}}' > ${dir}/.aidrian.local.json`, { cwd: other }).status, 2, `${session}: a switch from another project`);
-    assert.equal(run(session, 'claude -p x', { cwd: other }).status, 2, `${session}: a start from another project`);
-    assert.equal(run(session, `rm -f ${other}/src/app.js`, { cwd: other }).status, 0, session);
+    assert.equal((await run(session, `rm ${store}/from-${full}.json`, { cwd: other })).status, 2, `${session}: the marked project's store from another project`);
+    assert.equal((await run(session, `echo '{"handoff":{"background":"on"}}' > ${dir}/.aidrian.local.json`, { cwd: other })).status, 2, `${session}: a switch from another project`);
+    assert.equal((await run(session, 'claude -p x', { cwd: other })).status, 2, `${session}: a start from another project`);
+    assert.equal((await run(session, `rm -f ${other}/src/app.js`, { cwd: other })).status, 0, session);
   }
-  assert.equal(run(gone, 'claude -p x').status, 2, 'a mark whose project is gone');
-  assert.equal(run(gone, `rm ${marks}/${gone}.json`).status, 2, 'its own mark');
-  assert.equal(run(gone, 'ls').status, 0);
+  assert.equal((await run(gone, 'claude -p x')).status, 2, 'a mark whose project is gone');
+  assert.equal((await run(gone, `rm ${marks}/${gone}.json`)).status, 2, 'its own mark');
+  assert.equal((await run(gone, 'ls')).status, 0);
   // An attended session may do all of it; a subagent of it may not change the marks.
-  for (const [command] of refused) assert.equal(run('plain-session', command).status, 0, `attended: ${command}`);
-  assert.equal(run('plain-session', `rm ${marks}/${full}.json`, { agent: true }).status, 2, 'a subagent may not delete a mark');
-  assert.equal(run('plain-session', `printf x > ${marks}/plain-session.json`, { agent: true, cwd: dir }).status, 2, 'nor forge one, in a project');
+  for (const [command] of refused) assert.equal((await run('plain-session', command)).status, 0, `attended: ${command}`);
+  assert.equal((await run('plain-session', `rm ${marks}/${full}.json`, { agent: true })).status, 2, 'a subagent may not delete a mark');
+  assert.equal((await run('plain-session', `printf x > ${marks}/plain-session.json`, { agent: true, cwd: dir })).status, 2, 'nor forge one, in a project');
   // The marks are still there: every refusal was judged before the call ran.
   assert.deepEqual(readUnattendedMark(full, { home: TEST_HOME }), { root: dir });
 });
 
-test('while the gate starts a session, every session the host had not listed and with no mark of its own is held, in whatever folder it works', (t) => {
+test('while the gate starts a session, every session the host had not listed and with no mark of its own is held, in whatever folder it works', async (t) => {
   const dir = project(t);
   const outside = folder(t, 'aidrian-outside-');
   const old = 'feed0004-0000-4000-8000-000000000004';
@@ -187,7 +188,7 @@ test('while the gate starts a session, every session the host had not listed and
   const pending = markPending(old, { cwd: dir, root: dir, known: [old, listed] });
   assert.ok(pending);
   t.after(() => dropPending(pending));
-  const run = (session, command, cwd = dir) => spawnSync(process.execPath, [HOOK], {
+  const run = (session, command, cwd = dir) => hookCall(HOOK, {
     input: JSON.stringify({ session_id: session, tool_name: 'Bash', tool_input: { command }, cwd }), cwd, encoding: 'utf8',
   });
   const refused = [
@@ -198,39 +199,39 @@ test('while the gate starts a session, every session the host had not listed and
   for (const [command, reason] of refused) {
     // The new session may change folder before the host lists its id: below the start folder, or out of it.
     for (const cwd of [dir, path.join(dir, 'src'), outside]) {
-      const result = run(fresh, command, cwd);
+      const result = await run(fresh, command, cwd);
       assert.equal(result.status, 2, `${cwd}: ${command}`);
       assert.match(result.stderr, reason, command);
       assert.match(result.stderr, /the background handoff route started this (?:session|one), with no Human/u, command);
     }
-    assert.equal(run(old, command).status, 0, `the session that ran the gate: ${command}`);
-    assert.equal(run(listed, command).status, 0, `a session the host listed before the start: ${command}`);
+    assert.equal((await run(old, command)).status, 0, `the session that ran the gate: ${command}`);
+    assert.equal((await run(listed, command)).status, 0, `a session the host listed before the start: ${command}`);
   }
-  assert.equal(run(fresh, 'ls').status, 0);
-  assert.equal(run(fresh, 'ls', outside).status, 0, 'a held session still works');
+  assert.equal((await run(fresh, 'ls')).status, 0);
+  assert.equal((await run(fresh, 'ls', outside)).status, 0, 'a held session still works');
 
   // A pending mark that names no listing holds every session but the gate's.
   const unlisted = markPending(old, { cwd: dir, root: dir });
   assert.equal(unlisted, pending, 'the same gate\'s mark, written again');
-  assert.equal(run(listed, 'claude --bg x', outside).status, 2, 'with no listing, a session cannot show it was there before');
-  assert.equal(run(old, 'claude --bg x', outside).status, 0);
+  assert.equal((await run(listed, 'claude --bg x', outside)).status, 2, 'with no listing, a session cannot show it was there before');
+  assert.equal((await run(old, 'claude --bg x', outside)).status, 0);
 
   // A pending mark lapses after PENDING_AGE; one it cannot read holds every session.
   const lapsed = (Date.now() - PENDING_AGE - 60_000) / 1000;
   utimesSync(pending, lapsed, lapsed);
-  assert.equal(run(fresh, 'claude --bg x').status, 0, 'a lapsed pending mark holds nobody');
+  assert.equal((await run(fresh, 'claude --bg x')).status, 0, 'a lapsed pending mark holds nobody');
   writeFileSync(pending, 'not json');
-  assert.equal(run(fresh, 'claude --bg x', outside).status, 2, 'an unreadable pending mark holds every session');
+  assert.equal((await run(fresh, 'claude --bg x', outside)).status, 2, 'an unreadable pending mark holds every session');
   assert.ok(dropPending(pending));
-  assert.equal(run(fresh, 'claude --bg x').status, 0, 'once the gate removed it, nobody');
+  assert.equal((await run(fresh, 'claude --bg x')).status, 0, 'once the gate removed it, nobody');
 });
 
-test('a subagent and a marked session may not repoint a git remote or gh\'s default repository; reads, and an attended session, may', (t) => {
+test('a subagent and a marked session may not repoint a git remote or gh\'s default repository; reads, and an attended session, may', async (t) => {
   const dir = project(t);
   const outside = folder(t, 'aidrian-outside-');
   const marked = 'feed0006-0000-4000-8000-000000000006';
   assert.ok(markUnattended(marked, { root: dir }));
-  const run = (session, command, { cwd = dir, agent = false } = {}) => spawnSync(process.execPath, [HOOK], {
+  const run = (session, command, { cwd = dir, agent = false } = {}) => hookCall(HOOK, {
     input: JSON.stringify({ session_id: session, tool_name: 'Bash', tool_input: { command }, cwd, ...(agent ? { agent_id: 'a5f0c1', agent_type: 'aidrian:explorer' } : {}) }),
     cwd, encoding: 'utf8',
   });
@@ -278,12 +279,12 @@ test('a subagent and a marked session may not repoint a git remote or gh\'s defa
   ];
   for (const [who, session, options] of [['a marked session', marked, {}], ['a subagent', 'plain-session', { agent: true }], ['a marked session outside its project', marked, { cwd: outside }]]) {
     for (const command of refused) {
-      const result = run(session, command, options);
+      const result = await run(session, command, options);
       assert.equal(result.status, 2, `${who}: ${command}`);
       assert.match(result.stderr, /changes which repository the checkout's git remotes or gh's default name, or how git reads them, where the plugin reads the team's policy on the forge, such as solo/u, `${who}: ${command}`);
     }
     for (const command of allowed) {
-      const result = run(session, command, options);
+      const result = await run(session, command, options);
       // A marked session's write of the repository's own git config is the write allowlist's to refuse
       // (lib/unattended-write.mjs), never this guard's.
       if (command === 'git config user.name t' && session === marked) {
@@ -295,17 +296,17 @@ test('a subagent and a marked session may not repoint a git remote or gh\'s defa
       assert.equal(result.status, 0, `${who}: ${command}`);
     }
   }
-  for (const command of refused) assert.equal(run('plain-session', command).status, 0, `attended: ${command}`);
+  for (const command of refused) assert.equal((await run('plain-session', command)).status, 0, `attended: ${command}`);
 });
 
-test('a subagent and a marked session may not erase the machine\'s local file by any Bash write, though it names no key', (t) => {
+test('a subagent and a marked session may not erase the machine\'s local file by any Bash write, though it names no key', async (t) => {
   // The project has no gates: the guard holds without them.
   const dir = project(t);
   const local = path.join(dir, '.aidrian.local.json');
   writeFileSync(local, JSON.stringify({ unattendedSignoff: 'off' }));
   const marked = 'feed0007-0000-4000-8000-000000000007';
   assert.ok(markUnattended(marked, { root: dir }));
-  const run = (session, command, { agent = false } = {}) => spawnSync(process.execPath, [HOOK], {
+  const run = (session, command, { agent = false } = {}) => hookCall(HOOK, {
     input: JSON.stringify({ session_id: session, tool_name: 'Bash', tool_input: { command }, cwd: dir, ...(agent ? { agent_id: 'a5f0c1', agent_type: 'aidrian:explorer' } : {}) }),
     cwd: dir, encoding: 'utf8',
   });
@@ -319,35 +320,38 @@ test('a subagent and a marked session may not erase the machine\'s local file by
   ];
   for (const [who, session, options] of [['a marked session', marked, {}], ['a subagent', 'plain-session', { agent: true }]]) {
     for (const command of refused) {
-      const result = run(session, command, options);
+      const result = await run(session, command, options);
       assert.equal(result.status, 2, `${who}: ${command}`);
       assert.match(result.stderr, /it writes, moves, links, or removes \.aidrian\.local\.json, or may, which holds the machine's switches/u, `${who}: ${command}`);
     }
-    assert.equal(run(session, `cat ${local}`, options).status, 0, `${who}: a read`);
-    for (const command of [`cp ${local} ${dir}/copy.json`, 'git clean -fd', 'git stash', 'F=notes.txt; rm "$F"']) assert.equal(run(session, command, options).status, 0, `${who}: ${command}`);
-    assert.equal(run(session, 'rm -f notes.txt', options).status, 0, `${who}: another file`);
+    assert.equal((await run(session, `cat ${local}`, options)).status, 0, `${who}: a read`);
+    for (const command of [`cp ${local} ${dir}/copy.json`, 'git clean -fd', 'git stash', 'F=notes.txt; rm "$F"']) assert.equal((await run(session, command, options)).status, 0, `${who}: ${command}`);
+    assert.equal((await run(session, 'rm -f notes.txt', options)).status, 0, `${who}: another file`);
   }
-  for (const command of refused) assert.equal(run('plain-session', command).status, 0, `attended: ${command}`);
+  for (const command of refused) assert.equal((await run('plain-session', command)).status, 0, `attended: ${command}`);
 });
 
-test('a marked session may not run the handoff gate with a variable that moves the repository git reads, or gh\'s config', (t) => {
+test('a marked session may not run the handoff gate with a variable that moves the repository git reads, or gh\'s config', async (t) => {
   const dir = project(t);
   const marked = 'feed0008-0000-4000-8000-000000000008';
   assert.ok(markUnattended(marked, { root: dir }));
-  const run = (session, command) => spawnSync(process.execPath, [HOOK], {
+  const run = (session, command) => hookCall(HOOK, {
     input: JSON.stringify({ session_id: session, tool_name: 'Bash', tool_input: { command }, cwd: dir }), cwd: dir, encoding: 'utf8',
   });
   // Any variable, not only the ones that move what the gate reads.
   for (const name of [...GIT_VARS, 'GH_CONFIG_DIR', 'XDG_CONFIG_HOME', 'NODE_OPTIONS', 'HTTPS_PROXY']) {
-    const result = run(marked, `${name}=/tmp/elsewhere aidrian handoff continue b.md`);
+    const result = await run(marked, `${name}=/tmp/elsewhere aidrian handoff continue b.md`);
     assert.equal(result.status, 2, name);
     assert.match(result.stderr, new RegExp(`with ${name} set or unset by the command itself`, 'u'), name);
-    assert.equal(run('plain-session', `${name}=/tmp/elsewhere aidrian handoff continue b.md`).status, 0, `attended: ${name}`);
+    assert.equal((await run('plain-session', `${name}=/tmp/elsewhere aidrian handoff continue b.md`)).status, 0, `attended: ${name}`);
   }
-  const exported = run(marked, 'export NODE_OPTIONS=--require=/tmp/x.js; aidrian handoff route');
+  // The script itself, so its own entry stays covered.
+  const exported = spawnSync(process.execPath, [HOOK], {
+    input: JSON.stringify({ session_id: marked, tool_name: 'Bash', tool_input: { command: 'export NODE_OPTIONS=--require=/tmp/x.js; aidrian handoff route' }, cwd: dir }), cwd: dir, encoding: 'utf8',
+  });
   assert.equal(exported.status, 2);
   assert.match(exported.stderr, /with NODE_OPTIONS set or unset by the command itself/u);
-  assert.equal(run(marked, 'aidrian handoff route').status, 0, 'with no variable');
+  assert.equal((await run(marked, 'aidrian handoff route')).status, 0, 'with no variable');
 });
 
 // The user's own state folder is read beside the state root's, and no HOME or XDG_STATE_HOME moves it, so a call that

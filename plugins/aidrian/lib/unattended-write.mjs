@@ -23,7 +23,7 @@ import { checkDeadline, PastDeadline, remainingMs } from './deadline.mjs';
 import { isManifestPath } from './finding-disposition.mjs';
 import { forgeWorkflowFolders } from './forges/index.mjs';
 import { foldCase, isWithin } from './fs.mjs';
-import { gitConfigFiles, gitFolders, runGit } from './git.mjs';
+import { gitConfigFiles, gitFolders, repositoryCheckouts, runGit } from './git.mjs';
 import { GLOB_WORD, sameFile } from './glob-links.mjs';
 import { globPaths, globReaches, modeTargets, startedFolder, stateFolders } from './handoff-guard.mjs';
 import { fileEditOf, nestedProtected, opaqueShellCommand, protectedPaths } from './hosts/index.mjs';
@@ -93,9 +93,10 @@ const issueHandoff = (issue) => (target, folder) => {
 const absolute = (each) => typeof each === 'string' && path.isAbsolute(each);
 // The time a git call may take: what the guards' budget leaves, or git's own default outside one.
 const gitBudget = () => (Number.isFinite(remainingMs()) ? { timeout: Math.max(1, Math.floor(remainingMs())) } : undefined);
-// A function that adds a refused entry to `list`: { path, spelled, what, folder, allows }, `allows(target, folder)` the
-// paths inside a refused folder that pass.
-const refuser = (list) => (file, what, folder = false, allows = null) => list.push({ path: real(file), spelled: file, what, folder, allows });
+// A function that adds a refused entry to `list`: { path, spelled, what, folder, allows, always }, `allows(target, folder)`
+// the paths inside a refused folder that pass, and `always` an entry a write to a folder that holds it meets even when
+// that folder is a place itself, as a checkout nested in the session's worktree is met by `rm -rf` of the worktree.
+const refuser = (list) => (file, what, folder = false, allows = null, always = false) => list.push({ path: real(file), spelled: file, what, folder, allows, always });
 
 // The places a session no Human attends may write, for the session whose mark is `mark`, or null when they cannot be
 // told: { limited, pending, specific, reviews, worktree, temp, refused, later, home }, each path real and case-folded.
@@ -106,7 +107,8 @@ const refuser = (list) => (file, what, folder = false, allows = null) => list.pu
 //   - specific: its attempt's work, drop, and cache folders (`own()`, project-run-guard.mjs ownAttemptFolder), and HAND_FOLDERS of
 //     every state folder of `project`, the project the mark names, that is no link; `reviews`, each state's reviews folder.
 //   - worktree: the checkout of the folder its mark says it started in (startFolder), when it shares its git folder with
-//     the mark's main checkout, and `worktreeCommon` its git common folder; never the call's folder. `nested` holds the attempt's
+//     the mark's main checkout, and `worktreeCommon` its git common folder; never the call's folder. Every other checkout
+//     of the repository nested in it keeps its `.git` pointer and host files refused (nestedRefused). `nested` holds the attempt's
 //     clone, { root, work, common, links }, `common` the git folder the start cloned it with. `temp`: the temporary
 //     folders, this process's and /tmp by default. `states`: every state folder of `project`, where only `specific`
 //     and `reviews` pass, even inside a temporary folder, as a state folder under /tmp is.
@@ -193,7 +195,7 @@ function ownPlaces(places, { mark, project, config, base, own, home, temp, sessi
   const from = repo ? startFolder(mark, places.issueHeld, () => startedFolder(project, config, session, stateOptions(base, home))) : null;
   const start = from ? gitFolders(from, gitBudget()) : null;
   if (places.issueHeld) places.issue = ownIssue(project, config, mark, stateOptions(base, home));
-  if (start && real(start.common) === real(repo.common)) {
+  if (start && real(start.common) === real(repo.common) && nestedRefused(refuse, mark.root, start.top)) {
     places.worktree = real(start.top);
     places.worktreeCommon = real(start.common);
     gitRefused(refuse, start);
@@ -220,6 +222,26 @@ function ownPlaces(places, { mark, project, config, base, own, home, temp, sessi
   }
   stateWork(places, { project, config, base, home }, refuse);
   places.temp = (temp ?? [tmpdir(), '/tmp']).filter(absolute).map(real);
+}
+
+// The other checkouts of the repository of the main checkout `root` that lie inside the session's worktree `top`, as
+// task worktrees under the main checkout's `.claude/worktrees/` do for a session started there: each one's `.git`
+// pointer is refused, whole folders that hold it included (`always`), and so are its host files, which a later session
+// there loads (hostRefused). Whether git could list the checkouts: a worktree whose nested checkouts cannot be told is
+// none of the session's.
+const NESTED_POINTER = 'a nested checkout\'s pointer to its git folder, which only git writes';
+function nestedRefused(refuse, root, top) {
+  checkDeadline();
+  const checkouts = repositoryCheckouts(root, gitBudget);
+  if (!checkouts) return false;
+  const own = real(top);
+  for (const each of checkouts) {
+    const at = real(each);
+    if (at === own || !isWithin(own, at)) continue;
+    refuse(path.join(each, '.git'), NESTED_POINTER, false, null, true);
+    hostRefused(refuse, each);
+  }
+  return true;
 }
 
 // The forge's workflow folders of the checkout at `top` (forges/index.mjs forgeWorkflowFolders), refused to a project
@@ -421,7 +443,7 @@ function refusedHit(target, spelled, entries, { own, holds }) {
   for (const entry of entries) {
     checkDeadline();
     const inside = (entry.path === target || (entry.folder && isWithin(entry.path, target))) && !entry.allows?.(target, entry.path);
-    if (inside || (holds && !own && target !== entry.path && isWithin(target, entry.path)) || (!entry.folder && sameFile(entry.spelled, spelled))) return entry;
+    if (inside || (holds && (!own || entry.always) && target !== entry.path && isWithin(target, entry.path)) || (!entry.folder && sameFile(entry.spelled, spelled))) return entry;
   }
   return null;
 }
@@ -440,8 +462,8 @@ function placeOf(target, spelled, places, { holds = true } = {}) {
     const late = refusedHit(target, spelled, places.later(), { own, holds });
     return late ? { refused: late } : null;
   };
-  if ([...places.specific, ...places.reviews].some((dir) => isWithin(dir, target))) return passes();
-  if (places.worktree && isWithin(places.worktree, target)) return gitEntry(places.worktree, target, spelled) ?? passes();
+  const holder = [...places.specific, ...places.reviews, places.worktree].find((dir) => dir && isWithin(dir, target));
+  if (holder) return gitEntry(holder, target, spelled) ?? passes();
   const below = isWithin(places.home, target) ? path.relative(places.home, target).split(path.sep)[0] : '';
   if (below.startsWith('.')) return { refused: { what: 'a dot file or folder of the user\'s home folder', spelled } };
   if (places.limited) return passes();
@@ -450,12 +472,25 @@ function placeOf(target, spelled, places, { holds = true } = {}) {
   return { outside: true };
 }
 
-// A `.git` entry at any depth of the session's worktree `top`, below its own, which gitRefused names: a checkout nested
-// in it, as a task worktree under the main checkout's `.claude/worktrees/` is, and that checkout's pointer to its git
-// folder. Only git writes there: { refused } for the real, case-folded path `target`, or null.
+// A `.git` entry at any depth of the place `top` the real, case-folded path `target` lies in, the session's worktree,
+// an attempt folder, or a state folder it writes, below the entries gitRefused names: a checkout nested in it, as a task
+// worktree under the main checkout's `.claude/worktrees/` is, and that checkout's pointer to its git folder. Only git
+// writes there. It is told by the real path's parts from `top`, and by the parts of the path as spelled, so a `.git`
+// that is a link, which the real path no longer names, still counts: { refused }, or null.
 const GIT_ENTRY = 'a nested checkout\'s git folder or pointer to one, which only git writes';
+const isGitPart = (part) => part.toLowerCase() === '.git';
 function gitEntry(top, target, spelled) {
-  return path.relative(top, target).split(path.sep).includes('.git') ? { refused: { what: GIT_ENTRY, spelled } } : null;
+  const spelledParts = typeof spelled === 'string' ? path.normalize(spelled).split(path.sep) : [];
+  return [...path.relative(top, target).split(path.sep), ...spelledParts].some(isGitPart) ? { refused: { what: GIT_ENTRY, spelled } } : null;
+}
+
+// Whether a glob, by its folder `prefix` and its later parts `rest`, may reach a `.git` entry in one of the places
+// `places` (gitEntry): it lies in one, or above one, and a later part may name `.git`, as a glob whose own text starts
+// with a dot or is a class or a brace may, since a shell's `*` skips dot names.
+function gitGlob(prefix, rest, places) {
+  const roots = [...places.specific, ...places.reviews, places.worktree].filter(Boolean);
+  if (!roots.some((root) => isWithin(root, prefix) || isWithin(prefix, root))) return false;
+  return rest.some((part) => (GLOB_WORD.test(part) ? /^[.[{]/u.test(part) && partPattern(part).test('.git') : isGitPart(part)));
 }
 
 // A spelled path as placeOf meets it: a device always passes, before any path is resolved.
@@ -732,6 +767,7 @@ function globDenial(globs, found, say) {
       const reached = found.refused.filter((entry) => !isWithin(entry.path, spelling.prefix)).find((entry) => globReaches(spelling, entry.path));
       if (reached) return say.refused(reached, glob.text);
       if (nestedGlob(spelling.prefix, spelling.rest, found.nested ?? [])) return say.refused(NESTED, glob.text);
+      if (!found.limited && gitGlob(spelling.prefix, spelling.rest, found)) return say.refused({ what: GIT_ENTRY }, glob.text);
     }
   }
   return null;
@@ -744,12 +780,13 @@ function manifestDenial(input, shell, found, say) {
   return say.deny('unattended write that may forge an attest record', `it ${say.verb} ${file}, a review manifest, in a way that may give it a \`reviewer\` key, which the review gate reads as an attest record under the manifest's own name, pr-<n>.json; write a temporary copy with the file tool, with no such key, then rename it`);
 }
 
-// What no path places, judged by name: a startup file or a git config (REFUSED_NAME), a home dot entry (HOME_DOT), or
-// a path in the text that meets a refused entry.
+// What no path places, judged by name: a startup file or a git config (REFUSED_NAME), a home dot entry (HOME_DOT), a
+// `.git` entry for a session its own mark holds (GIT_WORD), or a path in the text that meets a refused entry.
 function nameDenial(texts, found, say) {
   for (const text of texts) {
     checkDeadline();
     if (REFUSED_NAME.test(text) || HOME_DOT.test(text)) return say.deny('unattended write to a refused name', `it ${say.verb} a file named in \`${text.slice(0, 80)}\`, which names a shell startup file, a git config, or a dot entry of the home folder, and no Human attends this session`);
+    if (!found.limited && GIT_WORD.test(text)) return say.deny('unattended write to a refused name', `it ${say.verb} a file named in \`${text.slice(0, 80)}\`, which names a \`.git\` entry, ${GIT_ENTRY}, and no Human attends this session`);
     for (const [word] of text.matchAll(PATH_IN_TEXT)) {
       const spelled = word.startsWith('~') ? path.join(found.home, word.slice(1)) : word;
       const met = placed(spelled, found, { holds: false });

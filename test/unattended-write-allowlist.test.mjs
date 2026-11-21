@@ -609,6 +609,68 @@ test('the agent gate hook finds the start record of a session whose mark names n
   assert.match(other.stderr, /outside the places/u);
 });
 
+test('a session started in the main checkout never writes the git pointer or the host files of a checkout nested in it, directly, through a folder, a glob, or a link', (t) => {
+  const fx = fixture(t);
+  const { first, second } = nestedWorktrees(fx);
+  const held = { root: fx.dir, cwd: fx.dir };
+  const found = unattendedPlaces({ cwd: fx.dir, mark: held, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.temp], session: SESSION });
+  const ask = (input) => fx.ask(input, { held, cwd: fx.dir, places: () => found })?.reason ?? null;
+  // Its own checkout, the task worktrees in it included, it writes.
+  for (const file of [path.join(fx.dir, 'README.md'), path.join(first, 'src', 'a.ts'), path.join(second, 'src', 'a.ts')]) assert.equal(ask(write(file)), null, file);
+  // The host files a later session in a nested checkout loads.
+  for (const top of [first, second]) {
+    for (const file of [path.join(top, '.claude', 'settings.json'), path.join(top, '.claude', 'skills', 'x', 'SKILL.md'), path.join(top, '.mcp.json')]) {
+      assert.match(ask(write(file)) ?? '', /a host file a later session/u, file);
+      assert.match(ask(bash(`printf x > "${file}"`)) ?? '', /a host file a later session/u, `shell ${file}`);
+    }
+  }
+  // Each nested checkout's `.git` pointer, written, removed, or moved, by itself or with a folder that holds it.
+  const pointer = /pointer to its git folder|nested checkout's git folder|host file a later session/u;
+  for (const command of [`printf x > "${first}/.git"`, `rm -f "${first}/.git"`, `rm -rf "${first}"`, `mv "${first}" "${fx.temp}/moved"`,
+    `rm -rf "${path.join(fx.dir, '.claude', 'worktrees')}"`, `rm -rf "${path.join(fx.dir, '.claude')}"`, `rm -rf "${fx.dir}"`]) {
+    assert.match(ask(bash(command)) ?? '', pointer, command);
+  }
+  // A glob that may reach one: by a folder it expands to, or by a part that names `.git`.
+  for (const command of [`rm -rf ${path.join(fx.dir, '.claude', 'worktrees')}/*`, `rm -f ${path.join(fx.dir, '.claude', 'worktrees')}/*/.git`, `rm -rf ${first}/.g*`, `rm -rf ${fx.dir}/src/*/.git`]) {
+    assert.match(ask(bash(command)) ?? '', pointer, command);
+  }
+  // A link whose real path no longer names `.git`, and a `.git` named in a folder no path gives.
+  const repo = path.join(fx.dir, 'vendor', 'lib');
+  const store = path.join(fx.dir, 'vendor', 'store');
+  mkdirSync(store, { recursive: true });
+  mkdirSync(repo, { recursive: true });
+  symlinkSync(store, path.join(repo, '.git'));
+  assert.match(ask(write(path.join(repo, '.git', 'config'))) ?? '', /nested checkout's git folder/u, 'a .git link');
+  assert.match(ask(bash(`printf x > "${path.join(repo, '.git', 'HEAD')}"`)) ?? '', /nested checkout's git folder/u, 'a .git link by the shell');
+  // From the temporary folder, where the path as the call's folder gives it passes, the name still refuses.
+  const fromTemp = (command) => fx.ask(bash(command), { held, cwd: fx.temp, places: () => found })?.reason ?? null;
+  assert.match(fromTemp('cd "$X" && printf x > .git/HEAD') ?? '', /names a `\.git` entry/u, 'a folder no path gives');
+  assert.equal(fromTemp('cd "$X" && printf x > notes.md'), null);
+  // `.gitignore` and `.github` are no git entries.
+  for (const file of [path.join(first, '.gitignore'), path.join(first, '.github', 'x.md')]) assert.equal(ask(write(file)), null, file);
+  assert.equal(ask(bash('cd "$X" && printf x > .gitignore')), null);
+});
+
+test('a `.git` entry in an attempt folder or a state folder a session writes is refused too', (t) => {
+  const fx = fixture(t);
+  const ask = (input) => fx.ask(input)?.reason ?? null;
+  const tmp = path.join(fx.state, 'tmp');
+  mkdirSync(tmp, { recursive: true });
+  for (const file of [path.join(tmp, 'clone', '.git', 'config'), path.join(fx.state, 'plans', 'x', '.git')]) {
+    assert.match(ask(write(file)) ?? '', /nested checkout's git folder/u, file);
+    assert.match(ask(bash(`printf x > "${file}"`)) ?? '', /nested checkout's git folder/u, `shell ${file}`);
+  }
+  assert.match(ask(bash(`rm -rf ${tmp}/*/.git`)) ?? '', /nested checkout's git folder/u, 'a glob');
+  assert.equal(ask(write(path.join(tmp, 'notes.md'))), null);
+  // An attempt's work folder, an issue session's place.
+  const held = { root: fx.dir, cwd: path.join(fx.attempt, 'work'), project: 'launch', issue: 'ENG-1' };
+  const own = () => fx.attempt;
+  const found = unattendedPlaces({ cwd: path.join(fx.attempt, 'work'), mark: held, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.temp], own, session: SESSION });
+  const inAttempt = (input) => fx.ask(input, { held, cwd: path.join(fx.attempt, 'work'), places: () => found })?.reason ?? null;
+  assert.match(inAttempt(write(path.join(fx.attempt, 'work', 'pkg', '.git', 'config'))) ?? '', /nested checkout's git folder/u);
+  assert.equal(inAttempt(write(path.join(fx.attempt, 'work', 'pkg', 'a.ts'))), null);
+});
+
 test('the agent gate hook holds a marked session to its places, a pending hold to the refused entries, and lets a call run when it cannot read its input', async (t) => {
   const fx = fixture(t);
   const zdot = path.join(fx.temp, 'zdot');

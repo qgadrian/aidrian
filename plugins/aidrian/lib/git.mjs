@@ -129,12 +129,13 @@ export function withoutGitFacts(body) {
 // runGit for one of the four fact reads, remembered inside withGitFacts. The stopped call and an attempt clone's refusal
 // answer first, as in runGit, so a clone whose config turned unsafe is refused after its roots were read. An answer is
 // kept only when git ran with no error and exited 0, or, for a `config` read, 1 (no such key) in a folder whose roots
-// read answers, itself remembered: outside a repository a config read exits 1 too. A read given `options.env` always asks.
+// read answers, itself remembered: outside a repository a config read exits 1 too. A read given any option but `timeout`,
+// such as `env` or `encoding`, always asks: the key holds no options, and those can change the answer or its form.
 // The key is the folder as given, resolved but not through links, a NUL, and the arguments: a folder swapped while the
 // call is open, as by a rename or a new `.git`, keeps its old answers, though the clone refusal still runs first.
 function readFact(args, cwd, options = {}, config = false) {
   const scope = gitFacts.getStore();
-  if (!scope?.open || options.env !== undefined) return runGit(args, cwd, options);
+  if (!scope?.open || Object.keys(options).some((key) => key !== 'timeout')) return runGit(args, cwd, options);
   const held = heldBack(cwd, options);
   if (held) return held;
   const folder = path.resolve(cwd ?? process.cwd());

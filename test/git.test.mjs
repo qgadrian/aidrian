@@ -253,6 +253,22 @@ test('inside withGitFacts a folder git cannot answer for is asked again, and a r
   assert.equal(git.count('remote.origin.url'), 2);
 });
 
+test('inside withGitFacts a read given an option but a timeout asks git, so its answer never stands in for another read`s', (t) => {
+  const { dir } = repo(t);
+  const src = path.join(dir, 'src');
+  const git = loggingGit(t);
+  withGitFacts(() => {
+    assert.equal(showPrefix(src), 'src/');
+    assert.ok(Buffer.isBuffer(readPrefix(src, { encoding: 'buffer' }).stdout), 'a buffer read after a default read');
+  });
+  withGitFacts(() => {
+    assert.ok(Buffer.isBuffer(readPrefix(src, { encoding: 'buffer' }).stdout));
+    assert.equal(showPrefix(src), 'src/', 'a default read after a buffer read');
+    assert.equal(knownPrefix(src, { timeout: GIT_TIMEOUT_MS }), 'src/', 'a timeout alone keeps the remembered answer');
+  });
+  assert.equal(git.count('--show-prefix'), 4);
+});
+
 test('a nested withGitFacts shares the open scope, and two scopes in a row share nothing', async (t) => {
   const { dir } = repo(t);
   const git = loggingGit(t);

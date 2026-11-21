@@ -22,7 +22,9 @@ every file whole in one shard and held to its [budget](test-processes.md#child-p
 that passes uploads a record of it, `passed-tests-nodeN-shardS` or `passed-static-nodeN`. `Check (Node N)`, the required
 check, passes only when every one of those jobs passed and it finds every one's record: a matrix job's result can read
 success when one of its jobs was cancelled before a runner took it, so a missing record fails the check instead.
-`test/ci-workflow.test.mjs` holds the list the check looks for to the jobs' matrices.
+A record is kept 30 days, the time GitHub allows a rerun in, so a partial rerun of the failed jobs reuses the records
+the jobs that passed earlier left. `test/ci-workflow.test.mjs` holds the list the check looks for to the jobs' matrices,
+and each record's retention to those 30 days.
 
 Push a change once its touched tests pass, and let CI run the commands of `npm run check`: a full local run on a loaded machine once
 held a fix back for two hours. Run it locally only when CI cannot, once, before marking ready.

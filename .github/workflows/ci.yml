@@ -14,7 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 # The commands of `npm run check`, in jobs that run at once: `npm run check:static` in one job a Node version, and the
-# test files in two shards a Node version. Each of those jobs that passed uploads a record of it. `Check (Node N)`, the
+# test files in two shards a Node version. Each of those jobs that passed uploads a record of it, kept the 30 days GitHub
+# lets a failed job be rerun in, since a partial rerun's checks read the earlier jobs' records. `Check (Node N)`, the
 # name the required checks list, passes only when all of them passed and it finds every one's record: a matrix job's
 # result can read success when one of its jobs was cancelled before a runner took it, so the result alone is not proof.
 jobs:
@@ -60,7 +61,7 @@ jobs:
           name: passed-tests-node${{ matrix.node }}-shard${{ matrix.shard }}
           path: ${{ runner.temp }}/passed
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 30
           overwrite: true
 
   static:
@@ -101,7 +102,7 @@ jobs:
           name: passed-static-node${{ matrix.node }}
           path: ${{ runner.temp }}/passed
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 30
           overwrite: true
 
   check:

@@ -90,6 +90,8 @@ test('every other job uploads its record last, only when every step before it pa
     assert.equal(write.run?.trim(), 'echo passed > "$RUNNER_TEMP/passed"', `${id}: the step before writes it`);
     assert.equal(upload.with.path, '${{ runner.temp }}/passed', id);
     assert.equal(upload.with['if-no-files-found'], 'error', id);
+    // GitHub reruns a job up to 30 days after its run, and a partial rerun's Check reads the earlier jobs' records.
+    assert.ok(upload.with['retention-days'] >= 30, `${id}: its record outlives the 30 days a failed job can be rerun in`);
     for (const step of steps) {
       assert.equal(step.if, undefined, `${id}: ${step.name} runs only when every step before it passed`);
       assert.equal(step['continue-on-error'], undefined, `${id}: ${step.name} fails its job when it fails`);

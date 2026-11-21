@@ -9,8 +9,9 @@ import test from 'node:test';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { baseMergeOf, cleanBaseMerge, isMergeCommit, parents, remergeDiff } from '../plugins/aidrian/lib/review/diff.mjs';
-import { reviewPrompt } from '../plugins/aidrian/lib/review/reviewers.mjs';
-import { reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
+import { passInput } from '../plugins/aidrian/lib/review/dispatch.mjs';
+import { baseMergedBrief, flowBaseBrief, reviewPrompt } from '../plugins/aidrian/lib/review/reviewers.mjs';
+import { recordPass, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { recordPending } from '../plugins/aidrian/lib/review/pending.mjs';
 import { emptyState, noteOutcome, readLocalState, stateFromComment, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { check } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
@@ -368,8 +369,8 @@ test('a merge whose own edit is only a comment opens a round: a merge from the b
 
 // With no received outcome, or from another branch, nothing marks the merge as the base branch's: for the round count,
 // what it brought is its change, judged as a push's is. The passes it touches run either way, and a pass after a merge
-// from the base reads only this pull request's own change: one that changed nothing of it since the pass's head reviews
-// the whole change, from the merge base, never the base's code.
+// from the base reads only this pull request's own change, plus the file of an open finding it must check again: never
+// the base's code.
 test('any other merge is judged by its change like a push: one bringing only docs keeps the round, one bringing code opens one', async (t) => {
   const finding = { file: 'src/app.js', line: 1, title: 'off by one', body: 'x', severity: 'high' };
   for (const [what, files, round] of [['docs', { 'docs/guide.md': 'hello\n' }, 1], ['code', { 'src/lib.js': 'export const lib = 1;\n' }, 2]]) {
@@ -378,8 +379,8 @@ test('any other merge is judged by its change like a push: one bringing only doc
     const merge = r.mergeMain(files);
     const seen = recorder();
     const result = await r.step({ exec: seen.exec });
-    assert.deepEqual([result.round, result.carried_from, seen.inputs.length, seen.inputs[0].context, seen.inputs[0].remerge], [round, undefined, 1, 'full', undefined], `${what} from main after fix_required`);
-    assert.deepEqual([seen.inputs[0].base, seen.inputs[0].files], [r.git('rev-parse', 'main'), null], `${what}: the whole change, from the merge base`);
+    assert.deepEqual([result.round, result.carried_from, seen.inputs.length, seen.inputs[0].context, seen.inputs[0].remerge], [round, undefined, 1, 'delta', undefined], `${what} from main after fix_required`);
+    assert.deepEqual([seen.inputs[0].base, seen.inputs[0].files], [r.first, ['src/app.js']], `${what}: only the open finding's file, never what main brought`);
     const { rounds } = readLocalState(r.project(), 7);
     assert.deepEqual([rounds.length, rounds.at(-1).head, rounds[0].quiet?.[0].from], [round, merge, round === 1 ? r.first : undefined], what);
   }
@@ -397,11 +398,18 @@ test('any other merge is judged by its change like a push: one bringing only doc
   assert.deepEqual(readLocalState(r.project(), 7).rounds[0].quiet.map((each) => each.from), [r.first]);
 });
 
-// A head whose review ended fix_required, never received, with a finding on src/app.js.
-async function fixRequired(t, options = {}) {
+// A head whose review ended fix_required, never received, with a finding on `file`. An agent pass the plan dispatches
+// first, as a flow's, finds nothing: its record lets the engine's pass end the round.
+async function fixRequired(t, options = {}, file = 'src/app.js') {
   const r = repo(t, options);
-  const finding = { file: 'src/app.js', line: 1, title: 'off by one', body: 'x', severity: 'high' };
-  assert.equal((await r.step({ exec: async () => ({ status: 'done', findings: [finding], verdicts: [], dropped: [] }) })).status, 'fix_required');
+  const finding = { file, line: 1, title: 'off by one', body: 'x', severity: 'high' };
+  const exec = async () => ({ status: 'done', findings: [finding], verdicts: [], dropped: [] });
+  let result = await r.step({ exec });
+  if (result.status === 'dispatch') {
+    for (const pass of result.dispatch) recordPass(r.project(), { pr: 7, repo: 'o/r', pass: pass.pass, head: result.head, reviewer: pass.agent, findings: 0, fixed: 0 });
+    result = await r.step({ exec });
+  }
+  assert.equal(result.status, 'fix_required');
   return r;
 }
 
@@ -432,6 +440,119 @@ test('after fix_required, a merge from the base whose resolution takes the base\
   const [input] = seen.inputs;
   assert.deepEqual([input.base, input.context, input.files], [r.first, 'delta', ['src/app.js']], 'the resolution is reviewed; src/lib.js, which main alone brought, is not');
   assert.deepEqual(input.baseMerged.merges, [merge]);
+});
+
+test('after fix_required, a merge from the base whose resolution keeps the branch\'s side: that resolution is still reviewed', async (t) => {
+  const r = await fixRequired(t, { feature: { 'src/app.js': 'export const app = 2;\n', 'src/extra.js': 'export const extra = 1;\n' } }, 'src/extra.js');
+  r.write('src/extra.js', 'export const extra = 2;\n');
+  r.commit('fix');
+  // src/app.js reads as at the earlier head, so the change since it does not hold the file: only the merge's own does.
+  const merge = r.mergeMain(CONFLICT, { 'src/app.js': 'export const app = 2;\n' });
+  const seen = recorder();
+  assert.equal((await r.step({ exec: seen.exec })).status, 'received');
+  const [input] = seen.inputs;
+  assert.deepEqual([input.context, [...input.files].sort()], ['delta', ['src/app.js', 'src/extra.js']], 'the kept side is reviewed; src/lib.js, which main alone brought, is not');
+  assert.deepEqual(input.baseMerged.merges, [merge]);
+});
+
+test('after fix_required, an open finding whose file changed nothing since stays in the list of a delta after a base merge', async (t) => {
+  const r = await fixRequired(t);
+  r.write('src/own.js', 'export const own = 1;\n');
+  r.commit('more');
+  r.mergeMain({ 'src/lib.js': 'export const lib = 1;\n' });
+  const seen = recorder();
+  await r.step({ exec: seen.exec });
+  const [input] = seen.inputs;
+  assert.equal(input.context, 'delta');
+  assert.deepEqual([...input.files].sort(), ['src/app.js', 'src/own.js'], 'src/app.js holds the open finding, so the reviewer can raise it again');
+});
+
+test('a merge inside the base branch\'s own history is not one of the branch\'s merges', async (t) => {
+  const r = await fixRequired(t);
+  r.write('src/app.js', 'export const app = 3;\n');
+  r.commit('fix');
+  r.git('switch', '-q', '-c', 'topic', 'main');
+  r.write('src/topic.js', 'export const topic = 1;\n');
+  r.commit('topic');
+  r.git('switch', '-q', 'main');
+  r.git('merge', '-q', '--no-ff', '--no-edit', 'topic');
+  r.git('switch', '-q', 'feat');
+  const merge = r.mergeMain({ 'src/lib.js': 'export const lib = 1;\n' });
+  const seen = recorder();
+  await r.step({ exec: seen.exec });
+  const [input] = seen.inputs;
+  assert.deepEqual([input.files, input.baseMerged.merges], [['src/app.js'], [merge]], 'main\'s own merge of topic is the base\'s');
+});
+
+test('the flow brief of a delta after a base merge points at the pull request\'s own change, never the range that holds the base\'s code', () => {
+  const brief = flowBaseBrief({ base: 'aaa', head: 'bbb', flowBase: 'ccc', baseMerged: { base: 'ccc', merges: ['bbb'] } });
+  assert.doesNotMatch(brief, /aaa\.\.bbb/u);
+  assert.match(brief, /own change in the listed files/u);
+  assert.match(flowBaseBrief({ base: 'aaa', head: 'bbb', flowBase: 'ccc' }), /aaa\.\.bbb/u);
+});
+
+test('the prompt of a delta after a base merge names the pull request\'s own diff, never the range that holds the base\'s code', () => {
+  const merges = ['ddd', 'eee'];
+  const input = { base: 'aaa', head: 'bbb', files: ['src/app.js'], flows: [], priorFindings: [], baseMerged: { base: 'ccc', merges } };
+  for (const each of [input, { ...input, role: 'slice', manifest: [] }]) {
+    const prompt = reviewPrompt(each);
+    assert.doesNotMatch(prompt, /git diff aaa bbb/u, each.role ?? 'whole pass');
+    assert.match(prompt, /git diff ccc bbb -- <file>/u, each.role ?? 'whole pass');
+    for (const merge of merges) assert.match(prompt, new RegExp(`git show --remerge-diff ${merge}`, 'u'));
+  }
+  assert.match(reviewPrompt({ ...input, baseMerged: undefined }), /run `git diff aaa bbb`/u, 'with no base merge, the range from the earlier head');
+});
+
+test('passInput: a blocking finding handed to the pass from another keeps its file in the list of a delta after a base merge', (t) => {
+  const r = repo(t);
+  r.write('src/own.js', 'export const own = 1;\n');
+  const head = r.commit('more');
+  const pass = { id: 'engine:codex-local', reviewer: 'codex-local', files: null };
+  const stage = { name: 'local', passes: [pass] };
+  // An open entry of a pass the plan no longer holds goes to the first pass of its reviewer and stage (findings.mjs listing).
+  const index = { 'R1-1': { title: 'handed on', file: 'src/handed.js', line: 1, severity: 'high', state: 'open', pass: 'engine:codex-gone', reviewer: 'codex-local', stage: 'local' } };
+  const prior = { head: r.first, files: null, list: [] };
+  const s = {
+    config: { github: { reviewGate: { enabled: false }, pullRequest: { residuals: null } } },
+    root: r.dir, repo: 'o/r', n: 7, head, base: 'b1', baseTip: 'b1', changes: [], scope: null,
+    state: { ...emptyState(7, 'o/r'), index }, plan: { flows: [], stages: [stage] },
+    resultFor: () => prior, sameFiles: () => true, verdictsFor: () => [], visual: null, manifest: null, isVisual: () => false, map: {}, info: {},
+    boundFor: () => ({ base: 'b1', merges: [head], files: new Set(['src/own.js']), resolved: [] }),
+    delta: () => [{ file: 'src/own.js', status: 'A', added: 1, removed: 0 }],
+  };
+  const input = passInput(s, pass, stage);
+  assert.equal(input.context, 'delta');
+  assert.deepEqual([...input.files].sort(), ['src/handed.js', 'src/own.js'], 'the reviewer can raise the handed finding again');
+  assert.deepEqual(input.priorFindings.map((finding) => finding.id), ['R1-1']);
+});
+
+test('after fix_required, a flow\'s agent pass of a delta after a base merge is briefed on the pull request\'s own change', async (t) => {
+  const r = await fixRequired(t, { baseConfig: { version: 1, review: { flows: { app: { files: ['src/**'] } } } } });
+  r.write('src/app.js', 'export const app = 3;\n');
+  r.commit('fix');
+  r.mergeMain({ 'src/lib.js': 'export const lib = 1;\n' });
+  const result = await r.step({ exec: recorder().exec });
+  assert.equal(result.status, 'dispatch');
+  const pass = result.dispatch.find((each) => each.flows.length);
+  assert.ok(pass, JSON.stringify(result.dispatch.map((each) => each.pass)));
+  assert.deepEqual([pass.base, pass.context, pass.files, pass.flowBase], [r.first, 'delta', ['src/app.js'], r.git('rev-parse', 'main')]);
+  assert.deepEqual(pass.baseMerged, { base: r.git('rev-parse', 'main'), merges: [result.head] });
+  assert.ok(pass.brief.includes(baseMergedBrief(pass)), pass.brief);
+  assert.ok(pass.brief.includes(flowBaseBrief(pass)), pass.brief);
+  assert.match(pass.brief, /Find bugs in this pull request's own change in the listed files/u);
+  assert.doesNotMatch(pass.brief, new RegExp(`${r.first}\\.\\.`, 'u'));
+});
+
+test('after fix_required, a merge from a base that changed how the project is reviewed reviews the whole change, not its own files alone', async (t) => {
+  const r = await fixRequired(t);
+  r.write('src/app.js', 'export const app = 3;\n');
+  r.commit('fix');
+  // A rule that changes no pass of this plan: only the review's rules moved, not what runs.
+  r.mergeMain({ 'src/lib.js': 'export const lib = 1;\n', '.aidrian/config.json': JSON.stringify({ version: 1, review: { rules: [{ when: { lines: { over: 100000 } }, depth: 'split' }] } }) });
+  const seen = recorder();
+  await r.step({ exec: seen.exec });
+  const [input] = seen.inputs;
+  assert.deepEqual([input.base, input.context, input.files, input.baseMerged], [r.git('rev-parse', 'main'), 'full', null, undefined], 'the earlier head was reviewed without main\'s new rule');
 });
 
 test('a merge with -s ours, which drops what main brought, is no clean merge, and its reviewer runs on the drop', async (t) => {

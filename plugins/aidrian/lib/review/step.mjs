@@ -330,23 +330,32 @@ export async function prepareStep(s) {
   // bounded by the files of the pull request's own whole change, `changes`, and of each merge commit's own changes in
   // the range (remergeDiff), so a file only the base changed is never this review's. `{ base, merges, files }`, or null
   // when the range merged no base; `files` is null, and the pass then reviews the whole change (dispatch.mjs
-  // passInput), when git cannot read a merge's own changes, as of an octopus merge, or when the step reviews the whole
-  // change for the merge (`mergeNote`).
+  // passInput), when git cannot read a merge's own changes, as of an octopus merge, when the step reviews the whole
+  // change for the merge (`mergeNote`), or when the base branch, from `from`'s merge base to its tip, changes how the
+  // project is reviewed (baseReviewMoved): `from` was reviewed without that rule, so its result is no ground to narrow.
   const boundCache = new Map();
   const readBound = (from) => {
     if (scope || !isAncestor(root, from, head)) return null;
     let merges = [];
     try {
-      if (mergeBase(root, baseTip, from) === base) return null;
+      const earlierBase = mergeBase(root, baseTip, from);
+      if (earlierBase === base) return null;
       merges = mergesBetween(root, from, head);
       if (mergeNote) return { base, merges, files: null };
+      if (baseReviewMoved(project, { from: earlierBase, to: baseTip, flows: review.flows, harnessFiles }).length) return { base, merges, files: null };
       const files = new Set(changes.map((change) => change.file));
+      // A merge's own edits, kept apart: a resolution that keeps the branch's side changes nothing since `from`, yet
+      // it is the merge's own and is reviewed (delta).
+      const resolved = [];
       for (const merge of merges) {
         const own = remergeDiff(root, merge);
         if (!own) return { base, merges, files: null };
-        for (const change of own.changes) files.add(change.file);
+        for (const change of own.changes) {
+          files.add(change.file);
+          if (!resolved.some((each) => each.file === change.file)) resolved.push(change);
+        }
       }
-      return { base, merges, files };
+      return { base, merges, files, resolved };
     } catch {
       return { base, merges, files: null };
     }
@@ -357,8 +366,10 @@ export async function prepareStep(s) {
   };
   const delta = (from) => {
     const since = changeSince(from);
-    const files = since ? boundFor(from)?.files : null;
-    return files ? since.filter((change) => files.has(change.file)) : since;
+    const bound = since ? boundFor(from) : null;
+    if (!bound?.files) return since;
+    const own = since.filter((change) => bound.files.has(change.file));
+    return [...own, ...bound.resolved.filter((change) => !own.some((each) => each.file === change.file))];
   };
   // Whether the change since `from` is quiet (quietChange). A merge scoped to its own changes (`scope`) is not; any
   // other merge is judged by its whole change, as a push is: quiet decides the round count, never what a pass reads.

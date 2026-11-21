@@ -208,11 +208,24 @@ export function passInput(s, pass, stage) {
   const { config, root, repo, n, head, base, baseTip, changes, scope, state, plan, resultFor, sameFiles, verdictsFor, visual, manifest, isVisual } = s;
   const recorded = state.passes[pass.id];
   const prior = resultFor(pass) ?? (recorded && sameFiles(pass, recorded) ? recorded : null);
+  // The pass's own last list, then the open entries listed to it that the list does not hold (a cut that moved them
+  // here, or halves), then a fallback's kept findings: each once by id.
+  const seen = new Set();
+  const listed = new Set(listedFor(s, pass));
+  const earlier = [...(prior?.list ?? []), ...listedFindings(s, pass), ...keptFindings(state, pass)].filter((finding) => {
+    if (!isFindingId(finding?.id)) return true;
+    if (seen.has(finding.id)) return false;
+    seen.add(finding.id);
+    return true;
+  });
   let from = prior && prior.head !== head && isAncestor(root, prior.head, head) ? prior.head : base;
   // A delta whose range merged the base branch reads only this pull request's own files (step.mjs boundFor): the pass's
   // own list, else the bounded delta's. With none left, or a merge git cannot read, it reads the whole change instead.
+  // A blocking finding the pass reads in `earlier`, its own or one handed to it, keeps its file in the list though that
+  // file changed nothing since: dropped from the list, the reviewer could not raise it again, and it would close unfixed.
   const bound = from !== base ? s.boundFor?.(from) ?? null : null;
-  const ownFiles = bound?.files ? s.delta(from).map((change) => change.file) : null;
+  const openFiles = bound?.files ? earlier.filter(blocks).map((finding) => finding.file).filter((file) => typeof file === 'string') : [];
+  const ownFiles = bound?.files ? [...new Set([...s.delta(from).map((change) => change.file), ...openFiles])] : null;
   if (bound && (!bound.files || !(pass.files ?? ownFiles).length)) from = base;
   const merged = bound && from !== base ? bound : null;
   const flows = plan.flows.filter((flow) => (pass.flows ?? []).includes(flow.id) || stage.name !== 'local').map((flow) => ({
@@ -236,16 +249,6 @@ export function passInput(s, pass, stage) {
   } : {};
   const visualChecklist = visual?.checklist ? { path: visual.checklist, text: fileAt(root, baseTip, visual.checklist.split('#')[0]) } : null;
   const residuals = passResiduals(s, pass);
-  // The pass's own last list, then the open entries listed to it that the list does not hold (a cut that moved them
-  // here, or halves), then a fallback's kept findings: each once by id.
-  const seen = new Set();
-  const listed = new Set(listedFor(s, pass));
-  const earlier = [...(prior?.list ?? []), ...listedFindings(s, pass), ...keptFindings(state, pass)].filter((finding) => {
-    if (!isFindingId(finding?.id)) return true;
-    if (seen.has(finding.id)) return false;
-    seen.add(finding.id);
-    return true;
-  });
   return {
     ...split,
     // A merge's resolutions are the whole review: a pass of every changed file reads only the resolved ones.

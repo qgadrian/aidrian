@@ -2,6 +2,8 @@ import '../scripts/test-state.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-enter-worktree.mjs');
@@ -14,4 +16,31 @@ test('a subagent may not call EnterWorktree, which would move the whole session;
   assert.match(sub.stderr, /^Blocked: EnterWorktree moves the whole session/);
   assert.equal(run({}).status, 0);
   assert.equal(run({ agent_id: 'a1', tool_name: 'Read' }).status, 0);
+});
+
+test('the main session may not enter an existing worktree, in the repository\'s .claude/worktrees/ or outside it, where the host asks the Human; it may create one by name', () => {
+  for (const given of ['.worktrees/task', '.claude/worktrees/own', path.join(import.meta.dirname, '..', '.claude', 'worktrees', 'own'), '/elsewhere/.claude/worktrees/own']) {
+    const entered = run({ tool_input: { path: given } });
+    assert.equal(entered.status, 2, given);
+    assert.match(entered.stderr, /^Blocked: this project never enters an existing worktree by path, wherever it lies\./);
+    assert.match(entered.stderr, /work in the worktree by absolute path/);
+    assert.doesNotMatch(entered.stderr, /task|own|elsewhere/, 'the reason is fixed, never the path');
+  }
+  assert.equal(run({ tool_input: { name: 'fresh' } }).status, 0);
+  assert.equal(run({ tool_input: { path: '' } }).status, 0);
+});
+
+test('a worktree the host manages, in the main checkout\'s .claude/worktrees/, is blocked too, from a linked checkout', (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'enter-worktree-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const repo = path.join(dir, 'repo');
+  const git = (args) => assert.equal(spawnSync('git', args, { cwd: repo, encoding: 'utf8' }).status, 0, args.join(' '));
+  mkdirSync(repo);
+  git(['init', '--quiet']);
+  git(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--quiet', '--allow-empty', '-m', 'first']);
+  git(['worktree', 'add', '--quiet', '-b', 'task', path.join(repo, '.worktrees', 'task')]);
+  git(['worktree', 'add', '--quiet', '-b', 'own', path.join(repo, '.claude', 'worktrees', 'own')]);
+  const entered = run({ cwd: path.join(repo, '.worktrees', 'task'), tool_input: { path: path.join(repo, '.claude', 'worktrees', 'own') } });
+  assert.equal(entered.status, 2);
+  assert.equal(run({ cwd: repo, tool_input: { path: '.claude/worktrees/own' } }).status, 2);
 });

@@ -4,9 +4,7 @@
 //   - The driver: the session that ran init, until custody moves. Custody moves to a continuation only when the driver's
 //     start record (`started-<driver>`) names it, is dated, by its field and its file, after the ledger row that made the
 //     driver, and holds the sha256 of a brief the driver's own session recorded with `aidrian project handoff` after that
-//     row, or when the host itself continued the driver's session under the new id (`capabilities.continuedIn`, at most
-//     CONTINUATION_HOPS times in a row, each after the row that made the driver). A slug or a name never moves it. The
-//     gate appends a `driver` row when the continuation first acts.
+//     row. A slug or a name never moves it. The gate appends a `driver` row when the continuation first acts.
 //   - An issue's session: the session a `start` row names, and every continuation of it, read through the start records
 //     of each, at most BACKGROUND_HOPS + 1 sessions; only one of them records the issue's result.
 // scripts/hook-agent-gates.mjs asks projectCommandDenial before every Bash call that names `aidrian project`, with the
@@ -23,7 +21,7 @@ import { BACKGROUND_HOPS } from './handoff-continue.mjs';
 import { PROJECT_SUB, PROJECT_SUBCOMMANDS, PROJECT_WORD, stateFolders } from './handoff-guard.mjs';
 import { openStore, readStarted, readStartedDated, SESSION_ID } from './handoff-markers.mjs';
 import { resolvedPath } from './fs.mjs';
-import { continuationReader, opaqueShellCommand } from './hosts/index.mjs';
+import { detectHost, opaqueShellCommand } from './hosts/index.mjs';
 import { findProject } from './project.mjs';
 import { activeRuns, attendedProblem, ISSUE_KEY, readRun, RUN_ID, runPlace } from './project-run.mjs';
 import { aidrianArgs, walkCommands } from './shell-lex.mjs';
@@ -94,37 +92,33 @@ export function currentDriver(session, options = {}) {
 export const isMember = (member, session) => isSession(session)
   && (member.session === session || member.id === session || (member.session === null && typeof member.id === 'string' && session.startsWith(member.id)));
 
-// The most host continuations in a row custody follows from the driver's session to the last of them.
-export const CONTINUATION_HOPS = 8;
-
-// The session the host now runs the driver `driver`, { session, since }, of the run whose main checkout is `cwd` as:
-// the last of the continuations from the driver's session, each written after the one before and after the row that made
-// the driver, or the driver's own session when the host continued it as none. `continuedIn` is the host's read
-// (hosts/index.mjs continuationReader). Past CONTINUATION_HOPS, null: no session holds custody by the host's word.
-export function hostDriver(driver, cwd, continuedIn) {
-  let at = { id: driver.session, at: driver.since };
-  for (let hop = 0; hop <= CONTINUATION_HOPS; hop += 1) {
-    const next = continuedIn(at.id, cwd);
-    if (!next || !isSession(next.id) || !(next.at > at.at)) return at.id;
-    at = next;
+// Where the host continued the driver of the run `found` under a new id, as { id, at }, when it recorded that after the
+// row that made the driver (`capabilities.continuedIn`, read in the run's main checkout's folder first), else null. It
+// grants nothing: it strands the run, so an attended `aidrian project resume` may take custody (project-run-gate.mjs).
+export function hostContinued(found, { env = process.env, home } = {}) {
+  const read = detectHost({ env }).capabilities?.continuedIn;
+  if (typeof read !== 'function') return null;
+  const driver = driverOf(found);
+  let moved = null;
+  try {
+    moved = read({ session: driver.session, cwd: found.init.main, env, ...(home ? { home } : {}) });
+  } catch {
+    return null;
   }
-  return null;
+  return moved && isSession(moved.id) && moved.at > driver.since ? moved : null;
 }
 
 // The custody of the run `found` for `session`: { role: 'driver', driver } when it is the driver; { role: 'successor',
-// driver, sha256 } when custody may move to it by a handoff, or { role: 'successor', driver, via: 'continuation' } when
-// the host continued the driver's session as it (the header's rule); else { problem }. `store` is the run's continuation
-// store, and `continuedIn` the host's read of continuations, which by default finds none.
-export function custody({ found, store, session, now = Date.now(), continuedIn = () => null }) {
+// driver, sha256 } when custody may move to it (the header's rule); else { problem }. `store` is the run's continuation
+// store.
+export function custody({ found, store, session, now = Date.now(), env }) {
   const driver = driverOf(found);
   if (!isSession(session)) return { problem: 'this host tells the command no session id, so the run cannot tell whether this session is its driver' };
-  const host = hostDriver(driver, found.init.main, continuedIn);
-  if (host !== driver.session) {
-    if (host !== null && session === host) return { role: 'successor', driver, via: 'continuation' };
-    return { problem: `this session is not the driver of the run ${found.init.run}: the host continued its driver ${driver.session} as ${host ?? `a chain of more than ${CONTINUATION_HOPS} sessions`}, and only the last of them drives it` };
-  }
   if (session === driver.session) return { role: 'driver', driver };
-  const not = `this session is not the driver of the run ${found.init.run}, ${driver.session}`;
+  const moved = env ? hostContinued(found, { env }) : null;
+  const not = moved
+    ? `this session is not the driver of the run ${found.init.run}, ${driver.session}, which the host continued as ${moved.id}: custody moves only through \`aidrian project resume ${found.init.run}\`, from a session a person attends that never drove the run, such as ${moved.id}`
+    : `this session is not the driver of the run ${found.init.run}, ${driver.session}`;
   const dated = store.refused ? null : readStartedDated(store, driver.session, { now });
   const record = dated?.record;
   if (!record || record.project || !isMember({ id: record.id, session: record.session }, session)) return { problem: `${not}, and no start record of the driver names it as the session the driver handed the run to` };
@@ -137,11 +131,11 @@ export function custody({ found, store, session, now = Date.now(), continuedIn =
 // Why `session` may not lift a halt of the run `found`, or null: it drives the run, drove it once (the init row's
 // session, or one a `driver` row named), or is the continuation custody would move to. Only another attended session, or
 // the Human's own shell, lifts a halt.
-export function resumerProblem({ found, store, session, now = Date.now(), continuedIn }) {
+export function resumerProblem({ found, store, session, now = Date.now() }) {
   if (!isSession(session)) return null;
   const members = new Set([found.init.session, ...found.rows.filter((row) => row.event === 'driver').flatMap((row) => [row.session, row.from])]);
   if (members.has(session)) return `this session drives the run ${found.init.run}, or did, and a halt is lifted by another session a person attends, or by the Human's own shell`;
-  const held = custody({ found, store, session, now, continuedIn });
+  const held = custody({ found, store, session, now });
   if (held.role) return `this session is the run ${found.init.run}'s ${held.role}, and a halt is lifted by another session a person attends, or by the Human's own shell`;
   return null;
 }
@@ -390,8 +384,8 @@ export function projectCommandDenial(input, { names: { human } }, { unattended =
 // The rule of each subcommand, which says why a session may not run it, or null. A subcommand of SUBCOMMANDS with no rule
 // is refused (projectCommandDenial): a later step that adds one adds its rule here.
 const readOnly = () => null;
-const driverOnly = ({ sub, found, store, session, input, home }) => {
-  const held = custody({ found, store, session, continuedIn: continuationReader({ input, ...(home ? { home } : {}) }) });
+const driverOnly = ({ sub, found, store, session }) => {
+  const held = custody({ found, store, session, env: process.env });
   return held.problem && `\`aidrian project ${sub}\` is the driver's, and ${held.problem}`;
 };
 const RULES = Object.freeze({
@@ -407,8 +401,7 @@ const RULES = Object.freeze({
     const problem = attendedProblem({ input, session, project, config, state, ...(home ? { home } : {}) });
     if (problem) return `\`aidrian project resume\` lifts a run's halt, which a person decides, and ${problem}`;
     const found = RUN_ID.test(run ?? '') ? readRun(state, run) : null;
-    const continuedIn = continuationReader({ input, ...(home ? { home } : {}) });
-    const member = found && !found.problem ? resumerProblem({ found, store: runStore(project, config, state), session, continuedIn }) : null;
+    const member = found && !found.problem ? resumerProblem({ found, store: runStore(project, config, state), session }) : null;
     return member && `\`aidrian project resume\` lifts a run's halt, which a person decides, and ${member}`;
   },
   start: driverOnly,
@@ -503,7 +496,7 @@ export function resultHoldReason(input, { home, env = process.env } = {}) {
     if (!newest(issueChain(runStore(project, config, place.state), start), session)) return null;
     return `This session works the issue ${mark.issue} of the project run ${mark.project}, and it has not recorded the issue's result, which the run's driver waits on. ` +
       `Before stopping, write the result as JSON to a file outside the state folder and run \`aidrian project result ${mark.project} ${mark.issue} --file <that file>\`: ` +
-      'status merged, pr_open, parked, blocked, or failed, the pull request number or null, any decisions the issue waits on, and, when the work stopped, why. ' +
+      'status merged, pr_open, parked, blocked, environment, or failed, the pull request number or null, any decisions the issue waits on, and, when the work stopped, why. ' +
       'When the work can still go on, go on with it instead, and record the result when it ends.';
   } catch {
     return null;

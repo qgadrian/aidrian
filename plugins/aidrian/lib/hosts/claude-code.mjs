@@ -245,7 +245,7 @@ export default {
   },
   capabilities: {
     // The session a session went on as, when the host continued it under a new id (hosts/claude-code-continuation.mjs),
-    // as { id, at }, or null: custody of a project run follows it (lib/project-run-guard.mjs custody).
+    // as { id, at }, or null: a project run whose driver it continued is stranded (lib/project-run-gate.mjs strandedDriver).
     continuedIn: ({ session, cwd, env, home }) => continuedIn({ session, cwd, env, home }),
     // Reads Claude Code's transcripts (lib/transcript.mjs): cost, names reminder, session length, and attribution's model.
     // Also opts it into the review-rounds rule's reading of the Human's answers and typed grants of review rounds.

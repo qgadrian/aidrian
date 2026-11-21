@@ -20,7 +20,7 @@ import path from 'node:path';
 
 import { baseReader } from './handoff-guard.mjs';
 import { SESSION_ID } from './handoff-markers.mjs';
-import { continuationReader, sessionIdentity } from './hosts/index.mjs';
+import { sessionIdentity } from './hosts/index.mjs';
 import { CAPS, cleanText, RESULT_CAP, RESULT_STATUSES, validateResult } from './project-result.mjs';
 import { findProject } from './project.mjs';
 import { appendToRun, readCapped, readRun, runFolder, runPlace } from './project-run.mjs';
@@ -141,6 +141,7 @@ export function reportBody(run, facts, outOfAttempts = false) {
     parked: 'stopped on decisions a person makes',
     blocked: 'stopped: something it needs is missing',
     failed: 'failed',
+    environment: 'stopped: its session found its environment broken',
     orphan: 'had a session start the run could not confirm, so it was stopped',
     unknown: 'settled in a way this report cannot read',
     ...ENDED,
@@ -188,7 +189,7 @@ function openForDriver({ project, config, run, env, home, base }) {
   if (place.problem) return { problem: place.problem };
   const found = readRun(place.state, run);
   if (found.problem) return { problem: found.problem };
-  const held = custody({ found, store: runStore(project, config, place.state), session, continuedIn: continuationReader({ env, ...(home ? { home } : {}) }) });
+  const held = custody({ found, store: runStore(project, config, place.state), session });
   if (held.problem) return { problem: held.problem };
   if (held.role !== 'driver') return { problem: `custody of the run ${run} moves to this session on its first \`aidrian project wait ${run}\`; run that first` };
   const read = base ?? baseReader(project)();

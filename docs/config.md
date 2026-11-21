@@ -1846,7 +1846,8 @@ The driver reads the tracker with its own tools and writes a snapshot input; `in
 The run's files are in `<state>/runs/RUN/`, where `<state>` is the project's state folder.
 How its sessions relate to the cap of five background continuations in a row, and how the driver hands off, is
 [A project run](handoff.md#a-project-run). The [Full autonomy, solo](config-recipes.md#full-autonomy-solo) recipe
-allows project runs.
+allows project runs. [Project run setup](project-run-setup.md) lists every one-time step the Human takes for these keys,
+the machine's local file, the forge, and the host; each `aidrian project preflight` blocker line ends with its section.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -1884,6 +1885,16 @@ session that never named itself, whose hooks never ran, or whose sandbox proof f
 again) and writes a `halt` row: every later start refuses, however long ago it was written, until the Human's own shell,
 or another session a person attends that never drove the run, runs `aidrian project resume RUN`, which writes a `resume`
 row. The driver never runs it, and the hooks and the command refuse it to every session of the run's custody. `next` prints `halted <cause>` first, and `--json` adds `halt`.
+An issue's session that finds its own environment broken, such as a sandbox that refuses what the work needs, a forge
+sign-in or push that fails, or a host tool that fails, records the result `environment`, with the failing command and
+its error as its `stop`, which it must name. Every result's `stop` has anything shaped like a token, a URL's password,
+or an Authorization value masked as `[redacted]` before it is kept. The driver's `wait` records the result with that
+stop as the run's halt cause, in the same row, and prints `result ISSUE environment -> open`, or `-> parked attempts`
+on the issue's last attempt: the cause is fixed once for the whole run, not once per issue, and a `start` checks for
+a halt again under the ledger's lock. The attempt counts toward the issue's 3, as after `failed`: with attempts left,
+`aidrian project resume RUN` lets the next start take the same issue up again. The attempt's folder stays for the
+run's life, so work its clone holds that a failed push never sent can be recovered from
+`<state>/runs/RUN/attempts/ISSUE.ATTEMPT/work`.
 When an issue's pull request does not merge, its session runs `aidrian project stop-action RUN ISSUE`, as the
 autopilot skill's phases say. Only the issue's own session runs it: the newest session of the chain of the issue's
 latest start, while the issue runs, whose mark names that run and issue; never the driver. It finds the pull request
@@ -2144,8 +2155,7 @@ those its start row recorded, the ceiling, and the base branch's local ref, or t
 recorded none, so one failed read stops no session the team gave longer.
 So the driver's halt wait reaches `idle` and `end` can follow.
 `resume` names a driver it cannot read as an ended background session, such as the first one the Human ran: the Human
-resumes that same host session, which keeps its id and custody. A host that continues the driver's session under a new
-id moves custody to it by its own record ([handoff.md](handoff.md#a-project-run)).
+resumes that same host session, which keeps its id and custody.
 
 The [tracker write guard](#tracker) holds a project run's sessions whatever the working copy's `tracker.enabled` says,
 knowing each by its marks alone, never the folder a call runs in. An issue's session writes only its own issue, by its

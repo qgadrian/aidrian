@@ -6,7 +6,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -286,18 +286,6 @@ test('the remote rule, the project command rule, and the guards\' limits name an
   const many = Array.from({ length: WRITE_TARGETS + 1 }, (_, i) => `: > a${i}`).join('; ');
   assert.match(writeLimitDenial(bash(many, { session_id: OTHER, cwd: fx.dir }), fx.config, { unattended, issue, mark })?.reason ?? '', session);
   assert.match(deadlineDenial(bash(': > a', { session_id: OTHER, cwd: fx.dir }), fx.config, { unattended, issue, mark })?.reason ?? '', session);
-});
-
-test('the agent gate hook lets the session the host continued the driver as run the driver\'s commands, by the old transcript\'s own row', (t) => {
-  const fx = runFixture(t);
-  const ask = (session) => spawnHook(AGENT_HOOK, { session_id: session, tool_name: 'Bash', tool_input: { command: 'aidrian project wait launch --max-wait 60' }, cwd: fx.dir }, fx.env);
-  assert.equal(ask(OTHER).status, 2, 'before the host continued the driver');
-  const transcript = path.join(fx.env.CLAUDE_CONFIG_DIR, 'projects', fx.dir.replace(/[^A-Za-z0-9]/gu, '-'), `${DRIVER}.jsonl`);
-  mkdirSync(path.dirname(transcript), { recursive: true });
-  const moved = new Date(Date.parse(fx.run().init.at) + 1000).toISOString();
-  appendFileSync(transcript, `${JSON.stringify({ type: 'continued-in', timestamp: moved, sessionId: DRIVER, continuedInSessionId: OTHER })}\n`);
-  const waited = ask(OTHER);
-  assert.equal(waited.status, 0, waited.stderr);
 });
 
 test('the hook scripts hold the new guards: a subagent\'s project start, an unattended write into the runs, and an issue session\'s stop', async (t) => {

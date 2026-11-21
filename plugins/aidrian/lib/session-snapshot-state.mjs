@@ -1,15 +1,18 @@
-// The state folder as `aidrian session snapshot` (lib/session-snapshot.mjs) reads it: what its sections share, and the
-// two sections that read the state folder outside the session's own folder, lessons and audits. The state folder's real
-// path is resolved once, checked, and kept, and every read goes through that path, so a symlink at `state.dir` repointed
-// after the check moves no read. A folder or file read below it is resolved again and must lie inside no checkout of the
-// repository either: with a committed `state.dir` of ".." in a repository folder named `lessons` or `audits`, the state
-// folder lies outside the checkout, but that folder below it is the checkout itself.
+// The state folder as `aidrian session snapshot` (lib/session-snapshot.mjs) reads it: the two sections that read the
+// state folder outside the session's own folder, lessons and audits. The module also holds origin's repository as the
+// worktrees section reads it (originOf). The state folder's real path is resolved once, checked, and kept, and every
+// read goes through that path, so a symlink at `state.dir` repointed after the check moves no read. A folder or file
+// read below it is resolved again and must lie inside no checkout of the repository either: with a committed
+// `state.dir` of ".." in a repository folder named `lessons` or `audits`, the state folder lies outside the checkout,
+// but that folder below it is the checkout itself.
 
 import path from 'node:path';
 
 import { listAudits } from './audits.mjs';
 import { loadConfig } from './config.mjs';
+import { remoteIdentity } from './forges/index.mjs';
 import { checkoutHolding, resolvedPath } from './fs.mjs';
+import { runGit } from './git.mjs';
 import { lessons, lessonStats, stateInbox } from './lesson-inbox.mjs';
 import { projectCheckouts, stateDir } from './project.mjs';
 import { sessionFolder, stateHeld } from './session-folder.mjs';
@@ -42,6 +45,19 @@ export function snapshotContext(project, { session, transcript, validId }, error
     for (const [name, failing] of failed) if (failing) errors.add(name);
   }
   return { project, config, state, checkouts, inside, loose, folder };
+}
+
+// `git remote get-url`'s exit status when the remote is not configured.
+const NO_SUCH_REMOTE = 2;
+
+// Origin's repository in the checkout `root`, as git fetches from it there: { repo, failed }. `repo` is remoteIdentity's
+// `{ host, path }` of its first URL, after any `url.<base>.insteadOf` rewrite, with that checkout's own config, such as a
+// worktree's or an `includeIf "onbranch:"` one; null with no origin, or one git reads as a folder. `failed` says git
+// could not read it, which no origin is not. One `git remote get-url` with constant arguments; never throws.
+export function originOf(root) {
+  const read = runGit(['remote', 'get-url', 'origin'], root, KILL);
+  if (read.status === 0) return { repo: remoteIdentity(read.stdout.trim()), failed: false };
+  return { repo: null, failed: read.status !== NO_SUCH_REMOTE };
 }
 
 // The real path of the state folder of `ctx`, as snapshotContext resolved and checked it, when it lies outside every

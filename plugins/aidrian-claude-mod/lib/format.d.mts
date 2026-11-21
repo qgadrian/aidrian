@@ -17,6 +17,11 @@ export function plainText(segments: Segment[]): string
 export function changeRows(prs: unknown): Row[]
 export function isIssueLink(url: unknown, key: unknown): boolean
 export function ticketRow(ticket: unknown, issue?: { title?: string; status?: string; url?: string } | null): Row | null
+export const MAX_TICKETS: number
+export const LISTED_TICKETS: number
+export function ticketsOf(snapshot: unknown): Record<string, unknown>[]
+export function ticketRows(tickets: unknown, issues?: unknown): Row[]
+export function ticketsSummary(rows: Row[]): { listed: Row[]; more: number }
 export function alertText(alert?: { text?: string; title?: string }): { text: string; title: string }
 export const NOTICES: Readonly<Record<'missing' | 'no-node' | 'refused' | 'failed' | 'timed-out' | 'off', string>>
 export function noticeOf(result: unknown): string | null

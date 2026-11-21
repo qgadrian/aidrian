@@ -11,7 +11,7 @@ import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { stopMarkerPath } from '../plugins/aidrian/lib/session-length.mjs';
 import { cachedValue } from '../plugins/aidrian/lib/session-cached-value.mjs';
 import { reserveSessionFile } from '../plugins/aidrian/lib/session-folder.mjs';
-import { DISPLAY_CAPS, displayText, MERGED_HEADS, PRS_CACHE, snapshotLine } from '../plugins/aidrian/lib/session-snapshot.mjs';
+import { DISPLAY_CAPS, displayText, MERGED_HEADS, PRS_CACHE, snapshot, snapshotLine } from '../plugins/aidrian/lib/session-snapshot.mjs';
 import { auditsSection, lessonsSection, snapshotContext } from '../plugins/aidrian/lib/session-snapshot-state.mjs';
 
 import { hookCall } from './hook-call.mjs';
@@ -25,7 +25,7 @@ const LIB = path.join(ROOT, 'plugins/aidrian/lib');
 const FIXTURES = path.join(ROOT, 'test/fixtures/transcripts');
 const POSIX = process.platform !== 'win32';
 const ID = 'snap-1';
-const SECTIONS = ['handoff', 'prs', 'lessons', 'worktrees', 'decisions', 'audits', 'ticket', 'links'];
+const SECTIONS = ['handoff', 'prs', 'lessons', 'worktrees', 'decisions', 'audits', 'tickets', 'links'];
 // What a terminal must never receive: C0 but the line feed, DEL, and C1.
 const CLEAN = /^[^\u0000-\u0009\u000b-\u001f\u007f-\u009f]*\n?$/u;
 
@@ -131,7 +131,7 @@ test('the JSON object and the line at each handoff level, with the Stop hook`s o
     return [env.run(['--session', ID, '--transcript', transcript, '--json']), env.run(['--session', ID, '--transcript', transcript, '--line'])];
   };
   const [quiet, quietLine] = at(cost, 0);
-  assert.deepEqual(Object.keys(quiet.json), ['session', ...SECTIONS, 'errors']);
+  assert.deepEqual(Object.keys(quiet.json), ['session', ...SECTIONS, 'ticket', 'errors']);
   assert.deepEqual(quiet.json.session, { id: ID, transcript, cwd: cost.dir });
   assert.deepEqual(Object.keys(quiet.json.handoff), ['ratio', 'breakEven', 'level', 'nextRatio', 'context', 'ceiling', 'chain', 'maxChain', 'continueArmed', 'lastBrief']);
   assert.equal(quiet.json.handoff.level, 'quiet');
@@ -251,7 +251,7 @@ test('with nothing to show, the line is empty; with no project every section is 
   writeFileSync(transcript, turnsOf('handoff-cost')[4]);
   const { json, status } = env.run(['--session', ID, '--transcript', transcript], { cwd: outside });
   assert.equal(status, 0);
-  assert.deepEqual(json, { session: { id: ID, transcript, cwd: outside }, ...Object.fromEntries(SECTIONS.map((name) => [name, null])), errors: [] });
+  assert.deepEqual(json, { session: { id: ID, transcript, cwd: outside }, ...Object.fromEntries(SECTIONS.map((name) => [name, null])), ticket: null, errors: [] });
   assert.deepEqual(env.run(['--line'], { cwd: outside }).stdout, '\n');
   assert.deepEqual([readdirSync(env.state), readdirSync(env.temp)], before);
   assert.equal(snapshotLine({ handoff: null, lessons: { open: 2, byTier: { P1: 0, P2: 2, P3: 0 } }, decisions: { provisional: 0 }, worktrees: null, audits: { untriaged: 0 } }), '');
@@ -610,21 +610,26 @@ test('session-snapshot.mjs names no forge outside its comments', () => {
   assert.doesNotMatch(code, /['"`]gh['"`]|--hostname|repos\//u);
 });
 
-test('the ticket comes from the prefixes the caller passes, else from a numbered branch; a bad prefix list makes it null', (t) => {
+test('the tickets come from the prefixes the caller passes, else from a numbered branch; a bad prefix list makes them null', (t) => {
   const keyed = setup(t, { branch: 'feat/abc-123-login' });
-  assert.deepEqual(keyed.run(['--ticket-prefixes', 'XY|ABC']).json.ticket, { key: 'ABC-123', source: 'branch' });
-  assert.equal(keyed.run([]).json.ticket, null, 'no prefixes and no number after the type');
+  const prefixed = keyed.run(['--ticket-prefixes', 'XY|ABC']).json;
+  assert.deepEqual(prefixed.tickets, [{ key: 'ABC-123', source: 'branch' }]);
+  assert.deepEqual(prefixed.ticket, prefixed.tickets[0], 'the deprecated ticket: the first of tickets');
+  const bare = keyed.run([]).json;
+  assert.deepEqual(bare.tickets, [], 'no prefixes and no number after the type');
+  assert.deepEqual([Object.hasOwn(bare, 'ticket'), bare.ticket], [true, null], 'no ticket: the deprecated key is there, and null');
   const numbered = setup(t, { branch: 'fix/42-login-redirect' });
-  assert.deepEqual(numbered.run([]).json.ticket, { key: '#42', source: 'branch' });
-  assert.deepEqual(numbered.run(['--ticket-prefixes', 'ABC']).json.ticket, { key: '#42', source: 'branch' });
+  assert.deepEqual(numbered.run([]).json.tickets, [{ key: '#42', source: 'branch' }]);
+  assert.deepEqual(numbered.run(['--ticket-prefixes', 'ABC']).json.tickets, [{ key: '#42', source: 'branch' }]);
   for (const prefixes of ['1AB', 'A.B', 'A|', 'ABCDEFGHIJKLMNOPQ', 'A(B', Array.from({ length: 33 }, (_, i) => `P${i}`).join('|')]) {
     const { json, status } = numbered.run(['--ticket-prefixes', prefixes]);
     assert.equal(status, 0);
-    assert.equal(json.ticket, null, prefixes);
-    assert.deepEqual(json.errors, ['worktrees', 'ticket', 'links'].filter((name) => json.errors.includes(name)));
-    assert.ok(json.errors.includes('ticket'), prefixes);
+    assert.equal(json.tickets, null, prefixes);
+    assert.deepEqual([json.ticket, json.errors.includes('ticket')], [null, false], prefixes);
+    assert.deepEqual(json.errors, ['worktrees', 'tickets', 'links'].filter((name) => json.errors.includes(name)));
+    assert.ok(json.errors.includes('tickets'), prefixes);
   }
-  assert.deepEqual(numbered.run(['--ticket-prefixes', Array.from({ length: 32 }, (_, i) => `P${i}`).join('|')]).json.ticket, { key: '#42', source: 'branch' });
+  assert.deepEqual(numbered.run(['--ticket-prefixes', Array.from({ length: 32 }, (_, i) => `P${i}`).join('|')]).json.tickets, [{ key: '#42', source: 'branch' }]);
 });
 
 test('bad arguments exit 1 with the usage; every read failure exits 0', (t) => {
@@ -943,15 +948,16 @@ test('a named pipe at the lesson inbox or the audits triage file fails that sect
   }
 });
 
-// The prs section. A project whose origin no forge serves, so the merged-heads read starts no call, with a fake gh that
-// logs each call's arguments, folder, stdin, and GH_HOST to `calls()`, and answers what `answer` last set.
+// The prs section. A project with no origin unless `options` names one, so the merged-heads read starts no call, with a
+// fake gh that logs each call's arguments, folder, stdin, and GH_HOST to `calls()`, answers a list of merged pull
+// requests with none, and anything else with what `answer` last set.
 function withLedger(t, options = {}) {
   const env = setup(t, options);
   const answerFile = path.join(env.base, 'answer.json');
   ghWrapper(path.join(env.base, 'bin'), `const fs = require('node:fs');\n` +
     `const input = process.argv.includes('--input') ? fs.readFileSync(0, 'utf8') : null;\n` +
     `fs.appendFileSync(${JSON.stringify(env.log)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), input, ghHost: process.env.GH_HOST ?? null }) + '\\n');\n` +
-    `const { text, status, delay } = JSON.parse(fs.readFileSync(${JSON.stringify(answerFile)}, 'utf8'));\n` +
+    `const { text, status, delay } = process.argv.includes('list') ? { text: '[]', status: 0, delay: 0 } : JSON.parse(fs.readFileSync(${JSON.stringify(answerFile)}, 'utf8'));\n` +
     `setTimeout(() => { process.stdout.write(text); process.exitCode = status; }, delay);\n`);
   const answer = (value, { status = 0, delay = 0 } = {}) => writeFileSync(answerFile, JSON.stringify({ text: typeof value === 'string' ? value : JSON.stringify(value), status, delay }));
   answer({ data: {} });
@@ -1155,7 +1161,7 @@ test('prs: a named pipe at prs.jsonl fails the section, one at prs-cache.json is
   spawnSync('mkfifo', [path.join(env.folder, 'prs.jsonl')]);
   const piped = env.run(['--session', ID]);
   assert.ok(piped.ms < 10_000, `${piped.ms} ms`);
-  assert.deepEqual([piped.json.prs, piped.json.errors], [null, ['prs', 'ticket']]);
+  assert.deepEqual([piped.json.prs, piped.json.errors, piped.json.tickets], [null, ['prs', 'tickets'], []]);
   rmSync(path.join(env.folder, 'prs.jsonl'));
   env.ledger([ledgerRow(env.dir, { kind: 'created', number: 7 })]);
   env.answer({ data: { r0: { pullRequest: prNode(7) } } });
@@ -1174,7 +1180,7 @@ test('prs: a symlinked prs.jsonl and a symlinked session folder receive no write
   symlinkSync(target, path.join(env.folder, 'prs.jsonl'));
   env.answer({ data: { r0: { pullRequest: prNode(7) } } });
   const linked = env.run(['--session', ID]).json;
-  assert.deepEqual([linked.prs, linked.errors], [null, ['prs', 'ticket']]);
+  assert.deepEqual([linked.prs, linked.errors, linked.tickets], [null, ['prs', 'tickets'], []]);
   assert.deepEqual([readFileSync(target, 'utf8').split('\n').length, env.calls().length], [2, 0]);
   const elsewhere = path.join(env.base, 'folder-elsewhere');
   mkdirSync(elsewhere, { mode: 0o700 });
@@ -1183,6 +1189,131 @@ test('prs: a symlinked prs.jsonl and a symlinked session folder receive no write
   const folder = env.run(['--session', 'linked-1']).json;
   assert.deepEqual([folder.prs, folder.errors.includes('prs')], [null, true]);
   assert.deepEqual(readdirSync(elsewhere), ['prs.jsonl'], 'no cache or temporary file is written through the symlink');
+});
+
+// The tickets section, from the change requests the prs section read. A body's keys count for an author of the
+// repository alone (lib/forges/github.mjs closesOf), so these nodes name one.
+const OWN_REPO = { name: 'notes', owner: { login: 'acme' } };
+
+test('tickets: a session on main that touched a pull request whose body says Fixes ABC-12 shows ABC-12, from the one forge call', { skip: !POSIX }, (t) => {
+  const env = withLedger(t);
+  env.ledger([ledgerRow(env.dir, { kind: 'touched', number: 7 })]);
+  env.answer({ data: { r0: { pullRequest: prNode(7, { authorAssociation: 'MEMBER', bodyText: 'Fixes ABC-12', closingIssuesReferences: { nodes: [] } }) } } });
+  const { json, stdout } = env.run(['--session', ID, '--ticket-prefixes', 'ABC']);
+  assert.deepEqual(json.tickets, [{ key: 'ABC-12', source: 'pr' }]);
+  assert.deepEqual(json.ticket, { key: 'ABC-12', source: 'pr' }, 'the deprecated ticket: the first of tickets');
+  assert.deepEqual(json.errors, []);
+  assert.deepEqual(json.prs, [PR_ROW], 'closes never reaches prs');
+  assert.ok(!stdout.includes('Fixes'), 'the body text reaches no output');
+  const [call, ...more] = env.calls();
+  assert.deepEqual(more, [], 'one forge call for the prs and tickets sections');
+  assert.deepEqual(call.args, ['api', 'graphql', '--hostname', 'github.com', '--input', '-']);
+  const { query } = JSON.parse(call.input);
+  assert.equal(query.match(/query changes\(/gu).length, 1);
+  assert.match(query, /bodyText/u);
+  const again = env.run(['--session', ID]).json;
+  assert.deepEqual([again.tickets, again.ticket, again.errors, env.calls().length], [[], null, [], 1], 'no prefix: no key; inside the minute: the cache, and no second call');
+});
+
+test('tickets: pull requests for two issues show both, the newest pull request`s first', { skip: !POSIX }, (t) => {
+  const env = withLedger(t);
+  env.ledger([ledgerRow(env.dir, { kind: 'created', number: 7 }, 1), ledgerRow(env.dir, { kind: 'created', number: 8 }, 2)]);
+  env.answer({ data: { r0: { pullRequest: prNode(8, { authorAssociation: 'MEMBER', bodyText: 'Closes ABC-15' }) }, r1: { pullRequest: prNode(7, { title: 'ABC-12: close the login gaps' }) } } });
+  const { json } = env.run(['--session', ID, '--ticket-prefixes', 'ABC']);
+  assert.deepEqual(json.prs.map(({ number }) => number), [8, 7]);
+  assert.deepEqual(json.tickets, [{ key: 'ABC-15', source: 'pr' }, { key: 'ABC-12', source: 'pr' }]);
+  assert.deepEqual(json.ticket, { key: 'ABC-15', source: 'pr' }, 'the deprecated ticket: the newest pull request`s');
+  assert.deepEqual([json.errors, env.calls().length], [[], 1]);
+});
+
+test('tickets: past the deadline the branch`s key still shows, prs alone is in errors, and no second forge call starts', { skip: !POSIX }, (t) => {
+  const env = withLedger(t, { branch: 'fix/42-login' });
+  env.ledger([ledgerRow(env.dir, { kind: 'created', number: 7 })]);
+  env.answer({ data: { r0: { pullRequest: prNode(7, { title: 'ABC-12' }) } } });
+  assert.deepEqual(env.run(['--session', ID, '--ticket-prefixes', 'ABC']).json.tickets, [{ key: '#42', source: 'branch' }, { key: 'ABC-12', source: 'pr' }]);
+  rmSync(path.join(env.folder, PRS_CACHE.name));
+  env.answer({ data: {} }, { delay: 5000 });
+  const late = env.run(['--session', ID, '--ticket-prefixes', 'ABC', '--deadline-ms', '200']);
+  // From gh's spawn, as the snapshot's own process recorded it, to the snapshot's exit: the node and git startups a loaded
+  // machine slows come before it.
+  const lateMs = late.endedAt - ghSpawned(env.log).at(-1).at;
+  assert.ok(lateMs < 4000, `${lateMs} ms`);
+  assert.deepEqual([late.json.tickets, late.json.prs, late.json.errors], [[{ key: '#42', source: 'branch' }], null, ['prs']]);
+  // Calls the snapshot made, counted in its process: the 200 ms deadline can stop a slowly started gh before it logs one.
+  assert.equal(env.spawns(), 2, 'the late snapshot started one forge call, and the tickets section none');
+});
+
+test('tickets: a closing reference of the forge gives #N; a key no prefix matches, and a #N in a title, give none', { skip: !POSIX }, (t) => {
+  const env = withLedger(t, { origin: 'https://github.com/acme/notes.git' });
+  env.ledger([ledgerRow(env.dir, { kind: 'created', number: 7 }, 1), ledgerRow(env.dir, { kind: 'created', number: 8 }, 2)]);
+  env.answer({ data: {
+    r0: { pullRequest: prNode(8, { authorAssociation: 'MEMBER', bodyText: 'Fixes DEF-9', title: 'Follow up #99' }) },
+    r1: { pullRequest: prNode(7, { closingIssuesReferences: { nodes: [{ number: 12, repository: OWN_REPO }, { number: 5, repository: { name: 'other', owner: { login: 'acme' } } }] } }) },
+  } });
+  assert.deepEqual(env.run(['--session', ID]).json.tickets, [{ key: '#12', source: 'pr' }], 'no prefix');
+  assert.deepEqual(env.run(['--session', ID, '--ticket-prefixes', 'ABC']).json.tickets, [{ key: '#12', source: 'pr' }]);
+  assert.equal(env.calls().filter(({ args }) => args.includes('graphql')).length, 1);
+});
+
+test('tickets: a pull request of another repository whose closing reference is #5 gives no key; one of origin`s repository gives its #12', { skip: !POSIX }, (t) => {
+  const env = withLedger(t, { origin: 'https://github.com/acme/notes.git' });
+  const other = { name: 'repo', owner: { login: 'other' } };
+  env.ledger([ledgerRow(env.dir, { kind: 'created', number: 8 }, 1), ledgerRow(env.dir, { kind: 'touched', number: 7, path: 'other/repo' }, 2)]);
+  env.answer({ data: {
+    r0: { pullRequest: prNode(7, { repository: other, headRepository: other, url: 'https://github.com/other/repo/pull/7', closingIssuesReferences: { nodes: [{ number: 5, repository: other }] } }) },
+    r1: { pullRequest: prNode(8, { closingIssuesReferences: { nodes: [{ number: 12, repository: OWN_REPO }] } }) },
+  } });
+  const { json } = env.run(['--session', ID]);
+  assert.deepEqual(json.prs.map(({ repo, number }) => `${repo}#${number}`), ['other/repo#7', 'acme/notes#8']);
+  assert.deepEqual([json.tickets, json.errors], [[{ key: '#12', source: 'pr' }], []]);
+  const none = withLedger(t);
+  none.ledger([ledgerRow(none.dir, { kind: 'created', number: 8 })]);
+  none.answer({ data: { r0: { pullRequest: prNode(8, { closingIssuesReferences: { nodes: [{ number: 12, repository: OWN_REPO }] } }) } } });
+  assert.deepEqual(none.run(['--session', ID]).json.tickets, [], 'no origin: no repository a #N could name');
+});
+
+// The snapshot run in this process, with the state root, temporary folder, fake gh, and git config of `env`.
+function inProcess(env, options) {
+  const names = ['XDG_STATE_HOME', 'TMPDIR', 'PATH', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM'];
+  const saved = names.map((name) => [name, process.env[name]]);
+  for (const name of names) process.env[name] = env.env[name];
+  try {
+    return snapshot({ cwd: env.dir, ...options });
+  } finally {
+    for (const [name, value] of saved) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+}
+
+test('tickets: the prs and tickets sections share one read of the change requests, one cache read a snapshot', { skip: !POSIX }, (t) => {
+  const env = withLedger(t);
+  env.ledger([ledgerRow(env.dir, { kind: 'created', number: 7 })]);
+  env.answer({ data: { r0: { pullRequest: prNode(7, { title: 'ABC-12' }) } } });
+  for (const round of ['refreshed', 'cached']) {
+    const reads = [];
+    const io = { cachedValue: (options) => (reads.push(options.name), cachedValue(options)) };
+    const snap = inProcess(env, { session: ID, ticketPrefixes: 'ABC', io });
+    assert.deepEqual([snap.prs.map(({ number }) => number), snap.tickets], [[7], [{ key: 'ABC-12', source: 'pr' }]], round);
+    assert.deepEqual(reads.filter((name) => name === PRS_CACHE.name), [PRS_CACHE.name], `${round}: one read of the change requests' cache`);
+  }
+  assert.equal(env.calls().filter(({ args }) => args.includes('graphql')).length, 1);
+});
+
+test('tickets: a cached closes entry of another shape shows no key', { skip: !POSIX }, (t) => {
+  const env = withLedger(t);
+  env.ledger([ledgerRow(env.dir, { kind: 'created', number: 7 })]);
+  env.answer({ data: { r0: { pullRequest: prNode(7, { authorAssociation: 'MEMBER', bodyText: 'Fixes ABC-12' }) } } });
+  assert.deepEqual(env.run(['--session', ID, '--ticket-prefixes', 'ABC']).json.tickets, [{ key: 'ABC-12', source: 'pr' }]);
+  const cache = path.join(env.folder, PRS_CACHE.name);
+  const stored = JSON.parse(readFileSync(cache, 'utf8'));
+  assert.deepEqual(stored.value.rows[0].closes, ['ABC-12']);
+  writeFileSync(cache, JSON.stringify({ ...stored, value: { ...stored.value, rows: [{ ...stored.value.rows[0], closes: ['ABC-12‮'] }] } }), { mode: 0o600 });
+  const { json, stdout } = env.run(['--session', ID, '--ticket-prefixes', 'ABC']);
+  assert.deepEqual([json.prs, json.tickets, json.errors], [null, [], ['prs']], 'no cache: prs fails, and tickets shows no key of it and names no error');
+  assert.match(stdout, CLEAN);
+  assert.ok(!stdout.includes('‮'));
 });
 
 // A project whose repository folder is named `name`, with a committed state.dir of "..": the state folder, the folder

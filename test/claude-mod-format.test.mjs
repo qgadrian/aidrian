@@ -6,7 +6,8 @@ import test from 'node:test';
 
 import {
   alertText, bandSegments, changeRows, changesParts, COLORS, DISPLAY_CAPS, displayText, FORGES, handoffParts, harnessParts,
-  isIssueLink, NOTICES, noticeOf, plainText, SUMMARY_BUDGET, ticketRow,
+  isIssueLink, LISTED_TICKETS, MAX_TICKETS, NOTICES, noticeOf, plainText, SUMMARY_BUDGET, ticketRow, ticketRows, ticketsOf,
+  ticketsSummary,
 } from '../plugins/aidrian-claude-mod/lib/format.mjs';
 import { SUMMARY_BUDGET as LINE_BUDGET } from '../plugins/aidrian/lib/session-prs.mjs';
 import { DISPLAY_CAPS as SNAPSHOT_CAPS, displayText as snapshotText, snapshotLine } from '../plugins/aidrian/lib/session-snapshot.mjs';
@@ -16,7 +17,7 @@ const MOD_LIB = path.join(ROOT, 'plugins/aidrian-claude-mod/lib');
 // What a terminal must never receive: C0, DEL, and C1.
 const CLEAN = /^[^\u0000-\u001f\u007f-\u009f]*$/u;
 const HOSTILE = ['\u001b]52;c;aGk=\u0007', '\u001b[2J', '‮', '‏', '⁠', '\u{E0041}'];
-const SECTIONS = ['handoff', 'prs', 'lessons', 'worktrees', 'decisions', 'audits', 'ticket'];
+const SECTIONS = ['handoff', 'prs', 'lessons', 'worktrees', 'decisions', 'audits', 'tickets'];
 
 const CHECKS = { passed: 3, failed: 0, pending: 0, skipped: 1 };
 const pull = (number, fields = {}) => ({
@@ -323,6 +324,50 @@ test('no hidden character reaches the band or the pane', () => {
   assert.equal(changeRows([row])[0].link, null);
   assert.equal(ticket.link, null);
   assert.match(textsOf(ticket.parts), /^ABC-1\]52;c;aGk=\[2JIssue\]52;c;aGk=\[2J title/u);
+  const key = `ABC-1${dirty}`;
+  const rows = ticketRows([{ key, source: 'pr' }, { key: `#4${dirty}`, source: 'branch' }], [{ key, title: `Issue${dirty}`, status: `In${dirty}`, url: `https://linear.app/acme/issue/ABC-1${dirty}` }]);
+  assert.equal(rows.length, 2);
+  for (const each of rows.flatMap((row) => row.parts)) {
+    assert.match(each.text, CLEAN, JSON.stringify(each.text));
+    for (const hidden of ['‮', '‏', '⁠', '\u{E0041}']) assert.ok(!each.text.includes(hidden), JSON.stringify(each.text));
+  }
+  assert.deepEqual(rows.map((row) => row.link), [null, null]);
+});
+
+test('ticketsOf reads the list, else an older plugin`s one ticket, 10 at most', () => {
+  assert.equal(MAX_TICKETS, 10);
+  const twelve = Array.from({ length: 12 }, (_, index) => ({ key: `ABC-${index + 1}`, source: 'pr' }));
+  assert.deepEqual(ticketsOf(snap({ tickets: twelve })), twelve.slice(0, 10));
+  assert.deepEqual(ticketsOf(snap({ tickets: [null, 'ABC-1', 7, [], { key: 'ABC-2', source: 'pr' }] })), [{ key: 'ABC-2', source: 'pr' }], 'entries that are no object are dropped');
+  const legacy = { key: 'ABC-1', source: 'branch' };
+  assert.deepEqual(ticketsOf({ ticket: legacy }), [legacy], 'an older aidrian plugin prints one ticket');
+  assert.deepEqual(ticketsOf({ tickets: [], ticket: legacy }), [], 'the list wins, even empty');
+  const both = ticketsOf(snap({ tickets: [legacy, { key: 'ABC-2', source: 'pr' }], ticket: legacy }));
+  assert.deepEqual(both, [legacy, { key: 'ABC-2', source: 'pr' }], 'a plugin that prints both: the list alone');
+  assert.deepEqual(ticketRows(both).map(rowText), ['ABC-1', 'ABC-2'], 'one row a ticket, none twice');
+  for (const value of [null, 'tickets', 42, [], {}, { ticket: null }, { ticket: 'ABC-1' }]) assert.deepEqual(ticketsOf(value), [], JSON.stringify(value));
+});
+
+test('ticketRows gives one row a ticket, each with the issue of its own key alone', () => {
+  const issue = { key: 'ABC-15', title: 'Close the gaps', status: 'Todo', url: 'https://linear.app/acme/issue/ABC-15' };
+  const rows = ticketRows([{ key: 'ABC-12', source: 'pr' }, { key: 'ABC-15', source: 'pr' }], [issue, { key: 'XY-1', title: 'Elsewhere', status: 'Done', url: 'https://linear.app/acme/issue/XY-1' }]);
+  assert.deepEqual(rows.map(rowText), ['ABC-12', 'ABC-15Close the gapsTodo']);
+  assert.deepEqual(rows.map((row) => row.link), [null, issue.url]);
+  assert.ok(!rows.some((row) => rowText(row).includes('Elsewhere')), 'an issue of another key shows nowhere');
+  assert.deepEqual(ticketRows([{ key: 'ABC-12' }, { key: 'ABC-12' }, { key: 'abc-12' }]).map(rowText), ['ABC-12'], 'a repeated key gives one row');
+  assert.deepEqual(ticketRows([{ key: '#42', source: 'branch' }, { source: 'pr' }, null, { key: '' }]).map(rowText), ['#42'], 'a ticket with no key gives no row');
+  assert.deepEqual(ticketRows(null), []);
+  assert.deepEqual(ticketRows([{ key: 'ABC-12' }], 'issues').map(rowText), ['ABC-12']);
+});
+
+test('ticketsSummary lists three rows and counts the rest', () => {
+  assert.equal(LISTED_TICKETS, 3);
+  const rowsOf = (count) => ticketRows(Array.from({ length: count }, (_, index) => ({ key: `ABC-${index + 1}` })));
+  for (const [count, listed, more] of [[0, 0, 0], [1, 1, 0], [3, 3, 0], [5, 3, 2]]) {
+    const summary = ticketsSummary(rowsOf(count));
+    assert.deepEqual(summary.listed.map(rowText), rowsOf(count).slice(0, listed).map(rowText), String(count));
+    assert.equal(summary.more, more, String(count));
+  }
 });
 
 test('the ticket row links only to the Linear page of the key looked up', () => {

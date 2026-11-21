@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { checkoutRoots, currentRoot, gateGit, GIT_TIMEOUT_MS, isIgnored, isRefName, mainRoot, REF_NAME_MAX_BYTES, repositoryCheckouts } from '../plugins/aidrian/lib/git.mjs';
+import { checkoutRoots, currentRoot, gateGit, GIT_TIMEOUT_MS, isIgnored, isRefName, mainRoot, memoGit, REF_NAME_MAX_BYTES, repositoryCheckouts } from '../plugins/aidrian/lib/git.mjs';
 
 // A repository with one commit, an ignored folder, and a worktree inside that folder.
 function repo(t) {
@@ -57,6 +57,16 @@ test('with a separate git folder, the main checkout is the folder that has the f
   execFileSync('git', ['-C', work, 'worktree', 'add', '-q', '-b', 'task', worktree]);
   assert.equal(checkoutRoots(worktree).current, worktree, 'a linked worktree is never the main checkout');
   assert.notEqual(checkoutRoots(worktree).main, worktree);
+});
+
+test('memoGit runs each command once a folder and gives the same result again; other arguments or folders run again', (t) => {
+  const { dir, worktree } = repo(t);
+  const read = memoGit();
+  const head = read(['rev-parse', '--abbrev-ref', 'HEAD'], dir);
+  assert.equal(head.stdout.trim(), 'main');
+  assert.equal(read(['rev-parse', '--abbrev-ref', 'HEAD'], dir), head, 'the first result, not a second run');
+  assert.equal(read(['rev-parse', '--abbrev-ref', 'HEAD'], worktree).stdout.trim(), 'task');
+  assert.equal(read(['rev-parse', '--show-toplevel'], dir).stdout.trim(), dir);
 });
 
 test('isIgnored answers true or false inside a repository, and null when git cannot tell', (t) => {

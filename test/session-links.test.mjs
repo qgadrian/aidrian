@@ -1,5 +1,5 @@
 // The sessions a handoff came from (lib/session-links.mjs): the parent a chain floor names, the lineage that walks those
-// names, the reader of the row groups, and the ticket's rules.
+// names, the reader of the row groups, and the tickets' rules.
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
@@ -11,7 +11,7 @@ import test, { after } from 'node:test';
 
 import { foldCase } from '../plugins/aidrian/lib/fs.mjs';
 import { noteFrom, openStore, readFrom, readHop, storeNames } from '../plugins/aidrian/lib/handoff-markers.mjs';
-import { keyOfBranch, lineage, linksOf, MAX_ANCESTORS, prefixList, rowReader, ticketOf } from '../plugins/aidrian/lib/session-links.mjs';
+import { keyOfBranch, lineage, linksOf, MAX_ANCESTORS, MAX_TICKETS, prefixList, rowReader, ticketsOf } from '../plugins/aidrian/lib/session-links.mjs';
 import { createdWorktrees, isWorktreeRow, printedResults, recordLinks, worktreeCalls, worktreeRows } from '../plugins/aidrian/lib/session-links-writer.mjs';
 import { sessionFolder } from '../plugins/aidrian/lib/session-folder.mjs';
 import { remoteRepos } from '../plugins/aidrian/lib/session-prs.mjs';
@@ -277,29 +277,142 @@ test('keyOfBranch reads a prefixed key, else #N from <type>/<N>-<slug>', () => {
   assert.throws(() => prefixList('1AB'));
 });
 
-test('ticketOf: the current branch first, then the newest own row with a key, then the nearest ancestor`s as cut', { skip: !POSIX }, () => {
+test('keyOfBranch gives the configured prefix in ASCII capitals: a lookalike letter that folds into it reaches no key', () => {
+  // U+212A KELVIN SIGN folds to k under Unicode case folding.
+  const kelvin = keyOfBranch('feat/Key-12-x', prefixList('key'));
+  assert.equal(kelvin, 'KEY-12');
+  assert.match(kelvin, /^[\x20-\x7e]+$/u);
+  assert.equal(keyOfBranch('feat/kEy-12-x', prefixList('ABC|key')), 'KEY-12', 'the matching prefix, not the first');
+});
+
+test('ticketsOf: a zero-padded branch number and the closing reference of the same issue take one place; a number of zeros gives none', { skip: !POSIX }, () => {
+  const { state } = fixture();
+  const repo = path.join(ROOT, `repo-padded-${states}`);
+  mkdirSync(repo);
+  spawnSync('git', ['init', '-q', '-b', 'fix/0042-login'], { cwd: repo, env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
+  const own = sessionWith(state, 'kid-14', [ledgerRow({ branch: 'fix/042-again', at: at(2) }), ledgerRow({ branch: 'fix/000-none', at: at(1) })]);
+  sessionWith(state, 'mom-14', [ledgerRow({ branch: 'fix/00042-parent', at: at(30) }), ledgerRow({ branch: 'fix/007-parent', at: at(31) })]);
+  const changes = [{ host: 'github.com', repo: 'acme/notes', number: 1, inherited: false, closes: ['#42'], title: 'Change 1' }];
+  assert.deepEqual(keysOf(ticketsOf(repo, '', { rows: readerOf(state, own, [{ id: 'mom-14', hopAt: NOW }]), changes, origin: ORIGIN })).keys, ['#42 branch', '#7 ledger'],
+    'the branch, own, and inherited rows give #42 as the closing reference does; fix/000 gives no key');
+  assert.equal(keyOfBranch('fix/0-x', []), null);
+});
+
+// The tickets ticketsOf gives, each `key source`, and whether an own file could not be read.
+const keysOf = ({ tickets, unread }) => ({ keys: tickets.map(({ key, source }) => `${key} ${source}`), unread });
+// The current folder's origin, as ticketsOf asks for it: the repository the fixtures' rows record.
+const ORIGIN = () => ({ host: 'github.com', path: 'acme/notes' });
+
+test('ticketsOf: the current branch first, then every own row with a key newest first, then the nearest ancestor`s as cut', { skip: !POSIX }, () => {
   const { state } = fixture();
   const repo = path.join(ROOT, `repo-${states}`);
   mkdirSync(repo);
   const git = (...args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
   git('init', '-q', '-b', 'main');
+  const origin = ORIGIN;
   const own = sessionWith(state, 'kid-4', [ledgerRow({ branch: 'fix/42-login', at: at(9) }), ledgerRow({ branch: 'fix/43-later', at: at(8) }), ledgerRow({ kind: 'created', number: 9, branch: null, at: at(1) })]);
-  assert.deepEqual(ticketOf(repo, '', { rows: readerOf(state, own, []) }), { key: '#43', source: 'ledger' }, 'the later at wins; a created row holds no branch');
+  assert.deepEqual(keysOf(ticketsOf(repo, '', { rows: readerOf(state, own, []), origin })), { keys: ['#43 ledger', '#42 ledger'], unread: false }, 'the later at first; a created row holds no branch');
   const tie = sessionWith(state, 'tie-4', [ledgerRow({ branch: 'fix/1-a', at: at(5) }), ledgerRow({ branch: 'fix/2-b', at: at(5) })]);
-  assert.deepEqual(ticketOf(repo, '', { rows: readerOf(state, tie, []) }), { key: '#2', source: 'ledger' }, 'of one at, the later line');
-  const keyed = sessionWith(state, 'abc-4', [ledgerRow({ branch: 'feat/abc-7-x' })]);
-  assert.deepEqual(ticketOf(repo, 'ABC', { rows: readerOf(state, keyed, []) }), { key: 'ABC-7', source: 'ledger' });
+  assert.deepEqual(keysOf(ticketsOf(repo, '', { rows: readerOf(state, tie, []), origin })).keys, ['#2 ledger', '#1 ledger'], 'of one at, the later line first');
+  const keyed = sessionWith(state, 'abc-4', [ledgerRow({ branch: 'feat/abc-7-x' }), ledgerRow({ branch: 'feat/ABC-7-again', at: at(5) })]);
+  assert.deepEqual(keysOf(ticketsOf(repo, 'ABC', { rows: readerOf(state, keyed, []), origin })).keys, ['ABC-7 ledger'], 'a key in either letter case once');
   const empty = sessionWith(state, 'empty-4', [ledgerRow({ kind: 'touched', branch: 'main' })]);
   sessionWith(state, 'mom-4', [ledgerRow({ branch: 'fix/5-parent', at: at(20) }), ledgerRow({ branch: 'fix/6-after', at: at(1) }), ledgerRow({ kind: 'touched', branch: 'fix/7-touched', at: at(19) })]);
-  assert.deepEqual(ticketOf(repo, '', { rows: readerOf(state, empty, [{ id: 'mom-4', hopAt: NOW - 10 * 60_000 }]) }), { key: '#5', source: 'ledger' }, 'the parent`s row as cut; not one after the hop, nor a touched one');
-  assert.equal(ticketOf(repo, ''), null, 'without a session, rule 2 is not run');
+  const chain = [{ id: 'mom-4', hopAt: NOW - 10 * 60_000 }];
+  assert.deepEqual(keysOf(ticketsOf(repo, '', { rows: readerOf(state, empty, chain), origin })).keys, ['#5 ledger'], 'the parent`s row as cut; not one after the hop, nor a touched one');
+  assert.deepEqual(keysOf(ticketsOf(repo, '', { rows: readerOf(state, own, chain), origin })).keys, ['#43 ledger', '#42 ledger', '#5 ledger'], 'the parent`s keys after the session`s own');
+  assert.deepEqual(ticketsOf(repo, ''), { tickets: [], unread: false }, 'without a session, rule 2 is not run');
   git('checkout', '-q', '-b', 'fix/99-current');
-  assert.deepEqual(ticketOf(repo, '', { rows: readerOf(state, own, []) }), { key: '#99', source: 'branch' }, 'the current branch wins');
+  assert.deepEqual(keysOf(ticketsOf(repo, '', { rows: readerOf(state, own, []), origin })).keys, ['#99 branch', '#43 ledger', '#42 ledger'], 'the current branch first, the ledger`s keys after it');
+  assert.deepEqual(keysOf(ticketsOf(repo, '')).keys, ['#99 branch'], 'without rows: the branch alone');
   const piped = sessionFolder(state, 'pipe-4', { checkouts: [] });
   spawnSync('mkfifo', [path.join(piped, 'prs.jsonl')]);
-  assert.deepEqual(ticketOf(repo, '', { rows: readerOf(state, piped, []) }), { key: '#99', source: 'branch' }, 'rule 1 never reads a ledger');
+  assert.deepEqual(keysOf(ticketsOf(repo, '', { rows: readerOf(state, piped, []), origin })), { keys: ['#99 branch'], unread: true }, 'an own ledger that cannot be read: unread, the branch`s key kept');
   git('symbolic-ref', 'HEAD', 'refs/heads/main');
-  assert.throws(() => ticketOf(repo, '', { rows: readerOf(state, piped, []) }), 'an own ledger that cannot be read fails the section');
+  assert.deepEqual(ticketsOf(repo, '', { rows: readerOf(state, piped, chain), origin }), { tickets: [{ key: '#5', source: 'ledger' }], unread: true }, 'the ancestors are still read');
+  assert.throws(() => ticketsOf(repo, '1AB'), 'a bad prefix list');
+});
+
+test('ticketsOf: a ledger branch`s #N counts only from a row on origin`s repository, or one that records none; a tracker key from any', { skip: !POSIX }, () => {
+  const { state } = fixture();
+  const repo = path.join(ROOT, `repo-origin-${states}`);
+  mkdirSync(repo);
+  spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: repo, env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
+  const own = sessionWith(state, 'kid-11', [
+    ledgerRow({ kind: 'touched', branch: 'fix/5-elsewhere', path: 'other/repo', at: at(3) }),
+    ledgerRow({ kind: 'touched', branch: 'feat/abc-6-elsewhere', path: 'other/repo', at: at(2) }),
+    ledgerRow({ branch: 'fix/7-here', at: at(1) }),
+  ]);
+  writeFileSync(path.join(own, 'links.jsonl'), `${JSON.stringify(linkRow({ branch: 'fix/8-loose', host: null, path: null }, 4))}\n`, { mode: 0o600 });
+  const rows = () => readerOf(state, own, []);
+  assert.deepEqual(keysOf(ticketsOf(repo, 'ABC', { rows: rows(), origin: ORIGIN })).keys, ['#7 ledger', 'ABC-6 ledger', '#8 ledger'], 'another repository`s #5 gives none; its tracker key counts; a row that records no repository keeps its #N');
+  assert.deepEqual(keysOf(ticketsOf(repo, 'ABC', { rows: rows(), origin: () => null })).keys, ['ABC-6 ledger', '#8 ledger'], 'no origin: no row`s repository is the current one');
+  assert.deepEqual(keysOf(ticketsOf(repo, 'ABC', { rows: rows(), origin: () => ({ host: 'github.com', path: 'other/repo' }) })).keys, ['ABC-6 ledger', '#5 ledger', '#8 ledger'], 'origin decides which #N counts');
+  const loose = sessionWith(state, 'kid-13', [ledgerRow({ branch: 'feat/abc-6-here', at: at(1) }), ledgerRow({ branch: 'fix/9-loose', host: null, path: null, at: at(2) })]);
+  let asked = 0;
+  assert.deepEqual(keysOf(ticketsOf(repo, 'ABC', { rows: readerOf(state, loose, []), origin: () => (asked += 1, ORIGIN()) })).keys, ['ABC-6 ledger', '#9 ledger']);
+  assert.equal(asked, 0, 'origin is asked only for a #N of a row that records a repository');
+});
+
+test('ticketsOf: pull requests give their closing references, then their title`s keys; own before inherited; 10 keys at most; a repeat once', { skip: !POSIX }, () => {
+  const { state } = fixture();
+  const repo = path.join(ROOT, `repo-prs-${states}`);
+  mkdirSync(repo);
+  spawnSync('git', ['init', '-q', '-b', 'feat/abc-3-x'], { cwd: repo, env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
+  const on = { host: 'github.com', repo: 'acme/notes' };
+  const changes = [
+    { ...on, number: 1, inherited: false, closes: ['#12', 'abc-3', 'DEF-9', 'ABC-4‮', 'ABC-0x', '#0', 42, 'xy-11'],
+      title: 'XY-5 and xy-5: Follow up #99, xABC-6, ABC-7x, ABC-1234567890, ABC​-8, ABC-13' },
+    { ...on, number: 2, inherited: true, closes: ['ABC-20'], title: 'ABC-21' },
+    { ...on, number: 3, inherited: false, title: 'abc-10 later' },
+    { host: 'git.example.com', repo: 'acme/notes', number: null, inherited: false, unsupported: true, title: null },
+    { ...on, number: 4, inherited: false, closes: 'ABC-30', title: 7 },
+  ];
+  const own = sessionWith(state, 'kid-10', [ledgerRow({ branch: 'fix/50-own' })]);
+  sessionWith(state, 'mom-10', [ledgerRow({ branch: 'fix/51-parent', at: at(30) })]);
+  const rows = readerOf(state, own, [{ id: 'mom-10', hopAt: NOW }]);
+  assert.deepEqual(keysOf(ticketsOf(repo, 'ABC|XY', { rows, changes, origin: ORIGIN })), {
+    keys: ['ABC-3 branch', '#50 ledger', '#12 pr', 'XY-11 pr', 'XY-5 pr', 'ABC-10 pr', '#51 ledger', 'ABC-20 pr', 'ABC-21 pr'], unread: false,
+  }, 'the branch, the own ledger, the own pull requests, 3 new keys each, so not ABC-13, the parent`s ledger, then the inherited pull requests');
+  assert.deepEqual(keysOf(ticketsOf(repo, '', { changes, origin: ORIGIN })).keys, ['#12 pr'], 'no prefix: the forge`s own closing reference alone, never a #N of a title');
+  const many = Array.from({ length: 4 }, (_, row) => ({ ...on, number: row + 1, inherited: false, title: Array.from({ length: 3 }, (_, index) => `ABC-${100 + row * 10 + index}`).join(' ') }));
+  const reads = [];
+  const counted = readerOf(state, own, [{ id: 'mom-10', hopAt: NOW }], { read: (folder, name, options) => (reads.push(path.basename(folder)), readRows(folder, name, options)) });
+  const full = ticketsOf(repo, 'ABC', { rows: counted, changes: many, origin: ORIGIN });
+  assert.equal(MAX_TICKETS, 10);
+  assert.equal(full.tickets.length, MAX_TICKETS);
+  assert.deepEqual(full.tickets.slice(0, 3).map(({ key }) => key), ['ABC-3', '#50', 'ABC-100']);
+  assert.ok(!reads.includes('mom-10'), 'a full list reads no ancestor');
+  assert.deepEqual(ticketsOf(repo, 'ABC', { changes: null }).tickets, [{ key: 'ABC-3', source: 'branch' }], 'no change rows: none from pull requests');
+});
+
+test('ticketsOf: a pull request of another repository gives no #N from its closing references; its tracker keys still count', () => {
+  const repo = path.join(ROOT, `repo-elsewhere-${states}`);
+  mkdirSync(repo, { recursive: true });
+  spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: repo, env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
+  const changes = [
+    { host: 'github.com', repo: 'other/repo', number: 3, inherited: false, closes: ['#5', 'ABC-9'], title: 'Change 3' },
+    { host: 'github.com', repo: 'Acme/Notes', number: 4, inherited: false, closes: ['#6'], title: 'Change 4' },
+  ];
+  assert.deepEqual(keysOf(ticketsOf(repo, 'ABC', { changes, origin: ORIGIN })).keys, ['ABC-9 pr', '#6 pr'], 'the repository compared in any letter case');
+  assert.deepEqual(keysOf(ticketsOf(repo, 'ABC', { changes })).keys, ['ABC-9 pr'], 'no origin: no #N of a pull request');
+});
+
+test('ticketsOf: one pull request adds at most 3 keys, its closing references and title together, so an earlier session`s key still shows', { skip: !POSIX }, () => {
+  const { state } = fixture();
+  const repo = path.join(ROOT, `repo-cap-${states}`);
+  mkdirSync(repo);
+  spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: repo, env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
+  const own = sessionWith(state, 'kid-12', [ledgerRow({ branch: 'fix/50-own' })]);
+  sessionWith(state, 'mom-12', [ledgerRow({ branch: 'fix/51-parent', at: at(30) })]);
+  const title = Array.from({ length: 12 }, (_, index) => `ABC-${index + 100}`).join(' ');
+  const changes = [
+    { host: 'github.com', repo: 'acme/notes', number: 1, inherited: false, closes: ['#50', 'ABC-1'], title },
+    { host: 'github.com', repo: 'acme/notes', number: 2, inherited: true, closes: [], title: 'ABC-200 ABC-201 ABC-202 ABC-203' },
+  ];
+  assert.deepEqual(keysOf(ticketsOf(repo, 'ABC', { rows: readerOf(state, own, [{ id: 'mom-12', hopAt: NOW }]), changes, origin: ORIGIN })).keys, [
+    '#50 ledger', 'ABC-1 pr', 'ABC-100 pr', 'ABC-101 pr', '#51 ledger', 'ABC-200 pr', 'ABC-201 pr', 'ABC-202 pr',
+  ], 'a key already held takes none of the 3; the parent`s key and the inherited pull request`s still show');
 });
 
 test('session-links.mjs, its writer, and session-rows.mjs name no host, forge, or tracker outside their comments', () => {
@@ -427,19 +540,19 @@ test('the links section: the newest row of each key whose cwd git still lists, o
   assert.equal(linksOf(linkReader(state, dropped, []), listOf('relative', '/w/x')), null);
 });
 
-test('the ticket reads both files: a worktree row gives it, and of one at, the links row wins', { skip: !POSIX }, () => {
+test('the tickets read both files: a worktree row gives one, and of one at, the links row comes first', { skip: !POSIX }, () => {
   const { state } = fixture();
   const repo = path.join(ROOT, `repo-links-${states}`);
   mkdirSync(repo);
   spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: repo, env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
   const own = linksWith(state, 'kid-8', [linkRow({ branch: 'fix/42-login' }, 5)]);
-  assert.deepEqual(ticketOf(repo, '', { rows: linkReader(state, own, []) }), { key: '#42', source: 'ledger' });
+  assert.deepEqual(ticketsOf(repo, '', { rows: linkReader(state, own, []), origin: ORIGIN }).tickets, [{ key: '#42', source: 'ledger' }]);
   writeFileSync(path.join(own, 'prs.jsonl'), `${JSON.stringify(ledgerRow({ branch: 'fix/7-pushed', at: at(5) }))}\n`, { mode: 0o600 });
-  assert.deepEqual(ticketOf(repo, '', { rows: linkReader(state, own, []) }), { key: '#42', source: 'ledger' }, 'a tie goes to links.jsonl');
+  assert.deepEqual(keysOf(ticketsOf(repo, '', { rows: linkReader(state, own, []), origin: ORIGIN })).keys, ['#42 ledger', '#7 ledger'], 'a tie goes to links.jsonl');
   sessionWith(state, 'kid-9', []);
   linksWith(state, 'kid-9', []);
   linksWith(state, 'mom-9', [linkRow({ branch: 'fix/9-other', path: 'other/repo' }, 30), linkRow({ branch: 'fix/8-mine' }, 31)]);
-  assert.deepEqual(ticketOf(repo, '', { rows: linkReader(state, path.join(state, 'sessions', 'kid-9'), [{ id: 'mom-9', hopAt: NOW }]) }), { key: '#8', source: 'ledger' }, 'a parent`s worktree row on another repository gives none');
+  assert.deepEqual(ticketsOf(repo, '', { rows: linkReader(state, path.join(state, 'sessions', 'kid-9'), [{ id: 'mom-9', hopAt: NOW }]), origin: ORIGIN }).tickets, [{ key: '#8', source: 'ledger' }], 'a parent`s worktree row on another repository gives none');
 });
 
 test('recordLinks appends every row with no key, and none that fails the row checks', { skip: !POSIX }, () => {

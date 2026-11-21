@@ -1851,7 +1851,9 @@ test('the Claude mod`s only MCP call is get_issue with the { id } issueLookup gi
   const code = MOD_HOOKS.map(modCode).join('\n');
   const calls = [...code.matchAll(/\$\.mcp\.(\w+)\(([^)]*)\)/gu)].map((match) => `${match[1]}(${match[2].trim()})`);
   assert.deepEqual(calls, ['call(server, ISSUE_TOOL, lookup)']);
-  assert.match(code, /const lookup = snapshot\.kind === 'ok' \? issueLookup\(/u);
+  // Each lookup is the object issueLookup gives a ticket, handed on as it is: no key reaches the call another way.
+  assert.match(code, /const lookups = snapshot\.kind === 'ok' \? ticketsOf\(snapshot\.snapshot \?\? null\)\.map\(ticket => issueLookup\(ticket, prefixes\)\) : \[\]/u);
+  assert.deepEqual([...code.matchAll(/\bsharedLookup\(([^)]*)\)/gu)].map((match) => match[1]), ['$, lookup, at', '$: EngineInterface, lookup: { id: string }, at: number']);
   assert.deepEqual([...code.matchAll(/\baskLinear\(([^)]*)\)/gu)].map((match) => match[1]), ['$, lookup', '$: EngineInterface, lookup: { id: string }']);
   for (const rel of MOD_LIBS) assert.doesNotMatch(modCode(rel), /\bmcp\b/u, rel);
 });

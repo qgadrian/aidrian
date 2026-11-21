@@ -44,3 +44,10 @@ test('a listing that cannot be read leaves the id as it is', () => {
   assert.equal(stopBackground({ id: FULL, run, resolve: () => '/usr/local/bin/claude' }), true);
   assert.deepEqual(calls.filter((args) => args[0] === 'stop'), [['stop', FULL]]);
 });
+
+test('the short id the start recorded goes first, with no listing, so a listing that times out never leaves the full id', () => {
+  const calls = [];
+  const run = (_claude, args) => (calls.push(args), args[0] === 'agents' ? { error: new Error('ETIMEDOUT'), status: null, stdout: '', stderr: '' } : { status: args[1] === '306d6ea0' ? 0 : 1, stdout: '', stderr: '' });
+  assert.equal(stopBackground({ id: FULL, started: '306d6ea0', run, resolve: () => '/usr/local/bin/claude' }), true);
+  assert.deepEqual(calls, [['stop', '306d6ea0']]);
+});

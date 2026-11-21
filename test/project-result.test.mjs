@@ -181,7 +181,7 @@ test('wait records an issue whose sessions all ended with no result, and stops a
   const late = started(t, { projectRun: { allow: true, unverifiedHosts: true, issueHours: 2 } });
   const later = Date.now() + 3 * 60 * 60 * 1000;
   assert.deepEqual(late.cmd(['wait', 'launch', '--max-wait', '0'], { now: later }).out, ['ended ENG-1 timeout -> open', 'idle']);
-  assert.deepEqual(late.claude.calls.filter((call) => call.args[0] === 'stop').map((call) => call.args[1]), [CHILD]);
+  assert.deepEqual(late.claude.calls.filter((call) => call.args[0] === 'stop').map((call) => call.args[1]), [STARTED[0].id]);
   // One past issueHours that cannot be stopped is named with the host's own command that stops it by hand.
   const stuck = started(t, { projectRun: { allow: true, unverifiedHosts: true, issueHours: 2 } });
   const failing = (command, args, options) => (args[0] === 'stop' ? { status: 1, stdout: '', stderr: 'no' } : stuck.claude.run(command, args, options));

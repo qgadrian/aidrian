@@ -341,7 +341,7 @@ test('a host that does not continue has its limited session stopped; one that ca
   assert.equal(fx.rows().length, before, 'nothing written');
   const out = fx.cmd(['wait', 'launch', '--max-wait', '0']).out;
   assert.match(out[0], /^limit ENG-1 usage until \S+ -> open$/u);
-  assert.deepEqual(fx.claude.calls.filter((call) => call.args[0] === 'stop').map((call) => call.args[1]), [CHILD], 'stopped once the stop works');
+  assert.deepEqual(fx.claude.calls.filter((call) => call.args[0] === 'stop').map((call) => call.args[1]), [STARTED[0].id], 'stopped once the stop works');
 });
 
 test('a limited chain whose second session cannot be stopped is named by that session, not the one the start held', (t) => {
@@ -418,7 +418,7 @@ test('a running session is held only for a usage limit whose pause runs: a rate 
   const rate = started(t);
   rate.limit([apiError('API Error: 429 rate limited')]);
   assert.match(rate.cmd(['wait', 'launch', '--max-wait', '0']).out[0], /^limit ENG-1 rate until \S+ -> open$/u);
-  assert.deepEqual(rate.claude.calls.filter((call) => call.args[0] === 'stop').map((call) => call.args[1]), [CHILD], 'a rate limit is no limit the host continues');
+  assert.deepEqual(rate.claude.calls.filter((call) => call.args[0] === 'stop').map((call) => call.args[1]), [STARTED[0].id], 'a rate limit is no limit the host continues');
 
   // The host lists each limited session working and never continues it: three such limits leave the issue open.
   const fx = runFixture(t);

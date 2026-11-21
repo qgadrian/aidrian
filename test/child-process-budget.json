@@ -62,7 +62,7 @@
     "solo-opt-in.test.mjs": 500,
     "tracker-guard.test.mjs": 900,
     "unattended-mark.test.mjs": 3100,
-    "unattended-write-allowlist.test.mjs": 13300,
+    "unattended-write-allowlist.test.mjs": 9000,
     "version.test.mjs": 650,
     "worktree-cleanup.test.mjs": 2250
   }

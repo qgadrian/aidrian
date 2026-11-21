@@ -62,12 +62,16 @@ export function hostVarsProblem(folder, env) {
 }
 
 // The attempt whose clone holds the folder of the call in `input`, when the start wrote a proof plan beside it, as a
-// hold that owes the proof; else null.
+// hold that owes the proof; else null. The folder is read every way readsStore reads a path: as the system resolves
+// it, where a `..` after a link climbs from the link's target, and folded as text first, from the nearest folder above
+// it that is there when it does not resolve, as a dangling link or a missing folder.
 function cloneHold(input) {
-  const at = typeof input.cwd === 'string' ? real(input.cwd) : null;
-  const attempt = at ? attemptOf(at) : null;
-  if (!attempt || !within(attempt.work, at)) return null;
-  return exists(path.join(attempt.folder, CONFINE_PLAN)) ? { attempt, state: true } : null;
+  if (typeof input.cwd !== 'string') return null;
+  for (const at of [real(input.cwd), realOf(path.resolve(input.cwd))]) {
+    const attempt = at ? attemptOf(at) : null;
+    if (attempt && within(attempt.work, at) && exists(path.join(attempt.folder, CONFINE_PLAN))) return { attempt, state: true };
+  }
+  return null;
 }
 
 // What holds the session of `input`, by its unattended mark `mark`, to its sandbox proof: { attempt, state } with

@@ -1084,7 +1084,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   `aidrian project confine <run> <issue>` of its own issue, alone, on one line, in Bash, and only while no verdict is in
   the drop folder, until the start files the passed proof in its mark; a call it makes before then is refused,
   wherever it runs. A session with no readable mark of its own, whichever pending mark it reads, is held the same way
-  whenever its call runs in an attempt's clone whose start wrote the proof's plan. Once the mark or the verdict in the
+  whenever its call's folder, as the system resolves it or as its spelling folds, lies in an attempt's clone whose
+  start wrote the proof's plan. Once the mark or the verdict in the
   drop folder says the proof failed, or the mark's proof state cannot be read, every call is refused, the confine
   command too. Before and after the proof, a file-tool read (Read, Grep, Glob, or LS, as the host's adapter names its
   read tools) that reaches a store the plan lists as hidden, or a folder that holds one, is refused. A Glob pattern

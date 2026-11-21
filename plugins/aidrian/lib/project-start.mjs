@@ -530,7 +530,7 @@ function confinedAttempt({ session, cwd, env, home }) {
   const mark = readUnattendedMark(session, { env, ...(home ? { home } : {}) });
   // Every path resolved as attemptOf resolves `cwd`, where the system lands.
   const real = systemReal;
-  const starting = mark?.pending === true && typeof mark.cwd === 'string' && real(mark.cwd) === real(attempt.work);
+  const starting = mark?.pending === true && typeof mark.cwd === 'string' && same(real, mark.cwd, attempt.work);
   if (!starting && !recordedAttempt(mark, attempt, real, home)) return null;
   return { attempt, mark };
 }
@@ -542,5 +542,12 @@ function recordedAttempt(mark, attempt, real, home) {
   const project = findProject(mark.root);
   if (!project) return false;
   const own = ownAttemptFolder(project, loadConfig(project).config, mark, home ? { home } : {});
-  return own !== null && real(own) === real(attempt.folder);
+  return own !== null && same(real, own, attempt.folder);
+}
+
+// Whether `a` and `b` are one path by `real`, a path that does not resolve matching none, so a missing folder never
+// passes for another missing one.
+function same(real, a, b) {
+  const resolved = real(a);
+  return resolved !== null && resolved === real(b);
 }

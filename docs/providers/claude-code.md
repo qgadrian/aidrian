@@ -738,8 +738,11 @@ its start stays as [its page](codex.md#project-start) says.
    environment, which is the host process's, holds a cache variable of the session: those reach the session's
    sandboxed commands alone. Before and after the proof, the hook refuses a Read, Grep, Glob, or LS that reaches a store
    the plan lists as hidden, a folder that holds one included, since the file tools run outside the sandbox. A path is
-   read both as folded text and as the system resolves it, where a `..` after a link climbs from the link's target;
-   a call's folder counts as in a clone by the system's resolution alone.
+   read both as folded text and as the system resolves it, where a `..` after a link climbs from the link's target,
+   and a Glob's `path` and its pattern's literal folder are joined as text, so that `..` is not folded away first.
+   A call's folder counts as in a clone when any reading lies in one: the system's resolution, the folded spelling
+   resolved, or, where the path does not resolve, as with a dangling link or a missing folder, the nearest folder
+   above it that is there, with the rest of the spelling.
 3. `aidrian project confine` runs once a start, under a lock in the drop folder, in the session's sandboxed shell, and
    tries: to make a file in each unattended mark folder, in the attempt's folder, and in the home folder, one there
    already counting as made; to open the clone's git `config` and `.claude/settings.json` for writing; to remove the

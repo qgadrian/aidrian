@@ -19,7 +19,7 @@ import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import { confineReads, sandboxSettings, writeEnvFile } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
-import { confinedTokenVars } from '../plugins/aidrian/lib/project-start.mjs';
+import { confinedShellVars, confinedTokenVars } from '../plugins/aidrian/lib/project-start.mjs';
 import { receivePackStatus, tokenMayPush } from '../plugins/aidrian/lib/forges/github-token.mjs';
 import { confineCheck } from '../plugins/aidrian/lib/project-confine.mjs';
 import { CLAIM_VAR, DEFAULT_KEYCHAIN_SERVICE, forgeToken, gitCredentialVars, handoffProblem, keychainToken, tokenVars } from '../plugins/aidrian/lib/project-token.mjs';
@@ -328,6 +328,22 @@ test('in the launch window, while the host has not named the session, only the s
   assert.deepEqual(confinedTokenVars({ session: stranger, cwd: work, env: fx.env, token }), { problem: 'this session does not hold the claim the start gave the session it launched, so it is not that session', folder: null });
   assert.deepEqual(confinedTokenVars({ session: stranger, cwd: work, env: { ...fx.env, [CLAIM_VAR]: 'f'.repeat(48) }, token }).problem, 'this session does not hold the claim the start gave the session it launched, so it is not that session', 'a wrong claim');
   assert.equal(confinedTokenVars({ session: stranger, cwd: work, env: { ...fx.env, [CLAIM_VAR]: claim }, token }).vars.GH_TOKEN, FIXTURE_TOKEN, 'the launched session, before the host names it');
+});
+
+test('a pending mark whose folder is missing never matches a call in an attempt whose clone is missing too', (t) => {
+  const fx = runFixture(t);
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  const claim = claimOf(fx);
+  const work = path.join(runsFolder(fx.state), 'launch', 'attempts', 'ENG-1.1', 'work');
+  const token = () => ({ token: FIXTURE_TOKEN, source: 'the login' });
+  const stranger = 'abcd1234-0000-4000-8000-00000000fd01';
+  const env = { ...fx.env, [CLAIM_VAR]: claim };
+  // The pending mark of another launch, whose clone is not there, and this attempt's clone, gone too: neither resolves.
+  assert.ok(markPending(DRIVER, { cwd: path.join(fx.dir, 'gone', 'work'), root: fx.dir, known: [DRIVER], env: fx.env }));
+  assert.ok(statSync(path.join(path.dirname(work), 'shell-env.json')).isFile(), 'the attempt holds the shell environment');
+  rmSync(work, { recursive: true, force: true });
+  assert.equal(confinedTokenVars({ session: stranger, cwd: work, env, token }), null);
+  assert.equal(confinedShellVars({ session: stranger, cwd: work, env }), null);
 });
 
 test('the hook reads only the source the start checked: a project entry that fails then gives no token, with no fall back', () => {

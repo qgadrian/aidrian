@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { runGh } from '../plugins/aidrian/lib/forges/github-cli.mjs';
-import { createGithubForge, domains, FORGE_HOSTS, GITHUB_JSON, isTrustedCommenter, MAX_CHANGE_REFS, REVIEWS_PAGE, servedRepository, UPLOAD_TIMEOUT_MS } from '../plugins/aidrian/lib/forges/github.mjs';
+import { GH_MAX_BUFFER_BYTES, runGh } from '../plugins/aidrian/lib/forges/github-cli.mjs';
+import { createGithubForge, domains, FORGE_HOSTS, GITHUB_JSON, isTrustedCommenter, MAX_BODY, MAX_BODY_NODES, MAX_CHANGE_REFS, REVIEWS_PAGE, servedRepository, UPLOAD_TIMEOUT_MS } from '../plugins/aidrian/lib/forges/github.mjs';
 import { remoteIdentity, repoIdentity } from '../plugins/aidrian/lib/forges/identity.mjs';
 import * as facade from '../plugins/aidrian/lib/forges/index.mjs';
 import { forgeFor } from '../plugins/aidrian/lib/forges/index.mjs';
@@ -1359,7 +1359,30 @@ test('changesState asks GitHub whether each branch page has more', () => {
   const { forge, calls } = recorded(() => '{"data":{}}');
   forge.changesState([branchRef('acme/notes', 'feat/x')]);
   const { query } = bodyOf(calls[0]);
-  assert.equal(query.match(/pullRequests\(headRefName: \$b0, first: 5, [^)]*\) \{ nodes \{ \.\.\.change \} pageInfo \{ hasNextPage \} \}/gu)?.length, 2, 'the repository`s page and its parent`s');
+  assert.equal(query.match(/pullRequests\(headRefName: \$b0, first: 5, [^)]*\) \{ nodes \{ \.\.\.change(?: bodyText)? \} pageInfo \{ hasNextPage \} \}/gu)?.length, 2, 'the repository`s page and its parent`s');
+});
+
+test('changesState reads the body text of MAX_BODY_NODES pull requests at most, the newest refs first, so the answer is bounded before gh returns it', () => {
+  // The aliases whose pull requests carry bodyText, and how many pull requests that asks for: 1 a number, 5 a page.
+  const read = (refs) => {
+    const { forge, calls } = recorded(() => '{"data":{}}');
+    forge.changesState(refs);
+    const [operation, fragment] = bodyOf(calls[0]).query.split('\n');
+    assert.doesNotMatch(fragment, /bodyText/u, 'the shared fragment reads no body');
+    const aliases = operation.split(/ (?=r\d+: repository\()/u).slice(1);
+    const bodied = aliases.filter((alias) => alias.includes('bodyText'));
+    return { bodied: bodied.map((alias) => alias.match(/^r\d+/u)[0]), nodes: bodied.reduce((sum, alias) => sum + (alias.match(/\.\.\.change bodyText \} pageInfo/gu)?.length ?? 0) * 5 + (alias.includes('pullRequest(number:') ? 1 : 0), 0) };
+  };
+  const branches = read(Array.from({ length: MAX_CHANGE_REFS }, (_, i) => branchRef('acme/notes', `feat/${i}`)));
+  assert.deepEqual(branches, { bodied: ['r0', 'r1', 'r2'], nodes: 30 }, '25 branches: the first 3 read bodies, not all 250 pull requests');
+  const numbers = read(Array.from({ length: MAX_CHANGE_REFS }, (_, i) => numberRef('acme/notes', i + 1)));
+  assert.deepEqual(numbers.bodied.length, MAX_CHANGE_REFS, 'every one of 25 numbers reads its body');
+  const mixed = read([numberRef('acme/notes', 1), branchRef('acme/notes', 'a'), branchRef('acme/notes', 'b'), branchRef('acme/notes', 'c'), numberRef('acme/notes', 2)]);
+  assert.deepEqual(mixed, { bodied: ['r0', 'r1', 'r2', 'r4'], nodes: 22 }, 'a branch past the budget reads none; a later number that still fits reads its own');
+  // GitHub caps a body at MAX_BODY characters, and JSON writes one character in 6 bytes at most (\u001b), so the bodies
+  // of one answer stay far under gh's stdout ceiling, with room for the rest of each pull request.
+  assert.equal(MAX_BODY_NODES, 30);
+  assert.ok(MAX_BODY_NODES * MAX_BODY * 6 < GH_MAX_BUFFER_BYTES / 4, 'the bodies of one answer take under a quarter of the ceiling');
 });
 
 test('a pull request number past GraphQL`s Int is refused before any call: the batch still resolves the others, and no read sends it', () => {
@@ -1482,13 +1505,16 @@ test('changesState: closes is bounded', () => {
   assert.equal(cut.length, 65_537);
   assert.deepEqual(keyed({ bodyText: cut }).closes, [], 'no ABC-1 from a cut ABC-12');
   assert.deepEqual(keyed({ bodyText: `Fixes ABC-3 ${cut.slice(12)}` }).closes, ['ABC-3'], 'the keys before the cut still count');
-  const started = process.hrtime.bigint();
   const bodies = [
     `${'fixes '.repeat(10_922)}fix`, `Fixes ${'A1'.repeat(32_000)}`, 'a'.repeat(65_536), 'a'.repeat(70_000), `Fixes ${'a'.repeat(65_530)}`, `Fixes${' '.repeat(65_531)}`,
     `Fixes:${'\t'.repeat(65_530)}`, `Fixes A-${'1'.repeat(65_528)}`, `Fixes ${'a'.repeat(32_000)}-${'1'.repeat(32_000)}`, 'a-'.repeat(32_768), 'fix a'.repeat(13_107),
   ];
+  // Timed by the work: 10 µs a character, far above a linear scan's cost under any load, and far below a scan that
+  // backtracks over the body, which costs on the order of the body's length for each character.
+  const characters = bodies.reduce((sum, body) => sum + body.length, 0);
+  const started = process.hrtime.bigint();
   for (const bodyText of bodies) keyed({ bodyText });
-  assert.ok(Number(process.hrtime.bigint() - started) / 1e6 < 500, 'the scan stays linear on a body built to backtrack');
+  assert.ok(Number(process.hrtime.bigint() - started) / 1e3 < characters * 10, 'the scan stays linear on a body built to backtrack');
 });
 
 test('changesState: no hidden character of a body reaches closes', () => {

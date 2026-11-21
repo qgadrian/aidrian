@@ -930,7 +930,10 @@ the snapshot's own checks (a host name, an absolute folder, a positive number, a
 records rows only on a declared host, so such a row appears only from a ledger written another way, such as by a later
 adapter.
 The same call also reads each pull request's closing references, the row's `closes`, which [the tickets](#the-tickets)
-read and `prs` never shows; the body text it reads them from stays in the adapter.
+read and `prs` never shows; the body text it reads them from stays in the adapter. It asks for the body text of 30
+pull requests at most, so the answer stays bounded before gh returns it: refs in order, newest first, a number counting
+1 and a branch 10 (its two pages of 5), each read while it still fits, so every one of 25 numbers, or the first 3
+branches. A ref past that gives the forge's own closing references and no body key.
 The answer is cached for a minute in `prs-cache.json`, with the refs it answered, under the merged heads' rules: one
 forge call a minute at most, a 1 MiB read, and the 4 s budget, which the two reads share, this one first. A cached
 answer shows only for the refs the ledger still selects, so a pull request pushed out of the newest 25 leaves, and the

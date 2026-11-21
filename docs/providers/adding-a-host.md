@@ -243,7 +243,9 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   keyword). Anyone can open a pull request and write its body, so an outsider's `Fixes ABC-1` gives no key. A key that
   ends where a longer body is cut may be the start of a longer one, and is dropped. GitHub's `bodyText` holds no HTML
   comment, so a template's commented placeholder never matches. The adapter knows no prefix list: it keeps any key of
-  that shape, and shared code keeps the ones its project tracks.
+  that shape, and shared code keeps the ones its project tracks. One call reads the body text of 30 pull requests at
+  most (`MAX_BODY_NODES`), the newest refs first, a number counting 1 and a branch the 10 of its two pages, so the
+  answer stays bounded before gh returns it; a ref past that gives its `#<n>` references and no body key.
   The body text never leaves the adapter: it is in no row, cache, or log. A row with no `closes`, as a cache an
   older plugin wrote, reads as none, and one whose `closes` has any other shape is no row (`isChangeRow` in
   `lib/session-prs.mjs`). The recorded answer in `test/fixtures/forges/github/` predates the `bodyText` and

@@ -69,31 +69,48 @@ const CHANGES_HOST = 'github.com';
 // page GitHub says has more (hasNextPage) an older, better-ranked one may lie past it, so there answeredChange takes only
 // a pick of the top class and shows nothing otherwise. Enough for display data; paging until the row's own head repository answers would replace it.
 // (Ref.associatedPullRequests lists other forks' pull requests too, and ignores orderBy, so it is no fix.)
-// SHORTCUT: every pull request read here carries its body text and closing references (CHANGE_FIELDS), the picked one's
-// and the others' alike, so one call reads at most MAX_CHANGE_REFS * 2 * HEAD_CHANGES bodies (250) of MAX_BODY characters
-// each to keep one row per ref. Picking first and reading the pick's body after would need a second call, which the
-// snapshot's one batched read rules out.
 const HEAD_CHANGES = 5;
+// The most pull requests one changesState call reads the body text of, so the answer stays bounded before gh returns it:
+// a body is up to MAX_BODY characters, and the 250 a call of 25 branches would ask for could pass gh's stdout ceiling.
+// Refs in order, newest first, each costs the pull requests it asks for, 1 for a number and 2 * HEAD_CHANGES for a
+// branch, and reads bodies while its cost still fits: so every ref of 25 numbers, or the first 3 branches. A ref past it
+// gives the forge's closing references and no body key; the tickets take at most 3 keys a pull request and 10 in all,
+// so the newest refs give them first anyway.
+// SHORTCUT: a branch's body read covers every pull request of its pages, the pick's and the others', since picking
+// first and reading the pick's body after would need a second call, which the snapshot's one batched read rules out.
+export const MAX_BODY_NODES = 30;
 // What changesState reads of one pull request. statusCheckRollup's counts by state cover every check of the head commit,
 // however many, with no page of them read (GitHub's StatusCheckRollupContextConnection).
 // SHORTCUT: unresolvedThreads counts the unresolved threads among the first 100 alone. Enough for display data; paging
 // reviewThreads, as findingThreads does, would replace it.
-// bodyText and closingIssuesReferences give the row's `closes` (closesOf), with viewerDidAuthor and authorAssociation,
-// which say whose body it is; bodyText holds no HTML comment, so a pull request template's commented placeholder never
-// matches, and the body itself never leaves the adapter.
+// closingIssuesReferences, and bodyText where MAX_BODY_NODES allows it (BODY), give the row's `closes` (closesOf), with
+// viewerDidAuthor and authorAssociation, which say whose body it is; bodyText holds no HTML comment, so a pull request
+// template's commented placeholder never matches, and the body itself never leaves the adapter.
 const CHANGE_FIELDS = 'fragment change on PullRequest { number title url isDraft state mergeable reviewDecision createdAt headRefName viewerDidAuthor authorAssociation '
-  + `bodyText closingIssuesReferences(first: ${MAX_CLOSES}) { nodes { number repository { name owner { login } } } } `
+  + `closingIssuesReferences(first: ${MAX_CLOSES}) { nodes { number repository { name owner { login } } } } `
   + 'headRepository { name owner { login } } repository { name owner { login } } reviewThreads(first: 100) { nodes { isResolved } } '
   + 'commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 1) { checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } } }';
-const headChanges = (index) => `pullRequests(headRefName: $b${index}, first: ${HEAD_CHANGES}, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { ...change } pageInfo { hasNextPage } }`;
+const BODY = ' bodyText';
+const headChanges = (index, body) => `pullRequests(headRefName: $b${index}, first: ${HEAD_CHANGES}, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { ...change${body} } pageInfo { hasNextPage } }`;
+// For each of `refs`, in order, BODY when its pull requests still fit MAX_BODY_NODES, else ''.
+function bodyReads(refs) {
+  let left = MAX_BODY_NODES;
+  return refs.map((ref) => {
+    const cost = ref.number === null ? 2 * HEAD_CHANGES : 1;
+    if (cost > left) return '';
+    left -= cost;
+    return BODY;
+  });
+}
 
 // The one query operation for `refs`, as changeRef gave them: its text is built from each ref's index and kind alone, a
-// number or a branch, and every value is a variable (changesVariables). No root field: a non-null one a token cannot
+// number or a branch, those kinds also saying which refs read bodies (bodyReads), and every value is a variable (changesVariables). No root field: a non-null one a token cannot
 // resolve, such as an app installation token's viewer, nulls the whole `data`; each pull request says itself whether the
 // token's user wrote it (viewerDidAuthor), which ranks a branch's pull requests (answeredChange). Never a mutation.
 function changesQuery(refs) {
   const head = refs.map((ref, i) => `$o${i}: String!, $n${i}: String!, ${ref.number === null ? `$b${i}: String!` : `$p${i}: Int!`}`);
-  const body = refs.map((ref, i) => `r${i}: repository(owner: $o${i}, name: $n${i}) { ${ref.number === null ? `${headChanges(i)} parent { ${headChanges(i)} }` : `pullRequest(number: $p${i}) { ...change }`} }`);
+  const bodies = bodyReads(refs);
+  const body = refs.map((ref, i) => `r${i}: repository(owner: $o${i}, name: $n${i}) { ${ref.number === null ? `${headChanges(i, bodies[i])} parent { ${headChanges(i, bodies[i])} }` : `pullRequest(number: $p${i}) { ...change${bodies[i]} }`} }`);
   return `query changes(${head.join(', ')}) { ${body.join(' ')} }\n${CHANGE_FIELDS}`;
 }
 const changesVariables = (refs) => Object.assign({}, ...refs.map((ref, i) => ({ [`o${i}`]: ref.owner, [`n${i}`]: ref.name, ...(ref.number === null ? { [`b${i}`]: ref.branch } : { [`p${i}`]: ref.number }) })));

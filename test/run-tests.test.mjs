@@ -87,6 +87,28 @@ const FILES = {
     '  mkdirSync(log);',
     '});',
   ],
+  // Passes, and removes the script's log folder after its start was logged, so its row is lost when it exits.
+  'drops.test.mjs': [
+    "import { readdirSync, rmSync } from 'node:fs';",
+    "import { tmpdir } from 'node:os';",
+    "import path from 'node:path';",
+    "import test from 'node:test';",
+    "test('drops the log folder', () => {",
+    "  const [name] = readdirSync(tmpdir()).filter((entry) => entry.startsWith('aidrian-test-log-'));",
+    '  rmSync(path.join(tmpdir(), name), { recursive: true, force: true });',
+    '});',
+  ],
+  // Passes, and removes the script's log alone after its start was logged, so its row lands in a new log with no start.
+  'swaps.test.mjs': [
+    "import { readdirSync, rmSync } from 'node:fs';",
+    "import { tmpdir } from 'node:os';",
+    "import path from 'node:path';",
+    "import test from 'node:test';",
+    "test('swaps the log', () => {",
+    "  const [name] = readdirSync(tmpdir()).filter((entry) => entry.startsWith('aidrian-test-log-'));",
+    "  rmSync(path.join(tmpdir(), name, 'files.jsonl'));",
+    '});',
+  ],
 };
 
 // A folder holding the test files, and an empty temporary folder for the script's own files. `budget`, when given, is
@@ -248,6 +270,27 @@ test('a test log that cannot be read fails a run whose runner passed, and the sc
   assert.equal(run.status, 1, run.stdout + run.stderr);
   assert.match(run.stderr, /^Could not read the test log \S+files\.jsonl: /mu);
   assert.deepEqual(readdirSync(where.temp), []);
+});
+
+test('a test log removed or replaced after a file started fails a run whose runner passed, naming the log', (t) => {
+  for (const file of ['drops.test.mjs', 'swaps.test.mjs']) {
+    const where = folder(t);
+    const run = runTests(where, [file]);
+    assert.equal(run.status, 1, run.stdout + run.stderr);
+    assert.match(run.stdout, /pass 1/u, 'the runner itself passed');
+    assert.match(run.stderr, /^Could not read the test log \S+files\.jsonl: it was removed or replaced after 1 test file started, so their rows cannot be judged: run them again$/mu, file);
+    assert.deepEqual(readdirSync(where.temp), [], file);
+  }
+});
+
+test('a run that selected no test file passes', (t) => {
+  const where = folder(t, { default: 0, files: {} });
+  for (const args of [['none/*.test.mjs'], ['--test-shard=2/2', 'quiet.test.mjs']]) {
+    const run = runTests(where, args);
+    assert.equal(run.status, 0, run.stdout + run.stderr);
+    assert.match(run.stdout, /tests 0/u, args.join(' '));
+    assert.doesNotMatch(run.stderr, /Could not read the test log/u, args.join(' '));
+  }
 });
 
 test('a budget file that cannot be read fails a run whose runner passed, and the script still removes its folder', (t) => {

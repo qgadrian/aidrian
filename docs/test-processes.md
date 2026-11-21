@@ -12,7 +12,9 @@ that ran is over its budget, and names the file, its count, and its budget; a fi
 A budget file that cannot be read or has another shape fails a run whose tests passed too, and names the budget file.
 Each file's preload logs the file's start as it loads, and a file whose start it cannot log fails there; its row of counts
 it logs as the file exits, if it can. A file that started and left no row fails a run whose tests passed, named on stderr,
-and so does a log the script cannot read, so a lost row never passes as a file within its budget.
+and so does a log the script cannot read, or one removed or replaced, folder and all, after a file started: the script
+holds the log open from before the run, so it still sees the starts. A lost row never passes as a file within its budget,
+and a run that selected no test file still passes.
 There is no budget on seconds, since one commit's time varies by more than half between runners.
 
 Each entry is 1.5 times the largest count seen for the file, rounded up to the next 50, and only a file above 300 has one.

@@ -15,11 +15,11 @@
 // { "default": 300, "files": { "<name>.test.mjs": <count> } }, a file with no entry held to the default, and every
 // file to 300 when the budget file is missing. A run whose runner passed exits 1 when a file that ran is over its
 // budget, naming each such file and the two ways out on stderr, or when the budget file cannot be read. It exits 1 too
-// when a file that started left no row, naming the file, or when the log exists and cannot be read: a lost row is never
-// a file within its budget.
+// when a file that started left no row, naming the file, or when the log cannot be read, as when it was removed or
+// replaced after a file started: a lost row is never a file within its budget. A run that selected no test file passes.
 
 import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { closeSync, fstatSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -29,17 +29,8 @@ const SHOWN = 10;
 const BUDGET_FILE = path.join('test', 'child-process-budget.json');
 const DEFAULT_BUDGET = 300;
 
-// The lines the test files wrote, each file's start, { file, started: true }, and its row, { file, ms, git, other },
-// skipping a line a killed process left half written. No log is no line, as when no test file started; a log that
-// cannot be read throws.
-function readLog(log) {
-  let text = '';
-  try {
-    text = readFileSync(log, 'utf8');
-  } catch (error) {
-    if (error.code === 'ENOENT') return [];
-    throw error;
-  }
+// The JSON lines of a log's text, skipping a line a killed process left half written.
+function parseLines(text) {
   return text.split('\n').flatMap((line) => {
     try {
       return line ? [JSON.parse(line)] : [];
@@ -47,6 +38,32 @@ function readLog(log) {
       return [];
     }
   });
+}
+
+// The lines the test files wrote to `log`, each file's start, { file, started: true }, and its row, { file, ms, git, other }.
+// `held` is the log this script created and kept open before any file started, so it still holds every start when the
+// log, or its folder, was removed or replaced while the files ran. Then the rows at the log's path are not every file's,
+// and this throws once a file had started; with no start, no file was selected, and there is no line. A log that cannot
+// be read throws.
+function readLog(log, held) {
+  let text = '';
+  let same = false;
+  try {
+    const fd = openSync(log, 'r');
+    try {
+      const [now, then] = [fstatSync(fd), fstatSync(held)];
+      same = now.dev === then.dev && now.ino === then.ino;
+      text = readFileSync(fd, 'utf8');
+    } finally {
+      closeSync(fd);
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  if (same) return parseLines(text);
+  const started = parseLines(readFileSync(held, 'utf8')).filter(isStart).length;
+  if (started) throw new Error(`it was removed or replaced after ${started === 1 ? '1 test file' : `${started} test files`} started, so their rows cannot be judged: run them again`);
+  return [];
 }
 
 const seconds = (ms) => (ms / 1000).toFixed(1);
@@ -119,6 +136,9 @@ function overBudget(rows, budget) {
 
 const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-test-log-'));
 const log = path.join(dir, 'files.jsonl');
+// Created and held open before the runner starts: readLog reads the starts through it once the log's path is gone.
+writeFileSync(log, '');
+const held = openSync(log, 'r');
 const runner = spawn(process.execPath, ['--test', '--import', SETUP, ...process.argv.slice(2)], {
   stdio: 'inherit',
   env: { ...process.env, AIDRIAN_TEST_LOG: log },
@@ -165,13 +185,14 @@ runner.on('exit', (code) => {
     let lines = [];
     let unreadable = null;
     try {
-      lines = readLog(log);
+      lines = readLog(log, held);
     } catch (error) {
       unreadable = error;
     }
     const rows = lines.filter((line) => !isStart(line));
     attempt('print the table of test files', () => process.stderr.write(formatTable(rows)));
     if (status === 0) status = judge(lines, unreadable);
+    attempt('close the test log', () => closeSync(held));
     attempt(`remove the test log folder ${dir}`, () => rmSync(dir, { recursive: true, force: true, maxRetries: 3 }));
   } finally {
     process.exit(status);

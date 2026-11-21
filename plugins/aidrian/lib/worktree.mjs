@@ -178,7 +178,7 @@ export function createWorktree({ branch, slug, base, fetch = false, plan = false
     const setup = run('sh', ['-c', ctx.config.git.worktrees.bootstrap], { cwd: dir });
     if (setup.status !== 0) {
       const tail = `${setup.stdout}${setup.stderr}`.trim().split('\n').slice(-OUTPUT_TAIL_LINES).join('\n');
-      throw blocked('bootstrap', `the worktree ${dir} was created, but its bootstrap failed:\n${tail}`, `sh -c ${shellQuote(`cd ${shellQuote(dir)} && ${ctx.config.git.worktrees.bootstrap}`)}`);
+      throw blocked('bootstrap', `the worktree ${dir} was created, but its bootstrap failed:\n${tail}`, `sh -c ${shellQuote(`cd ${shellQuote(dir)} || exit 1; ${ctx.config.git.worktrees.bootstrap}`)}`);
     }
   }
   return { status: 'created', ...report };

@@ -132,13 +132,24 @@ test('a failing bootstrap keeps the worktree and reports the end of its output a
   assert.match(result.reason, new RegExp(`^the worktree ${dir} was created, but its bootstrap failed:\\n`));
   assert.match(result.reason, /line 30\nbroke$/);
   assert.doesNotMatch(result.reason, /line 1\n/, 'only the end of the output');
-  assert.match(result.next, /^sh -c 'cd '\\''.*\/\.worktrees\/x'\\'' && pwd > where\.txt; for i/, 'the rerun names the worktree in a shell of its own');
+  assert.match(result.next, /^sh -c 'cd '\\''.*\/\.worktrees\/x'\\'' \|\| exit 1; pwd > where\.txt; for i/, 'the rerun names the worktree in a shell of its own');
   rmSync(path.join(dir, 'where.txt'));
-  const rerun = spawnSync('sh', ['-c', `${result.next}; pwd`], { cwd: repo, encoding: 'utf8' });
-  assert.deepEqual([rerun.stderr.trim(), rerun.stdout.trim().split('\n').at(-1)], ['broke', realpathSync(repo)], 'the rerun leaves the calling shell where it was');
+  const rerun = spawnSync('sh', ['-c', result.next], { cwd: repo, encoding: 'utf8' });
+  assert.deepEqual([rerun.status, rerun.stderr.trim()], [3, 'broke'], 'the rerun runs the whole bootstrap again, with its status');
+  const after = spawnSync('sh', ['-c', `${result.next}; pwd`], { cwd: repo, encoding: 'utf8' });
+  assert.equal(after.stdout.trim().split('\n').at(-1), realpathSync(repo), 'the rerun leaves the calling shell where it was');
   assert.equal(readFileSync(path.join(dir, 'where.txt'), 'utf8').trim(), realpathSync(dir), 'the bootstrap reruns in the worktree');
   assert.equal(existsSync(path.join(repo, 'where.txt')), false);
   assert.equal(existsSync(dir), true);
+});
+
+test('the bootstrap rerun line runs nothing when its worktree is gone', (t) => {
+  const { repo, blocked } = fixture(t, { version: 1, git: { worktrees: { bootstrap: 'touch ran.txt; exit 3' } } });
+  const result = blocked({ branch: 'feat/x' });
+  rmSync(path.join(repo, '.worktrees/x'), { recursive: true, force: true });
+  const rerun = spawnSync('sh', ['-c', result.next], { cwd: repo, encoding: 'utf8' });
+  assert.equal(rerun.status, 1);
+  assert.equal(existsSync(path.join(repo, 'ran.txt')), false, 'no step of the bootstrap ran in the caller');
 });
 
 test('without an origin the base is the local default branch, and worktrees.dir moves the folder', (t) => {

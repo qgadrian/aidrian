@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -50,6 +50,45 @@ test('the test setup keeps the temporary files of a run in its own folder, and d
   assert.equal(run.status, 0, run.stderr);
   assert.ok(run.stdout.startsWith(outer), run.stdout);
   assert.deepEqual(readdirSync(outer), []);
+});
+
+// A probe test file in a folder of its own, run as `node --import <setup> probe.test.mjs`, so the setup sees a test file as
+// the main script. It prints node:child_process's functions' source after the setup ran, and starts git through exec, a
+// promisified exec, and a promisified execFile: exec calls execFile inside node:child_process, so each must count once.
+function probeRun(t, env) {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-test-state-spawns-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(path.join(dir, 'probe.test.mjs'), [
+    "import childProcess from 'node:child_process';",
+    "import { promisify } from 'node:util';",
+    "const names = ['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork'];",
+    "const source = names.map((name) => childProcess[name].toString()).join('\\n');",
+    "await new Promise((done) => childProcess.exec('git --version', done));",
+    "await promisify(childProcess.exec)('git --version');",
+    "const { stdout } = await promisify(childProcess.execFile)('git', ['--version']);",
+    "if (!stdout.startsWith('git version')) throw new Error(`promisify lost its stdout: ${stdout}`);",
+    'process.stdout.write(source);',
+  ].join('\n'));
+  const run = spawnSync(process.execPath, ['--import', SETUP, 'probe.test.mjs'], { cwd: dir, encoding: 'utf8', env: { ...process.env, ...env } });
+  assert.equal(run.status, 0, run.stderr);
+  return { dir, source: run.stdout };
+}
+
+const PLAIN = "const cp = require('node:child_process'); process.stdout.write(['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork'].map((name) => cp[name].toString()).join('\\n'));";
+
+test('without AIDRIAN_TEST_LOG the test setup leaves node:child_process as it is', (t) => {
+  const plain = spawnSync(process.execPath, ['-e', PLAIN], { encoding: 'utf8' }).stdout;
+  assert.equal(probeRun(t, {}).source, plain);
+});
+
+test('with AIDRIAN_TEST_LOG the test setup appends the test file`s time and child processes, each counted once', (t) => {
+  const log = path.join(realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-test-log-'))), 'files.jsonl');
+  t.after(() => rmSync(path.dirname(log), { recursive: true, force: true }));
+  probeRun(t, { AIDRIAN_TEST_LOG: log });
+  const [row, ...more] = readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(more, []);
+  assert.deepEqual({ file: row.file, git: row.git, other: row.other }, { file: 'probe.test.mjs', git: 3, other: 0 });
+  assert.ok(Number.isInteger(row.ms) && row.ms > 0, JSON.stringify(row));
 });
 
 test('every test file imports the setup first, so a file run alone with `node --test` is kept apart too', () => {

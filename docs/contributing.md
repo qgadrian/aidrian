@@ -19,11 +19,18 @@ Push a change once its touched tests pass, and let CI run `npm run check`: a ful
 held a fix back for two hours. Run it locally only when CI cannot, once, before marking ready.
 This repository opts into [push first](hooks.md#push-first) and the [check-run record](hooks.md#check-runs):
 `.aidrian/config.json` sets
-`"testing": { "fullSuite": ["npm run check", "npm test", "npm run test"], "pushFirstMinutes": 5 }`, since `npm test`
-runs the whole suite here too. So a session's `npm run check` or bare `npm test` is refused while the pushed branch
-lacks a commit older than 5 minutes, and a `## Tests run` line that says one of them passed needs a finished run of it.
+`"testing": { "fullSuite": ["npm run check", "npm test", "npm run test", "node scripts/run-tests.mjs"], "pushFirstMinutes": 5 }`,
+since `npm test` and the script behind it run the whole suite here too. So a session's `npm run check`, bare `npm test`,
+or bare `node scripts/run-tests.mjs` is refused while the pushed branch lacks a commit older than 5 minutes, and a `## Tests run` line that says one of them passed needs a finished run of it.
 `npm test -- <files>` runs only those files, and push first leaves it alone. Its `requires.aidrian` asks for 0.73.1, the first release whose
 config check knows the `testing` keys; an older installed plugin rejects them.
+
+`npm test` and `npm run check` run the suite through `scripts/run-tests.mjs`, which runs `node --test` with its arguments
+and passes the runner's output through. After the run it prints on stderr the ten test files that took the most time,
+each with its seconds, its `git` calls, and its other child processes, and a line of totals summed over every file:
+the numbers a change to the suite's time moves. The counts cover the processes a test file's own process starts:
+a command or hook a test starts counts as one, and the processes it starts in turn are not counted.
+A file run alone, `node --test test/<name>.test.mjs`, still works the same way, with no table.
 
 `make` lists the same tasks.
 

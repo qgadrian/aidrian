@@ -27,7 +27,7 @@ import path from 'node:path';
 
 import { ATTEMPT_KEEP, attemptOf, GIT_PLACEHOLDERS, KEPT_FOLDERS } from './attempt-clone.mjs';
 import { isWithin, readSmallJson, resolvedPath } from './fs.mjs';
-import { gateGit } from './git.mjs';
+import { gateGit, withoutLocation } from './git.mjs';
 import { claimedSource, forgeToken, gitCredentialVars, sessionToken, tokenDigest, tokenVars } from './project-token.mjs';
 import { loadConfig } from './config.mjs';
 import { findProject, stateRoot } from './project.mjs';
@@ -214,7 +214,8 @@ export function stateWorkFolders(state, { env, home }) {
 // (project-registries.mjs cacheVars), which holds only npm's empty config files (NPM_CONFIGS) at first; it and `drop`
 // each hold a read-only keep file (attempt-clone.mjs ATTEMPT_KEEP). Any folder the attempt had is removed first. The clone borrows the main checkout's objects
 // read-only, takes origin's URL from the main checkout, which pushProblem checked, and checks out `branch`: from the
-// base tip `tip` on the first attempt, or from the forge on a later one when the forge has it. `env` is the environment
+// base tip `tip` on the first attempt, or from the forge on a later one when the forge has it. Its own config turns
+// signing off (UNSIGNED); a clone whose commits would still sign (signingProblem) is { halt }. `env` is the environment
 // of its network calls.
 export function prepareAttempt({ project, state, run, key, attempt, branch, tip, env }) {
   const folder = attemptFolder(state, run, key, attempt);
@@ -239,7 +240,7 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, tip,
   if (cloned.status !== 0) return failed('clone', cloned);
   const origin = gateGit(['remote', 'set-url', 'origin', url.stdout.trim()], work);
   if (origin.status !== 0) return failed('origin', origin);
-  const unsigned = setUnsigned(work);
+  const unsigned = setUnsigned(work, env);
   if (unsigned) return failed('config', unsigned);
   let from = tip;
   const listed = gateGit(['ls-remote', '--exit-code', '--heads', 'origin', `refs/heads/${branch}`], work, { env });
@@ -255,6 +256,9 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, tip,
   }
   const checkout = gateGit(['checkout', '--quiet', '-b', branch, from], work);
   if (checkout.status !== 0) return failed('checkout', checkout);
+  // The same check as the preflight's probe: a clone whose commits would still sign halts before any session starts.
+  const signing = signingProblem(work, env);
+  if (signing) return { halt: gone(`the attempt's clone ${work} is not started: ${signing}`).problem };
   const plain = plainFolderProblem(drop) ?? plainFolderProblem(cache);
   return plain ? gone(plain) : { folder, work, git, drop, cache };
 }
@@ -267,23 +271,30 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, tip,
 // through GIT_CONFIG_COUNT or GIT_CONFIG_PARAMETERS, still wins over the clone's own: commitProblem names it.
 export const UNSIGNED = Object.freeze([['commit.gpgsign', 'false'], ['tag.gpgsign', 'false']]);
 
-// Sets UNSIGNED in the own config of the checkout `work`, under `env`: null, or the git call that failed.
-export function setUnsigned(work, env) {
+// Sets UNSIGNED in the own config of the checkout `work`, under `env` without the variables that point git elsewhere
+// (git.mjs withoutLocation), so only that checkout's config is written: null, or the git call that failed.
+export function setUnsigned(work, env = process.env) {
   for (const [key, value] of UNSIGNED) {
-    const set = gateGit(['config', '--local', key, value], work, { timeout: 30_000, ...(env ? { env } : {}) });
+    const set = gateGit(['config', '--local', key, value], work, { timeout: 30_000, env: withoutLocation(env) });
     if (set.status !== 0) return set;
   }
   return null;
 }
 
-// The keys of UNSIGNED that git in the checkout `cwd`, under `env`, still reads as on, from every scope it reads and
-// the environment.
-export function signedKeys(cwd, env) {
-  return UNSIGNED.map(([key]) => key).filter((key) => {
-    const read = gateGit(['config', '--type=bool', '--get', key], cwd, { env, timeout: 30_000 });
+// Why a commit in the checkout `cwd`, under `env`, would still sign, or null: a key of UNSIGNED that git reads as true
+// there, from every scope it reads and the environment, whose -c settings win over the checkout's own config. The start
+// asks it of each attempt's clone, and the preflight's probe of its scratch clone.
+export function signingProblem(cwd, env = process.env) {
+  const signed = UNSIGNED.map(([key]) => key).filter((key) => {
+    const read = gateGit(['config', '--type=bool', '--get', key], cwd, { env: withoutLocation(env), timeout: 30_000 });
     return read.status === 0 && read.stdout.trim() === 'true';
   });
+  if (!signed.length) return null;
+  return `git still reads ${signed.join(' and ')} as true in a clone whose own config sets it false, as a GIT_CONFIG_COUNT or GIT_CONFIG_PARAMETERS setting in this environment makes it; the issue session's sandbox hides the signing keys, so its every commit would fail: unset that setting`;
 }
+
+// The branch the preflight's probe commits on when no run names one: a name of the default branch format.
+export const PROBE_BRANCH = 'fix/aidrian-commit-probe';
 
 // git's own words in the call `result`: its error and fatal lines, or its last line, or its exit status.
 const gitSaid = (result) => {
@@ -293,12 +304,15 @@ const gitSaid = (result) => {
 };
 
 // Why a commit would fail in a clone made as prepareAttempt makes an attempt's, or null: the preflight's probe. A scratch
-// repository in a folder of its own in the runs folder of `state`, where every clone lies, so a config that names a
-// folder (includeIf) reads it as a clone's, with its git folder apart as a clone's is and UNSIGNED set in its own config,
-// commits an empty probe under `env`. The preflight runs outside the issue session's sandbox, where the user's signing
-// keys are in reach, so a signing key git still reads as on (signedKeys) refuses before the commit: in the sandbox it
-// would fail. Otherwise git's own error refuses, as no identity would. The scratch folder is removed either way.
-export function commitProblem({ state, env = process.env }) {
+// repository in a folder of its own in the runs folder of `state`, where every clone lies, with its git folder apart as
+// a clone's is, origin's URL `url` (the main checkout's, which each clone takes), the branch `branch` checked out, and
+// UNSIGNED set in its own config, commits an empty probe under `env`: so a config that names a folder, a remote URL, or a
+// branch (includeIf) reads it as a clone's. Every git call runs without the variables that point git elsewhere
+// (git.mjs withoutLocation), so nothing outside the scratch folder is written. The preflight runs outside the issue
+// session's sandbox, where the user's signing keys are in reach, so a commit that would still sign (signingProblem)
+// refuses before the commit: in the sandbox it would fail. Otherwise git's own error refuses, as no identity would. The
+// scratch folder is removed either way.
+export function commitProblem({ state, env = process.env, url = null, branch = PROBE_BRANCH }) {
   const runs = runsFolder(state);
   let scratch;
   try {
@@ -308,16 +322,17 @@ export function commitProblem({ state, env = process.env }) {
     return `no scratch folder for the probe can be made in ${runs} (${error.code ?? 'no code'})`;
   }
   const work = path.join(scratch, 'work');
+  const git = (args, cwd = work) => gateGit(args, cwd, { env: withoutLocation(env), timeout: 30_000 });
   try {
-    const made = gateGit(['init', '--quiet', '--separate-git-dir', path.join(scratch, 'git'), work], scratch, { env, timeout: 30_000 });
+    const made = git(['init', '--quiet', `--initial-branch=${branch}`, '--separate-git-dir', path.join(scratch, 'git'), work], scratch);
     if (made.status !== 0) return `git cannot make a scratch repository for the probe (${gitSaid(made)})`;
+    const origin = url ? git(['remote', 'add', 'origin', url]) : null;
+    if (origin && origin.status !== 0) return `git cannot give the probe's scratch repository origin's URL (${gitSaid(origin)})`;
     const set = setUnsigned(work, env);
     if (set) return `git cannot set ${UNSIGNED.map(([key]) => key).join(' and ')} in a clone's own config (${gitSaid(set)})`;
-    const signed = signedKeys(work, env);
-    if (signed.length) {
-      return `git still reads ${signed.join(' and ')} as true in a clone whose own config sets it false, as a GIT_CONFIG_COUNT or GIT_CONFIG_PARAMETERS setting in this environment makes it; the issue session's sandbox hides the signing keys, so its every commit would fail: unset that setting`;
-    }
-    const commit = gateGit(['commit', '--quiet', '--allow-empty', '-m', 'aidrian preflight commit probe'], work, { env, timeout: 30_000 });
+    const signing = signingProblem(work, env);
+    if (signing) return signing;
+    const commit = git(['commit', '--quiet', '--allow-empty', '-m', 'aidrian preflight commit probe']);
     return commit.status === 0 ? null : `a commit in a clone made as an attempt's fails (${gitSaid(commit)})`;
   } finally {
     rmSync(scratch, { recursive: true, force: true });

@@ -1933,7 +1933,10 @@ clone under its host's sandbox, and a host that is not halts the start. Each att
 start sets `commit.gpgsign` and `tag.gpgsign` to `false` in the clone's own git config, on every attempt, and never in
 the user's global or system config. The sandbox hides the signing keys (`~/.gnupg` and `~/.ssh`), so a commit the
 user's config signs would fail once the work is done and park the issue with its change staged; the forge asks no
-signature of a branch commit, and the run merges each pull request by squash. The session hands its
+signature of a branch commit, and the run merges each pull request by squash. The writes run without git's location
+variables (`GIT_DIR`, `GIT_INDEX_FILE`, `GIT_CONFIG`, and the rest), so only the clone's config is written. A clone in
+which git still reads either key as true, as a `GIT_CONFIG_COUNT` or `GIT_CONFIG_PARAMETERS` setting in the driver's
+environment makes it, halts the start before any session, with the preflight's own check. The session hands its
 result over in its attempt's `drop` folder, and `wait` records it as a `result` row with `via: "drop"`, or ends the
 attempt `bad_result`, as it does at once for a pull request the forge says it does not have; a result the forge cannot
 confirm yet waits for the next `wait`, until `issueHours`, when its sessions are stopped and it ends `bad_result`.
@@ -2034,7 +2037,10 @@ is skipped and names it. `--json` prints the whole plan, with the `maxParallel` 
 `preflight [RUN]` runs, at once, every check a start would refuse or halt on, and starts nothing: the repository, the
 state folder and any other active run but `RUN`, a host instruction file, such as a `CLAUDE.md`, in a folder above the
 runs folder, which every attempt's clone would load, a commit in a clone made as an attempt's (`commit`: an empty commit
-in a scratch repository under the runs folder, its git folder apart and signing off in its own config, removed after;
+in a scratch repository under the runs folder, its git folder apart, origin set to the main checkout's origin URL, the
+run's first issue branch checked out (`fix/aidrian-commit-probe` before a run exists), and signing off in its own
+config, so a config `includeIf` keyed on the folder, the remote URL, or the branch reads it as a clone's; every git call
+runs without git's location variables, and the scratch is removed after;
 preflight runs outside the issue session's sandbox, where the signing keys are in reach, so it blocks when git still
 reads `commit.gpgsign` or `tag.gpgsign` as true there, as a `GIT_CONFIG_COUNT` or `GIT_CONFIG_PARAMETERS` setting in
 the environment makes it, and otherwise on git's own error, such as no identity), `projectRun.allow` through the forge, the machine's switch, the host's

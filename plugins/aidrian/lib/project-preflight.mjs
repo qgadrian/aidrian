@@ -26,23 +26,23 @@ import path from 'node:path';
 import { baseBranchTip, machineSwitch } from './config.mjs';
 import { resolveAutoMerge } from './config-local.mjs';
 import { forgeFor } from './forges/index.mjs';
-import { knownPrefix } from './git.mjs';
+import { gateGit, knownPrefix, withoutLocation } from './git.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
 import { continueRoutes, detectHost } from './hosts/index.mjs';
 import { isQuotaNotice } from './pr-await-review.mjs';
 import { branchPolicies } from './pr-auto-merge.mjs';
 import { mayFollowTeamDefault } from './project.mjs';
 import { recordedTexts } from './project-issue-text.mjs';
-import { activeRuns, nextLines, pinnedRepository, planRun, readSnapshotInput, refNames, runPlace, runsFolder, teamsNote } from './project-run.mjs';
+import { activeRuns, nextLines, pinnedRepository, planRun, readRun, readSnapshotInput, refNames, runPlace, runsFolder, teamsNote } from './project-run.mjs';
 import { runParallel, teamPolicy } from './project-run-gate.mjs';
-import { accessProblem, commitProblem, guardedFolders, hostStartProblem } from './project-start.mjs';
+import { accessProblem, commitProblem, guardedFolders, hostStartProblem, PROBE_BRANCH } from './project-start.mjs';
 import { ancestorProblem } from './project-trust.mjs';
 import { cardState, REVIEW_SUMMARY_CARD_MARKER } from './review/bot-card.mjs';
 import { trackerOfEndpoint } from './tracker-guard.mjs';
 import { knownServers, trackerById, trackerOfTools, TRACKERS } from './trackers/index.mjs';
 
-// The section of the project run setup doc on commit signing, which a commit blocker points at.
-const COMMIT_SETUP = 'docs/project-run-setup.md#commit-signing';
+// The doc section on a project run's commit signing, which a commit blocker points at.
+const COMMIT_SETUP = 'docs/config.md#project-run';
 // The reviewer values that mean no bot reviews, as config-defaults.mjs reads `github.reviewer`.
 const NO_REVIEWER = new Set([null, undefined, '', 'none']);
 // What a `note` says in place of a branch-protection or release-tags blocker the team accepts through
@@ -50,6 +50,15 @@ const NO_REVIEWER = new Set([null, undefined, '', 'none']);
 const ACCEPTED_PROTECTION = 'the team accepts no forge protection (projectRun.forgeProtectionAccepted): a script an issue session runs can push to the default branch or a tag with the token, and only the hooks hold it';
 // The risk of projectRun.localBinding where the host names none of its own.
 const LOCAL_BINDING_RISK = 'a service a session starts may listen on this machine\'s network interfaces, where other local processes, and other machines the firewall lets through, reach it, and the session may reach the services listening on this machine';
+
+// The branch of the first issue of the run `run` in `state`, which the commit probe checks out as a clone would, or null
+// with no run or none it can read.
+function runBranch(state, run) {
+  if (!run) return null;
+  const found = readRun(state, run);
+  const branch = found.problem ? null : found.snapshot?.issues?.[0]?.branch;
+  return typeof branch === 'string' ? branch : null;
+}
 
 // The `note` preflight prints when the team lets issue sessions bind local ports through projectRun.localBinding: the
 // risk as the host `cap` says it is on `platform` (capabilities.projectStart.localBindingRisk), and the remedy.
@@ -83,7 +92,8 @@ export function preflightCommand({ project, config, run = null, env = process.en
     check('instructions', ancestorProblem(path.join(runsFolder(place.state), 'attempts'), { project, tip: baseBranchTip(project.root), env }));
     // Every issue session commits in its clone, unsigned (project-start.mjs UNSIGNED), so a commit that fails there
     // parks every issue with its work staged.
-    const commit = commitProblem({ state: place.state, env });
+    const origin = gateGit(['remote', 'get-url', 'origin'], main, { env: withoutLocation(env), timeout: 30_000 });
+    const commit = commitProblem({ state: place.state, env, url: origin.status === 0 ? origin.stdout.trim() : null, branch: runBranch(place.state, run) ?? PROBE_BRANCH });
     check('commit', commit ? `${commit} (setup: ${COMMIT_SETUP})` : null);
   }
   const base = baseBranchTip(project.root) ? baseBranchConfig(project, 'projectRun') : { why: 'git names no base branch commit' };

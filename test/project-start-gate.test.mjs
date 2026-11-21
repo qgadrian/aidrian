@@ -7,7 +7,7 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -19,7 +19,7 @@ import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { CEILINGS, ISSUE_ATTEMPTS, PROJECT_PARALLEL, PROJECT_STARTS, PROJECT_STARTS_PER_DAY, projectPrompt, teamPolicy } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { DROP_FILE } from '../plugins/aidrian/lib/project-result.mjs';
 import { appendToRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
-import { attemptFolder, sweepAttempts } from '../plugins/aidrian/lib/project-start.mjs';
+import { attemptFolder, setUnsigned, signingProblem, sweepAttempts, UNSIGNED } from '../plugins/aidrian/lib/project-start.mjs';
 import { markUnattended, PENDING_AGE, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { DRIVER, fakeClaude, ORIGIN, OTHER, runFixture, STARTED, testGlobalConfig } from './project-start-fixture.mjs';
 
@@ -274,6 +274,35 @@ test('every attempt\'s clone commits unsigned through its own config, and the us
   unsigned(work(fx, 'ENG-1', 2));
   assert.equal(readFileSync(global, 'utf8'), before, 'the global config is never written');
   assert.throws(() => commit(fx.dir, 'signed'), /gpg/u, 'the main checkout still signs, as the user set it');
+});
+
+// The same check as the preflight's probe: a -c setting in the driver's environment wins over the clone's own config.
+test('start halts before any session when the prepared clone would still sign, and leaves no attempt folder', (t) => {
+  const fx = runFixture(t);
+  const env = { ...fx.as(DRIVER), GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'commit.gpgsign', GIT_CONFIG_VALUE_0: 'true' };
+  const started = fx.cmd(['start', 'launch', 'ENG-1'], { env });
+  const halt = started.out.find((line) => line.startsWith('halt ')) ?? '';
+  assert.equal(started.exitCode, 1, JSON.stringify(started));
+  assert.ok(halt.startsWith(`halt the attempt's clone ${work(fx)} is not started: git still reads commit.gpgsign as true in a clone whose own config sets it false, as a GIT_CONFIG_COUNT or GIT_CONFIG_PARAMETERS setting`), halt);
+  assert.deepEqual(fx.claude.starts(), []);
+  assert.deepEqual(fx.rows(), [], 'a halt records nothing');
+  assert.equal(existsSync(path.dirname(work(fx))), false, 'the clone is removed');
+});
+
+// The keys go to the checkout's own config whatever the caller's environment points git at; never a real repository:
+// GIT_DIR and the rest name empty temporary folders.
+test('setUnsigned and signingProblem write and read only the checkout\'s own config, whatever git\'s location variables say', (t) => {
+  const top = mkdtempSync(path.join(tmpdir(), 'aidrian-unsigned-'));
+  t.after(() => rmSync(top, { recursive: true, force: true }));
+  const work = path.join(top, 'work');
+  execFileSync('git', ['init', '-q', work]);
+  const outside = path.join(top, 'outside');
+  mkdirSync(path.join(outside, 'gitdir'), { recursive: true });
+  const env = { ...process.env, GIT_DIR: path.join(outside, 'gitdir'), GIT_WORK_TREE: outside, GIT_INDEX_FILE: path.join(outside, 'index'), GIT_OBJECT_DIRECTORY: path.join(outside, 'objects'), GIT_CONFIG: path.join(outside, 'config'), GIT_COMMON_DIR: path.join(outside, 'gitdir') };
+  assert.equal(setUnsigned(work, env), null);
+  assert.deepEqual(UNSIGNED.map(([key]) => execFileSync('git', ['config', '--file', path.join(work, '.git', 'config'), '--get', key], { encoding: 'utf8' }).trim()), ['false', 'false']);
+  assert.equal(signingProblem(work, env), null);
+  assert.deepEqual([readdirSync(outside), readdirSync(path.join(outside, 'gitdir'))], [['gitdir'], []], 'nothing written outside the checkout');
 });
 
 test('a claim that is no plain object with a boolean kept, or is too large to read, counts as kept once past its write', (t) => {

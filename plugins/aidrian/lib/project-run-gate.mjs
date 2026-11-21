@@ -418,6 +418,7 @@ function confinedRoom({ project, state, run, key, branch, attempt, tip, env, hom
   const folders = stateWorkFolders(state, { env, home });
   if (folders.problem) return { halt: folders.problem };
   const clone = prepareAttempt({ project, state, run, key, attempt, branch, tip, env });
+  if (clone.halt) return { halt: clone.halt };
   if (clone.problem) return { problem: clone.problem };
   const trust = trustProblem(clone.work, tip) ?? ancestorProblem(clone.work, { project, tip, env }) ?? pushProblem(clone.work, found.init.repository);
   if (trust) return { problem: `the attempt's clone ${clone.work} is not started: ${trust}` };

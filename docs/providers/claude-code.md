@@ -379,7 +379,8 @@ How issue sessions and the driver relate to the cap of five background continuat
   of a commit holds in the sandbox: the identity comes from the user's `~/.gitconfig`, which stays readable, and the
   plugin's own git calls run no hooks, though the session's commit runs any `core.hooksPath` the user's global config
   sets, inside the sandbox. A `GIT_CONFIG_COUNT` or `GIT_CONFIG_PARAMETERS` setting in the driver's environment still
-  wins over the clone's config; `aidrian project preflight` blocks on one ([Project run](../config.md#project-run)).
+  wins over the clone's config: `aidrian project preflight` blocks on one, and the start, which reads the prepared
+  clone with the same check, halts before the launch ([Project run](../config.md#project-run)).
 - Before the launch, the start makes placeholders for the protected host files that can be there harmlessly, since on
   Linux a sandbox write denial holds only on a path there at launch: in the clone's git folder, an empty
   `config.worktree`, which git reads only once `extensions.worktreeConfig` is set in the config the sandbox denies, and

@@ -567,13 +567,29 @@ test('preflight probes a commit in a clone made as an attempt\'s, blocks one tha
   assert.deepEqual(scratch(), [], 'the scratch repository is removed');
 
   const forced = line({ GIT_CONFIG_GLOBAL: signing, GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'commit.gpgsign', GIT_CONFIG_VALUE_0: 'true' });
-  assert.match(forced ?? '', /^blocker commit: git still reads commit\.gpgsign as true in a clone whose own config sets it false, as a GIT_CONFIG_COUNT or GIT_CONFIG_PARAMETERS setting in this environment makes it; .*: unset that setting \(setup: docs\/project-run-setup\.md#commit-signing\)$/u, forced);
+  assert.match(forced ?? '', /^blocker commit: git still reads commit\.gpgsign as true in a clone whose own config sets it false, as a GIT_CONFIG_COUNT or GIT_CONFIG_PARAMETERS setting in this environment makes it; .*: unset that setting \(setup: docs\/config\.md#project-run\)$/u, forced);
   assert.deepEqual(scratch(), []);
 
   const nobody = path.join(fx.root, 'nobody.gitconfig');
   writeFileSync(nobody, '[user]\n\tuseConfigOnly = true\n');
   const failed = line({ GIT_CONFIG_GLOBAL: nobody });
-  assert.match(failed ?? '', /^blocker commit: a commit in a clone made as an attempt's fails \(fatal: no (?:name|email) was given and auto-detection is disabled\) \(setup: docs\/project-run-setup\.md#commit-signing\)$/u, failed);
+  assert.match(failed ?? '', /^blocker commit: a commit in a clone made as an attempt's fails \(fatal: no (?:name|email) was given and auto-detection is disabled\) \(setup: docs\/config\.md#project-run\)$/u, failed);
+  assert.deepEqual(scratch(), []);
+
+  // An identity the user's config gives only to a clone of the run's repository, by origin's URL: the scratch takes the
+  // main checkout's origin URL, as each attempt's clone does.
+  const identity = path.join(fx.root, 'acme.gitconfig');
+  writeFileSync(identity, '[user]\n\tname = t\n\temail = t@example.invalid\n');
+  const byRemote = path.join(fx.root, 'by-remote.gitconfig');
+  writeFileSync(byRemote, `[user]\n\tuseConfigOnly = true\n[includeIf "hasconfig:remote.*.url:https://github.com/acme/**"]\n\tpath = ${identity}\n`);
+  assert.equal(line({ GIT_CONFIG_GLOBAL: byRemote }), 'ok commit', 'the identity an includeIf on origin\'s URL gives');
+
+  // Variables that point git at another git folder, index, object store, or config file write nothing there.
+  const outside = mkdtempSync(path.join(fx.root, 'outside-'));
+  mkdirSync(path.join(outside, 'gitdir'));
+  const pointed = { GIT_DIR: path.join(outside, 'gitdir'), GIT_INDEX_FILE: path.join(outside, 'index'), GIT_OBJECT_DIRECTORY: path.join(outside, 'objects'), GIT_CONFIG: path.join(outside, 'config'), GIT_WORK_TREE: outside };
+  assert.equal(line({ GIT_CONFIG_GLOBAL: signing, ...pointed }), 'ok commit');
+  assert.deepEqual([readdirSync(outside), readdirSync(path.join(outside, 'gitdir'))], [['gitdir'], []], 'nothing written outside the scratch');
   assert.deepEqual(scratch(), []);
 });
 

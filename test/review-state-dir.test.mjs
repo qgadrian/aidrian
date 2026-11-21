@@ -5,7 +5,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -1020,17 +1020,22 @@ for (const [name, match, make, bound] of [
   ['the state folder\'s name', '*" --show-prefix "*', (t) => stateUnset(t).r, 5000],
   ['the checkout list, with state.dir unset', '*" worktree list "*', (t) => stateUnset(t).r, 5000],
 ]) {
+  // Timed from the stall's first moment, which the mark's mtime records, so a loaded machine's slow hook start
+  // counts against no bound.
   test(`a git that stalls on ${name} lets the merge go on within ${bound} ms`, (t) => {
     const r = make(t);
     rmSync(path.join(r.dir, HEAD_RECORD), { force: true });
     tracking(r);
-    const started = Date.now();
+    const mark = path.join(folderFor(t), 'stalled');
     const hook = spawnSync(process.execPath, [HOOK], {
       input: JSON.stringify({ tool_name: 'Bash', cwd: r.dir, tool_input: { command: `gh pr merge 7 --match-head-commit ${r.head}` } }),
       encoding: 'utf8',
-      env: { ...process.env, AIDRIAN_TELEMETRY: '0', PATH: fakeGit(t, match, 'exec sleep 30') },
+      env: { ...process.env, AIDRIAN_TELEMETRY: '0', PATH: fakeGit(t, match, `[ -e "${mark}" ] || : > "${mark}"; exec sleep 30`) },
     });
-    assert.ok(Date.now() - started < bound, `the hook took ${Date.now() - started} ms`);
+    const returned = Date.now();
+    assert.ok(existsSync(mark), `the git stalled: ${hook.stderr}`);
+    const stalled = statSync(mark).mtimeMs;
+    assert.ok(returned - stalled < bound, `the hook returned ${Math.round(returned - stalled)} ms after the stall`);
     assert.equal(hook.status, 0, hook.stderr);
   });
 }

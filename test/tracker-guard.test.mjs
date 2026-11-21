@@ -45,20 +45,20 @@ const judge = (...call) => denial(...call)?.reason ?? null;
 const OK = { url: EXPECT };
 const text = (body) => ({ type: 'text', text: body });
 
-test('the reader takes the value from an object', async () => {
+test('the reader takes the value from an object', () => {
   assert.equal(readTrackerValue(OK, 'url'), EXPECT);
 });
 
-test('the reader takes the value from a JSON string', async () => {
+test('the reader takes the value from a JSON string', () => {
   assert.equal(readTrackerValue(JSON.stringify(OK), 'url'), EXPECT);
 });
 
-test('the reader takes the value from a content-block array', async () => {
+test('the reader takes the value from a content-block array', () => {
   assert.equal(readTrackerValue([text(JSON.stringify(OK))], 'url'), EXPECT);
   assert.equal(readTrackerValue(JSON.stringify([text(JSON.stringify(OK))]), 'url'), EXPECT);
 });
 
-test('the reader takes the value from the shape observed on Codex', async () => {
+test('the reader takes the value from the shape observed on Codex', () => {
   assert.equal(readTrackerValue({ content: [text(JSON.stringify(OK))] }, 'url'), EXPECT);
   assert.equal(readTrackerValue(JSON.stringify({ content: [text(JSON.stringify(OK))] }), 'url'), EXPECT);
 });
@@ -67,32 +67,32 @@ test('the reader takes the value from the shape observed on Codex', async () => 
 // shape on the plugin's server and on the claude.ai connector.
 const CLAUDE_CODE_READ = [text(JSON.stringify({ id: 'redacted-id', name: 'Redacted', url: EXPECT }))];
 
-test('the reader takes the value from the shape observed on Claude Code', async () => {
+test('the reader takes the value from the shape observed on Claude Code', () => {
   assert.equal(readTrackerValue(CLAUDE_CODE_READ, 'url'), EXPECT);
 });
 
-test('the reader parses the first text block holding JSON, past blocks that hold none', async () => {
+test('the reader parses the first text block holding JSON, past blocks that hold none', () => {
   const blocks = [{ type: 'image', data: 'x' }, 'stray', text('Connected workspace:'), text(JSON.stringify(OK))];
   assert.equal(readTrackerValue(blocks, 'url'), EXPECT);
   assert.equal(readTrackerValue([{ url: EXPECT }, text(JSON.stringify(OK))], 'url'), EXPECT);
 });
 
-test('a block that is not a text block is never read, even when it carries JSON', async () => {
+test('a block that is not a text block is never read, even when it carries JSON', () => {
   const other = '{"url":"https://other.example"}';
   assert.equal(readTrackerValue([{ type: 'resource', text: other }, text(JSON.stringify(OK))], 'url'), EXPECT);
   assert.equal(readTrackerValue({ content: [{ text: other }, text(JSON.stringify(OK))] }, 'url'), EXPECT);
 });
 
-test('the reader stops at the first block holding JSON, even when it lacks the field', async () => {
+test('the reader stops at the first block holding JSON, even when it lacks the field', () => {
   assert.equal(readTrackerValue([text('{"name":"acme"}'), text(JSON.stringify(OK))], 'url'), null);
   assert.equal(readTrackerValue([text('3'), text(JSON.stringify(OK))], 'url'), null);
 });
 
-test('an object that has the field keeps it, even beside content blocks', async () => {
+test('an object that has the field keeps it, even beside content blocks', () => {
   assert.equal(readTrackerValue({ url: EXPECT, content: [text('{"url":"https://other.example"}')] }, 'url'), EXPECT);
 });
 
-test('a response with no value reads as null', async () => {
+test('a response with no value reads as null', () => {
   const empty = [
     undefined, null, 7, true, '', 'not json', '"just text"', '{"url":', [], {}, { content: [] }, { content: 'text' }, [text('no json here')],
     { url: '' }, { url: '   ' }, { url: 12 }, { url: null }, { url: { href: EXPECT } }, { name: 'acme' }, [{ url: EXPECT }], { content: [{ type: 'text' }] },
@@ -100,12 +100,12 @@ test('a response with no value reads as null', async () => {
   for (const response of empty) assert.equal(readTrackerValue(response, 'url'), null, JSON.stringify(response));
 });
 
-test('the reader follows the field it is given, not a fixed name', async () => {
+test('the reader follows the field it is given, not a fixed name', () => {
   assert.equal(readTrackerValue({ url: EXPECT, slug: 'acme' }, 'slug'), 'acme');
   assert.equal(readTrackerValue({ url: EXPECT }, 'slug'), null);
 });
 
-test('a tracker that is off, or a tool outside writeTools, passes', async () => {
+test('a tracker that is off, or a tool outside writeTools, passes', () => {
   assert.equal(judge({}, null, { settings: config({ enabled: false }) }), null);
   assert.equal(judge({}, null, { settings: config({ enabled: 'true' }) }), null);
   assert.equal(judge({}, null, { settings: { names: { human: 'the Human', ai: null } } }), null);
@@ -114,7 +114,7 @@ test('a tracker that is off, or a tool outside writeTools, passes', async () => 
   assert.equal(judgeTrackerWrite(config(), undefined, {}, null), null);
 });
 
-test('writeTools match exactly, or by a trailing *', async () => {
+test('writeTools match exactly, or by a trailing *', () => {
   assert.equal(nameMatches('mcp__x__delete_issue', 'mcp__x__delete_issue'), true);
   assert.equal(nameMatches('mcp__x__delete_issue', 'mcp__x__delete_issue_label'), false);
   assert.equal(nameMatches('mcp__x__save_*', 'mcp__x__save_comment'), true);
@@ -123,7 +123,7 @@ test('writeTools match exactly, or by a trailing *', async () => {
   assert.match(judge({}, null, { tool: 'mcp__x__save_comment' }), /has not read/);
 });
 
-test('rule 1: a write with no read refuses and names the read tool; a record passes', async () => {
+test('rule 1: a write with no read refuses and names the read tool; a record passes', () => {
   assert.match(judge({}, null), /mcp__x__get_workspace/);
   assert.match(judgeTrackerWrite(config(), WRITE, {}, undefined).reason, /mcp__x__get_workspace/);
   assert.equal(judge({}, record()), null);
@@ -131,7 +131,7 @@ test('rule 1: a write with no read refuses and names the read tool; a record pas
   assert.match(several, /mcp__x__get_workspace or mcp__x__whoami/);
 });
 
-test('rule 1 has a way out for a caller with no session, and the other rules still run', async () => {
+test('rule 1 has a way out for a caller with no session, and the other rules still run', () => {
   const options = { skipMissingRecord: true };
   assert.equal(judge({}, null, { options }), null);
   assert.match(judge({ team: 'Other' }, null, { options }), /"Other"/);
@@ -140,7 +140,7 @@ test('rule 1 has a way out for a caller with no session, and the other rules sti
   assert.match(judge({}, record('https://other.example'), { options }), /tracker\.workspace\.expect/);
 });
 
-test('rule 1 and the other workspace rules skip when workspace is unset', async () => {
+test('rule 1 and the other workspace rules skip when workspace is unset', () => {
   const settings = config({ workspace: null, readTools: [] });
   assert.equal(judge({}, null, { settings }), null);
   assert.equal(judge({}, unreadable, { settings }), null);
@@ -148,7 +148,7 @@ test('rule 1 and the other workspace rules skip when workspace is unset', async 
   assert.match(judge({ team: 'Other' }, null, { settings }), /"Other"/);
 });
 
-test('rule 2: an unreadable record refuses, says what the read lacked, and asks the Human to fix it', async () => {
+test('rule 2: an unreadable record refuses, says what the read lacked, and asks the Human to fix it', () => {
   const reason = judge({}, unreadable);
   assert.match(reason, /the read returned no url/);
   assert.match(reason, /mcp__x__get_workspace/);
@@ -158,7 +158,7 @@ test('rule 2: an unreadable record refuses, says what the read lacked, and asks 
   assert.equal(judge({}, record()), null);
 });
 
-test('rule 2 reads a record with no text value as unreadable, and names the human the config names', async () => {
+test('rule 2 reads a record with no text value as unreadable, and names the human the config names', () => {
   for (const seen of [{}, { value: null }, { value: 3 }, { value: '' }, { value: EXPECT, unreadable: true }]) {
     assert.match(judge({}, { ...seen, tool: READ }), /the read returned no url/, JSON.stringify(seen));
   }
@@ -166,14 +166,14 @@ test('rule 2 reads a record with no text value as unreadable, and names the huma
   assert.match(judge({}, unreadable, { settings }), /Sam/);
 });
 
-test('rule 2 names the read that came back empty, not every configured read', async () => {
+test('rule 2 names the read that came back empty, not every configured read', () => {
   const settings = config({ readTools: ['mcp__x__whoami', READ] });
   const reason = judge({}, unreadable, { settings });
   assert.match(reason, /mcp__x__get_workspace/);
   assert.doesNotMatch(reason, /mcp__x__whoami/);
 });
 
-test('rule 3: another workspace refuses, naming both values and the key; the same one passes', async () => {
+test('rule 3: another workspace refuses, naming both values and the key; the same one passes', () => {
   const reason = judge({}, record('https://tracker.example/other'));
   assert.match(reason, /"https:\/\/tracker\.example\/other"/);
   assert.match(reason, /"https:\/\/tracker\.example\/acme"/);
@@ -181,7 +181,7 @@ test('rule 3: another workspace refuses, naming both values and the key; the sam
   assert.equal(judge({}, record(EXPECT)), null);
 });
 
-test('the workspace compares as exact text, ignoring one trailing / on either side', async () => {
+test('the workspace compares as exact text, ignoring one trailing / on either side', () => {
   assert.equal(judge({}, record(`${EXPECT}/`)), null);
   assert.equal(judge({}, record(), { settings: config({ workspace: { expect: `${EXPECT}/`, field: 'url' } }) }), null);
   assert.match(judge({}, record(`${EXPECT}//`)), /tracker\.workspace\.expect/);
@@ -189,7 +189,7 @@ test('the workspace compares as exact text, ignoring one trailing / on either si
   assert.match(judge({}, record(`${EXPECT} `)), /tracker\.workspace\.expect/);
 });
 
-test('rule 4: a create value outside team.values refuses, naming both values and the key; a listed one passes', async () => {
+test('rule 4: a create value outside team.values refuses, naming both values and the key; a listed one passes', () => {
   const reason = judge({ team: 'Other' });
   assert.match(reason, /"Other"/);
   assert.match(reason, /"Notes"/);
@@ -198,7 +198,7 @@ test('rule 4: a create value outside team.values refuses, naming both values and
   assert.equal(judge({ team: 'Notes' }), null);
 });
 
-test('rule 4 passes the team key in a create field, in any case; a listed value stays exact text', async () => {
+test('rule 4 passes the team key in a create field, in any case; a listed value stays exact text', () => {
   assert.equal(judge({ team: 'NOTES' }), null);
   assert.equal(judge({ team: 'notes' }), null);
   assert.match(judge({ team: 'Other' }), /"Other"/);
@@ -208,17 +208,17 @@ test('rule 4 passes the team key in a create field, in any case; a listed value 
   assert.match(judge({ team: 'notes' }, record(), { settings }), /"notes"/);
 });
 
-test('a refused create value is told the team key would pass too', async () => {
+test('a refused create value is told the team key would pass too', () => {
   assert.match(judge({ team: 'Other' }), /team key "NOTES"/);
   assert.doesNotMatch(judge({ project: 'Other' }), /team key/);
 });
 
-test('the team key does not stand in for a project value', async () => {
+test('the team key does not stand in for a project value', () => {
   assert.match(judge({ project: 'NOTES' }), /"NOTES"/);
   assert.match(judge({ project: ['NOTES'] }), /tracker\.project\.values/);
 });
 
-test('an array in a create field is judged entry by entry, and the first that fails is named', async () => {
+test('an array in a create field is judged entry by entry, and the first that fails is named', () => {
   assert.equal(judge({ team: ['Notes'] }), null);
   assert.equal(judge({ team: ['Notes', 'notes', UUID] }), null);
   assert.equal(judge({ project: ['Notes launch', UUID] }), null);
@@ -232,12 +232,12 @@ test('an array in a create field is judged entry by entry, and the first that fa
   assert.match(judge({ team: [['Notes']] }), /team has \["Notes"\]/);
 });
 
-test('an empty array names no value to check, as an absent field does', async () => {
+test('an empty array names no value to check, as an absent field does', () => {
   assert.equal(judge({ team: [] }), null);
   assert.equal(judge({ project: [] }), null);
 });
 
-test('rule 4: a key with another prefix refuses, naming both values and the key; the team key passes in any case', async () => {
+test('rule 4: a key with another prefix refuses, naming both values and the key; the team key passes in any case', () => {
   for (const field of ['id', 'issueId']) {
     const reason = judge({ [field]: 'OTHER-12' });
     assert.match(reason, /"OTHER-12"/);
@@ -252,13 +252,13 @@ test('rule 4: a key with another prefix refuses, naming both values and the key;
   assert.equal(judge({ id: 'NoTeS-12' }), null);
 });
 
-test('a key field value not of the form <KEY>-<n> skips the team check only', async () => {
+test('a key field value not of the form <KEY>-<n> skips the team check only', () => {
   for (const id of [UUID, 'abc123', 'OTHER-', '-12', 'OTHER-12a', 'OTHER-12-3', 'two words-1', 12, ['OTHER-12']]) {
     assert.equal(judge({ id }), null, JSON.stringify(id));
   }
 });
 
-test('a UUID in a key field skips the team check and still runs the workspace and project checks', async () => {
+test('a UUID in a key field skips the team check and still runs the workspace and project checks', () => {
   assert.equal(judge({ id: UUID }), null);
   assert.match(judge({ id: UUID }, null), /mcp__x__get_workspace/);
   assert.match(judge({ id: UUID }, unreadable), /returned no url/);
@@ -267,13 +267,13 @@ test('a UUID in a key field skips the team check and still runs the workspace an
   assert.match(judge({ id: UUID, team: 'Other' }), /tracker\.team\.values/);
 });
 
-test('a UUID in a create field skips that check, in either case', async () => {
+test('a UUID in a create field skips that check, in either case', () => {
   assert.equal(judge({ team: UUID }), null);
   assert.equal(judge({ team: UUID.toUpperCase() }), null);
   assert.match(judge({ team: `${UUID}x` }), /tracker\.team\.values/);
 });
 
-test('rule 5: a project outside project.values refuses, naming both values; a listed one passes', async () => {
+test('rule 5: a project outside project.values refuses, naming both values; a listed one passes', () => {
   const reason = judge({ project: 'Other launch' });
   assert.match(reason, /"Other launch"/);
   assert.match(reason, /"Notes launch"/);
@@ -281,14 +281,14 @@ test('rule 5: a project outside project.values refuses, naming both values; a li
   assert.equal(judge({ project: 'Notes launch' }), null);
 });
 
-test('a UUID in the project field skips the check; a project identifier or slug must be listed', async () => {
+test('a UUID in the project field skips the check; a project identifier or slug must be listed', () => {
   assert.equal(judge({ project: UUID }), null);
   assert.match(judge({ project: 'P-NOTES-12' }), /"P-NOTES-12"/);
   assert.match(judge({ project: 'notes-launch' }), /"notes-launch"/);
   assert.equal(judge({ project: 'notes-launch' }, record(), { settings: config({ project: { values: ['Notes launch', 'notes-launch'], field: 'project' } }) }), null);
 });
 
-test('a field absent from the input, or null, has nothing to check; any other value that is not listed refuses', async () => {
+test('a field absent from the input, or null, has nothing to check; any other value that is not listed refuses', () => {
   assert.equal(judge({}), null);
   assert.equal(judge({ team: null, id: null, project: null }), null);
   assert.equal(judge(null), null);
@@ -298,12 +298,12 @@ test('a field absent from the input, or null, has nothing to check; any other va
   assert.match(judge({ project: '' }), /tracker\.project\.values/);
 });
 
-test('the team and project checks skip when their group is unset', async () => {
+test('the team and project checks skip when their group is unset', () => {
   assert.equal(judge({ team: 'Other', id: 'OTHER-1' }, record(), { settings: config({ team: null }) }), null);
   assert.equal(judge({ project: 'Other' }, record(), { settings: config({ project: null }) }), null);
 });
 
-test('the rules run in order: the first that a call breaks gives the reason', async () => {
+test('the rules run in order: the first that a call breaks gives the reason', () => {
   const input = { team: 'Other', id: 'OTHER-1', project: 'Other launch' };
   assert.match(judge(input, null), /mcp__x__get_workspace/);
   assert.doesNotMatch(judge(input, null), /tracker\.team/);
@@ -314,7 +314,7 @@ test('the rules run in order: the first that a call breaks gives the reason', as
   assert.match(judge({ project: 'Other launch' }), /tracker\.project\.values/);
 });
 
-test('the fields and values come from the config, so another tracker\'s names work the same', async () => {
+test('the fields and values come from the config, so another tracker\'s names work the same', () => {
   const settings = config({
     workspace: { expect: 'acme-org', field: 'organization' },
     readTools: ['mcp__y__me'],
@@ -333,7 +333,7 @@ test('the fields and values come from the config, so another tracker\'s names wo
   assert.equal(on({ team: 'Other', id: 'OTHER-1', project: 'Other' }), null);
 });
 
-test('a refusal is { match, reason }, and routine when it says so: match is the cause alone, and fits a deny row with its values', async () => {
+test('a refusal is { match, reason }, and routine when it says so: match is the cause alone, and fits a deny row with its values', () => {
   const REPORT_ROW_CHARS = 120;
   const causes = [
     [denial({}, null), /^this session has not read the connected workspace$/, ['match', 'reason', 'routine']],
@@ -352,7 +352,7 @@ test('a refusal is { match, reason }, and routine when it says so: match is the 
   }
 });
 
-test('the workspace mismatch reason asks the Human whether the key is wrong, and tells the agent not to edit it', async () => {
+test('the workspace mismatch reason asks the Human whether the key is wrong, and tells the agent not to edit it', () => {
   const reason = judge({}, record('https://tracker.example/other'));
   assert.match(reason, /Ask the Human whether tracker\.workspace\.expect is wrong/);
   assert.match(reason, /do not edit the key/);
@@ -361,7 +361,7 @@ test('the workspace mismatch reason asks the Human whether the key is wrong, and
   assert.match(judge({}, record('https://tracker.example/other'), { settings }), /Ask Sam whether/);
 });
 
-test('the team, issue key, and project refusals tell the agent not to edit the key', async () => {
+test('the team, issue key, and project refusals tell the agent not to edit the key', () => {
   for (const input of [{ team: 'Other' }, { team: ['Other'] }, { id: 'OTHER-1' }, { project: 'Other' }, { project: ['Other'] }]) {
     assert.match(judge(input), /, and do not edit the key\.$/, JSON.stringify(input));
   }
@@ -372,7 +372,7 @@ const twoServers = config({ readTools: ['mcp__a__read', 'mcp__b__read'], writeTo
 const readOn = (tool, value = EXPECT) => ({ value, unreadable: false, tool, at: '2026-11-04T10:00:00.000Z' });
 const NO_READ = /has not read the connected workspace/;
 
-test('a record counts only when its tool is on the write\'s server, and the refusal names that server\'s read', async () => {
+test('a record counts only when its tool is on the write\'s server, and the refusal names that server\'s read', () => {
   const onB = judge({}, readOn('mcp__a__read'), { settings: twoServers, tool: 'mcp__b__write' });
   assert.match(onB, NO_READ);
   assert.match(onB, /Call mcp__b__read, then write again/);
@@ -386,13 +386,13 @@ test('a record counts only when its tool is on the write\'s server, and the refu
   assert.doesNotMatch(none, /mcp__a__read/);
 });
 
-test('a record from another server names no value of that server: a wrong workspace there gives the no-read refusal', async () => {
+test('a record from another server names no value of that server: a wrong workspace there gives the no-read refusal', () => {
   const reason = judge({}, readOn('mcp__a__read', 'https://other.example'), { settings: twoServers, tool: 'mcp__b__write' });
   assert.match(reason, NO_READ);
   assert.doesNotMatch(reason, /other\.example/);
 });
 
-test('with no read tool listed on the write\'s server, the refusal asks the Human for one, since no read can clear it', async () => {
+test('with no read tool listed on the write\'s server, the refusal asks the Human for one, since no read can clear it', () => {
   const settings = config({ readTools: ['mcp__a__read'], writeTools: ['mcp__b__write'] });
   for (const seen of [null, readOn('mcp__a__read')]) {
     const reason = judge({}, seen, { settings, tool: 'mcp__b__write' });
@@ -402,13 +402,13 @@ test('with no read tool listed on the write\'s server, the refusal asks the Huma
   }
 });
 
-test('a record with no tool, or that is no record, belongs to no server and gives the no-read refusal', async () => {
+test('a record with no tool, or that is no record, belongs to no server and gives the no-read refusal', () => {
   for (const seen of [{}, { value: EXPECT }, { value: EXPECT, tool: 7 }, { value: EXPECT, tool: 'Bash' }, 'broken']) {
     assert.match(judge({}, seen), NO_READ, JSON.stringify(seen));
   }
 });
 
-test('a server ends at the first double underscore, so single underscores stay in its name and double ones stay in the tool', async () => {
+test('a server ends at the first double underscore, so single underscores stay in its name and double ones stay in the tool', () => {
   const held = (read, write) => judge({}, readOn(read), { settings: config({ readTools: [read], writeTools: [write] }), tool: write });
   assert.equal(held('mcp__plugin_a_b__read', 'mcp__plugin_a_b__write'), null);
   assert.equal(held('mcp__a__read', 'mcp__a__write_issue'), null);
@@ -419,7 +419,7 @@ test('a server ends at the first double underscore, so single underscores stay i
   assert.equal(held('mcp__a__read', 'mcp__a__b__write'), null, 'the limit: a server named a__b reads as server a');
 });
 
-test('a write tool with no server gets its own next step, even with a read tool that has no server either', async () => {
+test('a write tool with no server gets its own next step, even with a read tool that has no server either', () => {
   for (const readTools of [[READ], ['mcp__solo_read']]) {
     const settings = config({ readTools, writeTools: ['mcp__solo'] });
     for (const seen of [null, record(), readOn('mcp__solo_read')]) {
@@ -431,7 +431,7 @@ test('a write tool with no server gets its own next step, even with a read tool 
   }
 });
 
-test('skipMissingRecord also covers a record from another server, which no read could replace', async () => {
+test('skipMissingRecord also covers a record from another server, which no read could replace', () => {
   const options = { skipMissingRecord: true };
   const seen = readOn('mcp__a__read', 'https://other.example');
   assert.equal(judge({}, seen, { settings: twoServers, tool: 'mcp__b__write', options }), null);
@@ -439,7 +439,7 @@ test('skipMissingRecord also covers a record from another server, which no read 
   assert.match(judge({}, seen, { settings: twoServers, tool: 'mcp__a__write', options }), /tracker\.workspace\.expect/);
 });
 
-test('the only routine refusal is the no-read one a listed read clears', async () => {
+test('the only routine refusal is the no-read one a listed read clears', () => {
   assert.equal(denial({}, null).routine, true);
   assert.equal(denial({}, readOn('mcp__a__read'), { settings: twoServers, tool: 'mcp__b__write' }).routine, true, 'a read on another server asks for the same step');
   const others = [
@@ -454,7 +454,7 @@ test('the only routine refusal is the no-read one a listed read clears', async (
   for (const refusal of others) assert.equal(refusal.routine, undefined, refusal.match);
 });
 
-test('an unlisted tool is on a server the lists name, in neither list, with no name that says it reads', async () => {
+test('an unlisted tool is on a server the lists name, in neither list, with no name that says it reads', () => {
   const unlisted = (tool, settings = tracker) => unlistedTool(settings, tool);
   for (const tool of ['mcp__x__archive_issue', 'mcp__x__mark_notification', 'mcp__x__getter', 'mcp__x__listen', 'mcp__x__set_list', 'mcp__x__Get_issue']) {
     assert.equal(unlisted(tool), true, tool);
@@ -474,7 +474,7 @@ test('an unlisted tool is on a server the lists name, in neither list, with no n
   assert.equal(unlisted('mcp__c__archive', { readTools: [], writeTools: ['mcp__b*'] }), false, 'and names no server');
 });
 
-test('the module and its hooks name no tracker', async () => {
+test('the module and its hooks name no tracker', () => {
   for (const file of [MODULE, PRE, POST]) {
     assert.doesNotMatch(readFileSync(file, 'utf8'), /linear|jira|github|gitlab|asana|trello|notion|clickup|youtrack/iu, file);
   }
@@ -560,13 +560,13 @@ test('a read in the shape observed on Claude Code clears the write', async (t) =
   assertRuns(await write());
 });
 
-test('no tracker hook runs on a failed read, so it leaves the record as it was', async () => {
+test('no tracker hook runs on a failed read, so it leaves the record as it was', () => {
   const { hooks } = JSON.parse(readFileSync(path.join(PLUGIN, 'hooks/hooks.json'), 'utf8'));
   assert.ok(JSON.stringify(hooks.PostToolUse).includes('hook-tracker-post.mjs'));
   assert.ok(!JSON.stringify(hooks.PostToolUseFailure ?? []).includes('hook-tracker-post.mjs'));
 });
 
-test('the probe server speaks MCP: initialize, tools/list, a read, a write that does nothing, and a failed read', async () => {
+test('the probe server speaks MCP: initialize, tools/list, a read, a write that does nothing, and a failed read', () => {
   const lines = [
     { id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '0' } } },
     { method: 'notifications/initialized' },
@@ -588,7 +588,7 @@ test('the probe server speaks MCP: initialize, tools/list, a read, a write that 
   assert.equal(answers[4].result.isError, true);
 });
 
-test('the probe server exits at once under the test runner, which holds its stdin open', async () => {
+test('the probe server exits at once under the test runner, which holds its stdin open', () => {
   const line = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' });
   const { status, stdout } = spawnSync(process.execPath, [PROBE], { input: `${line}\n`, encoding: 'utf8', env: { ...process.env, NODE_TEST_CONTEXT: 'child-v8' } });
   assert.deepEqual([status, stdout], [0, '']);
@@ -1136,7 +1136,7 @@ const owedBody = 'Project run launch: TB-1, attempt 1, merged.';
 const driver = { role: 'driver', run: 'launch', owed: [{ key: 'TB-1', status: 'closed', label: null, sha256: bodyHash(owedBody) }, { key: 'TB-2', status: null, label: 'needs-decision', sha256: bodyHash('b') }] };
 const runJudge = (writer, short, input, more = {}) => runWriteRefusal({ writer, tool: `mcp__ticketbox__${short}`, input, trackers: [runTracker], ...more })?.reason ?? null;
 
-test('an issue\'s session writes only its own issue, by its key, through the adapter\'s run tools and fields', async () => {
+test('an issue\'s session writes only its own issue, by its key, through the adapter\'s run tools and fields', () => {
   assert.equal(runJudge(child, 'put_ticket', { ticket: 'TB-1', phase: 'active', points: 3 }), null);
   assert.equal(runJudge(child, 'put_ticket', { ticket: 'TB-1', edits: [{ op: 'replace', old: '- [ ] export', new: '- [x] export' }] }), null);
   assert.equal(runJudge(child, 'note_ticket', { ticket: 'TB-1', text: 'progress' }), null);
@@ -1151,7 +1151,7 @@ test('an issue\'s session writes only its own issue, by its key, through the ada
   assert.equal(runWriteRefusal({ writer: child, tool: 'mcp__elsewhere__put_ticket', input: { ticket: 'TB-2' }, trackers: [runTracker] }), null, 'a server no tracker serves');
 });
 
-test('an issue\'s session sets only the started status, and writes plain text', async () => {
+test('an issue\'s session sets only the started status, and writes plain text', () => {
   assert.match(runJudge(child, 'put_ticket', { ticket: 'TB-1', phase: 'closed' }), /sets phase to "closed", and an issue's session sets only "active"/u);
   for (const text of ['ping @lead', 'see [spec](https://x.example/a)', 'at evil.example/x', '![x](y.png)', '<b>bold</b>', 'hidden​mark', 'ref &#64;lead', 'www.example.org']) {
     assert.match(runJudge(child, 'note_ticket', { ticket: 'TB-1', text }), /note_ticket sets text with a mention, link, address, image, HTML, or hidden character/u, text);
@@ -1170,7 +1170,7 @@ test('an issue\'s session sets only the started status, and writes plain text', 
   assert.match(runJudge(child, 'note_ticket', { ticket: 'TB-1', text: 'run `rm -rf x`' }), /sets text with a mention/u, 'a code span around anything but one file or host name');
 });
 
-test('for an issue\'s session, the driver, and a held session, every call on a tracker server is a write unless its name reads', async () => {
+test('for an issue\'s session, the driver, and a held session, every call on a tracker server is a write unless its name reads', () => {
   for (const short of ['mark_notification', 'frob_ticket', 'archive_all']) {
     assert.match(runJudge(child, short, {}), /is not a write the run's tools make/u, short);
     assert.match(runJudge(driver, short, {}), /is not a write the run's tools make/u, short);
@@ -1181,7 +1181,7 @@ test('for an issue\'s session, the driver, and a held session, every call on a t
   for (const short of ['get_ticket', 'list_tickets', 'site_info', 'search_tickets']) assert.equal(runJudge(child, short, {}), null, short);
 });
 
-test('the driver writes only the status, label, and comment body a report owes, and only on an issue that owes one', async () => {
+test('the driver writes only the status, label, and comment body a report owes, and only on an issue that owes one', () => {
   assert.equal(runJudge(driver, 'put_ticket', { ticket: 'TB-1', phase: 'closed' }), null);
   assert.equal(runJudge(driver, 'note_ticket', { ticket: 'TB-1', text: owedBody }), null);
   assert.equal(runJudge(driver, 'put_ticket', { ticket: 'TB-2', tags: ['needs-decision'] }), null);
@@ -1196,7 +1196,7 @@ test('the driver writes only the status, label, and comment body a report owes, 
   assert.match(runJudge({ ...driver, owed: [] }, 'note_ticket', { ticket: 'TB-1', text: owedBody }), /driver writes only what/u, 'recorded: nothing owed');
 });
 
-test('a tracker\'s merge tool is refused to every session, pointing at gh pr merge; a merge-named tool anywhere to every marked one', async () => {
+test('a tracker\'s merge tool is refused to every session, pointing at gh pr merge; a merge-named tool anywhere to every marked one', () => {
   assert.match(runJudge(null, 'land_change', { change: '12' }), /land_change merges code through the tracker, past the merge guard\. Merge with `gh pr merge <number>`, which the merge guard judges/u, 'attended');
   for (const writer of [child, driver, { role: 'unattended' }, { role: 'held', why: 'x' }]) {
     assert.match(runJudge(writer, 'land_change', { change: '12' }), /merges code through the tracker.*only through the pr-auto-merge skill/u, writer.role);
@@ -1209,14 +1209,14 @@ test('a tracker\'s merge tool is refused to every session, pointing at gh pr mer
   assert.match(runJudge({ role: 'held', why: 'another session\'s start holds this one, which lapses within 5 minutes' }, 'note_ticket', { ticket: 'TB-1', text: 'x' }), /lapses within 5 minutes/u);
 });
 
-test('a tracker call that marks a change ready is refused to every session, pointing at gh pr ready', async () => {
+test('a tracker call that marks a change ready is refused to every session, pointing at gh pr ready', () => {
   for (const writer of [null, child, driver, { role: 'unattended' }]) {
     assert.match(runJudge(writer, 'edit_change', { change: '12', state: 'ready' }) ?? '', /edit_change marks a pull request ready through the tracker, past the ready hold\. Mark it ready with `gh pr ready <number>`/u, writer?.role ?? 'attended');
   }
   assert.equal(runJudge(null, 'edit_change', { change: '12', state: 'draft' }), null);
 });
 
-test('a server named otherwise in projectRun.mcpServers maps to its tracker by endpoint, and holds the child to its issue', async () => {
+test('a server named otherwise in projectRun.mcpServers maps to its tracker by endpoint, and holds the child to its issue', () => {
   const mcpServers = { tickets: { type: 'http', url: 'https://mcp.ticketbox.example/mcp' }, proxied: { command: 'npx', args: ['mcp-remote', 'https://mcp.ticketbox.example/sse'] }, other: { url: 'https://db.example/mcp' } };
   assert.equal(trackerOfEndpoint(mcpServers.tickets, [runTracker]), runTracker);
   assert.equal(trackerOfEndpoint(mcpServers.proxied, [runTracker]), runTracker);
@@ -1231,7 +1231,7 @@ test('a server named otherwise in projectRun.mcpServers maps to its tracker by e
 
 // A tracker connection the run rule cannot map: a stdio server under a name no adapter knows, whose command reaches no
 // endpoint an adapter names, as a team might list Linear's own server.
-test('a listed server no tracker maps holds an issue\'s session, the driver, and a held session to calls that read by their name', async () => {
+test('a listed server no tracker maps holds an issue\'s session, the driver, and a held session to calls that read by their name', () => {
   const mcpServers = { issues: { command: 'npx', args: ['-y', 'linear-mcp'] }, docs: { command: 'npx', args: ['-y', 'docs-mcp'] } };
   const judge = (writer, tool, more = {}) => runWriteRefusal({ writer, tool, input: { id: 'ENG-2', state: 'completed' }, mcpServers, ...more })?.reason ?? null;
   for (const writer of [{ role: 'child', run: 'launch', issue: 'ENG-1' }, driver]) {
@@ -1253,7 +1253,7 @@ test('a listed server no tracker maps holds an issue\'s session, the driver, and
   assert.equal(runWriteRefusal({ writer: { role: 'child', run: 'launch', issue: 'ENG-1' }, tool: 'mcp__issues__merge_pr', input: {}, mcpServers })?.reason.includes('named like a tool that merges'), true, 'a merge name keeps its own refusal');
 });
 
-test('to a role the run rule holds, a write verb anywhere in a name makes it a write, and query is no read', async () => {
+test('to a role the run rule holds, a write verb anywhere in a name makes it a write, and query is no read', () => {
   const mcpServers = { issues: { command: 'npx', args: ['-y', 'linear-mcp'] } };
   const strict = (short) => runCallKind({ tool: `mcp__issues__${short}`, mcpServers, strict: true })?.write ?? false;
   for (const short of ['get_or_create_item', 'list_and_update', 'getOrCreateItem', 'findOrCreate', 'fetch-and-delete', 'search_then_add_label', 'query', 'query_issues', 'read.and.save']) {
@@ -1270,7 +1270,7 @@ test('to a role the run rule holds, a write verb anywhere in a name makes it a w
   assert.equal(runCallKind({ tool: 'mcp__ticketbox__get_ticket', trackers: [runTracker], strict: true }), null);
 });
 
-test('with the base branch unread, an issue\'s session and the driver are refused every call no tracker maps unless it reads, and a held session always', async () => {
+test('with the base branch unread, an issue\'s session and the driver are refused every call no tracker maps unless it reads, and a held session always', () => {
   const unread = 'the base branch\'s config could not be read (git could not read the base branch\'s config.json)';
   const child = { role: 'child', run: 'launch', issue: 'ENG-1' };
   for (const writer of [child, driver]) {
@@ -1285,7 +1285,7 @@ test('with the base branch unread, an issue\'s session and the driver are refuse
   assert.equal(runWriteRefusal({ writer: { role: 'unattended' }, tool: 'mcp__anything__send', input: {}, unread }), null, 'unattended outside a run');
 });
 
-test('the run rule reads the host\'s raw name, the base branch\'s servers and lists, and the working copy\'s lists', async () => {
+test('the run rule reads the host\'s raw name, the base branch\'s servers and lists, and the working copy\'s lists', () => {
   const raw = runWriteRefusal({ writer: child, tool: 'mcp__ticketbox__put_ticket', rawTool: 'ticketbox/put_ticket', input: { ticket: 'TB-2' }, trackers: [runTracker] });
   assert.match(raw.reason, /ticket is "TB-2"/u);
   const own = { provider: 'ticketbox', servers: ['acme-box'] };
@@ -1297,7 +1297,7 @@ test('the run rule reads the host\'s raw name, the base branch\'s servers and li
   assert.equal(runWriteRefusal({ writer: child, tool: 'mcp__custom__edit', input: {}, trackers: [runTracker] }), null, 'unlisted and unknown: no write to judge');
 });
 
-test('the run rule judges a merge, a ready call, or a write, so the hook judges no read', async () => {
+test('the run rule judges a merge, a ready call, or a write, so the hook judges no read', () => {
   const kind = (short, more = {}) => runCallKind({ tool: `mcp__ticketbox__${short}`, trackers: [runTracker], ...more });
   assert.equal(kind('site_info'), null);
   assert.equal(kind('get_ticket'), null);
@@ -1312,7 +1312,7 @@ test('the run rule judges a merge, a ready call, or a write, so the hook judges 
   assert.equal(runCallKind({ tool: 42, trackers: [runTracker] }), null);
 });
 
-test('the shipped tracker declares the run tools, statuses, merge verbs, and ready calls the run rule reads', async () => {
+test('the shipped tracker declares the run tools, statuses, merge verbs, and ready calls the run rule reads', () => {
   for (const each of TRACKERS) {
     if (each.run === undefined) continue;
     for (const kind of ['issue', 'comment']) assert.ok(each.writeVerbs.some((verb) => nameMatches(verb, each.run[kind].tool)), `${each.id} ${kind}: its run tool is a write`);
@@ -1324,7 +1324,7 @@ test('the shipped tracker declares the run tools, statuses, merge verbs, and rea
   }
 });
 
-test('the shipped tracker\'s read-only tools a first word does not name pass for an issue\'s session', async () => {
+test('the shipped tracker\'s read-only tools a first word does not name pass for an issue\'s session', () => {
   const child = { role: 'child', run: 'launch', issue: 'ENG-1' };
   for (const tool of ['extract_images', 'get_attachment', 'list_comments']) assert.equal(runWriteRefusal({ writer: child, tool: `mcp__linear__${tool}`, input: {} }), null, tool);
   assert.match(runWriteRefusal({ writer: child, tool: 'mcp__linear__delete_comment', input: { id: 'c1' } })?.reason ?? '', /is not a write the run's tools make/u);

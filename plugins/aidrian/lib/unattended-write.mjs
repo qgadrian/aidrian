@@ -113,7 +113,7 @@ const refuser = (list) => (file, what, folder = false, allows = null, always = f
 //     folders, this process's and /tmp by default. `states`: every state folder of `project`, where only `specific`
 //     and `reviews` pass, even inside a temporary folder, as a state folder under /tmp is. `checkouts`: every checkout of
 //     the mark's repository, where a temporary folder passes nothing either, so a checkout under /tmp keeps its own rules;
-//     with checkouts git cannot list, no temporary folder passes.
+//     with checkouts git cannot list, no temporary folder passes. A main checkout that is no git repository has none.
 //   - refused, each refused wherever it lies, and `later()`, the user's and the system's git config as git names them
 //     (git.mjs gitConfigFiles), read only for a target that would pass.
 // Null when the mark names a main checkout but no project can be read there, or a read fails. `env` is the hook's, and
@@ -195,7 +195,7 @@ function ownPlaces(places, { mark, project, config, base, own, home, temp, sessi
   if (repo) gitRefused(refuse, repo);
   checkDeadline();
   const checkouts = repo ? repositoryCheckouts(mark.root, gitBudget) : null;
-  places.checkouts = [...(checkouts ?? []), mark.root, ...(repo ? [repo.top] : [])].map(real);
+  places.checkouts = repo ? [...(checkouts ?? []), repo.top].map(real) : [];
   const from = repo ? startFolder(mark, places.issueHeld, () => startedFolder(project, config, session, stateOptions(base, home))) : null;
   const start = from ? gitFolders(from, gitBudget()) : null;
   if (places.issueHeld) places.issue = ownIssue(project, config, mark, stateOptions(base, home));
@@ -227,7 +227,7 @@ function ownPlaces(places, { mark, project, config, base, own, home, temp, sessi
     refuse(path.join(attempt, 'work', '.git'), 'the attempt clone\'s pointer to its git folder');
   }
   stateWork(places, { project, config, base, home }, refuse);
-  places.temp = checkouts ? (temp ?? [tmpdir(), '/tmp']).filter(absolute).map(real) : [];
+  places.temp = repo && !checkouts ? [] : (temp ?? [tmpdir(), '/tmp']).filter(absolute).map(real);
 }
 
 // The other checkouts of the repository, `checkouts` (git.mjs repositoryCheckouts), that lie inside the session's worktree `top`, as

@@ -18,7 +18,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { forgeFor, forgeLoginStep, forgeTokenNote, forgeTokenVar } from './forges/index.mjs';
+import { forgeFor, forgeGitHelper, forgeLoginStep, forgeTokenNote, forgeTokenVar } from './forges/index.mjs';
 import { writeJson } from './confine-guard.mjs';
 import { readSmallJson } from './fs.mjs';
 import { programNames, programOnPath } from './hosts/process.mjs';
@@ -99,11 +99,36 @@ export function forgeToken({ forge, repository, keychain = null, platform = proc
   }
   if (only) return { problem: `${list[0].label}, the source the start checked, gives no token now (${whyNone(last)})`, notes };
   const tried = all.map((each) => each.label.replace(/ for \S+$/u, ''));
-  return { problem: `no source gives a forge token for ${host}, of ${tried.join(', ')} (the login: ${whyNone(last)}), and an issue session reaches the forge only with one; sign the forge CLI in with \`${forgeLoginStep(host)}\`, or add a keychain entry of service ${JSON.stringify(DEFAULT_KEYCHAIN_SERVICE)}, or name one in projectRun.forgeTokenKeychain of ${LOCAL_FILE}`, notes };
+  return { problem: `no source gives a forge token for ${host}, of ${tried.join(', ')} (the login: ${whyNone(last)}), and an issue session reaches the forge only with one; ${recovery({ host, platform }).join(', or ')}`, notes };
+}
+
+// The steps that would give a run on `host` a token, from the sources it can use on `platform`: the forge CLI's login
+// always; the machine's default keychain entry for github.com on macOS; a project keychain entry on macOS.
+function recovery({ host, platform }) {
+  const steps = [`sign the forge CLI in with \`${forgeLoginStep(host)}\``];
+  if (platform !== 'darwin') return steps;
+  if (String(host ?? '').toLowerCase() === 'github.com') steps.push(`add a keychain entry of service ${JSON.stringify(DEFAULT_KEYCHAIN_SERVICE)}`);
+  return [...steps, `name one in projectRun.forgeTokenKeychain of ${LOCAL_FILE}`];
 }
 
 // The variables that hand `token` to the session's sandboxed commands: the forge CLI's token variable for `host` alone.
 export const tokenVars = (token, host) => ({ [forgeTokenVar(host)]: token });
+
+// The command-scope git config that makes git take that token from the forge CLI's credential helper, for the session's
+// sandboxed commands, after the entries `env` already counts in GIT_CONFIG_COUNT: an empty `credential.helper`, which
+// drops every helper git read from the user's and the repository's config, since git reads the environment's last,
+// then the CLI's own helper (forgeGitHelper). Null when the CLI is not on an absolute folder of PATH.
+export function gitCredentialVars(env) {
+  const helper = forgeGitHelper(env);
+  if (!helper) return null;
+  const given = Number(env?.GIT_CONFIG_COUNT);
+  const count = Number.isSafeInteger(given) && given >= 0 && /^\d+$/u.test(String(env?.GIT_CONFIG_COUNT ?? '')) ? given : 0;
+  return {
+    GIT_CONFIG_COUNT: String(count + 2),
+    [`GIT_CONFIG_KEY_${count}`]: 'credential.helper', [`GIT_CONFIG_VALUE_${count}`]: '',
+    [`GIT_CONFIG_KEY_${count + 1}`]: 'credential.helper', [`GIT_CONFIG_VALUE_${count + 1}`]: helper,
+  };
+}
 
 // The token as the SessionStart hook of a confined session reads it again, outside the sandbox, from the main checkout
 // `root`, from the source `only` the start recorded: forgeToken's answer, each read stopped at TOKEN_TIMEOUT_MS.

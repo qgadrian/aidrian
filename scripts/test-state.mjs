@@ -56,8 +56,7 @@ if (!process.env.AIDRIAN_TEST_STATE) {
   const gitconfig = path.join(state, 'gitconfig');
   // An identity, though: git without one guesses an email from the machine's host name to write a reflog, and on a
   // machine whose name does not resolve, each clone, checkout, or commit then waits about 5 seconds for that lookup.
-  // And gh's credential helper for github.com, as `gh auth setup-git` writes it, which a project run's start requires.
-  writeFileSync(gitconfig, '[user]\n\tname = aidrian tests\n\temail = tests@aidrian.invalid\n[credential "https://github.com"]\n\thelper =\n\thelper = !gh auth git-credential\n');
+  writeFileSync(gitconfig, '[user]\n\tname = aidrian tests\n\temail = tests@aidrian.invalid\n');
   process.env.GIT_CONFIG_GLOBAL = gitconfig;
   process.env.GIT_CONFIG_NOSYSTEM = '1';
   process.on('exit', () => rmSync(state, { recursive: true, force: true }));

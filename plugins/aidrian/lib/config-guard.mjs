@@ -223,14 +223,22 @@ export const bashCall = (input) => input.tool_name === 'Bash';
 // names the key, or when the file it leaves parses to another value than the file on disk, which covers
 // `"off"` to `"on"`, a JSON escape, a removed key, and a file left unparsable. A patch changes it when a line it adds or
 // removes names the key, or the switch's own `patched` shape: a patch is not applied here, so a value on a line of its own
-// that names neither, or a key spelled with a JSON escape, is not seen. Each operation of a patch whose file, or the
-// file it moves to, is the local file named `local` is judged alone, against that file as it is on disk, from the
-// call's folder `cwd`.
+// that names neither, or a key spelled with a JSON escape, is not seen. Each operation of a patch whose file is the
+// local file named `local` is judged alone, against that file as it is on disk, from the call's folder `cwd`; one that
+// moves a file into it, by the moved file and its update lines, as the new local file.
 function changesSwitch({ tool_name: tool, tool_input: given, cwd }, file, { key, valueIn, patched }, local = path.basename(file ?? '')) {
   const edit = fileEditOf({ tool_name: tool, tool_input: given });
   if (edit?.shape === 'patch') {
-    return patchOperations(edit.text).some(({ files, text }) => files.filter((each) => path.basename(each).toLowerCase() === local.toLowerCase())
-      .some((each) => (typeof patched === 'function' ? patched(text, readText(path.resolve(typeof cwd === 'string' ? cwd : process.cwd(), each))) : patched.test(text))));
+    const from = (each) => path.resolve(typeof cwd === 'string' ? cwd : process.cwd(), each);
+    const isLocal = (each) => typeof each === 'string' && path.basename(each).toLowerCase() === local.toLowerCase();
+    const judged = (text, before) => (typeof patched === 'function' ? patched(text, before) : patched.test(text));
+    return patchOperations(edit.text).some(({ file, move, text }) => {
+      if (isLocal(file) && judged(text, readText(from(file)))) return true;
+      if (!isLocal(move)) return false;
+      // A move into the local file leaves the moved file, with this operation's update lines, as the new local file.
+      const moved = readText(from(file));
+      return switchIn(moved, valueIn) !== switchIn(readText(from(move)), valueIn) || judged(text, moved);
+    });
   }
   const written = edit?.shape === 'write' ? edit.content : edit?.shape === 'edit' ? edit.newText : undefined;
   if (typeof written !== 'string') return false;
@@ -239,17 +247,18 @@ function changesSwitch({ tool_name: tool, tool_input: given, cwd }, file, { key,
   return switchIn(before, valueIn) !== switchIn(edit.shape === 'write' ? written : editedText(before, given), valueIn);
 }
 
-// The operations of an apply_patch text, each { files, text }: the file its `*** Add File:`, `*** Update File:`, or
-// `*** Delete File:` header names, and a `*** Move to:` one, with the operation's own lines, headers included.
+// The operations of an apply_patch text, each { file, move, text }: the file its `*** Add File:`, `*** Update File:`, or
+// `*** Delete File:` header names, the file a `*** Move to:` line moves it to, or null, and the operation's own lines,
+// headers included.
 function patchOperations(text) {
   const operations = [];
   for (const line of String(text ?? '').split(/\r?\n/u)) {
     const header = /^\*\*\* (?:Add|Update|Delete) File: (.+)$/u.exec(line);
     const move = /^\*\*\* Move to: (.+)$/u.exec(line);
-    if (header) operations.push({ files: [header[1].trim()], text: `${line}\n` });
+    if (header) operations.push({ file: header[1].trim(), move: null, text: `${line}\n` });
     else if (/^\*\*\* (?:Begin|End) Patch/u.test(line)) continue;
     else if (operations.length) {
-      if (move) operations.at(-1).files.push(move[1].trim());
+      if (move) operations.at(-1).move = move[1].trim();
       operations.at(-1).text += `${line}\n`;
     }
   }

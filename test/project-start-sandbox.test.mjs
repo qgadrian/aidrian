@@ -783,7 +783,7 @@ test('an HTTPS origin that the user\'s git config rewrites to SSH with url.<base
 
 test('a clone that would push to another URL than the access check read, through the user\'s pushInsteadOf, halts the start', (t) => {
   const global = testGlobalConfig(t);
-  writeFileSync(global, '[url "git@github.com:acme/"]\n\tpushInsteadOf = https://github.com/acme/\n[credential "https://github.com"]\n\thelper = !gh auth git-credential\n');
+  writeFileSync(global, '[url "git@github.com:acme/"]\n\tpushInsteadOf = https://github.com/acme/\n');
   const fx = runFixture(t);
   halted(fx, fx.cmd(['start', 'launch', 'ENG-1']), /the attempt's clone pushes to git@github\.com:acme\/widgets\.git, not https:\/\/github\.com\/acme\/widgets\.git, the URL the host's access check read/u);
 });

@@ -6,7 +6,7 @@
 // payloads are: a second forge reshapes them with its adapter.
 
 import { apiWrite, changeNotFound, CONFIG_COMMANDS, createGithubForge, domains, GITHUB_JSON, isLogin, isTrustedCommenter, MAX_BODY, REF_COMMANDS, REVIEWS_PAGE, servedRepository, TOKEN_VARS, WORKFLOW_FOLDERS } from './github.mjs';
-import { HELPER_STEP, isCliHelper, loginStep, tokenNote, tokenVarFor } from './github-token.mjs';
+import { gitHelperValue, loginStep, tokenNote, tokenVarFor } from './github-token.mjs';
 import { remoteIdentity, repoIdentity } from './identity.mjs';
 
 // A repository's `{ host, path }` from a remote or a `-R` value: the facade's own helper (identity.mjs), which reads
@@ -45,9 +45,9 @@ export const forgeTokenVars = () => [...TOKEN_VARS];
 // step that signs the CLI in; and forgeTokenNote(token), why a token reaches more than the run's repository, or null.
 // The token itself comes from forgeFor's `authToken({ host })`, and whether it may push from its `tokenCanPush`.
 export const forgeTokenVar = (host) => tokenVarFor(host);
-// Whether a git credential helper is the forge CLI's own, which answers git with that token, and the step that sets it.
-export const forgeCredentialHelper = (value) => isCliHelper(value);
-export const forgeHelperStep = () => HELPER_STEP;
+// The git credential helper, as a `credential.helper` value, that answers git with the token the forge CLI's variable
+// holds, from the CLI on `env`'s PATH; null when the CLI is not there.
+export const forgeGitHelper = (env) => gitHelperValue(env);
 export const forgeLoginStep = (host) => loginStep(host);
 export const forgeTokenNote = (token) => tokenNote(token);
 

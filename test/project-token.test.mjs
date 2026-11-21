@@ -19,10 +19,10 @@ import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import { confineReads, sandboxSettings, writeEnvFile } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
-import { accessProblem, confinedTokenVars } from '../plugins/aidrian/lib/project-start.mjs';
+import { confinedTokenVars } from '../plugins/aidrian/lib/project-start.mjs';
 import { receivePackStatus, tokenMayPush } from '../plugins/aidrian/lib/forges/github-token.mjs';
 import { confineCheck } from '../plugins/aidrian/lib/project-confine.mjs';
-import { CLAIM_VAR, DEFAULT_KEYCHAIN_SERVICE, forgeToken, handoffProblem, keychainToken, tokenVars } from '../plugins/aidrian/lib/project-token.mjs';
+import { CLAIM_VAR, DEFAULT_KEYCHAIN_SERVICE, forgeToken, gitCredentialVars, handoffProblem, keychainToken, tokenVars } from '../plugins/aidrian/lib/project-token.mjs';
 import { markPending } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { DRIVER, FIXTURE_TOKEN, runFixture, STARTED } from './project-start-fixture.mjs';
 
@@ -155,7 +155,7 @@ test('a Claude Code start with no forge token to hand its session halts, recordi
   const none = { ...fx.forge, authToken: () => { throw new Error('no oauth token found for github.com'); } };
   const halted = fx.cmd(['start', 'launch', 'ENG-1'], { forge: none });
   assert.equal(halted.exitCode, 1, halted.out.join('\n'));
-  assert.equal(halted.out[0], 'halt no source gives a forge token for github.com, of the forge CLI\'s login (the login: no oauth token found for github.com), and an issue session reaches the forge only with one; sign the forge CLI in with `gh auth login --hostname github.com --git-protocol https`, or add a keychain entry of service "aidrian-project-run", or name one in projectRun.forgeTokenKeychain of .aidrian.local.json');
+  assert.equal(halted.out[0], 'halt no source gives a forge token for github.com, of the forge CLI\'s login (the login: no oauth token found for github.com), and an issue session reaches the forge only with one; sign the forge CLI in with `gh auth login --hostname github.com --git-protocol https`');
   assert.deepEqual(fx.claude.starts(), [], 'no claude --bg');
   assert.deepEqual(fx.rows().filter((row) => row.event === 'start'), [], 'nothing recorded');
   const started = fx.cmd(['start', 'launch', 'ENG-1']);
@@ -220,32 +220,15 @@ test('the machine\'s default keychain entry is read for github.com alone: an Ent
   const forge = login('ghe_LOGIN0123456789');
   const read = forgeToken({ forge, repository: enterprise, platform: 'darwin', exec: machineOnly.exec });
   assert.deepEqual([read.token, read.id], ['ghe_LOGIN0123456789', 'login'], 'the Enterprise host\'s own login, never the machine entry');
+  // With no token at all, the recovery names only the sources the run can use: no machine entry off github.com.
+  const none = forgeToken({ forge: login(''), repository: enterprise, platform: 'darwin', exec: entries({}).exec });
+  assert.match(none.problem, /; sign the forge CLI in with `gh auth login --hostname ghe\.example\.com --git-protocol https`, or name one in projectRun\.forgeTokenKeychain of \.aidrian\.local\.json$/u);
+  assert.doesNotMatch(none.problem, /aidrian-project-run/u);
   assert.deepEqual(machineOnly.read, [], 'the machine entry is not even read');
   assert.deepEqual(forge.calls, [{ host: 'ghe.example.com' }]);
   // The same machine, on github.com, takes the machine entry.
   assert.equal(forgeToken({ forge: login(), repository: REPOSITORY, platform: 'darwin', exec: entries(both).exec }).id, 'machine');
   assert.equal(forgeToken({ forge: login(), repository: enterprise, platform: 'darwin', only: 'machine', exec: entries(both).exec }).problem, 'the source the start checked, machine, is not one this machine reads now');
-});
-
-test('a start halts unless one of git\'s credential helpers for the origin is the forge CLI\'s', (t) => {
-  const root = mkdtempSync(path.join(tmpdir(), 'aidrian-helper-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const main = path.join(root, 'main');
-  execFileSync('git', ['init', '-q', main]);
-  execFileSync('git', ['-C', main, 'remote', 'add', 'origin', 'https://github.com/acme/widgets.git']);
-  const cap = { access: () => null, forgeTokenEnv: true };
-  const forge = { repository: () => ({ permissions: { push: true } }), authToken: () => FIXTURE_TOKEN, tokenCanPush: () => ({ may: true, why: null }) };
-  const ask = (config) => {
-    const file = path.join(root, `gitconfig-${Math.random().toString(16).slice(2)}`);
-    writeFileSync(file, `[user]\n\tname = t\n\temail = t@example.invalid\n${config}`);
-    return accessProblem({ cap, forge, repository: REPOSITORY, env: { ...process.env, GIT_CONFIG_GLOBAL: file, GIT_CONFIG_NOSYSTEM: '1' }, guarded: [], main, platform: 'linux' });
-  };
-  assert.deepEqual(ask(''), { halt: 'git\'s credential helpers for https://github.com (none) hold none of the forge CLI\'s, and the issue session\'s git push gets the forge token only through it; run `gh auth setup-git`, then start again' });
-  assert.equal(ask('[credential]\n\thelper = osxkeychain\n').halt, 'git\'s credential helpers for https://github.com (`osxkeychain`) hold none of the forge CLI\'s, and the issue session\'s git push gets the forge token only through it; run `gh auth setup-git`, then start again');
-  // gh's own, as `gh auth setup-git` writes it for the host, or as the plain helper, passes.
-  for (const config of ['[credential "https://github.com"]\n\thelper =\n\thelper = !/opt/homebrew/bin/gh auth git-credential\n', '[credential]\n\thelper = osxkeychain\n\thelper = !gh auth git-credential\n']) {
-    assert.equal(ask(config).halt, undefined, config);
-  }
 });
 
 test('preflight says ok access with a note naming the token\'s source, and a blocker when there is none', (t) => {
@@ -295,6 +278,9 @@ test('the SessionStart hook hands GH_TOKEN, from the source the start checked, t
   assert.equal(statSync(file).mode & 0o777, 0o600);
   const seen = spawnSync('/bin/sh', ['-c', `. '${file}'; printf '%s' "$GH_TOKEN"`], { encoding: 'utf8' });
   assert.equal(seen.stdout, hookToken);
+  // And git's command-scope config: every helper of the user's and the repository's config dropped, then gh's own.
+  const git = spawnSync('/bin/sh', ['-c', `. '${file}'; printf '%s|' "$GIT_CONFIG_COUNT" "$GIT_CONFIG_KEY_0" "$GIT_CONFIG_VALUE_0" "$GIT_CONFIG_KEY_1" "$GIT_CONFIG_VALUE_1"`], { encoding: 'utf8' });
+  assert.equal(git.stdout, `2|credential.helper||credential.helper|!'${path.join(fx.bin, 'gh')}' auth git-credential|`);
   // The hook recorded the handoff for the start's proof check, with nothing secret.
   const attempt = path.dirname(work);
   rmSync(path.join(attempt, 'token-handoff.json'), { force: true });
@@ -305,7 +291,7 @@ test('the SessionStart hook hands GH_TOKEN, from the source the start checked, t
   // record of the successful handoff as it was.
   const bare = envFile('bare');
   const unclaimed = hook(STARTED[0].session, work, bare);
-  assert.doesNotMatch(text(bare), /GH_TOKEN/u);
+  assert.doesNotMatch(text(bare), /GH_TOKEN|GIT_CONFIG/u);
   assert.match(unclaimed.stdout, /Forge token: not handed to this session: this session does not hold the claim the start gave the session it launched/u);
   assert.deepEqual(JSON.parse(readFileSync(path.join(path.dirname(work), 'token-handoff.json'), 'utf8')), { handed: true }, 'a stranger overwrites no verdict');
   // Another session in that clone, and the session elsewhere, get none either, even with the claim.
@@ -319,7 +305,9 @@ test('the SessionStart hook hands GH_TOKEN, from the source the start checked, t
   let asked = null;
   const claimed = { ...fx.env, [CLAIM_VAR]: claim };
   const vars = confinedTokenVars({ session: STARTED[0].session, cwd: work, env: claimed, token: (given) => ((asked = given), { token: FIXTURE_TOKEN, source: 'the forge CLI\'s login for github.com' }) });
-  assert.deepEqual(vars, { vars: { GH_TOKEN: FIXTURE_TOKEN }, folder: attempt });
+  assert.equal(vars.folder, attempt);
+  assert.equal(vars.vars.GH_TOKEN, FIXTURE_TOKEN);
+  assert.deepEqual(Object.keys(vars.vars).filter((name) => name.startsWith('GIT_CONFIG')).sort(), ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_KEY_1', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_VALUE_1']);
   assert.deepEqual([asked.root, asked.repository, asked.keychain, asked.env, asked.only], [findProject(fx.dir).root, { host: 'github.com', owner: 'acme', name: 'widgets' }, null, claimed, 'login']);
   assert.deepEqual(confinedTokenVars({ session: STARTED[0].session, cwd: work, env: claimed, token: () => ({ problem: 'the login: gone' }) }), { problem: 'the login: gone', folder: attempt });
   // The same source now giving another token, as after a new login: a failed handoff, never the new token.
@@ -339,7 +327,7 @@ test('in the launch window, while the host has not named the session, only the s
   const folder = path.dirname(work);
   assert.deepEqual(confinedTokenVars({ session: stranger, cwd: work, env: fx.env, token }), { problem: 'this session does not hold the claim the start gave the session it launched, so it is not that session', folder: null });
   assert.deepEqual(confinedTokenVars({ session: stranger, cwd: work, env: { ...fx.env, [CLAIM_VAR]: 'f'.repeat(48) }, token }).problem, 'this session does not hold the claim the start gave the session it launched, so it is not that session', 'a wrong claim');
-  assert.deepEqual(confinedTokenVars({ session: stranger, cwd: work, env: { ...fx.env, [CLAIM_VAR]: claim }, token }), { vars: { GH_TOKEN: FIXTURE_TOKEN }, folder }, 'the launched session, before the host names it');
+  assert.equal(confinedTokenVars({ session: stranger, cwd: work, env: { ...fx.env, [CLAIM_VAR]: claim }, token }).vars.GH_TOKEN, FIXTURE_TOKEN, 'the launched session, before the host names it');
 });
 
 test('the hook reads only the source the start checked: a project entry that fails then gives no token, with no fall back', () => {
@@ -399,4 +387,14 @@ test('a credential that disappears after the access check fails the start: the h
   // A start that expected no token, with no claim, is not held to one.
   rmSync(path.join(folder, 'token-claim.json'));
   assert.equal(handoffProblem(folder), null);
+});
+
+test('git takes the token through gh\'s helper alone: an empty helper resets the ones git read, appended after any command-scope entries', (t) => {
+  const bin = mkdtempSync(path.join(tmpdir(), 'aidrian-gitvars-'));
+  t.after(() => rmSync(bin, { recursive: true, force: true }));
+  writeFileSync(path.join(bin, 'gh'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const helper = `!'${path.join(bin, 'gh')}' auth git-credential`;
+  assert.deepEqual(gitCredentialVars({ PATH: bin }), { GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_VALUE_0: '', GIT_CONFIG_KEY_1: 'credential.helper', GIT_CONFIG_VALUE_1: helper });
+  assert.deepEqual(gitCredentialVars({ PATH: bin, GIT_CONFIG_COUNT: '1' }), { GIT_CONFIG_COUNT: '3', GIT_CONFIG_KEY_1: 'credential.helper', GIT_CONFIG_VALUE_1: '', GIT_CONFIG_KEY_2: 'credential.helper', GIT_CONFIG_VALUE_2: helper }, 'after the entry already there');
+  assert.equal(gitCredentialVars({ PATH: '' }), null, 'no gh, no helper');
 });

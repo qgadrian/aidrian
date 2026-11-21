@@ -496,10 +496,8 @@ No `sandbox.excludedCommands` is passed. Three conditions hold on top of the san
   the start reads it outside the sandbox, from the first of the project's keychain entry
   ([`projectRun.forgeTokenKeychain`](../config.md#project-run) in `.aidrian.local.json`), the machine's default entry,
   service `aidrian-project-run`, both on macOS, the default entry for a github.com run alone, so no github.com token
-  reaches another host, and `gh auth token --hostname <host>`. It halts when none gives one; when none of git's
-  credential helpers for the origin (`credential.<origin>.helper` and `credential.helper`) is gh's, which is how the
-  session's git push gets the token (fix: `gh auth setup-git`); or when that very token may not push, whatever the
-  driver's own login may do: the start asks GitHub for the
+  reaches another host, and `gh auth token --hostname <host>`. It halts when none gives one, or when that very token
+  may not push, whatever the driver's own login may do: the start asks GitHub for the
   repository's receive-pack advertisement, `https://<host>/<owner>/<name>.git/info/refs?service=git-receive-pack`,
   with the token as basic auth, from a Node process with no shell that gets the token in its environment. GitHub
   answers 200 with `application/x-git-receive-pack-advertisement` only to a token that may write the contents, and
@@ -510,7 +508,10 @@ No `sandbox.excludedCommands` is passed. Three conditions hold on top of the san
   opened in the clone gets it, before the host names the launched one or after; it reads the token again, outside the
   sandbox, from that one source, never another, hands it over only when its SHA-256 is the one the start recorded, and
   appends it, in a file it first makes owner-only, to the file `CLAUDE_ENV_FILE` names, as it does the cache
-  variables. A source that gives no token then, or another one, or a session without the claim, gets a line saying
+  variables. With it go git's command-scope config entries, after any `GIT_CONFIG_COUNT` the environment already
+  holds: `credential.helper` empty, which drops every helper git read from the user's and the repository's config,
+  since git reads the environment's last, then `credential.helper` set to gh's own `auth git-credential`, by the
+  absolute path of the gh on PATH, so git's push takes the token whatever helpers the config names. A source that gives no token then, or another one, or a session without the claim, gets a line saying
   why instead, and no token. The hook of the session that holds the claim, and only it, records in the attempt's
   folder whether it handed the token over, and why not, nothing secret, and the start's check of the sandbox proof fails a start whose record is missing or says not
   handed, so the run halts as on a failed proof. The host reads that file in its own
@@ -642,6 +643,8 @@ Before `verified` changes, a live Claude Code must show every one of these, each
    answer inside the sandbox, so `~/Library/Keychains` stays denied and the token goes through the forge CLI's token
    variable, which `secretVars` keeps. Verified live: the start's push probe (`receivePackStatus`), run with a project's
    dedicated keychain token, answered 200 for the repository that token may write and 403 for another repository.
+   Verified live too: with the hook's command-scope helper entries, `git credential fill` for github.com answered with
+   `GH_TOKEN`'s value though the user's config named `osxkeychain`, which alone did not.
 8. The same from a subagent, a background Bash command, and Monitor.
 9. With no `bwrap`, nothing runs.
 10. An invalid `--settings` value: what the host does with it. And each key the start passes that no earlier check

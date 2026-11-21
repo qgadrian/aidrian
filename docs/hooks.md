@@ -49,7 +49,8 @@ the package managers' caches in its `cache` folder, on a host that takes it: Cla
 `CLAUDE_ENV_FILE` ([Dependency installs](providers/claude-code.md#dependency-installs)). On a host that declares
 `forgeTokenEnv`, as Claude Code does, it then hands over the forge token as `GH_TOKEN` the same way, only to a session
 whose environment holds the claim the start gave the session it launched, read again outside the sandbox from the one
-source the start checked, and only the token the start checked, by its SHA-256
+source the start checked, and only the token the start checked, by its SHA-256, with git's command-scope config that
+makes git take it from gh's own credential helper alone
 ([Project start](providers/claude-code.md#project-start)). It records in the attempt's folder whether it handed the
 token over, which the start's proof check reads. It prints nothing for either, but a line saying why the token was not
 handed over.

@@ -2011,8 +2011,8 @@ state folder and any other active run but `RUN`, a host instruction file, such a
 runs folder, which every attempt's clone would load, `projectRun.allow` through the forge, the machine's switch, the host's
 start and its `projectRun.unverifiedHosts`, the host's access check (push rights, an HTTPS origin, nothing outside the
 sandbox that `projectRun.outsideSandbox` does not name, and, on Claude Code, a forge token to hand the issue sessions,
-from the project's keychain entry `projectRun.forgeTokenKeychain` names, the machine's default entry `aidrian-project-run`,
-or the forge CLI's login, in that order, that the forge's push probe with that token says may write the repository, with a
+from the project's keychain entry `projectRun.forgeTokenKeychain` names, the machine's default entry `aidrian-project-run`
+for a github.com run alone, or the forge CLI's login, in that order, that the forge's push probe with that token says may write the repository, with a
 `note token:` line that names the source it used and, for any token but a fine-grained one, its kind, never the token
 itself), and whether the host carries on by itself after a usage limit
 (in Claude Code, `"autoContinueAtUsageLimit": true` in the user's own settings, the one source preflight reads, so managed policy and `--settings` go unverified; the host ignores it in a project's settings), since

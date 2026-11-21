@@ -708,6 +708,11 @@ test('a subagent may not change the keychain entry a project run takes its forge
   }
   // A local file that selects no entry takes a patch or an edit of another key, as before.
   writeFileSync(local, `${JSON.stringify({ names: { human: 'off' } }, null, 2)}\n`);
+  // But a move into it of a file that would select one is judged as the new local file, and refused.
+  writeFileSync(path.join(dir, 'staged.json'), JSON.stringify({ projectRun: { forgeTokenKeychain: { service: 'other', account: 'me' } } }));
+  const into = await run(subagent(dir, 'apply_patch', { command: `*** Begin Patch\n*** Update File: ${path.join(dir, 'staged.json')}\n*** Move to: ${local}\n*** End Patch\n` }));
+  assert.equal(into.status, 2, into.stderr);
+  assert.match(into.stderr, /projectRun\.forgeTokenKeychain/u);
   assert.equal((await run(subagent(dir, 'apply_patch', patch(local, '-  "names": {}', '+  "names": { "human": "x" }')))).status, 0);
   assert.equal((await run(subagent(dir, 'Edit', { file_path: local, old_string: '"human": "off"', new_string: '"human": "on"' }))).status, 0);
 });

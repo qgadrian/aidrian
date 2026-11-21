@@ -24,9 +24,8 @@ import path from 'node:path';
 
 import { ATTEMPT_KEEP, attemptOf, GIT_PLACEHOLDERS, KEPT_FOLDERS } from './attempt-clone.mjs';
 import { isWithin, readSmallJson, resolvedPath } from './fs.mjs';
-import { forgeCredentialHelper, forgeHelperStep } from './forges/index.mjs';
 import { gateGit } from './git.mjs';
-import { claimedSource, forgeToken, sessionToken, tokenDigest, tokenVars } from './project-token.mjs';
+import { claimedSource, forgeToken, gitCredentialVars, sessionToken, tokenDigest, tokenVars } from './project-token.mjs';
 import { loadConfig } from './config.mjs';
 import { findProject, stateRoot } from './project.mjs';
 import { CACHE_VAR_NAMES, NPM_CONFIGS, varsProblem } from './project-registries.mjs';
@@ -89,8 +88,6 @@ export function hostStartProblem(cap, policy, env) {
 export function accessProblem({ cap, forge, repository, env, home, guarded, main, platform = process.platform, allowed = [], localBinding = false, keychain = null, exec }) {
   const pushed = pushAccess({ cap, forge, repository, env, home, guarded, main, platform, allowed, localBinding });
   if (!pushed?.pushUrl || cap.forgeTokenEnv !== true) return pushed;
-  const helper = helperProblem(main, pushed.pushUrl, env);
-  if (helper) return { halt: helper };
   const read = forgeToken({ forge, repository, keychain, platform, env, ...(exec ? { exec } : {}) });
   if (read.problem) return { halt: read.problem, token: { notes: read.notes } };
   const token = { id: read.id, source: read.source, notes: read.notes, digest: tokenDigest(read.token) };
@@ -109,25 +106,6 @@ function tokenPushProblem({ forge, repository, read }) {
   }
   if (answer?.may === true) return null;
   return `the forge token from ${read.source} may not push to ${named}, as the forge's push probe with it answers (${answer?.why ?? 'no answer'}); give that source a token that may write the repository's contents`;
-}
-
-// Why git, pushing to `pushUrl` from the main checkout `main` under `env`, would get no forge token, or null: the
-// session's git reads the token only through the forge CLI's credential helper, so one of the helpers git takes for
-// that URL's origin, `credential.<origin>.helper` and `credential.helper`, must be the CLI's (forgeCredentialHelper).
-function helperProblem(main, pushUrl, env) {
-  let origin;
-  try {
-    origin = new URL(pushUrl).origin;
-  } catch {
-    return null;
-  }
-  const values = [`credential.${origin}.helper`, 'credential.helper'].flatMap((key) => {
-    const read = gateGit(['config', '--get-all', key], main, { timeout: 30_000, env });
-    return read.status === 0 ? read.stdout.split('\n').map((line) => line.trim()).filter(Boolean) : [];
-  });
-  if (values.some(forgeCredentialHelper)) return null;
-  const named = values.length ? values.map((each) => `\`${each.slice(0, 80)}\``).join(', ') : 'none';
-  return `git's credential helpers for ${origin} (${named}) hold none of the forge CLI's, and the issue session's git push gets the forge token only through it; run \`${forgeHelperStep()}\`, then start again`;
 }
 
 function pushAccess({ cap, forge, repository, env, home, guarded, main, platform, allowed, localBinding }) {
@@ -418,7 +396,7 @@ export function confinedShellVars({ session, cwd, env = process.env, home }) {
 // environment holds the start's claim (project-token.mjs claimedSource), so no other session opened in the clone does,
 // while the host has yet to name it or after. The token is read again, outside the sandbox, from the one source the
 // start checked, never another (sessionToken), and handed over only when it is the token the start checked, by its
-// digest. `token` is a test's stand-in for that read. Never throws.
+// digest, with the command-scope git config that makes git take it from the forge CLI's helper (gitCredentialVars). `token` is a test's stand-in for that read. Never throws.
 export function confinedTokenVars({ session, cwd, env = process.env, home, token = sessionToken }) {
   const found = safely(() => confinedAttempt({ session, cwd, env, home }));
   if (!found) return null;
@@ -433,7 +411,10 @@ export function confinedTokenVars({ session, cwd, env = process.env, home, token
     const read = token({ root: project.root, repository, keychain: project.localForgeTokenKeychain, env, only: claim.source });
     if (!read.token) return { problem: read.problem, folder };
     if (tokenDigest(read.token) !== claim.token) return { problem: `${read.source} now gives another token than the one the start checked`, folder };
-    return { vars: tokenVars(read.token, repository.host), folder };
+    // git takes the token only through the forge CLI's helper, set in the same handoff, in the command scope.
+    const git = gitCredentialVars(env);
+    if (!git) return { problem: 'the forge CLI is not on an absolute folder of PATH, so git could not take the token through it', folder };
+    return { vars: { ...tokenVars(read.token, repository.host), ...git }, folder };
   } catch (error) {
     return { problem: `the token could not be read (${String(error?.message ?? error).split('\n')[0].slice(0, 200)})`, folder };
   }

@@ -5,6 +5,8 @@
 
 import { execFileSync } from 'node:child_process';
 
+import { programNames, programOnPath } from '../hosts/process.mjs';
+
 // The variable gh reads a token for `host` from first, and `gh auth git-credential`, the helper `gh auth setup-git`
 // writes, too, so git's HTTPS push takes it as well (`gh help environment`): GH_TOKEN for github.com and a ghe.com
 // tenancy, GH_ENTERPRISE_TOKEN for any other host, a GitHub Enterprise Server.
@@ -72,7 +74,10 @@ export function tokenMayPush(repo, { host, token, probe = receivePackStatus }) {
   throw new Error(`the forge answered the push probe with ${Number.isFinite(status) ? status : 'no status'}`);
 }
 
-// Whether a git credential helper's value is gh's own, the one `gh auth setup-git` writes, which answers git with the
-// forge token the session's environment holds; and the step that writes it.
-export const isCliHelper = (value) => /(?:^|[\s/!"'])gh(?:\.exe)?["']?\s+auth\s+git-credential\b/u.test(String(value ?? ''));
-export const HELPER_STEP = 'gh auth setup-git';
+// The git credential helper that answers git with the token in gh's variable: gh's own `auth git-credential`, by the
+// absolute path of the gh first on an absolute folder of `env`'s PATH, quoted for the shell git runs a `!` helper in;
+// or null when no gh is there.
+export function gitHelperValue(env) {
+  const gh = programOnPath(env, programNames('gh'));
+  return gh ? `!'${gh.replaceAll("'", "'\\''")}' auth git-credential` : null;
+}

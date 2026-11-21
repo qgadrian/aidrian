@@ -2,7 +2,10 @@
 // scripts/hook-tracker-pre.mjs). An issue settles once: done after a merge the forge confirmed, or parked. Each settle
 // owes one report on that issue, built here from the ledger and the result file alone, never from the tracker: a status,
 // a label, and a comment body, with the body's sha256. The driver posts exactly that, then runs `aidrian project
-// recorded`, which closes it; lib/tracker-guard.mjs runWriteRefusal refuses the driver any other tracker write.
+// recorded`, which closes it; lib/tracker-guard.mjs runWriteRefusal refuses the driver any other tracker write but one:
+// the started status of an issue that runs (startedWrites), which it sets once right after the start. That write owes
+// no report and leaves no record. It does not check the tracker's current status, so each write can set the issue back
+// to started once, when the status moved after init or between attempts.
 //
 // The result file is read again as untrusted: `results/<issue>.json` is read without following a link, under
 // RESULT_CAP, must name this run, issue, and attempt, and passes validateResult again, whose cleanText strips control,
@@ -21,7 +24,7 @@ import { sessionIdentity } from './hosts/index.mjs';
 import { CAPS, cleanText, RESULT_CAP, RESULT_STATUSES, validateResult } from './project-result.mjs';
 import { findProject } from './project.mjs';
 import { appendToRun, readCapped, readRun, runFolder, runPlace } from './project-run.mjs';
-import { currentDriver, custody, runStore } from './project-run-guard.mjs';
+import { currentDriver, custody, runStore, startsOf } from './project-run-guard.mjs';
 import { runDriver } from './run-driver.mjs';
 import { bodyHash } from './tracker-guard.mjs';
 import { trackerById, trackerOfTools } from './trackers/index.mjs';
@@ -31,6 +34,8 @@ import { readUnattendedMark } from './unattended-mark.mjs';
 const SETTLES = new Set(['result', 'ended', 'orphan']);
 // The issue states a report is owed on: an issue in either never starts again in its run.
 const FINAL = new Set(['done', 'parked']);
+// The snapshot status types before a started one: only an issue the run read in one may have its started status set.
+const BEFORE_STARTED = new Set(['triage', 'backlog', 'unstarted']);
 // How an `ended` row's reason reads in a body.
 const ENDED = {
   no_result: 'ended with no result recorded',
@@ -75,7 +80,8 @@ export function rereadResult(state, run, key, row) {
 // { key, attempt, outcome, pr, status, label, body, sha256 }. `policy` is reportPolicy's.
 export function owedReports({ state, run, found, policy }) {
   const keys = new Set(found.snapshot.issues.map((issue) => issue.key));
-  const recorded = new Set(found.rows.filter((row) => row.event === 'recorded').map((row) => row.key));
+  // A `recorded` row of kind `started`, as a build that acknowledged the started status wrote, closes no settle report.
+  const recorded = new Set(found.rows.filter((row) => row.event === 'recorded' && row.kind !== 'started').map((row) => row.key));
   const settled = new Map();
   found.rows.forEach((cause, at) => {
     const after = found.rows[at + 1];
@@ -110,6 +116,20 @@ function buildReport({ state, run, key, cause, after, policy }) {
   const label = facts.outcome === 'merged' ? null : policy.label;
   const body = reportBody(run, facts, after.decision === 'attempts');
   return { key, attempt: facts.attempt, outcome: facts.outcome, pr: facts.pr, status, label, body, sha256: bodyHash(body) };
+}
+
+// The started status writes the driver may make on run `found`, as [{ key, status }]: each issue that runs on a start
+// that held its session, its latest start's outcome `started`, and that the snapshot holds in a status before started.
+// `status` is the adapter's started status type (`run.issue.started`), none when `policy.adapter` names none. The
+// snapshot is read at init and no tracker is read here, so a status that moved since, after init or between attempts,
+// is not seen: each write can set the issue back to started once. Accepted residual of #489's review (R1-3): a status
+// read before the write would put tracker text in the driver's context, and Linear's write takes no expected state.
+export function startedWrites({ found, policy }) {
+  const status = policy.adapter?.run?.issue?.started;
+  if (typeof status !== 'string' || status === '') return [];
+  return found.snapshot.issues
+    .filter((issue) => BEFORE_STARTED.has(issue.status) && found.states.get(issue.key)?.state === 'running' && startsOf(found, issue.key).at(-1)?.outcome === 'started')
+    .map((issue) => ({ key: issue.key, status }));
 }
 
 // The comment a report posts: what happened, then what the issue's session wrote, each text quoted as data.
@@ -217,7 +237,8 @@ export function recordedCommand({ project, config, run, key, env = process.env, 
 // alone, never the folder a call runs in: null for a session no mark names. A pending mark, or one that cannot be read,
 // holds it (`held`); a mark that names a run and an issue is that issue's session (`child`); a driver mark
 // (run-driver.mjs runDriver) is the run's driver when the ledger it names says it is the current one (currentDriver),
-// and owes what owedReports says, none when the base branch cannot be read; any other driver mark is `held`, as a
+// and owes what owedReports says, and may set the started status startedWrites lists, none of either when the base
+// branch cannot be read; any other driver mark is `held`, as a
 // continuation before its first `wait` is; any other marked session is `unattended`. `project` is the project of the
 // main checkout the mark names, whose base branch the hook reads. `home` is a test's; `base` a baseReader to share.
 export function runWriter({ session, env = process.env, home, base }) {
@@ -241,7 +262,8 @@ export function runWriter({ session, env = process.env, home, base }) {
     if (!current) return { role: 'held', why: 'this session holds a project run\'s driver mark, and the run\'s ledger does not name it the current driver, or cannot be read; a continuation becomes the driver on its first `aidrian project wait`' };
     const policy = reportPolicy((base ?? baseReader(current.project))());
     const owed = policy.problem ? [] : owedReports({ state: current.state, run: current.run, found: current.found, policy });
-    return { role: 'driver', run: current.run, owed: owed.map(({ key, status, label, sha256 }) => ({ key, status, label, sha256 })), project: current.project };
+    const started = policy.problem ? [] : startedWrites({ found: current.found, policy });
+    return { role: 'driver', run: current.run, owed: owed.map(({ key, status, label, sha256 }) => ({ key, status, label, sha256 })), started, project: current.project };
   }
   return mark ? { role: 'unattended', project: projectOf(mark.root) } : null;
 }

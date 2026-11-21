@@ -51,8 +51,9 @@ Read [references/loop.md](references/loop.md) once turn 1 ends, and follow it: n
 ## Tracker writes
 
 The driver writes only what `aidrian project report` owes: each settled issue's status, label, and comment, posted
-exactly as printed, then `aidrian project recorded` closes it. The tracker guard refuses any other write, and an issue's
-session may write only its own issue. [references/tracker-writes.md](references/tracker-writes.md) says how; read it
+exactly as printed, then `aidrian project recorded` closes it. It also sets each issue's started status once, right
+after its start. The tracker guard refuses any other write, and an issue's session may write only its own issue.
+[references/tracker-writes.md](references/tracker-writes.md) says how; read it
 before the first report.
 
 ## What stops an issue
@@ -85,7 +86,7 @@ when the host continues nothing.
 At the end, or at a halt, for a reader who saw nothing of the run, naming the Human and the AI as the start hook does:
 
 1. **Outcome**: the counts `aidrian project summary <run>` prints, and the path of its summary.md.
-2. **Merged**: each issue with its pull request.
+2. **Merged**: each issue with its pull request. Then each issue whose started status could not be set.
 3. **Decisions for the Human**: each parked issue, its decisions with their options and the recommendation, and the
    issues skipped because they wait on it. Each sign-off a pull request waits on, with its number, comes first:
    the Human gives it in a separate session the Human attends, never in this one.

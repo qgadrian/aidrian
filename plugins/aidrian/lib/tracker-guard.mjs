@@ -271,9 +271,11 @@ export function runCallKind({ tool, rawTool, input, tracker = null, writeTools =
 //   { role: 'child', run, issue }   an issue's session: it writes only its own issue, by its key, through the adapter's
 //                                   `run` tools and fields, status `started` only, with text no mention, link, address,
 //                                   image, HTML, or hidden character; a create, a UUID, or another tool is refused;
-//   { role: 'driver', run, owed }   the run's current driver: it writes only what `aidrian project report` owes, each
+//   { role: 'driver', run, owed, started }
+//                                   the run's current driver: it writes only what `aidrian project report` owes, each
 //                                   [{ key, status, label, sha256 }]: the status and label as printed, and a comment
-//                                   whose body has that sha256;
+//                                   whose body has that sha256; and, on an issue that owes none, the started status
+//                                   `started` lists, [{ key, status }], with no other field;
 //   { role: 'unattended' }          a session no Human attends outside a run: the merge and ready rules alone;
 //   { role: 'held', why }           a session that cannot be told apart from one of these: every write refused.
 // Any role but null is refused a tool a merge verb names on any server. For the child, driver, and held roles, every call
@@ -383,11 +385,13 @@ function childRefusal(writer, call, adapter, short, human) {
 
 function driverRefusal(writer, call, adapter, short, human) {
   const report = `\`aidrian project report ${writer.run}\``;
-  const only = `the run ${writer.run}'s driver writes only what ${report} owes`;
+  const only = `the run ${writer.run}'s driver writes only what ${report} owes, and the started status of an issue it runs`;
   if (!call) return refused(`${short} is not a write the run's tools make, and ${only}`, `Write only through ${runTools(adapter)}, with the values ${report} printed`);
   const owed = (writer.owed ?? []).find((each) => each.key === call.key);
-  const key = keyProblem(call, () => owed !== undefined);
-  if (key) return refused(`${key}, and ${only}`, `Write only to an issue ${report} lists, by its key, or tell ${human}`);
+  const start = owed ? undefined : (writer.started ?? []).find((each) => each.key === call.key);
+  const key = keyProblem(call, () => owed !== undefined || start !== undefined);
+  if (key) return refused(`${key}, and ${only}`, `Write only to an issue ${report} lists, or one the run started, by its key, or tell ${human}`);
+  if (start) return startedRefusal(call, start, short);
   if (call.kind === 'comment') {
     const extra = call.fields.find((field) => ![call.spec.key, call.spec.body].includes(field));
     if (extra) return refused(`${short} sets ${extra}, and ${only}`, `Pass only ${call.spec.key} and ${call.spec.body}`);
@@ -401,6 +405,20 @@ function driverRefusal(writer, call, adapter, short, human) {
   const wrong = call.fields.find((field) => field !== call.spec.key && JSON.stringify(call.input[field]) !== JSON.stringify(wanted[field]));
   if (wrong) return refused(`${short} sets ${wrong} to ${JSON.stringify(call.input[wrong])?.slice(0, 60)} on ${owed.key}, and ${report} owes ${JSON.stringify(wanted[wrong])}`, `Set only ${describeWanted(wanted)}`);
   if (call.fields.length < 2) return refused(`${short} sets nothing on ${owed.key}`, `Set ${describeWanted(wanted)}`);
+  return null;
+}
+
+// Why the driver may not make the call `call` on the issue `start` names, which runs and owes no report, or null: it
+// may set the issue's status to `start.status`, the adapter's started status type, with no other field.
+function startedRefusal(call, start, short) {
+  const set = `Set only ${call.spec.status} ${JSON.stringify(start.status)} on ${start.key}, through ${call.spec.tool}`;
+  const only = `the run's driver sets only the started status of ${start.key}, an issue that runs`;
+  if (call.kind !== 'issue') return refused(`${short} writes a comment on ${start.key}, and ${only}`, set);
+  const extra = call.fields.find((field) => field !== call.spec.key && field !== call.spec.status);
+  if (extra) return refused(`${short} sets ${extra} on ${start.key}, and ${only}`, set);
+  if (!call.fields.includes(call.spec.status)) return refused(`${short} sets nothing on ${start.key}`, set);
+  const value = call.input[call.spec.status];
+  if (value !== start.status) return refused(`${short} sets ${call.spec.status} to ${JSON.stringify(value)?.slice(0, 40)} on ${start.key}, and ${only}, ${JSON.stringify(start.status)}`, set);
   return null;
 }
 

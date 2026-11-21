@@ -722,11 +722,27 @@ export const sessionNote = ({ work, branch }) => `This session runs in Claude Co
 
 // Why the host would not carry on by itself after a usage limit, or null: a limit is account-wide, so it stops a project
 // run's driver at the same moment as the issues' sessions, and only a driver whose host continues on its own takes the
-// run on once the limit lifts. The user's settings must set `autoContinueAtUsageLimit` to true. It reads only the user's
-// settings, where the host's own code honors the key; a project or managed setting is not read, and is no answer.
-export function limitContinueProblem({ env, home }) {
+// run on once the limit lifts. A project run asks the user's settings to set `autoContinueAtUsageLimit` to true. The host
+// also takes the key from managed policy and `--settings`, which can set or override it and which this check does not
+// read, so the host's effective setting stays unverified; the host ignores the key in a project's settings. When the
+// checkout `project` sets the key in a settings file of its own, the reason names that file and says it is ignored.
+export function limitContinueProblem({ env, home, project }) {
   const settings = userSettings(configFolder(env, home ?? env.HOME ?? homedir()));
   if (settings.problem) return settings.problem;
   if (settings.value.autoContinueAtUsageLimit === true) return null;
-  return `the host's user settings ${settings.file} do not set "autoContinueAtUsageLimit": true, so a usage limit would stop the driver for good; add it`;
+  const why = `the host's user settings ${settings.file} do not set "autoContinueAtUsageLimit": true, which a project run asks for so that a usage limit does not stop the driver for good; add it`;
+  const local = projectLimitFile(project);
+  const ignored = local ? ` there: ${local} sets it, but the host ignores this key in a project's settings, so a project file does not count` : '';
+  return `${why}${ignored} (this check reads that file only; managed policy and --settings, which can set or override the key, go unverified)`;
+}
+
+// The settings file of the checkout `project` that sets `autoContinueAtUsageLimit`, or null.
+function projectLimitFile(project) {
+  if (typeof project !== 'string' || !project) return null;
+  for (const name of ['settings.json', 'settings.local.json']) {
+    const file = path.join(project, '.claude', name);
+    const read = readJson(file);
+    if (!read.missing && !read.problem && isObject(read.value) && Object.hasOwn(read.value, 'autoContinueAtUsageLimit')) return file;
+  }
+  return null;
 }

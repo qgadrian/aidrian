@@ -73,6 +73,19 @@ const EXCEPTIONS = [
     line: /^const isMain = process\.argv\[1\] && path\.resolve\(process\.argv\[1\]\) === fileURLToPath\(import\.meta\.url\);$/u,
     reason: 'checks whether it runs as the main script; loads nothing',
   })),
+  // lib/hook-io.mjs isMain, which each hook script asks whether it runs as the main script, or a test imports its handle.
+  ...['process.argv[1]', 'process.argv[1]'].map((loader) => ({
+    file: 'lib/hook-io.mjs',
+    loader,
+    line: /^return Boolean\(process\.argv\[1\]\) && realpathSync\(process\.argv\[1\]\) === realpathSync\(fileURLToPath\(url\)\);$/u,
+    reason: 'checks whether a hook script runs as the main script; loads nothing',
+  })),
+  ...['scripts/hook-agent-gates.mjs', 'scripts/hook-agent-post.mjs', 'scripts/hook-agent-pre.mjs', 'scripts/hook-ask.mjs', 'scripts/hook-bash-post.mjs', 'scripts/hook-bash.mjs', 'scripts/hook-compact.mjs', 'scripts/hook-enter-worktree.mjs', 'scripts/hook-markdown-wrap.mjs', 'scripts/hook-mcp-github.mjs', 'scripts/hook-plan-exit.mjs', 'scripts/hook-prompt.mjs', 'scripts/hook-session-end.mjs', 'scripts/hook-session-start.mjs', 'scripts/hook-stop.mjs', 'scripts/hook-subagent-stop.mjs', 'scripts/hook-tracker-post.mjs', 'scripts/hook-tracker-pre.mjs', 'scripts/hook-write.mjs', 'scripts/session-row.mjs'].map((file) => ({
+    file,
+    loader: 'import.meta.url',
+    line: /^if \(isMain\(import\.meta\.url\)\) await runHook\(handle\);$/u,
+    reason: 'runs the hook only as the main script, so a test can import its handle; loads nothing',
+  })),
 ];
 
 const lineAt = (text, index) => text.slice(text.lastIndexOf('\n', index) + 1, text.indexOf('\n', index) === -1 ? undefined : text.indexOf('\n', index));

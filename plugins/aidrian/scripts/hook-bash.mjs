@@ -5,7 +5,7 @@
 // session again and again. Anything this hook cannot read lets the command run: rules deny only what they positively identify.
 
 import { anchorClones } from '../lib/attempt-clone.mjs';
-import { block, runHook } from '../lib/hook-io.mjs';
+import { block, isMain, runHook } from '../lib/hook-io.mjs';
 import * as attribution from '../lib/rules/attribution.mjs';
 import * as decisionsSet from '../lib/rules/decisions-set.mjs';
 import * as dependencyLink from '../lib/rules/dependency-link.mjs';
@@ -81,14 +81,16 @@ const RULES = [
   ['main-checkout', mainCheckout],
 ];
 
-await runHook(async (input) => {
+// The hook's body, for the payload `input`; `start` is when the call began, 0 for the hook's own process (lib/hook-io.mjs
+// callHook).
+export async function handle(input, { start = 0 } = {}) {
   const command = input.tool_input?.command;
   if (input.tool_name !== 'Bash' || typeof command !== 'string' || command === '') return;
   // An attempt clone is linked only for the session the payload names (lib/attempt-clone.mjs).
   anchorClones({ session: input.session_id });
-  // `startedAt`: when this process started, for a rule that bounds its network calls by the hook's own time (merge-review's
+  // `startedAt`: when this call began, its process's start under a host, for a rule that bounds its network calls by the hook's own time (merge-review's
   // unattended waiver, ready-hold).
-  const context = { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), env: process.env, input, startedAt: performance.timeOrigin };
+  const context = { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), env: process.env, input, startedAt: performance.timeOrigin + start };
   for (const [name, rule] of RULES) {
     // A rule that throws lets the command through that rule alone: the later rules still run.
     let reason = null;
@@ -99,4 +101,6 @@ await runHook(async (input) => {
     }
     if (reason) await block(input, name, reason);
   }
-});
+}
+
+if (isMain(import.meta.url)) await runHook(handle);

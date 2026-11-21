@@ -7,11 +7,11 @@ disable-model-invocation: true
 # autopilot
 
 Take one task from implementation to a reviewed pull request while the Human is away, then report. It merges only when auto-merge is on.
-Launched with `--continue`, it takes over a session already under way instead of starting a task.
+With `--continue`, it takes over a session under way instead of starting a task.
 It runs other skills and adds two things: what to do with a decision nobody is there to make, and a bound on the review loop.
 It never redoes what the skills it runs already do.
 
-Before you start, follow the `knowledge` skill. Load your `product_sensitive` docs for the flows the project declares critical.
+Before you start, follow the `knowledge` skill. Load your `product_sensitive` docs for the project's critical flows.
 Load the `orchestration` skill too: it owns the worktree, the pull request, and review findings.
 Its `references/review-rules.md` defines a review round, when the bot is out, the fix-pass cap, proportion, and the disposition actions.
 
@@ -23,19 +23,16 @@ Its `references/review-rules.md` defines a review round, when the bot is out, th
 
 - `<task>`: an issue key or URL, a plan path, or a one-line task description.
 - `--continue`: take over the work this session has under way. Words typed with it are launch words, never a new task.
-- `--base`: the branch the pull request targets. Default: the one the implementing skill picks.
-- `--full-review`: run the `pr-review` skill in every review round, not only when `references/phases.md` § 3 calls for it.
+- `--base`: the pull request's target branch; default: the engine's pick.
+- `--full-review`: run the `pr-review` skill in every review round, not only when `references/phases.md` § 3 says.
 - `--handoff`: write a handoff brief at each checkpoint, as § Checkpoints says.
-
-## What it is, and is not
-
-- It merges only when `aidrian pr auto-merge <n>` exits 0, through the `pr-auto-merge` skill
-  that `references/phases.md` § 4 runs. Any other merge needs the Human's explicit say-so.
 
 ## Before launch
 
-While the Human is here, record what the Human says at launch word for word, such as "skip the end-to-end run"
-or "five review rounds". The entry file of § Entry names what else to settle now.
+While the Human is here, record the launch words verbatim, such as "skip the end-to-end run".
+§ Entry's file names what else to settle now.
+Run `aidrian push-preflight --cwd <dir>` with the folder the run will work in; before its worktree exists, it answers unknown, so rerun it there once made.
+On exit 1, the host would refuse a push: tell the Human its printed line, and start no run unless the Human says to go on.
 
 ## Who decides
 
@@ -67,12 +64,12 @@ with the count of automatic quorum runs. A failed write never blocks the run.
 
 ## Phases
 
-Read `references/phases.md` before an engine starts, since its § 2 runs inside the engine's last phase,
+Read `references/phases.md` before an engine starts, since its § 2 runs in the engine's last phase,
 or before phase 2 on an adopted pull request, and follow it.
 
 1. The entry, as § Entry says: committed work on the task branch, or a pull request or skill taken over.
 2. Open the draft pull request through the `pr-write` skill.
-3. Review rounds: the bot review, when the project has a bot, through the `pr-review-loop` skill,
+3. Review rounds: the bot review, when the project has one, through the `pr-review-loop` skill,
    and the `pr-review` skill when the phase says so.
 4. Stop at sign-off, or at a bound; merge as § 4 allows.
 
@@ -88,7 +85,8 @@ Write the brief first when checkpoints are allowed.
 
 ## Hard rules
 
-1. Merge only through the `pr-auto-merge` skill, as § 4 of the phases says: never `gh pr merge` yourself.
+1. Merge only when `aidrian pr auto-merge <n>` exits 0, through the `pr-auto-merge` skill that `references/phases.md` § 4 runs:
+   never `gh pr merge` yourself. Any other merge needs the Human's explicit say-so.
 2. Leave the pull request a draft, unless `github.markReady` is `"auto"`, the default, or the Human asked at launch to mark it ready;
    § 4 of the phases says when.
 3. Never approve a product or security gate yourself, and never guess a critical decision that cannot be undone.
@@ -97,8 +95,8 @@ Write the brief first when checkpoints are allowed.
 
 ## Report
 
-Write for a reader who saw nothing of the run: plain words, no internal labels, and the Human and the AI named
-by the names the start hook gives, never "you" or "I". In this order:
+Write for a reader who saw nothing of the run: plain words, no internal labels, and the Human and the AI
+by the start hook's names, never "you" or "I". In this order:
 
 1. **What shipped**: one or two lines, the pull request link, and the merge: merged, or why not, as the line
    `aidrian pr auto-merge` printed or the stop line of the `pr-merge-when-green` skill.
@@ -115,7 +113,7 @@ by the names the start hook gives, never "you" or "I". In this order:
 
 ## Entry
 
-Read the launch's entry file at the start, and only that one.
+Read the launch's entry file first, and only that one.
 
 | Launch | Entry file |
 | --- | --- |

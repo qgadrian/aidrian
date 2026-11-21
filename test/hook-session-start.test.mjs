@@ -8,6 +8,7 @@ import test from 'node:test';
 
 import { snapshotPath } from '../plugins/aidrian/lib/gate-snapshot.mjs';
 import { GIT_TIMEOUT_MS } from '../plugins/aidrian/lib/git.mjs';
+import { hookCall } from './hook-call.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const BIN = path.join(ROOT, 'plugins/aidrian/bin');
@@ -47,7 +48,26 @@ test.after(() => rmSync(USER_SETTINGS, { recursive: true, force: true }));
 // `CLAUDECODE: '1'` makes it Claude Code, and `PLUGIN_ROOT: null` a host no adapter claims.
 // AIDRIAN_ALLOW_MAIN_COMMIT is unset unless a test passes it, whatever the shell running the tests holds.
 // A host no adapter claims is called neither Claude nor Codex.
-function hook({ input = '{}', args = [], cwd = ROOT, PATH = WITHOUT_BIN, XDG_STATE_HOME = XDG, CLAUDECODE, AIDRIAN_ALLOW_MAIN_COMMIT, CLAUDE_CONFIG_DIR = USER_SETTINGS, PLUGIN_ROOT = CLAUDECODE === undefined ? PLUGIN_DIR : null } = {}) {
+// The hook is called in this process, as the host runs its script, with `args` where its process would see them in
+// argv; hookProcess runs the script as its own process.
+async function hook(options = {}) {
+  const { args, ...spawnOptions } = hookOptions(options);
+  const saved = process.argv;
+  // argv[1] stays this file's, so the script, imported here, never runs itself as the main script.
+  process.argv = [...saved.slice(0, 2), ...args];
+  try {
+    return await hookCall(HOOK, spawnOptions);
+  } finally {
+    process.argv = saved;
+  }
+}
+
+function hookProcess(options = {}) {
+  const { args, ...spawnOptions } = hookOptions(options);
+  return spawnSync(process.execPath, [HOOK, ...args], spawnOptions);
+}
+
+function hookOptions({ input = '{}', args = [], cwd = ROOT, PATH = WITHOUT_BIN, XDG_STATE_HOME = XDG, CLAUDECODE, AIDRIAN_ALLOW_MAIN_COMMIT, CLAUDE_CONFIG_DIR = USER_SETTINGS, PLUGIN_ROOT = CLAUDECODE === undefined ? PLUGIN_DIR : null } = {}) {
   const env = { ...process.env, PATH, XDG_STATE_HOME, CLAUDECODE, AIDRIAN_ALLOW_MAIN_COMMIT, CLAUDE_CONFIG_DIR };
   if (CLAUDECODE === undefined) delete env.CLAUDECODE;
   if (PLUGIN_ROOT === null) {
@@ -58,32 +78,32 @@ function hook({ input = '{}', args = [], cwd = ROOT, PATH = WITHOUT_BIN, XDG_STA
     env.CLAUDE_PLUGIN_ROOT = PLUGIN_ROOT;
   }
   if (AIDRIAN_ALLOW_MAIN_COMMIT === undefined) delete env.AIDRIAN_ALLOW_MAIN_COMMIT;
-  return spawnSync(process.execPath, [HOOK, ...args], { input, cwd, encoding: 'utf8', env });
+  return { args, input, cwd, encoding: 'utf8', env };
 }
 
 test('at session start, one plain line names the always docs and the commands, by full path when bin/ is not on PATH', () => {
-  const { status, stdout, stderr } = hook({ input: JSON.stringify({ hook_event_name: 'SessionStart', cwd: EXAMPLE }) });
+  const { status, stdout, stderr } = hookProcess({ input: JSON.stringify({ hook_event_name: 'SessionStart', cwd: EXAMPLE }) });
   assert.deepEqual([status, stdout, stderr], [0, `${LINE(path.join(BIN, 'aidrian-knowledge'))}\n${MAIN('Codex')}`, '']);
 });
 
 test('the bare command name is used when bin/ is on PATH, and the project is found from the process folder without a cwd', () => {
-  const { status, stdout } = hook({ input: 'not json', cwd: path.join(EXAMPLE, 'src'), PATH: `${BIN}${path.delimiter}${WITHOUT_BIN}` });
+  const { status, stdout } = hookProcess({ input: 'not json', cwd: path.join(EXAMPLE, 'src'), PATH: `${BIN}${path.delimiter}${WITHOUT_BIN}` });
   assert.equal(status, 0);
   assert.equal(stdout, `${LINE('aidrian-knowledge')}\n${MAIN('Codex')}`);
 });
 
-test('at subagent start, the same lines but the format line come as SubagentStart additional context', () => {
-  const { status, stdout } = hook({ args: ['--subagent'], input: JSON.stringify({ cwd: EXAMPLE, agent_type: 'Explore' }), CLAUDECODE: '1' });
+test('at subagent start, the same lines but the format line come as SubagentStart additional context', async () => {
+  const { status, stdout } = await hook({ args: ['--subagent'], input: JSON.stringify({ cwd: EXAMPLE, agent_type: 'Explore' }), CLAUDECODE: '1' });
   assert.equal(status, 0);
   assert.deepEqual(JSON.parse(stdout), {
     hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: `${LINE(path.join(BIN, 'aidrian-knowledge'))}\n${NAMES('Claude')}\n${VOICE()}\n${FOOTER}` },
   });
 });
 
-test('in Claude Code, a line settles the pull request footer, unless its own attribution settings already drop it', (t) => {
+test('in Claude Code, a line settles the pull request footer, unless its own attribution settings already drop it', async (t) => {
   const input = JSON.stringify({ cwd: EXAMPLE });
-  assert.equal(hook({ input, CLAUDECODE: '1' }).stdout, `${LINE(path.join(BIN, 'aidrian-knowledge'))}\n${NAMES('Claude')}\n${VOICE()}\n${FOOTER}\n${FORMAT}\n`);
-  assert.doesNotMatch(hook({ input }).stdout, /Pull requests:/, 'Codex adds no such footer');
+  assert.equal((await hook({ input, CLAUDECODE: '1' })).stdout, `${LINE(path.join(BIN, 'aidrian-knowledge'))}\n${NAMES('Claude')}\n${VOICE()}\n${FOOTER}\n${FORMAT}\n`);
+  assert.doesNotMatch((await hook({ input })).stdout, /Pull requests:/, 'Codex adds no such footer');
   const settings = (dir, file, value) => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(path.join(dir, file), JSON.stringify(value));
@@ -92,27 +112,27 @@ test('in Claude Code, a line settles the pull request footer, unless its own att
   const project = path.join(mkdtempSync(path.join(tmpdir(), 'aidrian-start-')), 'consumer');
   t.after(() => [user, path.dirname(project)].forEach((dir) => rmSync(dir, { recursive: true, force: true })));
   cpSync(EXAMPLE, project, { recursive: true });
-  const run = () => hook({ input: JSON.stringify({ cwd: project }), CLAUDECODE: '1', CLAUDE_CONFIG_DIR: user }).stdout;
+  const run = async () => (await hook({ input: JSON.stringify({ cwd: project }), CLAUDECODE: '1', CLAUDE_CONFIG_DIR: user })).stdout;
   settings(user, 'settings.json', { attribution: { pr: '' } });
-  assert.doesNotMatch(run(), /Pull requests:/, 'the user setting turns the host footer off');
+  assert.doesNotMatch(await run(), /Pull requests:/, 'the user setting turns the host footer off');
   settings(path.join(project, '.claude'), 'settings.json', { attribution: { pr: '🤖 Generated with [Claude Code](https://claude.com/claude-code)' } });
-  assert.match(run(), /\nPull requests: /, 'the project setting wins over the user one, and asks for the footer');
+  assert.match(await run(), /\nPull requests: /, 'the project setting wins over the user one, and asks for the footer');
   settings(path.join(project, '.claude'), 'settings.local.json', { attribution: { pr: 'Made by the team' } });
-  assert.doesNotMatch(run(), /Pull requests:/, 'the local setting wins, and asks for no footer');
+  assert.doesNotMatch(await run(), /Pull requests:/, 'the local setting wins, and asks for no footer');
   rmSync(path.join(project, '.claude'), { recursive: true });
   settings(user, 'settings.json', { includeCoAuthoredBy: false });
-  assert.doesNotMatch(run(), /Pull requests:/, 'the older switch turns it off too');
+  assert.doesNotMatch(await run(), /Pull requests:/, 'the older switch turns it off too');
   writeFileSync(path.join(user, 'settings.json'), 'not json');
-  assert.match(run(), /\nPull requests: /, 'a settings file it cannot read changes nothing');
+  assert.match(await run(), /\nPull requests: /, 'a settings file it cannot read changes nothing');
 });
 
-test('a PLUGIN_ROOT inherited by a Claude Code session does not make it Codex', () => {
-  const { stdout } = spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ cwd: EXAMPLE }), cwd: ROOT, encoding: 'utf8', env: { ...process.env, PATH: WITHOUT_BIN, XDG_STATE_HOME: XDG, CLAUDECODE: '1', CLAUDE_CONFIG_DIR: USER_SETTINGS, CLAUDE_PLUGIN_ROOT: PLUGIN_DIR, PLUGIN_ROOT: '/somewhere/else' } });
+test('a PLUGIN_ROOT inherited by a Claude Code session does not make it Codex', async () => {
+  const { stdout } = await hookCall(HOOK, { input: JSON.stringify({ cwd: EXAMPLE }), cwd: ROOT, encoding: 'utf8', env: { ...process.env, PATH: WITHOUT_BIN, XDG_STATE_HOME: XDG, CLAUDECODE: '1', CLAUDE_CONFIG_DIR: USER_SETTINGS, CLAUDE_PLUGIN_ROOT: PLUGIN_DIR, PLUGIN_ROOT: '/somewhere/else' } });
   assert.equal(stdout.split('\n')[1], NAMES('Claude'));
   assert.match(stdout, /Pull requests:/u);
 });
 
-test('the main session hears when its host reaches a known tracker server the key leaves out, and a subagent does not', (t) => {
+test('the main session hears when its host reaches a known tracker server the key leaves out, and a subagent does not', async (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-start-tracker-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   mkdirSync(path.join(dir, '.aidrian'));
@@ -121,61 +141,61 @@ test('the main session hears when its host reaches a known tracker server the ke
   const workspace = { expect: 'https://linear.app/acme', field: 'url' };
   write({ enabled: true, workspace, readTools: ['mcp__plugin_linear_linear__get_workspace'], writeTools: ['mcp__plugin_linear_linear__save_*'], team });
   const input = JSON.stringify({ cwd: dir });
-  const line = hook({ input, CLAUDECODE: '1' }).stdout.split('\n').find((each) => each.startsWith('Tracker guard:'));
+  const line = (await hook({ input, CLAUDECODE: '1' })).stdout.split('\n').find((each) => each.startsWith('Tracker guard:'));
   assert.match(line, /on Claude Code, tracker\.writeTools leaves out Linear tools on linear, linear-server, plugin_linear_linear, claude_ai_Linear/u);
-  const onCodex = hook({ input }).stdout.split('\n').find((each) => each.startsWith('Tracker guard:'));
+  const onCodex = (await hook({ input })).stdout.split('\n').find((each) => each.startsWith('Tracker guard:'));
   assert.match(onCodex, /on Codex, .* linear, linear_server, codex_apps_linear/u, 'in the host\'s spelling, and only its own servers');
-  assert.doesNotMatch(hook({ input, args: ['--subagent'], CLAUDECODE: '1' }).stdout, /Tracker guard:/u);
+  assert.doesNotMatch((await hook({ input, args: ['--subagent'], CLAUDECODE: '1' })).stdout, /Tracker guard:/u);
   write({ enabled: true, provider: 'linear', workspace: { expect: workspace.expect }, team: { key: 'NOTES' } });
-  assert.doesNotMatch(hook({ input, CLAUDECODE: '1' }).stdout, /Tracker guard:/u, 'the short key covers them all');
-  assert.doesNotMatch(hook({ input }).stdout, /Tracker guard:/u);
+  assert.doesNotMatch((await hook({ input, CLAUDECODE: '1' })).stdout, /Tracker guard:/u, 'the short key covers them all');
+  assert.doesNotMatch((await hook({ input })).stdout, /Tracker guard:/u);
 });
 
-test('a host no adapter claims is called the AI, neither Claude nor Codex', () => {
-  const { stdout } = hook({ input: JSON.stringify({ cwd: EXAMPLE }), PLUGIN_ROOT: null });
+test('a host no adapter claims is called the AI, neither Claude nor Codex', async () => {
+  const { stdout } = await hook({ input: JSON.stringify({ cwd: EXAMPLE }), PLUGIN_ROOT: null });
   assert.equal(stdout.split('\n')[1], NAMES('the AI'));
   assert.doesNotMatch(stdout, /Pull requests:/u, 'the footer line is Claude Code\'s to need');
 });
 
-test('the names line calls the AI by its host unless config.json or .aidrian.local.json names it, the local file winning', (t) => {
+test('the names line calls the AI by its host unless config.json or .aidrian.local.json names it, the local file winning', async (t) => {
   const input = JSON.stringify({ cwd: EXAMPLE });
-  assert.equal(hook({ input, CLAUDECODE: '1' }).stdout.split('\n')[1], NAMES('Claude'));
-  assert.equal(hook({ input }).stdout.split('\n')[1], NAMES('Codex'));
+  assert.equal((await hook({ input, CLAUDECODE: '1' })).stdout.split('\n')[1], NAMES('Claude'));
+  assert.equal((await hook({ input })).stdout.split('\n')[1], NAMES('Codex'));
 
   const project = mkdtempSync(path.join(tmpdir(), 'aidrian-start-'));
   t.after(() => rmSync(project, { recursive: true, force: true }));
   mkdirSync(path.join(project, '.aidrian/knowledge'), { recursive: true });
   writeFileSync(path.join(project, '.aidrian/config.json'), JSON.stringify({ version: 1, names: { human: 'the team lead', ai: 'the agent' } }));
   writeFileSync(path.join(project, '.aidrian.local.json'), JSON.stringify({ names: { human: 'the "product" owner' } }));
-  const lines = hook({ input: JSON.stringify({ cwd: project }), CLAUDECODE: '1' }).stdout.split('\n');
+  const lines = (await hook({ input: JSON.stringify({ cwd: project }), CLAUDECODE: '1' })).stdout.split('\n');
   assert.equal(lines[1], 'Names: call the human "the \\"product\\" owner" and yourself "the agent", in replies and questions alike; never "I", "me", "my", "you", or "your".');
   assert.equal(lines[2], VOICE('the \\"product\\" owner'));
 });
 
-test('outside a project, and for any stdin, the hook prints nothing and exits 0', (t) => {
+test('outside a project, and for any stdin, the hook prints nothing and exits 0', async (t) => {
   const outside = mkdtempSync(path.join(tmpdir(), 'aidrian-start-'));
   t.after(() => rmSync(outside, { recursive: true, force: true }));
   for (const input of ['', 'not json', '[]', JSON.stringify({ cwd: outside }), JSON.stringify({ cwd: 42 })]) {
     for (const args of [[], ['--subagent']]) {
-      const { status, stdout, stderr } = hook({ input, args, cwd: outside });
+      const { status, stdout, stderr } = await hook({ input, args, cwd: outside });
       assert.deepEqual([status, stdout, stderr], [0, '', ''], `${input} ${args}`);
     }
   }
 });
 
-test('a project with a broken folder still gets the line, plus how many problems it has and the check to run', (t) => {
+test('a project with a broken folder still gets the line, plus how many problems it has and the check to run', async (t) => {
   const project = mkdtempSync(path.join(tmpdir(), 'aidrian-start-'));
   t.after(() => rmSync(project, { recursive: true, force: true }));
   mkdirSync(path.join(project, '.aidrian/knowledge'), { recursive: true });
   writeFileSync(path.join(project, '.aidrian/config.json'), JSON.stringify({ version: 1, extra: 1 }));
   writeFileSync(path.join(project, '.aidrian/knowledge/kb.json'), JSON.stringify({ dir: 'missing' }));
-  const { status, stdout } = hook({ input: JSON.stringify({ cwd: project }) });
+  const { status, stdout } = await hook({ input: JSON.stringify({ cwd: project }) });
   assert.equal(status, 0);
   assert.match(stdout, /^Project knowledge: 0 buckets, 0 docs\. For more, run .* for a topic\. The project folder has 2 problems; run `\S+\/aidrian check`\.\n/);
   assert.equal(stdout.split('\n').slice(1).join('\n'), MAIN('Codex'));
 });
 
-test('the main session also hears about open lessons, escalated with the command to list them once a P1 is open; a subagent does not', (t) => {
+test('the main session also hears about open lessons, escalated with the command to list them once a P1 is open; a subagent does not', async (t) => {
   const xdg = mkdtempSync(path.join(tmpdir(), 'aidrian-start-state-'));
   t.after(() => rmSync(xdg, { recursive: true, force: true }));
   const env = { ...process.env, XDG_STATE_HOME: xdg, PATH: WITHOUT_BIN };
@@ -184,18 +204,18 @@ test('the main session also hears about open lessons, escalated with the command
   assert.equal(add('the second lesson').status, 0);
 
   const input = JSON.stringify({ cwd: EXAMPLE });
-  const [knowledge, names, voice, format, lessons, rest] = hook({ input, XDG_STATE_HOME: xdg }).stdout.split('\n');
+  const [knowledge, names, voice, format, lessons, rest] = (await hook({ input, XDG_STATE_HOME: xdg })).stdout.split('\n');
   assert.equal(knowledge, LINE(path.join(BIN, 'aidrian-knowledge')));
   assert.equal(names, NAMES('Codex'));
   assert.equal(voice, VOICE());
   assert.equal(format, FORMAT);
   assert.equal(lessons, 'Lesson inbox: 2 open (P2 2), the oldest from today. The lesson-triage skill drains it in a session opened for it.');
   assert.equal(rest, '');
-  assert.doesNotMatch(hook({ input, args: ['--subagent'], XDG_STATE_HOME: xdg }).stdout, /Lesson inbox/);
+  assert.doesNotMatch((await hook({ input, args: ['--subagent'], XDG_STATE_HOME: xdg })).stdout, /Lesson inbox/);
 
   const urgent = spawnSync(path.join(BIN, 'aidrian'), ['lesson', 'add', '--tier', 'P1'], { cwd: EXAMPLE, input: 'lost a commit', encoding: 'utf8', env });
   assert.equal(urgent.status, 0);
-  const escalated = hook({ input, XDG_STATE_HOME: xdg }).stdout.split('\n')[4];
+  const escalated = (await hook({ input, XDG_STATE_HOME: xdg })).stdout.split('\n')[4];
   assert.match(escalated, /^Lesson inbox needs triage: 1 P1 open\. Tell the Human once, then go on with the task: .* `\S+\/bin\/aidrian lesson list` shows the order\.$/);
 });
 
@@ -215,45 +235,45 @@ const daysAgo = (n) => new Date(Date.now() - n * 86_400_000).toISOString().slice
 const unreviewed = (id, status, date) => `Rule.\n<!-- aidrian:decision id=${id} status=${status} class=copy domain=ux date=${date} pr=41 -->\n<!-- aidrian:decision-new id=${id} text="Rule." -->\n`;
 const REMINDER = /^Decisions to review: .*$/mu;
 
-test('the main session hears how many decisions wait for the Human and how old the oldest is; a subagent does not', (t) => {
+test('the main session hears how many decisions wait for the Human and how old the oldest is; a subagent does not', async (t) => {
   const project = decisionsProject(t, {
     'a.md': `${unreviewed('one', 'unconfirmed', daysAgo(1))}\n${unreviewed('kept', 'confirmed', daysAgo(90))}\n`,
     'b.md': unreviewed('two', 'unconfirmed', daysAgo(3)),
   });
   const input = JSON.stringify({ cwd: project });
-  const { status, stdout } = hook({ input });
+  const { status, stdout } = await hook({ input });
   assert.equal(status, 0);
   assert.match(stdout, /^Decisions to review: 2 \(oldest 3 days\)\. Tell the Human once, then go on with the task: the decision-review skill goes through them, and only a person starts it\.$/mu);
-  assert.doesNotMatch(hook({ input, args: ['--subagent'] }).stdout, /Decisions to review/u);
+  assert.doesNotMatch((await hook({ input, args: ['--subagent'] })).stdout, /Decisions to review/u);
   const one = decisionsProject(t, { 'a.md': unreviewed('one', 'unconfirmed', daysAgo(1)) });
-  assert.match(hook({ input: JSON.stringify({ cwd: one }) }).stdout, /^Decisions to review: 1 \(oldest 1 day\)\./mu);
+  assert.match((await hook({ input: JSON.stringify({ cwd: one }) })).stdout, /^Decisions to review: 1 \(oldest 1 day\)\./mu);
 });
 
-test('no reminder with nothing to review or with remind off, and a doc it cannot read costs only that doc', (t) => {
+test('no reminder with nothing to review or with remind off, and a doc it cannot read costs only that doc', async (t) => {
   const settled = decisionsProject(t, { 'a.md': unreviewed('kept', 'confirmed', daysAgo(9)) });
-  assert.doesNotMatch(hook({ input: JSON.stringify({ cwd: settled }) }).stdout, REMINDER, 'N is 0');
+  assert.doesNotMatch((await hook({ input: JSON.stringify({ cwd: settled }) })).stdout, REMINDER, 'N is 0');
   const none = decisionsProject(t, { 'a.md': '# Nothing here\n' });
-  assert.doesNotMatch(hook({ input: JSON.stringify({ cwd: none }) }).stdout, REMINDER, 'no markers');
+  assert.doesNotMatch((await hook({ input: JSON.stringify({ cwd: none }) })).stdout, REMINDER, 'no markers');
   const own = decisionsProject(t, { 'a.md': unreviewed('one', 'unconfirmed', daysAgo(1)).replace('class=copy', 'class=pricing-page') }, { decisions: { classes: { 'pricing-page': 'the pricing page' } } });
-  assert.match(hook({ input: JSON.stringify({ cwd: own }) }).stdout, /^Decisions to review: 1 /mu, 'a marker of a project class counts');
+  assert.match((await hook({ input: JSON.stringify({ cwd: own }) })).stdout, /^Decisions to review: 1 /mu, 'a marker of a project class counts');
   const removed = decisionsProject(t, { 'a.md': unreviewed('one', 'unconfirmed', daysAgo(1)).replace('class=copy', 'class=pricing-page') });
-  assert.match(hook({ input: JSON.stringify({ cwd: removed }) }).stdout, /^Decisions to review: 1 /mu, 'a marker whose class was removed still counts, as it does toward the pause');
+  assert.match((await hook({ input: JSON.stringify({ cwd: removed }) })).stdout, /^Decisions to review: 1 /mu, 'a marker whose class was removed still counts, as it does toward the pause');
   const off = decisionsProject(t, { 'a.md': unreviewed('one', 'unconfirmed', daysAgo(1)) }, { decisions: { unreviewed: { remind: 'off', pauseDomainAt: null } } });
-  assert.doesNotMatch(hook({ input: JSON.stringify({ cwd: off }) }).stdout, REMINDER, 'remind off');
+  assert.doesNotMatch((await hook({ input: JSON.stringify({ cwd: off }) })).stdout, REMINDER, 'remind off');
 
   const folder = decisionsProject(t, { 'a.md': unreviewed('one', 'unconfirmed', daysAgo(2)), 'b.md': 'gone\n' });
   rmSync(path.join(folder, 'docs/b.md'));
   mkdirSync(path.join(folder, 'docs/b.md'));
-  const { status, stdout } = hook({ input: JSON.stringify({ cwd: folder }) });
+  const { status, stdout } = await hook({ input: JSON.stringify({ cwd: folder }) });
   assert.equal(status, 0);
   assert.match(stdout, /^Decisions to review: 1 \(oldest 2 days\)\./mu, 'the doc that reads still counts');
   const broken = decisionsProject(t, { 'a.md': '<!-- aidrian:decision id=a status=nope -->\n' });
-  const quiet = hook({ input: JSON.stringify({ cwd: broken }) });
+  const quiet = await hook({ input: JSON.stringify({ cwd: broken }) });
   assert.equal(quiet.status, 0);
   assert.doesNotMatch(quiet.stdout, REMINDER, 'a malformed marker counts for nothing');
 });
 
-test('the main session hears about untriaged persona audits only while some are; a subagent never, and bad state prints nothing', (t) => {
+test('the main session hears about untriaged persona audits only while some are; a subagent never, and bad state prints nothing', async (t) => {
   const project = path.join(mkdtempSync(path.join(tmpdir(), 'aidrian-start-')), 'consumer');
   t.after(() => rmSync(path.dirname(project), { recursive: true, force: true }));
   cpSync(EXAMPLE, project, { recursive: true });
@@ -265,19 +285,19 @@ test('the main session hears about untriaged persona audits only while some are;
   const run = (args = []) => hook({ input, args });
   const LINE_RE = /^Audit inbox:/mu;
 
-  assert.doesNotMatch(run().stdout, LINE_RE, 'no audits folder');
+  assert.doesNotMatch((await run()).stdout, LINE_RE, 'no audits folder');
   mkdirSync(audits, { recursive: true });
-  assert.doesNotMatch(run().stdout, LINE_RE, 'an empty audits folder');
+  assert.doesNotMatch((await run()).stdout, LINE_RE, 'an empty audits folder');
 
   const fixtures = path.join(ROOT, 'test/fixtures/persona-audit');
   for (const name of ['front-desk-2026-05-02.md', 'front-desk-2026-05-02-2.md']) cpSync(path.join(fixtures, name), path.join(audits, name));
-  const { status, stdout } = run();
+  const { status, stdout } = await run();
   assert.equal(status, 0);
   assert.equal(stdout.split('\n')[4], 'Audit inbox: 18 untriaged findings in 1 report. The persona-audit-triage skill triages them.', 'after the format line');
-  assert.doesNotMatch(run(['--subagent']).stdout, /Audit inbox/);
+  assert.doesNotMatch((await run(['--subagent'])).stdout, /Audit inbox/);
 
   writeFileSync(path.join(audits, 'triage.json'), '{ cut short');
-  const broken = run();
+  const broken = await run();
   assert.equal(broken.status, 0);
   assert.equal(broken.stdout, `${LINE(path.join(BIN, 'aidrian-knowledge'))}\n${MAIN('Codex')}`, 'an unreadable triage record costs the line, nothing else');
 
@@ -289,27 +309,27 @@ test('the main session hears about untriaged persona audits only while some are;
   };
   writeFileSync(path.join(audits, 'front-desk-2026-05-02-2.json'), JSON.stringify(sidecar));
   writeFileSync(path.join(audits, 'triage.json'), JSON.stringify({ version: 1, reports: {} }));
-  assert.match(run().stdout, /^Audit inbox: 1 untriaged finding in 1 report\./mu);
+  assert.match((await run()).stdout, /^Audit inbox: 1 untriaged finding in 1 report\./mu);
   writeFileSync(path.join(audits, 'triage.json'), JSON.stringify({ version: 1, reports: { 'front-desk-2026-05-02-2.md': { F1: { decision: 'defer', date: '2026-05-03' } } } }));
-  assert.doesNotMatch(run().stdout, LINE_RE, 'fully triaged');
+  assert.doesNotMatch((await run()).stdout, LINE_RE, 'fully triaged');
 });
 
-test('when another copy of the plugin\'s aidrian comes first on PATH, one line names this copy\'s by its path', (t) => {
+test('when another copy of the plugin\'s aidrian comes first on PATH, one line names this copy\'s by its path', async (t) => {
   const other = mkdtempSync(path.join(tmpdir(), 'aidrian-start-other-'));
   t.after(() => rmSync(other, { recursive: true, force: true }));
   writeFileSync(path.join(other, 'aidrian'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
   const input = JSON.stringify({ cwd: EXAMPLE });
   const line = `Commands: the aidrian on PATH, in ${other}, is another copy of this plugin; run this session's as ${path.join(BIN, 'aidrian')}.`;
-  const first = hook({ input, PATH: `${other}${path.delimiter}${BIN}${path.delimiter}${WITHOUT_BIN}` });
+  const first = await hook({ input, PATH: `${other}${path.delimiter}${BIN}${path.delimiter}${WITHOUT_BIN}` });
   assert.equal(first.status, 0);
   assert.deepEqual(first.stdout.split('\n').slice(3, 5), [line, FORMAT], 'after the voice line, in the main session');
-  const subagent = JSON.parse(hook({ input, args: ['--subagent'], PATH: `${other}${path.delimiter}${WITHOUT_BIN}` }).stdout);
+  const subagent = JSON.parse((await hook({ input, args: ['--subagent'], PATH: `${other}${path.delimiter}${WITHOUT_BIN}` })).stdout);
   assert.match(subagent.hookSpecificOutput.additionalContext, new RegExp(`\n${line.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}$`, 'u'), 'and in a subagent');
-  assert.doesNotMatch(hook({ input, PATH: `${BIN}${path.delimiter}${other}${path.delimiter}${WITHOUT_BIN}` }).stdout, /^Commands:/mu, 'this copy first: nothing');
-  assert.doesNotMatch(hook({ input }).stdout, /^Commands:/mu, 'no aidrian on PATH: nothing');
+  assert.doesNotMatch((await hook({ input, PATH: `${BIN}${path.delimiter}${other}${path.delimiter}${WITHOUT_BIN}` })).stdout, /^Commands:/mu, 'this copy first: nothing');
+  assert.doesNotMatch((await hook({ input })).stdout, /^Commands:/mu, 'no aidrian on PATH: nothing');
 });
 
-test('the gate snapshot is saved before the knowledge loads, so a knowledge folder that throws still leaves the gates held', (t) => {
+test('the gate snapshot is saved before the knowledge loads, so a knowledge folder that throws still leaves the gates held', async (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-start-'));
   const knowledge = path.join(dir, '.aidrian/knowledge');
   t.after(() => {
@@ -320,7 +340,7 @@ test('the gate snapshot is saved before the knowledge loads, so a knowledge fold
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, agents: { explorer: { deny: ['WebFetch'] } } }));
   chmodSync(knowledge, 0o000);
   const session = 'start-snapshot-1';
-  hook({ input: JSON.stringify({ hook_event_name: 'SessionStart', cwd: dir, session_id: session }) });
+  await hook({ input: JSON.stringify({ hook_event_name: 'SessionStart', cwd: dir, session_id: session }) });
   assert.ok(existsSync(snapshotPath(session, { env: { XDG_STATE_HOME: XDG } })));
 });
 
@@ -367,70 +387,70 @@ function hangingGit(t, word) {
 
 const after = (stdout) => stdout.split('\n').slice(4, -1);
 
-test('the main session hears about unpushed commits on main, after the lessons line; even with origin, nothing', (t) => {
+test('the main session hears about unpushed commits on main, after the lessons line; even with origin, nothing', async (t) => {
   const { dir, git } = gitRepo(t);
   const input = JSON.stringify({ cwd: dir });
-  assert.deepEqual(after(hook({ input }).stdout), [], 'even with origin/main');
+  assert.deepEqual(after((await hook({ input })).stdout), [], 'even with origin/main');
   git('commit', '-q', '--allow-empty', '-m', 'stray');
-  assert.deepEqual(after(hook({ input }).stdout), [AHEAD]);
+  assert.deepEqual(after((await hook({ input })).stdout), [AHEAD]);
 
   const xdg = mkdtempSync(path.join(tmpdir(), 'aidrian-start-state-'));
   t.after(() => rmSync(xdg, { recursive: true, force: true }));
   const env = { ...process.env, XDG_STATE_HOME: xdg, PATH: WITHOUT_BIN };
   assert.equal(spawnSync(path.join(BIN, 'aidrian'), ['lesson', 'add'], { cwd: dir, input: 'a lesson', encoding: 'utf8', env }).status, 0);
-  const [lessons, ahead] = after(hook({ input, XDG_STATE_HOME: xdg }).stdout);
+  const [lessons, ahead] = after((await hook({ input, XDG_STATE_HOME: xdg })).stdout);
   assert.match(lessons, /^Lesson inbox: 1 open/);
   assert.equal(ahead, AHEAD);
 });
 
-test('the main checkout off main, detached, or with changed tracked files gets its line; untracked files alone do not', (t) => {
+test('the main checkout off main, detached, or with changed tracked files gets its line; untracked files alone do not', async (t) => {
   const { dir, git } = gitRepo(t);
   const input = JSON.stringify({ cwd: dir });
   writeFileSync(path.join(dir, 'notes.md'), 'scratch\n');
-  assert.deepEqual(after(hook({ input }).stdout), [], 'clean on main, with an untracked file');
+  assert.deepEqual(after((await hook({ input })).stdout), [], 'clean on main, with an untracked file');
   git('switch', '-q', '-c', 'side');
-  assert.deepEqual(after(hook({ input }).stdout), [OFF]);
+  assert.deepEqual(after((await hook({ input })).stdout), [OFF]);
   git('switch', '-q', '--detach', 'main');
-  assert.deepEqual(after(hook({ input }).stdout), [DETACHED]);
+  assert.deepEqual(after((await hook({ input })).stdout), [DETACHED]);
   git('switch', '-q', 'main');
   writeFileSync(path.join(dir, 'README.md'), '# changed\n');
-  assert.deepEqual(after(hook({ input }).stdout), [CHANGED]);
+  assert.deepEqual(after((await hook({ input })).stdout), [CHANGED]);
 });
 
-test('no main-checkout line in a subagent, with the guard off, or without an origin/main ref', (t) => {
+test('no main-checkout line in a subagent, with the guard off, or without an origin/main ref', async (t) => {
   const { dir, git } = gitRepo(t);
   git('commit', '-q', '--allow-empty', '-m', 'stray');
   git('switch', '-q', '-c', 'side');
   const input = JSON.stringify({ cwd: dir });
-  const { additionalContext } = JSON.parse(hook({ input, args: ['--subagent'] }).stdout).hookSpecificOutput;
+  const { additionalContext } = JSON.parse((await hook({ input, args: ['--subagent'] })).stdout).hookSpecificOutput;
   assert.equal(additionalContext.split('\n').length, 3);
   assert.doesNotMatch(additionalContext, /main checkout|Local main/);
 
   const off = gitRepo(t, { version: 1, git: { mainCheckout: { guard: false } } });
   off.git('commit', '-q', '--allow-empty', '-m', 'stray');
   off.git('switch', '-q', '-c', 'side');
-  assert.deepEqual(after(hook({ input: JSON.stringify({ cwd: off.dir }) }).stdout), []);
+  assert.deepEqual(after((await hook({ input: JSON.stringify({ cwd: off.dir }) })).stdout), []);
 
   git('remote', 'remove', 'origin');
-  assert.deepEqual(after(hook({ input }).stdout), [OFF], 'no origin/main drops only the unpushed line');
+  assert.deepEqual(after((await hook({ input })).stdout), [OFF], 'no origin/main drops only the unpushed line');
 });
 
 const INHERITED =
   'AIDRIAN_ALLOW_MAIN_COMMIT is set in this session, so the commit guard lets every commit through. ' +
   'Tell the Human: restart the session without it, and use it per command in their own terminal.';
 
-test('a main session that inherits AIDRIAN_ALLOW_MAIN_COMMIT=1 hears so while the guard is on, before the main-checkout lines', (t) => {
+test('a main session that inherits AIDRIAN_ALLOW_MAIN_COMMIT=1 hears so while the guard is on, before the main-checkout lines', async (t) => {
   const { dir, git } = gitRepo(t);
   git('commit', '-q', '--allow-empty', '-m', 'stray');
   const input = JSON.stringify({ cwd: dir });
-  assert.deepEqual(after(hook({ input, AIDRIAN_ALLOW_MAIN_COMMIT: '1' }).stdout), [INHERITED, AHEAD]);
-  assert.deepEqual(after(hook({ input }).stdout), [AHEAD], 'unset: no line');
-  assert.deepEqual(after(hook({ input, AIDRIAN_ALLOW_MAIN_COMMIT: '0' }).stdout), [AHEAD], 'only 1 lets commits through');
-  const { additionalContext } = JSON.parse(hook({ input, args: ['--subagent'], AIDRIAN_ALLOW_MAIN_COMMIT: '1' }).stdout).hookSpecificOutput;
+  assert.deepEqual(after((await hook({ input, AIDRIAN_ALLOW_MAIN_COMMIT: '1' })).stdout), [INHERITED, AHEAD]);
+  assert.deepEqual(after((await hook({ input })).stdout), [AHEAD], 'unset: no line');
+  assert.deepEqual(after((await hook({ input, AIDRIAN_ALLOW_MAIN_COMMIT: '0' })).stdout), [AHEAD], 'only 1 lets commits through');
+  const { additionalContext } = JSON.parse((await hook({ input, args: ['--subagent'], AIDRIAN_ALLOW_MAIN_COMMIT: '1' })).stdout).hookSpecificOutput;
   assert.doesNotMatch(additionalContext, /AIDRIAN_ALLOW_MAIN_COMMIT/, 'the main session only');
 
   const off = gitRepo(t, { version: 1, git: { mainCheckout: { guard: false } } });
-  assert.deepEqual(after(hook({ input: JSON.stringify({ cwd: off.dir }), AIDRIAN_ALLOW_MAIN_COMMIT: '1' }).stdout), [], 'guard off: nothing to let through');
+  assert.deepEqual(after((await hook({ input: JSON.stringify({ cwd: off.dir }), AIDRIAN_ALLOW_MAIN_COMMIT: '1' })).stdout), [], 'guard off: nothing to let through');
 });
 
 test('a git that hangs costs the main-checkout lines it stops and nothing else: the hook exits 0 inside its time', (t) => {
@@ -441,7 +461,7 @@ test('a git that hangs costs the main-checkout lines it stops and nothing else: 
   const input = JSON.stringify({ cwd: dir });
   for (const [word, lines] of [['status', [AHEAD, OFF]], ['rev-list', []], ['', []]]) {
     const started = Date.now();
-    const { status, stdout, stderr } = hook({ input, PATH: hangingGit(t, word) });
+    const { status, stdout, stderr } = hookProcess({ input, PATH: hangingGit(t, word) });
     assert.deepEqual([status, stderr], [0, ''], word);
     assert.match(stdout, /^Project knowledge: /, word);
     assert.deepEqual(after(stdout), lines, word || 'every git call');
@@ -449,18 +469,18 @@ test('a git that hangs costs the main-checkout lines it stops and nothing else: 
   }
 });
 
-test('in handoff mode auto the main session hears it never asks whether to hand off; in ask and off, and in a subagent, nothing', (t) => {
+test('in handoff mode auto the main session hears it never asks whether to hand off; in ask and off, and in a subagent, nothing', async (t) => {
   const AUTO = 'Handoff: config.json session.handoff.mode is "auto", so this session never asks "the Human" whether to hand off or ' +
     'keep going. It judges that by itself and, when a handoff is worth it, runs the session-handoff skill; otherwise it keeps working.';
-  const start = (handoff, args = []) => {
+  const start = async (handoff, args = []) => {
     const project = decisionsProject(t, { 'a.md': 'Rule.\n' }, handoff ? { session: { handoff } } : {});
-    const result = hook({ input: JSON.stringify({ cwd: project }), args });
+    const result = await hook({ input: JSON.stringify({ cwd: project }), args });
     assert.equal(result.status, 0, result.stderr);
     return result.stdout;
   };
-  const auto = start({ mode: 'auto' }).split('\n');
+  const auto = (await start({ mode: 'auto' })).split('\n');
   assert.equal(auto[auto.indexOf(FORMAT) + 1], AUTO, 'right after the format line');
-  assert.ok(start({ mode: 'auto', continue: 'clear' }).includes(AUTO), 'whatever the route');
-  for (const handoff of [{ mode: 'ask' }, { mode: 'off' }, null]) assert.doesNotMatch(start(handoff), /^Handoff:/mu, JSON.stringify(handoff));
-  assert.doesNotMatch(start({ mode: 'auto' }, ['--subagent']), /Handoff:/u, 'a subagent hands nothing off');
+  assert.ok((await start({ mode: 'auto', continue: 'clear' })).includes(AUTO), 'whatever the route');
+  for (const handoff of [{ mode: 'ask' }, { mode: 'off' }, null]) assert.doesNotMatch(await start(handoff), /^Handoff:/mu, JSON.stringify(handoff));
+  assert.doesNotMatch(await start({ mode: 'auto' }, ['--subagent']), /Handoff:/u, 'a subagent hands nothing off');
 });

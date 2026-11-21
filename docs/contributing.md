@@ -75,6 +75,22 @@ A test that does not test the deadline itself gives the code the time the test s
 
 A test of the deadline itself keeps the real clock, and no production deadline changes for a test.
 
+## Hooks in the test's process
+
+Each hook script exports its body as `handle`, and runs it only as the main script. A test calls a hook with
+`await hookCall(script, { input, cwd, env })` (`test/hook-call.mjs`), which runs `handle` in the test's own process and
+returns spawnSync's `{ status, stderr, stdout }`, without starting a node process for each call. Calls run one at a
+time: `callHook` (`lib/hook-io.mjs`) swaps in the call's folder and environment, and each call starts with no stopped
+git call and no clone anchor, as a host's fresh process does. A hook with a time budget counts it from the call's start.
+
+A test still starts the script as a program where only a process shows the behaviour: its stdin reading, a `timeout`
+or signal it relies on, exit timing, or a deadline it measures. Keep at least one such run for each hook script a file
+covers, so the script's own entry stays tested. A hook body that reads the clock under `Date.now` can be held still
+in process by replacing `Date.now` around the call, as `test/ready-hold.test.mjs` does.
+
+The tests' git config holds a user identity: without one, git guesses an email from the machine's host name, and on a
+machine whose name does not resolve each clone, checkout, or commit waits about 5 seconds for that lookup.
+
 ## What the tests hold
 
 - The Claude Code marketplace lists `aidrian`, from `./plugins/aidrian`, then the optional Claude mod `aidrian-mod`,

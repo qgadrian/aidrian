@@ -254,6 +254,28 @@ test('refProtection holds the default branch protected only by a rule the signed
   assert.throws(() => recorded(() => '{}').forge.refProtection('acme/notes'), /named no default branch/u);
 });
 
+test('refProtection reads a private repository whose plan offers no rules as unprotected for that reason, and throws any other refusal', () => {
+  // As gh fails on GitHub's answer for a private repository on the free plan: the body on stdout, the line on stderr.
+  const gated = (route) => Object.assign(new Error(`Command failed: gh api --hostname github.com ${route} --paginate --slurp\ngh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)`), {
+    stderr: 'gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)',
+    stdout: '{"message":"Upgrade to GitHub Pro or make this repository public to enable this feature.","status":"403"}',
+  });
+  const PLAN = { branch: 'main', protected: false, plan: true, why: 'the plan offers no branch protection or rulesets for a private repository: GitHub Pro, or a public repository, offers them', tags: [] };
+  const free = { 'repos/acme/notes': { default_branch: 'main', private: true, permissions: { admin: true }, owner: { login: 'acme', type: 'User' } } };
+  assert.deepEqual(routed({ ...free, 'repos/acme/notes/rules/branches/main': gated('rules/branches/main') }).forge.refProtection('acme/notes', { host: 'github.com' }), PLAN, 'the rules of the branch');
+  assert.deepEqual(routed({ ...HELD, ...free, 'repos/acme/notes/rulesets?targets=tag&includes_parents=true': gated('rulesets') }).forge.refProtection('acme/notes'), PLAN, 'the tag rulesets');
+  // Branch protection's settings: the plan's 403, not an administrator's view.
+  const classic = { ...HELD, ...free, 'repos/acme/notes/rules/branches/main': [[]], 'repos/acme/notes/branches/main': { protected: true } };
+  assert.deepEqual(routed({ ...classic, 'repos/acme/notes/branches/main/protection': gated('protection') }).forge.refProtection('acme/notes'), PLAN, 'branch protection');
+  assert.equal(routed({ ...classic, 'repos/acme/notes/branches/main/protection': new Error('gh: Not Found (HTTP 404)') }).forge.refProtection('acme/notes').protected, null, 'a hidden protection is still asked');
+  assert.throws(() => routed({ ...free, 'repos/acme/notes/rules/branches/main': new Error('gh: Forbidden (HTTP 403)') }).forge.refProtection('acme/notes'), /Forbidden/u, 'another 403 throws');
+  // GitHub Pro is a personal account's plan: an organization's repository needs GitHub Team, and an owner GitHub does not
+  // name is told both.
+  const owned = (type) => routed({ 'repos/acme/notes': { ...free['repos/acme/notes'], owner: { login: 'acme', type } }, 'repos/acme/notes/rules/branches/main': gated('rules/branches/main') }).forge.refProtection('acme/notes').why;
+  assert.equal(owned('Organization'), 'the plan offers no branch protection or rulesets for a private repository: GitHub Team, or a public repository, offers them');
+  assert.equal(owned(undefined), 'the plan offers no branch protection or rulesets for a private repository: GitHub Pro for a personal account or GitHub Team for an organization, or a public repository, offers them');
+});
+
 test('workflowSecrets counts the repository\'s and its organization\'s Actions secrets, and reads the token\'s workflow scope', () => {
   const headers = (scopes) => `HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n${scopes === null ? '' : `X-Oauth-Scopes: ${scopes}\r\n`}\r\n{"login":"octo"}`;
   const secrets = (more) => routed({
@@ -270,27 +292,41 @@ test('workflowSecrets counts the repository\'s and its organization\'s Actions s
   assert.throws(() => secrets({ 'repos/acme/notes/actions/secrets': {} }).forge.workflowSecrets('acme/notes'), /no count of secrets/u);
 });
 
-test('workflowSecrets counts the secrets of an environment any branch may deploy to, and not those of one held to protected branches or reviewers', () => {
+test('workflowSecrets counts no organization secret for a repository a user owns, whose organization route GitHub refuses with 422', () => {
+  const headers = 'HTTP/2.0 200 OK\r\nX-Oauth-Scopes: repo, workflow\r\n\r\n{"login":"octo"}';
+  const validation = Object.assign(new Error('Command failed: gh api repos/acme/notes/actions/organization-secrets\ngh: Validation Failed (HTTP 422)'), { stderr: 'gh: Validation Failed (HTTP 422)' });
+  const secrets = (owner) => routed({
+    'repos/acme/notes': { default_branch: 'main', owner: { login: 'acme', type: owner } }, 'repos/acme/notes/actions/secrets': { total_count: 2 },
+    'repos/acme/notes/actions/organization-secrets': validation, 'repos/acme/notes/environments': [{ total_count: 0, environments: [] }], user: headers,
+  });
+  const user = secrets('User');
+  assert.deepEqual(user.forge.workflowSecrets('acme/notes', { host: 'github.com' }), { secrets: 2, workflowPush: true });
+  assert.ok(!user.args().some((each) => each.includes('repos/acme/notes/actions/organization-secrets')), 'a user\'s repository has no organization to ask');
+  // An organization's repository that answers 422 is a failure the preflight names, not a count of none.
+  assert.throws(() => secrets('Organization').forge.workflowSecrets('acme/notes'), /Validation Failed/u);
+});
+
+test('workflowSecrets counts the secrets of an environment no rule holds, and not those of one held to reviewers', () => {
   const headers = 'HTTP/2.0 200 OK\r\nX-Oauth-Scopes: repo, workflow\r\n\r\n{"login":"octo"}';
   const open = { name: 'prod deploy', deployment_branch_policy: null, protection_rules: [{ type: 'wait_timer', wait_timer: 5 }] };
-  const branches = { name: 'staging', deployment_branch_policy: { protected_branches: true, custom_branch_policies: false }, protection_rules: [{ type: 'branch_policy' }] };
   const user = (login) => ({ type: 'User', reviewer: { login } });
   const reviewers = (prevent, ...named) => ({ name: 'release', deployment_branch_policy: null, protection_rules: [{ type: 'required_reviewers', prevent_self_review: prevent, reviewers: named }] });
   const reviewed = reviewers(true, user('Octo'));
+  // The signed-in user is no admin of the repository, so a reviewer rule can hold that user.
   const read = (environments, more = {}) => routed({
+    'repos/acme/notes': { default_branch: 'main', owner: { login: 'acme', type: 'Organization' }, permissions: { admin: false } },
     'repos/acme/notes/actions/secrets': { total_count: 0 }, 'repos/acme/notes/actions/organization-secrets': { total_count: 0 }, user: headers,
     'repos/acme/notes/environments': [{ total_count: environments.length, environments }],
-    'repos/acme/notes/environments/prod%20deploy/secrets': { total_count: 4 }, 'repos/acme/notes/environments/staging/secrets': { total_count: 2 },
-    'repos/acme/notes/environments/release/secrets': { total_count: 3 }, ...more,
+    'repos/acme/notes/environments/prod%20deploy/secrets': { total_count: 4 }, 'repos/acme/notes/environments/release/secrets': { total_count: 3 }, ...more,
   });
   // Every secret in an environment no rule holds: the preflight sees them.
   const { forge, args } = read([open]);
   assert.deepEqual(forge.workflowSecrets('acme/notes', { host: 'github.com' }), { secrets: 4, workflowPush: true });
   assert.ok(args().some((each) => each.includes('repos/acme/notes/environments/prod%20deploy/secrets')), 'the name of the environment is encoded in its route');
-  // Held to protected branches, or to a reviewer: not counted.
-  assert.equal(read([branches, reviewed]).forge.workflowSecrets('acme/notes').secrets, 0);
-  assert.ok(!read([branches, reviewed]).args().some((each) => each.some((word) => /environments\/.+\/secrets/u.test(word))), 'a held environment\'s secrets are not read');
-  assert.equal(read([open, branches]).forge.workflowSecrets('acme/notes').secrets, 4);
+  const held = read([reviewed]);
+  assert.equal(held.forge.workflowSecrets('acme/notes').secrets, 0);
+  assert.ok(!held.args().some((each) => each.some((word) => /environments\/.+\/secrets/u.test(word))), 'a held environment\'s secrets are not read');
+  assert.equal(read([open, reviewed]).forge.workflowSecrets('acme/notes').secrets, 4);
   // A reviewer rule holds only when the signed-in user cannot approve alone: self-review prevented, or every reviewer
   // another user. The user named, a team that may hold the user, or no reviewer at all: counted.
   const counted = (environment) => read([environment]).forge.workflowSecrets('acme/notes').secrets;
@@ -302,6 +338,48 @@ test('workflowSecrets counts the secrets of an environment any branch may deploy
   // A repository GitHub keeps no environments for has none; any other failure throws.
   assert.equal(read([], { 'repos/acme/notes/environments': new Error('gh: Not Found (HTTP 404)') }).forge.workflowSecrets('acme/notes').secrets, 0);
   assert.throws(() => read([open], { 'repos/acme/notes/environments/prod%20deploy/secrets': new Error('gh: Forbidden (HTTP 403)') }).forge.workflowSecrets('acme/notes'), /Forbidden/u);
+});
+
+test('workflowSecrets counts every environment when the signed-in user is an admin, whose token can edit its protection rules', () => {
+  const held = (bypass) => ({ name: 'release', ...(bypass === undefined ? {} : { can_admins_bypass: bypass }), deployment_branch_policy: null, protection_rules: [{ type: 'required_reviewers', prevent_self_review: true, reviewers: [{ type: 'User', reviewer: { login: 'ada' } }] }] });
+  // `permissions` undefined: the repository's read carries no permissions at all.
+  const secrets = (environment, permissions) => routed({
+    'repos/acme/notes': { default_branch: 'main', owner: { login: 'acme', type: 'Organization' }, ...(permissions === undefined ? {} : { permissions }) },
+    'repos/acme/notes/actions/secrets': { total_count: 0 }, 'repos/acme/notes/actions/organization-secrets': { total_count: 0 },
+    user: 'HTTP/2.0 200 OK\r\nX-Oauth-Scopes: repo\r\n\r\n{"login":"octo"}',
+    'repos/acme/notes/environments': [{ total_count: 1, environments: [environment] }], 'repos/acme/notes/environments/release/secrets': { total_count: 3 },
+  }).forge.workflowSecrets('acme/notes').secrets;
+  // An admin's token can rewrite the reviewers and the self-review rule, so no reviewer holds it, whatever
+  // `can_admins_bypass`, a field GitHub does not document, says.
+  assert.deepEqual([secrets(held(true), { admin: true }), secrets(held(false), { admin: true }), secrets(held(undefined), { admin: true })], [3, 3, 3], 'an admin: counted');
+  assert.deepEqual([secrets(held(true), { admin: false }), secrets(held(false), { admin: false }), secrets(held(undefined), { admin: false })], [0, 0, 0], 'no admin: the reviewer holds');
+  assert.equal(secrets(held(false), undefined), 3, 'admin rights GitHub does not show count as an admin\'s');
+  assert.equal(secrets(held(false), { push: true }), 3, 'a permissions answer that names no admin right counts as an admin\'s');
+});
+
+test('workflowSecrets counts every environment no reviewer other than the signed-in user holds, whatever its deployment branch policy', () => {
+  const user = (login) => ({ type: 'User', reviewer: { login } });
+  // The signed-in user is no admin of the repository, so a reviewer rule can hold that user.
+  const read = (deployment_branch_policy, protection_rules = []) => routed({
+    'repos/acme/notes': { default_branch: 'main', owner: { login: 'acme', type: 'Organization' }, permissions: { admin: false } },
+    'repos/acme/notes/actions/secrets': { total_count: 0 }, 'repos/acme/notes/actions/organization-secrets': { total_count: 0 },
+    user: 'HTTP/2.0 200 OK\r\nX-Oauth-Scopes: repo\r\n\r\n{"login":"octo"}',
+    'repos/acme/notes/environments': [{ total_count: 1, environments: [{ name: 'deploy', deployment_branch_policy, protection_rules }] }],
+    'repos/acme/notes/environments/deploy/secrets': { total_count: 5 },
+    'repos/acme/notes/environments/deploy/deployment-branch-policies': [{ total_count: 1, branch_policies: [{ name: 'main', type: 'branch' }] }],
+  });
+  const secrets = (...given) => read(...given).forge.workflowSecrets('acme/notes').secrets;
+  const branchRule = { type: 'branch_policy' };
+  assert.equal(secrets(null), 5, 'no policy');
+  assert.equal(secrets({ protected_branches: true, custom_branch_policies: false }, [branchRule]), 5, 'protected branches: a deployment branch rule is no hold');
+  assert.equal(secrets({ protected_branches: false, custom_branch_policies: true }, [branchRule]), 5, 'a custom policy for main alone: no hold either');
+  const custom = { protected_branches: false, custom_branch_policies: true };
+  assert.equal(secrets(custom, [branchRule, { type: 'required_reviewers', prevent_self_review: true, reviewers: [user('octo')] }]), 0, 'held for a reviewer, with self-review prevented');
+  assert.equal(secrets(custom, [branchRule, { type: 'required_reviewers', prevent_self_review: false, reviewers: [user('Octo')] }]), 5, 'the signed-in user may approve alone');
+  // A branch policy is never read: what branches it lets deploy plays no part.
+  const { forge, args } = read(custom, [branchRule]);
+  forge.workflowSecrets('acme/notes');
+  assert.ok(!args().some((each) => each.some((word) => /deployment-branch-policies|rulesets|protection|graphql/u.test(word))), 'no read of branch policies or branch rules');
 });
 
 test('mergedChanges takes a repo option, as openChanges does, and the repository check names only a repository the adapter serves', () => {
@@ -451,6 +529,30 @@ test('the reviews report`s calls: the merged list and its search string, +1 reac
     ['api', '--paginate', '--slurp', 'repos/acme/notes/issues/2/reactions?content=%2B1'],
     ['api', 'repos/acme/notes/compare/c1...c2'],
   ]);
+});
+
+test('reviewerSeen: a bot that only comments on a clean head is seen, and so is a formal review', () => {
+  const receipt = 'Codex Review: Didn\'t find any major issues.';
+  const seen = (changes, login = 'chatgpt-codex-connector') => {
+    const { forge, args } = recorded(() => JSON.stringify(changes));
+    return { result: forge.reviewerSeen('acme/notes', login, { limit: 5 }), args: args() };
+  };
+  const comment = seen([{ number: 6, reviews: [], comments: [{ author: { login: 'chatgpt-codex-connector' }, body: receipt }] }]);
+  assert.deepEqual(comment.result, { changes: 1, seen: true }, 'a receipt comment alone');
+  assert.deepEqual(comment.args, [['pr', 'list', '--repo', 'acme/notes', '--state', 'all', '--limit', '5', '--json', 'number,reviews,comments']]);
+  for (const login of ['ChatGPT-Codex-Connector[bot]', 'chatgpt-codex-connector[bot]']) {
+    assert.equal(seen([{ number: 6, reviews: [], comments: [{ author: { login: 'chatgpt-codex-connector' } }] }], login).result.seen, true, `${login}: any case, with or without [bot]`);
+  }
+  assert.equal(seen([{ number: 5, reviews: [{ author: { login: 'chatgpt-codex-connector' } }], comments: [] }]).result.seen, true, 'a formal review still counts');
+  const quoted = seen([{ number: 7, reviews: [{ author: { login: 'adrian' } }], comments: [{ author: { login: 'adrian' }, body: `> ${receipt}` }] }]);
+  assert.deepEqual(quoted.result, { changes: 1, seen: false }, 'another login quoting the receipt');
+  assert.deepEqual(seen([{ number: 8 }]).result, { changes: 1, seen: false }, 'no reviews or comments listed');
+  const notice = [{ number: 9, reviews: [], comments: [{ author: { login: 'chatgpt-codex-connector' }, body: 'You have reached your Codex usage limits.' }] }];
+  const { forge } = recorded(() => JSON.stringify(notice));
+  const counts = (body) => !/usage limits/u.test(body);
+  assert.equal(forge.reviewerSeen('acme/notes', 'chatgpt-codex-connector', { counts }).seen, false, 'a comment counts refuses is not seen');
+  const reviewed = [{ ...notice[0], reviews: [{ author: { login: 'chatgpt-codex-connector' } }] }];
+  assert.equal(recorded(() => JSON.stringify(reviewed)).forge.reviewerSeen('acme/notes', 'chatgpt-codex-connector', { counts }).seen, true, 'counts reads comments only');
 });
 
 test('reviewsWithComments: the reviews report`s GraphQL call, query and variables as it sent them', () => {

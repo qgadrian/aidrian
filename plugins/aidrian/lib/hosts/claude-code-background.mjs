@@ -205,7 +205,8 @@ function backwardLine() {
 function lastMode(file, session) {
   let fd;
   try {
-    fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    // Not blocking, so a named pipe in a transcript's place answers at once, as no file, and never holds the gate.
+    fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
     const stat = fstatSync(fd);
     if (!stat.isFile()) return undefined;
     let end = stat.size;
@@ -266,6 +267,24 @@ export function attachLine({ id, name }) {
 // How the Human stops the session `id` by hand, when stopBackground could not.
 export const stopLine = ({ id }) => `\`claude stop ${id}\` stops it`;
 
+// The folder of the session `session` in the listing `list`, where startBackground starts the session that resumes its
+// brief: an absolute path with no control character, or null.
+function ownFolder(list, session) {
+  const own = list?.find((each) => each.sessionId === session);
+  return typeof own?.cwd === 'string' && path.isAbsolute(own.cwd) && !CONTROL.test(own.cwd) ? own.cwd : null;
+}
+
+// The folder startBackground would start the session that resumes the brief of the session `session` in, from one read
+// of `claude agents --json`: { cwd, listing }, or null when `claude` is not found, the listing does not answer, or it
+// lists no such folder. The gate's push preflight judges the remote of `cwd` (docs/handoff.md#the-push-preflight), then
+// passes this answer to startBackground as `start`, which starts there from `listing` and never reads the folder again.
+export function startFolder({ session, env, run = runCommand, resolve = claudeOnPath }) {
+  const claude = resolve(env);
+  const listing = claude ? listed(run, claude, undefined) : null;
+  const cwd = ownFolder(listing, session);
+  return cwd === null ? null : { cwd, listing };
+}
+
 // Starts a session in the background in the folder `cwd`, by its real path, whose first message is `prompt`, under the name `name`, in
 // the permission mode `mode`: { id, session, name, cwd, mode }, or { problem, uncertain } when none it can name started,
 // as startBackground's. `mode` must be one of PERMISSION_MODES: a session no Human attends never runs without permission
@@ -297,14 +316,13 @@ export function startIn({ cwd, prompt, name, mode, agent, effort, efforts = [], 
   return launch({ claude, before, cwd: real, prompt, name, mode, agent, effort, efforts, settings, mcp, hold, run, wait });
 }
 
-// The permission mode the session `session`, as `list` names it, runs in: { mode } or { problem }. A session whose mode is
+// The permission mode the session `session`, as `list` names it, runs in: { mode, own } or { problem }, with `own` its
+// listing entry in the folder `cwd`, its listed folder (ownFolder) unless given. A session whose mode is
 // bypassPermissions, or cannot be read, gives a problem: the host's default may bypass permission checks.
-function ownMode({ session, list, env, readMode }) {
-  const own = list.find((each) => each.sessionId === session);
-  if (typeof own?.cwd !== 'string' || !path.isAbsolute(own.cwd) || CONTROL.test(own.cwd)) {
-    return { problem: '`claude agents --json` does not list the folder of this session' };
-  }
-  const read = readMode({ session, cwd: own.cwd, env });
+function ownMode({ session, list, env, readMode, cwd = ownFolder(list, session) }) {
+  if (cwd === null) return { problem: '`claude agents --json` does not list the folder of this session' };
+  const own = { ...list.find((each) => each.sessionId === session), cwd };
+  const read = readMode({ session, cwd, env });
   if (read === BYPASS) return { problem: 'this session runs with permission checks bypassed, and a session no Human attends never starts that way' };
   const mode = MODE_NAMES.get(read) ?? read;
   if (!PERMISSION_MODES.has(mode)) return { problem: 'the permission mode of this session could not be read, and the host\'s default may bypass permission checks' };
@@ -469,13 +487,14 @@ export function findSessions({ cwd, name, env, run = runCommand, resolve = claud
 // cannot be read, starts nothing: the host's default may bypass permission checks. `hold({ cwd, known })`, the gate's, files the pending mark that holds
 // every session the host had not listed, `known` being the ids it had, until the new session's own mark is written; it
 // runs before `claude --bg`, and a start it does not confirm is none. `run` and `wait` are a test's stand-ins, and
-// `resolve` finds `claude` from `env`. It is the handoff's wrapper of the launch startIn makes.
-export function startBackground({ session, slug, chain, agent, effort, efforts, prompt, env, hold, run = runCommand, wait = pause, resolve = claudeOnPath, readMode = sessionMode }) {
+// `resolve` finds `claude` from `env`. `start`, startFolder's answer the gate judged, gives the folder and the listing;
+// without it, the listing is read here. It is the handoff's wrapper of the launch startIn makes.
+export function startBackground({ session, slug, chain, agent, effort, efforts, prompt, env, hold, start, run = runCommand, wait = pause, resolve = claudeOnPath, readMode = sessionMode }) {
   const claude = resolve(env);
   if (!claude) return { problem: NO_CLAUDE };
-  const before = listed(run, claude, undefined);
+  const before = start?.listing ?? listed(run, claude, undefined);
   if (!before) return { problem: '`claude agents --json` did not answer, so the folder of this session is unknown' };
-  const read = ownMode({ session, list: before, env, readMode });
+  const read = ownMode({ session, list: before, env, readMode, cwd: start?.cwd ?? ownFolder(before, session) });
   if (read.problem) return { problem: read.problem };
   const { mode, own } = read;
   const name = sessionName(own.name, slug, chain);

@@ -24,6 +24,8 @@ import { findProject, projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { placeHolders } from '../plugins/aidrian/lib/project-start.mjs';
 import { markPending, markUnattended, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 
+import { hookCall } from './hook-call.mjs';
+
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-agent-gates.mjs');
 const WRITE_HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-write.mjs');
 const SESSION = 'feed00aa-0000-4000-8000-0000000000aa';
@@ -414,14 +416,14 @@ test('an attempt\'s work, drop, or cache folder replaced by a link is no place o
   }
 });
 
-test('the agent gate hook refuses a program that writes its own config to a marked session', (t) => {
+test('the agent gate hook refuses a program that writes its own config to a marked session', async (t) => {
   const fx = fixture(t);
-  const run = (command) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ session_id: SESSION, cwd: fx.worktree, ...bash(command) }), cwd: fx.worktree, env: fx.env, encoding: 'utf8' });
+  const run = (command) => hookCall(HOOK, { input: JSON.stringify({ session_id: SESSION, cwd: fx.worktree, ...bash(command) }), cwd: fx.worktree, env: fx.env, encoding: 'utf8' });
   for (const command of ['git config --global user.name x', 'claude mcp add srv -- npx srv', 'codex login', 'npm config set x y', 'crontab jobs.txt', 'gh auth setup-git', 'defaults write com.x k 1', 'launchctl load x.plist']) {
-    const result = run(command);
+    const result = await run(command);
     assert.equal(result.status, 2, `${command}: ${result.stderr}`);
   }
-  assert.equal(run('git config --get user.name').status, 0);
+  assert.equal((await run('git config --get user.name')).status, 0);
 });
 
 test('a link a command makes is judged by the path it points at', (t) => {
@@ -519,13 +521,15 @@ test('the session\'s own worktree is the folder its mark says it started in, nev
   assert.match(fx.ask(write(path.join(fx.home, '.zshrc')), { held, owner, cwd: dotfiles })?.reason ?? '', /a shell startup file/u, 'the refused list stays first');
 });
 
-test('the agent gate hook holds a marked session to its places, a pending hold to the refused entries, and lets a call run when it cannot read its input', (t) => {
+test('the agent gate hook holds a marked session to its places, a pending hold to the refused entries, and lets a call run when it cannot read its input', async (t) => {
   const fx = fixture(t);
   const zdot = path.join(fx.temp, 'zdot');
   // A system git config inside the temporary folder, where only git's name for it refuses it.
   const system = path.join(fx.temp, 'etc', 'gitconfig');
   const env = { ...fx.env, ZDOTDIR: zdot, GIT_CONFIG_SYSTEM: system };
-  const run = (session, input, { script = HOOK, cwd = fx.worktree } = {}) => spawnSync(process.execPath, [script], { input: typeof input === 'string' ? input : JSON.stringify({ session_id: session, cwd, ...input }), cwd, env, encoding: 'utf8' });
+  // Called in this process as the host runs the script; `call` spawned starts it as its own program, for its reading of stdin.
+  const spawned = (script, options) => spawnSync(process.execPath, [script], options);
+  const run = (session, input, { script = HOOK, cwd = fx.worktree, call = hookCall } = {}) => call(script, { input: typeof input === 'string' ? input : JSON.stringify({ session_id: session, cwd, ...input }), cwd, env, encoding: 'utf8' });
   const refused = [
     [write(system), /the system's git config/u],
     [write(path.join(fx.dir, '.git', 'hooks', 'pre-commit')), /the repository's shared git hooks/u],
@@ -534,15 +538,15 @@ test('the agent gate hook holds a marked session to its places, a pending hold t
     [write(path.join(fx.xdg, 'git', 'config')), /the user's git config/u],
   ];
   for (const [input, reason] of refused) {
-    const result = run(SESSION, input);
+    const result = await run(SESSION, input);
     assert.equal(result.status, 2, `${input.tool_input.command ?? input.tool_input.file_path}: ${result.stderr}`);
     assert.match(result.stderr, reason);
   }
   for (const input of [write(path.join(fx.worktree, 'src.js')), bash(`echo x > ${path.join(fx.state, 'tmp', 'x')}`), bash('make 2>/dev/null')]) {
-    const result = run(SESSION, input);
+    const result = await run(SESSION, input);
     assert.equal(result.status, 0, result.stderr);
   }
-  for (const script of [HOOK, WRITE_HOOK]) assert.equal(run(SESSION, 'not json', { script }).status, 0, 'an input it cannot read lets the call run');
+  for (const script of [HOOK, WRITE_HOOK]) assert.equal((await run(SESSION, 'not json', { script, call: spawned })).status, 0, 'an input it cannot read lets the call run');
   // A pending mark with no session listed holds every other session: one writing its own file in another repository
   // passes, and one writing that repository's shared git config does not.
   const other = path.join(fx.root, 'other');
@@ -550,9 +554,9 @@ test('the agent gate hook holds a marked session to its places, a pending hold t
   gitIn(other)('init', '-q', '-b', 'main');
   assert.ok(markPending('feed00aa-0000-4000-8000-0000000000dd', { cwd: fx.worktree, root: fx.dir, known: [], env: fx.env }));
   const another = 'feed00aa-0000-4000-8000-0000000000ee';
-  const own = run(another, write(path.join(other, 'notes.md')), { cwd: other });
+  const own = await run(another, write(path.join(other, 'notes.md')), { cwd: other });
   assert.equal(own.status, 0, own.stderr);
-  const user = run(another, write(path.join(other, '.git', 'config')), { cwd: other });
+  const user = await run(another, write(path.join(other, '.git', 'config')), { cwd: other });
   assert.equal(user.status, 2, user.stderr);
   assert.match(user.stderr, /a project start is in progress/u);
 });
@@ -746,21 +750,21 @@ test('git reads a commondir of `.` and a newline as the git folder itself: statu
   assert.throws(() => inWork('status'), /failed to read .*commondir/u);
 });
 
-test('the agent gate hook refuses every call in an attempt clone whose commondir is not the gate\'s placeholder, before any git runs there', (t) => {
+test('the agent gate hook refuses every call in an attempt clone whose commondir is not the gate\'s placeholder, before any git runs there', async (t) => {
   const root = tempRoot(t, 'aidrian-hook-commondir-');
   const state = path.join(root, 'state');
   const main = path.join(root, 'main');
   onMain(main, { version: 1, state: { dir: state } });
   const { attempt, work } = clone({ state, main });
   const env = { ...process.env, XDG_STATE_HOME: path.join(root, 'marks') };
-  const run = () => spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ session_id: SESSION, cwd: work, tool_name: 'Read', tool_input: { file_path: path.join(work, 'x') } }), cwd: work, env, encoding: 'utf8' });
+  const run = () => hookCall(HOOK, { input: JSON.stringify({ session_id: SESSION, cwd: work, tool_name: 'Read', tool_input: { file_path: path.join(work, 'x') } }), cwd: work, env, encoding: 'utf8' });
   const commondir = path.join(attempt, 'git', 'commondir');
   writeFileSync(commondir, GIT_PLACEHOLDERS.commondir);
-  const passed = run();
+  const passed = await run();
   assert.equal(passed.status, 0, passed.stderr);
   for (const text of [`${path.join(main, '.git')}\n`, '', '../git\n']) {
     writeFileSync(commondir, text);
-    const refused = run();
+    const refused = await run();
     assert.equal(refused.status, 2, JSON.stringify(text));
     assert.match(refused.stderr, /holds .*commondir, through which git reads another config/u, JSON.stringify(text));
   }

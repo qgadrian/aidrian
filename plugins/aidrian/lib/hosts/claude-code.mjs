@@ -6,8 +6,9 @@ import { lstatSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-import { attachLine, findLine, findSessions, nameMatcher, sessionEnded, sessionFinished, startBackground, startProject, stopBackground, stopLine, stopOwnBackground } from './claude-code-background.mjs';
+import { attachLine, findLine, findSessions, nameMatcher, sessionEnded, sessionFinished, startBackground, startFolder, startProject, stopBackground, stopLine, stopOwnBackground } from './claude-code-background.mjs';
 import { configDir } from './claude-code-config.mjs';
+import { pushPermission } from './claude-code-push.mjs';
 import { attended, END_SIGNAL, hasClient, hostProcess, isWrappedHost, PROGRAM } from './claude-code-terminal.mjs';
 import modelPrices from './claude-code-prices.mjs';
 import { transcriptLimit } from './claude-code-limit.mjs';
@@ -265,13 +266,15 @@ export default {
     wakesOnTaskEnd: { taskTypes: ['shell'] },
     // Every MCP call reaches its hooks with no step by a person.
     trackerGuard: { verified: 'live', evidence: 'The PostToolUse payload of a real get_workspace call on Claude Code 2.1.318', unguardedRoutes: [] },
+    // Whether auto mode would let a session push to the remote, from the user settings (lib/hosts/claude-code-push.mjs).
+    pushPermission: (ask) => pushPermission(ask),
     // How a session goes on after its handoff (session.handoff.continue). A clear keeps the same process, so the hook's parent,
     // the claude process, names the session before and after it. The background route starts a new session with
-    // `claude --bg` (lib/hosts/claude-code-background.mjs), in the session's own folder, under its name, agent, and
-    // effort; `stopBackground` stops one the gate cannot hold to a chain floor, `stopLine` says how to stop it by hand when
-    // that failed, `findLine` how to find and stop one a start may have made that the gate cannot name, `attachLine`
-    // and `attachCommand` say how to open one, and `sessionEnded` whether `claude agents --json --all` lists a started one
-    // as done. `replaceTerminal` ends a session that handed off once its turn ends, so the shell function
+    // `claude --bg` (lib/hosts/claude-code-background.mjs), in the session's own folder, `startFolder`, under its name,
+    // agent, and effort; `stopBackground` stops one the gate cannot hold to a chain floor, `stopLine` says how to stop it by
+    // hand when that failed, `findLine` how to find and stop one a start may have made that the gate cannot name,
+    // `attachLine` and `attachCommand` say how to open one, and `sessionEnded` whether `claude agents --json --all` lists a
+    // started one as done. `replaceTerminal` ends a session that handed off once its turn ends, so the shell function
     // `aidrian shell-init` prints opens the new one in the same terminal (lib/hosts/claude-code-terminal.mjs).
     handoffContinue: {
       routes: ['clear', 'background'],
@@ -279,9 +282,11 @@ export default {
         clear: 'type /clear, then any message',
         background: 'nothing to type, since a new session starts in the background and resumes from the brief by itself',
       },
-      startBackground: ({ session, slug, chain, env, prompt, hold, run, wait }) => startBackground({
-        session, slug, chain, env, prompt, hold, run, wait, agent: agentName(env), effort: effort(env), efforts: MODEL_CHOICES.effort,
+      startBackground: ({ session, slug, chain, env, prompt, hold, run, wait, start }) => startBackground({
+        session, slug, chain, env, prompt, hold, run, wait, start, agent: agentName(env), effort: effort(env), efforts: MODEL_CHOICES.effort,
       }),
+      // The folder startBackground would start the new session in, which the gate's push preflight judges and passes back.
+      startFolder: ({ session, env, run }) => startFolder({ session, env, run }),
       stopBackground: ({ id, env, run }) => stopBackground({ id, env, run }),
       sessionEnded: ({ id, session, env, run }) => sessionEnded({ id, session, env, run }),
       stopLine,
@@ -332,7 +337,7 @@ export default {
       access: ({ env, home, guarded, pushUrl, platform, allowed, helpers }) => accessProblem({ env, home, guarded, pushUrl, platform, allowed, helpers }),
       cloneProblem: ({ work, allowed }) => cloneProblem({ work, allowed }),
       // Whether a driver on this host would carry on by itself after a usage limit (aidrian project preflight).
-      limitContinue: ({ env, home }) => limitContinueProblem({ env, home }),
+      limitContinue: ({ env, home, project }) => limitContinueProblem({ env, home, project }),
       placeholders: PLACEHOLDERS,
       sessionNote,
       // The package managers' caches reach the session's sandboxed commands alone: the SessionStart hook appends them to

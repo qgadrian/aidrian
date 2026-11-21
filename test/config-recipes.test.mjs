@@ -26,6 +26,8 @@ const MACHINE = {
 };
 // The projectRun keys that open a confined session's sandbox further: a team sets each after reading its risk.
 const SANDBOX_OPT_INS = ['registries', 'unverifiedHosts', 'outsideSandbox', 'mcpServers'];
+// The projectRun keys that turn a preflight blocker into a risk the team takes: a team sets each after reading it.
+const RISK_ACCEPTANCES = ['workflowSecretsAccepted', 'forgeProtectionAccepted'];
 
 const recipe = (name) => JSON.parse(readFileSync(path.join(RECIPES, `${name}.json`), 'utf8'));
 // Every leaf of `value` as a dotted path.
@@ -57,6 +59,10 @@ test('no recipe turns on a machine switch, which only the main checkout\'s local
 
 test('no recipe opens a project run\'s sandbox further', () => {
   for (const name of names) for (const key of SANDBOX_OPT_INS) assert.equal(has(recipe(name), `projectRun.${key}`), false, `${name} sets projectRun.${key}`);
+});
+
+test('no recipe accepts a risk the preflight blocks', () => {
+  for (const name of names) for (const key of RISK_ACCEPTANCES) assert.equal(has(recipe(name), `projectRun.${key}`), false, `${name} sets projectRun.${key}`);
 });
 
 test('the setup reference offers every recipe', () => {

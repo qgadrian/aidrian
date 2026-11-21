@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { hookCall } from './hook-call.mjs';
+
 import { nameMatches } from '../plugins/aidrian/lib/agent-gates.mjs';
 import { TRACKERS } from '../plugins/aidrian/lib/trackers/index.mjs';
 import { fold } from '../plugins/aidrian/lib/lesson-inbox.mjs';
@@ -481,7 +483,9 @@ test('the module and its hooks name no tracker', () => {
 // The hooks run as processes, in a git repository of their own with `settings` as its config.json: as given when it is a
 // string, such as text that does not parse. With null, the folder is no project.
 let sessions = 0;
-function project(t, settings = { version: 1, tracker }) {
+// A session in a fresh repository with `settings`. Its hooks are called in this process, as the host runs their
+// scripts; `runProcess` runs a script as its own process, and `{ spawn: true }` sends every call through it.
+function project(t, settings = { version: 1, tracker }, { spawn = false } = {}) {
   const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-tracker-')));
   t.after(() => rmSync(base, { recursive: true, force: true }));
   const dir = path.join(base, 'repo');
@@ -495,7 +499,9 @@ function project(t, settings = { version: 1, tracker }) {
   const state = path.join(base, 'state');
   const env = { ...process.env, XDG_STATE_HOME: state, TMPDIR: temp };
   const session = `session-${sessions += 1}`;
-  const run = (script, input) => spawnSync(process.execPath, [script], { input: JSON.stringify({ cwd: dir, session_id: session, ...input }), encoding: 'utf8', env });
+  const options = (input) => ({ input: JSON.stringify({ cwd: dir, session_id: session, ...input }), encoding: 'utf8', env });
+  const runProcess = async (script, input) => spawnSync(process.execPath, [script], options(input));
+  const run = spawn ? runProcess : (script, input) => hookCall(script, options(input));
   // The project's state folder, found on disk: `aidrian state` exits 1 on a config whose problems `check` reports.
   const stateRows = (file) => {
     const projects = path.join(state, 'aidrian/projects');
@@ -517,6 +523,7 @@ function project(t, settings = { version: 1, tracker }) {
     end: (extra = {}) => run(END, extra),
     inbox: () => stateRows('lessons/inbox.jsonl'),
     run,
+    runProcess,
     stateFiles: () => (existsSync(state) ? readdirSync(state, { recursive: true }) : []),
     report: (args) => spawnSync(CLI, ['report', ...args], { cwd: dir, env, encoding: 'utf8' }),
   };
@@ -525,31 +532,32 @@ function project(t, settings = { version: 1, tracker }) {
 const assertRuns = ({ status, stderr }, label) => assert.deepEqual([status, stderr], [0, ''], label);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-test('a write is refused before a read, allowed after a matching one, and refused again after a later mismatched read', (t) => {
-  const { read, write } = project(t);
-  const before = write();
+test('a write is refused before a read, allowed after a matching one, and refused again after a later mismatched read', async (t) => {
+  // The real scripts, as the host runs them.
+  const { read, write } = project(t, undefined, { spawn: true });
+  const before = await write();
   assert.equal(before.status, 2);
   assert.match(before.stderr, /has not read the connected workspace/);
   assert.match(before.stderr, /mcp__x__get_workspace/);
 
-  assertRuns(read());
-  assertRuns(write());
+  assertRuns(await read());
+  assertRuns(await write());
 
-  assertRuns(read({ url: 'https://tracker.example/other' }));
-  const after = write();
+  assertRuns(await read({ url: 'https://tracker.example/other' }));
+  const after = await write();
   assert.equal(after.status, 2);
   assert.match(after.stderr, /"https:\/\/tracker\.example\/other"/);
   assert.match(after.stderr, /Ask the Human whether tracker\.workspace\.expect is wrong/);
 
-  assertRuns(read());
-  assertRuns(write());
+  assertRuns(await read());
+  assertRuns(await write());
 });
 
-test('a read in the shape observed on Claude Code clears the write', (t) => {
+test('a read in the shape observed on Claude Code clears the write', async (t) => {
   const { file, read, write } = project(t);
-  assertRuns(read(CLAUDE_CODE_READ));
+  assertRuns(await read(CLAUDE_CODE_READ));
   assert.deepEqual(JSON.parse(readFileSync(file(), 'utf8')).value, EXPECT);
-  assertRuns(write());
+  assertRuns(await write());
 });
 
 test('no tracker hook runs on a failed read, so it leaves the record as it was', () => {
@@ -586,84 +594,84 @@ test('the probe server exits at once under the test runner, which holds its stdi
   assert.deepEqual([status, stdout], [0, '']);
 });
 
-test('the post hook records { value, unreadable, tool, at }, and the latest read replaces an earlier one', (t) => {
+test('the post hook records { value, unreadable, tool, at }, and the latest read replaces an earlier one', async (t) => {
   const { file, read } = project(t);
-  assertRuns(read());
+  assertRuns(await read());
   const first = JSON.parse(readFileSync(file(), 'utf8'));
   assert.deepEqual(Object.keys(first), ['value', 'unreadable', 'tool', 'at']);
   assert.deepEqual([first.value, first.unreadable, first.tool], [EXPECT, false, READ]);
   assert.equal(new Date(first.at).toISOString(), first.at);
 
-  assertRuns(read('not json'));
+  assertRuns(await read('not json'));
   const second = JSON.parse(readFileSync(file(), 'utf8'));
   assert.deepEqual([second.value, second.unreadable, second.tool], [null, true, READ]);
 });
 
-test('a read with no value refuses a write and asks the Human, until a later read has one', (t) => {
+test('a read with no value refuses a write and asks the Human, until a later read has one', async (t) => {
   const { read, write } = project(t);
-  assertRuns(read({ name: 'acme' }));
-  const refused = write();
+  assertRuns(await read({ name: 'acme' }));
+  const refused = await write();
   assert.equal(refused.status, 2);
   assert.match(refused.stderr, /the read returned no url \(mcp__x__get_workspace\)/);
-  assertRuns(read({ content: [text(JSON.stringify(OK))] }));
-  assertRuns(write());
+  assertRuns(await read({ content: [text(JSON.stringify(OK))] }));
+  assertRuns(await write());
 });
 
-test('only a tool in readTools leaves a record, and it never replaces one', (t) => {
+test('only a tool in readTools leaves a record, and it never replaces one', async (t) => {
   const { file, read, run, write } = project(t);
-  assertRuns(run(POST, { tool_name: 'mcp__x__get_issue', tool_response: { url: 'https://other.example' } }));
-  assertRuns(run(POST, { tool_name: WRITE, tool_response: { url: 'https://other.example' } }));
+  assertRuns(await run(POST, { tool_name: 'mcp__x__get_issue', tool_response: { url: 'https://other.example' } }));
+  assertRuns(await run(POST, { tool_name: WRITE, tool_response: { url: 'https://other.example' } }));
   assert.equal(existsSync(file()), false);
-  assertRuns(read());
-  assertRuns(run(POST, { tool_name: 'mcp__x__get_issue', tool_response: { url: 'https://other.example' } }));
-  assertRuns(write());
+  assertRuns(await read());
+  assertRuns(await run(POST, { tool_name: 'mcp__x__get_issue', tool_response: { url: 'https://other.example' } }));
+  assertRuns(await write());
 });
 
-test('one record serves one server: a read on a clears a write on a and not on b, and a read on b takes its place', (t) => {
+test('one record serves one server: a read on a clears a write on a and not on b, and a read on b takes its place', async (t) => {
   const settings = { version: 1, tracker: { ...tracker, readTools: ['mcp__a__read', 'mcp__b__read'], writeTools: ['mcp__a__write', 'mcp__b__write'] } };
   const { read, write } = project(t, settings);
   const on = (server) => write({}, { tool_name: `mcp__${server}__write` });
   const readOnServer = (server, response = OK) => read(response, { tool_name: `mcp__${server}__read` });
 
-  assertRuns(readOnServer('a'));
-  assertRuns(on('a'));
-  const refusedOnB = on('b');
+  assertRuns(await readOnServer('a'));
+  assertRuns(await on('a'));
+  const refusedOnB = await on('b');
   assert.equal(refusedOnB.status, 2);
   assert.match(refusedOnB.stderr, /Call mcp__b__read, then write again/);
 
-  assertRuns(readOnServer('b'));
-  assertRuns(on('b'));
-  const refusedOnA = on('a');
+  assertRuns(await readOnServer('b'));
+  assertRuns(await on('b'));
+  const refusedOnA = await on('a');
   assert.equal(refusedOnA.status, 2);
   assert.match(refusedOnA.stderr, /Call mcp__a__read, then write again/);
 
-  assertRuns(readOnServer('a'));
-  assertRuns(on('a'));
-  assertRuns(readOnServer('b', { url: 'https://other.example' }));
-  assert.match(on('b').stderr, /"https:\/\/other\.example"/);
-  assert.match(on('a').stderr, /Call mcp__a__read/, 'the mismatched read on b replaced the good read on a');
+  assertRuns(await readOnServer('a'));
+  assertRuns(await on('a'));
+  assertRuns(await readOnServer('b', { url: 'https://other.example' }));
+  assert.match((await on('b')).stderr, /"https:\/\/other\.example"/);
+  assert.match((await on('a')).stderr, /Call mcp__a__read/, 'the mismatched read on b replaced the good read on a');
 });
 
-test('a session whose record cannot be saved skips the no-read rule and keeps the others, under any uid', (t) => {
+test('a session whose record cannot be saved skips the no-read rule and keeps the others, under any uid', async (t) => {
   const { read, state, write } = project(t);
   writeFileSync(state, 'a plain file, so no folder can be made under it');
-  assertRuns(read());
-  assertRuns(write());
-  const refused = write({ team: 'Other' });
+  assertRuns(await read());
+  assertRuns(await write());
+  const refused = await write({ team: 'Other' });
   assert.equal(refused.status, 2);
   assert.match(refused.stderr, /tracker\.team\.values/);
-  assert.match(write({ project: 'Other' }).stderr, /tracker\.project\.values/);
-  assert.match(write({ id: 'OTHER-1' }).stderr, /tracker\.team\.key/);
+  assert.match((await write({ project: 'Other' })).stderr, /tracker\.project\.values/);
+  assert.match((await write({ id: 'OTHER-1' })).stderr, /tracker\.team\.key/);
 });
 
-test('a record folder that exists but is read-only skips the no-read rule and keeps the others', { skip: process.getuid?.() === 0 }, (t) => {
+test('a record folder that exists but is read-only skips the no-read rule and keeps the others', { skip: process.getuid?.() === 0 }, async (t) => {
   const { file, write } = project(t);
   const folder = path.dirname(file());
   mkdirSync(folder, { recursive: true });
   chmodSync(folder, 0o555);
   try {
-    assertRuns(write());
-    const refused = write({ team: 'Other' });
+    assertRuns(await write());
+    const refused = await write({ team: 'Other' });
     assert.equal(refused.status, 2);
     assert.match(refused.stderr, /tracker\.team\.values/);
   } finally {
@@ -671,10 +679,10 @@ test('a record folder that exists but is read-only skips the no-read rule and ke
   }
 });
 
-test('check reports a write no read can clear, and the guard stays on and refuses it at run time', (t) => {
+test('check reports a write no read can clear, and the guard stays on and refuses it at run time', async (t) => {
   const settings = { version: 1, tracker: { ...tracker, readTools: ['mcp__a__read'], writeTools: ['mcp__b__write'] } };
   const { dir, write } = project(t, settings);
-  const refused = write({}, { tool_name: 'mcp__b__write' });
+  const refused = await write({}, { tool_name: 'mcp__b__write' });
   assert.equal(refused.status, 2);
   assert.match(refused.stderr, /Ask the Human to add a read tool on this server to tracker\.readTools/);
   const checked = spawnSync(CLI, ['check'], { cwd: dir, encoding: 'utf8' });
@@ -682,63 +690,63 @@ test('check reports a write no read can clear, and the guard stays on and refuse
   assert.match(checked.stderr, /"tracker\.writeTools" has "mcp__b__write": no tool in "tracker\.readTools" is on its server/);
 });
 
-test('a missing record folder that can be made keeps the no-read rule, and the pre hook does not make it', (t) => {
+test('a missing record folder that can be made keeps the no-read rule, and the pre hook does not make it', async (t) => {
   const { state, stateFiles, write } = project(t);
   assert.equal(existsSync(state), false);
-  assert.match(write().stderr, /has not read the connected workspace/);
+  assert.match((await write()).stderr, /has not read the connected workspace/);
   assert.deepEqual(stateFiles().filter((entry) => entry.includes('sessions')), []);
   mkdirSync(state, { recursive: true });
-  assert.match(write().stderr, /has not read the connected workspace/);
+  assert.match((await write()).stderr, /has not read the connected workspace/);
 });
 
-test('a record that already exists is judged, though its folder cannot be written', (t) => {
+test('a record that already exists is judged, though its folder cannot be written', async (t) => {
   const { file, read, write } = project(t);
-  assertRuns(read({ url: 'https://other.example' }));
+  assertRuns(await read({ url: 'https://other.example' }));
   const folder = path.dirname(file());
   chmodSync(folder, 0o555);
   try {
-    assert.match(write().stderr, /"https:\/\/other\.example"/);
+    assert.match((await write()).stderr, /"https:\/\/other\.example"/);
   } finally {
     chmodSync(folder, 0o755);
   }
 });
 
-test('the pre hook judges only writeTools, and the team and project rules from the tool input', (t) => {
+test('the pre hook judges only writeTools, and the team and project rules from the tool input', async (t) => {
   const { read, run, write } = project(t);
-  assertRuns(run(PRE, { tool_name: 'mcp__x__get_issue', tool_input: { team: 'Other' } }));
-  assertRuns(read());
-  assert.match(write({ team: 'Other' }).stderr, /tracker\.team\.values/);
-  assert.match(write({ id: 'OTHER-1' }).stderr, /tracker\.team\.key/);
-  assert.match(write({ project: 'Other' }).stderr, /tracker\.project\.values/);
-  assertRuns(write({ team: 'Notes', id: 'NOTES-1', project: 'Notes launch' }));
+  assertRuns(await run(PRE, { tool_name: 'mcp__x__get_issue', tool_input: { team: 'Other' } }));
+  assertRuns(await read());
+  assert.match((await write({ team: 'Other' })).stderr, /tracker\.team\.values/);
+  assert.match((await write({ id: 'OTHER-1' })).stderr, /tracker\.team\.key/);
+  assert.match((await write({ project: 'Other' })).stderr, /tracker\.project\.values/);
+  assertRuns(await write({ team: 'Notes', id: 'NOTES-1', project: 'Notes launch' }));
 });
 
-test('with no session id, nothing is recorded, rule 1 is skipped, and the other rules still run', (t) => {
+test('with no session id, nothing is recorded, rule 1 is skipped, and the other rules still run', async (t) => {
   const { read, stateFiles, write } = project(t);
   for (const session_id of [undefined, '', 42, '../escape', 'a/b']) {
-    assertRuns(read(OK, { session_id }), `post: ${session_id}`);
-    assertRuns(write({}, { session_id }), `pre: ${session_id}`);
+    assertRuns(await read(OK, { session_id }), `post: ${session_id}`);
+    assertRuns(await write({}, { session_id }), `pre: ${session_id}`);
   }
   assert.deepEqual(stateFiles(), []);
-  const refused = write({ team: 'Other' }, { session_id: undefined });
+  const refused = await write({ team: 'Other' }, { session_id: undefined });
   assert.equal(refused.status, 2);
   assert.match(refused.stderr, /tracker\.team\.values/);
 });
 
-test('a record that is not one reads as no read, so a new read recovers', (t) => {
+test('a record that is not one reads as no read, so a new read recovers', async (t) => {
   const { file, read, write } = project(t);
-  assertRuns(read());
+  assertRuns(await read());
   for (const broken of ['not json', '[]', 'null', '3']) {
     writeFileSync(file(), broken);
-    const refused = write();
+    const refused = await write();
     assert.equal(refused.status, 2, broken);
     assert.match(refused.stderr, /has not read the connected workspace/, broken);
   }
-  assertRuns(read());
-  assertRuns(write());
+  assertRuns(await read());
+  assertRuns(await write());
 });
 
-test('with the tracker off, a broken config, or no project, both hooks let the call run and write no file', (t) => {
+test('with the tracker off, a broken config, or no project, both hooks let the call run and write no file', async (t) => {
   const off = [
     ['the key unset', { version: 1 }],
     ['enabled false', { version: 1, tracker: { ...tracker, enabled: false } }],
@@ -752,26 +760,26 @@ test('with the tracker off, a broken config, or no project, both hooks let the c
   ];
   for (const [label, settings] of off) {
     const { read, stateFiles, write } = project(t, settings);
-    assertRuns(write({ team: 'Other' }), `pre: ${label}`);
-    assertRuns(read(), `post: ${label}`);
-    assertRuns(write({ team: 'Other' }), `pre after a read: ${label}`);
+    assertRuns(await write({ team: 'Other' }), `pre: ${label}`);
+    assertRuns(await read(), `post: ${label}`);
+    assertRuns(await write({ team: 'Other' }), `pre after a read: ${label}`);
     assert.deepEqual(stateFiles(), [], label);
   }
 });
 
-test('input a hook cannot read lets the call run and writes no file', (t) => {
+test('input a hook cannot read lets the call run and writes no file', async (t) => {
   const { run, stateFiles } = project(t);
   for (const input of [{ tool_name: undefined }, { tool_name: 42 }, { cwd: 42, tool_name: 42 }, { tool_name: ['mcp__x__get_workspace'] }]) {
-    assertRuns(run(PRE, input), `pre: ${JSON.stringify(input)}`);
-    assertRuns(run(POST, input), `post: ${JSON.stringify(input)}`);
+    assertRuns(await run(PRE, input), `pre: ${JSON.stringify(input)}`);
+    assertRuns(await run(POST, input), `post: ${JSON.stringify(input)}`);
   }
   assert.deepEqual(stateFiles(), []);
 });
 
-test('a refusal appears as a tracker-guard row in the report, naming the cause and never the rest of the input', (t) => {
+test('a refusal appears as a tracker-guard row in the report, naming the cause and never the rest of the input', async (t) => {
   const { read, report, write } = project(t, { version: 1, tracker, telemetry: { enabled: true, hookDenies: true } });
-  assertRuns(read());
-  assert.equal(write({ team: 'Other', title: 'SECRET title' }).status, 2);
+  assertRuns(await read());
+  assert.equal((await write({ team: 'Other', title: 'SECRET title' })).status, 2);
   const { status, stdout } = report(['--json']);
   assert.equal(status, 0);
   const denies = JSON.parse(stdout).hook_denies;
@@ -787,10 +795,10 @@ const TELEMETRY = { version: 1, tracker, telemetry: { enabled: true, hookDenies:
 const NO_READ_LANDED = 'this session was refused for no read of the connected workspace, and no read landed';
 const denyRows = ({ log }) => log().filter((row) => row.event === 'hook_deny');
 
-test('a batch of first writes is refused with its reason, adds no row and no block count, and files no lesson', (t) => {
+test('a batch of first writes is refused with its reason, adds no row and no block count, and files no lesson', async (t) => {
   const { inbox, log, session, state, write } = project(t, TELEMETRY);
   for (let call = 0; call < 5; call += 1) {
-    const refused = write();
+    const refused = await write();
     assert.equal(refused.status, 2);
     assert.match(refused.stderr, /has not read the connected workspace/);
     assert.match(refused.stderr, /Call mcp__x__get_workspace, then write again/);
@@ -800,15 +808,15 @@ test('a batch of first writes is refused with its reason, adds no row and no blo
   assert.deepEqual(inbox(), []);
 });
 
-test('a session refused for no read whose read never lands writes one row at its end, and cleans up', (t) => {
+test('a session refused for no read whose read never lands writes one row at its end, and cleans up', async (t) => {
   const refused = project(t, TELEMETRY);
   const { counts, end, inbox, session, write } = refused;
-  for (let call = 0; call < 3; call += 1) assert.equal(write({}, { agent_type: 'worker' }).status, 2);
+  for (let call = 0; call < 3; call += 1) assert.equal((await write({}, { agent_type: 'worker' })).status, 2);
   const marker = path.join(counts, `aidrian-tracker-refused-${session}`);
   assert.equal(existsSync(marker), true);
   assert.deepEqual(denyRows(refused), [], 'nothing counts before the end');
 
-  assertRuns(end());
+  assertRuns(await end());
   const rows = denyRows(refused);
   assert.deepEqual(rows.map((row) => [row.rule, row.tool, row.agent_type, row.session_id, row.reason]), [['tracker-guard', WRITE, 'worker', session, NO_READ_LANDED]]);
   assert.ok(NO_READ_LANDED.length <= 120);
@@ -816,63 +824,63 @@ test('a session refused for no read whose read never lands writes one row at its
   assert.equal(existsSync(path.join(counts, `aidrian-denials-${session}`)), false, 'the recorder\'s count goes with the session');
   assert.deepEqual(inbox(), [], 'one block is no lesson');
 
-  assertRuns(end());
+  assertRuns(await end());
   assert.equal(denyRows(refused).length, 1, 'a second end writes no second row');
 });
 
-test('the first refusal of a session keeps its marker, so the row names that call', (t) => {
+test('the first refusal of a session keeps its marker, so the row names that call', async (t) => {
   const refused = project(t, TELEMETRY);
-  assert.equal(refused.write({}, { agent_type: 'first' }).status, 2);
-  assert.equal(refused.write({}, { agent_type: 'second' }).status, 2);
-  assertRuns(refused.end());
+  assert.equal((await refused.write({}, { agent_type: 'first' })).status, 2);
+  assert.equal((await refused.write({}, { agent_type: 'second' })).status, 2);
+  assertRuns(await refused.end());
   assert.deepEqual(denyRows(refused).map((row) => row.agent_type), ['first']);
 });
 
-test('with telemetry.enabled or telemetry.hookDenies off, a session stuck on the no-read refusal is refused and leaves no row and no lesson', (t) => {
+test('with telemetry.enabled or telemetry.hookDenies off, a session stuck on the no-read refusal is refused and leaves no row and no lesson', async (t) => {
   for (const telemetry of [{ enabled: true, hookDenies: false }, { enabled: false, hookDenies: true }]) {
     const stuck = project(t, { version: 1, tracker, telemetry });
     for (let call = 0; call < 5; call += 1) {
-      const refused = stuck.write();
+      const refused = await stuck.write();
       assert.equal(refused.status, 2, JSON.stringify(telemetry));
       assert.match(refused.stderr, /has not read the connected workspace/);
     }
-    assertRuns(stuck.end());
+    assertRuns(await stuck.end());
     assert.deepEqual(denyRows(stuck), [], JSON.stringify(telemetry));
     assert.deepEqual(stuck.inbox(), [], JSON.stringify(telemetry));
   }
 });
 
-test('a session with a recorded read writes no row at its end, whatever the read returned', (t) => {
+test('a session with a recorded read writes no row at its end, whatever the read returned', async (t) => {
   for (const response of [OK, { url: 'https://other.example' }, { name: 'no url' }]) {
     const session = project(t, TELEMETRY);
-    assert.equal(session.write().status, 2);
-    assertRuns(session.read(response));
+    assert.equal((await session.write()).status, 2);
+    assertRuns(await session.read(response));
     const before = denyRows(session).length;
-    assertRuns(session.end());
+    assertRuns(await session.end());
     assert.equal(denyRows(session).length, before);
     assert.equal(existsSync(path.join(session.counts, `aidrian-tracker-refused-${session.session}`)), false);
   }
 });
 
-test('the row at a session\'s end respects the switches and goes to the project that refused, wherever the session ends', (t) => {
+test('the row at a session\'s end respects the switches and goes to the project that refused, wherever the session ends', async (t) => {
   for (const telemetry of [{ enabled: true, hookDenies: false }, { enabled: false, hookDenies: true }]) {
     const off = project(t, { version: 1, tracker, telemetry });
-    assert.equal(off.write().status, 2);
-    assertRuns(off.end());
+    assert.equal((await off.write()).status, 2);
+    assertRuns(await off.end());
     assert.deepEqual(denyRows(off), []);
     assert.equal(existsSync(path.join(off.counts, `aidrian-tracker-refused-${off.session}`)), false);
   }
   const moved = project(t, TELEMETRY);
-  assert.equal(moved.write().status, 2);
-  assertRuns(moved.end({ cwd: moved.base }));
+  assert.equal((await moved.write()).status, 2);
+  assertRuns(await moved.end({ cwd: moved.base }));
   assert.deepEqual(denyRows(moved).map((row) => row.reason), [NO_READ_LANDED]);
 });
 
-test('a refusal whose marker cannot be written is still refused', (t) => {
+test('a refusal whose marker cannot be written is still refused', async (t) => {
   const { counts, write } = project(t, TELEMETRY);
   mkdirSync(path.dirname(counts), { recursive: true });
   writeFileSync(counts, 'a plain file where the counts folder goes');
-  const refused = write();
+  const refused = await write();
   assert.equal(refused.status, 2);
   assert.match(refused.stderr, /has not read the connected workspace/);
 });
@@ -895,7 +903,7 @@ test('session end still deletes and hands off when the refusal cannot be settled
     writeFileSync(length, '{}\n');
     const transcript = path.join(base, 'transcript.jsonl');
     writeFileSync(transcript, JSON.stringify({ type: 'assistant', timestamp: '2026-11-04T10:00:00Z', message: { id: 'm1', model: 'claude-opus-5-5', usage: { input_tokens: 10, output_tokens: 5 }, content: [] } }));
-    assertRuns(end({ transcript_path: transcript }), label);
+    assertRuns(await end({ transcript_path: transcript }), label);
     assert.equal(existsSync(length), false, label);
     for (const deadline = Date.now() + 15_000; !log().some((row) => row.event === 'session'); await sleep(25)) {
       if (Date.now() > deadline) assert.fail(`the session row never landed: ${label}`);
@@ -903,43 +911,45 @@ test('session end still deletes and hands off when the refusal cannot be settled
   }
 });
 
-test('a row that cannot be written at session end costs nothing else', (t) => {
-  const { counts, end, session, state, write } = project(t, TELEMETRY);
-  assert.equal(write().status, 2);
+test('a row that cannot be written at session end costs nothing else', async (t) => {
+  // The real scripts, as the host runs them.
+  const { counts, end, session, state, write } = project(t, TELEMETRY, { spawn: true });
+  assert.equal((await write()).status, 2);
   const length = path.join(counts, `aidrian-session-length-${session}`);
   writeFileSync(length, '{}\n');
   // A plain file where the projects' state folders go, so no state folder can be made under it.
   const projects = path.join(state, 'aidrian', 'projects');
   rmSync(projects, { recursive: true, force: true });
   writeFileSync(projects, 'a plain file, so no state folder can be made under it');
-  assertRuns(end());
+  assertRuns(await end());
   assert.equal(existsSync(length), false);
   assert.equal(existsSync(path.join(counts, `aidrian-tracker-refused-${session}`)), false);
 });
 
-test('every refusal but the routine one still counts: its rows, and the lesson at three in a session', (t) => {
+test('every refusal but the routine one still counts: its rows, and the lesson at three in a session', async (t) => {
   const refusals = [
-    ['a read with no value', TELEMETRY, ({ read, write }) => { assertRuns(read({ name: 'acme' })); return write; }, WRITE],
-    ['another workspace', TELEMETRY, ({ read, write }) => { assertRuns(read({ url: 'https://other.example' })); return write; }, WRITE],
-    ['a wrong team', TELEMETRY, ({ read, write }) => { assertRuns(read()); return () => write({ team: 'Other' }); }, WRITE],
+    ['a read with no value', TELEMETRY, async ({ read, write }) => { assertRuns(await read({ name: 'acme' })); return write; }, WRITE],
+    ['another workspace', TELEMETRY, async ({ read, write }) => { assertRuns(await read({ url: 'https://other.example' })); return write; }, WRITE],
+    ['a wrong team', TELEMETRY, async ({ read, write }) => { assertRuns(await read()); return () => write({ team: 'Other' }); }, WRITE],
     ['a server with no read tool', { ...TELEMETRY, tracker: { ...tracker, readTools: ['mcp__a__read'], writeTools: ['mcp__b__write'] } }, ({ write }) => () => write({}, { tool_name: 'mcp__b__write' }), 'mcp__b__write'],
     ['a write tool with no server', { ...TELEMETRY, tracker: { ...tracker, writeTools: ['mcp__solo'] } }, ({ write }) => () => write({}, { tool_name: 'mcp__solo' }), 'mcp__solo'],
   ];
   for (const [label, settings, arrange, tool] of refusals) {
     const session = project(t, settings);
-    const refuse = arrange(session);
-    for (let call = 0; call < 3; call += 1) assert.equal(refuse().status, 2, label);
+    const refuse = await arrange(session);
+    for (let call = 0; call < 3; call += 1) assert.equal((await refuse()).status, 2, label);
     assert.deepEqual(session.log().filter((row) => row.event === 'hook_deny').map((row) => [row.rule, row.tool]), Array(3).fill(['tracker-guard', tool]), label);
     assert.deepEqual(fold(session.inbox()).lessons.map((lesson) => [lesson.key, lesson.target]), [['hook-deny:tracker-guard', 'project']], label);
   }
 });
 
 // What aidrian report health says of `sessions` sessions that each dispatch an agent, so the log sees them, and then take `flow`.
-function healthAfter({ base, dir, env, run }, sessions, flow) {
+async function healthAfter({ base, dir, env, run, runProcess }, sessions, flow) {
   for (let each = 0; each < sessions; each += 1) {
     const session_id = `flow-${each}`;
-    assertRuns(run(AGENT_POST, { session_id, tool_name: 'Agent', tool_input: { subagent_type: 'worker', description: `task ${each}` }, tool_response: { agentId: `agent-${each}`, status: 'completed' } }));
-    flow(session_id);
+    // The first dispatch runs the real script.
+    assertRuns(await (each === 0 ? runProcess : run)(AGENT_POST, { session_id, tool_name: 'Agent', tool_input: { subagent_type: 'worker', description: `task ${each}` }, tool_response: { agentId: `agent-${each}`, status: 'completed' } }));
+    await flow(session_id);
   }
   // No GitHub for the reviews signal to reach.
   const bin = path.join(base, 'bin');
@@ -950,35 +960,35 @@ function healthAfter({ base, dir, env, run }, sessions, flow) {
   return JSON.parse(stdout);
 }
 
-test('report health: sessions that read after the first refusal show no hot spot, and refusals of another kind do', (t) => {
+test('report health: sessions that read after the first refusal show no hot spot, and refusals of another kind do', async (t) => {
   const SESSIONS = 6;
   const healthy = project(t, TELEMETRY);
-  const flowing = healthAfter(healthy, SESSIONS, (session_id) => {
-    assert.equal(healthy.write({}, { session_id }).status, 2);
-    assertRuns(healthy.read(OK, { session_id }));
-    assertRuns(healthy.write({}, { session_id }));
-    assertRuns(healthy.end({ session_id }));
+  const flowing = await healthAfter(healthy, SESSIONS, async (session_id) => {
+    assert.equal((await healthy.write({}, { session_id })).status, 2);
+    assertRuns(await healthy.read(OK, { session_id }));
+    assertRuns(await healthy.write({}, { session_id }));
+    assertRuns(await healthy.end({ session_id }));
   });
   assert.deepEqual([flowing.signals.denies.status, flowing.signals.denies.count, flowing.signals.denies.sample.n], ['ok', 0, SESSIONS]);
   assert.deepEqual(flowing.problems.filter((problem) => problem.kind === 'deny-hot-spot'), []);
   assert.deepEqual(healthy.inbox(), []);
 
   const wrong = project(t, TELEMETRY);
-  const refused = healthAfter(wrong, SESSIONS, (session_id) => {
-    assertRuns(wrong.read({ url: 'https://other.example' }, { session_id }));
-    assert.equal(wrong.write({}, { session_id }).status, 2);
+  const refused = await healthAfter(wrong, SESSIONS, async (session_id) => {
+    assertRuns(await wrong.read({ url: 'https://other.example' }, { session_id }));
+    assert.equal((await wrong.write({}, { session_id })).status, 2);
   });
   const [hot] = refused.problems.filter((problem) => problem.kind === 'deny-hot-spot');
   assert.deepEqual([hot?.subject, hot?.value], ['tracker-guard', SESSIONS]);
 });
 
-test('report health: sessions whose listed read never records raise the hot spot, one row a session, with no new lesson', (t) => {
+test('report health: sessions whose listed read never records raise the hot spot, one row a session, with no new lesson', async (t) => {
   const SESSIONS = 6;
   const broken = project(t, TELEMETRY);
-  const health = healthAfter(broken, SESSIONS, (session_id) => {
-    for (let call = 0; call < 4; call += 1) assert.equal(broken.write({}, { session_id }).status, 2);
+  const health = await healthAfter(broken, SESSIONS, async (session_id) => {
+    for (let call = 0; call < 4; call += 1) assert.equal((await broken.write({}, { session_id })).status, 2);
     // A read that fails, or a read tool renamed upstream, reaches no hook-tracker-post.mjs record.
-    assertRuns(broken.end({ session_id }));
+    assertRuns(await broken.end({ session_id }));
   });
   assert.deepEqual([health.signals.denies.status, health.signals.denies.count], ['problem', SESSIONS]);
   const [hot] = health.problems.filter((problem) => problem.kind === 'deny-hot-spot');
@@ -989,10 +999,10 @@ test('report health: sessions whose listed read never records raise the hot spot
 
 const UNLISTED = 'mcp__x__archive_issue';
 
-test('an unlisted tool on a guarded server files one project lesson, a row per session, and the call runs', (t) => {
+test('an unlisted tool on a guarded server files one project lesson, a row per session, and the call runs', async (t) => {
   const { inbox, run } = project(t);
-  const call = (tool = UNLISTED, extra = {}) => assertRuns(run(POST, { tool_name: tool, tool_response: { body: 'SECRET output' }, agent_type: 'worker', ...extra }));
-  for (let each = 0; each < 3; each += 1) call();
+  const call = async (tool = UNLISTED, extra = {}) => assertRuns(await run(POST, { tool_name: tool, tool_response: { body: 'SECRET output' }, agent_type: 'worker', ...extra }));
+  for (let each = 0; each < 3; each += 1) await call();
   assert.equal(inbox().length, 1, 'once per session and tool');
   const [lesson] = fold(inbox()).lessons;
   assert.deepEqual([lesson.key, lesson.target, lesson.tier, lesson.kind, lesson.source, lesson.agent], [`tracker-unlisted:${UNLISTED}`, 'project', 'P2', 'gap', 'auto', 'worker']);
@@ -1000,85 +1010,85 @@ test('an unlisted tool on a guarded server files one project lesson, a row per s
   assert.match(lesson.note, /add it to tracker\.writeTools/);
   assert.doesNotMatch(JSON.stringify(inbox()), /SECRET/);
 
-  call(UNLISTED, { session_id: 'another-session' });
+  await call(UNLISTED, { session_id: 'another-session' });
   assert.equal(inbox().length, 2, 'another session adds its row');
   assert.equal(fold(inbox()).lessons[0].seen, 1, 'and it is the same event');
 
-  call('mcp__x__merge_diff');
+  await call('mcp__x__merge_diff');
   assert.deepEqual(fold(inbox()).lessons.map((each) => each.key), [`tracker-unlisted:${UNLISTED}`, 'tracker-unlisted:mcp__x__merge_diff']);
 });
 
-test('a rejected unlisted tool stays rejected in later sessions, so it is noted once and gone', (t) => {
+test('a rejected unlisted tool stays rejected in later sessions, so it is noted once and gone', async (t) => {
   const { dir, env, inbox, run } = project(t);
-  assertRuns(run(POST, { tool_name: UNLISTED }));
+  assertRuns(await run(POST, { tool_name: UNLISTED }));
   const [{ id }] = fold(inbox()).lessons;
   const resolved = spawnSync(CLI, ['lesson', 'resolve', id, '--outcome', 'rejected', '--link', 'it only reads'], { cwd: dir, env, encoding: 'utf8' });
   assert.equal(resolved.status, 0, resolved.stderr);
-  assertRuns(run(POST, { tool_name: UNLISTED, session_id: 'a-later-session' }));
+  assertRuns(await run(POST, { tool_name: UNLISTED, session_id: 'a-later-session' }));
   assert.equal(fold(inbox()).lessons[0].status, 'resolved');
 });
 
-test('no note for a listed tool, a read by its name, another server, no session id, lessons off, or the tracker off', (t) => {
+test('no note for a listed tool, a read by its name, another server, no session id, lessons off, or the tracker off', async (t) => {
   const quiet = project(t);
   for (const tool_name of [READ, WRITE, 'mcp__x__delete_issue', 'mcp__x__get_issue', 'mcp__x__list_issues', 'mcp__other__archive_issue', 'Bash']) {
-    assertRuns(quiet.run(POST, { tool_name, tool_response: OK }), tool_name);
+    assertRuns(await quiet.run(POST, { tool_name, tool_response: OK }), tool_name);
   }
-  for (const session_id of [undefined, '', 42, '../escape']) assertRuns(quiet.run(POST, { tool_name: UNLISTED, session_id }), String(session_id));
+  for (const session_id of [undefined, '', 42, '../escape']) assertRuns(await quiet.run(POST, { tool_name: UNLISTED, session_id }), String(session_id));
   assert.deepEqual(quiet.inbox(), []);
 
   const off = [{ version: 1, tracker, lessons: { auto: false } }, { version: 1, tracker: { ...tracker, enabled: false } }];
   for (const settings of off) {
     const { inbox, run } = project(t, settings);
-    assertRuns(run(POST, { tool_name: UNLISTED }));
+    assertRuns(await run(POST, { tool_name: UNLISTED }));
     assert.deepEqual(inbox(), []);
   }
 });
 
-test('a note that cannot be saved lets the call run, and a later call in the session tries again', (t) => {
+test('a note that cannot be saved lets the call run, and a later call in the session tries again', async (t) => {
   const { inbox, run, state } = project(t);
   writeFileSync(state, 'a plain file, so no inbox can be made under it');
-  assertRuns(run(POST, { tool_name: UNLISTED }));
+  assertRuns(await run(POST, { tool_name: UNLISTED }));
   rmSync(state);
   assert.deepEqual(inbox(), []);
-  assertRuns(run(POST, { tool_name: UNLISTED }));
+  assertRuns(await run(POST, { tool_name: UNLISTED }));
   assert.equal(inbox().length, 1);
 });
 
-test('session end forgets which tools the session noted', (t) => {
+test('session end forgets which tools the session noted', async (t) => {
   const { end, run, session, state } = project(t);
-  assertRuns(run(POST, { tool_name: UNLISTED }));
+  assertRuns(await run(POST, { tool_name: UNLISTED }));
   const folder = path.join(state, 'aidrian', 'hook-counts', `aidrian-denials-${session}`);
   assert.equal(existsSync(path.join(folder, `${UNLISTED}.noted`)), true);
-  assertRuns(end());
+  assertRuns(await end());
   assert.equal(existsSync(folder), false);
 });
 
-test('a refusal\'s row holds the whole cause with both values, and no lead from the reason the agent reads', (t) => {
+test('a refusal\'s row holds the whole cause with both values, and no lead from the reason the agent reads', async (t) => {
   const { log, read, report, write } = project(t, { version: 1, tracker, telemetry: { enabled: true, hookDenies: true } });
-  assertRuns(read({ url: 'https://other.example' }));
-  assert.match(write().stderr, /^aidrian: this tracker write is refused because /);
+  assertRuns(await read({ url: 'https://other.example' }));
+  assert.match((await write()).stderr, /^aidrian: this tracker write is refused because /);
   const cause = `the connected workspace is "https://other.example", and tracker.workspace.expect is "${EXPECT}"`;
   assert.deepEqual(log().filter((row) => row.event === 'hook_deny').map((row) => [row.rule, row.reason]), [['tracker-guard', cause]]);
   const [{ reasons }] = JSON.parse(report(['--json']).stdout).hook_denies.by_rule;
   assert.deepEqual(reasons, [[cause, 1]]);
 });
 
-test('session end deletes the record, of this session only, tracker on or off', (t) => {
+test('session end deletes the record, of this session only, tracker on or off', async (t) => {
   const { end, file, read, run } = project(t);
-  assertRuns(read());
-  assertRuns(read(OK, { session_id: 'another-session' }));
+  assertRuns(await read());
+  assertRuns(await read(OK, { session_id: 'another-session' }));
   assert.equal(existsSync(file()), true);
-  assertRuns(end());
+  assertRuns(await end());
   assert.equal(existsSync(file()), false);
   assert.equal(existsSync(file('another-session')), true);
-  assertRuns(end(), 'a record already gone is no error');
-  assertRuns(run(END, { session_id: '../another-session' }), 'an id that cannot name a file deletes nothing');
+  assertRuns(await end(), 'a record already gone is no error');
+  assertRuns(await run(END, { session_id: '../another-session' }), 'an id that cannot name a file deletes nothing');
   assert.equal(existsSync(file('another-session')), true);
 
   const outside = project(t, null);
   mkdirSync(path.dirname(outside.file()), { recursive: true });
   writeFileSync(outside.file(), '{}');
-  assertRuns(outside.end());
+  assertRuns(await outside.end());
   assert.equal(existsSync(outside.file()), false, 'the session may end outside the project it read in');
 });
 
@@ -1093,7 +1103,7 @@ test('a record session end cannot delete skips nothing: the session-length marke
   const transcript = path.join(base, 'transcript.jsonl');
   writeFileSync(transcript, JSON.stringify({ type: 'assistant', timestamp: '2026-11-04T10:00:00Z', message: { id: 'm1', model: 'claude-opus-5-5', usage: { input_tokens: 10, output_tokens: 5 }, content: [] } }));
 
-  assertRuns(end({ transcript_path: transcript }));
+  assertRuns(await end({ transcript_path: transcript }));
 
   assert.equal(existsSync(marker), false);
   assert.equal(existsSync(file()), true);

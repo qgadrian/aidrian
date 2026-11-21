@@ -890,6 +890,7 @@ else console.log('backgrounded · abcd1234 · ' + args[args.indexOf('--name') + 
   assert.equal(result.out[0], 'continue: background');
   assert.match(result.out.join('\n'), /^say: The brief widget continues in the new background session abcd1234 'widget · 1'/mu);
   const calls = readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  // One listing names the folder the push preflight judges and the start uses: the start never reads it again.
   assert.deepEqual(calls.map((call) => call.args[0]), ['agents', '--bg', 'agents']);
   assert.equal(readFrom(setting.store, NEW_SESSION).chain, 1);
 
@@ -1794,5 +1795,150 @@ test('the terminal follows a chain of background hops the shell function attache
     // The client exits, and the shell function reads the record and attaches the next hop, as it does in a shell.
     rmSync(shellRecord);
     followsRecord(base, 4242, next.short);
+  }
+});
+
+// The push preflight (docs/handoff.md#the-push-preflight): before the gate keeps the brief or starts anything, it asks
+// the host whether a session could push to this repository's remote. Only a clear denial changes the route.
+const ONLY_OTHER = { autoMode: { environment: ['Trusted repo: github.com/acme/other'] } };
+const TRUSTED = { autoMode: { environment: ['Trusted repo: github.com/acme/widget'] } };
+// `setting`'s repository with `origin` at `url`, when given, whose `main` a fetch would have recorded at HEAD, as in a
+// clone, so the base branch's config still resolves; Claude Code's user settings `settings`, written as JSON unless a
+// string; and a state folder of its own for unattended marks.
+function preflighted(t, setting, { url = 'https://user:secret@github.com/acme/widget.git', settings } = {}) {
+  if (url) {
+    setting.git('remote', 'add', 'origin', url);
+    setting.git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  }
+  if (settings !== undefined) writeFileSync(path.join(setting.env.CLAUDE_CONFIG_DIR, 'settings.json'), typeof settings === 'string' ? settings : JSON.stringify(settings));
+  const xdg = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-marks-')));
+  t.after(() => rmSync(xdg, { recursive: true, force: true }));
+  return { env: { ...setting.env, XDG_STATE_HOME: xdg }, marks: path.join(xdg, 'aidrian', 'unattended') };
+}
+const storeFiles = (setting) => (existsSync(setting.store.dir) ? readdirSync(setting.store.dir) : []);
+
+test('a host that would refuse the push stops the background start before work: the handoff goes on by the clear route, and names what to change (AC2)', (t) => {
+  const setting = setup(t, { mode: 'auto' });
+  const { env, marks } = preflighted(t, setting, { settings: ONLY_OTHER });
+  // `aidrian handoff route` reads no host settings: it still answers the background route, and only the gate falls back.
+  assert.deepEqual(routeOf({ env, home: TEST_HOME, cwd: setting.dir }), { exitCode: 0, out: ['route: background'], err: [] });
+  passCheck(setting);
+  const { run, calls } = fakeRun({ own: setting.dir });
+  const result = gate(setting, { run, env });
+  assert.deepEqual([result.exitCode, result.err], [0, []]);
+  assert.equal(result.out[0], 'continue: clear');
+  const settings = path.join(setting.env.CLAUDE_CONFIG_DIR, 'settings.json');
+  assert.ok(result.out[1].startsWith(`fallback: no background session started, since Claude Code would refuse a push to this repository's remote, github.com/acme/widget: autoMode.environment in ${settings} `), result.out[1]);
+  assert.ok(result.out[1].endsWith('; this handoff goes on by the clear route'), result.out[1]);
+  assert.ok(!result.out.join('\n').includes('secret'), 'no credential is printed');
+  assert.match(result.out[2], /^say: To continue from the brief widget, /u);
+  assert.deepEqual(calls.map((call) => call.args[0]), ['agents'], 'the host was asked only for the folder the session would start in: no start');
+  assert.equal(existsSync(marks), false, 'no pending mark');
+  assert.deepEqual(storeFiles(setting).filter((name) => /^(?:continued|from|started)-/u.test(name)), [], 'no kept copy, no chain floor, no start record');
+  assert.equal(readArmed(setting.store, SESSION).route, 'clear', 'a Human continues it');
+});
+
+// The new session works in the folder the host lists for the handing-off session, which may be another repository than
+// the folder the gate runs in: the preflight judges that folder's remote.
+test('the push preflight judges the remote of the folder the new session starts in, not of the folder the gate runs in', (t) => {
+  // A second repository, with `origin` at `url`.
+  const elsewhere = (url) => {
+    const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-elsewhere-')));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    execFileSync('git', ['-C', dir, 'init', '-q', '-b', 'main']);
+    execFileSync('git', ['-C', dir, 'remote', 'add', 'origin', url]);
+    return dir;
+  };
+  // The gate's folder pushes to a trusted remote, the session's folder to one the settings do not trust: denied.
+  const refused = setup(t, { mode: 'auto' });
+  const { env } = preflighted(t, refused, { url: 'git@github.com:acme/widget.git', settings: TRUSTED });
+  passCheck(refused);
+  const untrusted = elsewhere('git@github.com:acme/elsewhere.git');
+  const first = fakeRun({ own: untrusted });
+  const result = gate(refused, { run: first.run, env });
+  assert.equal(result.out[0], 'continue: clear', result.out.join('\n'));
+  assert.ok(result.out[1].includes('github.com/acme/elsewhere: autoMode.environment in '), result.out[1]);
+  assert.deepEqual(bgCalls(first.calls), [], 'no start');
+  // The gate's folder pushes to an untrusted remote, the session's folder to a trusted one: the session starts there.
+  const started = setup(t, { mode: 'auto' });
+  const other = preflighted(t, started, { url: 'git@github.com:acme/elsewhere.git', settings: TRUSTED });
+  passCheck(started);
+  const trusted = elsewhere('https://github.com/acme/widget.git');
+  const second = fakeRun({ own: trusted });
+  const ok = gate(started, { run: second.run, env: other.env });
+  assert.equal(ok.out[0], 'continue: background', ok.out.join('\n'));
+  assert.equal(bgCalls(second.calls)[0]?.cwd, trusted, 'started in the folder judged');
+});
+
+// When the host cannot say which folder the new session starts in, the preflight answers unknown: the folder the gate
+// runs in may be another repository than the one the new session pushes from, so it is never judged in its place.
+test('the push preflight answers unknown when the host cannot name the new session\'s folder, and never judges the gate\'s folder instead', (t) => {
+  for (const [label, first] of [['a listing that fails', { status: 1, stdout: '', stderr: 'boom' }], ['a listing without this session', { status: 0, stdout: '[]', stderr: '' }]]) {
+    // The gate's folder pushes to a remote the settings refuse.
+    const setting = setup(t, { mode: 'auto' });
+    const { env } = preflighted(t, setting, { settings: ONLY_OTHER });
+    passCheck(setting);
+    const { run: listing, calls } = fakeRun({ own: setting.dir });
+    let looked = false;
+    // Only the first listing, the preflight's, fails; the start reads its own.
+    const run = (command, args, options) => {
+      if (args[0] !== 'agents' || looked) return listing(command, args, options);
+      looked = true;
+      calls.push({ command, args, cwd: options.cwd });
+      return first;
+    };
+    const result = gate(setting, { run, env });
+    assert.equal(result.out[0], 'continue: background', `${label}: ${result.out.join('\n')}`);
+    assert.ok(!result.out.some((line) => line.startsWith('fallback:')), label);
+    assert.equal(bgCalls(calls).length, 1, label);
+    assert.deepEqual(calls.slice(0, 3).map((call) => call.args[0]), ['agents', 'agents', '--bg'], `${label}: the start read the listing itself`);
+  }
+});
+
+// The preflight answers unknown, so the start is tried; spawnSync cannot run `claude` in a folder that is not there.
+test('the push preflight answers unknown for a new session\'s folder that is not there, and the start that fails there goes on by the clear route', (t) => {
+  const setting = setup(t, { mode: 'auto' });
+  const { env, marks } = preflighted(t, setting, { settings: ONLY_OTHER });
+  passCheck(setting);
+  const { run: listing, calls } = fakeRun({ own: path.join(setting.dir, 'worktrees', 'not-yet') });
+  const run = (command, args, options) => (options.cwd && !existsSync(options.cwd)
+    ? (calls.push({ command, args, cwd: options.cwd }), { status: null, stdout: '', stderr: '', error: Object.assign(new Error('spawnSync'), { code: 'ENOENT' }) })
+    : listing(command, args, options));
+  const result = gate(setting, { run, env });
+  assert.equal(bgCalls(calls).length, 1, 'the start was tried');
+  assert.deepEqual(result.out.slice(0, 2), ['continue: clear', 'fallback: no background session started, since `claude` could not be run (ENOENT); this handoff goes on by the clear route']);
+  assert.ok(!readdirSync(marks).some((name) => name.startsWith('pending.')), 'the pending mark was released');
+});
+
+test('a remote the host trusts starts the background session as before (AC3)', (t) => {
+  const setting = setup(t, { mode: 'auto' });
+  const { env } = preflighted(t, setting, { url: 'git@github.com:acme/widget.git', settings: TRUSTED });
+  passCheck(setting);
+  const { run, calls } = fakeRun({ own: setting.dir });
+  const result = gate(setting, { run, env });
+  assert.equal(result.out[0], 'continue: background', result.err.join('\n'));
+  assert.ok(!result.out.some((line) => line.startsWith('fallback:')), result.out.join('\n'));
+  assert.equal(bgCalls(calls).length, 1);
+});
+
+test('settings the preflight cannot read, no remote, and a session not in auto mode start the background session with nothing shown (AC4)', (t) => {
+  const cases = [
+    ['bad JSON', {}, { settings: '{"autoMode": {' }],
+    ['no autoMode', {}, { settings: {} }],
+    ['no settings file', {}, {}],
+    ['no remote', {}, { url: null, settings: ONLY_OTHER }],
+    ['a remote on disk', {}, { url: '/srv/git/widget.git', settings: ONLY_OTHER }],
+    ['acceptEdits with denying settings', { mode: 'acceptEdits' }, { settings: ONLY_OTHER }],
+  ];
+  for (const [label, given, remote] of cases) {
+    const setting = setup(t, { mode: 'auto', ...given });
+    const { env } = preflighted(t, setting, remote);
+    passCheck(setting);
+    const { run, calls } = fakeRun({ own: setting.dir });
+    const result = gate(setting, { run, env });
+    assert.equal(result.out[0], 'continue: background', `${label}: ${result.out.join('\n')}`);
+    assert.ok(!result.out.some((line) => line.startsWith('fallback:')), label);
+    assert.deepEqual(result.err, [], label);
+    assert.equal(bgCalls(calls).length, 1, label);
   }
 });

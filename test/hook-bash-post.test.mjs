@@ -1,5 +1,6 @@
-// The session ledger hook (docs/hooks.md#session-ledger), run as the host runs it: a PostToolUse payload of a Bash call on
-// stdin, in a project whose checkouts have real remotes. Every case reads what the hook appended to the session's prs.jsonl.
+// The session ledger hook (docs/hooks.md#session-ledger), called in this process as the host runs its script (and run as
+// a script where a case reads what only its process shows): a PostToolUse payload of a Bash call, in a project whose
+// checkouts have real remotes. Every case reads what the hook appended to the session's prs.jsonl.
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
@@ -14,6 +15,8 @@ import * as githubCalls from '../plugins/aidrian/lib/rules/github/session-calls.
 import { findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { appendLedger, LEDGER_MAX_BYTES, ledgerRows, MAX_FOLDERS, MAX_ROWS, OUTPUT_TAIL, outputTail, remoteRepos } from '../plugins/aidrian/lib/session-prs.mjs';
 import { sessionFolder } from '../plugins/aidrian/lib/session-folder.mjs';
+
+import { hookCall } from './hook-call.mjs';
 
 const ROOT_DIR = path.resolve(import.meta.dirname, '..');
 const PLUGIN = path.join(ROOT_DIR, 'plugins/aidrian');
@@ -61,7 +64,15 @@ const payload = (command, { cwd = OWN, stdout = '', session = nextSession(), res
   ...extra,
 });
 
-function runHook(input, env = {}) {
+async function runHook(input, env = {}) {
+  const text = typeof input === 'string' ? input : JSON.stringify(input);
+  const ran = await hookCall(HOOK, { input: text, env: { ...ENV, ...env } });
+  assert.deepEqual([ran.status, ran.stdout, ran.stderr], [0, '', ''], 'the hook always exits 0 and prints nothing');
+  return ran;
+}
+
+// The script itself, for input only its stdin reads.
+function spawnHook(input, env = {}) {
   const text = typeof input === 'string' ? input : JSON.stringify(input);
   const ran = spawnSync(process.execPath, [HOOK], { input: text, encoding: 'utf8', env: { ...ENV, ...env } });
   assert.deepEqual([ran.status, ran.stdout, ran.stderr], [0, '', ''], 'the hook always exits 0 and prints nothing');
@@ -76,9 +87,9 @@ function ledgerFiles(session) {
 }
 
 // The rows the hook appended for `command`, without their time.
-function rows(command, options = {}, env = {}) {
+async function rows(command, options = {}, env = {}) {
   const input = payload(command, options);
-  runHook(input, env);
+  await runHook(input, env);
   return ledgerFiles(input.session_id).flatMap((file) => readFileSync(file, 'utf8').trim().split('\n').filter(Boolean)).map((line) => {
     const { at, ...row } = JSON.parse(line);
     assert.match(at, /^\d{4}-\d\d-\d\dT/u);
@@ -108,67 +119,67 @@ function pushRepo(branch, url = 'https://github.com/acme/notes') {
 // Runs `command` in a shell in `dir`, as the session's call ran it.
 const sh = (dir, command) => assert.equal(spawnSync('/bin/sh', ['-c', command], { cwd: dir, env: ENV }).status, 0, command);
 
-test('gh pr create records the pull request its stdout links, with the forge id, host, and path, and no raw URL, command, or output', () => {
-  const recorded = rows('gh pr create --title "Add x" --body "Why"', { stdout: `${URL_OF('acme/widgets', 12)}\n` });
+test('gh pr create records the pull request its stdout links, with the forge id, host, and path, and no raw URL, command, or output', async () => {
+  const recorded = await rows('gh pr create --title "Add x" --body "Why"', { stdout: `${URL_OF('acme/widgets', 12)}\n` });
   assert.deepEqual(recorded, [created('acme/widgets', 12)]);
   assert.deepEqual(Object.keys(recorded[0]), ['agentId', 'kind', 'forge', 'host', 'path', 'number', 'branch', 'cwd']);
 });
 
-test('a created row comes only from a line that is exactly a pull request URL of a remote of the call`s folder', () => {
-  assert.deepEqual(rows('gh pr create --fill', { stdout: `${URL_OF('acme/widgets', 12)}\n${URL_OF('other/repo', 9)}\n` }), [created('acme/widgets', 12)], 'other/repo is no remote of the folder');
-  assert.deepEqual(rows('gh pr create --fill', { stdout: `see ${URL_OF('acme/widgets', 12)}\n${URL_OF('acme/widgets', 13)}/files\n` }), []);
-  assert.deepEqual(rows('gh pr create --fill', { stdout: 'https://gitlab.com/acme/widgets/pull/4\nhttps://git.example.test/acme/widgets/pull/5\n' }), []);
-  assert.deepEqual(rows('gh pr create --fill', { stdout: `${URL_OF('acme/widgets', 12)}\r\n` }), [created('acme/widgets', 12)]);
-  assert.deepEqual(rows(`echo ${URL_OF('acme/widgets', 12)}`, { stdout: `${URL_OF('acme/widgets', 12)}\n` }), [], 'output is read only for gh pr create');
+test('a created row comes only from a line that is exactly a pull request URL of a remote of the call`s folder', async () => {
+  assert.deepEqual(await rows('gh pr create --fill', { stdout: `${URL_OF('acme/widgets', 12)}\n${URL_OF('other/repo', 9)}\n` }), [created('acme/widgets', 12)], 'other/repo is no remote of the folder');
+  assert.deepEqual(await rows('gh pr create --fill', { stdout: `see ${URL_OF('acme/widgets', 12)}\n${URL_OF('acme/widgets', 13)}/files\n` }), []);
+  assert.deepEqual(await rows('gh pr create --fill', { stdout: 'https://gitlab.com/acme/widgets/pull/4\nhttps://git.example.test/acme/widgets/pull/5\n' }), []);
+  assert.deepEqual(await rows('gh pr create --fill', { stdout: `${URL_OF('acme/widgets', 12)}\r\n` }), [created('acme/widgets', 12)]);
+  assert.deepEqual(await rows(`echo ${URL_OF('acme/widgets', 12)}`, { stdout: `${URL_OF('acme/widgets', 12)}\n` }), [], 'output is read only for gh pr create');
 });
 
-test('gh pr create --dry-run creates nothing, so a link in its preview body records no row', () => {
+test('gh pr create --dry-run creates nothing, so a link in its preview body records no row', async () => {
   const preview = `Would have created a Pull Request with:\ntitle:\tAdd x\nbody:\nFollows\n${URL_OF('acme/widgets', 12)}\n`;
-  assert.deepEqual(rows('gh pr create --dry-run --title "Add x" --body-file body.md', { stdout: preview }), []);
+  assert.deepEqual(await rows('gh pr create --dry-run --title "Add x" --body-file body.md', { stdout: preview }), []);
 });
 
-test('a created row comes only from a line whose one printing command is gh pr create, after a cd or variable assignments', () => {
+test('a created row comes only from a line whose one printing command is gh pr create, after a cd or variable assignments', async () => {
   const link = `${URL_OF('acme/widgets', 9)}\n`;
-  assert.deepEqual(rows(`gh pr create --fill && echo ${URL_OF('acme/widgets', 9)}`, { stdout: link }), [], 'an echoed link of an allowed repository');
-  assert.deepEqual(rows(`echo ${URL_OF('acme/widgets', 9)}; gh pr create --fill`, { stdout: link }), [], 'a command before it');
-  assert.deepEqual(rows('gh pr create --fill | tee log', { stdout: link }), [], 'a pipe');
-  assert.deepEqual(rows(`gh pr create --body "$(echo ${URL_OF('acme/widgets', 9)} >&2)" --fill`, { stdout: link }), [], 'a substitution that prints');
-  assert.deepEqual(rows('X=1; gh pr create --fill', { stdout: link }), [created('acme/widgets', 9)], 'a bare assignment');
-  assert.deepEqual(rows(`cd ${OWN} && GH_REPO=acme/widgets gh pr create --body "$(cat <<'EOF'\nWhy\nEOF\n)" --fill`, { stdout: link }), [created('acme/widgets', 9)], 'a cd and a heredoc body');
+  assert.deepEqual(await rows(`gh pr create --fill && echo ${URL_OF('acme/widgets', 9)}`, { stdout: link }), [], 'an echoed link of an allowed repository');
+  assert.deepEqual(await rows(`echo ${URL_OF('acme/widgets', 9)}; gh pr create --fill`, { stdout: link }), [], 'a command before it');
+  assert.deepEqual(await rows('gh pr create --fill | tee log', { stdout: link }), [], 'a pipe');
+  assert.deepEqual(await rows(`gh pr create --body "$(echo ${URL_OF('acme/widgets', 9)} >&2)" --fill`, { stdout: link }), [], 'a substitution that prints');
+  assert.deepEqual(await rows('X=1; gh pr create --fill', { stdout: link }), [created('acme/widgets', 9)], 'a bare assignment');
+  assert.deepEqual(await rows(`cd ${OWN} && GH_REPO=acme/widgets gh pr create --body "$(cat <<'EOF'\nWhy\nEOF\n)" --fill`, { stdout: link }), [created('acme/widgets', 9)], 'a cd and a heredoc body');
 });
 
-test('in a fork checkout, gh pr create printing the parent`s URL records the parent', () => {
-  assert.deepEqual(rows('gh pr create --fill', { cwd: FORK, stdout: `${URL_OF('acme/widgets', 31)}\n` }), [created('acme/widgets', 31, FORK)]);
+test('in a fork checkout, gh pr create printing the parent`s URL records the parent', async () => {
+  assert.deepEqual(await rows('gh pr create --fill', { cwd: FORK, stdout: `${URL_OF('acme/widgets', 31)}\n` }), [created('acme/widgets', 31, FORK)]);
 });
 
-test('with -R or GH_REPO, the created URL`s repository must equal it', () => {
-  assert.deepEqual(rows('gh pr create -R acme/other --fill', { stdout: `${URL_OF('acme/widgets', 12)}\n` }), []);
-  assert.deepEqual(rows('gh pr create -R acme/other --fill', { stdout: `${URL_OF('acme/other', 2)}\n` }), [created('acme/other', 2)]);
-  assert.deepEqual(rows('GH_REPO=acme/other gh pr create --fill', { stdout: `${URL_OF('acme/other', 3)}\n` }), [created('acme/other', 3)]);
-  assert.deepEqual(rows('gh pr create --fill', { stdout: `${URL_OF('acme/other', 4)}\n` }, { GH_REPO: 'acme/other' }), [created('acme/other', 4)]);
-  assert.deepEqual(rows('gh pr create --repo "$R" --fill', { stdout: `${URL_OF('acme/widgets', 12)}\n` }), [], 'a repository the shell fills in records nothing');
+test('with -R or GH_REPO, the created URL`s repository must equal it', async () => {
+  assert.deepEqual(await rows('gh pr create -R acme/other --fill', { stdout: `${URL_OF('acme/widgets', 12)}\n` }), []);
+  assert.deepEqual(await rows('gh pr create -R acme/other --fill', { stdout: `${URL_OF('acme/other', 2)}\n` }), [created('acme/other', 2)]);
+  assert.deepEqual(await rows('GH_REPO=acme/other gh pr create --fill', { stdout: `${URL_OF('acme/other', 3)}\n` }), [created('acme/other', 3)]);
+  assert.deepEqual(await rows('gh pr create --fill', { stdout: `${URL_OF('acme/other', 4)}\n` }, { GH_REPO: 'acme/other' }), [created('acme/other', 4)]);
+  assert.deepEqual(await rows('gh pr create --repo "$R" --fill', { stdout: `${URL_OF('acme/widgets', 12)}\n` }), [], 'a repository the shell fills in records nothing');
 });
 
-test('the call`s folder is the one a cd before it names, and a folder the shell fills in records nothing', () => {
-  assert.deepEqual(rows(`cd ${OTHER} && gh pr create --fill`, { stdout: `${URL_OF('acme/other', 5)}\n` }), [created('acme/other', 5, OTHER)]);
-  assert.deepEqual(rows('cd "$X" && gh pr create --fill', { stdout: `${URL_OF('acme/widgets', 12)}\n` }), []);
+test('the call`s folder is the one a cd before it names, and a folder the shell fills in records nothing', async () => {
+  assert.deepEqual(await rows(`cd ${OTHER} && gh pr create --fill`, { stdout: `${URL_OF('acme/other', 5)}\n` }), [created('acme/other', 5, OTHER)]);
+  assert.deepEqual(await rows('cd "$X" && gh pr create --fill', { stdout: `${URL_OF('acme/widgets', 12)}\n` }), []);
 });
 
-test('only the last 64 KB of the output is read', () => {
+test('only the last 64 KB of the output is read', async () => {
   const filler = `${'x'.repeat(70 * 1024)}\n`;
-  assert.deepEqual(rows('gh pr create --fill', { stdout: `${URL_OF('acme/widgets', 12)}\n${filler}` }), []);
-  assert.deepEqual(rows('gh pr create --fill', { stdout: `${filler}${URL_OF('acme/widgets', 12)}\n` }), [created('acme/widgets', 12)]);
+  assert.deepEqual(await rows('gh pr create --fill', { stdout: `${URL_OF('acme/widgets', 12)}\n${filler}` }), []);
+  assert.deepEqual(await rows('gh pr create --fill', { stdout: `${filler}${URL_OF('acme/widgets', 12)}\n` }), [created('acme/widgets', 12)]);
 });
 
-test('a response the adapter cannot read gives no created row, and a push in the same call still records', () => {
+test('a response the adapter cannot read gives no created row, and a push in the same call still records', async () => {
   const dir = pushRepo('feat/ledger');
   sh(dir, 'git push -q origin HEAD');
   for (const response of [null, 'text', { stdout: 7 }, []]) {
-    assert.deepEqual(rows('gh pr create --fill && git push origin HEAD', { cwd: dir, response }), [pushed('acme/notes', 'feat/ledger', dir)], JSON.stringify(response));
+    assert.deepEqual(await rows('gh pr create --fill && git push origin HEAD', { cwd: dir, response }), [pushed('acme/notes', 'feat/ledger', dir)], JSON.stringify(response));
   }
 });
 
-test('a push records each branch git recorded it updated, as the remote-tracking ref`s reflog holds it', () => {
+test('a push records each branch git recorded it updated, as the remote-tracking ref`s reflog holds it', async () => {
   const cases = [
     ['feat/head', 'git push -q origin HEAD', ['feat/head']],
     ['feat/local', 'git config push.default upstream && git config branch.feat/local.remote origin && git config branch.feat/local.merge refs/heads/main-line && git push -q', ['main-line']],
@@ -181,21 +192,21 @@ test('a push records each branch git recorded it updated, as the remote-tracking
     const dir = pushRepo(branch);
     const command = written.replace('BARE', `${path.basename(dir)}.git`);
     sh(dir, command);
-    assert.deepEqual(rows(command, { cwd: dir }), branches.map((each) => pushed('acme/notes', each, dir)), why ?? command);
+    assert.deepEqual(await rows(command, { cwd: dir }), branches.map((each) => pushed('acme/notes', each, dir)), why ?? command);
   }
 });
 
-test('a push records the folder it ran in: git -C, then a cd before it on the line, else the payload folder', () => {
+test('a push records the folder it ran in: git -C, then a cd before it on the line, else the payload folder', async () => {
   const dir = pushRepo('feat/folder');
   sh(dir, 'git push -q origin HEAD');
-  assert.deepEqual(rows(`git -C ${dir} push`), [pushed('acme/notes', 'feat/folder', dir)]);
-  assert.deepEqual(rows(`cd ${dir} && npm test && git push`), [pushed('acme/notes', 'feat/folder', dir)]);
-  assert.deepEqual(rows('git push', { cwd: dir }), [pushed('acme/notes', 'feat/folder', dir)]);
-  assert.deepEqual(rows('git -C "$W" push', { cwd: dir }), []);
-  assert.deepEqual(rows('cd "$W" && git push', { cwd: dir }), []);
+  assert.deepEqual(await rows(`git -C ${dir} push`), [pushed('acme/notes', 'feat/folder', dir)]);
+  assert.deepEqual(await rows(`cd ${dir} && npm test && git push`), [pushed('acme/notes', 'feat/folder', dir)]);
+  assert.deepEqual(await rows('git push', { cwd: dir }), [pushed('acme/notes', 'feat/folder', dir)]);
+  assert.deepEqual(await rows('git -C "$W" push', { cwd: dir }), []);
+  assert.deepEqual(await rows('cd "$W" && git push', { cwd: dir }), []);
 });
 
-test('a push records only what it pushed of its own folder`s HEAD, never a sibling worktree`s push in the window', () => {
+test('a push records only what it pushed of its own folder`s HEAD, never a sibling worktree`s push in the window', async () => {
   const base = pushRepo('main');
   const [a, b] = ['wt-a', 'wt-b'].map((name) => path.join(ROOT, `${path.basename(base)}-${name}`));
   sh(base, `git worktree add -q -b feat/wt-a '${a}' && git worktree add -q -b feat/wt-b '${b}'`);
@@ -208,19 +219,19 @@ test('a push records only what it pushed of its own folder`s HEAD, never a sibli
   const commit = '-c user.name=t -c user.email=t@t.test commit -q --allow-empty -m';
   sh(b, `git ${commit} b && git push -q origin HEAD`);
   sh(a, 'git push -q origin HEAD');
-  assert.deepEqual(rows('git push origin HEAD', { cwd: a }), [], 'A had nothing to push');
+  assert.deepEqual(await rows('git push origin HEAD', { cwd: a }), [], 'A had nothing to push');
   sh(a, `git ${commit} a && git push -q origin HEAD`);
-  assert.deepEqual(rows('git push origin HEAD', { cwd: a }), [pushed('acme/notes', 'feat/wt-a', a)], 'A pushed its own branch');
+  assert.deepEqual(await rows('git push origin HEAD', { cwd: a }), [pushed('acme/notes', 'feat/wt-a', a)], 'A pushed its own branch');
 });
 
-test('a row is recorded only for a host the forge adapter declares', () => {
+test('a row is recorded only for a host the forge adapter declares', async () => {
   const dir = pushRepo('feat/gitlab', 'https://gitlab.com/acme/notes');
   sh(dir, 'git push -q origin HEAD');
-  assert.deepEqual(rows('git push', { cwd: dir }), [], 'gitlab.com');
-  assert.deepEqual(rows('gh pr view 4', { cwd: GITLAB }), []);
+  assert.deepEqual(await rows('git push', { cwd: dir }), [], 'gitlab.com');
+  assert.deepEqual(await rows('gh pr view 4', { cwd: GITLAB }), []);
 });
 
-test('gh pr ready, edit, merge, checks, view, and comment record a touched row', () => {
+test('gh pr ready, edit, merge, checks, view, and comment record a touched row', async () => {
   const cases = [
     ['gh pr view 12 --json number', [touched('acme/widgets', { number: 12 })]],
     ["gh pr checks '#13' --watch", [touched('acme/widgets', { number: 13 })]],
@@ -237,35 +248,35 @@ test('gh pr ready, edit, merge, checks, view, and comment record a touched row',
     ['gh pr list', []],
     ['gh issue view 12', []],
   ];
-  for (const [command, expected] of cases) assert.deepEqual(rows(command), expected, command);
+  for (const [command, expected] of cases) assert.deepEqual(await rows(command), expected, command);
 });
 
-test('in a fork checkout, a number with no repository records nothing, and -R names the parent', () => {
-  assert.deepEqual(rows('gh pr checks 12', { cwd: FORK }), []);
-  assert.deepEqual(rows('gh pr checks 12 -R acme/widgets', { cwd: FORK }), [touched('acme/widgets', { number: 12 }, FORK)]);
-  assert.deepEqual(rows(`gh pr view ${URL_OF('acme/widgets', 12)}`, { cwd: FORK }), [touched('acme/widgets', { number: 12 }, FORK)]);
+test('in a fork checkout, a number with no repository records nothing, and -R names the parent', async () => {
+  assert.deepEqual(await rows('gh pr checks 12', { cwd: FORK }), []);
+  assert.deepEqual(await rows('gh pr checks 12 -R acme/widgets', { cwd: FORK }), [touched('acme/widgets', { number: 12 }, FORK)]);
+  assert.deepEqual(await rows(`gh pr view ${URL_OF('acme/widgets', 12)}`, { cwd: FORK }), [touched('acme/widgets', { number: 12 }, FORK)]);
 });
 
-test('a subagent`s call records its agent id under the parent session', () => {
-  const recorded = rows('gh pr view feat', { extra: { agent_id: 'a1b2c3d4', agent_type: 'aidrian:harness-mechanic' } });
+test('a subagent`s call records its agent id under the parent session', async () => {
+  const recorded = await rows('gh pr view feat', { extra: { agent_id: 'a1b2c3d4', agent_type: 'aidrian:harness-mechanic' } });
   assert.deepEqual(recorded, [{ ...touched('acme/widgets', { branch: 'feat' }), agentId: 'a1b2c3d4' }]);
-  assert.deepEqual(rows('gh pr view feat', { extra: { agent_id: '../x y' } }), [touched('acme/widgets', { branch: 'feat' })], 'an id of another shape is left out');
+  assert.deepEqual(await rows('gh pr view feat', { extra: { agent_id: '../x y' } }), [touched('acme/widgets', { branch: 'feat' })], 'an id of another shape is left out');
 });
 
-test('nothing is written for an interrupted call, a bad session id, a folder with no project, or input the hook cannot read', () => {
-  assert.deepEqual(rows('gh pr view feat', { response: { stdout: '', stderr: '', interrupted: true } }), []);
+test('nothing is written for an interrupted call, a bad session id, a folder with no project, or input the hook cannot read', async () => {
+  assert.deepEqual(await rows('gh pr view feat', { response: { stdout: '', stderr: '', interrupted: true } }), []);
   for (const session of ['../x', 'a/b', '', 'x'.repeat(129)]) {
-    runHook(payload('gh pr view feat', { session }));
+    await runHook(payload('gh pr view feat', { session }));
   }
-  runHook({ ...payload('gh pr view feat'), session_id: undefined });
-  assert.deepEqual(rows('gh pr view feat', { cwd: NO_PROJECT }), []);
-  for (const input of ['', 'not json', '[]', '{"tool_input":{"command":7}}']) runHook(input);
+  await runHook({ ...payload('gh pr view feat'), session_id: undefined });
+  assert.deepEqual(await rows('gh pr view feat', { cwd: NO_PROJECT }), []);
+  for (const input of ['', 'not json', '[]', '{"tool_input":{"command":7}}']) spawnHook(input);
   const projects = path.join(STATE, 'aidrian/projects');
   const files = existsSync(projects) ? readdirSync(projects).flatMap((id) => (existsSync(path.join(projects, id, 'sessions')) ? readdirSync(path.join(projects, id, 'sessions')) : [])) : [];
   assert.deepEqual(files.filter((name) => !/^session-\d+$/u.test(name)), [], 'no folder for a session id that fails SESSION_ID');
 });
 
-test('a state folder inside another checkout of the repository, such as a linked worktree, gets no ledger', () => {
+test('a state folder inside another checkout of the repository, such as a linked worktree, gets no ledger', async () => {
   const dir = checkout('linked-state', { origin: 'git@github.com:acme/widgets.git' });
   const git = (...args) => assert.equal(spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.test', ...args], { cwd: dir, env: ENV }).status, 0, args.join(' '));
   git('commit', '-q', '--allow-empty', '-m', 'init');
@@ -273,14 +284,14 @@ test('a state folder inside another checkout of the repository, such as a linked
   git('worktree', 'add', '-q', '-b', 'feat/other', tree);
   // The project's own checkouts are its folder and the main checkout: the linked worktree is neither.
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: path.join(tree, '.state') } }));
-  runHook(payload('gh pr view 3', { cwd: dir }));
+  await runHook(payload('gh pr view 3', { cwd: dir }));
   assert.equal(existsSync(path.join(tree, '.state')), false, 'nothing is written in the other worktree');
 });
 
-test('the session folder is 0700 and prs.jsonl 0600, appended line by line', { skip: !POSIX }, () => {
+test('the session folder is 0700 and prs.jsonl 0600, appended line by line', { skip: !POSIX }, async () => {
   const session = nextSession();
-  runHook(payload('gh pr view feat/a', { session }));
-  runHook(payload('gh pr view feat/b', { session }));
+  await runHook(payload('gh pr view feat/a', { session }));
+  await runHook(payload('gh pr view feat/b', { session }));
   const [file] = ledgerFiles(session);
   assert.equal(statSync(path.dirname(file)).mode & 0o777, 0o700);
   assert.equal(statSync(file).mode & 0o777, 0o600);
@@ -288,8 +299,8 @@ test('the session folder is 0700 and prs.jsonl 0600, appended line by line', { s
 });
 
 // The session folder of `session` under the project of OWN, made by a first call.
-function ownFolder(session) {
-  runHook(payload('gh pr view first', { session }));
+async function ownFolder(session) {
+  await runHook(payload('gh pr view first', { session }));
   const [file] = ledgerFiles(session);
   return path.dirname(file);
 }
@@ -303,64 +314,64 @@ function outsideFile(name) {
   return file;
 }
 
-test('a hard link at prs.jsonl receives no write: one link is required', { skip: !POSIX }, () => {
+test('a hard link at prs.jsonl receives no write: one link is required', { skip: !POSIX }, async () => {
   const outside = outsideFile('outside-hard.txt');
   const session = nextSession();
-  const folder = ownFolder(session);
+  const folder = await ownFolder(session);
   rmSync(path.join(folder, 'prs.jsonl'));
   linkSync(outside, path.join(folder, 'prs.jsonl'));
-  runHook(payload('gh pr view feat', { session }));
+  await runHook(payload('gh pr view feat', { session }));
   assert.equal(readFileSync(outside, 'utf8'), 'kept\n');
 });
 
-test('a symlink at prs.jsonl receives no write: the ledger opens no-follow', { skip: !POSIX }, () => {
+test('a symlink at prs.jsonl receives no write: the ledger opens no-follow', { skip: !POSIX }, async () => {
   const outside = outsideFile('outside-symlink.txt');
   const session = nextSession();
-  const folder = ownFolder(session);
+  const folder = await ownFolder(session);
   rmSync(path.join(folder, 'prs.jsonl'));
   symlinkSync(outside, path.join(folder, 'prs.jsonl'));
-  runHook(payload('gh pr view feat', { session }));
+  await runHook(payload('gh pr view feat', { session }));
   assert.equal(readFileSync(outside, 'utf8'), 'kept\n');
   assert.equal(statSync(outside).nlink, 1);
 });
 
-test('a ledger another user may read receives no write: it must be 0600', { skip: !POSIX }, () => {
+test('a ledger another user may read receives no write: it must be 0600', { skip: !POSIX }, async () => {
   const session = nextSession();
-  const folder = ownFolder(session);
+  const folder = await ownFolder(session);
   const file = path.join(folder, 'prs.jsonl');
   const before = readFileSync(file, 'utf8');
   chmodSync(file, 0o644);
-  runHook(payload('gh pr view feat', { session }));
+  await runHook(payload('gh pr view feat', { session }));
   assert.equal(readFileSync(file, 'utf8'), before);
 });
 
-test('a symlinked session folder receives no write', { skip: !POSIX }, () => {
-  const folder = ownFolder(nextSession());
+test('a symlinked session folder receives no write', { skip: !POSIX }, async () => {
+  const folder = await ownFolder(nextSession());
   const moved = nextSession();
   const target = path.join(ROOT, 'elsewhere');
   mkdirSync(target, { mode: 0o700 });
   symlinkSync(target, path.join(path.dirname(folder), moved));
-  runHook(payload('gh pr view feat', { session: moved }));
+  await runHook(payload('gh pr view feat', { session: moved }));
   assert.deepEqual(readdirSync(target), []);
   assert.ok(lstatSync(path.join(path.dirname(folder), moved)).isSymbolicLink());
 });
 
-test('a ledger at its cap is compacted, so the newest row shows and the file stays within the cap', { skip: !POSIX }, () => {
+test('a ledger at its cap is compacted, so the newest row shows and the file stays within the cap', { skip: !POSIX }, async () => {
   const session = nextSession();
-  const file = path.join(ownFolder(session), 'prs.jsonl');
+  const file = path.join(await ownFolder(session), 'prs.jsonl');
   appendFileSync(file, `${' '.repeat(LEDGER_MAX_BYTES - statSync(file).size - 10)}\n`);
-  runHook(payload('gh pr view feat/newest', { session }));
+  await runHook(payload('gh pr view feat/newest', { session }));
   assert.ok(statSync(file).size <= LEDGER_MAX_BYTES);
   assert.equal(statSync(file).mode & 0o777, 0o600);
   assert.deepEqual(readFileSync(file, 'utf8').trim().split('\n').map((line) => JSON.parse(line).branch), ['first', 'feat/newest']);
 });
 
-test('the same call made again within a minute adds no row', { skip: !POSIX }, () => {
+test('the same call made again within a minute adds no row', { skip: !POSIX }, async () => {
   const session = nextSession();
-  const file = path.join(ownFolder(session), 'prs.jsonl');
-  runHook(payload('gh pr view feat', { session }));
+  const file = path.join(await ownFolder(session), 'prs.jsonl');
+  await runHook(payload('gh pr view feat', { session }));
   const size = statSync(file).size;
-  for (let at = 0; at < 3; at += 1) runHook(payload('gh pr view feat', { session }));
+  for (let at = 0; at < 3; at += 1) await runHook(payload('gh pr view feat', { session }));
   assert.equal(statSync(file).size, size);
 });
 
@@ -371,17 +382,17 @@ test('a repeat within a minute is written when another kind of row for its branc
   assert.deepEqual(readFileSync(path.join(folder, 'prs.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line).kind), ['touched', 'pushed', 'touched']);
 });
 
-test('creating a session folder sweeps the folders untouched for 30 days', { skip: !POSIX }, () => {
+test('creating a session folder sweeps the folders untouched for 30 days', { skip: !POSIX }, async () => {
   const old = nextSession();
-  const folder = ownFolder(old);
+  const folder = await ownFolder(old);
   const then = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
   utimesSync(path.join(folder, 'prs.jsonl'), then, then);
   utimesSync(folder, then, then);
-  runHook(payload('gh pr view feat', { session: nextSession() }));
+  await runHook(payload('gh pr view feat', { session: nextSession() }));
   assert.equal(existsSync(folder), false);
 });
 
-test('each host`s recorded payload records the created pull request through its adapter', () => {
+test('each host`s recorded payload records the created pull request through its adapter', async () => {
   for (const host of ['claude-code', 'codex']) {
     const fixture = JSON.parse(readFileSync(path.join(ROOT_DIR, 'test/fixtures/hosts', host, 'bash-post.json'), 'utf8'));
     assert.equal(typeof fixture.live, 'boolean');
@@ -389,7 +400,7 @@ test('each host`s recorded payload records the created pull request through its 
     const session = nextSession();
     const input = { ...fixture.post, session_id: session, cwd: OWN };
     const env = { PATH: ENV.PATH, HOME: ROOT, XDG_STATE_HOME: STATE, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', ...fixture.env };
-    runHook(input, { ...env, CLAUDECODE: fixture.env.CLAUDECODE ?? '' });
+    await runHook(input, { ...env, CLAUDECODE: fixture.env.CLAUDECODE ?? '' });
     const lines = ledgerFiles(session).flatMap((file) => readFileSync(file, 'utf8').trim().split('\n'));
     assert.deepEqual(lines.map((line) => JSON.parse(line).number), [fixture.number], host);
   }
@@ -399,18 +410,18 @@ test('each host`s recorded payload records the created pull request through its 
 const BIDI = checkout('bidi‮own', { origin: 'https://github.com/acme/widgets.git' });
 mkdirSync(path.join(OWN, 'sub'), { recursive: true });
 
-test('the folder of a call comes from an absolute cd, git -C, or env -C, and the payload folder only on a line that changes no directory', () => {
-  assert.deepEqual(rows('cd sub && gh pr create --fill', { stdout: `${URL_OF('acme/widgets', 12)}\n` }), [], 'a relative cd');
-  assert.deepEqual(rows(`cd ${OTHER} && gh pr view 3`), [touched('acme/other', { number: 3 }, OTHER)]);
-  assert.deepEqual(rows(`gh pr view 3 && cd ${OTHER}`), [], 'the payload folder may be the one the line ended in');
-  assert.deepEqual(rows(`cd ${OTHER}; gh pr view 3`), [], 'a cd that is no leading cd with &&');
-  assert.deepEqual(rows('gh pr view 3'), [touched('acme/widgets', { number: 3 })]);
-  assert.deepEqual(rows(`env -C ${OTHER} gh pr view 3`), [touched('acme/other', { number: 3 }, OTHER)]);
-  assert.deepEqual(rows("bash -c 'cd sub && gh pr view 3'"), [], 'a relative cd in a shell the line runs');
-  assert.deepEqual(rows('echo "$(pwd)" && gh pr view 3'), [touched('acme/widgets', { number: 3 })]);
+test('the folder of a call comes from an absolute cd, git -C, or env -C, and the payload folder only on a line that changes no directory', async () => {
+  assert.deepEqual(await rows('cd sub && gh pr create --fill', { stdout: `${URL_OF('acme/widgets', 12)}\n` }), [], 'a relative cd');
+  assert.deepEqual(await rows(`cd ${OTHER} && gh pr view 3`), [touched('acme/other', { number: 3 }, OTHER)]);
+  assert.deepEqual(await rows(`gh pr view 3 && cd ${OTHER}`), [], 'the payload folder may be the one the line ended in');
+  assert.deepEqual(await rows(`cd ${OTHER}; gh pr view 3`), [], 'a cd that is no leading cd with &&');
+  assert.deepEqual(await rows('gh pr view 3'), [touched('acme/widgets', { number: 3 })]);
+  assert.deepEqual(await rows(`env -C ${OTHER} gh pr view 3`), [touched('acme/other', { number: 3 }, OTHER)]);
+  assert.deepEqual(await rows("bash -c 'cd sub && gh pr view 3'"), [], 'a relative cd in a shell the line runs');
+  assert.deepEqual(await rows('echo "$(pwd)" && gh pr view 3'), [touched('acme/widgets', { number: 3 })]);
 });
 
-test('a call whose repository or config the line may move records nothing', () => {
+test('a call whose repository or config the line may move records nothing', async () => {
   const cases = [
     'gh pr view 12 --json $FIELDS',
     'export GH_REPO=acme/other; gh pr view 12',
@@ -418,7 +429,7 @@ test('a call whose repository or config the line may move records nothing', () =
     'unset GH_REPO && gh pr view 12',
     'GIT_DIR=/x/.git gh pr view 12',
   ];
-  for (const command of cases) assert.deepEqual(rows(command), [], command);
+  for (const command of cases) assert.deepEqual(await rows(command), [], command);
   // A push git recorded in this folder, which each line below may not be the one that made it.
   const dir = pushRepo('feat/moved');
   sh(dir, 'git push -q origin HEAD');
@@ -431,24 +442,24 @@ test('a call whose repository or config the line may move records nothing', () =
     'export GIT_DIR=/x/.git && git push',
     'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.url GIT_CONFIG_VALUE_0=x git push',
   ];
-  for (const command of pushes) assert.deepEqual(rows(command, { cwd: dir }), [], command);
-  assert.deepEqual(rows('git --no-pager push origin HEAD', { cwd: dir }), [pushed('acme/notes', 'feat/moved', dir)], 'a switch that moves nothing');
-  assert.deepEqual(rows(`gh pr create --body "$(cat <<'EOF'\nWhy\nEOF\n)" --title t`, { stdout: `${URL_OF('acme/widgets', 12)}\n` }), [created('acme/widgets', 12)], 'the canonical heredoc body is quoted');
+  for (const command of pushes) assert.deepEqual(await rows(command, { cwd: dir }), [], command);
+  assert.deepEqual(await rows('git --no-pager push origin HEAD', { cwd: dir }), [pushed('acme/notes', 'feat/moved', dir)], 'a switch that moves nothing');
+  assert.deepEqual(await rows(`gh pr create --body "$(cat <<'EOF'\nWhy\nEOF\n)" --title t`, { stdout: `${URL_OF('acme/widgets', 12)}\n` }), [created('acme/widgets', 12)], 'the canonical heredoc body is quoted');
 });
 
-test('a bare owner/name in -R or GH_REPO records nothing while GH_HOST is set', () => {
-  assert.deepEqual(rows('GH_HOST=ghe.example.test gh pr view 12 -R acme/other'), []);
-  assert.deepEqual(rows('gh pr view 12 -R acme/other', {}, { GH_HOST: 'ghe.example.test' }), []);
-  assert.deepEqual(rows('GH_HOST=ghe.example.test GH_REPO=acme/other gh pr view 12'), []);
-  assert.deepEqual(rows('GH_HOST=ghe.example.test gh pr view 12 -R github.com/acme/other'), [touched('acme/other', { number: 12 })]);
-  assert.deepEqual(rows('env -u GH_HOST gh pr view 12 -R acme/other', {}, { GH_HOST: 'ghe.example.test' }), [touched('acme/other', { number: 12 })]);
+test('a bare owner/name in -R or GH_REPO records nothing while GH_HOST is set', async () => {
+  assert.deepEqual(await rows('GH_HOST=ghe.example.test gh pr view 12 -R acme/other'), []);
+  assert.deepEqual(await rows('gh pr view 12 -R acme/other', {}, { GH_HOST: 'ghe.example.test' }), []);
+  assert.deepEqual(await rows('GH_HOST=ghe.example.test GH_REPO=acme/other gh pr view 12'), []);
+  assert.deepEqual(await rows('GH_HOST=ghe.example.test gh pr view 12 -R github.com/acme/other'), [touched('acme/other', { number: 12 })]);
+  assert.deepEqual(await rows('env -u GH_HOST gh pr view 12 -R acme/other', {}, { GH_HOST: 'ghe.example.test' }), [touched('acme/other', { number: 12 })]);
 });
 
-test('a folder or a branch holding a hidden character writes nothing', () => {
-  assert.deepEqual(rows(`cd '${BIDI}' && gh pr view 3`), [], 'a bidi control in the folder');
-  assert.deepEqual(rows('gh pr view \'feat‮x\''), [], 'a bidi control in a branch');
-  assert.deepEqual(rows('gh pr view \'feat​x\''), [], 'a zero-width space in a branch');
-  assert.deepEqual(rows(`gh pr view 'feat\u001b[2J'`), [], 'an escape in a branch');
+test('a folder or a branch holding a hidden character writes nothing', async () => {
+  assert.deepEqual(await rows(`cd '${BIDI}' && gh pr view 3`), [], 'a bidi control in the folder');
+  assert.deepEqual(await rows('gh pr view \'feat‮x\''), [], 'a bidi control in a branch');
+  assert.deepEqual(await rows('gh pr view \'feat​x\''), [], 'a zero-width space in a branch');
+  assert.deepEqual(await rows(`gh pr view 'feat\u001b[2J'`), [], 'an escape in a branch');
 });
 
 // ledgerRows over a fake git: `remotes` by name and URL, the branch every folder is on, more config lines as
@@ -545,12 +556,12 @@ test('a gh pr call with no target records nothing when a later command on the li
   assert.deepEqual(unit('gh pr view 3 && git switch main', '/w', read), [touched('acme/widgets', { number: 3 }, '/w')], 'a target');
 });
 
-test('a line that reads a shell file into the shell, or runs cd through builtin, records nothing', () => {
-  assert.deepEqual(rows('source ./env.sh && gh pr view 12'), []);
-  assert.deepEqual(rows('. ./env.sh; gh pr view 12'), []);
-  assert.deepEqual(rows('builtin source ./env.sh && gh pr view 12'), []);
-  assert.deepEqual(rows(`builtin cd ${OTHER} && gh pr view 12`), [], 'the payload folder may be the one the line ended in');
-  assert.deepEqual(rows(`gh pr view 12 && builtin pushd ${OTHER}`), []);
+test('a line that reads a shell file into the shell, or runs cd through builtin, records nothing', async () => {
+  assert.deepEqual(await rows('source ./env.sh && gh pr view 12'), []);
+  assert.deepEqual(await rows('. ./env.sh; gh pr view 12'), []);
+  assert.deepEqual(await rows('builtin source ./env.sh && gh pr view 12'), []);
+  assert.deepEqual(await rows(`builtin cd ${OTHER} && gh pr view 12`), [], 'the payload folder may be the one the line ended in');
+  assert.deepEqual(await rows(`gh pr view 12 && builtin pushd ${OTHER}`), []);
 });
 
 test('a line of thousands of gh calls is read in linear time', () => {
@@ -660,32 +671,32 @@ const blockedLine = (branch) => JSON.stringify({ status: 'blocked', phase: 'vali
 
 // The rows the hook appended to the session's links.jsonl, in each project's state folder, for `command` run in `cwd`
 // with `stdout`, by the project id they were filed under.
-function linkRowsByProject(command, cwd, { stdout = '', session = nextSession(), env = {} } = {}) {
-  runHook(payload(command, { cwd, session, stdout }), env);
+async function linkRowsByProject(command, cwd, { stdout = '', session = nextSession(), env = {} } = {}) {
+  await runHook(payload(command, { cwd, session, stdout }), env);
   const projects = path.join(STATE, 'aidrian/projects');
   return Object.fromEntries(readdirSync(projects).map((id) => [id, path.join(projects, id, 'sessions', session, 'links.jsonl')]).filter(([, file]) => existsSync(file))
     .map(([id, file]) => [id, readFileSync(file, 'utf8').trim().split('\n').map((line) => JSON.parse(line))]));
 }
-const linkRows = (command, cwd, options) => Object.values(linkRowsByProject(command, cwd, options)).flat();
+const linkRows = async (command, cwd, options) => Object.values(await linkRowsByProject(command, cwd, options)).flat();
 
-test('aidrian worktree new records one links row under the payload`s session: its branch, git`s path, and origin', { skip: !POSIX }, () => {
+test('aidrian worktree new records one links row under the payload`s session: its branch, git`s path, and origin', { skip: !POSIX }, async () => {
   const { dir, tree, listed } = worktreeRepo('feat/wt');
-  const [only, ...more] = linkRows('aidrian worktree new feat/wt', dir, { stdout: `${createdLine('feat/wt', tree)}\n` });
+  const [only, ...more] = await linkRows('aidrian worktree new feat/wt', dir, { stdout: `${createdLine('feat/wt', tree)}\n` });
   assert.deepEqual(more, []);
   assert.deepEqual({ ...only, at: 'x' }, { at: 'x', kind: 'worktree', host: 'github.com', path: 'acme/widgets', branch: 'feat/wt', cwd: listed });
-  assert.equal(linkRows('aidrian worktree new feat/wt --base origin/main', dir, { stdout: `${createdLine('feat/wt', tree)}\n` }).length, 1);
+  assert.equal((await linkRows('aidrian worktree new feat/wt --base origin/main', dir, { stdout: `${createdLine('feat/wt', tree)}\n` })).length, 1);
   const none = worktreeRepo('feat/no-origin', { origin: null });
-  assert.deepEqual(linkRows('aidrian worktree new feat/no-origin', none.dir, { stdout: createdLine('feat/no-origin', none.tree) }).map(({ host, path: repo }) => [host, repo]), [[null, null]]);
+  assert.deepEqual((await linkRows('aidrian worktree new feat/no-origin', none.dir, { stdout: createdLine('feat/no-origin', none.tree) })).map(({ host, path: repo }) => [host, repo]), [[null, null]]);
 });
 
-test('a shell-filled branch, an option, --plan, or a branch git lists no worktree for records no links row', { skip: !POSIX }, () => {
+test('a shell-filled branch, an option, --plan, or a branch git lists no worktree for records no links row', { skip: !POSIX }, async () => {
   const { dir, tree } = worktreeRepo('feat/quiet');
   for (const command of ['aidrian worktree new "$B"', 'aidrian worktree new -x', 'aidrian worktree new feat/quiet --plan', 'aidrian worktree new feat/never']) {
-    assert.deepEqual(linkRows(command, dir, { stdout: `${createdLine('feat/quiet', tree)}\n${createdLine('feat/never', tree)}\n` }), [], command);
+    assert.deepEqual(await linkRows(command, dir, { stdout: `${createdLine('feat/quiet', tree)}\n${createdLine('feat/never', tree)}\n` }), [], command);
   }
 });
 
-test('a worktree the call did not create records no links row: no result, a refusal, a skipped call, or another path', { skip: !POSIX }, () => {
+test('a worktree the call did not create records no links row: no result, a refusal, a skipped call, or another path', { skip: !POSIX }, async () => {
   const { dir, tree } = worktreeRepo('feat/existing');
   const cases = [
     ['aidrian worktree new feat/existing', ''],
@@ -710,61 +721,61 @@ test('a worktree the call did not create records no links row: no result, a refu
     // A relative cd: the payload may name the folder the line started in or the one it ended in.
     ['cd sub && aidrian worktree new feat/existing', `${createdLine('feat/existing', tree)}\n`],
   ];
-  for (const [command, stdout] of cases) assert.deepEqual(linkRows(command, dir, { stdout }), [], `${command} printing ${stdout || 'nothing'}`);
-  assert.equal(linkRows('aidrian worktree new feat/existing', dir, { stdout: `output before\n${createdLine('feat/existing', tree)}\n` }).length, 1, 'the created result, among other lines');
+  for (const [command, stdout] of cases) assert.deepEqual(await linkRows(command, dir, { stdout }), [], `${command} printing ${stdout || 'nothing'}`);
+  assert.equal((await linkRows('aidrian worktree new feat/existing', dir, { stdout: `output before\n${createdLine('feat/existing', tree)}\n` })).length, 1, 'the created result, among other lines');
 });
 
-test('a created result is recorded when other commands share its line: one after it, or a second creation', { skip: !POSIX }, () => {
+test('a created result is recorded when other commands share its line: one after it, or a second creation', { skip: !POSIX }, async () => {
   const { dir, tree, listed } = worktreeRepo('feat/first');
   const second = path.join(ROOT, `wt-${worktreeRepos}-second`);
   assert.equal(spawnSync('git', ['worktree', 'add', '-q', '-b', 'feat/second', second], { cwd: dir, env: ENV }).status, 0);
   const secondListed = realpathSync(second);
   const branches = (rows) => rows.map(({ branch, cwd }) => [branch, cwd]);
-  assert.deepEqual(branches(linkRows('aidrian worktree new feat/first && npm test', dir, { stdout: `${createdLine('feat/first', tree)}\ntest output\n` })), [['feat/first', listed]]);
-  const both = linkRows('aidrian worktree new feat/first && aidrian worktree new feat/second && npm test', dir, { stdout: `${createdLine('feat/first', tree)}\n${createdLine('feat/second', second)}\nok\n` });
+  assert.deepEqual(branches(await linkRows('aidrian worktree new feat/first && npm test', dir, { stdout: `${createdLine('feat/first', tree)}\ntest output\n` })), [['feat/first', listed]]);
+  const both = await linkRows('aidrian worktree new feat/first && aidrian worktree new feat/second && npm test', dir, { stdout: `${createdLine('feat/first', tree)}\n${createdLine('feat/second', second)}\nok\n` });
   assert.deepEqual(branches(both), [['feat/first', listed], ['feat/second', secondListed]], 'two creations, in order');
   // An echoed result of an existing worktree, before or after a call: never that call's own result.
-  assert.deepEqual(linkRows(`echo '${createdLine('feat/first', tree)}' && aidrian worktree new feat/first && npm test`, dir, { stdout: `${createdLine('feat/first', tree)}\n${blockedLine('feat/first')}\n` }), []);
-  assert.deepEqual(linkRows(`aidrian worktree new feat/first; echo '${createdLine('feat/first', tree)}'`, dir, { stdout: `${createdLine('feat/first', tree)}\n` }), []);
+  assert.deepEqual(await linkRows(`echo '${createdLine('feat/first', tree)}' && aidrian worktree new feat/first && npm test`, dir, { stdout: `${createdLine('feat/first', tree)}\n${blockedLine('feat/first')}\n` }), []);
+  assert.deepEqual(await linkRows(`aidrian worktree new feat/first; echo '${createdLine('feat/first', tree)}'`, dir, { stdout: `${createdLine('feat/first', tree)}\n` }), []);
 });
 
-test('two calls on one line in two projects: each row lands in its own project`s session folder', { skip: !POSIX }, () => {
+test('two calls on one line in two projects: each row lands in its own project`s session folder', { skip: !POSIX }, async () => {
   const here = worktreeRepo('feat/here-call');
   const there = worktreeRepo('feat/there-call', { origin: 'git@github.com:acme/there.git' });
   const command = `aidrian worktree new feat/here-call && env -C ${there.dir} aidrian worktree new feat/there-call && npm test`;
-  const byProject = linkRowsByProject(command, here.dir, { stdout: `${createdLine('feat/here-call', here.tree)}\n${createdLine('feat/there-call', there.tree)}\nok\n` });
+  const byProject = await linkRowsByProject(command, here.dir, { stdout: `${createdLine('feat/here-call', here.tree)}\n${createdLine('feat/there-call', there.tree)}\nok\n` });
   const idOf = (dir) => path.basename(stateDir(findProject(dir)));
   assert.deepEqual(Object.keys(byProject).sort(), [idOf(here.dir), idOf(there.dir)].sort(), 'one session folder each');
   assert.deepEqual(byProject[idOf(here.dir)].map(({ branch, cwd, path: repo }) => [branch, cwd, repo]), [['feat/here-call', here.listed, 'acme/widgets']]);
   assert.deepEqual(byProject[idOf(there.dir)].map(({ branch, cwd, path: repo }) => [branch, cwd, repo]), [['feat/there-call', there.listed, 'acme/there']]);
 });
 
-test('a worktree made after a cd is filed in the project of that folder, with its own checkout`s path', { skip: !POSIX }, () => {
+test('a worktree made after a cd is filed in the project of that folder, with its own checkout`s path', { skip: !POSIX }, async () => {
   const here = worktreeRepo('feat/here');
   const there = worktreeRepo('feat/there', { origin: 'git@github.com:acme/there.git' });
-  const byProject = linkRowsByProject(`cd ${there.dir} && aidrian worktree new feat/there`, here.dir, { stdout: `${createdLine('feat/there', there.tree)}\n` });
+  const byProject = await linkRowsByProject(`cd ${there.dir} && aidrian worktree new feat/there`, here.dir, { stdout: `${createdLine('feat/there', there.tree)}\n` });
   const filed = Object.values(byProject);
   assert.equal(filed.length, 1, 'one project`s session folder');
   assert.deepEqual(filed[0].map(({ branch, cwd, path: repo }) => [branch, cwd, repo]), [['feat/there', there.listed, 'acme/there']]);
   assert.equal(stateDir(findProject(there.dir)).endsWith(Object.keys(byProject)[0]), true, 'filed under the project the command ran in');
-  assert.deepEqual(linkRows(`cd /tmp && aidrian worktree new feat/here`, here.dir, { stdout: `${createdLine('feat/here', here.tree)}\n` }), [], 'a folder with no project records nothing');
+  assert.deepEqual(await linkRows(`cd /tmp && aidrian worktree new feat/here`, here.dir, { stdout: `${createdLine('feat/here', here.tree)}\n` }), [], 'a folder with no project records nothing');
   const same = worktreeRepo('feat/same');
-  assert.deepEqual(linkRows(`cd ${there.dir} && aidrian worktree new feat/same`, same.dir, { stdout: `${createdLine('feat/same', same.tree)}\n` }), [], 'the payload`s project is not looked up');
+  assert.deepEqual(await linkRows(`cd ${there.dir} && aidrian worktree new feat/same`, same.dir, { stdout: `${createdLine('feat/same', same.tree)}\n` }), [], 'the payload`s project is not looked up');
 });
 
-test('in a checkout under a symlinked folder, the row`s cwd is the path git worktree list prints', { skip: !POSIX }, () => {
+test('in a checkout under a symlinked folder, the row`s cwd is the path git worktree list prints', { skip: !POSIX }, async () => {
   const real = path.join(ROOT, 'real-parent');
   mkdirSync(real);
   const linked = path.join(ROOT, 'linked-parent');
   symlinkSync(real, linked);
   const { dir, tree, listed } = worktreeRepo('feat/linked', { parent: linked });
-  const [row] = linkRows('aidrian worktree new feat/linked', dir, { stdout: createdLine('feat/linked', tree) });
+  const [row] = await linkRows('aidrian worktree new feat/linked', dir, { stdout: createdLine('feat/linked', tree) });
   assert.equal(row.cwd, listed);
 });
 
-test('a rewritten origin is recorded as the snapshot`s remotes read it, with no insteadOf applied', { skip: !POSIX }, () => {
+test('a rewritten origin is recorded as the snapshot`s remotes read it, with no insteadOf applied', { skip: !POSIX }, async () => {
   const { dir, tree } = worktreeRepo('feat/short', { origin: 'gh:acme/widgets', config: [['url.git@github.com:.insteadOf', 'gh:']] });
-  const [row] = linkRows('aidrian worktree new feat/short', dir, { stdout: createdLine('feat/short', tree) });
+  const [row] = await linkRows('aidrian worktree new feat/short', dir, { stdout: createdLine('feat/short', tree) });
   assert.deepEqual([row.host, row.path], [remoteRepos(dir)[0].host, remoteRepos(dir)[0].path]);
   assert.deepEqual([row.host, row.path], ['gh', 'acme/widgets']);
 });
@@ -823,17 +834,17 @@ test('project discovery`s tracked-file check of a local switch runs inside the l
   assert.ok(over < 1500, `the stalled tracked-file check cost ${over} ms over the ${baseline} ms baseline, past the links budget`);
 });
 
-test('the ledger row of a call is written before its links are looked at, and apart from them', { skip: !POSIX }, () => {
+test('the ledger row of a call is written before its links are looked at, and apart from them', { skip: !POSIX }, async () => {
   const { dir } = worktreeRepo('feat/both');
   const session = nextSession();
   // A pull request and a worktree on one line: the pull request prints first, so the worktree's result has no known
   // place and it records nothing, and the pull request records its touched row all the same.
-  runHook(payload('gh pr view 12 && aidrian worktree new feat/both', { cwd: dir, session, stdout: 'x' }));
+  await runHook(payload('gh pr view 12 && aidrian worktree new feat/both', { cwd: dir, session, stdout: 'x' }));
   const ledger = ledgerFiles(session).flatMap((file) => readFileSync(file, 'utf8').trim().split('\n')).map((line) => JSON.parse(line));
   assert.deepEqual(ledger.map(({ kind, number }) => [kind, number]), [['touched', 12]]);
 });
 
-test('origin is read in the checkout the command ran in, so a worktree-specific origin is recorded', { skip: !POSIX }, () => {
+test('origin is read in the checkout the command ran in, so a worktree-specific origin is recorded', { skip: !POSIX }, async () => {
   // Origin set only in the linked checkout's own config: the main checkout has none.
   const { dir } = worktreeRepo('feat/linked-origin', { origin: null, config: [['extensions.worktreeConfig', 'true']] });
   const linked = path.join(ROOT, `wt-${worktreeRepos}-own`);
@@ -843,6 +854,6 @@ test('origin is read in the checkout the command ran in, so a worktree-specific 
   git(linked, 'config', '--worktree', 'remote.origin.url', 'git@github.com:acme/fork.git');
   const tree = path.join(ROOT, `wt-${worktreeRepos}-made`);
   git(dir, 'worktree', 'add', '-q', '-b', 'feat/made-here', tree);
-  const [row] = linkRows('aidrian worktree new feat/made-here', linked, { stdout: createdLine('feat/made-here', tree) });
+  const [row] = await linkRows('aidrian worktree new feat/made-here', linked, { stdout: createdLine('feat/made-here', tree) });
   assert.deepEqual([row?.host, row?.path], ['github.com', 'acme/fork']);
 });

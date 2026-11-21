@@ -17,12 +17,16 @@ import { configFiles, findProject, stateDir, stateRoot } from '../plugins/aidria
 import { sessionFolder } from '../plugins/aidrian/lib/session-folder.mjs';
 import { originFolder, readOrigins } from '../plugins/aidrian/lib/session-origins.mjs';
 
+import { hookCall } from './hook-call.mjs';
+
 // The hooks this file runs record their blocks in the state folder; keep those rows out of the real one.
 process.env.XDG_STATE_HOME = mkdtempSync(path.join(tmpdir(), 'aidrian-state-'));
 after(() => rmSync(process.env.XDG_STATE_HOME, { recursive: true, force: true }));
 
 const FOLDS = process.platform === 'darwin' || process.platform === 'win32';
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-agent-gates.mjs');
+// The agent gates hook, called in this process as the host runs its script: spawnSync's options, its result's shape.
+const inHook = (options) => hookCall(HOOK, options);
 const GATED = { version: 1, agents: { explorer: { deny: ['WebFetch'] } }, names: { human: 'the product owner' } };
 
 // A project with gates in `config`, a knowledge folder, and a source file. `spelled` is the folder as tmpdir() spells it,
@@ -44,7 +48,7 @@ const verdict = (cwd, input) => {
   return configWriteDenial(input, found, loadConfig(found).config)?.reason ?? null;
 };
 
-test('a subagent may not change a file that sets the gates, with any write tool or a Bash command that writes it', (t) => {
+test('a subagent may not change a file that sets the gates, with any write tool or a Bash command that writes it', async (t) => {
   const { dir, spelled } = project(t);
   const blocked = [
     ['Edit', { file_path: path.join(dir, '.aidrian/config.json') }],
@@ -88,7 +92,7 @@ test('a subagent may not change a file that sets the gates, with any write tool 
   assert.match(verdict(dir, subagent(dir, 'Bash', { command: 'rm -rf .aidrian' })), /^aidrian: Bash is blocked .* it changes \.aidrian\/config\.json,/);
 });
 
-test('a subagent may still read those files and write anything else, and the main session may change them', (t) => {
+test('a subagent may still read those files and write anything else, and the main session may change them', async (t) => {
   const { dir } = project(t);
   const allowed = [
     ['Read', { file_path: '.aidrian/config.json' }],
@@ -139,7 +143,7 @@ test('a subagent may still read those files and write anything else, and the mai
   assert.equal(verdict(dir, { ...main, agent_type: 'aidrian:explorer' }), null, 'a session started with --agent is the main session');
 });
 
-test('a write to an unknown folder, or code an interpreter runs, is judged by the names it holds', (t) => {
+test('a write to an unknown folder, or code an interpreter runs, is judged by the names it holds', async (t) => {
   const { dir } = project(t);
   const reasonOf = (command) => verdict(dir, subagent(dir, 'Bash', { command }));
   for (const [command, file] of [
@@ -206,7 +210,7 @@ test('a write to an unknown folder, or code an interpreter runs, is judged by th
   }
 });
 
-test('the session`s gate snapshot, the file that marks the session gated, and their folder are guarded as the config is', (t) => {
+test('the session`s gate snapshot, the file that marks the session gated, and their folder are guarded as the config is', async (t) => {
   const { dir } = project(t);
   const sessions = path.join(process.env.XDG_STATE_HOME, 'aidrian/sessions');
   const snapshot = path.join(sessions, 's-1.json');
@@ -237,7 +241,7 @@ test('the session`s gate snapshot, the file that marks the session gated, and th
   }
 });
 
-test('a project folder that .aidrian.json moves is guarded where it is, and so is the default one it falls back to', (t) => {
+test('a project folder that .aidrian.json moves is guarded where it is, and so is the default one it falls back to', async (t) => {
   const { dir } = project(t);
   mkdirSync(path.join(dir, 'tools/aidrian'), { recursive: true });
   writeFileSync(path.join(dir, '.aidrian.json'), JSON.stringify({ dir: 'tools/aidrian' }));
@@ -249,7 +253,7 @@ test('a project folder that .aidrian.json moves is guarded where it is, and so i
   assert.equal(verdict(dir, subagent(dir, 'Bash', { command: 'echo x > tools/aidrian/knowledge.md' })), null);
 });
 
-test('in a worktree, the main checkout`s .aidrian.local.json, which the worktree reads, is guarded too', (t) => {
+test('in a worktree, the main checkout`s .aidrian.local.json, which the worktree reads, is guarded too', async (t) => {
   const { dir } = project(t);
   const git = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe' });
   writeFileSync(path.join(dir, '.gitignore'), '.aidrian.local.json\n.worktrees/\n');
@@ -270,13 +274,13 @@ test('in a worktree, the main checkout`s .aidrian.local.json, which the worktree
   assert.equal(verdict(dir, subagent(dir, 'Bash', { command: 'rm -rf .worktrees/task' })), null, 'from the main checkout, a worktree is another project');
 });
 
-test('the hook blocks a subagent that changes the gates with exit 2, and lets it run without gates or as the main session', (t) => {
+test('the hook blocks a subagent that changes the gates with exit 2, and lets it run without gates or as the main session', async (t) => {
   const gated = project(t).dir;
   const open = project(t, { version: 1 }).dir;
-  const run = (cwd, input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd, encoding: 'utf8' });
+  const run = (cwd, input) => inHook({ input: JSON.stringify(input), cwd, encoding: 'utf8' });
   const edit = (cwd) => subagent(cwd, 'Edit', { file_path: '.aidrian/config.json' });
 
-  const blocked = run(gated, edit(gated));
+  const blocked = await run(gated, edit(gated));
   assert.deepEqual([blocked.status, blocked.stdout], [2, '']);
   assert.match(blocked.stderr, /^aidrian: Edit is blocked for the agent "aidrian:explorer" in this project: it changes \.aidrian\/config\.json,/);
   assert.match(blocked.stderr, /tell the product owner what the task needs\.\n$/);
@@ -285,12 +289,12 @@ test('the hook blocks a subagent that changes the gates with exit 2, and lets it
     [gated, { tool_name: 'Edit', tool_input: { file_path: '.aidrian/config.json' }, cwd: gated }],
     [gated, subagent(gated, 'Edit', { file_path: 'src/app.js' })],
   ]) {
-    const { status, stdout, stderr } = run(cwd, input);
+    const { status, stdout, stderr } = await run(cwd, input);
     assert.deepEqual([status, stdout, stderr], [0, '', ''], `${cwd}: ${JSON.stringify(input)}`);
   }
 });
 
-test('a glob reaches a config file that is a symlink to another folder, by the path it is spelled with', (t) => {
+test('a glob reaches a config file that is a symlink to another folder, by the path it is spelled with', async (t) => {
   const { dir } = project(t);
   mkdirSync(path.join(dir, 'settings'));
   renameSync(path.join(dir, '.aidrian/config.json'), path.join(dir, 'settings/config.json'));
@@ -338,7 +342,7 @@ test('a glob reaches a config file that is a symlink to another folder, by the p
   assert.equal(verdict(dir, subagent(dir, 'Bash', { command: 'touch src/a.js && rm -rf out/*.js' })), null);
 });
 
-test('a link to a config file not made yet changes it: a write through the link creates the file', (t) => {
+test('a link to a config file not made yet changes it: a write through the link creates the file', async (t) => {
   const { dir } = project(t);
   mkdirSync(path.join(dir, 'out'));
   symlinkSync('../.aidrian.local.json', path.join(dir, 'out/alias'));
@@ -349,7 +353,7 @@ test('a link to a config file not made yet changes it: a write through the link 
   assert.equal(verdict(dir, subagent(dir, 'Bash', { command: 'echo x > out/other' })), null);
 });
 
-test('ln, truncate, install, dd, git checkout --, git restore, and a glob that may name a guarded file change it', (t) => {
+test('ln, truncate, install, dd, git checkout --, git restore, and a glob that may name a guarded file change it', async (t) => {
   const { dir } = project(t);
   for (const command of [
     'ln -sf /tmp/x.json .aidrian/config.json',
@@ -374,15 +378,15 @@ test('ln, truncate, install, dd, git checkout --, git restore, and a glob that m
   }
 });
 
-test('a subagent may not set the auto-merge switch, with or without gates; other local writes and the main session stay allowed', (t) => {
+test('a subagent may not set the auto-merge switch, with or without gates; other local writes and the main session stay allowed', async (t) => {
   const on = JSON.stringify({ github: { autoMerge: 'on' } });
   const gated = project(t).dir;
-  const denied = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(gated, 'Write', { file_path: '.aidrian.local.json', content: on })), cwd: gated, encoding: 'utf8' });
+  const denied = await inHook({ input: JSON.stringify(subagent(gated, 'Write', { file_path: '.aidrian.local.json', content: on })), cwd: gated, encoding: 'utf8' });
   assert.equal(denied.status, 2);
   assert.match(denied.stderr, /github\.autoMerge/u, 'with gates, this rule answers first');
   {
     const { dir } = project(t, { version: 1 });
-    const run = (input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
+    const run = (input) => inHook({ input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
     for (const [tool, toolInput] of [
       ['Write', { file_path: path.join(dir, '.aidrian.local.json'), content: on }],
       ['Write', { file_path: '.aidrian.local.json', content: on }],
@@ -395,7 +399,7 @@ test('a subagent may not set the auto-merge switch, with or without gates; other
       // A patch is not applied here: the value on a line of its own, under a key on an unchanged context line.
       ['apply_patch', { command: '*** Begin Patch\n*** Update File: .aidrian.local.json\n@@\n     "autoMerge": {\n-      "enabled": false\n+      "enabled": true\n*** End Patch\n' }],
     ]) {
-      const result = run(subagent(dir, tool, toolInput));
+      const result = await run(subagent(dir, tool, toolInput));
       assert.equal(result.status, 2, JSON.stringify(toolInput));
       assert.match(result.stderr, /github\.autoMerge/u);
     }
@@ -407,19 +411,19 @@ test('a subagent may not set the auto-merge switch, with or without gates; other
       ['Bash', { command: 'jq .github.autoMerge .aidrian.local.json' }],
       ['Bash', { command: 'echo autoMerge > docs/.aidrian.local.json.md' }],
     ]) {
-      assert.equal(run(subagent(dir, tool, toolInput)).status, 0, JSON.stringify(toolInput));
+      assert.equal((await run(subagent(dir, tool, toolInput))).status, 0, JSON.stringify(toolInput));
     }
     const { agent_id: _ignored, agent_type: _alsoIgnored, ...main } = subagent(dir, 'Write', { file_path: '.aidrian.local.json', content: on });
-    assert.equal(run(main).status, 0, 'the main session may');
+    assert.equal((await run(main)).status, 0, 'the main session may');
   }
 });
 
-test('a subagent may not set the review approvals switch, with or without gates; other local writes and the main session stay allowed', (t) => {
+test('a subagent may not set the review approvals switch, with or without gates; other local writes and the main session stay allowed', async (t) => {
   const { dir } = project(t, { version: 1 });
   const local = path.join(dir, '.aidrian.local.json');
   writeFileSync(local, `${JSON.stringify({ names: { human: 'x' }, reviewApprovals: 'off' }, null, 2)}\n`);
   const on = JSON.stringify({ reviewApprovals: 'on' });
-  const run = (input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
+  const run = (input) => inHook({ input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
   for (const [tool, toolInput] of [
     ['Write', { file_path: '.aidrian.local.json', content: on }],
     ['Edit', { file_path: '.aidrian.local.json', old_string: '"off"', new_string: '"on"' }],
@@ -427,7 +431,7 @@ test('a subagent may not set the review approvals switch, with or without gates;
     ['apply_patch', { command: '*** Begin Patch\n*** Update File: .aidrian.local.json\n@@\n-  "reviewApprovals": "off"\n+  "reviewApprovals": "on"\n*** End Patch\n' }],
     ['Bash', { command: `echo '${on}' > .aidrian.local.json` }],
   ]) {
-    const result = run(subagent(dir, tool, toolInput));
+    const result = await run(subagent(dir, tool, toolInput));
     assert.equal(result.status, 2, JSON.stringify(toolInput));
     assert.match(result.stderr, /sets reviewApprovals in \.aidrian\.local\.json/u, JSON.stringify(toolInput));
   }
@@ -436,24 +440,24 @@ test('a subagent may not set the review approvals switch, with or without gates;
     ['Bash', { command: 'jq .reviewApprovals .aidrian.local.json' }],
     ['Write', { file_path: 'docs/notes.md', content: 'reviewApprovals is a key of .aidrian.local.json' }],
   ]) {
-    assert.equal(run(subagent(dir, tool, toolInput)).status, 0, JSON.stringify(toolInput));
+    assert.equal((await run(subagent(dir, tool, toolInput))).status, 0, JSON.stringify(toolInput));
   }
   const { agent_id: _ignored, agent_type: _alsoIgnored, ...main } = subagent(dir, 'Write', { file_path: '.aidrian.local.json', content: on });
-  assert.equal(run(main).status, 0, 'the main session may');
+  assert.equal((await run(main)).status, 0, 'the main session may');
 });
 
-test('a subagent may not turn on the background handoff; other local writes and the main session stay allowed', (t) => {
+test('a subagent may not turn on the background handoff; other local writes and the main session stay allowed', async (t) => {
   const { dir } = project(t, { version: 1 });
   writeFileSync(path.join(dir, '.aidrian.local.json'), `${JSON.stringify({ names: { human: 'x' }, handoff: { background: 'off' } }, null, 2)}\n`);
   const on = JSON.stringify({ handoff: { background: 'on' } });
-  const run = (input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
+  const run = (input) => inHook({ input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
   for (const [tool, toolInput] of [
     ['Write', { file_path: '.aidrian.local.json', content: on }],
     ['Edit', { file_path: '.aidrian.local.json', old_string: '"off"', new_string: '"on"' }],
     ['apply_patch', { command: '*** Begin Patch\n*** Update File: .aidrian.local.json\n@@\n-    "background": "off"\n+    "background": "on"\n*** End Patch\n' }],
     ['Bash', { command: `echo '${on}' > .aidrian.local.json` }],
   ]) {
-    const result = run(subagent(dir, tool, toolInput));
+    const result = await run(subagent(dir, tool, toolInput));
     assert.equal(result.status, 2, JSON.stringify(toolInput));
     assert.match(result.stderr, /sets handoff\.background in \.aidrian\.local\.json/u, JSON.stringify(toolInput));
   }
@@ -461,13 +465,13 @@ test('a subagent may not turn on the background handoff; other local writes and 
     ['Edit', { file_path: '.aidrian.local.json', old_string: '"human": "x"', new_string: '"human": "y"' }],
     ['Write', { file_path: 'docs/notes.md', content: 'background is a key of .aidrian.local.json' }],
   ]) {
-    assert.equal(run(subagent(dir, tool, toolInput)).status, 0, JSON.stringify(toolInput));
+    assert.equal((await run(subagent(dir, tool, toolInput))).status, 0, JSON.stringify(toolInput));
   }
   const { agent_id: _ignored, agent_type: _alsoIgnored, ...main } = subagent(dir, 'Write', { file_path: '.aidrian.local.json', content: on });
-  assert.equal(run(main).status, 0, 'the main session may');
+  assert.equal((await run(main)).status, 0, 'the main session may');
 });
 
-test('a main session the background handoff route started may not set any machine switch; an ordinary main session may', (t) => {
+test('a main session the background handoff route started may not set any machine switch; an ordinary main session may', async (t) => {
   const { dir } = project(t, { version: 1 });
   const state = stateDir(findProject(dir));
   t.after(() => rmSync(state, { recursive: true, force: true }));
@@ -479,7 +483,7 @@ test('a main session the background handoff route started may not set any machin
   floor(full, 'background');
   floor('beef5678', 'background');
   floor('cleared-session', 'clear');
-  const run = (session, tool, toolInput) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ session_id: session, tool_name: tool, tool_input: toolInput, cwd: dir }), cwd: dir, encoding: 'utf8' });
+  const run = (session, tool, toolInput) => inHook({ input: JSON.stringify({ session_id: session, tool_name: tool, tool_input: toolInput, cwd: dir }), cwd: dir, encoding: 'utf8' });
   const writes = [
     ['github.autoMerge', { github: { autoMerge: { enabled: true } } }],
     ['github.unattendedWaiver', { github: { unattendedWaiver: { enabled: true } } }],
@@ -490,21 +494,21 @@ test('a main session the background handoff route started may not set any machin
   ];
   for (const session of [full, short]) {
     for (const [name, value] of writes) {
-      const written = run(session, 'Write', { file_path: '.aidrian.local.json', content: JSON.stringify(value) });
+      const written = await run(session, 'Write', { file_path: '.aidrian.local.json', content: JSON.stringify(value) });
       assert.equal(written.status, 2, `${session}: ${name}`);
       assert.ok(written.stderr.includes(`sets ${name} in .aidrian.local.json, and only a main session a Human attends may`), written.stderr);
       assert.match(written.stderr, /the background handoff route started this one, with no Human/u);
     }
-    const shell = run(session, 'Bash', { command: `echo '${JSON.stringify(writes[0][1])}' > .aidrian.local.json` });
+    const shell = await run(session, 'Bash', { command: `echo '${JSON.stringify(writes[0][1])}' > .aidrian.local.json` });
     assert.equal(shell.status, 2, `${session}: a Bash write`);
     // Other writes to the local file, and anything else, stay its own.
-    assert.equal(run(session, 'Write', { file_path: '.aidrian.local.json', content: JSON.stringify({ names: { human: 'x' } }) }).status, 0, session);
-    assert.equal(run(session, 'Write', { file_path: 'src/app.js', content: 'export {};\n' }).status, 0, session);
+    assert.equal((await run(session, 'Write', { file_path: '.aidrian.local.json', content: JSON.stringify({ names: { human: 'x' } }) })).status, 0, session);
+    assert.equal((await run(session, 'Write', { file_path: 'src/app.js', content: 'export {};\n' })).status, 0, session);
   }
   // A main session with no floor, or one a clear started, has a Human: it may set them.
   for (const session of ['plain-session', 'cleared-session', undefined]) {
     for (const [name, value] of writes) {
-      assert.equal(run(session, 'Write', { file_path: '.aidrian.local.json', content: JSON.stringify(value) }).status, 0, `${session}: ${name}`);
+      assert.equal((await run(session, 'Write', { file_path: '.aidrian.local.json', content: JSON.stringify(value) })).status, 0, `${session}: ${name}`);
     }
   }
 });
@@ -523,14 +527,14 @@ function unattendedSetting(t) {
   floor(full, 'background');
   floor('beef5678', 'background');
   floor('cleared-session', 'clear');
-  const run = (session, command, { agent = false } = {}) => spawnSync(process.execPath, [HOOK], {
+  const run = (session, command, { agent = false } = {}) => inHook({
     input: JSON.stringify({ session_id: session, tool_name: 'Bash', tool_input: { command }, cwd: dir, ...(agent ? { agent_id: 'a5f0c1', agent_type: 'aidrian:explorer' } : {}) }),
     cwd: dir, encoding: 'utf8',
   });
   return { dir, state, handoffs, store: store.dir, full, short, run };
 }
 
-test('a main session the background route started may not delete, overwrite, or hide its own floor; an attended one may', (t) => {
+test('a main session the background route started may not delete, overwrite, or hide its own floor; an attended one may', async (t) => {
   const { dir, state, handoffs, store, full, short, run } = unattendedSetting(t);
   const own = path.join(store, `from-${full}.json`);
   const blocked = [
@@ -552,45 +556,45 @@ test('a main session the background route started may not delete, overwrite, or 
   ];
   for (const session of [full, short]) {
     for (const command of blocked) {
-      const result = run(session, command);
+      const result = await run(session, command);
       assert.equal(result.status, 2, `${session}: ${command}`);
       assert.match(result.stderr, /the handoff continuation store, where only `aidrian handoff` commands write, and the background handoff route started this session, with no Human/u, command);
     }
     // A change of mode anywhere else stays its own.
-    assert.equal(run(session, `chmod +x ${path.join(dir, 'src/app.js')}`).status, 0, session);
-    assert.equal(run(session, `ls ${store}`).status, 0, session);
+    assert.equal((await run(session, `chmod +x ${path.join(dir, 'src/app.js')}`)).status, 0, session);
+    assert.equal((await run(session, `ls ${store}`)).status, 0, session);
   }
   // The floor is read before the call runs: refused once, it is still there to refuse the next one.
-  assert.equal(run(full, `rm ${own}`).status, 2);
-  assert.equal(run(full, `echo '${JSON.stringify({ github: { autoMerge: { enabled: true } } })}' > .aidrian.local.json`).status, 2, 'the switches stay refused');
+  assert.equal((await run(full, `rm ${own}`)).status, 2);
+  assert.equal((await run(full, `echo '${JSON.stringify({ github: { autoMerge: { enabled: true } } })}' > .aidrian.local.json`)).status, 2, 'the switches stay refused');
   for (const session of ['plain-session', 'cleared-session', undefined]) {
-    for (const command of blocked) assert.equal(run(session, command).status, 0, `${session}: ${command}`);
+    for (const command of blocked) assert.equal((await run(session, command)).status, 0, `${session}: ${command}`);
   }
   // A subagent is refused the change of mode too.
-  assert.equal(run('plain-session', `chmod 777 ${handoffs}`, { agent: true }).status, 2);
+  assert.equal((await run('plain-session', `chmod 777 ${handoffs}`, { agent: true })).status, 2);
 });
 
-test('a main session the background route started, and a subagent, may not start a host session outside the gate', (t) => {
+test('a main session the background route started, and a subagent, may not start a host session outside the gate', async (t) => {
   const { full, short, run } = unattendedSetting(t);
   const starts = ['claude -p "go on"', 'claude --bg "go on"', 'claude --resume abcd', 'claude -c', 'claude', '/usr/local/bin/claude --print x', 'claude mcp serve', 'bash -c "claude -p x"', 'echo "claude -p x" | sh', 'codex exec "go on"', 'codex resume --last'];
   const allowed = ['claude agents --json', 'claude stop abcd1234', 'claude attach abcd1234', 'claude --version', 'claude mcp list', 'codex login status', 'cat CLAUDE.md', 'echo claude'];
   for (const session of [full, short]) {
     for (const command of starts) {
-      const result = run(session, command);
+      const result = await run(session, command);
       assert.equal(result.status, 2, `${session}: ${command}`);
       assert.match(result.stderr, /session outside the handoff gate, which holds every session it starts to a chain floor, and a session starts another only through `aidrian handoff continue`, and the background handoff route started this session, with no Human/u, command);
     }
-    for (const command of allowed) assert.equal(run(session, command).status, 0, `${session}: ${command}`);
+    for (const command of allowed) assert.equal((await run(session, command)).status, 0, `${session}: ${command}`);
   }
   for (const command of starts) {
-    assert.equal(run('plain-session', command).status, 0, `an attended session may: ${command}`);
-    assert.equal(run('plain-session', command, { agent: true }).status, 2, `a subagent may not: ${command}`);
+    assert.equal((await run('plain-session', command)).status, 0, `an attended session may: ${command}`);
+    assert.equal((await run('plain-session', command, { agent: true })).status, 2, `a subagent may not: ${command}`);
   }
-  assert.match(run('plain-session', 'claude -p x', { agent: true }).stderr, /starts or resumes a Claude Code session outside the handoff gate/u);
-  assert.match(run('plain-session', 'codex exec x', { agent: true }).stderr, /starts or resumes a Codex session outside the handoff gate/u);
+  assert.match((await run('plain-session', 'claude -p x', { agent: true })).stderr, /starts or resumes a Claude Code session outside the handoff gate/u);
+  assert.match((await run('plain-session', 'codex exec x', { agent: true })).stderr, /starts or resumes a Codex session outside the handoff gate/u);
 });
 
-test('a main session the background route started, and a subagent, may not run the gate with a variable of their own that moves it', (t) => {
+test('a main session the background route started, and a subagent, may not run the gate with a variable of their own that moves it', async (t) => {
   const { full, short, run } = unattendedSetting(t);
   const moved = [
     'XDG_STATE_HOME=/tmp/elsewhere aidrian handoff continue b.md',
@@ -612,27 +616,27 @@ test('a main session the background route started, and a subagent, may not run t
   const other = ['FOO=1 aidrian handoff continue b.md', 'env -u FOO aidrian handoff continue b.md', 'unset FOO; aidrian handoff route'];
   for (const session of [full, short]) {
     for (const command of moved) {
-      const result = run(session, command);
+      const result = await run(session, command);
       assert.equal(result.status, 2, `${session}: ${command}`);
       assert.match(result.stderr, /it runs `aidrian handoff` or `aidrian project` with \w+ set or unset by the command itself, which would move the continuation store, the session, or the host command the gate reads, or the policy it reads/u, command);
     }
     for (const command of other) {
-      const result = run(session, command);
+      const result = await run(session, command);
       assert.equal(result.status, 2, `${session}: ${command}`);
       assert.match(result.stderr, /it runs `aidrian handoff` or `aidrian project` with FOO set or unset by the command itself, and the gate runs with no variable a command sets/u, command);
     }
-    for (const command of plain) assert.equal(run(session, command).status, 0, `${session}: ${command}`);
+    for (const command of plain) assert.equal((await run(session, command)).status, 0, `${session}: ${command}`);
   }
-  for (const command of moved) assert.equal(run('plain-session', command).status, 0, `an attended session may: ${command}`);
+  for (const command of moved) assert.equal((await run('plain-session', command)).status, 0, `an attended session may: ${command}`);
   // A subagent may run no gate at all; the route, which writes nothing, it may run only as the host gave it.
-  assert.equal(run('plain-session', 'aidrian handoff route', { agent: true }).status, 0);
-  assert.equal(run('plain-session', 'XDG_STATE_HOME=/tmp/elsewhere aidrian handoff route', { agent: true }).status, 2);
+  assert.equal((await run('plain-session', 'aidrian handoff route', { agent: true })).status, 0);
+  assert.equal((await run('plain-session', 'XDG_STATE_HOME=/tmp/elsewhere aidrian handoff route', { agent: true })).status, 2);
 });
 
-test('a subagent may not change the machine\'s product feedback choice, by any spelling; other local writes and the main session stay allowed', (t) => {
+test('a subagent may not change the machine\'s product feedback choice, by any spelling; other local writes and the main session stay allowed', async (t) => {
   const { dir } = project(t, { version: 1 });
   const local = path.join(dir, '.aidrian.local.json');
-  const run = (input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
+  const run = (input) => inHook({ input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
   writeFileSync(local, `${JSON.stringify({ names: { human: 'off' }, review: { productFeedback: { auto: true } } }, null, 2)}\n`);
   const edit = (from, to) => ['Edit', { file_path: local, old_string: from, new_string: to }];
   const patch = (file, ...lines) => ({ command: `*** Begin Patch\n*** Update File: ${file}\n@@\n${lines.join('\n')}\n*** End Patch\n` });
@@ -654,7 +658,7 @@ test('a subagent may not change the machine\'s product feedback choice, by any s
     ['Bash', { command: `echo '{"review":{"productFeedback":{"auto":false}}}' > .aidrian.local.json` }],
     ['Bash', { command: `python3 -c "open('.aidrian.local.json','w').write('productFeedback')"` }],
   ]) {
-    const result = run(subagent(dir, tool, toolInput));
+    const result = await run(subagent(dir, tool, toolInput));
     assert.equal(result.status, 2, JSON.stringify(toolInput));
     assert.match(result.stderr, /review\.productFeedback/u, JSON.stringify(toolInput));
   }
@@ -667,17 +671,17 @@ test('a subagent may not change the machine\'s product feedback choice, by any s
     ['Bash', { command: 'echo productFeedback > docs/notes.md' }],
     ['Write', { file_path: 'docs/notes.md', content: 'productFeedback is a key' }],
   ]) {
-    assert.equal(run(subagent(dir, tool, toolInput)).status, 0, JSON.stringify(toolInput));
+    assert.equal((await run(subagent(dir, tool, toolInput))).status, 0, JSON.stringify(toolInput));
   }
   const { agent_id: _ignored, agent_type: _alsoIgnored, ...main } = subagent(dir, 'Write', { file_path: local, content: JSON.stringify({ review: { productFeedback: { auto: false } } }) });
-  assert.equal(run(main).status, 0, 'the main session may');
+  assert.equal((await run(main)).status, 0, 'the main session may');
 });
 
-test('a subagent may not change the auto-merge switch without naming it: the guard reads what an Edit, Write, or apply_patch leaves', (t) => {
+test('a subagent may not change the auto-merge switch without naming it: the guard reads what an Edit, Write, or apply_patch leaves', async (t) => {
   const { dir } = project(t, { version: 1 });
   const local = path.join(dir, '.aidrian.local.json');
   writeFileSync(local, `${JSON.stringify({ names: { human: 'off' }, models: { claude: { agents: {} } }, github: { autoMerge: 'off' } }, null, 2)}\n`);
-  const run = (input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
+  const run = (input) => inHook({ input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
   const patch = (file, ...lines) => ({ command: ['*** Begin Patch', `*** Update File: ${file}`, '@@', ...lines, '*** End Patch', ''].join('\n') });
   const edit = (old_string, new_string, more = {}) => ['Edit', { file_path: '.aidrian.local.json', old_string, new_string, ...more }];
   for (const [tool, toolInput] of [
@@ -695,7 +699,7 @@ test('a subagent may not change the auto-merge switch without naming it: the gua
     ['apply_patch', { command: '*** Begin Patch\n*** Add File: .aidrian.local.json\n+{ "github": { "autoMerge": "on" } }\n*** End Patch\n' }],
     ['apply_patch', patch('old.json', '*** Move to: .aidrian.local.json', '+{ "github": { "autoMerge": "on" } }')],
   ]) {
-    const result = run(subagent(dir, tool, toolInput));
+    const result = await run(subagent(dir, tool, toolInput));
     assert.equal(result.status, 2, JSON.stringify(toolInput));
     assert.match(result.stderr, /github\.autoMerge/u, JSON.stringify(toolInput));
   }
@@ -710,16 +714,16 @@ test('a subagent may not change the auto-merge switch without naming it: the gua
     ['apply_patch', patch('.aidrian.local.json', '     "autoMerge": "off"', '-  "models": {}', '+  "models": { "claude": {} }')],
     ['apply_patch', patch('docs/notes.md', '+autoMerge is a key of the local file')],
   ]) {
-    assert.equal(run(subagent(dir, tool, toolInput)).status, 0, JSON.stringify(toolInput));
+    assert.equal((await run(subagent(dir, tool, toolInput))).status, 0, JSON.stringify(toolInput));
   }
   const { agent_id: _ignored, agent_type: _alsoIgnored, ...main } = subagent(dir, ...edit('"autoMerge": "off"', '"autoMerge": "on"'));
-  assert.equal(run(main).status, 0, 'the main session may');
+  assert.equal((await run(main)).status, 0, 'the main session may');
 });
 
-test('a subagent may not run `aidrian handoff continue`, with or without gates, in or out of a project; the main session may', (t) => {
+test('a subagent may not run `aidrian handoff continue`, with or without gates, in or out of a project; the main session may', async (t) => {
   const outside = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-noproject-')));
   t.after(() => rmSync(outside, { recursive: true, force: true }));
-  const run = (cwd, input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd, encoding: 'utf8' });
+  const run = (cwd, input) => inHook({ input: JSON.stringify(input), cwd, encoding: 'utf8' });
   const blocked = [
     'aidrian handoff continue /tmp/2026-11-15-x.md',
     'aidrian handoff continue /tmp/2026-11-15-x.md --route clear',
@@ -759,37 +763,37 @@ test('a subagent may not run `aidrian handoff continue`, with or without gates, 
   ];
   for (const [cwd, label] of [[project(t, { version: 1 }).dir, 'no gates'], [project(t).dir, 'gates'], [outside, 'no project']]) {
     for (const command of blocked) {
-      const result = run(cwd, subagent(cwd, 'Bash', { command }));
+      const result = await run(cwd, subagent(cwd, 'Bash', { command }));
       assert.equal(result.status, 2, `${label}: ${command}`);
       assert.match(result.stderr, /it runs `aidrian handoff continue`, which arms a continuation of the main session/u, `${label}: ${command}`);
     }
-    for (const command of allowed) assert.equal(run(cwd, subagent(cwd, 'Bash', { command })).status, 0, `${label}: ${command}`);
+    for (const command of allowed) assert.equal((await run(cwd, subagent(cwd, 'Bash', { command }))).status, 0, `${label}: ${command}`);
     // Claude Code's Monitor tool runs its command in a shell, as Bash does, and a subagent may call it.
     for (const command of [blocked[0], blocked[4], '$AIDRIAN handoff continue x.md']) {
-      const result = run(cwd, subagent(cwd, 'Monitor', { command, description: 'watch' }));
+      const result = await run(cwd, subagent(cwd, 'Monitor', { command, description: 'watch' }));
       assert.equal(result.status, 2, `${label}: Monitor ${command}`);
       assert.match(result.stderr, /it runs `aidrian handoff continue`/u, `${label}: Monitor ${command}`);
     }
-    assert.equal(run(cwd, subagent(cwd, 'Monitor', { command: allowed[0], description: 'watch' })).status, 0, `${label}: Monitor check`);
-    assert.equal(run(cwd, subagent(cwd, 'Monitor', { ws: { url: 'wss://example.test/aidrian handoff continue' } })).status, 0, `${label}: a WebSocket watch runs no shell`);
+    assert.equal((await run(cwd, subagent(cwd, 'Monitor', { command: allowed[0], description: 'watch' }))).status, 0, `${label}: Monitor check`);
+    assert.equal((await run(cwd, subagent(cwd, 'Monitor', { ws: { url: 'wss://example.test/aidrian handoff continue' } }))).status, 0, `${label}: a WebSocket watch runs no shell`);
     // Claude Code's PowerShell tool runs a shell the lexer cannot read: its words are judged as opaque text.
     for (const command of ['aidrian handoff continue x.md', 'node C:/plugin/lib/cli.mjs handoff continue x.md', '& $a Handoff @("Continue", "x.md")', "$w = 'continue'; aidrian handoff $w x.md"]) {
-      const result = run(cwd, subagent(cwd, 'PowerShell', { command }));
+      const result = await run(cwd, subagent(cwd, 'PowerShell', { command }));
       assert.equal(result.status, 2, `${label}: PowerShell ${command}`);
       assert.match(result.stderr, /^aidrian: PowerShell is blocked for the agent "aidrian:explorer"[^\n]*it runs `aidrian handoff continue`/u, `${label}: PowerShell ${command}`);
     }
-    for (const command of ['Get-ChildItem C:/repo', 'aidrian handoff check x.md']) assert.equal(run(cwd, subagent(cwd, 'PowerShell', { command })).status, 0, `${label}: PowerShell ${command}`);
+    for (const command of ['Get-ChildItem C:/repo', 'aidrian handoff check x.md']) assert.equal((await run(cwd, subagent(cwd, 'PowerShell', { command }))).status, 0, `${label}: PowerShell ${command}`);
     const { agent_id: _id, agent_type: _type, ...mainShell } = subagent(cwd, 'PowerShell', { command: 'aidrian handoff continue x.md' });
-    assert.equal(run(cwd, mainShell).status, 0, `${label}: the main session's PowerShell may`);
+    assert.equal((await run(cwd, mainShell)).status, 0, `${label}: the main session's PowerShell may`);
     const { agent_id: _ignored, agent_type: _alsoIgnored, ...main } = subagent(cwd, 'Bash', { command: blocked[0] });
-    assert.equal(run(cwd, main).status, 0, `${label}: the main session may`);
+    assert.equal((await run(cwd, main)).status, 0, `${label}: the main session may`);
   }
   const { dir } = project(t, { version: 1 });
   const patch = { command: '*** Begin Patch\n*** Add File: notes.md\n+aidrian handoff continue x.md\n*** End Patch\n' };
-  assert.equal(run(dir, subagent(dir, 'apply_patch', patch)).status, 0, 'a patch that names the command runs nothing');
+  assert.equal((await run(dir, subagent(dir, 'apply_patch', patch))).status, 0, 'a patch that names the command runs nothing');
 });
 
-test('a subagent may not write in the handoff continuation store, with or without gates; the main session may', (t) => {
+test('a subagent may not write in the handoff continuation store, with or without gates; the main session may', async (t) => {
   for (const config of [{ version: 1 }, GATED]) {
     const { dir } = project(t, config);
     const state = stateDir(findProject(dir));
@@ -798,7 +802,7 @@ test('a subagent may not write in the handoff continuation store, with or withou
     const store = path.join(handoffs, '.continue');
     mkdirSync(store, { recursive: true });
     t.after(() => rmSync(state, { recursive: true, force: true }));
-    const run = (input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
+    const run = (input) => inHook({ input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
     const label = (toolInput) => `${config.agents ? 'gates' : 'no gates'}: ${JSON.stringify(toolInput)}`;
     for (const [tool, toolInput] of [
       ['Write', { file_path: path.join(store, 'armed-s1.json'), content: '{}' }],
@@ -864,7 +868,7 @@ test('a subagent may not write in the handoff continuation store, with or withou
         ['Bash', { command: 'cd "$X" && echo {} > Handoffs/.Continue/notes.json' }],
       ] : []),
     ]) {
-      const result = run(subagent(dir, tool, toolInput));
+      const result = await run(subagent(dir, tool, toolInput));
       assert.equal(result.status, 2, label(toolInput));
       assert.match(result.stderr, /the handoff continuation store, where only the main session's `aidrian handoff` commands write/u, label(toolInput));
     }
@@ -892,12 +896,12 @@ test('a subagent may not write in the handoff continuation store, with or withou
       // One pipeline of read-only cmdlets with plain words writes nothing, as `cat` does not.
       ['PowerShell', { command: `Get-Content ${store}/armed-s1.json` }],
     ]) {
-      assert.equal(run(subagent(dir, tool, toolInput)).status, 0, label(toolInput));
+      assert.equal((await run(subagent(dir, tool, toolInput))).status, 0, label(toolInput));
     }
     const { agent_id: _ignored, agent_type: _alsoIgnored, ...main } = subagent(dir, 'Write', { file_path: path.join(store, 'armed-s1.json'), content: '{}' });
-    assert.equal(run(main).status, 0, 'the main session may');
+    assert.equal((await run(main)).status, 0, 'the main session may');
     const { agent_id: _id, agent_type: _type, ...mainShell } = subagent(dir, 'PowerShell', { command: `Set-Content ${store}/armed-s1.json '{}'` });
-    assert.equal(run(mainShell).status, 0, 'the main session\'s PowerShell may');
+    assert.equal((await run(mainShell)).status, 0, 'the main session\'s PowerShell may');
   }
 });
 
@@ -908,7 +912,7 @@ function outside(t) {
   return out;
 }
 
-test('a subagent\'s glob that passes an existing link to an armed marker or the store, in any part it expands, is refused', (t) => {
+test('a subagent\'s glob that passes an existing link to an armed marker or the store, in any part it expands, is refused', async (t) => {
   const { dir } = project(t, { version: 1 });
   const state = stateDir(findProject(dir));
   const handoffs = path.join(state, 'handoffs');
@@ -922,7 +926,7 @@ test('a subagent\'s glob that passes an existing link to an armed marker or the 
   mkdirSync(path.join(out, 'a'));
   symlinkSync(handoffs, path.join(out, 'a/hl'));
   writeFileSync(path.join(out, 'other.txt'), '');
-  const run = (tool, toolInput) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(dir, tool, toolInput)), cwd: dir, encoding: 'utf8' });
+  const run = (tool, toolInput) => inHook({ input: JSON.stringify(subagent(dir, tool, toolInput)), cwd: dir, encoding: 'utf8' });
   for (const [tool, toolInput] of [
     // The glob's last match is a link to the marker.
     ['Bash', { command: `echo '{}' | tee ${out}/marker-alias*` }],
@@ -934,7 +938,7 @@ test('a subagent\'s glob that passes an existing link to an armed marker or the 
     ['Bash', { command: `echo '{}' > ${out}/*/h?/.continue/armed-s1.json` }],
     ['PowerShell', { command: `Set-Content ${out}/*/h?/.continue/armed-s1.json '{}'` }],
   ]) {
-    const result = run(tool, toolInput);
+    const result = await run(tool, toolInput);
     assert.equal(result.status, 2, `${tool}: ${toolInput.command}`);
     assert.match(result.stderr, /the handoff continuation store, where only the main session's `aidrian handoff` commands write/u, toolInput.command);
   }
@@ -944,12 +948,12 @@ test('a subagent\'s glob that passes an existing link to an armed marker or the 
     ['Monitor', { command: `echo x | tee ${out}/oth*.txt`, description: 'watch' }],
     ['PowerShell', { command: `Remove-Item ${out}/oth*.txt` }],
   ]) {
-    const result = run(tool, toolInput);
+    const result = await run(tool, toolInput);
     assert.equal(result.status, 0, `${tool}: ${toolInput.command}: ${result.stderr}`);
   }
 });
 
-test('a subagent\'s ** glob passes a link to the store any number of folders down, through looping links in time; one that reaches nothing runs', (t) => {
+test('a subagent\'s ** glob passes a link to the store any number of folders down, through looping links in time; one that reaches nothing runs', async (t) => {
   const { dir } = project(t, { version: 1 });
   const state = stateDir(findProject(dir));
   const marker = path.join(state, 'handoffs/.continue/armed-s1.json');
@@ -969,7 +973,7 @@ test('a subagent\'s ** glob passes a link to the store any number of folders dow
   mkdirSync(path.join(clean, 'a/b'), { recursive: true });
   symlinkSync('..', path.join(clean, 'a/up'));
   writeFileSync(path.join(clean, 'a/b/notes.log'), '');
-  const run = (tool, toolInput) => {
+  const run = async (tool, toolInput) => {
     const started = performance.now();
     const result = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(dir, tool, toolInput)), cwd: dir, encoding: 'utf8', timeout: 5000 });
     return { ...result, took: performance.now() - started };
@@ -981,7 +985,7 @@ test('a subagent\'s ** glob passes a link to the store any number of folders dow
     ['Bash', { command: `printf x | tee ${loop}/**/alias*` }],
     ['PowerShell', { command: `Set-Content ${loop}/**/alias* x` }],
   ]) {
-    const result = run(tool, toolInput);
+    const result = await run(tool, toolInput);
     assert.equal(result.status, 2, `${tool}: ${toolInput.command}`);
     assert.match(result.stderr, /the handoff continuation store/u, toolInput.command);
     assert.ok(result.took < 4000, `${toolInput.command}: took ${Math.round(result.took)} ms`);
@@ -993,13 +997,13 @@ test('a subagent\'s ** glob passes a link to the store any number of folders dow
     // A link to the marker file under `**` leads to nothing below it.
     ['Bash', { command: `rm -f ${out}/**/*.log` }],
   ]) {
-    const result = run(tool, toolInput);
+    const result = await run(tool, toolInput);
     assert.equal(result.status, 0, `${tool}: ${toolInput.command}: ${result.stderr}`);
     assert.ok(result.took < 4000, `${toolInput.command}: took ${Math.round(result.took)} ms`);
   }
 });
 
-test('a subagent\'s glob that passes an existing link to a config file or the local file is refused; one that reaches neither runs', (t) => {
+test('a subagent\'s glob that passes an existing link to a config file or the local file is refused; one that reaches neither runs', async (t) => {
   const { dir } = project(t);
   writeFileSync(path.join(dir, '.aidrian.local.json'), '{}');
   const out = outside(t);
@@ -1008,22 +1012,22 @@ test('a subagent\'s glob that passes an existing link to a config file or the lo
   mkdirSync(path.join(out, 'dist'));
   symlinkSync(path.join(dir, '.aidrian/config.json'), path.join(out, 'dist/alias'));
   symlinkSync(path.join(out, 'dist'), path.join(out, 'dlink'));
-  const run = (command) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(dir, 'Bash', { command })), cwd: dir, encoding: 'utf8' });
+  const run = (command) => inHook({ input: JSON.stringify(subagent(dir, 'Bash', { command })), cwd: dir, encoding: 'utf8' });
   for (const command of [`printf x | tee ${out}/conf-al*`, `printf x | tee ${out}/dl*/al*`]) {
-    const result = run(command);
+    const result = await run(command);
     assert.equal(result.status, 2, command);
     assert.match(result.stderr, /may change \.aidrian\/config\.json/u, command);
   }
-  const switched = run(`echo '${JSON.stringify({ github: { autoMerge: 'on' } })}' | tee ${out}/local-al*`);
+  const switched = await run(`echo '${JSON.stringify({ github: { autoMerge: 'on' } })}' | tee ${out}/local-al*`);
   assert.equal(switched.status, 2);
   assert.match(switched.stderr, /it sets github\.autoMerge in \.aidrian\.local\.json/u);
   for (const command of [`printf x | tee ${out}/other*`, `printf x | tee ${out}/dist/*.txt`]) {
-    const result = run(command);
+    const result = await run(command);
     assert.equal(result.status, 0, `${command}: ${result.stderr}`);
   }
 });
 
-test('a subagent\'s glob that passes a link in a folder it may pass but not list is refused, and so is a wildcard there; a plain miss runs', (t) => {
+test('a subagent\'s glob that passes a link in a folder it may pass but not list is refused, and so is a wildcard there; a plain miss runs', async (t) => {
   if (process.platform === 'win32' || process.getuid?.() === 0) {
     t.skip('folder modes do not keep this user from listing a folder');
     return;
@@ -1051,7 +1055,7 @@ test('a subagent\'s glob that passes a link in a folder it may pass but not list
   const spelled = path.join(stateDir(findProject(dir), { env }), 'handoffs/.continue');
   mkdirSync(spelled, { recursive: true });
   writeFileSync(path.join(spelled, 'armed-s1.json'), '{}');
-  const run = (tool, toolInput, given = process.env) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(dir, tool, toolInput)), cwd: dir, encoding: 'utf8', env: given });
+  const run = (tool, toolInput, given = process.env) => inHook({ input: JSON.stringify(subagent(dir, tool, toolInput)), cwd: dir, encoding: 'utf8', env: given });
   chmodSync(shut, 0o311);
   chmodSync(path.join(out, 'nr'), 0o311);
   try {
@@ -1065,12 +1069,12 @@ test('a subagent\'s glob that passes a link in a folder it may pass but not list
       // A wildcard part in a folder that may not be listed may match a link the guard cannot see.
       ['Bash', { command: `printf x | tee ${out}/xdir/shut/m*` }, /./u],
     ]) {
-      const result = run(tool, toolInput, given);
+      const result = await run(tool, toolInput, given);
       assert.equal(result.status, 2, `${tool}: ${toolInput.command}: ${result.stderr}`);
       assert.match(result.stderr, reason, toolInput.command);
     }
     for (const command of [`printf x | tee ${out}/x*/shut/notes.txt`, `printf x | tee ${out}/n*/link/notes.txt`]) {
-      const result = run('Bash', { command });
+      const result = await run('Bash', { command });
       assert.equal(result.status, 0, `${command}: ${result.stderr}`);
     }
   } finally {
@@ -1079,62 +1083,62 @@ test('a subagent\'s glob that passes a link in a folder it may pass but not list
   }
 });
 
-test('a subagent\'s PowerShell command that names a guarded config file or the machine switches is refused; a Bash(prefix) allow never admits one', (t) => {
-  const run = (cwd, input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd, encoding: 'utf8' });
+test('a subagent\'s PowerShell command that names a guarded config file or the machine switches is refused; a Bash(prefix) allow never admits one', async (t) => {
+  const run = (cwd, input) => inHook({ input: JSON.stringify(input), cwd, encoding: 'utf8' });
   const gated = project(t).dir;
   for (const command of [String.raw`Set-Content .AIDRIAN\Config.json '{}'`, "Remove-Item -Recurse .aidrian/config.json"]) {
-    const result = run(gated, subagent(gated, 'PowerShell', { command }));
+    const result = await run(gated, subagent(gated, 'PowerShell', { command }));
     assert.equal(result.status, 2, command);
     assert.match(result.stderr, /^aidrian: PowerShell is blocked[^\n]*may change \.aidrian\/config\.json, which sets this project's agent gates/u, command);
   }
-  assert.equal(run(gated, subagent(gated, 'PowerShell', { command: 'Get-ChildItem src' })).status, 0);
+  assert.equal((await run(gated, subagent(gated, 'PowerShell', { command: 'Get-ChildItem src' }))).status, 0);
   const open = project(t, { version: 1 }).dir;
   for (const command of ["(Get-Content .aidrian.local.json) -replace 'off','on' | Set-Content .aidrian.local.json", '$j = gc .AIDRIAN.LOCAL.JSON | ConvertFrom-Json; $j.github.automerge = "on"']) {
-    const result = run(open, subagent(open, 'PowerShell', { command }));
+    const result = await run(open, subagent(open, 'PowerShell', { command }));
     assert.equal(result.status, 2, command);
     assert.match(result.stderr, /it names \.aidrian\.local\.json in a shell command the guard cannot read/u, command);
   }
-  assert.equal(run(open, subagent(open, 'PowerShell', { command: 'Get-Content README.md' })).status, 0);
+  assert.equal((await run(open, subagent(open, 'PowerShell', { command: 'Get-Content README.md' }))).status, 0);
   const { agent_id: _id, agent_type: _type, ...main } = subagent(open, 'PowerShell', { command: "Set-Content .aidrian.local.json '{}'" });
-  assert.equal(run(open, main).status, 0, 'the main session may');
+  assert.equal((await run(open, main)).status, 0, 'the main session may');
   const limited = project(t, { version: 1, agents: { explorer: { allow: ['Read', 'Bash(git status)'] } } }).dir;
-  const shell = run(limited, subagent(limited, 'PowerShell', { command: 'git status' }));
+  const shell = await run(limited, subagent(limited, 'PowerShell', { command: 'git status' }));
   assert.equal(shell.status, 2, 'a Bash(prefix) allow never admits a PowerShell command');
   assert.match(shell.stderr, /agents\.explorer\.allow does not list it/u);
 });
 
-test('a subagent\'s PowerShell command is judged also with its backtick escapes, quote joins, and literal + joins undone', (t) => {
-  const run = (cwd, input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd, encoding: 'utf8' });
-  const refused = (cwd, command, reason) => {
-    const result = run(cwd, subagent(cwd, 'PowerShell', { command }));
+test('a subagent\'s PowerShell command is judged also with its backtick escapes, quote joins, and literal + joins undone', async (t) => {
+  const run = (cwd, input) => inHook({ input: JSON.stringify(input), cwd, encoding: 'utf8' });
+  const refused = async (cwd, command, reason) => {
+    const result = await run(cwd, subagent(cwd, 'PowerShell', { command }));
     assert.equal(result.status, 2, command);
     assert.match(result.stderr, reason, command);
   };
   const open = project(t, { version: 1 }).dir;
   for (const command of ['aidrian hand`off cont`inue x.md', 'aidrian hand"off" cont"inue" x.md', "aidrian ('hand'+'off') (\"cont\" + \"inue\") x.md"]) {
-    refused(open, command, /it runs `aidrian handoff continue`/u);
+    await refused(open, command, /it runs `aidrian handoff continue`/u);
   }
   for (const command of [String.raw`Set-Content $env:S\handoffs\.cont` + '`' + String.raw`inue\arm` + '`' + 'ed-s1.json \'{}\'', "Set-Content ($env:S + '\\handoffs\\.cont' + 'inue\\armed-s1.json') '{}'"]) {
-    refused(open, command, /the handoff continuation store/u);
+    await refused(open, command, /the handoff continuation store/u);
   }
   for (const command of ["Set-Content .aidrian.lo`cal.json '{}'", "Set-Content ('.aidrian.lo'+'cal.json') '{}'"]) {
-    refused(open, command, /it names \.aidrian\.local\.json in a shell command the guard cannot read/u);
+    await refused(open, command, /it names \.aidrian\.local\.json in a shell command the guard cannot read/u);
   }
   const gated = project(t).dir;
   for (const command of ["Set-Content .aidrian/conf`ig.json '{}'", "Set-Content (\".aidrian/con\" + \"fig.json\") '{}'"]) {
-    refused(gated, command, /may change \.aidrian\/config\.json, which sets this project's agent gates/u);
+    await refused(gated, command, /may change \.aidrian\/config\.json, which sets this project's agent gates/u);
   }
-  for (const command of ['Write-Host "a`tb"', "Write-Host ('a' + 'b')"]) assert.equal(run(gated, subagent(gated, 'PowerShell', { command })).status, 0, command);
+  for (const command of ['Write-Host "a`tb"', "Write-Host ('a' + 'b')"]) assert.equal((await run(gated, subagent(gated, 'PowerShell', { command }))).status, 0, command);
 });
 
-test('a subagent\'s PowerShell command that names the store, a folder that holds it, or a glob that reaches it by path is refused', (t) => {
+test('a subagent\'s PowerShell command that names the store, a folder that holds it, or a glob that reaches it by path is refused', async (t) => {
   const { dir } = project(t, { version: 1 });
   const state = stateDir(findProject(dir));
   const handoffs = path.join(state, 'handoffs');
   const store = path.join(handoffs, '.continue');
   mkdirSync(store, { recursive: true });
   t.after(() => rmSync(state, { recursive: true, force: true }));
-  const run = (input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
+  const run = (input) => inHook({ input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
   const windows = (file) => file.replaceAll('/', '\\');
   for (const [cwd, command] of [
     [dir, `Remove-Item -Recurse -Force ${windows(handoffs)}`],
@@ -1143,43 +1147,43 @@ test('a subagent\'s PowerShell command that names the store, a folder that holds
     [dir, `Copy-Item C:\\tmp\\x.json ${store}`],
     [dir, `Set-Location ${handoffs}; Remove-Item -Recurse -Force .c*`],
   ]) {
-    const result = run(subagent(cwd, 'PowerShell', { command }));
+    const result = await run(subagent(cwd, 'PowerShell', { command }));
     assert.equal(result.status, 2, `${cwd}: ${command}`);
     assert.match(result.stderr, /may change [^\n]*, the handoff continuation store/u, command);
   }
   for (const command of [`Remove-Item ${handoffs}/2026-*.md`, `Get-ChildItem ${handoffs}/2026-11-15-x.md`]) {
-    assert.equal(run(subagent(dir, 'PowerShell', { command })).status, 0, command);
+    assert.equal((await run(subagent(dir, 'PowerShell', { command }))).status, 0, command);
   }
   const gated = project(t).dir;
   for (const command of [`Remove-Item -Recurse ${windows(gated)}\\.aidrian\\c*`, 'Remove-Item .aidrian/c*', 'Remove-Item .aidrian/conf[i]g.json']) {
-    const result = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(gated, 'PowerShell', { command })), cwd: gated, encoding: 'utf8' });
+    const result = await inHook({ input: JSON.stringify(subagent(gated, 'PowerShell', { command })), cwd: gated, encoding: 'utf8' });
     assert.equal(result.status, 2, command);
     assert.match(result.stderr, /may change \.aidrian\/config\.json/u, command);
   }
 });
 
-test('a subagent may not set a machine switch through a glob that matches the local file', (t) => {
+test('a subagent may not set a machine switch through a glob that matches the local file', async (t) => {
   const { dir } = project(t, { version: 1 });
-  const run = (tool, toolInput) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(dir, tool, toolInput)), cwd: dir, encoding: 'utf8' });
+  const run = (tool, toolInput) => inHook({ input: JSON.stringify(subagent(dir, tool, toolInput)), cwd: dir, encoding: 'utf8' });
   const on = JSON.stringify({ github: { autoMerge: 'on' } });
   for (const command of [`echo '${on}' > .aidrian.local.js*`, `echo '${on}' > .AIDRIAN.LOCAL.JS?N`, `echo '${on}' > .aidrian.local.[j]son`]) {
-    const result = run('Bash', { command });
+    const result = await run('Bash', { command });
     assert.equal(result.status, 2, command);
     assert.match(result.stderr, /it sets github\.autoMerge in \.aidrian\.local\.json/u, command);
   }
-  const shell = run('PowerShell', { command: "Set-Content .aidrian.local.js* '{}'" });
+  const shell = await run('PowerShell', { command: "Set-Content .aidrian.local.js* '{}'" });
   assert.equal(shell.status, 2);
   assert.match(shell.stderr, /it has a glob that may reach \.aidrian\.local\.json in a shell command the guard cannot read/u);
-  for (const command of [`echo '${on}' > notes.js*`, 'echo autoMerge > docs/*.md']) assert.equal(run('Bash', { command }).status, 0, command);
+  for (const command of [`echo '${on}' > notes.js*`, 'echo autoMerge > docs/*.md']) assert.equal((await run('Bash', { command })).status, 0, command);
   // With gates, a bracket class in a config file's name is read as the glob the shell expands, as `*` is.
   const gated = project(t).dir;
-  const config = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(gated, 'Bash', { command: 'echo {} > .aidrian/conf[i]g.json' })), cwd: gated, encoding: 'utf8' });
+  const config = await inHook({ input: JSON.stringify(subagent(gated, 'Bash', { command: 'echo {} > .aidrian/conf[i]g.json' })), cwd: gated, encoding: 'utf8' });
   assert.equal(config.status, 2);
   assert.match(config.stderr, /may change \.aidrian\/config\.json/u);
 });
 
-test('a subagent\'s plain PowerShell glob is judged by the folder it reaches, and by its name only when that names a guarded file', (t) => {
-  const run = (cwd, command) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(cwd, 'PowerShell', { command })), cwd, encoding: 'utf8' });
+test('a subagent\'s plain PowerShell glob is judged by the folder it reaches, and by its name only when that names a guarded file', async (t) => {
+  const run = (cwd, command) => inHook({ input: JSON.stringify(subagent(cwd, 'PowerShell', { command })), cwd, encoding: 'utf8' });
   const plain = [
     String.raw`Get-ChildItem src\*`,
     'Get-ChildItem *.json',
@@ -1195,34 +1199,34 @@ test('a subagent\'s plain PowerShell glob is judged by the folder it reaches, an
   const gated = project(t).dir;
   for (const [cwd, label] of [[open, 'no gates'], [path.join(gated, 'src'), 'gates, from src']]) {
     for (const command of plain) {
-      const result = run(cwd, command);
+      const result = await run(cwd, command);
       assert.equal(result.status, 0, `${label}: ${command}: ${result.stderr}`);
     }
   }
-  for (const command of ['Get-ChildItem *.json', 'Copy-Item src/* out/', "Get-ChildItem | Where-Object Name -like '*config*'"]) assert.equal(run(gated, command).status, 0, `gates: ${command}`);
+  for (const command of ['Get-ChildItem *.json', 'Copy-Item src/* out/', "Get-ChildItem | Where-Object Name -like '*config*'"]) assert.equal((await run(gated, command)).status, 0, `gates: ${command}`);
   // From the project root, a glob that reaches the config folder or the local file still counts, as it may delete them.
   for (const command of ['Remove-Item -Recurse -Force *', 'Remove-Item -Recurse .*', 'Remove-Item -Recurse .aidria?']) {
-    const result = run(gated, command);
+    const result = await run(gated, command);
     assert.equal(result.status, 2, command);
     assert.match(result.stderr, /may change \.aidrian\/config\.json/u, command);
   }
   // By name, from any folder, as a shell that changed its folder first may reach it.
   for (const command of [String.raw`Set-Location ..; Remove-Item -Recurse .aidrian\*`, 'Remove-Item -Recurse ../.aid*/*', 'Remove-Item conf*', 'Remove-Item conf[i]g.json']) {
-    const result = run(path.join(gated, 'src'), command);
+    const result = await run(path.join(gated, 'src'), command);
     assert.equal(result.status, 2, command);
     assert.match(result.stderr, /may change \.aidrian\/config\.json/u, command);
   }
   writeFileSync(path.join(open, '.aidrian.local.json'), '{}');
   for (const command of ['Remove-Item *.json', 'Set-Location ..; Set-Content .aidrian.local.js* x', 'Copy-Item x.json .AIDRIAN.LOCAL.[j]son']) {
-    const result = run(path.join(open, command.startsWith('Set-Location') ? 'src' : ''), command);
+    const result = await run(path.join(open, command.startsWith('Set-Location') ? 'src' : ''), command);
     assert.equal(result.status, 2, command);
     assert.match(result.stderr, /it has a glob that may reach \.aidrian\.local\.json in a shell command the guard cannot read/u, command);
   }
-  assert.equal(run(path.join(open, 'src'), 'Remove-Item *.json').status, 0, 'a folder without the local file');
+  assert.equal((await run(path.join(open, 'src'), 'Remove-Item *.json')).status, 0, 'a folder without the local file');
 });
 
-test('a subagent\'s PowerShell command reads a typographic quote as a quote, for each guard', (t) => {
-  const run = (cwd, command) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(cwd, 'PowerShell', { command })), cwd, encoding: 'utf8' });
+test('a subagent\'s PowerShell command reads a typographic quote as a quote, for each guard', async (t) => {
+  const run = (cwd, command) => inHook({ input: JSON.stringify(subagent(cwd, 'PowerShell', { command })), cwd, encoding: 'utf8' });
   const open = project(t, { version: 1 }).dir;
   const gated = project(t).dir;
   for (const [cwd, command, reason] of [
@@ -1233,57 +1237,57 @@ test('a subagent\'s PowerShell command reads a typographic quote as a quote, for
     [open, 'Set-Content (\u2018.aidrian.lo\u2019+\u201Acal.json\u201B) x', /it names \.aidrian\.local\.json in a shell command the guard cannot read/u],
     [gated, 'Set-Content .aidrian/conf\u201Eig\u201D.json x', /may change \.aidrian\/config\.json/u],
   ]) {
-    const result = run(cwd, command);
+    const result = await run(cwd, command);
     assert.equal(result.status, 2, command);
     assert.match(result.stderr, reason, command);
   }
 });
 
-test('a subagent\'s PowerShell word that starts with ~ is read in the home folder, as a Bash one is', (t) => {
+test('a subagent\'s PowerShell word that starts with ~ is read in the home folder, as a Bash one is', async (t) => {
   const home = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-home-')));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const { dir } = project(t, { version: 1 });
   const env = { ...process.env, HOME: home, USERPROFILE: home, XDG_STATE_HOME: path.join(home, '.local/state') };
   const store = path.join(stateDir(findProject(dir), { env }), 'handoffs/.continue');
   mkdirSync(store, { recursive: true });
-  const run = (tool, command) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(dir, tool, { command })), cwd: dir, encoding: 'utf8', env });
+  const run = (tool, command) => inHook({ input: JSON.stringify(subagent(dir, tool, { command })), cwd: dir, encoding: 'utf8', env });
   for (const [tool, command] of [
     ['Bash', 'rm -rf ~/.local/state/aidrian'],
     ['PowerShell', 'Remove-Item -Recurse -Force ~/.local/state/aidrian'],
     ['PowerShell', String.raw`Remove-Item -Recurse -Force ~\.local\state\aidrian`],
   ]) {
-    const result = run(tool, command);
+    const result = await run(tool, command);
     assert.equal(result.status, 2, `${tool}: ${command}`);
     assert.match(result.stderr, /the handoff continuation store/u, command);
   }
-  assert.equal(run('PowerShell', 'Get-ChildItem ~/Documents').status, 0);
+  assert.equal((await run('PowerShell', 'Get-ChildItem ~/Documents')).status, 0);
 });
 
-test('a subagent\'s PowerShell command with more words than the guards read is refused; the main session\'s runs', (t) => {
+test('a subagent\'s PowerShell command with more words than the guards read is refused; the main session\'s runs', async (t) => {
   const { dir } = project(t, { version: 1 });
   const words = (count) => Array.from({ length: count }, (_, i) => `w${i}`).join(' ');
-  const run = (input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
+  const run = (input) => inHook({ input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
   // Write-Host counts twice, as given and in lower case.
-  const refused = run(subagent(dir, 'PowerShell', { command: `Write-Host ${words(OPAQUE_WORDS - 1)}` }));
+  const refused = await run(subagent(dir, 'PowerShell', { command: `Write-Host ${words(OPAQUE_WORDS - 1)}` }));
   assert.equal(refused.status, 2);
   assert.match(refused.stderr, new RegExp(`its command has ${OPAQUE_WORDS + 1} words, counting each case, and the guards read at most ${OPAQUE_WORDS}`, 'u'));
-  assert.equal(run(subagent(dir, 'PowerShell', { command: words(OPAQUE_WORDS) })).status, 0, 'as many as the guards read');
+  assert.equal((await run(subagent(dir, 'PowerShell', { command: words(OPAQUE_WORDS) }))).status, 0, 'as many as the guards read');
   const { agent_id: _id, agent_type: _type, ...main } = subagent(dir, 'PowerShell', { command: `Write-Host ${words(OPAQUE_WORDS)}` });
-  assert.equal(run(main).status, 0, 'the main session may');
+  assert.equal((await run(main)).status, 0, 'the main session may');
 });
 
-test('a glob of many thousand ** parts still reaches the store, for Bash and PowerShell, and never runs the guard out of stack', (t) => {
+test('a glob of many thousand ** parts still reaches the store, for Bash and PowerShell, and never runs the guard out of stack', async (t) => {
   const { dir } = project(t, { version: 1 });
   const run = (tool, command) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(dir, tool, { command })), cwd: dir, encoding: 'utf8', timeout: 4000 });
   const deep = `${'/**'.repeat(17000)}/x`;
   for (const [tool, command] of [['Bash', `rm -rf ${deep}`], ['PowerShell', `Remove-Item -Recurse ${deep}`]]) {
-    const result = run(tool, command);
+    const result = await run(tool, command);
     assert.equal(result.status, 2, `${tool}: ${result.signal ?? ''}`);
     assert.match(result.stderr, /the handoff continuation store/u, tool);
   }
 });
 
-test('globParts answers in milliseconds on a part of many wildcards, as it reads them', () => {
+test('globParts answers in milliseconds on a part of many wildcards, as it reads them', async () => {
   for (const [part, name, expected] of [
     [`${'*'.repeat(40)}x`, '.aidrian.local.json', false],
     [`${'*'.repeat(40)}n`, '.aidrian.local.json', true],
@@ -1297,7 +1301,7 @@ test('globParts answers in milliseconds on a part of many wildcards, as it reads
   }
 });
 
-test('globParts reads *, ?, and a [...] class, negated with !, in the last path part', () => {
+test('globParts reads *, ?, and a [...] class, negated with !, in the last path part', async () => {
   const { head, pattern, folders } = globParts('a/[.]cont*', ['/x', '/y']);
   assert.deepEqual([head, folders], ['a', ['/x/a', '/y/a']]);
   assert.ok(pattern.test('.continue'));
@@ -1316,32 +1320,32 @@ test('globParts reads *, ?, and a [...] class, negated with !, in the last path 
   assert.ok(globParts('/s/a[b').pattern.test('a[b'), 'an unclosed bracket is a plain character');
 });
 
-test('the store guard follows state.dir to a folder outside the state root', (t) => {
+test('the store guard follows state.dir to a folder outside the state root', async (t) => {
   const elsewhere = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-elsewhere-')));
   t.after(() => rmSync(elsewhere, { recursive: true, force: true }));
   const { dir } = project(t, { version: 1, state: { dir: elsewhere } });
-  const run = (input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
-  assert.equal(run(subagent(dir, 'Write', { file_path: path.join(elsewhere, 'handoffs/.continue/armed-s1.json'), content: '{}' })).status, 2);
-  assert.equal(run(subagent(dir, 'Write', { file_path: path.join(elsewhere, 'handoffs/2026-11-15-x.md'), content: '#\n' })).status, 0);
+  const run = (input) => inHook({ input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
+  assert.equal((await run(subagent(dir, 'Write', { file_path: path.join(elsewhere, 'handoffs/.continue/armed-s1.json'), content: '{}' }))).status, 2);
+  assert.equal((await run(subagent(dir, 'Write', { file_path: path.join(elsewhere, 'handoffs/2026-11-15-x.md'), content: '#\n' }))).status, 0);
 });
 
-test('a gated subagent\'s bracket glob in a known folder gets the folder check, as a `*` glob does', (t) => {
+test('a gated subagent\'s bracket glob in a known folder gets the folder check, as a `*` glob does', async (t) => {
   const { dir } = project(t);
   mkdirSync(path.join(dir, 'build'));
-  const run = (command) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(dir, 'Bash', { command })), cwd: dir, encoding: 'utf8' });
-  for (const command of ['rm -rf build/[a-z]*', 'rm -f build/[[:alpha:]]*', 'rm -f build/[!.]x']) assert.equal(run(command).status, 0, command);
-  const refused = run('rm -f .aidrian/[c]onfig.json*');
+  const run = (command) => inHook({ input: JSON.stringify(subagent(dir, 'Bash', { command })), cwd: dir, encoding: 'utf8' });
+  for (const command of ['rm -rf build/[a-z]*', 'rm -f build/[[:alpha:]]*', 'rm -f build/[!.]x']) assert.equal((await run(command)).status, 0, command);
+  const refused = await run('rm -f .aidrian/[c]onfig.json*');
   assert.equal(refused.status, 2);
   assert.match(refused.stderr, /\.aidrian\/config\.json/u);
 });
 
-test('a subagent, and a session the background route started, may not write in the session folders; an attended main session may', (t) => {
+test('a subagent, and a session the background route started, may not write in the session folders; an attended main session may', async (t) => {
   const { dir, state, full } = unattendedSetting(t);
   const sessions = path.join(state, 'sessions');
   const own = path.join(sessions, 'abc-1');
   mkdirSync(own, { recursive: true, mode: 0o700 });
   symlinkSync(path.join(own, 'prs.jsonl'), path.join(dir, 'into-sessions'));
-  const run = (session, tool, toolInput, { agent = false } = {}) => spawnSync(process.execPath, [HOOK], {
+  const run = (session, tool, toolInput, { agent = false } = {}) => inHook({
     input: JSON.stringify({ session_id: session, tool_name: tool, tool_input: toolInput, cwd: dir, ...(agent ? { agent_id: 'a5f0c1', agent_type: 'aidrian:explorer' } : {}) }),
     cwd: dir, encoding: 'utf8',
   });
@@ -1379,15 +1383,15 @@ test('a subagent, and a session the background route started, may not write in t
   ];
   for (const [session, agent] of [['plain-session', true], [full, false]]) {
     for (const [tool, toolInput] of blocked) {
-      const result = run(session, tool, toolInput, { agent });
+      const result = await run(session, tool, toolInput, { agent });
       assert.equal(result.status, 2, `${session}: ${JSON.stringify(toolInput)}`);
     }
-    for (const [tool, toolInput] of passing) assert.equal(run(session, tool, toolInput, { agent }).status, 0, `${session}: ${JSON.stringify(toolInput)}`);
+    for (const [tool, toolInput] of passing) assert.equal((await run(session, tool, toolInput, { agent })).status, 0, `${session}: ${JSON.stringify(toolInput)}`);
   }
-  const named = run('plain-session', 'Write', { file_path: path.join(own, 'prs.jsonl'), content: '{}\n' }, { agent: true });
+  const named = await run('plain-session', 'Write', { file_path: path.join(own, 'prs.jsonl'), content: '{}\n' }, { agent: true });
   assert.match(named.stderr, /the session folders, where only the hooks and the `aidrian` commands write/u);
   for (const [tool, toolInput] of blocked.filter(([, input]) => !String(input.command ?? '').startsWith('chmod -R'))) {
-    assert.equal(run('plain-session', tool, toolInput).status, 0, `an attended session may: ${JSON.stringify(toolInput)}`);
+    assert.equal((await run('plain-session', tool, toolInput)).status, 0, `an attended session may: ${JSON.stringify(toolInput)}`);
   }
 });
 
@@ -1399,12 +1403,12 @@ function sessionFolderOf(dir, session) {
   return made;
 }
 
-const subagentWrite = (cwd, session, toolInput) => spawnSync(process.execPath, [HOOK], {
+const subagentWrite = (cwd, session, toolInput) => inHook({
   input: JSON.stringify({ session_id: session, tool_name: 'Write', tool_input: toolInput, cwd, agent_id: 'a5f0c1', agent_type: 'aidrian:explorer' }),
   cwd, encoding: 'utf8',
 });
 
-test('a subagent that works in another project, or in no project, may not write the session folders of the project it started in', (t) => {
+test('a subagent that works in another project, or in no project, may not write the session folders of the project it started in', async (t) => {
   const { dir: home } = project(t, { version: 1 });
   const { dir: elsewhere } = project(t, { version: 1 });
   const loose = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-loose-')));
@@ -1414,14 +1418,14 @@ test('a subagent that works in another project, or in no project, may not write 
   t.after(() => rmSync(homeState, { recursive: true, force: true }));
   const write = { file_path: path.join(own, 'prs.jsonl'), content: '{}\n' };
   for (const cwd of [elsewhere, loose]) {
-    const result = subagentWrite(cwd, 'moved-1', write);
+    const result = await subagentWrite(cwd, 'moved-1', write);
     assert.equal(result.status, 2, `from ${cwd}: ${result.stderr}`);
     assert.match(result.stderr, /the session folders/u);
   }
-  assert.equal(subagentWrite(elsewhere, 'moved-1', { file_path: path.join(elsewhere, 'src/app.js'), content: 'x\n' }).status, 0, 'its own work in the other project');
+  assert.equal((await subagentWrite(elsewhere, 'moved-1', { file_path: path.join(elsewhere, 'src/app.js'), content: 'x\n' })).status, 0, 'its own work in the other project');
 });
 
-test('a subagent in another project meets the session folders of a state.dir its gate snapshot`s project moves', (t) => {
+test('a subagent in another project meets the session folders of a state.dir its gate snapshot`s project moves', async (t) => {
   const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-origin-')));
   t.after(() => rmSync(base, { recursive: true, force: true }));
   const moved = path.join(base, 'moved-state');
@@ -1433,12 +1437,12 @@ test('a subagent in another project meets the session folders of a state.dir its
   t.after(() => forgetGateSnapshot(session));
   const own = sessionFolderOf(home, session);
   assert.ok(own.startsWith(realpathSync(moved)));
-  const result = subagentWrite(elsewhere, session, { file_path: path.join(own, 'links.jsonl'), content: '{}\n' });
+  const result = await subagentWrite(elsewhere, session, { file_path: path.join(own, 'links.jsonl'), content: '{}\n' });
   assert.equal(result.status, 2, result.stderr);
   assert.match(result.stderr, /the session folders/u);
 });
 
-test('a state.dir of ".." in a checkout named sessions leaves the checkout writable: no session folder lies there', { skip: process.platform === 'win32' }, (t) => {
+test('a state.dir of ".." in a checkout named sessions leaves the checkout writable: no session folder lies there', { skip: process.platform === 'win32' }, async (t) => {
   const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-parent-state-')));
   t.after(() => rmSync(base, { recursive: true, force: true }));
   const dir = path.join(base, 'sessions');
@@ -1447,7 +1451,7 @@ test('a state.dir of ".." in a checkout named sessions leaves the checkout writa
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '..' } }));
   assert.equal(stateDir(findProject(dir)), base);
   for (const file of ['src/app.js', 'README.md']) {
-    const result = subagentWrite(dir, 'plain-session', { file_path: path.join(dir, file), content: 'x\n' });
+    const result = await subagentWrite(dir, 'plain-session', { file_path: path.join(dir, file), content: 'x\n' });
     assert.equal(result.status, 0, `${file}: ${result.stderr}`);
   }
 });
@@ -1455,7 +1459,7 @@ test('a state.dir of ".." in a checkout named sessions leaves the checkout writa
 const SESSION_START = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-session-start.mjs');
 const gitIn = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args], { cwd, env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
 
-test('an ungated session`s subagent in another project may not write the session folders the session started with, before they exist', (t) => {
+test('an ungated session`s subagent in another project may not write the session folders the session started with, before they exist', async (t) => {
   const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-origins-')));
   t.after(() => rmSync(base, { recursive: true, force: true }));
   const moved = path.join(base, 'moved-state');
@@ -1476,18 +1480,18 @@ test('an ungated session`s subagent in another project may not write the session
   ];
   for (const [session, file] of targets) {
     assert.equal(existsSync(path.dirname(path.dirname(file))), false, 'no sessions folder yet');
-    const result = subagentWrite(elsewhere, session, { file_path: file, content: '{}\n' });
+    const result = await subagentWrite(elsewhere, session, { file_path: file, content: '{}\n' });
     assert.equal(result.status, 2, `${file}: ${result.stderr}`);
     assert.match(result.stderr, /the session folders/u);
   }
   const record = path.join(originFolder(), 'origin-custom-1.json');
   assert.ok(existsSync(record));
-  const forged = subagentWrite(elsewhere, 'origin-custom-1', { file_path: record, content: '{"states":[]}\n' });
+  const forged = await subagentWrite(elsewhere, 'origin-custom-1', { file_path: record, content: '{"states":[]}\n' });
   assert.equal(forged.status, 2, 'a subagent may not rewrite the session`s origins');
   assert.match(forged.stderr, /the session origins/u);
 });
 
-test('the sessions folder of a state.dir the session folder writer refuses, below a repository or in a sibling worktree, stays writable', { skip: process.platform === 'win32' }, (t) => {
+test('the sessions folder of a state.dir the session folder writer refuses, below a repository or in a sibling worktree, stays writable', { skip: process.platform === 'win32' }, async (t) => {
   const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-refused-store-')));
   t.after(() => rmSync(base, { recursive: true, force: true }));
   const repo = path.join(base, 'repo');
@@ -1500,16 +1504,16 @@ test('the sessions folder of a state.dir the session folder writer refuses, belo
   gitIn(repo, 'add', '.');
   gitIn(repo, 'commit', '-q', '-m', 'start');
   assert.equal(stateDir(findProject(sub)), repo, 'a relative state.dir resolves against the repository root');
-  const nested = subagentWrite(sub, 'plain-session', { file_path: path.join(repo, 'sessions/notes/a.md'), content: 'y\n' });
+  const nested = await subagentWrite(sub, 'plain-session', { file_path: path.join(repo, 'sessions/notes/a.md'), content: 'y\n' });
   assert.equal(nested.status, 0, nested.stderr);
   const sibling = path.join(base, 'sibling');
   gitIn(repo, 'worktree', 'add', '-q', '-b', 'side', sibling);
   writeFileSync(path.join(sub, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: sibling } }));
-  const inSibling = subagentWrite(sub, 'plain-session', { file_path: path.join(sibling, 'sessions/notes/a.md'), content: 'y\n' });
+  const inSibling = await subagentWrite(sub, 'plain-session', { file_path: path.join(sibling, 'sessions/notes/a.md'), content: 'y\n' });
   assert.equal(inSibling.status, 0, inSibling.stderr);
 });
 
-test('the default sessions folders are scanned once a call, with the guards` deadline checked at each', () => {
+test('the default sessions folders are scanned once a call, with the guards` deadline checked at each', async () => {
   const projects = path.join(stateRoot(), 'projects');
   for (let i = 0; i < 40; i += 1) mkdirSync(path.join(projects, `scan-${i}`, 'sessions'), { recursive: true });
   const input = { tool_name: 'Write', tool_input: {}, cwd: '/' };
@@ -1524,7 +1528,7 @@ test('the default sessions folders are scanned once a call, with the guards` dea
   assert.ok(entries <= 1, `${entries} folders read past the deadline`);
 });
 
-test('a gated subagent`s Read in the project its session started in runs one git, to find the project, and no other', { skip: process.platform === 'win32' }, (t) => {
+test('a gated subagent`s Read in the project its session started in runs one git, to find the project, and no other', { skip: process.platform === 'win32' }, async (t) => {
   const { dir } = project(t, GATED);
   gitIn(dir, 'init', '-q', '-b', 'main');
   const session = 'git-count-1';
@@ -1535,20 +1539,20 @@ test('a gated subagent`s Read in the project its session started in runs one git
   const log = path.join(bin, 'calls.log');
   const realGit = execFileSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
   writeFileSync(path.join(bin, 'git'), `#!/bin/sh\necho "$*" >> ${JSON.stringify(log)}\nexec ${JSON.stringify(realGit)} "$@"\n`, { mode: 0o755 });
-  const calls = (toolName, toolInput) => {
+  const calls = async (toolName, toolInput) => {
     rmSync(log, { force: true });
-    const ran = spawnSync(process.execPath, [HOOK], {
+    const ran = await inHook({
       input: JSON.stringify({ session_id: session, tool_name: toolName, tool_input: toolInput, cwd: dir, agent_id: 'a5f0c1', agent_type: 'aidrian:explorer' }),
       cwd: dir, encoding: 'utf8', env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` },
     });
     assert.equal(ran.status, 0, ran.stderr);
     return existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : [];
   };
-  assert.equal(calls('Read', { file_path: path.join(dir, 'src/app.js') }).length, 1, 'the project lookup alone');
-  assert.equal(calls('Grep', { pattern: 'x', path: dir }).length, 1);
+  assert.equal((await calls('Read', { file_path: path.join(dir, 'src/app.js') })).length, 1, 'the project lookup alone');
+  assert.equal((await calls('Grep', { pattern: 'x', path: dir })).length, 1);
 });
 
-test('a session that starts with a state folder its repository holds records no origin, so the folder stays writable from elsewhere', { skip: process.platform === 'win32' }, (t) => {
+test('a session that starts with a state folder its repository holds records no origin, so the folder stays writable from elsewhere', { skip: process.platform === 'win32' }, async (t) => {
   const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-refused-origin-')));
   t.after(() => rmSync(base, { recursive: true, force: true }));
   const repo = path.join(base, 'repo');
@@ -1565,17 +1569,17 @@ test('a session that starts with a state folder its repository holds records no 
   const ran = spawnSync(process.execPath, [SESSION_START], { input: JSON.stringify({ session_id: session, cwd: sub, hook_event_name: 'SessionStart' }), cwd: sub, encoding: 'utf8' });
   assert.equal(ran.status, 0, ran.stderr);
   assert.deepEqual(readOrigins(session), [], 'the writer would refuse the repository root as a state folder');
-  const result = subagentWrite(elsewhere, session, { file_path: path.join(repo, 'sessions/notes/a.md'), content: 'y\n' });
+  const result = await subagentWrite(elsewhere, session, { file_path: path.join(repo, 'sessions/notes/a.md'), content: 'y\n' });
   assert.equal(result.status, 0, result.stderr);
 });
 
-test('the session-folder guard`s checkout read stops at what is left of the guards` budget', { skip: process.platform === 'win32' }, (t) => {
+test('the session-folder guard`s checkout read stops at what is left of the guards` budget', { skip: process.platform === 'win32' }, async (t) => {
   const { dir } = project(t, { version: 1 });
   gitIn(dir, 'init', '-q', '-b', 'main');
   const bin = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-stall-git-')));
   t.after(() => rmSync(bin, { recursive: true, force: true }));
   const realGit = execFileSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
-  const timed = (pattern) => {
+  const timed = async (pattern) => {
     writeFileSync(path.join(bin, 'git'), `#!/bin/sh\ncase "$*" in ${pattern}) exec sleep 30;; esac\nexec ${JSON.stringify(realGit)} "$@"\n`, { mode: 0o755 });
     const near = path.join(stateRoot(), 'projects', 'stall-probe', 'notes.txt');
     const started = Date.now();
@@ -1586,8 +1590,8 @@ test('the session-folder guard`s checkout read stops at what is left of the guar
     assert.notEqual(ran.status, null, 'the hook ended');
     return Date.now() - started;
   };
-  const baseline = timed('no-such-call');
-  const over = timed('*"worktree list"*') - baseline;
+  const baseline = await timed('no-such-call');
+  const over = await timed('*"worktree list"*') - baseline;
   // git's own 2 s limit would show as well over a second; the guards' 0.6 s budget as less.
   assert.ok(over < 1200, `the stalled checkout read cost ${over} ms over the ${baseline} ms baseline`);
 });

@@ -325,6 +325,9 @@ Read in Codex's source at `rust-v0.166.0` on 2026-11-18, not live:
   So `install-agents.mjs` writes no sandbox into a role.
 - A read-only agent is told so in its instructions, and nothing on Codex enforces it.
 - The session's own sandbox binds every agent in it, such as `codex --sandbox read-only`.
+- Nothing tells whether Codex would let a session push to the repository's remote: its `capabilities.pushPermission`
+  ([the adapter's fields](adding-a-host.md#the-adapters-fields)) answers `unknown`, so the push preflight never stops a run here.
+  Verified by `node --test` on fixtures (`test/adapters.test.mjs`), not live.
 - No hook writes a `dispatch` row with the agent id of a subagent Codex spawns, so the adapter declares no
   `capabilities.judgeDispatch`: under the [unattended waiver](../config.md#unattended-waiver), no judge's verdict stands
   for `aidrian pr auto-merge` on Codex, and `aidrian pr waive --gate` exits 1 and says so.

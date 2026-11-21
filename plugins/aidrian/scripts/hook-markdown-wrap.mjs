@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { loadConfig } from '../lib/config.mjs';
-import { deny, runHook } from '../lib/hook-io.mjs';
+import { deny, isMain, runHook } from '../lib/hook-io.mjs';
 import { fileEditOf } from '../lib/hosts/index.mjs';
 import { affectedLines, findWrapViolations } from '../lib/markdown-wrap.mjs';
 import { findProject } from '../lib/project.mjs';
@@ -15,7 +15,8 @@ import { findProject } from '../lib/project.mjs';
 const MARKDOWN = /\.(md|markdown|mdx)$/i;
 const MAX_REPORTED = 10;
 
-await runHook((input) => {
+// The hook's body, for the payload `input` (lib/hook-io.mjs callHook).
+export async function handle(input) {
   const edit = fileEditOf(input);
   const file = edit?.file;
   const introduced = edit?.shape === 'write' ? edit.content : edit?.shape === 'edit' ? edit.newText : undefined;
@@ -35,4 +36,6 @@ await runHook((input) => {
   if (violations.length > MAX_REPORTED) lines.push(`  ... and ${violations.length - MAX_REPORTED} more`);
   lines.push('Fix those lines with a follow-up edit: break at sentence boundaries, one sentence per line, never inside a backtick span or a link.');
   deny(lines.join('\n'));
-});
+}
+
+if (isMain(import.meta.url)) await runHook(handle);

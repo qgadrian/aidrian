@@ -124,7 +124,7 @@ test('start refuses a run the base branch has not switched on, by its local ref 
 test('the team policy is the lowest of the local ref, the forge, and the ceilings', (t) => {
   const fx = runFixture(t, { projectRun: { allow: true, maxStarts: 900, issueHours: 24 }, forgeConfig: { version: 1, projectRun: { allow: true, maxStarts: 50, issueHours: 30 } } });
   const policy = teamPolicy(fx.project, { host: 'github.com', owner: 'acme', name: 'widgets' }, fx.forge);
-  assert.deepEqual(policy, { maxParallel: 1, maxStarts: 50, issueHours: 6, solo: false, unverifiedHosts: false, workflowSecretsAccepted: false, outsideSandbox: [], mcpServers: {}, registries: [] }, 'issueHours 30 fails its check on the forge and reads as the default 6, the lowest of 24, 6, and the ceiling');
+  assert.deepEqual(policy, { maxParallel: 1, maxStarts: 50, issueHours: 6, solo: false, unverifiedHosts: false, workflowSecretsAccepted: false, forgeProtectionAccepted: false, outsideSandbox: [], mcpServers: {}, registries: [] }, 'issueHours 30 fails its check on the forge and reads as the default 6, the lowest of 24, 6, and the ceiling');
   const ceiling = runFixture(t, { projectRun: { allow: true, maxStarts: 1000 }, forgeConfig: { version: 1, projectRun: { allow: true, maxStarts: 1000 } } });
   assert.equal(teamPolicy(ceiling.project, { host: 'github.com', owner: 'acme', name: 'widgets' }, ceiling.forge).maxStarts, 1000);
 });
@@ -195,6 +195,27 @@ test('start halts when the user\'s git config gives origin a second push URL, wh
   assert.match(halt, /an issue session pushes to exactly one, the URL its start pins; remove the extra push URL, then start again/u);
   assert.deepEqual(fx.rows(), [], 'a halt records nothing');
   assert.deepEqual(fx.claude.starts(), []);
+});
+
+// The push preflight (docs/handoff.md#the-push-preflight) on the attempt's clone: a driver in auto mode whose user
+// settings trust only another repository would start a session whose push the host refuses after its work.
+test('start halts before the launch when the host would refuse the push of a session in the driver\'s mode, and starts once it trusts the remote', (t) => {
+  const fx = runFixture(t);
+  const transcripts = path.join(fx.env.CLAUDE_CONFIG_DIR, 'projects', fx.dir.replace(/[^A-Za-z0-9]/gu, '-'));
+  writeFileSync(path.join(transcripts, `${DRIVER}.jsonl`), `${JSON.stringify({ type: 'permission-mode', permissionMode: 'auto', sessionId: DRIVER })}\n`);
+  const settings = path.join(fx.env.CLAUDE_CONFIG_DIR, 'settings.json');
+  writeFileSync(settings, JSON.stringify({ autoMode: { environment: ['Trusted repo: github.com/acme/other'] } }));
+  const refused = fx.cmd(['start', 'launch', 'ENG-1']);
+  const halt = refused.out.find((line) => line.startsWith('halt ')) ?? '';
+  assert.ok(halt.startsWith(`halt no session started, since Claude Code would refuse a push to this repository's remote, github.com/acme/widgets: autoMode.environment in ${settings} `), JSON.stringify(refused));
+  assert.match(halt, /the Human adds "\$defaults" to that list/u);
+  assert.deepEqual(fx.claude.starts(), [], 'no session started');
+  assert.deepEqual(fx.rows(), [], 'a halt records nothing');
+  writeFileSync(settings, JSON.stringify({ autoMode: { environment: ['Trusted repo: github.com/acme/widgets'] } }));
+  const started = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(started.exitCode, 0, JSON.stringify(started));
+  assert.deepEqual(fx.claude.starts().map((call) => call.cwd), [work(fx)], 'the session starts in the clone the preflight judged');
+  assert.equal(fx.claude.starts()[0].args[fx.claude.starts()[0].args.indexOf('--permission-mode') + 1], 'auto');
 });
 
 test('a later attempt clones again from the issue branch on the forge, and one whose branch changed a host file is refused', (t) => {

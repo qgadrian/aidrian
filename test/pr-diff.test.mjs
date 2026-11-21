@@ -116,18 +116,22 @@ test('a commit the checkout lacks is fetched from the pull request\'s remote fir
   r.git('remote', 'add', 'fork', 'git@github.com:someone/notes.git');
   assert.equal(remoteOf(r.dir, { host: 'github.com', repo: 'acme/notes' }), 'origin');
   assert.notEqual(spawnSync('git', ['cat-file', '-e', `${head}^{commit}`], { cwd: r.dir }).status, 0, 'the checkout lacks the head');
+  // A remote-tracking branch upstream does not have, and a prune setting that would remove it on a default fetch.
+  r.git('update-ref', 'refs/remotes/origin/unrelated', r.base);
+  r.git('config', 'fetch.prune', 'true');
   const result = run(t, r, fakeGh({ base: upstream.base, head }, () => { throw ghFailed(TOO_LARGE); }));
   assert.equal(result.code, 0, result.err.join('\n'));
   r.git('cat-file', '-e', `${head}^{commit}`);
   assert.match(readFileSync(patchOf(r), 'utf8'), /^\+export const title = "Tables";$/mu);
   assert.match(result.err[0], new RegExp(`, after fetching (?:[0-9a-f]{40} )?${head}$`, 'u'));
   assert.throws(() => r.git('rev-parse', '-q', '--verify', 'FETCH_HEAD'), 'the fetch leaves FETCH_HEAD as it was');
+  assert.equal(r.git('for-each-ref', '--format=%(refname) %(objectname)', 'refs/remotes'), `refs/remotes/origin/unrelated ${r.base}`, 'no remote-tracking ref is written or pruned');
   // A commit no remote has fails, naming the fetch, and writes nothing.
   const lost = repo(t);
   lost.git('config', `url.${upstream.dir}.insteadOf`, ORIGIN);
   const missing = run(t, lost, fakeGh({ base: lost.base, head: 'f'.repeat(40) }, () => { throw ghFailed(TOO_LARGE); }));
   assert.equal(missing.code, 3);
-  assert.match(missing.err.join('\n'), /as too large, and the local diff failed: git fetch --no-tags --quiet --no-write-fetch-head origin f{40} failed/u);
+  assert.match(missing.err.join('\n'), /as too large, and the local diff failed: git fetch --no-tags --no-prune --quiet --no-write-fetch-head origin f{40} failed/u);
   assert.ok(!existsSync(patchOf(lost)), 'nothing was written');
 });
 
@@ -145,28 +149,45 @@ test('remoteOf picks the remote whose URL, as git uses it, names the repository 
   rewritten.git('remote', 'add', 'mirror', 'https://mirror.example/acme/notes.git');
   rewritten.git('config', 'url.https://github.com/.insteadOf', 'https://mirror.example/');
   assert.equal(remoteOf(rewritten.dir, { host: 'github.com', repo: 'acme/notes' }), 'mirror');
+  // A remote set only in the command's own config scope, as `git remote -v` lists it to the remotes check.
+  const scoped = repo(t);
+  scoped.git('remote', 'set-url', 'origin', 'git@github.com:someone/notes.git');
+  const keys = ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0'];
+  const before = keys.map((key) => process.env[key]);
+  t.after(() => keys.forEach((key, i) => (before[i] === undefined ? delete process.env[key] : (process.env[key] = before[i]))));
+  Object.assign(process.env, { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'remote.scoped.url', GIT_CONFIG_VALUE_0: 'https://github.com/acme/notes.git' });
+  assert.equal(remoteOf(scoped.dir, { host: 'github.com', repo: 'acme/notes' }), 'scoped');
 });
 
-test('in a shallow checkout whose merge base is past the boundary, the diff fetches the full history and runs again', (t) => {
+test('a shallow checkout is refused, whether or not its diff would succeed, naming the fetch that fixes it', (t) => {
   const upstream = repo(t);
-  // main moves on past the commit the head branched from, so the merge base is neither tip.
-  writeFileSync(path.join(upstream.dir, 'other.js'), 'export const other = 1;\n');
-  upstream.git('add', 'other.js');
-  upstream.git('commit', '-qm', 'main moves on');
-  const base = upstream.git('rev-parse', 'HEAD');
-  const parent = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-pr-diff-shallow-')));
-  t.after(() => rmSync(parent, { recursive: true, force: true }));
-  execFileSync('git', ['clone', '-q', '--depth', '1', '--no-single-branch', `file://${upstream.dir}`, 'clone'], { cwd: parent });
-  const dir = path.join(parent, 'clone');
-  const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
-  const r = { dir, git, state: path.join(dir, 'state') };
-  git('cat-file', '-e', `${base}^{commit}`);
-  git('cat-file', '-e', `${upstream.head}^{commit}`);
-  assert.notEqual(spawnSync('git', ['cat-file', '-e', `${upstream.base}^{commit}`], { cwd: dir }).status, 0, 'the merge base is past the shallow boundary');
-  const result = run(t, r, fakeGh({ base, head: upstream.head }, () => { throw ghFailed(TOO_LARGE); }));
-  assert.equal(result.code, 0, result.err.join('\n'));
-  assert.equal(readFileSync(patchOf(r), 'utf8'), `${git('diff', '--no-color', `${base}...${upstream.head}`)}\n`);
-  assert.doesNotMatch(readFileSync(patchOf(r), 'utf8'), /other\.js/u, 'the diff starts at the merge base, not at the base tip');
-  assert.equal(git('rev-parse', '--is-shallow-repository'), 'false');
-  assert.match(result.err[0], /, after fetching the full history for their merge base$/u);
+  // The pull request branches from a commit above the root, and main moves on past it: its merge base is neither tip.
+  const commit = (file, text, message) => {
+    writeFileSync(path.join(upstream.dir, file), text);
+    upstream.git('add', file);
+    upstream.git('commit', '-qm', message);
+    return upstream.git('rev-parse', 'HEAD');
+  };
+  upstream.git('branch', '-D', 'feature');
+  const fork = commit('fork.js', 'export const fork = 1;\n', 'branch point');
+  upstream.git('switch', '-qc', 'topic');
+  const head = commit('page.js', 'export const title = "Tables";\n', 'head');
+  upstream.git('switch', '-q', 'main');
+  const base = commit('other.js', 'export const other = 1;\n', 'main moves on');
+  // Depth 1 leaves the merge base out, so the diff would fail; depth 2 keeps it, so the diff would succeed.
+  for (const [depth, mergeBase] of [['1', false], ['2', true]]) {
+    const parent = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-pr-diff-shallow-')));
+    t.after(() => rmSync(parent, { recursive: true, force: true }));
+    execFileSync('git', ['clone', '-q', '--depth', depth, '--no-single-branch', `file://${upstream.dir}`, 'clone'], { cwd: parent });
+    const dir = path.join(parent, 'clone');
+    const r = { dir, state: path.join(dir, 'state') };
+    const has = (sha) => spawnSync('git', ['cat-file', '-e', `${sha}^{commit}`], { cwd: dir }).status === 0;
+    assert.deepEqual([has(base), has(head), has(fork)], [true, true, mergeBase], `depth ${depth}`);
+    const result = run(t, r, fakeGh({ base, head }, () => { throw ghFailed(TOO_LARGE); }));
+    assert.equal(result.code, 3, `depth ${depth}`);
+    assert.match(result.err.join('\n'), /as too large, and the local diff failed: this checkout is shallow, so the local diff of #7 could be wrong or fail; run `git fetch --unshallow origin` here, then run the command again/u);
+    assert.deepEqual(viewsOfEnds(result.calls), [], 'refused before any other read');
+    assert.ok(!existsSync(patchOf(r)), 'nothing was written');
+    assert.equal(execFileSync('git', ['rev-parse', '--is-shallow-repository'], { cwd: dir, encoding: 'utf8' }).trim(), 'true', 'nothing was fetched');
+  }
 });

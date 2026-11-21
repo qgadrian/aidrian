@@ -17,6 +17,12 @@
 // and the rule both. What holds at merge time is the guard's own test, so a forged answer or entry ships low findings
 // only, on the head the review stopped on.
 //
+// SHORTCUT: the rule and this command each resolve the project and repository on their own, the question names the
+// pull request by number and short head only, the command may adopt a newer posted record with the same head and
+// count, and a posted copy withholds the entry's session. Each needs the agent's own working directory, gh default,
+// fork, or record to differ from the review's; within the trust limit above, the most it ships is low findings on the
+// capped head. Accepted residuals of the round-limit delegation review (round 1).
+//
 // SHORTCUT: readCurrent and runDelegate repeat the read, check, write, and publish sequence of waiver.mjs runWaive and
 // extension.mjs runExtend, so a fix to one writer, such as the revision race, is made in all three. Accepted residual of
 // the round-limit delegation review; one shared record writer would remove it.
@@ -78,7 +84,21 @@ export function lowOnly(state, head) {
   if (!Number.isInteger(last.open) || last.open <= 0 || !Array.isArray(last.findings) || last.findings.length !== last.open) {
     return { ok: false, why: `the record does not list every open finding of head ${sha7} with its severity` };
   }
-  const above = last.findings.find((finding) => !isObject(finding) || finding.security === true || !noHigher(finding.severity, RESIDUAL_CAP));
+  // The round's findings are the stage the cap was judged at: in the last round another stage can run first and leave
+  // its own open findings. The cap's cause (run.mjs capCause, kept on the outcome) lists every pass's open findings and
+  // whatever else stopped the review, and is read whole. A posted copy drops the cause, so it never delegates.
+  const cap = isObject(state.outcome?.cap) ? state.outcome.cap : null;
+  if (!cap || typeof cap.head !== 'string' || !sameCommit(cap.head, head) || cap.itemized !== true || !Array.isArray(cap.items) || !Array.isArray(cap.unrun)) {
+    return { ok: false, why: `the record does not hold what stopped the review of head ${sha7} in every stage` };
+  }
+  const stops = [[cap.unrun, 'a pass that never reviewed it'], [cap.flows, 'a flow invariant not held'], [cap.unsigned, 'an unsigned flow'], [cap.tests_removed, 'a removed flow test'], [cap.human, 'a flow the Human signs off']];
+  const stop = stops.find(([list]) => Array.isArray(list) && list.length);
+  if (stop) return { ok: false, why: `the review of head ${sha7} stopped on ${stop[1]} too` };
+  if (cap.bot === true || cap.checks_failing !== 0) return { ok: false, why: `the review of head ${sha7} stopped on ${cap.bot === true ? 'the review bot\'s own round limit' : 'a failing check'} too` };
+  const listed = new Set(last.findings.map((finding) => finding?.id));
+  const above = [...last.findings, ...cap.items].find((finding) => !isObject(finding) || finding.security === true || !noHigher(finding.severity, RESIDUAL_CAP));
+  const elsewhere = cap.items.find((item) => !isObject(item) || !listed.has(item.id));
+  if (above === undefined && elsewhere !== undefined) return { ok: false, why: `${named(elsewhere)} is open in another stage` };
   if (above === undefined) return { ok: true, count: last.open };
   if (above?.security === true) return { ok: false, why: `${named(above)} is marked security` };
   const severity = severityOf(above?.severity);
@@ -103,7 +123,8 @@ export function delegationFor(state, head, { session = null } = {}) {
 const ISSUE_URL = /^https:\/\/[^/\s]+\/[^/\s]+\/[^/\s]+\/issues\/\d+\/?$/u;
 const ISSUE_ERROR = '--issue must be an issue number, <owner>/<name>#<n>, or an issue URL';
 
-// The follow-up issue `value` names: { repo, number }, `repo` null for the pull request's own repository.
+// The follow-up issue `value` names: { repo, number, host? }, `repo` null for the pull request's own repository, and
+// `host` the host of an issue URL.
 export function issueRef(value) {
   const text = String(value ?? '').trim();
   let repo = null;
@@ -114,7 +135,8 @@ export function issueRef(value) {
   else if (qualified) [repo, number] = [repoName(qualified[1]), Number(qualified[2])];
   else if (ISSUE_URL.test(text)) [repo, number] = [repoName(text), prNumber(text)];
   if (!Number.isSafeInteger(number) || number < 1 || (repo === null && !plain)) throw new Error(ISSUE_ERROR);
-  return { repo, number };
+  // A URL keeps its host: an issue on another forge instance is not the one of the same name on the pull request's.
+  return ISSUE_URL.test(text) ? { repo, number, host: new URL(text).host.toLowerCase() } : { repo, number };
 }
 
 // `aidrian pr delegate <PR> --issue <REF> [--head <SHA>] [--repo <OWNER/NAME>]`: { pr, issue, head, repo }.
@@ -170,6 +192,13 @@ function followUp(forge, opts, { repo, url, since, ids }) {
   const issueRepo = opts.issue.repo ?? home;
   const ref = `${issueRepo}#${opts.issue.number}`;
   if (issueRepo !== home) throw new Error(`issue ${ref} is not in the pull request's repository, ${home}: file the follow-up issue there`);
+  let prHost = null;
+  try {
+    prHost = new URL(url).host.toLowerCase();
+  } catch {}
+  if (opts.issue.host !== undefined && opts.issue.host !== prHost) {
+    throw new Error(`issue ${ref} is on ${opts.issue.host}, not on the pull request's host${prHost ? `, ${prHost}` : ''}: file the follow-up issue there`);
+  }
   let found;
   try {
     found = forge.issue(issueRepo, opts.issue.number);
@@ -275,7 +304,7 @@ export async function runDelegate(args, project, config, deps = {}) {
     const io = { comments: () => comments, post: (body) => forge.postComment(repo, pr, body), edit: (id, body) => forge.editComment(repo, id, body), viewer: () => forge.viewer() };
     summaryError = publishState(state, io, 'delegation recorded', postContext({ forge, repo, n: pr, project, configs: [committed, config], env }));
   }
-  const next = `merge with \`gh pr merge ${pr} --match-head-commit ${current}\`: the merge guard takes this answer only for a merge that names that head, while every open finding stays low`;
+  const next = `merge with \`gh pr merge ${pr} --repo ${repoName(repo) ?? repo} --match-head-commit ${current}\`: the merge guard takes this answer only for a merge that names that head, while every open finding stays low`;
   const delegation = { head: entry.head, kind: entry.kind, answer: entry.answer, issue: entry.issue, url: entry.url };
   console.log(JSON.stringify({ status: 'recorded', pr, delegation, next, ...(summaryError ? { summary_error: summaryError } : {}) }, null, 2));
   return 0;

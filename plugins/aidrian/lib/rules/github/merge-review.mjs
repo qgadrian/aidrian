@@ -335,7 +335,7 @@ function cappedAsk({ pr, count, last, head, delegable, repoArg }) {
 const delegateRoute = (pr, head, repoArg) =>
   'When the Human instead answers in their own words that the session decides, the session may ship, since every open finding is low: ' +
   `file what the review left open as an open follow-up issue that names pull request #${pr}, run \`aidrian pr delegate ${pr} --issue <issue> --head ${head}${repoArg}\` ` +
-  `as its own command, then merge with \`gh pr merge ${pr} --match-head-commit ${head}\`. `;
+  `as its own command, then merge with \`gh pr merge ${pr}${repoArg} --match-head-commit ${head}\`. `;
 
 // ` --repo <owner>/<name>` for a command in a checkout whose remotes name several repositories: the merge's own when it
 // names one, else a placeholder; '' with one remote. A git read that fails reads as one remote.
@@ -424,12 +424,18 @@ function heldReason({ project, pr, repo, base, deadline, now }) {
 // { allow, delegable, route }. Read only at a capped review whose open findings are all low (`delegable`), and taken only
 // for a merge that names its head (`named`), as a recorded verdict; for another, `route` says to name it. `session` is the
 // merging session's id, or null when the hook gives none: an entry another session recorded is then not taken.
-function delegated({ state, pr, head, capped, named, session }) {
+// A later "Grant more review rounds" answer of this session to the same question (`answers`, `count`) outranks the entry.
+// `repoArg` names the repository in the merge command it suggests, as `--repo` selected it.
+function delegated({ state, pr, head, capped, named, session, answers = [], count = null, repoArg = '' }) {
   const delegable = capped && lowOnly(state, head).ok;
-  const taken = delegable ? delegationFor(state, head, { session }) : null;
-  const route = taken && !named
-    ? ` The Human's recorded answer covers this head, but only for a merge that names it: merge with \`gh pr merge ${pr} --match-head-commit ${head}\`, or give the merge tool its \`sha\`.`
-    : '';
+  let taken = delegable ? delegationFor(state, head, { session }) : null;
+  const question = roundLimitQuestion(pr, head, count);
+  const granted = taken && answers.some((each) => each.question === question && new RegExp(`^\\s*${GRANT}\\b`, 'iu').test(each.answer ?? '') &&
+    each.at !== null && Date.parse(each.at) >= Date.parse(taken.at));
+  if (granted) taken = null;
+  let route = '';
+  if (granted) route = ` The Human granted more review rounds after the recorded answer, so it no longer stands: do not merge; run \`aidrian pr extend ${pr} --human approve\`.`;
+  else if (taken && !named) route = ` The Human's recorded answer covers this head, but only for a merge that names it: merge with \`gh pr merge ${pr}${repoArg} --match-head-commit ${head}\`, or give the merge tool its \`sha\`.`;
   return { allow: Boolean(taken) && named, delegable, route };
 }
 
@@ -499,7 +505,7 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
   }
   const since = [onHead ? outcome.at : null, ...owing.map((entry) => entry.at)].filter((at) => typeof at === 'string').sort().at(-1) ?? null;
   if (mergeApproved(answers, { pr, head, since, capped })) return null;
-  const delegation = delegated({ state, pr, head, capped, named, session });
+  const delegation = delegated({ state, pr, head, capped, named, session, answers, count, repoArg: capped ? repoArgFor(project, repo) : '' });
   if (delegation.allow) return null;
   // A judge's recorded verdict, under both switches, for the round cap on this head only (waiverKind).
   const waiver = guardWaiver({ project, state, pr, head, named, repo, view, forge: waiverForge, startedAt, now, memo });

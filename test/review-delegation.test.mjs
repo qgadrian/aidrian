@@ -67,10 +67,16 @@ function repo(t, config = {}) {
   return { dir, git, transcript, project, record, answer, merge, rule, input };
 }
 
+// The cause of a cap on `head` (run.mjs capCause) whose only stops are `findings`, as one stage's open findings.
+function capOf(findings, head = HEAD, over = {}) {
+  const items = findings.filter((each) => each?.id).map(({ id, severity, security }) => ({ id, severity, ...(security ? { security } : {}), pass: 'agent:code-reviewer', stage: 'local', reviewer: 'agent:code-reviewer' }));
+  return { head, reviewed: head, items, counted: items.length, itemized: true, unrun: [], unsigned: [], flows: [], tests_removed: [], checks_failing: 0, bot: false, human: [], ...over };
+}
+
 // The review of HEAD stopped at its round limit, with `findings` the last round's itemized open findings.
 const stopped = (findings = LOW, { status = 'round_limit', head = HEAD, open = findings.length } = {}) => (state) => {
   state.rounds.push({ head, at: T0, open, findings });
-  state.outcome = { status, head, at: T0 };
+  state.outcome = { status, head, at: T0, cap: capOf(findings, head) };
 };
 const entry = (over = {}) => ({ head: HEAD, kind: 'round_cap', answer: 'delegate', issue: 'acme/notes#9', url: 'https://github.com/Acme/Notes/issues/9', by: 't', session: null, at: LATER, ...over });
 
@@ -123,7 +129,7 @@ test('delegates: the whole answer is one of the fixed phrases; a hedge, a condit
 });
 
 test('lowOnly: only a last round on the head that lists every open finding, each low and none marked security', () => {
-  const state = (rounds) => ({ ...emptyState(5, 'acme/notes'), rounds });
+  const state = (rounds) => ({ ...emptyState(5, 'acme/notes'), rounds, outcome: { status: 'round_limit', head: HEAD, at: T0, cap: capOf(rounds.at(-1)?.findings ?? []) } });
   const round = (findings, over = {}) => ({ head: HEAD, at: T0, open: findings.length, findings, ...over });
   assert.deepEqual(lowOnly(state([round(LOW)]), HEAD), { ok: true, count: 2 });
   assert.deepEqual(lowOnly(state([round([finding('R2-1', 'medium')]), round(LOW)]), HEAD.slice(0, 7)), { ok: true, count: 2 }, 'the last round, by a short head');
@@ -170,7 +176,7 @@ test('parseDelegate and issueRef: the pull request, a required issue in three sp
   assert.deepEqual(parseDelegate(['5', '--issue', '9']), { pr: 5, issue: { repo: null, number: 9 }, head: null, repo: null });
   assert.deepEqual(parseDelegate(['#5', '--issue', '#9', '--head', HEAD, '--repo', 'Acme/Notes']), { pr: 5, issue: { repo: null, number: 9 }, head: HEAD, repo: 'acme/notes' });
   assert.deepEqual(issueRef('Other/Repo#12'), { repo: 'other/repo', number: 12 });
-  assert.deepEqual(issueRef('https://github.com/Other/Repo/issues/12'), { repo: 'other/repo', number: 12 });
+  assert.deepEqual(issueRef('https://github.com/Other/Repo/issues/12'), { repo: 'other/repo', number: 12, host: 'github.com' });
   for (const bad of ['', 'nine', '0', 'o/r#', 'https://github.com/o/r/pull/12', 'http://github.com/o/r/issues/12', '12345678901', 'o/r#1 x']) {
     assert.throws(() => issueRef(bad), /--issue must be an issue number, <owner>\/<name>#<n>, or an issue URL/u, bad);
   }
@@ -325,7 +331,7 @@ test('aidrian pr delegate records the answer with the follow-up issue, and posts
   const { code, out, comments } = await delegate(t, r, ['--issue', '9', '--head', HEAD.slice(0, 7)], { issues: OPEN_ISSUE });
   assert.equal(code, 0);
   assert.deepEqual(out.delegation, { head: HEAD, kind: 'round_cap', answer: 'delegate', issue: 'acme/notes#9', url: 'https://github.com/Acme/Notes/issues/9' });
-  assert.match(out.next, new RegExp(`gh pr merge 5 --match-head-commit ${HEAD}`, 'u'));
+  assert.match(out.next, new RegExp(`gh pr merge 5 --repo acme/notes --match-head-commit ${HEAD}`, 'u'));
   const [saved] = readLocalState(r.project(), 5).delegations;
   assert.deepEqual({ ...saved, at: null }, { head: HEAD, kind: 'round_cap', answer: 'delegate', issue: 'acme/notes#9', url: 'https://github.com/Acme/Notes/issues/9', by: 't', session: null, at: null });
   assert.equal(comments.length, 0, 'a local record posts nothing');
@@ -363,6 +369,7 @@ test('aidrian pr delegate refuses a follow-up issue it cannot hold to, a moved h
     ['an issue that lists one finding of two', {}, { issues: issue({ body: 'See #5: R2-10 and R2-2.' }) }, /issue acme\/notes#9 does not list finding R2-1: list each/u],
     ['an open finding with no id', { edit: stopped([finding('R2-1', 'low'), finding(undefined, 'low')]) }, { issues: OPEN_ISSUE }, /an open finding of the record has no id, so the follow-up issue cannot list it/u],
     ['an issue in another repository', { args: ['--issue', 'other/repo#9'] }, { issues: { 'other/repo#9': { ...OPEN_ISSUE['acme/notes#9'], body: `From ${URL}` } } }, /issue other\/repo#9 is not in the pull request's repository, acme\/notes: file the follow-up issue there/u],
+    ['an issue URL on another forge host', { args: ['--issue', 'https://ghe.example.com/acme/notes/issues/9'] }, { issues: OPEN_ISSUE }, /issue acme\/notes#9 is on ghe\.example\.com, not on the pull request's host, github\.com: file the follow-up issue there/u],
     ['an issue filed before the review stopped', {}, { issues: issue({ created: '2026-11-03T13:59:59Z' }) }, /issue acme\/notes#9 was filed before the review stopped at 2026-11-03T14:00:00\.000Z: file a new follow-up issue for what this review left open/u],
     ['an issue whose filing time the forge does not give', {}, { issues: issue({ created: null }) }, /cannot read when issue acme\/notes#9 was filed/u],
     ['an issue the forge cannot read', {}, { issues: { 'acme/notes#9': () => { throw new Error('HTTP 502'); } } }, /could not read issue acme\/notes#9/u],
@@ -495,11 +502,32 @@ test('the deny names --repo in the delegation route when the remotes name severa
   const one = repo(t);
   one.record(5, stopped());
   assert.ok((one.merge(`gh pr merge 5 --match-head-commit ${HEAD}`) ?? '').includes(`--head ${HEAD}\` as its own command`), 'one remote: no --repo');
+  assert.ok(named.includes(`then merge with \`gh pr merge 5 --repo acme/notes --match-head-commit ${HEAD}\``), `the merge it suggests keeps the repository: ${named}`);
+  const state = readLocalState(r.project(), 5, 'acme/notes');
+  state.delegations = [entry()];
+  writeLocalState(r.project(), state, { repo: 'acme/notes' });
+  const unnamed = r.merge('gh pr merge 5 -R Acme/Notes') ?? '';
+  assert.ok(unnamed.includes(`merge with \`gh pr merge 5 --repo acme/notes --match-head-commit ${HEAD}\``), `the head route keeps the repository: ${unnamed}`);
+});
+
+test('a "Grant more review rounds" answer after the recorded delegation outranks it at merge time', (t) => {
+  const r = repo(t);
+  r.record(5, stopped());
+  const merge = `gh pr merge 5 --match-head-commit ${HEAD}`;
+  const state = readLocalState(r.project(), 5);
+  state.delegations = [entry()];
+  writeLocalState(r.project(), state);
+  r.answer([QUESTION, 'whatever you recommend best']);
+  assert.equal(r.merge(merge), null, 'the recorded answer stands');
+  r.answer([QUESTION, 'whatever you recommend best'], [QUESTION, 'Grant more review rounds', '2026-11-03T15:00:00.000Z']);
+  assert.match(r.merge(merge) ?? '', /The Human granted more review rounds after the recorded answer, so it no longer stands: do not merge/u);
+  r.answer([QUESTION, 'Grant more review rounds', T0]);
+  assert.equal(r.merge(merge), null, 'a grant before the entry does not outrank it');
 });
 
 test('lowOnly reads the highest severity and any security mark of findings two passes both reported', async () => {
   const { dedupe } = await import('../plugins/aidrian/lib/review/split.mjs');
-  const state = (findings) => ({ ...emptyState(5, 'acme/notes'), rounds: [{ head: HEAD, at: T0, open: findings.length, findings }] });
+  const state = (findings) => ({ ...emptyState(5, 'acme/notes'), rounds: [{ head: HEAD, at: T0, open: findings.length, findings }], outcome: { status: 'round_limit', head: HEAD, at: T0, cap: capOf(findings) } });
   const twin = (severity, over = {}) => ({ id: 'R2-1', title: 'Missing null check', file: 'a.js', line: 3, severity, ...over });
   for (const [name, second] of [['a Major twin', twin('Major')], ['a twin marked security', twin('low', { security: true })], ['a twin with no known severity', twin('urgent')]]) {
     for (const lists of [[['slice:a', [twin('low')]], ['cross', [second]]], [['slice:a', [second]], ['cross', [twin('low')]]]]) {
@@ -507,5 +535,28 @@ test('lowOnly reads the highest severity and any security mark of findings two p
       assert.equal(merged.length, 1, name);
       assert.equal(lowOnly(state(merged), HEAD).ok, false, name);
     }
+  }
+});
+
+test('lowOnly reads every stage of the cap: a low finding in the judged stage never hides a high, security, or other stop in another', () => {
+  const capped = (cap) => ({ ...emptyState(5, 'acme/notes'), rounds: [{ head: HEAD, at: T0, open: LOW.length, findings: LOW }], outcome: { status: 'round_limit', head: HEAD, at: T0, cap } });
+  assert.deepEqual(lowOnly(capped(capOf(LOW)), HEAD), { ok: true, count: 2 });
+  const other = (severity, over = {}) => ({ id: 'R2-9', severity, pass: 'engine:codex-local', stage: 'independent', reviewer: 'engine:codex-local', ...over });
+  const items = capOf(LOW).items;
+  for (const [name, cap, why] of [
+    ['a high in the stage that ran first', capOf(LOW, HEAD, { items: [...items, other('high')], counted: 3 }), /^finding R2-9 is high$/u],
+    ['a low marked security in another stage', capOf(LOW, HEAD, { items: [...items, other('low', { security: true })], counted: 3 }), /^finding R2-9 is marked security$/u],
+    ['a low the round does not list', capOf(LOW, HEAD, { items: [...items, other('low')], counted: 3 }), /^finding R2-9 is open in another stage$/u],
+    ['no cause kept, as a posted copy', null, /does not hold what stopped the review/u],
+    ['a cause for another head', capOf(LOW, NEXT), /does not hold what stopped the review/u],
+    ['a cause only counted', capOf(LOW, HEAD, { itemized: false }), /does not hold what stopped the review/u],
+    ['a pass that never ran', capOf(LOW, HEAD, { unrun: ['engine:codex-local'] }), /stopped on a pass that never reviewed it too/u],
+    ['a flow invariant', capOf(LOW, HEAD, { flows: ['booking'] }), /stopped on a flow invariant not held too/u],
+    ['a failing check', capOf(LOW, HEAD, { checks_failing: 1 }), /stopped on a failing check too/u],
+    ['the bot\'s own limit', capOf(LOW, HEAD, { bot: true }), /review bot's own round limit/u],
+  ]) {
+    const result = lowOnly(capped(cap), HEAD);
+    assert.equal(result.ok, false, name);
+    assert.match(result.why, why, name);
   }
 });

@@ -627,8 +627,12 @@ When every open finding of the head is low, the reason also names a third route,
 that the session decides, such as "whatever you recommend": the session files what the review left open as an open
 follow-up issue that names the pull request, runs `aidrian pr delegate <PR> --issue <issue> --head <sha>` as its own
 command, ending in `--repo <owner>/<name>` when this checkout's remotes name several repositories (the merge's own when
-it names one), then merges with `gh pr merge <PR> --match-head-commit <sha>`. Every open finding is low when the record's last
-round is for the head and lists each of its open findings, as many as its count, each `low` and none marked security;
+it names one), then merges with `gh pr merge <PR> --match-head-commit <sha>`, with the same `--repo`. Every open finding is low when the record's last
+round is for the head and lists each of its open findings, as many as its count, each `low` and none marked security,
+and the cap's cause kept on the outcome is for the head, lists every pass's open findings, each `low`, none marked
+security and none missing from the round, and names no pass that never reviewed the head, flow, removed test, failing
+check, or the review bot's own limit: in the last round a stage can run first and leave findings the round does not
+list. A posted copy keeps no cause, so a record read from another machine names no delegation route;
 a finding of medium or higher, one with a severity the table does not know, such as a violated flow invariant, a
 security mark, or a round that recorded counts only, keeps today's reason, word for word. The
 [round limit delegation rule](#bash-rules) lets the command run only on the Human's answer in the session. The command
@@ -643,8 +647,10 @@ and lists each open finding's id, such as `R2-1`. It records `{ head, kind: "rou
 its head (`--match-head-commit`, `sha=` in a `gh api` merge, or the merge tool's `sha`), every open finding of the
 head is still low, and the entry is for that head, at or after its outcome. An entry another session recorded is passed
 over when the hook gives the merging session's id and the entry holds its own; one recorded with no session id counts
-for any. A merge that names no head is refused, and told to name it. The guard reads the entry from the record it already loaded: it makes no call for it, and needs no
-transcript at merge time. `aidrian pr auto-merge` reads no delegation.
+for any. A merge that names no head is refused, and told to name it. A "Grant more review rounds" answer in the
+merging session's transcript to the same question, at or after the entry, outranks it: the merge is refused, and the
+reason names `aidrian pr extend <PR> --human approve`. The guard reads the entry from the record it already loaded: it
+makes no call for it; without a transcript, the entry stands. `aidrian pr auto-merge` reads no delegation.
 
 Under the [unattended waiver](config.md#unattended-waiver), a judge's verdict recorded with `aidrian pr waive` stands in
 for that answer, for one denial only: `round_limit` on the merge's own head, with nothing owed. A head pushed after the

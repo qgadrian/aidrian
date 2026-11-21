@@ -210,7 +210,7 @@ such an answer, and never change its words or add an option to it.
   name the pull request or list every open finding, a moved head, or a finding above low; fix the issue and run it again, or ask the guard's
   question again for the rest.
 - Merge from the session that recorded it: the guard passes over an answer another session recorded.
-- Merge naming the head, as its `next` says: `gh pr merge <n> --match-head-commit <sha>`.
+- Merge naming the head and repository, as its `next` says: `gh pr merge <n> --repo <owner>/<name> --match-head-commit <sha>`.
 
 ## At the cap: a judge's waiver
 

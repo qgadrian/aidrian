@@ -634,10 +634,18 @@ export function nameMatcher({ session, skip = null, env, run = runCommand, resol
 // How the Human finds and stops a session a start may have made, when the gate cannot name it.
 export const findLine = () => '`claude agents` lists the background sessions, with the folder each started in, and `claude stop <id>` stops one';
 
-// Stops the background session `id`, as `claude stop` does: whether it exited 0.
+// Stops the background session `id`, as `claude stop` does: whether it exited 0. `claude stop` takes the listing's short
+// `id` and refuses a full `sessionId` ("No session matching", exit 1, seen on 2.1.330), so a full `sessionId` is first
+// turned into the short `id` of the one listed row that holds it; with no such row, `id` goes as it is.
 export function stopBackground({ id, env, run = runCommand, resolve = claudeOnPath }) {
   const claude = resolve(env);
   if (!claude || typeof id !== 'string' || !ID.test(id)) return false;
-  const result = run(claude, ['stop', id], { cwd: undefined, timeout: LIST_TIMEOUT });
+  const result = run(claude, ['stop', shortId(run, claude, id)], { cwd: undefined, timeout: LIST_TIMEOUT });
   return !result.error && result.status === 0;
+}
+
+// The short `id` the listing gives the session whose full `sessionId` is `id`, else `id` itself.
+function shortId(run, claude, id) {
+  const rows = (listed(run, claude, undefined, ['--all']) ?? []).filter((each) => each.sessionId === id);
+  return rows.length === 1 && typeof rows[0].id === 'string' && ID.test(rows[0].id) ? rows[0].id : id;
 }

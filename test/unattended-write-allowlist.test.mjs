@@ -534,7 +534,9 @@ test('a mark filed before the start folder was recorded takes its main checkout 
   // The mark an older gate filed, { root, at }, and the marks a gate files now, naming the main checkout or the worktree.
   for (const held of [{ root: fx.dir }, { root: fx.dir, cwd: fx.dir }, { root: fx.dir, cwd: nested }]) {
     const label = JSON.stringify(held);
-    const ask = (input) => fx.ask(input, { held, cwd: nested })?.reason ?? null;
+    // The places, told once for the mark, as one hook call tells them.
+    const found = unattendedPlaces({ cwd: nested, mark: held, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.temp] });
+    const ask = (input) => fx.ask(input, { held, cwd: nested, places: () => found })?.reason ?? null;
     for (const file of files) {
       for (const input of [edit(file), write(file), write(file, { agent_id: 'a5f0c1' })]) assert.equal(ask(input), null, `${label} ${input.tool_name} ${file}`);
       const spelled = path.relative(nested, file);

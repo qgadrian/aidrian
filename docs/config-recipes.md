@@ -101,8 +101,8 @@ one missing as a blocker, but the registries:
   dependencies; this recipe lists none, since each one widens the hosts the sandbox reaches, and most give a channel
   out of it ([Project run](config.md#project-run)).
 - On Claude Code, `"autoContinueAtUsageLimit": true` in the user's own settings, since a usage limit stops the driver too.
-- On Claude Code, the runs folder trusted once: run `claude` in `<state>/runs` and accept its trust question, since a
-  start in a folder the host has not trusted starts nothing. `aidrian project preflight` names it as `blocker trust`.
+- On Claude Code, the runs folder trusted once: `mkdir -p <state>/runs` when it does not exist yet, then run `claude`
+  there and accept its trust question, since a start in a folder the host has not trusted starts nothing. `aidrian project preflight` names it as `blocker trust`.
 
 How a run relates to the handoff chain, and what stops it for a person, are in [Handoff](handoff.md#a-project-run).
 

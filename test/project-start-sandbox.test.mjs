@@ -93,7 +93,7 @@ test('the sandbox settings are pinned whole: the sandbox on and required, writes
     work: '/s/w', git: '/s/g', grants: ['/s/g', '/s/d', '/st/plans'], domains: ['github.com', 'api.github.com'], temp: ['/private/tmp', '/s/d'], home,
     config: '/cfg', platform: 'linux', main: '/m', mainGit: '/m/.git', secrets: ['NPM_TOKEN', 'AWS_SECRET_ACCESS_KEY'], stores: ['/usr/local/etc/npmrc'],
   });
-  const stores = [...CREDENTIAL_PATHS.map((each) => path.join(home, each)), '/cfg/.credentials.json', '/cfg/ide', '/cfg/.claude.json', '/usr/local/etc/npmrc'];
+  const stores = [...CREDENTIAL_PATHS.map((each) => path.join(home, each)), '/cfg/.credentials.json', '/cfg/ide', '/cfg/.claude.json', '/cfg/.claude-trust-stage', '/usr/local/etc/npmrc'];
   const unread = [...stores, '/m'];
   const nested = ['/s/w/**/.claude', ...['skills', 'agents', 'commands', 'hooks', 'workflows', 'scheduled_tasks.json'].flatMap((name) => [`/s/w/**/.claude/${name}`, `/s/w/**/.claude/${name}/**`])];
   assert.deepEqual(settings, {
@@ -144,7 +144,7 @@ test('the sandbox settings are pinned whole: the sandbox on and required, writes
     '.config/op', '.1password', 'Library/Application Support/Google/Chrome', 'Library/Application Support/Firefox',
     'Library/Application Support/BraveSoftware', 'Library/Application Support/Microsoft Edge', '.mozilla', '.config/google-chrome',
     '.config/chromium', '.git-credentials', '.npmrc', '.pypirc', '.cargo/credentials.toml', '.cargo/credentials', '.gem/credentials',
-    '.vault-token', '.config/hub', '.claude.json', '.claude/.credentials.json', '.claude/ide', '.local/share/keyrings',
+    '.vault-token', '.config/hub', '.claude.json', '.claude-trust-stage', '.claude/.credentials.json', '.claude/ide', '.local/share/keyrings',
     '.bash_history', '.zsh_history', '.local/share/fish',
     '.yarnrc.yml', '.yarnrc', '.config/npm/npmrc', '.bunfig.toml', '.local/share/gem/credentials', '.bundle/config',
     '.config/pnpm/rc', 'Library/Preferences/pnpm/rc', '.config/pip/pip.conf', '.pip/pip.conf', 'Library/Application Support/pip/pip.conf',

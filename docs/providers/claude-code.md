@@ -507,16 +507,20 @@ config makes it, or that pushes to more than one URL (`git remote get-url --push
 `remote.origin.pushurl` there makes it, halts too. On Linux, `bwrap` and `socat` must be on an absolute folder of PATH. A state folder that
 lies in the main checkout starts nothing, since the session may not read the main checkout.
 
-In a folder the host has not trusted, `claude --bg` exits with `Workspace not trusted` and starts nothing; the start
-says to trust the project's runs folder, `<state>/runs`, once, by running `claude` there and accepting its trust
-question. Inside a git repository the host looks trust up at the repository's own root alone (2.1.330, checked live),
-so an attempt's clone, a repository of its own, never inherits the runs folder's trust: each start records the host's
-trust for its own clone in the host's trust record, and only when that record trusts the runs folder or a folder above
-it, which is the Human's one-time consent. Nothing else of the state folder is trusted. The record is written whole to a
-temporary file and renamed over it, as the host writes it; a host session that writes the record at the same moment
-can drop the new entry, and that start then refuses with `Workspace not trusted` and the same trust step. `aidrian project preflight` reads the
-host's trust record, `.claude.json` in `CLAUDE_CONFIG_DIR` or the home folder, and blocks a runs folder that neither it
-nor a folder above it trusts; a record it cannot read is only a note, since the file is the host's own and undocumented.
+In a folder the host has not trusted, `claude --bg` exits with `Workspace not trusted` and starts nothing. The Human
+trusts the project's runs folder, `<state>/runs`, once: `mkdir -p` it when the run's init has not made it yet, then run
+`claude` there and accept its trust question. Inside a git repository the host looks trust up at the repository's own
+root alone (2.1.330, checked live), so an attempt's clone, a repository of its own, never inherits that trust: each
+start records the host's trust for its own clone in the host's trust record, `.claude.json` in `CLAUDE_CONFIG_DIR` or
+the home folder, and only when that record trusts the runs folder or a folder above it at that moment. An entry an
+earlier start left for the same path never stands in for that consent. Nothing else of the state folder is trusted.
+The consent and the update come from one read of the record; the new record is staged in `.claude-trust-stage` beside
+it, a sandbox read barrier as the record is, and renamed over it only when the file still holds what was read, so a
+change the host made meanwhile is never undone; a record that keeps changing is read again, up to three times. A host
+session that writes the record in the instant between that check and the rename can still drop the new entry, and that
+start then refuses with `Workspace not trusted` and the same trust step. `aidrian project preflight` reads the record
+and blocks a runs folder that neither it nor a folder above it trusts; a record it cannot read is only a note, since
+the file is the host's own and undocumented.
 
 Residual risks, each known and accepted:
 

@@ -9,16 +9,19 @@
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { noteStarted } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { cleanText, RESULT_CAP, validateResult } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { DROP_FILE } from '../plugins/aidrian/lib/project-result.mjs';
+import { stderrTail } from '../plugins/aidrian/lib/review/base-worktree.mjs';
+import { appendRowsAtOnce } from '../plugins/aidrian/lib/jsonl.mjs';
 import { LINGER_GRACE } from '../plugins/aidrian/lib/project-linger.mjs';
-import { appendToRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
-import { DROP_FILE as GUARD_DROP_FILE, resultHoldReason } from '../plugins/aidrian/lib/project-run-guard.mjs';
+import { appendToRun, readRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
+import { DROP_FILE as GUARD_DROP_FILE, resultHoldReason, spentAttempts } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { DRIVER, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
 
@@ -268,4 +271,86 @@ test('wait records a failed issue session as ended with no result', (t) => {
 test('result text loses character references that spell a mention marker, before the mention pass', () => {
   assert.equal(cleanText('ping &#64;admin, &#x40;team, &#X40;ops, &commat;lead, and &#64&#64;owner', 99), 'ping admin, team, ops, lead, and owner');
   assert.equal(cleanText('Tom&Jerry and R&D stay', 99), 'Tom&Jerry and R&D stay');
+});
+
+test('an environment result halts the run with its stop, and the issue goes on as after failed', (t) => {
+  const fx = started(t);
+  assert.match(fx.result({ status: 'environment', stop: null }).err.join('\n'), /an environment result names in "stop" what failed/u);
+  const stop = 'git push: could not read Username for github.com, token ghp_abcdefghijklmnopqrstuvwxyz0123';
+  assert.deepEqual(fx.recorded({ status: 'environment', stop }).out, ['result ENG-1 environment -> open']);
+  assert.deepEqual(fx.rows().filter((row) => row.event === 'result').map((row) => row.halt), ['ENG-1 attempt 1 found its environment broken: git push: could not read Username for `github.com`, token [redacted]']);
+  assert.equal(spentAttempts(readRun(fx.state, 'launch'), 'ENG-1'), 1);
+  fx.claude.states[CHILD] = 'done';
+  assert.match(fx.cmd(['next', 'launch']).out[0], /^halted ENG-1 attempt 1 found its environment broken/u);
+  assert.match(fx.cmd(['start', 'launch', 'ENG-1']).out[0], /^halt the run is halted/u);
+  // The wait sweeps ended attempts, but keeps this one's folder while its issue is open: its clone may hold unpushed work.
+  fx.cmd(['wait', 'launch', '--max-wait', '0']);
+  assert.ok(existsSync(path.join(runFolder(fx.state, 'launch'), 'attempts', 'ENG-1.1')), 'the environment attempt keeps its folder');
+  const resumed = fx.cmd(['resume', 'launch'], { session: OTHER });
+  assert.equal(resumed.exitCode, 0, resumed.err.join('\n'));
+  const next = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(next.exitCode, 0, next.err.join('\n'));
+  assert.ok(next.out.includes('started ENG-1 attempt 2 session c0ffee02'), next.out.join('\n'));
+});
+
+test('an environment result that spends the last attempt parks the issue on attempts, and the run still halts', (t) => {
+  const fx = started(t);
+  for (let n = 0; n < 3; n += 1) {
+    const session = STARTED[n].session;
+    if (n > 0) {
+      assert.equal(fx.cmd(['resume', 'launch'], { session: OTHER }).exitCode, 0);
+      const again = fx.cmd(['start', 'launch', 'ENG-1']);
+      assert.equal(again.exitCode, 0, again.err.join('\n'));
+    }
+    const expected = n < 2 ? 'result ENG-1 environment -> open' : 'result ENG-1 environment -> parked attempts';
+    assert.deepEqual(fx.recorded({ status: 'environment', stop: `no network, try ${n + 1}` }, session).out, [expected]);
+    fx.claude.states[session] = 'done';
+  }
+  assert.equal(fx.rows().filter((row) => row.event === 'result' && row.halt).length, 3);
+  assert.match(fx.cmd(['next', 'launch']).out[0], /^halted ENG-1 attempt 3 found its environment broken: no network, try 3/u);
+  // The attempt folder of each environment attempt stays.
+  fx.cmd(['wait', 'launch', '--max-wait', '0']);
+  for (const n of [1, 2, 3]) assert.ok(existsSync(path.join(runFolder(fx.state, 'launch'), 'attempts', `ENG-1.${n}`)), `ENG-1.${n} keeps its folder`);
+  const report = JSON.parse(fx.cmd(['report', 'launch', '--json']).out[0]);
+  const owed = report.owed.find((each) => each.key === 'ENG-1');
+  assert.match(owed?.body ?? '', /ENG-1, attempt 3, stopped: its session found its environment broken\./u, JSON.stringify(report).slice(0, 400));
+});
+
+test('a result stop has credentials masked', () => {
+  const { result } = validateResult({ status: 'failed', stop: 'push to https://bob:hunter2pass@example.test/x failed; Authorization: Bearer abcdefghijklmnop; authorization: Basic eDp5; key AKIAABCDEFGHIJKL' });
+  assert.doesNotMatch(result.stop, /hunter2pass|abcdefghijklmnop|eDp5|AKIAABCDEFGHIJKL/u);
+  assert.doesNotMatch(stderrTail('fatal: header Authorization: Basic eDp5 refused'), /eDp5/u);
+  assert.doesNotMatch(validateResult({ status: 'failed', stop: '{"Authorization": "Basic eDp5"} and Authorization: Digest username="u", response="abc123"' }).result.stop, /eDp5|abc123/u);
+  assert.doesNotMatch(stderrTail('{"authorization":"Basic eDp5"}'), /eDp5/u);
+  const digest = JSON.stringify({ headers: { Authorization: 'Digest username="u7x", response="r9y"' } });
+  assert.doesNotMatch(validateResult({ status: 'failed', stop: digest }).result.stop, /u7x|r9y/u);
+  assert.doesNotMatch(stderrTail(digest), /u7x|r9y/u);
+  assert.match(stderrTail('Authorization: Basic eDp5\nfatal: the plan failed'), /Authorization: \[redacted\] \| fatal: the plan failed$/u);
+  assert.match(result.stop, /\[redacted\]/u);
+});
+
+test('a start refuses a halt written after it read the run, under the ledger lock it writes ahead under', (t) => {
+  const fx = runFixture(t);
+  let halted = false;
+  const racing = (command, args, options) => {
+    if (!halted) {
+      halted = true;
+      appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'halt', cause: 'ENG-9 attempt 1 found its environment broken: no network', key: 'ENG-9', attempt: 1, at: new Date().toISOString() }] }));
+    }
+    return fx.claude.run(command, args, options);
+  };
+  const start = fx.cmd(['start', 'launch', 'ENG-1'], { spawn: racing });
+  assert.ok(halted, 'the host was asked before the write-ahead');
+  assert.equal(start.exitCode, 1);
+  assert.match(start.out[0], /^halt the run is halted: ENG-9 attempt 1 found its environment broken: no network/u);
+  assert.equal(fx.rows().filter((row) => row.event === 'start' || (row.event === 'issue' && row.state === 'running')).length, 0, 'nothing was written ahead');
+});
+
+test('appendRowsAtOnce writes every row in one append, after a cut last line', (t) => {
+  const folder = mkdtempSync(path.join(tmpdir(), 'rows-'));
+  t.after(() => rmSync(folder, { recursive: true, force: true }));
+  const file = path.join(folder, 'ledger.jsonl');
+  writeFileSync(file, '{"cut":');
+  appendRowsAtOnce(file, [{ a: 1 }, { b: 2 }]);
+  assert.equal(readFileSync(file, 'utf8'), '{"cut":\n{"a":1}\n{"b":2}\n');
 });

@@ -477,7 +477,7 @@ export function resultHoldReason(input, { home, env = process.env } = {}) {
     if (!newest(issueChain(runStore(project, config, place.state), start), session)) return null;
     return `This session works the issue ${mark.issue} of the project run ${mark.project}, and it has not recorded the issue's result, which the run's driver waits on. ` +
       `Before stopping, write the result as JSON to a file outside the state folder and run \`aidrian project result ${mark.project} ${mark.issue} --file <that file>\`: ` +
-      'status merged, pr_open, parked, blocked, or failed, the pull request number or null, any decisions the issue waits on, and, when the work stopped, why. ' +
+      'status merged, pr_open, parked, blocked, environment, or failed, the pull request number or null, any decisions the issue waits on, and, when the work stopped, why. ' +
       'When the work can still go on, go on with it instead, and record the result when it ends.';
   } catch {
     return null;

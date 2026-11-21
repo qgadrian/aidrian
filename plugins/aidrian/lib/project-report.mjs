@@ -141,6 +141,7 @@ export function reportBody(run, facts, outOfAttempts = false) {
     parked: 'stopped on decisions a person makes',
     blocked: 'stopped: something it needs is missing',
     failed: 'failed',
+    environment: 'stopped: its session found its environment broken',
     orphan: 'had a session start the run could not confirm, so it was stopped',
     unknown: 'settled in a way this report cannot read',
     ...ENDED,

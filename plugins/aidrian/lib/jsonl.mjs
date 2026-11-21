@@ -11,8 +11,15 @@ import { pauseSync, readRegularFile, resolvedPath } from './fs.mjs';
 // A write cut short leaves the file without its last newline; the next row then starts on a line of its own, so the
 // damage stays on the cut line and the new row still reads back. Two appenders that both see the cut add a blank line.
 export function appendRow(file, row) {
+  appendRowsAtOnce(file, [row]);
+}
+
+// Appends `rows` to `file` in one write, so a process cut between them leaves all of them or, at worst, a cut last line
+// a reader skips: never the first rows of a transition without the rest.
+export function appendRowsAtOnce(file, rows) {
+  if (rows.length === 0) return;
   mkdirSync(path.dirname(file), { recursive: true });
-  appendFileSync(file, `${endsCut(file) ? '\n' : ''}${JSON.stringify(row)}\n`);
+  appendFileSync(file, `${endsCut(file) ? '\n' : ''}${rows.map((row) => `${JSON.stringify(row)}\n`).join('')}`);
 }
 
 function endsCut(file) {

@@ -69,21 +69,26 @@ attempt <n>`. No Human attends it, and the run's hooks hold it to that issue. Ev
   - A `park` line for the Human's sign-off: record `parked` with exactly the one decision the line gives (question,
     options, recommendation, class). Never sign off, and never wait for one.
   - Any other `park` line: record `pr_open`, with the `stop` the line names: the line itself, or the merge steps' own
-    stop line when it says so.
+    stop line when it says so; but `environment` when the stop is this session's own broken environment, as below.
   - `done`: record `merged`.
 - **No handoff, no early stop.** An issue's session starts no continuation, and carries on past the session-length
   reminder and a usage-limit warning: the host compacts it, and the run waits out a limit. Record the result only when
   the work ends. A session that must stop before the work ends records `failed` with the pull request's number, so the
   next attempt takes it up; an interruption is never `pr_open`.
+- **A broken environment comes first.** When this session's own environment keeps it from the work, record
+  `environment`, never `failed`, `blocked`, or `pr_open`, whichever step it stops at: a push or forge call that fails
+  on sign-in, permission, or the network, twice in a row; the sandbox refusing a write, a port, or a domain the work
+  needs; or a host tool that will not run. Its `stop` names the command and its error, with no token or password in
+  it. A failing test, a review finding, or a merge rule is the work's own outcome, never `environment`.
 - **The result is the report's last step.** After the report, write the result as JSON to a file in the temporary
   folder (`mktemp`), and run `aidrian project result <run> <key> --file <that file>`. On exit 1, fix what it lists and
   run it again. The fields:
 
   | Field | Value |
   | --- | --- |
-  | `status` | `merged` when `pr-auto-merge` merged it; `pr_open` when review ended with the pull request open and nothing more this session can do; `parked` on a decision, including a sign-off park; `blocked` when access is missing; `failed` otherwise |
+  | `status` | `merged` when `pr-auto-merge` merged it; `pr_open` when review ended with the pull request open and nothing more this session can do; `parked` on a decision, including a sign-off park; `blocked` when access the issue needs is missing; `environment` when this session's own environment keeps it from the work, such as the sandbox refusing what the work needs, the forge sign-in or push failing, or a host tool failing, which halts the run until a person fixes it; `failed` otherwise |
   | `pr` | the pull request's number, or `null` |
   | `decisions` | each parked decision: `question`, 2 to 6 `options`, `recommended` (the index of the safest), and `class`: `product`, `ux`, `architecture`, `security`, `scope`, or `other` |
-  | `stop` | why the work stopped, in one line, or `null` |
+  | `stop` | why the work stopped, in one line, or `null`; for `environment`, the failing command and its error |
 
   The driver reads only these fields, cleaned: put nothing else in them, and no link, address, or mention.

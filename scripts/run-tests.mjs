@@ -63,17 +63,24 @@ const runner = spawn(process.execPath, ['--test', '--import', SETUP, ...process.
 });
 // Ctrl-C reaches the runner too: this script waits for it to end, then cleans up.
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => runner.kill(signal));
-// The table and the cleanup are each best effort: the one that fails is named on stderr, the other still runs, and the
-// status stays the runner's.
+// The table and the cleanup are each best effort: the one that fails is named on stderr when stderr takes it, the other
+// still runs, and the status stays the runner's whatever fails.
 function attempt(what, step) {
   try {
     step();
   } catch (error) {
-    process.stderr.write(`Could not ${what}: ${error.message}\n`);
+    try {
+      process.stderr.write(`Could not ${what}: ${error.message}\n`);
+    } catch {
+      // Stderr is gone too: nothing is left to tell.
+    }
   }
 }
 runner.on('exit', (code) => {
-  attempt('print the table of test files', () => process.stderr.write(formatTable(readRows(log))));
-  attempt(`remove the test log folder ${dir}`, () => rmSync(dir, { recursive: true, force: true, maxRetries: 3 }));
-  process.exit(code ?? 1);
+  try {
+    attempt('print the table of test files', () => process.stderr.write(formatTable(readRows(log))));
+    attempt(`remove the test log folder ${dir}`, () => rmSync(dir, { recursive: true, force: true, maxRetries: 3 }));
+  } finally {
+    process.exit(code ?? 1);
+  }
 });

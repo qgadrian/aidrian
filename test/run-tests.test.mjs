@@ -5,6 +5,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 
 import { isFullSuite, testRuns } from '../plugins/aidrian/lib/check-runs.mjs';
 import { lexPipeline, readInvocation } from '../plugins/aidrian/lib/shell-lex.mjs';
@@ -66,10 +67,11 @@ function folder(t) {
 }
 
 // The script run in `dir`. A runner started inside a test reports as that test's child unless NODE_TEST_CONTEXT is gone.
-function runTests({ dir, temp }, args) {
+// `node` holds node's own arguments for the script's process, such as an --import.
+function runTests({ dir, temp }, args, node = []) {
   const env = { ...process.env, TMPDIR: temp };
   delete env.NODE_TEST_CONTEXT;
-  return spawnSync(process.execPath, [SCRIPT, ...args], { cwd: dir, encoding: 'utf8', env });
+  return spawnSync(process.execPath, [...node, SCRIPT, ...args], { cwd: dir, encoding: 'utf8', env });
 }
 
 // The table's rows, by file: { seconds, git, other }.
@@ -134,6 +136,16 @@ test('a table that cannot be rendered is named on stderr, and the script still r
   assert.equal(run.status, 0, run.stdout + run.stderr);
   assert.match(run.stderr, /^Could not print the table of test files: /mu);
   assert.doesNotMatch(run.stderr, /Could not remove/u);
+  assert.deepEqual(readdirSync(where.temp), []);
+});
+
+test('a stderr that throws on every write leaves the runner`s status, and the script still removes its folder', (t) => {
+  const where = folder(t);
+  // Loaded into the script's process alone: the runner it starts writes to stderr as usual.
+  const broken = path.join(where.dir, 'broken-stderr.mjs');
+  writeFileSync(broken, "process.stderr.write = () => { throw new Error('stderr is closed'); };\n");
+  const run = runTests(where, ['quiet.test.mjs'], ['--import', pathToFileURL(broken).href]);
+  assert.equal(run.status, 0, run.stdout + run.stderr);
   assert.deepEqual(readdirSync(where.temp), []);
 });
 

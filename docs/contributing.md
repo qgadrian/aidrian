@@ -58,11 +58,31 @@ A clone set up with the earlier relative `.githooks` reruns `make hooks`. Agents
 - a generated agent is stale, or edited by hand;
 - the example's project folder, or this repository's own, is invalid;
 - a test fails;
+- a test file starts more child processes than its [budget](#child-process-budget);
 - the branch changes the plugin version ([Versions](#versions)).
 
 Last, `scripts/code-shape.mjs` lists on stderr the files of `plugins/aidrian/lib/` over 300 lines, the functions over 40,
 and the nested ternaries, by the [default code style](../plugins/aidrian/skills/knowledge/references/code-style.md).
 These are warnings, and never fail the check.
+
+## Child-process budget
+
+`test/child-process-budget.json` caps the child processes each test file may start, its `git` calls and its other
+processes together, as the table after a run counts them: `{ "default": 300, "files": { "<name>.test.mjs": <count> } }`.
+A file with no entry is held to the default. After a run whose tests passed, `scripts/run-tests.mjs` exits 1 when a file
+that ran is over its budget, and names the file, its count, and its budget; a file that did not run is not judged.
+A budget file that cannot be read or has another shape fails a run whose tests passed too, and names the budget file.
+There is no budget on seconds, since one commit's time varies by more than half between runners.
+
+Each entry is 1.5 times the largest count seen for the file, rounded up to the next 50, and only a file above 300 has one.
+The counts come from one local run of the branch merged with main, since CI checks that merge, and from the pull
+request's Check run with the budget on. A file's count is in its over-budget line, or in the table of
+`npm test -- test/<name>.test.mjs`. The margin covers polling loops, such as the `ps` calls of `project-start-codex`,
+and a machine with `claude` and `codex` on PATH, which runs more of `test/hosts.test.mjs`.
+
+A file over its budget has two ways out. Run its commands and hooks in the test's process
+([Commands](#commands-in-the-tests-process), [Hooks](#hooks-in-the-tests-process)), or add or raise its entry, by the
+same rule, in the same pull request, and say why in the pull request's description. A lowered count may lower its entry the same way.
 
 ## Load-independent deadlines
 

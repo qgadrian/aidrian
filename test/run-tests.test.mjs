@@ -13,8 +13,18 @@ import { lexPipeline, readInvocation } from '../plugins/aidrian/lib/shell-lex.mj
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SCRIPT = path.join(import.meta.dirname, '../scripts/run-tests.mjs');
 
-// Small test files: one starts 3 git and 2 other child processes, one starts none, one fails, and one kills its runner.
+// Small test files: one starts 3 git and 2 other child processes, one 1 git and 2 others, one starts none, one fails,
+// and one kills its runner.
 const FILES = {
+  'trio.test.mjs': [
+    "import { execFileSync } from 'node:child_process';",
+    "import test from 'node:test';",
+    "test('starts three processes', () => {",
+    "  execFileSync('git', ['--version']);",
+    "  execFileSync(process.execPath, ['-e', '']);",
+    "  execFileSync(process.execPath, ['-e', '']);",
+    '});',
+  ],
   'busy.test.mjs': [
     "import { execFileSync, execSync, spawnSync } from 'node:child_process';",
     "import test from 'node:test';",
@@ -56,13 +66,18 @@ const FILES = {
   ],
 };
 
-// A folder holding the test files, and an empty temporary folder for the script's own files.
-function folder(t) {
+// A folder holding the test files, and an empty temporary folder for the script's own files. `budget`, when given, is
+// written as the folder's test/child-process-budget.json: an object as JSON, a string as it is.
+function folder(t, budget) {
   const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-run-tests-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   for (const [name, lines] of Object.entries(FILES)) writeFileSync(path.join(dir, name), `${lines.join('\n')}\n`);
   const temp = path.join(dir, 'tmp');
   mkdirSync(temp);
+  if (budget !== undefined) {
+    mkdirSync(path.join(dir, 'test'));
+    writeFileSync(path.join(dir, 'test/child-process-budget.json'), typeof budget === 'string' ? budget : JSON.stringify(budget));
+  }
   return { dir, temp };
 }
 
@@ -147,6 +162,66 @@ test('a stderr that throws on every write leaves the runner`s status, and the sc
   const run = runTests(where, ['quiet.test.mjs'], ['--import', pathToFileURL(broken).href]);
   assert.equal(run.status, 0, run.stdout + run.stderr);
   assert.deepEqual(readdirSync(where.temp), []);
+});
+
+const WAYS_OUT = [
+  /^Run its commands and hooks in the test's process \(docs\/contributing\.md, Commands in the test's process and Hooks in the test's process\),$/mu,
+  /^or add or raise its entry in test\/child-process-budget\.json, by the rule in docs\/contributing\.md, Child-process budget, in the same pull request, and say why in the pull request's description\.$/mu,
+];
+
+test('a file one child process over its budget fails the run, naming the file, its count, its budget, and the ways out', (t) => {
+  const run = runTests(folder(t, { default: 300, files: { 'trio.test.mjs': 2 } }), ['trio.test.mjs', 'quiet.test.mjs']);
+  assert.equal(run.status, 1, run.stdout + run.stderr);
+  assert.match(run.stdout, /pass 2/u, 'the runner itself passed');
+  assert.match(run.stderr, /^trio\.test\.mjs started 3 child processes \(1 git, 2 other\), over its budget of 2 in test\/child-process-budget\.json\.$/mu);
+  assert.doesNotMatch(run.stderr, /quiet\.test\.mjs started/u);
+  for (const line of WAYS_OUT) assert.match(run.stderr, line);
+});
+
+test('a file at its budget passes', (t) => {
+  const run = runTests(folder(t, { default: 0, files: { 'trio.test.mjs': 3, 'quiet.test.mjs': 0 } }), ['trio.test.mjs', 'quiet.test.mjs']);
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  assert.doesNotMatch(run.stderr, /over its budget/u);
+});
+
+test('a file with no entry is held to the default', (t) => {
+  const run = runTests(folder(t, { default: 2, files: { 'busy.test.mjs': 5 } }), ['trio.test.mjs', 'busy.test.mjs']);
+  assert.equal(run.status, 1, run.stdout + run.stderr);
+  assert.match(run.stderr, /^trio\.test\.mjs started 3 child processes \(1 git, 2 other\), over its budget of 2 in /mu);
+  assert.doesNotMatch(run.stderr, /busy\.test\.mjs started/u);
+});
+
+test('with no budget file a run passes, and a file that did not run is not judged', (t) => {
+  assert.equal(runTests(folder(t), ['busy.test.mjs']).status, 0);
+  const run = runTests(folder(t, { default: 300, files: { 'busy.test.mjs': 0 } }), ['quiet.test.mjs']);
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+});
+
+test('a runner that failed keeps its status, and the budget is not judged', (t) => {
+  const run = runTests(folder(t, { default: 0, files: {} }), ['fails.test.mjs', 'trio.test.mjs']);
+  assert.equal(run.status, 1);
+  assert.doesNotMatch(run.stderr, /over its budget/u);
+});
+
+test('a budget file that cannot be read fails a run whose runner passed, and the script still removes its folder', (t) => {
+  for (const budget of ['{ not json', JSON.stringify({ default: 300, files: { 'quiet.test.mjs': 'many' } }), JSON.stringify({ files: {} }), JSON.stringify({ default: 300, files: null }), JSON.stringify({ default: 300, files: [] }), 'null']) {
+    const where = folder(t, budget);
+    const run = runTests(where, ['quiet.test.mjs']);
+    assert.equal(run.status, 1, budget);
+    assert.match(run.stderr, /^Could not read the child-process budget test\/child-process-budget\.json: /mu, budget);
+    assert.deepEqual(readdirSync(where.temp), []);
+  }
+});
+
+test('this repository`s budget is the default 300 and names only test files that exist, each above the default', () => {
+  const budget = JSON.parse(readFileSync(path.join(ROOT, 'test/child-process-budget.json'), 'utf8'));
+  assert.deepEqual(Object.keys(budget).sort(), ['default', 'files']);
+  assert.equal(budget.default, 300);
+  for (const [name, count] of Object.entries(budget.files)) {
+    assert.ok(existsSync(path.join(ROOT, 'test', name)), `${name} names no test file`);
+    assert.ok(name.endsWith('.test.mjs'), name);
+    assert.ok(Number.isInteger(count) && count > budget.default && count % 50 === 0, `${name}: ${count} is not a multiple of 50 above the default`);
+  }
 });
 
 test('this repository`s config records the script as a test run, and the script alone as the full suite', () => {

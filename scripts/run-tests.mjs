@@ -8,6 +8,12 @@
 // The runner's output passes through. Each test file's preload (scripts/test-state.mjs) appends its row to the file
 // AIDRIAN_TEST_LOG names, in a temporary folder this script removes. The exit status is the runner's, 1 when a signal
 // ended it, even when the table or the cleanup fails. A file run alone, `node --test test/<name>.test.mjs`, still works, with no table.
+//
+// Budget: each test file that ran may start at most its budget of child processes, its git calls and its others
+// together, as test/child-process-budget.json under the folder the run starts in sets it:
+// { "default": 300, "files": { "<name>.test.mjs": <count> } }, a file with no entry held to the default, and every
+// file to 300 when the budget file is missing. A run whose runner passed exits 1 when a file that ran is over its
+// budget, naming each such file and the two ways out on stderr, or when the budget file cannot be read.
 
 import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -17,6 +23,8 @@ import { pathToFileURL } from 'node:url';
 
 const SETUP = pathToFileURL(path.join(import.meta.dirname, 'test-state.mjs')).href;
 const SHOWN = 10;
+const BUDGET_FILE = path.join('test', 'child-process-budget.json');
+const DEFAULT_BUDGET = 300;
 
 // The rows the test files wrote, { file, ms, git, other }, skipping a line a killed process left half written.
 function readRows(log) {
@@ -55,6 +63,46 @@ function formatTable(rows) {
   ].join('\n');
 }
 
+// The budget file's { default, files }, read from the folder the run starts in. Missing, every file has the default;
+// unreadable or of the wrong shape, it throws.
+function readBudget() {
+  let text;
+  try {
+    text = readFileSync(BUDGET_FILE, 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') return { default: DEFAULT_BUDGET, files: {} };
+    throw error;
+  }
+  const budget = JSON.parse(text);
+  const plain = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+  const counts = plain(budget) && plain(budget.files) ? [budget.default, ...Object.values(budget.files)] : [];
+  if (!counts.length || !counts.every((count) => Number.isInteger(count) && count >= 0)) {
+    throw new Error('it is not { "default": <count>, "files": { "<name>.test.mjs": <count> } }');
+  }
+  return budget;
+}
+
+// A row the preload wrote: a file's name and its two counts. The table names any other line it cannot render.
+const isRow = (row) => typeof row?.file === 'string' && Number.isInteger(row.git) && Number.isInteger(row.other);
+
+// The lines that name each file over its budget, and the two ways out, or none when every file is within it.
+function overBudget(rows, budget) {
+  const over = rows.filter(isRow).flatMap((row) => {
+    const name = path.basename(row.file);
+    const allowed = budget.files[name] ?? budget.default;
+    const count = row.git + row.other;
+    return count > allowed ? [`${row.file} started ${count} child processes (${row.git} git, ${row.other} other), over its budget of ${allowed} in ${BUDGET_FILE}.`] : [];
+  });
+  if (!over.length) return [];
+  return [
+    '',
+    ...over,
+    "Run its commands and hooks in the test's process (docs/contributing.md, Commands in the test's process and Hooks in the test's process),",
+    `or add or raise its entry in ${BUDGET_FILE}, by the rule in docs/contributing.md, Child-process budget, in the same pull request, and say why in the pull request's description.`,
+    '',
+  ];
+}
+
 const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-test-log-'));
 const log = path.join(dir, 'files.jsonl');
 const runner = spawn(process.execPath, ['--test', '--import', SETUP, ...process.argv.slice(2)], {
@@ -76,11 +124,29 @@ function attempt(what, step) {
     }
   }
 }
-runner.on('exit', (code) => {
+
+// The budget, judged only when the runner passed: a file over it, or a budget that cannot be read, fails the run.
+function judge(rows) {
+  let lines;
   try {
-    attempt('print the table of test files', () => process.stderr.write(formatTable(readRows(log))));
+    lines = overBudget(rows, readBudget());
+  } catch (error) {
+    attempt('name the budget it could not read', () => process.stderr.write(`Could not read the child-process budget ${BUDGET_FILE}: ${error.message}\n`));
+    return 1;
+  }
+  if (!lines.length) return 0;
+  attempt('name the files over their budget', () => process.stderr.write(lines.join('\n')));
+  return 1;
+}
+
+runner.on('exit', (code) => {
+  let status = code ?? 1;
+  try {
+    const rows = readRows(log);
+    attempt('print the table of test files', () => process.stderr.write(formatTable(rows)));
+    if (status === 0) status = judge(rows);
     attempt(`remove the test log folder ${dir}`, () => rmSync(dir, { recursive: true, force: true, maxRetries: 3 }));
   } finally {
-    process.exit(code ?? 1);
+    process.exit(status);
   }
 });

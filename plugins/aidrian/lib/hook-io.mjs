@@ -105,7 +105,7 @@ export async function callHook(handle, payload, { cwd = process.cwd(), env = pro
   } catch (error) {
     // Any other error lets the action run, as runHook does.
     if (error instanceof HookExit) status = error.code;
-    else if (error?.code === 'ENOENT' && error.syscall === 'chdir') throw error;
+    else if (error?.syscall === 'chdir') throw error;
   } finally {
     called = null;
     process.chdir(saved.cwd);

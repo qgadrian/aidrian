@@ -22,7 +22,13 @@ export async function hookCall(script, { input = '{}', cwd, env } = {}) {
     payload = {};
   }
   // What a host's fresh process starts without: no git call stopped yet, and no clone anchor of an earlier call.
+  // Reset again after it, so what the hook set stays inside the call, as it stayed inside its process.
   resetGitStall();
   anchorClones(null);
-  return callHook(handle, payload, { cwd, env });
+  try {
+    return await callHook(handle, payload, { cwd, env });
+  } finally {
+    resetGitStall();
+    anchorClones(null);
+  }
 }

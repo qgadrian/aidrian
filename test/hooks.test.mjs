@@ -62,7 +62,7 @@ function hookCommands() {
 // A host runs a hook while its module still loads: the body starts at the isMain line, so a top-level binding declared
 // below it is not yet set, the body throws, and the hook lets the call through. The tests call handle once the module
 // has loaded, so they cannot see it: this check does.
-test('each hook script runs its body on its last top-level statement, so the body reads no binding not yet set', () => {
+test('each hook script runs its body on its last top-level statement, after which it only declares functions', () => {
   const scripts = path.join(import.meta.dirname, '../plugins/aidrian/scripts');
   const line = 'if (isMain(import.meta.url)) await runHook(handle);';
   for (const name of readdirSync(scripts).filter((file) => file.endsWith('.mjs'))) {
@@ -70,7 +70,10 @@ test('each hook script runs its body on its last top-level statement, so the bod
     if (!text.includes('export async function handle(')) continue;
     const after = text.slice(text.indexOf(line) + line.length);
     assert.ok(text.includes(line), `${name} runs its body only as the main script`);
-    assert.doesNotMatch(after, /^(?:export\s+)?(?:const|let|var|class)\b/mu, `${name} declares a top-level binding after its isMain line`);
+    // After the line, only function declarations: any other top-level statement would run after the body under a host.
+    for (const top of after.split('\n').filter((each) => /^\S/u.test(each) && !each.startsWith('//'))) {
+      assert.match(top, /^(?:export\s+)?(?:async\s+)?function\b|^\}/u, `${name} runs \`${top}\` after its isMain line`);
+    }
   }
 });
 

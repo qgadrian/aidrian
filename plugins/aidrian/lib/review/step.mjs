@@ -273,6 +273,9 @@ export async function prepareStep(s) {
   if (engine.problem) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: engine.problem });
   // Flows whose files the globs miss: a changed file whose whole head content, or whose callers, hand it the flow's
   // privileged value (review.flows.<id>.content). A git failure stops the review rather than plan less.
+  // Accepted residual (tracked on pull request #457): the plan reads `changes`, the merge-base diff, so a file whose
+  // conflict a merge resolved exactly to the base's text is not in it. A delta pass still reads that resolution (boundFor
+  // `resolved`), but in a split review the file gets no slice of its own, and it triggers no flow by its path.
   const traced = contentFlows({ root, head, changes, addedLines, flows: review.flows });
   const planFor = (minDepth) => buildPlan({
     head, base, changes, addedLines, removedFiles, config: effective, harnessChanged: [...new Set(harnessChanged)], extraFlows: traced,
@@ -327,12 +330,15 @@ export async function prepareStep(s) {
   };
   // Any other range that merged the base branch, as a merge onto a head never `received` does, holds what the base
   // brought, which was reviewed there and is not this pull request's: the merge base moved since `from`. Its delta is
-  // bounded by the files of the pull request's own whole change, `changes`, and of each merge commit's own changes in
-  // the range (remergeDiff), so a file only the base changed is never this review's. `{ base, merges, files }`, or null
-  // when the range merged no base; `files` is null, and the pass then reviews the whole change (dispatch.mjs
-  // passInput), when git cannot read a merge's own changes, as of an octopus merge, when the step reviews the whole
-  // change for the merge (`mergeNote`), or when the base branch, from `from`'s merge base to its tip, changes how the
-  // project is reviewed (baseReviewMoved): `from` was reviewed without that rule, so its result is no ground to narrow.
+  // bounded by the files of the pull request's own whole change, `changes`, of its own change at `from` (a push that
+  // takes a file back to the base's text drops it from `changes`, yet that rollback is the pull request's), and of each
+  // merge commit's own changes in the range (remergeDiff), so a file only the base changed is never this review's. The
+  // merges are those the branch made since `from`, never one of the base's own (diff.mjs mergesBetween).
+  // `{ base, merges, files }`, or null when the range merged no base; `files` is null, and the pass then reviews the
+  // whole change (dispatch.mjs passInput) and reuses no earlier result (resultFor), when git cannot read a merge's own
+  // changes, as of an octopus merge, when the step reviews the whole change for the merge (`mergeNote`), or when the
+  // base branch, from `from`'s merge base to its tip, changes how the project is reviewed (baseReviewMoved): `from` was
+  // reviewed without that rule, so its result is no ground to narrow.
   const boundCache = new Map();
   const readBound = (from) => {
     if (scope || !isAncestor(root, from, head)) return null;
@@ -340,10 +346,10 @@ export async function prepareStep(s) {
     try {
       const earlierBase = mergeBase(root, baseTip, from);
       if (earlierBase === base) return null;
-      merges = mergesBetween(root, from, head);
+      merges = mergesBetween(root, from, head, baseTip);
       if (mergeNote) return { base, merges, files: null };
       if (baseReviewMoved(project, { from: earlierBase, to: baseTip, flows: review.flows, harnessFiles }).length) return { base, merges, files: null };
-      const files = new Set(changes.map((change) => change.file));
+      const files = new Set([...changes, ...changedFiles(root, earlierBase, from)].map((change) => change.file));
       // A merge's own edits, kept apart: a resolution that keeps the branch's side changes nothing since `from`, yet
       // it is the merge's own and is reviewed (delta).
       const resolved = [];
@@ -386,13 +392,18 @@ export async function prepareStep(s) {
   const sameFiles = (pass, result) => !Array.isArray(pass.files) || JSON.stringify([...pass.files].sort()) === JSON.stringify(result.files ?? null);
   // A result built on from a private copy whose text checks withheld its verdicts' evidence or a slice's report
   // (publish.mjs fillWithheld) is not finished here: the pass runs again, so its reviewer answers with what this machine
-  // reads. A copy that is not private is never built on (state.mjs readRecord).
+  // reads. A copy that is not private is never built on (state.mjs readRecord). An earlier result whose range merged the
+  // base branch where the whole change must be reviewed (boundFor's `files` null: the base changed how the project is
+  // reviewed, a merge git cannot read, or `mergeNote`) is never reused, whatever files the pass covers: it was judged
+  // without that rule, or on a range nobody could read.
   const resultFor = (pass) => {
     const result = state.passes[pass.id];
     if (!result || result.evidenceWithheld === true || result.notesWithheld === true || !sameFiles(pass, result)) return null;
     if (result.head === head) return result;
     const since = delta(result.head);
-    return since && !touches(since, pass.files) && result.open === 0 ? result : null;
+    if (!since || touches(since, pass.files) || result.open !== 0) return null;
+    const bound = boundFor(result.head);
+    return bound && !bound.files ? null : result;
   };
   const fallbacks = quota.applyChoices(plan, state.quotaStops, head, resultFor);
   const { lines } = classify(changes, review);

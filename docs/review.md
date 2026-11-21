@@ -678,8 +678,9 @@ A project adds its own in `review.reviewers`:
 
 - `exec`: the command reads the pass as JSON on stdin (`base`, `head`, `files`, `flows`, `priorFindings`,
   `acceptedResiduals`, and, when they apply, `flowBase`, the merge base a delta pass judges its flows from, `remerge`,
-  the merge head whose own changes are the review, and `baseMerged`, the merge base and the merges of a delta whose range
-  merged the base branch, as [Rounds](#rounds) says)
+  the merge head whose own changes are the review, and `baseMerged`, the merge base, the earlier head as `from`, and the
+  merges of a delta whose range merged the base branch, as [Rounds](#rounds) says; there `base` is the merge base, so
+  `git diff <base> <head> -- <file>` over `files` is the pull request's own change)
   and prints `{ "findings": [{ id, file, line, title, body, severity, already_ruled, security }], "verdicts": [...] }`;
   a finding keeps only those keys, and `id`, `already_ruled`, and `security` may be left out. `id` is the id of the
   `priorFindings` entry a finding reports again, reworded or not, and empty for a new finding (Codex's schema requires
@@ -902,19 +903,26 @@ reviewer sees that; CI still runs on the merge head.
 
 Whatever came before, a review never takes in code only the base branch wrote. A pass that reviews the change since an
 earlier head, as after a `fix_required` round, whose range merged the base branch (the merge base moved since that head)
-reads only the files of the pull request's own change, `git diff $(git merge-base <base> HEAD) HEAD`, and of each merge
-commit's own changes in the range, `git show --remerge-diff`: its input lists them in `files`, carries `baseMerged`
-with the merge base and the merges, and the reviewer is told to report nothing the base alone wrote. The merges are
-those on the branch's own path from the earlier head (`git rev-list --merges --ancestry-path`), never one inside the
-history the base brought. A resolution that keeps the branch's side is listed though it changed nothing since the
+reads only the files of the pull request's own change, `git diff $(git merge-base <base> HEAD) HEAD`, of its own
+change at the earlier head, from that head's merge base, so a push that takes a file back to the base's text is still
+reviewed, and of each merge commit's own changes in the range, `git show --remerge-diff`. Its input lists them in
+`files`, sets `base` to the merge base, never the earlier head, whose range to the head holds the base's code, keeps
+`context: "delta"`, and carries `baseMerged` with the merge base, the earlier head as `from`, and the merges; the
+reviewer is told to report nothing the base alone wrote. The merges are those the branch made since the earlier head,
+`git rev-list --merges <earlier head>..HEAD ^<base tip>`: one on a topic branch that forked before the earlier head
+and was merged in since counts, and one inside the base branch's own history never does. A resolution that keeps the branch's side is listed though it changed nothing since the
 earlier head, and so is the file of each open finding the pass reads, its own or one handed to it, so the reviewer can raise it again and it never
 closes unfixed. The prompt names that own diff, `git diff <merge base> HEAD -- <file>`, never the range from the earlier head. A flow's brief points at that own change too, and judges the invariants on the whole change. A file only the
 base changed is neither reviewed nor counted against a pass's earlier result. A pass with no such file left, or a range
 holding a merge git cannot read this way, such as an octopus merge, reviews the whole change from the merge base
 instead; so does every pass when the step reviews the whole change for the merge, and every pass when the base branch,
 from the earlier head's merge base to its tip, changes how the project is reviewed, as above: the earlier head was
-reviewed without that rule, so its result is no ground to narrow the review. The round count still reads the
+reviewed without that rule, so its result is no ground to narrow the review, and no pass reuses its earlier result
+there, even one whose files the range does not touch. The round count still reads the
 range's whole change, as a push's: a merge that brings code opens a round, one that brings only prose keeps it.
+The limit: the plan reads the merge-base diff, so a file whose conflict a merge resolved exactly to the base's text is
+missing from it. A delta pass still reads that resolution, but in a split review the file gets no slice, and its path
+selects no flow.
 
 ### Late rounds
 

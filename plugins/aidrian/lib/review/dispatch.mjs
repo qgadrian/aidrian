@@ -251,9 +251,12 @@ export function passInput(s, pass, stage) {
   const residuals = passResiduals(s, pass);
   return {
     ...split,
-    // A merge's resolutions are the whole review: a pass of every changed file reads only the resolved ones.
-    pr: n, repo, base: from, head, context: from === base ? 'full' : 'delta', files: pass.files ?? (scope ? scope.changes.map((change) => change.file) : merged ? ownFiles : null), flows,
-    ...(merged ? { baseMerged: { base: merged.base, merges: merged.merges } } : {}),
+    // A merge's resolutions are the whole review: a pass of every changed file reads only the resolved ones. A bounded
+    // delta's `base` is the merge base, not the earlier head: `git diff <base> <head>` from the earlier head holds the
+    // base branch's code, and an exec reviewer diffs `base` to `head` as it reads them. `baseMerged.from` names the
+    // earlier head the delta runs from.
+    pr: n, repo, base: merged ? merged.base : from, head, context: from === base ? 'full' : 'delta', files: pass.files ?? (scope ? scope.changes.map((change) => change.file) : merged ? ownFiles : null), flows,
+    ...(merged ? { baseMerged: { base: merged.base, from, merges: merged.merges } } : {}),
     // Only the ids listed to this pass show: the only ones a finding it returns may take.
     priorFindings: residuals ? [...contextFindings(earlier, listed), ...recordSettled(state, prior, residuals)] : earlier.map((finding) => idCopy(finding, listed)),
     ...(residuals ? { acceptedResiduals: residuals } : {}),

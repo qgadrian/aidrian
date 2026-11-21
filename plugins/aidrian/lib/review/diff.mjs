@@ -194,9 +194,11 @@ export const parents = (root, commit) => git(root, ['rev-list', '--parents', '-n
 
 export const isMergeCommit = (root, commit) => parents(root, commit).length >= 2;
 
-// The merge commits on the branch's own path from `from` to `to`, newest first: those that descend from `from`, never
-// a merge inside the history a merged branch brought (`--ancestry-path`).
-export const mergesBetween = (root, from, to) => git(root, ['rev-list', '--merges', '--ancestry-path', `${from}..${to}`]).split('\n').filter(Boolean);
+// The merge commits the branch made between `from` and `to`, newest first: those reachable from `to` and from neither
+// `from` nor `base`, the base branch tip. A merge inside the base branch's own history is the base's, even when the
+// base merged `from`; a merge on a topic branch that forked before `from` and was merged in since is the branch's own,
+// though it does not descend from `from`.
+export const mergesBetween = (root, from, to, base) => git(root, ['rev-list', '--merges', `${from}..${to}`, `^${base}`]).split('\n').filter(Boolean);
 
 // git's own merge of commits `a` and `b` (`git merge-tree --write-tree`): { clean, tree, conflicts }, `conflicts` the
 // paths it could not merge, from the repository root. Exit 1 is a merge with conflicts, which `clean` false says even

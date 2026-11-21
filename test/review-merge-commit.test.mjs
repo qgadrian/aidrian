@@ -380,7 +380,7 @@ test('any other merge is judged by its change like a push: one bringing only doc
     const seen = recorder();
     const result = await r.step({ exec: seen.exec });
     assert.deepEqual([result.round, result.carried_from, seen.inputs.length, seen.inputs[0].context, seen.inputs[0].remerge], [round, undefined, 1, 'delta', undefined], `${what} from main after fix_required`);
-    assert.deepEqual([seen.inputs[0].base, seen.inputs[0].files], [r.first, ['src/app.js']], `${what}: only the open finding's file, never what main brought`);
+    assert.deepEqual([seen.inputs[0].base, seen.inputs[0].baseMerged.from, seen.inputs[0].files], [r.git('rev-parse', 'main'), r.first, ['src/app.js']], `${what}: only the open finding's file, never what main brought`);
     const { rounds } = readLocalState(r.project(), 7);
     assert.deepEqual([rounds.length, rounds.at(-1).head, rounds[0].quiet?.[0].from], [round, merge, round === 1 ? r.first : undefined], what);
   }
@@ -422,8 +422,8 @@ test('after fix_required, a fix and a merge from the base: the delta reads only 
   const result = await r.step({ exec: seen.exec });
   assert.deepEqual([result.status, result.round, result.carried_from], ['received', 2, undefined]);
   const [input] = seen.inputs;
-  assert.deepEqual([input.base, input.head, input.context, input.files, input.remerge], [r.first, merge, 'delta', ['src/app.js'], undefined], 'src/lib.js came from main alone');
-  assert.deepEqual(input.baseMerged, { base: r.git('rev-parse', 'main'), merges: [merge] });
+  assert.deepEqual([input.base, input.head, input.context, input.files, input.remerge], [r.git('rev-parse', 'main'), merge, 'delta', ['src/app.js'], undefined], 'src/lib.js came from main alone');
+  assert.deepEqual(input.baseMerged, { base: r.git('rev-parse', 'main'), from: r.first, merges: [merge] });
   const prompt = reviewPrompt(input);
   assert.match(prompt, /Report findings only in these files: src\/app\.js\./u);
   assert.match(prompt, new RegExp(`only what this pull request changes, \`git diff ${input.baseMerged.base} ${merge}\`, or what a merge commit itself changed, \`git show --remerge-diff ${merge}\``, 'u'));
@@ -438,7 +438,7 @@ test('after fix_required, a merge from the base whose resolution takes the base\
   const seen = recorder();
   assert.equal((await r.step({ exec: seen.exec })).status, 'received');
   const [input] = seen.inputs;
-  assert.deepEqual([input.base, input.context, input.files], [r.first, 'delta', ['src/app.js']], 'the resolution is reviewed; src/lib.js, which main alone brought, is not');
+  assert.deepEqual([input.base, input.baseMerged.from, input.context, input.files], [r.git('rev-parse', 'main'), r.first, 'delta', ['src/app.js']], 'the resolution is reviewed; src/lib.js, which main alone brought, is not');
   assert.deepEqual(input.baseMerged.merges, [merge]);
 });
 
@@ -484,8 +484,88 @@ test('a merge inside the base branch\'s own history is not one of the branch\'s 
   assert.deepEqual([input.files, input.baseMerged.merges], [['src/app.js'], [merge]], 'main\'s own merge of topic is the base\'s');
 });
 
+test('a merge on a topic branch forked before the earlier head, merged into the pull request since, is one of the branch\'s merges', async (t) => {
+  const r = await fixRequired(t, { baseFiles: { 'src/t.js': 'export const t = 1;\n' } });
+  const fork = r.git('merge-base', 'main', r.first);
+  r.git('switch', '-q', 'main');
+  r.write('src/t.js', 'export const t = 9;\n');
+  r.commit('on main');
+  // topic forked before the earlier head, and its own merge of main resolved src/t.js to main's side: that resolution
+  // is in no merge-base diff, and its merge does not descend from the earlier head.
+  r.git('switch', '-q', '-c', 'topic', fork);
+  r.write('src/t.js', 'export const t = 2;\n');
+  r.commit('topic');
+  assert.throws(() => r.git('merge', '-q', '--no-edit', 'main'));
+  r.write('src/t.js', 'export const t = 9;\n');
+  const topicMerge = r.commit('merge main into topic');
+  r.git('switch', '-q', 'feat');
+  r.write('src/app.js', 'export const app = 3;\n');
+  r.commit('fix');
+  r.git('merge', '-q', '--no-edit', 'topic');
+  const merge = r.git('rev-parse', 'HEAD');
+  const seen = recorder();
+  await r.step({ exec: seen.exec });
+  const [input] = seen.inputs;
+  assert.equal(input.context, 'delta');
+  assert.deepEqual([...input.baseMerged.merges].sort(), [merge, topicMerge].sort(), 'topic\'s merge of main is the branch\'s own');
+  assert.deepEqual([...input.files].sort(), ['src/app.js', 'src/t.js'], 'topic\'s resolution is reviewed');
+});
+
+test('a push that takes a file back to the base\'s text, then a base merge: that rollback is reviewed, never carried', async (t) => {
+  const r = repo(t, { feature: { 'src/app.js': 'export const app = 2;\n', 'src/extra.js': 'export const extra = 1;\n' } });
+  assert.equal((await r.step({ exec: recorder().exec })).status, 'received');
+  r.write('src/app.js', 'export const app = 1;\n');
+  r.commit('roll back');
+  const merge = r.mergeMain({ 'src/lib.js': 'export const lib = 1;\n' });
+  assert.equal(r.git('diff', '--name-only', r.git('merge-base', 'main', 'HEAD'), 'HEAD'), 'src/extra.js', 'the merge-base diff no longer holds src/app.js');
+  const seen = recorder();
+  const result = await r.step({ exec: seen.exec });
+  assert.equal(seen.inputs.length, 1, 'the earlier head\'s clean result is not reused: the rollback is the pull request\'s change');
+  const [input] = seen.inputs;
+  assert.deepEqual([result.status, input.context, input.files, input.base, input.baseMerged.from, input.baseMerged.merges], ['received', 'delta', ['src/app.js'], r.git('rev-parse', 'main'), r.first, [merge]]);
+});
+
+test('an exec reviewer of a delta after a base merge reads the merge base as `base`: its own diff holds none of the base\'s lines', async (t) => {
+  const lines = (first, last) => `${first}\nb\nc\nd\ne\n${last}\n`;
+  const r = await fixRequired(t, { baseFiles: { 'src/app.js': lines('a', 'f') }, feature: { 'src/app.js': lines('A', 'f') } });
+  r.write('src/app.js', lines('AA', 'f'));
+  r.commit('fix');
+  // main edits the same file far from the pull request's line, so the merge is clean and the file holds both.
+  const merge = r.mergeMain({ 'src/app.js': lines('a', 'F') });
+  const seen = recorder();
+  await r.step({ exec: seen.exec });
+  const [input] = seen.inputs;
+  assert.deepEqual([input.base, input.head, input.context, input.files, input.baseMerged.from], [r.git('rev-parse', 'main'), merge, 'delta', ['src/app.js'], r.first]);
+  const own = r.git('diff', '--unified=0', input.base, input.head, '--', ...input.files);
+  assert.match(own, /^\+AA$/mu);
+  assert.doesNotMatch(own, /^\+F$/mu, 'main\'s line is not the pull request\'s');
+});
+
+test('a file-scoped pass reuses no earlier result across a base merge that changed how the project is reviewed', async (t) => {
+  const planner = "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>console.log(JSON.stringify({depth:'single',stages:[{name:'independent',passes:[{id:'extra:lint',reviewer:'lint',kind:'exec',files:['docs/guide.md']}]}]})))";
+  const review = { planCommand: 'node scripts/plan.mjs', reviewers: { lint: { kind: 'exec', command: ['node', 'scripts/lint.mjs'], stage: 'independent' } } };
+  const r = repo(t, {
+    baseConfig: { version: 1, review },
+    baseFiles: { 'scripts/plan.mjs': planner, 'scripts/lint.mjs': '\n' },
+    feature: { 'src/app.js': 'export const app = 2;\n', 'docs/guide.md': 'hello\n' },
+  });
+  const isLint = (input) => JSON.stringify(input.files) === '["docs/guide.md"]';
+  const first = recorder();
+  assert.equal((await r.step({ exec: first.exec })).status, 'received');
+  assert.equal(first.inputs.filter(isLint).length, 1);
+  r.write('src/app.js', 'export const app = 3;\n');
+  r.commit('push');
+  // A rule that changes no pass of this plan: only the review's rules moved, and docs/guide.md is untouched since.
+  r.mergeMain({ 'src/lib.js': 'export const lib = 1;\n', '.aidrian/config.json': JSON.stringify({ version: 1, review: { ...review, rules: [{ when: { lines: { over: 100000 } }, depth: 'split' }] } }) });
+  const seen = recorder();
+  await r.step({ exec: seen.exec });
+  const lint = seen.inputs.find(isLint);
+  assert.ok(lint, `the lint pass runs again: its earlier result was judged without main's new rule (${JSON.stringify(seen.inputs.map((input) => input.files))})`);
+  assert.deepEqual([lint.base, lint.context, lint.baseMerged], [r.git('rev-parse', 'main'), 'full', undefined]);
+});
+
 test('the flow brief of a delta after a base merge points at the pull request\'s own change, never the range that holds the base\'s code', () => {
-  const brief = flowBaseBrief({ base: 'aaa', head: 'bbb', flowBase: 'ccc', baseMerged: { base: 'ccc', merges: ['bbb'] } });
+  const brief = flowBaseBrief({ base: 'ccc', head: 'bbb', flowBase: 'ccc', baseMerged: { base: 'ccc', from: 'aaa', merges: ['bbb'] } });
   assert.doesNotMatch(brief, /aaa\.\.bbb/u);
   assert.match(brief, /own change in the listed files/u);
   assert.match(flowBaseBrief({ base: 'aaa', head: 'bbb', flowBase: 'ccc' }), /aaa\.\.bbb/u);
@@ -493,14 +573,15 @@ test('the flow brief of a delta after a base merge points at the pull request\'s
 
 test('the prompt of a delta after a base merge names the pull request\'s own diff, never the range that holds the base\'s code', () => {
   const merges = ['ddd', 'eee'];
-  const input = { base: 'aaa', head: 'bbb', files: ['src/app.js'], flows: [], priorFindings: [], baseMerged: { base: 'ccc', merges } };
+  const input = { base: 'ccc', head: 'bbb', files: ['src/app.js'], flows: [], priorFindings: [], baseMerged: { base: 'ccc', from: 'aaa', merges } };
   for (const each of [input, { ...input, role: 'slice', manifest: [] }]) {
     const prompt = reviewPrompt(each);
     assert.doesNotMatch(prompt, /git diff aaa bbb/u, each.role ?? 'whole pass');
     assert.match(prompt, /git diff ccc bbb -- <file>/u, each.role ?? 'whole pass');
     for (const merge of merges) assert.match(prompt, new RegExp(`git show --remerge-diff ${merge}`, 'u'));
+    assert.match(prompt, /Between aaa and bbb this branch merged the base branch/u, 'the brief names the earlier head, `baseMerged.from`');
   }
-  assert.match(reviewPrompt({ ...input, baseMerged: undefined }), /run `git diff aaa bbb`/u, 'with no base merge, the range from the earlier head');
+  assert.match(reviewPrompt({ ...input, base: 'aaa', baseMerged: undefined }), /run `git diff aaa bbb`/u, 'with no base merge, the range from the earlier head');
 });
 
 test('passInput: a blocking finding handed to the pass from another keeps its file in the list of a delta after a base merge', (t) => {
@@ -535,8 +616,8 @@ test('after fix_required, a flow\'s agent pass of a delta after a base merge is 
   assert.equal(result.status, 'dispatch');
   const pass = result.dispatch.find((each) => each.flows.length);
   assert.ok(pass, JSON.stringify(result.dispatch.map((each) => each.pass)));
-  assert.deepEqual([pass.base, pass.context, pass.files, pass.flowBase], [r.first, 'delta', ['src/app.js'], r.git('rev-parse', 'main')]);
-  assert.deepEqual(pass.baseMerged, { base: r.git('rev-parse', 'main'), merges: [result.head] });
+  assert.deepEqual([pass.base, pass.context, pass.files, pass.flowBase], [r.git('rev-parse', 'main'), 'delta', ['src/app.js'], r.git('rev-parse', 'main')]);
+  assert.deepEqual(pass.baseMerged, { base: r.git('rev-parse', 'main'), from: r.first, merges: [result.head] });
   assert.ok(pass.brief.includes(baseMergedBrief(pass)), pass.brief);
   assert.ok(pass.brief.includes(flowBaseBrief(pass)), pass.brief);
   assert.match(pass.brief, /Find bugs in this pull request's own change in the listed files/u);

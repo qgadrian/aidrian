@@ -197,8 +197,9 @@ export function flowBaseBrief(input) {
 export const remergeBrief = (input) => `This head is a merge from the base branch: review only the changes the merge commit itself made, its conflict resolutions and any other edit, \`git show --remerge-diff ${input.head}\`. A file listed with no lines there had a conflict whose resolution shows no lines, such as a binary file or a kept side of a modify/delete: check that side was the right one. The rest of \`git diff ${input.base} ${input.head}\` was reviewed before, on this pull request's earlier heads or on the base branch.`;
 
 // What a reviewer of a delta whose range merged the base branch reads (lib/review/step.mjs boundFor): the base's own
-// changes in that range are not this pull request's, so `files` lists only its own, and within them only its own lines count.
-export const baseMergedBrief = (input) => `Between ${input.base} and ${input.head} this branch merged the base branch (${input.baseMerged.merges.join(', ')}): what the base brought was reviewed there and is not this pull request's change. Review only the listed files, and in them only what this pull request changes, \`git diff ${input.baseMerged.base} ${input.head}\`, or what a merge commit itself changed, ${input.baseMerged.merges.map((merge) => `\`git show --remerge-diff ${merge}\``).join(', ')}. Report nothing the base branch alone wrote.`;
+// changes in that range are not this pull request's, so `files` lists only its own, and within them only its own lines
+// count. The input's `base` is then the merge base, and `baseMerged.from` the earlier head the delta runs from.
+export const baseMergedBrief = (input) => `Between ${input.baseMerged.from} and ${input.head} this branch merged the base branch (${input.baseMerged.merges.join(', ')}): what the base brought was reviewed there and is not this pull request's change. Review only the listed files, and in them only what this pull request changes, \`git diff ${input.baseMerged.base} ${input.head}\`, or what a merge commit itself changed, ${input.baseMerged.merges.map((merge) => `\`git show --remerge-diff ${merge}\``).join(', ')}. Report nothing the base branch alone wrote.`;
 
 // What a reviewer of a project below the repository root reads, with `prefix` the project's folder from the top: a plain
 // `git diff` lists repository-root paths and files outside the project, and a citation of one is refused.
@@ -207,8 +208,9 @@ export const belowRootBrief = (prefix) => `This project is the folder ${prefix} 
 // The prompt a model reviewer reads: the pass input as instructions and data. The input is JSON, so a diff cannot
 // close the instructions. `prefix` is the project's folder from the top of the repository, empty at the top.
 export function reviewPrompt(input, prefix = '') {
-  // After a merge from the base branch, the range from `base` holds the base's code (baseMergedBrief): the diff to read
-  // is the pull request's own, from the merge base, in the listed files, plus each merge commit's own changes.
+  // After a merge from the base branch, the range from the earlier head, `baseMerged.from`, holds the base's code
+  // (baseMergedBrief): the diff to read is the pull request's own, from the merge base, in the listed files, plus each
+  // merge commit's own changes.
   const from = input.baseMerged?.base ?? input.base;
   let lead = `Review the diff from ${input.base} to ${input.head} (run \`git diff ${input.base} ${input.head}\`; read any file at ${input.head} you need).`;
   if (input.baseMerged) {

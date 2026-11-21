@@ -20,7 +20,7 @@ import { viewForge, viewPrAt } from '../plugins/aidrian/lib/rules/github/merge-r
 // Every name the facade gives its callers.
 const FACADE = [
   'id', 'cwd', 'isTrustedCommenter', 'hosts', 'changeRef', 'changesState', 'changeUrl',
-  'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'branchHead', 'contents', 'tree', 'visibility', 'viewer', 'authToken',
+  'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'branchHead', 'contents', 'tree', 'visibility', 'viewer', 'authToken', 'tokenCanPush',
   'conversationComments', 'comment', 'issue', 'postComment', 'editComment', 'deleteComment', 'reactions',
   'pull', 'diff', 'nodeChange', 'changeEdits', 'reviewTrail', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',
   'postReview', 'reviewComment', 'deleteReviewComment', 'findingThreads', 'replyToReviewComment', 'resolveThread', 'unresolveThread',
@@ -179,24 +179,18 @@ test('authToken: gh auth token for the host, trimmed, which reads gh`s login whe
   assert.throws(() => none.authToken({ host: 'github.com' }), /no oauth token/u);
 });
 
-test('repository with a token: the same route, signed in with that token through GH_TOKEN, never an argument', () => {
-  const { forge, calls } = recorded(() => '{"permissions":{"push":false}}');
-  assert.deepEqual(forge.repository('acme/widgets', { host: 'github.com', token: 'github_pat_x' }), { permissions: { push: false } });
-  forge.repository('acme/widgets', { host: 'github.com' });
-  assert.deepEqual(calls.map((call) => call.args), [['api', '--hostname', 'github.com', 'repos/acme/widgets'], ['api', '--hostname', 'github.com', 'repos/acme/widgets']]);
-  assert.equal(calls[0].options.token, 'github_pat_x');
-  assert.equal(calls[1].options.token, undefined, 'no token: gh\'s own login');
-  assert.ok(!calls[0].args.some((arg) => arg.includes('github_pat_x')), 'never an argument');
-  const seen = [];
-  runGh(['api', 'user'], { token: 'github_pat_y', exec: (_program, _args, options) => (seen.push(options.env), '{}') });
-  runGh(['api', 'user'], { exec: (_program, _args, options) => (seen.push(options.env), '{}') });
-  assert.equal(seen[0].GH_TOKEN, 'github_pat_y');
-  assert.equal(seen[1], undefined, 'gh inherits the environment as it is');
+test('tokenCanPush: the push probe the adapter was given, for the repository and host, with the token', () => {
+  const asked = [];
+  const forge = createGithubForge({ cwd: '/repo', run: () => assert.fail('no gh'), probe: (repo, options) => (asked.push([repo, options]), 403) });
+  assert.equal(forge.tokenCanPush('acme/widgets', { host: 'github.com', token: 'github_pat_RO' }), false);
+  assert.equal(forge.tokenCanPush('acme/widgets', { token: 'github_pat_RO' }), false);
+  assert.deepEqual(asked, [['acme/widgets', { host: 'github.com', token: 'github_pat_RO' }], ['acme/widgets', { host: 'github.com', token: 'github_pat_RO' }]]);
 });
 
 test('the forge token helpers: GH_TOKEN, which gh and its git helper read, the login step, and a note on any token but a fine-grained one', () => {
-  assert.equal(facade.forgeTokenVar(), 'GH_TOKEN');
-  assert.ok(facade.forgeTokenVars().includes(facade.forgeTokenVar()), 'the sandbox keeps the variable the token goes in');
+  assert.equal(facade.forgeTokenVar('github.com'), 'GH_TOKEN');
+  assert.equal(facade.forgeTokenVar('ghe.example.com'), 'GH_ENTERPRISE_TOKEN', 'a GitHub Enterprise Server host');
+  for (const host of ['github.com', 'ghe.example.com']) assert.ok(facade.forgeTokenVars().includes(facade.forgeTokenVar(host)), 'the sandbox keeps the variable the token goes in');
   assert.equal(facade.forgeLoginStep('github.com'), 'gh auth login --hostname github.com --git-protocol https');
   assert.equal(facade.forgeTokenNote('github_pat_11AAAA'), null);
   assert.match(facade.forgeTokenNote('gho_abc'), /^it is an OAuth token of gh's own login, which reaches every repository and scope its user has/u);

@@ -40,6 +40,7 @@ import { inboxPath, nudge } from '../lib/lesson-inbox.mjs';
 import { inheritedOverrideLine, unpushedMainLine } from '../lib/main-commits.mjs';
 import { findProject, projectCheckouts, stateDir } from '../lib/project.mjs';
 import { confinedShellVars, confinedTokenVars } from '../lib/project-start.mjs';
+import { writeHandoff } from '../lib/project-token.mjs';
 import { noteOrigin } from '../lib/session-origins.mjs';
 import { terminalLine } from '../lib/shell-init.mjs';
 
@@ -264,9 +265,11 @@ function shareShellVars(input) {
     const start = detectHost({ input }).capabilities.projectStart;
     const token = start?.forgeTokenEnv === true ? confinedTokenVars({ session: input.session_id, cwd: input.cwd, env: process.env }) : null;
     if (!token) return null;
-    if (token.vars && start.shellEnv?.({ env: process.env, vars: token.vars }) === true) return null;
-    const why = token.problem ?? 'the host\'s session environment file could not be written owner-only';
-    return `Forge token: not handed to this session: ${why}. Its pushes and forge calls will not sign in; report that, and push nothing.`;
+    const handed = Boolean(token.vars) && start.shellEnv?.({ env: process.env, vars: token.vars }) === true;
+    const why = handed ? null : token.problem ?? 'the host\'s session environment file could not be written owner-only';
+    // The verdict the start's proof check reads (lib/project-confine.mjs confineCheck): nothing secret.
+    writeHandoff(token.folder, { handed, why });
+    return handed ? null : `Forge token: not handed to this session: ${why}. Its pushes and forge calls will not sign in; report that, and push nothing.`;
   } catch {
     return null;
   }

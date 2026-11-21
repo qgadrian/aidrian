@@ -392,7 +392,7 @@ function startPlace(context) {
   const base = forgeBase(project, found.init.repository, facade, env);
   if (base.problem) return refuse(base.problem, orphans);
   const { branch } = current.snapshot.issues.find((issue) => issue.key === key);
-  const where = { ...context, attempt: capped.attempt, tip: base.tip, branch, pushUrl: access?.pushUrl, tokenSource: access?.token?.id ?? null };
+  const where = { ...context, attempt: capped.attempt, tip: base.tip, branch, pushUrl: access?.pushUrl, checked: access?.token?.id ? access.token : null };
   const room = confinedRoom(where);
   if (room.halt) return { answer: noted(haltAnswer(room.halt, { lines: orphans })) };
   if (room.problem) return refuse(room.problem, orphans);
@@ -413,7 +413,7 @@ const endedOnLimit = (found, key, attempt) => found.rows.some((row) => row.event
 // A host that would refuse the push of a session the driver `session` starts in the clone halts too (pushPreflight, in
 // the driver's permission mode, which the session takes): the clone is the folder the start passes the host, judged
 // once, and a remote or folder it cannot read answers unknown and starts. Last, the host's placeholders go in (placeHolders).
-function confinedRoom({ project, state, run, key, branch, attempt, tip, env, home, found, cap, policy, main, pushUrl, session, tokenSource }) {
+function confinedRoom({ project, state, run, key, branch, attempt, tip, env, home, found, cap, policy, main, pushUrl, session, checked }) {
   const folders = stateWorkFolders(state, { env, home });
   if (folders.problem) return { halt: folders.problem };
   const clone = prepareAttempt({ project, state, run, key, attempt, branch, tip, env });
@@ -448,10 +448,10 @@ function confinedRoom({ project, state, run, key, branch, attempt, tip, env, hom
   const vars = cacheVars(clone.cache, env, { registries: policy.registries });
   const written = writeShellVars(clone.folder, vars);
   if (written) return { problem: written };
-  // The claim that marks the session this start launches, and the token source the access check chose, for the hook
-  // that hands that session the forge token (lib/project-token.mjs): the token itself is never written.
-  const claim = tokenSource ? newClaim() : null;
-  const claimed = claim ? writeClaim(clone.folder, { claim, source: tokenSource }) : null;
+  // The claim that marks the session this start launches, and the token source the access check chose with the checked
+  // token's digest, for the hook that hands that session the forge token (lib/project-token.mjs): never the token.
+  const claim = checked ? newClaim() : null;
+  const claimed = claim ? writeClaim(clone.folder, { claim, source: checked.id, token: checked.digest }) : null;
   if (claimed) return { problem: claimed };
   // The issue's text the driver kept at init, for the session to read instead of the tracker (lib/project-issue-text.mjs).
   const issueFile = issueFileFor(state, run, key, clone.folder);

@@ -35,6 +35,7 @@ import { CONFINE_LOCK, CONFINE_PLAN, CONFINE_VERDICT, exists, SHELL_VARS, VERDIC
 import { pauseSync, readOnce, readSmallJson } from './fs.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { REGISTRY_NAMES, registryHosts } from './project-registries.mjs';
+import { handoffProblem } from './project-token.mjs';
 import { markFolders } from './unattended-mark.mjs';
 
 export { CONFINE_LOCK, CONFINE_PLAN, CONFINE_VERDICT, SHELL_VARS };
@@ -479,6 +480,9 @@ export function confineCheck({ folder, session, prints = {}, isAlive = alive, se
   if (!verdict) return null;
   const listed = (each) => (Array.isArray(each) ? each.filter((one) => typeof one === 'string').slice(0, 10).join('; ') : '');
   if (verdict.pass !== true) return { pass: false, problem: listed(verdict.failed) || 'the proof failed' };
+  // A start that expected to hand its session the forge token fails without the hook's record that it did.
+  const handoff = handoffProblem(folder);
+  if (handoff) return { pass: false, problem: handoff };
   if (verdict.nonce !== plan.nonce || verdict.run !== plan.run || verdict.key !== plan.key || verdict.attempt !== plan.attempt) return { pass: false, problem: 'the verdict in the drop folder is not this start\'s' };
   if (verdict.session !== null && verdict.session !== undefined && verdict.session !== session) return { pass: false, problem: `the verdict names the session ${String(verdict.session).slice(0, 64)}, not ${session}` };
   const reads = Array.isArray(verdict.reads) ? verdict.reads : [];

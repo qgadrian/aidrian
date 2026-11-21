@@ -695,6 +695,9 @@ test('a subagent may not change the keychain entry a project run takes its forge
     ['apply_patch', patch(local, '+    "x": 1,')],
     ['apply_patch', patch(local, '-  "names": { "human": "off" },')],
     ['apply_patch', patch(LOCAL_NAME, '+  "projectRun": {}')],
+    // A delete or a move of the file has no line to add or remove, and drops the setting all the same.
+    ['apply_patch', { command: `*** Begin Patch\n*** Delete File: ${local}\n*** End Patch\n` }],
+    ['apply_patch', { command: `*** Begin Patch\n*** Update File: ${local}\n*** Move to: ${path.join(dir, 'moved.json')}\n*** End Patch\n` }],
   ]) {
     const result = await run(subagent(dir, tool, toolInput));
     assert.equal(result.status, 2, JSON.stringify(toolInput));

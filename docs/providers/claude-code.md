@@ -485,18 +485,25 @@ No `sandbox.excludedCommands` is passed. Three conditions hold on top of the san
   `~/Library/Application Support/pypoetry`, and `~/.local/share/uv/credentials`. Credential-named environment variables are unset in the sandbox, as the table says, and the
   main checkout is unreadable but its git folder. The forge CLI's login, `~/.config/gh`, and its token variables stay:
   the session pushes and opens pull requests through them. Since the sandbox also hides the system keyring, where gh
-  keeps its token by default, the session gets the forge token as `GH_TOKEN` in its sandboxed commands' environment:
+  keeps its token by default, the session gets the forge token as `GH_TOKEN` (`GH_ENTERPRISE_TOKEN` for a GitHub
+  Enterprise Server host, as gh reads it) in its sandboxed commands' environment:
   the start reads it outside the sandbox, from the first of the project's keychain entry
   ([`projectRun.forgeTokenKeychain`](../config.md#project-run) in `.aidrian.local.json`), the machine's default entry,
   service `aidrian-project-run`, both on macOS, and `gh auth token --hostname <host>`, and halts when none gives one,
-  or when the forge, asked for the repository with that very token, does not answer `permissions.push` true, whatever
-  the driver's own login may do. The start records only which source gave the token, with the digest of a random
-  claim it passes the session it launches as the one `env` key of its inline settings, `AIDRIAN_START_CLAIM`. The
-  plugin's SessionStart hook of the confined session hands the token over only when its environment holds that claim,
-  so no other session opened in the clone gets it, before the host names the launched one or after; it reads the
-  token again, outside the sandbox, from that one source, never another, and appends it, in a file it first makes
-  owner-only, to the file `CLAUDE_ENV_FILE` names, as it does the cache variables. A source that gives no token then,
-  or a session without the claim, gets a line saying why instead, and no token. The host reads that file in its own
+  or when that very token may not push, whatever the driver's own login may do: the start asks GitHub for the
+  repository's receive-pack advertisement, `https://<host>/<owner>/<name>.git/info/refs?service=git-receive-pack`,
+  with the token as basic auth, from a Node process with no shell that gets the token in its environment. GitHub
+  answers 200 only to a token that may write the contents, and 401 or 403 otherwise; the probe writes nothing. The
+  start records which source gave the token and the token's SHA-256, with the digest of a random claim it passes the
+  session it launches as the one `env` key of its inline settings, `AIDRIAN_START_CLAIM`. The plugin's SessionStart
+  hook of the confined session hands the token over only when its environment holds that claim, so no other session
+  opened in the clone gets it, before the host names the launched one or after; it reads the token again, outside the
+  sandbox, from that one source, never another, hands it over only when its SHA-256 is the one the start recorded, and
+  appends it, in a file it first makes owner-only, to the file `CLAUDE_ENV_FILE` names, as it does the cache
+  variables. A source that gives no token then, or another one, or a session without the claim, gets a line saying
+  why instead, and no token. The hook records in the attempt's folder whether it handed the token over, and why not,
+  nothing secret, and the start's check of the sandbox proof fails a start whose record is missing or says not
+  handed, so the run halts as on a failed proof. The host reads that file in its own
   process and runs its lines ahead of each Bash command (2.1.330: "Session environment loaded from CLAUDE_ENV_FILE"),
   so the sandbox hides the whole `session-env` tree and each session still gets its own variables, while no session
   reads another's. The token reaches the sandboxed Bash commands alone, never the host's hooks or MCP servers, and no
@@ -541,9 +548,7 @@ Residual risks, each known and accepted:
   the preflight's `note token:` line names. A fine-grained token in the keychain, limited to the run's repository,
   narrows that. The host keeps the file `CLAUDE_ENV_FILE` names, which then holds the token, owner-only, in its own
   config folder, which the sandbox hides, for the session's life; whether it removes it when the session ends is not
-  checked. Whether the forge's `permissions.push` reflects a fine-grained token's own Contents permission, rather than
-  its user's role, is not checked against GitHub: a fine-grained token with read-only Contents may pass the start's
-  check and then fail to push.
+  checked.
 - The forge CLI's token in `~/.config/gh`, when gh keeps it there, is readable, and reaches every repository the user can. In the run's repository,
   the default branch's protection and the tag rule that `aidrian project preflight` requires hold it; in the user's
   other repositories, nothing does.

@@ -6,6 +6,7 @@
 import { isRefName } from '../git.mjs';
 import { hasHidden } from '../hidden-text.mjs';
 import { runGh } from './github-cli.mjs';
+import { receivePackStatus, tokenMayPush } from './github-token.mjs';
 
 // The author associations GitHub gives the people who belong to a repository.
 // Frozen, with no add, and compared by === rather than through a prototype method, so no module in the gate's process
@@ -713,21 +714,21 @@ function branchHold(read, admin, viewer) {
 // `killSignal` stops a call at that bound with another signal, such as SIGKILL; null keeps gh's runner's default.
 // A method that takes `{ host }` names that host to every REST call it makes (`--hostname`), as `aidrian pr auto-merge`
 // does with the host of the pull request's URL; without one, gh picks its default host.
-export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutMs = null, killSignal = null } = {}) {
-  const gh = (args, { timeoutMs: limit = timeoutMs, input, token } = {}) =>
-    run(args, { cwd, ...(limit === null ? {} : { timeoutMs: limit }), ...(killSignal === null ? {} : { killSignal }), ...(input === undefined ? {} : { input }), ...(token === undefined ? {} : { token }) });
+export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutMs = null, killSignal = null, probe = receivePackStatus } = {}) {
+  const gh = (args, { timeoutMs: limit = timeoutMs, input } = {}) =>
+    run(args, { cwd, ...(limit === null ? {} : { timeoutMs: limit }), ...(killSignal === null ? {} : { killSignal }), ...(input === undefined ? {} : { input }) });
   const json = (args) => JSON.parse(gh(args));
   const given = (ref) => ref !== undefined && ref !== null && ref !== '';
   // One REST route. `paginate` reads every page and joins them into one list; `fields` are sent as `-f key=value`, each
   // value a literal string, and `input`, a request body, as JSON on gh's stdin: never `-F`, which reads a leading `@` as
   // a file and `true` as a boolean. `empty` reads an answer with no body, such as a delete's, as null.
-  const rest = (route, { paginate = false, method, fields, input, empty = false, host, token } = {}) => {
+  const rest = (route, { paginate = false, method, fields, input, empty = false, host } = {}) => {
     const args = ['api', ...(host ? ['--hostname', host] : []), route, ...(mediaType === null ? [] : ['--header', `Accept: ${mediaType}`])];
     if (paginate) args.push('--paginate', '--slurp');
     if (method) args.push('--method', method);
     for (const [key, value] of Object.entries(fields ?? {})) args.push('-f', `${key}=${value}`);
     if (input !== undefined) args.push('--input', '-');
-    const answer = gh(args, { ...(input === undefined ? {} : { input: JSON.stringify(input) }), ...(token === undefined ? {} : { token }) });
+    const answer = gh(args, input === undefined ? {} : { input: JSON.stringify(input) });
     if (empty) return answer.trim() === '' ? null : JSON.parse(answer);
     if (mediaType === null) return paginate ? JSON.parse(answer || '[]').flat() : JSON.parse(answer);
     const parsed = JSON.parse(answer || 'null');
@@ -881,8 +882,7 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // `owner/name` of the default repository.
     repo: () => json(['repo', 'view', '--json', 'nameWithOwner']).nameWithOwner,
     // The repository itself, such as its `default_branch`.
-    // With `token`, the repository as that token sees it, `permissions` included, in place of gh's own login.
-    repository: (repo, { host, token } = {}) => rest(`repos/${repo}`, { host, ...(token === undefined ? {} : { token }) }),
+    repository: (repo, { host } = {}) => rest(`repos/${repo}`, { host }),
     // Whether the reviewer `login` reviewed or commented on any of the repository's last `limit` pull requests, for a
     // project run's preflight: { changes, seen }, with a bot's login compared with or without its `[bot]` suffix. A
     // review bot that finds nothing on a clean head may post only a conversation comment, and no formal review. A
@@ -966,6 +966,9 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // The token gh signs in to `host` with, from its own login wherever gh keeps it, the system keyring included, or
     // from its token variables: no network call. Throws when gh has none.
     authToken: ({ host } = {}) => gh(['auth', 'token', ...(host ? ['--hostname', host] : [])]).trim(),
+    // Whether `token` may push to `repo` on `host` (default github.com), by a probe that writes nothing: true, false, or
+    // a throw when the forge's answer says neither (github-token.mjs tokenMayPush).
+    tokenCanPush: (repo, { host = DEFAULT_HOST, token } = {}) => tokenMayPush(repo, { host, token, probe }),
     // The comments on the pull request's conversation, not those on its diff (reviewComments).
     conversationComments: (repo, n, { host } = {}) => list(`repos/${repo}/issues/${n}/comments`, { host }),
     // One comment of a conversation, by its id. With `pr`, it is held to that pull request of `repo`: a comment whose

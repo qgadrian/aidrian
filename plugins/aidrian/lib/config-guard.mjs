@@ -85,10 +85,11 @@ const SWITCHES = Object.freeze([
   Object.freeze({ key: 'productFeedback', valueIn: (parsed) => parsed?.review?.productFeedback, name: 'review.productFeedback', why: 'only the main session may choose whether this machine owes product feedback', patched: /^[+-].*(?:productFeedback|"auto"\s*:)/mu }),
   // Which keychain entry gives a project run's issue sessions their forge token (lib/project-token.mjs), as the reader
   // takes it, so a sibling key that voids the whole setting changes it too. A patch, which is not applied here, changes
-  // it when a line names projectRun or its keys, or, while the file selects an entry, when it adds or removes any line.
+  // it when a line names projectRun or its keys, or, while the file selects an entry, when it adds or removes any line,
+  // or deletes or moves a file, which no added or removed line shows.
   Object.freeze({
     key: 'forgeTokenKeychain', valueIn: (parsed) => localForgeTokenKeychain(parsed, []) ?? undefined, name: 'projectRun.forgeTokenKeychain', why: 'only the main session may choose which keychain entry gives a project run\'s sessions their forge token',
-    patched: (text, before) => /^[+-].*(?:projectRun|forgeTokenKeychain|"service"\s*:|"account"\s*:)/mu.test(text) || (selectsKeychain(before) && /^[+-](?![+-])/mu.test(text)),
+    patched: (text, before) => /^[+-].*(?:projectRun|forgeTokenKeychain|"service"\s*:|"account"\s*:)/mu.test(text) || (selectsKeychain(before) && /^(?:[+-](?![+-])|\*\*\* (?:Delete File|Move to):)/mu.test(text)),
   }),
 ]);
 

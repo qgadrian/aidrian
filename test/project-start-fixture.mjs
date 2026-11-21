@@ -12,7 +12,7 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -20,6 +20,7 @@ import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { openStore } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { noteBeacon } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { CONFINE_PLAN, CONFINE_VERDICT } from '../plugins/aidrian/lib/project-confine.mjs';
+import { writeHandoff } from '../plugins/aidrian/lib/project-token.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { projectCommand } from '../plugins/aidrian/lib/project-run-cli.mjs';
 import { appendToRun, initRun, readRun } from '../plugins/aidrian/lib/project-run.mjs';
@@ -96,8 +97,8 @@ const gitIn = (dir) => (...args) => execFileSync('git', ['-c', 'user.name=t', '-
 // A stand-in for the forge facade: the default branch `main` at the commit `head()` gives, the committed config at
 // `.aidrian/config.json` (`config`, as text), no `.aidrian.json`, the pull requests in `views`, by number, the push
 // permission `push()` gives, and the forge CLI's login token `token()` gives, a fine-grained one by default; a `token`
-// that throws is a CLI with no login. A repository read with a token, as the start checks the issue session's, answers
-// the push permission `tokenPush(token)` gives. `calls` records each call.
+// that throws is a CLI with no login. The push probe with a token, as the start checks the issue session's, answers what
+// `tokenPush(token)` gives: true, false (the forge's 403), or a throw. `calls` records each call.
 export const FIXTURE_TOKEN = 'github_pat_FIXTURE0123456789';
 export function fakeForge(config, head, views = {}, { push = () => true, token = () => FIXTURE_TOKEN, tokenPush = () => true } = {}) {
   const calls = [];
@@ -107,8 +108,11 @@ export function fakeForge(config, head, views = {}, { push = () => true, token =
     tokenPush,
     repository: (repo, options) => {
       calls.push(['repository', repo, options]);
-      const allowed = typeof options?.token === 'string' ? forge.tokenPush(options.token) : push();
-      return { default_branch: 'main', permissions: { pull: true, push: allowed } };
+      return { default_branch: 'main', permissions: { pull: true, push: push() } };
+    },
+    tokenCanPush: (repo, options) => {
+      calls.push(['tokenCanPush', repo, { host: options?.host, token: typeof options?.token === 'string' ? 'given' : 'none' }]);
+      return forge.tokenPush(options.token);
     },
     contents: (repo, file, ref, options) => {
       calls.push(['contents', repo, file, ref, options]);
@@ -176,9 +180,10 @@ export function fakeClaude({ dir, start = null, hidden = false, env = null, beac
 export const passVerdict = (plan, session) => ({ version: 1, run: plan.run, key: plan.key, attempt: plan.attempt, nonce: plan.nonce, session, pass: true, failed: [], probes: 12, at: new Date().toISOString() });
 
 // Writes in the drop folder beside the clone `work` the verdict `confine(plan, session)` gives, when the start wrote a
-// plan there.
+// plan there; and, where the start wrote a token claim, the SessionStart hook's record that it handed the token over.
 export function handVerdict(work, session, confine = passVerdict) {
   const folder = path.dirname(work);
+  if (existsSync(path.join(folder, 'token-claim.json'))) writeHandoff(folder, { handed: true });
   let plan;
   try {
     plan = JSON.parse(readFileSync(path.join(folder, CONFINE_PLAN), 'utf8'));

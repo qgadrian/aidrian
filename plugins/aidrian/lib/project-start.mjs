@@ -25,7 +25,7 @@ import path from 'node:path';
 import { ATTEMPT_KEEP, attemptOf, GIT_PLACEHOLDERS, KEPT_FOLDERS } from './attempt-clone.mjs';
 import { isWithin, readSmallJson, resolvedPath } from './fs.mjs';
 import { gateGit } from './git.mjs';
-import { claimedSource, forgeToken, sessionToken, tokenVars } from './project-token.mjs';
+import { claimedSource, forgeToken, sessionToken, tokenDigest, tokenVars } from './project-token.mjs';
 import { loadConfig } from './config.mjs';
 import { findProject, stateRoot } from './project.mjs';
 import { CACHE_VAR_NAMES, NPM_CONFIGS, varsProblem } from './project-registries.mjs';
@@ -89,22 +89,22 @@ export function accessProblem({ cap, forge, repository, env, home, guarded, main
   if (!pushed?.pushUrl || cap.forgeTokenEnv !== true) return pushed;
   const read = forgeToken({ forge, repository, keychain, platform, env, ...(exec ? { exec } : {}) });
   if (read.problem) return { halt: read.problem, token: { notes: read.notes } };
-  const token = { id: read.id, source: read.source, notes: read.notes };
+  const token = { id: read.id, source: read.source, notes: read.notes, digest: tokenDigest(read.token) };
   const denied = tokenPushProblem({ forge, repository, read });
   return denied ? { halt: denied, token } : { ...pushed, token };
 }
 
-// Why the token `read` gave may not push to `repository`, asked of the forge with that token, or null.
+// Why the token `read` gave may not push to `repository`, by the forge's push probe with that very token, or null.
 function tokenPushProblem({ forge, repository, read }) {
   const named = `${repository.host}/${repository.owner}/${repository.name}`;
-  let view;
+  let may;
   try {
-    view = forge.repository(`${repository.owner}/${repository.name}`, { host: repository.host, token: read.token });
+    may = forge.tokenCanPush(`${repository.owner}/${repository.name}`, { host: repository.host, token: read.token });
   } catch (error) {
-    return `the forge token from ${read.source} cannot read ${named} (${String(error?.message ?? error).split('\n')[0].slice(0, 200)}), so the issue session could not push with it; give that source a token for this repository`;
+    return `whether the forge token from ${read.source} may push to ${named} cannot be told (${String(error?.message ?? error).split('\n')[0].slice(0, 200)}); start again`;
   }
-  if (view?.permissions?.push === true) return null;
-  return `the forge token from ${read.source} does not let the issue session push to ${named}; give that source a token that may push there`;
+  if (may === true) return null;
+  return `the forge token from ${read.source} may not push to ${named}, as the forge's push probe with it answers; give that source a token that may write the repository's contents`;
 }
 
 function pushAccess({ cap, forge, repository, env, home, guarded, main, platform, allowed }) {
@@ -389,25 +389,29 @@ export function confinedShellVars({ session, cwd, env = process.env, home }) {
   }
 }
 
-// The forge token the sandboxed commands of `session`, whose hook runs in `cwd` under `env`, get: { vars }, the forge
-// CLI's token variable; { problem }, why it was not handed over; or null for a session of no confined attempt. Only the
-// session the start launched gets it: one whose environment holds the start's claim (project-token.mjs claimedSource),
-// so no other session opened in the clone does, while the host has yet to name it or after. The token is read again,
-// outside the sandbox, from the one source the start checked, never another (sessionToken). `token` is a test's
-// stand-in for that read. Never throws.
+// The forge token the sandboxed commands of `session`, whose hook runs in `cwd` under `env`, get, with `folder` its
+// attempt's folder: { vars, folder }, the forge CLI's token variable for the host; { problem, folder }, why it was not
+// handed over; or null for a session of no confined attempt. Only the session the start launched gets it: one whose
+// environment holds the start's claim (project-token.mjs claimedSource), so no other session opened in the clone does,
+// while the host has yet to name it or after. The token is read again, outside the sandbox, from the one source the
+// start checked, never another (sessionToken), and handed over only when it is the token the start checked, by its
+// digest. `token` is a test's stand-in for that read. Never throws.
 export function confinedTokenVars({ session, cwd, env = process.env, home, token = sessionToken }) {
+  const found = safely(() => confinedAttempt({ session, cwd, env, home }));
+  if (!found) return null;
+  const { folder } = found.attempt;
   try {
-    const found = confinedAttempt({ session, cwd, env, home });
-    if (!found) return null;
-    const claim = claimedSource(found.attempt.folder, env);
-    if (claim.problem) return { problem: claim.problem };
+    const claim = claimedSource(folder, env);
+    if (claim.problem) return { problem: claim.problem, folder };
     const project = typeof found.mark?.root === 'string' ? findProject(found.mark.root) : null;
     const repository = project ? pinnedRepository(project) : null;
-    if (!repository) return { problem: 'the main checkout the session\'s mark names gives no repository' };
+    if (!repository) return { problem: 'the main checkout the session\'s mark names gives no repository', folder };
     const read = token({ root: project.root, repository, keychain: project.localForgeTokenKeychain, env, only: claim.source });
-    return read.token ? { vars: tokenVars(read.token) } : { problem: read.problem };
+    if (!read.token) return { problem: read.problem, folder };
+    if (tokenDigest(read.token) !== claim.token) return { problem: `${read.source} now gives another token than the one the start checked`, folder };
+    return { vars: tokenVars(read.token, repository.host), folder };
   } catch (error) {
-    return { problem: `the token could not be read (${String(error?.message ?? error).split('\n')[0].slice(0, 200)})` };
+    return { problem: `the token could not be read (${String(error?.message ?? error).split('\n')[0].slice(0, 200)})`, folder };
   }
 }
 

@@ -20,7 +20,9 @@ import { confineReads, sandboxSettings, writeEnvFile } from '../plugins/aidrian/
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { confinedTokenVars } from '../plugins/aidrian/lib/project-start.mjs';
-import { CLAIM_VAR, DEFAULT_KEYCHAIN_SERVICE, forgeToken, keychainToken, tokenVars } from '../plugins/aidrian/lib/project-token.mjs';
+import { receivePackStatus, tokenMayPush } from '../plugins/aidrian/lib/forges/github-token.mjs';
+import { confineCheck } from '../plugins/aidrian/lib/project-confine.mjs';
+import { CLAIM_VAR, DEFAULT_KEYCHAIN_SERVICE, forgeToken, handoffProblem, keychainToken, tokenVars } from '../plugins/aidrian/lib/project-token.mjs';
 import { markPending } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { DRIVER, FIXTURE_TOKEN, runFixture, STARTED } from './project-start-fixture.mjs';
 
@@ -111,7 +113,10 @@ test('no token from either source is a problem naming both and the fix, and a br
   const classic = forgeToken({ forge: login('gho_classic0123456789'), repository: REPOSITORY, platform: 'linux' });
   assert.deepEqual(classic.notes, ['it is an OAuth token of gh\'s own login, which reaches every repository and scope its user has, not only this one; a fine-grained token limited to this repository narrows that']);
   assert.ok(!JSON.stringify({ ...classic, token: null }).includes('gho_classic'), 'only `token` holds it');
-  assert.deepEqual(tokenVars('x'), { GH_TOKEN: 'x' });
+  assert.deepEqual(tokenVars('x', 'github.com'), { GH_TOKEN: 'x' });
+  // gh reads a GitHub Enterprise Server host's token from GH_ENTERPRISE_TOKEN, and a ghe.com tenancy's from GH_TOKEN.
+  assert.deepEqual(tokenVars('x', 'ghe.example.com'), { GH_ENTERPRISE_TOKEN: 'x' });
+  assert.deepEqual(tokenVars('x', 'acme.ghe.com'), { GH_TOKEN: 'x' });
 });
 
 test('the local file\'s projectRun.forgeTokenKeychain is checked, and read only from the main checkout\'s untracked file', (t) => {
@@ -166,24 +171,42 @@ test('a Claude Code start with no forge token to hand its session halts, recordi
   const claim = claimOf(fx);
   assert.match(claim, /^[0-9a-f]{48}$/u);
   const kept = JSON.parse(readFileSync(path.join(attempt, 'token-claim.json'), 'utf8'));
-  assert.deepEqual(kept, { claim: createHash('sha256').update(claim).digest('hex'), source: 'login' });
+  const sha = (value) => createHash('sha256').update(value).digest('hex');
+  assert.deepEqual(kept, { claim: sha(claim), source: 'login', token: sha(FIXTURE_TOKEN) });
   assert.equal(statSync(path.join(attempt, 'token-claim.json')).mode & 0o777, 0o600);
 });
 
-test('a start whose token may not push halts, though the driver\'s own login may push: the forge is asked with that token', (t) => {
+test('a start whose token may not push halts, though the driver\'s own login may push: the forge\'s push probe runs with that token', (t) => {
   const fx = runFixture(t);
+  // A token with read-only Contents on a repository the driver may write: the probe's answer is the forge's 403.
   fx.forge.tokenPush = (token) => token !== FIXTURE_TOKEN;
   const halted = fx.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(halted.exitCode, 1, halted.out.join('\n'));
-  assert.equal(halted.out[0], 'halt the forge token from the forge CLI\'s login for github.com does not let the issue session push to github.com/acme/widgets; give that source a token that may push there');
+  assert.equal(halted.out[0], 'halt the forge token from the forge CLI\'s login for github.com may not push to github.com/acme/widgets, as the forge\'s push probe with it answers; give that source a token that may write the repository\'s contents');
   assert.deepEqual(fx.claude.starts(), [], 'no claude --bg');
-  const asked = fx.forge.calls.filter(([name]) => name === 'repository');
-  assert.ok(asked.some(([, , options]) => options.token === undefined), 'the driver\'s push rights, through its own login');
-  assert.ok(asked.some(([, repo, options]) => repo === 'acme/widgets' && options.host === 'github.com' && options.token === FIXTURE_TOKEN), 'and the token\'s, with the token');
-  // A token the forge does not let read the repository at all, as one for another repository.
+  assert.ok(fx.forge.calls.some(([name, repo, options]) => name === 'tokenCanPush' && repo === 'acme/widgets' && options.host === 'github.com' && options.token === 'given'));
+  // A probe the forge answers with neither: the start says so, and starts nothing.
   const other = runFixture(t);
-  other.forge.tokenPush = () => { throw new Error('gh: Not Found (HTTP 404)'); };
-  assert.match(other.cmd(['start', 'launch', 'ENG-1']).out[0], /^halt the forge token from the forge CLI's login for github\.com cannot read github\.com\/acme\/widgets \(gh: Not Found \(HTTP 404\)\)/u);
+  other.forge.tokenPush = () => { throw new Error('the forge answered the push probe with 500'); };
+  assert.equal(other.cmd(['start', 'launch', 'ENG-1']).out[0], 'halt whether the forge token from the forge CLI\'s login for github.com may push to github.com/acme/widgets cannot be told (the forge answered the push probe with 500); start again');
+});
+
+test('the push probe asks GitHub for the receive-pack advertisement, with the token in the environment under the host\'s variable, never an argument', () => {
+  const calls = [];
+  const exec = (program, args, options) => (calls.push({ program, args, options }), '403');
+  assert.equal(receivePackStatus('acme/widgets', { host: 'github.com', token: 'github_pat_RO0123456789', exec }), 403);
+  assert.equal(receivePackStatus('acme/widgets', { host: 'ghe.example.com', token: 'ghe_token0123456789', exec }), 403);
+  assert.equal(calls[0].program, process.execPath);
+  assert.deepEqual(calls[0].args.slice(2), ['https://github.com/acme/widgets.git/info/refs?service=git-receive-pack', 'GH_TOKEN']);
+  assert.equal(calls[0].options.env.GH_TOKEN, 'github_pat_RO0123456789');
+  assert.deepEqual(calls[1].args.slice(2), ['https://ghe.example.com/acme/widgets.git/info/refs?service=git-receive-pack', 'GH_ENTERPRISE_TOKEN']);
+  assert.equal(calls[1].options.env.GH_ENTERPRISE_TOKEN, 'ghe_token0123456789');
+  assert.ok(calls.every((call) => !call.args.join(' ').includes('token0123456789') && !call.args.join(' ').includes('RO0123456789')), 'never an argument');
+  assert.equal(calls[0].options.shell, undefined, 'no shell');
+  // 200 may push; 401, 403, and 404 may not; anything else says neither.
+  const may = (status) => tokenMayPush('acme/widgets', { host: 'github.com', token: 't', probe: () => status });
+  assert.deepEqual([200, 401, 403, 404].map(may), [true, false, false, false]);
+  assert.throws(() => may(500), /the forge answered the push probe with 500/u);
 });
 
 test('preflight says ok access with a note naming the token\'s source, and a blocker when there is none', (t) => {
@@ -208,7 +231,7 @@ test('the SessionStart hook hands GH_TOKEN, from the source the start checked, t
   const claim = claimOf(fx);
   const work = path.join(runsFolder(fx.state), 'launch', 'attempts', 'ENG-1.1', 'work');
   // The forge CLI the hook finds on PATH, which answers its login's token, as gh does from the keyring.
-  const hookToken = 'github_pat_HOOK0123456789';
+  const hookToken = FIXTURE_TOKEN;
   writeFileSync(path.join(fx.bin, 'gh'), `#!/bin/sh\n[ "$1 $2 $3 $4" = "auth token --hostname github.com" ] && { echo ${hookToken}; exit 0; }\nexit 1\n`, { mode: 0o755 });
   const hook = (session, cwd, file, more = {}) => spawnSync(process.execPath, [SESSION_START], {
     input: JSON.stringify({ session_id: session, cwd, hook_event_name: 'SessionStart', source: 'startup' }),
@@ -233,6 +256,12 @@ test('the SessionStart hook hands GH_TOKEN, from the source the start checked, t
   assert.equal(statSync(file).mode & 0o777, 0o600);
   const seen = spawnSync('/bin/sh', ['-c', `. '${file}'; printf '%s' "$GH_TOKEN"`], { encoding: 'utf8' });
   assert.equal(seen.stdout, hookToken);
+  // The hook recorded the handoff for the start's proof check, with nothing secret.
+  const attempt = path.dirname(work);
+  rmSync(path.join(attempt, 'token-handoff.json'), { force: true });
+  mkdirSync(path.dirname(envFile('again')), { recursive: true });
+  assert.equal(hook(STARTED[0].session, work, envFile('again'), { [CLAIM_VAR]: claim }).status, 0);
+  assert.deepEqual(JSON.parse(readFileSync(path.join(attempt, 'token-handoff.json'), 'utf8')), { handed: true });
   // The same session without the claim, as one another person opened, gets no token, and is told why.
   const bare = envFile('bare');
   const unclaimed = hook(STARTED[0].session, work, bare);
@@ -248,10 +277,12 @@ test('the SessionStart hook hands GH_TOKEN, from the source the start checked, t
   // start checked; a failed read of that source hands nothing over and says why, with no other source tried.
   let asked = null;
   const claimed = { ...fx.env, [CLAIM_VAR]: claim };
-  const vars = confinedTokenVars({ session: STARTED[0].session, cwd: work, env: claimed, token: (given) => ((asked = given), { token: 'github_pat_STANDIN0123' }) });
-  assert.deepEqual(vars, { vars: { GH_TOKEN: 'github_pat_STANDIN0123' } });
+  const vars = confinedTokenVars({ session: STARTED[0].session, cwd: work, env: claimed, token: (given) => ((asked = given), { token: FIXTURE_TOKEN, source: 'the forge CLI\'s login for github.com' }) });
+  assert.deepEqual(vars, { vars: { GH_TOKEN: FIXTURE_TOKEN }, folder: attempt });
   assert.deepEqual([asked.root, asked.repository, asked.keychain, asked.env, asked.only], [findProject(fx.dir).root, { host: 'github.com', owner: 'acme', name: 'widgets' }, null, claimed, 'login']);
-  assert.deepEqual(confinedTokenVars({ session: STARTED[0].session, cwd: work, env: claimed, token: () => ({ problem: 'the login: gone' }) }), { problem: 'the login: gone' });
+  assert.deepEqual(confinedTokenVars({ session: STARTED[0].session, cwd: work, env: claimed, token: () => ({ problem: 'the login: gone' }) }), { problem: 'the login: gone', folder: attempt });
+  // The same source now giving another token, as after a new login: a failed handoff, never the new token.
+  assert.deepEqual(confinedTokenVars({ session: STARTED[0].session, cwd: work, env: claimed, token: () => ({ token: 'github_pat_OTHER0123456789', source: 'the forge CLI\'s login for github.com' }) }), { problem: 'the forge CLI\'s login for github.com now gives another token than the one the start checked', folder: attempt });
   assert.equal(confinedTokenVars({ session: STARTED[0].session, cwd: fx.dir, env: claimed }), null, 'no confined attempt, no answer');
 });
 
@@ -263,10 +294,11 @@ test('in the launch window, while the host has not named the session, only the s
   // A pending mark for the next launch in that clone, which holds every session the host had not listed before it.
   assert.ok(markPending(DRIVER, { cwd: work, root: fx.dir, known: [DRIVER], env: fx.env }));
   const stranger = 'abcd1234-0000-4000-8000-00000000fe01';
-  const token = () => ({ token: 'github_pat_STANDIN0123' });
-  assert.deepEqual(confinedTokenVars({ session: stranger, cwd: work, env: fx.env, token }), { problem: 'this session does not hold the claim the start gave the session it launched, so it is not that session' });
+  const token = () => ({ token: FIXTURE_TOKEN, source: 'the login' });
+  const folder = path.dirname(work);
+  assert.deepEqual(confinedTokenVars({ session: stranger, cwd: work, env: fx.env, token }), { problem: 'this session does not hold the claim the start gave the session it launched, so it is not that session', folder });
   assert.deepEqual(confinedTokenVars({ session: stranger, cwd: work, env: { ...fx.env, [CLAIM_VAR]: 'f'.repeat(48) }, token }).problem, 'this session does not hold the claim the start gave the session it launched, so it is not that session', 'a wrong claim');
-  assert.deepEqual(confinedTokenVars({ session: stranger, cwd: work, env: { ...fx.env, [CLAIM_VAR]: claim }, token }), { vars: { GH_TOKEN: 'github_pat_STANDIN0123' } }, 'the launched session, before the host names it');
+  assert.deepEqual(confinedTokenVars({ session: stranger, cwd: work, env: { ...fx.env, [CLAIM_VAR]: claim }, token }), { vars: { GH_TOKEN: FIXTURE_TOKEN }, folder }, 'the launched session, before the host names it');
 });
 
 test('the hook reads only the source the start checked: a project entry that fails then gives no token, with no fall back', () => {
@@ -296,3 +328,34 @@ test('the session environment file is made owner-only before anything is written
   assert.ok(confineReads({ env: {}, home: root }).includes(tree), 'and the sandbox proof tries to read it');
 });
 
+
+test('a credential that disappears after the access check fails the start: the hook records no handoff, and the proof check reads that', (t) => {
+  const fx = runFixture(t);
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  const claim = claimOf(fx);
+  const work = path.join(runsFolder(fx.state), 'launch', 'attempts', 'ENG-1.1', 'work');
+  const folder = path.dirname(work);
+  // The forge CLI's login is gone by the time the session starts: gh gives no token.
+  writeFileSync(path.join(fx.bin, 'gh'), '#!/bin/sh\necho "no oauth token found for github.com" >&2\nexit 1\n', { mode: 0o755 });
+  const file = path.join(fx.root, 'session-env', 'gone', 'sessionstart-hook-0.sh');
+  mkdirSync(path.dirname(file), { recursive: true });
+  const ran = spawnSync(process.execPath, [SESSION_START], {
+    input: JSON.stringify({ session_id: STARTED[0].session, cwd: work, hook_event_name: 'SessionStart', source: 'startup' }),
+    env: { ...fx.env, CLAUDE_ENV_FILE: file, CLAUDE_CODE_SESSION_ID: STARTED[0].session, [CLAIM_VAR]: claim }, encoding: 'utf8',
+  });
+  assert.equal(ran.status, 0, ran.stderr);
+  const record = JSON.parse(readFileSync(path.join(folder, 'token-handoff.json'), 'utf8'));
+  assert.equal(record.handed, false);
+  assert.match(record.why, /^the forge CLI's login for github\.com, the source the start checked, gives no token now \(/u);
+  assert.match(handoffProblem(folder), /^the forge token was not handed to the session: the forge CLI's login for github\.com, the source the start checked, gives no token now/u);
+  // The proof check fails on it, before it reads anything else of the proof.
+  const checked = confineCheck({ folder, session: STARTED[0].session, isAlive: () => true, sentinel: () => ({ others: 0 }) });
+  assert.equal(checked.pass, false);
+  assert.match(checked.problem, /^the forge token was not handed to the session/u);
+  // No record at all, as a hook that never ran: the same.
+  rmSync(path.join(folder, 'token-handoff.json'));
+  assert.equal(confineCheck({ folder, session: STARTED[0].session, isAlive: () => true, sentinel: () => ({ others: 0 }) }).problem, 'the session\'s SessionStart hook recorded no forge token handoff, so its pushes would not sign in');
+  // A start that expected no token, with no claim, is not held to one.
+  rmSync(path.join(folder, 'token-claim.json'));
+  assert.equal(handoffProblem(folder), null);
+});

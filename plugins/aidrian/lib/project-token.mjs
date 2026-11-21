@@ -6,10 +6,11 @@
 //      which every project on the machine shares: `security find-generic-password -s aidrian-project-run -w`;
 //   3. `login`: the forge CLI's own login for the repository's host (forgeFor's authToken), wherever the CLI keeps it.
 // Each keychain read is an argv with no shell. The start picks the first source that gives a token, checks that token
-// may push, and records only the source's id, with the digest of a claim it gives the session it launches (writeClaim).
-// The session's SessionStart hook then reads that one source again, outside the sandbox, only for a session that holds
-// the claim, and hands the token to the sandboxed commands alone, as the forge CLI's token variable (forgeTokenVar).
-// No file of the run, argv, or printed line holds the token.
+// may push, and records the source's id and the token's digest, with the digest of a claim it gives the session it
+// launches (writeClaim). The session's SessionStart hook then reads that one source again, outside the sandbox, only for
+// a session that holds the claim, and hands the sandboxed commands alone the token whose digest the start recorded, as
+// the forge CLI's token variable for the host (forgeTokenVar); it records whether it did (writeHandoff), which the
+// sandbox proof's check reads. No file of the run, argv, or printed line holds the token.
 
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
@@ -17,6 +18,7 @@ import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { forgeFor, forgeLoginStep, forgeTokenNote, forgeTokenVar } from './forges/index.mjs';
+import { writeJson } from './confine-guard.mjs';
 import { readSmallJson } from './fs.mjs';
 import { programNames, programOnPath } from './hosts/process.mjs';
 import { LOCAL_FILE } from './project.mjs';
@@ -98,8 +100,8 @@ export function forgeToken({ forge, repository, keychain = null, platform = proc
   return { problem: `no source gives a forge token for ${host}, of ${tried.join(', ')} (the login: ${whyNone(last)}), and an issue session reaches the forge only with one; sign the forge CLI in with \`${forgeLoginStep(host)}\`, or add a keychain entry of service ${JSON.stringify(DEFAULT_KEYCHAIN_SERVICE)}, or name one in projectRun.forgeTokenKeychain of ${LOCAL_FILE}`, notes };
 }
 
-// The variables that hand `token` to the session's sandboxed commands: the forge CLI's token variable alone.
-export const tokenVars = (token) => ({ [forgeTokenVar()]: token });
+// The variables that hand `token` to the session's sandboxed commands: the forge CLI's token variable for `host` alone.
+export const tokenVars = (token, host) => ({ [forgeTokenVar(host)]: token });
 
 // The token as the SessionStart hook of a confined session reads it again, outside the sandbox, from the main checkout
 // `root`, from the source `only` the start recorded: forgeToken's answer, each read stopped at TOKEN_TIMEOUT_MS.
@@ -110,28 +112,48 @@ export const sessionToken = ({ root, repository, keychain, env = process.env, pl
 // the inline settings' `env` (lib/hosts/claude-code-background.mjs): no other session opened in the clone holds it.
 export const CLAIM_VAR = 'AIDRIAN_START_CLAIM';
 const CLAIM_FILE = 'token-claim.json';
+// Where the SessionStart hook records whether it handed the token over, beside the claim, outside the sandbox's grants.
+const HANDOFF_FILE = 'token-handoff.json';
 const digest = (value) => createHash('sha256').update(String(value)).digest('hex');
+
+// The SHA-256 of a token, as the claim keeps it: the start's checked token, which the hook's must match.
+export const tokenDigest = (token) => digest(token);
 
 // A new claim for one start: random, and only its digest is kept on disk.
 export const newClaim = () => randomBytes(24).toString('hex');
 
-// Writes the claim's digest and the token's source id to the attempt's folder `folder`, owner-only, a new file: null,
-// or why it could not.
-export function writeClaim(folder, { claim, source }) {
+// Writes the claim's digest, the token's source id, and the checked token's digest `token` to the attempt's folder
+// `folder`, owner-only, a new file: null, or why it could not.
+export function writeClaim(folder, { claim, source, token }) {
   try {
-    writeFileSync(path.join(folder, CLAIM_FILE), `${JSON.stringify({ claim: digest(claim), source })}\n`, { flag: 'wx', mode: 0o600 });
+    writeFileSync(path.join(folder, CLAIM_FILE), `${JSON.stringify({ claim: digest(claim), source, token })}\n`, { flag: 'wx', mode: 0o600 });
     return null;
   } catch (error) {
     return `the attempt's token claim cannot be written (${error.code ?? 'no code'})`;
   }
 }
 
-// The source id the start recorded for the attempt's folder `folder`, when `env` holds the claim it gave the session it
-// launched: { source }, or { problem } for a session that does not hold it, or an attempt with no claim.
+// The source id and the checked token's digest the start recorded for the attempt's folder `folder`, when `env` holds
+// the claim it gave the session it launched: { source, token }, or { problem } for a session that does not hold it, or
+// an attempt with no claim.
 export function claimedSource(folder, env) {
   const read = readSmallJson(path.join(folder, CLAIM_FILE), 4096);
-  if (!read || typeof read.claim !== 'string' || !SOURCE_IDS.includes(read.source)) return { problem: 'the start recorded no token claim for this attempt' };
+  if (!read || typeof read.claim !== 'string' || !SOURCE_IDS.includes(read.source) || typeof read.token !== 'string') return { problem: 'the start recorded no token claim for this attempt' };
   const given = env?.[CLAIM_VAR];
   if (typeof given !== 'string' || digest(given) !== read.claim) return { problem: 'this session does not hold the claim the start gave the session it launched, so it is not that session' };
-  return { source: read.source };
+  return { source: read.source, token: read.token };
+}
+
+// Records in the attempt's folder `folder` whether the hook handed the token over (`handed`) and, when not, `why`:
+// nothing secret. Null, or why it could not.
+export const writeHandoff = (folder, { handed, why = null }) => writeJson(path.join(folder, HANDOFF_FILE), handed ? { handed: true } : { handed: false, why });
+
+// Why the attempt in `folder` holds no forge token its session was handed, or null: only for a start that expected one,
+// whose claim is there; then a missing record, or one that says not handed, is the problem.
+export function handoffProblem(folder) {
+  if (!readSmallJson(path.join(folder, CLAIM_FILE), 4096)) return null;
+  const read = readSmallJson(path.join(folder, HANDOFF_FILE), 4096);
+  if (!read) return 'the session\'s SessionStart hook recorded no forge token handoff, so its pushes would not sign in';
+  if (read.handed === true) return null;
+  return `the forge token was not handed to the session: ${typeof read.why === 'string' ? read.why.slice(0, 300) : 'no reason given'}`;
 }

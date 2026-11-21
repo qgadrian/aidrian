@@ -16,7 +16,7 @@ import { emptyState, noteOutcome, readLocalState, stateFromComment, writeLocalSt
 import { check } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 
 // A temporary repository with `main` (plus `baseFiles`) and a `feat` branch whose one commit writes `feature`, by
-// default `src/app.js` set to 2, with GitHub faked in memory, as test/review-run.test.mjs builds it. `mergeMain(files, resolution)` commits `files` on main, merges main
+// default `src/app.js` set to 2, with GitHub faked in memory, as test/review-run-fixture.mjs builds it. `mergeMain(files, resolution)` commits `files` on main, merges main
 // into feat, and, when the merge conflicts, writes `resolution` and commits it. No GIT_DIR: every git call runs in
 // the temporary folder.
 function repo(t, { baseConfig = { version: 1 }, baseFiles = {}, feature = { 'src/app.js': 'export const app = 2;\n' } } = {}) {

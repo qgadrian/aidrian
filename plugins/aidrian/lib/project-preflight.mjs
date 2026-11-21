@@ -26,7 +26,7 @@ import path from 'node:path';
 import { baseBranchTip, machineSwitch } from './config.mjs';
 import { resolveAutoMerge } from './config-local.mjs';
 import { forgeFor } from './forges/index.mjs';
-import { gateGit, knownPrefix, withoutLocation } from './git.mjs';
+import { gateGit, knownPrefix } from './git.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
 import { continueRoutes, detectHost } from './hosts/index.mjs';
 import { isQuotaNotice } from './pr-await-review.mjs';
@@ -92,7 +92,7 @@ export function preflightCommand({ project, config, run = null, env = process.en
     check('instructions', ancestorProblem(path.join(runsFolder(place.state), 'attempts'), { project, tip: baseBranchTip(project.root), env }));
     // Every issue session commits in its clone, unsigned (project-start.mjs UNSIGNED), so a commit that fails there
     // parks every issue with its work staged.
-    const origin = gateGit(['remote', 'get-url', 'origin'], main, { env: withoutLocation(env), timeout: 30_000 });
+    const origin = gateGit(['remote', 'get-url', 'origin'], main, { env, timeout: 30_000 });
     const branch = runBranch(place.state, run);
     const commit = commitProblem({ state: place.state, env, url: origin.status === 0 ? origin.stdout.trim() : null, branch: branch ?? PROBE_BRANCH, run: branch ? run : null });
     check('commit', commit ? `${commit} (setup: ${COMMIT_SETUP})` : null);

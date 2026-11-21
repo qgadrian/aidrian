@@ -1933,9 +1933,10 @@ clone under its host's sandbox, and a host that is not halts the start. Each att
 start sets `commit.gpgsign` and `tag.gpgsign` to `false` in the clone's own git config, on every attempt, and never in
 the user's global or system config. The sandbox hides the signing keys (`~/.gnupg` and `~/.ssh`), so a commit the
 user's config signs would fail once the work is done and park the issue with its change staged; the forge asks no
-signature of a branch commit, and the run merges each pull request by squash. Every git call that makes the clone,
-and the start's fetch of the base branch, runs without git's location variables (`GIT_DIR`, `GIT_INDEX_FILE`,
-`GIT_CONFIG`, and the rest), so it reads and writes only the attempt's own git folder and the main checkout's. A clone in
+signature of a branch commit, and the run merges each pull request by squash. Every `aidrian project` subcommand
+drops git's location variables (`GIT_DIR`, `GIT_INDEX_FILE`, `GIT_CONFIG`, `GIT_TEMPLATE_DIR`, and the rest) once, at
+its entry, from its own process and the environment it passes on, so each git call reads and writes only the
+repository at its own folder, the attempt's clone included. A clone in
 which git still reads either key as true, as a `GIT_CONFIG_COUNT` or `GIT_CONFIG_PARAMETERS` setting in the driver's
 environment makes it, halts the start before any session, with the preflight's own check; so does a read of either
 key that git fails, naming git's error. The clone takes no template (`--template=`), so neither `GIT_TEMPLATE_DIR` nor
@@ -2044,8 +2045,9 @@ in a scratch repository with no template, its git folder apart, origin set to th
 signing off in its own config; with `RUN` named it lies in that run's attempts folder and checks out the run's first
 issue branch, before a run exists in the runs folder on `fix/aidrian-commit-probe`; an `includeIf` on an attempt's
 folder or branch may still read it otherwise, since that first issue may be done and the `.commit-probe-*` name is no
-attempt's `<issue>.<attempt>`, a residual the start's own check of each real clone covers; every git call
-runs without git's location variables, and the scratch is removed after;
+attempt's `<issue>.<attempt>`; the start's own check of each real clone guards signing only, so an identity that
+differs there, as `user.useConfigOnly` with such an `includeIf` makes it, is an accepted residual: preflight passes,
+the attempt's commit fails on identity, and that issue parks; the scratch is removed after;
 preflight runs outside the issue session's sandbox, where the signing keys are in reach, so it blocks when git still
 reads `commit.gpgsign` or `tag.gpgsign` as true there, as a `GIT_CONFIG_COUNT` or `GIT_CONFIG_PARAMETERS` setting in
 the environment makes it, or cannot read either, and otherwise on git's own error, such as no identity),

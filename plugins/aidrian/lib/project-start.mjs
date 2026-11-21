@@ -27,7 +27,7 @@ import path from 'node:path';
 
 import { ATTEMPT_KEEP, attemptOf, GIT_PLACEHOLDERS, KEPT_FOLDERS } from './attempt-clone.mjs';
 import { isWithin, readSmallJson, resolvedPath } from './fs.mjs';
-import { gateGit, withoutLocation } from './git.mjs';
+import { gateGit } from './git.mjs';
 import { claimedSource, forgeToken, gitCredentialVars, sessionToken, tokenDigest, tokenVars } from './project-token.mjs';
 import { loadConfig } from './config.mjs';
 import { findProject, stateRoot } from './project.mjs';
@@ -233,9 +233,9 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, tip,
     rmSync(folder, { recursive: true, force: true });
     return { problem };
   };
-  // Every git call of the attempt runs without the variables that point git at another git folder, index, or config
-  // (git.mjs withoutLocation), so it reads and writes only the attempt's own.
-  const git = (args, cwd = work, options = {}) => gateGit(args, cwd, { ...options, env: withoutLocation(env) });
+  // Every git call of the attempt runs under `env`, which `aidrian project` cleared of git's location variables once, at
+  // its entry (git.mjs clearLocation).
+  const git = (args, cwd = work, options = {}) => gateGit(args, cwd, { ...options, env });
   const failed = (what, result) => gone(`the attempt's clone could not be made (${what}: ${String(result.stderr ?? '').trim().split('\n').at(-1) || `exit ${result.status}`})`);
   const url = git(['remote', 'get-url', 'origin'], main, { timeout: 30_000 });
   if (url.status !== 0) return failed('origin', url);
@@ -281,11 +281,10 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, tip,
 // through GIT_CONFIG_COUNT or GIT_CONFIG_PARAMETERS, still wins over the clone's own: commitProblem names it.
 export const UNSIGNED = Object.freeze([['commit.gpgsign', 'false'], ['tag.gpgsign', 'false']]);
 
-// Sets UNSIGNED in the own config of the checkout `work`, under `env` without the variables that point git elsewhere
-// (git.mjs withoutLocation), so only that checkout's config is written: null, or the git call that failed.
+// Sets UNSIGNED in the own config of the checkout `work`, under `env`: null, or the git call that failed.
 export function setUnsigned(work, env = process.env) {
   for (const [key, value] of UNSIGNED) {
-    const set = gateGit(['config', '--local', key, value], work, { timeout: 30_000, env: withoutLocation(env) });
+    const set = gateGit(['config', '--local', key, value], work, { timeout: 30_000, env });
     if (set.status !== 0) return set;
   }
   return null;
@@ -298,7 +297,7 @@ export function setUnsigned(work, env = process.env) {
 export function signingProblem(cwd, env = process.env) {
   const signed = [];
   for (const [key] of UNSIGNED) {
-    const read = gateGit(['config', '--type=bool', '--get', key], cwd, { env: withoutLocation(env), timeout: 30_000 });
+    const read = gateGit(['config', '--type=bool', '--get', key], cwd, { env, timeout: 30_000 });
     if (read.status !== 0 && read.status !== 1) return `git cannot read ${key} in a clone made as an attempt's (${gitSaid(read)}), so whether its commits would sign cannot be told: fix that config`;
     if (read.status === 0 && read.stdout.trim() === 'true') signed.push(key);
   }
@@ -320,15 +319,17 @@ const gitSaid = (result) => {
 // repository in a folder of its own in the runs folder of `state`, where every clone lies, with its git folder apart as
 // a clone's is, origin's URL `url` (the main checkout's, which each clone takes), the branch `branch` checked out, and
 // UNSIGNED set in its own config, commits an empty probe under `env`: so a config that names a folder, a remote URL, or a
-// branch (includeIf) reads it as a clone's. Every git call runs without the variables that point git elsewhere
-// (git.mjs withoutLocation), so nothing outside the scratch folder is written. The preflight runs outside the issue
+// branch (includeIf) reads it as a clone's. `aidrian project` cleared git's location variables at its entry
+// (git.mjs clearLocation), so nothing outside the scratch folder is written. The preflight runs outside the issue
 // session's sandbox, where the user's signing keys are in reach, so a commit that would still sign (signingProblem)
 // refuses before the commit: in the sandbox it would fail. Otherwise git's own error refuses, as no identity would. The
 // scratch folder is removed either way. With the run `run` named, the scratch lies in its attempts folder, as a clone
 // does; before a run exists it lies in the runs folder and checks out PROBE_BRANCH. An accepted residual: an includeIf
 // on an attempt's gitdir or branch may still read the scratch otherwise than a real clone, since the run's first
 // snapshot issue may be done, so no attempt ever takes its branch, and the `.commit-probe-*` folder name misses a gitdir
-// pattern on an attempt's `<issue>.<attempt>` name. The start's own signingProblem in each real clone guards the attempt.
+// pattern on an attempt's `<issue>.<attempt>` name. The start's own signingProblem in each real clone guards signing
+// only: an identity that differs, as user.useConfigOnly with an includeIf on the attempt's folder or branch makes it,
+// lets the probe pass while the attempt's commit then fails on identity, and that issue parks.
 export function commitProblem({ state, env = process.env, url = null, branch = PROBE_BRANCH, run = null }) {
   const runs = run ? path.join(runFolder(state, run), 'attempts') : runsFolder(state);
   let scratch;
@@ -339,7 +340,7 @@ export function commitProblem({ state, env = process.env, url = null, branch = P
     return `no scratch folder for the probe can be made in ${runs} (${error.code ?? 'no code'})`;
   }
   const work = path.join(scratch, 'work');
-  const git = (args, cwd = work) => gateGit(args, cwd, { env: withoutLocation(env), timeout: 30_000 });
+  const git = (args, cwd = work) => gateGit(args, cwd, { env, timeout: 30_000 });
   try {
     const made = git(['init', '--quiet', '--template=', `--initial-branch=${branch}`, '--separate-git-dir', path.join(scratch, 'git'), work], scratch);
     if (made.status !== 0) return `git cannot make a scratch repository for the probe (${gitSaid(made)})`;

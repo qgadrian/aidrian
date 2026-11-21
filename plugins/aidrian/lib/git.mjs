@@ -189,9 +189,17 @@ export const LOCATION_VARS = Object.freeze([
   'GIT_REPLACE_REF_BASE', 'GIT_PREFIX', 'GIT_TEMPLATE_DIR',
 ]);
 
-// `env` (this process's by default) without LOCATION_VARS: for a git call that must read and write only the repository
-// at its own folder, whatever the caller's environment points git at.
+// `env` (this process's by default) without LOCATION_VARS, a copy.
 export const withoutLocation = (env = process.env) => Object.fromEntries(Object.entries(env).filter(([name]) => !LOCATION_VARS.includes(name)));
+
+// Drops LOCATION_VARS for the rest of a command, so each of its git calls reads and writes only the repository at its
+// own folder, whatever the caller's environment points git at: from this process's own environment, in place, which
+// every call that names no environment takes, and from `env`, whose copy without them it returns. `aidrian project`
+// calls it once, at its entry (lib/project-run-cli.mjs projectCommand).
+export function clearLocation(env = process.env) {
+  for (const name of LOCATION_VARS) delete process.env[name];
+  return env === process.env ? process.env : withoutLocation(env);
+}
 
 function firstLine(args, cwd, options) {
   return lineOf(runGit(args, cwd, options));

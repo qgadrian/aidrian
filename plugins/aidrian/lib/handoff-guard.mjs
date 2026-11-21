@@ -30,7 +30,7 @@ import { GIT_TIMEOUT_MS, runGit } from './git.mjs';
 import { changesGitTarget } from './git-push.mjs';
 import { globLinksTo, globStarts, linkWalk } from './glob-links.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
-import { ARMING_FILE, openStore, SESSION_ID, startedInBackground, storePath } from './handoff-markers.mjs';
+import { ARMING_FILE, openStore, SESSION_ID, startedFolders, startedInBackground, storePath } from './handoff-markers.mjs';
 import { DETECT_VARS, HOSTS, IDENTITY_VARS, mainCheckoutPaths, opaqueShellCommand } from './hosts/index.mjs';
 import { defaultStateDir, findProject, projectCheckouts, stateDir, stateRoot } from './project.mjs';
 import { GIT_VARS } from './review/env.mjs';
@@ -79,6 +79,33 @@ export function startedUnattended(project, config, session, { home, base } = {})
   // Lazily, so the working copy's folders are read first, and git only when they hold no floor.
   for (const state of stateFolders(project, config, { home, lazy: true, ...(base ? { base } : {}) })) if (found(state)) return true;
   return false;
+}
+
+// The folder the background start of `session` started it in, as the start record of the gate that started it says
+// (handoff-markers.mjs startedFolders): its `cwd`, in the continuation stores of `project`'s state folders, read as
+// startedUnattended reads them, but each store held to every checkout of the repository, as the handoff writer holds it
+// (handoff-continue.mjs projectStore, project.mjs projectCheckouts): a record grants a worktree, so one in a store inside
+// a sibling worktree, which the writer would refuse, grants none. lib/unattended-write.mjs asks it for a mark a gate
+// filed before the mark recorded that folder. Null when git cannot list the checkouts, no store holds such a record, or
+// the records name two folders: a session that cannot tell where it started has no worktree.
+export function startedFolder(project, config, session, { home, base } = {}) {
+  if (typeof session !== 'string' || !SESSION_ID.test(session)) return null;
+  checkDeadline();
+  const checkouts = projectCheckouts(project, () => (Number.isFinite(remainingMs()) ? { timeout: Math.max(1, Math.floor(remainingMs())) } : undefined));
+  if (!checkouts) return null;
+  const folders = new Set();
+  for (const state of stateFolders(project, config, { home, lazy: true, ...(base ? { base } : {}) })) {
+    checkDeadline();
+    let found;
+    try {
+      found = startedFolders(openStore(state, { checkouts, maxChain: config.session.handoff.maxChain }), session);
+    } catch (error) {
+      if (error instanceof PastDeadline) throw error;
+      found = [];
+    }
+    for (const each of found) folders.add(each);
+  }
+  return folders.size === 1 ? [...folders][0] : null;
 }
 
 // The base branch's config of `project`, read once however often it is asked: a function that gives { config },

@@ -509,9 +509,11 @@ No `sandbox.excludedCommands` is passed. Three conditions hold on top of the san
   sandbox, from that one source, never another, hands it over only when its SHA-256 is the one the start recorded, and
   appends it, in a file it first makes owner-only, to the file `CLAUDE_ENV_FILE` names, as it does the cache
   variables. With it go git's command-scope config entries, after any `GIT_CONFIG_COUNT` the environment already
-  holds: `credential.helper` empty, which drops every helper git read from the user's and the repository's config,
-  since git reads the environment's last, then `credential.helper` set to gh's own `auth git-credential`, by the
-  absolute path of the gh on PATH, so git's push takes the token whatever helpers the config names. A source that gives no token then, or another one, or a session without the claim, gets a line saying
+  holds, both scoped to the forge's host as `credential.https://<host>.helper`: an empty one, which drops every helper
+  git collected for that host from the user's and the repository's config, then gh's own `auth git-credential`, by the
+  absolute path of the gh on PATH, so git's push takes the token whatever helpers the config names. Another host keeps
+  the user's own helpers, so gh never offers the run's token there (checked live: `git credential fill` gave the gh
+  token for github.com and no credential for an unrelated host). A source that gives no token then, or another one, or a session without the claim, gets a line saying
   why instead, and no token. The hook of the session that holds the claim, and only it, records in the attempt's
   folder whether it handed the token over, and why not, nothing secret, and the start's check of the sandbox proof fails a start whose record is missing or says not
   handed, so the run halts as on a failed proof. The host reads that file in its own

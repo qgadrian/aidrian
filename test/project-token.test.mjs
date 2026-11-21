@@ -280,7 +280,7 @@ test('the SessionStart hook hands GH_TOKEN, from the source the start checked, t
   assert.equal(seen.stdout, hookToken);
   // And git's command-scope config: every helper of the user's and the repository's config dropped, then gh's own.
   const git = spawnSync('/bin/sh', ['-c', `. '${file}'; printf '%s|' "$GIT_CONFIG_COUNT" "$GIT_CONFIG_KEY_0" "$GIT_CONFIG_VALUE_0" "$GIT_CONFIG_KEY_1" "$GIT_CONFIG_VALUE_1"`], { encoding: 'utf8' });
-  assert.equal(git.stdout, `2|credential.helper||credential.helper|!'${path.join(fx.bin, 'gh')}' auth git-credential|`);
+  assert.equal(git.stdout, `2|credential.https://github.com.helper||credential.https://github.com.helper|!'${path.join(fx.bin, 'gh')}' auth git-credential|`);
   // The hook recorded the handoff for the start's proof check, with nothing secret.
   const attempt = path.dirname(work);
   rmSync(path.join(attempt, 'token-handoff.json'), { force: true });
@@ -394,7 +394,9 @@ test('git takes the token through gh\'s helper alone: an empty helper resets the
   t.after(() => rmSync(bin, { recursive: true, force: true }));
   writeFileSync(path.join(bin, 'gh'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   const helper = `!'${path.join(bin, 'gh')}' auth git-credential`;
-  assert.deepEqual(gitCredentialVars({ PATH: bin }), { GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_VALUE_0: '', GIT_CONFIG_KEY_1: 'credential.helper', GIT_CONFIG_VALUE_1: helper });
-  assert.deepEqual(gitCredentialVars({ PATH: bin, GIT_CONFIG_COUNT: '1' }), { GIT_CONFIG_COUNT: '3', GIT_CONFIG_KEY_1: 'credential.helper', GIT_CONFIG_VALUE_1: '', GIT_CONFIG_KEY_2: 'credential.helper', GIT_CONFIG_VALUE_2: helper }, 'after the entry already there');
+  const key = 'credential.https://github.com.helper';
+  assert.deepEqual(gitCredentialVars({ PATH: bin }, 'github.com'), { GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: key, GIT_CONFIG_VALUE_0: '', GIT_CONFIG_KEY_1: key, GIT_CONFIG_VALUE_1: helper });
+  assert.deepEqual(gitCredentialVars({ PATH: bin, GIT_CONFIG_COUNT: '1' }, 'github.com'), { GIT_CONFIG_COUNT: '3', GIT_CONFIG_KEY_1: key, GIT_CONFIG_VALUE_1: '', GIT_CONFIG_KEY_2: key, GIT_CONFIG_VALUE_2: helper }, 'after the entry already there');
+  assert.equal(gitCredentialVars({ PATH: bin }, 'evil.example/x'), null, 'no plain host name');
   assert.equal(gitCredentialVars({ PATH: '' }), null, 'no gh, no helper');
 });

@@ -115,18 +115,21 @@ function recovery({ host, platform }) {
 export const tokenVars = (token, host) => ({ [forgeTokenVar(host)]: token });
 
 // The command-scope git config that makes git take that token from the forge CLI's credential helper, for the session's
-// sandboxed commands, after the entries `env` already counts in GIT_CONFIG_COUNT: an empty `credential.helper`, which
-// drops every helper git read from the user's and the repository's config, since git reads the environment's last,
-// then the CLI's own helper (forgeGitHelper). Null when the CLI is not on an absolute folder of PATH.
-export function gitCredentialVars(env) {
+// sandboxed commands, after the entries `env` already counts in GIT_CONFIG_COUNT, both scoped to `https://<host>`, the
+// forge the session pushes to: an empty `credential.https://<host>.helper`, which drops every helper git collected
+// for that host from the user's and the repository's config, then the CLI's own helper (forgeGitHelper). Another
+// host keeps the user's own helpers, so the CLI never offers the run's token there. Null when the CLI is not on an
+// absolute folder of PATH, or `host` is no plain host name.
+export function gitCredentialVars(env, host) {
   const helper = forgeGitHelper(env);
-  if (!helper) return null;
+  if (!helper || typeof host !== 'string' || !/^[A-Za-z0-9.-]+$/u.test(host)) return null;
+  const key = `credential.https://${host}.helper`;
   const given = Number(env?.GIT_CONFIG_COUNT);
   const count = Number.isSafeInteger(given) && given >= 0 && /^\d+$/u.test(String(env?.GIT_CONFIG_COUNT ?? '')) ? given : 0;
   return {
     GIT_CONFIG_COUNT: String(count + 2),
-    [`GIT_CONFIG_KEY_${count}`]: 'credential.helper', [`GIT_CONFIG_VALUE_${count}`]: '',
-    [`GIT_CONFIG_KEY_${count + 1}`]: 'credential.helper', [`GIT_CONFIG_VALUE_${count + 1}`]: helper,
+    [`GIT_CONFIG_KEY_${count}`]: key, [`GIT_CONFIG_VALUE_${count}`]: '',
+    [`GIT_CONFIG_KEY_${count + 1}`]: key, [`GIT_CONFIG_VALUE_${count + 1}`]: helper,
   };
 }
 

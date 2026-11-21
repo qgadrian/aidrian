@@ -561,6 +561,13 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   first `aidrian project wait <run> --max-wait 0`: only when the driver's start record names it, is dated after the
   ledger row that made that driver, and holds the sha256 of a brief that driver recorded. A slug or a session name
   never moves custody.
+- **Custody follows the host continuing the driver.** A host can go on with the driver's own conversation under a new
+  session id, as Claude Code does when it continues a session as a fork. With no brief to check, custody moves only on
+  the host's own record (`capabilities.continuedIn`): on Claude Code, a `continued-in` row last in the old session's
+  transcript that names the new id, dated after the ledger row that made the driver, with no turn of the old session
+  after it. Up to 8 such continuations in a row are followed. The hooks then let the new session run the driver's
+  commands, and its first one writes a `driver` row with `via: "continuation"` and files its driver mark. A fork's
+  `derived-from` row in the new transcript moves nothing: a branch leaves the old session running.
 - **`maxChain` binds the driver's chain alone.** The driver's hops count as any session's, up to the base branch's
   `session.handoff.maxChain`, at most 5 unless it is `"unlimited"`. At the limit the gate prints `continue: none`,
   and the driver keeps driving in its own session, which the host compacts; it does the same on `continue: clear`,

@@ -31,7 +31,7 @@ const AGAIN = /\btry again in\s+([^|]{1,80})/iu;
 const ZONE = /\(([A-Za-z_]+(?:\/[A-Za-z0-9_+-]+){1,2}|UTC)\)/u;
 
 // The transcript files the session `session` started in `cwd` may have, the likeliest first.
-function transcripts({ session, cwd, env, home }) {
+export function transcriptFiles({ session, cwd, env, home }) {
   const projects = path.join(configFolder(env, home), 'projects');
   const name = `${session}.jsonl`;
   const first = typeof cwd === 'string' ? [path.join(projects, cwd.replace(/[^A-Za-z0-9]/gu, '-'), name)] : [];
@@ -85,7 +85,7 @@ export function entryLimit(entry, now) {
 // transcript can be read. An entry with no session id, or one dated ahead, never holds the session.
 export function transcriptLimit({ session, cwd, env, home, now = Date.now() }) {
   if (typeof session !== 'string' || !ID.test(session)) return null;
-  for (const file of transcripts({ session, cwd, env, home })) {
+  for (const file of transcriptFiles({ session, cwd, env, home })) {
     const entries = tailObjects(file, TAIL);
     if (entries === null) continue;
     const own = entries.filter((entry) => entry.sessionId === undefined || entry.sessionId === session);

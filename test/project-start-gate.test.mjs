@@ -417,6 +417,46 @@ test('custody moves to the continuation the driver handed the run to, and never 
   assert.match(fresh.cmd(['start', 'launch', 'ENG-4']).err[0], /this session is not the driver of the run launch, abcd1234-0000-4000-8000-00000000a0c1/u, 'the old driver lost custody');
 });
 
+test('custody follows the host continuing the driver session under a new id, and never a stale, voided, or one-sided continuation', (t) => {
+  const NEXT = 'abcd1234-0000-4000-8000-00000000c0n1';
+  const LAST = 'abcd1234-0000-4000-8000-00000000c0n2';
+  const setup = (rows) => {
+    const fx = runFixture(t);
+    const folder = path.join(fx.env.CLAUDE_CONFIG_DIR, 'projects', fx.dir.replace(/[^A-Za-z0-9]/gu, '-'));
+    mkdirSync(folder, { recursive: true });
+    for (const [session, lines] of Object.entries(rows(Date.parse(fx.run().init.at)))) {
+      appendFileSync(path.join(folder, `${session}.jsonl`), lines.map((line) => `${JSON.stringify(line)}\n`).join(''));
+    }
+    return fx;
+  };
+  const continued = (from, to, ms) => ({ type: 'continued-in', timestamp: at(ms), sessionId: from, continuedInSessionId: to });
+  const wait = (fx, session) => fx.cmd(['wait', 'launch', '--max-wait', '0'], { session });
+
+  // The host continued the driver as NEXT after init: NEXT's first wait takes custody, which the ledger records.
+  const fx = setup((init) => ({ [DRIVER]: [{ type: 'user', sessionId: DRIVER }, continued(DRIVER, NEXT, init + 1000)] }));
+  assert.equal(wait(fx, NEXT).exitCode, 0, wait(fx, NEXT).err.join('\n'));
+  const row = fx.rows().find((each) => each.event === 'driver');
+  assert.deepEqual([row.session, row.from, row.via, /^[0-9a-f]{64}$/u.test(row.sha256)], [NEXT, DRIVER, 'continuation', true]);
+  assert.equal(runDriver(NEXT, { env: fx.env, home: fx.home })?.run, 'launch', 'the continuation holds the driver mark');
+  assert.match(fx.cmd(['start', 'launch', 'ENG-1']).err[0], /this session is not the driver of the run launch, abcd1234-0000-4000-8000-00000000c0n1/u, 'the old id lost custody');
+
+  // Two continuations in a row reach the last.
+  const twice = setup((init) => ({ [DRIVER]: [continued(DRIVER, NEXT, init + 1000)], [NEXT]: [continued(NEXT, LAST, init + 2000)] }));
+  assert.equal(wait(twice, LAST).exitCode, 0);
+  assert.equal(wait(twice, NEXT).exitCode, 1, 'the middle one lost custody to the last');
+
+  // A continuation written before the row that made the driver moves nothing.
+  const stale = setup((init) => ({ [DRIVER]: [continued(DRIVER, NEXT, init - 1000)] }));
+  assert.match(wait(stale, NEXT).err[0], /this session is not the driver of the run launch/u);
+  // The old session went on after the row: the continuation is void.
+  const voided = setup((init) => ({ [DRIVER]: [continued(DRIVER, NEXT, init + 1000), { type: 'assistant', sessionId: DRIVER }] }));
+  assert.match(wait(voided, NEXT).err[0], /this session is not the driver of the run launch/u);
+  // The new session's own word, as a fork's `derived-from` row, moves nothing: only the old transcript's row does.
+  const forked = setup(() => ({ [NEXT]: [{ type: 'derived-from', v: 1, sessionId: NEXT, sessions: [{ type: 'claude_code_session', id: DRIVER, via: 'fork' }] }] }));
+  assert.match(wait(forked, NEXT).err[0], /this session is not the driver of the run launch/u);
+  assert.equal(forked.rows().some((each) => each.event === 'driver'), false);
+});
+
 test('a driver whose earlier issue session handed off to a continuation still running starts no other', (t) => {
   const fx = runFixture(t, { issues: [{ key: 'ENG-1', branch: 'feat/eng-1', status: 'unstarted' }, { key: 'ENG-4', branch: 'fix/eng-4', status: 'unstarted' }] });
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);

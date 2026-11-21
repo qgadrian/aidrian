@@ -51,7 +51,7 @@ import { forgeDomains, forgeFor, forgeTokenVars } from './forges/index.mjs';
 import { gateGit, knownPrefix } from './git.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
 import { claimBusy, dropClaim, readContainedBrief, readStarted, SESSION_ID } from './handoff-markers.mjs';
-import { detectHost, sessionIdentity } from './hosts/index.mjs';
+import { continuationReader, detectHost, sessionIdentity } from './hosts/index.mjs';
 import { branchPolicies, defaultBranch, soloOn } from './pr-auto-merge.mjs';
 import { chainEnded, lingerLine, lingerProblem, notStopped, settleLingering, stopChain } from './project-linger.mjs';
 import { checkedLimit, limitEndRows, limitRecorded, pausedTime, pauseOf, pauseRow, recordedPauseRuns } from './project-limit.mjs';
@@ -207,8 +207,15 @@ export function projectPrompt({ run, key, attempt, branch, clone, skill = SKILL,
 // The name of an issue's session: `<run> · <issue> · <attempt>`.
 const sessionName = (run, key, attempt) => `${run} · ${key} · ${attempt}`;
 
-// The ledger rows that move custody to `session` when `held` (custody) says it is the successor, else none.
-const custodyRows = (held, session, now) => (held.role === 'successor' ? [{ event: 'driver', session, from: held.driver.session, sha256: held.sha256, at: iso(now) }] : []);
+// The ledger rows that move custody to `session` when `held` (custody) says it is the successor, else none. A host
+// continuation hands over no brief, so its row carries the sha256 of its own words, as a resume's does, and `via`.
+const custodyRows = (held, session, now) => {
+  if (held.role !== 'successor') return [];
+  const from = held.driver.session;
+  const at = iso(now);
+  if (held.via === 'continuation') return [{ event: 'driver', session, from, sha256: sha256(Buffer.from(`continuation ${from} ${session} ${at}`)), via: 'continuation', at }];
+  return [{ event: 'driver', session, from, sha256: held.sha256, at }];
+};
 // Files the driver mark of `session`, the run's current driver, or the continuation custody moved to, once its row is
 // written (unattended-mark.mjs markDriver): each start and wait refreshes it, and it names the state folder `state`.
 const markCustodian = (session, found, run, state, env) => markDriver(session, { run, root: found.init.main, state: resolvedPath(state) ?? state, env });
@@ -335,7 +342,7 @@ function startContext(given) {
   const opened = openRun(project, config, run, { env, home });
   if (opened.problem) return plain(opened.problem);
   const { state, found, store } = opened;
-  const held = custody({ found, store, session, now: given.now });
+  const held = custody({ found, store, session, now: given.now, continuedIn: continuationReader({ env, ...(home ? { home } : {}) }) });
   if (held.problem) return plain(held.problem);
   if (endedIn(found)) return plain(`the run ${run} ended, and starts no issue`);
   const halted = haltOf(found);
@@ -704,7 +711,7 @@ export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = pr
   const opened = openRun(project, config, run, { env, home });
   if (opened.problem) return refuse(opened.problem);
   const { state, store } = opened;
-  const held = custody({ found: opened.found, store, session, now });
+  const held = custody({ found: opened.found, store, session, now, continuedIn: continuationReader({ env, ...(home ? { home } : {}) }) });
   if (held.problem) return refuse(held.problem);
   const facade = forge ?? forgeFor(project.root);
   const { policy, note } = settlePolicy(project, teamPolicy(project, opened.found.init.repository, facade));
@@ -914,7 +921,7 @@ export function recordHandoff({ project, config, run, brief, env = process.env, 
   const opened = openRun(project, config, run, { env, home });
   if (opened.problem) return refuse(opened.problem);
   const { state, found, store } = opened;
-  const held = custody({ found, store, session, now });
+  const held = custody({ found, store, session, now, continuedIn: continuationReader({ env, ...(home ? { home } : {}) }) });
   if (held.problem) return refuse(held.problem);
   if (store.refused) return refuse(store.refused);
   const read = readContainedBrief(store, brief);
@@ -939,7 +946,7 @@ export function endRun({ project, config, run, env = process.env, home, now = Da
   if (opened.problem) return refuse(opened.problem);
   const { state, found, store } = opened;
   if (endedIn(found)) return refuse(`the run ${run} ended already`);
-  const held = custody({ found, store, session, now });
+  const held = custody({ found, store, session, now, continuedIn: continuationReader({ env, ...(home ? { home } : {}) }) });
   if (held.problem) return refuse(held.problem);
   // A session that ran on after its issue settled and that the host now lists as ended is recorded gone first.
   const cap = detectHost({ env }).capabilities.projectStart;
@@ -971,7 +978,7 @@ export function resumeRun({ project, config, run, env = process.env, home, now =
   if (named) {
     const attended = attendedProblem({ session, project, config, state: opened.state, env, ...(home ? { home } : {}), now });
     if (attended) return refuse(`a halt is lifted by a person, and ${attended}`);
-    const member = resumerProblem({ found: opened.found, store: opened.store, session, now });
+    const member = resumerProblem({ found: opened.found, store: opened.store, session, now, continuedIn: continuationReader({ env, ...(home ? { home } : {}) }) });
     if (member) return refuse(member);
   }
   if (endedIn(opened.found)) return refuse(`the run ${run} ended`);

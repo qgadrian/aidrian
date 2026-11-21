@@ -731,7 +731,8 @@ export function limitContinueProblem({ env, home, project }) {
   if (settings.value.autoContinueAtUsageLimit === true) return null;
   const why = `the host's user settings ${settings.file} do not set "autoContinueAtUsageLimit": true, so a usage limit would stop the driver for good; add it`;
   const local = projectLimitFile(project);
-  return local ? `${why} there: ${local} sets it, but the host ignores this key in a project's settings, so a project file does not count` : why;
+  const ignored = local ? ` there: ${local} sets it, but the host ignores this key in a project's settings, so a project file does not count` : '';
+  return `${why}${ignored} (this check reads the user settings only, not managed policy or --settings)`;
 }
 
 // The settings file of the checkout `project` that sets `autoContinueAtUsageLimit`, or null.

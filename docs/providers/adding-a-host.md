@@ -292,7 +292,7 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
 - A project run's preflight (`lib/project-preflight.mjs`): `reviewerSeen(repo, login, { host, limit, counts })`, whether
   the reviewer reviewed, or left a comment whose body `counts` accepts on, any of the repository's last `limit` pull
   requests, as `{ changes, seen }`, a bot's login compared with or without its `[bot]` suffix (preflight's `counts`
-  skips a usage-limit notice, which shows no review); `ciWorkflows(repo, { host })`, the names of its active CI workflows;
+  skips a usage-limit notice and a status card for a review still running, which show no finished review); `ciWorkflows(repo, { host })`, the names of its active CI workflows;
   `refProtection(repo, { host })`, `{ branch, protected, why, tags }`: the default branch's name, whether a rule that
   asks for a pull request there binds the signed-in user (true; false; null when the forge shows the rule's settings
   only to an administrator, which the preflight asks of the driver), why not, and each active tag rule as `{ name, all,

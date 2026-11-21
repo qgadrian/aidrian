@@ -472,6 +472,10 @@ test('preflight names every blocker at once, and starts nothing', (t) => {
   const ok = ready.cmd(['preflight']);
   assert.equal(asked?.counts?.('You have reached your Codex usage limits for code reviews.'), false, 'a usage-limit notice shows no review');
   assert.equal(asked?.counts?.('<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn\'t find any major issues.'), true, 'a clean receipt counts');
+  const card = (status) => `<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1 {"code_review":{"status":"${status}"}} -->\n\n## Codex Review Summary`;
+  assert.equal(asked?.counts?.(card('running')), false, 'a status card the bot posts as it starts shows no review');
+  assert.equal(asked?.counts?.('<!-- codex-pull-request-review-summary -->\n\n| 📝 **Code Review** | 🔄 **Running** |'), false, 'nor a card with no state');
+  assert.equal(asked?.counts?.(card('completed')), true, 'a card whose review completed counts');
   assert.deepEqual(ok.out.filter((line) => !/^(ask|note) /u.test(line)), ['ok repository', 'ok state', 'ok run', 'ok instructions', 'ok policy', 'ok machine', 'ok host', 'ok access', 'ok usage-limit', 'ok tracker', 'ok auto-merge', 'ok handoff', 'ok reviewer', 'ok reviewer-seen', 'ok ci', 'ok branch-protection', 'ok release-tags', 'ok workflow-secrets'], ok.out.join('\n'));
   assert.equal(ok.exitCode, 0);
   assert.deepEqual(ok.out.filter((line) => line.startsWith('ask ')).map((line) => line.split(':')[0]), ['ask labels']);

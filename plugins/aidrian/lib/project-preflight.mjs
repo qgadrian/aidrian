@@ -34,6 +34,7 @@ import { activeRuns, nextLines, pinnedRepository, planRun, readSnapshotInput, re
 import { runParallel, teamPolicy } from './project-run-gate.mjs';
 import { accessProblem, guardedFolders, hostStartProblem } from './project-start.mjs';
 import { ancestorProblem } from './project-trust.mjs';
+import { cardState, isReviewSummaryCard } from './review/bot-card.mjs';
 import { trackerOfEndpoint } from './tracker-guard.mjs';
 import { knownServers, trackerById, trackerOfTools, TRACKERS } from './trackers/index.mjs';
 
@@ -169,13 +170,20 @@ function autoMergeProblem({ project, repository, facade }) {
 
 // The reviewer bot seen on a recent pull request, and CI workflows, through the forge's own reads, or `ask` lines for a
 // forge with none. With no pull request yet, the first one proves the bot, and the merge's trust check holds it until then.
+// Whether a comment by the review bot's login shows a review it finished: its usage-limit notice does not, and nor does
+// its status card until the card's state says the code review completed, since the bot posts the card when it starts.
+export const showsReview = (body) => {
+  if (isQuotaNotice(body)) return false;
+  if (isReviewSummaryCard(body)) return cardState(body)?.code_review?.status === 'completed';
+  return true;
+};
+
 function forgeLines({ facade, repository, reviewer, lines, check, asks }) {
   const bot = NO_REVIEWER.has(reviewer) ? null : reviewer;
   const named = repository ? `${repository.owner}/${repository.name}` : null;
   if (typeof facade.reviewerSeen === 'function' && named && bot) {
     try {
-      // A usage-limit notice comes from the bot's own login, but shows no review.
-      const { changes, seen } = facade.reviewerSeen(named, bot, { host: repository.host, counts: (body) => !isQuotaNotice(body) });
+      const { changes, seen } = facade.reviewerSeen(named, bot, { host: repository.host, counts: showsReview });
       if (changes === 0) lines.push(`note reviewer-seen: no pull request yet, so the first one shows whether ${bot} reviews; the merge's trust check holds every merge until it has`);
       else check('reviewer-seen', seen ? null : `${bot} reviewed none of the last ${changes} pull requests; install it on the repository and request one review`);
     } catch (error) {

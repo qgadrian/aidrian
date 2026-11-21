@@ -801,13 +801,14 @@ test('limitContinueProblem: a project settings file that sets autoContinueAtUsag
   mkdirSync(path.join(project, '.claude'), { recursive: true });
   const env = { CLAUDE_CONFIG_DIR: config };
   const plain = limitContinueProblem({ env, home: root, project });
-  assert.match(plain, /do not set "autoContinueAtUsageLimit": true, so a usage limit would stop the driver for good; add it$/u, 'no project file: the reason as before');
+  const scope = ' (this check reads the user settings only, not managed policy or --settings)';
+  assert.ok(plain.endsWith(`do not set "autoContinueAtUsageLimit": true, so a usage limit would stop the driver for good; add it${scope}`), `no project file: ${plain}`);
   for (const name of ['settings.json', 'settings.local.json']) {
     const file = path.join(project, '.claude', name);
     writeFileSync(file, JSON.stringify({ autoContinueAtUsageLimit: true }));
     const named = limitContinueProblem({ env, home: root, project });
-    assert.ok(named.startsWith(plain), named);
-    assert.ok(named.endsWith(`there: ${file} sets it, but the host ignores this key in a project's settings, so a project file does not count`), named);
+    assert.ok(named.startsWith(plain.slice(0, -scope.length)), named);
+    assert.ok(named.endsWith(`add it there: ${file} sets it, but the host ignores this key in a project's settings, so a project file does not count${scope}`), named);
     rmSync(file);
   }
   writeFileSync(path.join(project, '.claude', 'settings.json'), JSON.stringify({ other: true }));

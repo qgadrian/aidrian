@@ -269,7 +269,7 @@ the handoff goes on by the clear route:
    not place starts nothing. The adapter then calls the gate's `hold` with that folder and the `sessionId` of every
    listed session, which files the pending mark that holds every other session until the new one's id is listed;
    when that fails, nothing starts.
-2. `claude --bg --name '<name> · <n>' [--agent <agent>] [--effort <effort>] [--permission-mode <mode>] <prompt>` there,
+2. `claude --bg --name '<name> · <n>' [--agent <agent>] [--effort <effort>] [--permission-mode <mode>] -- <prompt>` there,
    where the name is that session's, else the brief's slug. A name that ends in ` · <n - 1>` loses that count and
    any before it that count down by one, so a second hop names `widget-work · 2`, not `widget-work · 1 · 2`;
    any other name stays whole, such as `release · 2026`. `<n>` is the continuation's number; the agent is
@@ -370,7 +370,7 @@ How issue sessions and the driver relate to the cap of five background continuat
   attempt cuts the issue's branch from the base tip, and is refused when the forge has that branch already. A clone
   that could not be made, or is refused so, leaves no attempt folder.
 - The session starts with `claude --bg --name '<run> · <issue> · <attempt>' --permission-mode <the driver's>
-  --setting-sources user --settings '<sandbox JSON>' --strict-mcp-config --mcp-config '<servers JSON>' <prompt>`, in the
+  --setting-sources user --settings '<sandbox JSON>' --strict-mcp-config --mcp-config '<servers JSON>' -- <prompt>`, in the
   clone, with no agent. The settings are inline: no settings file is written.
 - Before the launch, the start makes placeholders for the protected host files that can be there harmlessly, since on
   Linux a sandbox write denial holds only on a path there at launch: in the clone's git folder, an empty

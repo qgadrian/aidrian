@@ -200,6 +200,7 @@ test('the adapter starts claude --bg under the sandbox settings and only the tea
   const args = calls.find((each) => each[0] === '--bg');
   const prompt = args.at(-1);
   assert.equal(prompt, 'Project run launch, issue ENG-1: work it.');
+  assert.equal(args.at(-2), '--', 'the prompt follows `--`, so --mcp-config, which takes several values, never reads it as a config');
   const at = (flag) => args.indexOf(flag);
   for (const flag of ['--setting-sources', '--settings', '--strict-mcp-config', '--mcp-config']) assert.ok(at(flag) > 0 && at(flag) < args.length - 1, `${flag} before the prompt`);
   assert.equal(args[at('--setting-sources') + 1], 'user');

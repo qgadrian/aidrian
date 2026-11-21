@@ -668,7 +668,10 @@ function diff({ argv: [value], project, forge, remotes }) {
   return 0;
 }
 
-const localNote = (pr, { base, head, fetched }) => `gh refused the diff of #${pr.number} as too large, so it came from the local fallback: git diff ${base}...${head} in this checkout${fetched.length ? `, after fetching ${fetched.join(' ')}` : ''}`;
+const localNote = (pr, { base, head, fetched, unshallowed }) => {
+  const steps = [...(fetched.length ? [`fetching ${fetched.join(' ')}`] : []), ...(unshallowed ? ['fetching the full history for their merge base'] : [])];
+  return `gh refused the diff of #${pr.number} as too large, so it came from the local fallback: git diff ${base}...${head} in this checkout${steps.length ? `, after ${steps.join(' and ')}` : ''}`;
+};
 
 const TEXT = { type: 'string' };
 const ACTIONS = {

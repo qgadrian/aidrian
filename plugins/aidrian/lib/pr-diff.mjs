@@ -1,11 +1,11 @@
 // A pull request's diff, as `aidrian pr product-feedback diff` writes it for the product-manager read: the forge's, or,
 // when the forge refuses a diff that large (diffTooLarge), git's own diff of the two commits the forge names
 // (changeEnds), run in this checkout. A commit the checkout lacks is fetched first, from the remote that names the pull
-// request's repository, else `origin`. git runs through runGit: an argument list, never a shell, under the plugin's
+// request's repository, else `origin`, and a shallow checkout with no merge base fetches its full history. git runs through runGit: an argument list, never a shell, under the plugin's
 // hardened settings. Any other forge failure still fails, as it always has.
 
 import { diffTooLarge, remoteIdentity } from './forges/index.mjs';
-import { readRemoteUrls, runGit } from './git.mjs';
+import { runGit } from './git.mjs';
 import { ghError } from './pr-auto-merge.mjs';
 
 // A full commit id: SHA-1, or SHA-256 for a repository that uses it.
@@ -17,7 +17,8 @@ const FETCH_TIMEOUT_MS = 120_000;
 const DIFF_TIMEOUT_MS = 60_000;
 
 // The diff of `pr` ({ number, host, repo }) as { text, local }: `local` is null for the forge's, else
-// { base, head, fetched }, the two commits git compared and the ones it fetched. Throws with what failed.
+// { base, head, fetched, unshallowed }: the two commits git compared, the ones it fetched, and whether it fetched the
+// shallow checkout's full history for their merge base. Throws with what failed.
 export function pullRequestDiff({ forge, pr, root }) {
   try {
     return { text: forge.diff(pr.number, { repo: `${pr.host}/${pr.repo}` }), local: null };
@@ -32,15 +33,25 @@ export function pullRequestDiff({ forge, pr, root }) {
 }
 
 // git's diff of the merge base of the pull request's base and its head, to its head, as GitHub shows a pull request.
+// In a shallow checkout both tips can be present while their merge base is not: then the diff fails, and it runs once
+// more after the checkout's full history is fetched.
 function localDiff({ forge, pr, root }) {
   const { base, head } = endsOf(forge, pr);
   const fetched = [base, head].filter((sha, index, all) => all.indexOf(sha) === index && !hasCommit(root, sha));
-  if (fetched.length) fetchCommits(root, pr, fetched);
-  const result = runGit(['diff', '--no-color', `${base}...${head}`, '--'], root, { maxBuffer: LOCAL_DIFF_MAX_BYTES, timeout: DIFF_TIMEOUT_MS });
+  if (fetched.length) fetchFrom(root, pr, fetched);
+  let result = threeDot(root, base, head);
+  const unshallowed = result.status !== 0 && result.error?.code !== 'ENOBUFS' && isShallow(root);
+  if (unshallowed) {
+    fetchFrom(root, pr, [], ['--unshallow']);
+    result = threeDot(root, base, head);
+  }
   if (result.error?.code === 'ENOBUFS') throw new Error(`git diff ${base}...${head} printed more than ${LOCAL_DIFF_MAX_BYTES / 1024 / 1024} MB`);
   if (result.status !== 0) throw new Error(`git diff ${base}...${head} failed (${gitError(result)})`);
-  return { text: result.stdout, local: { base, head, fetched } };
+  return { text: result.stdout, local: { base, head, fetched, unshallowed } };
 }
+
+const threeDot = (root, base, head) => runGit(['diff', '--no-color', `${base}...${head}`, '--'], root, { maxBuffer: LOCAL_DIFF_MAX_BYTES, timeout: DIFF_TIMEOUT_MS });
+const isShallow = (root) => runGit(['rev-parse', '--is-shallow-repository'], root).stdout?.trim() === 'true';
 
 // The two commits the forge names for the pull request, each a full commit id, or it throws.
 function endsOf(forge, pr) {
@@ -57,25 +68,29 @@ function endsOf(forge, pr) {
 
 const hasCommit = (root, sha) => runGit(['cat-file', '-e', `${sha}^{commit}`], root).status === 0;
 
-// Fetches `shas` from the pull request's remote, or throws when git fails or any is still missing after.
-function fetchCommits(root, pr, shas) {
+// Fetches `shas`, with the git fetch options `extra`, from the pull request's remote, leaving FETCH_HEAD as it was, or
+// throws when git fails or any of `shas` is still missing after.
+function fetchFrom(root, pr, shas, extra = []) {
   const remote = remoteOf(root, pr);
   const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
-  const result = runGit(['fetch', '--no-tags', '--quiet', remote, ...shas], root, { timeout: FETCH_TIMEOUT_MS, env });
-  if (result.status !== 0) throw new Error(`git fetch ${remote} ${shas.join(' ')} failed (${gitError(result)})`);
+  const args = ['fetch', '--no-tags', '--quiet', '--no-write-fetch-head', ...extra, remote, ...shas];
+  const result = runGit(args, root, { timeout: FETCH_TIMEOUT_MS, env });
+  if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed (${gitError(result)})`);
   const missing = shas.filter((sha) => !hasCommit(root, sha));
   if (missing.length) throw new Error(`git fetch ${remote} did not bring ${missing.join(' ')}`);
 }
 
-// The remote whose URL names the pull request's repository on its host, else `origin`. A name git could read as an
-// option is never one.
+// The remote whose fetch URL, as git uses it (`git remote get-url`, after any `url.*.insteadOf`, as `git remote -v`
+// shows it to the remotes check), names the pull request's repository on its host, else `origin`. A name git could read
+// as an option is never one.
 export function remoteOf(root, pr) {
-  const listed = readRemoteUrls(root);
+  const listed = runGit(['remote'], root);
   const wanted = `${pr.host}/${pr.repo}`.toLowerCase();
-  for (const line of listed.status === 0 ? listed.stdout.split('\n') : []) {
-    const match = /^remote\.(.+)\.url (.+)$/u.exec(line);
-    const identity = match ? remoteIdentity(match[2]) : null;
-    if (identity && !match[1].startsWith('-') && `${identity.host}/${identity.path}`.toLowerCase() === wanted) return match[1];
+  for (const name of listed.status === 0 ? listed.stdout.split('\n').map((line) => line.trim()) : []) {
+    if (!name || name.startsWith('-')) continue;
+    const url = runGit(['remote', 'get-url', name], root);
+    const identity = url.status === 0 ? remoteIdentity(url.stdout.trim()) : null;
+    if (identity && `${identity.host}/${identity.path}`.toLowerCase() === wanted) return name;
   }
   return 'origin';
 }

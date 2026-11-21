@@ -718,9 +718,12 @@ product-manager read takes it, since that agent runs no shell.
 When the forge refuses the diff as too large (GitHub's `PullRequest.diff too_large`, past its size limit), and only then,
 `diff` reads the pull request's base and head commits from the forge and writes `git diff <base>...<head>` from the current
 checkout instead, the merge base to the head, as the forge shows a pull request. A commit the checkout lacks is fetched
-first, `git fetch --no-tags <remote> <sha>...`, from the remote whose URL names the pull request's repository, else `origin`.
+first, `git fetch --no-tags --no-write-fetch-head <remote> <sha>...`, so `FETCH_HEAD` stays as it was, from the remote
+whose URL as git uses it (`git remote get-url`, after any `url.*.insteadOf`) names the pull request's repository, else
+`origin`. In a shallow checkout whose merge base is past the boundary, the diff fails once, and runs again after
+`git fetch --no-tags --no-write-fetch-head --unshallow <remote>`.
 git runs from an argument list, never a shell, under the plugin's hardened git settings. A line on stderr says the diff came
-from this local fallback, naming both commits and any it fetched. Nothing downstream caps the diff, so the local one is written
+from this local fallback, naming both commits, any it fetched, and whether it fetched the full history. Nothing downstream caps the diff, so the local one is written
 whole, as the forge's is; one past 64 MB, as with any gh read, exits 3. Any other forge failure, and a local diff or fetch
 that fails, exits 3 with nothing written, so the feedback stays owed.
 

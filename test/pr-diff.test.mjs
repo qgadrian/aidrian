@@ -110,7 +110,8 @@ test('a commit the checkout lacks is fetched from the pull request\'s remote fir
   writeFileSync(path.join(upstream.dir, 'page.js'), 'export const title = "Tables";\n');
   upstream.git('commit', '-qam', 'later');
   const head = upstream.git('rev-parse', 'HEAD');
-  // origin keeps GitHub's URL, so the remote that names acme/notes is found; git reads the URL as the upstream folder.
+  // origin's URL reads as GitHub's acme/notes, and git fetches it from the upstream folder: no remote's URL, as git uses
+  // it, names acme/notes, so the fetch goes to origin.
   r.git('config', `url.${upstream.dir}.insteadOf`, ORIGIN);
   r.git('remote', 'add', 'fork', 'git@github.com:someone/notes.git');
   assert.equal(remoteOf(r.dir, { host: 'github.com', repo: 'acme/notes' }), 'origin');
@@ -120,19 +121,52 @@ test('a commit the checkout lacks is fetched from the pull request\'s remote fir
   r.git('cat-file', '-e', `${head}^{commit}`);
   assert.match(readFileSync(patchOf(r), 'utf8'), /^\+export const title = "Tables";$/mu);
   assert.match(result.err[0], new RegExp(`, after fetching (?:[0-9a-f]{40} )?${head}$`, 'u'));
+  assert.throws(() => r.git('rev-parse', '-q', '--verify', 'FETCH_HEAD'), 'the fetch leaves FETCH_HEAD as it was');
   // A commit no remote has fails, naming the fetch, and writes nothing.
   const lost = repo(t);
   lost.git('config', `url.${upstream.dir}.insteadOf`, ORIGIN);
   const missing = run(t, lost, fakeGh({ base: lost.base, head: 'f'.repeat(40) }, () => { throw ghFailed(TOO_LARGE); }));
   assert.equal(missing.code, 3);
-  assert.match(missing.err.join('\n'), /as too large, and the local diff failed: git fetch origin f{40} failed/u);
+  assert.match(missing.err.join('\n'), /as too large, and the local diff failed: git fetch --no-tags --quiet --no-write-fetch-head origin f{40} failed/u);
   assert.ok(!existsSync(patchOf(lost)), 'nothing was written');
 });
 
-test('remoteOf picks the remote that names the repository on its host, else origin', (t) => {
+test('remoteOf picks the remote whose URL, as git uses it, names the repository on its host, else origin', (t) => {
   const r = repo(t);
   r.git('remote', 'set-url', 'origin', 'git@github.com:someone/notes.git');
   r.git('remote', 'add', 'upstream', 'https://github.com/Acme/Notes.git');
   assert.equal(remoteOf(r.dir, { host: 'github.com', repo: 'acme/notes' }), 'upstream');
   assert.equal(remoteOf(r.dir, { host: 'ghe.acme.io', repo: 'acme/notes' }), 'origin', 'another host is another repository');
+  // The URL after `url.*.insteadOf`, as `git remote -v` shows it, not the one in the config: a mirror git reads as
+  // GitHub's acme/notes is it, and a GitHub URL git reads as a folder is not.
+  const rewritten = repo(t);
+  rewritten.git('remote', 'set-url', 'origin', 'https://github.com/acme/notes.git');
+  rewritten.git('config', `url.${rewritten.dir}/elsewhere.insteadOf`, 'https://github.com/acme/notes.git');
+  rewritten.git('remote', 'add', 'mirror', 'https://mirror.example/acme/notes.git');
+  rewritten.git('config', 'url.https://github.com/.insteadOf', 'https://mirror.example/');
+  assert.equal(remoteOf(rewritten.dir, { host: 'github.com', repo: 'acme/notes' }), 'mirror');
+});
+
+test('in a shallow checkout whose merge base is past the boundary, the diff fetches the full history and runs again', (t) => {
+  const upstream = repo(t);
+  // main moves on past the commit the head branched from, so the merge base is neither tip.
+  writeFileSync(path.join(upstream.dir, 'other.js'), 'export const other = 1;\n');
+  upstream.git('add', 'other.js');
+  upstream.git('commit', '-qm', 'main moves on');
+  const base = upstream.git('rev-parse', 'HEAD');
+  const parent = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-pr-diff-shallow-')));
+  t.after(() => rmSync(parent, { recursive: true, force: true }));
+  execFileSync('git', ['clone', '-q', '--depth', '1', '--no-single-branch', `file://${upstream.dir}`, 'clone'], { cwd: parent });
+  const dir = path.join(parent, 'clone');
+  const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
+  const r = { dir, git, state: path.join(dir, 'state') };
+  git('cat-file', '-e', `${base}^{commit}`);
+  git('cat-file', '-e', `${upstream.head}^{commit}`);
+  assert.notEqual(spawnSync('git', ['cat-file', '-e', `${upstream.base}^{commit}`], { cwd: dir }).status, 0, 'the merge base is past the shallow boundary');
+  const result = run(t, r, fakeGh({ base, head: upstream.head }, () => { throw ghFailed(TOO_LARGE); }));
+  assert.equal(result.code, 0, result.err.join('\n'));
+  assert.equal(readFileSync(patchOf(r), 'utf8'), `${git('diff', '--no-color', `${base}...${upstream.head}`)}\n`);
+  assert.doesNotMatch(readFileSync(patchOf(r), 'utf8'), /other\.js/u, 'the diff starts at the merge base, not at the base tip');
+  assert.equal(git('rev-parse', '--is-shallow-repository'), 'false');
+  assert.match(result.err[0], /, after fetching the full history for their merge base$/u);
 });

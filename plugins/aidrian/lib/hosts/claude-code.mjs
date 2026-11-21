@@ -350,8 +350,8 @@ export default {
       confineReads: ({ env, home }) => confineReads({ env, home }),
       // The allowedDomains the user's and the organization's settings add, which the proof's unlisted host stays outside.
       confineDomains: ({ env, home, platform }) => confineDomains({ env, home, platform }),
-      // Whether the session would reach this machine's loopback under projectRun.localBinding, so the proof runs no
-      // localhost listener: macOS alone, unless managed settings keep allowLocalBinding false.
+      // Whether the session's binding reaches this machine's loopback under projectRun.localBinding, so the proof runs no
+      // localhost listener: macOS alone; Linux keeps the session in a network namespace of its own.
       confineLoopback: ({ platform, localBinding }) => loopbackReach({ platform, localBinding }),
       localBindingRisk,
       start: ({ session, cwd, name, prompt, env, hold, identify, beacon, confined, git, grants, domains, main, mainGit, tokens, guarded, mcp, localBinding, home, platform, run, wait }) => startProject({

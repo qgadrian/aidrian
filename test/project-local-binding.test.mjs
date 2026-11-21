@@ -2,8 +2,8 @@
 // on the forge and the local ref alike, never a working copy. Off, the default, a session's sandbox keeps
 // `allowLocalBinding: false`, the organization's managed settings may not set it true, and the sandbox proof probes its
 // localhost listener; on, the sandbox starts with `allowLocalBinding: true`, a managed true or false passes, and
-// preflight prints a note naming the host's risk. The proof drops its listener only where the session reaches this
-// machine's loopback as the host runs it: on macOS, with no managed source keeping allowLocalBinding false.
+// preflight prints a note naming the host's risk. The proof drops its listener only where the host declares the
+// binding reaches this machine's loopback on the platform: Claude Code on macOS, whatever managed settings say.
 // Checked on fixtures only (test/project-start-fixture.mjs, on Linux); Codex's side is in project-start-codex.test.mjs.
 
 import '../scripts/test-state.mjs';
@@ -26,19 +26,11 @@ const REPOSITORY = { host: 'github.com', owner: 'acme', name: 'widgets' };
 const ON = { allow: true, unverifiedHosts: true, localBinding: true };
 const OFF = { allow: true, unverifiedHosts: true };
 
-// Managed settings in `dir`, each document of `values` a managed-settings.d file, lowest rank first: { dir, plists }.
-function managedAt(dir, values = []) {
-  rmSync(dir, { recursive: true, force: true });
-  mkdirSync(path.join(dir, 'managed-settings.d'), { recursive: true });
-  values.forEach((value, index) => writeFileSync(path.join(dir, 'managed-settings.d', `${10 + index}.json`), JSON.stringify(value)));
-  return { dir, plists: [] };
-}
-
-// Runs `body` with the adapter's loopback judged as on macOS, under the managed settings `managed`, then puts it back.
-function asMacOs(t, managed) {
+// Makes the adapter's own loopback rule judge the start as on macOS, for this test; the fixture's platform is Linux.
+function asMacOs(t) {
   const cap = claudeCode.capabilities.projectStart;
   const own = cap.confineLoopback;
-  cap.confineLoopback = ({ localBinding }) => loopbackReach({ platform: 'darwin', localBinding, managed });
+  cap.confineLoopback = (given) => own({ ...given, platform: 'darwin' });
   t.after(() => {
     cap.confineLoopback = own;
   });
@@ -89,17 +81,9 @@ test('off, the session\'s sandbox refuses local binding and the proof probes its
   assert.ok(Number.isInteger(linux.plan.local.port));
 });
 
-test('on macOS a managed allowLocalBinding false keeps the listener required', (t) => {
+test('on macOS the session\'s binding reaches the loopback, so the proof runs no listener, judged from the start and never the plan', (t) => {
   const fx = runFixture(t, { projectRun: ON });
-  asMacOs(t, managedAt(path.join(fx.root, 'managed'), [{ sandbox: { network: { allowLocalBinding: false } } }]));
-  const kept = started(fx);
-  assert.equal(kept.settings.sandbox.network.allowLocalBinding, true);
-  assert.equal(kept.plan.local.host, '127.0.0.1');
-});
-
-test('on macOS with no managed false, the session reaches the loopback, so the proof runs no listener, judged from the start and never the plan', (t) => {
-  const fx = runFixture(t, { projectRun: ON });
-  asMacOs(t, managedAt(path.join(fx.root, 'managed')));
+  asMacOs(t);
   const on = started(fx);
   assert.equal(on.settings.sandbox.network.allowLocalBinding, true);
   assert.deepEqual([on.settings.sandbox.network.strictAllowlist, on.settings.sandbox.network.allowAllUnixSockets], [true, false], 'nothing else of the network widens');
@@ -113,7 +97,7 @@ test('on macOS with no managed false, the session reaches the loopback, so the p
 
 test('a plan with no listener probes no loopback connection', async (t) => {
   const fx = runFixture(t, { projectRun: ON });
-  asMacOs(t, managedAt(path.join(fx.root, 'managed')));
+  asMacOs(t);
   const { plan } = started(fx);
   assert.equal(plan.local, null);
   // The unlisted host a closed local port, so no test reaches the network.
@@ -122,19 +106,22 @@ test('a plan with no listener probes no loopback connection', async (t) => {
   assert.deepEqual(reaches.map((each) => each.target), ['127.0.0.1:9']);
 });
 
-test('the session reaches the loopback only on macOS, with the key on, where the highest managed source that sets allowLocalBinding sets it true', (t) => {
+test('the loopback decision is the team key and the platform alone, and ignores managed and user settings', (t) => {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-binding-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const dir = path.join(root, 'managed');
-  const reach = (values, more = {}) => loopbackReach({ platform: 'darwin', localBinding: true, managed: managedAt(dir, values), ...more });
-  assert.equal(reach([]), true, 'no managed source sets it');
-  assert.equal(reach([{ sandbox: { network: { allowLocalBinding: false } } }]), false, 'a managed false');
-  assert.equal(reach([{ sandbox: { network: { allowLocalBinding: false } } }, { sandbox: { network: { allowLocalBinding: true } } }]), true, 'a higher managed true');
-  assert.equal(reach([{ sandbox: { network: { allowLocalBinding: true } } }, { sandbox: { network: { allowLocalBinding: false } } }]), false, 'a higher managed false');
-  assert.equal(reach([], { platform: 'linux' }), false, 'Linux');
-  assert.equal(reach([], { localBinding: false }), false, 'the key off');
-  writeFileSync(path.join(dir, 'managed-settings.json'), 'not json');
-  assert.equal(loopbackReach({ platform: 'darwin', localBinding: true, managed: { dir, plists: [] } }), false, 'managed settings that cannot be read keep the listener');
+  // Managed and user settings that keep allowLocalBinding false, which the decision must not read.
+  const off = JSON.stringify({ sandbox: { network: { allowLocalBinding: false } } });
+  const managed = path.join(root, 'managed');
+  mkdirSync(managed);
+  writeFileSync(path.join(managed, 'managed-settings.json'), off);
+  const config = path.join(root, 'claude-config');
+  mkdirSync(config);
+  writeFileSync(path.join(config, 'settings.json'), off);
+  const decide = (platform, localBinding) => claudeCode.capabilities.projectStart.confineLoopback({ env: { CLAUDE_CONFIG_DIR: config, HOME: root }, home: root, platform, localBinding, managed: { dir: managed, plists: [] } });
+  assert.equal(decide('darwin', true), true, 'macOS with the key on, whatever the settings say');
+  assert.equal(decide('linux', true), false, 'Linux keeps its own network namespace');
+  assert.equal(decide('darwin', false), false, 'the key off');
+  assert.equal(loopbackReach({ platform: 'darwin', localBinding: 'yes' }), false, 'only true counts');
 });
 
 test('the sandbox settings take allowLocalBinding from localBinding alone', () => {

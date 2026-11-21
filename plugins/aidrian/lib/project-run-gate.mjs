@@ -480,8 +480,8 @@ function launchStart(context, place) {
   const { run, key, env, home, session, store, cap, spawn, wait, state, held, noted } = context;
   const { folder, attempt, branch, cwd, git, grants, drop, cache, vars, log, main, mainGit, afterLimit, issueFile, pushUrl } = place;
   const localBinding = context.policy.localBinding === true;
-  // Whether the session reaches this machine's loopback as the host runs it, not by the team's switch alone: a host that
-  // keeps its commands off the loopback all the same, as Claude Code on Linux, keeps the proof's listener.
+  // Whether the team's switch reaches this machine's loopback on this host and platform, as the host declares it: one
+  // that keeps its commands off the loopback all the same, as Claude Code on Linux, keeps the proof's listener.
   const loopback = localBinding && safely(() => cap.confineLoopback?.({ env, home, platform: context.platform, localBinding })) === true;
   // The forge's hosts, and the registries the team lists (projectRun.registries).
   const domains = [...forgeDomains(context.found.init.repository), ...registryHosts(context.policy.registries)];

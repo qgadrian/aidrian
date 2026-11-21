@@ -538,8 +538,9 @@ Residual risks, each known and accepted:
   listen on any interface of this machine, where any other local process of any user, and any other machine the
   firewall lets through when it binds `0.0.0.0`, can reach it; and the session's sandboxed commands reach every service
   listening on this machine's loopback, such as the user's own databases, development servers, and any local admin
-  port, outside the network allowlist. The sandbox proof runs no localhost listener then, unless a managed source keeps
-  `allowLocalBinding` false. On Linux the network namespace holds as without it, and the proof keeps its listener.
+  port, outside the network allowlist. The sandbox proof runs no localhost listener then, so on macOS with the key on
+  it does not check the loopback at all. On Linux the network namespace holds as without it, and the proof keeps its
+  listener.
   Bind each test server to `127.0.0.1`; a team sets the key only on a machine where the rest is acceptable.
 - Each registry `projectRun.registries` lists is a host a sandboxed command can send data to, an accepted channel;
   [Dependency installs](#dependency-installs) names each one's path and the ruling. Hosts an install reaches beyond its registry, such as a
@@ -665,11 +666,13 @@ its start stays as [its page](codex.md#project-start) says.
    already counting as made; to open the clone's git `config` and `.claude/settings.json` for writing; to remove the
    keep file of `cache` and of `drop`; to move each folder away, or else to put a link beside it, and to write through
    the link; to read each store in the plan; to connect to the unlisted host, directly and through each HTTP proxy the
-   shell's environment names; and to connect to the listener. Where the session would reach this machine's loopback,
-   which is only on macOS with the base branch's `projectRun.localBinding` set and no managed source keeping
-   `allowLocalBinding` false (the adapter's `confineLoopback`), the start runs no listener, the plan's `local` is
-   `null`, and the proof neither probes nor judges a listener; the start decides that from the team's policy and the
-   host, never from the plan. On Linux, and on macOS under a managed `false`, the listener stays required. It also checks that each cache variable is in force in
+   shell's environment names; and to connect to the listener. Where the session's binding reaches this machine's
+   loopback, which the adapter declares through `confineLoopback` for macOS alone, the start runs no listener when the
+   base branch sets `projectRun.localBinding`, the plan's `local` is `null`, and the proof neither probes nor judges a
+   listener; the start decides that from the team's policy, the host, and the platform, never from the plan. On Linux
+   the listener stays required. The one known gap: on macOS with the key on, the proof does not check the loopback.
+   The start does not read managed settings for this; one that keeps `allowLocalBinding` false leaves the session
+   off the loopback, more isolated than the proof assumes. It also checks that each cache variable is in force in
    the shell with the value the start wrote. Any write, removal, move, link, or connection that succeeds is undone and
    fails the proof, and so does one whose target is not there. A read that opens is not yet a landed read: on Linux
    the host masks a denied folder with an empty one and a denied file with an empty one, so the proof hands what each

@@ -537,18 +537,12 @@ const withManagedPlugins = (settings, documents) => ({
   enabledPlugins: Object.assign({}, isObject(settings.enabledPlugins) ? settings.enabledPlugins : {}, ...documents.map(({ value }) => (isObject(value.enabledPlugins) ? value.enabledPlugins : {}))),
 });
 
-// Whether a sandboxed command of a session started now reaches this machine's loopback, so the sandbox proof's
-// localhost listener would see it: only on macOS, where allowLocalBinding is the switch for localhost, with the team's
-// `localBinding` on and the highest-ranked managed source that sets network.allowLocalBinding, if any, setting it true,
-// as managed settings rank above --settings. On Linux the session's commands run in a network namespace of their own.
-// Managed settings that cannot be read count as no reach: the proof keeps its listener, and fails closed.
-export function loopbackReach({ platform, localBinding = false, managed = null }) {
-  if (localBinding !== true || platform !== 'darwin') return false;
-  const read = managedSettings({ platform, managed, user: userName() });
-  if (read.problem) return false;
-  const set = read.documents.map(({ value }) => at(value, 'sandbox.network.allowLocalBinding')).filter((each) => each !== undefined);
-  return set.length === 0 || set.at(-1) === true;
-}
+// Whether the session's allowLocalBinding reaches this machine's loopback on `platform`, so the sandbox proof runs no
+// localhost listener: with the team's `localBinding` on, on macOS, where it is the switch for localhost. On Linux the
+// session's commands run in a network namespace of their own, and the listener stays. Managed settings are not read: one
+// that keeps allowLocalBinding false only isolates the session more than the proof then checks
+// (docs/providers/claude-code.md#the-sandbox-proof).
+export const loopbackReach = ({ platform, localBinding = false }) => localBinding === true && platform === 'darwin';
 
 // The risk of the team's projectRun.localBinding on `platform`, for preflight's note.
 export const localBindingRisk = ({ platform }) => (platform === 'darwin'

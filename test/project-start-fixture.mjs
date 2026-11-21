@@ -94,9 +94,11 @@ export const ORIGIN = 'https://github.com/acme/widgets.git';
 const gitIn = (dir) => (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', '-C', dir, ...args], { encoding: 'utf8', stdio: 'pipe' });
 
 // A stand-in for the forge facade: the default branch `main` at the commit `head()` gives, the committed config at
-// `.aidrian/config.json` (`config`, as text), no `.aidrian.json`, the pull requests in `views`, by number, and the push
-// permission `push()` gives. `calls` records each call.
-export function fakeForge(config, head, views = {}, { push = () => true } = {}) {
+// `.aidrian/config.json` (`config`, as text), no `.aidrian.json`, the pull requests in `views`, by number, the push
+// permission `push()` gives, and the forge CLI's login token `token()` gives, a fine-grained one by default; a `token`
+// that throws is a CLI with no login. `calls` records each call.
+export const FIXTURE_TOKEN = 'github_pat_FIXTURE0123456789';
+export function fakeForge(config, head, views = {}, { push = () => true, token = () => FIXTURE_TOKEN } = {}) {
   const calls = [];
   const missing = () => Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)' });
   return {
@@ -109,6 +111,10 @@ export function fakeForge(config, head, views = {}, { push = () => true } = {}) 
       calls.push(['contents', repo, file, ref, options]);
       if (file !== '.aidrian/config.json') throw missing();
       return { type: 'file', encoding: 'base64', content: Buffer.from(config()).toString('base64') };
+    },
+    authToken: (options) => {
+      calls.push(['authToken', options]);
+      return token();
     },
     branchHead: (repo, branch, options) => {
       calls.push(['branchHead', repo, branch, options]);

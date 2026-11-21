@@ -6,6 +6,7 @@
 // payloads are: a second forge reshapes them with its adapter.
 
 import { apiWrite, changeNotFound, CONFIG_COMMANDS, createGithubForge, domains, GITHUB_JSON, isLogin, isTrustedCommenter, MAX_BODY, REF_COMMANDS, REVIEWS_PAGE, servedRepository, TOKEN_VARS, WORKFLOW_FOLDERS } from './github.mjs';
+import { loginStep, TOKEN_VAR, tokenNote } from './github-token.mjs';
 import { remoteIdentity, repoIdentity } from './identity.mjs';
 
 // A repository's `{ host, path }` from a remote or a `-R` value: the facade's own helper (identity.mjs), which reads
@@ -38,6 +39,14 @@ export const forgeDomains = (repository) => domains(repository?.host);
 
 // The environment variables the forge's CLI reads its token from: the one credential a confined session's sandbox keeps.
 export const forgeTokenVars = () => [...TOKEN_VARS];
+
+// What a project run needs to hand its issue session the forge token (lib/project-token.mjs): forgeTokenVar(), the one
+// variable the forge's CLI and its git credential helper both read a token from; forgeLoginStep(host), the step that
+// signs the CLI in; and forgeTokenNote(token), why a token reaches more than the run's repository, or null. The token
+// itself comes from forgeFor's `authToken({ host })`.
+export const forgeTokenVar = () => TOKEN_VAR;
+export const forgeLoginStep = (host) => loginStep(host);
+export const forgeTokenNote = (token) => tokenNote(token);
 
 // Whether a comment's author belongs to the repository. Each forge method object carries it too.
 export { isTrustedCommenter };

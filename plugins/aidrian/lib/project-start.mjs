@@ -25,11 +25,12 @@ import path from 'node:path';
 import { ATTEMPT_KEEP, attemptOf, GIT_PLACEHOLDERS, KEPT_FOLDERS } from './attempt-clone.mjs';
 import { isWithin, readSmallJson, resolvedPath } from './fs.mjs';
 import { gateGit } from './git.mjs';
+import { forgeToken, sessionToken, tokenVars } from './project-token.mjs';
 import { loadConfig } from './config.mjs';
 import { findProject, stateRoot } from './project.mjs';
 import { CACHE_VAR_NAMES, NPM_CONFIGS, varsProblem } from './project-registries.mjs';
 import { DROP_FILE, plainFolderProblem } from './project-result.mjs';
-import { runFolder, runsFolder } from './project-run.mjs';
+import { pinnedRepository, runFolder, runsFolder } from './project-run.mjs';
 import { latestStart, ownAttemptFolder, startRows } from './project-run-guard.mjs';
 import { signoffFolders } from './review/signoff-store.mjs';
 import { archiveStops } from './stop-history.mjs';
@@ -78,7 +79,18 @@ export function hostStartProblem(cap, policy, env) {
 // asked. `main` is the main checkout, whose origin URL the attempt's clone takes (prepareAttempt), so it is the URL the
 // session pushes to (`pushUrl`, which confinedRoom holds the clone to); `helpers` are the git credential helpers its
 // config names; `platform` the operating system, and `allowed` the base branch's projectRun.outsideSandbox.
-export function accessProblem({ cap, forge, repository, env, home, guarded, main, platform = process.platform, allowed = [] }) {
+// On a host that hands its session the forge token (`forgeTokenEnv`), a start with no token to hand halts too
+// (lib/project-token.mjs, from the keychain entry `keychain` or the forge CLI's login), and { pushUrl, token } names
+// its `source` and `notes`, never the token, which the session's SessionStart hook reads again for itself.
+export function accessProblem({ cap, forge, repository, env, home, guarded, main, platform = process.platform, allowed = [], keychain = null, exec }) {
+  const pushed = pushAccess({ cap, forge, repository, env, home, guarded, main, platform, allowed });
+  if (!pushed?.pushUrl || cap.forgeTokenEnv !== true) return pushed;
+  const read = forgeToken({ forge, repository, keychain, platform, env, ...(exec ? { exec } : {}) });
+  if (read.problem) return { halt: read.problem, token: { notes: read.notes } };
+  return { ...pushed, token: { source: read.source, notes: read.notes } };
+}
+
+function pushAccess({ cap, forge, repository, env, home, guarded, main, platform, allowed }) {
   const named = `${repository.host}/${repository.owner}/${repository.name}`;
   let view;
   try {
@@ -349,18 +361,8 @@ export function writeShellVars(folder, vars) {
 // only the names cacheVars gives. Never throws.
 export function confinedShellVars({ session, cwd, env = process.env, home }) {
   try {
-    const attempt = typeof cwd === 'string' && path.isAbsolute(cwd) ? attemptOf(cwd) : null;
+    const { attempt } = confinedAttempt({ session, cwd, env, home }) ?? {};
     if (!attempt) return null;
-    const mark = readUnattendedMark(session, { env, ...(home ? { home } : {}) });
-    const real = (file) => {
-      try {
-        return realpathSync(file);
-      } catch {
-        return null;
-      }
-    };
-    const starting = mark?.pending === true && typeof mark.cwd === 'string' && real(mark.cwd) === real(attempt.work);
-    if (!starting && !recordedAttempt(mark, attempt, real, home)) return null;
     const read = readSmallJson(path.join(attempt.folder, SHELL_VARS), SHELL_VARS_CAP);
     if (!read || varsProblem(read)) return null;
     const vars = Object.fromEntries(Object.entries(read).filter(([name]) => CACHE_VAR_NAMES.includes(name)));
@@ -368,6 +370,39 @@ export function confinedShellVars({ session, cwd, env = process.env, home }) {
   } catch {
     return null;
   }
+}
+
+// The forge token the sandboxed commands of `session`, whose hook runs in `cwd`, get, as the forge CLI's token variable,
+// or null: only for the session of a confined attempt, as confinedShellVars holds it, read again outside the sandbox
+// from the main checkout its mark names (project-token.mjs sessionToken), so no file carries it from the start. `token`
+// is a test's stand-in for that read. Never throws.
+export function confinedTokenVars({ session, cwd, env = process.env, home, token = sessionToken }) {
+  try {
+    const { mark } = confinedAttempt({ session, cwd, env, home }) ?? {};
+    const project = typeof mark?.root === 'string' ? findProject(mark.root) : null;
+    const repository = project ? pinnedRepository(project) : null;
+    const read = repository ? token({ root: project.root, repository, keychain: project.localForgeTokenKeychain, env }) : null;
+    return read?.token ? tokenVars(read.token) : null;
+  } catch {
+    return null;
+  }
+}
+
+// The confined attempt `cwd` lies in and the mark of `session`, its session, or null (confinedShellVars).
+function confinedAttempt({ session, cwd, env, home }) {
+  const attempt = typeof cwd === 'string' && path.isAbsolute(cwd) ? attemptOf(cwd) : null;
+  if (!attempt) return null;
+  const mark = readUnattendedMark(session, { env, ...(home ? { home } : {}) });
+  const real = (file) => {
+    try {
+      return realpathSync(file);
+    } catch {
+      return null;
+    }
+  };
+  const starting = mark?.pending === true && typeof mark.cwd === 'string' && real(mark.cwd) === real(attempt.work);
+  if (!starting && !recordedAttempt(mark, attempt, real, home)) return null;
+  return { attempt, mark };
 }
 
 // Whether `attempt` is the attempt folder the run's ledger, in the project at the main checkout the session's own mark

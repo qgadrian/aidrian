@@ -11,6 +11,7 @@ import path from 'node:path';
 
 import { anchorReaders } from './attempt-clone.mjs';
 import { loadConfig, pluginRepository } from './config.mjs';
+import { localForgeTokenKeychain } from './config-local.mjs';
 import { insidePath, isDirectory, isFile, isObject, isWithin, joinedInside, readJson } from './fs.mjs';
 import { checkoutRoots, mainRoot, repositoryCheckouts, runGit } from './git.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
@@ -39,7 +40,9 @@ anchorReaders({
 
 const DEFAULT_DIR = '.aidrian';
 const OVERRIDE = '.aidrian.json';
+// The machine's own git-ignored settings file, which other modules name through LOCAL_FILE.
 const LOCAL = '.aidrian.local.json';
+export const LOCAL_FILE = LOCAL;
 // config.json in the default project folder, where a checkout looks when its `.aidrian.json` names no usable folder.
 export const DEFAULT_CONFIG = `${DEFAULT_DIR}/config.json`;
 // A git read with runGit's own options.
@@ -68,7 +71,7 @@ const GUARDED_LIB = [
   'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits', 'markdown-prose', 'markdown-sections', 'markdown-wrap',
   'model-prices', 'names', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review', 'pr-checks', 'pr-product-feedback',
   'pr-resolve', 'project', 'project-confine', 'project-issue-text', 'project-limit', 'project-linger', 'project-preflight', 'project-registries', 'project-report',
-  'project-result', 'project-run', 'project-run-cli', 'project-run-gate', 'project-run-guard', 'project-start', 'project-stops', 'project-trust', 'push-preflight',
+  'project-result', 'project-run', 'project-run-cli', 'project-run-gate', 'project-run-guard', 'project-start', 'project-stops', 'project-token', 'project-trust', 'push-preflight',
   'remotes', 'review-gate', 'run-driver', 'session-folder', 'session-length', 'session-links', 'session-links-writer', 'session-origins',
   'session-prs', 'session-rows', 'session-start-gate', 'shell-init', 'shell-lex', 'solo', 'stop-announce', 'stop-handback', 'stop-history', 'stop-review-loop',
   'terminal-replace', 'terms', 'test-changed', 'tracker-check', 'tracker-guard', 'transcript', 'unattended-mark', 'unattended-shell',
@@ -179,7 +182,8 @@ export function projectAt(start) {
 
 // The project rooted at `root`, whether or not its folder exists yet:
 // { root, dir, paths, sources, checkouts, localModels, localNames, localTelemetry, localAgents, localReview, localDecisions,
-// localAutoMerge, localUnattendedWaiver, localReviewApprovals, localHandoffBackground, localFeedbackAuto, errors, unreadable }.
+// localAutoMerge, localUnattendedWaiver, localReviewApprovals, localHandoffBackground, localFeedbackAuto,
+// localForgeTokenKeychain, errors, unreadable }.
 // `dir` and every path are POSIX-style and relative to `root`. `sources` lists where knowledge indexes are read from:
 // the project folder first, then each local source. `checkouts` is `root`, then, when it is in a git worktree, the same
 // folder in the main checkout. `localModels`, `localNames`, `localTelemetry`, `localAgents`, `localReview`, and
@@ -195,7 +199,8 @@ export function projectAt(start) {
 // `localHandoffBackground` is its `handoff.background`, read the same way; the base branch's session.handoff still
 // decides (lib/handoff-continue.mjs backgroundGate).
 // `localFeedbackAuto` is the main checkout's `review.productFeedback.auto`: true or false, or undefined when unset or
-// unusable (mainFeedbackAuto), so the team's value holds. `errors` lists the problems in the root files; a broken
+// unusable (mainFeedbackAuto), so the team's value holds. `localForgeTokenKeychain` is the main checkout's
+// `projectRun.forgeTokenKeychain`, `{ service, account }`, or null (config-local.mjs localForgeTokenKeychain, mainKeychain). `errors` lists the problems in the root files; a broken
 // `.aidrian.json` leaves the default folder in place, and a broken local source is left out.
 // `unreadable` names each of `.aidrian.json` and `.aidrian.local.json` that is there but whose settings are not in force,
 // because it could not be read or names no usable folder: from `root`, or absolute when it is in the main checkout.
@@ -228,6 +233,7 @@ export function openProject(root, roots, read) {
     localUnattendedSignoff: local.unattendedSignoff,
     localHandoffBackground: local.handoffBackground,
     localFeedbackAuto: local.feedbackAuto,
+    localForgeTokenKeychain: local.forgeTokenKeychain ?? null,
     errors,
     unreadable,
   };
@@ -353,7 +359,7 @@ export function projectCheckouts(project, read) {
   return repository && [...new Set([...project.checkouts, ...repository])];
 }
 
-const LOCAL_KEYS = ['sources', 'models', 'names', 'telemetry', 'agents', 'review', 'decisions', 'github', 'reviewApprovals', 'unattendedSignoff', 'handoff'];
+const LOCAL_KEYS = ['sources', 'models', 'names', 'telemetry', 'agents', 'review', 'decisions', 'github', 'reviewApprovals', 'unattendedSignoff', 'handoff', 'projectRun'];
 
 // `.aidrian.local.json`: { sources, models, names, telemetry, agents, review, decisions, autoMerge, unattendedWaiver, reviewApprovals, feedbackAuto }. A git worktree has no copy of that git-ignored
 // file, so it is read from the main checkout then: from the first of `checkouts` that has it. Each source is a folder with
@@ -377,9 +383,10 @@ function readLocal(checkouts, errors, unreadable, read) {
   const tracked = () => (asked ??= runGit(['ls-files', '--error-unmatch', '--', `:(icase)${LOCAL}`], main, typeof read === 'function' ? read() : undefined)).status;
   const switches = machineSwitches(mainFile, tracked, errors);
   const feedbackAuto = mainFeedbackAuto(mainFile?.raw, tracked, errors);
-  if (!own) return { ...none, ...switches, feedbackAuto };
+  const forgeTokenKeychain = mainKeychain(mainFile, tracked, errors);
+  if (!own) return { ...none, ...switches, feedbackAuto, forgeTokenKeychain };
   const { models, names, telemetry, agents, review } = raw;
-  return { sources: own.sources, models, names, telemetry, agents, review, decisions: mainFile?.raw.decisions, ...switches, feedbackAuto };
+  return { sources: own.sources, models, names, telemetry, agents, review, decisions: mainFile?.raw.decisions, ...switches, feedbackAuto, forgeTokenKeychain };
 }
 
 // Every check of the local file `raw`, read from `dir`, whichever checkout it is in: { raw, sources, autoMerge,
@@ -395,7 +402,8 @@ function checkedLocal(raw, dir) {
   const reviewApprovals = localReviewApprovals(raw, problems);
   const unattendedSignoff = localUnattendedSignoff(raw, problems);
   const handoffBackground = localHandoffBackground(raw, problems);
-  return { raw, sources, autoMerge, unattendedWaiver, reviewApprovals, unattendedSignoff, handoffBackground, problems };
+  const forgeTokenKeychain = localForgeTokenKeychain(raw, problems, LOCAL);
+  return { raw, sources, autoMerge, unattendedWaiver, reviewApprovals, unattendedSignoff, handoffBackground, forgeTokenKeychain, problems };
 }
 
 // The main checkout's local file behind a worktree's own copy, through checkedLocal: undefined when there is none, null
@@ -453,6 +461,19 @@ function untrackedSwitch(value, key, tracked, errors) {
 // it could not be read. Unset, a value that is no boolean, a broken file, and no file all read as undefined, so the
 // team's value holds, never false. A file git tracks travels with a branch, so it is no machine's own: only git's answer
 // "untracked" (exit 1) keeps the value. Asked only when a value is set, so a hook pays no git call for a file with none.
+// The main checkout's `projectRun.forgeTokenKeychain`, as checkedLocal read it, or null: only while git says it tracks
+// no local file there, since a branch that carried one could choose which keychain entry gives a session its token.
+function mainKeychain(file, tracked, errors) {
+  const entry = file?.forgeTokenKeychain ?? null;
+  if (!entry) return null;
+  const status = tracked();
+  if (status === 1) return entry;
+  errors.push(status === 0
+    ? `${LOCAL}: git tracks it, so a branch could carry it; "projectRun.forgeTokenKeychain" is ignored until it is untracked (git rm --cached ${LOCAL})`
+    : `${LOCAL}: git could not say whether it tracks it, so "projectRun.forgeTokenKeychain" is ignored`);
+  return null;
+}
+
 function mainFeedbackAuto(raw, tracked, errors) {
   const auto = raw?.review?.productFeedback?.auto;
   if (typeof auto !== 'boolean') return undefined;

@@ -343,6 +343,9 @@ export default {
       // The package managers' caches reach the session's sandboxed commands alone: the SessionStart hook appends them to
       // the file the host sources before each Bash command, never the settings' `env`, which its hooks and MCP servers get.
       shellEnv: ({ env, vars }) => writeEnvFile(env.CLAUDE_ENV_FILE, vars),
+      // The sandbox hides the system keyring, where the forge CLI may keep its login: the start reads the forge token
+      // outside it, and the SessionStart hook hands it to the sandboxed commands through shellEnv (lib/project-token.mjs).
+      forgeTokenEnv: true,
       // Each start proves, from inside the session, that the sandbox holds (lib/project-confine.mjs): its first call runs
       // `aidrian project confine`, which tries what the sandbox must refuse, and the start holds the session only once the
       // gate confirmed the verdict (`confined`). `confineReads` are the credential stores the proof tries to read.

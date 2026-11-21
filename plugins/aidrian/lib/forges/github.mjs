@@ -962,6 +962,9 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     visibility: (repo) => json(['repo', 'view', repo, '--json', 'visibility']).visibility,
     // The login gh is signed in as.
     viewer: ({ host } = {}) => rest('user', { host })?.login,
+    // The token gh signs in to `host` with, from its own login wherever gh keeps it, the system keyring included, or
+    // from its token variables: no network call. Throws when gh has none.
+    authToken: ({ host } = {}) => gh(['auth', 'token', ...(host ? ['--hostname', host] : [])]).trim(),
     // The comments on the pull request's conversation, not those on its diff (reviewComments).
     conversationComments: (repo, n, { host } = {}) => list(`repos/${repo}/issues/${n}/comments`, { host }),
     // One comment of a conversation, by its id. With `pr`, it is held to that pull request of `repo`: a comment whose

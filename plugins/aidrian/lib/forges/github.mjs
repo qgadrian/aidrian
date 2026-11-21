@@ -488,6 +488,16 @@ const graphNumber = (value) => {
 const clientError = (error) => /\(HTTP 4\d\d\)/u.test(`${error?.message ?? ''} ${error?.stderr ?? ''}`);
 // Whether gh failed on GitHub's 404.
 const notFound = (error) => /\(HTTP 404\)/u.test(`${error?.message ?? ''} ${error?.stderr ?? ''}`);
+// Whether gh failed on GitHub's 403 for a feature the account's plan lacks, as the rules, rulesets, and branch protection
+// routes answer for a private repository on the free plan.
+const planGated = (error) => /Upgrade to GitHub Pro or make this repository public[^\n]*\(HTTP 403\)/u.test(`${error?.message ?? ''} ${error?.stderr ?? ''}`);
+// What refProtection says of a repository whose plan offers no rule on its branches or tags, owned by an account of
+// `ownerType` as GitHub answers it: GitHub Pro is a personal account's plan, and an organization needs GitHub Team.
+const planWhy = (ownerType) => {
+  const plans = { User: 'GitHub Pro', Organization: 'GitHub Team' };
+  const plan = plans[ownerType] ?? 'GitHub Pro for a personal account or GitHub Team for an organization';
+  return `the plan offers no branch protection or rulesets for a private repository: ${plan}, or a public repository, offers them`;
+};
 // Whether a `change` call failed because GitHub has no such pull request: a 404 from REST, or GraphQL's answer that it
 // could not resolve the number, which `gh pr view` gives. Any other failure, such as a network error, may pass.
 export const changeNotFound = (error) => notFound(error)
@@ -541,15 +551,14 @@ function workflowIds(rows, listRuns) {
 // slash, as fnmatch's do, so `refs/tags/*` and `refs/tags/**` let a tag such as `release/v1` through.
 const ALL_TAGS = new Set(['~ALL', 'refs/tags/**/*']);
 
-// The names of the environments of `repo` a workflow on any branch may deploy to, and so read the secrets of: those with
-// no deployment branch policy and no required reviewers rule that holds the signed-in user `login` (heldForReviewer).
-// A repository GitHub keeps no environments for has none.
-// SHORTCUT: an environment limited by custom branch patterns counts as held, though a pattern may match an issue's branch,
-// and so does one limited to protected branches, though a branch protection's pattern may match an issue's branch too;
-// an environment whose admins may bypass its rules (`can_admins_bypass`, true by default) counts as held, though an
-// admin's token, as the session's may be, deploys past them through a script. Listing each pattern against the branch
-// names issues get, and reading the bypass, would replace this when a team keeps secrets so.
-function openEnvironments(list, repo, host, login) {
+// The names of the environments of `repo` whose secrets an issue's session could reach, and so counts: every one when
+// the signed-in user is an admin of the repository, `admin`, since an admin's token, which may be the session's, can
+// edit an environment's protection rules, its reviewers and self-review rule among them, so no rule holds it; and
+// otherwise every one with no required reviewers rule that holds the signed-in user `login` (heldForReviewer). A deployment branch policy, protected
+// branches or custom branch patterns, holds nothing: it is no hold against code the run pushes, since which branches it
+// lets deploy turns on patterns, rulesets, and waivers this read cannot weigh. A repository GitHub keeps no
+// environments for has none.
+function openEnvironments(list, repo, host, login, admin) {
   let pages;
   try {
     pages = list(`repos/${repo}/environments`, { host });
@@ -559,7 +568,7 @@ function openEnvironments(list, repo, host, login) {
   }
   const environments = pages.flatMap((page) => (Array.isArray(page?.environments) ? page.environments : []));
   const reviewed = (each) => (Array.isArray(each?.protection_rules) ? each.protection_rules : []).some((rule) => heldForReviewer(rule, login));
-  return environments.filter((each) => typeof each?.name === 'string' && !each.deployment_branch_policy && !reviewed(each)).map((each) => each.name);
+  return environments.filter((each) => typeof each?.name === 'string' && (admin || !reviewed(each))).map((each) => each.name);
 }
 
 // Whether an environment's protection rule holds a deployment for a reviewer other than the signed-in user `login`
@@ -613,7 +622,7 @@ function branchHold(read, admin, viewer) {
   try {
     rules = read('/protection');
   } catch (error) {
-    if (clientError(error)) return { held: null, why: 'GitHub shows the settings of its branch protection only to an administrator' };
+    if (clientError(error) && !planGated(error)) return { held: null, why: 'GitHub shows the settings of its branch protection only to an administrator' };
     throw error;
   }
   const reviews = rules?.required_pull_request_reviews;
@@ -709,6 +718,27 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
       comments: nodes.map((each) => ({ id: restId(each?.fullDatabaseId), body: typeof each?.body === 'string' ? each.body : '', user: { login: each?.author?.login ?? null }, author_association: each?.authorAssociation ?? null })),
     };
   };
+  // refProtection's reads of the rules on `branch`, the default branch of `repo` as `about` answers it, and of the tag
+  // rulesets; each throws what gh throws.
+  const guards = (repo, branch, about, host) => {
+    const rulesets = new Map();
+    const ruleset = (id) => {
+      if (!rulesets.has(id)) rulesets.set(id, rest(`repos/${repo}/rulesets/${id}`, { host }));
+      return rulesets.get(id);
+    };
+    const asks = list(`repos/${repo}/rules/branches/${encodeURIComponent(branch)}`, { host })
+      .filter((rule) => rule?.type === 'pull_request' && Number.isSafeInteger(rule.ruleset_id));
+    const ruled = [...new Set(asks.map((rule) => rule.ruleset_id))].map(ruleset).filter((each) => each?.enforcement === 'active');
+    const tags = list(`repos/${repo}/rulesets?targets=tag&includes_parents=true`, { host })
+      .filter((each) => each?.enforcement === 'active' && each?.target === 'tag' && Number.isSafeInteger(each?.id))
+      .map((each) => ruleset(each.id)).filter((each) => each?.enforcement === 'active').map(tagRule);
+    if (ruled.some((each) => each.current_user_can_bypass === 'never')) return { branch, protected: true, why: null, tags };
+    const read = (route) => rest(`repos/${repo}/branches/${encodeURIComponent(branch)}${route}`, { host });
+    const classic = branchHold(read, about?.permissions?.admin !== false, () => rest('user', { host })?.login);
+    const bypassed = ruled.map((each) => `the ruleset ${JSON.stringify(String(each.name ?? each.id))} asks for a pull request, and lets the signed-in user bypass it (${String(each.current_user_can_bypass ?? 'not said')})`);
+    const why = classic.held === true ? null : [...bypassed, classic.why].filter(Boolean).join('; ');
+    return { branch, protected: classic.held, why, tags };
+  };
   return Object.freeze({
     id: FORGE_ID,
     cwd,
@@ -803,51 +833,48 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // `protected` true when an active ruleset that asks for a pull request there may never be bypassed by that user, or
     // branch protection asks for one and binds that user (branchHold), false when neither does, and null when only branch
     // protection could hold and GitHub shows its settings to admins alone; `why` says why it is not true. `tags` holds
-    // each active tag ruleset (tagRule).
+    // each active tag ruleset (tagRule). A repository whose plan offers neither rulesets nor branch protection, GitHub's
+    // 403 for a private repository on the free plan, has none: `protected` false, `plan` true, no tag rule, and a `why`
+    // that names the plan the owner's kind of account needs (planWhy).
     refProtection: (repo, { host } = {}) => {
       const about = rest(`repos/${repo}`, { host });
       const branch = about?.default_branch;
       if (typeof branch !== 'string' || branch === '') throw new Error('GitHub named no default branch');
-      const rulesets = new Map();
-      const ruleset = (id) => {
-        if (!rulesets.has(id)) rulesets.set(id, rest(`repos/${repo}/rulesets/${id}`, { host }));
-        return rulesets.get(id);
-      };
-      const asks = list(`repos/${repo}/rules/branches/${encodeURIComponent(branch)}`, { host })
-        .filter((rule) => rule?.type === 'pull_request' && Number.isSafeInteger(rule.ruleset_id));
-      const ruled = [...new Set(asks.map((rule) => rule.ruleset_id))].map(ruleset).filter((each) => each?.enforcement === 'active');
-      const tags = list(`repos/${repo}/rulesets?targets=tag&includes_parents=true`, { host })
-        .filter((each) => each?.enforcement === 'active' && each?.target === 'tag' && Number.isSafeInteger(each?.id))
-        .map((each) => ruleset(each.id)).filter((each) => each?.enforcement === 'active').map(tagRule);
-      if (ruled.some((each) => each.current_user_can_bypass === 'never')) return { branch, protected: true, why: null, tags };
-      const read = (route) => rest(`repos/${repo}/branches/${encodeURIComponent(branch)}${route}`, { host });
-      const classic = branchHold(read, about?.permissions?.admin !== false, () => rest('user', { host })?.login);
-      const bypassed = ruled.map((each) => `the ruleset ${JSON.stringify(String(each.name ?? each.id))} asks for a pull request, and lets the signed-in user bypass it (${String(each.current_user_can_bypass ?? 'not said')})`);
-      const why = classic.held === true ? null : [...bypassed, classic.why].filter(Boolean).join('; ');
-      return { branch, protected: classic.held, why, tags };
+      try {
+        return guards(repo, branch, about, host);
+      } catch (error) {
+        if (planGated(error)) return { branch, protected: false, plan: true, why: planWhy(about?.owner?.type), tags: [] };
+        throw error;
+      }
     },
     // What a project run's issue session's token could run with the repository's secrets, for the run's preflight:
     // { secrets, workflowPush }. `secrets` counts the Actions secrets of the repository, those its organization
-    // shares with it (none for a repository with no organization), and those of each environment any branch may deploy
-    // to without a reviewer other than the signed-in user (openEnvironments); `workflowPush` is whether the signed-in
-    // token's scopes include `workflow`, which GitHub asks of a push that changes a workflow file, or null for a token
-    // that names no scopes, as a fine-grained one.
+    // shares with it (none for a repository a user owns, whose organization route GitHub answers with 422, nor for one
+    // GitHub answers 404), and those of every environment when the signed-in user is an admin of the repository
+    // (`permissions.admin` on the repository's read; a missing one counts as admin), whose token can edit an
+    // environment's protection rules, and otherwise of each environment no reviewer other than that user holds, whatever
+    // its deployment branch policy (openEnvironments). `workflowPush` is whether the signed-in token's scopes include
+    // `workflow`, which GitHub asks of a push that changes a workflow file, or null for a token that names no scopes, as
+    // a fine-grained one.
     workflowSecrets: (repo, { host } = {}) => {
       const count = (route) => {
         const total = rest(route, { host })?.total_count;
         if (!Number.isSafeInteger(total)) throw new Error('GitHub answered no count of secrets');
         return total;
       };
+      const about = rest(`repos/${repo}`, { host });
       let shared = 0;
-      try {
-        shared = count(`repos/${repo}/actions/organization-secrets`);
-      } catch (error) {
-        if (!notFound(error)) throw error;
+      if (about?.owner?.type !== 'User') {
+        try {
+          shared = count(`repos/${repo}/actions/organization-secrets`);
+        } catch (error) {
+          if (!notFound(error)) throw error;
+        }
       }
       const answer = String(gh(['api', '--include', ...(host ? ['--hostname', host] : []), 'user']));
       const line = answer.split(/\r?\n/u).find((each) => /^x-oauth-scopes:/iu.test(each));
       const scopes = line === undefined ? null : line.slice(line.indexOf(':') + 1).split(',').map((each) => each.trim());
-      const open = openEnvironments(list, repo, host, signedInLogin(answer)).reduce((sum, name) => sum + count(`repos/${repo}/environments/${encodeURIComponent(name)}/secrets`), 0);
+      const open = openEnvironments(list, repo, host, signedInLogin(answer), about?.permissions?.admin !== false).reduce((sum, name) => sum + count(`repos/${repo}/environments/${encodeURIComponent(name)}/secrets`), 0);
       const secrets = count(`repos/${repo}/actions/secrets`) + shared + open;
       return { secrets, workflowPush: scopes === null ? null : scopes.includes('workflow') };
     },

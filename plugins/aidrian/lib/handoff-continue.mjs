@@ -16,7 +16,9 @@
 // resolves session.handoff.continue to it (backgroundGate). It arms no marker: the gate starts the new session itself,
 // through the host adapter's `startBackground` and the injectable `run`, records its chain floor, and records the start,
 // so a second run on the same bytes starts nothing (startInBackground, which holds the start with
-// lib/session-start-gate.mjs startHeld).
+// lib/session-start-gate.mjs startHeld). Before it keeps the brief or starts anything, it asks the host whether the new
+// session could push to the repository's remote (lib/push-preflight.mjs), and a clear denial goes on by the clear route,
+// with what to change.
 // A session another gate's pending mark still holds (lib/unattended-mark.mjs), which may be the session that gate is
 // starting before its chain floor exists, is refused: it could otherwise start the count again. A session whose
 // unattended mark names a project run or an issue, or is there but cannot be read, gets `continue: none` on every route,
@@ -44,6 +46,7 @@ import { continueRoutes, detectHost, sessionIdentity } from './hosts/index.mjs';
 import { branchOf } from './handoff-sections.mjs';
 import { sectionItems } from './markdown-sections.mjs';
 import { committedConfigFile, defaultStateDir, projectAt, projectCheckouts, stateDir } from './project.mjs';
+import { pushPreflight } from './push-preflight.mjs';
 import { safely, startHeld } from './session-start-gate.mjs';
 import { drivenRunStart } from './run-driver.mjs';
 import { olderWrap } from './shell-init.mjs';
@@ -321,11 +324,17 @@ function armed({ host, found, slug, chain, hash, store, session, now, route, fal
 // The background route, once the brief passed every check: a chain that made no progress over STALL_HOPS hops in a row,
 // goes on by the clear route instead (progressOf), or, when the working config's maxChain cannot arm a clear at this
 // chain, by none: a person resumes the brief. A hop whose next floor CHAIN_CEILING cannot record (floorFits) goes on by
-// none too, since a clear would deliver the same chain. A session whose earlier start the store still records starts
+// none too, since a clear would deliver the same chain. A host that would refuse the new session's push to the
+// repository's remote (pushPreflight), that of the folder the host starts the new session in (`startFolder`), goes on by
+// the clear route, before anything is kept, marked, or started: a run no Human attends would do its work and then fail
+// at the push. A folder the host cannot name, or one that is not there, answers unknown, and the start goes on; in a
+// folder that is not there the host's start cannot run, so nothing starts, the pending mark is removed, and the handoff
+// goes on by the clear route. A session whose earlier start the store still records starts
 // no other until the host lists that one as ended (busy), but for a project run's current driver whose earlier start is
 // one of its run's issues' sessions, which the run's caps count instead (run-driver.mjs drivenRunStart). Otherwise the
 // store keeps the checked bytes, the host starts a new
-// session in the handing-off session's own folder, whose first message is backgroundPrompt on that copy, held by
+// session in the handing-off session's own folder, the one `startFolder` named when it named one, whose first message
+// is backgroundPrompt on that copy, held by
 // startHeld (lib/session-start-gate.mjs), which records the new session's chain floor, with the hop's progress and its
 // parent, this session, under its full id or the short one the host printed, and its unattended mark under the same id,
 // which the hooks read wherever the session's calls run (lib/unattended-mark.mjs), then the start itself, behind a
@@ -374,13 +383,21 @@ function startInBackground(ready) {
   const progress = progressOf({ store, session, now, cwd, text: found.bytes.toString('utf8') });
   if (progress.stalls >= STALL_HOPS) return fallBack(`stuck: no new commits or finished steps over the last ${STALL_HOPS} handoffs`);
   if (!floorFits({ chain: chain + 1, done: progress.done })) return none(`${CEILING_WHY}; a person resumes the brief`);
+  // The denial names a settings file a session no Human attends must never edit: only the Human widens push trust. The
+  // remote judged is the one of the folder the host starts the new session in, looked up once and passed to the start;
+  // when the host cannot say which folder that is, the answer is unknown, never that of the folder the gate runs in.
+  const place = safely(() => handoff.startFolder?.({ session, env, run }));
+  const start = typeof place?.cwd === 'string' && path.isAbsolute(place.cwd) ? place : undefined;
+  const push = start ? pushPreflight({ cwd: start.cwd, env, host, session }) : { answer: 'unknown' };
+  if (push.answer === 'denied') return fallBack(`no background session started, since ${push.message}`);
   const kept = keepBrief(store, found.bytes, hash);
   if (!kept || hasControl(kept)) return fallBack('the continuation store could not keep the checked brief for a background session');
   const prompt = backgroundPrompt({ marker: { brief: found.path, slug, chain }, kept, sha256: hash, maxChain });
   const held = startHeld({
     session,
     driver,
-    launch: (hold) => handoff.startBackground({ session, slug, chain: chain + 1, env, prompt, hold, run, wait }),
+    // `start`, the folder the push preflight judged, so the host starts there and never looks it up again.
+    launch: (hold) => handoff.startBackground({ session, slug, chain: chain + 1, env, prompt, hold, run, wait, start }),
     stop: (id) => handoff.stopBackground?.({ id, env, run }),
     // A driver's last start may be one of its run's issues, which the run's caps count while it runs: the start gate's
     // read of the same record (run-driver.mjs drivenRunStart). Every other record waits for the host's listing.

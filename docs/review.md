@@ -1421,17 +1421,22 @@ outside its own pull request and issues ([hooks.md](hooks.md#agent-gates)). A sc
 `curl` with the token, is outside every hook and can still push a tag, cut a release, start a workflow, or push another
 branch: that is an accepted residual, which only the forge closes. So `aidrian project preflight` blocks a run whose
 default branch asks the signed-in user, administrator or not, for no pull request, or whose tags no tag rule holds that
-names every tag, restricts creating and updating one, and that the signed-in user can never bypass. The forge also runs
+names every tag, restricts creating and updating one, and that the signed-in user can never bypass, unless the team
+sets `projectRun.forgeProtectionAccepted`, which removes that backstop: the hooks alone then hold the token, and a
+script the session runs can push to the default branch or a tag. The forge also runs
 a branch's own workflow files, with the repository's secrets, on every push: the hook refuses an issue session's push
-whose commits change them, release and deploy secrets belong in environments limited to protected branches and tags
-or held for a required reviewer who prevents self-review or is not the signed-in user, never in repository secrets or
-an open environment a pushed branch's workflow can read. The preflight counts an environment as held when its admins
-may bypass its rules (on GitHub `can_admins_bypass`, true by default), though an admin's token deploys past them
-through a script, and when it is limited to protected branches, though a branch protection's pattern may match an
-issue's branch; its `note workflows` line says to turn the bypass off and keep those patterns off issue branch names.
+whose commits change them, release and deploy secrets belong in environments held for a required reviewer who
+prevents self-review or is not the signed-in user, never in repository secrets or an open environment a pushed
+branch's workflow can read. The preflight counts every other environment as open, one limited to protected branches or
+branch patterns too, since a deployment branch rule is no hold against code the run pushes, and every environment,
+one held for reviewers too, when the signed-in user is an admin of the repository, or the forge does not say, since an
+admin's token can edit an environment's protection rules, so no rule holds it.
+`projectRun.forgeProtectionAccepted` waives no secret.
 The preflight blocks a run whose workflows see CI secrets,
 whatever the token's `workflow` scope, since the workflows already run the branch's own tests, scripts, and build, unless
-the team sets `projectRun.workflowSecretsAccepted`. A cloud role whose OIDC trust names any ref of the repository,
+the team sets `projectRun.workflowSecretsAccepted`, which skips the secrets read whole: it accepts all current and future
+workflow secret exposure for project runs, the repository's, its organization's, and every environment's secrets, so a
+team sets it only when that is acceptable. A cloud role whose OIDC trust names any ref of the repository,
 `repo:<owner>/<name>:*`, is a secret by another name: any pushed branch's workflow can assume it, so its trust names a
 protected branch or a held environment.
 

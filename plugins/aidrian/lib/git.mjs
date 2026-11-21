@@ -282,7 +282,7 @@ export const holdsCheckout = (dir) => isFile(path.join(dir, '.git')) || isDirect
 
 // Whether `dir` or a folder above it holds a `.git` entry, where git looks for a repository. It reads the disk alone, so
 // it answers when git does not.
-function underGit(dir) {
+export function underGit(dir) {
   for (let current = path.resolve(dir); ; current = path.dirname(current)) {
     if (isEntry(path.join(current, '.git'))) return true;
     if (path.dirname(current) === current) return false;

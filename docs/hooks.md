@@ -1229,8 +1229,19 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
 - **The write allowlist of a session no Human attends** (`lib/unattended-write.mjs`). A session its own unattended
   mark holds, read by the hook payload's session id, and every subagent of it, writes only:
   - its own worktree: the checkout of the folder its mark says the gate started it in, when that checkout shares its git
-    folder with the main checkout the mark names; never the call's folder, so another worktree of the same repository
-    is outside. A mark filed before the start folder was recorded names no worktree;
+    folder with the main checkout the mark names: a linked worktree from any folder inside it, such as a package of a
+    monorepo, and the main checkout only from its own top, so a removed worktree's folder left as a plain one inside the
+    main checkout gives none; never the call's folder, so another worktree of the same repository
+    is outside, unless it lies inside that checkout, as a task worktree under the main checkout's `.claude/worktrees/`
+    does for a session started in the main checkout; each checkout nested so keeps its `.git` pointer and its host
+    files refused, as below, and a checkout whose nested checkouts git cannot list is no worktree. A mark filed before
+    the start folder was recorded, by an older gate, names the main checkout as its root wherever the session started,
+    so that checkout never stands in: the start folder is the one the gate's start record in the continuation store
+    names for the session, by the payload's full id or the short id the host printed (`lib/handoff-guard.mjs
+    startedFolder`), read only from a store the handoff writer would keep, outside every checkout of the repository,
+    and within the guards' time budget; with no such record, or records that name two folders, the session gets no worktree, so it
+    writes none of the main checkout's task worktrees. A start record lasts a day. A project run's issue session whose
+    mark names no start folder gets no worktree;
   - its issue's running attempt folders `work`, `drop`, and `cache`, under `<state>/runs/<run>/attempts/`, each only
     while it is a plain folder: one replaced by a link is refused, and so is the keep file `.keep-attempt` in `drop`
     and `cache`;
@@ -1248,18 +1259,28 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     `feat-eng-1-export-S1-explorer.json`. Its issue and branch are the run snapshot's, read while the ledger names its
     issue running (`lib/project-run-guard.mjs ownIssue`); with none, it writes none of them;
   - the temporary folder, this process's `TMPDIR` and `/tmp`, but for a state folder inside it, as one under `/tmp`
-    is, where only the state places above pass;
+    is, where only the state places above pass, and for any checkout of the repository inside it, which keeps the rules
+    above: a checkout that is not the session's worktree stays outside, and the worktree's host files and `.git` entries
+    stay refused; with checkouts git cannot list, or a main checkout git cannot read though a `.git` lies at or above it,
+    the temporary folder passes nothing and no checkout is granted;
   - `/dev/null`, `/dev/stdout`, `/dev/stderr`, `/dev/tty`, and `/dev/fd/<n>`, by the path a command spells.
 
   Everything else is refused, and these always, inside a place or not, checked first: every git folder, whole (the
   shared one, the worktree's own, and the attempt's; only git writes there, and git running is no write this guard
-  sees), and a worktree's or the attempt clone's `.git` pointer; `~/.gitconfig`, the `git` folder of `$XDG_CONFIG_HOME`
+  sees), and a worktree's or the attempt clone's `.git` pointer, with every `.git` entry at any depth of the session's
+  worktree, its attempt folders, and the state folders it writes, such as the pointer of a worktree nested in it: by
+  the real path's parts and by the path as written, so a `.git` that is a link counts, by a glob part that may name
+  `.git` (`.g*`), and, for a session its own mark holds, by a `.git` named in a folder no path gives; the pointer of each
+  checkout of the repository nested in the worktree is refused too when a write, a delete, a move, or a glob reaches a
+  folder that holds it, the worktree itself included, as `rm -rf .claude/worktrees` does; a glob is judged from its
+  folder as written. A removal, move, or glob that reaches the `.git` of a standalone repository nested in a place, which
+  no git listing names, without naming `.git` itself, such as `rm -rf vendor`, is not refused; `~/.gitconfig`, the `git` folder of `$XDG_CONFIG_HOME`
   and of `~/.config`, and the global and system git config files git itself names (`git var GIT_CONFIG_GLOBAL` and
   `GIT_CONFIG_SYSTEM`, such as a package manager's `etc/gitconfig`, asked only for a write that would otherwise pass);
   the shell startup files in the home folder and in `ZDOTDIR`; the user's macOS launch agents, `~/Library/LaunchAgents`;
   the review and attest records in `reviews`, by a write or a delete; any other path in `dispatch`, and the dispatch log
   beside it, `<state>/dispatch-log.jsonl`; the host files every host's adapter protects (`protectedPaths`), in the
-  session's own worktree and its attempt's clone: `.claude/settings.json`, `.claude/settings.local.json`,
+  session's own worktree, each checkout of the repository nested in it, and its attempt's clone: `.claude/settings.json`, `.claude/settings.local.json`,
   `.claude/skills`, `.claude/agents`, `.claude/commands`, `.claude/hooks`, `.claude/workflows`,
   `.claude/scheduled_tasks.json`, and `.mcp.json`, which a later session there loads, whichever host the session runs
   on; at any depth of the attempt's clone, the host files a host loads from a nested folder (`nestedProtected`): a

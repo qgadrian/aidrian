@@ -16,7 +16,10 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { anchorClones, cloneConfigProblem, cloneGitProblem, GIT_PLACEHOLDERS } from '../plugins/aidrian/lib/attempt-clone.mjs';
+import { noteStarted, openStore, startedFolders } from '../plugins/aidrian/lib/handoff-markers.mjs';
+import { PastDeadline, withinDeadline } from '../plugins/aidrian/lib/deadline.mjs';
 import { committedConfig } from '../plugins/aidrian/lib/config-committed.mjs';
+import { foldCase } from '../plugins/aidrian/lib/fs.mjs';
 import { runGit } from '../plugins/aidrian/lib/git.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { unattendedPlaces, unattendedWriteDenial } from '../plugins/aidrian/lib/unattended-write.mjs';
@@ -38,6 +41,9 @@ function tempRoot(t, prefix) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 }
+
+// A path as the places keep it: real, and in the case the disk folds to.
+const realFolded = (file) => foldCase(realpathSync(file));
 
 // A project on `main` with a linked worktree, a state folder, a home folder, a temporary folder, an XDG config folder,
 // a system git config git names through GIT_CONFIG_SYSTEM, and an attempt folder; the session SESSION marked unattended
@@ -68,7 +74,7 @@ function fixture(t) {
   const ask = (input, { held = mark, cwd = worktree, own = null, places, owner = project } = {}) => unattendedWriteDenial({ session_id: SESSION, cwd, ...input }, config, {
     mark: held,
     env,
-    places: places ?? (() => unattendedPlaces({ cwd, mark: held, project: owner, config, env, home, temp: [temp], own })),
+    places: places ?? (() => unattendedPlaces({ cwd, mark: held, project: owner, config, env, home, temp: [temp], own, session: SESSION })),
   });
   return { root, dir, state, home, temp, xdg, worktree, system, attempt, env, mark, project, config, ask };
 }
@@ -502,8 +508,9 @@ test('the session\'s own worktree is the folder its mark says it started in, nev
   gitIn(fx.dir)('worktree', 'add', '-q', '-b', 'feat/y', second);
   assert.match(fx.ask(write(path.join(second, 'a.txt')), { cwd: second })?.reason ?? '', /outside the places/u, 'another worktree of the same repository');
   assert.match(fx.ask(write(path.join(fx.dir, 'a.txt')), { cwd: fx.dir })?.reason ?? '', /outside the places/u, 'the main checkout');
-  // A mark filed before the start folder was recorded names no worktree.
+  // A mark filed before the start folder was recorded, with no start record to name that folder, has no worktree.
   assert.match(fx.ask(write(path.join(fx.worktree, 'a.txt')), { held: { root: fx.dir } })?.reason ?? '', /outside the places/u);
+  assert.match(fx.ask(write(path.join(fx.dir, 'a.txt')), { held: { root: fx.dir }, cwd: fx.dir })?.reason ?? '', /outside the places/u);
   // A repository under a dot folder of the home folder writes itself, but never its git folder.
   const dotfiles = path.join(fx.home, '.dotfiles');
   mkdirSync(dotfiles);
@@ -519,6 +526,251 @@ test('the session\'s own worktree is the folder its mark says it started in, nev
   assert.equal(fx.ask(write(path.join(dotfiles, 'zshrc')), { held, owner, cwd: dotfiles }), null);
   assert.match(fx.ask(write(path.join(dotfiles, '.git', 'info', 'exclude')), { held, owner, cwd: dotfiles })?.reason ?? '', /the repository's shared git folder/u);
   assert.match(fx.ask(write(path.join(fx.home, '.zshrc')), { held, owner, cwd: dotfiles })?.reason ?? '', /a shell startup file/u, 'the refused list stays first');
+});
+
+// Next.js route segment folders, whose names hold glob and shell characters: a dynamic segment, a catch-all, an optional
+// catch-all, a route group, a parallel route slot, and intercepting routes.
+const SEGMENTS = ['[uid]', '[...slug]', '[[...slug]]', '(group)', '@slot', '(.)photo', '(..)(..)feed'];
+
+// The start record a gate files for the session it started (handoff-markers.mjs noteStarted), in the store of the state
+// folder `state`: `id` and `session` name the new session, `cwd` the folder it started in.
+function recordStart(fx, { cwd, id = SESSION, session = SESSION, ran = 'feed00aa-0000-4000-8000-0000000000bb' }) {
+  const store = openStore(fx.state, { checkouts: fx.project.checkouts, maxChain: fx.config.session.handoff.maxChain });
+  const brief = path.join(fx.state, 'handoffs', '2026-11-21-eng-1.md');
+  assert.ok(noteStarted(store, ran, { sha256: 'a'.repeat(64), slug: 'eng-1', brief, chain: 1, id, session, name: null, cwd }));
+}
+
+// Two task worktrees nested in the fixture's main checkout, as Claude Code's own worktrees under `.claude/worktrees/` are.
+function nestedWorktrees(fx) {
+  const [first, second] = ['eng-1-hours', 'eng-2-billing'].map((name) => path.join(fx.dir, '.claude', 'worktrees', name));
+  gitIn(fx.dir)('worktree', 'add', '-q', '-b', 'feat/hours', first);
+  gitIn(fx.dir)('worktree', 'add', '-q', '-b', 'feat/billing', second);
+  return { first, second };
+}
+
+test('a mark filed before the start folder was recorded writes only the worktree its start record names, whatever its folders are named, and none with no record', (t) => {
+  const fx = fixture(t);
+  const { first, second } = nestedWorktrees(fx);
+  const files = SEGMENTS.map((segment) => path.join(first, 'src', 'app', 'api', segment, 'route.ts'));
+  const edit = (file) => ({ tool_name: 'Edit', tool_input: { file_path: file, old_string: 'a', new_string: 'b' } });
+  // The mark an older gate filed, { root, at }, whose root is the main checkout wherever the session started.
+  const held = { root: fx.dir };
+  // The places, told once for the mark and its session, as one hook call tells them.
+  const told = (session = SESSION) => unattendedPlaces({ cwd: first, mark: held, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.temp], session });
+  const askWith = (found) => (input, cwd = first) => fx.ask(input, { held, cwd, places: () => found })?.reason ?? null;
+
+  // No start record: the session cannot tell where it started, so it writes no checkout, nested or not.
+  const none = askWith(told());
+  for (const file of [files[0], path.join(second, 'a.ts'), path.join(fx.dir, 'README.md')]) assert.match(none(write(file)) ?? '', /outside the places/u, `no record: ${file}`);
+
+  // A record of another session names no folder of this one's.
+  recordStart(fx, { cwd: second, id: 'feed00aa-0000-4000-8000-0000000000cc', session: 'feed00aa-0000-4000-8000-0000000000cc', ran: 'feed00aa-0000-4000-8000-0000000000c0' });
+  assert.match(askWith(told())(write(files[0])) ?? '', /outside the places/u, 'another session\'s record');
+
+  // The record of its own start, by its full id or by the short id the host printed, names the worktree it started in.
+  for (const [id, session] of [[SESSION, SESSION], [SESSION.slice(0, 8), null]]) {
+    recordStart(fx, { cwd: first, id, session });
+    const ask = askWith(told());
+    for (const file of files) {
+      for (const input of [edit(file), write(file), write(file, { agent_id: 'a5f0c1' })]) assert.equal(ask(input), null, `${id} ${input.tool_name} ${file}`);
+      const spelled = path.relative(first, file);
+      for (const command of [`printf x > '${spelled}'`, `printf x > "${file}"`, `sed -i '' 's/a/b/' '${spelled}'`]) assert.equal(ask(bash(command)), null, `${id} ${command}`);
+    }
+    // The other task worktree, another session's, and the main checkout around it stay outside.
+    for (const file of [path.join(second, 'src', 'a.ts'), path.join(fx.dir, 'README.md'), path.join(fx.worktree, 'a.ts')]) {
+      assert.match(ask(write(file)) ?? '', /outside the places/u, `${id} ${file}`);
+      assert.match(ask(bash(`printf x > "${file}"`)) ?? '', /outside the places/u, `${id} shell ${file}`);
+    }
+    // The same names outside every place, and the entries refused wherever they lie, stay refused.
+    for (const segment of SEGMENTS) assert.match(ask(edit(path.join(fx.root, 'elsewhere', segment, 'route.ts'))) ?? '', /outside the places/u, `${id} ${segment}`);
+    for (const [file, reason] of refusedOf(fx)) assert.match(ask(write(file)) ?? '', file.startsWith(fx.worktree) ? /outside the places/u : reason, `${id} ${file}`);
+    assert.match(ask(write(path.join(first, '.git'))) ?? '', /pointer to its git folder/u, id);
+    assert.match(ask(write(path.join(first, '.claude', 'settings.json'))) ?? '', /a host file a later session/u, id);
+    rmSync(path.join(fx.state, 'handoffs', '.continue', 'started-feed00aa-0000-4000-8000-0000000000bb.json'));
+  }
+
+  // Two records of its start that name two folders tell none.
+  recordStart(fx, { cwd: first });
+  recordStart(fx, { cwd: second, ran: 'feed00aa-0000-4000-8000-0000000000b1' });
+  assert.match(askWith(told())(write(files[0])) ?? '', /outside the places/u, 'records that disagree');
+
+  // A project run's issue session works in its attempt's clone, which its mark names: one whose mark names no start
+  // folder gets no worktree, whatever a start record says.
+  const issue = { root: fx.dir, project: 'launch', issue: 'ENG-1' };
+  assert.match(fx.ask(write(files[0]), { held: issue, cwd: first })?.reason ?? '', /outside the places/u);
+  assert.match(fx.ask(write(path.join(fx.dir, 'README.md')), { held: issue, cwd: fx.dir })?.reason ?? '', /outside the places/u);
+});
+
+test('the agent gate hook finds the start record of a session whose mark names no start folder by the payload\'s session id', async (t) => {
+  const fx = fixture(t);
+  const { first, second } = nestedWorktrees(fx);
+  assert.ok(markUnattended(SESSION, { root: fx.dir, env: fx.env }));
+  recordStart(fx, { cwd: first });
+  const run = (file) => hookCall(HOOK, { input: JSON.stringify({ session_id: SESSION, cwd: first, ...write(file) }), cwd: first, env: fx.env, encoding: 'utf8' });
+  const own = await run(path.join(first, 'src', 'a.ts'));
+  assert.equal(own.status, 0, own.stderr);
+  const other = await run(path.join(second, 'src', 'a.ts'));
+  assert.equal(other.status, 2, other.stderr);
+  assert.match(other.stderr, /outside the places/u);
+});
+
+test('a session started in the main checkout never writes the git pointer or the host files of a checkout nested in it, directly, through a folder, a glob, or a link', (t) => {
+  const fx = fixture(t);
+  const { first, second } = nestedWorktrees(fx);
+  const held = { root: fx.dir, cwd: fx.dir };
+  const found = unattendedPlaces({ cwd: fx.dir, mark: held, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.temp], session: SESSION });
+  const ask = (input) => fx.ask(input, { held, cwd: fx.dir, places: () => found })?.reason ?? null;
+  // Its own checkout, the task worktrees in it included, it writes.
+  for (const file of [path.join(fx.dir, 'README.md'), path.join(first, 'src', 'a.ts'), path.join(second, 'src', 'a.ts')]) assert.equal(ask(write(file)), null, file);
+  // The host files a later session in a nested checkout loads.
+  for (const top of [first, second]) {
+    for (const file of [path.join(top, '.claude', 'settings.json'), path.join(top, '.claude', 'skills', 'x', 'SKILL.md'), path.join(top, '.mcp.json')]) {
+      assert.match(ask(write(file)) ?? '', /a host file a later session/u, file);
+      assert.match(ask(bash(`printf x > "${file}"`)) ?? '', /a host file a later session/u, `shell ${file}`);
+    }
+  }
+  // Each nested checkout's `.git` pointer, written, removed, or moved, by itself or with a folder that holds it.
+  const pointer = /pointer to its git folder|nested checkout's git folder|host file a later session/u;
+  for (const command of [`printf x > "${first}/.git"`, `rm -f "${first}/.git"`, `rm -rf "${first}"`, `mv "${first}" "${fx.temp}/moved"`,
+    `rm -rf "${path.join(fx.dir, '.claude', 'worktrees')}"`, `rm -rf "${path.join(fx.dir, '.claude')}"`, `rm -rf "${fx.dir}"`]) {
+    assert.match(ask(bash(command)) ?? '', pointer, command);
+  }
+  // A glob that may reach one: by a folder it expands to, or by a part that names `.git`.
+  for (const command of [`rm -rf ${path.join(fx.dir, '.claude', 'worktrees')}/*`, `rm -f ${path.join(fx.dir, '.claude', 'worktrees')}/*/.git`, `rm -rf ${first}/.g*`, `rm -rf ${fx.dir}/src/*/.git`]) {
+    assert.match(ask(bash(command)) ?? '', pointer, command);
+  }
+  // A link whose real path no longer names `.git`, and a `.git` named in a folder no path gives.
+  const repo = path.join(fx.dir, 'vendor', 'lib');
+  const store = path.join(fx.dir, 'vendor', 'store');
+  mkdirSync(store, { recursive: true });
+  mkdirSync(repo, { recursive: true });
+  symlinkSync(store, path.join(repo, '.git'));
+  assert.match(ask(write(path.join(repo, '.git', 'config'))) ?? '', /nested checkout's git folder/u, 'a .git link');
+  assert.match(ask(bash(`printf x > "${path.join(repo, '.git', 'HEAD')}"`)) ?? '', /nested checkout's git folder/u, 'a .git link by the shell');
+  // From the temporary folder, where the path as the call's folder gives it passes, the name still refuses.
+  const fromTemp = (command) => fx.ask(bash(command), { held, cwd: fx.temp, places: () => found })?.reason ?? null;
+  assert.match(fromTemp('cd "$X" && printf x > .git/HEAD') ?? '', /names a `\.git` entry/u, 'a folder no path gives');
+  assert.equal(fromTemp('cd "$X" && printf x > notes.md'), null);
+  // `.gitignore` and `.github` are no git entries.
+  for (const file of [path.join(first, '.gitignore'), path.join(first, '.github', 'x.md')]) assert.equal(ask(write(file)), null, file);
+  assert.equal(ask(bash('cd "$X" && printf x > .gitignore')), null);
+});
+
+test('a start record grants only from a store the handoff writer would keep, and a start folder only a linked worktree from any folder in it, or the main checkout from its top', (t) => {
+  const fx = fixture(t);
+  const { first } = nestedWorktrees(fx);
+  const held = { root: fx.dir };
+  const placesFor = (project, config) => unattendedPlaces({ cwd: first, mark: held, project, config, env: fx.env, home: fx.home, temp: [fx.temp], session: SESSION });
+  // A state folder inside the worktree beside the main checkout: the handoff writer refuses a store there, so its
+  // record names no folder.
+  const sibling = path.join(fx.worktree, 'state');
+  writeFileSync(path.join(fx.dir, '.aidrian', 'config.json'), JSON.stringify({ version: 1, state: { dir: sibling } }));
+  const project = findProject(fx.dir);
+  const { config } = loadConfig(project);
+  const loose = openStore(sibling, { checkouts: project.checkouts, maxChain: config.session.handoff.maxChain });
+  assert.equal(loose.refused, null, 'a reader that knows only the project\'s own checkouts keeps it');
+  const brief = path.join(sibling, 'handoffs', '2026-11-21-eng-1.md');
+  assert.ok(noteStarted(loose, 'feed00aa-0000-4000-8000-0000000000bb', { sha256: 'a'.repeat(64), slug: 'eng-1', brief, chain: 1, id: SESSION, session: SESSION, name: null, cwd: first }));
+  assert.equal(placesFor(project, config).worktree, null, 'a record in a sibling worktree\'s store');
+  writeFileSync(path.join(fx.dir, '.aidrian', 'config.json'), JSON.stringify({ version: 1, state: { dir: fx.state } }));
+
+  // A start in a folder inside a linked worktree, as a package of a monorepo is, by the record or the mark, grants that
+  // worktree; the main checkout grants itself from its top.
+  const src = path.join(first, 'src', 'pkg');
+  mkdirSync(src, { recursive: true });
+  const markFor = (held) => unattendedPlaces({ cwd: src, mark: held, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.temp], session: SESSION });
+  assert.equal(markFor({ root: fx.dir, cwd: src }).worktree, realFolded(first), 'a mark naming a folder in the worktree');
+  assert.equal(markFor({ root: fx.dir, cwd: fx.dir }).worktree, realFolded(fx.dir), 'a mark naming the main checkout');
+  assert.equal(markFor({ root: fx.dir, cwd: path.join(fx.dir, '.aidrian') }).worktree, null, 'a mark naming a folder in the main checkout');
+  recordStart(fx, { cwd: src });
+  const inside = placesFor(fx.project, fx.config);
+  assert.equal(inside.worktree, realFolded(first), 'a record naming a folder in the worktree');
+  assert.equal(fx.ask(write(path.join(first, 'README.md')), { held, cwd: src, places: () => inside }), null);
+
+  // A task worktree since removed, its folder left as a plain one, resolves to the main checkout around it: none.
+  rmSync(path.join(fx.state, 'handoffs', '.continue', 'started-feed00aa-0000-4000-8000-0000000000bb.json'));
+  recordStart(fx, { cwd: first });
+  assert.ok(placesFor(fx.project, fx.config).worktree, 'the live worktree');
+  gitIn(fx.dir)('worktree', 'remove', '--force', first);
+  mkdirSync(path.join(first, 'src'), { recursive: true });
+  const removed = placesFor(fx.project, fx.config);
+  assert.equal(removed.worktree, null, 'a removed worktree\'s folder');
+  const ask = (input, found) => fx.ask(input, { held, cwd: first, places: () => found })?.reason ?? null;
+  for (const file of [path.join(first, 'src', 'a.ts'), path.join(fx.dir, 'README.md')]) assert.match(ask(write(file), removed) ?? '', /outside the places/u, file);
+  // A mark that names that folder, or a folder below it, gets none either.
+  const plain = { root: fx.dir, cwd: path.join(first, 'src') };
+  assert.equal(unattendedPlaces({ cwd: first, mark: plain, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.temp], session: SESSION }).worktree, null);
+});
+
+test('a temporary folder that holds a checkout passes none of it: the checkout\'s own rules win', (t) => {
+  const fx = fixture(t);
+  const { first, second } = nestedWorktrees(fx);
+  // The whole fixture under the temporary folder, as /tmp holds it where tmpdir() is /tmp.
+  const placesFor = (held) => unattendedPlaces({ cwd: first, mark: held, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.root], session: SESSION });
+  const ask = (input, held, found) => fx.ask(input, { held, cwd: first, places: () => found })?.reason ?? null;
+  // With no start record, the checkouts are withheld, and still outside.
+  const withheld = { root: fx.dir };
+  const none = placesFor(withheld);
+  for (const file of [path.join(fx.dir, 'README.md'), path.join(first, 'a.ts'), path.join(second, '.claude', 'settings.json'), path.join(fx.worktree, 'a.ts'), path.join(fx.worktree, '.git')]) {
+    assert.match(ask(write(file), withheld, none) ?? '', /outside the places|pointer to its git folder/u, file);
+    assert.match(ask(bash(`printf x > "${file}"`), withheld, none) ?? '', /outside the places|pointer to its git folder/u, `shell ${file}`);
+  }
+  assert.equal(ask(write(path.join(fx.root, 'elsewhere', 'notes.md')), withheld, none), null, 'the temporary folder outside every checkout');
+  // With its own worktree, the others stay outside, and its host files and git pointer refused.
+  recordStart(fx, { cwd: first });
+  const own = placesFor(withheld);
+  assert.equal(ask(write(path.join(first, 'a.ts')), withheld, own), null);
+  assert.match(ask(write(path.join(first, '.claude', 'settings.json')), withheld, own) ?? '', /a host file a later session/u);
+  for (const file of [path.join(second, 'a.ts'), path.join(fx.worktree, 'a.ts'), path.join(fx.dir, 'README.md')]) assert.match(ask(write(file), withheld, own) ?? '', /outside the places/u, file);
+});
+
+test('a main checkout git cannot read, with a .git on disk, grants no checkout and no temporary folder; one outside git keeps the temporary folder', (t) => {
+  const fx = fixture(t);
+  const broken = path.join(fx.root, 'broken');
+  mkdirSync(path.join(broken, 'src'), { recursive: true });
+  writeFileSync(path.join(broken, '.git'), `gitdir: ${path.join(fx.root, 'gone')}\n`);
+  const placesFor = (root) => unattendedPlaces({ cwd: root, mark: { root, cwd: root }, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.root], session: SESSION });
+  const found = placesFor(broken);
+  assert.equal(found.worktree, null);
+  assert.deepEqual(found.temp, []);
+  for (const file of [path.join(broken, 'src', 'a.ts'), path.join(fx.root, 'elsewhere', 'notes.md')]) {
+    assert.match(fx.ask(write(file), { held: { root: broken, cwd: broken }, cwd: broken, places: () => found })?.reason ?? '', /outside the places/u, file);
+  }
+  // A folder with no .git at or above it is outside git: the temporary folder still passes.
+  const plain = path.join(fx.root, 'plain');
+  mkdirSync(plain);
+  assert.equal(placesFor(plain).temp.length, 1);
+});
+
+test('the start record scan checks the guards\' deadline on each file it reads', (t) => {
+  const fx = fixture(t);
+  recordStart(fx, { cwd: fx.worktree });
+  const store = openStore(fx.state, { checkouts: fx.project.checkouts, maxChain: fx.config.session.handoff.maxChain });
+  assert.deepEqual(startedFolders(store, SESSION), [fx.worktree]);
+  // startedFolders checks the deadline only on each file of the store it reads, so a spent budget meets it there.
+  assert.throws(() => withinDeadline(performance.now() - 1, () => startedFolders(store, SESSION)), PastDeadline);
+  // And the places read through it give the deadline's refusal, never a worktree.
+  assert.throws(() => withinDeadline(performance.now() - 1, () => unattendedPlaces({ cwd: fx.worktree, mark: { root: fx.dir }, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.temp], session: SESSION })), PastDeadline);
+});
+
+test('a `.git` entry in an attempt folder or a state folder a session writes is refused too', (t) => {
+  const fx = fixture(t);
+  const ask = (input) => fx.ask(input)?.reason ?? null;
+  const tmp = path.join(fx.state, 'tmp');
+  mkdirSync(tmp, { recursive: true });
+  for (const file of [path.join(tmp, 'clone', '.git', 'config'), path.join(fx.state, 'plans', 'x', '.git')]) {
+    assert.match(ask(write(file)) ?? '', /nested checkout's git folder/u, file);
+    assert.match(ask(bash(`printf x > "${file}"`)) ?? '', /nested checkout's git folder/u, `shell ${file}`);
+  }
+  assert.match(ask(bash(`rm -rf ${tmp}/*/.git`)) ?? '', /nested checkout's git folder/u, 'a glob');
+  assert.equal(ask(write(path.join(tmp, 'notes.md'))), null);
+  // An attempt's work folder, an issue session's place.
+  const held = { root: fx.dir, cwd: path.join(fx.attempt, 'work'), project: 'launch', issue: 'ENG-1' };
+  const own = () => fx.attempt;
+  const found = unattendedPlaces({ cwd: path.join(fx.attempt, 'work'), mark: held, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.temp], own, session: SESSION });
+  const inAttempt = (input) => fx.ask(input, { held, cwd: path.join(fx.attempt, 'work'), places: () => found })?.reason ?? null;
+  assert.match(inAttempt(write(path.join(fx.attempt, 'work', 'pkg', '.git', 'config'))) ?? '', /nested checkout's git folder/u);
+  assert.equal(inAttempt(write(path.join(fx.attempt, 'work', 'pkg', 'a.ts'))), null);
 });
 
 test('the agent gate hook holds a marked session to its places, a pending hold to the refused entries, and lets a call run when it cannot read its input', async (t) => {

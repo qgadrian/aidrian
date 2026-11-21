@@ -51,13 +51,14 @@ number it names. When a person typed the resume, the next brief carries `Chain: 
      host asks a person first, which stops a background session.
    - If it is gone, stop, say so, and offer to create it again for the brief's branch with the `worktree-new` skill. Never fall back to the main checkout.
    - A brief that names no worktree means the work happens where you are.
-3. **Read the state fresh.** The brief holds no snapshots on purpose:
+3. **Read the state fresh.** The brief holds no snapshots on purpose. Run each command in the brief's worktree, as
+   `<wt>` here; with no worktree named, leave out `-C <wt>`:
 
    ```bash
-   git branch --show-current     # must be the brief's branch
-   git status --porcelain        # changes in progress to account for
-   git log --oneline -3          # new commits beyond Done
-   gh pr view --json number,url,state && aidrian pr checks   # only when the brief names a pull request
+   git -C <wt> branch --show-current     # must be the brief's branch
+   git -C <wt> status --porcelain        # changes in progress to account for
+   git -C <wt> log --oneline -3          # new commits beyond Done
+   env -C <wt> gh pr view --json number,url,state && env -C <wt> aidrian pr checks   # only when the brief names a pull request
    ```
 
    Take each Still running item before the same work starts again: check whether it still runs,

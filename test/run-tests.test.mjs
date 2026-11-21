@@ -165,8 +165,8 @@ test('a stderr that throws on every write leaves the runner`s status, and the sc
 });
 
 const WAYS_OUT = [
-  /^Run its commands and hooks in the test's process \(docs\/contributing\.md, Commands in the test's process and Hooks in the test's process\),$/mu,
-  /^or add or raise its entry in test\/child-process-budget\.json, by the rule in docs\/contributing\.md, Child-process budget, in the same pull request, and say why in the pull request's description\.$/mu,
+  /^Run its commands and hooks in the test's process \(docs\/test-processes\.md, Commands in the test's process, and docs\/contributing\.md, Hooks in the test's process\),$/mu,
+  /^or add or raise its entry in test\/child-process-budget\.json, by the rule in docs\/test-processes\.md, Child-process budget, in the same pull request, and say why in the pull request's description\.$/mu,
 ];
 
 test('a file one child process over its budget fails the run, naming the file, its count, its budget, and the ways out', (t) => {

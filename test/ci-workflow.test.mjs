@@ -1,5 +1,6 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
@@ -21,7 +22,13 @@ function requiredCheckNames() {
 // A job's name with ${{ matrix.<key> }} replaced from `values`.
 const expand = (name, values) => name.replace(/\$\{\{\s*matrix\.(\w+)\s*\}\}/gu, (_, key) => String(values[key]));
 
-test('Check (Node N) waits for every other job, and fails unless each one succeeded', async () => {
+// Every result GitHub gives a needed job.
+const RESULTS = ['success', 'failure', 'cancelled', 'skipped'];
+
+// Each way to give every name one of RESULTS: 4 ** names.length objects.
+const combinations = (names) => names.reduce((sets, name) => sets.flatMap((set) => RESULTS.map((result) => ({ ...set, [name]: result }))), [{}]);
+
+test('Check (Node N) waits for every other job, and its step passes only when every one succeeded', async () => {
   const { jobs } = await ciWorkflow();
   const { check } = jobs;
   const others = Object.keys(jobs).filter((id) => id !== 'check');
@@ -30,11 +37,26 @@ test('Check (Node N) waits for every other job, and fails unless each one succee
   assert.deepEqual(check.permissions, {}, 'check reads results only, with no token');
   assert.equal(check.steps.length, 1);
   const [step] = check.steps;
-  for (const id of others) {
+  const variables = others.map((id) => {
     const variable = Object.entries(step.env ?? {}).find(([, value]) => value === `\${{ needs.${id}.result }}`)?.[0];
     assert.ok(variable, `the step reads needs.${id}.result through env`);
-    assert.match(step.run, new RegExp(`test "\\$${variable}" = success`, 'u'), `the step requires ${id} to be success`);
+    return variable;
+  });
+  // As GitHub runs a run: body with shell bash.
+  for (const results of combinations(variables)) {
+    const run = spawnSync('bash', ['--noprofile', '--norc', '-eo', 'pipefail', '-c', step.run], { env: { PATH: process.env.PATH, ...results }, encoding: 'utf8' });
+    const passes = Object.values(results).every((result) => result === 'success');
+    assert.equal(run.status, passes ? 0 : 1, `${JSON.stringify(results)}: ${run.stdout}${run.stderr}`);
   }
+});
+
+test('npm run check is the static checks and the tests, and CI runs the same two', async () => {
+  const pkg = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+  assert.equal(pkg.scripts.check, 'npm run check:static && npm test');
+  const { jobs } = await ciWorkflow();
+  const runs = jobs.static.steps.filter((step) => step.run !== undefined).map((step) => step.run.trim());
+  assert.deepEqual(runs.filter((run) => run !== 'npm ci'), ['npm run check:static'], 'static runs npm run check:static, once');
+  assert.ok(jobs.test.steps.some((step) => /^npm test -- /u.test(step.run ?? '')), 'test runs npm test');
 });
 
 test('the Check names over matrix.node are the Check (Node N) checks .aidrian/config.json requires', async () => {

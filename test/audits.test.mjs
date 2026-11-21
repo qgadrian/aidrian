@@ -390,7 +390,7 @@ test('pending orders the items: blockers alone, then by severity and owner, then
 
 // `aidrian audits` in a project whose config.json puts the state folder in a temporary folder: `run` in the test's process
 // (test/cli-call.mjs), and `runProcess` as one, kept where only a process shows the behaviour,
-// docs/contributing.md#commands-in-the-tests-process, each with why.
+// docs/test-processes.md#commands-in-the-tests-process, each with why.
 function project(t) {
   const root = mkdtempSync(path.join(tmpdir(), 'aidrian-audits-project-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));

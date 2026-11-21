@@ -6,8 +6,8 @@
 //   node scripts/run-tests.mjs [node --test arguments and files]
 //
 // The runner's output passes through. Each test file's preload (scripts/test-state.mjs) appends its row to the file
-// AIDRIAN_TEST_LOG names, in a temporary folder this script removes. The exit status is the runner's, 1 when a signal
-// ended it, even when the table or the cleanup fails. A file run alone, `node --test test/<name>.test.mjs`, still works, with no table.
+// AIDRIAN_TEST_LOG names, in a temporary folder this script removes. The exit status is the runner's, or 1 when a signal
+// ended it or the budget below fails the run, even when the table or the cleanup fails. A file run alone, `node --test test/<name>.test.mjs`, still works, with no table.
 //
 // Budget: each test file that ran may start at most its budget of child processes, its git calls and its others
 // together, as test/child-process-budget.json under the folder the run starts in sets it:
@@ -97,8 +97,8 @@ function overBudget(rows, budget) {
   return [
     '',
     ...over,
-    "Run its commands and hooks in the test's process (docs/contributing.md, Commands in the test's process and Hooks in the test's process),",
-    `or add or raise its entry in ${BUDGET_FILE}, by the rule in docs/contributing.md, Child-process budget, in the same pull request, and say why in the pull request's description.`,
+    "Run its commands and hooks in the test's process (docs/test-processes.md, Commands in the test's process, and docs/contributing.md, Hooks in the test's process),",
+    `or add or raise its entry in ${BUDGET_FILE}, by the rule in docs/test-processes.md, Child-process budget, in the same pull request, and say why in the pull request's description.`,
     '',
   ];
 }

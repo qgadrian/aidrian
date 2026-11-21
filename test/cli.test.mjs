@@ -20,7 +20,7 @@ const EXAMPLE = path.join(ROOT, 'examples/consumer');
 const CLI = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
 
 // A command in the test's process (test/cli-call.mjs), and one as a process: runProcess is kept where only a process shows
-// the behaviour, docs/contributing.md#commands-in-the-tests-process, and each one says why.
+// the behaviour, docs/test-processes.md#commands-in-the-tests-process, and each one says why.
 const run = (args, cwd = EXAMPLE, env = process.env) => cliCall(args, { cwd, env });
 const runProcess = (args, cwd = EXAMPLE, env = process.env) => spawnSync(CLI, args, { cwd, encoding: 'utf8', env });
 

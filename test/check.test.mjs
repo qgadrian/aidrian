@@ -18,7 +18,7 @@ const STATE = new RegExp(`^${XDG}/aidrian/projects/[a-z0-9-]+-[0-9a-f]{8}$`);
 const REPOSITORY = JSON.parse(readFileSync(path.join(ROOT, 'plugins/aidrian/plugin.json'), 'utf8')).repository;
 
 // A command in the test's process (test/cli-call.mjs), and one as a process: runProcess is kept where only a process shows
-// the behaviour, docs/contributing.md#commands-in-the-tests-process, and each one says why.
+// the behaviour, docs/test-processes.md#commands-in-the-tests-process, and each one says why.
 const run = (args, cwd) => cliCall(args, { cwd, env: { ...process.env, XDG_STATE_HOME: XDG } });
 const runProcess = (args, cwd) => spawnSync(CLI, args, { cwd, encoding: 'utf8', env: { ...process.env, XDG_STATE_HOME: XDG } });
 const ok = (stdout) => stdout.split('\n')[0];

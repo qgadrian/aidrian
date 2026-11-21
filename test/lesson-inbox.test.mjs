@@ -21,7 +21,7 @@ const at = (daysAgo) => new Date(NOW - daysAgo * DAY).toISOString();
 // A git repository with an `origin`, and an empty state folder for it. `run` runs a lesson command in the test's process
 // (test/cli-call.mjs); `pipe` runs one as a process, since only a process reads the text it is given on stdin, and
 // `runProcess` runs one as a process where only a process shows the behaviour,
-// docs/contributing.md#commands-in-the-tests-process, each with why.
+// docs/test-processes.md#commands-in-the-tests-process, each with why.
 function setup(t) {
   const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-lessons-')));
   t.after(() => rmSync(base, { recursive: true, force: true }));

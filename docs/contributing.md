@@ -71,10 +71,6 @@ At the end of `npm run check:static`, `scripts/code-shape.mjs` lists on stderr t
 and the nested ternaries, by the [default code style](../plugins/aidrian/skills/knowledge/references/code-style.md).
 These are warnings, and never fail the check.
 
-## Child-process budget
-
-Moved to [Test processes](test-processes.md#child-process-budget).
-
 ## Load-independent deadlines
 
 A full local run loads the machine, and a test that races a real deadline then fails at random.
@@ -122,10 +118,6 @@ in process by replacing `Date.now` around the call, as `test/ready-hold.test.mjs
 
 The tests' git config holds a user identity: without one, git guesses an email from the machine's host name, and on a
 machine whose name does not resolve each clone, checkout, or commit waits about 5 seconds for that lookup.
-
-## Commands in the test's process
-
-Moved to [Test processes](test-processes.md#commands-in-the-tests-process).
 
 ## What the tests hold
 

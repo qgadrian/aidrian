@@ -50,9 +50,11 @@ const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 
 // Folders for the adapter's start outside the gate: a clone, its git folder, and a granted folder, by their real paths,
 // laid out as a run's attempt is, `<root>/runs/launch/attempts/ENG-1.1/`.
-function folders(t) {
+// With `fx`, the host's trust record of that fixture trusts the root, as the Human's trust in the runs folder does.
+function folders(t, fx = null) {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-sandbox-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
+  if (fx) writeFileSync(path.join(fx.env.CLAUDE_CONFIG_DIR, '.claude.json'), JSON.stringify({ projects: { [root]: { hasTrustDialogAccepted: true } } }));
   const attempt = path.join(root, 'runs', 'launch', 'attempts', 'ENG-1.1');
   const [cwd, git, drop] = ['work', 'git', 'drop'].map((name) => path.join(attempt, name));
   for (const each of [cwd, git, drop]) mkdirSync(each, { recursive: true });
@@ -91,7 +93,7 @@ test('the sandbox settings are pinned whole: the sandbox on and required, writes
     work: '/s/w', git: '/s/g', grants: ['/s/g', '/s/d', '/st/plans'], domains: ['github.com', 'api.github.com'], temp: ['/private/tmp', '/s/d'], home,
     config: '/cfg', platform: 'linux', main: '/m', mainGit: '/m/.git', secrets: ['NPM_TOKEN', 'AWS_SECRET_ACCESS_KEY'], stores: ['/usr/local/etc/npmrc'],
   });
-  const stores = [...CREDENTIAL_PATHS.map((each) => path.join(home, each)), '/cfg/.credentials.json', '/cfg/ide', '/cfg/.claude.json', '/usr/local/etc/npmrc'];
+  const stores = [...CREDENTIAL_PATHS.map((each) => path.join(home, each)), '/cfg/.credentials.json', '/cfg/ide', '/cfg/.claude.json', '/cfg/.claude-trust-stage', '/usr/local/etc/npmrc'];
   const unread = [...stores, '/m'];
   const nested = ['/s/w/**/.claude', ...['skills', 'agents', 'commands', 'hooks', 'workflows', 'scheduled_tasks.json'].flatMap((name) => [`/s/w/**/.claude/${name}`, `/s/w/**/.claude/${name}/**`])];
   assert.deepEqual(settings, {
@@ -142,7 +144,7 @@ test('the sandbox settings are pinned whole: the sandbox on and required, writes
     '.config/op', '.1password', 'Library/Application Support/Google/Chrome', 'Library/Application Support/Firefox',
     'Library/Application Support/BraveSoftware', 'Library/Application Support/Microsoft Edge', '.mozilla', '.config/google-chrome',
     '.config/chromium', '.git-credentials', '.npmrc', '.pypirc', '.cargo/credentials.toml', '.cargo/credentials', '.gem/credentials',
-    '.vault-token', '.config/hub', '.claude.json', '.claude/.credentials.json', '.claude/ide', '.local/share/keyrings',
+    '.vault-token', '.config/hub', '.claude.json', '.claude-trust-stage', '.claude/.credentials.json', '.claude/ide', '.local/share/keyrings',
     '.bash_history', '.zsh_history', '.local/share/fish',
     '.yarnrc.yml', '.yarnrc', '.config/npm/npmrc', '.bunfig.toml', '.local/share/gem/credentials', '.bundle/config',
     '.config/pnpm/rc', 'Library/Preferences/pnpm/rc', '.config/pip/pip.conf', '.pip/pip.conf', 'Library/Application Support/pip/pip.conf',
@@ -173,7 +175,7 @@ test('the forge\'s network hosts: github.com and its API host, or an Enterprise 
 
 test('the adapter starts claude --bg under the sandbox settings and only the team\'s MCP servers, and holds the session on its beacon', (t) => {
   const fx = runFixture(t, { init: false });
-  const { root, cwd, git, drop } = folders(t);
+  const { root, cwd, git, drop } = folders(t, fx);
   const calls = [];
   let beacons = 0;
   const claude = fakeClaude({ dir: fx.dir });
@@ -228,7 +230,7 @@ test('the adapter starts claude --bg under the sandbox settings and only the tea
 
 test('a start whose beacon never comes stops the session and names the proof; one with bad folders runs no claude --bg', (t) => {
   const fx = runFixture(t, { init: false });
-  const { cwd, git, drop, root } = folders(t);
+  const { cwd, git, drop, root } = folders(t, fx);
   const claude = fakeClaude({ dir: fx.dir });
   const base = {
     session: DRIVER, cwd, prompt: 'Work it.', name: 'launch · ENG-1 · 1', env: fx.env, hold: () => true, identify: () => true, beacon: () => false,
@@ -257,9 +259,31 @@ test('a start whose beacon never comes stops the session and names the proof; on
   }
 });
 
-test('a start the host refuses for an untrusted folder names the trust step: the runs folder, never the whole state folder', (t) => {
+test('a start takes consent from the runs folder the run names, not one walked up from the clone\'s real path', (t) => {
   const fx = runFixture(t, { init: false });
   const { root, cwd, git } = folders(t);
+  // The run names its runs folder through a link, and the Human trusted that spelling alone.
+  const link = `${root}-linked`;
+  symlinkSync(root, link);
+  t.after(() => rmSync(link, { force: true }));
+  const runs = path.join(link, 'runs');
+  const record = path.join(fx.env.CLAUDE_CONFIG_DIR, '.claude.json');
+  writeFileSync(record, JSON.stringify({ projects: { [runs]: { hasTrustDialogAccepted: true } } }));
+  const claude = fakeClaude({ dir: fx.dir });
+  const start = (more) => startProject({
+    session: DRIVER, cwd, prompt: 'Work it.', name: 'launch · ENG-1 · 1', env: fx.env, hold: () => true, identify: () => true, beacon: () => true,
+    sandbox: { git, grants: [git], domains: ['github.com'] }, home: fx.home, platform: 'linux', run: claude.run, wait: () => {}, resolve: () => '/bin/claude', readMode: () => 'acceptEdits', ...more,
+  });
+  const fallback = start({});
+  assert.match(fallback.problem ?? '', /trusts neither the runs folder/u, 'walked up from the clone, the link spelling is never met');
+  const named = start({ runs });
+  assert.equal(named.problem, undefined, named.problem);
+  assert.equal(JSON.parse(readFileSync(record, 'utf8')).projects[cwd].hasTrustDialogAccepted, true, 'the clone is recorded under its real path');
+});
+
+test('a start the host refuses for an untrusted folder names the trust step: the runs folder, never the whole state folder', (t) => {
+  const fx = runFixture(t, { init: false });
+  const { root, cwd, git } = folders(t, fx);
   const claude = fakeClaude({ dir: fx.dir, start: () => ({ status: 1, stdout: '', stderr: 'Error: Workspace not trusted', listed: false }) });
   const result = startProject({
     session: DRIVER, cwd, prompt: 'Work it.', name: 'launch · ENG-1 · 1', env: fx.env, hold: () => true, identify: () => true, beacon: () => true,

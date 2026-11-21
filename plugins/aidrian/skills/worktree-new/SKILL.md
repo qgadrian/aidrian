@@ -29,7 +29,7 @@ A thin adapter for `aidrian worktree new`. The command owns the git and setup st
    The project's bootstrap command (config.json `git.worktrees.bootstrap`) runs inside the new worktree and can take minutes,
    so give the shell call a 10-minute timeout.
 4. On `"status": "created"`, report `worktree_path`, `branch`, and `branch_mode`, and run every later command inside `worktree_path`:
-   `git -C <worktree_path>` or `(cd <worktree_path> && …)` in the same shell call, with files edited by absolute path.
+   `git -C <worktree_path>` or `cd <worktree_path> && …` in the same shell call, with files edited by absolute path.
    Never move the whole session there with a host tool: the host asks a person first, which stops a session no one attends.
 5. On `"status": "blocked"`, relay `phase`, `reason`, and `next_step` as they are.
    After a failed fetch, offer the same run without `--fetch`. Never delete what a failed run left: a failed bootstrap keeps the worktree.

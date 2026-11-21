@@ -46,7 +46,7 @@ number it names. When a person typed the resume, the next brief carries `Chain: 
    such as what the code does or a call to skip, is checked against the docs and code it touches first;
    where they disagree, the docs and code win: say so, and follow them.
 2. **Enter the worktree** named in Current state.
-   - Check it is listed in `git worktree list --porcelain`, then work in it: `git -C <worktree>` or `(cd <worktree> && …)` in
+   - Check it is listed in `git worktree list --porcelain`, then work in it: `git -C <worktree>` or `cd <worktree> && …` in
      the same shell call, with files edited by absolute path. Never move the whole session there with a host tool: the
      host asks a person first, which stops a background session.
    - If it is gone, stop, say so, and offer to create it again for the brief's branch with the `worktree-new` skill. Never fall back to the main checkout.
@@ -58,7 +58,7 @@ number it names. When a person typed the resume, the next brief carries `Chain: 
    git -C <wt> branch --show-current     # must be the brief's branch
    git -C <wt> status --porcelain        # changes in progress to account for
    git -C <wt> log --oneline -3          # new commits beyond Done
-   (cd <wt> && gh pr view --json number,url,state && aidrian pr checks)   # only when the brief names a pull request
+   cd <wt> && gh pr view --json number,url,state && aidrian pr checks   # only when the brief names a pull request
    ```
 
    Take each Still running item before the same work starts again: check whether it still runs,

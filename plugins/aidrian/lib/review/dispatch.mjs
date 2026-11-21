@@ -313,7 +313,7 @@ export function dispatchFor(s, pass, stage) {
   const prefix = showPrefix(root);
   const briefs = [
     prefix ? belowRootBrief(prefix) : null,
-    input.checklist ? `Review the diff against the checklist in ${input.checklist.path} as well as for bugs.` : null,
+    input.checklist ? 'Review the diff against the checklist, `checklist` in the input, its `path` and `text`, as well as for bugs.' : null,
     input.flows.some((flow) => (flow.invariants ?? []).some((invariant) => invariant.source)) ? 'Judge each invariant against its `source`, the section of the project doc it cites; `text` is only the question.' : null,
     input.flows.length ? VERDICT_MEANING : null,
     input.flowBase ? flowBaseBrief(input) : null,

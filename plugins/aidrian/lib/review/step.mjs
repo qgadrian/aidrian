@@ -368,6 +368,10 @@ export async function prepareStep(s) {
       // back to the base's text. Its diff from the merge base is empty, and its diff from `from` to the head holds the
       // base's own edits to it since `earlierBase`, so the reviewer reads the rollback as the reverse of the pull
       // request's own change at `from`, `git diff <from> <earlierBase> -- <file>`.
+      // Accepted residuals (tracked on pull request #457): a base that adopts one of the pull request's earlier edits
+      // can make a file read as rolled back though the pull request took nothing back, and a partial rollback within a
+      // file that keeps other edits stays in `changes`, so it is not listed as rolled back; its diff from the merge base
+      // shows only what the file still changes.
       const inChanges = new Set(changes.map((change) => change.file));
       const rolledBack = changeSince(from).map((change) => change.file).filter((file) => files.has(file) && !inChanges.has(file));
       return { base, earlierBase, merges, files, resolved, rolledBack };

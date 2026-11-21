@@ -920,8 +920,8 @@ A listed file the pull request took back to the base's text has no diff from the
 names it, and the prompt and the agent brief point at the rollback as the reverse of the pull request's own change at
 the earlier head, `git diff <earlier head> <its merge base> -- <file>`, with that merge base in `baseMerged.earlierBase`:
 the range from the earlier head to `HEAD` would hold the base's own edits to the file. The prompt and the brief refer to
-`baseMerged.rolledBack` in the input and never write a file name of it into their prose, since a file name may hold a
-newline and any text. A flow's brief points at that own change too, and judges the invariants on the whole change. A file only the
+`files`, `baseMerged.rolledBack`, and `checklist` in the input and never write a file name or path into their prose,
+since a file name may hold a newline and any text. A flow's brief points at that own change too, and judges the invariants on the whole change. A file only the
 base changed is neither reviewed nor counted against a pass's earlier result. A pass with no such file left, or a range
 holding a merge git cannot read this way, such as an octopus merge, reviews the whole change from the merge base
 instead; so does every pass when the step reviews the whole change for the merge, and every pass when the base branch,

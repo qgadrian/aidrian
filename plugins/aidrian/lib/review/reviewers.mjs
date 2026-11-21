@@ -219,6 +219,8 @@ export const belowRootBrief = (prefix) => `This project is the folder ${prefix} 
 
 // The prompt a model reviewer reads: the pass input as instructions and data. The input is JSON, so a diff cannot
 // close the instructions. `prefix` is the project's folder from the top of the repository, empty at the top.
+// A file name is the pull request's and may hold any text, a newline among it, so the prose points at `files` (and
+// `baseMerged.rolledBack`) in the input JSON and never writes a file name.
 export function reviewPrompt(input, prefix = '') {
   // After a merge from the base branch, the range from the earlier head, `baseMerged.from`, holds the base's code
   // (baseMergedBrief): the diff to read is the pull request's own, from the merge base, in the listed files, plus each
@@ -235,16 +237,16 @@ export function reviewPrompt(input, prefix = '') {
     lead,
     prefix ? belowRootBrief(prefix) : '',
     input.role === 'slice'
-      ? `This is one slice of a large change. Review the diff of these files only: ${input.files.join(', ')} (\`git diff ${from} ${input.head} -- <file>\`${rolledBackDiff(input)}); \`manifest\` lists every changed file, and you may read any file at ${input.head}. Report findings only in your files. In \`contracts\`, list every exported or behavioural contract your files change (signatures, types, schemas, routes, events, config); in \`cross_notes\`, anything you saw that other changed files must agree with.`
+      ? `This is one slice of a large change. Review the diff of the files listed in \`files\` only (\`git diff ${from} ${input.head} -- <file>\`${rolledBackDiff(input)}); \`manifest\` lists every changed file, and you may read any file at ${input.head}. Report findings only in your files. In \`contracts\`, list every exported or behavioural contract your files change (signatures, types, schemas, routes, events, config); in \`cross_notes\`, anything you saw that other changed files must agree with.`
       : input.role === 'cross'
         ? 'This is the cross-cutting pass of a review split into slices. `slices` holds each slice\'s contracts, notes, and findings. Report only bugs that cross slices: a changed contract a caller in another slice does not follow, a schema and its users disagreeing, an assumption one slice makes that another breaks. Do not repeat a slice\'s findings.'
-        : input.files ? `Report findings only in these files: ${input.files.join(', ')}.` : 'Report findings in any changed file.',
+        : input.files ? 'Report findings only in the files listed in `files`.' : 'Report findings in any changed file.',
     'Look for correctness bugs, regressions, edge cases, security, data consistency, error handling, and missing tests.',
     'When you find a mistake, search the whole change for every copy and list each in that finding. Finish the whole review before answering.',
     'Set `security` to true on a finding that is a security problem, such as a leak, an injection, or a broken access check, and to false on every other finding.',
     ID_BRIEF,
     settledBrief(settledEntries(input)),
-    input.checklist ? `Also review the change against the project's checklist (${input.checklist.path}), included in the input.` : '',
+    input.checklist ? 'Also review the change against the project\'s checklist, `checklist` in the input, its `path` and `text`.' : '',
     input.flows.length ? `For each critical flow below, give one verdict per invariant: holds, violated, not_affected, or cannot_verify. Evidence for holds or not_affected must cite file:line at the head commit, or a test name. Earlier reviewers' verdicts are listed: challenge every "holds" you cannot confirm yourself. Where an invariant has a \`source\`, the section of the project doc it cites, judge against that source: \`text\` is only the question. ${VERDICT_MEANING}` : '',
     input.flowBase ? flowBaseBrief(input) : '',
     input.remerge ? remergeBrief(input) : '',

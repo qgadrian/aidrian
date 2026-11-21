@@ -10,14 +10,14 @@ import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { configWriteDenial, OPAQUE_WORDS } from '../plugins/aidrian/lib/config-guard.mjs';
 import { PastDeadline, withinDeadline } from '../plugins/aidrian/lib/deadline.mjs';
 import { globParts } from '../plugins/aidrian/lib/fs.mjs';
-import { callHook } from '../plugins/aidrian/lib/hook-io.mjs';
 import { defaultSessionsFolders } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { noteFrom, openStore } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { forgetGateSnapshot, saveGateSnapshot } from '../plugins/aidrian/lib/gate-snapshot.mjs';
 import { configFiles, findProject, stateDir, stateRoot } from '../plugins/aidrian/lib/project.mjs';
 import { sessionFolder } from '../plugins/aidrian/lib/session-folder.mjs';
 import { originFolder, readOrigins } from '../plugins/aidrian/lib/session-origins.mjs';
-import { handle } from '../plugins/aidrian/scripts/hook-agent-gates.mjs';
+
+import { hookCall } from './hook-call.mjs';
 
 // The hooks this file runs record their blocks in the state folder; keep those rows out of the real one.
 process.env.XDG_STATE_HOME = mkdtempSync(path.join(tmpdir(), 'aidrian-state-'));
@@ -26,7 +26,7 @@ after(() => rmSync(process.env.XDG_STATE_HOME, { recursive: true, force: true })
 const FOLDS = process.platform === 'darwin' || process.platform === 'win32';
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-agent-gates.mjs');
 // The agent gates hook, called in this process as the host runs its script: spawnSync's options, its result's shape.
-const inHook = ({ input, cwd, env }) => callHook(handle, JSON.parse(input), { cwd, env });
+const inHook = (options) => hookCall(HOOK, options);
 const GATED = { version: 1, agents: { explorer: { deny: ['WebFetch'] } }, names: { human: 'the product owner' } };
 
 // A project with gates in `config`, a knowledge folder, and a source file. `spelled` is the folder as tmpdir() spells it,

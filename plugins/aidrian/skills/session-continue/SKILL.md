@@ -58,7 +58,7 @@ number it names. When a person typed the resume, the next brief carries `Chain: 
    git -C <wt> branch --show-current     # must be the brief's branch
    git -C <wt> status --porcelain        # changes in progress to account for
    git -C <wt> log --oneline -3          # new commits beyond Done
-   cd <wt> && gh pr view --json number,url,state && aidrian pr checks   # only when the brief names a pull request
+   (cd <wt> && gh pr view --json number,url,state && aidrian pr checks)   # only when the brief names a pull request
    ```
 
    Take each Still running item before the same work starts again: check whether it still runs,

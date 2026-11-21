@@ -50,7 +50,7 @@ export function recordTrust({ work, env = process.env, home }) {
   const above = trustProblem({ folder: path.dirname(work), env, home });
   if (above) return { problem: above.note ?? `the host trusts no folder above the attempt's clone ${work}, which, a repository of its own, inherits no trust` };
   record.projects = { ...projects, [work]: { ...(projects[work] ?? {}), hasTrustDialogAccepted: true } };
-  const temp = `${file}.aidrian-${process.pid}`;
+  const temp = `${file}.tmp-${process.pid}`;
   try {
     writeFileSync(temp, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
     chmodSync(temp, statSync(file).mode & 0o777);

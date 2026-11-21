@@ -635,20 +635,29 @@ export function nameMatcher({ session, skip = null, env, run = runCommand, resol
 export const findLine = () => '`claude agents` lists the background sessions, with the folder each started in, and `claude stop <id>` stops one';
 
 // Stops the background session `id`, as `claude stop` does: whether it exited 0. `claude stop` takes the listing's short
-// `id` and refuses a full `sessionId` ("No session matching", exit 1, seen on 2.1.330), so a full `sessionId` is first
-// turned into the short `id` of the one listed row that holds it; with no such row, `id` goes as it is. `started`, the
-// short id the session's start printed, when a caller recorded one, goes first and needs no listing, so a listing that
-// times out or cannot be read never leaves only the full id.
+// `id` and refuses a full `sessionId` ("No session matching", exit 1, seen on 2.1.330). So `started`, the id the
+// session's start printed when a caller recorded one, and then `id`, each go to `claude stop` as they are, with no
+// listing, unless it is a full `sessionId`. Only when none of those stopped it is the listing read once, and each of
+// the two turned into the short `id` of the one listed row whose `sessionId` is it or starts with it, and tried.
 export function stopBackground({ id, started = null, env, run = runCommand, resolve = claudeOnPath }) {
   const claude = resolve(env);
   if (!claude || typeof id !== 'string' || !ID.test(id)) return false;
-  const target = typeof started === 'string' && ID.test(started) ? started : shortId(run, claude, id);
-  const result = run(claude, ['stop', target], { cwd: undefined, timeout: LIST_TIMEOUT });
-  return !result.error && result.status === 0;
+  const given = [...new Set([started, id].filter((each) => typeof each === 'string' && ID.test(each)))];
+  const tried = new Set();
+  const stop = (target) => {
+    if (tried.has(target)) return false;
+    tried.add(target);
+    const result = run(claude, ['stop', target], { cwd: undefined, timeout: LIST_TIMEOUT });
+    return !result.error && result.status === 0;
+  };
+  if (given.some((each) => !FULL_ID.test(each) && stop(each))) return true;
+  const rows = listed(run, claude, undefined, ['--all']) ?? [];
+  return given.some((each) => {
+    const holds = rows.filter((row) => typeof row.sessionId === 'string' && (row.sessionId === each || row.sessionId.startsWith(each)));
+    const short = holds.length === 1 && typeof holds[0].id === 'string' && ID.test(holds[0].id) ? holds[0].id : each;
+    return stop(short);
+  });
 }
 
-// The short `id` the listing gives the session whose full `sessionId` is `id`, else `id` itself.
-function shortId(run, claude, id) {
-  const rows = (listed(run, claude, undefined, ['--all']) ?? []).filter((each) => each.sessionId === id);
-  return rows.length === 1 && typeof rows[0].id === 'string' && ID.test(rows[0].id) ? rows[0].id : id;
-}
+// A full session id, as `claude agents` gives `sessionId`: one `claude stop` refuses.
+const FULL_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;

@@ -26,10 +26,20 @@ test('a full session id is stopped by the short id the listing gives it', () => 
   assert.deepEqual(calls.filter((args) => args[0] === 'stop'), [['stop', '306d6ea0']]);
 });
 
-test('a short id goes to claude stop as it is', () => {
+test('a short id goes to claude stop as it is, with no listing', () => {
   const { run, calls, resolve } = fake([{ id: '306d6ea0', sessionId: FULL, kind: 'background', state: 'blocked' }]);
   assert.equal(stopBackground({ id: '306d6ea0', run, resolve }), true);
-  assert.deepEqual(calls.filter((args) => args[0] === 'stop'), [['stop', '306d6ea0']]);
+  assert.deepEqual(calls, [['stop', '306d6ea0']]);
+});
+
+test('a recorded full id, or a printed prefix the listing names otherwise, falls back to the listed short id', () => {
+  const rows = [{ id: 'c0ffee01', sessionId: FULL, kind: 'background', state: 'blocked' }];
+  const full = fake(rows);
+  assert.equal(stopBackground({ id: FULL, started: FULL, run: full.run, resolve: full.resolve }), true);
+  assert.deepEqual(full.calls.filter((args) => args[0] === 'stop'), [['stop', 'c0ffee01']]);
+  const prefix = fake(rows);
+  assert.equal(stopBackground({ id: FULL, started: '306d6ea0', run: prefix.run, resolve: prefix.resolve }), true);
+  assert.deepEqual(prefix.calls.filter((args) => args[0] === 'stop'), [['stop', '306d6ea0'], ['stop', 'c0ffee01']]);
 });
 
 test('a full id no row holds goes as it is, and the refusal is a false answer', () => {

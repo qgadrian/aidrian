@@ -136,7 +136,8 @@ them reads between two calls keeps a process run.
 A test still runs `bin/aidrian` as a process where only a process shows the behaviour: a command that reads stdin
 (`cliCall` throws when given `input`, or when the command reads it), exit timing, a signal or `timeout` it relies on, a deadline it measures, what
 the test preload records about the processes a file starts, or output a child writes straight to the terminal's
-descriptors. Keep at least one process run for each command a file covers, so the command's own entry stays tested.
+descriptors. Keep at least one process run for each command a file tests, so the command's own entry stays tested;
+a command the file only touches in passing, such as a row in a table of config errors, needs none.
 
 ## What the tests hold
 

@@ -785,6 +785,9 @@ folder and a trivial prompt:
 - The Bash tool's shell and every hook carry `CLAUDE_PID`, the session's `claude` process, the parent of the Bash tool's
   shell and of a hook's shell. They carry `CLAUDE_CODE_SESSION_ATTENDED=1` in an interactive session and `0` in a
   background one, and a variable the starting shell exported, such as `AIDRIAN_SHELL_PID`.
+  A reviewer and the test suite run without `CLAUDE_PID` and `CLAUDE_CODE_SESSION_ATTENDED`, which the adapter lists in
+  its `identityVars`: one that inherited `CLAUDE_CODE_SESSION_ATTENDED=1` would take itself for the developer's attended
+  session. It could not end that session, since it runs without `AIDRIAN_SHELL_PID` too.
 - The interactive `claude` shows as `claude` in `ps -o comm=`, a child of the program that started it. A background
   session's process shows as `claude bg-spare` under `claude bg-pty-host`, so it never passes the check.
 

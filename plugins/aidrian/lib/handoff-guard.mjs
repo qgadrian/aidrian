@@ -207,7 +207,8 @@ const runsProject = ({ invocation, unread }) => {
 // The variables the gate reads its store, its session, its agent, the host command it runs, and the team's policy from:
 // the state root and the home folder (project.mjs stateDir), PATH, which finds the host's command, every variable that
 // moves the repository git reads (review/env.mjs GIT_VARS) or gh's config (GH_CONFIG_DIR), where `solo` is read from
-// (lib/solo.mjs), and every variable a host names a session or an agent by, or tells itself by (lib/hosts/index.mjs).
+// (lib/solo.mjs), and every variable a host names a session, its agent, or its host process by, says whether a Human
+// attends the session with, or tells itself by (lib/hosts/index.mjs).
 // How a shell no lexer reads sets or removes a variable: `$env:NAME`, `NAME=`, or a command that does.
 const OPAQUE_SETS = /\$env:|(?<![\w$.-])[A-Za-z_]\w*\s*=|\b(?:set|setx|export|unset|env|remove-item\s+env:)\b/iu;
 const GATE_ENV = Object.freeze([...new Set(['XDG_STATE_HOME', 'HOME', 'PATH', 'GH_CONFIG_DIR', ...GIT_VARS, ...IDENTITY_VARS, ...DETECT_VARS])]);
@@ -254,8 +255,8 @@ export function handoffEnvDenial(input, { names: { human } }, { unattended = () 
 
 // Why the call in `input` may not run because it runs an `aidrian pr` command with a GATE_ENV variable set or unset by the
 // command line itself, or null: { match, reason }. `aidrian pr auto-merge` and `aidrian pr signoff` read the sign-off
-// store and the review records under the state root those variables move, so a session `unattended()` says no Human
-// attends could point them at a folder it writes. Every other variable runs, as the Human's own words, such as an
+// store and the review records under the state root some of those variables move, so a session `unattended()` says no
+// Human attends could point them at a folder it writes; the others name the session, or say a Human attends it. Every other variable runs, as the Human's own words, such as an
 // approved round grant, ride on the command line. A command in a shell the lexer cannot read counts when its text
 // names `aidrian`, `pr`, and one of GATE_ENV.
 export function prEnvDenial(input, { names: { human } }, { unattended = () => false } = {}) {
@@ -276,7 +277,7 @@ export function prEnvDenial(input, { names: { human } }, { unattended = () => fa
     named = GATE_ENV.find((name) => commands.some(({ invocation }) => changesVariable(invocation, name))) ?? null;
   }
   if (!named || !unattended()) return null;
-  const why = `it runs \`aidrian pr\` with ${named} set or unset by the command itself, which would move the state root its review records and the sign-off store are read from, and ${UNATTENDED}`;
+  const why = `it runs \`aidrian pr\` with ${named} set or unset by the command itself, which would move the state root its review records and the sign-off store are read from, or change the session it takes itself to run in or whether a Human attends it, and ${UNATTENDED}`;
   return { match: `changes ${named} for aidrian pr`, reason: projectRuleReason(input, why, human) };
 }
 

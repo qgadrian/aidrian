@@ -32,6 +32,7 @@
 
 import { isObject } from '../fs.mjs';
 import { forgeFor } from '../forges/index.mjs';
+import { withGitFacts, withoutGitFacts } from '../git.mjs';
 import { sessionIdentity } from '../hosts/index.mjs';
 import { repoName } from '../remotes.mjs';
 import { isAncestor } from './diff.mjs';
@@ -68,22 +69,29 @@ export const EXIT = Object.freeze({
 // disposition table in tests.
 // A step that throws after it marked its head `running`, such as a plan command that fails or a bot wait that errs,
 // leaves `error` as the head's outcome, so the merge guard keeps refusing the head.
-export async function reviewStep(opts, deps = {}) {
-  const run = { pr: null, head: null, repo: null };
-  try {
-    return await stepOnce(opts, deps, run);
-  } catch (error) {
-    if (run.pr !== null) {
-      const state = readLocalState(deps.project, run.pr, run.repo) ?? emptyState(run.pr, run.repo);
-      writeLocalState(deps.project, noteOutcome(state, { status: 'error', head: run.head, reason: error.message }), { repo: run.repo });
+// The whole step, that write included, reads a checkout's roots, prefix, and remote URLs once (lib/git.mjs withGitFacts),
+// apart from the bot wait.
+export function reviewStep(opts, deps = {}) {
+  return withGitFacts(async () => {
+    const run = { pr: null, head: null, repo: null };
+    try {
+      return await stepOnce(opts, deps, run);
+    } catch (error) {
+      if (run.pr !== null) {
+        const state = readLocalState(deps.project, run.pr, run.repo) ?? emptyState(run.pr, run.repo);
+        writeLocalState(deps.project, noteOutcome(state, { status: 'error', head: run.head, reason: error.message }), { repo: run.repo });
+      }
+      throw error;
     }
-    throw error;
-  }
+  });
 }
 
 // One step on the context `s`: the deps, then what lib/review/step.mjs reads and plans, and the outcome writers.
+// The bot wait, which may last minutes, runs outside the step's git facts (withoutGitFacts), so it and every read after it
+// ask git again.
 async function stepOnce(opts, { project, config, env = process.env, forge = forgeFor(undefined), image = (repo, files) => ghImage(repo, files, forge), exec = runExec, awaitBot = null, codex, captureSpawn, dispositionTable = loadTable() } = {}, run) {
-  const s = { opts, project, config, env, forge, image, exec, awaitBot, codex, captureSpawn, dispositionTable, run };
+  const wait = async (...args) => (awaitBot ?? (await import('../pr-await-review.mjs')).awaitReview)(...args);
+  const s = { opts, project, config, env, forge, image, exec, awaitBot: (...args) => withoutGitFacts(() => wait(...args)), codex, captureSpawn, dispositionTable, run };
   Object.assign(s, {
     settle: (result) => settle(s, result),
     finish: (status, extra) => finish(s, status, extra),

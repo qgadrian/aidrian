@@ -150,7 +150,10 @@ export default {
   modelChoices: MODEL_CHOICES,
   // Its models' prices, for the cost of the transcripts it writes (lib/model-prices.mjs).
   modelPrices,
-  identityVars: ['CLAUDE_CODE_AGENT', 'CLAUDE_CODE_SESSION_ID'],
+  // CLAUDE_CODE_SESSION_ATTENDED and CLAUDE_PID say whether a Human attends the session and which process hosts it
+  // (claude-code-terminal.mjs): a reviewer or a test that inherited CLAUDE_CODE_SESSION_ATTENDED=1 would take itself
+  // for that attended session.
+  identityVars: ['CLAUDE_CODE_AGENT', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_SESSION_ATTENDED', 'CLAUDE_PID'],
   detectVars: ['CLAUDECODE', ...MARKERS],
   detect: ({ env }) => env.CLAUDECODE === '1' || MARKERS.some((name) => Boolean(env[name])),
   sessionId: (env) => env.CLAUDE_CODE_SESSION_ID || null,

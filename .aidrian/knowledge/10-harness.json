@@ -8,7 +8,7 @@
       "tags": []
     },
     "contributing.md": {
-      "summary": "Building and checking the plugin: npm run build and check, load-independent deadlines, the test clock, trying a branch, skill evals, releases and versions.",
+      "summary": "npm run build and check, deadlines, the test clock, hooks and commands in the test's process (hookCall, cliCall), trying a branch, skill evals, versions.",
       "tags": ["harness_engineering", "docs"]
     },
     "architecture.md": {

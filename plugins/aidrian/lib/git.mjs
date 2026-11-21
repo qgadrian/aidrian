@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import path from 'node:path';
 
-import { attemptClone, cloneGitProblem } from './attempt-clone.mjs';
+import { attemptClone, cloneGitProblem, systemReal } from './attempt-clone.mjs';
 import { isDirectory, isEntry, isFile } from './fs.mjs';
 
 // The clone check every git call of the plugin asks first, for the modules that spawn git themselves.
@@ -311,9 +311,9 @@ const REDIRECTS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR'];
 export const holdsCheckout = (dir) => isFile(path.join(dir, '.git')) || isDirectory(path.join(dir, '.git'));
 
 // Whether `dir` or a folder above it holds a `.git` entry, where git looks for a repository. It reads the disk alone, so
-// it answers when git does not.
+// it answers when git does not, from where the system lands in `dir`, folded as text only when that does not resolve.
 export function underGit(dir) {
-  for (let current = path.resolve(dir); ; current = path.dirname(current)) {
+  for (let current = systemReal(dir) ?? path.resolve(dir); ; current = path.dirname(current)) {
     if (isEntry(path.join(current, '.git'))) return true;
     if (path.dirname(current) === current) return false;
   }

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { checkoutRoots, currentRoot, gateGit, gitFolders, GIT_TIMEOUT_MS, isIgnored, isRefName, knownPrefix, mainRoot, memoGit, readOriginUrl, readPrefix, readRemoteUrls, REF_NAME_MAX_BYTES, repositoryCheckouts, resetGitStall, runGit, showPrefix, withGitFacts, withoutGitFacts } from '../plugins/aidrian/lib/git.mjs';
+import { checkoutRoots, currentRoot, gateGit, gitFolders, GIT_TIMEOUT_MS, isIgnored, isRefName, knownPrefix, mainRoot, memoGit, readOriginUrl, readPrefix, readRemoteUrls, REF_NAME_MAX_BYTES, repositoryCheckouts, resetGitStall, runGit, showPrefix, underGit, withGitFacts, withoutGitFacts } from '../plugins/aidrian/lib/git.mjs';
 
 // A repository with one commit, an ignored folder, and a worktree inside that folder.
 function repo(t) {
@@ -139,6 +139,11 @@ test('repositoryCheckouts lists every checkout but a gone one; [] only outside a
   assert.equal(answer(dir, empty), null, 'no git inside a repository');
   assert.equal(answer(worktree, empty), null, 'no git inside a linked worktree');
   assert.deepEqual(answer(outside, empty), [], 'no git outside every repository');
+  // `link/..`, with the link into the repository, is the repository to the system, though it folds to the folder outside.
+  symlinkSync(path.join(dir, 'src'), path.join(outside, 'link'));
+  assert.equal(underGit(`${outside}/link/..`), true, 'the folder the system lands in');
+  assert.equal(answer(`${outside}/link/..`, bin), null, 'a failed git through a link and `..` into a repository');
+  assert.equal(underGit(path.join(outside, 'gone', '..')), false, 'a folder that does not resolve, folded');
 });
 
 test('repositoryCheckouts is null when the environment points git at another repository, or keeps it from this one', (t) => {

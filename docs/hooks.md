@@ -1274,7 +1274,7 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     is, where only the state places above pass, and for any checkout of the repository inside it, which keeps the rules
     above: a checkout that is not the session's worktree stays outside, and the worktree's host files and `.git` entries
     stay refused; with checkouts git cannot list, or a main checkout git cannot read though a `.git` lies at or above it,
-    the temporary folder passes nothing and no checkout is granted;
+    as the system resolves its folder, the temporary folder passes nothing and no checkout is granted;
   - `/dev/null`, `/dev/stdout`, `/dev/stderr`, `/dev/tty`, and `/dev/fd/<n>`, by the path a command spells.
 
   Everything else is refused, and these always, inside a place or not, checked first: every git folder, whole (the

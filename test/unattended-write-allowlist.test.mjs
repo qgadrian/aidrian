@@ -16,7 +16,8 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { anchorClones, cloneConfigProblem, cloneGitProblem, GIT_PLACEHOLDERS } from '../plugins/aidrian/lib/attempt-clone.mjs';
-import { noteStarted, openStore } from '../plugins/aidrian/lib/handoff-markers.mjs';
+import { noteStarted, openStore, startedFolders } from '../plugins/aidrian/lib/handoff-markers.mjs';
+import { PastDeadline, withinDeadline } from '../plugins/aidrian/lib/deadline.mjs';
 import { committedConfig } from '../plugins/aidrian/lib/config-committed.mjs';
 import { runGit } from '../plugins/aidrian/lib/git.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
@@ -649,6 +650,49 @@ test('a session started in the main checkout never writes the git pointer or the
   // `.gitignore` and `.github` are no git entries.
   for (const file of [path.join(first, '.gitignore'), path.join(first, '.github', 'x.md')]) assert.equal(ask(write(file)), null, file);
   assert.equal(ask(bash('cd "$X" && printf x > .gitignore')), null);
+});
+
+test('a start record grants only from a store the handoff writer would keep, and only a folder that is a checkout\'s top itself', (t) => {
+  const fx = fixture(t);
+  const { first } = nestedWorktrees(fx);
+  const held = { root: fx.dir };
+  const placesFor = (project, config) => unattendedPlaces({ cwd: first, mark: held, project, config, env: fx.env, home: fx.home, temp: [fx.temp], session: SESSION });
+  // A state folder inside the worktree beside the main checkout: the handoff writer refuses a store there, so its
+  // record names no folder.
+  const sibling = path.join(fx.worktree, 'state');
+  writeFileSync(path.join(fx.dir, '.aidrian', 'config.json'), JSON.stringify({ version: 1, state: { dir: sibling } }));
+  const project = findProject(fx.dir);
+  const { config } = loadConfig(project);
+  const loose = openStore(sibling, { checkouts: project.checkouts, maxChain: config.session.handoff.maxChain });
+  assert.equal(loose.refused, null, 'a reader that knows only the project\'s own checkouts keeps it');
+  const brief = path.join(sibling, 'handoffs', '2026-11-21-eng-1.md');
+  assert.ok(noteStarted(loose, 'feed00aa-0000-4000-8000-0000000000bb', { sha256: 'a'.repeat(64), slug: 'eng-1', brief, chain: 1, id: SESSION, session: SESSION, name: null, cwd: first }));
+  assert.equal(placesFor(project, config).worktree, null, 'a record in a sibling worktree\'s store');
+  writeFileSync(path.join(fx.dir, '.aidrian', 'config.json'), JSON.stringify({ version: 1, state: { dir: fx.state } }));
+
+  // A task worktree since removed, its folder left as a plain one, resolves to the main checkout around it: none.
+  recordStart(fx, { cwd: first });
+  assert.ok(placesFor(fx.project, fx.config).worktree, 'the live worktree');
+  gitIn(fx.dir)('worktree', 'remove', '--force', first);
+  mkdirSync(path.join(first, 'src'), { recursive: true });
+  const removed = placesFor(fx.project, fx.config);
+  assert.equal(removed.worktree, null, 'a removed worktree\'s folder');
+  const ask = (input, found) => fx.ask(input, { held, cwd: first, places: () => found })?.reason ?? null;
+  for (const file of [path.join(first, 'src', 'a.ts'), path.join(fx.dir, 'README.md')]) assert.match(ask(write(file), removed) ?? '', /outside the places/u, file);
+  // A mark that names a plain folder inside the main checkout gets none either.
+  const plain = { root: fx.dir, cwd: path.join(first, 'src') };
+  assert.equal(unattendedPlaces({ cwd: first, mark: plain, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.temp], session: SESSION }).worktree, null);
+});
+
+test('the start record scan checks the guards\' deadline on each file it reads', (t) => {
+  const fx = fixture(t);
+  recordStart(fx, { cwd: fx.worktree });
+  const store = openStore(fx.state, { checkouts: fx.project.checkouts, maxChain: fx.config.session.handoff.maxChain });
+  assert.deepEqual(startedFolders(store, SESSION), [fx.worktree]);
+  // startedFolders checks the deadline only on each file of the store it reads, so a spent budget meets it there.
+  assert.throws(() => withinDeadline(performance.now() - 1, () => startedFolders(store, SESSION)), PastDeadline);
+  // And the places read through it give the deadline's refusal, never a worktree.
+  assert.throws(() => withinDeadline(performance.now() - 1, () => unattendedPlaces({ cwd: fx.worktree, mark: { root: fx.dir }, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.temp], session: SESSION })), PastDeadline);
 });
 
 test('a `.git` entry in an attempt folder or a state folder a session writes is refused too', (t) => {

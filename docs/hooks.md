@@ -1156,14 +1156,16 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
 - **The write allowlist of a session no Human attends** (`lib/unattended-write.mjs`). A session its own unattended
   mark holds, read by the hook payload's session id, and every subagent of it, writes only:
   - its own worktree: the checkout of the folder its mark says the gate started it in, when that checkout shares its git
-    folder with the main checkout the mark names; never the call's folder, so another worktree of the same repository
+    folder with the main checkout the mark names and that folder is the checkout's top itself, so a removed worktree's
+    folder left as a plain one, or a plain folder inside a checkout, gives none; never the call's folder, so another worktree of the same repository
     is outside, unless it lies inside that checkout, as a task worktree under the main checkout's `.claude/worktrees/`
     does for a session started in the main checkout; each checkout nested so keeps its `.git` pointer and its host
     files refused, as below, and a checkout whose nested checkouts git cannot list is no worktree. A mark filed before
     the start folder was recorded, by an older gate, names the main checkout as its root wherever the session started,
     so that checkout never stands in: the start folder is the one the gate's start record in the continuation store
     names for the session, by the payload's full id or the short id the host printed (`lib/handoff-guard.mjs
-    startedFolder`), and with no such record, or records that name two folders, the session gets no worktree, so it
+    startedFolder`), read only from a store the handoff writer would keep, outside every checkout of the repository,
+    and within the guards' time budget; with no such record, or records that name two folders, the session gets no worktree, so it
     writes none of the main checkout's task worktrees. A start record lasts a day. A project run's issue session whose
     mark names no start folder gets no worktree;
   - its issue's running attempt folders `work`, `drop`, and `cache`, under `<state>/runs/<run>/attempts/`, each only

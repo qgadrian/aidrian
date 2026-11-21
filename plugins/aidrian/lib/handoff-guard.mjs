@@ -83,17 +83,22 @@ export function startedUnattended(project, config, session, { home, base } = {})
 
 // The folder the background start of `session` started it in, as the start record of the gate that started it says
 // (handoff-markers.mjs startedFolders): its `cwd`, in the continuation stores of `project`'s state folders, read as
-// startedUnattended reads them. lib/unattended-write.mjs asks it for a mark a gate filed before the mark recorded that
-// folder. Null when no store holds such a record, or the records name two folders: a session that cannot tell where it
-// started has no worktree.
+// startedUnattended reads them, but each store held to every checkout of the repository, as the handoff writer holds it
+// (handoff-continue.mjs projectStore, project.mjs projectCheckouts): a record grants a worktree, so one in a store inside
+// a sibling worktree, which the writer would refuse, grants none. lib/unattended-write.mjs asks it for a mark a gate
+// filed before the mark recorded that folder. Null when git cannot list the checkouts, no store holds such a record, or
+// the records name two folders: a session that cannot tell where it started has no worktree.
 export function startedFolder(project, config, session, { home, base } = {}) {
   if (typeof session !== 'string' || !SESSION_ID.test(session)) return null;
+  checkDeadline();
+  const checkouts = projectCheckouts(project, () => (Number.isFinite(remainingMs()) ? { timeout: Math.max(1, Math.floor(remainingMs())) } : undefined));
+  if (!checkouts) return null;
   const folders = new Set();
   for (const state of stateFolders(project, config, { home, lazy: true, ...(base ? { base } : {}) })) {
     checkDeadline();
     let found;
     try {
-      found = startedFolders(openStore(state, { checkouts: project.checkouts, maxChain: config.session.handoff.maxChain }), session);
+      found = startedFolders(openStore(state, { checkouts, maxChain: config.session.handoff.maxChain }), session);
     } catch (error) {
       if (error instanceof PastDeadline) throw error;
       found = [];

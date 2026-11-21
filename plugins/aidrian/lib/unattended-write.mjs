@@ -195,7 +195,9 @@ function ownPlaces(places, { mark, project, config, base, own, home, temp, sessi
   const from = repo ? startFolder(mark, places.issueHeld, () => startedFolder(project, config, session, stateOptions(base, home))) : null;
   const start = from ? gitFolders(from, gitBudget()) : null;
   if (places.issueHeld) places.issue = ownIssue(project, config, mark, stateOptions(base, home));
-  if (start && real(start.common) === real(repo.common) && nestedRefused(refuse, mark.root, start.top)) {
+  // The start folder must be the top of a checkout of the repository itself: a removed worktree's folder left as a
+  // plain one would resolve to the checkout around it, and grant all of it.
+  if (start && real(start.common) === real(repo.common) && real(start.top) === real(from) && nestedRefused(refuse, mark.root, start.top)) {
     places.worktree = real(start.top);
     places.worktreeCommon = real(start.common);
     gitRefused(refuse, start);

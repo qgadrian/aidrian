@@ -91,11 +91,13 @@ export function lowOnly(state, head) {
   if (!cap || typeof cap.head !== 'string' || !sameCommit(cap.head, head) || cap.itemized !== true || !Array.isArray(cap.items) || !Array.isArray(cap.unrun)) {
     return { ok: false, why: `the record does not hold what stopped the review of head ${sha7} in every stage` };
   }
-  const stops = [[cap.unrun, 'a pass that never reviewed it'], [cap.flows, 'a flow invariant not held'], [cap.unsigned, 'an unsigned flow'], [cap.tests_removed, 'a removed flow test'], [cap.human, 'a flow the Human signs off']];
+  if (!Array.isArray(cap.waiting)) return { ok: false, why: `the record does not say whether a remote reviewer still owes head ${sha7} its review` };
+  const stops = [[cap.unrun, 'a pass that never reviewed it'], [cap.waiting, 'a remote reviewer that has not answered'], [cap.flows, 'a flow invariant not held'], [cap.unsigned, 'an unsigned flow'], [cap.tests_removed, 'a removed flow test'], [cap.human, 'a flow the Human signs off']];
   const stop = stops.find(([list]) => Array.isArray(list) && list.length);
   if (stop) return { ok: false, why: `the review of head ${sha7} stopped on ${stop[1]} too` };
   if (cap.bot === true || cap.checks_failing !== 0) return { ok: false, why: `the review of head ${sha7} stopped on ${cap.bot === true ? 'the review bot\'s own round limit' : 'a failing check'} too` };
-  const listed = new Set(last.findings.map((finding) => finding?.id));
+  // A finding two passes both reported is one round finding, its other ids kept as `aliases`.
+  const listed = new Set(last.findings.flatMap((finding) => [finding?.id, ...(Array.isArray(finding?.aliases) ? finding.aliases : [])]));
   const above = [...last.findings, ...cap.items].find((finding) => !isObject(finding) || finding.security === true || !noHigher(finding.severity, RESIDUAL_CAP));
   const elsewhere = cap.items.find((item) => !isObject(item) || !listed.has(item.id));
   if (above === undefined && elsewhere !== undefined) return { ok: false, why: `${named(elsewhere)} is open in another stage` };
@@ -201,7 +203,7 @@ function followUp(forge, opts, { repo, url, since, ids }) {
   }
   let found;
   try {
-    found = forge.issue(issueRepo, opts.issue.number);
+    found = forge.issue(issueRepo, opts.issue.number, prHost ? { host: prHost } : {});
   } catch {
     throw new Error(`could not read issue ${ref}: the follow-up issue is read before the answer is recorded`);
   }

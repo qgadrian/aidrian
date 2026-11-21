@@ -283,7 +283,7 @@ test('the Human`s "Merge with the findings filed" lets a capped review merge, an
 const itemized = (severities, { head = HEAD } = {}) => (state) => {
   const findings = severities.map((severity, i) => ({ id: `R2-${i + 1}`, title: `t${i}`, file: 'a.js', line: 1, severity, pass: 'agent:code-reviewer' }));
   stopped('round_limit', { rounds: [{ head, open: severities.length, findings }], head })(state);
-  state.outcome.cap = { head, reviewed: head, items: findings.map(({ id, severity, pass }) => ({ id, severity, pass, stage: 'local', reviewer: pass })), counted: findings.length, itemized: true, unrun: [], unsigned: [], flows: [], tests_removed: [], checks_failing: 0, bot: false, human: [] };
+  state.outcome.cap = { head, reviewed: head, items: findings.map(({ id, severity, pass }) => ({ id, severity, pass, stage: 'local', reviewer: pass })), counted: findings.length, itemized: true, unrun: [], waiting: [], unsigned: [], flows: [], tests_removed: [], checks_failing: 0, bot: false, human: [] };
 };
 const DELEGATED = { head: HEAD, kind: 'round_cap', answer: 'delegate', issue: 'acme/notes#9', url: 'https://github.com/acme/notes/issues/9', by: 't', session: null, at: '2026-11-03T14:10:00.000Z' };
 

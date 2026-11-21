@@ -70,7 +70,7 @@ function repo(t, config = {}) {
 // The cause of a cap on `head` (run.mjs capCause) whose only stops are `findings`, as one stage's open findings.
 function capOf(findings, head = HEAD, over = {}) {
   const items = findings.filter((each) => each?.id).map(({ id, severity, security }) => ({ id, severity, ...(security ? { security } : {}), pass: 'agent:code-reviewer', stage: 'local', reviewer: 'agent:code-reviewer' }));
-  return { head, reviewed: head, items, counted: items.length, itemized: true, unrun: [], unsigned: [], flows: [], tests_removed: [], checks_failing: 0, bot: false, human: [], ...over };
+  return { head, reviewed: head, items, counted: items.length, itemized: true, unrun: [], waiting: [], unsigned: [], flows: [], tests_removed: [], checks_failing: 0, bot: false, human: [], ...over };
 }
 
 // The review of HEAD stopped at its round limit, with `findings` the last round's itemized open findings.
@@ -90,8 +90,8 @@ function delegate(t, r, args, { head = HEAD, issues = {}, comments = [], onIssue
     visibility: () => 'PRIVATE',
     pull: () => ({ author_association: 'MEMBER', base: { repo: { fork: false } } }),
     change: (ref, fields) => (fields === 'isCrossRepository' ? { isCrossRepository: false } : { number: Number(ref), headRefOid: head, baseRefName: base, url: URL }),
-    issue: (name, n) => {
-      onIssue?.();
+    issue: (name, n, opts) => {
+      onIssue?.(opts);
       const found = issues[`${name}#${n}`];
       return typeof found === 'function' ? found() : found ?? null;
     },
@@ -502,6 +502,8 @@ test('the deny names --repo in the delegation route when the remotes name severa
   const one = repo(t);
   one.record(5, stopped());
   assert.ok((one.merge(`gh pr merge 5 --match-head-commit ${HEAD}`) ?? '').includes(`--head ${HEAD}\` as its own command`), 'one remote: no --repo');
+  const picked = one.merge(`gh pr merge 5 -R Acme/Notes --match-head-commit ${HEAD}`) ?? '';
+  assert.ok(picked.includes(`then merge with \`gh pr merge 5 --repo acme/notes --match-head-commit ${HEAD}\``), `one remote, a merge that names its repository keeps it: ${picked}`);
   assert.ok(named.includes(`then merge with \`gh pr merge 5 --repo acme/notes --match-head-commit ${HEAD}\``), `the merge it suggests keeps the repository: ${named}`);
   const state = readLocalState(r.project(), 5, 'acme/notes');
   state.delegations = [entry()];
@@ -541,6 +543,10 @@ test('lowOnly reads the highest severity and any security mark of findings two p
 test('lowOnly reads every stage of the cap: a low finding in the judged stage never hides a high, security, or other stop in another', () => {
   const capped = (cap) => ({ ...emptyState(5, 'acme/notes'), rounds: [{ head: HEAD, at: T0, open: LOW.length, findings: LOW }], outcome: { status: 'round_limit', head: HEAD, at: T0, cap } });
   assert.deepEqual(lowOnly(capped(capOf(LOW)), HEAD), { ok: true, count: 2 });
+  // A slice and the cross-cutting pass report one low finding under two ids: the round keeps one, the other as an alias.
+  const twins = { ...capped(capOf(LOW, HEAD, { items: [...capOf(LOW).items, { id: 'R2-7', severity: 'low', pass: 'cross', stage: 'local', reviewer: 'cross' }], counted: 3 })) };
+  twins.rounds[0].findings = [{ ...LOW[0], aliases: ['R2-7'] }, LOW[1]];
+  assert.deepEqual(lowOnly(twins, HEAD), { ok: true, count: 2 }, 'a twin id is the same finding');
   const other = (severity, over = {}) => ({ id: 'R2-9', severity, pass: 'engine:codex-local', stage: 'independent', reviewer: 'engine:codex-local', ...over });
   const items = capOf(LOW).items;
   for (const [name, cap, why] of [
@@ -551,6 +557,8 @@ test('lowOnly reads every stage of the cap: a low finding in the judged stage ne
     ['a cause for another head', capOf(LOW, NEXT), /does not hold what stopped the review/u],
     ['a cause only counted', capOf(LOW, HEAD, { itemized: false }), /does not hold what stopped the review/u],
     ['a pass that never ran', capOf(LOW, HEAD, { unrun: ['engine:codex-local'] }), /stopped on a pass that never reviewed it too/u],
+    ['a remote reviewer still waited on', capOf(LOW, HEAD, { waiting: ['engine:pr-bot'] }), /stopped on a remote reviewer that has not answered too/u],
+    ['a cause from before remote passes were kept', capOf(LOW, HEAD, { waiting: undefined }), /does not say whether a remote reviewer still owes head abcdef1/u],
     ['a flow invariant', capOf(LOW, HEAD, { flows: ['booking'] }), /stopped on a flow invariant not held too/u],
     ['a failing check', capOf(LOW, HEAD, { checks_failing: 1 }), /stopped on a failing check too/u],
     ['the bot\'s own limit', capOf(LOW, HEAD, { bot: true }), /review bot's own round limit/u],
@@ -558,5 +566,15 @@ test('lowOnly reads every stage of the cap: a low finding in the judged stage ne
     const result = lowOnly(capped(cap), HEAD);
     assert.equal(result.ok, false, name);
     assert.match(result.why, why, name);
+  }
+});
+
+test('aidrian pr delegate reads the follow-up issue on the pull request`s host, for every spelling of it', async (t) => {
+  for (const issue of ['9', 'acme/notes#9', 'https://github.com/Acme/Notes/issues/9']) {
+    const r = repo(t);
+    r.record(5, stopped());
+    const hosts = [];
+    assert.equal((await delegate(t, r, ['--issue', issue], { issues: OPEN_ISSUE, onIssue: (opts) => hosts.push(opts?.host ?? null) })).code, 0, issue);
+    assert.deepEqual(hosts, ['github.com'], issue);
   }
 });

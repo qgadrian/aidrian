@@ -630,8 +630,9 @@ command, ending in `--repo <owner>/<name>` when this checkout's remotes name sev
 it names one), then merges with `gh pr merge <PR> --match-head-commit <sha>`, with the same `--repo`. Every open finding is low when the record's last
 round is for the head and lists each of its open findings, as many as its count, each `low` and none marked security,
 and the cap's cause kept on the outcome is for the head, lists every pass's open findings, each `low`, none marked
-security and none missing from the round, and names no pass that never reviewed the head, flow, removed test, failing
-check, or the review bot's own limit: in the last round a stage can run first and leave findings the round does not
+security and none missing from the round (a twin id two passes gave one finding counts as that finding), and names no
+pass that never reviewed the head, remote reviewer such as the review bot that has not answered yet, flow, removed
+test, failing check, or the review bot's own limit: in the last round a stage can run first and leave findings the round does not
 list. A posted copy keeps no cause, so a record read from another machine names no delegation route;
 a finding of medium or higher, one with a severity the table does not know, such as a violated flow invariant, a
 security mark, or a round that recorded counts only, keeps today's reason, word for word. The

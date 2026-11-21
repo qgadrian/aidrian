@@ -322,23 +322,32 @@ export function roundLimitQuestion(pr, head, count) {
 // neither preferred. The grant's route is the waiting check's own, else `aidrian pr extend`, whose refusal names it.
 // `delegable`: every open finding of `head` is low, so the Human may also leave the decision to the session; `repoArg`
 // is ` --repo <owner>/<name>` for the delegate command in a checkout whose remotes name several repositories.
-function cappedAsk({ pr, count, last, head, delegable, repoArg }) {
+function cappedAsk({ pr, count, last, head, delegable, repoArg, mergeArg = repoArg }) {
   const question = roundLimitQuestion(pr, head, count);
   const route = waitingRoute(pr, last) ??
     `Run \`aidrian pr extend ${pr} --human approve\`: it records the grant when an extension waits for the Human, and otherwise its refusal names the route to one more round.`;
   return `Only the Human decides this: ask with AskUserQuestion, the question "${question}", the options "${SHIP}" and "${GRANT}", ` +
     `and mark neither as preferred. When the Human picks "${SHIP}", file the findings the review left open as a follow-up issue, then merge. ` +
-    `When the Human picks "${GRANT}", do not merge. ${route} ${delegable ? delegateRoute(pr, head, repoArg) : ''}`;
+    `When the Human picks "${GRANT}", do not merge. ${route} ${delegable ? delegateRoute(pr, head, repoArg, mergeArg) : ''}`;
 }
 
 // The route when the Human answers in their own words that the session decides, offered only while every open finding is low.
-const delegateRoute = (pr, head, repoArg) =>
+const delegateRoute = (pr, head, repoArg, mergeArg = repoArg) =>
   'When the Human instead answers in their own words that the session decides, the session may ship, since every open finding is low: ' +
   `file what the review left open as an open follow-up issue that names pull request #${pr}, run \`aidrian pr delegate ${pr} --issue <issue> --head ${head}${repoArg}\` ` +
-  `as its own command, then merge with \`gh pr merge ${pr}${repoArg} --match-head-commit ${head}\`. `;
+  `as its own command, then merge with \`gh pr merge ${pr}${mergeArg} --match-head-commit ${head}\`. `;
 
 // ` --repo <owner>/<name>` for a command in a checkout whose remotes name several repositories: the merge's own when it
 // names one, else a placeholder; '' with one remote. A git read that fails reads as one remote.
+// ` --repo <host>/<owner>/<name>` (the host only off github.com) for a merge command the guard suggests: always, since
+// gh's default repository may be another one even in a checkout with one remote.
+const mergeRepoArg = (repo) => {
+  const name = repoName(repo);
+  if (!name) return '';
+  const host = typeof repo === 'string' ? /^(?:https?:\/\/)?([^/\s:@]+\.[^/\s:@]+)\/[^/\s]+\/[^/\s]+/u.exec(repo)?.[1]?.toLowerCase() : null;
+  return ` --repo ${host && host !== 'github.com' ? `${host}/` : ''}${name}`;
+};
+
 const repoArgFor = (project, repo) => {
   let several = false;
   try {
@@ -434,7 +443,7 @@ function delegated({ state, pr, head, capped, named, session, answers = [], coun
     each.at !== null && Date.parse(each.at) >= Date.parse(taken.at));
   if (granted) taken = null;
   let route = '';
-  if (granted) route = ` The Human granted more review rounds after the recorded answer, so it no longer stands: do not merge; run \`aidrian pr extend ${pr} --human approve\`.`;
+  if (granted) route = ` The Human granted more review rounds after the recorded answer, so it no longer stands: do not merge; run \`aidrian pr extend ${pr} --human approve${repoArg}\`.`;
   else if (taken && !named) route = ` The Human's recorded answer covers this head, but only for a merge that names it: merge with \`gh pr merge ${pr}${repoArg} --match-head-commit ${head}\`, or give the merge tool its \`sha\`.`;
   return { allow: Boolean(taken) && named, delegable, route };
 }
@@ -505,7 +514,7 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
   }
   const since = [onHead ? outcome.at : null, ...owing.map((entry) => entry.at)].filter((at) => typeof at === 'string').sort().at(-1) ?? null;
   if (mergeApproved(answers, { pr, head, since, capped })) return null;
-  const delegation = delegated({ state, pr, head, capped, named, session, answers, count, repoArg: capped ? repoArgFor(project, repo) : '' });
+  const delegation = delegated({ state, pr, head, capped, named, session, answers, count, repoArg: capped ? mergeRepoArg(repo) : '' });
   if (delegation.allow) return null;
   // A judge's recorded verdict, under both switches, for the round cap on this head only (waiverKind).
   const waiver = guardWaiver({ project, state, pr, head, named, repo, view, forge: waiverForge, startedAt, now, memo });
@@ -513,7 +522,7 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
   // The remotes are read only for the delegation route, which only a capped review whose open findings are all low names.
   const repoArg = delegation.delegable ? repoArgFor(project, repo) : '';
   const ask = capped
-    ? cappedAsk({ pr, count, last: state.extensions?.at(-1) ?? null, head, delegable: delegation.delegable, repoArg })
+    ? cappedAsk({ pr, count, last: state.extensions?.at(-1) ?? null, head, delegable: delegation.delegable, repoArg, mergeArg: mergeRepoArg(repo) })
     : `Only the Human waives this: ask with AskUserQuestion, the question "${question}", the options "Wait for the review" ` +
       '(first, recommended) and "Merge anyway", and merge only when the Human picks "Merge anyway". ';
   const blocked = (note, route) => `Blocked: this merges pull request #${pr} at ${sha7}, and ${problem}${note}. ${ask}Or the Human merges in their own shell.${route}`;

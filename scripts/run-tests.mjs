@@ -5,6 +5,9 @@
 //
 //   node scripts/run-tests.mjs [node --test arguments and files]
 //
+// It runs one test file per core, `--test-concurrency=<os.availableParallelism()>`, where `node --test` alone leaves one
+// core idle, unless its arguments name a `--test-concurrency` of their own.
+//
 // The runner's output passes through. Each test file's preload (scripts/test-state.mjs) appends its row to the file
 // AIDRIAN_TEST_LOG names, in a temporary folder this script removes. The exit status is the runner's, 1 when a signal
 // ended it, even when the table or the cleanup fails. A file run alone, `node --test test/<name>.test.mjs`, still works, with no table.
@@ -17,7 +20,7 @@
 
 import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { availableParallelism, tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -103,9 +106,15 @@ function overBudget(rows, budget) {
   ];
 }
 
+// The runner's arguments: one test file per core first, unless the arguments name a concurrency, then the arguments.
+function runnerArgs(args) {
+  const named = args.some((arg) => arg === '--test-concurrency' || arg.startsWith('--test-concurrency='));
+  return named ? args : [`--test-concurrency=${availableParallelism()}`, ...args];
+}
+
 const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-test-log-'));
 const log = path.join(dir, 'files.jsonl');
-const runner = spawn(process.execPath, ['--test', '--import', SETUP, ...process.argv.slice(2)], {
+const runner = spawn(process.execPath, ['--test', '--import', SETUP, ...runnerArgs(process.argv.slice(2))], {
   stdio: 'inherit',
   env: { ...process.env, AIDRIAN_TEST_LOG: log },
 });

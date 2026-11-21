@@ -26,7 +26,9 @@ or bare `node scripts/run-tests.mjs` is refused while the pushed branch lacks a 
 config check knows the `testing` keys; an older installed plugin rejects them.
 
 `npm test` and `npm run check` run the suite through `scripts/run-tests.mjs`, which runs `node --test` with its arguments
-and passes the runner's output through. After the run it prints on stderr the ten test files that took the most time,
+and passes the runner's output through. It runs one test file per core, `--test-concurrency=<os.availableParallelism()>`,
+where `node --test` alone leaves one core idle, unless its arguments name a `--test-concurrency` of their own.
+After the run it prints on stderr the ten test files that took the most time,
 each with its seconds, its `git` calls, and its other child processes, and a line of totals summed over every file:
 the numbers a change to the suite's time moves. The counts cover the processes a test file's own process starts:
 a command or hook a test starts counts as one, and the processes it starts in turn are not counted.

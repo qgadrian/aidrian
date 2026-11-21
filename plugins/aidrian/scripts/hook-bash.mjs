@@ -20,6 +20,7 @@ import * as readyChecks from '../lib/rules/github/ready-checks.mjs';
 import * as readyHold from '../lib/rules/github/ready-hold.mjs';
 import * as reviewRequest from '../lib/rules/github/review-request.mjs';
 import * as reviewRounds from '../lib/rules/github/review-rounds.mjs';
+import * as reviewDelegate from '../lib/rules/review-delegate.mjs';
 import * as reviewExtend from '../lib/rules/review-extend.mjs';
 import * as reviewFallback from '../lib/rules/review-fallback.mjs';
 import * as reviewSignoff from '../lib/rules/review-signoff.mjs';
@@ -43,7 +44,8 @@ import * as shellInitInstall from '../lib/rules/shell-init-install.mjs';
 // commits that copy lacks; ready-hold, git for the committed config and then, when the
 // project may run product feedback, gh under one deadline for all its calls, which ends 4 s after this process started
 // at the latest; ready-checks, for a ready it can read, gh under the same kind of deadline, a view and at most one GraphQL
-// read; and main-checkout, git, which runs last. ready-hold runs after merge-review, so a command that marks a
+// read; review-delegate, for an `aidrian pr delegate` call, git for this checkout's remotes, then it reads the transcript
+// and this machine's review record; and main-checkout, git, which runs last. ready-hold runs after merge-review, so a command that marks a
 // pull request ready and merges it leaves the merge guard its own 3 s: the guard refuses a merge it cannot read, and the
 // hold lets the command run when its time is gone. A command none of them matched starts nothing beyond findProject.
 // Each rule's name keys its rows and its lesson.
@@ -64,6 +66,7 @@ const RULES = [
   ['decisions-set', decisionsSet],
   ['project-init', projectInit],
   ['review-extend', reviewExtend],
+  ['review-delegate', reviewDelegate],
   ['review-fallback', reviewFallback],
   ['product-feedback-answer', productFeedbackAnswer],
   ['product-feedback-post', productFeedbackPost],

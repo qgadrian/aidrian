@@ -31,6 +31,10 @@ export function givenRepo(given) {
   return name;
 }
 
+// Whether `text` names pull request `pr` of `repo` as `owner/name#pr`, with no word, path, or URL glued before it and no
+// digit after it. The rules read a question with it, and `aidrian pr delegate` a follow-up issue.
+export const namesChange = (text, repo, pr) => new RegExp(`(?<![\\w./-])${repo.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}#${pr}(?!\\d)`, 'iu').test(text);
+
 // ` --repo <repo>` for a command the review step prints about pull request repository `repo`, when this checkout's
 // remotes name more than one repository, else ''. There the sign-off and round-raise rules count the Human's answer only
 // on a command that names its repository (lib/rules/review-signoff.mjs approvalTarget), so the printed command runs as

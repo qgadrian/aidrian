@@ -207,6 +207,19 @@ test('a review stopped at its round limit asks the Human to ship or to grant rou
   assert.match(reasoned.run('gh pr merge 5') ?? '', /is `round_limit` \(the judge stopped\): stopped at its round limit, with 2 findings open, and not running\./u);
 });
 
+test('a capped merge in a case arm whose pattern is a glob or a variable, or behind builtin, gets the same deny', (t) => {
+  const r = repo(t);
+  r.record(5, stopped('round_limit'));
+  const bare = r.run('gh pr merge 5');
+  assert.match(bare ?? '', /^Blocked: this merges pull request #5 at abcdef1/u);
+  for (const command of [
+    'case $v in *) gh pr merge 5;; esac', 'case "$1" in "$x") gh pr merge 5;; esac', 'case $v in ${A}) gh pr merge 5;; esac',
+    'case $v in ($x) gh pr merge 5;; esac', 'case $v in feat/*) gh pr merge 5;; esac', 'case $v in ?) gh pr merge 5;; esac',
+    'builtin command gh pr merge 5', 'builtin exec gh pr merge 5', 'builtin eval "gh pr merge 5"',
+    'case $v in a ) gh pr merge 5;; esac', 'f () { gh pr merge 5; }; f', 'noglob gh pr merge 5',
+  ]) assert.equal(r.run(command), bare, command);
+});
+
 test('the count is the last round`s, for the merge`s head only', (t) => {
   const r = repo(t);
   r.record(5, stopped('round_limit', { rounds: [{ head: HEAD, open: 5 }, { head: HEAD, open: 1 }] }));
@@ -263,6 +276,54 @@ test('the Human`s "Merge with the findings filed" lets a capped review merge, an
     assert.ok(question, name);
     r.answer(question, 'Merge with the findings filed', at);
     assert.ok(r.run('gh pr merge 5'), name);
+  }
+});
+
+// A capped review whose last round itemizes its open findings: `severities` one finding each.
+const itemized = (severities, { head = HEAD } = {}) => (state) => {
+  const findings = severities.map((severity, i) => ({ id: `R2-${i + 1}`, title: `t${i}`, file: 'a.js', line: 1, severity, pass: 'agent:code-reviewer' }));
+  stopped('round_limit', { rounds: [{ head, open: severities.length, findings }], head })(state);
+  state.outcome.cap = { head, reviewed: head, items: findings.map(({ id, severity, pass }) => ({ id, severity, pass, stage: 'local', reviewer: pass })), counted: findings.length, itemized: true, unrun: [], waiting: [], unsigned: [], flows: [], tests_removed: [], checks_failing: 0, bot: false, human: [] };
+};
+const DELEGATED = { head: HEAD, kind: 'round_cap', answer: 'delegate', issue: 'acme/notes#9', url: 'https://github.com/acme/notes/issues/9', by: 't', session: null, at: '2026-11-03T14:10:00.000Z' };
+
+test('the capped deny names the delegation route only when every itemized open finding is low', (t) => {
+  const r = repo(t);
+  r.record(5, itemized(['low', 'low']));
+  const reason = r.run('gh pr merge 5') ?? '';
+  // The grant's own route follows the grant's sentence, and the delegation's comes after it.
+  assert.ok(reason.includes('When the Human picks "Grant more review rounds", do not merge. Run `aidrian pr extend 5 --human approve`: it records the grant when an extension waits ' +
+    'for the Human, and otherwise its refusal names the route to one more round. When the Human instead answers in their own words that the session decides, ' +
+    'the session may ship, since every open finding is low: file what the review left open as an open follow-up issue that names pull request #5, ' +
+    `run \`aidrian pr delegate 5 --issue <issue> --head ${HEAD}\` as its own command, then merge with \`gh pr merge 5 --match-head-commit ${HEAD}\`. Or the Human merges`), reason);
+  assert.doesNotMatch(reason, /recommend/iu);
+  assert.doesNotMatch(reason, /\b(?:I|you|your)\b/u);
+  for (const [name, severities] of [['a medium', ['low', 'medium']], ['a high', ['high']], ['an unknown severity', ['low', 'urgent']]]) {
+    r.record(5, itemized(severities));
+    assert.doesNotMatch(r.run('gh pr merge 5') ?? '', /aidrian pr delegate/u, name);
+  }
+});
+
+test('a recorded delegation lets a capped merge that names its head run, while every open finding stays low', (t) => {
+  const r = repo(t);
+  r.record(5, (state) => (itemized(['low', 'low'])(state), (state.delegations = [DELEGATED])));
+  assert.equal(r.run(`gh pr merge 5 --match-head-commit ${HEAD}`), null, 'gh pr merge naming the head');
+  assert.equal(r.run(`gh api -X PUT repos/acme/notes/pulls/5/merge -f sha=${HEAD}`), null, 'the API naming its sha');
+  assert.equal(checkMcp({ owner: 'acme', repo: 'notes', pullNumber: 5, sha: HEAD }, { cwd: r.dir, input: { transcript_path: r.transcript }, viewPr: r.viewer() }), null, 'the merge tool with its sha');
+  const unnamed = r.run('gh pr merge 5') ?? '';
+  assert.match(unnamed, new RegExp(`The Human's recorded answer covers this head, but only for a merge that names it: merge with \`gh pr merge 5 --match-head-commit ${HEAD}\`, or give the merge tool its \`sha\`\\.$`, 'u'));
+  assert.ok(checkMcp({ owner: 'acme', repo: 'notes', pullNumber: 5 }, { cwd: r.dir, input: { transcript_path: r.transcript }, viewPr: r.viewer() }), 'the merge tool with no sha');
+  for (const [name, edit] of [
+    ['a medium finding open', (state) => (itemized(['low', 'medium'])(state), (state.delegations = [DELEGATED]))],
+    ['an entry older than the outcome', (state) => (itemized(['low'])(state), (state.delegations = [{ ...DELEGATED, at: '2026-11-03T13:00:00.000Z' }]))],
+    ['an entry on another head', (state) => (itemized(['low'])(state), (state.delegations = [{ ...DELEGATED, head: NEXT }]))],
+    ['a review owed', (state) => (itemized(['low'])(state), owe(state, 'request'), (state.delegations = [DELEGATED]))],
+    ['a head pushed after the review', (state) => (itemized(['low'], { head: NEXT })(state), (state.delegations = [{ ...DELEGATED, head: NEXT }]))],
+  ]) {
+    r.record(5, edit);
+    const reason = r.run(`gh pr merge 5 --match-head-commit ${HEAD}`) ?? '';
+    assert.match(reason, /^Blocked: this merges pull request #5 at abcdef1/u, name);
+    assert.doesNotMatch(reason, /recorded answer covers this head/u, name);
   }
 });
 

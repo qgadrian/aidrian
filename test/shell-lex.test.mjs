@@ -237,7 +237,99 @@ test('readInvocation reads the body of a function definition and the arm of a ca
   for (const line of ['case x in x) git push;; esac', 'case x in (x) git push;; esac', 'case $a in x) echo; ;; y) git push;; esac']) {
     assert.ok(lexCommand(line).some((segment) => readInvocation(segment).program === 'git'), line);
   }
+  // A pattern with a glob or a variable is dynamic, and still a pattern: what makes one is its unquoted closing `)`.
+  for (const pattern of ['*)', '$x)', '"$x")', '${A})', '($x)', 'feat/*)', '?)', 'main*)', '$(echo a))', '*" worktree list "*)']) {
+    const line = `case $v in ${pattern} gh pr merge 5;; esac`;
+    const read = lexCommand(line).map((segment) => readInvocation(segment)).find((each) => each.program === 'gh');
+    assert.deepEqual(read?.args.map((token) => token.text), ['pr', 'merge', '5'], line);
+    assert.equal(read.dynamic, false, `${line}: gh is the program`);
+  }
   assert.equal(programOf('(ls)'), 'ls)', 'a lone word stays the program');
+});
+
+test('readInvocation reads past a case pattern or a function name spaced from its parentheses', () => {
+  const guarded = (line, program, args) => {
+    const read = lexCommand(line).map((segment) => readInvocation(segment)).find((each) => each.program === program);
+    assert.deepEqual(read?.args.map((token) => token.text), args, line);
+  };
+  guarded('case $x in a ) git reset --hard HEAD~1 ;; esac', 'git', ['reset', '--hard', 'HEAD~1']);
+  guarded('case $x in * ) gh pr merge 5;; esac', 'gh', ['pr', 'merge', '5']);
+  guarded('f () { git commit --amend -m x; }; f', 'git', ['commit', '--amend', '-m', 'x']);
+  guarded('f () (git commit --amend -m x)', 'git', ['commit', '--amend', '-m', 'x']);
+  // A quoted parenthesis is an argument, never a pattern's end or a function head.
+  assert.deepEqual([programOf('x ")" commit'), argsOf('x ")" commit')], ['x', [')', 'commit']]);
+  assert.deepEqual([programOf("x '()' commit"), argsOf("x '()' commit")], ['x', ['()', 'commit']]);
+});
+
+test('readInvocation peels the zsh precommand modifiers', () => {
+  for (const line of ['noglob git reset --hard HEAD^', 'nocorrect git reset --hard HEAD^', '- git reset --hard HEAD^', 'repeat 3 git reset --hard HEAD^',
+    'repeat $n git reset --hard HEAD^', 'noglob nocorrect - git reset --hard HEAD^', 'builtin builtin command git reset --hard HEAD^',
+    'builtin builtin exec git reset --hard HEAD^', 'noglob command git reset --hard HEAD^', 'sudo noglob git reset --hard HEAD^']) {
+    assert.deepEqual([programOf(line), argsOf(line)], ['git', ['reset', '--hard', 'HEAD^']], line);
+  }
+  assert.equal(programOf('builtin builtin eval "git commit --amend"'), 'eval');
+  assert.deepEqual([programOf('builtin builtin cd x'), argsOf('builtin builtin cd x')], ['builtin', ['cd', 'x']], 'builtin before a builtin that runs nothing stays');
+  assert.deepEqual([programOf('repeat'), programOf('-')], ['repeat', '-'], 'a lone keyword or dash stays the program');
+});
+
+test('readInvocation marks an invocation it reached past a word the shell may not run, and no other', () => {
+  const read = (line, program) => lexCommand(line).map((segment) => readInvocation(segment)).find((each) => each.program === program);
+  // The command behind these may never run: a zero count, an untaken arm, an uncalled function, or a modifier bash lacks.
+  for (const line of ['repeat 0 cd /w', 'repeat $n cd /w', 'noglob cd /w', 'nocorrect cd /w', '- cd /w', 'case $x in a ) cd /w ;; esac',
+    'f () { cd /w; }', 'sudo noglob cd /w', 'env -S "noglob cd" /w']) {
+    assert.equal(read(line, 'cd')?.uncertain, true, line);
+  }
+  for (const line of ['cd /w', 'command cd /w', 'builtin command cd /w', 'builtin exec cd /w', 'sudo cd /w', '! cd /w', '(cd /w)', 'if true; then cd /w; fi']) {
+    assert.equal(read(line, 'cd')?.uncertain, false, line);
+  }
+  assert.equal(read('builtin builtin cd /w', 'builtin')?.uncertain, false, 'the builtin peel');
+  // walkCommands follows no marked cd: the folder after one is unknown, as after a negated cd.
+  for (const line of ['repeat 0 cd /x && gh pr view', 'noglob cd /x && gh pr view']) {
+    const [entry] = walkCommands(line, '/w');
+    assert.deepEqual([entry.folder, entry.chained], [null, null], line);
+  }
+  const [entry] = walkCommands('cd /x && gh pr view', '/w');
+  assert.deepEqual([entry.folder, entry.chained], ['/x', '/x'], 'an unmarked cd is followed');
+});
+
+test('readInvocation reports an invocation reached through command, which in zsh runs no builtin, without marking it', () => {
+  const read = (line, program) => lexCommand(line).map((segment) => readInvocation(segment)).find((each) => each.program === program);
+  // zsh's `command` runs only an external program: `command cd /w` runs a `cd` script, and the shell stays where it was.
+  for (const [line, program] of [['command cd /w', 'cd'], ['builtin command cd /w', 'cd'], ['builtin command pushd /w', 'pushd'], ['command -p cd /w', 'cd'],
+    ['/usr/bin/command cd /w', 'cd'], ['sudo command cd /w', 'cd'], ['env -S "command cd" /w', 'cd'], ['command npm test', 'npm']]) {
+    const invocation = read(line, program);
+    assert.deepEqual([invocation?.viaCommand, invocation?.uncertain], [true, false], line);
+  }
+  for (const [line, program] of [['cd /w', 'cd'], ['builtin exec cd /w', 'cd'], ['builtin builtin cd /w', 'builtin'], ['sudo cd /w', 'cd'], ['npm test', 'npm']]) {
+    assert.equal(read(line, program)?.viaCommand, false, line);
+  }
+  // walkCommands follows no cd through command: the folder after one is unknown, as after a marked cd.
+  for (const line of ['command cd /x && gh pr view', 'builtin command cd /x && gh pr view', 'builtin command pushd /x && gh pr view', 'x; command cd /x && gh pr view']) {
+    const entry = walkCommands(line, '/w').find(({ invocation }) => invocation.program === 'gh');
+    assert.deepEqual([entry.folder, entry.chained], [null, null], line);
+  }
+});
+
+test('readInvocation reads a program word the shell builds as dynamic, never as a case arm`s pattern', () => {
+  for (const line of ['"$(which git)" commit', '$(which git) commit', '"`which git`" commit', '"$(command -v git)" commit -m x',
+    `"$(printf ')' >/dev/null; command -v git)" commit`]) {
+    const read = readInvocation(lexCommand(line)[0]);
+    assert.equal(read.dynamic, true, line);
+    assert.equal(read.args[0]?.text, 'commit', `${line}: commit stays an argument`);
+  }
+  for (const line of ['"x)" commit', "'x)' commit", 'x\\) commit', 'x")" commit']) {
+    assert.deepEqual([programOf(line), argsOf(line)[0]], ['x)', 'commit'], `${line}: a quoted or escaped \`)\` closes no pattern`);
+  }
+});
+
+test('builtin is peeled before command, exec, and eval, which run another command, and before nothing else', () => {
+  assert.equal(programOf('builtin command git commit --amend'), 'git');
+  assert.deepEqual(argsOf('builtin command git commit --amend'), ['commit', '--amend']);
+  assert.equal(programOf('builtin exec git commit --amend'), 'git');
+  assert.equal(programOf('builtin eval "git commit --amend"'), 'eval');
+  assert.ok(walkCommands('builtin eval "git commit --amend"', null).some(({ invocation }) => invocation.program === 'git'), 'the eval string is read');
+  assert.equal(programOf('env A=1 builtin command git push'), 'git', 'after a wrapper too');
+  for (const line of ['builtin cd /x', 'builtin export A=1', 'builtin unset A', 'builtin echo x']) assert.equal(programOf(line), 'builtin', line);
 });
 
 test('>| writes the next word; >&word duplicates a descriptor only for digits or -, and otherwise writes the file', () => {

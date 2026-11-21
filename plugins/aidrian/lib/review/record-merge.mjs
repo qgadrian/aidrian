@@ -2,7 +2,8 @@
 // review record under its old name while a newer one writes the repository's own file (state.mjs readLocalState,
 // writeAt), or a newer copy on the pull request was built by a writer that never read this machine's record
 // (state.mjs readRecord). Neither may lose what the other holds of the Human: a sign-off, an overrule, an acceptance, a
-// waiver, an extension, or a stage sign-off is the Human's word, and nothing in the engine takes one back.
+// waiver, an extension, a delegation at the round limit, or a stage sign-off is the Human's word, and nothing in the
+// engine takes one back.
 // keepHuman adds those; keepWork adds the review's own progress, the passes, rounds, and id counter, for two copies of
 // one record on one machine. Each mutates and returns `base`, so a caller that writes or posts it carries the result.
 // Both act only on two copies of one review, the same first round (sameReview): a review that started over, from an
@@ -49,6 +50,7 @@ export function keepHuman(base, other) {
   keepLatest(base, other, 'overrulings', ['flow', 'invariant', 'head']);
   keepLatest(base, other, 'acceptances', ['flow', 'invariant', 'head']);
   keepEach(base, other, 'waivers', ['head', 'kind', 'at']);
+  keepEach(base, other, 'delegations', ['head', 'kind', 'at']);
   // Accepted limit: an extension both copies hold keeps `base`'s decision fields, so one the other copy approved may be
   // asked again. Only two copies a mixed set of plugin versions let grow apart are merged, which is rare, and a second
   // ask costs the Human one answer, never a grant they did not give.

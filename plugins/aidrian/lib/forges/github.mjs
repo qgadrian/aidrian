@@ -962,6 +962,26 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
       }
       return namesItem(found?.issue_url, 'issues', repo, number) ? found : null;
     },
+    // One issue by its number, in the forge-neutral shape: { number, state: 'open' | 'closed', title, body, url, change,
+    // created }, `change` true when the number is a pull request (GitHub numbers both in one list, and answers a pull
+    // request here with a `pull_request` key), a missing title or body '', and `created` the ISO time it was opened, or
+    // null. Null when GitHub does not find it (HTTP 404); any other failure throws.
+    issue: (repo, n, { host } = {}) => {
+      const route = `repos/${repo}/issues/${idOf(n, 'an issue number')}`;
+      let found;
+      try {
+        found = rest(route, { host });
+      } catch (error) {
+        if (notFound(error)) return null;
+        throw error;
+      }
+      const text = (value) => (typeof value === 'string' ? value : '');
+      return {
+        number: Number.isSafeInteger(found?.number) ? found.number : null, state: found?.state === 'open' ? 'open' : 'closed', title: text(found?.title),
+        body: text(found?.body), url: typeof found?.html_url === 'string' ? found.html_url : null, change: Boolean(found) && Object.hasOwn(found, 'pull_request'),
+        created: typeof found?.created_at === 'string' ? found.created_at : null,
+      };
+    },
     postComment: (repo, n, body, { host } = {}) => rest(`repos/${repo}/issues/${idOf(n, 'a pull request number')}/comments`, { method: 'POST', fields: { body }, host }),
     editComment: (repo, id, body, { host } = {}) => rest(`repos/${repo}/issues/comments/${idOf(id, 'a comment id')}`, { method: 'PATCH', fields: { body }, host }),
     deleteComment: (repo, id) => rest(`repos/${repo}/issues/comments/${idOf(id, 'a comment id')}`, { method: 'DELETE', empty: true }),

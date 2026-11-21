@@ -1058,6 +1058,7 @@ test('the review gate`s checklist reaches every reviewer', async (t) => {
   assert.equal(pass.checklist.path, 'docs/flows/booking.md');
   assert.match(pass.checklist.text, /No double booking/u);
   assert.match(pass.brief, /against the checklist/u);
+  assert.ok(!pass.brief.includes('docs/flows/booking.md'), 'the brief points at `checklist` in the input and writes no path');
 });
 
 test('the head`s review config comes from the head commit, even when the checkout is on another branch', async (t) => {

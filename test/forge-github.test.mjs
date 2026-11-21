@@ -21,7 +21,7 @@ import { viewForge, viewPrAt } from '../plugins/aidrian/lib/rules/github/merge-r
 const FACADE = [
   'id', 'cwd', 'isTrustedCommenter', 'hosts', 'changeRef', 'changesState', 'changeUrl',
   'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'branchHead', 'contents', 'tree', 'visibility', 'viewer',
-  'conversationComments', 'comment', 'postComment', 'editComment', 'deleteComment', 'reactions',
+  'conversationComments', 'comment', 'issue', 'postComment', 'editComment', 'deleteComment', 'reactions',
   'pull', 'diff', 'nodeChange', 'changeEdits', 'reviewTrail', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',
   'postReview', 'reviewComment', 'deleteReviewComment', 'findingThreads', 'replyToReviewComment', 'resolveThread', 'unresolveThread',
   'commit', 'checkRuns', 'compare', 'compareUrl', 'deployments', 'deploymentStatuses', 'uploadImages',
@@ -1146,6 +1146,19 @@ test('reviewComment and comment with the pull request named: each held to that p
   const broken = recorded(() => { throw httpError(502); }).forge;
   assert.throws(() => broken.reviewComment('o/r', 7, 1), /HTTP 502/u);
   assert.throws(() => broken.comment('o/r', 1, { pr: 7 }), /HTTP 502/u);
+});
+
+test('issue: one issue in the forge-neutral shape, a pull request marked as one, null when GitHub does not find it', () => {
+  const { forge, args } = recorded((call) => ({
+    'repos/o/r/issues/9': '{"number":9,"state":"open","title":"Follow-up","body":"From #5","html_url":"https://github.com/o/r/issues/9","created_at":"2026-11-03T14:20:00Z","user":{"login":"x"}}',
+    'repos/o/r/issues/5': '{"number":5,"state":"closed","title":"A pull request","body":null,"html_url":"https://github.com/o/r/pull/5","pull_request":{"url":"u"}}',
+  })[call[1]] ?? (() => { throw httpError(404); })());
+  assert.deepEqual(forge.issue('o/r', 9), { number: 9, state: 'open', title: 'Follow-up', body: 'From #5', url: 'https://github.com/o/r/issues/9', change: false, created: '2026-11-03T14:20:00Z' });
+  assert.deepEqual(forge.issue('o/r', '5'), { number: 5, state: 'closed', title: 'A pull request', body: '', url: 'https://github.com/o/r/pull/5', change: true, created: null });
+  assert.equal(forge.issue('o/r', 7), null, 'GitHub finds no such issue');
+  assert.deepEqual(args().map((call) => call[1]), ['repos/o/r/issues/9', 'repos/o/r/issues/5', 'repos/o/r/issues/7']);
+  for (const bad of ['1/../x', -1, 0, '@2']) assert.throws(() => forge.issue('o/r', bad), /an issue number must be a positive whole number/u, String(bad));
+  assert.throws(() => recorded(() => { throw httpError(502); }).forge.issue('o/r', 9), /HTTP 502/u, 'any other failure throws');
 });
 
 test('changeEvidence withBody: the item`s kind and its text, so a sign-off can refuse an engine post', () => {

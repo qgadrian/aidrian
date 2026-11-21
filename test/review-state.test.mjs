@@ -358,6 +358,7 @@ function sentinelRecord(head, { index = false } = {}) {
     visual: { head, status: 'failed', mode: 'none', visibility: 'PRIVATE', reason: `${S} visual`, error: `${S} error`, captured: 0, of: 1 },
     quotaStops: [{ head, stage: 'independent', reviewer: 'codex-local', passes: [pass], reason: `${S} quota`, at: ISO, choice: 'human', chosen_at: ISO, signoff: { by: `${S} signer`, at: ISO } }],
     waivers: [{ head, kind: 'round_cap', verdict: 'waive', reason: `${S} waiver`, judge: 'code-reviewer', at: ISO }],
+    delegations: [{ head, kind: 'round_cap', answer: 'delegate', issue: 'o/r#9', url: 'https://github.com/o/r/issues/9', by: `${S} person`, session: `${S} session`, at: ISO }],
     extensions: [{
       source: 'plan', round: 2, head, at: ISO, status: 'granted', by: 'human', reasons: [`${S} extension`], red_flags: [`looping: ${S}`],
       judge: { verdict: 'extend', reason: `${S} judge`, head, at: ISO }, human: { answer: 'approve', by: `${S} human`, session: `${S} session`, at: ISO },
@@ -426,6 +427,8 @@ test('the posted copy: on any reading but PRIVATE from inside the team, no free 
         assert.equal(record.revision, 5, `${at}: the engine keys are there`);
         assert.match(visible, /round_cap on `[0-9a-f]{7}`: waive by code-reviewer \(an audit entry/u, `${at}: the waiver line keeps kind, head, verdict, and judge`);
         assert.match(visible, /- round 2 on `[0-9a-f]{7}`: granted by the Human \(an audit entry, not proof\) \(over red flags: looping\)/u, `${at}: the extra rounds line`);
+        assert.deepEqual(record.delegations, [{ head, kind: 'round_cap', answer: 'delegate', issue: 'o/r#9', url: 'https://github.com/o/r/issues/9', at: ISO }], `${at}: a delegation keeps its listed keys, never who recorded it or in which session`);
+        assert.ok(visible.includes(`**Round limit, left to the session:**\n- \`${head.slice(0, 7)}\`: the Human left the ship decision to the session; findings filed as o/r#9 (https://github.com/o/r/issues/9) (an audit entry, not proof)`), `${at}: the delegation line`);
         if (!options.index) continue;
         // The well-formed values of the keys the later slices added are posted, and nothing else of them.
         assert.deepEqual(record.index['R1-1'].thread, { reviewId: 100, commentId: 101, fallbackId: 102, replyId: 103, replied: true, resolved: true }, `${at}: the thread keeps its ids and marks alone`);
@@ -584,6 +587,7 @@ test('a machine that builds on a higher-revision posted copy keeps every field t
   assert.equal(adopted.passes['engine:codex-local'].ruled[0].residual, `${S} residual`);
   assert.equal(adopted.waivers[0].reason, `${S} waiver`, 'a string outside a finding, by its entry`s key');
   assert.equal(adopted.extensions[0].human.by, `${S} human`);
+  assert.deepEqual([adopted.delegations[0].by, adopted.delegations[0].session], [`${S} person`, `${S} session`], 'a delegation`s withheld fields, by its head, kind, and time');
   assert.deepEqual([adopted.extensions[0].signals.evidence.looping[0].file, adopted.extensions[0].signals.evidence.looping[0].line], ['src/a.js', 3], 'an evidence entry`s place');
   assert.equal(untextedBlocking(adopted), null);
 

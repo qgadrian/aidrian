@@ -13,6 +13,8 @@
 
 import { createHash } from 'node:crypto';
 
+import { severityOf } from './findings.mjs';
+
 export const SPLIT_DEFAULTS = Object.freeze({ sliceLines: 800, parallel: 4, maxSlices: 8 });
 export const PACKAGE_FILES = Object.freeze(['package.json', 'go.mod', 'Cargo.toml', 'pyproject.toml', 'setup.py', 'pom.xml', 'build.gradle', 'build.gradle.kts', 'Gemfile', 'composer.json', 'mix.exs']);
 
@@ -97,9 +99,12 @@ export function splitPasses(reviewer, slices, { kind, halved = {} } = {}) {
 }
 
 // One finding per mistake across passes: the same file, lines within 3, and the same title words. The kept finding
-// has the highest severity, and `sources` names every pass that reported it. A finding without a title, as one recorded
-// on another machine reads here, is never merged: its words are unknown.
+// has the highest severity, read as the disposition table names it (findings.mjs severityOf), so "Major" outranks "low";
+// a word the table does not know, or none, outranks low alone: nothing says it is low, and a known higher one stays.
+// It keeps a security mark either twin carries, and `sources` names every pass that reported it. A finding without a
+// title, as one recorded on another machine reads here, is never merged: its words are unknown.
 const RANK = { critical: 3, high: 2, medium: 1, low: 0 };
+const rank = (severity) => RANK[severityOf(severity)] ?? 0.5;
 const words = (title) => (typeof title === 'string' ? title : '').toLowerCase().replace(/[^a-z0-9 ]+/gu, ' ').split(/\s+/u).filter((word) => word.length > 3).sort().join(' ');
 const titled = (finding) => typeof finding.title === 'string' && finding.title.trim() !== '';
 export function dedupe(lists) {
@@ -109,7 +114,9 @@ export function dedupe(lists) {
       const twin = !titled(finding) ? null : kept.find((each) => titled(each) && each.file === finding.file && Math.abs(each.line - finding.line) <= 3 && words(each.title) === words(finding.title));
       if (!twin) kept.push({ ...finding, sources: [source] });
       else {
-        if (RANK[finding.severity] > RANK[twin.severity]) Object.assign(twin, { ...finding, sources: twin.sources });
+        const security = twin.security === true || finding.security === true;
+        if (rank(finding.severity) > rank(twin.severity)) Object.assign(twin, { ...finding, sources: twin.sources });
+        if (security) twin.security = true;
         if (!twin.sources.includes(source)) twin.sources.push(source);
       }
     }

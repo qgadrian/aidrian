@@ -66,7 +66,8 @@ diff. `depth: "split"` cuts the change into slices that run in parallel, then on
   over its own partitions as passes.
 - **A slice** reads its own files' diff, a manifest of every changed file, and the repository at the head. It reports
   findings in its files only, the contracts its files change (signatures, types, schemas, routes, events), and notes
-  about what other files must agree with.
+  about what other files must agree with. Its `files` also hold the file of each blocking finding listed to it, even
+  after a fix repacks the slices and it restarts from the merge base, so it can raise that finding again.
 - **The cross-cutting pass** runs after every slice. It reads each slice's contracts, notes, and findings, plus any
   interface files a plan command flags, and reports only bugs that cross slices. It always runs again after a fix.
 - **Findings** that two passes report (same file, lines within 3, same title words) are listed once, at the higher
@@ -334,14 +335,14 @@ This machine keeps one review record a repository and pull request number, in th
 checkout reviews `a/b#12` and `c/d#12` apart, and a record never changes file when the remotes change, as when
 `gh repo fork` renames origin to upstream. The attest record (`pr-<N>-<owner>--<name>.json`) and a dispatch's findings
 folder (`tmp/review-<N>-<owner>--<name>/`) are keyed the same way. Every reader gets its own repository's record or
-none: a bot request, `aidrian pr extend` and its rule, `aidrian pr waive`, the quota-fallback rule, a sign-off, an
+none: a bot request, `aidrian pr extend` and its rule, `aidrian pr waive`, `aidrian pr delegate` and its rule, the quota-fallback rule, a sign-off, an
 attest, the review step's notes of a held finding or an error, and the merge guard read only that one, and start fresh,
 or refuse, when there is none. A record under the old name `pr-<N>-review.json`, written before the key, is read for the
 repository it names, and moved to that repository's file by its next write; one that names no repository is read for
 origin alone. When both files of one pull request exist, as when a session on an older plugin keeps writing the old name
 while a newer one writes the repository's file, and both are copies of one review (the same first round, which a quiet push moves to a new head without making it
 another review), the record is
-their merge: the newer of the two, with every Human entry of the other (sign-offs, overrules, acceptances, waivers, extensions, and stage sign-offs), each pass and round it lacks,
+their merge: the newer of the two, with every Human entry of the other (sign-offs, overrules, acceptances, waivers, delegations, extensions, and stage sign-offs), each pass and round it lacks,
 its owed entries, and the higher id counter. Each merged list ends in time order, so an older waive the other copy holds
 lands before a newer refuse, and the refuse still stands. A stage sign-off travels with its quota stop's choice: a signed or chosen stop
 only the other holds is added, the later choice of a stop both hold wins with its own sign-off, and a stop the newer one
@@ -355,7 +356,7 @@ A reader that names no repository, such as a merge with no `-R`, reads the newes
 refuses such a merge when this machine holds records of that number for more than one repository.
 A pull request's summary comment is that pull request's own, so a copy there whose record names no repository is taken
 as the repository's, and one that names another repository is ignored, never built on or written. Each writer, the
-review step, a bot request, `aidrian pr extend`, `aidrian pr waive`, a sign-off, an attest, and a recorded request,
+review step, a bot request, `aidrian pr extend`, `aidrian pr waive`, `aidrian pr delegate`, a sign-off, an attest, and a recorded request,
 refuses to write a record that names another repository than its own. An entry owed on one repository that a record of
 another holds, as one written before the key may, is moved into the owed repository's own record on its next write and
 marked moved in the other once the owed repository's own record is written. Only a record in this project's own
@@ -677,7 +678,15 @@ A project adds its own in `review.reviewers`:
 ```
 
 - `exec`: the command reads the pass as JSON on stdin (`base`, `head`, `files`, `flows`, `priorFindings`,
-  `acceptedResiduals`) and prints `{ "findings": [{ id, file, line, title, body, severity, already_ruled, security }], "verdicts": [...] }`;
+  `acceptedResiduals`, and, when they apply, `flowBase`, the merge base a delta pass judges its flows from, `remerge`,
+  the merge head whose own changes are the review, and `baseMerged`, the merge base, the earlier head as `from`, that
+  head's merge base as `earlierBase`, the merges, and `rolledBack`, of a delta whose range merged the base branch, as
+  [Rounds](#rounds) says; there `base` is the merge base, so `git --literal-pathspecs diff <base> <head> -- <file>` over `files` is the pull
+  request's own change, except for each file in `rolledBack`, which the pull request took back to the base's text: read
+  it with `git --literal-pathspecs diff <from> <earlierBase> -- <file>`, the reverse of its own change at `from`;
+  `--literal-pathspecs` reads a file name such as `*` or `:(exclude)x` as a name, never a pathspec, and each name is
+  passed as one argument, quoted for the shell, as `-- 'name'`, never pasted unquoted)
+  and prints `{ "findings": [{ id, file, line, title, body, severity, already_ruled, security }], "verdicts": [...] }`;
   a finding keeps only those keys, and `id`, `already_ruled`, and `security` may be left out. `id` is the id of the
   `priorFindings` entry a finding reports again, reworded or not, and empty for a new finding (Codex's schema requires
   the key); the engine checks it before it counts ([Finding ids](#finding-ids)). A `priorFindings` entry carries an `id`
@@ -892,10 +901,42 @@ names, or a flow's invariants doc or a doc an invariant cites. The reviewed head
 the plan's reasons name what changed. A change elsewhere in the config, outside `review`, does not count.
 
 An octopus merge, the merge of a side branch, a merge with no `received` review before it, and every head that is not a
-merge review as before. So does a merge git cannot read this way, such as under a git older than 2.38, which has no
-`git merge-tree --write-tree`: the step reviews the whole change and says why in the plan's reasons. The limit: two
-sides that each passed review can still break together with no textual conflict, and no reviewer sees that; CI still
-runs on the merge head.
+merge plan the whole change, from the merge base. So does a merge git cannot read this way, such as under a git older
+than 2.38, which has no `git merge-tree --write-tree`: the step reviews the whole change and says why in the plan's
+reasons. The limit: two sides that each passed review can still break together with no textual conflict, and no
+reviewer sees that; CI still runs on the merge head.
+
+Whatever came before, a review never takes in code only the base branch wrote. A pass that reviews the change since an
+earlier head, as after a `fix_required` round, whose range merged the base branch (the merge base moved since that head)
+reads only the files of the pull request's own change, `git diff $(git merge-base <base> HEAD) HEAD`, of its own
+change at the earlier head, from that head's merge base, so a push that takes a file back to the base's text is still
+reviewed, and of each merge commit's own changes in the range, `git show --remerge-diff`. Its input lists them in
+`files`, sets `base` to the merge base, never the earlier head, whose range to the head holds the base's code, keeps
+`context: "delta"`, and carries `baseMerged` with the merge base, the earlier head as `from`, and the merges; the
+reviewer is told to report nothing the base alone wrote. The merges are those the branch made since the earlier head,
+`git rev-list --merges <earlier head>..HEAD ^<base tip>`: one on a topic branch that forked before the earlier head
+and was merged in since counts, and one inside the base branch's own history never does. A resolution that keeps the branch's side is listed though it changed nothing since the
+earlier head, and so is the file of each open finding the pass reads, its own or one handed to it, even outside the files
+of a scoped pass such as a slice, so the reviewer can raise it again and it never
+closes unfixed. The prompt names that own diff, `git --literal-pathspecs diff <merge base> HEAD -- <file>`, never the range from the earlier head;
+every per-file diff the prompt and the brief suggest passes `--literal-pathspecs`, so a file name is never read as a pathspec,
+and each says once that a file name goes to git as one argument, quoted for the shell, as `-- 'name'`, never pasted unquoted.
+A listed file the pull request took back to the base's text has no diff from the merge base, so `baseMerged.rolledBack`
+names it, and the prompt and the agent brief point at the rollback as the reverse of the pull request's own change at
+the earlier head, `git --literal-pathspecs diff <earlier head> <its merge base> -- <file>`, with that merge base in `baseMerged.earlierBase`:
+the range from the earlier head to `HEAD` would hold the base's own edits to the file. The prompt and the brief refer to
+`files`, `baseMerged.rolledBack`, and `checklist` in the input and never write a file name or path into their prose,
+since a file name may hold a newline and any text. A flow's brief points at that own change too, and judges the invariants on the whole change. A file only the
+base changed is neither reviewed nor counted against a pass's earlier result. A pass with no such file left, or a range
+holding a merge git cannot read this way, such as an octopus merge, reviews the whole change from the merge base
+instead; so does every pass when the step reviews the whole change for the merge, and every pass when the base branch,
+from the earlier head's merge base to its tip, changes how the project is reviewed, as above: the earlier head was
+reviewed without that rule, so its result is no ground to narrow the review, and no pass reuses its earlier result
+there, even one whose files the range does not touch. The round count still reads the
+range's whole change, as a push's: a merge that brings code opens a round, one that brings only prose keeps it.
+The limit: the plan reads the merge-base diff, so a file whose conflict a merge resolved exactly to the base's text is
+missing from it. A delta pass still reads that resolution, but in a split review the file gets no slice, and its path
+selects no flow.
 
 ### Late rounds
 
@@ -1047,6 +1088,11 @@ It applies to `aidrian pr review` and to `aidrian pr await-review --request`, wh
    ```sh
    aidrian pr extend <PR> --human approve|deny
    ```
+
+At the cap that stands, `stop` or the ceiling, the merge guard asks the Human to ship with the findings filed or to
+grant more rounds. When every open finding is low and the Human answers in their own words that the session decides,
+the session records that answer with the follow-up issue, `aidrian pr delegate`, and merges naming the head:
+[Merge guard](hooks.md#merge-guard).
 
 **A fix no round reviewed.** The cap often meets a fix pushed after the last round: `aidrian pr review` cannot open a
 round for it, and `aidrian pr await-review --request` reaches its cap only on a head the bot has not reviewed. Against
@@ -1329,6 +1375,13 @@ shows, such as a waiver's reason, has `<!--` and `-->` escaped, so no text can c
   A record without the list has none. The [merge guard](hooks.md#merge-guard) and `aidrian pr auto-merge` read them only
   while the team's `github.unattendedWaiver.allow` and this machine's switch are both on, and only once the review bot
   passed the head: [Unattended waiver](config.md#unattended-waiver).
+- **Delegations.** `delegations` lists the Human's answers to the merge guard's round-limit question that left the ship
+  decision to the session, each recorded with `aidrian pr delegate` as `{ head, kind, answer, issue, url, by, session, at }`,
+  where `kind` is `round_cap`, `answer` is `delegate`, and `issue` is the follow-up issue as `<owner>/<name>#<n>`.
+  Each binds to one head. The summary comment shows them under **Round limit, left to the session**, each marked an
+  audit entry, not proof; except on a private repository read from inside the team, the posted copy leaves out `by`
+  and `session` ([The posted copy](#the-posted-copy)). A record without the list has none. The
+  [merge guard](hooks.md#merge-guard) takes one for a merge that names its head while every open finding stays low.
 
 ### Merge trust
 
@@ -1508,7 +1561,7 @@ which the review step alone writes, are kept from the comment.
   a date, a count, a word the engine defines, a defined name, a tracked path): no title, body, evidence, reason, note,
   or person's name. Without text, the waived-repeat lines show the count, the id, the file, and the severity; an Extra
   rounds line shows the status, who decided, and its red flags by name; a waiver line shows its kind, head, verdict,
-  and judge; and the outside evidence, overrides, quota, and visual lines show no reason and no person. A security
+  and judge; a delegation line shows its head and the follow-up issue's reference and URL; and the outside evidence, overrides, quota, and visual lines show no reason and no person. A security
   finding has no file or line there ([Reviewers](#reviewers)), and a verdict posts no evidence. A judge's ruling keeps
   `judge:<name>` for a name the plan or config defines, else `judge:` alone, so it never reads as the Human's. This
   copy is for display: no machine builds its record on it (A second machine, below).

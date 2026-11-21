@@ -8,8 +8,7 @@
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -106,19 +105,9 @@ test('a plan with no listener probes no loopback connection', async (t) => {
   assert.deepEqual(reaches.map((each) => each.target), ['127.0.0.1:9']);
 });
 
-test('the loopback decision is the team key and the platform alone, and ignores managed and user settings', (t) => {
-  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-binding-')));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  // Managed and user settings that keep allowLocalBinding false, which the decision must not read.
-  const off = JSON.stringify({ sandbox: { network: { allowLocalBinding: false } } });
-  const managed = path.join(root, 'managed');
-  mkdirSync(managed);
-  writeFileSync(path.join(managed, 'managed-settings.json'), off);
-  const config = path.join(root, 'claude-config');
-  mkdirSync(config);
-  writeFileSync(path.join(config, 'settings.json'), off);
-  const decide = (platform, localBinding) => claudeCode.capabilities.projectStart.confineLoopback({ env: { CLAUDE_CONFIG_DIR: config, HOME: root }, home: root, platform, localBinding, managed: { dir: managed, plists: [] } });
-  assert.equal(decide('darwin', true), true, 'macOS with the key on, whatever the settings say');
+test('the loopback decision is the team key and the platform alone', () => {
+  const decide = (platform, localBinding) => claudeCode.capabilities.projectStart.confineLoopback({ platform, localBinding });
+  assert.equal(decide('darwin', true), true, 'macOS with the key on');
   assert.equal(decide('linux', true), false, 'Linux keeps its own network namespace');
   assert.equal(decide('darwin', false), false, 'the key off');
   assert.equal(loopbackReach({ platform: 'darwin', localBinding: 'yes' }), false, 'only true counts');

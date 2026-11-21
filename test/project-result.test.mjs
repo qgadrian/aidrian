@@ -276,10 +276,7 @@ test('an environment result halts the run with its stop, and the issue goes on a
   assert.match(fx.result({ status: 'environment', stop: null }).err.join('\n'), /an environment result names in "stop" what failed/u);
   const stop = 'git push: could not read Username for github.com, token ghp_abcdefghijklmnopqrstuvwxyz0123';
   assert.deepEqual(fx.recorded({ status: 'environment', stop }).out, ['result ENG-1 environment -> open']);
-  const rows = fx.rows();
-  const halt = rows.findIndex((row) => row.event === 'halt');
-  assert.ok(halt >= 0 && halt < rows.findIndex((row) => row.event === 'result'), 'the halt row comes before the result row');
-  assert.deepEqual(rows.filter((row) => row.event === 'halt').map((row) => row.cause), ['ENG-1 attempt 1 found its environment broken: git push: could not read Username for `github.com`, token [redacted]']);
+  assert.deepEqual(fx.rows().filter((row) => row.event === 'result').map((row) => row.halt), ['ENG-1 attempt 1 found its environment broken: git push: could not read Username for `github.com`, token [redacted]']);
   assert.equal(spentAttempts(readRun(fx.state, 'launch'), 'ENG-1'), 1);
   fx.claude.states[CHILD] = 'done';
   assert.match(fx.cmd(['next', 'launch']).out[0], /^halted ENG-1 attempt 1 found its environment broken/u);
@@ -307,30 +304,22 @@ test('an environment result that spends the last attempt parks the issue on atte
     assert.deepEqual(fx.recorded({ status: 'environment', stop: `no network, try ${n + 1}` }, session).out, [expected]);
     fx.claude.states[session] = 'done';
   }
-  assert.equal(fx.rows().filter((row) => row.event === 'halt').length, 3);
-});
-
-test('a wait cut part way through an environment result writes only the rows still missing', (t) => {
-  const fx = started(t);
-  assert.equal(fx.result({ status: 'environment', stop: 'no network' }).exitCode, 0);
-  const at = new Date().toISOString();
-  // The halt and the result rows were written, and the wait stopped before the issue row.
-  appendToRun(fx.state, 'launch', () => ({ rows: [
-    { event: 'halt', cause: 'ENG-1 attempt 1 found its environment broken: no network', key: 'ENG-1', attempt: 1, at },
-    { event: 'result', key: 'ENG-1', attempt: 1, session: CHILD, via: 'drop', status: 'environment', pr: null, verified: false, at },
-  ] }));
-  const waited = fx.cmd(['wait', 'launch', '--max-wait', '0']);
-  assert.ok(waited.out.includes('result ENG-1 environment -> open'), waited.out.join('\n'));
-  const rows = fx.rows();
-  assert.equal(rows.filter((row) => row.event === 'halt').length, 1);
-  assert.equal(rows.filter((row) => row.event === 'result').length, 1);
-  assert.equal(readRun(fx.state, 'launch').states.get('ENG-1').state, 'open');
+  assert.equal(fx.rows().filter((row) => row.event === 'result' && row.halt).length, 3);
+  assert.match(fx.cmd(['next', 'launch']).out[0], /^halted ENG-1 attempt 3 found its environment broken: no network, try 3/u);
+  // The attempt folder of each environment attempt stays.
+  fx.cmd(['wait', 'launch', '--max-wait', '0']);
+  for (const n of [1, 2, 3]) assert.ok(existsSync(path.join(runFolder(fx.state, 'launch'), 'attempts', `ENG-1.${n}`)), `ENG-1.${n} keeps its folder`);
+  const report = JSON.parse(fx.cmd(['report', 'launch', '--json']).out[0]);
+  const owed = report.owed.find((each) => each.key === 'ENG-1');
+  assert.match(owed?.body ?? '', /ENG-1, attempt 3, stopped: its session found its environment broken\./u, JSON.stringify(report).slice(0, 400));
 });
 
 test('a result stop has credentials masked', () => {
   const { result } = validateResult({ status: 'failed', stop: 'push to https://bob:hunter2pass@example.test/x failed; Authorization: Bearer abcdefghijklmnop; authorization: Basic eDp5; key AKIAABCDEFGHIJKL' });
   assert.doesNotMatch(result.stop, /hunter2pass|abcdefghijklmnop|eDp5|AKIAABCDEFGHIJKL/u);
   assert.doesNotMatch(stderrTail('fatal: header Authorization: Basic eDp5 refused'), /eDp5/u);
+  assert.doesNotMatch(validateResult({ status: 'failed', stop: '{"Authorization": "Basic eDp5"} and Authorization: Digest username="u", response="abc123"' }).result.stop, /eDp5|abc123/u);
+  assert.doesNotMatch(stderrTail('{"authorization":"Basic eDp5"}'), /eDp5/u);
   assert.match(result.stop, /\[redacted\]/u);
 });
 

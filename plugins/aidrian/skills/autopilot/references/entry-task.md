@@ -69,7 +69,7 @@ attempt <n>`. No Human attends it, and the run's hooks hold it to that issue. Ev
   - A `park` line for the Human's sign-off: record `parked` with exactly the one decision the line gives (question,
     options, recommendation, class). Never sign off, and never wait for one.
   - Any other `park` line: record `pr_open`, with the `stop` the line names: the line itself, or the merge steps' own
-    stop line when it says so.
+    stop line when it says so; but `environment` when the stop is this session's own broken environment, as below.
   - `done`: record `merged`.
 - **No handoff, no early stop.** An issue's session starts no continuation, and carries on past the session-length
   reminder and a usage-limit warning: the host compacts it, and the run waits out a limit. Record the result only when

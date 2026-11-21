@@ -31,7 +31,7 @@ named and go on from that output as step 2 says.
    - `note outage: <why>`: the forge cannot answer now; not a refusal. Go on by the other lines; `start`'s exit 75 goes to § Retry.
    - `note policy: <why>`: the forge withdrew the policy; the run may start nothing more. § Stop (wait still settles the run).
    - `result <key> ...`, `ended <key> ...`, `settled <key> ...`, or `orphan ...`: an issue settled; step 4.
-     `result <key> environment -> open` halted the run on that session's environment; step 4, then step 1's `halted`.
+     `result <key> environment -> ...` halted the run on that session's environment; step 4, then step 1's `halted`.
    - `limit <key> <kind> until <time> -> open`, or `limit <key> <kind> halt -> open`: the issue's attempt ended on a
      usage or rate limit; step 1, whose `next` says whether the run is paused or halted.
    - `paused <key> ...`: that issue's session waits out a limit and goes on by itself; step 3 again.

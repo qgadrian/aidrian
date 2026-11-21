@@ -510,11 +510,13 @@ const isInit = (row, run) => isObject(row) && row.event === 'init' && row.run ==
 
 // Why the run `found` (readRun) is halted, or null: the cause of its latest `halt` row, unless a `resume` row an attended
 // session wrote with `aidrian project resume` comes after it. A start whose proof failed writes the halt row
-// (lib/project-run-gate.mjs); nothing lifts it but a resume.
+// (lib/project-run-gate.mjs), and an environment result's row carries its own `halt` (project-result.mjs haltCause);
+// nothing lifts either but a resume.
 export function haltOf(found) {
   let halt = null;
   for (const row of found.rows) {
     if (row.event === 'halt') halt = typeof row.cause === 'string' && row.cause !== '' ? row.cause.slice(0, 300) : 'a start failed its proof';
+    else if (row.event === 'result' && row.status === 'environment') halt = typeof row.halt === 'string' && row.halt !== '' ? row.halt.slice(0, 300) : 'an issue\'s session found its environment broken';
     else if (row.event === 'resume') halt = null;
   }
   return halt;

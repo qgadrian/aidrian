@@ -78,7 +78,7 @@ function capped(history, head, action, scope, why, { spent = null, ...extra } = 
 // from the waits on pending checks, so a forge outage neither spends their budget nor parks the issue for good.
 export function transientWait(history, attempt, why) {
   const used = count(history, (row) => row.action === 'retry' && row.attempt === attempt);
-  if (used >= STOP_CAPS.retry) return { action: 'park', why: `${why}, and it failed ${used} times in this attempt already`, parkAs: 'environment' };
+  if (used >= STOP_CAPS.retry) return { action: 'park', why: `${why}, and it failed ${used} times in this attempt already` };
   return { action: 'wait', record: 'retry', why, cap: STOP_CAPS.retry, used: used + 1, scope: 'for this attempt', pause: RETRY_PAUSES[used] };
 }
 
@@ -142,7 +142,6 @@ function nextStep(decision, { view, branch, method }) {
     case 'park':
       if (decision.parkAs === 'signoff') return `record the result parked with one decision of class ${decision.decisionClass ?? 'product'}: the Human's sign-off of the flows of #${view.number} at head ${short(view.head)}, options "leave the pull request unmerged" and "sign off from an attended session", recommended the first`;
       if (decision.parkAs === 'merge_steps') return 'record the result pr_open with the merge steps\' own stop line as its stop';
-      if (decision.parkAs === 'environment') return 'record the result environment with this line as its stop, which halts the run';
       return 'record the result pr_open with this line as its stop';
     case 'wait': return decision.awaitBot
       ? `run \`aidrian pr await-review ${view.number}\`, which waits for the bot it asked, ${again}`

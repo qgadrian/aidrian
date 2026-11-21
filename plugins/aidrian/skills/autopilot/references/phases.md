@@ -125,8 +125,7 @@ run `aidrian project stop-action <run> <issue>`, with the run and the issue the 
 It prints one line whose first word is the action, and has already taken the forge's part of it.
 
 - Do what the line says, then run the `pr-auto-merge` skill again. On the next stop, run `stop-action` again.
-- `park`: record the result the line names, `pr_open` with the stop it names, `environment` when a forge call kept
-  failing, or `parked` with the one decision it names.
+- `park`: record the result the line names, `pr_open` with the stop it names, or `parked` with the one decision it names.
   `done`: record the result `merged`.
 - Exit 1: record the result `pr_open`, with its error line as the stop, unless the error is this session's broken
   environment, such as a forge sign-in that fails: then `environment`, as the entry task says.

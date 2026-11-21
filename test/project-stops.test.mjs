@@ -45,7 +45,6 @@ test('the forge\'s merge ends it, a closed pull request parks, and an auto-merge
   // Each retry waits longer: 60, 300, then 900 seconds.
   assert.deepEqual([0, 1, 2].map((n) => classify({ autoMerge: { error: 'x' }, attempt: 1, history: retries(n) }).pause), [60, 300, 900]);
   assert.match(classify({ autoMerge: { error: 'x' }, attempt: 1, history: retries(3) }).why, /failed 3 times in this attempt already/u);
-  assert.match(lineOf(classify({ autoMerge: { error: 'x' }, attempt: 1, history: retries(3) })), /; record the result environment with this line as its stop, which halts the run$/u);
   assert.equal(classify({ autoMerge: { error: 'x' }, attempt: 1, history: retries(3) }).action, 'park', 'once the retry cap is spent');
   assert.equal(classify({ autoMerge: { error: 'x' }, attempt: 2, history: retries(3) }).action, 'wait', 'a new attempt retries again');
   // Retries spend nothing of the pending-check budget, and pending waits nothing of theirs.

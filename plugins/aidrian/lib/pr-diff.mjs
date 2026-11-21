@@ -2,8 +2,9 @@
 // when the forge refuses a diff that large (diffTooLarge), git's own diff of the two commits the forge names
 // (changeEnds), run in this checkout. A shallow checkout is refused before anything runs: its merge base may be missing,
 // or an older one, so its diff could fail or be wrong. A commit the checkout lacks is fetched first, by its id alone, from
-// the remote that names the pull request's repository, else `origin`, and no ref changes. git runs through runGit: an
-// argument list, never a shell, under the plugin's hardened settings. Any other forge failure still fails, as it always has.
+// the remote that names the pull request's repository, else `origin`, with no configured refspec applied (`--refmap=`),
+// so the fetch writes and prunes no ref. git runs through runGit: an argument list, never a shell, under the plugin's
+// hardened settings. Any other forge failure still fails, as it always has.
 
 import { diffTooLarge, remoteIdentity } from './forges/index.mjs';
 import { runGit } from './git.mjs';
@@ -33,14 +34,18 @@ export function pullRequestDiff({ forge, pr, root }) {
 }
 
 // git's diff of the merge base of the pull request's base and its head, to its head, as GitHub shows a pull request.
+// The shallow probe must answer `true` or `false`; any other answer stops it before any read or fetch.
 function localDiff({ forge, pr, root }) {
-  if (runGit(['rev-parse', '--is-shallow-repository'], root).stdout?.trim() === 'true') {
-    throw new Error(`this checkout is shallow, so the local diff of #${pr.number} could be wrong or fail; run \`git fetch --unshallow ${remoteOf(root, pr)}\` here, then run the command again`);
+  const probe = runGit(['rev-parse', '--is-shallow-repository'], root);
+  const shallow = probe.status === 0 ? probe.stdout.trim() : null;
+  if (shallow !== 'true' && shallow !== 'false') throw new Error(`git rev-parse --is-shallow-repository failed (${gitError(probe)})`);
+  if (shallow === 'true') {
+    throw new Error(`this checkout is shallow, so the local diff of #${pr.number} could be wrong or fail; run \`git fetch --unshallow ${shellQuoted(remoteOf(root, pr))}\` here and then the command again, or run the command from a full clone`);
   }
   const { base, head } = endsOf(forge, pr);
   const fetched = [base, head].filter((sha, index, all) => all.indexOf(sha) === index && !hasCommit(root, sha));
   if (fetched.length) fetchCommits(root, pr, fetched);
-  const result = runGit(['diff', '--no-color', `${base}...${head}`, '--'], root, { maxBuffer: LOCAL_DIFF_MAX_BYTES, timeout: DIFF_TIMEOUT_MS });
+  const result = runGit(['diff', '--no-color', '--no-relative', `${base}...${head}`, '--'], root, { maxBuffer: LOCAL_DIFF_MAX_BYTES, timeout: DIFF_TIMEOUT_MS });
   if (result.error?.code === 'ENOBUFS') throw new Error(`git diff ${base}...${head} printed more than ${LOCAL_DIFF_MAX_BYTES / 1024 / 1024} MB`);
   if (result.status !== 0) throw new Error(`git diff ${base}...${head} failed (${gitError(result)})`);
   return { text: result.stdout, local: { base, head, fetched } };
@@ -62,12 +67,12 @@ function endsOf(forge, pr) {
 const hasCommit = (root, sha) => runGit(['cat-file', '-e', `${sha}^{commit}`], root).status === 0;
 
 // Fetches `shas` from the pull request's remote, or throws when git fails or any is still missing after. The refspecs are
-// the commit ids alone, so no remote-tracking ref is written; `--no-prune` keeps a prune setting from removing any, and
-// FETCH_HEAD stays as it was.
+// the commit ids alone, with no destination, and `--refmap=` applies none of the remote's configured `fetch` refspecs, so
+// no ref is written; `--no-prune` keeps a prune setting from removing any, and FETCH_HEAD stays as it was.
 function fetchCommits(root, pr, shas) {
   const remote = remoteOf(root, pr);
   const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
-  const args = ['fetch', '--no-tags', '--no-prune', '--quiet', '--no-write-fetch-head', remote, ...shas];
+  const args = ['fetch', '--no-tags', '--no-prune', '--quiet', '--no-write-fetch-head', '--refmap=', remote, ...shas];
   const result = runGit(args, root, { timeout: FETCH_TIMEOUT_MS, env });
   if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed (${gitError(result)})`);
   const missing = shas.filter((sha) => !hasCommit(root, sha));
@@ -87,6 +92,9 @@ export function remoteOf(root, pr) {
   }
   return 'origin';
 }
+
+// `text` as one word of a POSIX shell: in single quotes, each `'` written as `'\''`.
+const shellQuoted = (text) => `'${text.replaceAll("'", "'\\''")}'`;
 
 const gitError = (result) => String(result.stderr ?? '').split('\n').map((line) => line.trim()).filter(Boolean).at(-1)
   ?? result.error?.message ?? `exit ${result.status}`;

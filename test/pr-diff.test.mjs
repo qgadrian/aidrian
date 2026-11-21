@@ -11,7 +11,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { createGithubForge } from '../plugins/aidrian/lib/forges/github.mjs';
-import { remoteOf } from '../plugins/aidrian/lib/pr-diff.mjs';
+import { pullRequestDiff, remoteOf } from '../plugins/aidrian/lib/pr-diff.mjs';
 import { runProductFeedback } from '../plugins/aidrian/lib/pr-product-feedback.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 
@@ -84,6 +84,28 @@ test('a diff gh refuses as too large comes from the local fallback, git diff of 
   assert.deepEqual(viewsOfEnds(result.calls), [['pr', 'view', '7', '--json', 'baseRefOid,headRefOid', '--repo', 'github.com/acme/notes']]);
   assert.equal(result.err.length, 1);
   assert.match(result.err[0], new RegExp(`as too large, so it came from the local fallback: git diff ${r.base}\\.\\.\\.${r.head} in this checkout$`, 'u'));
+  // A project in a subfolder, with `diff.relative` on: the diff still holds every file, outside the project too, by its
+  // path from the repository's top.
+  const nested = repo(t);
+  const app = path.join(nested.dir, 'app');
+  mkdirSync(path.join(app, '.aidrian'), { recursive: true });
+  writeFileSync(path.join(app, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' } }));
+  writeFileSync(path.join(app, 'inner.js'), 'export const inner = 1;\n');
+  nested.git('add', '.');
+  nested.git('commit', '-qm', 'nested project');
+  const nestedBase = nested.git('rev-parse', 'HEAD');
+  nested.git('switch', '-qc', 'nested-change');
+  writeFileSync(path.join(app, 'inner.js'), 'export const inner = 2;\n');
+  writeFileSync(path.join(nested.dir, 'page.js'), 'export const title = "Outside";\n');
+  nested.git('commit', '-qam', 'change inside and outside');
+  const nestedHead = nested.git('rev-parse', 'HEAD');
+  nested.git('config', 'diff.relative', 'true');
+  // state.dir is relative to the repository root, so the record lands in the top's ignored state folder.
+  const inApp = { dir: app, state: nested.state };
+  const fromApp = run(t, inApp, fakeGh({ base: nestedBase, head: nestedHead }, () => { throw ghFailed(TOO_LARGE); }));
+  assert.equal(fromApp.code, 0, fromApp.err.join('\n'));
+  const files = [...readFileSync(patchOf(inApp), 'utf8').matchAll(/^diff --git a\/(\S+) /gmu)].map((match) => match[1]);
+  assert.deepEqual(files, ['app/inner.js', 'page.js']);
 });
 
 test('any other gh failure still exits 3, writes nothing, and reads no commits for a local diff', (t) => {
@@ -119,6 +141,8 @@ test('a commit the checkout lacks is fetched from the pull request\'s remote fir
   // A remote-tracking branch upstream does not have, and a prune setting that would remove it on a default fetch.
   r.git('update-ref', 'refs/remotes/origin/unrelated', r.base);
   r.git('config', 'fetch.prune', 'true');
+  // A configured refspec that would map the fetched commit to a remote-tracking ref.
+  r.git('config', '--add', 'remote.origin.fetch', `${head}:refs/remotes/origin/pinned`);
   const result = run(t, r, fakeGh({ base: upstream.base, head }, () => { throw ghFailed(TOO_LARGE); }));
   assert.equal(result.code, 0, result.err.join('\n'));
   r.git('cat-file', '-e', `${head}^{commit}`);
@@ -131,7 +155,7 @@ test('a commit the checkout lacks is fetched from the pull request\'s remote fir
   lost.git('config', `url.${upstream.dir}.insteadOf`, ORIGIN);
   const missing = run(t, lost, fakeGh({ base: lost.base, head: 'f'.repeat(40) }, () => { throw ghFailed(TOO_LARGE); }));
   assert.equal(missing.code, 3);
-  assert.match(missing.err.join('\n'), /as too large, and the local diff failed: git fetch --no-tags --no-prune --quiet --no-write-fetch-head origin f{40} failed/u);
+  assert.match(missing.err.join('\n'), /as too large, and the local diff failed: git fetch --no-tags --no-prune --quiet --no-write-fetch-head --refmap= origin f{40} failed/u);
   assert.ok(!existsSync(patchOf(lost)), 'nothing was written');
 });
 
@@ -181,13 +205,25 @@ test('a shallow checkout is refused, whether or not its diff would succeed, nami
     execFileSync('git', ['clone', '-q', '--depth', depth, '--no-single-branch', `file://${upstream.dir}`, 'clone'], { cwd: parent });
     const dir = path.join(parent, 'clone');
     const r = { dir, state: path.join(dir, 'state') };
+    // At depth 2 the pull request's remote has a name a shell would read as two commands.
+    const remote = depth === '2' ? 'release&review' : 'origin';
+    if (depth === '2') execFileSync('git', ['remote', 'add', remote, 'https://github.com/acme/notes.git'], { cwd: dir });
     const has = (sha) => spawnSync('git', ['cat-file', '-e', `${sha}^{commit}`], { cwd: dir }).status === 0;
     assert.deepEqual([has(base), has(head), has(fork)], [true, true, mergeBase], `depth ${depth}`);
     const result = run(t, r, fakeGh({ base, head }, () => { throw ghFailed(TOO_LARGE); }));
     assert.equal(result.code, 3, `depth ${depth}`);
-    assert.match(result.err.join('\n'), /as too large, and the local diff failed: this checkout is shallow, so the local diff of #7 could be wrong or fail; run `git fetch --unshallow origin` here, then run the command again/u);
+    assert.ok(result.err.join('\n').includes(`as too large, and the local diff failed: this checkout is shallow, so the local diff of #7 could be wrong or fail; run \`git fetch --unshallow '${remote}'\` here and then the command again, or run the command from a full clone`), result.err.join('\n'));
     assert.deepEqual(viewsOfEnds(result.calls), [], 'refused before any other read');
     assert.ok(!existsSync(patchOf(r)), 'nothing was written');
     assert.equal(execFileSync('git', ['rev-parse', '--is-shallow-repository'], { cwd: dir, encoding: 'utf8' }).trim(), 'true', 'nothing was fetched');
   }
+});
+
+test('a shallow probe that does not answer true or false stops with git\'s error, before any read or fetch', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-pr-diff-nogit-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const asked = [];
+  const forge = { diff: () => { throw ghFailed(TOO_LARGE); }, changeEnds: (...args) => asked.push(args) };
+  assert.throws(() => pullRequestDiff({ forge, pr: { number: 7, host: 'github.com', repo: 'acme/notes' }, root: dir }), /as too large, and the local diff failed: git rev-parse --is-shallow-repository failed \(fatal: not a git repository/u);
+  assert.deepEqual(asked, [], 'no commit read, so no fetch');
 });

@@ -684,7 +684,8 @@ A project adds its own in `review.reviewers`:
   [Rounds](#rounds) says; there `base` is the merge base, so `git --literal-pathspecs diff <base> <head> -- <file>` over `files` is the pull
   request's own change, except for each file in `rolledBack`, which the pull request took back to the base's text: read
   it with `git --literal-pathspecs diff <from> <earlierBase> -- <file>`, the reverse of its own change at `from`;
-  `--literal-pathspecs` reads a file name such as `*` or `:(exclude)x` as a name, never a pathspec)
+  `--literal-pathspecs` reads a file name such as `*` or `:(exclude)x` as a name, never a pathspec, and each name is
+  passed as one argument, quoted for the shell, as `-- 'name'`, never pasted unquoted)
   and prints `{ "findings": [{ id, file, line, title, body, severity, already_ruled, security }], "verdicts": [...] }`;
   a finding keeps only those keys, and `id`, `already_ruled`, and `security` may be left out. `id` is the id of the
   `priorFindings` entry a finding reports again, reworded or not, and empty for a new finding (Codex's schema requires
@@ -890,10 +891,7 @@ plus every path git's merge conflicts on, with no lines when the resolution show
 of a modify/delete). A pass of every changed file reads only those files, the pass input carries `remerge` with the
 head, and the reviewer is told to review that diff alone; a pass the merge does not touch carries forward, and one that
 dropped what the base brought, as `git merge -s ours` does, is touched. It counts as a round. Later steps on the same
-merge head keep that scope, through the `remerge` entry of the record. Once the base branch changes how the project is
-reviewed, as below, a later step on that same head reviews it whole: each pass result the resolution-only round recorded
-on it is marked `remerge` and never reused, and the record's `remerge` entry is removed, so the next step reuses what
-the whole review records.
+merge head keep that scope, through the `remerge` entry of the record.
 
 Neither the carry nor the resolution-only round applies when the base branch, from the merge base of the reviewed head
 and the merge's base parent to the base branch's current tip, changes how the project is reviewed: a rule that lands on
@@ -921,7 +919,8 @@ and was merged in since counts, and one inside the base branch's own history nev
 earlier head, and so is the file of each open finding the pass reads, its own or one handed to it, even outside the files
 of a scoped pass such as a slice, so the reviewer can raise it again and it never
 closes unfixed. The prompt names that own diff, `git --literal-pathspecs diff <merge base> HEAD -- <file>`, never the range from the earlier head;
-every per-file diff the prompt and the brief suggest passes `--literal-pathspecs`, so a file name is never read as a pathspec.
+every per-file diff the prompt and the brief suggest passes `--literal-pathspecs`, so a file name is never read as a pathspec,
+and each says once that a file name goes to git as one argument, quoted for the shell, as `-- 'name'`, never pasted unquoted.
 A listed file the pull request took back to the base's text has no diff from the merge base, so `baseMerged.rolledBack`
 names it, and the prompt and the agent brief point at the rollback as the reverse of the pull request's own change at
 the earlier head, `git --literal-pathspecs diff <earlier head> <its merge base> -- <file>`, with that merge base in `baseMerged.earlierBase`:

@@ -10,7 +10,7 @@ import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { baseMergeOf, cleanBaseMerge, isMergeCommit, parents, remergeDiff } from '../plugins/aidrian/lib/review/diff.mjs';
 import { passInput } from '../plugins/aidrian/lib/review/dispatch.mjs';
-import { baseMergedBrief, flowBaseBrief, reviewPrompt } from '../plugins/aidrian/lib/review/reviewers.mjs';
+import { baseMergedBrief, flowBaseBrief, QUOTED_NAMES, reviewPrompt } from '../plugins/aidrian/lib/review/reviewers.mjs';
 import { recordPass, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { recordPending } from '../plugins/aidrian/lib/review/pending.mjs';
 import { emptyState, noteOutcome, readLocalState, stateFromComment, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
@@ -599,6 +599,24 @@ test('every per-file diff a prompt, a brief, or the review doc suggests reads fi
   assert.ok(suggested >= texts.length, `${suggested} per-file diffs in ${texts.length} texts`);
 });
 
+test('a prompt and a brief that suggest a per-file diff say once that each file name is one argument quoted for the shell', () => {
+  assert.match(QUOTED_NAMES, /one argument, quoted for the shell, such as `-- 'name'`/u);
+  assert.match(QUOTED_NAMES, /never paste a name unquoted/u);
+  const merged = { base: 'ccc', head: 'bbb', files: ['src/app.js'], flows: [], priorFindings: [], baseMerged: { base: 'ccc', from: 'aaa', earlierBase: 'ddd', merges: ['eee'], rolledBack: ['src/app.js'] } };
+  const plain = { base: 'aaa', head: 'bbb', files: ['src/app.js'], flows: [], priorFindings: [] };
+  const texts = [merged, plain].flatMap((input) => [input, { ...input, role: 'slice', manifest: [] }]).map((input) => reviewPrompt(input).split('Input (JSON):')[0]);
+  texts.push(baseMergedBrief(merged), baseMergedBrief({ ...merged, baseMerged: { ...merged.baseMerged, rolledBack: [] } }));
+  let checked = 0;
+  for (const text of texts) {
+    const commands = text.match(/`git [^`]*-- <file>`/gu) ?? [];
+    const stated = text.split(QUOTED_NAMES).length - 1;
+    assert.equal(stated, commands.length ? 1 : 0, text);
+    if (commands.length) checked += 1;
+  }
+  // Every text but the plain whole-pass prompt, which runs one diff of the whole range, suggests a per-file diff.
+  assert.equal(checked, texts.length - 1);
+});
+
 test('an exec reviewer of a delta after a base merge reads the merge base as `base`: its own diff holds none of the base\'s lines', async (t) => {
   const lines = (first, last) => `${first}\nb\nc\nd\ne\n${last}\n`;
   const r = await fixRequired(t, { baseFiles: { 'src/app.js': lines('a', 'f') }, feature: { 'src/app.js': lines('A', 'f') } });
@@ -732,26 +750,6 @@ test('passInput: a slice a fix repacked restarts from the base and still lists t
   assert.deepEqual([input.context, input.base], ['full', 'b1'], 'the repacked slice restarts from the base');
   assert.deepEqual(input.priorFindings.map((each) => each.id), ['R1-1']);
   assert.deepEqual([...input.files].sort(), ['src/handed.js', 'src/own.js'], 'the slice can raise its finding again, so it never closes as not reported');
-});
-
-test('a resolution-only review is not reused on the same head once main changes how the project is reviewed', async (t) => {
-  const r = repo(t);
-  await r.step({ exec: recorder().exec });
-  const merge = r.mergeMain(CONFLICT, RESOLVED);
-  const scoped = recorder();
-  assert.equal((await r.step({ exec: scoped.exec })).status, 'received');
-  assert.deepEqual([scoped.inputs[0].remerge, scoped.inputs[0].files], [merge, ['src/app.js']], 'the merge head was reviewed by its resolution alone');
-  // A rule that changes no pass of this plan: the pass id and its files stay the same, and the head does not move.
-  advanceMain(r, { '.aidrian/config.json': JSON.stringify({ version: 1, review: { rules: [{ when: { lines: { over: 100000 } }, depth: 'split' }] } }) });
-  const whole = recorder();
-  const result = await r.step({ exec: whole.exec });
-  assert.deepEqual([result.status, result.head], ['received', merge]);
-  assert.equal(whole.inputs.length, 1, 'the pass runs again: its result judged the resolution alone, without main\'s new rule');
-  assert.deepEqual([whole.inputs[0].context, whole.inputs[0].remerge, whole.inputs[0].files], ['full', undefined, null]);
-  assert.equal(readLocalState(r.project(), 7).remerge, undefined, 'the record no longer names the head as a resolution-only review');
-  const again = recorder();
-  assert.equal((await r.step({ exec: again.exec })).status, 'received');
-  assert.equal(again.inputs.length, 0, 'the whole review\'s result is reused on a later step for the head');
 });
 
 test('after fix_required, a flow\'s agent pass of a delta after a base merge is briefed on the pull request\'s own change', async (t) => {

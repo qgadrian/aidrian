@@ -231,13 +231,6 @@ export async function prepareStep(s) {
     baseMerge = null;
     mergeNote = `the merge from ${info.baseRefName} could not be read (${stderrTail(error.message, { chars: 200 })}): the whole change is reviewed`;
   }
-  // A head last reviewed by its resolutions alone (`state.remerge`) that this step reviews whole: each result recorded
-  // on it was judged on the resolution only, so it is marked and never reused (resultFor), and the record stops naming
-  // the head as a resolution-only review, so a later step on it reuses what the whole review records.
-  if (mergeNote && sameCommit(state.remerge?.head, head)) {
-    for (const result of Object.values(state.passes)) if (isObject(result) && sameCommit(result.head, head)) result.remerge = true;
-    delete state.remerge;
-  }
   if (baseMerge?.clean) {
     // A carried review answers the closed findings' threads as a finished step does (replies.mjs answerThreads), before
     // the record is written, so their marks are kept and posted.
@@ -413,11 +406,13 @@ export async function prepareStep(s) {
   // reads. A copy that is not private is never built on (state.mjs readRecord). An earlier result whose range merged the
   // base branch where the whole change must be reviewed (boundFor's `files` null: the base changed how the project is
   // reviewed, a merge git cannot read, or `mergeNote`) is never reused, whatever files the pass covers: it was judged
-  // without that rule, or on a range nobody could read. Nor is a result a resolution-only review recorded on a head the
-  // step now reviews whole (`remerge` on the result): it judged the resolution alone.
+  // without that rule, or on a range nobody could read.
+  // Accepted residual (tracked on pull request #457): after a resolution-only review, a commit on the base branch that
+  // changes how the project is reviewed, while the pull request's head stays the same, runs no pass again: a result for
+  // this head is reused by its head alone. Main behaves the same.
   const resultFor = (pass) => {
     const result = state.passes[pass.id];
-    if (!result || result.remerge === true || result.evidenceWithheld === true || result.notesWithheld === true || !sameFiles(pass, result)) return null;
+    if (!result || result.evidenceWithheld === true || result.notesWithheld === true || !sameFiles(pass, result)) return null;
     if (result.head === head) return result;
     const since = delta(result.head);
     if (!since || touches(since, pass.files) || result.open !== 0) return null;

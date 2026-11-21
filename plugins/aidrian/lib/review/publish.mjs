@@ -716,7 +716,6 @@ function allowlisted(state, post, counter) {
       open: int,
       files: (value) => (value === null ? null : paths_(head)(value)),
       bot: (value) => object(value, { kind: word(), review_id: check((each) => each === null || isInt(each)) }),
-      remerge: bool,
       list: (value) => (value === null ? null : findings(head)(value)),
       ruled: findings(head),
       carried: findings(head),

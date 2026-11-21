@@ -261,7 +261,8 @@ export function passInput(s, pass, stage) {
     // earlier head the delta runs from, `baseMerged.earlierBase` that head's merge base, and `baseMerged.rolledBack` the
     // listed files a push took back to the base's text since it: the diff from the merge base holds nothing there, and
     // the one from `from` to the head holds the base's own edits, so the reviewer reads
-    // `git --literal-pathspecs diff <from> <earlierBase> -- <file>`.
+    // `git --literal-pathspecs diff <from> <earlierBase> -- <file>`, each file name one argument quoted for the shell
+    // (reviewers.mjs QUOTED_NAMES), as `-- 'name'`.
     pr: n, repo, base: merged ? merged.base : from, head, context: from === base ? 'full' : 'delta', files, flows,
     ...(merged ? { baseMerged: { base: merged.base, from, earlierBase: merged.earlierBase, merges: merged.merges, rolledBack: (merged.rolledBack ?? []).filter((file) => files.includes(file)) } } : {}),
     // Only the ids listed to this pass show: the only ones a finding it returns may take.

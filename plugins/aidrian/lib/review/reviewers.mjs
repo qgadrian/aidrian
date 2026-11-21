@@ -202,7 +202,10 @@ const rolledBack = (input) => (Array.isArray(input.baseMerged?.rolledBack) ? inp
 // pull request's rollback is the reverse of its own change at `from`, from `from` to that head's merge base,
 // `baseMerged.earlierBase`. File names are the pull request's and may hold any text, a newline among it, so the prose
 // points at `baseMerged.rolledBack` in the input JSON and never names one. Every per-file diff a prompt or brief suggests
-// runs as `git --literal-pathspecs diff`, so a file name such as `*` or `:(exclude)x` is read as a name, never a pathspec.
+// runs as `git --literal-pathspecs diff`, so a file name such as `*` or `:(exclude)x` is read as a name, never a pathspec,
+// and the prompt or brief says once (QUOTED_NAMES) that the name goes to git as one argument quoted for the shell: pasted
+// unquoted, a name such as `a b` or `x;rm -rf .` is split or run by the shell.
+export const QUOTED_NAMES = `Pass each file name to git as one argument, quoted for the shell, such as \`-- 'name'\` with each \`'\` in it written \`'\\''\`; never paste a name unquoted.`;
 const rollbackDiff = (input) => `\`git --literal-pathspecs diff ${input.baseMerged.from} ${input.baseMerged.earlierBase} -- <file>\``;
 // The diff command a prompt's file list names for the rolled-back files, after the one from the merge base.
 const rolledBackDiff = (input) => (rolledBack(input).length ? `, and for each file in \`baseMerged.rolledBack\`, which it took back to the base's text, ${rollbackDiff(input)}` : '');
@@ -212,7 +215,7 @@ const rolledBackDiff = (input) => (rolledBack(input).length ? `, and for each fi
 // count. The input's `base` is then the merge base, and `baseMerged.from` the earlier head the delta runs from.
 // `baseMerged.rolledBack` lists the files this pull request took back to the base's text since `from`: the diff from the
 // merge base holds nothing there, so the rollback is read as the reverse of the change at `from` (rollbackDiff).
-export const baseMergedBrief = (input) => `Between ${input.baseMerged.from} and ${input.head} this branch merged the base branch (${input.baseMerged.merges.join(', ')}): what the base brought was reviewed there and is not this pull request's change. Review only the listed files, and in them only what this pull request changes, \`git --literal-pathspecs diff ${input.baseMerged.base} ${input.head} -- <file>\`, or what a merge commit itself changed, ${input.baseMerged.merges.map((merge) => `\`git show --remerge-diff ${merge}\``).join(', ')}.${rolledBack(input).length ? ` This pull request took each file in \`baseMerged.rolledBack\` back to the base's text since ${input.baseMerged.from}, so the diff from the merge base shows nothing there: review that rollback, the reverse of its own change at ${input.baseMerged.from}, ${rollbackDiff(input)} for each of those files.` : ''} Report nothing the base branch alone wrote.`;
+export const baseMergedBrief = (input) => `Between ${input.baseMerged.from} and ${input.head} this branch merged the base branch (${input.baseMerged.merges.join(', ')}): what the base brought was reviewed there and is not this pull request's change. Review only the listed files, and in them only what this pull request changes, \`git --literal-pathspecs diff ${input.baseMerged.base} ${input.head} -- <file>\`, or what a merge commit itself changed, ${input.baseMerged.merges.map((merge) => `\`git show --remerge-diff ${merge}\``).join(', ')}.${rolledBack(input).length ? ` This pull request took each file in \`baseMerged.rolledBack\` back to the base's text since ${input.baseMerged.from}, so the diff from the merge base shows nothing there: review that rollback, the reverse of its own change at ${input.baseMerged.from}, ${rollbackDiff(input)} for each of those files.` : ''} ${QUOTED_NAMES} Report nothing the base branch alone wrote.`;
 
 // What a reviewer of a project below the repository root reads, with `prefix` the project's folder from the top: a plain
 // `git diff` lists repository-root paths and files outside the project, and a citation of one is refused.
@@ -242,6 +245,8 @@ export function reviewPrompt(input, prefix = '') {
       : input.role === 'cross'
         ? 'This is the cross-cutting pass of a review split into slices. `slices` holds each slice\'s contracts, notes, and findings. Report only bugs that cross slices: a changed contract a caller in another slice does not follow, a schema and its users disagreeing, an assumption one slice makes that another breaks. Do not repeat a slice\'s findings.'
         : input.files ? 'Report findings only in the files listed in `files`.' : 'Report findings in any changed file.',
+    // A slice's per-file diff; after a base merge, baseMergedBrief below says it once for the whole prompt.
+    input.role === 'slice' && !input.baseMerged ? QUOTED_NAMES : '',
     'Look for correctness bugs, regressions, edge cases, security, data consistency, error handling, and missing tests.',
     'When you find a mistake, search the whole change for every copy and list each in that finding. Finish the whole review before answering.',
     'Set `security` to true on a finding that is a security problem, such as a leak, an injection, or a broken access check, and to false on every other finding.',

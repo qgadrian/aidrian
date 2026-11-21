@@ -83,7 +83,7 @@ test('a diff gh refuses as too large comes from the local fallback, git diff of 
   assert.match(written, /^\+export const title = "Reservations";$/mu);
   assert.deepEqual(viewsOfEnds(result.calls), [['pr', 'view', '7', '--json', 'baseRefOid,headRefOid', '--repo', 'github.com/acme/notes']]);
   assert.equal(result.err.length, 1);
-  assert.match(result.err[0], new RegExp(`as too large, so it came from the local fallback: git diff ${r.base}\\.\\.\\.${r.head} in this checkout$`, 'u'));
+  assert.match(result.err[0], new RegExp(`as too large, so it came from the local fallback: git diff --no-relative --ignore-submodules=none ${r.base}\\.\\.\\.${r.head} in this checkout$`, 'u'));
   // A project in a subfolder, with `diff.relative` on: the diff still holds every file, outside the project too, by its
   // path from the repository's top.
   const nested = repo(t);
@@ -104,8 +104,28 @@ test('a diff gh refuses as too large comes from the local fallback, git diff of 
   const inApp = { dir: app, state: nested.state };
   const fromApp = run(t, inApp, fakeGh({ base: nestedBase, head: nestedHead }, () => { throw ghFailed(TOO_LARGE); }));
   assert.equal(fromApp.code, 0, fromApp.err.join('\n'));
+  assert.match(fromApp.err[0], new RegExp(`local fallback: git diff --no-relative --ignore-submodules=none ${nestedBase}\\.\\.\\.${nestedHead} in this checkout$`, 'u'));
   const files = [...readFileSync(patchOf(inApp), 'utf8').matchAll(/^diff --git a\/(\S+) /gmu)].map((match) => match[1]);
   assert.deepEqual(files, ['app/inner.js', 'page.js']);
+});
+
+test('a changed submodule pointer stays in the diff, even with submodule.<name>.ignore set to all', (t) => {
+  const r = repo(t);
+  r.git('switch', '-qc', 'bump');
+  writeFileSync(path.join(r.dir, '.gitmodules'), '[submodule "lib"]\n\tpath = vendor/lib\n\turl = ./lib\n\tignore = all\n');
+  r.git('add', '.gitmodules');
+  r.git('update-index', '--add', '--cacheinfo', `160000,${r.base},vendor/lib`);
+  r.git('commit', '-qm', 'add the submodule');
+  const base = r.git('rev-parse', 'HEAD');
+  r.git('update-index', '--cacheinfo', `160000,${r.head},vendor/lib`);
+  r.git('commit', '-qm', 'bump the submodule');
+  const head = r.git('rev-parse', 'HEAD');
+  r.git('config', 'submodule.lib.ignore', 'all');
+  const result = run(t, r, fakeGh({ base, head }, () => { throw ghFailed(TOO_LARGE); }));
+  assert.equal(result.code, 0, result.err.join('\n'));
+  const written = readFileSync(patchOf(r), 'utf8');
+  assert.match(written, /^diff --git a\/vendor\/lib b\/vendor\/lib$/mu);
+  assert.match(written, new RegExp(`^-Subproject commit ${r.base}$\\n^\\+Subproject commit ${r.head}$`, 'mu'));
 });
 
 test('any other gh failure still exits 3, writes nothing, and reads no commits for a local diff', (t) => {
@@ -141,6 +161,11 @@ test('a commit the checkout lacks is fetched from the pull request\'s remote fir
   // A remote-tracking branch upstream does not have, and a prune setting that would remove it on a default fetch.
   r.git('update-ref', 'refs/remotes/origin/unrelated', r.base);
   r.git('config', 'fetch.prune', 'true');
+  // A bundle URI, which a fetch would import first, writing its refs under refs/bundles/.
+  const bundle = path.join(upstream.dir, 'all.bundle');
+  upstream.git('bundle', 'create', '-q', bundle, '--all');
+  r.git('config', 'fetch.bundleURI', bundle);
+  const refsBefore = r.git('for-each-ref', '--format=%(refname) %(objectname)');
   // A configured refspec that would map the fetched commit to a remote-tracking ref.
   r.git('config', '--add', 'remote.origin.fetch', `${head}:refs/remotes/origin/pinned`);
   const result = run(t, r, fakeGh({ base: upstream.base, head }, () => { throw ghFailed(TOO_LARGE); }));
@@ -149,13 +174,13 @@ test('a commit the checkout lacks is fetched from the pull request\'s remote fir
   assert.match(readFileSync(patchOf(r), 'utf8'), /^\+export const title = "Tables";$/mu);
   assert.match(result.err[0], new RegExp(`, after fetching (?:[0-9a-f]{40} )?${head}$`, 'u'));
   assert.throws(() => r.git('rev-parse', '-q', '--verify', 'FETCH_HEAD'), 'the fetch leaves FETCH_HEAD as it was');
-  assert.equal(r.git('for-each-ref', '--format=%(refname) %(objectname)', 'refs/remotes'), `refs/remotes/origin/unrelated ${r.base}`, 'no remote-tracking ref is written or pruned');
+  assert.equal(r.git('for-each-ref', '--format=%(refname) %(objectname)'), refsBefore, 'no ref is written or pruned');
   // A commit no remote has fails, naming the fetch, and writes nothing.
   const lost = repo(t);
   lost.git('config', `url.${upstream.dir}.insteadOf`, ORIGIN);
   const missing = run(t, lost, fakeGh({ base: lost.base, head: 'f'.repeat(40) }, () => { throw ghFailed(TOO_LARGE); }));
   assert.equal(missing.code, 3);
-  assert.match(missing.err.join('\n'), /as too large, and the local diff failed: git fetch --no-tags --no-prune --quiet --no-write-fetch-head --refmap= origin f{40} failed/u);
+  assert.match(missing.err.join('\n'), /as too large, and the local diff failed: git -c fetch\.bundleURI= fetch --no-tags --no-prune --quiet --no-write-fetch-head --refmap= origin f{40} failed/u);
   assert.ok(!existsSync(patchOf(lost)), 'nothing was written');
 });
 

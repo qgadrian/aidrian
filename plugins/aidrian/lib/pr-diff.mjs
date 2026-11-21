@@ -2,9 +2,9 @@
 // when the forge refuses a diff that large (diffTooLarge), git's own diff of the two commits the forge names
 // (changeEnds), run in this checkout. A shallow checkout is refused before anything runs: its merge base may be missing,
 // or an older one, so its diff could fail or be wrong. A commit the checkout lacks is fetched first, by its id alone, from
-// the remote that names the pull request's repository, else `origin`, with no configured refspec applied (`--refmap=`),
-// so the fetch writes and prunes no ref. git runs through runGit: an argument list, never a shell, under the plugin's
-// hardened settings. Any other forge failure still fails, as it always has.
+// the remote that names the pull request's repository, else `origin`, with no configured refspec applied (`--refmap=`)
+// and no bundle imported (`-c fetch.bundleURI=`), so the fetch writes and prunes no ref. git runs through runGit: an
+// argument list, never a shell, under the plugin's hardened settings. Any other forge failure still fails, as it always has.
 
 import { diffTooLarge, remoteIdentity } from './forges/index.mjs';
 import { runGit } from './git.mjs';
@@ -19,7 +19,7 @@ const FETCH_TIMEOUT_MS = 120_000;
 const DIFF_TIMEOUT_MS = 60_000;
 
 // The diff of `pr` ({ number, host, repo }) as { text, local }: `local` is null for the forge's, else
-// { base, head, fetched }: the two commits git compared and the ones it fetched. Throws with what failed.
+// { base, head, fetched, command }: the two commits git compared, the ones it fetched, and the diff command as shown. Throws with what failed.
 export function pullRequestDiff({ forge, pr, root }) {
   try {
     return { text: forge.diff(pr.number, { repo: `${pr.host}/${pr.repo}` }), local: null };
@@ -45,10 +45,12 @@ function localDiff({ forge, pr, root }) {
   const { base, head } = endsOf(forge, pr);
   const fetched = [base, head].filter((sha, index, all) => all.indexOf(sha) === index && !hasCommit(root, sha));
   if (fetched.length) fetchCommits(root, pr, fetched);
-  const result = runGit(['diff', '--no-color', '--no-relative', `${base}...${head}`, '--'], root, { maxBuffer: LOCAL_DIFF_MAX_BYTES, timeout: DIFF_TIMEOUT_MS });
-  if (result.error?.code === 'ENOBUFS') throw new Error(`git diff ${base}...${head} printed more than ${LOCAL_DIFF_MAX_BYTES / 1024 / 1024} MB`);
-  if (result.status !== 0) throw new Error(`git diff ${base}...${head} failed (${gitError(result)})`);
-  return { text: result.stdout, local: { base, head, fetched } };
+  const flags = ['--no-relative', '--ignore-submodules=none'];
+  const command = `git diff ${flags.join(' ')} ${base}...${head}`;
+  const result = runGit(['diff', '--no-color', ...flags, `${base}...${head}`, '--'], root, { maxBuffer: LOCAL_DIFF_MAX_BYTES, timeout: DIFF_TIMEOUT_MS });
+  if (result.error?.code === 'ENOBUFS') throw new Error(`${command} printed more than ${LOCAL_DIFF_MAX_BYTES / 1024 / 1024} MB`);
+  if (result.status !== 0) throw new Error(`${command} failed (${gitError(result)})`);
+  return { text: result.stdout, local: { base, head, fetched, command } };
 }
 
 // The two commits the forge names for the pull request, each a full commit id, or it throws.
@@ -67,12 +69,13 @@ function endsOf(forge, pr) {
 const hasCommit = (root, sha) => runGit(['cat-file', '-e', `${sha}^{commit}`], root).status === 0;
 
 // Fetches `shas` from the pull request's remote, or throws when git fails or any is still missing after. The refspecs are
-// the commit ids alone, with no destination, and `--refmap=` applies none of the remote's configured `fetch` refspecs, so
-// no ref is written; `--no-prune` keeps a prune setting from removing any, and FETCH_HEAD stays as it was.
+// the commit ids alone, with no destination, `--refmap=` applies none of the remote's configured `fetch` refspecs, and
+// `-c fetch.bundleURI=` imports no bundle and its `refs/bundles/*`, so no ref is written; `--no-prune` keeps a prune
+// setting from removing any, and FETCH_HEAD stays as it was.
 function fetchCommits(root, pr, shas) {
   const remote = remoteOf(root, pr);
   const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
-  const args = ['fetch', '--no-tags', '--no-prune', '--quiet', '--no-write-fetch-head', '--refmap=', remote, ...shas];
+  const args = ['-c', 'fetch.bundleURI=', 'fetch', '--no-tags', '--no-prune', '--quiet', '--no-write-fetch-head', '--refmap=', remote, ...shas];
   const result = runGit(args, root, { timeout: FETCH_TIMEOUT_MS, env });
   if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed (${gitError(result)})`);
   const missing = shas.filter((sha) => !hasCommit(root, sha));

@@ -82,12 +82,14 @@ const SWITCHES = Object.freeze([
   Object.freeze({ key: 'background', valueIn: (parsed) => parsed?.handoff?.background, name: 'handoff.background', why: 'only the main session may let a handoff start sessions in the background with no Human', patched: /^[+-].*"background"\s*:/mu }),
   // In a pretty-printed file the value sits on its own line, under a key the patch does not touch.
   Object.freeze({ key: 'productFeedback', valueIn: (parsed) => parsed?.review?.productFeedback, name: 'review.productFeedback', why: 'only the main session may choose whether this machine owes product feedback', patched: /^[+-].*(?:productFeedback|"auto"\s*:)/mu }),
+  // Which keychain entry gives a project run's issue sessions their forge token (lib/project-token.mjs).
+  Object.freeze({ key: 'forgeTokenKeychain', valueIn: (parsed) => parsed?.projectRun?.forgeTokenKeychain, name: 'projectRun.forgeTokenKeychain', why: 'only the main session may choose which keychain entry gives a project run\'s sessions their forge token', patched: /^[+-].*(?:forgeTokenKeychain|"service"\s*:|"account"\s*:)/mu }),
 ]);
 
 // What a Bash write to the local file that names no key changes: every switch in it, a local "off" among them.
 const EVERY_SWITCH = Object.freeze({ name: 'every machine switch', why: 'only the main session may change the machine\'s switches, a local "off" among them' });
 
-// Why the subagent call in `input` may not set one of the machine's switches, the auto-merge switch, the unattended waiver, review approvals,
+// Why the subagent call in `input` may not set one of the machine's switches, the auto-merge switch, the unattended waiver, review approvals, the forge token's keychain entry,
 // the background handoff, or the product feedback choice, or null: { match, reason }. It targets the project's local file and either changes the
 // switch (changesSwitch) or is a Bash command that writes it: any Bash write, move, remove, truncate, or copy over the
 // file counts as changing every switch, whether or not it names a key, since erasing a local "off" lets the team's

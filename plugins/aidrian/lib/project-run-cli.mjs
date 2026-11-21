@@ -72,7 +72,8 @@ export const commands = {
 // an in-process caller can point it elsewhere. So are `forge`, the forge facade the team's policy and a merge are read
 // through, `spawn` and `wait`, the host adapter's stand-ins for its command and its pause, `pause`, wait's pause between
 // reads, `now`, and `platform`, the operating system a start's host sandbox runs on. Throws what parseArgs and
-// commandConfig throw, which lib/cli.mjs reports. `autoMerge(url)` is stop-action's stand-in for the auto-merge answer.
+// commandConfig throw, which lib/cli.mjs reports. `autoMerge(url)` is stop-action's stand-in for the auto-merge answer,
+// and `exec` the keychain read's execFileSync for start and preflight (lib/project-token.mjs).
 // `confine` returns a promise of the answer (lib/project-confine.mjs runConfine), the others the answer itself.
 // A ledger another process holds locked is a refusal that may pass: exit 75, EX_TEMPFAIL, with a `retry:` line, which
 // the driver's loop tries again after one wait.
@@ -88,7 +89,7 @@ export function projectCommand(args, options = {}) {
 // The exit of a refusal that may pass when tried again: project-run-gate.mjs's.
 export { RETRY_EXIT };
 
-function projectAction(args, { cwd = process.cwd(), env = process.env, home, forge, spawn, wait, pause, now, platform, autoMerge } = {}) {
+function projectAction(args, { cwd = process.cwd(), env = process.env, home, forge, spawn, wait, pause, now, platform, autoMerge, exec } = {}) {
   const [action, ...rest] = args;
   if (!ACTIONS.includes(action)) return fail(`project takes ${ACTIONS.slice(0, -1).join(', ')}, or ${ACTIONS.at(-1)}${action ? `, not "${action}"` : ''}`);
   const word = { type: 'string' };
@@ -119,11 +120,11 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
     }
     return initRun({ project, config, run, file: path.resolve(cwd, values.file), session: sessionIdentity(env).session, env, home });
   }
-  if (action === 'preflight') return preflightCommand({ project, config, run: run ?? null, env, home, ...(forge ? { forge } : {}), ...(platform ? { platform } : {}) });
+  if (action === 'preflight') return preflightCommand({ project, config, run: run ?? null, env, home, ...(forge ? { forge } : {}), ...(platform ? { platform } : {}), ...(exec ? { exec } : {}) });
   if (action === 'report') return reportCommand({ project, config, run, json: values.json === true, env, home });
   if (action === 'recorded') return recordedCommand({ project, config, run, key: second, env, home, ...(now === undefined ? {} : { now }) });
   const gate = { project, config, run, env, home, ...(now === undefined ? {} : { now }), ...(forge ? { forge } : {}) };
-  if (action === 'start') return startIssue({ ...gate, key: second, spawn, wait, ...(platform ? { platform } : {}) });
+  if (action === 'start') return startIssue({ ...gate, key: second, spawn, wait, ...(platform ? { platform } : {}), ...(exec ? { exec } : {}) });
   if (action === 'result') {
     if (!values.file) return fail('project result needs --file');
     return recordResult({ ...gate, key: second, file: path.resolve(cwd, values.file) });

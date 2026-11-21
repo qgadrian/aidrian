@@ -483,7 +483,18 @@ No `sandbox.excludedCommands` is passed. Three conditions hold on top of the san
   `~/Library/Application Support/pip`, poetry's `auth.toml` in `~/.config/pypoetry` and
   `~/Library/Application Support/pypoetry`, and `~/.local/share/uv/credentials`. Credential-named environment variables are unset in the sandbox, as the table says, and the
   main checkout is unreadable but its git folder. The forge CLI's login, `~/.config/gh`, and its token variables stay:
-  the session pushes and opens pull requests through them. Git's `store` credential helper keeps the push token in
+  the session pushes and opens pull requests through them. Since the sandbox also hides the system keyring, where gh
+  keeps its token by default, the session gets the forge token as `GH_TOKEN` in its sandboxed commands' environment:
+  the start reads it outside the sandbox, from the first of the project's keychain entry
+  ([`projectRun.forgeTokenKeychain`](../config.md#project-run) in `.aidrian.local.json`), the machine's default entry,
+  service `aidrian-project-run`, both on macOS, and `gh auth token --hostname <host>`, and halts when none gives one;
+  the plugin's SessionStart hook of the confined session reads it again from the same sources, outside the sandbox,
+  and appends it to the file `CLAUDE_ENV_FILE` names, as it does the cache variables, so it reaches the sandboxed Bash
+  commands alone, never the host's hooks or MCP servers, and no file of the run, argv, or printed line carries it.
+  Variables of the shell that runs `claude --bg` never reach the session, so the driver's own `GH_TOKEN` is no channel.
+  `gh auth git-credential`, the helper `gh auth setup-git` writes, answers git with `GH_TOKEN` (checked on gh 2.105.0),
+  so git's HTTPS push signs in with it too. `sandbox.excludedCommands` for gh or git is no channel either: git runs
+  hooks the session can write. Git's `store` credential helper keeps the push token in
   `~/.git-credentials`, which the sandbox hides, so a main checkout whose git config names it halts the start: use the
   forge CLI's helper, `gh auth setup-git`.
 
@@ -515,11 +526,17 @@ Residual risks, each known and accepted:
 
 - WebFetch, Read, Edit, and Write run outside the sandbox. Edit and Write are held by the agent gate hook's write
   allowlist alone, and WebFetch reaches any host the permission rules allow.
-- The forge CLI's token in `~/.config/gh` is readable, and reaches every repository the user can. In the run's repository,
+- The session holds the forge token in its sandboxed commands' environment, as before it held gh's: any command it runs
+  can read it, and a token of gh's own login, or a classic one, reaches every repository and scope the user can, which
+  the preflight's `note token:` line names. A fine-grained token in the keychain, limited to the run's repository,
+  narrows that. The host keeps the file `CLAUDE_ENV_FILE` names, which then holds the token, in its own config folder
+  for the session's life; whether it removes it when the session ends is not checked.
+- The forge CLI's token in `~/.config/gh`, when gh keeps it there, is readable, and reaches every repository the user can. In the run's repository,
   the default branch's protection and the tag rule that `aidrian project preflight` requires hold it; in the user's
   other repositories, nothing does.
-- On macOS, `~/Library/Keychains` is unreadable to sandboxed commands; whether gh's token in the keychain and git's
-  `osxkeychain` helper still answer through the keychain service is live check 7.
+- On macOS, `~/Library/Keychains` is unreadable to sandboxed commands, and a live run on 0.80.1 showed gh's keychain
+  login does not answer there, which is why the session gets `GH_TOKEN`; whether git's `osxkeychain` helper, when the
+  git config names it before gh's, fails at once there and lets gh's helper sign the push in is part of live check 7.
 - The host's own git calls in the clone, such as for its status line or its view of changes, run outside the sandbox
   without the plugin's hardened settings. The `commondir` placeholder is there at launch, so the sandbox denies its
   write by path on every platform, and the hook refuses it too; should either fail, the host's own calls would follow a
@@ -563,9 +580,11 @@ Before `verified` changes, a live Claude Code must show every one of these, each
    trace of live check 21 shows the host makes no git call mid-session.
 6. A `settings.local.json` put in the clone mid-session changes none of 2 to 5.
 7. An HTTPS push, `gh api user`, and `gh pr create` work on macOS and on Linux, with `~/Library/Keychains` denied on
-   macOS; an unlisted host is refused with no prompt in every permission mode. Should a push or `gh pr create` fail
-   for the keychain, `~/Library/Keychains` is not opened again: the start passes the forge token through the forge
-   CLI's token variable, which `secretVars` keeps.
+   macOS, through the `GH_TOKEN` the SessionStart hook hands the sandboxed commands; the hook's `security` and
+   `gh auth token` reads answer in a background session within its 5 seconds, with no keychain prompt; an unlisted
+   host is refused with no prompt in every permission mode. A live run on 0.80.1 showed gh's keychain login does not
+   answer inside the sandbox, so `~/Library/Keychains` stays denied and the token goes through the forge CLI's token
+   variable, which `secretVars` keeps.
 8. The same from a subagent, a background Bash command, and Monitor.
 9. With no `bwrap`, nothing runs.
 10. An invalid `--settings` value: what the host does with it. And each key the start passes that no earlier check

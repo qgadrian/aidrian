@@ -491,6 +491,7 @@ test('a main session the background handoff route started may not set any machin
     ['unattendedSignoff', { unattendedSignoff: 'on' }],
     ['handoff.background', { handoff: { background: 'on' } }],
     ['review.productFeedback', { review: { productFeedback: { auto: true } } }],
+    ['projectRun.forgeTokenKeychain', { projectRun: { forgeTokenKeychain: { service: 'other', account: 'me' } } }],
   ];
   for (const session of [full, short]) {
     for (const [name, value] of writes) {

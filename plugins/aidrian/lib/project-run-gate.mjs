@@ -382,6 +382,7 @@ function startPlace(context) {
   if (early) return refuse(early, orphans);
   const access = accessProblem({
     cap, forge: facade, repository: found.init.repository, env, home, guarded: guardedFolders({ main, state, env, home }), main, platform: context.platform, allowed: policy.outsideSandbox,
+    keychain: project.localForgeTokenKeychain, ...(context.exec ? { exec: context.exec } : {}),
   });
   if (access?.refuse) return refuse(access.refuse, orphans);
   const tripped = access?.halt ?? linkTripwire({ state, run, store, env, home, main });

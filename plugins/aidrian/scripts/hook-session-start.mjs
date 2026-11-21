@@ -22,7 +22,9 @@
 // (lib/handoff-continue.mjs takeCleared): then it prints one JSON object, the banner as `systemMessage` and the same
 // lines, then the continuation, as `additionalContext`. Without one it prints the plain lines, as with any source.
 // First of all, for the session of a confined attempt of a project run, it hands the host the environment its sandboxed
-// commands get (lib/project-start.mjs confinedShellVars), on a host that takes it (capabilities.projectStart.shellEnv).
+// commands get (lib/project-start.mjs confinedShellVars), on a host that takes it (capabilities.projectStart.shellEnv),
+// and then, on a host that hands its session the forge token (`forgeTokenEnv`), that token, read for itself outside the
+// sandbox (confinedTokenVars), so no file carries it from the start.
 
 import { accessSync, constants, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
@@ -37,7 +39,7 @@ import { indexedPaths, indexRows, loadKnowledge } from '../lib/knowledge.mjs';
 import { inboxPath, nudge } from '../lib/lesson-inbox.mjs';
 import { inheritedOverrideLine, unpushedMainLine } from '../lib/main-commits.mjs';
 import { findProject, projectCheckouts, stateDir } from '../lib/project.mjs';
-import { confinedShellVars } from '../lib/project-start.mjs';
+import { confinedShellVars, confinedTokenVars } from '../lib/project-start.mjs';
 import { noteOrigin } from '../lib/session-origins.mjs';
 import { terminalLine } from '../lib/shell-init.mjs';
 
@@ -256,5 +258,12 @@ function shareShellVars(input) {
     if (vars) detectHost({ input }).capabilities.projectStart?.shellEnv?.({ env: process.env, vars });
   } catch {
     // No environment handed over: a sandboxed install then fails to write its cache, and writes nowhere else.
+  }
+  try {
+    const start = detectHost({ input }).capabilities.projectStart;
+    const token = start?.forgeTokenEnv === true ? confinedTokenVars({ session: input.session_id, cwd: input.cwd, env: process.env }) : null;
+    if (token) start.shellEnv?.({ env: process.env, vars: token });
+  } catch {
+    // No token handed over: the session's push and forge calls then fail to sign in, and it reports that.
   }
 }

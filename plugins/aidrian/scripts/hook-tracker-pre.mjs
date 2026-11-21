@@ -33,12 +33,13 @@ import { runDriver } from '../lib/run-driver.mjs';
 import { judgeTrackerWrite, readsByName, refusalMarker, runWriteRefusal } from '../lib/tracker-guard.mjs';
 import { readUnattendedMark } from '../lib/unattended-mark.mjs';
 
-// The hook's body, for the payload `input` (lib/hook-io.mjs callHook).
-export async function handle(input) {
+// The hook's body, for the payload `input`; `start` is when the call began, 0 for the hook's own process (lib/hook-io.mjs
+// callHook).
+export async function handle(input, { start = 0 } = {}) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
   const project = findProject(cwd);
   const config = project ? loadConfig(project).config : null;
-  const run = runDenial(input, project, config);
+  const run = runDenial(input, project, config, start);
   if (run) {
     if (!project) deny(run.reason);
     await block(input, 'tracker-guard', run.reason, { match: run.match, project, config });
@@ -64,14 +65,14 @@ if (isMain(import.meta.url)) await runHook(handle);
 // they may write unscreened (tracker-guard.mjs runWriteRefusal `unread`). A read or a judgment that throws refuses a
 // session with a mark, a pending hold, or a driver mark, and lets an attended one run; one cut short by the time budget
 // refuses such a session only a call whose name does not say it reads.
-function runDenial(input, project, config) {
+function runDenial(input, project, config, start) {
   const tool = input.tool_name;
   if (typeof tool !== 'string' || !tool.startsWith('mcp__')) return null;
   const listed = [...(config?.tracker?.writeTools ?? [])];
   const human = config?.names?.human ?? 'the Human';
   let writer = null;
   try {
-    return withinDeadline(guardBudget(process.env), () => {
+    return withinDeadline(start + guardBudget(process.env), () => {
       writer = runWriter({ session: input.session_id, env: process.env });
       if (!writer) return runWriteRefusal({ writer, tool, rawTool: input.raw_tool_name, input: input.tool_input, tracker: config?.tracker ?? null, writeTools: listed, human });
       const read = writer.project ? baseReader(writer.project)() : { why: 'the main checkout its mark names is no project' };

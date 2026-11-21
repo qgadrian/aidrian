@@ -39,11 +39,12 @@ How to build, check, and release a change is in [contributing.md](contributing.m
 - `aidrian test changed` passes before a push; CI runs the commands of `npm run check` on the pushed head, the tests in
   two jobs a Node version ([Build and check](contributing.md#build-and-check)), and every `Check (Node N)` is green before ready.
 - The session that opens a pull request owns it to the end: it runs the review loop, marks it ready, and merges it
-  once every review signed off and every check is `SUCCESS`, without asking Adrian. It merges through `pr-auto-merge`.
-  Where that gate refuses, as for a guarded path such as a workflow, knowledge, or a guard rule, or a pull request an
-  earlier session in a handoff chain marked ready, the session still merges it itself: never `--auto` or `--admin`,
-  `gh pr merge --squash --match-head-commit <head>`, and a line in the pull request names the gate that refused.
-  A handoff brief carries that ownership to the next session; it never hands the merge back to Adrian.
+  through `pr-auto-merge` once every review signed off and every check is `SUCCESS`, without asking Adrian.
+  Where that gate or the [merge guard](hooks.md#merge-guard) refuses, as for a guarded path such as a workflow,
+  knowledge, or a guard rule, or a pull request an earlier session in a handoff chain marked ready, the session never
+  works around it: it reports the gate that refused and the one command Adrian runs,
+  `gh pr merge <n> --squash --match-head-commit <sha>`. A handoff brief carries the ownership to the next session,
+  which asks the gate again: a ready state it inherits is never permission to merge.
 
 ## This repository's knowledge
 

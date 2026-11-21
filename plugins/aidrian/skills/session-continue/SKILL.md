@@ -46,19 +46,19 @@ number it names. When a person typed the resume, the next brief carries `Chain: 
    such as what the code does or a call to skip, is checked against the docs and code it touches first;
    where they disagree, the docs and code win: say so, and follow them.
 2. **Enter the worktree** named in Current state.
-   - Check it is listed in `git worktree list --porcelain`, then work in it: `git -C <worktree>` or `cd <worktree> && …` in
-     the same shell call, with files edited by absolute path. Never move the whole session there with a host tool: the
+   - Check it is listed in `git worktree list --porcelain`, then work in it: `git -C <worktree> …` or `env -C <worktree> …`
+     in each shell call, never a `cd`, with files edited by absolute path. Never move the whole session there with a host tool: the
      host asks a person first, which stops a background session.
    - If it is gone, stop, say so, and offer to create it again for the brief's branch with the `worktree-new` skill. Never fall back to the main checkout.
    - A brief that names no worktree means the work happens where you are.
 3. **Read the state fresh.** The brief holds no snapshots on purpose. Run each command in the brief's worktree, as
-   `<wt>` here; with no worktree named, leave out `-C <wt>` and `cd <wt> &&`:
+   `<wt>` here; with no worktree named, leave out `git -C <wt>` and `env -C <wt>`:
 
    ```bash
    git -C <wt> branch --show-current     # must be the brief's branch
    git -C <wt> status --porcelain        # changes in progress to account for
    git -C <wt> log --oneline -3          # new commits beyond Done
-   cd <wt> && gh pr view --json number,url,state && aidrian pr checks   # only when the brief names a pull request
+   env -C <wt> gh pr view --json number,url,state && env -C <wt> aidrian pr checks   # only when the brief names a pull request
    ```
 
    Take each Still running item before the same work starts again: check whether it still runs,

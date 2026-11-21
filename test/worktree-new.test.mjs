@@ -132,7 +132,9 @@ test('a failing bootstrap keeps the worktree and reports the end of its output a
   assert.match(result.reason, new RegExp(`^the worktree ${dir} was created, but its bootstrap failed:\\n`));
   assert.match(result.reason, /line 30\nbroke$/);
   assert.doesNotMatch(result.reason, /line 1\n/, 'only the end of the output');
-  assert.match(result.next, /^cd ".*\/\.worktrees\/x" && for i/);
+  assert.match(result.next, /^env -C '.*\/\.worktrees\/x' sh -c 'for i/, 'the rerun names the worktree without a cd');
+  const rerun = spawnSync('sh', ['-c', result.next], { cwd: repo, encoding: 'utf8' });
+  assert.deepEqual([rerun.status, rerun.stderr.trim()], [3, 'broke'], 'the rerun runs the whole bootstrap again');
   assert.equal(existsSync(dir), true);
 });
 

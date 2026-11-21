@@ -72,6 +72,8 @@ test('a test run is read through wrappers and redirects, and keyed the same way 
   assert.equal(commandKey(invocation('npx vitest run a.test.ts')), 'vitest run a.test.ts');
   assert.equal(commandKey(invocation('node plugins/aidrian/lib/cli.mjs test changed')), 'aidrian test changed');
   assert.deepEqual(testRuns('cd /x && npm run check 2>&1 | tail -5', '/w', TESTING), [{ key: 'npm run check', folder: '/x', carries: false }]);
+  assert.deepEqual(testRuns('env -C /x npm run check', '/w', TESTING), [{ key: 'npm run check', folder: '/x', carries: true }], 'env -C, the form the worktree skills give, credits its folder');
+  assert.deepEqual(testRuns('(cd /x && npm run check)', '/w', TESTING).map((run) => run.folder), [null], 'a subshell cd credits no folder');
   assert.deepEqual(testRuns('npm run check && git push', '/w', TESTING), [{ key: 'npm run check', folder: '/w', carries: true }]);
   assert.deepEqual(testRuns('git status; node --test test/a.test.mjs', '/w'), [{ key: 'node --test test/a.test.mjs', folder: '/w', carries: false }], 'after ; the line\'s status may be another\'s');
   assert.deepEqual(testRuns('true || npm test', '/w').map((run) => run.carries), [false], 'after || the run may not have run');

@@ -5,7 +5,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os, { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -14,7 +14,8 @@ import { nameMatches } from '../plugins/aidrian/lib/agent-gates.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { GUARDED_PATHS } from '../plugins/aidrian/lib/project.mjs';
 import { CONTINUE_ROUTES } from '../plugins/aidrian/lib/config-schema.mjs';
-import { agentAliases, continueRoutes, deniedNames, detectHost, HOSTS, opaqueShellCommand, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
+import { pushPermission as claudePushPermission } from '../plugins/aidrian/lib/hosts/claude-code-push.mjs';
+import { agentAliases, continueRoutes, deniedNames, detectHost, HOSTS, opaqueShellCommand, PUSH_ANSWERS, pushPermission, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { trackerWarnings, unwatchedLine } from '../plugins/aidrian/lib/tracker-check.mjs';
 import { judgeTrackerWrite, readTrackerValue, serverPrefix, unlistedTool } from '../plugins/aidrian/lib/tracker-guard.mjs';
 import { expandTracker, knownServers, readToolsOf, TRACKERS, writeToolsOf } from '../plugins/aidrian/lib/trackers/index.mjs';
@@ -362,7 +363,7 @@ test('the page on adding a host says what the adapter does not cover, and names 
   for (const delivery of DELIVERIES) assert.ok(text.includes(`\`${delivery}\``), delivery);
   for (const name of ['plugins/aidrian/hooks/hooks.json', 'scripts/version.mjs', 'test/hosts.test.mjs', 'lib/agent-models.mjs', 'What the fixtures do not prove']) assert.ok(text.includes(name), name);
   assert.doesNotMatch(text, /hookEvents/u);
-  for (const field of ['serverSpelling', 'nativeToolName', 'rawToolName', 'delivery', 'workspaceInput', 'unguardedRoutes']) assert.ok(text.includes(`\`${field}`), field);
+  for (const field of ['serverSpelling', 'nativeToolName', 'rawToolName', 'delivery', 'workspaceInput', 'unguardedRoutes', 'capabilities.pushPermission']) assert.ok(text.includes(`\`${field}`), field);
 });
 
 test('a value the file sets for what an adapter fills stays as written', () => {
@@ -512,4 +513,414 @@ test('each host`s PostToolUse Bash payload of aidrian worktree new files a links
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// The push permission capability (docs/providers/adding-a-host.md, capabilities.pushPermission): what a host says of a
+// push to the repository's remote before a run no Human attends starts work. Shared code reads it only through
+// pushPermission in lib/hosts/index.mjs, which answers unknown for whatever is not a clear answer.
+const REPOSITORY = 'github.com/acme/widget';
+const DENIAL = { answer: 'denied', setting: 'a.setting', file: '/x/settings.json', why: 'names no remote', fix: 'adds one' };
+
+test('every host answers the push permission with one of its answers, and unknown with no session', (t) => {
+  const config = mkdtempSync(path.join(tmpdir(), 'aidrian-push-'));
+  t.after(() => rmSync(config, { recursive: true, force: true }));
+  writeFileSync(path.join(config, 'settings.json'), JSON.stringify({ autoMode: { environment: ['Trusted repo: github.com/acme/other'] } }));
+  assert.deepEqual(PUSH_ANSWERS, ['allowed', 'denied', 'unknown']);
+  for (const host of [...HOSTS, fakeHost, UNKNOWN_HOST]) {
+    const read = pushPermission(host, { repository: REPOSITORY, session: null, cwd: config, env: { CLAUDE_CONFIG_DIR: config } });
+    assert.ok(PUSH_ANSWERS.includes(read.answer), host.id);
+    assert.deepEqual(read, { answer: 'unknown' }, host.id);
+  }
+});
+
+test('a host without the push permission capability, Codex, and the unknown host answer unknown', () => {
+  const codex = HOSTS.find((host) => host.id === 'codex');
+  assert.equal(fakeHost.capabilities.pushPermission, undefined, 'the fixture host is the one without it');
+  for (const host of [codex, UNKNOWN_HOST]) {
+    assert.equal(typeof host.capabilities.pushPermission, 'function', host.id);
+    assert.deepEqual(host.capabilities.pushPermission({ repository: REPOSITORY, session: 's', cwd: '/x', env: {} }), { answer: 'unknown' }, host.id);
+  }
+  for (const host of [fakeHost, codex, UNKNOWN_HOST, null, undefined, {}, { capabilities: null }]) {
+    assert.deepEqual(pushPermission(host, { repository: REPOSITORY, session: 's', cwd: '/x', env: {} }), { answer: 'unknown' }, String(host?.id));
+  }
+});
+
+test('the push permission is unknown for a capability that throws, a junk answer, and a denial it cannot name', () => {
+  const answering = (read) => ({ ...fakeHost, capabilities: { ...fakeHost.capabilities, pushPermission: () => read } });
+  const throwing = { ...fakeHost, capabilities: { pushPermission: () => { throw new Error('boom'); } } };
+  assert.deepEqual(pushPermission(throwing, {}), { answer: 'unknown' });
+  const rejected = Promise.reject(new Error('later'));
+  for (const read of [undefined, null, 'allowed', 7, [], {}, { answer: 'yes' }, { answer: 'ALLOWED' }, { answer: null }, rejected, Promise.resolve({ answer: 'allowed' })]) {
+    assert.deepEqual(pushPermission(answering(read), {}), { answer: 'unknown' }, String(read?.answer ?? read));
+  }
+  const getter = { get answer() { throw new Error('boom'); } };
+  assert.deepEqual(pushPermission(answering(getter), {}), { answer: 'unknown' });
+  for (const field of ['setting', 'file', 'why', 'fix']) {
+    for (const value of [undefined, '', '  ', 7, null, 'two\nlines', 'a\u0007bell', 'a\u2028line']) {
+      assert.deepEqual(pushPermission(answering({ ...DENIAL, [field]: value }), {}), { answer: 'unknown' }, `${field}: ${JSON.stringify(value)}`);
+    }
+  }
+  for (const file of ['settings.json', './x/settings.json', '~/.claude/settings.json']) {
+    assert.deepEqual(pushPermission(answering({ ...DENIAL, file }), {}), { answer: 'unknown' }, `a file that is not absolute: ${file}`);
+  }
+  assert.deepEqual(pushPermission(answering({ ...DENIAL, extra: 'kept out' }), {}), DENIAL);
+  assert.deepEqual(pushPermission(answering({ answer: 'allowed', setting: 'x' }), {}), { answer: 'allowed' });
+  assert.deepEqual(pushPermission(answering({ answer: 'unknown' }), {}), { answer: 'unknown' });
+  let asked = null;
+  const recording = { ...fakeHost, capabilities: { pushPermission: (ask) => { asked = ask; return { answer: 'allowed' }; } } };
+  const ask = { repository: REPOSITORY, session: 's', cwd: '/x', env: {} };
+  pushPermission(recording, ask);
+  assert.equal(asked, ask, 'the capability gets the ask as given');
+});
+
+// A Claude Code config folder whose settings.json holds `settings`, written as JSON unless it is a string.
+function claudeSettings(t, settings) {
+  const config = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-push-')));
+  t.after(() => rmSync(config, { recursive: true, force: true }));
+  if (settings !== undefined) writeFileSync(path.join(config, 'settings.json'), typeof settings === 'string' ? settings : JSON.stringify(settings));
+  return config;
+}
+const inAuto = () => 'auto';
+const askClaude = (config, extra = {}) => claudePushPermission({ repository: REPOSITORY, session: 'session-1', cwd: config, env: { CLAUDE_CONFIG_DIR: config }, readMode: inAuto, ...extra });
+const trusting = (environment, allow) => ({ autoMode: { environment, ...(allow ? { allow } : {}) } });
+
+test('Claude Code in auto mode answers the push permission from auto mode\'s trusted repositories in its user settings', (t) => {
+  const cases = [
+    ['an environment entry names the remote', trusting(['Trusted repo: github.com/acme/widget and its remotes']), 'allowed'],
+    ['"$defaults" keeps the defaults, which trust the working repository', trusting(['$defaults', 'Source control: gitlab.example.com/other']), 'allowed'],
+    ['an entry for the whole organisation', trusting(['Source control: github.com/acme and all repos under it']), 'allowed'],
+    ['an organisation entry with a glob', trusting(['Source control: github.com/acme/*']), 'allowed'],
+    ['the path alone, with .git', trusting(['**Trusted repo**: ~/work/widget (acme/widget.git, private)']), 'allowed'],
+    ['in another case, closed by a bracket', trusting(['Trusted repo: (GitHub.com/Acme/Widget)']), 'allowed'],
+    ['a URL', trusting(['Remote: https://github.com/acme/widget']), 'allowed'],
+    ['an allow entry that names it and holds push', trusting(['Source control: gitlab.example.com/other'], ['Git Pushes to github.com/acme/widget are fine']), 'allowed'],
+    ['only another remote is trusted', trusting(['Trusted repo: github.com/acme/other']), 'denied'],
+    ['a longer repository name', trusting(['Trusted repo: github.com/acme/widget-site']), 'denied'],
+    ['a longer organisation name', trusting(['Trusted repo: github.com/acme-corp/widget']), 'denied'],
+    ['another repository of the organisation', trusting(['Source control: github.com/acme/other and its remotes']), 'denied'],
+    ['an organisation with a longer name', trusting(['Source control: github.com/acme.io']), 'denied'],
+    ['an organisation at the end of a sentence', trusting(['Source control: github.com/acme.']), 'allowed'],
+    ['a repository of the organisation whose name starts with a dot', trusting(['Trusted repo: github.com/acme/.github']), 'denied'],
+    ['another host', trusting(['Source control: xgithub.com/acme']), 'denied'],
+    ['an allow entry that names it without push', trusting(['Trusted repo: github.com/acme/other'], ['Reading github.com/acme/widget is fine']), 'denied'],
+    ['an allow entry that holds push and names another', trusting(['Trusted repo: github.com/acme/other'], ['git push to github.com/acme/widget-site']), 'denied'],
+  ];
+  for (const [name, settings, answer] of cases) {
+    const config = claudeSettings(t, settings);
+    const read = askClaude(config);
+    assert.equal(read.answer, answer, name);
+    if (answer === 'denied') {
+      assert.equal(read.setting, 'autoMode.environment', name);
+      assert.equal(read.file, path.join(config, 'settings.json'), name);
+      assert.ok(path.isAbsolute(read.file), name);
+      assert.match(read.why, /"\$defaults"/u, name);
+      assert.ok(read.fix.includes('"$defaults"') && read.fix.includes(REPOSITORY), name);
+      assert.deepEqual(pushPermission({ capabilities: { pushPermission: () => read } }, {}), read, 'the registry passes the denial on');
+    } else {
+      assert.deepEqual(read, { answer }, name);
+    }
+  }
+});
+
+// An entry that trusts the remote's whole host, such as "Trusted source control: git.example.com", trusts the remote.
+// `denied` from the environment needs every entry to be one the matchers read, naming some host, and none naming this
+// remote; prose that names no host may trust it in words no matcher reads, so the answer is then unknown.
+test('Claude Code trusts a host-wide entry, and answers unknown, never denied, beside an entry it cannot read', (t) => {
+  const cases = [
+    ['the host alone', ['Trusted source control: github.com'], 'allowed'],
+    ['the host in another case, ending a sentence', ['Source control is GitHub.com.'], 'allowed'],
+    ['the host as a URL', ['Source control: https://github.com'], 'allowed'],
+    ['the host with a port', ['Source control: github.com:443'], 'allowed'],
+    ['the host with a glob for every path', ['Source control: github.com/*'], 'allowed'],
+    ['the host with a path to this owner, scp-style', ['Source control: git@github.com:acme'], 'allowed'],
+    ['another host only', ['Trusted source control: gitlab.example.com'], 'denied'],
+    ['a longer host', ['Trusted source control: xgithub.com'], 'denied'],
+    ['a subdomain of the host', ['Trusted source control: enterprise.github.com'], 'denied'],
+    ['the host as the start of a longer one', ['Trusted source control: github.com.example.io'], 'denied'],
+    ['the host narrowed to another owner', ['Trusted source control: github.com/other'], 'denied'],
+    ['the host narrowed to another owner, scp-style', ['Trusted source control: git@github.com:other/repo'], 'denied'],
+    ['the host and a port, narrowed to another owner', ['Trusted source control: github.com:22/other/repo'], 'denied'],
+    ['prose that names no host', ['Company: Acme builds widgets'], 'unknown'],
+    ['prose that names no host beside another remote', ['Trusted repo: github.com/acme/other', 'All repositories of our organisation'], 'unknown'],
+    ['prose beside another host', ['Trusted source control: gitlab.example.com', 'Our GitHub organisation'], 'unknown'],
+    ['an owner and repository with no host', ['Trusted repo: acme/other'], 'unknown'],
+    ['prose beside an entry that names the remote', ['Our GitHub organisation', 'Trusted repo: github.com/acme/widget'], 'allowed'],
+    ['prose beside the host', ['Our GitHub organisation', 'Source control: github.com'], 'allowed'],
+  ];
+  for (const [name, environment, answer] of cases) {
+    const read = askClaude(claudeSettings(t, trusting(environment)));
+    assert.equal(read.answer, answer, name);
+    if (answer !== 'denied') assert.deepEqual(read, { answer }, name);
+  }
+  // A host-wide entry for another remote's host.
+  assert.deepEqual(askClaude(claudeSettings(t, trusting(['Trusted source control: git.example.com'])), { repository: 'git.example.com/acme/widget' }), { answer: 'allowed' });
+  assert.equal(askClaude(claudeSettings(t, trusting(['Trusted source control: git.example.com'])), { repository: 'github.com/acme/widget' }).answer, 'denied');
+});
+
+// An entry is understood only when it names one source-control host or path: a word that reads like a file, such as
+// `Node.js` or `README.md`, names none, and an entry that names several, or names another host beside a bare word for
+// this remote's host, such as "our GitHub org", may cover this remote too. Beside any such entry the answer is unknown.
+test('Claude Code counts only a source-control name as an understood trust entry, and answers unknown beside any other', (t) => {
+  const OTHER = 'Trusted repo: github.com/acme/other';
+  for (const entry of ['We build with Node.js', 'See README.md', 'our GitHub org, and gitlab.example.com', 'Config lives in settings.json and package-lock.json',
+    'Trusted source control: gitlab.example.com and bitbucket.org', 'Trusted repos: github.com/acme/other, github.com/acme/third', 'Run scripts/setup.sh first', 'Mirrors on GITHUB too: gitlab.example.com']) {
+    assert.deepEqual(askClaude(claudeSettings(t, trusting([OTHER, entry]))), { answer: 'unknown' }, entry);
+    assert.deepEqual(askClaude(claudeSettings(t, trusting([entry]))), { answer: 'unknown' }, `${entry}, alone`);
+  }
+  // A single clear name of another repository, organisation, or host still denies.
+  for (const entry of ['Source control: github.example.com/other-org and all repos under it', 'Trusted source control: gitlab.example.com', OTHER,
+    'Remote: https://gitlab.example.com/acme/other.git', 'Mirror: git@gitlab.example.com:acme/other.git, read with the docs in README', 'Source control: githubusercontent.example.com']) {
+    assert.equal(askClaude(claudeSettings(t, trusting([entry]))).answer, 'denied', entry);
+  }
+  // The remote's own host counts whatever its last label, and a path names a host whatever it ends in.
+  const repository = 'code.example.sh/acme/widget';
+  assert.equal(askClaude(claudeSettings(t, trusting(['Mirror: code.example.sh/acme/other'])), { repository }).answer, 'denied');
+  assert.deepEqual(askClaude(claudeSettings(t, trusting(['Trusted: tools.example.sh'])), { repository }), { answer: 'unknown' }, 'a bare name with a file extension is no host');
+});
+
+// The user settings choose the entries, up to 1 MB, so reading one for a source-control name takes linear time.
+test('Claude Code reads a long trust entry for a source-control name at once', (t) => {
+  for (const entry of ['a'.repeat(300000), 'a.'.repeat(150000), `${'a-'.repeat(150000)}x`, `git@${'a.'.repeat(100000)}1`]) {
+    const config = claudeSettings(t, trusting(['Trusted repo: github.com/acme/other', entry]));
+    const module = path.join(ROOT, 'plugins/aidrian/lib/hosts/claude-code-push.mjs');
+    const script = `import { pushPermission } from ${JSON.stringify(module)};
+process.stdout.write(JSON.stringify(pushPermission({ repository: ${JSON.stringify(REPOSITORY)}, session: 's', cwd: ${JSON.stringify(config)}, env: { CLAUDE_CONFIG_DIR: ${JSON.stringify(config)} }, readMode: () => 'auto' })));`;
+    const ran = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 5000 });
+    assert.deepEqual([ran.status, ran.signal, ran.stdout], [0, null, '{"answer":"unknown"}'], entry.slice(0, 8));
+  }
+});
+
+test('Claude Code answers unknown on settings it cannot read as a clear auto mode list', (t) => {
+  const cases = [
+    ['no autoMode', {}],
+    ['autoMode not an object', { autoMode: 'trust everything' }],
+    ['autoMode a list', { autoMode: ['x'] }],
+    ['no environment', { autoMode: { allow: ['git push anywhere'] } }],
+    ['an empty environment', trusting([])],
+    ['an environment that is no list', trusting('Trusted repo: github.com/acme/other')],
+    ['a non-string entry', trusting(['Trusted repo: github.com/acme/other', 7])],
+    ['an allow of another shape', trusting(['Trusted repo: github.com/acme/other'], 'git push')],
+    ['an allow with a non-string entry', trusting(['Trusted repo: github.com/acme/other'], [null])],
+    ['settings that are a list', '[]'],
+    ['settings that are null', 'null'],
+    ['bad JSON', '{"autoMode": {'],
+  ];
+  for (const [name, settings] of cases) assert.deepEqual(askClaude(claudeSettings(t, settings)), { answer: 'unknown' }, name);
+  assert.deepEqual(askClaude(claudeSettings(t, undefined)), { answer: 'unknown' }, 'settings missing');
+  const folder = claudeSettings(t, undefined);
+  mkdirSync(path.join(folder, 'settings.json'));
+  assert.deepEqual(askClaude(folder), { answer: 'unknown' }, 'a folder at that path');
+  const denying = JSON.stringify(trusting(['Trusted repo: github.com/acme/other']));
+  const large = claudeSettings(t, `${denying}${' '.repeat(1024 * 1024)}`);
+  assert.deepEqual(askClaude(large), { answer: 'unknown' }, 'over 1 MB');
+  assert.equal(askClaude(claudeSettings(t, `${denying}${' '.repeat(1024 * 1024 - denying.length)}`)).answer, 'denied', 'at 1 MB');
+  const relative = claudeSettings(t, JSON.parse(denying));
+  assert.equal(askClaude(relative).answer, 'denied', 'the same folder by its absolute path denies');
+  assert.deepEqual(askClaude(relative, { env: { CLAUDE_CONFIG_DIR: path.relative(process.cwd(), relative) } }), { answer: 'unknown' }, 'a relative config folder');
+  for (const repository of [undefined, '', 'github.com/acme', 'github.com//widget', 7]) {
+    assert.deepEqual(askClaude(claudeSettings(t, JSON.parse(denying)), { repository }), { answer: 'unknown' }, String(repository));
+  }
+});
+
+test('Claude Code reads auto mode from the user settings alone, never from the project\'s', (t) => {
+  const config = claudeSettings(t, trusting(['Trusted repo: github.com/acme/other']));
+  const cwd = path.join(config, 'work');
+  mkdirSync(path.join(cwd, '.claude'), { recursive: true });
+  for (const name of ['settings.json', 'settings.local.json']) writeFileSync(path.join(cwd, '.claude', name), JSON.stringify(trusting(['$defaults'])));
+  const read = askClaude(config, { cwd });
+  assert.equal(read.answer, 'denied');
+  assert.equal(read.file, path.join(config, 'settings.json'));
+});
+
+// A permission rule settles a command before auto mode's classifier does, and the adapter does not emulate how Claude
+// Code matches one: a deny or ask rule that may reach a `git push`, or an allow rule that covers a push to `origin`, in
+// the user file or the project's `.claude/settings.json` or `.claude/settings.local.json`, only makes the answer
+// unknown. No rule answers allowed or denied. Auto mode drops broad allow rules, so a whole-tool allow leaves the verdict.
+const PUSH_RULES = ['Bash(git push:*)', 'Bash(git push *)', 'Bash(git push)', 'Bash(GIT PUSH origin main)', 'Bash(git  push --force:*)', 'Bash(git pushall)', 'Bash(git:*)', 'Bash(git *)', 'Bash(g*)', 'Bash(git:* push)',
+  'Bash', 'Bash(*)', 'Bash()', 'Bash(* --version)', 'B*', '*', 'Ba*h', 'Bash(*)(git status)', 'mcp__shell__run(git push origin)'];
+const ALLOW_PUSH_RULES = ['Bash(git push:*)', 'Bash(git push *)', 'Bash(git push)', 'Bash(GIT PUSH origin main)', 'Bash(git push origin:*)', 'Bash(git:*)', 'Bash(git *)', 'Bash(g*)',
+  'Bash(git:* push)', 'Bash(git  push --force:*)', 'Bash(git push -u origin:*)', 'Bash(git push --force-with-lease=main origin main)'];
+const UNRELATED_RULES = ['Bash(git status)', 'Bash(git pull:*)', 'Bash(npm run *)', 'Bash(gh pr view:*)', 'Read(**)', 'WebFetch', 'mcp__github__push_files', 'mcp__github__*', 'R*', '*(git status)'];
+
+test('Claude Code answers unknown, never denied, beside a deny or ask rule that may reach a git push, or an allow rule that covers one, and never allowed for one', (t) => {
+  const ONLY_OTHER = trusting(['Trusted repo: github.com/acme/other']);
+  for (const key of ['allow', 'deny', 'ask']) {
+    for (const rule of key === 'allow' ? ALLOW_PUSH_RULES : PUSH_RULES) {
+      assert.deepEqual(askClaude(claudeSettings(t, { ...ONLY_OTHER, permissions: { [key]: ['Bash(git status)', rule] } })), { answer: 'unknown' }, `${key} ${rule}`);
+      assert.deepEqual(askClaude(claudeSettings(t, { permissions: { [key]: [rule] } })), { answer: 'unknown' }, `${key} ${rule}, no autoMode`);
+      assert.deepEqual(askClaude(claudeSettings(t, { ...trusting(['$defaults']), permissions: { [key]: [rule] } })), { answer: 'unknown' }, `${key} ${rule}, "$defaults"`);
+    }
+    for (const rule of key === 'allow' ? [...UNRELATED_RULES, ...PUSH_RULES.filter((each) => !ALLOW_PUSH_RULES.includes(each))] : UNRELATED_RULES) {
+      assert.equal(askClaude(claudeSettings(t, { ...ONLY_OTHER, permissions: { [key]: [rule] } })).answer, 'denied', `${key} ${rule}`);
+      assert.deepEqual(askClaude(claudeSettings(t, { ...trusting(['$defaults']), permissions: { [key]: [rule] } })), { answer: 'allowed' }, `${key} ${rule}, "$defaults"`);
+    }
+  }
+  // With no rule that may reach a push, "$defaults" and an entry that names the remote still answer allowed.
+  assert.deepEqual(askClaude(claudeSettings(t, trusting(['$defaults']))), { answer: 'allowed' });
+  assert.deepEqual(askClaude(claudeSettings(t, { ...trusting(['Trusted repo: github.com/acme/widget']), permissions: { allow: ['Bash(git status)'] } })), { answer: 'allowed' });
+  // A file that cannot be read, or rules of another shape, may hold such a rule: unknown.
+  for (const settings of ['{"permissions": {', { ...ONLY_OTHER, permissions: 'Bash' }, { ...ONLY_OTHER, permissions: { deny: 'Bash(git push:*)' } }, { ...ONLY_OTHER, permissions: { ask: [7] } }, { ...ONLY_OTHER, permissions: { allow: [null] } }]) {
+    assert.deepEqual(askClaude(claudeSettings(t, settings)), { answer: 'unknown' }, JSON.stringify(settings));
+  }
+});
+
+// The four rules the review named, each with an otherwise-denying setup, and with "$defaults", which no rule turns into
+// a denial either.
+test('Claude Code answers unknown for a deny, an ask, and an allow push rule, a narrow git allow, and a B* deny, where it would deny, and denies beside a whole-tool allow', (t) => {
+  const ONLY_OTHER = trusting(['Trusted repo: github.com/acme/other']);
+  assert.equal(askClaude(claudeSettings(t, ONLY_OTHER)).answer, 'denied', 'the setup denies with no rule');
+  for (const permissions of [{ deny: ['Bash(git push:*)'] }, { ask: ['Bash(git push:*)'] }, { allow: ['Bash(git push:*)'] }, { allow: ['Bash(git:*)'] }, { allow: ['Bash(git *)'] }, { allow: ['Bash(git push -u origin:*)'] }, { deny: ['B*'] }]) {
+    assert.deepEqual(askClaude(claudeSettings(t, { ...ONLY_OTHER, permissions })), { answer: 'unknown' }, JSON.stringify(permissions));
+  }
+  // Auto mode drops a broad allow rule, so it leaves the denial; `git pushall` is no push, and `upstream` another remote.
+  for (const rule of ['Bash', 'Bash(*)', '*', 'B*', 'Bash(* --version)', 'Bash(git pushall)', 'Bash(git push originals)', 'Bash(git push upstream main)', 'Bash(git push -u upstream:*)']) {
+    assert.equal(askClaude(claudeSettings(t, { ...ONLY_OTHER, permissions: { allow: [rule] } })).answer, 'denied', `allow ${rule}`);
+  }
+  assert.deepEqual(askClaude(claudeSettings(t, { ...trusting(['$defaults']), permissions: { allow: ['Bash(git status)'] } })), { answer: 'allowed' }, '"$defaults"');
+});
+
+// Claude Code loads `.claude/settings.json` from the session's folder alone, and `.claude/settings.local.json` from the
+// repository root, a worktree's main checkout, and the session's folder (code.claude.com/docs/en/settings).
+test('Claude Code reads the push rules of each project settings file from the folder it loads that file from', (t) => {
+  const ONLY_OTHER = trusting(['Trusted repo: github.com/acme/other']);
+  const project = (files, { below = false } = {}) => {
+    const config = claudeSettings(t, ONLY_OTHER);
+    const root = path.join(config, 'work');
+    mkdirSync(path.join(root, '.claude'), { recursive: true });
+    mkdirSync(path.join(root, '.git'));
+    for (const [name, settings] of Object.entries(files)) writeFileSync(path.join(root, '.claude', name), typeof settings === 'string' ? settings : JSON.stringify(settings));
+    const cwd = below ? path.join(root, 'packages', 'app') : root;
+    mkdirSync(cwd, { recursive: true });
+    return askClaude(config, { cwd });
+  };
+  for (const name of ['settings.json', 'settings.local.json']) {
+    for (const key of ['allow', 'deny', 'ask']) {
+      assert.deepEqual(project({ [name]: { permissions: { [key]: ['Bash(git push:*)'] } } }), { answer: 'unknown' }, `${name} ${key}`);
+      const below = project({ [name]: { permissions: { [key]: ['Bash(git push *)'] } } }, { below: true });
+      if (name === 'settings.json') assert.equal(below.answer, 'denied', `${key}: the repository root's settings.json, which a session below it does not load`);
+      else assert.deepEqual(below, { answer: 'unknown' }, `${key}: the repository root's settings.local.json, from a folder below it`);
+      assert.equal(project({ [name]: { permissions: { [key]: ['Bash(git status)'] } } }).answer, 'denied', `${name} ${key}: an unrelated rule`);
+    }
+    // A project file that is there and cannot be read, or rules of another shape: no denial stands.
+    for (const settings of ['{"permissions": {', '[]', { permissions: 'Bash' }, { permissions: { allow: 'Bash(git push:*)' } }, { permissions: { deny: [7] } }]) {
+      assert.deepEqual(project({ [name]: settings }), { answer: 'unknown' }, `${name}: ${JSON.stringify(settings)}`);
+    }
+  }
+  assert.equal(project({}).answer, 'denied', 'no project settings');
+  // A worktree: Claude Code reads `.claude/settings.local.json` at the main checkout's root.
+  const config = claudeSettings(t, ONLY_OTHER);
+  const main = path.join(config, 'main');
+  const worktree = path.join(config, 'worktrees', 'wt');
+  mkdirSync(path.join(main, '.git', 'worktrees', 'wt'), { recursive: true });
+  mkdirSync(path.join(main, '.claude'));
+  mkdirSync(worktree, { recursive: true });
+  writeFileSync(path.join(main, '.git', 'worktrees', 'wt', 'commondir'), '../..\n');
+  writeFileSync(path.join(worktree, '.git'), `gitdir: ${path.join(main, '.git', 'worktrees', 'wt')}\n`);
+  assert.equal(askClaude(config, { cwd: worktree }).answer, 'denied', 'a worktree with no rule');
+  writeFileSync(path.join(main, '.claude', 'settings.local.json'), JSON.stringify({ permissions: { deny: ['Bash(git push *)'] } }));
+  assert.deepEqual(askClaude(config, { cwd: worktree }), { answer: 'unknown' }, 'the main checkout\'s local settings, from a worktree');
+  // A folder that is not absolute: the project's rules cannot be read, so no answer stands, "$defaults" included.
+  assert.deepEqual(askClaude(claudeSettings(t, ONLY_OTHER), { cwd: 'work' }), { answer: 'unknown' }, 'a relative folder');
+  assert.deepEqual(askClaude(claudeSettings(t, trusting(['$defaults'])), { cwd: 'work' }), { answer: 'unknown' }, 'a relative folder, "$defaults"');
+});
+
+// A project's checked-in `.claude/settings.json` chooses its rules, so reading one takes time linear in its length, never
+// time that grows with its stars. Run in a child process, so a hang fails, not blocks.
+test('Claude Code answers unknown at once for a project deny rule with thousands of stars', (t) => {
+  const config = claudeSettings(t, trusting(['Trusted repo: github.com/acme/other']));
+  const root = path.join(config, 'work');
+  mkdirSync(path.join(root, '.claude'), { recursive: true });
+  mkdirSync(path.join(root, '.git'));
+  const module = path.join(ROOT, 'plugins/aidrian/lib/hosts/claude-code-push.mjs');
+  // `g` starts `git push`, so the rule may reach one: no denial stands beside it.
+  writeFileSync(path.join(root, '.claude', 'settings.json'), JSON.stringify({ permissions: { deny: [`Bash(g${'*'.repeat(10000)}z)`] } }));
+  const script = `import { pushPermission } from ${JSON.stringify(module)};
+process.stdout.write(JSON.stringify(pushPermission({ repository: ${JSON.stringify(REPOSITORY)}, session: 's', cwd: ${JSON.stringify(root)}, env: { CLAUDE_CONFIG_DIR: ${JSON.stringify(config)} }, readMode: () => 'auto' })));`;
+  const ran = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 5000 });
+  assert.deepEqual([ran.status, ran.signal, ran.stdout], [0, null, '{"answer":"unknown"}']);
+});
+
+// The tool-name glob alone, the only rule, so its match runs: a glob read by backtracking, as a regular expression of
+// `.*` runs would, takes time that grows with the stars, and the child process is stopped.
+test('Claude Code reads a project tool-name glob with thousands of stars at once', (t) => {
+  const config = claudeSettings(t, trusting(['Trusted repo: github.com/acme/other']));
+  const root = path.join(config, 'work');
+  mkdirSync(path.join(root, '.claude'), { recursive: true });
+  mkdirSync(path.join(root, '.git'));
+  const module = path.join(ROOT, 'plugins/aidrian/lib/hosts/claude-code-push.mjs');
+  writeFileSync(path.join(root, '.claude', 'settings.json'), JSON.stringify({ permissions: { deny: [`${'*'.repeat(10000)}x`] } }));
+  const script = `import { pushPermission } from ${JSON.stringify(module)};
+process.stdout.write(JSON.stringify(pushPermission({ repository: ${JSON.stringify(REPOSITORY)}, session: 's', cwd: ${JSON.stringify(root)}, env: { CLAUDE_CONFIG_DIR: ${JSON.stringify(config)} }, readMode: () => 'auto' })));`;
+  const ran = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 5000 });
+  assert.deepEqual([ran.status, ran.signal], [0, null], 'read within 5 seconds');
+  assert.equal(JSON.parse(ran.stdout).answer, 'denied', 'a glob that matches no shell tool leaves the denial');
+});
+
+test('Claude Code answers unknown at once for a named pipe at its user settings, alone or behind a symlink', { skip: process.platform === 'win32' }, (t) => {
+  for (const linked of [false, true]) {
+    const config = claudeSettings(t, undefined);
+    const pipe = path.join(config, linked ? 'pipe' : 'settings.json');
+    assert.equal(spawnSync('mkfifo', [pipe]).status, 0, 'mkfifo');
+    if (linked) symlinkSync(pipe, path.join(config, 'settings.json'));
+    const module = path.join(ROOT, 'plugins/aidrian/lib/hosts/claude-code-push.mjs');
+    const script = `import { pushPermission } from ${JSON.stringify(module)};
+process.stdout.write(JSON.stringify(pushPermission({ repository: ${JSON.stringify(REPOSITORY)}, session: 's', cwd: '/x', env: { CLAUDE_CONFIG_DIR: ${JSON.stringify(config)} }, readMode: () => 'auto' })));`;
+    const ran = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 5000 });
+    assert.deepEqual([ran.status, ran.signal, ran.stdout], [0, null, '{"answer":"unknown"}'], linked ? 'behind a symlink' : 'alone');
+  }
+});
+
+test('Claude Code reads no mode, at once, from a named pipe in a transcript\'s place', { skip: process.platform === 'win32' }, (t) => {
+  const config = claudeSettings(t, trusting(['Trusted repo: github.com/acme/other']));
+  const cwd = path.join(config, 'work');
+  const transcripts = path.join(config, 'projects', cwd.replace(/[^A-Za-z0-9]/gu, '-'));
+  mkdirSync(transcripts, { recursive: true });
+  assert.equal(spawnSync('mkfifo', [path.join(transcripts, 'session-1.jsonl')]).status, 0, 'mkfifo');
+  const module = path.join(ROOT, 'plugins/aidrian/lib/hosts/index.mjs');
+  const script = `import { HOSTS, pushPermission } from ${JSON.stringify(module)};
+const host = HOSTS.find((each) => each.id === 'claude-code');
+process.stdout.write(JSON.stringify(pushPermission(host, { repository: ${JSON.stringify(REPOSITORY)}, session: 'session-1', cwd: ${JSON.stringify(cwd)}, env: { CLAUDE_CONFIG_DIR: ${JSON.stringify(config)} } })));`;
+  const ran = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 5000 });
+  assert.deepEqual([ran.status, ran.signal, ran.stdout], [0, null, '{"answer":"unknown"}']);
+});
+
+test('Claude Code follows a symlink to its user settings', { skip: process.platform === 'win32' }, (t) => {
+  const config = claudeSettings(t, undefined);
+  const real = path.join(config, 'real.json');
+  writeFileSync(real, JSON.stringify(trusting(['Trusted repo: github.com/acme/other'])));
+  symlinkSync(real, path.join(config, 'settings.json'));
+  assert.equal(askClaude(config).answer, 'denied');
+});
+
+test('Claude Code answers unknown outside auto mode and then reads no settings file', (t) => {
+  const config = claudeSettings(t, trusting(['Trusted repo: github.com/acme/other']));
+  for (const mode of ['acceptEdits', 'manual', 'plan', 'dontAsk', null, '(unreadable)', undefined]) {
+    const read = [];
+    const env = new Proxy({ CLAUDE_CONFIG_DIR: config }, { get: (target, name) => { read.push(name); return target[name]; } });
+    let asked = null;
+    const readMode = (ask) => { asked = ask; return mode; };
+    assert.deepEqual(claudePushPermission({ repository: REPOSITORY, session: 'session-1', cwd: '/work', env, readMode }), { answer: 'unknown' }, String(mode));
+    assert.deepEqual(read, [], `${mode}: no config folder looked up, so no settings file read`);
+    assert.equal(asked.env, env);
+    assert.deepEqual([asked.session, asked.cwd], ['session-1', '/work'], 'the mode is read for the session about to start work');
+  }
+});
+
+test('Claude Code\'s adapter answers denied from a transcript in auto mode and settings that trust only another remote', (t) => {
+  const config = claudeSettings(t, trusting(['Trusted repo: github.com/acme/other']));
+  const cwd = path.join(config, 'work');
+  const transcripts = path.join(config, 'projects', cwd.replace(/[^A-Za-z0-9]/gu, '-'));
+  mkdirSync(transcripts, { recursive: true });
+  const lines = [{ type: 'permission-mode', permissionMode: 'manual', sessionId: 'session-1' }, { type: 'permission-mode', permissionMode: 'auto', sessionId: 'session-1' }];
+  writeFileSync(path.join(transcripts, 'session-1.jsonl'), `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`);
+  const claudeCode = HOSTS.find((host) => host.id === 'claude-code');
+  const read = pushPermission(claudeCode, { repository: REPOSITORY, session: 'session-1', cwd, env: { CLAUDE_CONFIG_DIR: config } });
+  assert.equal(read.answer, 'denied');
+  assert.deepEqual(Object.keys(read).sort(), ['answer', 'file', 'fix', 'setting', 'why']);
+  assert.equal(read.setting, 'autoMode.environment');
+  assert.equal(read.file, path.join(config, 'settings.json'));
+  assert.ok(read.fix.includes(REPOSITORY));
+  writeFileSync(path.join(config, 'settings.json'), JSON.stringify(trusting(['$defaults'])));
+  assert.deepEqual(pushPermission(claudeCode, { repository: REPOSITORY, session: 'session-1', cwd, env: { CLAUDE_CONFIG_DIR: config } }), { answer: 'allowed' });
+  assert.deepEqual(pushPermission(claudeCode, { repository: REPOSITORY, session: 'session-2', cwd, env: { CLAUDE_CONFIG_DIR: config } }), { answer: 'unknown' }, 'a session with no transcript');
 });

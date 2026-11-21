@@ -15,12 +15,13 @@ import path from 'node:path';
 
 import { loadConfig } from '../lib/config.mjs';
 import { snapshotPath } from '../lib/gate-snapshot.mjs';
-import { runHook } from '../lib/hook-io.mjs';
+import { isMain, runHook } from '../lib/hook-io.mjs';
 import { detectHost, toolNames } from '../lib/hosts/index.mjs';
 import { findProject } from '../lib/project.mjs';
 import { readTrackerValue, serverPrefix, trackerOfTool, unlistedTool } from '../lib/tracker-guard.mjs';
 
-await runHook(async (input) => {
+// The hook's body, for the payload `input` (lib/hook-io.mjs callHook).
+export async function handle(input) {
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (!project) return;
   const { config } = loadConfig(project);
@@ -39,7 +40,9 @@ await runHook(async (input) => {
   const temporary = `${file}.${process.pid}.tmp`;
   writeFileSync(temporary, `${JSON.stringify({ value, unreadable: value === null, tool: input.tool_name, at: new Date().toISOString() })}\n`);
   renameSync(temporary, file);
-});
+}
+
+if (isMain(import.meta.url)) await runHook(handle);
 
 // Records the issues the answer of an adapter's issue read holds, for the session the payload names. Loaded only for such
 // a read, so the other MCP calls pay nothing for it.

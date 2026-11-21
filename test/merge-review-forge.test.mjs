@@ -25,6 +25,8 @@ import { markDriver, markFolder, markUnattended } from '../plugins/aidrian/lib/u
 import { check as signoffCheck, UNATTENDED_REASON } from '../plugins/aidrian/lib/rules/review-signoff.mjs';
 import { DRIVER, ISSUES, OTHER, recordIssue, runFixture, STARTED } from './project-start-fixture.mjs';
 
+import { hookCall } from './hook-call.mjs';
+
 // An unattended merge never rests on a record a confined session can write (docs/review.md, Merge trust): the merge guard
 // and `aidrian pr auto-merge` confirm the team's policy and the review bot's verdict on the forge, and read the Human's
 // flow sign-offs from the sign-off store, which no such session writes. Attended merges are unchanged.
@@ -553,7 +555,7 @@ test('a pull request that changes .aidrian/config.json, where projectRun widens 
   assert.equal(existsSync(signoffFolder()), false, 'nothing reached the store');
 });
 
-test('`aidrian project init` marks its session the run`s driver, held as one no Human attends for the runs folder, the marks, and the sign-off store, until the run`s recorded end', (t) => {
+test('`aidrian project init` marks its session the run`s driver, held as one no Human attends for the runs folder, the marks, and the sign-off store, until the run`s recorded end', async (t) => {
   const fx = runFixture(t);
   const seen = { env: fx.env, home: fx.home };
   const state = realpathSync(fx.state);
@@ -565,7 +567,8 @@ test('`aidrian project init` marks its session the run`s driver, held as one no 
   execFileSync('git', ['init', '-q'], { cwd: nested });
   const outside = mkdtempSync(path.join(tmpdir(), 'aidrian-driver-outside-'));
   t.after(() => rmSync(outside, { recursive: true, force: true }));
-  const hook = (session, command, cwd) => spawnSync(process.execPath, ['plugins/aidrian/scripts/hook-agent-gates.mjs'], {
+  // The hook called in this process, as the host runs its script.
+  const hook = (session, command, cwd) => hookCall(path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-agent-gates.mjs'), {
     input: JSON.stringify({ session_id: session, tool_name: 'Bash', tool_input: { command }, cwd }), encoding: 'utf8', env: { ...fx.env, AIDRIAN_TELEMETRY: '0' },
   });
   const ledger = path.join(fx.state, 'runs', 'launch', 'ledger.jsonl');
@@ -573,11 +576,11 @@ test('`aidrian project init` marks its session the run`s driver, held as one no 
   const store = path.join(signoffFolder(fx.env), 'acme', 'widgets', '7.json');
   for (const cwd of [fx.dir, nested, outside]) {
     for (const command of [`echo '{}' >> ${ledger}`, `printf x > ${snapshot}`, `printf x > ${store}`]) {
-      const result = hook(DRIVER, command, cwd);
+      const result = await hook(DRIVER, command, cwd);
       assert.equal(result.status, 2, `${cwd}: ${command}: ${result.stderr}`);
     }
   }
-  assert.equal(hook(OTHER, `printf x > ${store}`, fx.dir).status, 0, 'a session the Human attends, with no driver mark');
+  assert.equal((await hook(OTHER, `printf x > ${store}`, fx.dir)).status, 0, 'a session the Human attends, with no driver mark');
   const signoff = `aidrian pr signoff 7 --flow payments --head ${HEAD}`;
   for (const cwd of [fx.dir, nested]) {
     assert.equal(signoffCheck(signoff, { cwd, input: { session_id: DRIVER }, unattendedMark: () => null, drives: () => drivesRun(DRIVER, seen) }), UNATTENDED_REASON, `the driver, from ${cwd}`);

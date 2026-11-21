@@ -16,6 +16,11 @@ export { cloneGitProblem };
 // waits as long as git takes.
 export const GIT_TIMEOUT_MS = 2000;
 let stalled = null;
+
+// Forgets a stopped call, as a new process starts: a test that runs hooks in its own process calls it before each call.
+export function resetGitStall() {
+  stalled = null;
+}
 // The signal a git past its limit gets when the call names none: git's own SIGTERM, which lets it remove a lock it holds,
 // or SIGKILL inside killingGit.
 let killSignal;

@@ -4,7 +4,7 @@
 // questions. lib/names.mjs finds the words and leaves text in backticks or quotes alone.
 
 import { loadConfig } from '../lib/config.mjs';
-import { block, runHook } from '../lib/hook-io.mjs';
+import { block, isMain, runHook } from '../lib/hook-io.mjs';
 import { detectHost } from '../lib/hosts/index.mjs';
 import { personalWords } from '../lib/names.mjs';
 import { findProject } from '../lib/project.mjs';
@@ -24,7 +24,8 @@ function texts(input) {
   ].filter((t) => typeof t === 'string');
 }
 
-await runHook(async (input) => {
+// The hook's body, for the payload `input` (lib/hook-io.mjs callHook).
+export async function handle(input) {
   if (input.tool_name !== 'AskUserQuestion') return;
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (!project) return;
@@ -38,4 +39,6 @@ await runHook(async (input) => {
     `${JSON.stringify(ai)}, for example "How should ${ai} finish?" or "This needs approval from ${human}.". ` +
     'A word that quotes a command, a UI string, or the human goes in backticks or quotes. Rewrite it and ask again.',
     { project, config });
-});
+}
+
+if (isMain(import.meta.url)) await runHook(handle);

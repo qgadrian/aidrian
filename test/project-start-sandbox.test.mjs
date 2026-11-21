@@ -19,7 +19,7 @@ import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { forgeDomains, forgeTokenVars } from '../plugins/aidrian/lib/forges/index.mjs';
 import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import { BEACON_WAIT, IDENTIFY_CAP, startBackground, startProject } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
-import { accessProblem, cloneProblem, configFolder, CREDENTIAL_PATHS, mcpConfig, nestedProtected, npmGlobalConfigs, PLACEHOLDERS, PROTECTED_PATHS, sandboxSettings, secretVars, userSettingsProblem, writeEnvFile } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
+import { accessProblem, cloneProblem, configFolder, CREDENTIAL_PATHS, limitContinueProblem, mcpConfig, nestedProtected, npmGlobalConfigs, PLACEHOLDERS, PROTECTED_PATHS, sandboxSettings, secretVars, userSettingsProblem, writeEnvFile } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
 import { nestedProtected as anyHostNested, protectedPaths } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { GIT_PLACEHOLDERS } from '../plugins/aidrian/lib/attempt-clone.mjs';
 import { runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
@@ -790,4 +790,30 @@ test('the session loads only the MCP servers both the local ref and the forge na
   const settings = JSON.parse(plain[plain.indexOf('--settings') + 1]);
   assert.equal(settings.sandbox.filesystem.denyRead.at(-1), none.dir, 'the main checkout is unreadable');
   assert.equal(settings.sandbox.filesystem.allowRead[0], path.join(none.dir, '.git'), 'but its git folder, whose objects the clone borrows');
+});
+
+test('limitContinueProblem: a project settings file that sets autoContinueAtUsageLimit is named, and does not count', (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'limit-continue-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const config = path.join(root, 'config');
+  const project = path.join(root, 'project');
+  mkdirSync(config, { recursive: true });
+  mkdirSync(path.join(project, '.claude'), { recursive: true });
+  const env = { CLAUDE_CONFIG_DIR: config };
+  const plain = limitContinueProblem({ env, home: root, project });
+  const scope = ' (this check reads that file only; managed policy and --settings, which can set or override the key, go unverified)';
+  assert.ok(plain.endsWith(`do not set "autoContinueAtUsageLimit": true, which a project run asks for so that a usage limit does not stop the driver for good; add it${scope}`), `no project file: ${plain}`);
+  for (const name of ['settings.json', 'settings.local.json']) {
+    const file = path.join(project, '.claude', name);
+    writeFileSync(file, JSON.stringify({ autoContinueAtUsageLimit: true }));
+    const named = limitContinueProblem({ env, home: root, project });
+    assert.ok(named.startsWith(plain.slice(0, -scope.length)), named);
+    assert.ok(named.endsWith(`add it there: ${file} sets it, but the host ignores this key in a project's settings, so a project file does not count${scope}`), named);
+    rmSync(file);
+  }
+  writeFileSync(path.join(project, '.claude', 'settings.json'), JSON.stringify({ other: true }));
+  assert.equal(limitContinueProblem({ env, home: root, project }), plain, 'a project file without the key is not named');
+  writeFileSync(path.join(config, 'settings.json'), JSON.stringify({ autoContinueAtUsageLimit: true }));
+  writeFileSync(path.join(project, '.claude', 'settings.json'), JSON.stringify({ autoContinueAtUsageLimit: false }));
+  assert.equal(limitContinueProblem({ env, home: root, project }), null, 'the user settings decide');
 });

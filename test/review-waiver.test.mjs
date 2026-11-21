@@ -21,6 +21,8 @@ import { appendToRun } from '../plugins/aidrian/lib/project-run.mjs';
 import { runFixture } from './project-start-fixture.mjs';
 import { check, checkMcp, UNREAD_REASON } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 
+import { hookCall } from './hook-call.mjs';
+
 const ROOT = path.resolve(import.meta.dirname, '..');
 const GATES_HOOK = path.join(ROOT, 'plugins/aidrian/scripts/hook-agent-gates.mjs');
 const LOCAL = '.aidrian.local.json';
@@ -985,11 +987,13 @@ test('aidrian pr waive --judge keeps the judge\'s agent id and the session, and 
 
 // ---- the config guard and aidrian check (AC12)
 
-test('a subagent may not set the waiver switch in the local file; the main session may', (t) => {
+test('a subagent may not set the waiver switch in the local file; the main session may', async (t) => {
   const state = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-state-')));
   t.after(() => rmSync(state, { recursive: true, force: true }));
   const r = repo(t);
-  const run = (input) => spawnSync(process.execPath, [GATES_HOOK], { input: JSON.stringify(input), cwd: r.dir, encoding: 'utf8', env: { ...process.env, XDG_STATE_HOME: state } });
+  // The hook called in this process, as the host runs its script; `call` spawned starts the script as its own program.
+  const spawned = (script, options) => spawnSync(process.execPath, [script], options);
+  const run = (input, call = hookCall) => call(GATES_HOOK, { input: JSON.stringify(input), cwd: r.dir, encoding: 'utf8', env: { ...process.env, XDG_STATE_HOME: state } });
   const subagent = (tool, toolInput) => ({ tool_name: tool, tool_input: toolInput, agent_type: 'aidrian:explorer', agent_id: 'a5f0c1', cwd: r.dir });
   const on = JSON.stringify({ github: { unattendedWaiver: 'on' } });
   for (const [tool, toolInput] of [
@@ -998,7 +1002,7 @@ test('a subagent may not set the waiver switch in the local file; the main sessi
     ['Edit', { file_path: LOCAL, old_string: '"off"', new_string: '"unattendedWaiver": "on"' }],
     ['Bash', { command: `echo '${on}' > ${LOCAL}` }],
   ]) {
-    const result = run(subagent(tool, toolInput));
+    const result = await run(subagent(tool, toolInput));
     assert.equal(result.status, 2, JSON.stringify(toolInput));
     assert.match(result.stderr, /github\.unattendedWaiver/u);
     assert.match(result.stderr, /only the main session may let a recorded judge verdict waive the merge guard/u);
@@ -1012,12 +1016,12 @@ test('a subagent may not set the waiver switch in the local file; the main sessi
   ]) {
     const input = subagent('apply_patch', { command: text });
     assert.ok(machineSwitchWriteDenial(input, findProject(r.dir), { names: { human: 'the owner' } }), name);
-    assert.equal(run(input).status, 2, name);
+    assert.equal((await run(input)).status, 2, name);
   }
   assert.equal(machineSwitchWriteDenial(subagent('apply_patch', { command: patch('-  "names": {}', '+  "names": { "human": "x" }') }), findProject(r.dir), { names: { human: 'x' } }), null, 'another key');
-  assert.equal(run(subagent('Write', { file_path: LOCAL, content: JSON.stringify({ names: { human: 'x' } }) })).status, 0, 'other local writes run');
+  assert.equal((await run(subagent('Write', { file_path: LOCAL, content: JSON.stringify({ names: { human: 'x' } }) }))).status, 0, 'other local writes run');
   const { agent_id: _id, agent_type: _type, ...main } = subagent('Write', { file_path: LOCAL, content: on });
-  assert.equal(run(main).status, 0, 'the main session may');
+  assert.equal((await run(main, spawned)).status, 0, 'the main session may');
 });
 
 test('aidrian check warns, and still passes, when the waiver switch is on and the team does not allow it', (t) => {

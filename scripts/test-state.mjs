@@ -3,7 +3,7 @@
 // State: the tests and the commands they spawn keep their state in a temporary folder, never in the developer's
 // `~/.local/state/aidrian`. A test that sets XDG_STATE_HOME itself wins.
 //
-// Git: an empty global config file and no system file, so no test reads the developer's git config.
+// Git: a global config file that holds only a user identity, and no system file, so no test reads the developer's git config.
 //
 // Temporary files: TMPDIR points inside that folder, so what the tests and the hooks they spawn write to the
 // temporary folder, such as a hook's block counts, goes there too; the process that made the folder deletes it when it
@@ -44,7 +44,9 @@ if (!process.env.AIDRIAN_TEST_STATE) {
   process.env.PATH = `${bin}${path.delimiter}${process.env.PATH}`;
   // The developer's git config is never read: an empty global file and no system file.
   const gitconfig = path.join(state, 'gitconfig');
-  writeFileSync(gitconfig, '');
+  // An identity, though: git without one guesses an email from the machine's host name to write a reflog, and on a
+  // machine whose name does not resolve, each clone, checkout, or commit then waits about 5 seconds for that lookup.
+  writeFileSync(gitconfig, '[user]\n\tname = aidrian tests\n\temail = tests@aidrian.invalid\n');
   process.env.GIT_CONFIG_GLOBAL = gitconfig;
   process.env.GIT_CONFIG_NOSYSTEM = '1';
   process.on('exit', () => rmSync(state, { recursive: true, force: true }));

@@ -9,6 +9,7 @@ import test, { after } from 'node:test';
 import { gateDenial } from '../plugins/aidrian/lib/agent-gates.mjs';
 import { saveGateSnapshot } from '../plugins/aidrian/lib/gate-snapshot.mjs';
 import { UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
+import { hookCall } from './hook-call.mjs';
 
 // The hooks this file runs record their blocks in the state folder; keep those rows out of the real one.
 process.env.XDG_STATE_HOME = mkdtempSync(path.join(tmpdir(), 'aidrian-state-'));
@@ -183,7 +184,7 @@ test('an agent answers to its full name, its short name, and Codex`s aidrian- ro
   }
 });
 
-test('the hook blocks with exit 2 and the rule on stderr, and exits 0 silently without gates or a project', (t) => {
+test('the hook blocks with exit 2 and the rule on stderr, and exits 0 silently without gates or a project', async (t) => {
   const project = (config) => {
     const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-gates-')));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -191,10 +192,10 @@ test('the hook blocks with exit 2 and the rule on stderr, and exits 0 silently w
     writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify(config));
     return dir;
   };
-  const run = (cwd, input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ ...input, cwd }), cwd, encoding: 'utf8' });
+  const run = (cwd, input) => hookCall(HOOK, { input: JSON.stringify({ ...input, cwd }), cwd });
   const gated = project({ version: 1, agents: { main: { deny: ['Bash(git push)'] } }, names: { human: 'the product owner' } });
 
-  const blocked = run(gated, mainCall('Bash', bash('git push')));
+  const blocked = await run(gated, mainCall('Bash', bash('git push')));
   assert.deepEqual([blocked.status, blocked.stdout], [2, '']);
   assert.match(blocked.stderr, /^aidrian: Bash is blocked for the main session in this project: agents\.main\.deny has "Bash\(git push\)"/);
   assert.match(blocked.stderr, /tell the product owner what the task needs\.\n$/);
@@ -204,7 +205,7 @@ test('the hook blocks with exit 2 and the rule on stderr, and exits 0 silently w
     [project({ version: 1 }), mainCall('Bash', bash('git push'))],
     [path.dirname(gated), mainCall('Bash', bash('git push'))],
   ]) {
-    const { status, stdout, stderr } = run(cwd, input);
+    const { status, stdout, stderr } = await run(cwd, input);
     assert.deepEqual([status, stdout, stderr], [0, '', ''], `${cwd}: ${input.tool_input.command}`);
   }
 });
@@ -232,7 +233,7 @@ test('a gate denies a call before any guard resolves its paths or globs, so a lo
   }
 });
 
-test('while a file that sets the configuration cannot be read, a subagent may only read; the main session keeps every tool', (t) => {
+test('while a file that sets the configuration cannot be read, a subagent may only read; the main session keeps every tool', async (t) => {
   const project = (files) => {
     const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-gates-')));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -240,7 +241,7 @@ test('while a file that sets the configuration cannot be read, a subagent may on
     for (const [file, text] of Object.entries(files)) writeFileSync(path.join(dir, file), text);
     return dir;
   };
-  const run = (cwd, input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ ...input, cwd }), cwd, encoding: 'utf8' });
+  const run = (cwd, input) => hookCall(HOOK, { input: JSON.stringify({ ...input, cwd }), cwd });
   const gates = JSON.stringify({ version: 1, agents: { explorer: { deny: ['Bash(git push)'] } } });
   const cases = [
     [{ '.aidrian/config.json': '{' }, '.aidrian/config.json', /invalid JSON/],
@@ -253,7 +254,7 @@ test('while a file that sets the configuration cannot be read, a subagent may on
   ];
   for (const [files, file, problem] of cases) {
     const dir = project(files);
-    const blocked = run(dir, agentCall('aidrian:explorer', 'Bash', bash('git push')));
+    const blocked = await run(dir, agentCall('aidrian:explorer', 'Bash', bash('git push')));
     assert.deepEqual([blocked.status, blocked.stdout], [2, ''], file);
     const head = `aidrian: Bash is blocked for the agent "aidrian:explorer" in this project: ${file} cannot be read (`;
     assert.ok(blocked.stderr.startsWith(head), blocked.stderr);
@@ -266,11 +267,11 @@ test('while a file that sets the configuration cannot be read, a subagent may on
       mainCall('Bash', bash('git push')),
       mainCall('Edit', { file_path: file }),
     ]) {
-      const { status, stderr } = run(dir, input);
+      const { status, stderr } = await run(dir, input);
       assert.deepEqual([status, stderr], [0, ''], `${file}: ${input.tool_name}`);
     }
   }
-  const blockedEdit = run(project({ '.aidrian/config.json': '{' }), agentCall('aidrian:explorer', 'Edit', { file_path: '.aidrian/config.json' }));
+  const blockedEdit = await run(project({ '.aidrian/config.json': '{' }), agentCall('aidrian:explorer', 'Edit', { file_path: '.aidrian/config.json' }));
   assert.equal(blockedEdit.status, 2, 'a subagent cannot repair the file either');
 });
 
@@ -296,13 +297,18 @@ function gatedRepo(t, files, { commit = true, ignore = '.aidrian.local.json\n' }
   }
   sessions += 1;
   const session = `snapshot-${process.pid}-${sessions}`;
-  const hook = (script, input) => spawnSync(process.execPath, [script], { input: JSON.stringify({ session_id: session, cwd: dir, ...input }), cwd: dir, encoding: 'utf8' });
+  const options = (input) => ({ input: JSON.stringify({ session_id: session, cwd: dir, ...input }), cwd: dir, encoding: 'utf8' });
+  // Each hook is called in this process, as the host runs its script; startProcess and endProcess run the real scripts.
+  const hook = (script, input) => hookCall(script, options(input));
+  const spawned = (script, input) => spawnSync(process.execPath, [script], options(input));
   return {
     dir,
     git,
     session,
     start: () => hook(START, { hook_event_name: 'SessionStart' }),
     end: () => hook(END, { hook_event_name: 'SessionEnd' }),
+    startProcess: () => spawned(START, { hook_event_name: 'SessionStart' }),
+    endProcess: () => spawned(END, { hook_event_name: 'SessionEnd' }),
     gate: (input) => hook(HOOK, input),
     snapshot: path.join(process.env.XDG_STATE_HOME, 'aidrian/sessions', `${session}.json`),
     marker: path.join(process.env.XDG_STATE_HOME, 'aidrian/sessions', `${session}.gated`),
@@ -312,7 +318,7 @@ function gatedRepo(t, files, { commit = true, ignore = '.aidrian.local.json\n' }
 const push = agentCall('aidrian:explorer', 'Bash', bash('git push origin task'));
 const STARTED = /agents\.explorer\.deny has "Bash\(git push\)", as the project set it when this session started \(a change to \.aidrian\/config\.json or \.aidrian\.local\.json during the session cannot lift it\)/;
 
-test('a subagent keeps the gates its session started with when config.json is deleted, replaced, moved, cleaned, or stashed', (t) => {
+test('a subagent keeps the gates its session started with when config.json is deleted, replaced, moved, cleaned, or stashed', async (t) => {
   const config = '.aidrian/config.json';
   const tamperings = [
     ['deleted', { [config]: PUSH_GATE }, {}, ({ dir }) => rmSync(path.join(dir, config))],
@@ -341,122 +347,122 @@ test('a subagent keeps the gates its session started with when config.json is de
   for (const [label, files, options, tamper] of tamperings) {
     const repo = gatedRepo(t, files, options);
     const later = label === 'git stash of an edit' ? tamper(repo) : null;
-    assert.equal(repo.start().status, 0, label);
-    const before = repo.gate(push);
+    assert.equal((await repo.start()).status, 0, label);
+    const before = await repo.gate(push);
     assert.equal(before.status, 2, label);
     assert.match(before.stderr, /agents\.explorer\.deny has "Bash\(git push\)" \(\.aidrian\/config\.json, or \.aidrian\.local\.json, which wins\)/, label);
     if (later) later();
     else tamper(repo);
-    const after = repo.gate(push);
+    const after = await repo.gate(push);
     assert.deepEqual([after.status, after.stdout], [2, ''], label);
     assert.match(after.stderr, STARTED, label);
     for (const input of [agentCall('aidrian:explorer', 'Bash', bash('git status')), mainCall('Bash', bash('git push'))]) {
-      const { status, stderr } = repo.gate(input);
+      const { status, stderr } = await repo.gate(input);
       assert.deepEqual([status, stderr], [0, ''], `${label}: ${input.tool_input.command}`);
     }
   }
 });
 
-test('without a snapshot, as when the hooks arrived during the session, only the current config counts', (t) => {
+test('without a snapshot, as when the hooks arrived during the session, only the current config counts', async (t) => {
   const repo = gatedRepo(t, { '.aidrian/config.json': PUSH_GATE });
-  assert.equal(repo.gate(push).status, 2);
+  assert.equal((await repo.gate(push)).status, 2);
   rmSync(path.join(repo.dir, '.aidrian/config.json'));
-  assert.deepEqual([repo.gate(push).status, repo.gate(push).stderr], [0, '']);
+  assert.deepEqual([(await repo.gate(push)).status, (await repo.gate(push)).stderr], [0, '']);
 });
 
-test('a gate added during the session holds at once, a later SessionStart adds the gates then set, and SessionEnd forgets them', (t) => {
+test('a gate added during the session holds at once, a later SessionStart adds the gates then set, and SessionEnd forgets them', async (t) => {
   const repo = gatedRepo(t, { '.aidrian/config.json': PUSH_GATE });
   const config = path.join(repo.dir, '.aidrian/config.json');
   const publish = agentCall('aidrian:explorer', 'Bash', bash('npm publish'));
-  assert.equal(repo.start().status, 0);
+  assert.equal(repo.startProcess().status, 0, 'the real script');
   assert.deepEqual(JSON.parse(readFileSync(repo.snapshot, 'utf8')), { root: repo.dir, gates: [PUSH_GATE.agents] });
 
   writeFileSync(config, JSON.stringify({ version: 1, agents: { explorer: { deny: ['Bash(npm publish)'] } } }));
-  assert.match(repo.gate(publish).stderr, /agents\.explorer\.deny has "Bash\(npm publish\)" \(\.aidrian\/config\.json/);
-  assert.match(repo.gate(push).stderr, STARTED);
+  assert.match((await repo.gate(publish)).stderr, /agents\.explorer\.deny has "Bash\(npm publish\)" \(\.aidrian\/config\.json/);
+  assert.match((await repo.gate(push)).stderr, STARTED);
 
   // A compaction starts the session again: it adds the gates in force then, and lifts none.
-  assert.equal(repo.start().status, 0);
-  assert.equal(repo.start().status, 0);
+  assert.equal((await repo.start()).status, 0);
+  assert.equal((await repo.start()).status, 0);
   assert.equal(JSON.parse(readFileSync(repo.snapshot, 'utf8')).gates.length, 2, 'the same gates are saved once');
   writeFileSync(config, '{"version": 1}');
-  assert.equal(repo.gate(push).status, 2);
-  assert.match(repo.gate(publish).stderr, /agents\.explorer\.deny has "Bash\(npm publish\)", as the project set it when this session started/);
+  assert.equal((await repo.gate(push)).status, 2);
+  assert.match((await repo.gate(publish)).stderr, /agents\.explorer\.deny has "Bash\(npm publish\)", as the project set it when this session started/);
 
-  assert.equal(repo.end().status, 0);
+  assert.equal(repo.endProcess().status, 0, 'the real script');
   assert.deepEqual([existsSync(repo.snapshot), existsSync(repo.marker)], [false, false]);
-  assert.deepEqual([repo.gate(push).status, repo.gate(publish).status], [0, 0]);
+  assert.deepEqual([(await repo.gate(push)).status, (await repo.gate(publish)).status], [0, 0]);
 });
 
-test('a project without gates saves no snapshot, and a snapshot outside the project still holds its subagents', (t) => {
+test('a project without gates saves no snapshot, and a snapshot outside the project still holds its subagents', async (t) => {
   const open = gatedRepo(t, { '.aidrian/config.json': { version: 1 } });
-  assert.equal(open.start().status, 0);
+  assert.equal((await open.start()).status, 0);
   assert.deepEqual([existsSync(open.snapshot), existsSync(open.marker)], [false, false]);
 
   const repo = gatedRepo(t, { '.aidrian/config.json': PUSH_GATE });
-  assert.equal(repo.start().status, 0);
+  assert.equal((await repo.start()).status, 0);
   const elsewhere = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-elsewhere-')));
   t.after(() => rmSync(elsewhere, { recursive: true, force: true }));
-  const outside = spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ ...push, session_id: repo.session, cwd: elsewhere }), cwd: elsewhere, encoding: 'utf8' });
+  const outside = await hookCall(HOOK, { input: JSON.stringify({ ...push, session_id: repo.session, cwd: elsewhere }), cwd: elsewhere });
   assert.equal(outside.status, 2);
   assert.match(outside.stderr, /agents\.explorer\.deny has "Bash\(git push\)" \(/, 'the current config of the session`s project');
 });
 
-test('a snapshot that is not one keeps subagents to reading, and the guard keeps a subagent from changing a good one', (t) => {
+test('a snapshot that is not one keeps subagents to reading, and the guard keeps a subagent from changing a good one', async (t) => {
   const repo = gatedRepo(t, { '.aidrian/config.json': PUSH_GATE });
-  assert.equal(repo.start().status, 0);
+  assert.equal((await repo.start()).status, 0);
   for (const command of [`rm ${repo.snapshot}`, `echo {} > ${repo.snapshot}`, `rm -rf ${path.dirname(repo.snapshot)}`]) {
-    const { status, stderr } = repo.gate(agentCall('aidrian:explorer', 'Bash', bash(command)));
+    const { status, stderr } = await repo.gate(agentCall('aidrian:explorer', 'Bash', bash(command)));
     assert.equal(status, 2, command);
     assert.ok(stderr.includes(`it changes ${realpathSync(repo.snapshot)}, which sets`), stderr);
   }
 
   writeFileSync(repo.snapshot, '{"root": "/", "gates": [{"explorer": {"deny": ["Bash(git push"]}}]}');
-  const blocked = repo.gate(agentCall('aidrian:explorer', 'Bash', bash('ls')));
+  const blocked = await repo.gate(agentCall('aidrian:explorer', 'Bash', bash('ls')));
   assert.equal(blocked.status, 2);
   assert.match(blocked.stderr, /cannot be read \(it is not a gate snapshot\), so this project's agent gates are unknown/);
   assert.match(blocked.stderr, /tell the Human to start a new session, which takes the gates from the config again\.\n$/);
   for (const input of [agentCall('aidrian:explorer', 'Read', { file_path: 'x' }), mainCall('Bash', bash('ls'))]) {
-    assert.equal(repo.gate(input).status, 0, input.tool_name);
+    assert.equal((await repo.gate(input)).status, 0, input.tool_name);
   }
-  assert.equal(repo.start().status, 0);
+  assert.equal((await repo.start()).status, 0);
   assert.match(readFileSync(repo.snapshot, 'utf8'), /Bash\(git push"/, 'a SessionStart never replaces a snapshot it cannot read');
   rmSync(path.join(repo.dir, '.aidrian'), { recursive: true });
-  assert.equal(repo.gate(agentCall('aidrian:explorer', 'Bash', bash('ls'))).status, 2, 'with the project folder gone too');
+  assert.equal((await repo.gate(agentCall('aidrian:explorer', 'Bash', bash('ls')))).status, 2, 'with the project folder gone too');
 });
 
-test('a snapshot that goes missing in a session that started with gates keeps subagents to reading until a new session', (t) => {
+test('a snapshot that goes missing in a session that started with gates keeps subagents to reading until a new session', async (t) => {
   const repo = gatedRepo(t, { '.aidrian/config.json': PUSH_GATE });
   const config = path.join(repo.dir, '.aidrian/config.json');
-  assert.equal(repo.start().status, 0);
+  assert.equal((await repo.start()).status, 0);
   assert.equal(existsSync(repo.marker), true);
   // A move the guard cannot see, such as one by a script, and a config without the gate.
   renameSync(repo.snapshot, path.join(repo.dir, 'old.json'));
   writeFileSync(config, '{"version": 1}');
   for (const command of ['git push origin task', 'git status']) {
-    const { status, stderr } = repo.gate(agentCall('aidrian:explorer', 'Bash', bash(command)));
+    const { status, stderr } = await repo.gate(agentCall('aidrian:explorer', 'Bash', bash(command)));
     assert.equal(status, 2, command);
     assert.match(stderr, /\.json cannot be read \(it is gone, though this session started with gates\), so this project's agent gates are unknown/);
     assert.match(stderr, /tell the Human to start a new session, which takes the gates from the config again\.\n$/);
   }
   for (const input of [agentCall('aidrian:explorer', 'Read', { file_path: 'x' }), mainCall('Bash', bash('git push'))]) {
-    assert.deepEqual([repo.gate(input).status, repo.gate(input).stderr], [0, ''], input.tool_name);
+    assert.deepEqual([(await repo.gate(input)).status, (await repo.gate(input)).stderr], [0, ''], input.tool_name);
   }
 
   // A compaction does not save the gates then in force over the lost ones.
   writeFileSync(config, JSON.stringify({ version: 1, agents: { explorer: { deny: ['WebFetch'] } } }));
-  assert.equal(repo.start().status, 0);
+  assert.equal((await repo.start()).status, 0);
   assert.equal(existsSync(repo.snapshot), false);
-  assert.equal(repo.gate(push).status, 2);
+  assert.equal((await repo.gate(push)).status, 2);
 
-  assert.equal(repo.end().status, 0);
+  assert.equal((await repo.end()).status, 0);
   assert.equal(existsSync(repo.marker), false);
-  assert.equal(repo.gate(push).status, 0, 'a new session takes the gates from the config again');
+  assert.equal((await repo.gate(push)).status, 0, 'a new session takes the gates from the config again');
 });
 
-test('a subagent cannot move the config or the snapshot with interpreter code, and may read them with it', (t) => {
+test('a subagent cannot move the config or the snapshot with interpreter code, and may read them with it', async (t) => {
   const repo = gatedRepo(t, { '.aidrian/config.json': PUSH_GATE });
-  assert.equal(repo.start().status, 0);
+  assert.equal((await repo.start()).status, 0);
   const shown = realpathSync(repo.snapshot).replaceAll('.', '\\.');
   for (const [command, file] of [
     ['python3 -c "from pathlib import Path; Path(\'.aidrian/config.json\').replace(\'old.json\')"', '\\.aidrian/config\\.json'],
@@ -465,7 +471,7 @@ test('a subagent cannot move the config or the snapshot with interpreter code, a
     [`node -e "require('fs').renameSync('${repo.snapshot}', 'old.json')"`, shown],
     [`node -e "require('fs').unlinkSync('${repo.marker}')"`, realpathSync(repo.marker).replaceAll('.', '\\.')],
   ]) {
-    const { status, stderr } = repo.gate(agentCall('aidrian:explorer', 'Bash', bash(command)));
+    const { status, stderr } = await repo.gate(agentCall('aidrian:explorer', 'Bash', bash(command)));
     assert.equal(status, 2, command);
     assert.match(stderr, new RegExp(`^aidrian: Bash is blocked .* it may change ${file}, which sets this project's agent gates`), command);
   }
@@ -473,7 +479,7 @@ test('a subagent cannot move the config or the snapshot with interpreter code, a
     `python3 -c "import json; print(json.load(open('${repo.snapshot}'))['gates'])"`,
     "node -p \"require('fs').readFileSync('.aidrian/config.json', 'utf8')\"",
   ]) {
-    assert.deepEqual([repo.gate(agentCall('aidrian:explorer', 'Bash', bash(command))).status], [0], command);
+    assert.deepEqual([(await repo.gate(agentCall('aidrian:explorer', 'Bash', bash(command)))).status], [0], command);
   }
 });
 
@@ -499,8 +505,8 @@ test('Bash(prefix) reads the commands a shell reads from a heredoc or here-strin
   }
 });
 
-test('an agents entry whose allow or deny is no list leaves the gates unknown, so a subagent may only read', (t) => {
-  const run = (cwd, input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ ...input, cwd }), cwd, encoding: 'utf8' });
+test('an agents entry whose allow or deny is no list leaves the gates unknown, so a subagent may only read', async (t) => {
+  const run = (cwd, input) => hookCall(HOOK, { input: JSON.stringify({ ...input, cwd }), cwd });
   for (const [file, agents] of [
     ['.aidrian/config.json', { explorer: { allow: 'Read' } }],
     ['.aidrian/config.json', { '*': { deny: 'Bash(git push)' } }],
@@ -516,27 +522,27 @@ test('an agents entry whose allow or deny is no list leaves the gates unknown, s
     const local = file === '.aidrian.local.json';
     writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, ...(local ? {} : { agents }) }));
     if (local) writeFileSync(path.join(dir, file), JSON.stringify({ agents }));
-    const blocked = run(dir, agentCall('aidrian:explorer', 'Bash', bash('git push')));
+    const blocked = await run(dir, agentCall('aidrian:explorer', 'Bash', bash('git push')));
     assert.equal(blocked.status, 2, JSON.stringify(agents));
     assert.match(blocked.stderr, new RegExp(`${file.replaceAll('.', '\\.')} cannot be read \\(.*agents`));
-    assert.equal(run(dir, agentCall('aidrian:explorer', 'Read', { file_path: 'x' })).status, 0);
-    assert.equal(run(dir, mainCall('Bash', bash('git push'))).status, 0);
+    assert.equal((await run(dir, agentCall('aidrian:explorer', 'Read', { file_path: 'x' }))).status, 0);
+    assert.equal((await run(dir, mainCall('Bash', bash('git push')))).status, 0);
   }
 });
 
-test('in a session that started with gates, a subagent call the hook fails on may only read; elsewhere it runs', (t) => {
+test('in a session that started with gates, a subagent call the hook fails on may only read; elsewhere it runs', async (t) => {
   const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-gates-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   mkdirSync(path.join(dir, '.aidrian'));
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, agents: { explorer: { deny: ['WebFetch'] } } }));
-  const run = (input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ cwd: dir, ...input }), cwd: dir, encoding: 'utf8' });
+  const run = (input) => hookCall(HOOK, { input: JSON.stringify({ cwd: dir, ...input }), cwd: dir });
   // A patch whose text cannot be made a string throws inside the config guard.
   const broken = (session) => ({ ...agentCall('aidrian:explorer', 'apply_patch', { command: { toString: 1 } }), session_id: session });
-  assert.equal(run(broken('ungated-session')).status, 0, 'no snapshot: the call runs, as any hook error lets it');
+  assert.equal((await run(broken('ungated-session'))).status, 0, 'no snapshot: the call runs, as any hook error lets it');
   const session = 'gated-session-1';
   saveGateSnapshot(session, dir, { explorer: { deny: ['WebFetch'] } });
-  const blocked = run(broken(session));
+  const blocked = await run(broken(session));
   assert.equal(blocked.status, 2);
   assert.match(blocked.stderr, /the agent gate hook failed .*a subagent may only read files/);
-  assert.equal(run({ ...mainCall('apply_patch', { command: { toString: 1 } }), session_id: session }).status, 0, 'the main session keeps every tool');
+  assert.equal((await run({ ...mainCall('apply_patch', { command: { toString: 1 } }), session_id: session })).status, 0, 'the main session keeps every tool');
 });

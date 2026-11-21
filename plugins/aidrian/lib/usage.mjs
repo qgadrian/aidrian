@@ -27,9 +27,11 @@ export function wrap(text, indent, width = USAGE_WIDTH) {
   return [...lines, line];
 }
 
-// The alternatives of a usage, split at ` | ` outside brackets: `(--file PATH | --message TEXT)` stays whole.
+// The alternatives of a usage, split at ` | ` outside brackets: `(--file PATH | --message TEXT)` stays whole. A command
+// that takes no argument has an empty usage, which is one form: the command's name alone.
 function alternatives(usage) {
-  return topLevel(usage, ' | ').map((each) => each.trim());
+  const forms = topLevel(usage, ' | ').map((each) => each.trim());
+  return forms.length > 0 ? forms : [''];
 }
 
 // `text` split at each `separator` that no (), [], or {} holds.

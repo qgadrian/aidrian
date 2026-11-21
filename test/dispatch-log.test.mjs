@@ -15,6 +15,7 @@ import { parseSince } from '../plugins/aidrian/lib/report.mjs';
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
 import { endedSessions } from '../plugins/aidrian/lib/jsonl.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
+import { hookCall } from './hook-call.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 // The lock files beside `file` (jsonl.mjs withLocks), sorted.
@@ -42,7 +43,9 @@ function project(t) {
       return [];
     }
   };
-  const hook = (script, input, options = {}) => spawnSync(process.execPath, [path.join(SCRIPTS, script)], { input: JSON.stringify(input), encoding: 'utf8', env, ...options });
+  // A hook called in this process, as the host runs its script; hookProcess runs the script as its own process.
+  const hook = (script, input) => hookCall(path.join(SCRIPTS, script), { input: JSON.stringify(input), env });
+  const hookProcess = (script, input, options = {}) => spawnSync(process.execPath, [path.join(SCRIPTS, script)], { input: JSON.stringify(input), encoding: 'utf8', env, ...options });
   // The session-end hook hands the session row to a detached worker: wait for it, so the worker has finished before
   // the test's folder is removed. `rows` is how many rows the log holds once it has.
   const logged = async (rows) => {
@@ -51,7 +54,7 @@ function project(t) {
     }
     return log();
   };
-  return { base, dir, env, state, log, hook, logged };
+  return { base, dir, env, state, log, hook, hookProcess, logged };
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -111,12 +114,12 @@ test('the hooks write dispatch, stop, and session rows inside a project, and not
   writeFileSync(agent, [read(path.join(dir, 'docs/knowledge/engineering/testing.md')), read(path.join(dir, 'src/sharing.js'))].join('\n'));
   const bytes = (doc) => statSync(path.join(dir, doc)).size;
 
-  assert.equal(hook('hook-agent-post.mjs', { session_id: 's1', cwd: dir, tool_name: 'Agent', tool_input: { subagent_type: 'Explore', description: 'Find tests' }, tool_response: { status: 'completed', agentId: 'a1', totalDurationMs: 1000 } }).status, 0);
-  const stop = hook('hook-subagent-stop.mjs', { session_id: 's1', cwd: dir, agent_id: 'a1', agent_type: 'Explore', agent_transcript_path: agent, last_assistant_message: 'Done; nothing written.', stop_hook_active: false });
+  assert.equal((await hook('hook-agent-post.mjs', { session_id: 's1', cwd: dir, tool_name: 'Agent', tool_input: { subagent_type: 'Explore', description: 'Find tests' }, tool_response: { status: 'completed', agentId: 'a1', totalDurationMs: 1000 } })).status, 0);
+  const stop = await hook('hook-subagent-stop.mjs', { session_id: 's1', cwd: dir, agent_id: 'a1', agent_type: 'Explore', agent_transcript_path: agent, last_assistant_message: 'Done; nothing written.', stop_hook_active: false });
   assert.deepEqual([stop.status, stop.stderr], [0, '']);
-  assert.equal(hook('session-row.mjs', { session_id: 's2', cwd: dir, transcript_path: path.join(base, 'empty.jsonl') }).status, 0);
+  assert.equal((await hook('session-row.mjs', { session_id: 's2', cwd: dir, transcript_path: path.join(base, 'empty.jsonl') })).status, 0);
   assert.equal(log().length, 2, 'no usage: no row');
-  assert.equal(hook('hook-session-end.mjs', { session_id: 's1', cwd: dir, transcript_path: transcript, reason: 'exit' }).status, 0);
+  assert.equal((await hook('hook-session-end.mjs', { session_id: 's1', cwd: dir, transcript_path: transcript, reason: 'exit' })).status, 0);
 
   const rows = await logged(3);
   assert.deepEqual(rows.map((row) => row.event), ['dispatch', 'stop', 'session']);
@@ -131,24 +134,24 @@ test('the hooks write dispatch, stop, and session rows inside a project, and not
 
   const outside = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-dlog-none-')));
   t.after(() => rmSync(outside, { recursive: true, force: true }));
-  assert.equal(hook('hook-agent-post.mjs', { cwd: outside, tool_name: 'Agent', tool_input: {}, tool_response: {} }).status, 0);
+  assert.equal((await hook('hook-agent-post.mjs', { cwd: outside, tool_name: 'Agent', tool_input: {}, tool_response: {} })).status, 0);
   assert.equal(log().length, 3);
 });
 
-test('the delivery check sends a subagent back once for a path it named that does not exist', (t) => {
+test('the delivery check sends a subagent back once for a path it named that does not exist', async (t) => {
   const { dir, log, hook } = project(t);
   mkdirSync(path.join(dir, 'out'));
   writeFileSync(path.join(dir, 'out/real.json'), '{}');
   const stop = (message, active) => hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'a2', agent_type: 'planner', last_assistant_message: message, stop_hook_active: active });
-  const sent = stop('Wrote out/real.json and out/handoff.json.', false);
+  const sent = await stop('Wrote out/real.json and out/handoff.json.', false);
   assert.equal(sent.status, 2);
   assert.match(sent.stderr, /^Your report names `out\/handoff\.json`, which does not exist\. If you meant to write it, write it now/);
-  assert.equal(stop('Wrote out/real.json and out/handoff.json.', true).status, 0, 'the second stop always ends');
-  assert.equal(hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'a3', last_assistant_message: 'Wrote out/none.json.' }).status, 0, 'no stop_hook_active field: never sent back');
-  assert.deepEqual([stop('Wrote out/real.json.', false).status], [0]);
-  assert.equal(stop('out/gone.json does not exist, so I skipped it.', false).status, 0, 'a mention is not a claim');
+  assert.equal((await stop('Wrote out/real.json and out/handoff.json.', true)).status, 0, 'the second stop always ends');
+  assert.equal((await hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'a3', last_assistant_message: 'Wrote out/none.json.' })).status, 0, 'no stop_hook_active field: never sent back');
+  assert.deepEqual([(await stop('Wrote out/real.json.', false)).status], [0]);
+  assert.equal((await stop('out/gone.json does not exist, so I skipped it.', false)).status, 0, 'a mention is not a claim');
   const inline = JSON.stringify({ status: 'done', role: 'explorer', evidence: [{ file: 'docs/absent.md', shows: 'no such doc' }] }, null, 2);
-  assert.equal(stop(inline, false).status, 0, 'a handoff returned in the last message, as a read-only agent returns it, claims no file');
+  assert.equal((await stop(inline, false)).status, 0, 'a handoff returned in the last message, as a read-only agent returns it, claims no file');
   assert.deepEqual(log().map((row) => [row.agent_id, row.delivered, row.sent_back]), [
     ['a2', 'missing', true], ['a2', 'missing', false], ['a3', 'missing', false], ['a2', 'file', false], ['a2', 'chat', false], ['a2', 'chat', false],
   ]);
@@ -156,7 +159,7 @@ test('the delivery check sends a subagent back once for a path it named that doe
   assert.deepEqual(agents, [['general-purpose', 1, 0, 0, 0], ['planner', 1, 1, 1, 0]], 'a3 named a missing file and was never sent back; a2 was, once');
 });
 
-test('the delivery check finds a claimed path under the state folder, the plugin, a skill, another worktree, or a file the agent touched', (t) => {
+test('the delivery check finds a claimed path under the state folder, the plugin, a skill, another worktree, or a file the agent touched', async (t) => {
   const { base, dir, state, hook } = project(t);
   const git = (...args) => spawnSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' });
   git('add', '.');
@@ -186,13 +189,13 @@ test('the delivery check finds a claimed path under the state folder, the plugin
     'Wrote tmp/pr-body-fix-other.md in the other worktree.',
     'Wrote docs/product/tables.md.',
   ];
-  for (const message of present) assert.deepEqual([stop(message).status, stop(message).stderr], [0, ''], message);
-  const sent = stop('Wrote plans/never-written.md and tmp/never-written.md.');
+  for (const message of present) assert.deepEqual([(await stop(message)).status, (await stop(message)).stderr], [0, ''], message);
+  const sent = await stop('Wrote plans/never-written.md and tmp/never-written.md.');
   assert.equal(sent.status, 2, 'a path under no root is still sent back');
   assert.match(sent.stderr, /^Your report names `plans\/never-written\.md`, `tmp\/never-written\.md`, which does not exist\./u);
 });
 
-test('the delivery check sends a subagent back once for a handoff file its brief asked for, when it has no report to write there', (t) => {
+test('the delivery check sends a subagent back once for a handoff file its brief asked for, when it has no report to write there', async (t) => {
   const { base, dir, state, log, hook } = project(t);
   const dispatch = path.join(state(), 'dispatch');
   const own = path.join(dispatch, 'feat-12-S1-code-reviewer.json');
@@ -207,16 +210,16 @@ test('the delivery check sends a subagent back once for a handoff file its brief
   const stop = (active, agentType = 'aidrian:code-reviewer') => hook('hook-subagent-stop.mjs', {
     cwd: dir, agent_id: 'a6', agent_type: agentType, agent_transcript_path: transcript, last_assistant_message: '', stop_hook_active: active,
   });
-  const sent = stop(false);
+  const sent = await stop(false);
   assert.equal(sent.status, 2);
   assert.ok(sent.stderr.startsWith(`Your brief asks you to write your machine handoff to \`${own}\`, which does not exist.`), sent.stderr);
   assert.ok(!sent.stderr.includes(other), 'a handoff named for another agent is not asked of this one');
   assert.doesNotMatch(sent.stderr, /x-code-reviewer/u, 'only the brief, the first prompt, is read');
-  assert.equal(stop(true).status, 0, 'the second stop always ends');
-  assert.equal(stop(false, 'aidrian:critic').status, 0, 'an agent the brief names no handoff for is not sent back');
+  assert.equal((await stop(true)).status, 0, 'the second stop always ends');
+  assert.equal((await stop(false, 'aidrian:critic')).status, 0, 'an agent the brief names no handoff for is not sent back');
   mkdirSync(dispatch, { recursive: true });
   writeFileSync(own, '{}');
-  assert.equal(stop(false).status, 0, 'once the file exists, the stop ends');
+  assert.equal((await stop(false)).status, 0, 'once the file exists, the stop ends');
   assert.deepEqual(log().map((row) => [row.agent_type, row.delivered, row.sent_back]), [
     ['aidrian:code-reviewer', 'missing', true], ['aidrian:code-reviewer', 'missing', false], ['aidrian:critic', 'chat', false], ['aidrian:code-reviewer', 'chat', false],
   ]);
@@ -224,7 +227,7 @@ test('the delivery check sends a subagent back once for a handoff file its brief
 
 // A brief named a handoff file for an agent with no file tool or shell, or made it optional, and the agent returned its
 // handoff as its report: the hook writes that report to the file, and never sends the agent back for it.
-test('the stop hook writes a subagent\'s final report to the handoff file its brief asked for, instead of sending it back', (t) => {
+test('the stop hook writes a subagent\'s final report to the handoff file its brief asked for, instead of sending it back', async (t) => {
   const { base, dir, state, log, hook } = project(t);
   const dispatch = path.join(state(), 'dispatch');
   const transcriptFor = (id, file, lines = []) => {
@@ -243,13 +246,13 @@ test('the stop hook writes a subagent\'s final report to the handoff file its br
   // A machine handoff as the last message, in a fenced block, and presented as the handoff: written as the object it is.
   const json = path.join(dispatch, 'docs-S1-product-manager.json');
   const handoff = { status: 'done', role: 'product-manager', decision: 'One rewrite drops a rule.' };
-  const fenced = stop('p1', transcriptFor('p1', json), `\`\`\`json\n${JSON.stringify(handoff)}\n\`\`\``);
+  const fenced = await stop('p1', transcriptFor('p1', json), `\`\`\`json\n${JSON.stringify(handoff)}\n\`\`\``);
   assert.deepEqual([fenced.status, fenced.stderr], [0, '']);
   assert.deepEqual(read(json), handoff);
 
   // A report in prose, with a delivery line naming the file it never wrote: written as text, and not sent back for either.
   const prose = path.join(dispatch, 'docs-S2-product-manager.json');
-  const said = stop('p2', transcriptFor('p2', prose), `Verdict: not verified.\nHandoff: ${prose}`);
+  const said = await stop('p2', transcriptFor('p2', prose), `Verdict: not verified.\nHandoff: ${prose}`);
   assert.deepEqual([said.status, said.stderr], [0, '']);
   assert.deepEqual(read(prose), { written_by: 'stop-hook', report: `Verdict: not verified.\nHandoff: ${prose}` });
 
@@ -259,13 +262,13 @@ test('the stop hook writes a subagent\'s final report to the handoff file its br
     { type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'Reading the docs first.' }] } },
     { type: 'assistant', message: { id: 'm2', content: [{ type: 'tool_use', id: 't1', name: 'SubagentHandback', input: { message: '{"status":"done","role":"product-manager"}' } }] } },
   ]);
-  assert.equal(stop('p3', handback, 'Reading the docs first.').status, 0);
+  assert.equal((await stop('p3', handback, 'Reading the docs first.')).status, 0);
   assert.deepEqual(read(handedBack), { status: 'done', role: 'product-manager' });
 
   // A file that appeared before the hook wrote, as one its dispatcher wrote, is kept as it is.
   const kept = path.join(dispatch, 'docs-S4-product-manager.json');
   writeFileSync(kept, '{"by":"dispatcher"}');
-  assert.equal(stop('p4', transcriptFor('p4', kept), 'Done.').status, 0);
+  assert.equal((await stop('p4', transcriptFor('p4', kept), 'Done.')).status, 0);
   assert.deepEqual(read(kept), { by: 'dispatcher' });
 
   // While a background task of its own still runs, the stop is no end of its work: nothing is written, and only the
@@ -275,13 +278,13 @@ test('the stop hook writes a subagent\'s final report to the handoff file its br
     { type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { subagent_type: 'Explore', prompt: 'x' } }] } },
     { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'launched' }] }, toolUseResult: { status: 'async_launched', agentId: 'achild001' } },
   ]);
-  const held = stop('p5', busy, 'Waiting for the helper-scout result.', { background_tasks: [{ id: 'achild001', type: 'local_agent', status: 'running' }] });
+  const held = await stop('p5', busy, 'Waiting for the helper-scout result.', { background_tasks: [{ id: 'achild001', type: 'local_agent', status: 'running' }] });
   assert.equal(held.status, 2);
   assert.match(held.stderr, /^You started background work that is still running/u);
   assert.doesNotMatch(held.stderr, /Your brief asks you to write your machine handoff to/u, 'a handoff not due yet is no send-back reason');
   assert.throws(() => readFileSync(waiting), /ENOENT/u);
   // The task done, the next stop ends and writes the handoff.
-  assert.equal(stop('p5', busy, 'The helper found nothing.', { stop_hook_active: true, background_tasks: [] }).status, 0);
+  assert.equal((await stop('p5', busy, 'The helper found nothing.', { stop_hook_active: true, background_tasks: [] })).status, 0);
   assert.deepEqual(read(waiting), { written_by: 'stop-hook', report: 'The helper found nothing.' });
 
   assert.deepEqual(log().map((row) => [row.agent_id, row.delivered, row.running, row.handoffs_written, row.sent_back]), [
@@ -292,7 +295,7 @@ test('the stop hook writes a subagent\'s final report to the handoff file its br
 
 // A stop sent back for another missing file has a report the agent will correct: the hook writes the handoff only on the
 // stop it lets end, so the file holds the corrected report, not the one sent back.
-test('the stop hook writes the handoff from the report of the stop it lets end, not one it sent back', (t) => {
+test('the stop hook writes the handoff from the report of the stop it lets end, not one it sent back', async (t) => {
   const { base, dir, state, log, hook } = project(t);
   const file = path.join(state(), 'dispatch', 'docs-S1-product-manager.json');
   const transcript = path.join(base, 'agent-p6.jsonl');
@@ -300,13 +303,13 @@ test('the stop hook writes the handoff from the report of the stop it lets end, 
   const stop = (message, active) => hook('hook-subagent-stop.mjs', {
     cwd: dir, agent_id: 'p6', agent_type: 'aidrian:product-manager', agent_transcript_path: transcript, last_assistant_message: message, stop_hook_active: active,
   });
-  const sent = stop('Wrote docs/missing-result.md. No findings.', false);
+  const sent = await stop('Wrote docs/missing-result.md. No findings.', false);
   assert.equal(sent.status, 2);
   assert.match(sent.stderr, /^Your report names `docs\/missing-result\.md`, which does not exist\./u);
   assert.doesNotMatch(sent.stderr, /Your brief asks you to write your machine handoff/u, 'the hook writes the handoff once the stop ends');
   assert.throws(() => readFileSync(file), /ENOENT/u, 'nothing is written from a report sent back');
   const corrected = 'No findings. The result doc was never needed.';
-  assert.equal(stop(corrected, true).status, 0);
+  assert.equal((await stop(corrected, true)).status, 0);
   assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { written_by: 'stop-hook', report: corrected });
   assert.deepEqual(log().map((row) => [row.handoffs_written, row.sent_back]), [[0, true], [1, false]]);
 });
@@ -332,14 +335,14 @@ test('the stop hook replaces a stale handoff file, a link, but keeps one this ru
   const older = path.join(dispatch, 'docs-S1-product-manager.json');
   writeFileSync(older, '{"status":"done","role":"earlier"}');
   await sleep(30);
-  assert.equal(stop('s1', transcriptFor('s1', older, new Date().toISOString())).status, 0);
+  assert.equal((await stop('s1', transcriptFor('s1', older, new Date().toISOString()))).status, 0);
   assert.deepEqual(JSON.parse(readFileSync(older, 'utf8')), report);
 
   // Written by this run, after its transcript began: kept as it is.
   const newer = path.join(dispatch, 'docs-S2-product-manager.json');
   const began = new Date(Date.now() - 60_000).toISOString();
   writeFileSync(newer, '{ "by": "the agent itself" }');
-  assert.equal(stop('s2', transcriptFor('s2', newer, began)).status, 0);
+  assert.equal((await stop('s2', transcriptFor('s2', newer, began))).status, 0);
   assert.equal(readFileSync(newer, 'utf8'), '{ "by": "the agent itself" }');
 
   // A link, even a fresh one, is no handoff: the link is replaced, and the file it named is untouched.
@@ -347,7 +350,7 @@ test('the stop hook replaces a stale handoff file, a link, but keeps one this ru
   writeFileSync(target, '{"keep":true}');
   const linked = path.join(dispatch, 'docs-S3-product-manager.json');
   symlinkSync(target, linked);
-  assert.equal(stop('s3', transcriptFor('s3', linked, began)).status, 0);
+  assert.equal((await stop('s3', transcriptFor('s3', linked, began))).status, 0);
   assert.equal(lstatSync(linked).isFile(), true, 'a regular file now');
   assert.deepEqual(JSON.parse(readFileSync(linked, 'utf8')), report);
   assert.equal(readFileSync(target, 'utf8'), '{"keep":true}');
@@ -356,7 +359,7 @@ test('the stop hook replaces a stale handoff file, a link, but keeps one this ru
   const plain = path.join(dispatch, 'docs-S4-product-manager.json');
   writeFileSync(plain, '{"by":"dispatcher"}');
   await sleep(30);
-  assert.equal(stop('s4', transcriptFor('s4', plain, null)).status, 0);
+  assert.equal((await stop('s4', transcriptFor('s4', plain, null))).status, 0);
   assert.equal(readFileSync(plain, 'utf8'), '{"by":"dispatcher"}');
   assert.deepEqual(readdirSync(dispatch).filter((name) => name.endsWith('.tmp')), [], 'no temporary file left');
 });
@@ -366,7 +369,7 @@ test('claimedPaths leaves out a path shortened with an ellipsis: its full form c
   assert.deepEqual(claimedPaths(message), ['../docs/real.md']);
 });
 
-test('a stop row counts the background tasks the subagent started that still run, and records the send-back they caused', (t) => {
+test('a stop row counts the background tasks the subagent started that still run, and records the send-back they caused', async (t) => {
   const { base, dir, log, hook } = project(t);
   const transcript = path.join(base, 'agent-a4.jsonl');
   writeFileSync(transcript, [
@@ -375,8 +378,9 @@ test('a stop row counts the background tasks the subagent started that still run
   ].join('\n'));
   const tasks = [{ id: 'bsleep001', type: 'shell', status: 'running', command: 'sleep 600' }, { id: 'bother002', type: 'shell', status: 'running' }];
   const stop = (active, background) => hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'a4', agent_type: 'fixer', agent_transcript_path: transcript, last_assistant_message: 'Done.', stop_hook_active: active, background_tasks: background });
-  const sends = Array.from({ length: 5 }, (_, i) => stop(i > 0, tasks).status);
-  assert.deepEqual([...sends, stop(true, tasks).status, stop(false, tasks.slice(1)).status], [2, 2, 2, 2, 2, 0, 0]);
+  const sends = [];
+  for (let i = 0; i < 5; i += 1) sends.push((await stop(i > 0, tasks)).status);
+  assert.deepEqual([...sends, (await stop(true, tasks)).status, (await stop(false, tasks.slice(1))).status], [2, 2, 2, 2, 2, 0, 0]);
   assert.deepEqual(log().map((row) => [row.delivered, row.running, row.sent_back]), [
     ...Array(5).fill(['chat', 1, true]), ['chat', 1, false], ['chat', 0, false],
   ], 'the stop the cap let end is the one with running above 0 and sent_back false');
@@ -385,16 +389,16 @@ test('a stop row counts the background tasks the subagent started that still run
 // Sets config.json `telemetry` in a project from project().
 const setTelemetry = (dir, telemetry) => writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, telemetry }));
 
-test('telemetry.enabled false: the hooks write no rows, and the delivery check still sends a subagent back', (t) => {
+test('telemetry.enabled false: the hooks write no rows, and the delivery check still sends a subagent back', async (t) => {
   const { base, dir, log, hook } = project(t);
   setTelemetry(dir, { enabled: false });
   const transcript = path.join(base, 's1.jsonl');
   writeFileSync(transcript, usageLine('m1', 'claude-opus-5-5', { input_tokens: 10, output_tokens: 1 }));
-  assert.equal(hook('hook-agent-post.mjs', { session_id: 's1', cwd: dir, tool_name: 'Agent', tool_input: {}, tool_response: { agentId: 'a1' } }).status, 0);
-  const sent = hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'a1', last_assistant_message: 'Wrote out/handoff.json.', stop_hook_active: false });
+  assert.equal((await hook('hook-agent-post.mjs', { session_id: 's1', cwd: dir, tool_name: 'Agent', tool_input: {}, tool_response: { agentId: 'a1' } })).status, 0);
+  const sent = await hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'a1', last_assistant_message: 'Wrote out/handoff.json.', stop_hook_active: false });
   assert.deepEqual([sent.status, sent.stderr.startsWith('Your report names `out/handoff.json`')], [2, true]);
-  assert.equal(hook('hook-session-end.mjs', { session_id: 's1', cwd: dir, transcript_path: transcript }).status, 0);
-  assert.equal(hook('session-row.mjs', { session_id: 's1', cwd: dir, transcript_path: transcript }).status, 0, 'the worker checks too');
+  assert.equal((await hook('hook-session-end.mjs', { session_id: 's1', cwd: dir, transcript_path: transcript })).status, 0);
+  assert.equal((await hook('session-row.mjs', { session_id: 's1', cwd: dir, transcript_path: transcript })).status, 0, 'the worker checks too');
   assert.deepEqual(log(), []);
 });
 
@@ -404,19 +408,19 @@ test('telemetry.docReads false: stop and session rows record docs_read null, and
   const transcript = path.join(base, 's1.jsonl');
   const doc = path.join(dir, 'docs/knowledge/engineering/testing.md');
   writeFileSync(transcript, JSON.stringify({ type: 'assistant', message: { id: 'm1', model: 'claude-opus-5-5', usage: { input_tokens: 10, output_tokens: 1 }, content: [{ type: 'tool_use', name: 'Read', input: { file_path: doc } }] } }));
-  hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'a1', agent_type: 'Explore', agent_transcript_path: transcript, last_assistant_message: 'Done.', stop_hook_active: false });
-  hook('hook-session-end.mjs', { session_id: 's1', cwd: dir, transcript_path: transcript });
+  await hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'a1', agent_type: 'Explore', agent_transcript_path: transcript, last_assistant_message: 'Done.', stop_hook_active: false });
+  await hook('hook-session-end.mjs', { session_id: 's1', cwd: dir, transcript_path: transcript });
   const rows = await logged(2);
   assert.deepEqual(rows.map((row) => [row.event, row.docs_read, row.tokens?.input ?? row.tokens_by_model['claude-opus-5-5'].input]), [['stop', null, 10], ['session', null, 10]]);
 });
 
 test('the session-end hook exits while its worker still reads the transcript, and the row lands once the worker finishes', { skip: process.platform === 'win32' }, async (t) => {
-  const { base, dir, log, hook, logged } = project(t);
+  const { base, dir, log, hookProcess, logged } = project(t);
   // A FIFO the test has not written yet: reading it blocks until the test writes, however fast the machine parses.
   // Before the worker, the hook read the transcript itself, so it could not exit before the test wrote it.
   const transcript = path.join(base, 's1.jsonl');
   assert.equal(spawnSync('mkfifo', [transcript]).status, 0);
-  const ended = hook('hook-session-end.mjs', { session_id: 's1', cwd: dir, transcript_path: transcript, reason: 'exit' }, { timeout: 10_000 });
+  const ended = hookProcess('hook-session-end.mjs', { session_id: 's1', cwd: dir, transcript_path: transcript, reason: 'exit' }, { timeout: 10_000 });
   assert.deepEqual([ended.status, ended.signal], [0, null], 'the hook exited without waiting for the transcript');
   assert.deepEqual(log(), []);
   let fifo;
@@ -434,10 +438,10 @@ test('the session-end hook exits while its worker still reads the transcript, an
 });
 
 test('the session row is stamped with the time the session ended, which the hook hands its worker', (t) => {
-  const { base, dir, log, hook } = project(t);
+  const { base, dir, log, hookProcess } = project(t);
   const transcript = path.join(base, 's1.jsonl');
   writeFileSync(transcript, usageLine('m1', 'claude-opus-5-5', { input_tokens: 10, output_tokens: 1 }));
-  assert.equal(hook('session-row.mjs', { session_id: 's1', cwd: dir, transcript_path: transcript, ended_at: NOW }).status, 0);
+  assert.equal(hookProcess('session-row.mjs', { session_id: 's1', cwd: dir, transcript_path: transcript, ended_at: NOW }).status, 0);
   assert.equal(log()[0].ts, new Date(NOW).toISOString());
 });
 
@@ -459,13 +463,13 @@ test('a log of telemetry.maxMb rotates into dispatch-log.1.jsonl, a rotate row s
   const dispatch = (id) => hook('hook-agent-post.mjs', { session_id: 's', cwd: dir, tool_name: 'Agent', tool_input: { subagent_type: 'Explore' }, tool_response: { agentId: id } });
   mkdirSync(state(), { recursive: true });
   writeFileSync(file, big('old'));
-  dispatch('a1');
+  await dispatch('a1');
   assert.equal(readFileSync(rotated, 'utf8'), big('old'));
   assert.deepEqual(log().map((row) => [row.event, row.dropped ?? row.agent_id]), [['rotate', false], ['dispatch', 'a1']]);
-  dispatch('a2');
+  await dispatch('a2');
   assert.equal(log().length, 3, 'under the limit: no rotation');
   writeFileSync(file, big('older'), { flag: 'a' });
-  dispatch('a3');
+  await dispatch('a3');
   assert.deepEqual(log().map((row) => [row.event, row.dropped ?? row.agent_id]), [['rotate', true], ['dispatch', 'a3']]);
   assert.deepEqual(lockFiles(file), ['dispatch-log.jsonl.lock.2', 'dispatch-log.jsonl.lock.2.released'], 'the lock is released');
   const json = JSON.parse(spawnSync(CLI, ['report', '--json'], { cwd: dir, env, encoding: 'utf8' }).stdout);
@@ -479,12 +483,12 @@ test('a log of telemetry.maxMb rotates into dispatch-log.1.jsonl, a rotate row s
   const lock = `${file}.lock.3`;
   writeFileSync(lock, `${JSON.stringify({ pid: holder.pid, host: hostname(), nonce: 'test' })}\n`);
   const started = Date.now();
-  dispatch('a4');
+  await dispatch('a4');
   assert.ok(Date.now() - started < 4000, 'the hook did not wait for the lock');
   assert.deepEqual(log().map((row) => row.agent_id), ['busy', 'a4']);
   holder.kill();
   await new Promise((resolve) => holder.on('exit', resolve));
-  dispatch('a5');
+  await dispatch('a5');
   assert.deepEqual(log().map((row) => row.event === 'rotate' || row.agent_id), [true, 'a5']);
   assert.deepEqual(lockFiles(file), ['dispatch-log.jsonl.lock.4', 'dispatch-log.jsonl.lock.4.released']);
 });
@@ -521,10 +525,16 @@ for (let i = 0; i < 50; i++) appendEvent(project, config, { event: 'dispatch', t
   assert.ok(lockFiles(file).at(-1).endsWith('.released'));
 });
 
-test('every dispatch-log hook exits 0 silently on a payload it cannot read', () => {
+test('every dispatch-log hook exits 0 silently on a payload it cannot read', async () => {
   for (const script of ['hook-agent-post.mjs', 'hook-subagent-stop.mjs', 'hook-session-end.mjs']) {
-    for (const input of ['', 'not json', '[]', '{}', JSON.stringify({ cwd: 42, tool_name: 'Agent' })]) {
+    // Real runs for the payloads only the script's own stdin read sees, which hands the hook {} for each
+    // (lib/hook-io.mjs readHookInput); the JSON objects are called in this process.
+    for (const input of ['', 'not json', '[]']) {
       const { status, stdout, stderr } = spawnSync(process.execPath, [path.join(SCRIPTS, script)], { input, encoding: 'utf8', cwd: tmpdir() });
+      assert.deepEqual([status, stdout, stderr], [0, '', ''], `${script} ${input}`);
+    }
+    for (const input of ['{}', JSON.stringify({ cwd: 42, tool_name: 'Agent' })]) {
+      const { status, stdout, stderr } = await hookCall(path.join(SCRIPTS, script), { input, cwd: tmpdir() });
       assert.deepEqual([status, stdout, stderr], [0, '', ''], `${script} ${input}`);
     }
   }
@@ -775,7 +785,7 @@ test('sessionRow splits main and subagents, with effort, cost per model, cache w
   assert.deepEqual([row.skills, row.drafts_opened, row.review_runs], [[], 0, 0], 'no skill, draft, or review call');
 });
 
-test('sessionRow records the skills, draft pull requests, and review runs of the main conversation and its subagents', (t) => {
+test('sessionRow records the skills, draft pull requests, and review runs of the main conversation and its subagents', async (t) => {
   const { base, dir } = project(t);
   const call = (id, name, input) => JSON.stringify({
     type: 'assistant', timestamp: '2026-10-29T10:00:00Z',
@@ -806,9 +816,9 @@ test('a request a forked subagent`s transcript repeats from its parent counts on
   writeFileSync(path.join(subagents, 'agent-a2.meta.json'), JSON.stringify({ agentType: 'Explore', parentAgentId: 'a1' }));
   for (const id of ['a2', 'a1']) {
     const stop = { session_id: 's1', cwd: dir, transcript_path: main, agent_id: id, agent_type: 'Explore', last_assistant_message: 'Done.', stop_hook_active: false };
-    assert.equal(hook('hook-subagent-stop.mjs', { ...stop, agent_transcript_path: path.join(subagents, `agent-${id}.jsonl`) }).status, 0);
+    assert.equal((await hook('hook-subagent-stop.mjs', { ...stop, agent_transcript_path: path.join(subagents, `agent-${id}.jsonl`) })).status, 0);
   }
-  assert.equal(hook('hook-session-end.mjs', { session_id: 's1', cwd: dir, transcript_path: main }).status, 0);
+  assert.equal((await hook('hook-session-end.mjs', { session_id: 's1', cwd: dir, transcript_path: main })).status, 0);
 
   const rows = await logged(3);
   const one = { input: 10, output: 5, cache_read: 0, cache_write: 0, cache_write_5m: 0, cache_write_1h: 0 };

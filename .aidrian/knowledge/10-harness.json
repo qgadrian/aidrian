@@ -63,6 +63,10 @@
       "summary": "Claude mod, aidrian-mod: band, pane, and alerts from the session snapshot, handoff verdict, install, settings, status line fallback, folder trust, limits.",
       "tags": []
     },
+    "project-run-setup.md": {
+      "summary": "Project run setup: HTTPS origin, driver mode, runs folder trust, keychain forge token, labels, user-scope plugin, halt vs stop; preflight points here.",
+      "tags": []
+    },
     "config.md": {
       "summary": "config.json: auto-merge, roles/autoStart, decisions, authority, productFeedback maxPersonas/allWidths/items/diff, projectRun next/start/preflight/result/report",
       "tags": []

@@ -6,6 +6,7 @@ import { existsSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { maskSecrets } from '../clean-text.mjs';
 import { isDirectory } from '../fs.mjs';
 import { currentRoot, runGit, showPrefix } from '../git.mjs';
 import { validatePlan } from './plan.mjs';
@@ -46,10 +47,8 @@ export async function inBaseWorktree(root, baseTip, use) {
 // The part of a failed command's stderr worth showing: its last few non-empty lines, cut to a length, with anything
 // shaped like a token masked. A runtime's own last line (Node prints its version) would otherwise hide the cause.
 export function stderrTail(stderr, { lines = 6, chars = 800 } = {}) {
-  const kept = String(stderr ?? '').split('\n').map((line) => line.trimEnd()).filter((line) => line.trim() !== '').slice(-lines).join(' | ');
-  const masked = kept
-    .replace(/\b(?:gh[pousr]_|github_pat_|sk-|xox[abpr]-|AKIA)[A-Za-z0-9_-]{8,}/gu, '[redacted]')
-    .replace(/\b(?:eyJ[A-Za-z0-9_-]{10,}\.){2}[A-Za-z0-9_-]{10,}/gu, '[redacted]');
+  // Each line is masked on its own, before the join, so a header's mask never takes the lines after it.
+  const masked = String(stderr ?? '').split('\n').map((line) => maskSecrets(line.trimEnd())).filter((line) => line.trim() !== '').slice(-lines).join(' | ');
   return masked.length > chars ? `...${masked.slice(-chars)}` : masked;
 }
 

@@ -28,7 +28,7 @@ import { runGit } from './git.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
 import { RUNS_FOLDER, startedUnattended } from './handoff-guard.mjs';
 import { looseFolder, openStore, SESSION_ID } from './handoff-markers.mjs';
-import { appendRow, withLocks } from './jsonl.mjs';
+import { appendRow, appendRowsAtOnce, withLocks } from './jsonl.mjs';
 import { committedConfigFile, defaultStateDir, stateDir, stateRoot } from './project.mjs';
 import { dropIssueReads, recordedTexts, sweepIssueReads, writeIssueTexts } from './project-issue-text.mjs';
 import { endedIn } from './run-driver.mjs';
@@ -510,18 +510,20 @@ const isInit = (row, run) => isObject(row) && row.event === 'init' && row.run ==
 
 // Why the run `found` (readRun) is halted, or null: the cause of its latest `halt` row, unless a `resume` row an attended
 // session wrote with `aidrian project resume` comes after it. A start whose proof failed writes the halt row
-// (lib/project-run-gate.mjs); nothing lifts it but a resume.
+// (lib/project-run-gate.mjs), and an environment result's row carries its own `halt` (project-result.mjs haltCause);
+// nothing lifts either but a resume.
 export function haltOf(found) {
   let halt = null;
   for (const row of found.rows) {
     if (row.event === 'halt') halt = typeof row.cause === 'string' && row.cause !== '' ? row.cause.slice(0, 300) : 'a start failed its proof';
+    else if (row.event === 'result' && row.status === 'environment') halt = typeof row.halt === 'string' && row.halt !== '' ? row.halt.slice(0, 300) : 'an issue\'s session found its environment broken';
     else if (row.event === 'resume') halt = null;
   }
   return halt;
 }
 
 // Appends to the ledger of run `run`, under its lock, the rows `build(found)` returns for the run as readRun reads it under
-// that lock: { rows } appended in order, or { problem } appending none, which is what it returns. The run's folder must
+// that lock: { rows } appended in order, in one write, or { problem } appending none, which is what it returns. The run's folder must
 // hold snapshot.json before the lock is taken, so a missing run gets no folder or lock file. Throws jsonl.mjs's LOCKED when another holds the lock
 // past `waitMs`, jsonl.mjs's wait by default.
 export function appendToRun(state, run, build, { waitMs } = {}) {
@@ -533,7 +535,8 @@ export function appendToRun(state, run, build, { waitMs } = {}) {
     if (found.problem) return { problem: found.problem };
     const built = build(found);
     if (built.problem) return built;
-    for (const row of built.rows) appendRow(file, row);
+    // One write for every row, so a transition's rows land together (an issue's result and its state).
+    appendRowsAtOnce(file, built.rows);
     return built;
   }, waitMs === undefined ? {} : { waitMs });
 }

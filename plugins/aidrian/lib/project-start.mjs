@@ -437,6 +437,10 @@ export function sweepAttempts({ state, run, found, cap, env, spawn }) {
     if (path.dirname(row.drop) !== folder) continue;
     const current = found.states.get(row.key)?.state === 'running' && latestStart(found, row.key)?.attempt === row.attempt;
     if (current) continue;
+    // An attempt whose result was `environment` keeps its folder for the run's life: its clone may hold the only copy of
+    // work a failed push never sent, for the Human to recover.
+    const environment = found.rows.some((each) => each.event === 'result' && each.status === 'environment' && each.key === row.key && each.attempt === row.attempt);
+    if (environment) continue;
     // A handed-over result no row took in yet keeps its folder.
     const taken = found.rows.some((each) => ['result', 'ended'].includes(each.event) && each.key === row.key && each.attempt === row.attempt);
     if (!taken && existsSync(path.join(row.drop, DROP_FILE))) continue;

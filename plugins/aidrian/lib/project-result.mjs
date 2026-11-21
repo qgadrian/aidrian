@@ -9,7 +9,7 @@ import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSy
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 
-import { cleanText } from './clean-text.mjs';
+import { cleanText, maskSecrets } from './clean-text.mjs';
 import { changeNotFound } from './forges/index.mjs';
 import { appendToRun, runFolder } from './project-run.mjs';
 import { ISSUE_ATTEMPTS, latestStart, spentAttempts } from './project-run-guard.mjs';
@@ -18,8 +18,10 @@ import { hostOf, repoName } from './remotes.mjs';
 import { isObject } from './fs.mjs';
 import { safely } from './session-start-gate.mjs';
 
-// What a session records of its issue, and how each decision it parks on is classed.
-export const RESULT_STATUSES = Object.freeze(['merged', 'pr_open', 'parked', 'blocked', 'failed']);
+// What a session records of its issue, and how each decision it parks on is classed. `environment` says the session's
+// own environment kept it from the work, such as its sandbox, its forge sign-in, or its host: the run halts on its stop
+// (its result row's `halt`, project-run.mjs haltOf), and the issue goes on as after `failed`.
+export const RESULT_STATUSES = Object.freeze(['merged', 'pr_open', 'parked', 'blocked', 'failed', 'environment']);
 export const DECISION_CLASSES = Object.freeze(['product', 'ux', 'architecture', 'security', 'scope', 'other']);
 // The largest result file read, the most decisions and options it keeps, and each text field's length.
 export const RESULT_CAP = 64 * 1024;
@@ -70,7 +72,8 @@ export function validateResult(value) {
     });
   }
   if (value.status === 'parked' && Array.isArray(given) && given.length === 0) problems.push('a parked result names the decisions it waits on');
-  const stop = value.stop === undefined || value.stop === null ? null : cleanText(value.stop, CAPS.stop);
+  if (value.status === 'environment' && (typeof value.stop !== 'string' || !cleanText(value.stop, CAPS.stop))) problems.push('an environment result names in "stop" what failed');
+  const stop = value.stop === undefined || value.stop === null || typeof value.stop !== 'string' ? null : cleanText(maskSecrets(value.stop), CAPS.stop);
   if (value.stop !== undefined && value.stop !== null && typeof value.stop !== 'string') problems.push('"stop" is not text or null');
   return problems.length ? { result: null, problems } : { result: { status: value.status, pr, decisions, stop }, problems };
 }
@@ -102,13 +105,17 @@ export function mergeProblem({ forge, repository, pr, branch, since }) {
 
 // What the ledger records of issue `key` after attempt `attempt` ended with `status`: merged is done; parked, pr_open,
 // and blocked park it on a decision named for the status; failed opens it again while attempts remain, of the `spent`
-// that count (afterFailure).
+// that count (afterFailure); environment does the same, with the run halted by its result row (haltCause).
 export function afterResult(key, attempt, status, spent = attempt) {
   if (status === 'merged') return { event: 'issue', key, state: 'done' };
-  if (status === 'failed') return afterFailure(key, spent);
+  if (status === 'failed' || status === 'environment') return afterFailure(key, spent);
   return { event: 'issue', key, state: 'parked', decision: { parked: `decision-${attempt}`, pr_open: 'pr-open', blocked: 'blocked' }[status] };
 }
 
+
+// The halt an environment result of attempt `attempt` of issue `key` carries in its own result row, so one append records
+// both: the session's `stop` as the cause.
+export const haltCause = ({ key, attempt, stop }) => cleanText(`${key} attempt ${attempt} found its environment broken: ${stop}`, CAPS.stop);
 
 // Writes `value` to `results/<key>.json` in the run's folder, owner-only, through a temporary file.
 export function writeResultFile(state, run, key, value) {
@@ -222,7 +229,10 @@ function dropRows({ run, key, start, spent, branch, forge, repository, now }) {
   const { result } = checked;
   const next = afterResult(key, start.attempt, result.status, spent);
   return {
-    rows: [{ event: 'result', key, attempt: start.attempt, session: start.child, via: 'drop', status: result.status, pr: result.pr, verified: result.status === 'merged', at }, { ...next, at }],
+    rows: [{
+      event: 'result', key, attempt: start.attempt, session: start.child, via: 'drop', status: result.status, pr: result.pr, verified: result.status === 'merged',
+      ...(result.status === 'environment' ? { halt: haltCause({ key, attempt: start.attempt, stop: result.stop }) } : {}), at,
+    }, { ...next, at }],
     line: `${result.status} -> ${next.state}${next.decision ? ` ${next.decision}` : ''}`,
     kept: { run, key, attempt: start.attempt, session: start.child, at, via: 'drop', ...result },
   };

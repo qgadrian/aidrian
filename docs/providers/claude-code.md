@@ -362,7 +362,8 @@ Every start then prints an `unverified:` line. The sandbox's key names come from
 sandboxing page, read on 2026-11-18; a value the host does not validate in a session no Human attends is silently
 ignored, so the live checks below must show each one holds.
 How issue sessions and the driver relate to the cap of five background continuations in a row is
-[A project run](../handoff.md#a-project-run).
+[A project run](../handoff.md#a-project-run). Every one-time step the Human takes before a run, each a section that an
+`aidrian project preflight` blocker line points at, is in [Project run setup](../project-run-setup.md).
 
 - Each attempt works in a fresh clone, never a linked worktree: in a linked worktree, the host's sandbox lets a
   session write the main repository's whole shared `.git` but its `hooks/` and `config`.
@@ -537,7 +538,8 @@ No `sandbox.excludedCommands` is passed. Three conditions hold on top of the san
   so git's HTTPS push signs in with it too. `sandbox.excludedCommands` for gh or git is no channel either: git runs
   hooks the session can write. Git's `store` credential helper keeps the push token in
   `~/.git-credentials`, which the sandbox hides, so a main checkout whose git config names it halts the start: use the
-  forge CLI's helper, `gh auth setup-git`.
+  forge CLI's helper, `gh auth setup-git`, which leaves a `store` entry in place, and remove that entry from the file
+  that defines it ([Origin over HTTPS](../project-run-setup.md#origin-over-https)).
 
 The start also halts, recording nothing, when the user's settings are not a JSON object; set any `sandbox` key but
 those that only narrow it (`filesystem.denyRead`, `filesystem.denyWrite`, `network.deniedDomains`, and

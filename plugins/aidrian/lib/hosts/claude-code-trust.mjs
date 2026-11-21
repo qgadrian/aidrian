@@ -7,9 +7,11 @@
 // each start records that trust for its own clone (recordTrust). The file is the host's own and undocumented, so a
 // file that is missing or cannot be read leaves the preflight check unknown, never a blocker.
 
-import { chmodSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
+
+import { resolvedPath } from '../fs.mjs';
 
 // The host's record of trusted folders, for `env` and `home`.
 export const trustFile = (env, home) => path.join(env.CLAUDE_CONFIG_DIR || home || env.HOME || homedir(), '.claude.json');
@@ -25,7 +27,7 @@ export function trustProblem({ folder, env = process.env, home }) {
     return { note: `the host's trust record ${file} cannot be read (${error.code ?? 'not JSON'}), so whether it trusts ${folder} is unknown; a start there refuses with "Workspace not trusted" if it does not` };
   }
   const trusted = (dir) => projects?.[dir]?.hasTrustDialogAccepted === true;
-  for (const start of new Set([path.resolve(folder), real(folder)])) {
+  for (const start of new Set([path.resolve(folder), resolvedPath(folder) ?? path.resolve(folder)])) {
     for (let dir = start; ; dir = path.dirname(dir)) {
       if (trusted(dir)) return null;
       if (path.dirname(dir) === dir) break;
@@ -59,12 +61,4 @@ export function recordTrust({ work, env = process.env, home }) {
     return { problem: `the host's trust record ${file} could not be written (${error.code ?? 'no code'}), so the attempt's clone is not trusted` };
   }
   return null;
-}
-
-function real(folder) {
-  try {
-    return realpathSync(folder);
-  } catch {
-    return path.resolve(folder);
-  }
 }

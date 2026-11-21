@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -64,4 +64,13 @@ test('no trust above the clone records nothing and says so; an unreadable record
   rmSync(fx.file);
   assert.match(recordTrust({ work: fx.work, env: fx.env }).problem, /cannot be read \(ENOENT\)/u);
   assert.match(trustProblem({ folder: fx.runs, env: fx.env }).note, /cannot be read \(ENOENT\)/u);
+});
+
+test('preflight finds trust recorded on the real path when the runs folder does not exist yet and the state folder is reached through a link', (t) => {
+  const fx = layout(t);
+  const real = path.dirname(fx.runs);
+  const link = path.join(path.dirname(real), 'linked-state');
+  symlinkSync(real, link);
+  fx.write({ [real]: { hasTrustDialogAccepted: true } });
+  assert.equal(trustProblem({ folder: path.join(link, 'runs-not-made-yet'), env: fx.env }), null);
 });

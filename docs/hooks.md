@@ -1156,8 +1156,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
 - **The write allowlist of a session no Human attends** (`lib/unattended-write.mjs`). A session its own unattended
   mark holds, read by the hook payload's session id, and every subagent of it, writes only:
   - its own worktree: the checkout of the folder its mark says the gate started it in, when that checkout shares its git
-    folder with the main checkout the mark names and that folder is the checkout's top itself, so a removed worktree's
-    folder left as a plain one, or a plain folder inside a checkout, gives none; never the call's folder, so another worktree of the same repository
+    folder with the main checkout the mark names: a linked worktree from any folder inside it, such as a package of a
+    monorepo, and the main checkout only from its own top, so a removed worktree's folder left as a plain one inside the
+    main checkout gives none; never the call's folder, so another worktree of the same repository
     is outside, unless it lies inside that checkout, as a task worktree under the main checkout's `.claude/worktrees/`
     does for a session started in the main checkout; each checkout nested so keeps its `.git` pointer and its host
     files refused, as below, and a checkout whose nested checkouts git cannot list is no worktree. A mark filed before
@@ -1187,7 +1188,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   - the temporary folder, this process's `TMPDIR` and `/tmp`, but for a state folder inside it, as one under `/tmp`
     is, where only the state places above pass, and for any checkout of the repository inside it, which keeps the rules
     above: a checkout that is not the session's worktree stays outside, and the worktree's host files and `.git` entries
-    stay refused; with checkouts git cannot list, the temporary folder passes nothing;
+    stay refused; with checkouts git cannot list, or a main checkout git cannot read though a `.git` lies at or above it,
+    the temporary folder passes nothing and no checkout is granted;
   - `/dev/null`, `/dev/stdout`, `/dev/stderr`, `/dev/tty`, and `/dev/fd/<n>`, by the path a command spells.
 
   Everything else is refused, and these always, inside a place or not, checked first: every git folder, whole (the

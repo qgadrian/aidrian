@@ -19,6 +19,7 @@ import { anchorClones, cloneConfigProblem, cloneGitProblem, GIT_PLACEHOLDERS } f
 import { noteStarted, openStore, startedFolders } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { PastDeadline, withinDeadline } from '../plugins/aidrian/lib/deadline.mjs';
 import { committedConfig } from '../plugins/aidrian/lib/config-committed.mjs';
+import { foldCase } from '../plugins/aidrian/lib/fs.mjs';
 import { runGit } from '../plugins/aidrian/lib/git.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { unattendedPlaces, unattendedWriteDenial } from '../plugins/aidrian/lib/unattended-write.mjs';
@@ -40,6 +41,9 @@ function tempRoot(t, prefix) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 }
+
+// A path as the places keep it: real, and in the case the disk folds to.
+const realFolded = (file) => foldCase(realpathSync(file));
 
 // A project on `main` with a linked worktree, a state folder, a home folder, a temporary folder, an XDG config folder,
 // a system git config git names through GIT_CONFIG_SYSTEM, and an attempt folder; the session SESSION marked unattended
@@ -652,7 +656,7 @@ test('a session started in the main checkout never writes the git pointer or the
   assert.equal(ask(bash('cd "$X" && printf x > .gitignore')), null);
 });
 
-test('a start record grants only from a store the handoff writer would keep, and only a folder that is a checkout\'s top itself', (t) => {
+test('a start record grants only from a store the handoff writer would keep, and a start folder only a linked worktree from any folder in it, or the main checkout from its top', (t) => {
   const fx = fixture(t);
   const { first } = nestedWorktrees(fx);
   const held = { root: fx.dir };
@@ -670,7 +674,21 @@ test('a start record grants only from a store the handoff writer would keep, and
   assert.equal(placesFor(project, config).worktree, null, 'a record in a sibling worktree\'s store');
   writeFileSync(path.join(fx.dir, '.aidrian', 'config.json'), JSON.stringify({ version: 1, state: { dir: fx.state } }));
 
+  // A start in a folder inside a linked worktree, as a package of a monorepo is, by the record or the mark, grants that
+  // worktree; the main checkout grants itself from its top.
+  const src = path.join(first, 'src', 'pkg');
+  mkdirSync(src, { recursive: true });
+  const markFor = (held) => unattendedPlaces({ cwd: src, mark: held, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.temp], session: SESSION });
+  assert.equal(markFor({ root: fx.dir, cwd: src }).worktree, realFolded(first), 'a mark naming a folder in the worktree');
+  assert.equal(markFor({ root: fx.dir, cwd: fx.dir }).worktree, realFolded(fx.dir), 'a mark naming the main checkout');
+  assert.equal(markFor({ root: fx.dir, cwd: path.join(fx.dir, '.aidrian') }).worktree, null, 'a mark naming a folder in the main checkout');
+  recordStart(fx, { cwd: src });
+  const inside = placesFor(fx.project, fx.config);
+  assert.equal(inside.worktree, realFolded(first), 'a record naming a folder in the worktree');
+  assert.equal(fx.ask(write(path.join(first, 'README.md')), { held, cwd: src, places: () => inside }), null);
+
   // A task worktree since removed, its folder left as a plain one, resolves to the main checkout around it: none.
+  rmSync(path.join(fx.state, 'handoffs', '.continue', 'started-feed00aa-0000-4000-8000-0000000000bb.json'));
   recordStart(fx, { cwd: first });
   assert.ok(placesFor(fx.project, fx.config).worktree, 'the live worktree');
   gitIn(fx.dir)('worktree', 'remove', '--force', first);
@@ -679,7 +697,7 @@ test('a start record grants only from a store the handoff writer would keep, and
   assert.equal(removed.worktree, null, 'a removed worktree\'s folder');
   const ask = (input, found) => fx.ask(input, { held, cwd: first, places: () => found })?.reason ?? null;
   for (const file of [path.join(first, 'src', 'a.ts'), path.join(fx.dir, 'README.md')]) assert.match(ask(write(file), removed) ?? '', /outside the places/u, file);
-  // A mark that names a plain folder inside the main checkout gets none either.
+  // A mark that names that folder, or a folder below it, gets none either.
   const plain = { root: fx.dir, cwd: path.join(first, 'src') };
   assert.equal(unattendedPlaces({ cwd: first, mark: plain, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.temp], session: SESSION }).worktree, null);
 });
@@ -704,6 +722,24 @@ test('a temporary folder that holds a checkout passes none of it: the checkout\'
   assert.equal(ask(write(path.join(first, 'a.ts')), withheld, own), null);
   assert.match(ask(write(path.join(first, '.claude', 'settings.json')), withheld, own) ?? '', /a host file a later session/u);
   for (const file of [path.join(second, 'a.ts'), path.join(fx.worktree, 'a.ts'), path.join(fx.dir, 'README.md')]) assert.match(ask(write(file), withheld, own) ?? '', /outside the places/u, file);
+});
+
+test('a main checkout git cannot read, with a .git on disk, grants no checkout and no temporary folder; one outside git keeps the temporary folder', (t) => {
+  const fx = fixture(t);
+  const broken = path.join(fx.root, 'broken');
+  mkdirSync(path.join(broken, 'src'), { recursive: true });
+  writeFileSync(path.join(broken, '.git'), `gitdir: ${path.join(fx.root, 'gone')}\n`);
+  const placesFor = (root) => unattendedPlaces({ cwd: root, mark: { root, cwd: root }, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.root], session: SESSION });
+  const found = placesFor(broken);
+  assert.equal(found.worktree, null);
+  assert.deepEqual(found.temp, []);
+  for (const file of [path.join(broken, 'src', 'a.ts'), path.join(fx.root, 'elsewhere', 'notes.md')]) {
+    assert.match(fx.ask(write(file), { held: { root: broken, cwd: broken }, cwd: broken, places: () => found })?.reason ?? '', /outside the places/u, file);
+  }
+  // A folder with no .git at or above it is outside git: the temporary folder still passes.
+  const plain = path.join(fx.root, 'plain');
+  mkdirSync(plain);
+  assert.equal(placesFor(plain).temp.length, 1);
 });
 
 test('the start record scan checks the guards\' deadline on each file it reads', (t) => {

@@ -23,7 +23,7 @@ import { checkDeadline, PastDeadline, remainingMs } from './deadline.mjs';
 import { isManifestPath } from './finding-disposition.mjs';
 import { forgeWorkflowFolders } from './forges/index.mjs';
 import { foldCase, isWithin } from './fs.mjs';
-import { gitConfigFiles, gitFolders, repositoryCheckouts, runGit } from './git.mjs';
+import { gitConfigFiles, gitFolders, repositoryCheckouts, runGit, underGit } from './git.mjs';
 import { GLOB_WORD, globStarts, sameFile } from './glob-links.mjs';
 import { globReaches, modeTargets, startedFolder, stateFolders } from './handoff-guard.mjs';
 import { fileEditOf, nestedProtected, opaqueShellCommand, protectedPaths } from './hosts/index.mjs';
@@ -197,12 +197,13 @@ function ownPlaces(places, { mark, project, config, base, own, home, temp, sessi
   checkDeadline();
   const checkouts = repo ? repositoryCheckouts(mark.root, gitBudget) : null;
   places.checkouts = repo ? [...(checkouts ?? []), repo.top].map(real) : [];
+  // A main checkout git cannot read, with a `.git` at or above it on disk, is a repository whose checkouts cannot be
+  // told, not a folder outside git: it grants no checkout and the temporary folder passes nothing.
+  const unknown = !repo && underGit(mark.root);
   const from = repo ? startFolder(mark, places.issueHeld, () => startedFolder(project, config, session, stateOptions(base, home))) : null;
   const start = from ? gitFolders(from, gitBudget()) : null;
   if (places.issueHeld) places.issue = ownIssue(project, config, mark, stateOptions(base, home));
-  // The start folder must be the top of a checkout of the repository itself: a removed worktree's folder left as a
-  // plain one would resolve to the checkout around it, and grant all of it.
-  if (start && real(start.common) === real(repo.common) && real(start.top) === real(from) && nestedRefused(refuse, checkouts, start.top)) {
+  if (start && real(start.common) === real(repo.common) && startTop(start, from) && nestedRefused(refuse, checkouts, start.top)) {
     places.worktree = real(start.top);
     places.worktreeCommon = real(start.common);
     gitRefused(refuse, start);
@@ -228,8 +229,13 @@ function ownPlaces(places, { mark, project, config, base, own, home, temp, sessi
     refuse(path.join(attempt, 'work', '.git'), 'the attempt clone\'s pointer to its git folder');
   }
   stateWork(places, { project, config, base, home }, refuse);
-  places.temp = repo && !checkouts ? [] : (temp ?? [tmpdir(), '/tmp']).filter(absolute).map(real);
+  places.temp = unknown || (repo && !checkouts) ? [] : (temp ?? [tmpdir(), '/tmp']).filter(absolute).map(real);
 }
+
+// Whether the checkout `start` (gitFolders) of the start folder `from` is the session's worktree: a linked worktree,
+// from any folder inside it, as a session started in a package of a monorepo is; the main checkout only from its own top.
+// A removed worktree's folder left as a plain one inside the main checkout resolves to the main checkout, and grants none.
+const startTop = (start, from) => real(start.gitDir) !== real(start.common) || real(start.top) === real(from);
 
 // The other checkouts of the repository, `checkouts` (git.mjs repositoryCheckouts), that lie inside the session's worktree `top`, as
 // task worktrees under the main checkout's `.claude/worktrees/` do for a session started there: each one's `.git`

@@ -25,7 +25,7 @@ const MACHINE = {
   'full-autonomy-solo': null,
 };
 // The projectRun keys that open a confined session's sandbox further: a team sets each after reading its risk.
-const SANDBOX_OPT_INS = ['registries', 'unverifiedHosts', 'outsideSandbox', 'mcpServers'];
+const SANDBOX_OPT_INS = ['registries', 'unverifiedHosts', 'outsideSandbox', 'mcpServers', 'localBinding'];
 // The projectRun keys that turn a preflight blocker into a risk the team takes: a team sets each after reading it.
 const RISK_ACCEPTANCES = ['workflowSecretsAccepted', 'forgeProtectionAccepted'];
 

@@ -93,7 +93,7 @@ test('the sandbox settings are pinned whole: the sandbox on and required, writes
     work: '/s/w', git: '/s/g', grants: ['/s/g', '/s/d', '/st/plans'], domains: ['github.com', 'api.github.com'], temp: ['/private/tmp', '/s/d'], home,
     config: '/cfg', platform: 'linux', main: '/m', mainGit: '/m/.git', secrets: ['NPM_TOKEN', 'AWS_SECRET_ACCESS_KEY'], stores: ['/usr/local/etc/npmrc'],
   });
-  const stores = [...CREDENTIAL_PATHS.map((each) => path.join(home, each)), '/cfg/.credentials.json', '/cfg/ide', '/cfg/.claude.json', '/cfg/.claude-trust-stage', '/usr/local/etc/npmrc'];
+  const stores = [...CREDENTIAL_PATHS.map((each) => path.join(home, each)), '/cfg/.credentials.json', '/cfg/ide', '/cfg/.claude.json', '/cfg/.claude-trust-stage', '/cfg/session-env', '/usr/local/etc/npmrc'];
   const unread = [...stores, '/m'];
   const nested = ['/s/w/**/.claude', ...['skills', 'agents', 'commands', 'hooks', 'workflows', 'scheduled_tasks.json'].flatMap((name) => [`/s/w/**/.claude/${name}`, `/s/w/**/.claude/${name}/**`])];
   assert.deepEqual(settings, {
@@ -405,7 +405,7 @@ test('a start on Claude Code reaches the registries both reads of the default br
   const { text, value: settings } = settingsOf(fx);
   assert.deepEqual(settings.sandbox.network.allowedDomains, [...forge, ...REGISTRIES.npm, ...REGISTRIES.pypi]);
   assert.equal(settings.sandbox.network.strictAllowlist, true);
-  assert.equal(settings.env, undefined, 'no settings env, which the host\'s hooks and MCP servers would get');
+  assert.deepEqual(Object.keys(settings.env ?? {}), ['AIDRIAN_START_CLAIM'], 'no settings env but the start\'s claim, since the host\'s hooks and MCP servers get it');
   assert.doesNotMatch(text, /npm_config_cache|GOMODCACHE|PNPM_HOME/u);
   assert.ok(settings.sandbox.filesystem.allowWrite.includes(realpathSync(cache)), 'the cache folder is writable');
   assert.equal(lstatSync(cache).mode & 0o777, 0o700, 'owner-only');

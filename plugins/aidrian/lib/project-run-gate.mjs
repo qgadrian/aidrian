@@ -57,6 +57,7 @@ import { chainEnded, lingerLine, lingerProblem, notStopped, settleLingering, sto
 import { checkedLimit, limitEndRows, limitRecorded, pausedTime, pauseOf, pauseRow, recordedPauseRuns } from './project-limit.mjs';
 import { closeVerdict, confineCheck, prepareConfine } from './project-confine.mjs';
 import { cacheVars, registryHosts } from './project-registries.mjs';
+import { CLAIM_VAR, newClaim, writeClaim } from './project-token.mjs';
 import { afterFailure, cleanText, CAPS, DROP_FILE, ingestDrops, RESULT_CAP, validateResult, writeDrop } from './project-result.mjs';
 import { writeIssueFile } from './project-issue-text.mjs';
 import { appendToRun, attendedProblem, haltOf, planRun, readCapped, readRun, runFolder, runPlace, runsFolder, RUN_ID, SERIAL } from './project-run.mjs';
@@ -134,7 +135,7 @@ function guardedStore({ env, home }) {
 
 // The team's projectRun for `project`, as the base branch commits it: through this checkout's git, which only refuses,
 // and through the forge at the repository init pinned, `repository`. { maxParallel, maxStarts, issueHours, solo,
-// unverifiedHosts, workflowSecretsAccepted, forgeProtectionAccepted, outsideSandbox, mcpServers, registries } with each number the lowest of the two reads and its
+// unverifiedHosts, workflowSecretsAccepted, forgeProtectionAccepted, outsideSandbox, mcpServers, registries, localBinding } with each number the lowest of the two reads and its
 // CEILINGS value, each switch true only when both reads set it, outsideSandbox and registries the names both reads
 // list, and mcpServers the servers both reads define alike, or { problem }: with `transient` when the forge could not
 // answer now, and with issueHours when it answered and withdrew projectRun.allow. A forge read that fails refuses.
@@ -161,6 +162,7 @@ export function teamPolicy(project, repository, forge) {
     outsideSandbox: bothList(local.config.projectRun.outsideSandbox, policies.policy.projectRun.outsideSandbox),
     mcpServers: bothServers(local.config.projectRun.mcpServers, policies.policy.projectRun.mcpServers),
     registries: bothList(local.config.projectRun.registries, policies.policy.projectRun.registries),
+    localBinding: local.config.projectRun.localBinding === true && policies.policy.projectRun.localBinding === true,
   };
 }
 
@@ -381,7 +383,8 @@ function startPlace(context) {
   const early = heldProblem({ store, session, cap, env, spawn, state, run });
   if (early) return refuse(early, orphans);
   const access = accessProblem({
-    cap, forge: facade, repository: found.init.repository, env, home, guarded: guardedFolders({ main, state, env, home }), main, platform: context.platform, allowed: policy.outsideSandbox,
+    cap, forge: facade, repository: found.init.repository, env, home, guarded: guardedFolders({ main, state, env, home }), main, platform: context.platform, allowed: policy.outsideSandbox, localBinding: policy.localBinding,
+    keychain: project.localForgeTokenKeychain, ...(context.exec ? { exec: context.exec } : {}),
   });
   if (access?.refuse) return refuse(access.refuse, orphans);
   const tripped = access?.halt ?? linkTripwire({ state, run, store, env, home, main });
@@ -390,7 +393,7 @@ function startPlace(context) {
   const base = forgeBase(project, found.init.repository, facade, env);
   if (base.problem) return refuse(base.problem, orphans);
   const { branch } = current.snapshot.issues.find((issue) => issue.key === key);
-  const where = { ...context, attempt: capped.attempt, tip: base.tip, branch, pushUrl: access?.pushUrl };
+  const where = { ...context, attempt: capped.attempt, tip: base.tip, branch, pushUrl: access?.pushUrl, checked: access?.token?.id ? access.token : null };
   const room = confinedRoom(where);
   if (room.halt) return { answer: noted(haltAnswer(room.halt, { lines: orphans })) };
   if (room.problem) return refuse(room.problem, orphans);
@@ -411,7 +414,7 @@ const endedOnLimit = (found, key, attempt) => found.rows.some((row) => row.event
 // A host that would refuse the push of a session the driver `session` starts in the clone halts too (pushPreflight, in
 // the driver's permission mode, which the session takes): the clone is the folder the start passes the host, judged
 // once, and a remote or folder it cannot read answers unknown and starts. Last, the host's placeholders go in (placeHolders).
-function confinedRoom({ project, state, run, key, branch, attempt, tip, env, home, found, cap, policy, main, pushUrl, session }) {
+function confinedRoom({ project, state, run, key, branch, attempt, tip, env, home, found, cap, policy, main, pushUrl, session, checked }) {
   const folders = stateWorkFolders(state, { env, home });
   if (folders.problem) return { halt: folders.problem };
   const clone = prepareAttempt({ project, state, run, key, attempt, branch, tip, env });
@@ -446,10 +449,15 @@ function confinedRoom({ project, state, run, key, branch, attempt, tip, env, hom
   const vars = cacheVars(clone.cache, env, { registries: policy.registries });
   const written = writeShellVars(clone.folder, vars);
   if (written) return { problem: written };
+  // The claim that marks the session this start launches, and the token source the access check chose with the checked
+  // token's digest, for the hook that hands that session the forge token (lib/project-token.mjs): never the token.
+  const claim = checked ? newClaim() : null;
+  const claimed = claim ? writeClaim(clone.folder, { claim, source: checked.id, token: checked.digest }) : null;
+  if (claimed) return { problem: claimed };
   // The issue's text the driver kept at init, for the session to read instead of the tracker (lib/project-issue-text.mjs).
   const issueFile = issueFileFor(state, run, key, clone.folder);
   if (issueFile?.problem) return { problem: issueFile.problem };
-  return { folder: clone.folder, cwd: clone.work, git: clone.git, grants: [clone.git, clone.drop, clone.cache, ...folders.folders], drop: clone.drop, cache: clone.cache, vars, main: resolvedPath(main) ?? main, mainGit, issueFile: issueFile?.file ?? null, pushUrl: url || null };
+  return { folder: clone.folder, cwd: clone.work, git: clone.git, grants: [clone.git, clone.drop, clone.cache, ...folders.folders], drop: clone.drop, cache: clone.cache, vars, main: resolvedPath(main) ?? main, mainGit, issueFile: issueFile?.file ?? null, pushUrl: url || null, claim };
 }
 
 // Writes `<attempt>/issue.md` from `<run>/issues/<KEY>.json`, read as untrusted: { file }, null when the run kept no text
@@ -477,7 +485,11 @@ function issueFileFor(state, run, key, folder) {
 // start holds the session only once `confined` confirms the proof, which files it in the session's mark.
 function launchStart(context, place) {
   const { run, key, env, home, session, store, cap, spawn, wait, state, held, noted } = context;
-  const { folder, attempt, branch, cwd, git, grants, drop, cache, vars, log, main, mainGit, afterLimit, issueFile, pushUrl } = place;
+  const { folder, attempt, branch, cwd, git, grants, drop, cache, vars, log, main, mainGit, afterLimit, issueFile, pushUrl, claim } = place;
+  const localBinding = context.policy.localBinding === true;
+  // Whether the team's switch reaches this machine's loopback on this host and platform, as the host declares it: one
+  // that keeps its commands off the loopback all the same, as Claude Code on Linux, keeps the proof's listener.
+  const loopback = localBinding && safely(() => cap.confineLoopback?.({ env, home, platform: context.platform, localBinding })) === true;
   // The forge's hosts, and the registries the team lists (projectRun.registries).
   const domains = [...forgeDomains(context.found.init.repository), ...registryHosts(context.policy.registries)];
   const proving = cap.confineProof === true;
@@ -485,8 +497,9 @@ function launchStart(context, place) {
   if (proving) {
     // The unlisted host must be outside the domains the user's and the organization's settings add too.
     const added = safely(() => cap.confineDomains?.({ env, home, platform: context.platform }));
+    // A session that reaches this machine's loopback would reach the listener too, so the proof probes none there.
     confine = prepareConfine({
-      folder, run, key, attempt, work: cwd, git, drop, cache, domains: [...domains, ...(Array.isArray(added) ? added : [])], main, mainGit, env, home,
+      folder, run, key, attempt, work: cwd, git, drop, cache, domains: [...domains, ...(Array.isArray(added) ? added : [])], main, mainGit, env, home, loopback,
       ...(context.listen ? { listen: context.listen } : {}), reads: safely(() => cap.confineReads?.({ env, home })) ?? [],
     });
     if (confine.problem) {
@@ -500,7 +513,7 @@ function launchStart(context, place) {
   const fileProof = (own, result) => safely(() => markUnattended(own, { root: context.main, cwd: resolvedPath(cwd) ?? cwd, env, tags: { ...tags, confine: result } }));
   const confined = proving ? (own) => {
     proved = own;
-    const answer = confineCheck({ folder, session: own, prints: confine.prints });
+    const answer = confineCheck({ folder, session: own, prints: confine.prints, loopback });
     if (answer === null) return null;
     const filed = fileProof(own, answer.pass ? 'passed' : 'failed');
     if (!answer.pass) {
@@ -523,12 +536,12 @@ function launchStart(context, place) {
       session,
       launch: (hold, identify) => {
         const started = cap.start({
-          session, cwd, name, prompt, env, hold, identify, run: spawn, wait, log, git, grants, domains, cacheVars: vars, main, mainGit, tokens: forgeTokenVars(),
+          session, cwd, name, prompt, env, hold, identify, run: spawn, wait, log, git, grants, domains, cacheVars: vars, main, mainGit, tokens: forgeTokenVars(), claimVars: claim ? { [CLAIM_VAR]: claim } : null,
           // The runs folder as the run names it, whose trust the host's record must hold for the clone to be trusted.
           runs: runsFolder(state),
           // The sign-off store, which a merge no Human asks for reads as the Human's word: no confined session writes it.
           guarded: guardedStore({ env, home }),
-          mcp: context.policy.mcpServers, home, platform: context.platform, beacon: (id) => readBeacon(id, { env, home, since }), confined,
+          mcp: context.policy.mcpServers, localBinding, home, platform: context.platform, beacon: (id) => readBeacon(id, { env, home, since }), confined,
         });
         // A failed proof halts the run whatever came of stopping its session (startLines).
         if (started?.proof) proof = started.problem;
@@ -546,7 +559,7 @@ function launchStart(context, place) {
       now: context.now,
     });
   } finally {
-    confine?.listener.stop();
+    confine?.listener?.stop();
   }
   // A session the start stopped for its proof keeps a failed proof in its mark, so the hook refuses its every call.
   if (proving && proved && result.outcome !== 'started') fileProof(proved, 'failed');

@@ -48,30 +48,15 @@ import { sessionIdentity } from './hosts/index.mjs';
 import { repoFlag } from './remotes.mjs';
 import { cardState, isReviewSummaryCard, REVIEW_SUMMARY_CARD_MARKER } from './review/bot-card.mjs';
 import { holdToBase } from './review/in-force.mjs';
+import { REQUEST_COMMENT, REQUEST_INSTRUCTIONS, REQUEST_TEXT } from './review/request-text.mjs';
 
 export const DEFAULT_REVIEWER = CONFIG_DEFAULTS.github.reviewer;
-export const REQUEST_COMMENT = '@codex review';
 // The statuses that carry the bot's answer for the head: one that arrived during the wait, or one already there.
 export const ANSWERED = new Set(['received', 'already_present']);
 export const DEFAULTS = Object.freeze({ timeoutSec: 840, intervalSec: 60, maxRounds: CONFIG_DEFAULTS.github.maxReviewRounds });
 
-// What the request asks for after the trigger phrase. A bare "@codex review" returned about two findings per review,
-// and most later-round findings were copies of a mistake an earlier round had named, so this asks for the whole
-// review in one pass and for every copy in one finding. Codex reads free text after the trigger as that review's focus.
-export const REQUEST_INSTRUCTIONS = [
-  'Perform a thorough review of the complete PR. Inspect relevant surrounding',
-  'code and affected call paths, not only the changed lines.',
-  '',
-  'Check for correctness, regressions, edge cases, concurrency issues,',
-  'error handling, security, data consistency, performance, API compatibility,',
-  'and missing tests.',
-  '',
-  'Continue reviewing after finding issues and complete the full review before',
-  'reporting findings.',
-  '',
-  'When you find an issue, search the whole PR for the same mistake and list',
-  'every other location in that one finding.',
-].join('\n');
+// The request's text: review/request-text.mjs, which the local review's prompt also reads (review/reviewers.mjs).
+export { REQUEST_COMMENT, REQUEST_INSTRUCTIONS };
 
 // A limit above the default, recorded in the request comment that used it.
 export const MAX_ROUNDS_PATTERN = /<!--\s*pr-await-review:\s*max-rounds=(\d+)\s*-->/i;
@@ -96,7 +81,7 @@ export const codexRounds = (reviews, reviewer) => (reviews ?? []).filter((r) => 
 export const TRIGGER_HEAD_PATTERN = /<!--\s*pr-await-review:\s*head=([0-9a-f]{3,40})\s*-->/i;
 export const triggerHeadSha = (body) => (typeof body === 'string' ? body.match(TRIGGER_HEAD_PATTERN)?.[1] ?? null : null);
 export const requestCommentBody = (headSha, maxRounds = DEFAULTS.maxRounds, reviewMarker = null) => {
-  const request = `${REQUEST_COMMENT}\n\n${REQUEST_INSTRUCTIONS}`;
+  const request = REQUEST_TEXT;
   const marked = headSha ? `${request}\n\n<!-- pr-await-review: head=${headSha} -->` : request;
   const rounds = maxRounds > DEFAULTS.maxRounds ? `${marked}\n<!-- pr-await-review: max-rounds=${maxRounds} -->` : marked;
   return reviewMarker ? `${rounds}\n${reviewMarker}` : rounds;

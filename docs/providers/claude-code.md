@@ -427,7 +427,7 @@ whole). A scalar passed with `--settings` wins over the user's settings; a list 
 | `sandbox.filesystem.denyWrite` | the clone's `.git` pointer, its git folder's `config`, `hooks`, `commondir`, and `config.worktree`, on every platform, each a placeholder there at launch; each protected host file of the clone: `.claude/settings.json`, `.claude/settings.local.json`, `.claude/skills`, `.claude/agents`, `.claude/commands`, `.claude/hooks`, `.claude/workflows`, `.claude/scheduled_tasks.json`, and `.mcp.json`; and, as `**` globs, any `.claude` folder itself at any depth, so none is made or made a link, those of each, its `settings*.json`, and any `SKILL.md`; the [sign-off store](../review.md#merge-trust)'s folders, `$XDG_STATE_HOME/aidrian/signoffs` and `~/.local/state/aidrian/signoffs`, the gate's `guarded`, by their real paths, the first made owner-only before the start, so no user `allowWrite` opens them; `permissions.deny` adds an `Edit` rule for each, for the file tools, which run outside the sandbox; and the keep file `.keep-attempt` of the attempt's `drop` and `cache` folders, there at launch, so neither can be emptied and removed, and a link put in its place |
 | `sandbox.filesystem.denyRead` | the user's credential stores, below, and the main checkout, whose git-ignored files, such as env files, a session never reads |
 | `sandbox.filesystem.allowRead` | the main checkout's git folder, when it lies in the main checkout: the clone borrows its objects |
-| `sandbox.network` | `strictAllowlist: true`, `allowedDomains` the forge's hosts (`github.com` and its API host for GitHub) and the hosts of each registry the base branch's [`projectRun.registries`](../config.md#project-run) lists, none by default, `allowAllUnixSockets: false`, `allowLocalBinding: false`; no `allowUnixSockets` |
+| `sandbox.network` | `strictAllowlist: true`, `allowedDomains` the forge's hosts (`github.com` and its API host for GitHub) and the hosts of each registry the base branch's [`projectRun.registries`](../config.md#project-run) lists, none by default, `allowAllUnixSockets: false`, `allowLocalBinding: false`, or `true` where the base branch sets [`projectRun.localBinding`](../config.md#project-run); no `allowUnixSockets` |
 | `sandbox.credentials.envVars` | `{ name, mode: "deny" }`, so the variable is unset before each sandboxed command, for each variable of the driver's environment whose name says it holds a credential (`TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, `AUTH`, and the like) and the well-known ones, such as `AWS_SECRET_ACCESS_KEY`, `NPM_TOKEN`, and `SSH_AUTH_SOCK`, but the forge CLI's own token variables (`GH_TOKEN`, `GITHUB_TOKEN`, and their Enterprise forms) |
 | `permissions.deny` | `Read(//<path>)` and `Read(//<path>/**)` for each credential store and the main checkout, since the file tools run outside the sandbox |
 | `disableClaudeAiConnectors` | `true`: the claude.ai connectors, which `--strict-mcp-config` leaves on, neither load nor connect; a `true` from any source wins |
@@ -436,7 +436,13 @@ whole). A scalar passed with `--settings` wins over the user's settings; a list 
 
 `allowLocalBinding: false` has a cost on macOS, where it is the switch for localhost: a test that listens on a local
 port, or connects to one, fails in a confined session. On Linux it has no effect, and the network namespace keeps a
-sandboxed command off the host's localhost.
+sandboxed command off the host's localhost. An issue whose checks need a database, an API server, a worker, or a
+browser on localhost cannot run them so; a team whose issues need them sets
+[`projectRun.localBinding`](../config.md#project-run) on the default branch, which the forge and the local ref must
+both set, and the session starts with `allowLocalBinding: true`. No clone or local file turns it on. On macOS that
+opens binding, and inbound connections, on every interface of this machine, not only the loopback (the host's sandbox
+runtime, `src/sandbox/macos-sandbox-utils.ts`), so a project binds each test server to `127.0.0.1`, never `0.0.0.0`.
+On Linux it changes nothing, as above.
 
 No `sandbox.excludedCommands` is passed. Three conditions hold on top of the sandbox:
 
@@ -473,7 +479,8 @@ No `sandbox.excludedCommands` is passed. Three conditions hold on top of the san
   `~/Library/Application Support`, `~/.mozilla`, `~/.config/google-chrome`, `~/.config/chromium`,
   `~/.git-credentials`, `~/.npmrc`, `~/.pypirc`, `~/.cargo/credentials.toml` and `~/.cargo/credentials`,
   `~/.gem/credentials`, `~/.vault-token`, `~/.config/hub`, the host's own `~/.claude.json`,
-  `~/.claude/.credentials.json`, and `~/.claude/ide` (and those of `CLAUDE_CONFIG_DIR` when it moves them), the
+  `~/.claude/.credentials.json`, `~/.claude/ide`, and its `~/.claude/session-env` tree, which holds every session's
+  `CLAUDE_ENV_FILE` (and those of `CLAUDE_CONFIG_DIR` when it moves them), the
   keyrings in `~/.local/share/keyrings`, and the shell histories `~/.bash_history`, `~/.zsh_history`, and
   `~/.local/share/fish`; and the package registries' other token stores: `~/.yarnrc.yml`, `~/.yarnrc`,
   `~/.config/npm/npmrc`, the npm user and global config files the driver's `npm_config_userconfig` and
@@ -483,7 +490,41 @@ No `sandbox.excludedCommands` is passed. Three conditions hold on top of the san
   `~/Library/Application Support/pip`, poetry's `auth.toml` in `~/.config/pypoetry` and
   `~/Library/Application Support/pypoetry`, and `~/.local/share/uv/credentials`. Credential-named environment variables are unset in the sandbox, as the table says, and the
   main checkout is unreadable but its git folder. The forge CLI's login, `~/.config/gh`, and its token variables stay:
-  the session pushes and opens pull requests through them. Git's `store` credential helper keeps the push token in
+  the session pushes and opens pull requests through them. Since the sandbox also hides the system keyring, where gh
+  keeps its token by default, the session gets the forge token as `GH_TOKEN` (`GH_ENTERPRISE_TOKEN` for a GitHub
+  Enterprise Server host, as gh reads it) in its sandboxed commands' environment:
+  the start reads it outside the sandbox, from the first of the project's keychain entry
+  ([`projectRun.forgeTokenKeychain`](../config.md#project-run) in `.aidrian.local.json`), the machine's default entry,
+  service `aidrian-project-run`, both on macOS, the default entry for a github.com run alone, so no github.com token
+  reaches another host, and `gh auth token --hostname <host>`. It halts when none gives one, or when that very token
+  may not push, whatever the driver's own login may do: the start asks GitHub for the
+  repository's receive-pack advertisement, `https://<host>/<owner>/<name>.git/info/refs?service=git-receive-pack`,
+  with the token as basic auth, from a Node process with no shell that gets the token in its environment. GitHub
+  answers 200 with `application/x-git-receive-pack-advertisement` only to a token that may write the contents, and
+  401 or 403 otherwise; a 200 of any other content type counts as not writable. The probe writes nothing. The
+  start records which source gave the token and the token's SHA-256, with the digest of a random claim it passes the
+  session it launches as the one `env` key of its inline settings, `AIDRIAN_START_CLAIM`. The plugin's SessionStart
+  hook of the confined session hands the token over only when its environment holds that claim, so no other session
+  opened in the clone gets it, before the host names the launched one or after; it reads the token again, outside the
+  sandbox, from that one source, never another, hands it over only when its SHA-256 is the one the start recorded, and
+  appends it, in a file it first makes owner-only, to the file `CLAUDE_ENV_FILE` names, as it does the cache
+  variables. With it go git's command-scope config entries, after any `GIT_CONFIG_COUNT` the environment already
+  holds, both scoped to the forge's host as `credential.https://<host>.helper`: an empty one, which drops every helper
+  git collected for that host from the user's and the repository's config, then gh's own `auth git-credential`, by the
+  absolute path of the gh on PATH, so git's push takes the token whatever helpers the config names. Another host keeps
+  the user's own helpers, so gh never offers the run's token there (checked live: `git credential fill` gave the gh
+  token for github.com and no credential for an unrelated host). A source that gives no token then, or another one, or a session without the claim, gets a line saying
+  why instead, and no token. The hook of the session that holds the claim, and only it, records in the attempt's
+  folder whether it handed the token over, and why not, nothing secret, and the start's check of the sandbox proof fails a start whose record is missing or says not
+  handed, so the run halts as on a failed proof. The host reads that file in its own
+  process and runs its lines ahead of each Bash command (2.1.330: "Session environment loaded from CLAUDE_ENV_FILE"),
+  so the sandbox hides the whole `session-env` tree and each session still gets its own variables, while no session
+  reads another's. The token reaches the sandboxed Bash commands alone, never the host's hooks or MCP servers, and no
+  file of the run, argv, or printed line carries it.
+  Variables of the shell that runs `claude --bg` never reach the session, so the driver's own `GH_TOKEN` is no channel.
+  `gh auth git-credential`, the helper `gh auth setup-git` writes, answers git with `GH_TOKEN` (checked on gh 2.105.0),
+  so git's HTTPS push signs in with it too. `sandbox.excludedCommands` for gh or git is no channel either: git runs
+  hooks the session can write. Git's `store` credential helper keeps the push token in
   `~/.git-credentials`, which the sandbox hides, so a main checkout whose git config names it halts the start: use the
   forge CLI's helper, `gh auth setup-git`.
 
@@ -533,11 +574,18 @@ Residual risks, each known and accepted:
 
 - WebFetch, Read, Edit, and Write run outside the sandbox. Edit and Write are held by the agent gate hook's write
   allowlist alone, and WebFetch reaches any host the permission rules allow.
-- The forge CLI's token in `~/.config/gh` is readable, and reaches every repository the user can. In the run's repository,
+- The session holds the forge token in its sandboxed commands' environment, as before it held gh's: any command it runs
+  can read it, and a token of gh's own login, or a classic one, reaches every repository and scope the user can, which
+  the preflight's `note token:` line names. A fine-grained token in the keychain, limited to the run's repository,
+  narrows that. The host keeps the file `CLAUDE_ENV_FILE` names, which then holds the token, owner-only, in its own
+  config folder, which the sandbox hides, for the session's life; whether it removes it when the session ends is not
+  checked.
+- The forge CLI's token in `~/.config/gh`, when gh keeps it there, is readable, and reaches every repository the user can. In the run's repository,
   the default branch's protection and the tag rule that `aidrian project preflight` requires hold it; in the user's
   other repositories, nothing does.
-- On macOS, `~/Library/Keychains` is unreadable to sandboxed commands; whether gh's token in the keychain and git's
-  `osxkeychain` helper still answer through the keychain service is live check 7.
+- On macOS, `~/Library/Keychains` is unreadable to sandboxed commands, and a live run on 0.80.1 showed gh's keychain
+  login does not answer there, which is why the session gets `GH_TOKEN`; whether git's `osxkeychain` helper, when the
+  git config names it before gh's, fails at once there and lets gh's helper sign the push in is part of live check 7.
 - The host's own git calls in the clone, such as for its status line or its view of changes, run outside the sandbox
   without the plugin's hardened settings. The `commondir` placeholder is there at launch, so the sandbox denies its
   write by path on every platform, and the hook refuses it too; should either fail, the host's own calls would follow a
@@ -545,6 +593,15 @@ Residual risks, each known and accepted:
 - A `.claude` link a session's git makes, as by checking out a branch that holds one, is denied by the `**/.claude`
   glob, and the hook refuses a write through it or, while git's index lists it, to the folder it leads to; a link git
   does not list is judged by the path as written alone.
+- With [`projectRun.localBinding`](../config.md#project-run) set, on macOS, where `allowLocalBinding` is the switch
+  for local networking: a service an issue session starts, such as a database or an API server for its tests, may
+  listen on any interface of this machine, where any other local process of any user, and any other machine the
+  firewall lets through when it binds `0.0.0.0`, can reach it; and the session's sandboxed commands reach every service
+  listening on this machine's loopback, such as the user's own databases, development servers, and any local admin
+  port, outside the network allowlist. The sandbox proof runs no localhost listener then, so on macOS with the key on
+  it does not check the loopback at all. On Linux the network namespace holds as without it, and the proof keeps its
+  listener.
+  Bind each test server to `127.0.0.1`; a team sets the key only on a machine where the rest is acceptable.
 - Each registry `projectRun.registries` lists is a host a sandboxed command can send data to, an accepted channel;
   [Dependency installs](#dependency-installs) names each one's path and the ruling. Hosts an install reaches beyond its registry, such as a
   native module's prebuilt binary, node-gyp's headers, or a toolchain download, stay refused.
@@ -581,9 +638,15 @@ Before `verified` changes, a live Claude Code must show every one of these, each
    trace of live check 21 shows the host makes no git call mid-session.
 6. A `settings.local.json` put in the clone mid-session changes none of 2 to 5.
 7. An HTTPS push, `gh api user`, and `gh pr create` work on macOS and on Linux, with `~/Library/Keychains` denied on
-   macOS; an unlisted host is refused with no prompt in every permission mode. Should a push or `gh pr create` fail
-   for the keychain, `~/Library/Keychains` is not opened again: the start passes the forge token through the forge
-   CLI's token variable, which `secretVars` keeps.
+   macOS, through the `GH_TOKEN` the SessionStart hook hands the sandboxed commands; the hook's environment holds the
+   `AIDRIAN_START_CLAIM` of the inline settings; the hook's `security` and `gh auth token` reads answer in a
+   background session within its 5 seconds, with no keychain prompt; an unlisted
+   host is refused with no prompt in every permission mode. A live run on 0.80.1 showed gh's keychain login does not
+   answer inside the sandbox, so `~/Library/Keychains` stays denied and the token goes through the forge CLI's token
+   variable, which `secretVars` keeps. Verified live: the start's push probe (`receivePackStatus`), run with a project's
+   dedicated keychain token, answered 200 for the repository that token may write and 403 for another repository.
+   Verified live too: with the hook's command-scope helper entries, `git credential fill` for github.com answered with
+   `GH_TOKEN`'s value though the user's config named `osxkeychain`, which alone did not.
 8. The same from a subagent, a background Bash command, and Monitor.
 9. With no `bwrap`, nothing runs.
 10. An invalid `--settings` value: what the host does with it. And each key the start passes that no earlier check
@@ -594,7 +657,9 @@ Before `verified` changes, a live Claude Code must show every one of these, each
 11. `claude --bg` or `claude -p` from inside the sandbox starts nothing outside it.
 12. The plugin's hooks still run under `--setting-sources user`, with the plugin installed at user scope.
 13. A sandboxed process cannot connect to a localhost listener outside the sandbox, on macOS with
-    `allowLocalBinding: false`.
+    `allowLocalBinding: false`; with `projectRun.localBinding` set, a sandboxed command can listen on a local port and
+    connect to it, on macOS and on Linux, a server it binds to `0.0.0.0` on macOS takes a connection from another
+    machine only where the firewall allows it, and on Linux it still cannot reach a listener outside the sandbox.
 14. `cat ~/.ssh/*` and a Read of it fail, and so do `cat ~/.git-credentials`, a read of the main checkout's `.env`,
     and `echo $NPM_TOKEN` with it set in the driver's environment.
 15. The session lists no claude.ai connector and no other plugin's MCP server, and only the `projectRun.mcpServers`
@@ -667,7 +732,13 @@ its start stays as [its page](codex.md#project-start) says.
    already counting as made; to open the clone's git `config` and `.claude/settings.json` for writing; to remove the
    keep file of `cache` and of `drop`; to move each folder away, or else to put a link beside it, and to write through
    the link; to read each store in the plan; to connect to the unlisted host, directly and through each HTTP proxy the
-   shell's environment names; and to connect to the listener. It also checks that each cache variable is in force in
+   shell's environment names; and to connect to the listener. Where the session's binding reaches this machine's
+   loopback, which the adapter declares through `confineLoopback` for macOS alone, the start runs no listener when the
+   base branch sets `projectRun.localBinding`, the plan's `local` is `null`, and the proof neither probes nor judges a
+   listener; the start decides that from the team's policy, the host, and the platform, never from the plan. On Linux
+   the listener stays required. The one known gap: on macOS with the key on, the proof does not check the loopback.
+   The start does not read managed settings for this; one that keeps `allowLocalBinding` false leaves the session
+   off the loopback, more isolated than the proof assumes. It also checks that each cache variable is in force in
    the shell with the value the start wrote. Any write, removal, move, link, or connection that succeeds is undone and
    fails the proof, and so does one whose target is not there. A read that opens is not yet a landed read: on Linux
    the host masks a denied folder with an empty one and a denied file with an empty one, so the proof hands what each
@@ -704,7 +775,8 @@ sandbox. Before a start, the start reads each managed source the host documents 
 `/Library/Managed Preferences/com.anthropic.claudecode.plist` and the same under the user's own folder there, read
 through `plutil`. Each is judged by the user settings' rules for `sandbox` keys, granted folders, and commands, with
 one more: a scalar the session's own settings set, such as `allowUnsandboxedCommands`, passes only at the session's
-value, and `allowManagedPermissionRulesOnly` halts, since the host then drops the session's own permission rules that
+value, but `network.allowLocalBinding`, which passes at `false` too where `projectRun.localBinding` sets the session's
+`true`, since `false` only narrows it, and `allowManagedPermissionRulesOnly` halts, since the host then drops the session's own permission rules that
 keep its file tools from the stores its sandbox hides. Its `enabledPlugins` switches count over the user's for the plugin checks. A source that is there and cannot
 be read halts the start; a platform with no documented sources halts it too.
 
@@ -728,8 +800,8 @@ writes them to `shell-env.json` in the attempt's folder, which no confined sessi
 plugin's SessionStart hook, for a session whose own mark names a run and issue whose ledger gives it exactly that
 attempt's folder, or whose pending mark starts it in that very clone, appends one `export NAME='value'` line for each
 name the gate gives, and no other, single-quoted with each quote escaped, to the
-file the host names in `CLAUDE_ENV_FILE`, which it sources before each Bash command. No `env` key is passed in the
-settings. On Codex the same variables reach its sandboxed commands through `shell_environment_policy.set`.
+file the host names in `CLAUDE_ENV_FILE`, which it reads and runs ahead of each Bash command. No package manager
+variable is passed in the settings' `env`, whose one key is the start's claim (Project start, above). On Codex the same variables reach its sandboxed commands through `shell_environment_policy.set`.
 
 | Package manager | Variables, each a folder or file in `cache` |
 | --- | --- |

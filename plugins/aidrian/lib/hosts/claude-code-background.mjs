@@ -334,7 +334,7 @@ function ownMode({ session, list, env, readMode, cwd = ownFolder(list, session) 
 // Starts the session of one issue of a project run, in the background, in the attempt's clone `cwd`, under the name
 // `name`, whose first message is `prompt`, as startIn does, in the permission mode the driver session `session` runs in
 // (`readMode`, sessionMode by default; never bypassPermissions), under the host's sandbox: `--setting-sources user`,
-// the settings sandboxSettings gives for `sandbox`, { git, grants, domains, main, mainGit, tokens, guarded }, and
+// the settings sandboxSettings gives for `sandbox`, { git, grants, domains, main, mainGit, tokens, guarded, localBinding }, and
 // `--strict-mcp-config` with only the servers `mcp` names. `sandbox.git` is the clone's git folder, which `sandbox.grants`
 // must hold, each an absolute path of plain text that resolves; `sandbox.domains` the forge's network hosts;
 // `sandbox.main` the main checkout, which the session may not read but its git folder `sandbox.mainGit`, and in which
@@ -347,7 +347,7 @@ function ownMode({ session, list, env, readMode, cwd = ownFolder(list, session) 
 // `beacon(session)`, the agent gate hook's beacon, shows the plugin's hooks run for it, within BEACON_WAIT: else the
 // session is stopped, and the answer names the failed proof (`proof`). Returns startIn's answer, or { problem,
 // uncertain, proof }. `hold`, `run`, `wait`, and `resolve` are startBackground's.
-export function startProject({ session, cwd, runs, prompt, name, effort, efforts = [], env, hold, identify, beacon, confined, sandbox, mcp, home, platform = process.platform, run = runCommand, wait = pause, resolve = claudeOnPath, readMode = sessionMode }) {
+export function startProject({ session, cwd, runs, prompt, name, effort, efforts = [], env, hold, identify, beacon, confined, sandbox, mcp, home, platform = process.platform, run = runCommand, wait = pause, resolve = claudeOnPath, readMode = sessionMode, claimVars = null }) {
   const box = sandboxInputs(sandbox);
   if (box.problem) return { problem: box.problem };
   if (typeof beacon !== 'function') return { problem: 'the gate gave no way to read the agent gate hook\'s beacon' };
@@ -367,7 +367,11 @@ export function startProject({ session, cwd, runs, prompt, name, effort, efforts
     return { problem: `the attempt's clone or a folder the gate grants the session lies in the main checkout ${box.main}, which a confined session may not read; set state.dir to a folder outside it` };
   }
   const user = home ?? homedir();
-  const settings = sandboxSettings({ ...box, work, temp: tempFolders(), home: user, config: configFolder(env, user), platform, secrets: secretVars(env, box.tokens), stores: npmGlobalConfigs(env) });
+  const boxed = sandboxSettings({ ...box, work, temp: tempFolders(), home: user, config: configFolder(env, user), platform, secrets: secretVars(env, box.tokens), stores: npmGlobalConfigs(env) });
+  // The start's claim, the one variable the settings set (`claimVars`, from lib/project-token.mjs): it marks this session,
+  // and no other opened in the clone, to the SessionStart hook that hands it the forge token. It is no secret.
+  const claimed = claimVars && typeof claimVars === 'object' && Object.values(claimVars).every((value) => typeof value === 'string');
+  const settings = claimed ? { ...boxed, env: { ...claimVars } } : boxed;
   // The clone is a repository of its own, so it never inherits the runs folder's trust: the start records it.
   const consent = typeof runs === 'string' && runs ? runs : runsOf(work);
   const trust = recordTrust({ work, runs: consent, env, home: user });
@@ -412,7 +416,7 @@ function sandboxInputs(sandbox) {
   // Folders no sandboxed command may write, which need not exist yet: each an absolute path of plain text, kept as given.
   const guarded = sandbox.guarded ?? [];
   if (!Array.isArray(guarded) || !guarded.every(plain)) return { problem: 'a folder the gate guards from the session is not an absolute path of plain text' };
-  return { git: own, grants: granted, domains: [...domains], main: optional.main ?? null, mainGit: optional.mainGit ?? null, tokens, guarded: [...guarded] };
+  return { git: own, grants: granted, domains: [...domains], main: optional.main ?? null, mainGit: optional.mainGit ?? null, tokens, guarded: [...guarded], localBinding: sandbox.localBinding === true };
 }
 
 // The temporary folders a sandboxed command may write, by their real paths: /tmp and the host's own.

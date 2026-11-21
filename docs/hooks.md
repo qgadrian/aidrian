@@ -46,7 +46,14 @@ A file edit is an Edit, Write, or NotebookEdit call, or Codex's `apply_patch`.
 Before anything else, in a main session whose own mark names a run and issue whose ledger gives it the confined
 attempt it starts in, or whose pending mark starts it in that attempt's clone, the hook hands the host the environment that attempt's sandboxed commands get,
 the package managers' caches in its `cache` folder, on a host that takes it: Claude Code, through the file it names in
-`CLAUDE_ENV_FILE` ([Dependency installs](providers/claude-code.md#dependency-installs)). It prints nothing for it.
+`CLAUDE_ENV_FILE` ([Dependency installs](providers/claude-code.md#dependency-installs)). On a host that declares
+`forgeTokenEnv`, as Claude Code does, it then hands over the forge token as `GH_TOKEN` the same way, only to a session
+whose environment holds the claim the start gave the session it launched, read again outside the sandbox from the one
+source the start checked, and only the token the start checked, by its SHA-256, with git's command-scope config that
+makes git take it from gh's own credential helper alone, for the forge's host only
+([Project start](providers/claude-code.md#project-start)). It records in the attempt's folder whether it handed the
+token over, which the start's proof check reads. It prints nothing for either, but a line saying why the token was not
+handed over.
 
 At the start of every session and subagent, the hook prints:
 
@@ -1048,7 +1055,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   finds, such as `find -delete`.
 - With or without gates, the same holds for `review.productFeedback` in that file: a Write, Edit, or apply_patch that changes it,
   through a JSON-escaped key, a removed key, or a file left unparsable included, or a Bash command that names `productFeedback`:
-  the machine's [product feedback](config.md#product-feedback) choice is the main session's.
+  the machine's [product feedback](config.md#product-feedback) choice is the main session's. So does
+  `projectRun.forgeTokenKeychain`, through `forgeTokenKeychain`: which keychain entry gives a project run's issue
+  sessions their [forge token](config.md#project-run) is the main session's.
 - A main session the [background handoff route](handoff.md#the-background-route) started is refused every machine
   switch in that file the same way, as a subagent is: no Human attends it. The hook knows it by the unattended mark the
   gate files, `$XDG_STATE_HOME/aidrian/unattended/<session id>.json`, or the one in `~/.local/state/aidrian/unattended/`

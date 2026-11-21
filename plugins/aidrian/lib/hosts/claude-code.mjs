@@ -12,7 +12,7 @@ import { pushPermission } from './claude-code-push.mjs';
 import { attended, END_SIGNAL, hasClient, hostProcess, isWrappedHost, PROGRAM } from './claude-code-terminal.mjs';
 import modelPrices from './claude-code-prices.mjs';
 import { transcriptLimit } from './claude-code-limit.mjs';
-import { accessProblem, cloneProblem, confineDomains, confineReads, limitContinueProblem, nestedProtected, PLACEHOLDERS, PROTECTED_PATHS, sessionNote, writeEnvFile } from './claude-code-sandbox.mjs';
+import { accessProblem, cloneProblem, confineDomains, confineReads, limitContinueProblem, localBindingRisk, loopbackReach, nestedProtected, PLACEHOLDERS, PROTECTED_PATHS, sessionNote, writeEnvFile } from './claude-code-sandbox.mjs';
 import { trustProblem } from './claude-code-trust.mjs';
 import { responseObjects } from './response.mjs';
 
@@ -338,7 +338,7 @@ export default {
       verified: 'unverified',
       evidence: 'fixtures and the host docs; no live run',
       confined: true,
-      access: ({ env, home, guarded, pushUrl, platform, allowed, helpers }) => accessProblem({ env, home, guarded, pushUrl, platform, allowed, helpers }),
+      access: ({ env, home, guarded, pushUrl, platform, allowed, helpers, localBinding }) => accessProblem({ env, home, guarded, pushUrl, platform, allowed, helpers, localBinding }),
       cloneProblem: ({ work, allowed }) => cloneProblem({ work, allowed }),
       // Whether a driver on this host would carry on by itself after a usage limit (aidrian project preflight).
       limitContinue: ({ env, home, project }) => limitContinueProblem({ env, home, project }),
@@ -349,6 +349,9 @@ export default {
       // The package managers' caches reach the session's sandboxed commands alone: the SessionStart hook appends them to
       // the file the host sources before each Bash command, never the settings' `env`, which its hooks and MCP servers get.
       shellEnv: ({ env, vars }) => writeEnvFile(env.CLAUDE_ENV_FILE, vars),
+      // The sandbox hides the system keyring, where the forge CLI may keep its login: the start reads the forge token
+      // outside it, and the SessionStart hook hands it to the sandboxed commands through shellEnv (lib/project-token.mjs).
+      forgeTokenEnv: true,
       // Each start proves, from inside the session, that the sandbox holds (lib/project-confine.mjs): its first call runs
       // `aidrian project confine`, which tries what the sandbox must refuse, and the start holds the session only once the
       // gate confirmed the verdict (`confined`). `confineReads` are the credential stores the proof tries to read.
@@ -356,8 +359,12 @@ export default {
       confineReads: ({ env, home }) => confineReads({ env, home }),
       // The allowedDomains the user's and the organization's settings add, which the proof's unlisted host stays outside.
       confineDomains: ({ env, home, platform }) => confineDomains({ env, home, platform }),
-      start: ({ session, cwd, name, prompt, env, hold, identify, beacon, confined, git, grants, domains, main, mainGit, tokens, guarded, mcp, home, platform, run, wait, runs }) => startProject({
-        session, cwd, runs, name, prompt, env, hold, identify, beacon, confined, sandbox: { git, grants, domains, main, mainGit, tokens, guarded }, mcp, home, platform, run, wait, effort: effort(env), efforts: MODEL_CHOICES.effort,
+      // Whether the session's binding reaches this machine's loopback under projectRun.localBinding, so the proof runs no
+      // localhost listener: macOS alone; Linux keeps the session in a network namespace of its own.
+      confineLoopback: ({ platform, localBinding }) => loopbackReach({ platform, localBinding }),
+      localBindingRisk,
+      start: ({ session, cwd, name, prompt, env, hold, identify, beacon, confined, git, grants, domains, main, mainGit, tokens, guarded, mcp, localBinding, home, platform, run, wait, runs, claimVars }) => startProject({
+        session, cwd, runs, name, prompt, env, hold, identify, beacon, confined, sandbox: { git, grants, domains, main, mainGit, tokens, guarded, localBinding }, mcp, home, platform, run, wait, effort: effort(env), efforts: MODEL_CHOICES.effort, claimVars,
       }),
       stop: ({ id, env, run }) => stopBackground({ id, env, run }),
       ended: ({ id, session, env, run }) => sessionFinished({ id, session, env, run }),

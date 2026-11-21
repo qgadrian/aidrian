@@ -14,7 +14,7 @@
 // ignored. It reads no file when loaded: hooks load every adapter.
 
 import { spawnSync } from 'node:child_process';
-import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync, writeSync } from 'node:fs';
+import { closeSync, constants, fchmodSync, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync, writeSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import path from 'node:path';
 
@@ -75,9 +75,13 @@ export const CREDENTIAL_PATHS = Object.freeze([
   '.config/pypoetry/auth.toml', 'Library/Application Support/pypoetry/auth.toml', '.local/share/uv/credentials',
 ]);
 
-// The host's own credential files in its user config folder, wherever CLAUDE_CONFIG_DIR moves it.
+// The host's own credential files in its user config folder, wherever CLAUDE_CONFIG_DIR moves it, and its `session-env`
+// tree, whose files hand each session's Bash commands their environment, a confined session's forge token among them.
+// The host reads a session's own file in its own process, outside the sandbox, and runs what it read ahead of each Bash
+// command (Claude Code 2.1.330: "Session environment loaded from CLAUDE_ENV_FILE"), so a sandbox that hides the whole
+// tree still gives each session its own variables, and no session reads another's.
 // `.claude-trust-stage` is where a start stages the trust record it updates (claude-code-trust.mjs TRUST_STAGE).
-const CONFIG_CREDENTIALS = Object.freeze(['.credentials.json', 'ide', '.claude.json', '.claude-trust-stage']);
+const CONFIG_CREDENTIALS = Object.freeze(['.credentials.json', 'ide', '.claude.json', '.claude-trust-stage', 'session-env']);
 
 // An environment variable whose name says it holds a credential, which the sandbox unsets before each sandboxed command
 // runs; and the well-known ones, unset whether or not the driver's environment has them, since the host's background
@@ -165,9 +169,11 @@ const credentialStores = (home, config) => [...new Set([
 // and cache folders each hold a keep file (attempt-clone.mjs ATTEMPT_KEEP) whose write is denied, so neither can be
 // emptied and removed. No package manager variable is set here: the settings' `env` would reach the host's own process,
 // its hooks, and its MCP servers, so they reach the sandboxed commands alone, through the SessionStart hook
-// (writeEnvFile). Scalars passed with --settings win over the user's settings; lists merge with them, which
-// accessProblem checks.
-export function sandboxSettings({ work, git, grants, domains, temp, home, config = path.join(home, '.claude'), platform, main = null, mainGit = null, secrets = [], guarded = [], stores = [] }) {
+// (writeEnvFile). `localBinding`, the base branch's projectRun.localBinding, lets sandboxed commands bind local ports:
+// on macOS on every interface, with inbound connections, and reach every service on the machine's loopback; on Linux
+// the host keeps them in a network namespace of their own, so it changes nothing there. Scalars passed with --settings win over the user's settings; lists merge
+// with them, which accessProblem checks.
+export function sandboxSettings({ work, git, grants, domains, temp, home, config = path.join(home, '.claude'), platform, main = null, mainGit = null, secrets = [], guarded = [], stores = [], localBinding = false }) {
   const credentials = [...new Set([...credentialStores(home, config), ...stores])];
   const unread = main ? [...credentials, main] : credentials;
   const reopen = main && mainGit && within(main, mainGit) ? { allowRead: [mainGit] } : {};
@@ -191,7 +197,7 @@ export function sandboxSettings({ work, git, grants, domains, temp, home, config
         denyRead: unread,
         ...reopen,
       },
-      network: { strictAllowlist: true, allowedDomains: [...domains], allowAllUnixSockets: false, allowLocalBinding: false },
+      network: { strictAllowlist: true, allowedDomains: [...domains], allowAllUnixSockets: false, allowLocalBinding: localBinding === true },
       credentials: { envVars: secrets.map((name) => ({ name, mode: 'deny' })) },
     },
     // Read rules take `//` for an absolute path; the file tools run outside the sandbox, so they need their own.
@@ -230,8 +236,9 @@ export function npmGlobalConfigs(env) {
 const quoted = (value) => `'${value.replaceAll("'", "'\\''")}'`;
 
 // Appends an `export NAME='value'` line for each of `vars` to the host's session environment file `file`, which the
-// host sources before each Bash command of the session, and no hook or MCP server reads: whether it wrote them. A file
-// that is no absolute path, a link, or a name a shell does not take writes nothing.
+// host reads in its own process, outside the sandbox, and runs ahead of each Bash command of the session, and no hook
+// or MCP server reads: whether it wrote them. A file that is no absolute path, a link, or a name a shell does not take
+// writes nothing. The file is made owner-only first, and one that cannot be writes nothing: it may hold the forge token.
 export function writeEnvFile(file, vars) {
   if (typeof file !== 'string' || !path.isAbsolute(file) || CONTROL.test(file)) return false;
   const entries = Object.entries(vars ?? {});
@@ -240,6 +247,8 @@ export function writeEnvFile(file, vars) {
   try {
     fd = openSync(file, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0), 0o600);
     if (!fstatSync(fd).isFile()) return false;
+    fchmodSync(fd, 0o600);
+    if ((fstatSync(fd).mode & 0o777) !== 0o600) return false;
     writeSync(fd, `${entries.map(([name, value]) => `export ${name}=${quoted(value)}`).join('\n')}\n`);
     return true;
   } catch {
@@ -451,11 +460,12 @@ function weakenedProblem(settings, { home, guarded, label = 'the host\'s user se
 }
 
 // The values of each overridden sandbox scalar a managed source may set, which ranks above --settings: those the
-// session's own settings set (sandboxSettings), and, for autoAllowBashIfSandboxed, either, since false only asks more.
-const strictScalars = (platform) => ({
+// session's own settings set (sandboxSettings), and, for autoAllowBashIfSandboxed, either, since false only asks more;
+// for network.allowLocalBinding, either too where the team's `localBinding` sets the session's true.
+const strictScalars = (platform, localBinding = false) => ({
   enabled: [true], failIfUnavailable: [true], allowUnsandboxedCommands: [false], autoAllowBashIfSandboxed: [true, false], enableWeakerNestedSandbox: [false],
   enableWeakerNetworkIsolation: platform === 'darwin' ? [true, false] : [false], allowAppleEvents: [false], allowNestedUserNamespaces: [false],
-  'network.strictAllowlist': [true], 'network.allowAllUnixSockets': [false], 'network.allowLocalBinding': [false],
+  'network.strictAllowlist': [true], 'network.allowAllUnixSockets': [false], 'network.allowLocalBinding': localBinding === true ? [true, false] : [false],
 });
 
 // The system folder of the host's managed settings files, and the macOS managed preferences files of its policy domain,
@@ -515,11 +525,11 @@ export function managedSettings({ platform, managed = null, user = null, run = s
 
 // Why the managed settings `documents` would weaken the session's sandbox, run a command outside it, or grant a guarded
 // folder, under the user settings' rules, with an overridden sandbox scalar kept only at the session's own value; or null.
-function managedProblem(documents, { home, guarded, platform, allowed }) {
+function managedProblem(documents, { home, guarded, platform, allowed, localBinding = false }) {
   const named = new Set(allowed);
   for (const { source, value } of documents) {
     const label = `the host's managed settings ${source}`;
-    const weakened = weakenedProblem(value, { home, guarded, label, strict: strictScalars(platform) });
+    const weakened = weakenedProblem(value, { home, guarded, label, strict: strictScalars(platform, localBinding) });
     if (weakened) return weakened;
     const key = COMMAND_KEYS.find((each) => isSet(at(value, each)) && !named.has(each));
     if (key) return `${label} set ${key}, a command the host runs outside the sandbox of a session no Human attends; the team names it in projectRun.outsideSandbox, or the organization removes it`;
@@ -534,6 +544,18 @@ const withManagedPlugins = (settings, documents) => ({
   ...settings,
   enabledPlugins: Object.assign({}, isObject(settings.enabledPlugins) ? settings.enabledPlugins : {}, ...documents.map(({ value }) => (isObject(value.enabledPlugins) ? value.enabledPlugins : {}))),
 });
+
+// Whether the session's allowLocalBinding reaches this machine's loopback on `platform`, so the sandbox proof runs no
+// localhost listener: with the team's `localBinding` on, on macOS, where it is the switch for localhost. On Linux the
+// session's commands run in a network namespace of their own, and the listener stays. Managed settings are not read: one
+// that keeps allowLocalBinding false only isolates the session more than the proof then checks
+// (docs/providers/claude-code.md#the-sandbox-proof).
+export const loopbackReach = ({ platform, localBinding = false }) => localBinding === true && platform === 'darwin';
+
+// The risk of the team's projectRun.localBinding on `platform`, for preflight's note.
+export const localBindingRisk = ({ platform }) => (platform === 'darwin'
+  ? 'on macOS a service a session starts may listen on every interface of this machine, where other local processes, and other machines the firewall lets through, reach it, and the session reaches every service listening on this machine\'s loopback, unless the organization\'s managed settings keep allowLocalBinding false'
+  : 'on Linux the session\'s commands run in a network namespace of their own, so it changes nothing there, and their ports stay out of reach of the rest of this machine');
 
 // The network hosts the user's and the organization's settings add to the session's allowedDomains, which lists merge:
 // the sandbox proof names a host outside them (lib/project-confine.mjs). Unreadable settings add none; the start halts
@@ -554,10 +576,10 @@ const storeHelper = (value) => /^\s*(?:store\b|!?\S*git-credential-store\b)/u.te
 // a halt, or null. `env` and `home` name the user's settings; `guarded` holds the real folders no session no Human
 // attends may write; `pushUrl` is the URL the attempt's clone pushes to, origin's URL in the main checkout; `helpers` the
 // git credential helpers its config names; `platform` the operating system; `allowed`, the base branch's
-// projectRun.outsideSandbox. The checks, in order: the user's settings read; their sandbox keys and grants; this plugin
+// projectRun.outsideSandbox, and `localBinding` its projectRun.localBinding. The checks, in order: the user's settings read; their sandbox keys and grants; this plugin
 // enabled; their command keys and other plugins; the user's own skills, agents, and commands; then origin, git's
 // credential helper, and bubblewrap and socat on Linux.
-export function accessProblem({ env, home, guarded = [], pushUrl, platform, allowed = [], helpers = [], managed = null }) {
+export function accessProblem({ env, home, guarded = [], pushUrl, platform, allowed = [], helpers = [], managed = null, localBinding = false }) {
   const user = home ?? env.HOME ?? homedir();
   const folder = configFolder(env, user);
   const settings = userSettings(folder);
@@ -566,7 +588,7 @@ export function accessProblem({ env, home, guarded = [], pushUrl, platform, allo
   if (weakened) return weakened;
   const read = managedSettings({ platform, managed, user: userName() });
   if (read.problem) return read.problem;
-  const ranked = managedProblem(read.documents, { home: user, guarded, platform, allowed });
+  const ranked = managedProblem(read.documents, { home: user, guarded, platform, allowed, localBinding });
   if (ranked) return ranked;
   const effective = withManagedPlugins(settings.value, read.documents);
   const installed = installedPlugins(folder);

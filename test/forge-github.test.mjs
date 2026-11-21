@@ -20,7 +20,7 @@ import { viewForge, viewPrAt } from '../plugins/aidrian/lib/rules/github/merge-r
 // Every name the facade gives its callers.
 const FACADE = [
   'id', 'cwd', 'isTrustedCommenter', 'hosts', 'changeRef', 'changesState', 'changeUrl',
-  'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'branchHead', 'contents', 'tree', 'visibility', 'viewer',
+  'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'branchHead', 'contents', 'tree', 'visibility', 'viewer', 'authToken', 'tokenCanPush',
   'conversationComments', 'comment', 'issue', 'postComment', 'editComment', 'deleteComment', 'reactions',
   'pull', 'diff', 'nodeChange', 'changeEdits', 'reviewTrail', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',
   'postReview', 'reviewComment', 'deleteReviewComment', 'findingThreads', 'replyToReviewComment', 'resolveThread', 'unresolveThread',
@@ -170,8 +170,44 @@ test('docs/providers/adding-a-host.md names every method a forge adapter impleme
   assert.deepEqual(FACADE.filter((name) => !new RegExp('`' + name + '[`(]', 'u').test(section)), []);
 });
 
+test('authToken: gh auth token for the host, trimmed, which reads gh`s login wherever gh keeps it, and throws with none', () => {
+  const { forge, args } = recorded(() => 'gho_abc123\n');
+  assert.equal(forge.authToken({ host: 'github.com' }), 'gho_abc123');
+  assert.equal(forge.authToken(), 'gho_abc123');
+  assert.deepEqual(args(), [['auth', 'token', '--hostname', 'github.com'], ['auth', 'token']]);
+  const none = createGithubForge({ run: () => { throw new Error('no oauth token found for github.com'); } });
+  assert.throws(() => none.authToken({ host: 'github.com' }), /no oauth token/u);
+});
+
+test('tokenCanPush: the push probe the adapter was given, for the repository and host, with the token', () => {
+  const asked = [];
+  const forge = createGithubForge({ cwd: '/repo', run: () => assert.fail('no gh'), probe: (repo, options) => (asked.push([repo, options]), { status: 403, type: 'text/plain' }) });
+  assert.deepEqual(forge.tokenCanPush('acme/widgets', { host: 'github.com', token: 'github_pat_RO' }), { may: false, why: 'the forge answered 403' });
+  assert.deepEqual(forge.tokenCanPush('acme/widgets', { token: 'github_pat_RO' }), { may: false, why: 'the forge answered 403' });
+  assert.deepEqual(asked, [['acme/widgets', { host: 'github.com', token: 'github_pat_RO' }], ['acme/widgets', { host: 'github.com', token: 'github_pat_RO' }]]);
+});
+
+test('the forge token helpers: GH_TOKEN, which gh and its git helper read, the login step, and a note on any token but a fine-grained one', () => {
+  assert.equal(facade.forgeTokenVar('github.com'), 'GH_TOKEN');
+  assert.equal(facade.forgeTokenVar('ghe.example.com'), 'GH_ENTERPRISE_TOKEN', 'a GitHub Enterprise Server host');
+  for (const host of ['github.com', 'ghe.example.com']) assert.ok(facade.forgeTokenVars().includes(facade.forgeTokenVar(host)), 'the sandbox keeps the variable the token goes in');
+  assert.equal(facade.forgeLoginStep('github.com'), 'gh auth login --hostname github.com --git-protocol https');
+  // gh's own helper by its absolute path, quoted for the shell git runs it in; none without a gh on PATH.
+  const bin = mkdtempSync(path.join(tmpdir(), "aidrian-gh's-"));
+  writeFileSync(path.join(bin, 'gh'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  assert.equal(facade.forgeGitHelper({ PATH: `relative${path.delimiter}${bin}` }), `!'${path.join(bin, 'gh').replaceAll("'", "'\\''")}' auth git-credential`);
+  assert.equal(facade.forgeGitHelper({ PATH: '' }), null);
+  rmSync(bin, { recursive: true, force: true });
+  assert.equal(facade.forgeTokenNote('github_pat_11AAAA'), null);
+  assert.match(facade.forgeTokenNote('gho_abc'), /^it is an OAuth token of gh's own login, which reaches every repository and scope its user has/u);
+  assert.match(facade.forgeTokenNote('ghp_abc'), /^it is a classic personal access token, which reaches every repository/u);
+  assert.match(facade.forgeTokenNote('ghu_abc'), /^it is a user-to-server token/u);
+  assert.match(facade.forgeTokenNote('sometoken'), /^it is a token of no kind GitHub names by prefix/u);
+  for (const token of ['gho_secretvalue', 'github_pat_secretvalue']) assert.ok(!(facade.forgeTokenNote(token) ?? '').includes(token), 'a note never holds the token');
+});
+
 test('the facade index gives shared code forgeFor and its helpers, and nothing of GitHub`s by name', () => {
-  assert.deepEqual(Object.keys(facade).sort(), ['MAX_BODY', 'REVIEWS_PAGE', 'changeNotFound', 'diffTooLarge', 'forgeApiWrite', 'forgeConfigCommands', 'forgeDomains', 'forgeFor', 'forgeRefCommands', 'forgeTokenVars', 'forgeWorkflowFolders', 'isLogin', 'isTrustedCommenter', 'remoteIdentity', 'repoIdentity', 'servedRepository']);
+  assert.deepEqual(Object.keys(facade).sort(), ['MAX_BODY', 'REVIEWS_PAGE', 'changeNotFound', 'diffTooLarge', 'forgeApiWrite', 'forgeConfigCommands', 'forgeDomains', 'forgeFor', 'forgeGitHelper', 'forgeLoginStep', 'forgeRefCommands', 'forgeTokenNote', 'forgeTokenVar', 'forgeTokenVars', 'forgeWorkflowFolders', 'isLogin', 'isTrustedCommenter', 'remoteIdentity', 'repoIdentity', 'servedRepository']);
   assert.equal(facade.servedRepository, servedRepository);
   // The forge CLI's subcommands that write the user's config, for the unattended write allowlist.
   const commands = facade.forgeConfigCommands();

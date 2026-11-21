@@ -717,7 +717,7 @@ inside the state folder, and prints that path, alone, on stdout: the [pr-product
 product-manager read takes it, since that agent runs no shell.
 When the forge refuses the diff as too large (GitHub's `PullRequest.diff too_large`, past its size limit), and only then,
 `diff` reads the pull request's base and head commits from the forge and writes
-`git diff --no-relative --ignore-submodules=none <base>...<head>` from the current checkout instead, the merge base to the
+`git diff --no-relative --ignore-submodules=none --submodule=short <base>...<head>` from the current checkout instead, the merge base to the
 head, as the forge shows a pull request: every changed file by its path from the repository's top, even from a project in a
 subfolder with `diff.relative` set, and every changed submodule pointer, even one whose `submodule.<name>.ignore` is `all`. A shallow checkout
 (`git rev-parse --is-shallow-repository` prints `true`) is refused first, with nothing written and nothing fetched, whether

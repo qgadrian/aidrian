@@ -83,7 +83,7 @@ test('a diff gh refuses as too large comes from the local fallback, git diff of 
   assert.match(written, /^\+export const title = "Reservations";$/mu);
   assert.deepEqual(viewsOfEnds(result.calls), [['pr', 'view', '7', '--json', 'baseRefOid,headRefOid', '--repo', 'github.com/acme/notes']]);
   assert.equal(result.err.length, 1);
-  assert.match(result.err[0], new RegExp(`as too large, so it came from the local fallback: git diff --no-relative --ignore-submodules=none ${r.base}\\.\\.\\.${r.head} in this checkout$`, 'u'));
+  assert.match(result.err[0], new RegExp(`as too large, so it came from the local fallback: git diff --no-relative --ignore-submodules=none --submodule=short ${r.base}\\.\\.\\.${r.head} in this checkout$`, 'u'));
   // A project in a subfolder, with `diff.relative` on: the diff still holds every file, outside the project too, by its
   // path from the repository's top.
   const nested = repo(t);
@@ -104,7 +104,7 @@ test('a diff gh refuses as too large comes from the local fallback, git diff of 
   const inApp = { dir: app, state: nested.state };
   const fromApp = run(t, inApp, fakeGh({ base: nestedBase, head: nestedHead }, () => { throw ghFailed(TOO_LARGE); }));
   assert.equal(fromApp.code, 0, fromApp.err.join('\n'));
-  assert.match(fromApp.err[0], new RegExp(`local fallback: git diff --no-relative --ignore-submodules=none ${nestedBase}\\.\\.\\.${nestedHead} in this checkout$`, 'u'));
+  assert.match(fromApp.err[0], new RegExp(`local fallback: git diff --no-relative --ignore-submodules=none --submodule=short ${nestedBase}\\.\\.\\.${nestedHead} in this checkout$`, 'u'));
   const files = [...readFileSync(patchOf(inApp), 'utf8').matchAll(/^diff --git a\/(\S+) /gmu)].map((match) => match[1]);
   assert.deepEqual(files, ['app/inner.js', 'page.js']);
 });

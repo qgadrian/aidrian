@@ -45,7 +45,7 @@ function localDiff({ forge, pr, root }) {
   const { base, head } = endsOf(forge, pr);
   const fetched = [base, head].filter((sha, index, all) => all.indexOf(sha) === index && !hasCommit(root, sha));
   if (fetched.length) fetchCommits(root, pr, fetched);
-  const flags = ['--no-relative', '--ignore-submodules=none'];
+  const flags = ['--no-relative', '--ignore-submodules=none', '--submodule=short'];
   const command = `git diff ${flags.join(' ')} ${base}...${head}`;
   const result = runGit(['diff', '--no-color', ...flags, `${base}...${head}`, '--'], root, { maxBuffer: LOCAL_DIFF_MAX_BYTES, timeout: DIFF_TIMEOUT_MS });
   if (result.error?.code === 'ENOBUFS') throw new Error(`${command} printed more than ${LOCAL_DIFF_MAX_BYTES / 1024 / 1024} MB`);

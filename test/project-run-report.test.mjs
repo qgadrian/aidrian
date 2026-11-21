@@ -533,7 +533,7 @@ test('preflight names every blocker at once, and starts nothing', (t) => {
   assert.equal(asked?.counts?.(older('✅ **Completed**').replace('\n\n## Codex', '\n<!-- codex-review-state:v1 {not json} -->\n\n## Codex')), false, 'a state that does not parse shows nothing, whatever the row says');
   assert.equal(asked?.counts?.(card('completed')), true, 'a card whose review completed counts');
   assert.equal(asked?.counts?.('The card opens with `<!-- codex-pull-request-review-summary -->`, so match it at the start.'), true, 'a review that quotes the card marker counts');
-  assert.deepEqual(ok.out.filter((line) => !/^(ask|note) /u.test(line)), ['ok repository', 'ok state', 'ok run', 'ok instructions', 'ok policy', 'ok machine', 'ok host', 'ok trust', 'ok access', 'ok usage-limit', 'ok tracker', 'ok auto-merge', 'ok handoff', 'ok reviewer', 'ok reviewer-seen', 'ok ci', 'ok branch-protection', 'ok release-tags', 'ok workflow-secrets'], ok.out.join('\n'));
+  assert.deepEqual(ok.out.filter((line) => !/^(ask|note) /u.test(line)), ['ok repository', 'ok state', 'ok run', 'ok instructions', 'ok commit', 'ok policy', 'ok machine', 'ok host', 'ok trust', 'ok access', 'ok usage-limit', 'ok tracker', 'ok auto-merge', 'ok handoff', 'ok reviewer', 'ok reviewer-seen', 'ok ci', 'ok branch-protection', 'ok release-tags', 'ok workflow-secrets'], ok.out.join('\n'));
   assert.equal(ok.exitCode, 0);
   assert.deepEqual(ok.out.filter((line) => line.startsWith('ask ')).map((line) => line.split(':')[0]), ['ask labels']);
   assert.equal(ready.claude.starts().length, 0);
@@ -591,6 +591,67 @@ test('preflight blocks a host instruction file above the runs folder, which ever
   assert.ok(line, out.out.join('\n'));
   assert.ok(line.includes(`the host loads ${file}, in a folder above the attempt's clone, and it lies outside the main checkout`), line);
   assert.match(line, /move it away, or set state\.dir to a folder with no host instruction file above it$/u);
+});
+
+// A commit in a clone made as an attempt's: the user's global config may sign, since the clone's own config turns it off,
+// but a setting in the environment that wins over the clone's, or no identity, blocks with git's own words.
+test('preflight probes a commit in a clone made as an attempt\'s, blocks one that would still sign or fails, and leaves no scratch', (t) => {
+  const fx = runFixture(t, { init: false, ...READY });
+  const runs = path.join(fx.state, 'runs');
+  // The driver's environment with `env` on top, and no identity of git's own variables.
+  const line = (env) => {
+    const merged = { ...fx.as(DRIVER), ...env };
+    for (const name of ['GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL', 'EMAIL']) delete merged[name];
+    return fx.cmd(['preflight'], { env: merged }).out.find((each) => /^(?:ok|blocker) commit\b/u.test(each)) ?? null;
+  };
+  const scratch = () => (existsSync(runs) ? readdirSync(runs).filter((name) => name.startsWith('.commit-probe-')) : []);
+  const gpg = path.join(fx.root, 'gpg-denied');
+  writeFileSync(gpg, '#!/bin/sh\necho "gpg: the sandbox denies the keys" >&2\nexit 2\n', { mode: 0o755 });
+  const signing = path.join(fx.root, 'signing.gitconfig');
+  writeFileSync(signing, `[user]\n\tname = t\n\temail = t@example.invalid\n[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = ${gpg}\n`);
+  assert.equal(line({ GIT_CONFIG_GLOBAL: signing }), 'ok commit', 'the user\'s global config signs, and the clone\'s own config turns it off');
+  assert.deepEqual(scratch(), [], 'the scratch repository is removed');
+
+  const forced = line({ GIT_CONFIG_GLOBAL: signing, GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'commit.gpgsign', GIT_CONFIG_VALUE_0: 'true' });
+  assert.match(forced ?? '', /^blocker commit: git still reads commit\.gpgsign as true in a clone whose own config sets it false, as a GIT_CONFIG_COUNT or GIT_CONFIG_PARAMETERS setting in this environment makes it; .*: unset that setting \(setup: docs\/config\.md#project-run\)$/u, forced);
+  assert.deepEqual(scratch(), []);
+
+  const nobody = path.join(fx.root, 'nobody.gitconfig');
+  writeFileSync(nobody, '[user]\n\tuseConfigOnly = true\n');
+  const failed = line({ GIT_CONFIG_GLOBAL: nobody });
+  assert.match(failed ?? '', /^blocker commit: a commit in a clone made as an attempt's fails \(fatal: no (?:name|email) was given and auto-detection is disabled\) \(setup: docs\/config\.md#project-run\)$/u, failed);
+  assert.deepEqual(scratch(), []);
+
+  // An identity the user's config gives only to a clone of the run's repository, by origin's URL: the scratch takes the
+  // main checkout's origin URL, as each attempt's clone does.
+  const identity = path.join(fx.root, 'acme.gitconfig');
+  writeFileSync(identity, '[user]\n\tname = t\n\temail = t@example.invalid\n');
+  const byRemote = path.join(fx.root, 'by-remote.gitconfig');
+  writeFileSync(byRemote, `[user]\n\tuseConfigOnly = true\n[includeIf "hasconfig:remote.*.url:https://github.com/acme/**"]\n\tpath = ${identity}\n`);
+  assert.equal(line({ GIT_CONFIG_GLOBAL: byRemote }), 'ok commit', 'the identity an includeIf on origin\'s URL gives');
+
+  // Variables that point git at another git folder, index, object store, or config file write nothing there.
+  const outside = mkdtempSync(path.join(fx.root, 'outside-'));
+  mkdirSync(path.join(outside, 'gitdir'));
+  const pointed = { GIT_DIR: path.join(outside, 'gitdir'), GIT_INDEX_FILE: path.join(outside, 'index'), GIT_OBJECT_DIRECTORY: path.join(outside, 'objects'), GIT_CONFIG: path.join(outside, 'config'), GIT_WORK_TREE: outside };
+  assert.equal(line({ GIT_CONFIG_GLOBAL: signing, ...pointed }), 'ok commit');
+  assert.deepEqual([readdirSync(outside), readdirSync(path.join(outside, 'gitdir'))], [['gitdir'], []], 'nothing written outside the scratch');
+  assert.deepEqual(scratch(), []);
+
+  // A template whose commondir points elsewhere, by GIT_TEMPLATE_DIR or init.templateDir: the scratch takes no template.
+  const away = mkdtempSync(path.join(fx.root, 'away-'));
+  const template = mkdtempSync(path.join(fx.root, 'template-'));
+  writeFileSync(path.join(template, 'commondir'), `${away}\n`);
+  const templated = path.join(fx.root, 'templated.gitconfig');
+  writeFileSync(templated, `[user]\n\tname = t\n\temail = t@example.invalid\n[init]\n\ttemplateDir = ${template}\n`);
+  assert.equal(line({ GIT_CONFIG_GLOBAL: templated }), 'ok commit');
+  assert.equal(line({ GIT_CONFIG_GLOBAL: signing, GIT_TEMPLATE_DIR: template }), 'ok commit');
+  assert.deepEqual(readdirSync(away), [], 'nothing written where the template pointed');
+
+  // A signing key git cannot read as a boolean fails closed.
+  const unread = line({ GIT_CONFIG_GLOBAL: signing, GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'commit.gpgsign', GIT_CONFIG_VALUE_0: 'maybe' });
+  assert.match(unread ?? '', /^blocker commit: git cannot read commit\.gpgsign in a clone made as an attempt's \(fatal: bad boolean config value 'maybe' for 'commit\.gpgsign'\)/u, unread);
+  assert.deepEqual(scratch(), []);
 });
 
 test('preflight passes the host\'s own user memory in a home folder above the runs folder, and blocks a project file in that home', (t) => {

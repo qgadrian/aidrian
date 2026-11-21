@@ -198,15 +198,20 @@ export const remergeBrief = (input) => `This head is a merge from the base branc
 
 // The listed files this pull request took back to the base's text since `baseMerged.from` (step.mjs boundFor).
 const rolledBack = (input) => (Array.isArray(input.baseMerged?.rolledBack) ? input.baseMerged.rolledBack : []);
+// A rolled-back file's head text is the merge base's, which may hold the base's own edits to it since `from`: the
+// pull request's rollback is the reverse of its own change at `from`, from `from` to that head's merge base,
+// `baseMerged.earlierBase`. File names are the pull request's and may hold any text, a newline among it, so the prose
+// points at `baseMerged.rolledBack` in the input JSON and never names one.
+const rollbackDiff = (input) => `\`git diff ${input.baseMerged.from} ${input.baseMerged.earlierBase} -- <file>\``;
 // The diff command a prompt's file list names for the rolled-back files, after the one from the merge base.
-const rolledBackDiff = (input) => (rolledBack(input).length ? `, and for ${rolledBack(input).join(', ')}, which it took back to the base's text, \`git diff ${input.baseMerged.from} ${input.head} -- <file>\`` : '');
+const rolledBackDiff = (input) => (rolledBack(input).length ? `, and for each file in \`baseMerged.rolledBack\`, which it took back to the base's text, ${rollbackDiff(input)}` : '');
 
 // What a reviewer of a delta whose range merged the base branch reads (lib/review/step.mjs boundFor): the base's own
 // changes in that range are not this pull request's, so `files` lists only its own, and within them only its own lines
 // count. The input's `base` is then the merge base, and `baseMerged.from` the earlier head the delta runs from.
 // `baseMerged.rolledBack` lists the files this pull request took back to the base's text since `from`: the diff from the
-// merge base holds nothing there, so the rollback is read from `from` (rolledBackDiff).
-export const baseMergedBrief = (input) => `Between ${input.baseMerged.from} and ${input.head} this branch merged the base branch (${input.baseMerged.merges.join(', ')}): what the base brought was reviewed there and is not this pull request's change. Review only the listed files, and in them only what this pull request changes, \`git diff ${input.baseMerged.base} ${input.head}\`, or what a merge commit itself changed, ${input.baseMerged.merges.map((merge) => `\`git show --remerge-diff ${merge}\``).join(', ')}.${rolledBack(input).length ? ` This pull request took ${rolledBack(input).join(', ')} back to the base's text since ${input.baseMerged.from}, so the diff from the merge base shows nothing there: review that rollback, \`git diff ${input.baseMerged.from} ${input.head} -- <file>\`.` : ''} Report nothing the base branch alone wrote.`;
+// merge base holds nothing there, so the rollback is read as the reverse of the change at `from` (rollbackDiff).
+export const baseMergedBrief = (input) => `Between ${input.baseMerged.from} and ${input.head} this branch merged the base branch (${input.baseMerged.merges.join(', ')}): what the base brought was reviewed there and is not this pull request's change. Review only the listed files, and in them only what this pull request changes, \`git diff ${input.baseMerged.base} ${input.head}\`, or what a merge commit itself changed, ${input.baseMerged.merges.map((merge) => `\`git show --remerge-diff ${merge}\``).join(', ')}.${rolledBack(input).length ? ` This pull request took each file in \`baseMerged.rolledBack\` back to the base's text since ${input.baseMerged.from}, so the diff from the merge base shows nothing there: review that rollback, the reverse of its own change at ${input.baseMerged.from}, ${rollbackDiff(input)} for each of those files.` : ''} Report nothing the base branch alone wrote.`;
 
 // What a reviewer of a project below the repository root reads, with `prefix` the project's folder from the top: a plain
 // `git diff` lists repository-root paths and files outside the project, and a citation of one is refused.

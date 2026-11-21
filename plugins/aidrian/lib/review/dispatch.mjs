@@ -257,10 +257,11 @@ export function passInput(s, pass, stage) {
     // A merge's resolutions are the whole review: a pass of every changed file reads only the resolved ones. A bounded
     // delta's `base` is the merge base, not the earlier head: `git diff <base> <head>` from the earlier head holds the
     // base branch's code, and an exec reviewer diffs `base` to `head` as it reads them. `baseMerged.from` names the
-    // earlier head the delta runs from, and `baseMerged.rolledBack` the listed files a push took back to the base's
-    // text since it: the diff from the merge base holds nothing there, so the reviewer reads `git diff <from> <head>`.
+    // earlier head the delta runs from, `baseMerged.earlierBase` that head's merge base, and `baseMerged.rolledBack` the
+    // listed files a push took back to the base's text since it: the diff from the merge base holds nothing there, and
+    // the one from `from` to the head holds the base's own edits, so the reviewer reads `git diff <from> <earlierBase>`.
     pr: n, repo, base: merged ? merged.base : from, head, context: from === base ? 'full' : 'delta', files, flows,
-    ...(merged ? { baseMerged: { base: merged.base, from, merges: merged.merges, rolledBack: (merged.rolledBack ?? []).filter((file) => files.includes(file)) } } : {}),
+    ...(merged ? { baseMerged: { base: merged.base, from, earlierBase: merged.earlierBase, merges: merged.merges, rolledBack: (merged.rolledBack ?? []).filter((file) => files.includes(file)) } } : {}),
     // Only the ids listed to this pass show: the only ones a finding it returns may take.
     priorFindings: residuals ? [...contextFindings(earlier, listed), ...recordSettled(state, prior, residuals)] : earlier.map((finding) => idCopy(finding, listed)),
     ...(residuals ? { acceptedResiduals: residuals } : {}),

@@ -274,8 +274,11 @@ export async function prepareStep(s) {
   // Flows whose files the globs miss: a changed file whose whole head content, or whose callers, hand it the flow's
   // privileged value (review.flows.<id>.content). A git failure stops the review rather than plan less.
   // Accepted residual (tracked on pull request #457): the plan reads `changes`, the merge-base diff, so a file whose
-  // conflict a merge resolved exactly to the base's text is not in it. A delta pass still reads that resolution (boundFor
-  // `resolved`), but in a split review the file gets no slice of its own, and it triggers no flow by its path.
+  // conflict a merge resolved exactly to the base's text, or that a plain push took back to the base's text, is not in
+  // it. A delta pass still reads that resolution (boundFor `resolved`) or rollback (boundFor `rolledBack`), but in a split
+  // review the file gets no slice of its own, and it triggers no flow by its path. And a slice a fix repacked restarts
+  // from the base (sameFiles), so it reads no bound delta: an open finding assigned to it on a file it lost is not in its
+  // `files` (dispatch.mjs passInput keeps an open finding's file only in a bound delta), and it cannot raise it again.
   const traced = contentFlows({ root, head, changes, addedLines, flows: review.flows });
   const planFor = (minDepth) => buildPlan({
     head, base, changes, addedLines, removedFiles, config: effective, harnessChanged: [...new Set(harnessChanged)], extraFlows: traced,
@@ -362,10 +365,12 @@ export async function prepareStep(s) {
         }
       }
       // A bounded file the merge-base diff no longer holds, yet changed since `from`: a push, or a resolution, took it
-      // back to the base's text. Its diff from the merge base is empty, so the reviewer reads it from `from` instead.
+      // back to the base's text. Its diff from the merge base is empty, and its diff from `from` to the head holds the
+      // base's own edits to it since `earlierBase`, so the reviewer reads the rollback as the reverse of the pull
+      // request's own change at `from`, `git diff <from> <earlierBase> -- <file>`.
       const inChanges = new Set(changes.map((change) => change.file));
       const rolledBack = changeSince(from).map((change) => change.file).filter((file) => files.has(file) && !inChanges.has(file));
-      return { base, merges, files, resolved, rolledBack };
+      return { base, earlierBase, merges, files, resolved, rolledBack };
     } catch {
       return { base, merges, files: null };
     }

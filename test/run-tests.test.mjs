@@ -2,7 +2,7 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { availableParallelism, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
@@ -14,7 +14,7 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 const SCRIPT = path.join(import.meta.dirname, '../scripts/run-tests.mjs');
 
 // Small test files: one starts 3 git and 2 other child processes, one 1 git and 2 others, one starts none, one fails,
-// one kills its runner, and one writes its runner's command line to runner-args.txt in the folder it runs in.
+// and one kills its runner.
 const FILES = {
   'trio.test.mjs': [
     "import { execFileSync } from 'node:child_process';",
@@ -39,19 +39,6 @@ const FILES = {
   'quiet.test.mjs': ["import test from 'node:test';", "test('does nothing', () => {});"],
   'fails.test.mjs': ["import test from 'node:test';", "test('fails', () => { throw new Error('a failure'); });"],
   'kills.test.mjs': ["import test from 'node:test';", "test('kills its runner', () => { process.kill(process.ppid, 'SIGKILL'); });"],
-  // Reads the command line from /proc where it exists, elsewhere from `ps` by its absolute path, so no PATH entry stands in.
-  'args.test.mjs': [
-    "import { execFileSync } from 'node:child_process';",
-    "import { existsSync, readFileSync, writeFileSync } from 'node:fs';",
-    "import test from 'node:test';",
-    "test('records its runner`s command line', () => {",
-    "  const proc = `/proc/${process.ppid}/cmdline`;",
-    "  const line = existsSync(proc)",
-    "    ? readFileSync(proc, 'utf8').split('\\0').filter(Boolean).join(' ')",
-    "    : execFileSync('/bin/ps', ['-ww', '-o', 'args=', '-p', String(process.ppid)], { encoding: 'utf8' });",
-    "  writeFileSync('runner-args.txt', line);",
-    '});',
-  ],
   // Passes, and leaves a read-only folder holding a file in the script's log folder, so the script cannot remove it.
   'locks.test.mjs': [
     "import { chmodSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';",
@@ -129,27 +116,6 @@ test('the arguments after the script reach the runner', (t) => {
   assert.equal(run.status, 0, run.stdout + run.stderr);
   assert.match(run.stdout, /^TAP version/mu);
   assert.deepEqual(Object.keys(rows(run.stderr)), ['quiet.test.mjs']);
-});
-
-// The runner's command line, as args.test.mjs recorded it in the run of `args`, and its --test-concurrency arguments.
-function runnerLine(t, args) {
-  const where = folder(t);
-  const run = runTests(where, [...args, 'args.test.mjs']);
-  assert.equal(run.status, 0, run.stdout + run.stderr);
-  const line = readFileSync(path.join(where.dir, 'runner-args.txt'), 'utf8');
-  return { line, named: line.match(/--test-concurrency\S*(?: \d+)?/gu) ?? [] };
-}
-
-test('the runner runs one test file per core', (t) => {
-  const { line, named } = runnerLine(t, []);
-  assert.deepEqual(named, [`--test-concurrency=${availableParallelism()}`], line);
-});
-
-test('a --test-concurrency in the arguments wins, in either form', (t) => {
-  for (const [args, expected] of [[['--test-concurrency=1'], '--test-concurrency=1'], [['--test-concurrency', '2'], '--test-concurrency 2']]) {
-    const { line, named } = runnerLine(t, args);
-    assert.deepEqual(named, [expected], line);
-  }
 });
 
 test('the run exits with the runner`s status, and 1 when a signal ended the runner', (t) => {

@@ -3,7 +3,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -58,6 +58,21 @@ function hookCommands() {
     ),
   );
 }
+
+// A host runs a hook while its module still loads: the body starts at the isMain line, so a top-level binding declared
+// below it is not yet set, the body throws, and the hook lets the call through. The tests call handle once the module
+// has loaded, so they cannot see it: this check does.
+test('each hook script runs its body on its last top-level statement, so the body reads no binding not yet set', () => {
+  const scripts = path.join(import.meta.dirname, '../plugins/aidrian/scripts');
+  const line = 'if (isMain(import.meta.url)) await runHook(handle);';
+  for (const name of readdirSync(scripts).filter((file) => file.endsWith('.mjs'))) {
+    const text = readFileSync(path.join(scripts, name), 'utf8');
+    if (!text.includes('export async function handle(')) continue;
+    const after = text.slice(text.indexOf(line) + line.length);
+    assert.ok(text.includes(line), `${name} runs its body only as the main script`);
+    assert.doesNotMatch(after, /^(?:export\s+)?(?:const|let|var|class)\b/mu, `${name} declares a top-level binding after its isMain line`);
+  }
+});
 
 test('every hooks.json command runs a script in this plugin, through $CLAUDE_PLUGIN_ROOT', () => {
   const commands = hookCommands();

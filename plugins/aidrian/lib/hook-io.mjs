@@ -44,12 +44,12 @@ export function print(text) {
 }
 
 // Whether the module at `url` is the script node was started with, so a hook script runs its body only then, and a
-// test can import its `handle` instead.
+// test can import its `handle` instead. A path it cannot resolve counts as the script: a gate that cannot tell runs.
 export function isMain(url) {
   try {
     return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(url));
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -95,21 +95,23 @@ export async function runHook(body) {
 export async function callHook(handle, payload, { cwd = process.cwd(), env = process.env } = {}) {
   if (called) throw new Error('callHook runs one hook at a time');
   const saved = { cwd: process.cwd(), env: { ...process.env } };
-  called = { stderr: '', stdout: '' };
-  process.chdir(cwd);
-  replaceEnv(env);
+  const capture = { stderr: '', stdout: '' };
+  called = capture;
   let status = 0;
   try {
+    process.chdir(cwd);
+    replaceEnv(env);
     await handle(normalizeHookInput(payload ?? {}), { start: performance.now() });
   } catch (error) {
     // Any other error lets the action run, as runHook does.
     if (error instanceof HookExit) status = error.code;
+    else if (error?.code === 'ENOENT' && error.syscall === 'chdir') throw error;
+  } finally {
+    called = null;
+    process.chdir(saved.cwd);
+    replaceEnv(saved.env);
   }
-  const { stderr, stdout } = called;
-  called = null;
-  process.chdir(saved.cwd);
-  replaceEnv(saved.env);
-  return { status, stderr, stdout };
+  return { status, stderr: capture.stderr, stdout: capture.stdout };
 }
 
 function replaceEnv(env) {

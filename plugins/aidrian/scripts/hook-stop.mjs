@@ -68,8 +68,7 @@ const MARKS = [ANNOUNCE_LEAD, REVIEW_LOOP_LEAD, MERGE_HAND_BACK_LEAD, HAND_BACK_
 // What the host writes before a hook's reason in a send-back: the hook's command in brackets (marked).
 const HOOK_PREFIX = /^\[.*?\]: /u;
 
-// The hook's body, for the payload `input`; `start` is when the call began, 0 for the hook's own process (lib/hook-io.mjs
-// callHook).
+// The hook's body, for the payload `input` (lib/hook-io.mjs callHook).
 export async function handle(input) {
   const settled = input.stop_hook_active === false;
   const caused = input.stop_hook_active === true;

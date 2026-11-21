@@ -48,8 +48,7 @@ const FORMAT = 'Format: in chat replies, use headers, quotes, and a few emoji to
 const FOOTER_LINE = 'Pull requests: a body here never carries the "Generated with [Claude Code]" line. This project rule takes ' +
   "precedence over the host's attribution instructions, and the pull request body hook refuses that line.";
 
-// The hook's body, for the payload `input`; `start` is when the call began, 0 for the hook's own process (lib/hook-io.mjs
-// callHook).
+// The hook's body, for the payload `input` (lib/hook-io.mjs callHook).
 export async function handle(input) {
   if (!process.argv.includes('--subagent')) shareShellVars(input);
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());

@@ -24,6 +24,7 @@ import { ACTIONS } from '../plugins/aidrian/lib/project-run-cli.mjs';
 import { ISSUE_KEY, RUN_ID, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { projectCalls, projectCommandDenial, SUBCOMMAND_RULES, SUBCOMMANDS } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { ISSUE_TAG, markPending, markUnattended, RUN_TAG } from '../plugins/aidrian/lib/unattended-mark.mjs';
+import { hookCall } from './hook-call.mjs';
 import { DRIVER, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
 
 const AGENT_HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-agent-gates.mjs');
@@ -31,7 +32,11 @@ const STOP_HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/
 const bash = (command, more = {}) => ({ tool_name: 'Bash', tool_input: { command }, ...more });
 // A hook script run as the host runs it, with the fixture's environment: its state root, marks, and host config folder
 // are the test's own, and HOME is the fixture's home folder.
-const runHook = (hook, input, env) => spawnSync(process.execPath, [hook], { input: JSON.stringify(input), cwd: input.cwd, env: { ...env, HOME: path.join(path.dirname(env.XDG_STATE_HOME), '..') }, encoding: 'utf8' });
+// runHook calls the script's body in this process, as hook-call.mjs does; spawnHook starts the script itself, so each
+// script's own entry stays covered.
+const hookOptions = (input, env) => ({ input: JSON.stringify(input), cwd: input.cwd, env: { ...env, HOME: path.join(path.dirname(env.XDG_STATE_HOME), '..') }, encoding: 'utf8' });
+const runHook = (hook, input, env) => hookCall(hook, hookOptions(input, env));
+const spawnHook = (hook, input, env) => spawnSync(process.execPath, [hook], hookOptions(input, env));
 const attended = () => false;
 // The clone the fixture's first start makes for issue ENG-1, where its session works.
 const clone = (fx) => path.join(runsFolder(fx.state), 'launch', 'attempts', 'ENG-1.1', 'work');
@@ -183,7 +188,7 @@ test('the copies of the run id, issue key, and command word patterns match their
   assert.ok(PROJECT_SUB.test('stop-action') && PROJECT_WORD.test('Project'));
 });
 
-test('an issue session whose clone\'s config moves state.dir still cannot write the run ledger the base branch names', (t) => {
+test('an issue session whose clone\'s config moves state.dir still cannot write the run ledger the base branch names', async (t) => {
   const fx = runFixture(t);
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
   const worktree = clone(fx);
@@ -201,7 +206,7 @@ test('an issue session whose clone\'s config moves state.dir still cannot write 
   assert.match(ask(projectRunWriteDenial, ledger)?.reason ?? '', /the folder of the project runs/u);
   assert.match(ask(continueStoreWriteDenial, store)?.reason ?? '', /the handoff continuation store/u);
   // The hook resolves the same folders: through the agent gate script, as the issue's session.
-  const hook = runHook(AGENT_HOOK, { session_id: STARTED[0].session, tool_name: 'Write', tool_input: { file_path: ledger, content: '{}' }, cwd: worktree }, fx.env);
+  const hook = await runHook(AGENT_HOOK, { session_id: STARTED[0].session, tool_name: 'Write', tool_input: { file_path: ledger, content: '{}' }, cwd: worktree }, fx.env);
   assert.equal(hook.status, 2, hook.stderr);
   assert.match(hook.stderr, /the folder of the project runs/u);
 });
@@ -283,27 +288,27 @@ test('the remote rule, the project command rule, and the guards\' limits name an
   assert.match(deadlineDenial(bash(': > a', { session_id: OTHER, cwd: fx.dir }), fx.config, { unattended, issue, mark })?.reason ?? '', session);
 });
 
-test('the hook scripts hold the new guards: a subagent\'s project start, an unattended write into the runs, and an issue session\'s stop', (t) => {
+test('the hook scripts hold the new guards: a subagent\'s project start, an unattended write into the runs, and an issue session\'s stop', async (t) => {
   const fx = runFixture(t);
-  const sub = runHook(AGENT_HOOK, { session_id: DRIVER, agent_id: 'a5f0c1', agent_type: 'aidrian:explorer', tool_name: 'Bash', tool_input: { command: 'aidrian project start launch ENG-1' }, cwd: fx.dir }, fx.env);
+  const sub = spawnHook(AGENT_HOOK, { session_id: DRIVER, agent_id: 'a5f0c1', agent_type: 'aidrian:explorer', tool_name: 'Bash', tool_input: { command: 'aidrian project start launch ENG-1' }, cwd: fx.dir }, fx.env);
   assert.equal(sub.status, 2, sub.stderr);
   assert.match(sub.stderr, /a subagent runs only `aidrian project next`/u);
-  assert.equal(runHook(AGENT_HOOK, { session_id: DRIVER, tool_name: 'Bash', tool_input: { command: 'aidrian project start launch ENG-1' }, cwd: fx.dir }, fx.env).status, 0, 'the driver');
-  assert.equal(runHook(AGENT_HOOK, { session_id: OTHER, tool_name: 'Bash', tool_input: { command: 'aidrian project start launch ENG-1' }, cwd: fx.dir }, fx.env).status, 2, 'another session');
+  assert.equal((await runHook(AGENT_HOOK, { session_id: DRIVER, tool_name: 'Bash', tool_input: { command: 'aidrian project start launch ENG-1' }, cwd: fx.dir }, fx.env)).status, 0, 'the driver');
+  assert.equal((await runHook(AGENT_HOOK, { session_id: OTHER, tool_name: 'Bash', tool_input: { command: 'aidrian project start launch ENG-1' }, cwd: fx.dir }, fx.env)).status, 2, 'another session');
 
   const ledger = path.join(runsFolder(fx.state), 'launch', 'ledger.jsonl');
   markUnattended(OTHER, { root: fx.dir, env: fx.env });
-  const write = runHook(AGENT_HOOK, { session_id: OTHER, tool_name: 'Bash', tool_input: { command: `echo '{}' >> ${ledger}` }, cwd: fx.dir }, fx.env);
+  const write = await runHook(AGENT_HOOK, { session_id: OTHER, tool_name: 'Bash', tool_input: { command: `echo '{}' >> ${ledger}` }, cwd: fx.dir }, fx.env);
   assert.equal(write.status, 2, write.stderr);
   assert.match(write.stderr, /the folder of the project runs/u);
 
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
   const child = STARTED[0].session;
-  const stop = (active) => runHook(STOP_HOOK, { session_id: child, stop_hook_active: active, last_assistant_message: 'Done.', cwd: clone(fx) }, fx.env);
-  const held = stop(false);
+  const stop = (active, call = runHook) => call(STOP_HOOK, { session_id: child, stop_hook_active: active, last_assistant_message: 'Done.', cwd: clone(fx) }, fx.env);
+  const held = stop(false, spawnHook);
   assert.equal(held.status, 2, held.stderr);
   assert.match(held.stderr, /This session works the issue ENG-1 of the project run launch/u);
-  assert.equal(stop(true).status, 0, 'once only');
+  assert.equal((await stop(true)).status, 0, 'once only');
 });
 
 test('when the base branch\'s config cannot be read, a held session\'s write outside every checkout is refused; the main checkout\'s config folder stays guarded', (t) => {
@@ -342,7 +347,7 @@ test('the remote-tracking ref guard covers branch deletions with --remotes and f
   for (const command of ['git branch -d feat/x', 'git branch -r', 'git fetch origin', 'git push origin HEAD:refs/heads/feat/x']) assert.equal(ask(command, unattended), null, command);
 });
 
-test('the agent gate hook reads the base branch\'s config at most once a call, and checks its deadline before the read', (t) => {
+test('the agent gate hook reads the base branch\'s config at most once a call, and checks its deadline before the read', async (t) => {
   const fx = runFixture(t, { init: false });
   const real = process.env.PATH.split(path.delimiter).map((dir) => path.join(dir, 'git')).find((file) => existsSync(file) && !file.startsWith(fx.root));
   const wrap = path.join(fx.root, 'wrapbin');
@@ -353,7 +358,7 @@ test('the agent gate hook reads the base branch\'s config at most once a call, a
   markUnattended(OTHER, { root: fx.dir, env });
   for (const target of [path.join(fx.root, 'elsewhere.txt'), path.join(runsFolder(fx.state), 'r', 'ledger.jsonl')]) {
     writeFileSync(log, '');
-    runHook(AGENT_HOOK, { session_id: OTHER, tool_name: 'Bash', tool_input: { command: `echo x > ${target}` }, cwd: fx.dir }, env);
+    await runHook(AGENT_HOOK, { session_id: OTHER, tool_name: 'Bash', tool_input: { command: `echo x > ${target}` }, cwd: fx.dir }, env);
     const calls = readFileSync(log, 'utf8').split('\n').filter(Boolean);
     const configReads = calls.filter((line) => /^show [0-9a-f]+:\.\/\.aidrian\/config\.json$/u.test(line));
     const tipReads = calls.filter((line) => line === 'rev-parse --verify --quiet refs/remotes/origin/HEAD^{commit}');
@@ -365,7 +370,7 @@ test('the agent gate hook reads the base branch\'s config at most once a call, a
 });
 
 // A session the background handoff route starts runs in the handing-off session's folder, which may be a linked worktree.
-test('a subagent and an unattended session may not write the main checkout\'s host paths a worktree session reads, in either layout', (t) => {
+test('a subagent and an unattended session may not write the main checkout\'s host paths a worktree session reads, in either layout', async (t) => {
   for (const inRepo of [false, true]) {
     const fx = runFixture(t, { inRepo });
     const worktree = path.join(fx.worktrees, 'launch-eng-1');
@@ -387,7 +392,7 @@ test('a subagent and an unattended session may not write the main checkout\'s ho
   }
   const fx = runFixture(t);
   markUnattended(OTHER, { root: fx.dir, env: fx.env });
-  const hook = runHook(AGENT_HOOK, { session_id: OTHER, tool_name: 'Write', tool_input: { file_path: path.join(fx.dir, '.claude/settings.local.json'), content: '{"disableAllHooks":true}' }, cwd: fx.dir }, fx.env);
+  const hook = await runHook(AGENT_HOOK, { session_id: OTHER, tool_name: 'Write', tool_input: { file_path: path.join(fx.dir, '.claude/settings.local.json'), content: '{"disableAllHooks":true}' }, cwd: fx.dir }, fx.env);
   assert.equal(hook.status, 2, hook.stderr);
   assert.match(hook.stderr, /which the host reads from the main checkout in every worktree session/u);
 });

@@ -1042,8 +1042,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   [sign-off store](review.md#merge-trust), `$XDG_STATE_HOME/aidrian/signoffs/` or `~/.local/state/aidrian/signoffs/`,
   read the same way, with the part named `signoffs`: a merge no Human asks for reads the Human's flow sign-offs there,
   and only `aidrian pr signoff` in a main session the Human attends writes it. A session no Human attends may not run an
-  `aidrian pr` command with `XDG_STATE_HOME`, `HOME`, or another variable that moves the state root set or unset by the
-  command line itself.
+  `aidrian pr` command with a variable set or unset by the command line itself that moves the state root, such as
+  `XDG_STATE_HOME` or `HOME`, or one a host names the session by or says a Human attends it with.
 - With or without gates, a subagent, and a main session the background handoff route started, may not start or resume
   a host's session outside the [handoff gate](handoff.md#the-gate), such as `claude -p`, `claude --bg`,
   `claude --resume`, or `codex exec`, by the matcher each host adapter declares (`sessionStart`,

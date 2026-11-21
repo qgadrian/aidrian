@@ -14,6 +14,8 @@ const SETUP = path.join(import.meta.dirname, '../scripts/test-state.mjs');
 const LEAKED = {
   CLAUDE_CODE_AGENT: 'orchestrator',
   CLAUDE_CODE_SESSION_ID: 'session-1',
+  CLAUDE_CODE_SESSION_ATTENDED: '1',
+  CLAUDE_PID: '4343',
   AIDRIAN_ALLOW_GIT_AMEND: '1',
   AIDRIAN_ALLOW_MAIN_COMMIT: '1',
   GIT_DIR: '/nonexistent/.git',

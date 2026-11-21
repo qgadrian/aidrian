@@ -247,6 +247,35 @@ test('a later attempt clones again from the issue branch on the forge, and one w
   assert.equal(fx.claude.starts().length, 2);
 });
 
+// The user's global config signs every commit with a program the sandbox cannot reach: each attempt's clone turns
+// signing off in its own config, so the session's commit lands, and the global file is left as it was.
+test('every attempt\'s clone commits unsigned through its own config, and the user\'s global config stays as it was', (t) => {
+  const fx = runFixture(t);
+  const global = testGlobalConfig(t);
+  const gpg = path.join(fx.root, 'gpg-denied');
+  writeFileSync(gpg, '#!/bin/sh\necho "gpg: the sandbox denies the keys" >&2\nexit 2\n', { mode: 0o755 });
+  appendFileSync(global, `[commit]\n\tgpgsign = true\n[tag]\n\tgpgsign = true\n[gpg]\n\tprogram = ${gpg}\n`);
+  const before = readFileSync(global, 'utf8');
+  // git as the session runs it: no -c of the fixture's, which turns signing off itself.
+  const commit = (cwd, message) => execFileSync('git', ['-C', cwd, 'commit', '-q', '--allow-empty', '-m', message], { encoding: 'utf8', stdio: 'pipe' });
+  const unsigned = (clone) => {
+    const own = path.join(path.dirname(clone), 'git', 'config');
+    assert.deepEqual(['commit.gpgsign', 'tag.gpgsign'].map((key) => fx.git('config', '--file', own, '--get', key).trim()), ['false', 'false'], 'both keys in the clone\'s own config');
+    commit(clone, 'work');
+    assert.equal(fx.git('-C', clone, 'log', '-1', '--format=%s').trim(), 'work', 'the commit landed');
+  };
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  unsigned(work(fx));
+  fx.git('-C', work(fx), 'push', '-q', fx.bare, 'HEAD:refs/heads/feat/eng-1-export');
+  appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'issue', key: 'ENG-1', state: 'open', at: at(Date.now()) }] }));
+  fx.claude.states[STARTED[0].session] = 'done';
+  const second = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(second.exitCode, 0, second.err.join('\n'));
+  unsigned(work(fx, 'ENG-1', 2));
+  assert.equal(readFileSync(global, 'utf8'), before, 'the global config is never written');
+  assert.throws(() => commit(fx.dir, 'signed'), /gpg/u, 'the main checkout still signs, as the user set it');
+});
+
 test('a claim that is no plain object with a boolean kept, or is too large to read, counts as kept once past its write', (t) => {
   const fx = runFixture(t);
   const file = path.join(fx.store.dir, `claim-${DRIVER}.json`);

@@ -1929,7 +1929,11 @@ attempt's clone pushes to, read before its session starts, and a clone that push
 `remote.origin.pushurl` in the user's git config makes it, halts the start; the issue session's one push goes only there
 ([hooks.md](hooks.md#agent-gates)). A host that would refuse that push in the driver session's permission mode, which the session
 takes, halts the start too, before the host starts anything ([the push preflight](handoff.md#the-push-preflight)). Every start is confined to a fresh
-clone under its host's sandbox, and a host that is not halts the start. The session hands its
+clone under its host's sandbox, and a host that is not halts the start. Each attempt's clone commits unsigned: the
+start sets `commit.gpgsign` and `tag.gpgsign` to `false` in the clone's own git config, on every attempt, and never in
+the user's global or system config. The sandbox hides the signing keys (`~/.gnupg` and `~/.ssh`), so a commit the
+user's config signs would fail once the work is done and park the issue with its change staged; the forge asks no
+signature of a branch commit, and the run merges each pull request by squash. The session hands its
 result over in its attempt's `drop` folder, and `wait` records it as a `result` row with `via: "drop"`, or ends the
 attempt `bad_result`, as it does at once for a pull request the forge says it does not have; a result the forge cannot
 confirm yet waits for the next `wait`, until `issueHours`, when its sessions are stopped and it ends `bad_result`.
@@ -2029,7 +2033,11 @@ is skipped and names it. `--json` prints the whole plan, with the `maxParallel` 
 
 `preflight [RUN]` runs, at once, every check a start would refuse or halt on, and starts nothing: the repository, the
 state folder and any other active run but `RUN`, a host instruction file, such as a `CLAUDE.md`, in a folder above the
-runs folder, which every attempt's clone would load, `projectRun.allow` through the forge, the machine's switch, the host's
+runs folder, which every attempt's clone would load, a commit in a clone made as an attempt's (`commit`: an empty commit
+in a scratch repository under the runs folder, its git folder apart and signing off in its own config, removed after;
+preflight runs outside the issue session's sandbox, where the signing keys are in reach, so it blocks when git still
+reads `commit.gpgsign` or `tag.gpgsign` as true there, as a `GIT_CONFIG_COUNT` or `GIT_CONFIG_PARAMETERS` setting in
+the environment makes it, and otherwise on git's own error, such as no identity), `projectRun.allow` through the forge, the machine's switch, the host's
 start and its `projectRun.unverifiedHosts`, the host's access check (push rights, an HTTPS origin, nothing outside the
 sandbox that `projectRun.outsideSandbox` does not name, and, on Claude Code, a forge token to hand the issue sessions,
 from the project's keychain entry `projectRun.forgeTokenKeychain` names, the machine's default entry `aidrian-project-run`

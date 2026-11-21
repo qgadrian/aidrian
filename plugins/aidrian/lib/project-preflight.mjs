@@ -1,8 +1,9 @@
 // `aidrian project preflight`: every check that would refuse or halt a project run's start but the push preflight, which
 // reads the attempt's clone no preflight has (project-run-gate.mjs confinedRoom), run at once from the
-// attended session before `aidrian project init`, so the Human sees each blocker before walking away. It reads and
-// starts nothing. Each check is the start gate's own (lib/project-run-gate.mjs, lib/project-start.mjs): the repository
-// origin names, the state folder and any other active run, a host instruction file above the runs folder, the team's projectRun through the forge, the machine's
+// attended session before `aidrian project init`, so the Human sees each blocker before walking away. It starts
+// nothing, and writes only the scratch repository of its commit probe, which it removes. Each check is the start gate's
+// own (lib/project-run-gate.mjs, lib/project-start.mjs): the repository origin names, the state folder and any other
+// active run, a host instruction file above the runs folder, a commit in a clone made as an attempt's is, the team's projectRun through the forge, the machine's
 // switch, the host's start (confined, verified or allowed through projectRun.unverifiedHosts, hooks trusted), the host's
 // trust in the runs folder, and the
 // host's access check (push rights, an HTTPS origin the sandbox can push to, and nothing that would run outside the
@@ -34,12 +35,14 @@ import { mayFollowTeamDefault } from './project.mjs';
 import { recordedTexts } from './project-issue-text.mjs';
 import { activeRuns, nextLines, pinnedRepository, planRun, readSnapshotInput, refNames, runPlace, runsFolder, teamsNote } from './project-run.mjs';
 import { runParallel, teamPolicy } from './project-run-gate.mjs';
-import { accessProblem, guardedFolders, hostStartProblem } from './project-start.mjs';
+import { accessProblem, commitProblem, guardedFolders, hostStartProblem } from './project-start.mjs';
 import { ancestorProblem } from './project-trust.mjs';
 import { cardState, REVIEW_SUMMARY_CARD_MARKER } from './review/bot-card.mjs';
 import { trackerOfEndpoint } from './tracker-guard.mjs';
 import { knownServers, trackerById, trackerOfTools, TRACKERS } from './trackers/index.mjs';
 
+// The section of the project run setup doc on commit signing, which a commit blocker points at.
+const COMMIT_SETUP = 'docs/project-run-setup.md#commit-signing';
 // The reviewer values that mean no bot reviews, as config-defaults.mjs reads `github.reviewer`.
 const NO_REVIEWER = new Set([null, undefined, '', 'none']);
 // What a `note` says in place of a branch-protection or release-tags blocker the team accepts through
@@ -78,6 +81,10 @@ export function preflightCommand({ project, config, run = null, env = process.en
     check('run', active.length ? `the run ${active[0].run ?? 'in a folder that cannot be listed'} is still active, and a project has one active run at a time` : null);
     // Every attempt's clone lies under the runs folder, so a host instruction file above it refuses every start.
     check('instructions', ancestorProblem(path.join(runsFolder(place.state), 'attempts'), { project, tip: baseBranchTip(project.root), env }));
+    // Every issue session commits in its clone, unsigned (project-start.mjs UNSIGNED), so a commit that fails there
+    // parks every issue with its work staged.
+    const commit = commitProblem({ state: place.state, env });
+    check('commit', commit ? `${commit} (setup: ${COMMIT_SETUP})` : null);
   }
   const base = baseBranchTip(project.root) ? baseBranchConfig(project, 'projectRun') : { why: 'git names no base branch commit' };
   const facade = forge ?? forgeFor(project.root);

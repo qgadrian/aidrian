@@ -19,6 +19,7 @@ Each line is `ok <name>`, `blocker <name>: <why and fix>`, `note <name>: <what>`
 | `repository` | origin names a forge repository | set origin to the repository's HTTPS URL |
 | `state`, `run` | the state folder; no other run of this project active | as its line says |
 | `instructions` | no host instruction file, such as a `CLAUDE.md`, in a folder above the runs folder, which every attempt's clone would load | move it away, or set `state.dir` to a folder with none above it |
+| `commit` | an empty commit lands in a scratch clone under the runs folder, made as an attempt's, which commits unsigned; git reads no signing key as on there | unset the `GIT_CONFIG_COUNT` or `GIT_CONFIG_PARAMETERS` setting its line names, or fix what git's error says, such as a missing `user.name` or `user.email` |
 | `policy` | the default branch on the forge sets `projectRun.allow` | a pull request that sets it, merged |
 | `machine` | this machine allows sessions no Human attends | `"handoff": { "background": "on" }` in its git-ignored local file, or the team sets `solo` |
 | `host` | a confined start; an unverified host needs `projectRun.unverifiedHosts`; hooks trusted | as its line says |

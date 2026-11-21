@@ -135,10 +135,12 @@ function textJoin(folder, file) {
 }
 
 // A path its file tools name, as they resolve it: a leading `~` or `~/` is the home folder of the user the host runs as
-// (live check 23). Every other path is as it is, relative ones from the call's folder.
+// (live check 23), joined as text and never folded, so a `..` after it climbs from the home folder's target when that is
+// a link (lib/confine-guard.mjs readsStore). Every other path is as it is, relative ones from the call's folder.
 function filePath(file) {
   if (typeof file !== 'string') return file;
-  return file === '~' || file.startsWith('~/') ? path.join(homedir(), file.slice(1)) : file;
+  if (file === '~') return homedir();
+  return file.startsWith('~/') ? textJoin(homedir(), file.slice(2)) : file;
 }
 
 const startsSession = (args) => {

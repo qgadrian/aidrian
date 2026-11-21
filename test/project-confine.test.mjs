@@ -852,3 +852,25 @@ test('the host`s read tools are pinned: a read tool the host adds fails this unt
   assert.deepEqual([...READ_TOOLS], ['Read', 'Grep', 'Glob', 'NotebookRead', 'LS']);
   assert.deepEqual(claudeCode.fileReadTools, READ_TOOLS);
 });
+
+test('a file-tool read through `~/..`, with the home folder a link, climbs from the link`s target to the store it names', (t) => {
+  const at = attempt(t);
+  plan(at);
+  // The home folder is a link to a folder inside the real one: `~/..` climbs from the link's target, where the stores are.
+  const inner = path.join(at.home, 'inner');
+  mkdirSync(inner);
+  const linked = path.join(at.root, 'home-link');
+  symlinkSync(inner, linked);
+  const saved = process.env.HOME;
+  process.env.HOME = linked;
+  t.after(() => (saved === undefined ? delete process.env.HOME : (process.env.HOME = saved)));
+  assert.deepEqual(fileReadOf({ tool_name: 'Read', tool_input: { file_path: '~/../x' } }), [`${linked}/../x`], 'expanded as text, not folded');
+  assert.deepEqual(fileReadOf({ tool_name: 'LS', tool_input: { path: '~' } }), [linked]);
+  const mark = { root: at.root, cwd: at.work, project: 'launch', issue: 'ENG-1', confine: 'passed' };
+  const call = (tool, input) => confineDenial({ session_id: SESSION, tool_name: tool, tool_input: input, cwd: at.work }, { mark, env: {} });
+  for (const [tool, input] of [['Read', { file_path: '~/../.ssh/id_test' }], ['Read', { file_path: '~/../.npmrc' }], ['Grep', { pattern: 'x', path: '~/../.ssh' }],
+    ['Glob', { pattern: '~/../.ssh/*' }], ['Glob', { pattern: '*', path: '~/../.ssh' }], ['LS', { path: '~/../.ssh' }]]) {
+    assert.match(call(tool, input)?.reason ?? '', /hides/u, `${tool} ${JSON.stringify(input)}`);
+  }
+  assert.equal(call('Read', { file_path: '~/notes.md' }), null, 'a file in the linked home folder, no store');
+});

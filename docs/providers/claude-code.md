@@ -713,7 +713,7 @@ Before `verified` changes, a live Claude Code must show every one of these, each
     does too; and whether server-managed settings, which the start does not read, leave a local cache a later check
     could read.
 23. Claude Code's file tools expand a leading `~` and `~/` to the home folder of the user the host runs as, as the
-    adapter's `filePath` does for every guard of a file tool; and a Glob pattern's `..` reaches above its path. A `..`
+    adapter's `filePath` does, as text, for every guard of a file tool; and a Glob pattern's `..` reaches above its path. A `..`
     past the pattern's first glob character is bounded by no folder, so the adapter reads it as the file system's root.
 
 ### The sandbox proof
@@ -739,7 +739,8 @@ its start stays as [its page](codex.md#project-start) says.
    sandboxed commands alone. Before and after the proof, the hook refuses a Read, Grep, Glob, or LS that reaches a store
    the plan lists as hidden, a folder that holds one included, since the file tools run outside the sandbox. A path is
    read both as folded text and as the system resolves it, where a `..` after a link climbs from the link's target,
-   and a Glob's `path` and its pattern's literal folder are joined as text, so that `..` is not folded away first.
+   and a Glob's `path` and its pattern's literal folder are joined as text, as a leading `~` and the home folder are,
+   so that `..` is not folded away first.
    A call's folder counts as in a clone when any reading lies in one: the system's resolution, the folded spelling
    resolved, or, where the path does not resolve, as with a dangling link or a missing folder, the nearest folder
    above it that is there, with the rest of the spelling.

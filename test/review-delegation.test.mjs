@@ -131,8 +131,8 @@ test('delegates: the whole answer is one of the fixed phrases; a hedge, a condit
 test('lowOnly: only a last round on the head that lists every open finding, each low and none marked security', () => {
   const state = (rounds) => ({ ...emptyState(5, 'acme/notes'), rounds, outcome: { status: 'round_limit', head: HEAD, at: T0, cap: capOf(rounds.at(-1)?.findings ?? []) } });
   const round = (findings, over = {}) => ({ head: HEAD, at: T0, open: findings.length, findings, ...over });
-  assert.deepEqual(lowOnly(state([round(LOW)]), HEAD), { ok: true, count: 2 });
-  assert.deepEqual(lowOnly(state([round([finding('R2-1', 'medium')]), round(LOW)]), HEAD.slice(0, 7)), { ok: true, count: 2 }, 'the last round, by a short head');
+  assert.deepEqual(lowOnly(state([round(LOW)]), HEAD), { ok: true, count: 2, ids: ['R2-1', 'R2-2'] });
+  assert.deepEqual(lowOnly(state([round([finding('R2-1', 'medium')]), round(LOW)]), HEAD.slice(0, 7)), { ok: true, count: 2, ids: ['R2-1', 'R2-2'] }, 'the last round, by a short head');
   for (const [name, rounds, why] of [
     ['no round', [], /last round is not for head abcdef1/u],
     ['another head', [round(LOW, { head: NEXT })], /last round is not for head abcdef1/u],
@@ -542,17 +542,17 @@ test('lowOnly reads the highest severity and any security mark of findings two p
 
 test('lowOnly reads every stage of the cap: a low finding in the judged stage never hides a high, security, or other stop in another', () => {
   const capped = (cap) => ({ ...emptyState(5, 'acme/notes'), rounds: [{ head: HEAD, at: T0, open: LOW.length, findings: LOW }], outcome: { status: 'round_limit', head: HEAD, at: T0, cap } });
-  assert.deepEqual(lowOnly(capped(capOf(LOW)), HEAD), { ok: true, count: 2 });
+  assert.deepEqual(lowOnly(capped(capOf(LOW)), HEAD), { ok: true, count: 2, ids: ['R2-1', 'R2-2'] });
   // A slice and the cross-cutting pass report one low finding under two ids: the round keeps one, the other as an alias.
-  const twins = { ...capped(capOf(LOW, HEAD, { items: [...capOf(LOW).items, { id: 'R2-7', severity: 'low', pass: 'cross', stage: 'local', reviewer: 'cross' }], counted: 3 })) };
-  twins.rounds[0].findings = [{ ...LOW[0], aliases: ['R2-7'] }, LOW[1]];
-  assert.deepEqual(lowOnly(twins, HEAD), { ok: true, count: 2 }, 'a twin id is the same finding');
+  // A slice and the cross-cutting pass report one low finding under two ids, or another stage a low one: the round
+  // lists one, the cause both, and the follow-up issue must list every id.
+  const twins = capped(capOf(LOW, HEAD, { items: [...capOf(LOW).items, { id: 'R2-7', severity: 'low', pass: 'cross', stage: 'local', reviewer: 'cross' }], counted: 3 }));
+  assert.deepEqual(lowOnly(twins, HEAD), { ok: true, count: 2, ids: ['R2-1', 'R2-2', 'R2-7'] }, 'a twin or another stage`s low id is listed, not refused');
   const other = (severity, over = {}) => ({ id: 'R2-9', severity, pass: 'engine:codex-local', stage: 'independent', reviewer: 'engine:codex-local', ...over });
   const items = capOf(LOW).items;
   for (const [name, cap, why] of [
     ['a high in the stage that ran first', capOf(LOW, HEAD, { items: [...items, other('high')], counted: 3 }), /^finding R2-9 is high$/u],
     ['a low marked security in another stage', capOf(LOW, HEAD, { items: [...items, other('low', { security: true })], counted: 3 }), /^finding R2-9 is marked security$/u],
-    ['a low the round does not list', capOf(LOW, HEAD, { items: [...items, other('low')], counted: 3 }), /^finding R2-9 is open in another stage$/u],
     ['no cause kept, as a posted copy', null, /does not hold what stopped the review/u],
     ['a cause for another head', capOf(LOW, NEXT), /does not hold what stopped the review/u],
     ['a cause only counted', capOf(LOW, HEAD, { itemized: false }), /does not hold what stopped the review/u],

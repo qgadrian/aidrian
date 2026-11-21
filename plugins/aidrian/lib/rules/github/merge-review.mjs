@@ -339,13 +339,11 @@ const delegateRoute = (pr, head, repoArg, mergeArg = repoArg) =>
 
 // ` --repo <owner>/<name>` for a command in a checkout whose remotes name several repositories: the merge's own when it
 // names one, else a placeholder; '' with one remote. A git read that fails reads as one remote.
-// ` --repo <host>/<owner>/<name>` (the host only off github.com) for a merge command the guard suggests: always, since
-// gh's default repository may be another one even in a checkout with one remote.
+// ` --repo <owner>/<name>` for a merge command the guard suggests, when the merge named its repository: gh's default may
+// be another one even in a checkout with one remote. Only a name repoName reads is written, so no shell syntax.
 const mergeRepoArg = (repo) => {
   const name = repoName(repo);
-  if (!name) return '';
-  const host = typeof repo === 'string' ? /^(?:https?:\/\/)?([^/\s:@]+\.[^/\s:@]+)\/[^/\s]+\/[^/\s]+/u.exec(repo)?.[1]?.toLowerCase() : null;
-  return ` --repo ${host && host !== 'github.com' ? `${host}/` : ''}${name}`;
+  return name ? ` --repo ${name}` : '';
 };
 
 const repoArgFor = (project, repo) => {
@@ -443,7 +441,7 @@ function delegated({ state, pr, head, capped, named, session, answers = [], coun
     each.at !== null && Date.parse(each.at) >= Date.parse(taken.at));
   if (granted) taken = null;
   let route = '';
-  if (granted) route = ` The Human granted more review rounds after the recorded answer, so it no longer stands: do not merge; run \`aidrian pr extend ${pr} --human approve${repoArg}\`.`;
+  if (granted) route = ` The Human granted more review rounds after the recorded answer, so it no longer stands: do not merge; run \`aidrian pr extend ${pr} --human approve\`.`;
   else if (taken && !named) route = ` The Human's recorded answer covers this head, but only for a merge that names it: merge with \`gh pr merge ${pr}${repoArg} --match-head-commit ${head}\`, or give the merge tool its \`sha\`.`;
   return { allow: Boolean(taken) && named, delegable, route };
 }

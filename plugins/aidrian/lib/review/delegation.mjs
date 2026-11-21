@@ -96,12 +96,10 @@ export function lowOnly(state, head) {
   const stop = stops.find(([list]) => Array.isArray(list) && list.length);
   if (stop) return { ok: false, why: `the review of head ${sha7} stopped on ${stop[1]} too` };
   if (cap.bot === true || cap.checks_failing !== 0) return { ok: false, why: `the review of head ${sha7} stopped on ${cap.bot === true ? 'the review bot\'s own round limit' : 'a failing check'} too` };
-  // A finding two passes both reported is one round finding, its other ids kept as `aliases`.
-  const listed = new Set(last.findings.flatMap((finding) => [finding?.id, ...(Array.isArray(finding?.aliases) ? finding.aliases : [])]));
+  // A finding of another stage, or a twin id of one the round merged, is in the cause only: the follow-up issue lists
+  // its id too (`ids`).
   const above = [...last.findings, ...cap.items].find((finding) => !isObject(finding) || finding.security === true || !noHigher(finding.severity, RESIDUAL_CAP));
-  const elsewhere = cap.items.find((item) => !isObject(item) || !listed.has(item.id));
-  if (above === undefined && elsewhere !== undefined) return { ok: false, why: `${named(elsewhere)} is open in another stage` };
-  if (above === undefined) return { ok: true, count: last.open };
+  if (above === undefined) return { ok: true, count: last.open, ids: [...new Set([...last.findings, ...cap.items].map((finding) => finding.id))] };
   if (above?.security === true) return { ok: false, why: `${named(above)} is marked security` };
   const severity = severityOf(above?.severity);
   return { ok: false, why: `${named(above)} ${severity ? `is ${severity}` : 'has no severity on record'}` };
@@ -243,7 +241,7 @@ function shippable({ state, local, current, pr }) {
   if (!low.ok) {
     throw new Error(`the session may ship on the Human's word only while every open finding is low: ${low.why}. Ask the Human the merge guard's question again: only "Merge with the findings filed" or "Grant more review rounds" decides this`);
   }
-  const ids = state.rounds.at(-1).findings.map((finding) => finding.id);
+  const { ids } = low;
   if (!ids.every(isFindingId)) throw new Error('an open finding of the record has no id, so the follow-up issue cannot list it: only "Merge with the findings filed" or "Grant more review rounds" decides this');
   return ids;
 }

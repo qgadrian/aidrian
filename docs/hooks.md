@@ -627,10 +627,10 @@ When every open finding of the head is low, the reason also names a third route,
 that the session decides, such as "whatever you recommend": the session files what the review left open as an open
 follow-up issue that names the pull request, runs `aidrian pr delegate <PR> --issue <issue> --head <sha>` as its own
 command, ending in `--repo <owner>/<name>` when this checkout's remotes name several repositories (the merge's own when
-it names one), then merges with `gh pr merge <PR> --match-head-commit <sha>`, with the same `--repo`. Every open finding is low when the record's last
+it names one), then merges with `gh pr merge <PR> --match-head-commit <sha>`, with `--repo <owner>/<name>` when the merge named its repository. Every open finding is low when the record's last
 round is for the head and lists each of its open findings, as many as its count, each `low` and none marked security,
 and the cap's cause kept on the outcome is for the head, lists every pass's open findings, each `low`, none marked
-security and none missing from the round (a twin id two passes gave one finding counts as that finding), and names no
+security, and names no
 pass that never reviewed the head, remote reviewer such as the review bot that has not answered yet, flow, removed
 test, failing check, or the review bot's own limit: in the last round a stage can run first and leave findings the round does not
 list. A posted copy keeps no cause, so a record read from another machine names no delegation route;
@@ -643,7 +643,8 @@ open count, since the rule read the question the Human answered from it, every o
 the follow-up issue the forge reads is in the pull request's own repository, exists, is an issue and not a pull request,
 is open, was filed at or after the review stopped (to the second), names the pull request in its title or body
 (`<owner>/<name>#<PR>`, its URL, or `#<PR>` with no repository or path before it, so `other/repo#<PR>` does not count),
-and lists each open finding's id, such as `R2-1`. It records `{ head, kind: "round_cap", answer: "delegate", issue, url, by, session, at }` under
+and lists each open finding's id, such as `R2-1`, including each id the cap's cause holds that the round does not, such as
+another stage's finding or a second pass's id for one finding. It records `{ head, kind: "round_cap", answer: "delegate", issue, url, by, session, at }` under
 `delegations` in [the record](review.md#the-record). The guard takes that entry on three conditions: the merge names
 its head (`--match-head-commit`, `sha=` in a `gh api` merge, or the merge tool's `sha`), every open finding of the
 head is still low, and the entry is for that head, at or after its outcome. An entry another session recorded is passed

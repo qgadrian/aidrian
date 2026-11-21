@@ -115,7 +115,8 @@ export async function callHook(handle, payload, { cwd = process.cwd(), env = pro
 }
 
 function replaceEnv(env) {
-  const next = { ...env };
+  // A value of undefined leaves the variable out, as spawnSync does.
+  const next = Object.fromEntries(Object.entries(env).filter(([, value]) => value !== undefined));
   for (const name of Object.keys(process.env)) if (!Object.hasOwn(next, name)) delete process.env[name];
   Object.assign(process.env, next);
 }

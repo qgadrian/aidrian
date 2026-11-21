@@ -5,6 +5,8 @@
 // timeout. Calls run one at a time (lib/hook-io.mjs callHook), as a test file's tests do.
 import { pathToFileURL } from 'node:url';
 
+import { anchorClones } from '../plugins/aidrian/lib/attempt-clone.mjs';
+import { resetGitStall } from '../plugins/aidrian/lib/git.mjs';
 import { callHook } from '../plugins/aidrian/lib/hook-io.mjs';
 
 const handles = new Map();
@@ -19,5 +21,8 @@ export async function hookCall(script, { input = '{}', cwd, env } = {}) {
   } catch {
     payload = {};
   }
+  // What a host's fresh process starts without: no git call stopped yet, and no clone anchor of an earlier call.
+  resetGitStall();
+  anchorClones(null);
   return callHook(handle, payload, { cwd, env });
 }

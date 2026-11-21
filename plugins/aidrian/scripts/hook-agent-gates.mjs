@@ -53,7 +53,7 @@ import { anchorClones, cloneConfigProblem } from '../lib/attempt-clone.mjs';
 import { DEFAULTS, loadConfig, malformedGates } from '../lib/config.mjs';
 import { isFile } from '../lib/fs.mjs';
 import { configWriteDenial, deadlineDenial, machineSwitchWriteDenial, opaqueLimitDenial, writeLimitDenial, writesNothing } from '../lib/config-guard.mjs';
-import { PastDeadline, withinDeadline } from '../lib/deadline.mjs';
+import { GUARD_BUDGET_MS, guardBudget, PastDeadline, withinDeadline } from '../lib/deadline.mjs';
 import { readGateSnapshot } from '../lib/gate-snapshot.mjs';
 import { baseReader, continueStoreWriteDenial, handoffContinueDenial, handoffEnvDenial, hostSessionStartDenial, mainCheckoutWriteDenial, prEnvDenial, projectRunWriteDenial, remoteChangeDenial, sessionFoldersWriteDenial, startedUnattended, stateFolders, stateFoldersWriteDenial } from '../lib/handoff-guard.mjs';
 import { block, HookExit, isMain, runHook } from '../lib/hook-io.mjs';
@@ -64,19 +64,13 @@ import { canonical } from '../lib/rules/main-checkout.mjs';
 import { issueHeld, noteBeacon, readDriverMark, readUnattendedMark } from '../lib/unattended-mark.mjs';
 import { unattendedPlaces, unattendedWriteDenial } from '../lib/unattended-write.mjs';
 
-// The milliseconds from the hook's start the guards may take. AIDRIAN_GUARD_BUDGET_MS may only lower it, as a test does.
-const GUARD_BUDGET_MS = 2500;
-const guardBudget = () => {
-  const lowered = process.env.AIDRIAN_GUARD_BUDGET_MS ? Number(process.env.AIDRIAN_GUARD_BUDGET_MS) : Number.NaN;
-  return Number.isFinite(lowered) && lowered >= 0 ? Math.min(lowered, GUARD_BUDGET_MS) : GUARD_BUDGET_MS;
-};
 // The deadline of the running call, in performance.now() milliseconds: its start plus the budget.
 let budget = GUARD_BUDGET_MS;
 
 // The hook's body, for the payload `input`; `start` is when the call began, 0 for the hook's own process (lib/hook-io.mjs
 // callHook).
 export async function handle(input, { start = 0 } = {}) {
-  budget = start + guardBudget();
+  budget = start + guardBudget(process.env);
   try {
     await gate(input);
   } catch (error) {

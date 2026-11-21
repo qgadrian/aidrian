@@ -85,7 +85,7 @@ export async function handle(input, { start = 0 } = {}) {
   if (input.tool_name !== 'Bash' || typeof command !== 'string' || command === '') return;
   // An attempt clone is linked only for the session the payload names (lib/attempt-clone.mjs).
   anchorClones({ session: input.session_id });
-  // `startedAt`: when this process started, for a rule that bounds its network calls by the hook's own time (merge-review's
+  // `startedAt`: when this call began, its process's start under a host, for a rule that bounds its network calls by the hook's own time (merge-review's
   // unattended waiver, ready-hold).
   const context = { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), env: process.env, input, startedAt: performance.timeOrigin + start };
   for (const [name, rule] of RULES) {

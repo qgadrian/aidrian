@@ -975,7 +975,7 @@ test('a subagent\'s ** glob passes a link to the store any number of folders dow
   writeFileSync(path.join(clean, 'a/b/notes.log'), '');
   const run = async (tool, toolInput) => {
     const started = performance.now();
-    const result = await inHook({ input: JSON.stringify(subagent(dir, tool, toolInput)), cwd: dir, encoding: 'utf8', timeout: 5000 });
+    const result = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(dir, tool, toolInput)), cwd: dir, encoding: 'utf8', timeout: 5000 });
     return { ...result, took: performance.now() - started };
   };
   for (const [tool, toolInput] of [
@@ -1278,7 +1278,7 @@ test('a subagent\'s PowerShell command with more words than the guards read is r
 
 test('a glob of many thousand ** parts still reaches the store, for Bash and PowerShell, and never runs the guard out of stack', async (t) => {
   const { dir } = project(t, { version: 1 });
-  const run = (tool, command) => inHook({ input: JSON.stringify(subagent(dir, tool, { command })), cwd: dir, encoding: 'utf8', timeout: 4000 });
+  const run = (tool, command) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(dir, tool, { command })), cwd: dir, encoding: 'utf8', timeout: 4000 });
   const deep = `${'/**'.repeat(17000)}/x`;
   for (const [tool, command] of [['Bash', `rm -rf ${deep}`], ['PowerShell', `Remove-Item -Recurse ${deep}`]]) {
     const result = await run(tool, command);
@@ -1583,7 +1583,7 @@ test('the session-folder guard`s checkout read stops at what is left of the guar
     writeFileSync(path.join(bin, 'git'), `#!/bin/sh\ncase "$*" in ${pattern}) exec sleep 30;; esac\nexec ${JSON.stringify(realGit)} "$@"\n`, { mode: 0o755 });
     const near = path.join(stateRoot(), 'projects', 'stall-probe', 'notes.txt');
     const started = Date.now();
-    const ran = await inHook({
+    const ran = spawnSync(process.execPath, [HOOK], {
       input: JSON.stringify({ session_id: 'stall-1', tool_name: 'Write', tool_input: { file_path: near, content: 'x' }, cwd: dir, agent_id: 'a5f0c1', agent_type: 'aidrian:explorer' }),
       cwd: dir, encoding: 'utf8', timeout: 15_000, env: { ...process.env, AIDRIAN_GUARD_BUDGET_MS: '600', PATH: `${bin}${path.delimiter}${process.env.PATH}` },
     });

@@ -4,7 +4,7 @@
 // docs/providers/claude-code.md#the-sandbox-proof.
 
 import { randomBytes } from 'node:crypto';
-import { lstatSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { attemptOf, systemReal } from './attempt-clone.mjs';
@@ -109,20 +109,49 @@ function realOf(file) {
   return above === file ? file : path.join(realOf(above), path.basename(file));
 }
 
+// The file system's identity of `file`, its device and inode, or null when it is not there.
+function identity(file) {
+  try {
+    const { dev, ino } = statSync(file);
+    return `${dev}:${ino}`;
+  } catch {
+    return null;
+  }
+}
+
+// The identities of `file` and of each folder above it that is there, `file` first.
+function lineage(file) {
+  const found = [];
+  for (let at = file; ; at = path.dirname(at)) {
+    const each = identity(at);
+    if (each) found.push(each);
+    if (path.dirname(at) === at) return found;
+  }
+}
+
 // The store of `unreadable` a file-tool read in `input` reaches, a folder it names holding one, or one holding it, or
 // null: the host names its read tools and their paths (hosts/index.mjs fileReadOf), a path with none being the call's
 // folder. Each path is read both ways a tool may: folded as text first, and as the system resolves it, where a `..`
-// after a link climbs from the link's target.
+// after a link climbs from the link's target. Each reading is matched by its path, and by the file system's identity of
+// it and the folders above it, so another path to the same file or folder, as a hard link or macOS's
+// `/System/Volumes/Data` path to a folder of the Data volume, matches too.
 function readsStore(input, unreadable) {
   const targets = fileReadOf(input);
   if (!targets) return null;
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
   const stores = unreadable.filter((each) => typeof each === 'string' && path.isAbsolute(each)).map((each) => realOf(each));
+  let known = null;
   for (const target of targets) {
     const spelled = typeof target === 'string' && target !== '' ? target : '.';
     const files = [realOf(path.resolve(cwd, spelled)), real(path.isAbsolute(spelled) ? spelled : `${cwd}/${spelled}`)].filter(Boolean);
     const store = stores.find((each) => files.some((file) => within(each, file) || within(file, each)));
     if (store) return store;
+    known ??= stores.map((each) => ({ store: each, id: identity(each), ids: lineage(each) }));
+    for (const file of files) {
+      const [id, ids] = [identity(file), lineage(file)];
+      const found = known.find((each) => (each.id !== null && ids.includes(each.id)) || (id !== null && each.ids.includes(id)));
+      if (found) return found.store;
+    }
   }
   return null;
 }

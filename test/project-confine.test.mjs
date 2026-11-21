@@ -11,7 +11,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -873,4 +873,32 @@ test('a file-tool read through `~/..`, with the home folder a link, climbs from 
     assert.match(call(tool, input)?.reason ?? '', /hides/u, `${tool} ${JSON.stringify(input)}`);
   }
   assert.equal(call('Read', { file_path: '~/notes.md' }), null, 'a file in the linked home folder, no store');
+});
+
+test('a file-tool read of a store by another name for the same file or folder reaches that store', (t) => {
+  const at = attempt(t);
+  plan(at);
+  const mark = { root: at.root, cwd: at.work, project: 'launch', issue: 'ENG-1', confine: 'passed' };
+  const call = (tool, input) => confineDenial({ session_id: SESSION, tool_name: tool, tool_input: input, cwd: at.work }, { mark, env: {} });
+  // A hard link in the clone to a store's file: no link to resolve, one file on the disk.
+  linkSync(at.secret, path.join(at.work, 'notes'));
+  assert.match(call('Read', { file_path: path.join(at.work, 'notes') })?.reason ?? '', /hides/u, 'a hard link to a store');
+  assert.match(call('Read', { file_path: 'notes' })?.reason ?? '', /hides/u, 'the same, relative to the call\'s folder');
+  assert.equal(call('Read', { file_path: path.join(at.work, 'README.md') }), null, 'a file of the clone of its own');
+  assert.equal(call('LS', { path: at.work }), null, 'the clone, which holds no store');
+});
+
+// On macOS, the Data volume's own path to a folder is the same folder as its standard path, with another real path.
+test('a file-tool read of a store through the macOS Data volume`s path to it reaches that store', { skip: process.platform !== 'darwin' }, (t) => {
+  const at = attempt(t);
+  plan(at);
+  const alias = (file) => `/System/Volumes/Data${file}`;
+  if (!existsSync(alias(at.home)) || realpathSync.native(alias(at.home)) === at.home) return t.skip('no Data volume path to the temporary folder');
+  const mark = { root: at.root, cwd: at.work, project: 'launch', issue: 'ENG-1', confine: 'passed' };
+  const call = (tool, input) => confineDenial({ session_id: SESSION, tool_name: tool, tool_input: input, cwd: at.work }, { mark, env: {} });
+  for (const [tool, input] of [['Read', { file_path: alias(at.secret) }], ['Read', { file_path: alias(path.join(at.keys, 'id_test')) }], ['Grep', { pattern: 'x', path: alias(at.keys) }],
+    ['Grep', { pattern: 'x', path: alias(at.home) }], ['LS', { path: alias(at.keys) }], ['Glob', { pattern: '*', path: alias(at.home) }], ['Read', { file_path: alias(path.join(at.keys, 'gone')) }]]) {
+    assert.match(call(tool, input)?.reason ?? '', /hides/u, `${tool} ${JSON.stringify(input)}`);
+  }
+  assert.equal(call('Read', { file_path: alias(path.join(at.work, 'README.md')) }), null, 'the clone by the same path');
 });

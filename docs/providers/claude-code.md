@@ -740,7 +740,9 @@ its start stays as [its page](codex.md#project-start) says.
    the plan lists as hidden, a folder that holds one included, since the file tools run outside the sandbox. A path is
    read both as folded text and as the system resolves it, where a `..` after a link climbs from the link's target,
    and a Glob's `path` and its pattern's literal folder are joined as text, as a leading `~` and the home folder are,
-   so that `..` is not folded away first.
+   so that `..` is not folded away first. Each reading matches a store by its path and by the file system's identity,
+   device and inode, of it and of each folder above it, so another path to the same file or folder, such as a hard link
+   or macOS's `/System/Volumes/Data` path to a folder of the Data volume, reaches the store too.
    A call's folder counts as in a clone when any reading lies in one: the system's resolution, the folded spelling
    resolved, or, where the path does not resolve, as with a dangling link or a missing folder, the nearest folder
    above it that is there, with the rest of the spelling.

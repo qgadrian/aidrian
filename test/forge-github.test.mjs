@@ -187,15 +187,20 @@ test('tokenCanPush: the push probe the adapter was given, for the repository and
   assert.deepEqual(asked, [['acme/widgets', { host: 'github.com', token: 'github_pat_RO' }], ['acme/widgets', { host: 'github.com', token: 'github_pat_RO' }]]);
 });
 
-test('tokenLogin: gh api user on the host with the token in gh`s token variable, never an argument, and its login', () => {
+test('tokenLogin: gh api user on the host with the token in every variable gh reads one from, never an argument, and its login', () => {
   const { forge, calls } = recorded(() => '{"login":"octo"}');
-  assert.equal(forge.tokenLogin({ host: 'github.com', token: 'github_pat_X' }), 'octo');
-  assert.equal(forge.tokenLogin({ host: 'ghe.example.com', token: 'ghp_Y' }), 'octo');
+  // gh reads www.github.com as github.com, from GH_TOKEN, where tokenVarFor names GH_ENTERPRISE_TOKEN: with the token in
+  // every variable, gh's own pick of one never falls back on its stored login.
+  for (const [host, token] of [['github.com', 'github_pat_X'], ['ghe.example.com', 'ghp_Y'], ['www.github.com', 'github_pat_Z']]) {
+    assert.equal(forge.tokenLogin({ host, token }), 'octo', host);
+  }
+  const every = (token) => ({ GH_TOKEN: token, GITHUB_TOKEN: token, GH_ENTERPRISE_TOKEN: token, GITHUB_ENTERPRISE_TOKEN: token, GH_HOST: undefined });
   assert.deepEqual(calls.map((call) => [call.args, call.options.env]), [
-    [['api', '--hostname', 'github.com', 'user'], { GH_TOKEN: 'github_pat_X' }],
-    [['api', '--hostname', 'ghe.example.com', 'user'], { GH_ENTERPRISE_TOKEN: 'ghp_Y' }],
+    [['api', '--hostname', 'github.com', 'user'], every('github_pat_X')],
+    [['api', '--hostname', 'ghe.example.com', 'user'], every('ghp_Y')],
+    [['api', '--hostname', 'www.github.com', 'user'], every('github_pat_Z')],
   ]);
-  assert.ok(calls.every((call) => !call.args.some((arg) => arg.includes('github_pat_X') || arg.includes('ghp_Y'))), 'no argument carries the token');
+  assert.ok(calls.every((call) => !call.args.some((arg) => /github_pat_|ghp_/u.test(arg))), 'no argument carries the token');
   assert.equal(recorded(() => '{}').forge.tokenLogin({ token: 'github_pat_X' }), null, 'an answer with no login');
   assert.throws(() => recorded().forge.tokenLogin({ host: 'github.com' }), /no token/u, 'no token is never gh`s own login');
   const app = createGithubForge({ run: () => { throw new Error('gh: Resource not accessible by integration (HTTP 403)'); } });
@@ -207,7 +212,9 @@ test('runGh hands gh the variables of `env` over this process`s own, and the env
   const exec = (file, args, options) => (seen.push(options.env), '');
   runGh(['api', 'user'], { exec, env: { GH_TOKEN: 'github_pat_X' } });
   runGh(['api', 'user'], { exec });
+  runGh(['api', 'user'], { exec, env: { GH_HOST: undefined } });
   assert.equal(seen[0].GH_TOKEN, 'github_pat_X');
+  assert.equal(seen[2].GH_HOST, undefined, 'a variable set to undefined, which execFileSync leaves out');
   assert.equal(seen[0].PATH, process.env.PATH, 'the rest of the environment stays');
   assert.equal(seen[1], undefined, 'no env option inherits the environment');
 });

@@ -15,7 +15,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { forgeFor, forgeGitHelper, forgeLoginStep, forgeTokenNote, forgeTokenVar } from './forges/index.mjs';
@@ -109,6 +109,27 @@ function recovery({ host, platform }) {
   if (platform !== 'darwin') return steps;
   if (String(host ?? '').toLowerCase() === 'github.com') steps.push(`add a keychain entry of service ${JSON.stringify(DEFAULT_KEYCHAIN_SERVICE)}`);
   return [...steps, `name one in projectRun.forgeTokenKeychain of ${LOCAL_FILE}`];
+}
+
+// The account a passed `aidrian project preflight` checked the forge's rules for, branch protection, tag rules, and
+// environment reviewers, as the forge CLI's login: one file in the runs folder `runs`, which no sandboxed command may
+// write (project-start.mjs guardedFolders). Every start holds the forge token to that account (accessProblem), so a
+// forge CLI that signs in as another account after the preflight moves nothing.
+const CHECKED_FILE = 'checked-account.json';
+const repositoryName = (repository) => `${repository?.host}/${repository?.owner}/${repository?.name}`;
+export const writeCheckedAccount = (runs, repository, login) => {
+  try {
+    mkdirSync(runs, { recursive: true, mode: 0o700 });
+  } catch (error) {
+    return `the runs folder cannot be made (${error.code ?? 'no code'})`;
+  }
+  return writeJson(path.join(runs, CHECKED_FILE), { repository: repositoryName(repository), login });
+};
+// { login } of checkedAccount's record for `repository`, or { why } there is none.
+export function checkedAccount(runs, repository) {
+  const read = readSmallJson(path.join(runs, CHECKED_FILE), 4096);
+  if (read?.repository === repositoryName(repository) && typeof read.login === 'string' && read.login !== '') return { login: read.login };
+  return { why: `no passed \`aidrian project preflight\` recorded the account it checked the forge's rules of ${repositoryName(repository)} for` };
 }
 
 // The variables that hand `token` to the session's sandboxed commands: the forge CLI's token variable for `host` alone.

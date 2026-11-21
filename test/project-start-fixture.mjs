@@ -20,10 +20,10 @@ import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { openStore } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { noteBeacon } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { CONFINE_PLAN, CONFINE_VERDICT } from '../plugins/aidrian/lib/project-confine.mjs';
-import { writeHandoff } from '../plugins/aidrian/lib/project-token.mjs';
+import { writeCheckedAccount, writeHandoff } from '../plugins/aidrian/lib/project-token.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { projectCommand } from '../plugins/aidrian/lib/project-run-cli.mjs';
-import { appendToRun, initRun, readRun } from '../plugins/aidrian/lib/project-run.mjs';
+import { appendToRun, initRun, readRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
 
 export const DRIVER = 'abcd1234-0000-4000-8000-00000000d001';
 export const OTHER = 'abcd1234-0000-4000-8000-00000000e001';
@@ -277,6 +277,8 @@ export function runFixture(t, { projectRun = { allow: true, unverifiedHosts: tru
     writeFileSync(file, JSON.stringify({ issues }));
     const started = initRun({ project, config, run: 'launch', file, session: DRIVER, env, home });
     if (started.exitCode !== 0) throw new Error(started.err.join('\n'));
+    // The account a passed preflight checked the forge's rules for, which every start holds the token to.
+    writeCheckedAccount(runsFolder(state), { host: 'github.com', owner: 'acme', name: 'widgets' }, 'octo');
   }
   const as = (session) => ({ ...env, CLAUDE_CODE_SESSION_ID: session });
   // `aidrian project` in this process as the session `session`, the driver by default.

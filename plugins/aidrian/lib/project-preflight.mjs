@@ -1,7 +1,7 @@
 // `aidrian project preflight`: every check that would refuse or halt a project run's start but the push preflight, which
 // reads the attempt's clone no preflight has (project-run-gate.mjs confinedRoom), run at once from the
-// attended session before `aidrian project init`, so the Human sees each blocker before walking away. It reads and
-// starts nothing. Each check is the start gate's own (lib/project-run-gate.mjs, lib/project-start.mjs): the repository
+// attended session before `aidrian project init`, so the Human sees each blocker before walking away. It starts
+// nothing, and writes only, once it passes, the account it checked the forge's rules for (writeCheckedAccount). Each check is the start gate's own (lib/project-run-gate.mjs, lib/project-start.mjs): the repository
 // origin names, the state folder and any other active run, a host instruction file above the runs folder, the team's projectRun through the forge, the machine's
 // switch, the host's start (confined, verified or allowed through projectRun.unverifiedHosts, hooks trusted), the host's
 // trust in the runs folder, and the
@@ -36,6 +36,7 @@ import { recordedTexts } from './project-issue-text.mjs';
 import { activeRuns, nextLines, pinnedRepository, planRun, readSnapshotInput, refNames, runPlace, runsFolder, teamsNote } from './project-run.mjs';
 import { runParallel, teamPolicy } from './project-run-gate.mjs';
 import { accessProblem, guardedFolders, hostStartProblem } from './project-start.mjs';
+import { writeCheckedAccount } from './project-token.mjs';
 import { ancestorProblem } from './project-trust.mjs';
 import { cardState, REVIEW_SUMMARY_CARD_MARKER } from './review/bot-card.mjs';
 import { trackerOfEndpoint } from './tracker-guard.mjs';
@@ -122,8 +123,11 @@ export function preflightCommand({ project, config, run = null, env = process.en
     if (trust?.note) lines.push(`note trust: ${trust.note}`);
     else check('trust', trust?.problem ?? null);
   }
+  // The account the forge's rules below are checked for, the forge CLI's login now, which the token must be of, on a
+  // host that hands its sessions one; a preflight that passes records it for every start (writeCheckedAccount).
+  const checked = cap?.forgeTokenEnv === true && repository ? viewerAccount(facade, repository) : null;
   if (cap && repository && !place.problem) {
-    lines.push(...accessLines({ cap, facade, repository, env, home, main, state: place.state, platform, allowed: policy.outsideSandbox, localBinding: policy.localBinding === true, keychain: project.localForgeTokenKeychain, exec }));
+    lines.push(...accessLines({ cap, facade, repository, env, home, main, state: place.state, platform, allowed: policy.outsideSandbox, localBinding: policy.localBinding === true, keychain: project.localForgeTokenKeychain, exec, checked }));
     if (policy.localBinding === true) lines.push(localBindingNote(cap, platform));
   } else {
     check('access', 'it needs the repository, the state folder, and a host that starts project sessions, which the lines above name');
@@ -158,23 +162,37 @@ export function preflightCommand({ project, config, run = null, env = process.en
   }
   lines.push(...asks);
   if (typeof cap?.limitContinue !== 'function') lines.push('ask usage-limit: confirm this host carries on by itself after a usage limit, since a limit stops the driver too');
+  if (checked?.login && !lines.some((line) => line.startsWith('blocker '))) {
+    const unwritten = writeCheckedAccount(runsFolder(place.state), repository, checked.login);
+    if (unwritten) lines.push(blockerLine('access', `${unwritten}, so no start can tell the account the forge's rules were checked for`, 'token'));
+  }
   const blocked = lines.some((line) => line.startsWith('blocker '));
   return { exitCode: blocked ? 1 : 0, out: lines, err: blocked ? ['aidrian project preflight: fix each blocker line, then run it again'] : [] };
+}
+
+// The forge CLI's login on the repository's host, as { login }, or { why } it cannot be told.
+function viewerAccount(facade, repository) {
+  try {
+    const login = facade.viewer({ host: repository.host });
+    return typeof login === 'string' && login !== '' ? { login } : { why: 'the forge names no account the forge CLI is signed in as' };
+  } catch (error) {
+    return { why: `the forge cannot say which account the forge CLI is signed in as (${String(error?.message ?? error).split('\n')[0].slice(0, 200)})` };
+  }
 }
 
 // The access check, the start gate's own (project-start.mjs accessProblem): `ok access` or its blocker, then, on a host
 // that hands its sessions the forge token, a `note token:` line naming the source the token came from, and one for each
 // note on it, such as a token that reaches more than this repository. Never the token itself.
-function accessLines({ cap, facade, repository, env, home, main, state, platform, allowed, localBinding, keychain, exec }) {
+function accessLines({ cap, facade, repository, env, home, main, state, platform, allowed, localBinding, keychain, exec, checked }) {
   let access;
   try {
-    access = accessProblem({ cap, forge: facade, repository, env, home, guarded: guardedFolders({ main, state, env, home }), main, platform, allowed, localBinding, keychain, ...(exec ? { exec } : {}) });
+    access = accessProblem({ cap, forge: facade, repository, env, home, guarded: guardedFolders({ main, state, env, home }), main, platform, allowed, localBinding, keychain, ...(exec ? { exec } : {}), ...(checked ? { checked } : {}) });
   } catch (error) {
     access = { halt: `the access check failed (${String(error?.message ?? error).split('\n')[0]})` };
   }
   const problem = access?.halt ?? access?.refuse ?? null;
-  // A halt that carries the token's record is the token's own: no source gave one, it may not push, or it is not the
-  // forge CLI's own user's.
+  // A halt that carries the token's record is the token's own: no source gave one, it may not push, or it is not of the
+  // account the forge's rules are checked for.
   const lines = [problem ? blockerLine('access', problem, access?.token ? 'token' : 'access') : 'ok access'];
   if (access?.token?.source) lines.push(`note token: ${access.token.source} gives the issue sessions their forge token`);
   for (const note of access?.token?.notes ?? []) lines.push(`note token: ${note}`);

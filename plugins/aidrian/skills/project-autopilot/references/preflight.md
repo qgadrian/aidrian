@@ -1,7 +1,8 @@
 # Turn 1: preflight, snapshot, init
 
 Read in the attended first turn. Every step here runs while the Human is still here, so each blocker is named once,
-together, with its fix. `aidrian project init` runs last, only once nothing blocks: before it, nothing is written.
+together, with its fix. `aidrian project init` runs last, only once nothing blocks: before it, nothing is written but
+the account a passed preflight checked the forge's rules for, which every start holds the forge token to.
 
 ## 1. The project
 

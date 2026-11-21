@@ -6,7 +6,7 @@
 import { isRefName } from '../git.mjs';
 import { hasHidden } from '../hidden-text.mjs';
 import { runGh } from './github-cli.mjs';
-import { receivePackStatus, tokenMayPush, tokenVarFor } from './github-token.mjs';
+import { receivePackStatus, tokenMayPush } from './github-token.mjs';
 
 // The author associations GitHub gives the people who belong to a repository.
 // Frozen, with no add, and compared by === rather than through a prototype method, so no module in the gate's process
@@ -969,12 +969,15 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // Whether `token` may push to `repo` on `host` (default github.com), by a probe that writes nothing: { may, why }, or
     // a throw when the forge's answer says neither (github-token.mjs tokenMayPush).
     tokenCanPush: (repo, { host = DEFAULT_HOST, token } = {}) => tokenMayPush(repo, { host, token, probe }),
-    // The login of the user `token` belongs to on `host` (default github.com), asked of the forge with that very token in
-    // gh's token variable for the host, never an argument; null when the answer names none. Throws what gh throws, such
-    // as for an app's installation token, which GitHub names no user for.
+    // The login of the user `token` belongs to on `host` (default github.com), asked of the forge with that very token,
+    // never an argument, in every variable gh reads a token from, and with no GH_HOST: gh picks the variable by its own
+    // reading of the host, which can differ from tokenVarFor's (www.github.com), and a token in each leaves it no stored
+    // login to fall back on. Null when the answer names none. Throws what gh throws, such as for an app's installation
+    // token, which GitHub names no user for.
     tokenLogin: ({ host = DEFAULT_HOST, token } = {}) => {
       if (typeof token !== 'string' || token === '') throw new Error('no token to ask the forge with');
-      const login = JSON.parse(gh(['api', '--hostname', host, 'user'], { env: { [tokenVarFor(host)]: token } }) || 'null')?.login;
+      const env = { ...Object.fromEntries(TOKEN_VARS.map((name) => [name, token])), GH_HOST: undefined };
+      const login = JSON.parse(gh(['api', '--hostname', host, 'user'], { env }) || 'null')?.login;
       return typeof login === 'string' && login !== '' ? login : null;
     },
     // The comments on the pull request's conversation, not those on its diff (reviewComments).

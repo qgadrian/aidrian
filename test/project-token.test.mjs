@@ -191,28 +191,31 @@ test('a start whose token may not push halts, though the driver\'s own login may
   assert.equal(other.cmd(['start', 'launch', 'ENG-1']).out[0], 'halt whether the forge token from the forge CLI\'s login for github.com may push to github.com/acme/widgets cannot be told (the forge answered the push probe with 500); start again');
 });
 
-test('a start whose token belongs to another user than the forge CLI\'s login halts, since the preflight checks the forge\'s rules for that login alone', (t) => {
+test('a start holds the token to the account the passed preflight checked the forge\'s rules for, not the forge CLI\'s login now', (t) => {
+  // The fixture's run follows a preflight that passed as "octo". The forge CLI then signs in as another account, whose
+  // own login gives the token: the rules were never checked for it, so the start halts.
   const fx = runFixture(t);
-  // A token of another account, which may push, where the driver's login is held by every rule the preflight reads.
+  fx.forge.viewerLogin = () => 'mallory';
   fx.forge.tokenUser = () => 'mallory';
   const halted = fx.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(halted.exitCode, 1, halted.out.join('\n'));
-  assert.equal(halted.out[0], 'halt the forge token from the forge CLI\'s login for github.com belongs to "mallory", not "octo", the forge CLI\'s login, for whom the preflight checks branch protection, tag rules, and environment reviewers, so those checks say nothing of what the token may bypass; give that source a token of "octo", or sign the forge CLI in as "mallory"');
+  assert.equal(halted.out[0], 'halt the forge token from the forge CLI\'s login for github.com belongs to "mallory", not "octo", the account the preflight checked branch protection, tag rules, and environment reviewers for, so those checks say nothing of what the token may bypass; run `aidrian project preflight` again, with the forge CLI signed in as the account the token belongs to, so it checks the forge\'s rules for that account, or give that source a token of "octo"');
   assert.deepEqual(fx.claude.starts(), [], 'no claude --bg');
   assert.ok(fx.forge.calls.some(([name, options]) => name === 'tokenLogin' && options.host === 'github.com' && options.token === 'given'), 'the forge was asked with that very token');
-  assert.ok(fx.forge.calls.some(([name, options]) => name === 'viewer' && options.host === 'github.com'));
-  // Fails closed: a token the forge names no user for, as an app's installation token, halts as well.
+  assert.ok(!fx.forge.calls.some(([name]) => name === 'viewer'), 'a start never reads the forge CLI\'s login now');
+  // The same switch with a token still of "octo", as a keychain entry gives, starts: the login now plays no part.
+  const keyed = runFixture(t);
+  keyed.forge.viewerLogin = () => 'mallory';
+  keyed.forge.tokenUser = () => 'OCTO';
+  assert.equal(keyed.cmd(['start', 'launch', 'ENG-1']).exitCode, 0, 'logins match whatever their case');
+  // Fails closed: no recorded account, and a token the forge names no account for, as an app's installation token.
+  const unchecked = runFixture(t);
+  rmSync(path.join(runsFolder(unchecked.state), 'checked-account.json'));
+  assert.equal(unchecked.cmd(['start', 'launch', 'ENG-1']).out[0], 'halt no passed `aidrian project preflight` recorded the account it checked the forge\'s rules of github.com/acme/widgets for, so whether the forge token from the forge CLI\'s login for github.com is the account\'s the forge\'s rules were checked for cannot be told; run `aidrian project preflight` again, with the forge CLI signed in as the account the token belongs to, so it checks the forge\'s rules for that account');
   const app = runFixture(t);
   app.forge.tokenUser = () => { throw new Error('gh: Resource not accessible by integration (HTTP 403)'); };
-  assert.match(app.cmd(['start', 'launch', 'ENG-1']).out[0], /^halt the forge cannot say which user the forge token from the forge CLI's login for github\.com belongs to \(gh: Resource not accessible by integration \(HTTP 403\)\), .*; give that source a token of the user the forge CLI is signed in as, then start again$/u);
-  assert.deepEqual(app.claude.starts(), []);
-  const unread = runFixture(t);
-  unread.forge.viewerLogin = () => null;
-  assert.match(unread.cmd(['start', 'launch', 'ENG-1']).out[0], /^halt the forge cannot say which user the forge CLI is signed in as \(the forge named no user\)/u);
-  // Logins match whatever their case: the same user starts.
-  const same = runFixture(t);
-  same.forge.tokenUser = () => 'OCTO';
-  assert.equal(same.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  assert.match(app.cmd(['start', 'launch', 'ENG-1']).out[0], /^halt the forge cannot say which account the forge token from the forge CLI's login for github\.com belongs to \(gh: Resource not accessible by integration \(HTTP 403\)\), so the forge's rules, checked for "octo", may not hold it; give that source a token of "octo"$/u);
+  assert.deepEqual([unchecked, app].flatMap((each) => each.claude.starts()), []);
 });
 
 test('the push probe asks GitHub for the receive-pack advertisement, with the token in the environment under the host\'s variable, never an argument', () => {
@@ -233,6 +236,8 @@ test('the push probe asks GitHub for the receive-pack advertisement, with the to
   assert.deepEqual(may(200, 'text/html; charset=utf-8'), { may: false, why: 'the forge answered 200 with text/html, not a push advertisement' });
   assert.deepEqual([401, 403, 404].map((status) => may(status, 'text/plain')), [401, 403, 404].map((status) => ({ may: false, why: `the forge answered ${status}` })));
   assert.throws(() => may(500, 'text/plain'), /the forge answered the push probe with 500/u);
+  // A redirect, as GitHub answers for www.github.com, says neither: the start halts before it hands any token over.
+  assert.throws(() => may(301, 'text/html'), /the forge answered the push probe with 301/u);
 });
 
 test('the machine\'s default keychain entry is read for github.com alone: an Enterprise run takes the project entry or its own login', () => {

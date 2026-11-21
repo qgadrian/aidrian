@@ -19,7 +19,7 @@ export const GH_EXEC_OPTIONS = Object.freeze({ encoding: 'utf8', stdio: ['ignore
 // `input` is gh's stdin, such as a request body for `gh api --input -`: the text goes as it is, never read as a flag's value.
 // Node hands `input` to the child only through a piped stdin, so a call with one pipes it; every other call ignores stdin.
 // `env` adds variables to gh's environment, over this process's own, such as a token to ask the forge with, which no
-// argument then carries.
+// argument then carries; a variable it sets to undefined is left out.
 export function runGh(args, { cwd, exec = execFileSync, timeoutMs = GH_TIMEOUT_MS, killSignal = null, input, env } = {}) {
   try {
     return exec('gh', args, {

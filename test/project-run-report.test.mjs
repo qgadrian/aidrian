@@ -17,7 +17,8 @@ import { baseReader } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { SETUP_DOC, SETUP_SECTIONS, setupDocUrl } from '../plugins/aidrian/lib/project-preflight.mjs';
 import { pluginRepository } from '../plugins/aidrian/lib/config-version.mjs';
 import { owedReports, reportBody, reportCalls, runWriter } from '../plugins/aidrian/lib/project-report.mjs';
-import { runFolder } from '../plugins/aidrian/lib/project-run.mjs';
+import { runFolder, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
+import { checkedAccount, writeCheckedAccount } from '../plugins/aidrian/lib/project-token.mjs';
 import { bodyHash } from '../plugins/aidrian/lib/tracker-guard.mjs';
 import linear from '../plugins/aidrian/lib/trackers/linear.mjs';
 import { markDriver, markPending, markUnattended, readDriverMark, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
@@ -474,6 +475,7 @@ const NO_SECRETS = { secrets: 0, workflowPush: true };
 
 test('preflight names every blocker at once, and starts nothing', (t) => {
   const ready = runFixture(t, { init: false, ...READY });
+  assert.deepEqual(checkedAccount(runsFolder(ready.state), { host: 'github.com', owner: 'acme', name: 'widgets' }).login, undefined, 'no preflight has passed yet');
   writeFileSync(path.join(ready.env.CLAUDE_CONFIG_DIR, 'settings.json'), JSON.stringify({ autoContinueAtUsageLimit: true }));
   writeFileSync(path.join(ready.env.CLAUDE_CONFIG_DIR, '.claude.json'), JSON.stringify({ projects: { [ready.state]: { hasTrustDialogAccepted: true } } }));
   let asked = null;
@@ -492,6 +494,9 @@ test('preflight names every blocker at once, and starts nothing', (t) => {
   assert.equal(asked?.counts?.('The card opens with `<!-- codex-pull-request-review-summary -->`, so match it at the start.'), true, 'a review that quotes the card marker counts');
   assert.deepEqual(ok.out.filter((line) => !/^(ask|note) /u.test(line)), ['ok repository', 'ok state', 'ok run', 'ok instructions', 'ok policy', 'ok machine', 'ok host', 'ok trust', 'ok access', 'ok usage-limit', 'ok tracker', 'ok auto-merge', 'ok handoff', 'ok reviewer', 'ok reviewer-seen', 'ok ci', 'ok branch-protection', 'ok release-tags', 'ok workflow-secrets'], ok.out.join('\n'));
   assert.equal(ok.exitCode, 0);
+  // A passed preflight records the account it checked the forge's rules for, for every start to hold the token to.
+  assert.deepEqual(checkedAccount(runsFolder(ready.state), { host: 'github.com', owner: 'acme', name: 'widgets' }), { login: 'octo' });
+  assert.match(checkedAccount(runsFolder(ready.state), { ...{ host: 'github.com', owner: 'acme', name: 'widgets' }, name: 'other' }).why, /no passed `aidrian project preflight` recorded the account it checked the forge's rules of github\.com\/acme\/other for/u, 'only for its repository');
   assert.deepEqual(ok.out.filter((line) => line.startsWith('ask ')).map((line) => line.split(':')[0]), ['ask labels']);
   assert.equal(ready.claude.starts().length, 0);
   Object.assign(ready.forge, { reviewerSeen: () => ({ changes: 0, seen: false }), ciWorkflows: () => [] });
@@ -555,6 +560,7 @@ test('every preflight blocker line, and the labels ask, ends with the setup doc 
   assert.deepEqual(pointed(none).find(([name]) => name === 'blocker access'), ['blocker access', 'forge-token-in-the-keychain']);
   // So does a token of another user than the forge CLI's login, which the forge rules above were checked for.
   const other = ready.cmd(['preflight'], { forge: { ...ready.forge, tokenLogin: () => 'mallory' } }).out;
+  assert.equal(checkedAccount(runsFolder(ready.state), { host: 'github.com', owner: 'acme', name: 'widgets' }).login, undefined, 'a preflight with a blocker records no account');
   assert.deepEqual(pointed(other).find(([name]) => name === 'blocker access'), ['blocker access', 'forge-token-in-the-keychain']);
   assert.match(other.find((line) => line.startsWith('blocker access:')), /belongs to "mallory", not "octo"/u);
 });
@@ -1072,6 +1078,8 @@ test('init keeps each issue\'s text from the tracker\'s own answers this session
   assert.deepEqual([kept.title.length <= 300, kept.description.length <= 20_000, kept.description.includes('\t'), kept.labels], [true, true, true, ['export']]);
   assert.doesNotMatch(readFileSync(path.join(runFolder(fx.state, 'launch'), 'snapshot.json'), 'utf8'), /Export/u, 'snapshot.json keeps no text');
 
+  // The account a passed preflight records, which the start holds the forge token to.
+  writeCheckedAccount(runsFolder(fx.state), { host: 'github.com', owner: 'acme', name: 'widgets' }, 'octo');
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
   const issue = path.join(runFolder(fx.state, 'launch'), 'attempts', 'ENG-1.1', 'issue.md');
   const body = readFileSync(issue, 'utf8');

@@ -82,38 +82,36 @@ export function hostStartProblem(cap, policy, env) {
 // `localBinding` its projectRun.localBinding, which lets the host's settings allow local binding too.
 // On a host that hands its session the forge token (`forgeTokenEnv`), a start halts too when no source gives a token
 // (lib/project-token.mjs: the keychain entry `keychain`, the machine's default entry, or the forge CLI's login), or when
-// the forge, asked with that very token, does not let it push to the repository, or when the token is not the forge
-// CLI's own user's, or either user cannot be told: the preflight checks the forge's rules, branch protection, tag
-// rules, and environment reviewers, for that login alone, so they hold a token of another user to nothing.
-// { pushUrl, token } then names its source `id`, its `source` label, and `notes`, never the token, which the session's
-// SessionStart hook reads again from that one source.
-export function accessProblem({ cap, forge, repository, env, home, guarded, main, platform = process.platform, allowed = [], localBinding = false, keychain = null, exec }) {
+// the forge, asked with that very token, does not let it push to the repository, or when the token is not of the
+// account `checked`, { login } or { why } it cannot be told, names: the one the preflight checked the forge's rules,
+// branch protection, tag rules, and environment reviewers, for, which hold a token of any other account to nothing
+// (the preflight passes the forge CLI's login it checks as, a start the one a passed preflight recorded,
+// lib/project-token.mjs checkedAccount). { pushUrl, token } then names its source `id`, its `source` label, and
+// `notes`, never the token, which the session's SessionStart hook reads again from that one source.
+export function accessProblem({ cap, forge, repository, env, home, guarded, main, platform = process.platform, allowed = [], localBinding = false, keychain = null, exec, checked = { why: 'no account was named' } }) {
   const pushed = pushAccess({ cap, forge, repository, env, home, guarded, main, platform, allowed, localBinding });
   if (!pushed?.pushUrl || cap.forgeTokenEnv !== true) return pushed;
   const read = forgeToken({ forge, repository, keychain, platform, env, ...(exec ? { exec } : {}) });
   if (read.problem) return { halt: read.problem, token: { notes: read.notes } };
   const token = { id: read.id, source: read.source, notes: read.notes, digest: tokenDigest(read.token) };
-  const denied = tokenPushProblem({ forge, repository, read }) ?? tokenOwnerProblem({ forge, repository, read });
+  const denied = tokenPushProblem({ forge, repository, read }) ?? tokenOwnerProblem({ forge, repository, read, checked });
   return denied ? { halt: denied, token } : { ...pushed, token };
 }
 
-// Why the token `read` gave is not the forge CLI's own user's, the user the preflight checks the forge's rules for, or
-// cannot be told to be, or null. Fails closed: a login the forge does not answer halts as a different one does.
-function tokenOwnerProblem({ forge, repository, read }) {
-  const loginOf = (call) => {
-    try {
-      const login = call();
-      return typeof login === 'string' && login !== '' ? { login } : { why: 'the forge named no user' };
-    } catch (error) {
-      return { why: String(error?.message ?? error).split('\n')[0].slice(0, 200) };
-    }
-  };
-  const owner = loginOf(() => forge.tokenLogin({ host: repository.host, token: read.token }));
-  if (!owner.login) return `the forge cannot say which user the forge token from ${read.source} belongs to (${owner.why}), and the preflight checks branch protection, tag rules, and environment reviewers for the forge CLI's login alone, so they may not hold that token; give that source a token of the user the forge CLI is signed in as, then start again`;
-  const driver = loginOf(() => forge.viewer({ host: repository.host }));
-  if (!driver.login) return `the forge cannot say which user the forge CLI is signed in as (${driver.why}), so whether the forge token from ${read.source} is that user's cannot be told; start again`;
-  if (owner.login.toLowerCase() === driver.login.toLowerCase()) return null;
-  return `the forge token from ${read.source} belongs to ${JSON.stringify(owner.login)}, not ${JSON.stringify(driver.login)}, the forge CLI's login, for whom the preflight checks branch protection, tag rules, and environment reviewers, so those checks say nothing of what the token may bypass; give that source a token of ${JSON.stringify(driver.login)}, or sign the forge CLI in as ${JSON.stringify(owner.login)}`;
+// Why the token `read` gave is not of the account `checked` names, the one the preflight checked the forge's rules
+// for, or cannot be told to be, or null. Fails closed: a login the forge does not answer halts as another one does.
+const RECHECK = 'run `aidrian project preflight` again, with the forge CLI signed in as the account the token belongs to, so it checks the forge\'s rules for that account';
+function tokenOwnerProblem({ forge, repository, read, checked }) {
+  if (typeof checked?.login !== 'string' || checked.login === '') return `${checked?.why ?? 'no account was named'}, so whether the forge token from ${read.source} is the account's the forge's rules were checked for cannot be told; ${RECHECK}`;
+  let owner;
+  try {
+    owner = forge.tokenLogin({ host: repository.host, token: read.token });
+  } catch (error) {
+    return `the forge cannot say which account the forge token from ${read.source} belongs to (${String(error?.message ?? error).split('\n')[0].slice(0, 200)}), so the forge's rules, checked for ${JSON.stringify(checked.login)}, may not hold it; give that source a token of ${JSON.stringify(checked.login)}`;
+  }
+  if (typeof owner !== 'string' || owner === '') return `the forge names no account the forge token from ${read.source} belongs to, so the forge's rules, checked for ${JSON.stringify(checked.login)}, may not hold it; give that source a token of ${JSON.stringify(checked.login)}`;
+  if (owner.toLowerCase() === checked.login.toLowerCase()) return null;
+  return `the forge token from ${read.source} belongs to ${JSON.stringify(owner)}, not ${JSON.stringify(checked.login)}, the account the preflight checked branch protection, tag rules, and environment reviewers for, so those checks say nothing of what the token may bypass; ${RECHECK}, or give that source a token of ${JSON.stringify(checked.login)}`;
 }
 
 // Why the token `read` gave may not push to `repository`, by the forge's push probe with that very token, or null.

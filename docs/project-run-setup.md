@@ -44,26 +44,31 @@ git remote set-url origin https://github.com/<owner>/<name>.git
 git config --show-origin --show-scope --get-regexp 'insteadof$'
 ```
 
-The second command lists every `url.<base>.insteadOf` rule of every scope, each with its scope and the file that
-defines it. Remove each one that rewrites the HTTPS URL to SSH from that file, `git config --file <file> --unset-all
-url.<base>.insteadOf`, where `<file>` is the path after `file:` (a `system` file may need an administrator): git
-applies the rule to the URL it reports, so the clone would still push over SSH. A `pushInsteadOf` rule that changes
+The second command lists every `url.<base>.insteadOf` rule of every scope, one line each: its scope, `file:` and the
+file that defines it, the key, and the value, the URL prefix it rewrites. Remove each one that rewrites the HTTPS URL to
+SSH by that exact key and value, from that file (a `system` file may need an administrator); `--fixed-value`, git 2.30
+or later, matches the value as it is written rather than as a pattern, so no other rule of the key goes with it:
+
+```sh
+git config --file '<file>' --fixed-value --unset '<key>' '<exact value>'
+```
+
+Git applies the rule to the URL it reports, so the clone would still push over SSH. A `pushInsteadOf` rule that changes
 the push URL, or a second `remote.origin.pushurl` (`git remote get-url --push --all origin` lists them), halts the
 start too.
 
 Git's `store` credential helper keeps the token in `~/.git-credentials`, which the sandbox hides, and the access check
 reads every credential helper of every scope, so a `store` entry blocks the start wherever it is. `gh auth setup-git`
-adds gh's own helper and leaves an existing `store` entry in place, so after it, list the helpers with the file each
-comes from and remove the `store` one from that file:
+adds gh's own helper and leaves an existing `store` entry in place, so after it, list the helpers, then remove each
+`store` one, such as `store` or `store --file <path>`, by its exact key and value, from the file its line names:
 
 ```sh
 gh auth setup-git
 git config --show-origin --show-scope --get-regexp '^credential\..*helper$'
-git config --file <file> --unset-all credential.helper store
+git config --file '<file>' --fixed-value --unset '<key>' '<exact value>'
 ```
 
-The last line removes only the `credential.helper` values that match `store`; for a helper of one URL, such as
-`credential.https://github.com.helper`, name that key instead.
+The key is `credential.helper`, or for a helper of one URL, such as `credential.https://github.com.helper`, that key.
 `blocker repository` means origin names no repository a forge serves at all.
 
 ## Driver permission mode
@@ -104,11 +109,15 @@ The first of three sources that gives a token is used:
    account, shared by every project on the machine.
 3. The forge CLI's own login, `gh auth token --hostname <host>`.
 
-The token must belong to the account the driver's gh login is signed in as. The preflight checks branch protection,
-the tag rules, and environment reviewers for that login alone, so the rules it reads say nothing of a token of another
-account, which may bypass them. The start asks the forge whose token it is, `gh api user` with the token, and halts on
-a login other than the driver's, or on one the forge does not name, as for an app's installation token: give each
-source a token of that same account, or sign gh in as the token's account.
+The token must belong to the account the preflight checked the forge's rules for. The preflight checks branch
+protection, the tag rules, and environment reviewers as gh's login of that moment, so the rules it reads say nothing
+of a token of another account, which may bypass them. Each start asks the forge whose token it is, `gh api user` with
+the token alone, and halts when that account is not the one the preflight checked for, or when the forge names none,
+as for an app's installation token. A preflight that prints no blocker records its account in
+`<state>/runs/checked-account.json`, which no issue session may write, and a start compares the token with that record,
+never with gh's login at the start. So signing gh in as another account after the preflight changes nothing a start
+does. The remedy is to run `aidrian project preflight` again with gh signed in as the account the token belongs to,
+or to give the source a token of the account the preflight checked for.
 
 An entry that is not there passes to the next source. A token that is there but may not push, or that belongs to
 another account, does not: the start halts. Push rights are checked twice: the forge must let the signed-in user push
@@ -236,9 +245,9 @@ and with no pull request yet a `note` says the first one proves it.
 ## Forge rules
 
 An issue's session gets the forge token the start read ([Forge token in the keychain](#forge-token-in-the-keychain)),
-which may be a keychain entry's rather than gh's own login, but always one of the account gh is signed in as: the start
-halts on a token of any other. The checks below read the forge's rules for that account, so the forge must hold what a
-script the session runs could do with its token:
+which may be a keychain entry's rather than gh's own login, but always one of the account the passed preflight checked
+these rules for: the start halts on a token of any other. So the forge must hold what a script the session runs could
+do with its token:
 
 - `branch-protection`: a rule on the default branch that asks for a pull request, includes administrators, and lets
   that user bypass nothing.

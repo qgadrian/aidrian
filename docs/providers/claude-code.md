@@ -498,8 +498,9 @@ No `sandbox.excludedCommands` is passed. Three conditions hold on top of the san
   ([`projectRun.forgeTokenKeychain`](../config.md#project-run) in `.aidrian.local.json`), the machine's default entry,
   service `aidrian-project-run`, both on macOS, the default entry for a github.com run alone, so no github.com token
   reaches another host, and `gh auth token --hostname <host>`. It halts when none gives one, when the token belongs
-  to another account than gh's own login, `gh api user` asked with the token (the preflight checks the forge's rules
-  for that login alone), or when that very token may not push, whatever the driver's own login may do: the start asks GitHub for the
+  to another account than the one a passed preflight recorded checking the forge's rules for, `gh api user` asked
+  with the token alone ([Forge token in the keychain](../project-run-setup.md#forge-token-in-the-keychain)), or when
+  that very token may not push, whatever the driver's own login may do: the start asks GitHub for the
   repository's receive-pack advertisement, `https://<host>/<owner>/<name>.git/info/refs?service=git-receive-pack`,
   with the token as basic auth, from a Node process with no shell that gets the token in its environment. GitHub
   answers 200 with `application/x-git-receive-pack-advertisement` only to a token that may write the contents, and

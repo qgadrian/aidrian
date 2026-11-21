@@ -38,6 +38,7 @@ import { loadKnowledge } from './knowledge.mjs';
 import { ACCESS_DOC, parsePersona, personaDocs, previewPatterns } from './personas.mjs';
 import { branchConfig, defaultBranch, ghError, notFound, readView, VIEW_FIELDS } from './pr-auto-merge.mjs';
 import { checkoutRemotes } from './pr-checks.mjs';
+import { pullRequestDiff } from './pr-diff.mjs';
 import { changedFilesMatch, fromOutside, parseTarget, projectFolder } from './pr-resolve.mjs';
 import { committedConfigFile, repoRoot, stateDir, strictConfigPathIn } from './project.mjs';
 import { FEEDBACK_NO_LIST } from './review/config.mjs';
@@ -651,23 +652,23 @@ function items({ argv: [value], values, project, forge, remotes }) {
 }
 
 // `diff`: writes the pull request's diff beside its record, as `diff.patch`, for the product-manager read, and prints its
-// path. The diff is data an agent reads; nothing here runs it. gh reads it from the repository the pull request is in.
+// path, alone, on stdout. The diff is data an agent reads; nothing here runs it. gh reads it from the repository the pull
+// request is in; when gh refuses it as too large, pr-diff.mjs diffs its two commits in this checkout instead, and a
+// line on stderr says so.
 function diff({ argv: [value], project, forge, remotes }) {
   const pr = pullRequest(value, { forge, remotes });
   const state = stateDir(project, { config: commandConfig(project, { exitCode: 3 }) });
   const file = path.join(path.dirname(recordPath(state, pr.repo, pr.number)), 'diff.patch');
   if (!isWithin(path.join(state, 'product-feedback'), file)) throw new Error(`the diff of ${pr.repo}#${pr.number} would leave the state folder`);
-  let text;
-  try {
-    text = forge.diff(pr.number, { repo: `${pr.host}/${pr.repo}` });
-  } catch (error) {
-    throw new Error(`could not read the diff of #${pr.number} with gh (${ghError(error)})`);
-  }
+  const { text, local } = pullRequestDiff({ forge, pr, root: project.root });
   if (typeof text !== 'string') throw new Error(`gh returned no diff for #${pr.number}`);
   writeAtomic(file, text);
   console.log(file);
+  if (local) console.error(localNote(pr, local));
   return 0;
 }
+
+const localNote = (pr, { base, head, fetched }) => `gh refused the diff of #${pr.number} as too large, so it came from the local fallback: git diff ${base}...${head} in this checkout${fetched.length ? `, after fetching ${fetched.join(' ')}` : ''}`;
 
 const TEXT = { type: 'string' };
 const ACTIONS = {

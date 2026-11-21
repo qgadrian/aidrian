@@ -713,8 +713,16 @@ aidrian pr product-feedback diff <PR>
 `--json` gives `head`, gh's head now; `recorded_head`, the head the record was written at, which the comment names; `limited`; and each
 item's id, title, kind, source, `audit_key`, `found_at` head, `state`, decision, re-check with its own head, and the command that answers it.
 `diff` writes the pull request's diff, read with `--repo <host>/<owner>/<name>`, to `diff.patch` beside the record, a path held
-inside the state folder, and prints that path: the [pr-product-feedback](personas.md#product-feedback-on-a-pull-request) skill's
+inside the state folder, and prints that path, alone, on stdout: the [pr-product-feedback](personas.md#product-feedback-on-a-pull-request) skill's
 product-manager read takes it, since that agent runs no shell.
+When the forge refuses the diff as too large (GitHub's `PullRequest.diff too_large`, past its size limit), and only then,
+`diff` reads the pull request's base and head commits from the forge and writes `git diff <base>...<head>` from the current
+checkout instead, the merge base to the head, as the forge shows a pull request. A commit the checkout lacks is fetched
+first, `git fetch --no-tags <remote> <sha>...`, from the remote whose URL names the pull request's repository, else `origin`.
+git runs from an argument list, never a shell, under the plugin's hardened git settings. A line on stderr says the diff came
+from this local fallback, naming both commits and any it fetched. Nothing downstream caps the diff, so the local one is written
+whole, as the forge's is; one past 64 MB, as with any gh read, exits 3. Any other forge failure, and a local diff or fetch
+that fails, exits 3 with nothing written, so the feedback stays owed.
 
 | `status --json` `reason` | Exit | Means |
 | --- | --- | --- |

@@ -5,7 +5,7 @@
 // is forgeFor's methods, and the helpers below. repoIdentity is the facade's; the others are GitHub's today, as the
 // payloads are: a second forge reshapes them with its adapter.
 
-import { apiWrite, changeNotFound, CONFIG_COMMANDS, createGithubForge, domains, GITHUB_JSON, isLogin, isTrustedCommenter, MAX_BODY, REF_COMMANDS, REVIEWS_PAGE, servedRepository, TOKEN_VARS, WORKFLOW_FOLDERS } from './github.mjs';
+import { apiWrite, changeNotFound, CONFIG_COMMANDS, createGithubForge, diffTooLarge, domains, GITHUB_JSON, isLogin, isTrustedCommenter, MAX_BODY, REF_COMMANDS, REVIEWS_PAGE, servedRepository, TOKEN_VARS, WORKFLOW_FOLDERS } from './github.mjs';
 import { remoteIdentity, repoIdentity } from './identity.mjs';
 
 // A repository's `{ host, path }` from a remote or a `-R` value: the facade's own helper (identity.mjs), which reads
@@ -15,6 +15,10 @@ export { remoteIdentity, repoIdentity };
 // Whether a forge call that reads one pull request (`change`) failed because the forge has no such pull request, which
 // is final, rather than because it could not answer now.
 export { changeNotFound };
+
+// Whether a `diff` call failed because the forge refuses a diff that large, which a local diff of the two commits
+// `changeEnds` names can stand in for, rather than for any other reason.
+export { diffTooLarge };
 
 // The forge CLIs' subcommands that write the user's own config, each { programs, subcommands, valueOptions, what }:
 // the union of every forge adapter's list, whichever forge serves a checkout, since a session may run any forge's CLI.

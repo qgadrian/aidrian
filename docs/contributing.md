@@ -108,6 +108,36 @@ in process by replacing `Date.now` around the call, as `test/ready-hold.test.mjs
 The tests' git config holds a user identity: without one, git guesses an email from the machine's host name, and on a
 machine whose name does not resolve each clone, checkout, or commit waits about 5 seconds for that lookup.
 
+## Commands in the test's process
+
+`bin/aidrian` starts `lib/cli.mjs`, which sets the process's exit code to `await runCli(argv)`, its export that holds
+the command table, the usage, and the error handling. It runs the command unless a switch that only test code sets is
+on: `test/cli-in-process.mjs` sets `Symbol.for('aidrian.test.cliInProcess')` on `globalThis` before `lib/cli.mjs` loads,
+so importing it exposes `runCli` without running a command. The switch is never read from the arguments or from how the
+module was started, so a run that misses the check still runs the command. A test runs a command with
+`await cliCall(args, { cwd, env })` (`test/cli-call.mjs`), which calls `runCli` in the test's own process and returns
+spawnSync's `{ status, stdout, stderr }`, without starting a node process for each call. It swaps in the call's folder and
+environment, keeps what the command writes to `process.stdout` and `process.stderr`, and starts and ends the call with no
+stopped git call and no clone anchor, as `hookCall` does; afterwards the folder, the environment, both writes, and
+`process.exitCode` are as they were, whether the command returned or threw. Calls run one at a time, and a second call
+while one runs throws. An error `runCli` does not handle reaches the test, where a process prints it and exits 1, and a
+command that calls `process.exit` throws to the test instead of ending the test run. A write from outside the call,
+such as the test runner reporting an earlier test, goes to the stream as before. A command that reads stdin, with
+`readFileSync(0)` or `readFileSync('/dev/stdin')`, throws to the test too: the test runner's stdin never closes, so the
+read would hang the file until CI stops it. `cliCall` swaps `fs.readFileSync` for the call and back, with
+`syncBuiltinESMExports` so a module's own `import { readFileSync } from 'node:fs'` sees both swaps.
+
+Each command's module is imported once per test file, so a cache it keeps lasts across calls, where each process run
+started fresh: `codexAvailable` (`lib/review/reviewers.mjs`) asks once whether Codex runs here, `guardedMain`
+(`lib/rules/main-checkout/checkout.mjs`) reads each folder's guarded main checkout once, and `rootsOf`
+(`lib/rules/main-checkout/directory-change.mjs`) each folder's checkout roots once. A test that changes what one of
+them reads between two calls keeps a process run.
+
+A test still runs `bin/aidrian` as a process where only a process shows the behaviour: a command that reads stdin
+(`cliCall` throws when given `input`, or when the command reads it), exit timing, a signal or `timeout` it relies on, a deadline it measures, what
+the test preload records about the processes a file starts, or output a child writes straight to the terminal's
+descriptors. Keep at least one process run for each command a file covers, so the command's own entry stays tested.
+
 ## What the tests hold
 
 - The Claude Code marketplace lists `aidrian`, from `./plugins/aidrian`, then the optional Claude mod `aidrian-mod`,

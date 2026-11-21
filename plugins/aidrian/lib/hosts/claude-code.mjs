@@ -366,7 +366,7 @@ export default {
       start: ({ session, cwd, name, prompt, env, hold, identify, beacon, confined, git, grants, domains, main, mainGit, tokens, guarded, mcp, localBinding, home, platform, run, wait, runs, claimVars }) => startProject({
         session, cwd, runs, name, prompt, env, hold, identify, beacon, confined, sandbox: { git, grants, domains, main, mainGit, tokens, guarded, localBinding }, mcp, home, platform, run, wait, effort: effort(env), efforts: MODEL_CHOICES.effort, claimVars,
       }),
-      stop: ({ id, env, run }) => stopBackground({ id, env, run }),
+      stop: ({ id, started, env, run }) => stopBackground({ id, started, env, run }),
       ended: ({ id, session, env, run }) => sessionFinished({ id, session, env, run }),
       find: ({ cwd, name, env, run }) => findSessions({ cwd, name, env, run }),
       // Whether the session last met a usage or rate limit, from the host's own API error entry at the end of its

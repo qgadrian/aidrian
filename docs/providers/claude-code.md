@@ -286,7 +286,9 @@ listing holds no background session the first did not: then the gate falls back 
 such as any other non-zero exit, no exit within 60 seconds, a signal, or exit 0 with no id the listing names, is an
 uncertain launch, since the supervisor may have taken the start and list its session later: it keeps the pending
 mark (`uncertain: true`), and `findLine` names `claude agents` and `claude stop <id>` for the Human. A started session the gate cannot write a floor, mark, or start record
-for is stopped with `claude stop <id>`. The `say:` line leads with `claude attach <id>`, adds `claude attach '<name>'` only when the
+for is stopped with `claude stop <id>`. `claude stop` takes the short `id` that `claude agents` lists and refuses a full
+`sessionId` ("No session matching", exit 1, checked live on 2.1.330), so the adapter's `stopBackground` first turns a full
+`sessionId` into the short `id` of the one listed row that holds it. The `say:` line leads with `claude attach <id>`, adds `claude attach '<name>'` only when the
 name is plain words, digits, spaces, and `.@:·-`, and no other listed session has it, and names `claude agents`.
 
 `sessionEnded` reads `claude agents --json --all`, which `claude agents --help` says also lists the completed background

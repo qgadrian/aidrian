@@ -5,14 +5,14 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { isWithin } from '../plugins/aidrian/lib/fs.mjs';
-import { GATE_CONFIG } from '../plugins/aidrian/lib/git.mjs';
+import { GATE_CONFIG, resetGitStall } from '../plugins/aidrian/lib/git.mjs';
 import { DEFAULT_REVIEWER } from '../plugins/aidrian/lib/pr-await-review.mjs';
 import { projectAt, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { runAwaitReview } from '../plugins/aidrian/lib/pr-await-review.mjs';
@@ -36,7 +36,6 @@ const LOCAL_LIMIT = "A local reviewer reads the checkout at the head, so it cann
 const NEXT_STEP = `Run the review from a checkout on the base branch. ${LOCAL_LIMIT} ${BEHIND}`;
 const BASE_PINS = "The base branch's config.json pins `review.engine` to a local reviewer, which reads the checkout at the head, where the hold refuses, so no review finishes on this pull request: the Human merges it in their own shell.";
 const HEAD_RECORD = 'head-state/reviews/pr-7-review.json';
-const HOOK = path.join(import.meta.dirname, '../plugins/aidrian/scripts/hook-bash.mjs');
 const CLI = path.join(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
 const clean = async () => ({ status: 'done', findings: [], verdicts: [], dropped: [] });
 
@@ -1013,30 +1012,38 @@ test('the hold is skipped when the guard\'s time is gone', (t) => {
   assert.equal(judgeMerge({ project: r.project, pr: 7, head: r.head, viewPr: unused, startedAt: Date.now() - 60_000 }), null);
 });
 
-for (const [name, match, make, bound] of [
-  ['the base ref', '*refs/remotes/origin*', movedOutside, 5000],
-  ['the base\'s config', '*" show "*', moved, 5000],
-  ['the checkout list', '*" worktree list "*', (t) => repo(t, { baseConfig: INSIDE_TEAM, headConfig: INSIDE_TEAM }), 4000],
-  ['the state folder\'s name', '*" --show-prefix "*', (t) => stateUnset(t).r, 5000],
-  ['the checkout list, with state.dir unset', '*" worktree list "*', (t) => stateUnset(t).r, 5000],
+for (const [name, match, make] of [
+  ['the base ref', '*refs/remotes/origin*', movedOutside],
+  ['the base\'s config', '*" show "*', moved],
+  ['the checkout list', '*" worktree list "*', (t) => repo(t, { baseConfig: INSIDE_TEAM, headConfig: INSIDE_TEAM })],
+  ['the state folder\'s name', '*" --show-prefix "*', (t) => stateUnset(t).r],
+  ['the checkout list, with state.dir unset', '*" worktree list "*', (t) => stateUnset(t).r],
 ]) {
-  // Timed from the stall's first moment, which the mark's mtime records, so a loaded machine's slow hook start
-  // counts against no bound.
-  test(`a git that stalls on ${name} lets the merge go on within ${bound} ms`, (t) => {
+  // The guard runs in the test's process with its clock stopped at its start, so its 4 s budget never runs out before
+  // the stalled read, however slow the machine: the mark shows the read began. The stalled git writes `finished` only
+  // after its 30 s sleep, and the sleep keeps no pipe to the guard, so a read the guard stopped leaves no `finished`.
+  // A read stopped by git's own timeout holds back every later call in the process (lib/git.mjs runGit), so the test
+  // clears that before and after, as hookCall does.
+  test(`a git that stalls on ${name} is stopped, and the merge goes on`, (t) => {
     const r = make(t);
     rmSync(path.join(r.dir, HEAD_RECORD), { force: true });
     tracking(r);
-    const mark = path.join(folderFor(t), 'stalled');
-    const hook = spawnSync(process.execPath, [HOOK], {
-      input: JSON.stringify({ tool_name: 'Bash', cwd: r.dir, tool_input: { command: `gh pr merge 7 --match-head-commit ${r.head}` } }),
-      encoding: 'utf8',
-      env: { ...process.env, AIDRIAN_TELEMETRY: '0', PATH: fakeGit(t, match, `[ -e "${mark}" ] || : > "${mark}"; exec sleep 30`) },
-    });
-    const returned = Date.now();
-    assert.ok(existsSync(mark), `the git stalled: ${hook.stderr}`);
-    const stalled = statSync(mark).mtimeMs;
-    assert.ok(returned - stalled < bound, `the hook returned ${Math.round(returned - stalled)} ms after the stall`);
-    assert.equal(hook.status, 0, hook.stderr);
+    const marks = folderFor(t);
+    const [mark, finished] = [path.join(marks, 'stalled'), path.join(marks, 'finished')];
+    const before = process.env.PATH;
+    process.env.PATH = fakeGit(t, match, `: > "${mark}"; sleep 30 </dev/null >/dev/null 2>&1; : > "${finished}"`);
+    const startedAt = Date.now();
+    let reason;
+    resetGitStall();
+    try {
+      reason = check(`gh pr merge 7 --match-head-commit ${r.head}`, { cwd: r.dir, env: {}, viewPr: unused, startedAt, now: () => startedAt });
+    } finally {
+      process.env.PATH = before;
+      resetGitStall();
+    }
+    assert.ok(existsSync(mark), 'the git stalled');
+    assert.equal(existsSync(finished), false, 'the guard stopped the stalled git');
+    assert.equal(reason, null);
   });
 }
 

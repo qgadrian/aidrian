@@ -438,7 +438,7 @@ function tempFolders() {
 // `started` names is stopped when one fails, or the proof does not come within CONFINE_WAIT.
 function proveHooks({ started, identify, beacon, confined, env, run, wait, claude }) {
   const stopped = (why, proof = null) => {
-    if (!stopBackground({ id: started.id, env, run, resolve: () => claude })) return { problem: `${why}, and the session ${started.id} could not be stopped`, uncertain: true, ...(proof ? { proof } : {}) };
+    if (!stopBackground({ id: started.session ?? started.id, started: started.id, env, run, resolve: () => claude })) return { problem: `${why}, and the session ${started.id} could not be stopped`, uncertain: true, ...(proof ? { proof } : {}) };
     return { problem: `${why}; the session was stopped`, uncertain: false, ...(proof ? { proof } : {}) };
   };
   const own = started.session;
@@ -652,8 +652,10 @@ export function stopBackground({ id, started = null, env, run = runCommand, reso
     return !result.error && result.status === 0;
   };
   if (given.some((each) => !FULL_ID.test(each) && stop(each))) return true;
+  const full = given.filter((each) => FULL_ID.test(each));
+  if (full.length === 0) return false;
   const rows = listed(run, claude, undefined, ['--all']) ?? [];
-  return given.filter((each) => FULL_ID.test(each)).some((each) => {
+  return full.some((each) => {
     const holds = rows.filter((row) => row.sessionId === each);
     const short = holds.length === 1 && typeof holds[0].id === 'string' && ID.test(holds[0].id) ? holds[0].id : each;
     return stop(short);

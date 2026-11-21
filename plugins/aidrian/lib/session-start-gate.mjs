@@ -156,7 +156,7 @@ function holdFor({ session, ended, store, root, env, intent }, state) {
 // A session `started` that cannot be held: stopped, with its pending mark removed and the claim dropped, or, when the
 // stop fails, left held by its pending mark, with the claim kept for a day.
 function unheld({ started, stop, release, settle }) {
-  const stopped = Boolean(safely(() => stop?.(started.id)));
+  const stopped = Boolean(safely(() => stop?.(started.id, started.session)));
   if (stopped) release();
   return settle({ outcome: 'unheld', started, stopped }, !stopped);
 }

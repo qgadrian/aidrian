@@ -291,7 +291,7 @@ export default {
       }),
       // The folder startBackground would start the new session in, which the gate's push preflight judges and passes back.
       startFolder: ({ session, env, run }) => startFolder({ session, env, run }),
-      stopBackground: ({ id, env, run }) => stopBackground({ id, env, run }),
+      stopBackground: ({ id, started, env, run }) => stopBackground({ id, started, env, run }),
       sessionEnded: ({ id, session, env, run }) => sessionEnded({ id, session, env, run }),
       stopLine,
       findLine,

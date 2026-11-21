@@ -398,7 +398,7 @@ function startInBackground(ready) {
     driver,
     // `start`, the folder the push preflight judged, so the host starts there and never looks it up again.
     launch: (hold) => handoff.startBackground({ session, slug, chain: chain + 1, env, prompt, hold, run, wait, start }),
-    stop: (id) => handoff.stopBackground?.({ id, env, run }),
+    stop: (id, session) => handoff.stopBackground?.({ id: session ?? id, started: id, env, run }),
     // A driver's last start may be one of its run's issues, which the run's caps count while it runs: the start gate's
     // read of the same record (run-driver.mjs drivenRunStart). Every other record waits for the host's listing.
     ended: (earlier) => (driver && drivenRunStart(session, earlier, { env, home })) || handoff.sessionEnded?.({ id: earlier.id, session: earlier.session, env, run }),

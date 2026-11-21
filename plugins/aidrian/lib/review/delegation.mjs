@@ -96,10 +96,13 @@ export function lowOnly(state, head) {
   const stop = stops.find(([list]) => Array.isArray(list) && list.length);
   if (stop) return { ok: false, why: `the review of head ${sha7} stopped on ${stop[1]} too` };
   if (cap.bot === true || cap.checks_failing !== 0) return { ok: false, why: `the review of head ${sha7} stopped on ${cap.bot === true ? 'the review bot\'s own round limit' : 'a failing check'} too` };
-  // A finding of another stage, or a twin id of one the round merged, is in the cause only: the follow-up issue lists
-  // its id too (`ids`).
+  // A finding the cause holds and the round does not, of another stage or a second pass's id for one finding, is not
+  // in the question the Human answered: it refuses, and the Human gets the guard's two options.
+  const listed = new Set(last.findings.map((finding) => finding?.id));
   const above = [...last.findings, ...cap.items].find((finding) => !isObject(finding) || finding.security === true || !noHigher(finding.severity, RESIDUAL_CAP));
-  if (above === undefined) return { ok: true, count: last.open, ids: [...new Set([...last.findings, ...cap.items].map((finding) => finding.id))] };
+  const elsewhere = cap.items.find((item) => !isObject(item) || !listed.has(item.id));
+  if (above === undefined && elsewhere !== undefined) return { ok: false, why: `${named(elsewhere)} is open but not in the round's list` };
+  if (above === undefined) return { ok: true, count: last.open, ids: last.findings.map((finding) => finding.id) };
   if (above?.security === true) return { ok: false, why: `${named(above)} is marked security` };
   const severity = severityOf(above?.severity);
   return { ok: false, why: `${named(above)} ${severity ? `is ${severity}` : 'has no severity on record'}` };

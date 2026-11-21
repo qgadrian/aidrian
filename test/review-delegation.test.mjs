@@ -544,10 +544,9 @@ test('lowOnly reads every stage of the cap: a low finding in the judged stage ne
   const capped = (cap) => ({ ...emptyState(5, 'acme/notes'), rounds: [{ head: HEAD, at: T0, open: LOW.length, findings: LOW }], outcome: { status: 'round_limit', head: HEAD, at: T0, cap } });
   assert.deepEqual(lowOnly(capped(capOf(LOW)), HEAD), { ok: true, count: 2, ids: ['R2-1', 'R2-2'] });
   // A slice and the cross-cutting pass report one low finding under two ids: the round keeps one, the other as an alias.
-  // A slice and the cross-cutting pass report one low finding under two ids, or another stage a low one: the round
-  // lists one, the cause both, and the follow-up issue must list every id.
+  // Another stage's low finding, or a second pass's id for one, is not in the question the Human answered: refused.
   const twins = capped(capOf(LOW, HEAD, { items: [...capOf(LOW).items, { id: 'R2-7', severity: 'low', pass: 'cross', stage: 'local', reviewer: 'cross' }], counted: 3 }));
-  assert.deepEqual(lowOnly(twins, HEAD), { ok: true, count: 2, ids: ['R2-1', 'R2-2', 'R2-7'] }, 'a twin or another stage`s low id is listed, not refused');
+  assert.deepEqual(lowOnly(twins, HEAD), { ok: false, why: 'finding R2-7 is open but not in the round\'s list' });
   const other = (severity, over = {}) => ({ id: 'R2-9', severity, pass: 'engine:codex-local', stage: 'independent', reviewer: 'engine:codex-local', ...over });
   const items = capOf(LOW).items;
   for (const [name, cap, why] of [

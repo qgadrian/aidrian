@@ -52,7 +52,7 @@ const FOOTER_LINE = 'Pull requests: a body here never carries the "Generated wit
 
 // The hook's body, for the payload `input` (lib/hook-io.mjs callHook).
 export async function handle(input) {
-  if (!process.argv.includes('--subagent')) shareShellVars(input);
+  const tokenLine = process.argv.includes('--subagent') ? null : shareShellVars(input);
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (!project) return;
   const subagent = process.argv.includes('--subagent');
@@ -81,7 +81,7 @@ export async function handle(input) {
   const names = `Names: call the human ${human} and yourself ${JSON.stringify(ai)}, in replies and questions alike; never "I", "me", "my", "you", or "your".`;
   const footer = footerLine(project.root, process.env, input);
   const commands = commandsLine(process.env);
-  const lines = `${line}\n${names}\n${voiceLine(human)}${footer ? `\n${footer}` : ''}${commands ? `\n${commands}` : ''}`;
+  const lines = `${line}\n${names}\n${voiceLine(human)}${footer ? `\n${footer}` : ''}${commands ? `\n${commands}` : ''}${tokenLine ? `\n${tokenLine}` : ''}`;
 
   if (subagent) {
     print(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: lines } }));
@@ -250,7 +250,8 @@ function binCommand(name) {
   return /\s/.test(full) ? `"${full}"` : full;
 }
 
-// Hands the host the environment of a confined attempt's sandboxed commands, when this session is one: never throws, so
+// Hands the host the environment of a confined attempt's sandboxed commands, when this session is one, and then its forge
+// token: a line saying why the token was not handed over, or null. Never throws, so
 // the lines above still print.
 function shareShellVars(input) {
   try {
@@ -262,8 +263,11 @@ function shareShellVars(input) {
   try {
     const start = detectHost({ input }).capabilities.projectStart;
     const token = start?.forgeTokenEnv === true ? confinedTokenVars({ session: input.session_id, cwd: input.cwd, env: process.env }) : null;
-    if (token) start.shellEnv?.({ env: process.env, vars: token });
+    if (!token) return null;
+    if (token.vars && start.shellEnv?.({ env: process.env, vars: token.vars }) === true) return null;
+    const why = token.problem ?? 'the host\'s session environment file could not be written owner-only';
+    return `Forge token: not handed to this session: ${why}. Its pushes and forge calls will not sign in; report that, and push nothing.`;
   } catch {
-    // No token handed over: the session's push and forge calls then fail to sign in, and it reports that.
+    return null;
   }
 }

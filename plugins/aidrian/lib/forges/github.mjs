@@ -714,20 +714,20 @@ function branchHold(read, admin, viewer) {
 // A method that takes `{ host }` names that host to every REST call it makes (`--hostname`), as `aidrian pr auto-merge`
 // does with the host of the pull request's URL; without one, gh picks its default host.
 export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutMs = null, killSignal = null } = {}) {
-  const gh = (args, { timeoutMs: limit = timeoutMs, input } = {}) =>
-    run(args, { cwd, ...(limit === null ? {} : { timeoutMs: limit }), ...(killSignal === null ? {} : { killSignal }), ...(input === undefined ? {} : { input }) });
+  const gh = (args, { timeoutMs: limit = timeoutMs, input, token } = {}) =>
+    run(args, { cwd, ...(limit === null ? {} : { timeoutMs: limit }), ...(killSignal === null ? {} : { killSignal }), ...(input === undefined ? {} : { input }), ...(token === undefined ? {} : { token }) });
   const json = (args) => JSON.parse(gh(args));
   const given = (ref) => ref !== undefined && ref !== null && ref !== '';
   // One REST route. `paginate` reads every page and joins them into one list; `fields` are sent as `-f key=value`, each
   // value a literal string, and `input`, a request body, as JSON on gh's stdin: never `-F`, which reads a leading `@` as
   // a file and `true` as a boolean. `empty` reads an answer with no body, such as a delete's, as null.
-  const rest = (route, { paginate = false, method, fields, input, empty = false, host } = {}) => {
+  const rest = (route, { paginate = false, method, fields, input, empty = false, host, token } = {}) => {
     const args = ['api', ...(host ? ['--hostname', host] : []), route, ...(mediaType === null ? [] : ['--header', `Accept: ${mediaType}`])];
     if (paginate) args.push('--paginate', '--slurp');
     if (method) args.push('--method', method);
     for (const [key, value] of Object.entries(fields ?? {})) args.push('-f', `${key}=${value}`);
     if (input !== undefined) args.push('--input', '-');
-    const answer = gh(args, input === undefined ? {} : { input: JSON.stringify(input) });
+    const answer = gh(args, { ...(input === undefined ? {} : { input: JSON.stringify(input) }), ...(token === undefined ? {} : { token }) });
     if (empty) return answer.trim() === '' ? null : JSON.parse(answer);
     if (mediaType === null) return paginate ? JSON.parse(answer || '[]').flat() : JSON.parse(answer);
     const parsed = JSON.parse(answer || 'null');
@@ -881,7 +881,8 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // `owner/name` of the default repository.
     repo: () => json(['repo', 'view', '--json', 'nameWithOwner']).nameWithOwner,
     // The repository itself, such as its `default_branch`.
-    repository: (repo, { host } = {}) => rest(`repos/${repo}`, { host }),
+    // With `token`, the repository as that token sees it, `permissions` included, in place of gh's own login.
+    repository: (repo, { host, token } = {}) => rest(`repos/${repo}`, { host, ...(token === undefined ? {} : { token }) }),
     // Whether the reviewer `login` reviewed or commented on any of the repository's last `limit` pull requests, for a
     // project run's preflight: { changes, seen }, with a bot's login compared with or without its `[bot]` suffix. A
     // review bot that finds nothing on a clean head may post only a conversation comment, and no formal review. A

@@ -15,6 +15,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
+import { localForgeTokenKeychain } from './config-local.mjs';
 import { checkDeadline } from './deadline.mjs';
 import { foldCase, globParts, isEntry, isWithin } from './fs.mjs';
 import { folderOf, GLOB_WORD, globLinksTo, globStarts, linkBelow, linkReaches, linkWalk, partMatches, reachesFile, realOf, sameFile } from './glob-links.mjs';
@@ -82,9 +83,20 @@ const SWITCHES = Object.freeze([
   Object.freeze({ key: 'background', valueIn: (parsed) => parsed?.handoff?.background, name: 'handoff.background', why: 'only the main session may let a handoff start sessions in the background with no Human', patched: /^[+-].*"background"\s*:/mu }),
   // In a pretty-printed file the value sits on its own line, under a key the patch does not touch.
   Object.freeze({ key: 'productFeedback', valueIn: (parsed) => parsed?.review?.productFeedback, name: 'review.productFeedback', why: 'only the main session may choose whether this machine owes product feedback', patched: /^[+-].*(?:productFeedback|"auto"\s*:)/mu }),
-  // Which keychain entry gives a project run's issue sessions their forge token (lib/project-token.mjs).
-  Object.freeze({ key: 'forgeTokenKeychain', valueIn: (parsed) => parsed?.projectRun?.forgeTokenKeychain, name: 'projectRun.forgeTokenKeychain', why: 'only the main session may choose which keychain entry gives a project run\'s sessions their forge token', patched: /^[+-].*(?:forgeTokenKeychain|"service"\s*:|"account"\s*:)/mu }),
+  // Which keychain entry gives a project run's issue sessions their forge token (lib/project-token.mjs), as the reader
+  // takes it, so a sibling key that voids the whole setting changes it too. A patch, which is not applied here, changes
+  // it when a line names projectRun or its keys, or, while the file selects an entry, when it adds or removes any line.
+  Object.freeze({
+    key: 'forgeTokenKeychain', valueIn: (parsed) => localForgeTokenKeychain(parsed, []) ?? undefined, name: 'projectRun.forgeTokenKeychain', why: 'only the main session may choose which keychain entry gives a project run\'s sessions their forge token',
+    patched: (text, before) => /^[+-].*(?:projectRun|forgeTokenKeychain|"service"\s*:|"account"\s*:)/mu.test(text) || (selectsKeychain(before) && /^[+-](?![+-])/mu.test(text)),
+  }),
 ]);
+
+// Whether the local file's text `text` selects a keychain entry for the forge token, as the reader takes it.
+function selectsKeychain(text) {
+  const set = switchIn(text, (parsed) => localForgeTokenKeychain(parsed, []) ?? undefined);
+  return set !== undefined;
+}
 
 // What a Bash write to the local file that names no key changes: every switch in it, a local "off" among them.
 const EVERY_SWITCH = Object.freeze({ name: 'every machine switch', why: 'only the main session may change the machine\'s switches, a local "off" among them' });
@@ -213,7 +225,7 @@ export const bashCall = (input) => input.tool_name === 'Bash';
 // that names neither, or a key spelled with a JSON escape, is not seen.
 function changesSwitch({ tool_name: tool, tool_input: given }, file, { key, valueIn, patched }) {
   const edit = fileEditOf({ tool_name: tool, tool_input: given });
-  if (edit?.shape === 'patch') return patched.test(edit.text);
+  if (edit?.shape === 'patch') return typeof patched === 'function' ? patched(edit.text, readText(file)) : patched.test(edit.text);
   const written = edit?.shape === 'write' ? edit.content : edit?.shape === 'edit' ? edit.newText : undefined;
   if (typeof written !== 'string') return false;
   if (written.includes(key)) return true;

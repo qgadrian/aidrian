@@ -2011,8 +2011,9 @@ runs folder, which every attempt's clone would load, `projectRun.allow` through 
 start and its `projectRun.unverifiedHosts`, the host's access check (push rights, an HTTPS origin, nothing outside the
 sandbox that `projectRun.outsideSandbox` does not name, and, on Claude Code, a forge token to hand the issue sessions,
 from the project's keychain entry `projectRun.forgeTokenKeychain` names, the machine's default entry `aidrian-project-run`,
-or the forge CLI's login, in that order, with a `note token:` line that names the source it used and, for any token but
-a fine-grained one, its kind, never the token itself), and whether the host carries on by itself after a usage limit
+or the forge CLI's login, in that order, that the forge, asked with that token, lets push to the repository, with a
+`note token:` line that names the source it used and, for any token but a fine-grained one, its kind, never the token
+itself), and whether the host carries on by itself after a usage limit
 (in Claude Code, `"autoContinueAtUsageLimit": true` in the user's own settings, the one source preflight reads, so managed policy and `--settings` go unverified; the host ignores it in a project's settings), since
 a limit is the account's and stops the driver with the issues' sessions. Then what the run needs to finish with no one:
 the base branch's tracker, with no server in `projectRun.mcpServers` named like a tracker whose endpoint no adapter maps

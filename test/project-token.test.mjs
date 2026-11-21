@@ -1,22 +1,28 @@
 // The forge token a project run hands its issue session (lib/project-token.mjs): read outside the sandbox, which hides
 // the system keyring, from the macOS keychain entry the main checkout's `.aidrian.local.json` names, then the machine's
-// default entry, service aidrian-project-run, then the forge CLI's login; the start halts without one, the preflight names its source, and the SessionStart hook hands it to
-// the confined session's sandboxed commands alone, as GH_TOKEN, through the host's session environment file.
+// default entry, service aidrian-project-run, then the forge CLI's login. The start halts without one, or with one that
+// may not push; the preflight names its source; and the SessionStart hook hands it, from that one source, to the
+// sandboxed commands of the session holding the start's claim alone, as GH_TOKEN, through the host's session
+// environment file, which the sandbox hides from every session.
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { localForgeTokenKeychain } from '../plugins/aidrian/lib/config-local.mjs';
 import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
+import { confineReads, sandboxSettings, writeEnvFile } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
-import { confinedTokenVars, SHELL_VARS } from '../plugins/aidrian/lib/project-start.mjs';
-import { DEFAULT_KEYCHAIN_SERVICE, forgeToken, keychainToken, tokenVars } from '../plugins/aidrian/lib/project-token.mjs';
-import { FIXTURE_TOKEN, runFixture, STARTED } from './project-start-fixture.mjs';
+import { confinedTokenVars } from '../plugins/aidrian/lib/project-start.mjs';
+import { CLAIM_VAR, DEFAULT_KEYCHAIN_SERVICE, forgeToken, keychainToken, tokenVars } from '../plugins/aidrian/lib/project-token.mjs';
+import { markPending } from '../plugins/aidrian/lib/unattended-mark.mjs';
+import { DRIVER, FIXTURE_TOKEN, runFixture, STARTED } from './project-start-fixture.mjs';
 
 const SESSION_START = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-session-start.mjs');
 const REPOSITORY = { host: 'github.com', owner: 'acme', name: 'widgets' };
@@ -72,14 +78,14 @@ const entries = (given) => {
 test('on macOS the token comes from the project\'s keychain entry, then the machine\'s default entry, then the forge CLI\'s login', () => {
   const forge = login();
   const project = entries({ 'aidrian-forge': KEYCHAIN_TOKEN, 'aidrian-project-run': 'github_pat_DEFAULT0123456789' });
-  assert.deepEqual(forgeToken({ forge, repository: REPOSITORY, keychain: ENTRY, platform: 'darwin', exec: project.exec }), { token: KEYCHAIN_TOKEN, source: PROJECT_SOURCE, notes: [] });
+  assert.deepEqual(forgeToken({ forge, repository: REPOSITORY, keychain: ENTRY, platform: 'darwin', exec: project.exec }), { token: KEYCHAIN_TOKEN, id: 'project', source: PROJECT_SOURCE, notes: [] });
   assert.deepEqual(project.read, ['aidrian-forge'], 'the first source that gives one ends the reads');
   const fallback = entries({ 'aidrian-project-run': 'github_pat_DEFAULT0123456789' });
   const second = forgeToken({ forge, repository: REPOSITORY, keychain: ENTRY, platform: 'darwin', exec: fallback.exec });
-  assert.deepEqual(second, { token: 'github_pat_DEFAULT0123456789', source: DEFAULT_SOURCE, notes: [`${PROJECT_SOURCE} is not there, so the next source gives the token`] });
+  assert.deepEqual(second, { token: 'github_pat_DEFAULT0123456789', id: 'machine', source: DEFAULT_SOURCE, notes: [`${PROJECT_SOURCE} is not there, so the next source gives the token`] });
   assert.deepEqual(fallback.read, ['aidrian-forge', 'aidrian-project-run']);
   const machine = forgeToken({ forge, repository: REPOSITORY, platform: 'darwin', exec: entries({ 'aidrian-project-run': 'github_pat_DEFAULT0123456789' }).exec });
-  assert.deepEqual(machine, { token: 'github_pat_DEFAULT0123456789', source: DEFAULT_SOURCE, notes: [] }, 'no project key: the default entry first');
+  assert.deepEqual(machine, { token: 'github_pat_DEFAULT0123456789', id: 'machine', source: DEFAULT_SOURCE, notes: [] }, 'no project key: the default entry first');
   assert.deepEqual(forge.calls, [], 'the forge CLI is not asked while a keychain entry gives the token');
   const neither = entries({});
   const last = forgeToken({ forge, repository: REPOSITORY, keychain: ENTRY, platform: 'darwin', exec: neither.exec });
@@ -132,6 +138,12 @@ test('the local file\'s projectRun.forgeTokenKeychain is checked, and read only 
   assert.ok(tracked.errors.some((each) => /git tracks it, so a branch could carry it; "projectRun\.forgeTokenKeychain" is ignored/u.test(each)), tracked.errors.join('\n'));
 });
 
+// The claim the start gave the session it launched, from the inline settings of its `claude --bg`.
+const claimOf = (fx) => {
+  const [{ args }] = fx.claude.starts();
+  return JSON.parse(args[args.indexOf('--settings') + 1]).env?.[CLAIM_VAR];
+};
+
 test('a Claude Code start with no forge token to hand its session halts, recording nothing; with one it starts, and the token is in no argv or file of the start', (t) => {
   assert.equal(claudeCode.capabilities.projectStart.forgeTokenEnv, true);
   const fx = runFixture(t);
@@ -146,8 +158,32 @@ test('a Claude Code start with no forge token to hand its session halts, recordi
   assert.ok(fx.forge.calls.some(([name, options]) => name === 'authToken' && options.host === 'github.com'), 'the start asked for the token');
   assert.ok(!JSON.stringify(fx.claude.calls).includes(FIXTURE_TOKEN), 'no argv of the start holds the token');
   const attempt = path.join(runsFolder(fx.state), 'launch', 'attempts', 'ENG-1.1');
-  assert.ok(!readFileSync(path.join(attempt, SHELL_VARS), 'utf8').includes(FIXTURE_TOKEN), 'nor the attempt\'s shell variables');
+  for (const name of readdirSync(attempt).filter((each) => statSync(path.join(attempt, each)).isFile())) {
+    assert.ok(!readFileSync(path.join(attempt, name), 'utf8').includes(FIXTURE_TOKEN), `nor the attempt's ${name}`);
+  }
   assert.ok(!JSON.stringify(fx.rows()).includes(FIXTURE_TOKEN), 'nor the ledger');
+  // The claim the session got in its settings, of which the attempt keeps only the digest, with the source the start checked.
+  const claim = claimOf(fx);
+  assert.match(claim, /^[0-9a-f]{48}$/u);
+  const kept = JSON.parse(readFileSync(path.join(attempt, 'token-claim.json'), 'utf8'));
+  assert.deepEqual(kept, { claim: createHash('sha256').update(claim).digest('hex'), source: 'login' });
+  assert.equal(statSync(path.join(attempt, 'token-claim.json')).mode & 0o777, 0o600);
+});
+
+test('a start whose token may not push halts, though the driver\'s own login may push: the forge is asked with that token', (t) => {
+  const fx = runFixture(t);
+  fx.forge.tokenPush = (token) => token !== FIXTURE_TOKEN;
+  const halted = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(halted.exitCode, 1, halted.out.join('\n'));
+  assert.equal(halted.out[0], 'halt the forge token from the forge CLI\'s login for github.com does not let the issue session push to github.com/acme/widgets; give that source a token that may push there');
+  assert.deepEqual(fx.claude.starts(), [], 'no claude --bg');
+  const asked = fx.forge.calls.filter(([name]) => name === 'repository');
+  assert.ok(asked.some(([, , options]) => options.token === undefined), 'the driver\'s push rights, through its own login');
+  assert.ok(asked.some(([, repo, options]) => repo === 'acme/widgets' && options.host === 'github.com' && options.token === FIXTURE_TOKEN), 'and the token\'s, with the token');
+  // A token the forge does not let read the repository at all, as one for another repository.
+  const other = runFixture(t);
+  other.forge.tokenPush = () => { throw new Error('gh: Not Found (HTTP 404)'); };
+  assert.match(other.cmd(['start', 'launch', 'ENG-1']).out[0], /^halt the forge token from the forge CLI's login for github\.com cannot read github\.com\/acme\/widgets \(gh: Not Found \(HTTP 404\)\)/u);
 });
 
 test('preflight says ok access with a note naming the token\'s source, and a blocker when there is none', (t) => {
@@ -166,40 +202,97 @@ test('preflight says ok access with a note naming the token\'s source, and a blo
   assert.match(none.find((line) => line.startsWith('blocker access:')) ?? '', /^blocker access: no source gives a forge token for github\.com, of the forge CLI's login \(the login: not logged in\)/u);
 });
 
-test('the SessionStart hook hands GH_TOKEN, read again for itself, to the sandboxed commands of a confined attempt\'s session alone', (t) => {
+test('the SessionStart hook hands GH_TOKEN, from the source the start checked, to the sandboxed commands of the session the start launched alone', (t) => {
   const fx = runFixture(t);
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  const claim = claimOf(fx);
   const work = path.join(runsFolder(fx.state), 'launch', 'attempts', 'ENG-1.1', 'work');
   // The forge CLI the hook finds on PATH, which answers its login's token, as gh does from the keyring.
   const hookToken = 'github_pat_HOOK0123456789';
   writeFileSync(path.join(fx.bin, 'gh'), `#!/bin/sh\n[ "$1 $2 $3 $4" = "auth token --hostname github.com" ] && { echo ${hookToken}; exit 0; }\nexit 1\n`, { mode: 0o755 });
-  const hook = (session, cwd, file) => spawnSync(process.execPath, [SESSION_START], {
+  const hook = (session, cwd, file, more = {}) => spawnSync(process.execPath, [SESSION_START], {
     input: JSON.stringify({ session_id: session, cwd, hook_event_name: 'SessionStart', source: 'startup' }),
-    env: { ...fx.env, CLAUDE_ENV_FILE: file, CLAUDE_CODE_SESSION_ID: session }, encoding: 'utf8',
+    env: { ...fx.env, CLAUDE_ENV_FILE: file, CLAUDE_CODE_SESSION_ID: session, ...more }, encoding: 'utf8',
   });
-  const file = path.join(fx.root, 'session-env', 'own.sh');
+  const envFile = (name) => path.join(fx.root, 'session-env', name, 'sessionstart-hook-0.sh');
+  const text = (file) => {
+    try {
+      return readFileSync(file, 'utf8');
+    } catch {
+      return '';
+    }
+  };
+  // The host's file, made world-readable before the hook runs, as most of that folder is: the hook makes it owner-only.
+  const file = envFile('own');
   mkdirSync(path.dirname(file), { recursive: true });
-  const ran = hook(STARTED[0].session, work, file);
+  writeFileSync(file, '', { mode: 0o644 });
+  chmodSync(file, 0o644);
+  const ran = hook(STARTED[0].session, work, file, { [CLAIM_VAR]: claim });
   assert.equal(ran.status, 0, ran.stderr);
   assert.ok(!`${ran.stdout}${ran.stderr}`.includes(hookToken), 'the hook prints no token');
+  assert.equal(statSync(file).mode & 0o777, 0o600);
   const seen = spawnSync('/bin/sh', ['-c', `. '${file}'; printf '%s' "$GH_TOKEN"`], { encoding: 'utf8' });
   assert.equal(seen.stdout, hookToken);
-  // Another session in that clone, and the session elsewhere, get no token.
+  // The same session without the claim, as one another person opened, gets no token, and is told why.
+  const bare = envFile('bare');
+  const unclaimed = hook(STARTED[0].session, work, bare);
+  assert.doesNotMatch(text(bare), /GH_TOKEN/u);
+  assert.match(unclaimed.stdout, /Forge token: not handed to this session: this session does not hold the claim the start gave the session it launched/u);
+  // Another session in that clone, and the session elsewhere, get none either, even with the claim.
   for (const [session, cwd] of [['abcd1234-0000-4000-8000-00000000ff01', work], [STARTED[0].session, fx.dir]]) {
-    const other = path.join(fx.root, 'session-env', `${session}-${path.basename(cwd)}.sh`);
-    assert.equal(hook(session, cwd, other).status, 0);
-    let text = '';
-    try {
-      text = readFileSync(other, 'utf8');
-    } catch {
-      text = '';
-    }
-    assert.doesNotMatch(text, /GH_TOKEN/u, `${session} in ${cwd}`);
+    const other = envFile(`${session}-${path.basename(cwd)}`);
+    assert.equal(hook(session, cwd, other, { [CLAIM_VAR]: claim }).status, 0);
+    assert.doesNotMatch(text(other), /GH_TOKEN/u, `${session} in ${cwd}`);
   }
-  // In process: the read gets the main checkout, its pinned repository, and its keychain setting.
+  // In process: the read gets the main checkout, its pinned repository, its keychain setting, and the one source the
+  // start checked; a failed read of that source hands nothing over and says why, with no other source tried.
   let asked = null;
-  const vars = confinedTokenVars({ session: STARTED[0].session, cwd: work, env: fx.env, token: (given) => ((asked = given), { token: 'github_pat_STANDIN0123' }) });
-  assert.deepEqual(vars, { GH_TOKEN: 'github_pat_STANDIN0123' });
-  assert.deepEqual([asked.root, asked.repository, asked.keychain, asked.env], [findProject(fx.dir).root, { host: 'github.com', owner: 'acme', name: 'widgets' }, null, fx.env]);
-  assert.equal(confinedTokenVars({ session: STARTED[0].session, cwd: work, env: fx.env, token: () => ({ problem: 'none' }) }), null);
+  const claimed = { ...fx.env, [CLAIM_VAR]: claim };
+  const vars = confinedTokenVars({ session: STARTED[0].session, cwd: work, env: claimed, token: (given) => ((asked = given), { token: 'github_pat_STANDIN0123' }) });
+  assert.deepEqual(vars, { vars: { GH_TOKEN: 'github_pat_STANDIN0123' } });
+  assert.deepEqual([asked.root, asked.repository, asked.keychain, asked.env, asked.only], [findProject(fx.dir).root, { host: 'github.com', owner: 'acme', name: 'widgets' }, null, claimed, 'login']);
+  assert.deepEqual(confinedTokenVars({ session: STARTED[0].session, cwd: work, env: claimed, token: () => ({ problem: 'the login: gone' }) }), { problem: 'the login: gone' });
+  assert.equal(confinedTokenVars({ session: STARTED[0].session, cwd: fx.dir, env: claimed }), null, 'no confined attempt, no answer');
 });
+
+test('in the launch window, while the host has not named the session, only the session holding the start\'s claim gets the token', (t) => {
+  const fx = runFixture(t);
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  const claim = claimOf(fx);
+  const work = path.join(runsFolder(fx.state), 'launch', 'attempts', 'ENG-1.1', 'work');
+  // A pending mark for the next launch in that clone, which holds every session the host had not listed before it.
+  assert.ok(markPending(DRIVER, { cwd: work, root: fx.dir, known: [DRIVER], env: fx.env }));
+  const stranger = 'abcd1234-0000-4000-8000-00000000fe01';
+  const token = () => ({ token: 'github_pat_STANDIN0123' });
+  assert.deepEqual(confinedTokenVars({ session: stranger, cwd: work, env: fx.env, token }), { problem: 'this session does not hold the claim the start gave the session it launched, so it is not that session' });
+  assert.deepEqual(confinedTokenVars({ session: stranger, cwd: work, env: { ...fx.env, [CLAIM_VAR]: 'f'.repeat(48) }, token }).problem, 'this session does not hold the claim the start gave the session it launched, so it is not that session', 'a wrong claim');
+  assert.deepEqual(confinedTokenVars({ session: stranger, cwd: work, env: { ...fx.env, [CLAIM_VAR]: claim }, token }), { vars: { GH_TOKEN: 'github_pat_STANDIN0123' } }, 'the launched session, before the host names it');
+});
+
+test('the hook reads only the source the start checked: a project entry that fails then gives no token, with no fall back', () => {
+  const forge = login();
+  const failed = forgeToken({ forge, repository: REPOSITORY, keychain: ENTRY, platform: 'darwin', exec: keychain(exit(44)).exec, only: 'project' });
+  assert.equal(failed.token, undefined);
+  assert.equal(failed.problem, `${PROJECT_SOURCE}, the source the start checked, gives no token now (it is not there)`);
+  assert.deepEqual(forge.calls, [], 'the forge CLI\'s login is not asked');
+  const machine = forgeToken({ forge, repository: REPOSITORY, keychain: ENTRY, platform: 'darwin', exec: entries({ 'aidrian-forge': KEYCHAIN_TOKEN, 'aidrian-project-run': 'github_pat_DEFAULT0123456789' }).exec, only: 'machine' });
+  assert.deepEqual([machine.token, machine.id], ['github_pat_DEFAULT0123456789', 'machine'], 'the machine entry, though the project entry is there');
+  assert.equal(forgeToken({ forge, repository: REPOSITORY, keychain: ENTRY, platform: 'linux', only: 'project' }).problem, 'the source the start checked, project, is not one this machine reads now');
+  assert.equal(forgeToken({ forge: login(), repository: REPOSITORY, platform: 'linux' }).id, 'login');
+});
+
+test('the session environment file is made owner-only before anything is written, and Claude Code\'s session-env tree is hidden from the sandbox', (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'aidrian-envfile-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, 'env.sh');
+  writeFileSync(file, 'export A=1\n', { mode: 0o644 });
+  chmodSync(file, 0o644);
+  assert.equal(writeEnvFile(file, { GH_TOKEN: 'github_pat_X0123456789' }), true);
+  assert.equal(statSync(file).mode & 0o777, 0o600);
+  const settings = sandboxSettings({ work: path.join(root, 'w'), git: path.join(root, 'g'), grants: [], domains: [], temp: [], home: root, platform: 'darwin' });
+  const tree = path.join(root, '.claude', 'session-env');
+  assert.ok(settings.sandbox.filesystem.denyRead.includes(tree), 'no sandboxed command reads another session\'s file');
+  assert.ok(settings.permissions.deny.includes(`Read(/${tree}/**)`), 'nor the Read tool');
+  assert.ok(confineReads({ env: {}, home: root }).includes(tree), 'and the sandbox proof tries to read it');
+});
+

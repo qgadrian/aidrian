@@ -25,7 +25,7 @@ import path from 'node:path';
 import { ATTEMPT_KEEP, attemptOf, GIT_PLACEHOLDERS, KEPT_FOLDERS } from './attempt-clone.mjs';
 import { isWithin, readSmallJson, resolvedPath } from './fs.mjs';
 import { gateGit } from './git.mjs';
-import { forgeToken, sessionToken, tokenVars } from './project-token.mjs';
+import { claimedSource, forgeToken, sessionToken, tokenVars } from './project-token.mjs';
 import { loadConfig } from './config.mjs';
 import { findProject, stateRoot } from './project.mjs';
 import { CACHE_VAR_NAMES, NPM_CONFIGS, varsProblem } from './project-registries.mjs';
@@ -79,15 +79,32 @@ export function hostStartProblem(cap, policy, env) {
 // asked. `main` is the main checkout, whose origin URL the attempt's clone takes (prepareAttempt), so it is the URL the
 // session pushes to (`pushUrl`, which confinedRoom holds the clone to); `helpers` are the git credential helpers its
 // config names; `platform` the operating system, and `allowed` the base branch's projectRun.outsideSandbox.
-// On a host that hands its session the forge token (`forgeTokenEnv`), a start with no token to hand halts too
-// (lib/project-token.mjs, from the keychain entry `keychain` or the forge CLI's login), and { pushUrl, token } names
-// its `source` and `notes`, never the token, which the session's SessionStart hook reads again for itself.
+// On a host that hands its session the forge token (`forgeTokenEnv`), a start halts too when no source gives a token
+// (lib/project-token.mjs: the keychain entry `keychain`, the machine's default entry, or the forge CLI's login), or when
+// the forge, asked with that very token, does not let it push to the repository; { pushUrl, token } then names its
+// source `id`, its `source` label, and `notes`, never the token, which the session's SessionStart hook reads again from
+// that one source.
 export function accessProblem({ cap, forge, repository, env, home, guarded, main, platform = process.platform, allowed = [], keychain = null, exec }) {
   const pushed = pushAccess({ cap, forge, repository, env, home, guarded, main, platform, allowed });
   if (!pushed?.pushUrl || cap.forgeTokenEnv !== true) return pushed;
   const read = forgeToken({ forge, repository, keychain, platform, env, ...(exec ? { exec } : {}) });
   if (read.problem) return { halt: read.problem, token: { notes: read.notes } };
-  return { ...pushed, token: { source: read.source, notes: read.notes } };
+  const token = { id: read.id, source: read.source, notes: read.notes };
+  const denied = tokenPushProblem({ forge, repository, read });
+  return denied ? { halt: denied, token } : { ...pushed, token };
+}
+
+// Why the token `read` gave may not push to `repository`, asked of the forge with that token, or null.
+function tokenPushProblem({ forge, repository, read }) {
+  const named = `${repository.host}/${repository.owner}/${repository.name}`;
+  let view;
+  try {
+    view = forge.repository(`${repository.owner}/${repository.name}`, { host: repository.host, token: read.token });
+  } catch (error) {
+    return `the forge token from ${read.source} cannot read ${named} (${String(error?.message ?? error).split('\n')[0].slice(0, 200)}), so the issue session could not push with it; give that source a token for this repository`;
+  }
+  if (view?.permissions?.push === true) return null;
+  return `the forge token from ${read.source} does not let the issue session push to ${named}; give that source a token that may push there`;
 }
 
 function pushAccess({ cap, forge, repository, env, home, guarded, main, platform, allowed }) {
@@ -372,19 +389,25 @@ export function confinedShellVars({ session, cwd, env = process.env, home }) {
   }
 }
 
-// The forge token the sandboxed commands of `session`, whose hook runs in `cwd`, get, as the forge CLI's token variable,
-// or null: only for the session of a confined attempt, as confinedShellVars holds it, read again outside the sandbox
-// from the main checkout its mark names (project-token.mjs sessionToken), so no file carries it from the start. `token`
-// is a test's stand-in for that read. Never throws.
+// The forge token the sandboxed commands of `session`, whose hook runs in `cwd` under `env`, get: { vars }, the forge
+// CLI's token variable; { problem }, why it was not handed over; or null for a session of no confined attempt. Only the
+// session the start launched gets it: one whose environment holds the start's claim (project-token.mjs claimedSource),
+// so no other session opened in the clone does, while the host has yet to name it or after. The token is read again,
+// outside the sandbox, from the one source the start checked, never another (sessionToken). `token` is a test's
+// stand-in for that read. Never throws.
 export function confinedTokenVars({ session, cwd, env = process.env, home, token = sessionToken }) {
   try {
-    const { mark } = confinedAttempt({ session, cwd, env, home }) ?? {};
-    const project = typeof mark?.root === 'string' ? findProject(mark.root) : null;
+    const found = confinedAttempt({ session, cwd, env, home });
+    if (!found) return null;
+    const claim = claimedSource(found.attempt.folder, env);
+    if (claim.problem) return { problem: claim.problem };
+    const project = typeof found.mark?.root === 'string' ? findProject(found.mark.root) : null;
     const repository = project ? pinnedRepository(project) : null;
-    const read = repository ? token({ root: project.root, repository, keychain: project.localForgeTokenKeychain, env }) : null;
-    return read?.token ? tokenVars(read.token) : null;
-  } catch {
-    return null;
+    if (!repository) return { problem: 'the main checkout the session\'s mark names gives no repository' };
+    const read = token({ root: project.root, repository, keychain: project.localForgeTokenKeychain, env, only: claim.source });
+    return read.token ? { vars: tokenVars(read.token) } : { problem: read.problem };
+  } catch (error) {
+    return { problem: `the token could not be read (${String(error?.message ?? error).split('\n')[0].slice(0, 200)})` };
   }
 }
 

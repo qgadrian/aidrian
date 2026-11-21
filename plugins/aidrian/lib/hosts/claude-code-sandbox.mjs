@@ -14,7 +14,7 @@
 // ignored. It reads no file when loaded: hooks load every adapter.
 
 import { spawnSync } from 'node:child_process';
-import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync, writeSync } from 'node:fs';
+import { closeSync, constants, fchmodSync, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync, writeSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import path from 'node:path';
 
@@ -75,8 +75,12 @@ export const CREDENTIAL_PATHS = Object.freeze([
   '.config/pypoetry/auth.toml', 'Library/Application Support/pypoetry/auth.toml', '.local/share/uv/credentials',
 ]);
 
-// The host's own credential files in its user config folder, wherever CLAUDE_CONFIG_DIR moves it.
-const CONFIG_CREDENTIALS = Object.freeze(['.credentials.json', 'ide', '.claude.json']);
+// The host's own credential files in its user config folder, wherever CLAUDE_CONFIG_DIR moves it, and its `session-env`
+// tree, whose files hand each session's Bash commands their environment, a confined session's forge token among them.
+// The host reads a session's own file in its own process, outside the sandbox, and runs what it read ahead of each Bash
+// command (Claude Code 2.1.330: "Session environment loaded from CLAUDE_ENV_FILE"), so a sandbox that hides the whole
+// tree still gives each session its own variables, and no session reads another's.
+const CONFIG_CREDENTIALS = Object.freeze(['.credentials.json', 'ide', '.claude.json', 'session-env']);
 
 // An environment variable whose name says it holds a credential, which the sandbox unsets before each sandboxed command
 // runs; and the well-known ones, unset whether or not the driver's environment has them, since the host's background
@@ -229,8 +233,9 @@ export function npmGlobalConfigs(env) {
 const quoted = (value) => `'${value.replaceAll("'", "'\\''")}'`;
 
 // Appends an `export NAME='value'` line for each of `vars` to the host's session environment file `file`, which the
-// host sources before each Bash command of the session, and no hook or MCP server reads: whether it wrote them. A file
-// that is no absolute path, a link, or a name a shell does not take writes nothing.
+// host reads in its own process, outside the sandbox, and runs ahead of each Bash command of the session, and no hook
+// or MCP server reads: whether it wrote them. A file that is no absolute path, a link, or a name a shell does not take
+// writes nothing. The file is made owner-only first, and one that cannot be writes nothing: it may hold the forge token.
 export function writeEnvFile(file, vars) {
   if (typeof file !== 'string' || !path.isAbsolute(file) || CONTROL.test(file)) return false;
   const entries = Object.entries(vars ?? {});
@@ -239,6 +244,8 @@ export function writeEnvFile(file, vars) {
   try {
     fd = openSync(file, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0), 0o600);
     if (!fstatSync(fd).isFile()) return false;
+    fchmodSync(fd, 0o600);
+    if ((fstatSync(fd).mode & 0o777) !== 0o600) return false;
     writeSync(fd, `${entries.map(([name, value]) => `export ${name}=${quoted(value)}`).join('\n')}\n`);
     return true;
   } catch {

@@ -18,11 +18,13 @@ export const GH_EXEC_OPTIONS = Object.freeze({ encoding: 'utf8', stdio: ['ignore
 // signal that stops gh at the limit, such as SIGKILL for a hook that cannot wait on a gh that ignores the default.
 // `input` is gh's stdin, such as a request body for `gh api --input -`: the text goes as it is, never read as a flag's value.
 // Node hands `input` to the child only through a piped stdin, so a call with one pipes it; every other call ignores stdin.
-export function runGh(args, { cwd, exec = execFileSync, timeoutMs = GH_TIMEOUT_MS, killSignal = null, input } = {}) {
+// `token` signs this one call in with that token, through gh's GH_TOKEN, in place of gh's own login: never an argument.
+export function runGh(args, { cwd, exec = execFileSync, timeoutMs = GH_TIMEOUT_MS, killSignal = null, input, token } = {}) {
   try {
     return exec('gh', args, {
       ...GH_EXEC_OPTIONS,
       ...(cwd === undefined ? {} : { cwd }),
+      ...(typeof token === 'string' ? { env: { ...process.env, GH_TOKEN: token } } : {}),
       ...(timeoutMs === GH_TIMEOUT_MS ? {} : { timeout: timeoutMs }),
       ...(killSignal === null ? {} : { killSignal }),
       ...(input === undefined ? {} : { input, stdio: ['pipe', 'pipe', 'pipe'] }),

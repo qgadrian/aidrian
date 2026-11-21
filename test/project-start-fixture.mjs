@@ -96,16 +96,19 @@ const gitIn = (dir) => (...args) => execFileSync('git', ['-c', 'user.name=t', '-
 // A stand-in for the forge facade: the default branch `main` at the commit `head()` gives, the committed config at
 // `.aidrian/config.json` (`config`, as text), no `.aidrian.json`, the pull requests in `views`, by number, the push
 // permission `push()` gives, and the forge CLI's login token `token()` gives, a fine-grained one by default; a `token`
-// that throws is a CLI with no login. `calls` records each call.
+// that throws is a CLI with no login. A repository read with a token, as the start checks the issue session's, answers
+// the push permission `tokenPush(token)` gives. `calls` records each call.
 export const FIXTURE_TOKEN = 'github_pat_FIXTURE0123456789';
-export function fakeForge(config, head, views = {}, { push = () => true, token = () => FIXTURE_TOKEN } = {}) {
+export function fakeForge(config, head, views = {}, { push = () => true, token = () => FIXTURE_TOKEN, tokenPush = () => true } = {}) {
   const calls = [];
   const missing = () => Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)' });
-  return {
+  const forge = {
     calls,
+    tokenPush,
     repository: (repo, options) => {
       calls.push(['repository', repo, options]);
-      return { default_branch: 'main', permissions: { pull: true, push: push() } };
+      const allowed = typeof options?.token === 'string' ? forge.tokenPush(options.token) : push();
+      return { default_branch: 'main', permissions: { pull: true, push: allowed } };
     },
     contents: (repo, file, ref, options) => {
       calls.push(['contents', repo, file, ref, options]);
@@ -127,6 +130,7 @@ export function fakeForge(config, head, views = {}, { push = () => true, token =
       return typeof view === 'function' ? view() : view;
     },
   };
+  return forge;
 }
 
 // A stand-in for spawnSync that answers like Claude Code 2.1.326: the driver session is listed, then each session `--bg`

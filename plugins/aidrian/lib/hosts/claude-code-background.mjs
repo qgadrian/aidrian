@@ -345,7 +345,7 @@ function ownMode({ session, list, env, readMode, cwd = ownFolder(list, session) 
 // `beacon(session)`, the agent gate hook's beacon, shows the plugin's hooks run for it, within BEACON_WAIT: else the
 // session is stopped, and the answer names the failed proof (`proof`). Returns startIn's answer, or { problem,
 // uncertain, proof }. `hold`, `run`, `wait`, and `resolve` are startBackground's.
-export function startProject({ session, cwd, prompt, name, effort, efforts = [], env, hold, identify, beacon, confined, sandbox, mcp, home, platform = process.platform, run = runCommand, wait = pause, resolve = claudeOnPath, readMode = sessionMode }) {
+export function startProject({ session, cwd, prompt, name, effort, efforts = [], env, hold, identify, beacon, confined, sandbox, mcp, home, platform = process.platform, run = runCommand, wait = pause, resolve = claudeOnPath, readMode = sessionMode, claimVars = null }) {
   const box = sandboxInputs(sandbox);
   if (box.problem) return { problem: box.problem };
   if (typeof beacon !== 'function') return { problem: 'the gate gave no way to read the agent gate hook\'s beacon' };
@@ -365,7 +365,11 @@ export function startProject({ session, cwd, prompt, name, effort, efforts = [],
     return { problem: `the attempt's clone or a folder the gate grants the session lies in the main checkout ${box.main}, which a confined session may not read; set state.dir to a folder outside it` };
   }
   const user = home ?? homedir();
-  const settings = sandboxSettings({ ...box, work, temp: tempFolders(), home: user, config: configFolder(env, user), platform, secrets: secretVars(env, box.tokens), stores: npmGlobalConfigs(env) });
+  const boxed = sandboxSettings({ ...box, work, temp: tempFolders(), home: user, config: configFolder(env, user), platform, secrets: secretVars(env, box.tokens), stores: npmGlobalConfigs(env) });
+  // The start's claim, the one variable the settings set (`claimVars`, from lib/project-token.mjs): it marks this session,
+  // and no other opened in the clone, to the SessionStart hook that hands it the forge token. It is no secret.
+  const claimed = claimVars && typeof claimVars === 'object' && Object.values(claimVars).every((value) => typeof value === 'string');
+  const settings = claimed ? { ...boxed, env: { ...claimVars } } : boxed;
   const started = startIn({ cwd: work, prompt, name, mode: read.mode, effort, efforts, settings, mcp: mcpConfig(mcp), env, hold, run, wait, resolve: () => claude });
   if (started.problem) return REFUSED.test(started.problem) && started.uncertain === false ? { ...started, problem: `${started.problem}; ${trustStep(work)}` } : started;
   return proveHooks({ started, identify, beacon, confined, env, run, wait, claude });

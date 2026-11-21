@@ -473,7 +473,8 @@ No `sandbox.excludedCommands` is passed. Three conditions hold on top of the san
   `~/Library/Application Support`, `~/.mozilla`, `~/.config/google-chrome`, `~/.config/chromium`,
   `~/.git-credentials`, `~/.npmrc`, `~/.pypirc`, `~/.cargo/credentials.toml` and `~/.cargo/credentials`,
   `~/.gem/credentials`, `~/.vault-token`, `~/.config/hub`, the host's own `~/.claude.json`,
-  `~/.claude/.credentials.json`, and `~/.claude/ide` (and those of `CLAUDE_CONFIG_DIR` when it moves them), the
+  `~/.claude/.credentials.json`, `~/.claude/ide`, and its `~/.claude/session-env` tree, which holds every session's
+  `CLAUDE_ENV_FILE` (and those of `CLAUDE_CONFIG_DIR` when it moves them), the
   keyrings in `~/.local/share/keyrings`, and the shell histories `~/.bash_history`, `~/.zsh_history`, and
   `~/.local/share/fish`; and the package registries' other token stores: `~/.yarnrc.yml`, `~/.yarnrc`,
   `~/.config/npm/npmrc`, the npm user and global config files the driver's `npm_config_userconfig` and
@@ -487,10 +488,19 @@ No `sandbox.excludedCommands` is passed. Three conditions hold on top of the san
   keeps its token by default, the session gets the forge token as `GH_TOKEN` in its sandboxed commands' environment:
   the start reads it outside the sandbox, from the first of the project's keychain entry
   ([`projectRun.forgeTokenKeychain`](../config.md#project-run) in `.aidrian.local.json`), the machine's default entry,
-  service `aidrian-project-run`, both on macOS, and `gh auth token --hostname <host>`, and halts when none gives one;
-  the plugin's SessionStart hook of the confined session reads it again from the same sources, outside the sandbox,
-  and appends it to the file `CLAUDE_ENV_FILE` names, as it does the cache variables, so it reaches the sandboxed Bash
-  commands alone, never the host's hooks or MCP servers, and no file of the run, argv, or printed line carries it.
+  service `aidrian-project-run`, both on macOS, and `gh auth token --hostname <host>`, and halts when none gives one,
+  or when the forge, asked for the repository with that very token, does not answer `permissions.push` true, whatever
+  the driver's own login may do. The start records only which source gave the token, with the digest of a random
+  claim it passes the session it launches as the one `env` key of its inline settings, `AIDRIAN_START_CLAIM`. The
+  plugin's SessionStart hook of the confined session hands the token over only when its environment holds that claim,
+  so no other session opened in the clone gets it, before the host names the launched one or after; it reads the
+  token again, outside the sandbox, from that one source, never another, and appends it, in a file it first makes
+  owner-only, to the file `CLAUDE_ENV_FILE` names, as it does the cache variables. A source that gives no token then,
+  or a session without the claim, gets a line saying why instead, and no token. The host reads that file in its own
+  process and runs its lines ahead of each Bash command (2.1.330: "Session environment loaded from CLAUDE_ENV_FILE"),
+  so the sandbox hides the whole `session-env` tree and each session still gets its own variables, while no session
+  reads another's. The token reaches the sandboxed Bash commands alone, never the host's hooks or MCP servers, and no
+  file of the run, argv, or printed line carries it.
   Variables of the shell that runs `claude --bg` never reach the session, so the driver's own `GH_TOKEN` is no channel.
   `gh auth git-credential`, the helper `gh auth setup-git` writes, answers git with `GH_TOKEN` (checked on gh 2.105.0),
   so git's HTTPS push signs in with it too. `sandbox.excludedCommands` for gh or git is no channel either: git runs
@@ -529,8 +539,11 @@ Residual risks, each known and accepted:
 - The session holds the forge token in its sandboxed commands' environment, as before it held gh's: any command it runs
   can read it, and a token of gh's own login, or a classic one, reaches every repository and scope the user can, which
   the preflight's `note token:` line names. A fine-grained token in the keychain, limited to the run's repository,
-  narrows that. The host keeps the file `CLAUDE_ENV_FILE` names, which then holds the token, in its own config folder
-  for the session's life; whether it removes it when the session ends is not checked.
+  narrows that. The host keeps the file `CLAUDE_ENV_FILE` names, which then holds the token, owner-only, in its own
+  config folder, which the sandbox hides, for the session's life; whether it removes it when the session ends is not
+  checked. Whether the forge's `permissions.push` reflects a fine-grained token's own Contents permission, rather than
+  its user's role, is not checked against GitHub: a fine-grained token with read-only Contents may pass the start's
+  check and then fail to push.
 - The forge CLI's token in `~/.config/gh`, when gh keeps it there, is readable, and reaches every repository the user can. In the run's repository,
   the default branch's protection and the tag rule that `aidrian project preflight` requires hold it; in the user's
   other repositories, nothing does.
@@ -580,8 +593,9 @@ Before `verified` changes, a live Claude Code must show every one of these, each
    trace of live check 21 shows the host makes no git call mid-session.
 6. A `settings.local.json` put in the clone mid-session changes none of 2 to 5.
 7. An HTTPS push, `gh api user`, and `gh pr create` work on macOS and on Linux, with `~/Library/Keychains` denied on
-   macOS, through the `GH_TOKEN` the SessionStart hook hands the sandboxed commands; the hook's `security` and
-   `gh auth token` reads answer in a background session within its 5 seconds, with no keychain prompt; an unlisted
+   macOS, through the `GH_TOKEN` the SessionStart hook hands the sandboxed commands; the hook's environment holds the
+   `AIDRIAN_START_CLAIM` of the inline settings; the hook's `security` and `gh auth token` reads answer in a
+   background session within its 5 seconds, with no keychain prompt; an unlisted
    host is refused with no prompt in every permission mode. A live run on 0.80.1 showed gh's keychain login does not
    answer inside the sandbox, so `~/Library/Keychains` stays denied and the token goes through the forge CLI's token
    variable, which `secretVars` keeps.
@@ -729,8 +743,8 @@ writes them to `shell-env.json` in the attempt's folder, which no confined sessi
 plugin's SessionStart hook, for a session whose own mark names a run and issue whose ledger gives it exactly that
 attempt's folder, or whose pending mark starts it in that very clone, appends one `export NAME='value'` line for each
 name the gate gives, and no other, single-quoted with each quote escaped, to the
-file the host names in `CLAUDE_ENV_FILE`, which it sources before each Bash command. No `env` key is passed in the
-settings. On Codex the same variables reach its sandboxed commands through `shell_environment_policy.set`.
+file the host names in `CLAUDE_ENV_FILE`, which it reads and runs ahead of each Bash command. No package manager
+variable is passed in the settings' `env`, whose one key is the start's claim (Project start, above). On Codex the same variables reach its sandboxed commands through `shell_environment_policy.set`.
 
 | Package manager | Variables, each a folder or file in `cache` |
 | --- | --- |

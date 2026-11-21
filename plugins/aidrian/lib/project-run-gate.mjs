@@ -986,15 +986,17 @@ export function resumeRun({ project, config, run, env = process.env, home, now =
   }
   if (endedIn(opened.found)) return refuse(`the run ${run} ended`);
   // A run whose driver chain the host lists as ended is stranded: the attended session that resumes it takes custody.
-  const continued = named ? hostContinued(opened.found, { env, home }) : null;
-  if (continued && continued.id !== session) return refuse(`the host continued the run's driver ${driverOf(opened.found).session} as ${continued.id}, and only that session takes custody this way`);
-  const stranded = named && strandedDriver({ found: opened.found, env, spawn, continued });
+  const recorded = named ? hostContinued(opened.found, { env, home }) : null;
+  // Only the session the host names takes custody this way; any other may still lift a halt, and takes no custody.
+  const continued = recorded && recorded.id === session ? recorded : null;
+  const other = recorded && !continued ? [`note: the host continued the run's driver ${driverOf(opened.found).session} as ${recorded.id}, and only that session takes custody of it`] : [];
+  const stranded = named && !(recorded && !continued) && strandedDriver({ found: opened.found, env, spawn, continued });
   if (!haltOf(opened.found) && !stranded) {
     // A driver the host does not list as an ended background session may be an interactive session that closed, which
     // keeps its id: the Human resumes that same session, and it keeps custody.
     const driver = driverOf(opened.found).session;
     const note = named ? [`note: the driver ${driver} is not a background session the host lists as ended; if it was a session the Human ran and closed, resume that same host session, which keeps its id and so the run's custody`] : [];
-    return { exitCode: 0, out: [`not halted ${run}`, ...note], err: [] };
+    return { exitCode: 0, out: [`not halted ${run}`, ...(other.length ? other : note)], err: [] };
   }
   // The driver mark comes first: a session that would drive without one would not be held as a driver. A mark filed for
   // a custody row that then fails leaves the session held, writing nothing, since the ledger names another driver.
@@ -1003,13 +1005,14 @@ export function resumeRun({ project, config, run, env = process.env, home, now =
     const driver = driverOf(fresh);
     // Under the lock, the run must still be live, and a continuation still the host's word for this session.
     if (endedIn(fresh)) return { problem: `the run ${run} ended` };
-    if (continued && hostContinued(fresh, { env, home })?.id !== session) return { problem: 'the host no longer records that it continued the run\'s driver as this session; run resume again' };
+    const again = stranded ? hostContinued(fresh, { env, home }) : null;
+    if (stranded && (continued ? again?.id !== session : again !== null)) return { problem: 'the host\'s record of the run\'s driver changed while this command read it; run resume again' };
     const take = stranded && driver.session === stranded ? [{ event: 'driver', session, from: driver.session, sha256: sha256(Buffer.from(`resume ${run} ${session} ${iso(now)}`)), via: 'resume', at: iso(now) }] : [];
     return { rows: [...(haltOf(fresh) ? [{ event: 'resume', session, at: iso(now) }] : []), ...take] };
   });
   if (written.problem) return refuse(written.problem);
   const took = written.rows.some((row) => row.event === 'driver');
-  return { exitCode: 0, out: [...(written.rows.some((row) => row.event === 'resume') ? [`resumed ${run}`] : []), ...(took ? [`custody: this session now drives the run ${run}; its last driver ended`] : [])], err: [] };
+  return { exitCode: 0, out: [...(written.rows.some((row) => row.event === 'resume') ? [`resumed ${run}`] : []), ...(took ? [`custody: this session now drives the run ${run}; its last driver ended`] : []), ...other], err: [] };
 }
 
 // The session of the run `found`'s driver when the host lists it as ended, or, with `continued`, recorded that it

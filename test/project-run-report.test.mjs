@@ -966,15 +966,13 @@ test('the host continuing the driver under a new id strands the run, so an atten
   assert.match(fx.cmd(['end', 'launch'], { session: NEXT }).err[0], /custody moves only through `aidrian project resume launch`/u, 'end names it too');
   // Only the session the host names takes custody this way.
   const other = fx.cmd(['resume', 'launch'], { session: 'abcd1234-0000-4000-8000-00000000f001' });
-  assert.match(other.err[0], /the host continued the run's driver .* as abcd1234-0000-4000-8000-00000000c0n1, and only that session takes custody this way/u);
-  // A newer copy of the old transcript in another project folder is the one read: here it voids the row.
+  assert.equal(other.exitCode, 0, other.err.join('\n'));
+  assert.deepEqual(other.out, ['not halted launch', `note: the host continued the run's driver ${DRIVER} as ${NEXT}, and only that session takes custody of it`], 'it may lift a halt, and takes no custody');
+  assert.equal(fx.rows().some((each) => each.event === 'driver'), false);
+  // A copy of the old transcript in another project folder never outranks the main checkout's.
   const copy = path.join(fx.env.CLAUDE_CONFIG_DIR, 'projects', '-a-linked-worktree', `${DRIVER}.jsonl`);
   mkdirSync(path.dirname(copy), { recursive: true });
   writeFileSync(copy, `${row(NEXT, init + 2000)}${JSON.stringify({ type: 'user', sessionId: DRIVER })}\n`);
-  const later = (Date.now() + 60_000) / 1000;
-  utimesSync(copy, later, later);
-  assert.equal(resume().out[0], 'not halted launch', 'the newest copy voids the continuation');
-  rmSync(copy);
   // The attended continuation resumes, and drives on.
   const taken = resume();
   assert.equal(taken.exitCode, 0, taken.err.join('\n'));

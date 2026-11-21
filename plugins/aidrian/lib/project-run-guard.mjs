@@ -101,7 +101,7 @@ export function hostContinued(found, { env = process.env, home } = {}) {
   const driver = driverOf(found);
   let moved = null;
   try {
-    moved = read({ session: driver.session, env, ...(home ? { home } : {}) });
+    moved = read({ session: driver.session, cwd: found.init.main, env, ...(home ? { home } : {}) });
   } catch {
     return null;
   }

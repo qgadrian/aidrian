@@ -568,8 +568,9 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   ended does, so the driver's commands are refused to the new id with the way out named: `aidrian project resume <run>`
   from that continued session, when a person attends it; any other session is refused. Under the ledger's lock it
   checks again that the run is live and the host still records the continuation, files the driver mark, and moves
-  custody with a `driver` row, and the session drives on. When several project folders hold the old transcript, the
-  one last written is read.
+  custody with a `driver` row, and the session drives on. Another attended session may still lift a halt, and takes no
+  custody. The old transcript is read in the main checkout's project folder, else where it is the only copy; with
+  several copies elsewhere, the host's record counts as none.
 - **`maxChain` binds the driver's chain alone.** The driver's hops count as any session's, up to the base branch's
   `session.handoff.maxChain`, at most 5 unless it is `"unlimited"`. At the limit the gate prints `continue: none`,
   and the driver keeps driving in its own session, which the host compacts; it does the same on `continue: clear`,

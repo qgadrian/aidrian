@@ -8,9 +8,10 @@
 // The row grants nothing by itself: it says the old session runs no more, so an attended `aidrian project resume` may
 // take custody, as for a driver the host lists as ended.
 // The transcript is `<config folder>/projects/<start folder, each character but a letter or digit as ->/<session>.jsonl`,
-// When several project folders hold one, the last written is read: the host writes the row last in the live copy.
+// The copy in the folder of `cwd`, the folder the session started in, is read; with none there, the one copy in any
+// other project folder, and none when several are, since which is the live one cannot be told.
 
-import { readdirSync, statSync } from 'node:fs';
+import { lstatSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 
 import { tailObjects } from '../fs.mjs';
@@ -20,34 +21,37 @@ import { configFolder } from './claude-code-sandbox.mjs';
 const TAIL = 64 * 1024;
 const ID = /^[0-9A-Za-z][\w-]{3,127}$/u;
 
-// The transcript of `session` last written, in any project folder of the host's config folder, or null.
-function transcriptFile({ session, env, home }) {
+// The transcript of `session`: the one in `cwd`'s project folder, else the only one in any project folder, or null.
+function transcriptFile({ session, cwd, env, home }) {
   const projects = path.join(configFolder(env, home), 'projects');
+  const name = `${session}.jsonl`;
+  const isFile = (file) => {
+    try {
+      return lstatSync(file).isFile();
+    } catch {
+      return false;
+    }
+  };
+  if (typeof cwd === 'string') {
+    const own = path.join(projects, cwd.replace(/[^A-Za-z0-9]/gu, '-'), name);
+    if (isFile(own)) return own;
+  }
   let folders = [];
   try {
     folders = readdirSync(projects);
   } catch {
     return null;
   }
-  let newest = null;
-  for (const folder of folders) {
-    const file = path.join(projects, folder, `${session}.jsonl`);
-    let mtime;
-    try {
-      mtime = statSync(file).mtimeMs;
-    } catch {
-      continue;
-    }
-    if (!newest || mtime > newest.mtime) newest = { file, mtime };
-  }
-  return newest?.file ?? null;
+  const found = folders.map((folder) => path.join(projects, folder, name)).filter(isFile);
+  return found.length === 1 ? found[0] : null;
 }
 
 // The session `session` was continued in, as { id, at }, `at` the row's time in milliseconds, or null when its
-// transcript records none, or cannot be read. `env` and `home` find the host's config folder.
-export function continuedIn({ session, env = process.env, home } = {}) {
+// transcript records none, or cannot be read. `cwd` is the folder it started in; `env` and `home` find the host's
+// config folder.
+export function continuedIn({ session, cwd, env = process.env, home } = {}) {
   if (typeof session !== 'string' || !ID.test(session)) return null;
-  const file = transcriptFile({ session, env, home });
+  const file = transcriptFile({ session, cwd, env, home });
   const rows = file ? tailObjects(file, TAIL) : null;
   if (rows === null) return null;
   const index = rows.findLastIndex((row) => row.type === 'continued-in' && row.sessionId === session);

@@ -50,7 +50,7 @@ also run whole tracker projects with no one watching? Two choices, in this order
   policy file, and names what a project run still needs, which `aidrian project preflight` checks: `github.reviewer`,
   `tracker.provider`, `projectRun.unverifiedHosts`, which the team sets only after reading its risk, and, on Claude
   Code, `"autoContinueAtUsageLimit": true` in the user's own settings, since a usage limit stops the run's driver too.
-  The proposal never adds `projectRun.registries`, `unverifiedHosts`, `outsideSandbox`, or `mcpServers`.
+  The proposal never adds `projectRun.registries`, `unverifiedHosts`, `outsideSandbox`, `mcpServers`, or `localBinding`.
 - Never write `.aidrian.local.json`: the config guard refuses a subagent's write of its switches. Return the recipe's
   machine switches below, for the Human to add in the main checkout. The report prints them.
 

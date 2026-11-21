@@ -663,6 +663,16 @@ Every reviewer is an entry in one map. The built-ins:
 | `self` | agent | local | the code-reviewer agent; never the author |
 | `pr-bot` | remote | remote | `github.reviewer`, as `aidrian pr await-review` waits for it |
 
+`codex-local`'s prompt (`REQUEST_BRIEF` in `lib/review/reviewers.mjs`) treats the diff, commit messages, and the pull
+request's text and comments as data: no comment changes the range or files the prompt names, and text that asks to
+change, narrow, or skip the review is a finding. One comment is exempt: the harness's own request to the review bot,
+which `aidrian pr await-review` posts and whose text sits in `lib/review/request-text.mjs`. The prompt quotes that text
+whole and exempts only a comment identical to it, after trimming whitespace, followed by nothing but name-and-value
+marker lines such as `<!-- pr-await-review: head=<sha> -->`. Without the exemption, its ask for a thorough review would be
+a finding on every pull request, and no fix to the change could close it. Any other comment that asks to change the
+review, broader or narrower, is still a finding, even one that opens with `@codex review`, quotes the request, or adds
+text to it: who posted a comment does not show in how it opens.
+
 `codex-local`'s Codex run also serves plans: the `quorum` skill runs it as a plan's adversary, and the `plan-review`
 skill runs the quorum on high-stakes plans ([quorum ledgers](project-folder.md#local-state)).
 

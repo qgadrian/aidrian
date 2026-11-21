@@ -303,13 +303,19 @@ const childEnv = (env) => Object.fromEntries(Object.entries(env).filter(([name])
 // A network host the proxy's allow rules take: a host name, or `*.` and a host name.
 const DOMAIN = /^(?:\*\.)?[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/iu;
 
-// The `-c` overrides of a start: the network proxy on, with an allow rule for each of `domains` and no other, and each of
-// `cacheVars` set for the sandboxed commands alone. Each value is TOML, whose basic strings JSON's escapes spell.
-export function configFlags({ domains, cacheVars = {} }) {
+// The `-c` overrides of a start: the network proxy on, with an allow rule for each of `domains` and no other, local
+// binding and loopback traffic only where `localBinding`, the team's projectRun.localBinding, allows them (the proxy's
+// `allow_local_binding`, read from Codex 0.171.0's binary, not a live run), and each of `cacheVars` set for the
+// sandboxed commands alone. In Codex 0.171.0 `allow_local_binding` also turns off the proxy's refusal of private and
+// link-local destinations (codex-rs/network-proxy/README.md at rust-v0.171.0), so an allowed host name that resolves
+// to such an address is reached too: localBindingRisk says so in preflight. Each value is TOML, whose basic strings JSON's escapes spell.
+export function configFlags({ domains, cacheVars = {}, localBinding = false }) {
   const rules = domains.map((each) => `${JSON.stringify(each)} = "allow"`).join(', ');
+  const binding = localBinding === true ? ['-c', 'features.network_proxy.allow_local_binding=true'] : [];
   return [
     '-c', 'features.network_proxy.enabled=true',
     '-c', `features.network_proxy.domains={ ${rules} }`,
+    ...binding,
     ...Object.entries(cacheVars).flatMap(([name, value]) => ['-c', `shell_environment_policy.set.${name}=${JSON.stringify(value)}`]),
   ];
 }
@@ -348,8 +354,9 @@ function realPaths(folders) {
 // `beacon(thread)`. Returns { id, session, name, cwd, mode: null }; { problem, uncertain: false } when nothing runs, with
 // `proof` naming the proof that failed when a process that started was stopped for it; or { problem, uncertain: true }
 // when it could not be stopped. `domains` are the network hosts the proxy allows, and `cacheVars` the variables its
-// sandboxed commands get (configFlags). `limits` is a test's { session, tool, beacon } in milliseconds of steps.
-export function startProject({ cwd, prompt, name, env, hold, identify, log, beacon, grants = [], domains, cacheVars = {}, run = runCommand, wait = pauseSync, launch = launchCommand, resolve = codexOnPath, limits = {} }) {
+// sandboxed commands get (configFlags), and `localBinding` whether they may bind local ports and reach the loopback.
+// `limits` is a test's { session, tool, beacon } in milliseconds of steps.
+export function startProject({ cwd, prompt, name, env, hold, identify, log, beacon, grants = [], domains, cacheVars = {}, localBinding = false, run = runCommand, wait = pauseSync, launch = launchCommand, resolve = codexOnPath, limits = {} }) {
   const bad = inputProblem({ cwd, name, prompt, log, beacon, grants, domains, cacheVars });
   if (bad) return { problem: bad };
   const folders = realPaths([cwd, ...grants]);
@@ -359,7 +366,7 @@ export function startProject({ cwd, prompt, name, env, hold, identify, log, beac
   if (!codex) return { problem: NO_CODEX };
   if (!psProgram()) return { problem: 'this system has no process table program at /bin/ps or /usr/bin/ps, so a Codex session could never be stopped safely' };
   if (typeof hold !== 'function' || !hold({ cwd: real, known: [] })) return { problem: 'the gate could not record the pending mark that holds the new session as unattended until its own mark is written' };
-  const launched = launchIn({ codex, real, granted, prompt, env, log, launch, flags: configFlags({ domains, cacheVars }) });
+  const launched = launchIn({ codex, real, granted, prompt, env, log, launch, flags: configFlags({ domains, cacheVars, localBinding }) });
   if (launched.problem) return launched;
   return proveStart({ ...launched, real, name, log, beacon, identify, run, wait, limits });
 }
@@ -442,5 +449,8 @@ export function stopLine({ id }) {
 
 // What the session is told beside the project prompt: it works only in its attempt's folder, pushes its branch with a
 // full refspec, and names the branch to every forge command, since its clone tracks no branch of the forge.
+// The risk of the team's projectRun.localBinding on Codex, for preflight's note.
+export const localBindingRisk = () => 'on Codex a sandboxed command may bind local ports and reach this machine\'s loopback, and the network proxy no longer refuses private and link-local addresses, so an allowed host name that resolves to one is reached too (Codex 0.171.0, no live run)';
+
 export const sessionNote = ({ work, branch }) => `This session runs in Codex's workspace-write sandbox, in ${work}, a clone made for this attempt: work only in that folder. ` +
   `Push only with \`git push origin HEAD:refs/heads/${branch}\`, in a call of its own, and name the branch to every forge command, as \`gh pr create --head ${branch}\`.`;

@@ -185,10 +185,9 @@ test('runWriter reads the role from the session\'s marks alone: the issue\'s, th
 // A hook script started as its own process, as the host starts it.
 const spawned = (script, options) => spawnSync(process.execPath, [script], options);
 
-// The hook as a process, for the session `session`, on the call of `tool` with `input`, from `cwd`. A process still:
-// the hook's handle takes no `start`, so its time budget, measured from the process's start, is spent at once when a
-// test calls it in its own process (hookCall).
-function hook(fx, session, tool, input, cwd = fx.dir, more = {}, run = spawned) {
+// The tracker pre hook, for the session `session`, on the call of `tool` with `input`, from `cwd`, in the test's process
+// unless `run` is `spawned`.
+function hook(fx, session, tool, input, cwd = fx.dir, more = {}, run = hookCall) {
   const env = { ...fx.env, HOME: fx.home, ...more };
   return run(PRE, { input: JSON.stringify({ cwd, session_id: session, tool_name: tool, tool_input: input }), cwd, env, encoding: 'utf8' });
 }

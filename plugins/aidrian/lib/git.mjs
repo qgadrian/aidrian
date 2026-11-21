@@ -1,6 +1,7 @@
 // Small git helpers for hooks and commands. Each returns null when git cannot answer, so the caller decides whether to
 // fail open or closed.
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
@@ -76,13 +77,88 @@ export function hardenedEnv(env = process.env) {
 // git: it answers `status` null with the reason on stderr and an `error` whose code is EREFUSED, as git not answering.
 // The -c settings override core.fsmonitor and core.hooksPath, but not a config a commondir leads git to.
 export function runGit(args, cwd, options = {}) {
-  if (stalled && options.timeout === undefined) return stalled;
-  const refused = cloneGitProblem(cwd ?? process.cwd());
-  if (refused) return { status: null, signal: null, stdout: '', stderr: refused, error: Object.assign(new Error(refused), { code: 'EREFUSED' }) };
+  const held = heldBack(cwd, options);
+  if (held) return held;
   const result = spawnSync('git', hardenedArgs(args), { cwd, encoding: 'utf8', timeout: GIT_TIMEOUT_MS, ...(killSignal ? { killSignal } : {}), ...options, env: { ...(options.env ?? process.env), GIT_NO_REPLACE_OBJECTS: '1' } });
   if (result.error?.code === 'ETIMEDOUT' && options.timeout === undefined) stalled = { status: null, stdout: '', stderr: '', error: result.error };
   return result;
 }
+
+// The answer runGit gives without running git, or null: the stopped call's, while one stopped and `options` sets no
+// timeout, or the refusal of a call in an attempt clone git may not run in.
+function heldBack(cwd, options) {
+  if (stalled && options.timeout === undefined) return stalled;
+  const refused = cloneGitProblem(cwd ?? process.cwd());
+  return refused ? { status: null, signal: null, stdout: '', stderr: refused, error: Object.assign(new Error(refused), { code: 'EREFUSED' }) } : null;
+}
+
+// The open withGitFacts call's { answers, open }: a Map from a folder and a read's arguments to git's frozen answer, and
+// false once the call ends, so a timer or promise it started, which still sees this store, asks git again.
+const gitFacts = new AsyncLocalStorage();
+
+// `run()`'s value, with `done()` called once it returns or throws, or once the promise it returns settles.
+function thenDone(run, done) {
+  let later = false;
+  try {
+    const result = run();
+    if (typeof result?.then !== 'function') return result;
+    later = true;
+    return Promise.resolve(result).finally(done);
+  } finally {
+    if (!later) done();
+  }
+}
+
+// `body()`, with each answer of the four repository-fact reads below (readFact) remembered until it returns, or until
+// the promise it returns settles: the facts a review step reads many times, which nothing in the step changes. With a
+// call already open, `body` runs in that one. A read outside any call asks git every time, so a test may change a
+// repository between two calls; nothing opens one for a whole process. A long wait inside one runs in withoutGitFacts.
+export function withGitFacts(body) {
+  if (gitFacts.getStore()?.open) return body();
+  const scope = { answers: new Map(), open: true };
+  return thenDone(() => gitFacts.run(scope, body), () => (scope.open = false));
+}
+
+// `body()` outside the open withGitFacts call, for a wait that may last minutes, such as the review step's bot wait:
+// each read in it asks git, and the open call forgets every answer once `body` ends, so a read after the wait asks again.
+export function withoutGitFacts(body) {
+  const scope = gitFacts.getStore();
+  return thenDone(() => gitFacts.exit(body), () => scope?.answers.clear());
+}
+
+// runGit for one of the four fact reads, remembered inside withGitFacts. The stopped call and an attempt clone's refusal
+// answer first, as in runGit, so a clone whose config turned unsafe is refused after its roots were read. An answer is
+// kept only when git ran with no error and exited 0, or, for a `config` read, 1 (no such key) in a folder whose roots
+// read answers, itself remembered: outside a repository a config read exits 1 too. A read given `options.env` always asks.
+// The key is the folder as given, resolved but not through links, a NUL, and the arguments: a folder swapped while the
+// call is open, as by a rename or a new `.git`, keeps its old answers, though the clone refusal still runs first.
+function readFact(args, cwd, options = {}, config = false) {
+  const scope = gitFacts.getStore();
+  if (!scope?.open || options.env !== undefined) return runGit(args, cwd, options);
+  const held = heldBack(cwd, options);
+  if (held) return held;
+  const folder = path.resolve(cwd ?? process.cwd());
+  const key = [folder, ...args].join('\0');
+  const known = scope.answers.get(key);
+  if (known) return known;
+  const result = runGit(args, cwd, options);
+  const inRepository = () => readFact(ROOTS_ARGS, cwd, options).status === 0;
+  if (result.error || !(result.status === 0 || (config && result.status === 1 && inRepository()))) return result;
+  const answer = Object.freeze({ status: result.status, stdout: result.stdout, stderr: result.stderr });
+  scope.answers.set(key, answer);
+  return answer;
+}
+
+// The roots read of checkoutRoots and gitFolders.
+const ROOTS_ARGS = Object.freeze(['rev-parse', '--path-format=absolute', '--git-common-dir', '--git-dir', '--show-toplevel']);
+
+// Each as runGit's result, remembered inside withGitFacts: `git rev-parse --show-prefix`, origin's URL, and every
+// remote's URL, one `remote.<name>.url <url>` a line. A config read exits 1 when there is none.
+export const readPrefix = (cwd, options) => readFact(['rev-parse', '--show-prefix'], cwd, options);
+export const readOriginUrl = (cwd, options) => readFact(['config', '--get', 'remote.origin.url'], cwd, options, true);
+export const readRemoteUrls = (cwd, options) => readFact(['config', '--get-regexp', '^remote\\..*\\.url$'], cwd, options, true);
+
+const lineOf = (result) => (result.status === 0 ? result.stdout.trim() : null);
 
 // runGit for the project run's start gate (lib/project-run-gate.mjs and the modules it uses), with GATE_TIMEOUT_MS by
 // default. `options.env` is the environment (this process's by default); the rest are runGit's.
@@ -91,8 +167,7 @@ export function gateGit(args, cwd, { env = process.env, ...options } = {}) {
 }
 
 function firstLine(args, cwd, options) {
-  const result = runGit(args, cwd, options);
-  return result.status === 0 ? result.stdout.trim() : null;
+  return lineOf(runGit(args, cwd, options));
 }
 
 // The main checkout, which every worktree of the repository shares. `options` are runGit's.
@@ -117,13 +192,13 @@ export function treeOf(cwd, branch = null) {
 
 // `cwd` from the top of its checkout, with a trailing slash: '' at the top, or when git cannot answer.
 export function showPrefix(cwd) {
-  return firstLine(['rev-parse', '--show-prefix'], cwd) ?? '';
+  return lineOf(readPrefix(cwd)) ?? '';
 }
 
 // `cwd` from the top of its checkout, with a trailing slash, or null when git cannot answer, so a reader of policy at a
 // path from the top never takes a failed read for the top itself. `options` are runGit's, such as a hook's `timeout`.
 export function knownPrefix(cwd, options) {
-  return firstLine(['rev-parse', '--show-prefix'], cwd, options);
+  return lineOf(readPrefix(cwd, options));
 }
 
 // Both at once, in one git call: { main, current }, or null. They differ inside a linked worktree.
@@ -132,7 +207,7 @@ export function knownPrefix(cwd, options) {
 // main checkout holds it as `.git`. A separate git folder records no main checkout (`git worktree list` names the
 // folder itself), so from a linked worktree of such a repository `main` is that folder's parent.
 export function checkoutRoots(cwd, options) {
-  const lines = firstLine(['rev-parse', '--path-format=absolute', '--git-common-dir', '--git-dir', '--show-toplevel'], cwd, options)?.split('\n');
+  const lines = lineOf(readFact(ROOTS_ARGS, cwd, options))?.split('\n');
   if (lines?.length !== 3) return null;
   const [commonDir, gitDir, current] = lines;
   // A project run's attempt clone has the run's main checkout as its own, read from the state side (attempt-clone.mjs);
@@ -146,7 +221,7 @@ export function checkoutRoots(cwd, options) {
 // The git folders of the checkout `cwd` is in, as absolute paths: { common, gitDir, top }, the folder every worktree
 // shares, this checkout's own, and its top folder; null when git cannot answer. `options` are runGit's.
 export function gitFolders(cwd, options) {
-  const lines = firstLine(['rev-parse', '--path-format=absolute', '--git-common-dir', '--git-dir', '--show-toplevel'], cwd, options)?.split('\n');
+  const lines = lineOf(readFact(ROOTS_ARGS, cwd, options))?.split('\n');
   if (lines?.length !== 3) return null;
   const [common, gitDir, top] = lines;
   return { common, gitDir, top };

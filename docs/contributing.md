@@ -90,6 +90,13 @@ returns spawnSync's `{ status, stderr, stdout }`, without starting a node proces
 time: `callHook` (`lib/hook-io.mjs`) swaps in the call's folder and environment, and each call starts with no stopped
 git call and no clone anchor, as a host's fresh process does. A hook with a time budget counts it from the call's start.
 
+A lib call outside `withGitFacts` (`lib/git.mjs`) asks git every time, so a test may change a repository between two
+calls, such as with `git remote add`. Inside one, a checkout's roots, its prefix, origin's URL, and the remote URLs are
+each read once per folder, until the call ends. A review step runs inside one (`lib/review/run.mjs` reviewStep), so a
+test that changes a repository's remotes or folders does it between steps, or during the bot wait: that wait runs in
+`withoutGitFacts`, which asks git for each read and makes the step forget every answer once the wait ends. Nothing
+opens one for a whole process, a hook's or a command's.
+
 A test still starts the script as a program where only a process shows the behaviour: its stdin reading, a `timeout`
 or signal it relies on, exit timing, or a deadline it measures. Keep at least one such run for each hook script a file
 covers, so the script's own entry stays tested. A hook body that reads the clock under `Date.now` can be held still

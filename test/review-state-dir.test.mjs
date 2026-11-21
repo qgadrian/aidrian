@@ -786,21 +786,64 @@ function fakeGit(t, match, act) {
   return `${bin}:${process.env.PATH}`;
 }
 
-// The git calls `act` makes while a `git` that logs each one comes first on PATH, each as `line` prints it: by default
-// `<working folder> <args>`.
-function gitCalls(t, act, line = '"$(pwd -P)" "$*"') {
+// A `git` that logs each call first on PATH, each as `line` prints it: by default `<working folder> <args>`. `stop()`
+// puts PATH back; `calls()` reads the log.
+function gitLog(t, line = '"$(pwd -P)" "$*"') {
   const log = path.join(folderFor(t), 'git.log');
   const before = process.env.PATH;
   process.env.PATH = fakeGit(t, '*', `printf '%s %s\\n' ${line} >> "${log}"`);
+  // Every plugin git call runs hardened (lib/git.mjs GATE_CONFIG): the log shows each call's own arguments after it.
+  const hardened = ` ${GATE_CONFIG.join(' ')}`;
+  return {
+    stop: () => (process.env.PATH = before),
+    calls: () => readFileSync(log, 'utf8').trim().split('\n').map((entry) => entry.replace(hardened, '')),
+  };
+}
+
+// The git calls `act` makes while a `git` that logs each one comes first on PATH, each as `line` prints it: by default
+// `<working folder> <args>`.
+function gitCalls(t, act, line) {
+  const log = gitLog(t, line);
   try {
     act();
   } finally {
-    process.env.PATH = before;
+    log.stop();
   }
-  // Every plugin git call runs hardened (lib/git.mjs GATE_CONFIG): the log shows each call's own arguments after it.
-  const hardened = ` ${GATE_CONFIG.join(' ')}`;
-  return readFileSync(log, 'utf8').trim().split('\n').map((line) => line.replace(hardened, ''));
+  return log.calls();
 }
+
+// The git calls `await act()` makes, as gitCalls gives them.
+async function stepGitCalls(t, act) {
+  const log = gitLog(t);
+  try {
+    await act();
+  } finally {
+    log.stop();
+  }
+  return log.calls();
+}
+
+// The reads a review step remembers for its whole run (lib/git.mjs withGitFacts), by their arguments.
+const STEP_FACTS = [
+  ' rev-parse --path-format=absolute --git-common-dir --git-dir --show-toplevel',
+  ' rev-parse --show-prefix',
+  ' config --get remote.origin.url',
+  ' config --get-regexp ^remote\\..*\\.url$',
+];
+
+test('one review step asks git once for each folder\'s roots, prefix, origin, and remote URLs', async (t) => {
+  // No state.dir: the default state folder is keyed by origin's URL and the project's prefix, so the step reads all four.
+  const r = repo(t, { baseConfig: { version: 1 }, headConfig: { version: 1 } });
+  r.git('remote', 'add', 'origin', 'git@github.com:o/r.git');
+  r.git('remote', 'add', 'parent', 'https://github.com/up/stream.git');
+  let result;
+  const calls = await stepGitCalls(t, async () => (result = await r.step()));
+  assert.equal(result.status, 'received');
+  const asked = new Map();
+  for (const line of calls) if (STEP_FACTS.some((args) => line.endsWith(args))) asked.set(line, (asked.get(line) ?? 0) + 1);
+  assert.equal(asked.size, STEP_FACTS.length, [...asked.keys()].join('\n'));
+  assert.deepEqual([...asked].filter(([, count]) => count > 1), [], 'no fact is read twice for one folder');
+});
 
 test('a checkout list git cannot answer stops a command, and lets a merge go on', (t) => {
   const r = repo(t, { baseConfig: INSIDE_TEAM, headConfig: INSIDE_TEAM });

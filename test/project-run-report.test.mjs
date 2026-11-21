@@ -904,6 +904,22 @@ test('an attended resume takes custody of a run whose driver the host lists as e
   assert.match(fx.cmd(['resume', 'launch'], { session: DRIVER, spawn: listing }).err[0], /drives the run launch, or did/u);
 });
 
+test('an attended resume takes no custody of a run whose ended driver the host continued as another session', (t) => {
+  const fx = started(t);
+  const RESCUER = 'abcd1234-0000-4000-8000-00000000f001';
+  const NEXT = 'abcd1234-0000-4000-8000-00000000c0n1';
+  const listing = (command, args, options) => (args[0] === 'agents'
+    ? { status: 0, stdout: JSON.stringify([{ id: DRIVER.slice(0, 8), sessionId: DRIVER, name: 'driver', kind: 'background', cwd: fx.dir, state: 'stopped' }]), stderr: '' }
+    : fx.claude.run(command, args, options));
+  const transcript = path.join(fx.env.CLAUDE_CONFIG_DIR, 'projects', fx.dir.replace(/[^A-Za-z0-9]/gu, '-'), `${DRIVER}.jsonl`);
+  mkdirSync(path.dirname(transcript), { recursive: true });
+  const moved = new Date(Date.parse(fx.run().init.at) + 1000).toISOString();
+  appendFileSync(transcript, `${JSON.stringify({ type: 'continued-in', timestamp: moved, sessionId: DRIVER, continuedInSessionId: NEXT })}\n`);
+  const answer = fx.cmd(['resume', 'launch'], { session: RESCUER, spawn: listing });
+  assert.equal(answer.out.some((line) => line.startsWith('custody:')), false, answer.out.join('\n'));
+  assert.equal(fx.rows().some((row) => row.event === 'driver'), false, 'the host continuation keeps the run');
+});
+
 test('a command whose ledger another process holds locked exits 75 with a retry line', async (t) => {
   const fx = started(t);
   fx.settle({ status: 'merged', pr: 12 });

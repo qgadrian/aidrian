@@ -72,11 +72,12 @@ export const toolNames = ({ tool_name: name, raw_tool_name: raw }) => [name, raw
 export const deniedNames = (input) => [...toolNames(input), input.permission_tool_name, opaqueShellCommand(input) === null ? null : 'Bash']
   .filter((each, i, all) => typeof each === 'string' && each !== '' && all.indexOf(each) === i);
 
-// The host's read of where a session went on (`capabilities.continuedIn`), as a function of a session id that answers
-// { id, at } or null, for custody of a project run; a host that declares none continues no session under a new id.
+// The host's read of where a session went on (`capabilities.continuedIn`), as a function of a session id and the folder
+// it started in that answers { id, at } or null, for custody of a project run; a host that declares none continues no
+// session under a new id.
 export function continuationReader({ env = process.env, input = {}, home } = {}) {
   const read = detectHost({ env, input }).capabilities?.continuedIn;
-  return typeof read === 'function' ? (session) => read({ session, env, ...(home ? { home } : {}) }) : () => null;
+  return typeof read === 'function' ? (session, cwd) => read({ session, cwd, env, ...(home ? { home } : {}) }) : () => null;
 }
 
 // The command of a call that runs one in a shell the shared lexer cannot read, from an adapter's `opaqueShellTools`, or null.

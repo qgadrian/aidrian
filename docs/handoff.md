@@ -564,10 +564,13 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
 - **Custody follows the host continuing the driver.** A host can go on with the driver's own conversation under a new
   session id, as Claude Code does when it continues a session as a fork. With no brief to check, custody moves only on
   the host's own record (`capabilities.continuedIn`): on Claude Code, a `continued-in` row last in the old session's
-  transcript that names the new id, dated after the ledger row that made the driver, with no turn of the old session
-  after it. Up to 8 such continuations in a row are followed. The hooks then let the new session run the driver's
-  commands, and its first one writes a `driver` row with `via: "continuation"` and files its driver mark. A fork's
-  `derived-from` row in the new transcript moves nothing: a branch leaves the old session running.
+  transcript, the one in the folder of the run's main checkout, that names the new id, dated after the ledger row that
+  made the driver, with no turn of the old session after it. Up to 8 such continuations in a row are followed, and only
+  the last session of them drives: the old ids, and each between, lose custody at once. The hooks then let that session
+  run the driver's commands. Its first `wait`, `start`, `handoff`, or `end` files its driver mark, then writes a
+  `driver` row with `via: "continuation"`; `report` and `recorded` claim no custody, and say to run `wait` first. A fork's
+  `derived-from` row in the new transcript moves nothing: a branch leaves the old session running. `resume` takes no
+  custody of a run whose driver the host continued this way.
 - **`maxChain` binds the driver's chain alone.** The driver's hops count as any session's, up to the base branch's
   `session.handoff.maxChain`, at most 5 unless it is `"unlimited"`. At the limit the gate prints `continue: none`,
   and the driver keeps driving in its own session, which the host compacts; it does the same on `continue: clear`,

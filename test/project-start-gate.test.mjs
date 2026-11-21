@@ -440,10 +440,20 @@ test('custody follows the host continuing the driver session under a new id, and
   assert.equal(runDriver(NEXT, { env: fx.env, home: fx.home })?.run, 'launch', 'the continuation holds the driver mark');
   assert.match(fx.cmd(['start', 'launch', 'ENG-1']).err[0], /this session is not the driver of the run launch, abcd1234-0000-4000-8000-00000000c0n1/u, 'the old id lost custody');
 
-  // Two continuations in a row reach the last.
+  // Two continuations in a row: only the last drives, before any of them claimed custody.
   const twice = setup((init) => ({ [DRIVER]: [continued(DRIVER, NEXT, init + 1000)], [NEXT]: [continued(NEXT, LAST, init + 2000)] }));
+  assert.match(wait(twice, NEXT).err[0], /the host continued its driver .* as abcd1234-0000-4000-8000-00000000c0n2, and only the last of them drives it/u, 'the middle one');
+  assert.match(wait(twice, DRIVER).err[0], /only the last of them drives it/u, 'the old id, before the last claimed custody');
+  assert.equal(twice.rows().some((each) => each.event === 'driver'), false);
   assert.equal(wait(twice, LAST).exitCode, 0);
-  assert.equal(wait(twice, NEXT).exitCode, 1, 'the middle one lost custody to the last');
+  assert.equal(wait(twice, NEXT).exitCode, 1, 'the middle one, after');
+
+  // The same row in another project folder's transcript moves nothing: only the run's main checkout's counts.
+  const elsewhere = runFixture(t);
+  const other = path.join(elsewhere.env.CLAUDE_CONFIG_DIR, 'projects', '-somewhere-else');
+  mkdirSync(other, { recursive: true });
+  appendFileSync(path.join(other, `${DRIVER}.jsonl`), `${JSON.stringify(continued(DRIVER, NEXT, Date.parse(elsewhere.run().init.at) + 1000))}\n`);
+  assert.match(wait(elsewhere, NEXT).err[0], /this session is not the driver of the run launch/u);
 
   // A continuation written before the row that made the driver moves nothing.
   const stale = setup((init) => ({ [DRIVER]: [continued(DRIVER, NEXT, init - 1000)] }));

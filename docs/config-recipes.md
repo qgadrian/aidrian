@@ -22,7 +22,7 @@ How to apply one:
    the default branch, turns the unset ones on, and only the Human merges the change that adds it. A subagent may not
    write them.
    No recipe sets one in `config.json`, and none opens a project run's sandbox further: a team adds
-   `projectRun.registries`, `unverifiedHosts`, `outsideSandbox`, or `mcpServers` itself, after reading its risk.
+   `projectRun.registries`, `unverifiedHosts`, `outsideSandbox`, `mcpServers`, or `localBinding` itself, after reading its risk.
 3. Replace `"test"` in `github.requiredChecks` with the names of the project's CI checks. Auto-merge stays off without one.
    In a recipe that merges alone, replace the placeholder screen target too, `src/app/**` at `/`, with the project's
    web screen files and routes. With no web screen, leave out `review.visual`, and with no screen at all, both keys:

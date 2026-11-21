@@ -79,6 +79,10 @@ A test that does not test the deadline itself gives the code the time the test s
   `node --import test/fixtures/gh-spawns.mjs <cli>` records each call in the command's own process before `gh` is
   spawned, with the time limit and signal it asks for, so a `gh` a short deadline stops before it starts still counts.
 - A wall-clock bound measures only the part the deadline bounds, such as from `gh`'s spawn to the command's exit.
+- A "fast" claim that is not a deadline bounds processor time, not wall time: in process, `process.cpuUsage()`
+  around the call (`test/guard-budget.test.mjs`); for a command the test runs as a program,
+  `node --import test/fixtures/cpu-used.mjs <cli>` with `CPU_USED_LOG` set writes the command's processor time when
+  it exits, which counts that process alone, not its children.
 
 A test of the deadline itself keeps the real clock, and no production deadline changes for a test.
 

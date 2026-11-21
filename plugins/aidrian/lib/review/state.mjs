@@ -29,6 +29,7 @@ import { brotliCompressSync, brotliDecompressSync } from 'node:zlib';
 import { older, pluginVersion } from '../config-version.mjs';
 import { isTrustedCommenter } from '../forges/index.mjs';
 import { isObject } from '../fs.mjs';
+import { withGitFacts } from '../git.mjs';
 import { recordsFolder, remoteStateDirs, stateDir } from '../project.mjs';
 import { originRepo, repoName } from '../remotes.mjs';
 import { isClosed, isFindingId, isMint, recordedFindings, recordFindings } from './findings.mjs';
@@ -460,7 +461,12 @@ export function owedElsewhere(project, pr, repo) {
 // (recordFolders), under the same rules; the next write puts it in this project's own folder.
 // When the repository's own file and an old-name record for it both sit in one folder, as when a session on an older
 // plugin kept writing the old name, the record is their merge (mergeRecords), so neither's Human entries are lost.
+// One call reads each folder's roots, prefix, and remote URLs once (lib/git.mjs withGitFacts), or as the open call does.
 export function readLocalState(project, pr, repo) {
+  return withGitFacts(() => localState(project, pr, repo));
+}
+
+function localState(project, pr, repo) {
   if (repo === undefined || repo === null || repoName(repo) === null) return recordsOf(project, pr).reduce((a, b) => newer(a, b), null);
   const key = repoKey(repo);
   for (const [at, dir] of recordFolders(project).entries()) {
@@ -498,7 +504,12 @@ function absorb(base, other) {
 // finding the record holds takes the mark (findings.mjs recordFindings), so the copy it posts carries both.
 // With `repo`, the repository of the command that writes, a state that names another is refused, and one that names none
 // takes `repo`: a command writes its own repository's record alone.
-export function writeLocalState(project, state, { repo = null } = {}) {
+// One call reads each folder's roots, prefix, and remote URLs once (lib/git.mjs withGitFacts), or as the open call does.
+export function writeLocalState(project, state, options) {
+  return withGitFacts(() => writeState(project, state, options));
+}
+
+function writeState(project, state, { repo = null } = {}) {
   ownedBy(state, repo);
   recordFindings(state, null, null);
   state.revision = (state.revision ?? 0) + 1;

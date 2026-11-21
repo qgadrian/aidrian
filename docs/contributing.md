@@ -94,8 +94,11 @@ A lib call outside `withGitFacts` (`lib/git.mjs`) asks git every time, so a test
 calls, such as with `git remote add`. Inside one, a checkout's roots, its prefix, origin's URL, and the remote URLs are
 each read once per folder, until the call ends. A review step runs inside one (`lib/review/run.mjs` reviewStep), so a
 test that changes a repository's remotes or folders does it between steps, or during the bot wait: that wait runs in
-`withoutGitFacts`, which asks git for each read and makes the step forget every answer once the wait ends. Nothing
-opens one for a whole process, a hook's or a command's.
+`withoutGitFacts`, which asks git for each read and makes the step forget every answer once the wait ends. Outside a review
+step, one read or write of the review record (`lib/review/state.mjs` readLocalState and writeLocalState,
+`lib/review/record.mjs` recordPass) opens one for that call alone, and inside one it shares the step's, so a test changes
+the remotes between two such calls. The forge reading a record write may ask for runs in `withoutGitFacts` too.
+Nothing opens one for a whole process, a hook's or a command's.
 
 A test still starts the script as a program where only a process shows the behaviour: its stdin reading, a `timeout`
 or signal it relies on, exit timing, or a deadline it measures. Keep at least one such run for each hook script a file

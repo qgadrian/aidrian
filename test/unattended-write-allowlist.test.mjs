@@ -684,6 +684,61 @@ test('a start record grants only from a store the handoff writer would keep, and
   assert.equal(unattendedPlaces({ cwd: first, mark: plain, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.temp], session: SESSION }).worktree, null);
 });
 
+test('a temporary folder that holds a checkout passes none of it: the checkout\'s own rules win', (t) => {
+  const fx = fixture(t);
+  const { first, second } = nestedWorktrees(fx);
+  // The whole fixture under the temporary folder, as /tmp holds it where tmpdir() is /tmp.
+  const placesFor = (held) => unattendedPlaces({ cwd: first, mark: held, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.root], session: SESSION });
+  const ask = (input, held, found) => fx.ask(input, { held, cwd: first, places: () => found })?.reason ?? null;
+  // With no start record, the checkouts are withheld, and still outside.
+  const withheld = { root: fx.dir };
+  const none = placesFor(withheld);
+  for (const file of [path.join(fx.dir, 'README.md'), path.join(first, 'a.ts'), path.join(second, '.claude', 'settings.json'), path.join(fx.worktree, 'a.ts'), path.join(fx.worktree, '.git')]) {
+    assert.match(ask(write(file), withheld, none) ?? '', /outside the places|pointer to its git folder/u, file);
+    assert.match(ask(bash(`printf x > "${file}"`), withheld, none) ?? '', /outside the places|pointer to its git folder/u, `shell ${file}`);
+  }
+  assert.equal(ask(write(path.join(fx.root, 'elsewhere', 'notes.md')), withheld, none), null, 'the temporary folder outside every checkout');
+  // With its own worktree, the others stay outside, and its host files and git pointer refused.
+  recordStart(fx, { cwd: first });
+  const own = placesFor(withheld);
+  assert.equal(ask(write(path.join(first, 'a.ts')), withheld, own), null);
+  assert.match(ask(write(path.join(first, '.claude', 'settings.json')), withheld, own) ?? '', /a host file a later session/u);
+  for (const file of [path.join(second, 'a.ts'), path.join(fx.worktree, 'a.ts'), path.join(fx.dir, 'README.md')]) assert.match(ask(write(file), withheld, own) ?? '', /outside the places/u, file);
+});
+
+test('removing or moving a folder that holds a standalone repository\'s .git, by its name or a glob, is refused; one with none passes', (t) => {
+  const fx = fixture(t);
+  const held = { root: fx.dir, cwd: fx.dir };
+  const found = unattendedPlaces({ cwd: fx.dir, mark: held, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.temp], session: SESSION });
+  const ask = (command) => fx.ask(bash(command), { held, cwd: fx.dir, places: () => found })?.reason ?? null;
+  const vendor = path.join(fx.dir, 'vendor');
+  const lib = path.join(vendor, 'pkg', 'lib');
+  mkdirSync(lib, { recursive: true });
+  gitIn(lib)('init', '-q', '-b', 'main');
+  const linked = path.join(vendor, 'linked');
+  mkdirSync(path.join(vendor, 'store'), { recursive: true });
+  mkdirSync(linked, { recursive: true });
+  symlinkSync(path.join(vendor, 'store'), path.join(linked, '.git'));
+  const plain = path.join(fx.dir, 'dist');
+  mkdirSync(path.join(plain, 'deep', 'er'), { recursive: true });
+  for (const command of [`rm -rf "${vendor}"`, `rm -r ${path.join(vendor, 'pkg')}`, `mv "${vendor}" "${fx.temp}/v"`, 'rm -rf vendor', `rm -rf ${vendor}/*`, `rm -rf ${vendor}/*/lib`,
+    `rm -rf ${linked}`, `rm -f ${path.join(linked, '.git')}/*`, `rm -rf ${vendor}/p?g`]) {
+    assert.match(ask(command) ?? '', /nested checkout's git folder/u, command);
+  }
+  // A folder it cannot read is refused too, as a search that cannot finish.
+  if (process.getuid?.() !== 0) {
+    const shut = path.join(fx.dir, 'shut');
+    mkdirSync(path.join(shut, 'x'), { recursive: true });
+    execFileSync('chmod', ['000', path.join(shut, 'x')]);
+    try {
+      assert.match(ask(`rm -rf "${shut}"`) ?? '', /cannot all be searched/u);
+    } finally {
+      execFileSync('chmod', ['755', path.join(shut, 'x')]);
+    }
+  }
+  for (const command of [`rm -rf "${plain}"`, `rm -rf ${plain}/*`, `mv "${plain}" "${fx.temp}/d"`, `rm -f ${path.join(fx.dir, 'README.md')}`]) assert.equal(ask(command), null, command);
+});
+
 test('the start record scan checks the guards\' deadline on each file it reads', (t) => {
   const fx = fixture(t);
   recordStart(fx, { cwd: fx.worktree });

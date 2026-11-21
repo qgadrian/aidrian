@@ -1185,7 +1185,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     `feat-eng-1-export-S1-explorer.json`. Its issue and branch are the run snapshot's, read while the ledger names its
     issue running (`lib/project-run-guard.mjs ownIssue`); with none, it writes none of them;
   - the temporary folder, this process's `TMPDIR` and `/tmp`, but for a state folder inside it, as one under `/tmp`
-    is, where only the state places above pass;
+    is, where only the state places above pass, and for any checkout of the repository inside it, which keeps the rules
+    above: a checkout that is not the session's worktree stays outside, and the worktree's host files and `.git` entries
+    stay refused; with checkouts git cannot list, the temporary folder passes nothing;
   - `/dev/null`, `/dev/stdout`, `/dev/stderr`, `/dev/tty`, and `/dev/fd/<n>`, by the path a command spells.
 
   Everything else is refused, and these always, inside a place or not, checked first: every git folder, whole (the
@@ -1195,7 +1197,10 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   the real path's parts and by the path as written, so a `.git` that is a link counts, by a glob part that may name
   `.git` (`.g*`), and, for a session its own mark holds, by a `.git` named in a folder no path gives; the pointer of each
   checkout of the repository nested in the worktree is refused too when a write, a delete, a move, or a glob reaches a
-  folder that holds it, the worktree itself included, as `rm -rf .claude/worktrees` does; `~/.gitconfig`, the `git` folder of `$XDG_CONFIG_HOME`
+  folder that holds it, the worktree itself included, as `rm -rf .claude/worktrees` does; and, in those places, an `rm`
+  or the sources of an `mv`, and a glob from its spelled folder, whose folders hold a `.git` entry on disk, such as a
+  standalone repository no git listing names, searched to at most 50,000 entries, so a search that reads more, or a
+  folder it cannot read, refuses too; `~/.gitconfig`, the `git` folder of `$XDG_CONFIG_HOME`
   and of `~/.config`, and the global and system git config files git itself names (`git var GIT_CONFIG_GLOBAL` and
   `GIT_CONFIG_SYSTEM`, such as a package manager's `etc/gitconfig`, asked only for a write that would otherwise pass);
   the shell startup files in the home folder and in `ZDOTDIR`; the user's macOS launch agents, `~/Library/LaunchAgents`;

@@ -272,6 +272,14 @@ an error, reads every switch off. One file can hold this, the auto-merge switch,
 }
 ```
 
+## Commits in attempt clones
+
+Each attempt's clone commits unsigned: the start sets `commit.gpgsign` and `tag.gpgsign` to `false` in the clone's own
+git config, never in the user's global config, since the sandbox hides the signing keys. `blocker commit` names what
+still keeps a commit there from working: a `GIT_CONFIG_COUNT` or `GIT_CONFIG_PARAMETERS` setting in the environment
+that turns signing back on (unset it), or git's own error, such as no `user.name` or `user.email` in the user's global
+config ([Project run](config.md#project-run)).
+
 ## Host settings
 
 `blocker access` names what would let an issue's session run outside its sandbox, or keep it from pushing. On Claude

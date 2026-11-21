@@ -178,6 +178,29 @@ export function gateGit(args, cwd, { env = process.env, ...options } = {}) {
   return runGit(args, cwd, { timeout: GATE_TIMEOUT_MS, ...options, env });
 }
 
+// The variables that point git at another git folder, work tree, index, object store, ref namespace, or config file
+// than the repository at its folder: git's own list (`git rev-parse --local-env-vars`, git 2.56), GIT_NAMESPACE, and
+// GIT_TEMPLATE_DIR, whose files a new repository copies into its git folder, but
+// the -c settings it lists too (GIT_CONFIG_COUNT, GIT_CONFIG_PARAMETERS), which a call keeps, and GIT_NO_REPLACE_OBJECTS,
+// which runGit sets itself.
+export const LOCATION_VARS = Object.freeze([
+  'GIT_DIR', 'GIT_WORK_TREE', 'GIT_IMPLICIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY',
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE', 'GIT_CONFIG', 'GIT_GRAFT_FILE', 'GIT_SHALLOW_FILE',
+  'GIT_REPLACE_REF_BASE', 'GIT_PREFIX', 'GIT_TEMPLATE_DIR',
+]);
+
+// `env` (this process's by default) without LOCATION_VARS, a copy.
+export const withoutLocation = (env = process.env) => Object.fromEntries(Object.entries(env).filter(([name]) => !LOCATION_VARS.includes(name)));
+
+// Drops LOCATION_VARS for the rest of a command, so each of its git calls reads and writes only the repository at its
+// own folder, whatever the caller's environment points git at: from this process's own environment, in place, which
+// every call that names no environment takes, and from `env`, whose copy without them it returns. `aidrian project`
+// calls it once, at its entry (lib/project-run-cli.mjs projectCommand).
+export function clearLocation(env = process.env) {
+  for (const name of LOCATION_VARS) delete process.env[name];
+  return env === process.env ? process.env : withoutLocation(env);
+}
+
 function firstLine(args, cwd, options) {
   return lineOf(runGit(args, cwd, options));
 }

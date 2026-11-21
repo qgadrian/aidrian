@@ -30,6 +30,7 @@ import { parseArgs } from 'node:util';
 import { commandConfig } from './config.mjs';
 import { forgeFor } from './forges/index.mjs';
 import { resolvedPath } from './fs.mjs';
+import { clearLocation } from './git.mjs';
 import { detectHost, sessionIdentity } from './hosts/index.mjs';
 import { projectAt } from './project.mjs';
 import { pauseOf } from './project-limit.mjs';
@@ -78,8 +79,11 @@ export const commands = {
 // A ledger another process holds locked is a refusal that may pass: exit 75, EX_TEMPFAIL, with a `retry:` line, which
 // the driver's loop tries again after one wait.
 export function projectCommand(args, options = {}) {
+  // git's location variables, such as GIT_DIR or GIT_INDEX_FILE, would point every git call of the command at another
+  // repository than the one at its folder: they go once, here, for the whole command.
+  const env = clearLocation(options.env ?? process.env);
   try {
-    return projectAction(args, options);
+    return projectAction(args, { ...options, env });
   } catch (error) {
     if (error?.code !== LOCKED) throw error;
     return { exitCode: RETRY_EXIT, out: [`retry: ${String(error.message).split('\n')[0]}`], err: [`aidrian project ${args[0]}: ${String(error.message).split('\n')[0]}`] };

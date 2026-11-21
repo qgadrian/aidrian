@@ -7,7 +7,7 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -19,7 +19,7 @@ import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { CEILINGS, ISSUE_ATTEMPTS, PROJECT_PARALLEL, PROJECT_STARTS, PROJECT_STARTS_PER_DAY, projectPrompt, teamPolicy } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { DROP_FILE } from '../plugins/aidrian/lib/project-result.mjs';
 import { appendToRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
-import { attemptFolder, sweepAttempts } from '../plugins/aidrian/lib/project-start.mjs';
+import { attemptFolder, setUnsigned, signingProblem, sweepAttempts, UNSIGNED } from '../plugins/aidrian/lib/project-start.mjs';
 import { markUnattended, PENDING_AGE, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { DRIVER, fakeClaude, ORIGIN, OTHER, runFixture, STARTED, testGlobalConfig } from './project-start-fixture.mjs';
 
@@ -245,6 +245,111 @@ test('a later attempt clones again from the issue branch on the forge, and one w
   assert.equal(refused.exitCode, 1);
   assert.match(refused.err[0], /its host config or instruction files differ from the base tip: \.claude\/settings\.json/u);
   assert.equal(fx.claude.starts().length, 2);
+});
+
+// The user's global config signs every commit with a program the sandbox cannot reach: each attempt's clone turns
+// signing off in its own config, so the session's commit lands, and the global file is left as it was.
+test('every attempt\'s clone commits unsigned through its own config, and the user\'s global config stays as it was', (t) => {
+  const fx = runFixture(t);
+  const global = testGlobalConfig(t);
+  const gpg = path.join(fx.root, 'gpg-denied');
+  writeFileSync(gpg, '#!/bin/sh\necho "gpg: the sandbox denies the keys" >&2\nexit 2\n', { mode: 0o755 });
+  appendFileSync(global, `[commit]\n\tgpgsign = true\n[tag]\n\tgpgsign = true\n[gpg]\n\tprogram = ${gpg}\n`);
+  const before = readFileSync(global, 'utf8');
+  // git as the session runs it: no -c of the fixture's, which turns signing off itself.
+  const commit = (cwd, message) => execFileSync('git', ['-C', cwd, 'commit', '-q', '--allow-empty', '-m', message], { encoding: 'utf8', stdio: 'pipe' });
+  const unsigned = (clone) => {
+    const own = path.join(path.dirname(clone), 'git', 'config');
+    assert.deepEqual(['commit.gpgsign', 'tag.gpgsign'].map((key) => fx.git('config', '--file', own, '--get', key).trim()), ['false', 'false'], 'both keys in the clone\'s own config');
+    commit(clone, 'work');
+    assert.equal(fx.git('-C', clone, 'log', '-1', '--format=%s').trim(), 'work', 'the commit landed');
+  };
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  unsigned(work(fx));
+  fx.git('-C', work(fx), 'push', '-q', fx.bare, 'HEAD:refs/heads/feat/eng-1-export');
+  appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'issue', key: 'ENG-1', state: 'open', at: at(Date.now()) }] }));
+  fx.claude.states[STARTED[0].session] = 'done';
+  const second = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(second.exitCode, 0, second.err.join('\n'));
+  unsigned(work(fx, 'ENG-1', 2));
+  assert.equal(readFileSync(global, 'utf8'), before, 'the global config is never written');
+  assert.throws(() => commit(fx.dir, 'signed'), /gpg/u, 'the main checkout still signs, as the user set it');
+});
+
+// The same check as the preflight's probe: a -c setting in the driver's environment wins over the clone's own config.
+test('start halts before any session when the prepared clone would still sign, and leaves no attempt folder', (t) => {
+  const fx = runFixture(t);
+  const env = { ...fx.as(DRIVER), GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'commit.gpgsign', GIT_CONFIG_VALUE_0: 'true' };
+  const started = fx.cmd(['start', 'launch', 'ENG-1'], { env });
+  const halt = started.out.find((line) => line.startsWith('halt ')) ?? '';
+  assert.equal(started.exitCode, 1, JSON.stringify(started));
+  assert.ok(halt.startsWith(`halt the attempt's clone ${work(fx)} is not started: git still reads commit.gpgsign as true in a clone whose own config sets it false, as a GIT_CONFIG_COUNT or GIT_CONFIG_PARAMETERS setting`), halt);
+  assert.deepEqual(fx.claude.starts(), []);
+  assert.deepEqual(fx.rows(), [], 'a halt records nothing');
+  assert.equal(existsSync(path.dirname(work(fx))), false, 'the clone is removed');
+  // A read that fails is no answer: a value git cannot read as a boolean halts too, naming git's error.
+  const bad = fx.cmd(['start', 'launch', 'ENG-1'], { env: { ...env, GIT_CONFIG_VALUE_0: 'maybe' } });
+  const unread = bad.out.find((line) => line.startsWith('halt ')) ?? '';
+  assert.match(unread, /^halt the attempt's clone .* is not started: git cannot read commit\.gpgsign in a clone made as an attempt's \(fatal: bad boolean config value 'maybe' for 'commit\.gpgsign'\), so whether its commits would sign cannot be told/u, JSON.stringify(bad));
+  assert.deepEqual(fx.claude.starts(), []);
+});
+
+// A template folder, the user's init.templateDir, that would put a commondir in the clone's git folder: the clone takes
+// no template, so git never reads it, and the hooks folder is there, empty, for the sandbox's write denial.
+test('the attempt\'s clone takes no template, so a template\'s commondir leads no write elsewhere', (t) => {
+  const fx = runFixture(t);
+  const global = testGlobalConfig(t);
+  const outside = mkdtempSync(path.join(fx.root, 'outside-'));
+  const template = mkdtempSync(path.join(fx.root, 'template-'));
+  writeFileSync(path.join(template, 'commondir'), `${outside}\n`);
+  appendFileSync(global, `[init]\n\ttemplateDir = ${template}\n`);
+  const started = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(started.exitCode, 0, started.err.join('\n'));
+  const git = path.join(path.dirname(work(fx)), 'git');
+  assert.equal(readFileSync(path.join(git, 'commondir'), 'utf8'), '.\n', 'the gate\'s own placeholder, not the template\'s');
+  assert.deepEqual(readdirSync(path.join(git, 'hooks')), [], 'an empty hooks folder');
+  assert.deepEqual(readdirSync(outside), [], 'nothing written where the template pointed');
+});
+
+// git's location variables, in this process's environment and in the one the command is given, point at empty temporary
+// folders, never a repository: `aidrian project` drops them once, at its entry, for the whole command, so preflight
+// answers as without them, the start starts, and nothing lands there.
+test('aidrian project drops GIT_DIR and GIT_INDEX_FILE at its entry: preflight and start behave as without them and write nothing there', (t) => {
+  const fx = runFixture(t);
+  const outside = mkdtempSync(path.join(fx.root, 'outside-'));
+  mkdirSync(path.join(outside, 'gitdir'));
+  const pointed = { GIT_DIR: path.join(outside, 'gitdir'), GIT_INDEX_FILE: path.join(outside, 'index') };
+  const kept = Object.fromEntries(Object.keys(pointed).map((name) => [name, process.env[name]]));
+  t.after(() => {
+    for (const [name, value] of Object.entries(kept)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+  const plain = fx.cmd(['preflight', 'launch']);
+  Object.assign(process.env, pointed);
+  const preflight = fx.cmd(['preflight', 'launch'], { env: { ...fx.as(DRIVER), ...pointed } });
+  assert.deepEqual(preflight, plain, 'preflight answers as without the variables');
+  assert.deepEqual(Object.keys(pointed).filter((name) => name in process.env), [], 'dropped from this process\'s environment');
+  Object.assign(process.env, pointed);
+  const started = fx.cmd(['start', 'launch', 'ENG-1'], { env: { ...fx.as(DRIVER), ...pointed } });
+  assert.equal(started.exitCode, 0, JSON.stringify(started));
+  assert.equal(fx.git('-C', work(fx), 'rev-parse', '--abbrev-ref', 'HEAD').trim(), 'feat/eng-1-export');
+  assert.ok(existsSync(path.join(path.dirname(work(fx)), 'git', 'index')), 'the checkout wrote the attempt\'s own index');
+  assert.deepEqual([readdirSync(outside), readdirSync(path.join(outside, 'gitdir'))], [['gitdir'], []], 'nothing written where the variables pointed');
+});
+
+// A read git fails is no answer: the signing check fails closed, naming git's error.
+test('signingProblem fails closed on a config read git fails', (t) => {
+  const top = mkdtempSync(path.join(tmpdir(), 'aidrian-unsigned-'));
+  t.after(() => rmSync(top, { recursive: true, force: true }));
+  const work = path.join(top, 'work');
+  execFileSync('git', ['init', '-q', work]);
+  assert.equal(setUnsigned(work), null);
+  assert.deepEqual(UNSIGNED.map(([key]) => execFileSync('git', ['config', '--file', path.join(work, '.git', 'config'), '--get', key], { encoding: 'utf8' }).trim()), ['false', 'false']);
+  assert.equal(signingProblem(work), null);
+  assert.match(signingProblem(work, { ...process.env, GIT_CONFIG_COUNT: 'x' }) ?? '', /^git cannot read commit\.gpgsign in a clone made as an attempt's \(error: bogus count in GIT_CONFIG_COUNT; fatal: unable to parse command-line config\)/u);
+  assert.match(signingProblem(work, { ...process.env, GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'commit.gpgsign', GIT_CONFIG_VALUE_0: 'maybe' }) ?? '', /\(fatal: bad boolean config value 'maybe' for 'commit\.gpgsign'\), so whether its commits would sign cannot be told: fix that config$/u);
 });
 
 test('a claim that is no plain object with a boolean kept, or is too large to read, counts as kept once past its write', (t) => {

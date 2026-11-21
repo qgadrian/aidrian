@@ -192,6 +192,9 @@ The one-time steps before a run are in [Project run setup](../project-run-setup.
   owner-only, where its package managers keep their caches.
   The first attempt cuts the issue's branch from the base tip; a later one fetches it from the forge.
   The main repository never fetches from a clone, and the driver's `wait` removes an attempt's folder once its session ended.
+  The clone commits unsigned, as on [Claude Code](claude-code.md#project-start): the start sets `commit.gpgsign` and
+  `tag.gpgsign` to `false` in its own config, never the user's, since a sandboxed signing program may not reach its keys
+  or its agent.
 - The session runs `codex exec --json --sandbox workspace-write -c <override>... --cd <work>`, with `--add-dir` for exactly its git
   folder, its drop folder, its `cache` folder, and the state work folders `plans`, `reviews`, `tmp`, and `dispatch`,
   each a plain folder of the user directly in the state folder. No flag that bypasses the sandbox or the approvals is

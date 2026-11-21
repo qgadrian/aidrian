@@ -634,10 +634,31 @@ export function nameMatcher({ session, skip = null, env, run = runCommand, resol
 // How the Human finds and stops a session a start may have made, when the gate cannot name it.
 export const findLine = () => '`claude agents` lists the background sessions, with the folder each started in, and `claude stop <id>` stops one';
 
-// Stops the background session `id`, as `claude stop` does: whether it exited 0.
-export function stopBackground({ id, env, run = runCommand, resolve = claudeOnPath }) {
+// Stops the background session `id`, as `claude stop` does: whether it exited 0. `claude stop` takes the listing's short
+// `id` and refuses a full `sessionId` ("No session matching", exit 1, seen on 2.1.330). So `started`, the id the
+// session's start printed when a caller recorded one, and then `id`, each go to `claude stop` as they are, with no
+// listing, unless it is a full `sessionId`. Only when none of those stopped it is the listing read once, and a full
+// `sessionId` given turned into the short `id` of the one listed row whose `sessionId` is exactly it, and tried. No
+// prefix is matched: a prefix another session shares would stop that session instead.
+export function stopBackground({ id, started = null, env, run = runCommand, resolve = claudeOnPath }) {
   const claude = resolve(env);
   if (!claude || typeof id !== 'string' || !ID.test(id)) return false;
-  const result = run(claude, ['stop', id], { cwd: undefined, timeout: LIST_TIMEOUT });
-  return !result.error && result.status === 0;
+  const given = [...new Set([started, id].filter((each) => typeof each === 'string' && ID.test(each)))];
+  const tried = new Set();
+  const stop = (target) => {
+    if (tried.has(target)) return false;
+    tried.add(target);
+    const result = run(claude, ['stop', target], { cwd: undefined, timeout: LIST_TIMEOUT });
+    return !result.error && result.status === 0;
+  };
+  if (given.some((each) => !FULL_ID.test(each) && stop(each))) return true;
+  const rows = listed(run, claude, undefined, ['--all']) ?? [];
+  return given.filter((each) => FULL_ID.test(each)).some((each) => {
+    const holds = rows.filter((row) => row.sessionId === each);
+    const short = holds.length === 1 && typeof holds[0].id === 'string' && ID.test(holds[0].id) ? holds[0].id : each;
+    return stop(short);
+  });
 }
+
+// A full session id, as `claude agents` gives `sessionId`: one `claude stop` refuses.
+const FULL_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;

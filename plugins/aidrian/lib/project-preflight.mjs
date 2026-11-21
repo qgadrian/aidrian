@@ -1,8 +1,9 @@
 // `aidrian project preflight`: every check that would refuse or halt a project run's start but the push preflight, which
 // reads the attempt's clone no preflight has (project-run-gate.mjs confinedRoom), run at once from the
-// attended session before `aidrian project init`, so the Human sees each blocker before walking away. It reads and
-// starts nothing. Each check is the start gate's own (lib/project-run-gate.mjs, lib/project-start.mjs): the repository
-// origin names, the state folder and any other active run, a host instruction file above the runs folder, the team's projectRun through the forge, the machine's
+// attended session before `aidrian project init`, so the Human sees each blocker before walking away. It starts
+// nothing, and writes only the scratch repository of its commit probe, which it removes. Each check is the start gate's
+// own (lib/project-run-gate.mjs, lib/project-start.mjs): the repository origin names, the state folder and any other
+// active run, a host instruction file above the runs folder, a commit in a clone made as an attempt's is, the team's projectRun through the forge, the machine's
 // switch, the host's start (confined, verified or allowed through projectRun.unverifiedHosts, hooks trusted), the host's
 // trust in the runs folder, and the
 // host's access check (push rights, an HTTPS origin the sandbox can push to, and nothing that would run outside the
@@ -26,16 +27,16 @@ import { baseBranchTip, machineSwitch } from './config.mjs';
 import { resolveAutoMerge } from './config-local.mjs';
 import { pluginRepository } from './config-version.mjs';
 import { forgeFor } from './forges/index.mjs';
-import { knownPrefix } from './git.mjs';
+import { gateGit, knownPrefix } from './git.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
 import { continueRoutes, detectHost } from './hosts/index.mjs';
 import { isQuotaNotice } from './pr-await-review.mjs';
 import { branchPolicies } from './pr-auto-merge.mjs';
 import { mayFollowTeamDefault } from './project.mjs';
 import { recordedTexts } from './project-issue-text.mjs';
-import { activeRuns, nextLines, pinnedRepository, planRun, readSnapshotInput, refNames, runPlace, runsFolder, teamsNote } from './project-run.mjs';
+import { activeRuns, nextLines, pinnedRepository, planRun, readRun, readSnapshotInput, refNames, runPlace, runsFolder, teamsNote } from './project-run.mjs';
 import { runParallel, teamPolicy } from './project-run-gate.mjs';
-import { accessProblem, guardedFolders, hostStartProblem } from './project-start.mjs';
+import { accessProblem, commitProblem, guardedFolders, hostStartProblem, PROBE_BRANCH } from './project-start.mjs';
 import { ancestorProblem } from './project-trust.mjs';
 import { cardState, REVIEW_SUMMARY_CARD_MARKER } from './review/bot-card.mjs';
 import { trackerOfEndpoint } from './tracker-guard.mjs';
@@ -62,13 +63,22 @@ export function setupDocUrl() {
 }
 export const SETUP_SECTIONS = Object.freeze({
   repository: 'origin-over-https', state: 'state-folder', run: 'after-a-halt-or-a-stop', instructions: 'state-folder',
-  policy: 'team-config', machine: 'this-machine', host: 'host-start', trust: 'trust-the-runs-folder', access: 'host-settings',
+  policy: 'team-config', machine: 'this-machine', commit: 'commits-in-attempt-clones', host: 'host-start', trust: 'trust-the-runs-folder', access: 'host-settings',
   token: 'forge-token-in-the-keychain', 'usage-limit': 'host-settings', tracker: 'team-config', 'auto-merge': 'auto-merge-and-ci',
   handoff: 'team-config', reviewer: 'review-bot', 'reviewer-seen': 'review-bot', ci: 'auto-merge-and-ci',
   'branch-protection': 'forge-rules', 'release-tags': 'forge-rules', 'workflow-secrets': 'forge-rules', labels: 'the-decision-label',
 });
 export const setupPointer = (section) => ` (setup: ${setupDocUrl()}#${SETUP_SECTIONS[section]})`;
 const blockerLine = (name, problem, section = name) => `blocker ${name}: ${problem}${setupPointer(section)}`;
+
+// The branch of the first issue of the run `run` in `state`, which the commit probe checks out as a clone would, or null
+// with no run or none it can read.
+function runBranch(state, run) {
+  if (!run) return null;
+  const found = readRun(state, run);
+  const branch = found.problem ? null : found.snapshot?.issues?.[0]?.branch;
+  return typeof branch === 'string' ? branch : null;
+}
 
 // The `note` preflight prints when the team lets issue sessions bind local ports through projectRun.localBinding: the
 // risk as the host `cap` says it is on `platform` (capabilities.projectStart.localBindingRisk), and the remedy.
@@ -100,6 +110,12 @@ export function preflightCommand({ project, config, run = null, env = process.en
     check('run', active.length ? `the run ${active[0].run ?? 'in a folder that cannot be listed'} is still active, and a project has one active run at a time` : null);
     // Every attempt's clone lies under the runs folder, so a host instruction file above it refuses every start.
     check('instructions', ancestorProblem(path.join(runsFolder(place.state), 'attempts'), { project, tip: baseBranchTip(project.root), env }));
+    // Every issue session commits in its clone, unsigned (project-start.mjs UNSIGNED), so a commit that fails there
+    // parks every issue with its work staged.
+    const origin = gateGit(['remote', 'get-url', 'origin'], main, { env, timeout: 30_000 });
+    const branch = runBranch(place.state, run);
+    const commit = commitProblem({ state: place.state, env, url: origin.status === 0 ? origin.stdout.trim() : null, branch: branch ?? PROBE_BRANCH, run: branch ? run : null });
+    check('commit', commit);
   }
   const base = baseBranchTip(project.root) ? baseBranchConfig(project, 'projectRun') : { why: 'git names no base branch commit' };
   const facade = forge ?? forgeFor(project.root);

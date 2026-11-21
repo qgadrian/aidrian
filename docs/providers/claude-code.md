@@ -286,7 +286,9 @@ listing holds no background session the first did not: then the gate falls back 
 such as any other non-zero exit, no exit within 60 seconds, a signal, or exit 0 with no id the listing names, is an
 uncertain launch, since the supervisor may have taken the start and list its session later: it keeps the pending
 mark (`uncertain: true`), and `findLine` names `claude agents` and `claude stop <id>` for the Human. A started session the gate cannot write a floor, mark, or start record
-for is stopped with `claude stop <id>`. The `say:` line leads with `claude attach <id>`, adds `claude attach '<name>'` only when the
+for is stopped with `claude stop <id>`. `claude stop` takes the short `id` that `claude agents` lists and refuses a full
+`sessionId` ("No session matching", exit 1, checked live on 2.1.330), so the adapter's `stopBackground` first turns a full
+`sessionId` into the short `id` of the one listed row that holds it. The `say:` line leads with `claude attach <id>`, adds `claude attach '<name>'` only when the
 name is plain words, digits, spaces, and `.@:·-`, and no other listed session has it, and names `claude agents`.
 
 `sessionEnded` reads `claude agents --json --all`, which `claude agents --help` says also lists the completed background
@@ -373,6 +375,15 @@ How issue sessions and the driver relate to the cap of five background continuat
 - The session starts with `claude --bg --name '<run> · <issue> · <attempt>' --permission-mode <the driver's>
   --setting-sources user --settings '<sandbox JSON>' --strict-mcp-config --mcp-config '<servers JSON>' -- <prompt>`, in the
   clone, with no agent. The settings are inline: no settings file is written.
+- The clone commits unsigned. The sandbox denies reading `~/.gnupg` and `~/.ssh`, so a commit that the user's global
+  `commit.gpgsign` signs fails there, with gpg's or ssh's error, after the session's work is done. The start sets
+  `commit.gpgsign` and `tag.gpgsign` to `false` in the clone's own config, the git folder's `config`, which the sandbox
+  then denies the session writing, on every attempt; the user's global and system config are never written. The rest
+  of a commit holds in the sandbox: the identity comes from the user's `~/.gitconfig`, which stays readable, and the
+  plugin's own git calls run no hooks, though the session's commit runs any `core.hooksPath` the user's global config
+  sets, inside the sandbox. A `GIT_CONFIG_COUNT` or `GIT_CONFIG_PARAMETERS` setting in the driver's environment still
+  wins over the clone's config: `aidrian project preflight` blocks on one, and the start, which reads the prepared
+  clone with the same check, halts before the launch ([Project run](../config.md#project-run)).
 - Before the launch, the start makes placeholders for the protected host files that can be there harmlessly, since on
   Linux a sandbox write denial holds only on a path there at launch: in the clone's git folder, an empty
   `config.worktree`, which git reads only once `extensions.worktreeConfig` is set in the config the sandbox denies, and

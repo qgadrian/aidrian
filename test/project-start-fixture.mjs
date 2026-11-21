@@ -153,7 +153,8 @@ export function fakeClaude({ dir, start = null, hidden = false, env = null, beac
   const run = (command, args, options) => {
     calls.push({ command, args, cwd: options.cwd });
     if (args[0] === 'stop') {
-      const found = sessions.find((each) => each.id === args[1] || each.sessionId === args[1]);
+      // As 2.1.330 does: `claude stop` takes the listed short id and refuses a full session id.
+      const found = sessions.find((each) => each.id === args[1]);
       // As 2.1.326 lists a session `claude stop` stopped: `stopped`, not `done`.
       if (found && stoppable) states[found.sessionId] = 'stopped';
       return { status: found && stoppable ? 0 : 1, stdout: '', stderr: '' };

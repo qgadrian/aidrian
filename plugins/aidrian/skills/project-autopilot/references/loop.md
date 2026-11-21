@@ -20,20 +20,17 @@ named and go on from that output as step 2 says.
    - `done`: § Finish.
    - exit 1: § Stop, with its stderr line as the cause.
 2. `aidrian project start <run> <key>`:
-   - exit 0, `started <key> attempt <n> session <id>`: the issue runs in its own session. Write what
-     `aidrian project report <run> --json` owes, its started status, as step 4 says, before anything else. Next
-     `next` line, else step 3.
+   - exit 0, `started <key> attempt <n> session <id>`: the issue runs in its own session. Set its started status once,
+     as [tracker-writes.md](tracker-writes.md) § The started status says. Next `next` line, else step 3.
    - an `unverified:` line is a note, not a refusal.
    - `paused until <time>`, exit 1: a usage limit paused the run. Not a refusal: § Pause.
    - a line `halt <cause>`, exit 1: § Halt.
    - exit 75, `retry: <why>`: § Retry. A session that runs on after its issue settled gives this too: a wait.
    - any other exit 1: § Stop, with its stderr line as the cause.
-3. `aidrian project wait <run> --max-wait 150`: after every `wait` that exits 0, whatever its lines, first do step 4,
-   so a write that failed is tried again on the next pass, and a driver that took the run up catches up the same way.
-   Then by its lines:
+3. `aidrian project wait <run> --max-wait 150`:
    - `note outage: <why>`: the forge cannot answer now; not a refusal. Go on by the other lines; `start`'s exit 75 goes to § Retry.
    - `note policy: <why>`: the forge withdrew the policy; the run may start nothing more. § Stop (wait still settles the run).
-   - `result <key> ...`, `ended <key> ...`, `settled <key> ...`, or `orphan ...`: an issue settled; step 1.
+   - `result <key> ...`, `ended <key> ...`, `settled <key> ...`, or `orphan ...`: an issue settled; step 4.
    - `limit <key> <kind> until <time> -> open`, or `limit <key> <kind> halt -> open`: the issue's attempt ended on a
      usage or rate limit; step 1, whose `next` says whether the run is paused or halted.
    - `paused <key> ...`: that issue's session waits out a limit and goes on by itself; step 3 again.
@@ -47,15 +44,14 @@ named and go on from that output as step 2 says.
    - `idle`: step 1.
    - exit 75, `retry: <why>`, as when another process holds the ledger: § Retry. Exit 1: § Stop.
 4. `aidrian project report <run> --json`, and write each report it owes as [tracker-writes.md](tracker-writes.md) says.
-   Keep each `dropped` entry for the final report. Exit 75: § Retry. Exit 1: § Stop. Then go on from the step that
-   sent here.
+   Exit 75: § Retry. Exit 1: § Stop. Then step 1.
 
 ## Pause
 
 A usage limit is the account's: it pauses the issues' sessions and this driver at once, and the run records when it
 lifts, at most 6 hours ahead. Start nothing until then.
 
-1. Run `aidrian project wait <run> --max-wait 150` again and again, writing the owed reports after each wait,
+1. Run `aidrian project wait <run> --max-wait 150` again and again, writing the owed reports after each settle,
    until `<time>` has passed: about 150 calls for a 6-hour pause. Each is cheap; never end the turn to wait.
 2. If the driver's own turn is cut by the limit, its host carries it on once the limit lifts (the preflight's
    `usage-limit` line): go on from step 1.
@@ -71,7 +67,7 @@ then the same command again. After two retries of the same command that still ex
 A halt is host-wide, such as a failed sandbox proof, and waits on a person.
 
 1. Start nothing more.
-2. Run `aidrian project wait <run> --max-wait 150` until it prints `idle`, writing each owed report after each wait.
+2. Run `aidrian project wait <run> --max-wait 150` until it prints `idle`, writing each owed report after each settle.
    Stop waiting sooner once every line left is a `running <key>` or `lingering <key> attempt <n>` line of a session
    that a `could not be stopped` line named twice: no wait ends it.
 3. `aidrian project summary <run>`.

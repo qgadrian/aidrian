@@ -13,7 +13,7 @@ import test from 'node:test';
 import { cleanText, textProblem } from '../plugins/aidrian/lib/clean-text.mjs';
 import { createGithubForge } from '../plugins/aidrian/lib/forges/github.mjs';
 import { baseReader } from '../plugins/aidrian/lib/handoff-guard.mjs';
-import { owedReports, reportBody, reportCalls, reportPolicy, runWriter } from '../plugins/aidrian/lib/project-report.mjs';
+import { owedReports, reportBody, reportCalls, reportPolicy, runWriter, startedWrites } from '../plugins/aidrian/lib/project-report.mjs';
 import { readRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { bodyHash } from '../plugins/aidrian/lib/tracker-guard.mjs';
 import linear from '../plugins/aidrian/lib/trackers/linear.mjs';
@@ -71,9 +71,8 @@ function started(t, options = {}) {
 
 test('a merged issue owes its completed status and one comment; recorded closes it, once', (t) => {
   const fx = started(t);
-  assert.deepEqual(fx.owed().map((each) => each.outcome), ['started'], 'only the started status while the issue runs');
+  assert.deepEqual(fx.report().out, ['none'], 'nothing owed while the issue runs');
   assert.deepEqual(fx.settle({ status: 'merged', pr: 12 }), ['result ENG-1 merged -> done']);
-  assert.equal(fx.owed().length, 1, 'a started status not yet written is owed no more once the issue settles');
   const [report] = fx.owed();
   assert.deepEqual([report.key, report.attempt, report.outcome, report.pr, report.status, report.label], ['ENG-1', 1, 'merged', 12, 'completed', null]);
   assert.match(report.body, /^Project run launch: ENG-1, attempt 1, merged in pull request #12\./u);
@@ -83,70 +82,12 @@ test('a merged issue owes its completed status and one comment; recorded closes 
     { tool: 'save_comment', input: { issueId: 'ENG-1', body: report.body } },
   ]);
   const text = fx.report().out;
-  assert.deepEqual(text.slice(0, 4), ['owed ENG-1 attempt 1 merged', '  recorded --kind settle', '  status completed', `  comment sha256 ${report.sha256}`]);
-  assert.deepEqual(fx.cmd(['recorded', 'launch', 'ENG-1', '--kind', 'settle']), { exitCode: 0, out: ['recorded ENG-1'], err: [] });
+  assert.deepEqual(text.slice(0, 3), ['owed ENG-1 attempt 1 merged', '  status completed', `  comment sha256 ${report.sha256}`]);
+  assert.deepEqual(fx.cmd(['recorded', 'launch', 'ENG-1']), { exitCode: 0, out: ['recorded ENG-1'], err: [] });
   const row = fx.rows().at(-1);
-  assert.deepEqual([row.event, row.key, row.kind, row.attempt, row.sha256, row.session], ['recorded', 'ENG-1', 'settle', 1, report.sha256, DRIVER]);
-  assert.deepEqual(fx.report().out, ['none', 'dropped ENG-1 attempt 1 started: the issue settled before its started status was written']);
-  assert.match(fx.cmd(['recorded', 'launch', 'ENG-1', '--kind', 'settle']).err[0], /the run launch owes no settle report on ENG-1/u);
-  assert.match(fx.cmd(['recorded', 'launch', 'ENG-1']).err[0], /--kind takes started or settle, the kind `aidrian project report` printed$/u, 'the kind is required');
-});
-
-test('a started issue owes the adapter\'s started status once a run, with no label or comment; recorded closes it alone', (t) => {
-  const fx = started(t);
-  const [report] = fx.owed();
-  assert.deepEqual(report, { key: 'ENG-1', kind: 'started', attempt: 1, outcome: 'started', pr: null, status: 'started', label: null, body: null, sha256: null, calls: [{ tool: 'save_issue', input: { id: 'ENG-1', state: 'started' } }] });
-  assert.deepEqual(fx.report().out, ['owed ENG-1 attempt 1 started', '  recorded --kind started', '  status started', '  call save_issue {"id":"ENG-1","state":"started"}']);
-  assert.match(fx.cmd(['recorded', 'launch', 'ENG-1', '--kind', 'settle']).err[0], /the run launch owes no settle report on ENG-1/u, 'another kind closes nothing');
-  assert.deepEqual(fx.cmd(['recorded', 'launch', 'ENG-1', '--kind', 'started']), { exitCode: 0, out: ['recorded ENG-1'], err: [] });
-  const row = fx.rows().at(-1);
-  assert.deepEqual([row.event, row.key, row.attempt, row.kind, row.sha256], ['recorded', 'ENG-1', 1, 'started', null]);
-  assert.deepEqual(fx.report().out, ['none'], 'not owed again once it landed');
-  assert.match(fx.cmd(['recorded', 'launch', 'ENG-1', '--kind', 'started']).err[0], /the run launch owes no started report on ENG-1/u);
-  fx.settle({ status: 'merged', pr: 12 });
-  assert.deepEqual(fx.owed().map((each) => [each.outcome, each.status]), [['merged', 'completed']], 'the started row does not close the settle report');
-  assert.deepEqual(JSON.parse(fx.report(['--json']).out[0]).dropped, [], 'a started status that landed is not dropped');
-});
-
-test('a settle report a wait takes in between the started write and its recorded stays owed, and the started report is dropped', async (t) => {
-  const fx = started(t);
-  const [report] = fx.owed();
-  assert.equal((await hook(fx, DRIVER, 'mcp__linear__save_issue', report.calls[0].input)).status, 0, 'the driver writes the started status');
-  assert.deepEqual(fx.settle({ status: 'merged', pr: 12 }), ['result ENG-1 merged -> done'], 'a wait takes the result in before recorded runs');
-  const late = fx.cmd(['recorded', 'launch', 'ENG-1', '--kind', 'started']);
-  assert.equal(late.exitCode, 1);
-  assert.match(late.err[0], /the run launch owes no started report on ENG-1/u);
-  const { owed, dropped } = JSON.parse(fx.report(['--json']).out[0]);
-  assert.deepEqual(owed.map((each) => [each.key, each.kind, each.outcome]), [['ENG-1', 'settle', 'merged']], 'the settle report stays owed');
-  assert.deepEqual(dropped, [{ key: 'ENG-1', attempt: 1 }], 'the started report still owed at the settle is dropped, for the final report');
-});
-
-test('a started status that landed is not owed again on a later attempt; one that never landed is', (t) => {
-  const fx = started(t);
-  assert.equal(fx.cmd(['recorded', 'launch', 'ENG-1', '--kind', 'started']).exitCode, 0);
-  assert.deepEqual(fx.settle({ status: 'failed', pr: null, stop: 'the tests failed' }), ['result ENG-1 failed -> open']);
-  assert.deepEqual(fx.report().out, ['none'], 'an issue open again owes nothing');
-  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
-  assert.deepEqual(fx.report().out, ['none'], 'attempt 2 owes no second started status');
-  const unwritten = started(t);
-  unwritten.settle({ status: 'failed', pr: null, stop: 'the tests failed' });
-  assert.equal(unwritten.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
-  assert.deepEqual(unwritten.owed().map((each) => [each.key, each.attempt, each.outcome]), [['ENG-1', 2, 'started']]);
-});
-
-test('no started status is owed for an issue the snapshot holds started or later, a start still uncertain, or an adapter with none', (t) => {
-  const fx = started(t);
-  const found = readRun(fx.state, 'launch');
-  const policy = reportPolicy(baseReader(fx.project)());
-  const owed = (snapshot = found.snapshot, rows = found.rows, more = {}) => owedReports({ state: fx.state, run: 'launch', found: { ...found, snapshot, rows }, policy: { ...policy, ...more } }).map((each) => each.outcome);
-  assert.deepEqual(owed(), ['started']);
-  for (const status of ['started', 'completed', 'canceled']) {
-    const snapshot = { ...found.snapshot, issues: found.snapshot.issues.map((issue) => (issue.key === 'ENG-1' ? { ...issue, status } : issue)) };
-    assert.deepEqual(owed(snapshot), [], `the snapshot holds ENG-1 ${status}: the write would move it back or change nothing`);
-  }
-  const held = found.rows.findLast((row) => row.event === 'start');
-  assert.deepEqual(owed(found.snapshot, [...found.rows, { ...held, attempt: 2, outcome: 'uncertain', pending: true }]), [], 'the attempt it runs now has no session the run holds');
-  assert.deepEqual(owed(found.snapshot, found.rows, { started: null }), [], 'an adapter that names no started status');
+  assert.deepEqual([row.event, row.key, row.attempt, row.sha256, row.session], ['recorded', 'ENG-1', 1, report.sha256, DRIVER]);
+  assert.deepEqual(fx.report().out, ['none']);
+  assert.match(fx.cmd(['recorded', 'launch', 'ENG-1']).err[0], /the run launch owes no report on ENG-1/u);
 });
 
 test('a parked issue owes the decision label and a comment that quotes its cleaned decisions as data', (t) => {
@@ -197,7 +138,7 @@ test('a failed attempt with attempts left owes nothing; only the driver reads or
   assert.deepEqual(fx.settle({ status: 'failed', pr: null, stop: 'the tests failed' }), ['result ENG-1 failed -> open']);
   assert.deepEqual(fx.report().out, ['none']);
   assert.match(fx.report([], OTHER).err[0], /this session is not the driver of the run launch/u);
-  assert.match(fx.cmd(['recorded', 'launch', 'ENG-1', '--kind', 'settle'], { session: CHILD }).err[0], /this session is not the driver/u);
+  assert.match(fx.cmd(['recorded', 'launch', 'ENG-1'], { session: CHILD }).err[0], /this session is not the driver/u);
 });
 
 test('cleaned text loses domain-shaped tokens, and the child text test flags anything cleaning removes but white space', () => {
@@ -225,7 +166,7 @@ test('runWriter reads the role from the session\'s marks alone: the issue\'s, th
   const child = as(CHILD);
   assert.deepEqual([child.role, child.run, child.issue, child.project?.root], ['child', 'launch', 'ENG-1', fx.project.root]);
   const driver = as(DRIVER);
-  assert.deepEqual([driver.role, driver.run, driver.owed], ['driver', 'launch', [{ key: 'ENG-1', status: 'started', label: null, sha256: null }]], 'the running issue owes its started status');
+  assert.deepEqual([driver.role, driver.run, driver.owed, driver.started], ['driver', 'launch', [], [{ key: 'ENG-1', status: 'started' }]], 'the running issue owes no report, and its started status may be set');
   fx.settle({ status: 'merged', pr: 12 });
   const [owed] = as(DRIVER).owed;
   assert.deepEqual([owed.key, owed.status, owed.label], ['ENG-1', 'completed', null], 'the done status is the adapter\'s');
@@ -339,22 +280,47 @@ test('the hook holds the driver to the exact writes the report owes, from any fo
   for (const cwd of [outside, nested]) {
     assert.match((await hook(fx, DRIVER, 'mcp__linear__save_comment', { issueId: 'ENG-2', body: 'x' }, cwd)).stderr, /driver writes only what/u, cwd);
   }
-  assert.equal(fx.cmd(['recorded', 'launch', 'ENG-1', '--kind', 'settle']).exitCode, 0);
+  assert.equal(fx.cmd(['recorded', 'launch', 'ENG-1']).exitCode, 0);
   assert.match((await hook(fx, DRIVER, 'mcp__linear__save_comment', report.calls[1].input)).stderr, /issueId is "ENG-1", and the run launch's driver writes only what/u, 'closed once recorded');
   assert.equal((await hook(fx, OTHER, 'mcp__linear__save_comment', { issueId: 'ENG-2', body: 'x' })).status, 0, 'an attended session no run names, with the tracker off');
 });
 
-test('the hook lets the driver set the started status a running issue owes, and refuses any other write on it', async (t) => {
+test('the hook lets the driver set the started status of an issue the run started, and nothing else on it', async (t) => {
   const fx = started(t);
-  const [report] = fx.owed();
-  const set = await hook(fx, DRIVER, 'mcp__linear__save_issue', report.calls[0].input);
-  assert.equal(set.status, 0, set.stderr);
-  assert.match((await hook(fx, DRIVER, 'mcp__linear__save_issue', { id: 'ENG-1', state: 'completed' })).stderr, /sets state to "completed" on ENG-1, and `aidrian project report launch` owes "started"/u);
-  assert.match((await hook(fx, DRIVER, 'mcp__linear__save_issue', { id: 'ENG-1', state: 'started', addLabels: ['needs-decision'] })).stderr, /save_issue sets addLabels on ENG-1/u);
-  assert.match((await hook(fx, DRIVER, 'mcp__linear__save_comment', { issueId: 'ENG-1', body: 'started' })).stderr, /`aidrian project report launch` owes no comment on ENG-1\. Set only state "started"/u);
-  assert.match((await hook(fx, DRIVER, 'mcp__linear__save_issue', { id: 'ENG-4', state: 'started' })).stderr, /id is "ENG-4", and the run launch's driver writes only what/u, 'an issue the run did not start');
-  assert.equal(fx.cmd(['recorded', 'launch', 'ENG-1', '--kind', 'started']).exitCode, 0);
-  assert.match((await hook(fx, DRIVER, 'mcp__linear__save_issue', report.calls[0].input)).stderr, /id is "ENG-1", and the run launch's driver writes only what/u, 'closed once recorded');
+  assert.deepEqual(fx.report().out, ['none'], 'the started status is no owed report');
+  const set = { id: 'ENG-1', state: 'started' };
+  for (const n of [1, 2]) {
+    const ran = await hook(fx, DRIVER, 'mcp__linear__save_issue', set);
+    assert.equal(ran.status, 0, `write ${n}: ${ran.stderr}`);
+  }
+  assert.match((await hook(fx, DRIVER, 'mcp__linear__save_issue', { id: 'ENG-1', state: 'completed' })).stderr, /save_issue sets state to "completed" on ENG-1, and the run's driver sets only the started status of ENG-1, an issue that runs, "started"/u);
+  assert.match((await hook(fx, DRIVER, 'mcp__linear__save_issue', { ...set, estimate: 2 })).stderr, /save_issue sets estimate on ENG-1, and the run's driver sets only the started status/u);
+  assert.match((await hook(fx, DRIVER, 'mcp__linear__save_issue', { ...set, addLabels: ['needs-decision'] })).stderr, /save_issue sets addLabels on ENG-1/u);
+  assert.match((await hook(fx, DRIVER, 'mcp__linear__save_issue', { id: 'ENG-1' })).stderr, /save_issue sets nothing on ENG-1\. Set only state "started" on ENG-1, through save_issue/u);
+  assert.match((await hook(fx, DRIVER, 'mcp__linear__save_comment', { issueId: 'ENG-1', body: 'started' })).stderr, /save_comment writes a comment on ENG-1/u);
+  assert.match((await hook(fx, DRIVER, 'mcp__linear__save_issue', { id: 'ENG-4', state: 'started' })).stderr, /id is "ENG-4", and the run launch's driver writes only what `aidrian project report launch` owes, and the started status of an issue it runs/u, 'a queued issue');
+  fx.settle({ status: 'merged', pr: 12 });
+  assert.match((await hook(fx, DRIVER, 'mcp__linear__save_issue', set)).stderr, /sets state to "started" on ENG-1, and `aidrian project report launch` owes "completed"/u, 'a settled issue owes its report, not the started status');
+  assert.equal(fx.cmd(['recorded', 'launch', 'ENG-1']).exitCode, 0);
+  assert.match((await hook(fx, DRIVER, 'mcp__linear__save_issue', set)).stderr, /id is "ENG-1", and the run launch's driver writes only what/u, 'a settled issue, recorded');
+});
+
+test('the started status may be set only on an issue that runs on a start that held its session, from a status before started', (t) => {
+  const fx = started(t);
+  const found = readRun(fx.state, 'launch');
+  const policy = reportPolicy(baseReader(fx.project)());
+  const writes = (snapshot = found.snapshot, rows = found.rows, more = {}) => startedWrites({ found: { ...found, snapshot, rows }, policy: { ...policy, ...more } });
+  assert.deepEqual(writes(), [{ key: 'ENG-1', status: 'started' }]);
+  for (const status of ['started', 'completed', 'canceled']) {
+    const snapshot = { ...found.snapshot, issues: found.snapshot.issues.map((issue) => (issue.key === 'ENG-1' ? { ...issue, status } : issue)) };
+    assert.deepEqual(writes(snapshot), [], `the snapshot holds ENG-1 ${status}`);
+  }
+  const held = found.rows.findLast((row) => row.event === 'start');
+  assert.deepEqual(writes(found.snapshot, [...found.rows, { ...held, attempt: 2, outcome: 'uncertain', pending: true }]), [], 'a start the gate has not confirmed');
+  assert.deepEqual(writes(found.snapshot, found.rows, { adapter: { ...linear, run: { ...linear.run, issue: { ...linear.run.issue, started: undefined } } } }), [], 'an adapter that names no started status');
+  assert.deepEqual(writes(found.snapshot, found.rows, { adapter: null }), [], 'no adapter');
+  fx.settle({ status: 'failed', pr: null, stop: 'the tests failed' });
+  assert.deepEqual(startedWrites({ found: readRun(fx.state, 'launch'), policy }), [], 'an issue open again');
 });
 
 test('every session is refused a tracker\'s merge and ready calls, attended included, with the route that is judged', async (t) => {
@@ -876,7 +842,7 @@ test('a command whose ledger another process holds locked exits 75 with a retry 
   const holder = spawn(process.execPath, ['--input-type=module', '-e', `import { withLocks } from ${JSON.stringify(JSONL)}; withLocks([${JSON.stringify(ledger)}], () => { process.stdout.write('held\\n'); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 8000); });`], { stdio: ['ignore', 'pipe', 'inherit'] });
   t.after(() => holder.kill());
   await new Promise((resolve) => holder.stdout.once('data', resolve));
-  const answer = fx.cmd(['recorded', 'launch', 'ENG-1', '--kind', 'settle']);
+  const answer = fx.cmd(['recorded', 'launch', 'ENG-1']);
   assert.equal(answer.exitCode, 75);
   assert.match(answer.out[0], /^retry: .*is locked by another process/u);
 });

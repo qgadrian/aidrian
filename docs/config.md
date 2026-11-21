@@ -2082,27 +2082,13 @@ tabs removed, in `<state>/runs/RUN/issues/ISSUE.json`, never in `snapshot.json`,
 `issue.md`, fenced and marked as untrusted text from the tracker, which the issue's session reads instead of the tracker. The `project-autopilot` skill runs both in its
 attended first turn, and `init` last, once nothing blocks.
 
-`report RUN [--json]` prints, for the driver only, the reports the run owes. While an issue runs on a start that held
-its session, it owes one `started` report, once a run: the adapter's started status type alone (Linear `started`, which
-the tracker maps to the team's first started status), with no label and no comment, so the issue reads as in progress
-however its own session fares. It is owed only for an issue the snapshot holds in a status before started (triage,
-backlog, or unstarted), never once the issue settles, is open again, or runs a start the gate could not confirm, and
-not again on a later attempt once recorded. The report reads no tracker, only the snapshot's status, so the driver
-writes it right after each start, before the issue's session can have opened a pull request. A race remains, seconds
-wide: if the tracker moves the issue on in that time, such as to In Review, the write moves it back to the first
-started status. Linear's issue update takes no condition on the current status, so no write closes that race. One
-still owed when the issue settles is dropped, since the settle report supersedes it: `report` lists it under
-`dropped` (`dropped ISSUE attempt N started` in text), and the driver's final report names it. A tracker whose
-adapter names no started status, as for GitHub Issues, which has no adapter, owes none. Each issue that settled for good, done after a forge-confirmed merge or
-parked, owes a report too: a status (the adapter's done status type for a merge, `projectRun.blockedStatus` for a
+`report RUN [--json]` prints, for the driver only, the report the run owes each issue that settled for good, done after
+a forge-confirmed merge or parked: a status (the adapter's done status type for a merge, `projectRun.blockedStatus` for a
 blocked issue), `projectRun.decisionLabel` for any other, and a comment body with its sha256, with `--json` adding the
 exact tool `calls` for the base branch's tracker. Both values come from the base branch's config. The body is built
 from the ledger and from `results/ISSUE.json`, read again with no symlink followed, under its size cap, matched to the
 ledger's run, issue, attempt, status, and pull request, and checked again; a file that fails gives a body from the
-ledger alone that says so. Each report names its `kind`, `started` or `settle`. `recorded RUN ISSUE --kind KIND`
-closes the report of that kind, with a `recorded` row holding its kind, attempt, and sha256, null for a started report;
-the kind is required, and a started row never closes the settle report. It refuses, under the ledger's lock, an issue
-that owes no report of that kind: a settle report a `wait` took in after the driver wrote the started status stays owed.
+ledger alone that says so. `recorded RUN ISSUE` closes one, with a `recorded` row holding its attempt and sha256.
 `end RUN` refuses while any issue still runs, naming them, or while a session runs on after its issue settled.
 
 Every session a start held counts toward the run's caps until the host lists it ended, not only the session of an issue
@@ -2146,7 +2132,17 @@ host name in backticks; only the text a patch inserts is checked, never the anch
 quotes keeps a file or host name as an inline code span. A live check is still owed: that Linear renders no link inside
 inline code. The current
 driver (a driver mark the ledger's custody confirms) writes only the calls `report` owes, each matching the status,
-label, and body hash it printed, and no comment for a started report, until `recorded`; a driver mark the ledger does not confirm, as a continuation's
+label, and body hash it printed, until `recorded`, and one more write: the started status of an issue the run started.
+The `project-autopilot` loop sets it once, right after a start succeeds, so the tracker shows the issue in progress.
+The guard allows it on an issue whose latest ledger state is running on a start that held its session (outcome
+`started`), and that the snapshot holds as triage, backlog, or unstarted, as the adapter's issue tool with the issue's
+key and the adapter's started status type alone (Linear `save_issue` with `id` and `state: "started"`, which the tracker
+maps to the team's first started status). Any other field or status, a comment, or an issue that is queued, settled, or
+open again is refused as any other write is. It owes no report and leaves no record: the write is idempotent, so a
+repeat does no harm, and nothing retries one that fails, since the issue's own session sets `started` too, as its backup.
+A tracker whose adapter names no started status, as GitHub Issues, which has no adapter, gets no such write. The
+snapshot is taken at init and the guard reads no tracker, so a status a person moved after init, such as an issue moved
+on by hand, can be set back to started once; in a run no Human attends, nobody moves its queued issues. A driver mark the ledger does not confirm, as a continuation's
 before its first `wait`, is held, and writes nothing: the background route files the driver's mark for a driver's
 continuation as it starts it. For both, every call on the tracker's server is a write unless
 its name says it reads, and the tracker's servers include those of `projectRun.mcpServers` whose endpoint an adapter

@@ -1,13 +1,10 @@
 // What a project run owes the tracker, and who may write it (lib/project-run-cli.mjs `report` and `recorded`, and
 // scripts/hook-tracker-pre.mjs). An issue settles once: done after a merge the forge confirmed, or parked. Each settle
 // owes one report on that issue, built here from the ledger and the result file alone, never from the tracker: a status,
-// a label, and a comment body, with the body's sha256. Before that, an issue whose start held its session owes one
-// `started` report, once a run: the adapter's started status alone, with no label and no comment, while the issue still
-// runs, and only for an issue the snapshot holds in a status before started. It reads no tracker, so a status the
-// tracker moved on since the start, such as In Review, is not seen: the driver writes it right after the start, which
-// leaves that race seconds wide. One still owed when the issue settles is dropped, and `report` lists it as dropped.
-// The driver posts exactly what is owed, then runs `aidrian project recorded --kind <kind>`, which closes it;
-// lib/tracker-guard.mjs runWriteRefusal refuses the driver any other tracker write.
+// a label, and a comment body, with the body's sha256. The driver posts exactly that, then runs `aidrian project
+// recorded`, which closes it; lib/tracker-guard.mjs runWriteRefusal refuses the driver any other tracker write but one:
+// the started status of an issue that runs (startedWrites), which it sets once right after the start. That write owes
+// no report and leaves no record: it is idempotent, and nothing retries one that fails.
 //
 // The result file is read again as untrusted: `results/<issue>.json` is read without following a link, under
 // RESULT_CAP, must name this run, issue, and attempt, and passes validateResult again, whose cleanText strips control,
@@ -16,8 +13,7 @@
 //
 // The status and label come from the base branch's projectRun (decisionLabel, blockedStatus), as this checkout's git
 // holds it: a working copy cannot rename the label the guard holds the driver to. The done status is the adapter's
-// `run.issue.done`, a status type the tracker maps to the team's first completed status, and the started status its
-// `run.issue.started`, which maps to the team's first started status; an adapter that names none owes no started report.
+// `run.issue.done`, a status type the tracker maps to the team's first completed status.
 
 import path from 'node:path';
 
@@ -37,13 +33,8 @@ import { readUnattendedMark } from './unattended-mark.mjs';
 const SETTLES = new Set(['result', 'ended', 'orphan']);
 // The issue states a report is owed on: an issue in either never starts again in its run.
 const FINAL = new Set(['done', 'parked']);
-// The snapshot status types before a started one: only an issue the run read in one owes the started report.
+// The snapshot status types before a started one: only an issue the run read in one may have its started status set.
 const BEFORE_STARTED = new Set(['triage', 'backlog', 'unstarted']);
-// The outcome of the report a start owes, and the `kind` of the `recorded` row that closes it; SETTLE the kind of any
-// other report, and of a `recorded` row that names no kind, as rows written before kinds did.
-export const STARTED = 'started';
-export const SETTLE = 'settle';
-export const REPORT_KINDS = Object.freeze([STARTED, SETTLE]);
 // How an `ended` row's reason reads in a body.
 const ENDED = {
   no_result: 'ended with no result recorded',
@@ -65,7 +56,7 @@ export function reportPolicy(base) {
   const blocked = blockedStatus === null || blockedStatus === undefined ? null : cleanText(blockedStatus, STATUS_CAP);
   if (blockedStatus !== null && blockedStatus !== undefined && !blocked) return { problem: 'the base branch\'s projectRun.blockedStatus is neither text nor null' };
   const adapter = adapterOf(base.config.tracker);
-  return { label, blockedStatus: blocked, done: adapter?.run?.issue?.done ?? null, started: adapter?.run?.issue?.started ?? null, adapter };
+  return { label, blockedStatus: blocked, done: adapter?.run?.issue?.done ?? null, adapter };
 }
 
 // The result file of `key` in run `run`, read again as untrusted and checked against the `result` row `row`:
@@ -84,65 +75,24 @@ export function rereadResult(state, run, key, row) {
   return checked.result ? { result: checked.result } : { problem: 'the session\'s result file fails its checks' };
 }
 
-// The keys each kind of `recorded` row of `found` closes: { settle, started }.
-const recordedKeys = (found) => {
-  const recorded = { settle: new Set(), started: new Set() };
-  for (const row of found.rows) if (row.event === 'recorded') recorded[row.kind === STARTED ? 'started' : 'settle'].add(row.key);
-  return recorded;
-};
-
 // The reports run `run`, as `found` (readRun) holds it, owes and has not recorded, in ledger order: each
-// { key, kind, attempt, outcome, pr, status, label, body, sha256 }, where a started report has kind and outcome
-// `started` and a null label, body, and sha256, and any other has kind `settle`. `policy` is reportPolicy's. A
-// `recorded` row of kind `started` closes the started report alone; any other closes the settle report.
+// { key, attempt, outcome, pr, status, label, body, sha256 }. `policy` is reportPolicy's.
 export function owedReports({ state, run, found, policy }) {
-  const issues = new Map(found.snapshot.issues.map((issue) => [issue.key, issue]));
-  const recorded = recordedKeys(found);
+  const keys = new Set(found.snapshot.issues.map((issue) => issue.key));
+  const recorded = new Set(found.rows.filter((row) => row.event === 'recorded').map((row) => row.key));
   const settled = new Map();
   found.rows.forEach((cause, at) => {
     const after = found.rows[at + 1];
-    if (!SETTLES.has(cause.event) || after?.event !== 'issue' || after.key !== cause.key || !FINAL.has(after.state) || !issues.has(cause.key)) return;
+    if (!SETTLES.has(cause.event) || after?.event !== 'issue' || after.key !== cause.key || !FINAL.has(after.state) || !keys.has(cause.key)) return;
     if (!Number.isInteger(cause.attempt) || cause.attempt < 1) return;
-    settled.set(cause.key, { at, cause, after });
+    settled.set(cause.key, { cause, after });
   });
   const owed = [];
-  for (const [key, { at, cause, after }] of settled) {
-    if (recorded.settle.has(key) || found.states.get(key)?.state !== after.state) continue;
-    owed.push({ at, report: buildReport({ state, run, key, cause, after, policy }) });
+  for (const [key, { cause, after }] of settled) {
+    if (recorded.has(key) || found.states.get(key)?.state !== after.state) continue;
+    owed.push(buildReport({ state, run, key, cause, after, policy }));
   }
-  for (const [key, issue] of issues) {
-    const start = startedOwed({ found, key, issue, policy, recorded: recorded.started });
-    if (start) owed.push({ at: found.rows.indexOf(start), report: startedReport(key, start.attempt, policy.started) });
-  }
-  return owed.sort((one, other) => one.at - other.at).map(({ report }) => report);
-}
-
-// The start row of `key` a started report is owed on, or null. It is owed while the issue runs and its latest start,
-// the one it runs on now, held its session; when the adapter names a started status, the snapshot holds the issue in
-// a status before started, and no `recorded` row of kind `started` closed one in this run, whatever its attempt.
-function startedOwed({ found, key, issue, policy, recorded }) {
-  if (typeof policy.started !== 'string' || policy.started === '' || recorded.has(key)) return null;
-  if (found.states.get(key)?.state !== 'running' || !BEFORE_STARTED.has(issue.status)) return null;
-  const start = startsOf(found, key).at(-1);
-  return start?.outcome === 'started' && Number.isInteger(start.attempt) && start.attempt >= 1 ? start : null;
-}
-
-const startedReport = (key, attempt, status) => ({ key, kind: STARTED, attempt, outcome: STARTED, pr: null, status, label: null, body: null, sha256: null });
-
-// The started reports run `found` dropped: [{ key, attempt }], each issue that settled for good with a start that held
-// its session, the latest such start's attempt, and no `recorded` row of kind `started`: the settle report supersedes
-// it. Only where startedOwed would have owed one: an adapter that names a started status and an issue the snapshot
-// holds before started. The driver's final report names them.
-export function droppedStarted({ found, policy }) {
-  if (typeof policy.started !== 'string' || policy.started === '') return [];
-  const { started } = recordedKeys(found);
-  const dropped = [];
-  for (const issue of found.snapshot.issues) {
-    if (started.has(issue.key) || !BEFORE_STARTED.has(issue.status) || !FINAL.has(found.states.get(issue.key)?.state)) continue;
-    const held = startsOf(found, issue.key).filter((row) => row.outcome === 'started').at(-1);
-    if (held) dropped.push({ key: issue.key, attempt: held.attempt });
-  }
-  return dropped;
+  return owed;
 }
 
 function buildReport({ state, run, key, cause, after, policy }) {
@@ -163,7 +113,19 @@ function buildReport({ state, run, key, cause, after, policy }) {
   const status = facts.outcome === 'merged' ? policy.done : facts.outcome === 'blocked' ? policy.blockedStatus : null;
   const label = facts.outcome === 'merged' ? null : policy.label;
   const body = reportBody(run, facts, after.decision === 'attempts');
-  return { key, kind: SETTLE, attempt: facts.attempt, outcome: facts.outcome, pr: facts.pr, status, label, body, sha256: bodyHash(body) };
+  return { key, attempt: facts.attempt, outcome: facts.outcome, pr: facts.pr, status, label, body, sha256: bodyHash(body) };
+}
+
+// The started status writes the driver may make on run `found`, as [{ key, status }]: each issue that runs on a start
+// that held its session, its latest start's outcome `started`, and that the snapshot holds in a status before started.
+// `status` is the adapter's started status type (`run.issue.started`), none when `policy.adapter` names none. The
+// snapshot is read at init, so a status a person moved since is not seen.
+export function startedWrites({ found, policy }) {
+  const status = policy.adapter?.run?.issue?.started;
+  if (typeof status !== 'string' || status === '') return [];
+  return found.snapshot.issues
+    .filter((issue) => BEFORE_STARTED.has(issue.status) && found.states.get(issue.key)?.state === 'running' && startsOf(found, issue.key).at(-1)?.outcome === 'started')
+    .map((issue) => ({ key: issue.key, status }));
 }
 
 // The comment a report posts: what happened, then what the issue's session wrote, each text quoted as data.
@@ -195,7 +157,7 @@ export function reportBody(run, facts, outOfAttempts = false) {
 }
 
 // The tool calls that write `report` through `adapter`'s `run` tools: [{ tool, input }], the issue's status and label
-// first when it sets either, then its comment when it has a body. None with no adapter, or one that names no run tools.
+// first when it sets either, then its comment. None with no adapter, or one that names no run tools.
 export function reportCalls(report, adapter) {
   const run = adapter?.run;
   if (!run) return [];
@@ -205,7 +167,7 @@ export function reportCalls(report, adapter) {
   };
   return [
     ...(Object.keys(issue).length ? [{ tool: run.issue.tool, input: { [run.issue.key]: report.key, ...issue } }] : []),
-    ...(report.body === null ? [] : [{ tool: run.comment.tool, input: { [run.comment.key]: report.key, [run.comment.body]: report.body } }]),
+    { tool: run.comment.tool, input: { [run.comment.key]: report.key, [run.comment.body]: report.body } },
   ];
 }
 
@@ -231,43 +193,37 @@ function openForDriver({ project, config, run, env, home, base }) {
   return { state: place.state, found, base: read, policy, session };
 }
 
-// `aidrian project report RUN [--json]`: the reports the run owes, and the started reports it dropped (droppedStarted),
-// as { exitCode, out, err }. `base` is a test's stand-in for the base branch's config read.
+// `aidrian project report RUN [--json]`: the reports the run owes, as { exitCode, out, err }. `base` is a test's stand-in
+// for the base branch's config read.
 export function reportCommand({ project, config, run, json = false, env = process.env, home, base }) {
   const opened = openForDriver({ project, config, run, env, home, base });
   if (opened.problem) return { exitCode: 1, out: [], err: [`aidrian project report: ${opened.problem}`] };
   const { adapter } = opened.policy;
   const owed = owedReports({ state: opened.state, run, found: opened.found, policy: opened.policy })
     .map((report) => ({ ...report, calls: reportCalls(report, adapter) }));
-  const dropped = droppedStarted({ found: opened.found, policy: opened.policy });
-  if (json) return { exitCode: 0, out: [JSON.stringify({ run, owed, dropped }, null, 2)], err: [] };
-  const lines = owed.length === 0 ? ['none'] : [];
+  if (json) return { exitCode: 0, out: [JSON.stringify({ run, owed }, null, 2)], err: [] };
+  if (owed.length === 0) return { exitCode: 0, out: ['none'], err: [] };
+  const lines = [];
   for (const report of owed) {
-    lines.push(`owed ${report.key} attempt ${report.attempt} ${report.outcome}`, `  recorded --kind ${report.kind}`);
+    lines.push(`owed ${report.key} attempt ${report.attempt} ${report.outcome}`);
     if (report.status !== null) lines.push(`  status ${report.status}`);
     if (report.label !== null) lines.push(`  label ${report.label}`);
-    if (report.body !== null) lines.push(`  comment sha256 ${report.sha256}`, ...report.body.split('\n').map((line) => `  | ${line}`));
+    lines.push(`  comment sha256 ${report.sha256}`, ...report.body.split('\n').map((line) => `  | ${line}`));
     for (const call of report.calls) lines.push(`  call ${call.tool} ${JSON.stringify(call.input)}`);
   }
-  for (const { key, attempt } of dropped) lines.push(`dropped ${key} attempt ${attempt} started: the issue settled before its started status was written`);
   return { exitCode: 0, out: lines, err: [] };
 }
 
-// `aidrian project recorded RUN ISSUE --kind KIND`: closes the report of kind KIND, `started` or `settle`, that the run
-// owes on ISSUE once the driver wrote it, with a `recorded` row naming its kind, attempt, and body's sha256, null for a
-// started report, which has no body. KIND is required. Under the ledger's lock it refuses an issue that owes no report
-// of that kind, so a settle report a `wait` took in after the driver wrote the started status stays owed.
-export function recordedCommand({ project, config, run, key, kind, env = process.env, home, base, now = Date.now() }) {
+// `aidrian project recorded RUN ISSUE`: closes the report the run owes on ISSUE once the driver wrote it, with a
+// `recorded` row naming its attempt and body's sha256. Refuses an issue that owes none.
+export function recordedCommand({ project, config, run, key, env = process.env, home, base, now = Date.now() }) {
   const refuse = (why) => ({ exitCode: 1, out: [], err: [`aidrian project recorded: ${why}`] });
-  if (!REPORT_KINDS.includes(kind)) {
-    return refuse(`--kind takes ${REPORT_KINDS.join(' or ')}, the kind \`aidrian project report\` printed${kind === undefined ? '' : `, not ${JSON.stringify(String(kind).slice(0, 20))}`}`);
-  }
   const opened = openForDriver({ project, config, run, env, home, base });
   if (opened.problem) return refuse(opened.problem);
   const written = appendToRun(opened.state, run, (fresh) => {
-    const report = owedReports({ state: opened.state, run, found: fresh, policy: opened.policy }).find((each) => each.key === key && each.kind === kind);
-    if (!report) return { problem: `the run ${run} owes no ${kind} report on ${typeof key === 'string' ? key.slice(0, 40) : 'that issue'}; \`aidrian project report ${run}\` lists what it owes` };
-    return { rows: [{ event: 'recorded', key, kind, attempt: report.attempt, sha256: report.sha256, session: opened.session, at: iso(now) }] };
+    const report = owedReports({ state: opened.state, run, found: fresh, policy: opened.policy }).find((each) => each.key === key);
+    if (!report) return { problem: `the run ${run} owes no report on ${typeof key === 'string' ? key.slice(0, 40) : 'that issue'}; \`aidrian project report ${run}\` lists what it owes` };
+    return { rows: [{ event: 'recorded', key, attempt: report.attempt, sha256: report.sha256, session: opened.session, at: iso(now) }] };
   });
   if (written.problem) return refuse(written.problem);
   return { exitCode: 0, out: [`recorded ${key}`], err: [] };
@@ -277,7 +233,8 @@ export function recordedCommand({ project, config, run, key, kind, env = process
 // alone, never the folder a call runs in: null for a session no mark names. A pending mark, or one that cannot be read,
 // holds it (`held`); a mark that names a run and an issue is that issue's session (`child`); a driver mark
 // (run-driver.mjs runDriver) is the run's driver when the ledger it names says it is the current one (currentDriver),
-// and owes what owedReports says, none when the base branch cannot be read; any other driver mark is `held`, as a
+// and owes what owedReports says, and may set the started status startedWrites lists, none of either when the base
+// branch cannot be read; any other driver mark is `held`, as a
 // continuation before its first `wait` is; any other marked session is `unattended`. `project` is the project of the
 // main checkout the mark names, whose base branch the hook reads. `home` is a test's; `base` a baseReader to share.
 export function runWriter({ session, env = process.env, home, base }) {
@@ -301,7 +258,8 @@ export function runWriter({ session, env = process.env, home, base }) {
     if (!current) return { role: 'held', why: 'this session holds a project run\'s driver mark, and the run\'s ledger does not name it the current driver, or cannot be read; a continuation becomes the driver on its first `aidrian project wait`' };
     const policy = reportPolicy((base ?? baseReader(current.project))());
     const owed = policy.problem ? [] : owedReports({ state: current.state, run: current.run, found: current.found, policy });
-    return { role: 'driver', run: current.run, owed: owed.map(({ key, status, label, sha256 }) => ({ key, status, label, sha256 })), project: current.project };
+    const started = policy.problem ? [] : startedWrites({ found: current.found, policy });
+    return { role: 'driver', run: current.run, owed: owed.map(({ key, status, label, sha256 }) => ({ key, status, label, sha256 })), started, project: current.project };
   }
   return mark ? { role: 'unattended', project: projectOf(mark.root) } : null;
 }

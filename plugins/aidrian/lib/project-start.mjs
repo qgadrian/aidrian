@@ -219,7 +219,7 @@ export function stateWorkFolders(state, { env, home }) {
 // of its network calls.
 export function prepareAttempt({ project, state, run, key, attempt, branch, tip, env }) {
   const folder = attemptFolder(state, run, key, attempt);
-  const [work, git, drop, cache] = ['work', 'git', 'drop', 'cache'].map((name) => path.join(folder, name));
+  const [work, gitFolder, drop, cache] = ['work', 'git', 'drop', 'cache'].map((name) => path.join(folder, name));
   const main = project.checkouts.at(-1);
   try {
     rmSync(folder, { recursive: true, force: true });
@@ -233,41 +233,44 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, tip,
     rmSync(folder, { recursive: true, force: true });
     return { problem };
   };
+  // Every git call of the attempt runs without the variables that point git at another git folder, index, or config
+  // (git.mjs withoutLocation), so it reads and writes only the attempt's own.
+  const git = (args, cwd = work, options = {}) => gateGit(args, cwd, { ...options, env: withoutLocation(env) });
   const failed = (what, result) => gone(`the attempt's clone could not be made (${what}: ${String(result.stderr ?? '').trim().split('\n').at(-1) || `exit ${result.status}`})`);
-  const url = gateGit(['remote', 'get-url', 'origin'], main, { timeout: 30_000 });
+  const url = git(['remote', 'get-url', 'origin'], main, { timeout: 30_000 });
   if (url.status !== 0) return failed('origin', url);
   // No template: a template folder, from GIT_TEMPLATE_DIR or init.templateDir, could put a commondir or hooks in the git
   // folder. The hooks folder is made empty instead, so the sandbox's write denial has a path to hold.
-  const cloned = gateGit(['clone', '--quiet', '--template=', '--shared', '--no-checkout', '--separate-git-dir', git, main, work], folder, { env });
+  const cloned = git(['clone', '--quiet', '--template=', '--shared', '--no-checkout', '--separate-git-dir', gitFolder, main, work], folder);
   if (cloned.status !== 0) return failed('clone', cloned);
   try {
-    mkdirSync(path.join(git, 'hooks'), { mode: 0o700 });
+    mkdirSync(path.join(gitFolder, 'hooks'), { mode: 0o700 });
   } catch (error) {
     return gone(`the attempt's clone could not be made (hooks: ${error.code ?? 'no code'})`);
   }
-  const origin = gateGit(['remote', 'set-url', 'origin', url.stdout.trim()], work);
+  const origin = git(['remote', 'set-url', 'origin', url.stdout.trim()]);
   if (origin.status !== 0) return failed('origin', origin);
   const unsigned = setUnsigned(work, env);
   if (unsigned) return failed('config', unsigned);
   let from = tip;
-  const listed = gateGit(['ls-remote', '--exit-code', '--heads', 'origin', `refs/heads/${branch}`], work, { env });
+  const listed = git(['ls-remote', '--exit-code', '--heads', 'origin', `refs/heads/${branch}`]);
   // A first attempt cuts the branch fresh from the base tip: one the forge has already is someone else's work.
   if (attempt === 1 && listed.status === 0) return gone(`the branch ${branch} is on the forge already, and a first attempt cuts it fresh from the base tip; delete it on the forge, or name the issue another branch, then start again`);
   if (attempt === 1 && listed.status !== 2) return failed('ls-remote', listed);
   if (attempt > 1) {
     if (listed.status === 0) {
-      const fetched = gateGit(['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`], work, { env });
+      const fetched = git(['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`]);
       if (fetched.status !== 0) return failed('fetch', fetched);
       from = `refs/remotes/origin/${branch}`;
     } else if (listed.status !== 2) return failed('ls-remote', listed);
   }
-  const checkout = gateGit(['checkout', '--quiet', '-b', branch, from], work);
+  const checkout = git(['checkout', '--quiet', '-b', branch, from]);
   if (checkout.status !== 0) return failed('checkout', checkout);
   // The same check as the preflight's probe: a clone whose commits would still sign halts before any session starts.
   const signing = signingProblem(work, env);
   if (signing) return { halt: gone(`the attempt's clone ${work} is not started: ${signing}`).problem };
   const plain = plainFolderProblem(drop) ?? plainFolderProblem(cache);
-  return plain ? gone(plain) : { folder, work, git, drop, cache };
+  return plain ? gone(plain) : { folder, work, git: gitFolder, drop, cache };
 }
 
 // The signing keys each attempt's clone turns off, in its own config and nowhere else, so the user's global and system
@@ -322,9 +325,10 @@ const gitSaid = (result) => {
 // session's sandbox, where the user's signing keys are in reach, so a commit that would still sign (signingProblem)
 // refuses before the commit: in the sandbox it would fail. Otherwise git's own error refuses, as no identity would. The
 // scratch folder is removed either way. With the run `run` named, the scratch lies in its attempts folder, as a clone
-// does; before a run exists it lies in the runs folder and checks out PROBE_BRANCH, so an includeIf on an attempt's
-// gitdir or branch may read it otherwise. That residual is accepted: the start's own signingProblem in the real clone
-// guards each attempt.
+// does; before a run exists it lies in the runs folder and checks out PROBE_BRANCH. An accepted residual: an includeIf
+// on an attempt's gitdir or branch may still read the scratch otherwise than a real clone, since the run's first
+// snapshot issue may be done, so no attempt ever takes its branch, and the `.commit-probe-*` folder name misses a gitdir
+// pattern on an attempt's `<issue>.<attempt>` name. The start's own signingProblem in each real clone guards the attempt.
 export function commitProblem({ state, env = process.env, url = null, branch = PROBE_BRANCH, run = null }) {
   const runs = run ? path.join(runFolder(state, run), 'attempts') : runsFolder(state);
   let scratch;

@@ -48,7 +48,7 @@ import { baseBranchTip, machineSwitch } from './config.mjs';
 import { DEFAULTS } from './config-defaults.mjs';
 import { pauseSync, resolvedPath } from './fs.mjs';
 import { forgeDomains, forgeFor, forgeTokenVars } from './forges/index.mjs';
-import { gateGit, knownPrefix } from './git.mjs';
+import { gateGit, knownPrefix, withoutLocation } from './git.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
 import { claimBusy, dropClaim, readContainedBrief, readStarted, SESSION_ID } from './handoff-markers.mjs';
 import { detectHost, sessionIdentity } from './hosts/index.mjs';
@@ -638,7 +638,7 @@ export function forgeBase(project, repository, forge, env = process.env) {
     return { problem: `the forge cannot say which commit the default branch of ${repository.host}/${named} is at (${String(error.message).split('\n')[0]})` };
   }
   if (typeof sha !== 'string' || !/^[0-9a-f]{40}$/u.test(sha)) return { problem: `the forge names no commit for the default branch of ${repository.host}/${named}` };
-  const fetched = gateGit(['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${main}:refs/remotes/origin/${main}`], project.root, { env });
+  const fetched = gateGit(['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${main}:refs/remotes/origin/${main}`], project.root, { env: withoutLocation(env) });
   if (fetched.status !== 0) return { problem: `git could not fetch the default branch ${main} from origin (${String(fetched.stderr ?? '').trim().split('\n').at(-1) || `exit ${fetched.status}`})` };
   const tracked = gateGit(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${main}^{commit}`], project.root, { timeout: 30_000 }).stdout?.trim();
   if (tracked !== sha) return { problem: `the default branch ${main} moved while the start read it: the forge said ${sha}, and origin now gives ${tracked || 'nothing'}; start again` };

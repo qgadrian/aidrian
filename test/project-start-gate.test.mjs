@@ -311,6 +311,20 @@ test('the attempt\'s clone takes no template, so a template\'s commondir leads n
   assert.deepEqual(readdirSync(outside), [], 'nothing written where the template pointed');
 });
 
+// git's location variables in the driver's environment point at empty temporary folders, never a repository: every git
+// call of the attempt's clone and of the base fetch runs without them, so the attempt starts and nothing lands there.
+test('a start whose environment points GIT_DIR and GIT_INDEX_FILE elsewhere still starts, and writes nothing there', (t) => {
+  const fx = runFixture(t);
+  const outside = mkdtempSync(path.join(fx.root, 'outside-'));
+  mkdirSync(path.join(outside, 'gitdir'));
+  const env = { ...fx.as(DRIVER), GIT_DIR: path.join(outside, 'gitdir'), GIT_INDEX_FILE: path.join(outside, 'index') };
+  const started = fx.cmd(['start', 'launch', 'ENG-1'], { env });
+  assert.equal(started.exitCode, 0, JSON.stringify(started));
+  assert.equal(fx.git('-C', work(fx), 'rev-parse', '--abbrev-ref', 'HEAD').trim(), 'feat/eng-1-export');
+  assert.ok(existsSync(path.join(path.dirname(work(fx)), 'git', 'index')), 'the checkout wrote the attempt\'s own index');
+  assert.deepEqual([readdirSync(outside), readdirSync(path.join(outside, 'gitdir'))], [['gitdir'], []], 'nothing written where the variables pointed');
+});
+
 // The keys go to the checkout's own config whatever the caller's environment points git at; never a real repository:
 // GIT_DIR and the rest name empty temporary folders.
 test('setUnsigned and signingProblem write and read only the checkout\'s own config, whatever git\'s location variables say', (t) => {

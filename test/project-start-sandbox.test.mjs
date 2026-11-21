@@ -50,9 +50,11 @@ const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 
 // Folders for the adapter's start outside the gate: a clone, its git folder, and a granted folder, by their real paths,
 // laid out as a run's attempt is, `<root>/runs/launch/attempts/ENG-1.1/`.
-function folders(t) {
+// With `fx`, the host's trust record of that fixture trusts the root, as the Human's trust in the runs folder does.
+function folders(t, fx = null) {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-sandbox-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
+  if (fx) writeFileSync(path.join(fx.env.CLAUDE_CONFIG_DIR, '.claude.json'), JSON.stringify({ projects: { [root]: { hasTrustDialogAccepted: true } } }));
   const attempt = path.join(root, 'runs', 'launch', 'attempts', 'ENG-1.1');
   const [cwd, git, drop] = ['work', 'git', 'drop'].map((name) => path.join(attempt, name));
   for (const each of [cwd, git, drop]) mkdirSync(each, { recursive: true });
@@ -173,7 +175,7 @@ test('the forge\'s network hosts: github.com and its API host, or an Enterprise 
 
 test('the adapter starts claude --bg under the sandbox settings and only the team\'s MCP servers, and holds the session on its beacon', (t) => {
   const fx = runFixture(t, { init: false });
-  const { root, cwd, git, drop } = folders(t);
+  const { root, cwd, git, drop } = folders(t, fx);
   const calls = [];
   let beacons = 0;
   const claude = fakeClaude({ dir: fx.dir });
@@ -228,7 +230,7 @@ test('the adapter starts claude --bg under the sandbox settings and only the tea
 
 test('a start whose beacon never comes stops the session and names the proof; one with bad folders runs no claude --bg', (t) => {
   const fx = runFixture(t, { init: false });
-  const { cwd, git, drop, root } = folders(t);
+  const { cwd, git, drop, root } = folders(t, fx);
   const claude = fakeClaude({ dir: fx.dir });
   const base = {
     session: DRIVER, cwd, prompt: 'Work it.', name: 'launch · ENG-1 · 1', env: fx.env, hold: () => true, identify: () => true, beacon: () => false,
@@ -259,7 +261,7 @@ test('a start whose beacon never comes stops the session and names the proof; on
 
 test('a start the host refuses for an untrusted folder names the trust step: the runs folder, never the whole state folder', (t) => {
   const fx = runFixture(t, { init: false });
-  const { root, cwd, git } = folders(t);
+  const { root, cwd, git } = folders(t, fx);
   const claude = fakeClaude({ dir: fx.dir, start: () => ({ status: 1, stdout: '', stderr: 'Error: Workspace not trusted', listed: false }) });
   const result = startProject({
     session: DRIVER, cwd, prompt: 'Work it.', name: 'launch · ENG-1 · 1', env: fx.env, hold: () => true, identify: () => true, beacon: () => true,

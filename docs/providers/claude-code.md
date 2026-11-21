@@ -509,7 +509,14 @@ lies in the main checkout starts nothing, since the session may not read the mai
 
 In a folder the host has not trusted, `claude --bg` exits with `Workspace not trusted` and starts nothing; the start
 says to trust the project's runs folder, `<state>/runs`, once, by running `claude` there and accepting its trust
-question. Trust there covers every attempt's clone, and nothing else of the state folder.
+question. Inside a git repository the host looks trust up at the repository's own root alone (2.1.330, checked live),
+so an attempt's clone, a repository of its own, never inherits the runs folder's trust: each start records the host's
+trust for its own clone in the host's trust record, and only when that record trusts the runs folder or a folder above
+it, which is the Human's one-time consent. Nothing else of the state folder is trusted. The record is written whole to a
+temporary file and renamed over it, as the host writes it; a host session that writes the record at the same moment
+can drop the new entry, and that start then refuses with `Workspace not trusted` and the same trust step. `aidrian project preflight` reads the
+host's trust record, `.claude.json` in `CLAUDE_CONFIG_DIR` or the home folder, and blocks a runs folder that neither it
+nor a folder above it trusts; a record it cannot read is only a note, since the file is the host's own and undocumented.
 
 Residual risks, each known and accepted:
 

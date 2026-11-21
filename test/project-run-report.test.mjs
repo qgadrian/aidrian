@@ -472,6 +472,7 @@ const NO_SECRETS = { secrets: 0, workflowPush: true };
 test('preflight names every blocker at once, and starts nothing', (t) => {
   const ready = runFixture(t, { init: false, ...READY });
   writeFileSync(path.join(ready.env.CLAUDE_CONFIG_DIR, 'settings.json'), JSON.stringify({ autoContinueAtUsageLimit: true }));
+  writeFileSync(path.join(ready.env.CLAUDE_CONFIG_DIR, '.claude.json'), JSON.stringify({ projects: { [ready.state]: { hasTrustDialogAccepted: true } } }));
   let asked = null;
   Object.assign(ready.forge, { reviewerSeen: (repo, login, options) => ((asked = options), { changes: 4, seen: true }), ciWorkflows: () => ['test'], refProtection: () => GUARDED, workflowSecrets: () => NO_SECRETS });
   const ok = ready.cmd(['preflight']);
@@ -486,7 +487,7 @@ test('preflight names every blocker at once, and starts nothing', (t) => {
   assert.equal(asked?.counts?.(older('✅ **Completed**').replace('\n\n## Codex', '\n<!-- codex-review-state:v1 {not json} -->\n\n## Codex')), false, 'a state that does not parse shows nothing, whatever the row says');
   assert.equal(asked?.counts?.(card('completed')), true, 'a card whose review completed counts');
   assert.equal(asked?.counts?.('The card opens with `<!-- codex-pull-request-review-summary -->`, so match it at the start.'), true, 'a review that quotes the card marker counts');
-  assert.deepEqual(ok.out.filter((line) => !/^(ask|note) /u.test(line)), ['ok repository', 'ok state', 'ok run', 'ok instructions', 'ok policy', 'ok machine', 'ok host', 'ok access', 'ok usage-limit', 'ok tracker', 'ok auto-merge', 'ok handoff', 'ok reviewer', 'ok reviewer-seen', 'ok ci', 'ok branch-protection', 'ok release-tags', 'ok workflow-secrets'], ok.out.join('\n'));
+  assert.deepEqual(ok.out.filter((line) => !/^(ask|note) /u.test(line)), ['ok repository', 'ok state', 'ok run', 'ok instructions', 'ok policy', 'ok machine', 'ok host', 'ok trust', 'ok access', 'ok usage-limit', 'ok tracker', 'ok auto-merge', 'ok handoff', 'ok reviewer', 'ok reviewer-seen', 'ok ci', 'ok branch-protection', 'ok release-tags', 'ok workflow-secrets'], ok.out.join('\n'));
   assert.equal(ok.exitCode, 0);
   assert.deepEqual(ok.out.filter((line) => line.startsWith('ask ')).map((line) => line.split(':')[0]), ['ask labels']);
   assert.equal(ready.claude.starts().length, 0);
@@ -514,6 +515,24 @@ test('preflight names every blocker at once, and starts nothing', (t) => {
   assert.match(blocked.out.find((line) => line.startsWith('blocker auto-merge')), /does not set github\.autoMerge\.allow/u);
   const local = runFixture(t, { init: false, ...READY, local: { handoff: { background: 'on' } } });
   assert.match(local.cmd(['preflight']).out.find((line) => line.startsWith('blocker auto-merge')), /or the team sets github\.autoMerge\.default to "on"/u);
+});
+
+test('preflight blocks a runs folder the host does not trust, passes one under a trusted folder, and only notes a trust record it cannot read', (t) => {
+  const fx = runFixture(t, { init: false, ...READY });
+  const record = path.join(fx.env.CLAUDE_CONFIG_DIR, '.claude.json');
+  const runs = path.join(fx.state, 'runs');
+  const line = (prefix) => fx.cmd(['preflight']).out.find((each) => each.startsWith(prefix)) ?? null;
+  rmSync(record, { force: true });
+  assert.match(line('note trust:'), /trust record .*\.claude\.json cannot be read \(ENOENT\)/u, 'no record: unknown, not a blocker');
+  assert.equal(line('blocker trust'), null);
+  writeFileSync(record, JSON.stringify({ projects: { [fx.dir]: { hasTrustDialogAccepted: true }, [fx.state]: { hasTrustDialogAccepted: false } } }));
+  const blocked = line('blocker trust:');
+  assert.ok(blocked?.includes(`the host does not trust ${runs} or a folder above it`), blocked);
+  assert.ok(blocked.includes(`run \`claude\` in ${runs} once and accept its trust question`), blocked);
+  writeFileSync(record, JSON.stringify({ projects: { [path.dirname(fx.state)]: { hasTrustDialogAccepted: true } } }));
+  assert.ok(fx.cmd(['preflight']).out.includes('ok trust'), 'a folder above the runs folder covers it');
+  writeFileSync(record, '{ not json');
+  assert.match(line('note trust:'), /cannot be read \(not JSON\)/u);
 });
 
 test('preflight blocks a host instruction file above the runs folder, which every attempt\'s clone would load, and names state.dir', (t) => {

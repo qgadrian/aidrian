@@ -16,6 +16,7 @@ import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { pauseSync } from '../fs.mjs';
+import { recordTrust } from './claude-code-trust.mjs';
 import { configDir } from './claude-code-config.mjs';
 import { configFolder, mcpConfig, npmGlobalConfigs, sandboxSettings, secretVars } from './claude-code-sandbox.mjs';
 import { programNames, programOnPath, runCommand } from './process.mjs';
@@ -366,6 +367,9 @@ export function startProject({ session, cwd, prompt, name, effort, efforts = [],
   }
   const user = home ?? homedir();
   const settings = sandboxSettings({ ...box, work, temp: tempFolders(), home: user, config: configFolder(env, user), platform, secrets: secretVars(env, box.tokens), stores: npmGlobalConfigs(env) });
+  // The clone is a repository of its own, so it never inherits the runs folder's trust: the start records it.
+  const trust = recordTrust({ work, env, home: user });
+  if (trust) return { problem: `${trust.problem}; ${trustStep(work)}` };
   const started = startIn({ cwd: work, prompt, name, mode: read.mode, effort, efforts, settings, mcp: mcpConfig(mcp), env, hold, run, wait, resolve: () => claude });
   if (started.problem) return REFUSED.test(started.problem) && started.uncertain === false ? { ...started, problem: `${started.problem}; ${trustStep(work)}` } : started;
   return proveHooks({ started, identify, beacon, confined, env, run, wait, claude });

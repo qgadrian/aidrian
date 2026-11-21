@@ -13,6 +13,8 @@ None, or several: ask the Human which project, naming the values, and stop until
 Run `aidrian project preflight`. It runs every check a start makes, at once, and starts nothing, but the push preflight:
 each start reads it on the attempt's clone, which turn 1 has not made, and halts when the host would refuse the push.
 Each line is `ok <name>`, `blocker <name>: <why and fix>`, `note <name>: <what>`, or `ask <name>: <what>`.
+A blocker line, and `ask labels`, ends with `(setup: docs/project-run-setup.md#<section>)`: the section of the plugin
+repository's setup doc that clears it, to name with the fix when telling the Human.
 
 | Line | What it checks | The usual fix |
 | --- | --- | --- |

@@ -48,6 +48,21 @@ const ACCEPTED_PROTECTION = 'the team accepts no forge protection (projectRun.fo
 // The risk of projectRun.localBinding where the host names none of its own.
 const LOCAL_BINDING_RISK = 'a service a session starts may listen on this machine\'s network interfaces, where other local processes, and other machines the firewall lets through, reach it, and the session may reach the services listening on this machine';
 
+// The setup doc of a project run, and its section that clears each check's blocker, by the check's name: every blocker
+// line, and the labels `ask`, ends with a pointer to it (setupPointer). `token` is the access check's section when no
+// source gives a forge token, or that token may not push. test/project-run-report.test.mjs holds each anchor to a
+// heading of the doc.
+export const SETUP_DOC = 'docs/project-run-setup.md';
+export const SETUP_SECTIONS = Object.freeze({
+  repository: 'origin-over-https', state: 'state-folder', run: 'after-a-halt-or-a-stop', instructions: 'state-folder',
+  policy: 'team-config', machine: 'this-machine', host: 'host-start', trust: 'trust-the-runs-folder', access: 'host-settings',
+  token: 'forge-token-in-the-keychain', 'usage-limit': 'host-settings', tracker: 'team-config', 'auto-merge': 'auto-merge-and-ci',
+  handoff: 'team-config', reviewer: 'review-bot', 'reviewer-seen': 'review-bot', ci: 'auto-merge-and-ci',
+  'branch-protection': 'forge-rules', 'release-tags': 'forge-rules', 'workflow-secrets': 'forge-rules', labels: 'the-decision-label',
+});
+export const setupPointer = (section) => ` (setup: ${SETUP_DOC}#${SETUP_SECTIONS[section]})`;
+const blockerLine = (name, problem, section = name) => `blocker ${name}: ${problem}${setupPointer(section)}`;
+
 // The `note` preflight prints when the team lets issue sessions bind local ports through projectRun.localBinding: the
 // risk as the host `cap` says it is on `platform` (capabilities.projectStart.localBindingRisk), and the remedy.
 export function localBindingNote(cap, platform) {
@@ -63,11 +78,11 @@ export function localBindingNote(cap, platform) {
 
 // Runs every check for `project`, whose loaded config is `config`, with `run` the run these checks are for, which the
 // active-run check leaves out, and returns { exitCode, out, err }: a line `ok NAME`,
-// `blocker NAME: WHY`, or `ask NAME: WHAT` per check, exit 1 when any blocker. `forge`, `home`, `platform`, and `exec`,
+// `blocker NAME: WHY (setup: DOC#SECTION)`, or `ask NAME: WHAT` per check, exit 1 when any blocker. `forge`, `home`, `platform`, and `exec`,
 // the keychain read's execFileSync, are a test's.
 export function preflightCommand({ project, config, run = null, env = process.env, home, forge, platform = process.platform, exec }) {
   const lines = [];
-  const check = (name, problem) => lines.push(problem ? `blocker ${name}: ${problem}` : `ok ${name}`);
+  const check = (name, problem) => lines.push(problem ? blockerLine(name, problem) : `ok ${name}`);
   const main = project.checkouts.at(-1);
   const repository = pinnedRepository(project);
   check('repository', repository ? null : 'origin names no repository a forge serves; set origin to the repository\'s HTTPS URL');
@@ -132,7 +147,7 @@ export function preflightCommand({ project, config, run = null, env = process.en
   protectionLines({ facade, repository, policy, lines, check, asks });
   if (tracker.adapter?.run?.labelRead) {
     const status = base.config?.projectRun?.blockedStatus;
-    asks.push(`ask labels: confirm with ${tracker.adapter.run.labelRead} that the team has the label ${JSON.stringify(base.config?.projectRun?.decisionLabel)}${typeof status === 'string' ? `, and with ${tracker.adapter.run.statusRead} the status ${JSON.stringify(status)}` : ''}; a missing one is a blocker`);
+    asks.push(`ask labels: confirm with ${tracker.adapter.run.labelRead} that the team has the label ${JSON.stringify(base.config?.projectRun?.decisionLabel)}${typeof status === 'string' ? `, and with ${tracker.adapter.run.statusRead} the status ${JSON.stringify(status)}` : ''}; a missing one is a blocker${setupPointer('labels')}`);
   }
   lines.push(...asks);
   if (typeof cap?.limitContinue !== 'function') lines.push('ask usage-limit: confirm this host carries on by itself after a usage limit, since a limit stops the driver too');
@@ -151,7 +166,8 @@ function accessLines({ cap, facade, repository, env, home, main, state, platform
     access = { halt: `the access check failed (${String(error?.message ?? error).split('\n')[0]})` };
   }
   const problem = access?.halt ?? access?.refuse ?? null;
-  const lines = [problem ? `blocker access: ${problem}` : 'ok access'];
+  // A halt that carries the token's record is the token's own: no source gave one, or it may not push.
+  const lines = [problem ? blockerLine('access', problem, access?.token ? 'token' : 'access') : 'ok access'];
   if (access?.token?.source) lines.push(`note token: ${access.token.source} gives the issue sessions their forge token`);
   for (const note of access?.token?.notes ?? []) lines.push(`note token: ${note}`);
   return lines;
@@ -171,7 +187,7 @@ function trackerLines(base, policy, mcpServers) {
   let problem = null;
   if (!adapter) problem = 'the base branch\'s config.json names no tracker the plugin knows (tracker.provider), so the run cannot read or report its issues';
   else if (unmapped.length) problem = `projectRun.mcpServers holds ${unmapped.map((name) => JSON.stringify(name)).join(', ')}, named like a tracker with an endpoint no tracker adapter knows, so the run rule could not hold its writes; point it at the tracker's own endpoint, or remove it`;
-  lines.push(problem ? `blocker tracker: ${problem}` : 'ok tracker');
+  lines.push(problem ? blockerLine('tracker', problem) : 'ok tracker');
   // An issue's session reads its issue from a file the driver wrote, so a run needs no tracker server in it.
   if (adapter && !entries.some(([name, definition]) => mapped(name, definition) === adapter)) lines.push(`note tracker: projectRun.mcpServers holds no ${adapter.name} server, so issue sessions will not write the tracker; the driver reports`);
   // Every tracker connection there must reach an adapter's endpoint, or be named in tracker.servers: on any other the

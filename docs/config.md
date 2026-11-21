@@ -1825,7 +1825,8 @@ The driver reads the tracker with its own tools and writes a snapshot input; `in
 The run's files are in `<state>/runs/RUN/`, where `<state>` is the project's state folder.
 How its sessions relate to the cap of five background continuations in a row, and how the driver hands off, is
 [A project run](handoff.md#a-project-run). The [Full autonomy, solo](config-recipes.md#full-autonomy-solo) recipe
-allows project runs.
+allows project runs. [Project run setup](project-run-setup.md) lists every one-time step the Human takes for these keys,
+the machine's local file, the forge, and the host; each `aidrian project preflight` blocker line ends with its section.
 
 | Key | Default | Meaning |
 | --- | --- | --- |

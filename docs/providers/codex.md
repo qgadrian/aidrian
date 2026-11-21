@@ -184,6 +184,7 @@ In Codex, only `*` and `main` [agent gates](../hooks.md#agent-gates) are sure to
 `aidrian project start` can start an issue's session on Codex, but no live Codex has run it: the host declares it
 `verified: 'unverified'`, and a run starts it only where the default branch, on the forge and by its local ref, sets
 [`projectRun.unverifiedHosts`](../config.md#project-run). Every start then prints an `unverified:` line.
+The one-time steps before a run are in [Project run setup](../project-run-setup.md).
 
 - Codex is a confined host. Each attempt works in a fresh clone, never a linked worktree of the main checkout:
   `<state>/runs/<run>/attempts/<issue>.<attempt>/` holds `work/`, the clone, `git/`, its own git folder, which borrows

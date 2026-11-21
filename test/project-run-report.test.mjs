@@ -477,6 +477,8 @@ test('preflight names every blocker at once, and starts nothing', (t) => {
   const older = (row) => `<!-- codex-pull-request-review-summary -->\n\n## Codex Review Summary\n\n| Review | Status | Commit | Review trigger |\n| --- | --- | --- | --- |\n| 📝 **Code Review** | ${row} | \`c9de3bc\` | Manual request |`;
   assert.equal(asked?.counts?.(older('🔄 **Running** since <relative-time datetime="2026-09-02T14:52:49Z">x</relative-time>')), false, 'nor an older card, with no state, still running');
   assert.equal(asked?.counts?.(older('✅ **Completed** <relative-time datetime="2026-09-02T15:01:04Z">x</relative-time>')), true, 'an older card whose row says completed counts');
+  assert.equal(asked?.counts?.(`${older('🔄 **Running**')}\n\nA finished card reads \`| 📝 **Code Review** | ✅ **Completed** |\`.`), false, 'text quoting a completed row is no table row');
+  assert.equal(asked?.counts?.(older('✅ **Completed**').replace('\n\n## Codex', '\n<!-- codex-review-state:v1 {not json} -->\n\n## Codex')), false, 'a state that does not parse shows nothing, whatever the row says');
   assert.equal(asked?.counts?.(card('completed')), true, 'a card whose review completed counts');
   assert.equal(asked?.counts?.('The card opens with `<!-- codex-pull-request-review-summary -->`, so match it at the start.'), true, 'a review that quotes the card marker counts');
   assert.deepEqual(ok.out.filter((line) => !/^(ask|note) /u.test(line)), ['ok repository', 'ok state', 'ok run', 'ok instructions', 'ok policy', 'ok machine', 'ok host', 'ok access', 'ok usage-limit', 'ok tracker', 'ok auto-merge', 'ok handoff', 'ok reviewer', 'ok reviewer-seen', 'ok ci', 'ok branch-protection', 'ok release-tags', 'ok workflow-secrets'], ok.out.join('\n'));

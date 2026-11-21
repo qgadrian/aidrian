@@ -170,13 +170,14 @@ function autoMergeProblem({ project, repository, facade }) {
 
 // Whether a comment by the review bot's login shows a review it finished: its usage-limit notice does not, and nor does
 // its status card, which the bot posts when a review starts, until the card says the code review completed: in its
-// machine state, or, on an older card with none, in its visible Code Review row. Only a comment that opens with the
-// card's marker is the card, so a review that quotes the marker still counts.
+// machine state, or, on an older card with no state marker, in its visible Code Review table row. A state that does not
+// parse shows nothing. Only a comment that opens with the card's marker is the card, so a review that quotes it counts.
+const STATE_MARKER = /<!--\s*codex-review-state:v1\b/u;
 export const showsReview = (body) => {
   if (isQuotaNotice(body)) return false;
   if (typeof body === 'string' && body.trimStart().startsWith(REVIEW_SUMMARY_CARD_MARKER)) {
-    const state = cardState(body);
-    return state ? state.code_review?.status === 'completed' : /\*\*Code Review\*\*\s*\|\s*✅\s*\*\*Completed\*\*/u.test(body);
+    if (STATE_MARKER.test(body)) return cardState(body)?.code_review?.status === 'completed';
+    return /^\|\s*📝\s*\*\*Code Review\*\*\s*\|\s*✅\s*\*\*Completed\*\*/mu.test(body);
   }
   return true;
 };

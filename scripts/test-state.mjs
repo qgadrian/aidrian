@@ -19,8 +19,8 @@
 //
 // Timing: with AIDRIAN_TEST_LOG set, as scripts/run-tests.mjs sets it, and a test file as the main script, the setup
 // counts the child processes the file starts, git apart from the others, and appends one JSON line
-// { file, ms, git, other } to that file when the process exits. It removes the variable, so nothing a test starts
-// inherits it; without it, node:child_process stays as it is.
+// { file, ms, git, other } to that file when the process exits, if it can. It removes the variable, so nothing a test
+// starts inherits it; without it, node:child_process stays as it is.
 import childProcess from 'node:child_process';
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
@@ -94,8 +94,13 @@ function countChildProcesses(log, main) {
     childProcess[name] = wrapper;
   }
   syncBuiltinESMExports();
+  // Best effort: a log that cannot be written, as when its folder is gone, loses the row, never the file's exit status.
   process.on('exit', () => {
     const row = { file: path.relative(process.cwd(), main), ms: Math.round(process.uptime() * 1000), ...counts };
-    appendFileSync(log, `${JSON.stringify(row)}\n`);
+    try {
+      appendFileSync(log, `${JSON.stringify(row)}\n`);
+    } catch {
+      // The table leaves this file out.
+    }
   });
 }

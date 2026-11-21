@@ -7,7 +7,7 @@
 //
 // The runner's output passes through. Each test file's preload (scripts/test-state.mjs) appends its row to the file
 // AIDRIAN_TEST_LOG names, in a temporary folder this script removes. The exit status is the runner's, 1 when a signal
-// ended it. A file run alone, `node --test test/<name>.test.mjs`, still works, with no table.
+// ended it, even when the table or the cleanup fails. A file run alone, `node --test test/<name>.test.mjs`, still works, with no table.
 
 import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -63,8 +63,14 @@ const runner = spawn(process.execPath, ['--test', '--import', SETUP, ...process.
 });
 // Ctrl-C reaches the runner too: this script waits for it to end, then cleans up.
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => runner.kill(signal));
+// The table and the cleanup are best effort: a folder that cannot be removed is named on stderr, and the status stays the runner's.
 runner.on('exit', (code) => {
-  process.stderr.write(formatTable(readRows(log)));
-  rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
-  process.exit(code ?? 1);
+  try {
+    process.stderr.write(formatTable(readRows(log)));
+    rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+  } catch (error) {
+    process.stderr.write(`Could not remove the test log folder ${dir}: ${error.message}\n`);
+  } finally {
+    process.exit(code ?? 1);
+  }
 });

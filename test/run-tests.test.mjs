@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -28,6 +28,20 @@ const FILES = {
   'quiet.test.mjs': ["import test from 'node:test';", "test('does nothing', () => {});"],
   'fails.test.mjs': ["import test from 'node:test';", "test('fails', () => { throw new Error('a failure'); });"],
   'kills.test.mjs': ["import test from 'node:test';", "test('kills its runner', () => { process.kill(process.ppid, 'SIGKILL'); });"],
+  // Passes, and leaves a read-only folder holding a file in the script's log folder, so the script cannot remove it.
+  'locks.test.mjs': [
+    "import { chmodSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';",
+    "import { tmpdir } from 'node:os';",
+    "import path from 'node:path';",
+    "import test from 'node:test';",
+    "test('locks the log folder', () => {",
+    "  const [name] = readdirSync(tmpdir()).filter((entry) => entry.startsWith('aidrian-test-log-'));",
+    "  const locked = path.join(tmpdir(), name, 'locked');",
+    '  mkdirSync(locked);',
+    "  writeFileSync(path.join(locked, 'file'), '');",
+    '  chmodSync(locked, 0o500);',
+    '});',
+  ],
 };
 
 // A folder holding the test files, and an empty temporary folder for the script's own files.
@@ -82,6 +96,25 @@ test('the run exits with the runner`s status, and 1 when a signal ended the runn
   const killed = runTests(where, ['kills.test.mjs']);
   assert.equal(killed.status, 1, killed.stderr);
   assert.deepEqual(readdirSync(where.temp), []);
+});
+
+test('a log folder the script cannot remove leaves the runner`s status, and the table still prints', (t) => {
+  const where = folder(t);
+  // Writable again before the folder is removed, whether or not the run locked it.
+  const unlock = () => {
+    for (const name of readdirSync(where.temp)) {
+      const locked = path.join(where.temp, name, 'locked');
+      if (existsSync(locked)) chmodSync(locked, 0o700);
+    }
+  };
+  let run;
+  try {
+    run = runTests(where, ['locks.test.mjs']);
+  } finally {
+    unlock();
+  }
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  assert.deepEqual(Object.keys(rows(run.stderr)), ['locks.test.mjs'], run.stderr);
 });
 
 test('this repository`s config records the script as a test run, and the script alone as the full suite', () => {

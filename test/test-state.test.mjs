@@ -93,6 +93,13 @@ test('with AIDRIAN_TEST_LOG the test setup appends the test file`s time and chil
   assert.ok(Number.isInteger(row.ms) && row.ms > 0, JSON.stringify(row));
 });
 
+test('a timing log that cannot be written leaves a passing test file`s exit status 0', (t) => {
+  const gone = path.join(realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-test-log-'))), 'gone');
+  t.after(() => rmSync(path.dirname(gone), { recursive: true, force: true }));
+  // probeRun asserts the status: before the fix, the failed append in the exit listener made it 1.
+  probeRun(t, { AIDRIAN_TEST_LOG: path.join(gone, 'files.jsonl') });
+});
+
 test('every test file imports the setup first, so a file run alone with `node --test` is kept apart too', () => {
   const dir = import.meta.dirname;
   const late = readdirSync(dir).filter((name) => name.endsWith('.test.mjs')).filter((name) => {

@@ -480,6 +480,9 @@ function launchStart(context, place) {
   const { run, key, env, home, session, store, cap, spawn, wait, state, held, noted } = context;
   const { folder, attempt, branch, cwd, git, grants, drop, cache, vars, log, main, mainGit, afterLimit, issueFile, pushUrl } = place;
   const localBinding = context.policy.localBinding === true;
+  // Whether the session reaches this machine's loopback as the host runs it, not by the team's switch alone: a host that
+  // keeps its commands off the loopback all the same, as Claude Code on Linux, keeps the proof's listener.
+  const loopback = localBinding && safely(() => cap.confineLoopback?.({ env, home, platform: context.platform, localBinding })) === true;
   // The forge's hosts, and the registries the team lists (projectRun.registries).
   const domains = [...forgeDomains(context.found.init.repository), ...registryHosts(context.policy.registries)];
   const proving = cap.confineProof === true;
@@ -487,9 +490,9 @@ function launchStart(context, place) {
   if (proving) {
     // The unlisted host must be outside the domains the user's and the organization's settings add too.
     const added = safely(() => cap.confineDomains?.({ env, home, platform: context.platform }));
-    // A session the team lets bind local ports reaches the machine's loopback too, so the proof probes no listener there.
+    // A session that reaches this machine's loopback would reach the listener too, so the proof probes none there.
     confine = prepareConfine({
-      folder, run, key, attempt, work: cwd, git, drop, cache, domains: [...domains, ...(Array.isArray(added) ? added : [])], main, mainGit, env, home, loopback: localBinding,
+      folder, run, key, attempt, work: cwd, git, drop, cache, domains: [...domains, ...(Array.isArray(added) ? added : [])], main, mainGit, env, home, loopback,
       ...(context.listen ? { listen: context.listen } : {}), reads: safely(() => cap.confineReads?.({ env, home })) ?? [],
     });
     if (confine.problem) {
@@ -503,7 +506,7 @@ function launchStart(context, place) {
   const fileProof = (own, result) => safely(() => markUnattended(own, { root: context.main, cwd: resolvedPath(cwd) ?? cwd, env, tags: { ...tags, confine: result } }));
   const confined = proving ? (own) => {
     proved = own;
-    const answer = confineCheck({ folder, session: own, prints: confine.prints, loopback: localBinding });
+    const answer = confineCheck({ folder, session: own, prints: confine.prints, loopback });
     if (answer === null) return null;
     const filed = fileProof(own, answer.pass ? 'passed' : 'failed');
     if (!answer.pass) {

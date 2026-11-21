@@ -164,8 +164,9 @@ const credentialStores = (home, config) => [...new Set([
 // and cache folders each hold a keep file (attempt-clone.mjs ATTEMPT_KEEP) whose write is denied, so neither can be
 // emptied and removed. No package manager variable is set here: the settings' `env` would reach the host's own process,
 // its hooks, and its MCP servers, so they reach the sandboxed commands alone, through the SessionStart hook
-// (writeEnvFile). `localBinding`, the base branch's projectRun.localBinding, lets sandboxed commands bind local ports,
-// and on macOS reach the machine's loopback. Scalars passed with --settings win over the user's settings; lists merge
+// (writeEnvFile). `localBinding`, the base branch's projectRun.localBinding, lets sandboxed commands bind local ports:
+// on macOS on every interface, with inbound connections, and reach every service on the machine's loopback; on Linux
+// the host keeps them in a network namespace of their own, so it changes nothing there. Scalars passed with --settings win over the user's settings; lists merge
 // with them, which accessProblem checks.
 export function sandboxSettings({ work, git, grants, domains, temp, home, config = path.join(home, '.claude'), platform, main = null, mainGit = null, secrets = [], guarded = [], stores = [], localBinding = false }) {
   const credentials = [...new Set([...credentialStores(home, config), ...stores])];
@@ -535,6 +536,24 @@ const withManagedPlugins = (settings, documents) => ({
   ...settings,
   enabledPlugins: Object.assign({}, isObject(settings.enabledPlugins) ? settings.enabledPlugins : {}, ...documents.map(({ value }) => (isObject(value.enabledPlugins) ? value.enabledPlugins : {}))),
 });
+
+// Whether a sandboxed command of a session started now reaches this machine's loopback, so the sandbox proof's
+// localhost listener would see it: only on macOS, where allowLocalBinding is the switch for localhost, with the team's
+// `localBinding` on and the highest-ranked managed source that sets network.allowLocalBinding, if any, setting it true,
+// as managed settings rank above --settings. On Linux the session's commands run in a network namespace of their own.
+// Managed settings that cannot be read count as no reach: the proof keeps its listener, and fails closed.
+export function loopbackReach({ platform, localBinding = false, managed = null }) {
+  if (localBinding !== true || platform !== 'darwin') return false;
+  const read = managedSettings({ platform, managed, user: userName() });
+  if (read.problem) return false;
+  const set = read.documents.map(({ value }) => at(value, 'sandbox.network.allowLocalBinding')).filter((each) => each !== undefined);
+  return set.length === 0 || set.at(-1) === true;
+}
+
+// The risk of the team's projectRun.localBinding on `platform`, for preflight's note.
+export const localBindingRisk = ({ platform }) => (platform === 'darwin'
+  ? 'on macOS a service a session starts may listen on every interface of this machine, where other local processes, and other machines the firewall lets through, reach it, and the session reaches every service listening on this machine\'s loopback, unless the organization\'s managed settings keep allowLocalBinding false'
+  : 'on Linux the session\'s commands run in a network namespace of their own, so it changes nothing there, and their ports stay out of reach of the rest of this machine');
 
 // The network hosts the user's and the organization's settings add to the session's allowedDomains, which lists merge:
 // the sandbox proof names a host outside them (lib/project-confine.mjs). Unreadable settings add none; the start halts

@@ -306,7 +306,9 @@ const DOMAIN = /^(?:\*\.)?[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/iu;
 // The `-c` overrides of a start: the network proxy on, with an allow rule for each of `domains` and no other, local
 // binding and loopback traffic only where `localBinding`, the team's projectRun.localBinding, allows them (the proxy's
 // `allow_local_binding`, read from Codex 0.171.0's binary, not a live run), and each of `cacheVars` set for the
-// sandboxed commands alone. Each value is TOML, whose basic strings JSON's escapes spell.
+// sandboxed commands alone. In Codex 0.171.0 `allow_local_binding` also turns off the proxy's refusal of private and
+// link-local destinations (codex-rs/network-proxy/README.md at rust-v0.171.0), so an allowed host name that resolves
+// to such an address is reached too: localBindingRisk says so in preflight. Each value is TOML, whose basic strings JSON's escapes spell.
 export function configFlags({ domains, cacheVars = {}, localBinding = false }) {
   const rules = domains.map((each) => `${JSON.stringify(each)} = "allow"`).join(', ');
   const binding = localBinding === true ? ['-c', 'features.network_proxy.allow_local_binding=true'] : [];
@@ -447,5 +449,8 @@ export function stopLine({ id }) {
 
 // What the session is told beside the project prompt: it works only in its attempt's folder, pushes its branch with a
 // full refspec, and names the branch to every forge command, since its clone tracks no branch of the forge.
+// The risk of the team's projectRun.localBinding on Codex, for preflight's note.
+export const localBindingRisk = () => 'on Codex a sandboxed command may bind local ports and reach this machine\'s loopback, and the network proxy no longer refuses private and link-local addresses, so an allowed host name that resolves to one is reached too (Codex 0.171.0, no live run)';
+
 export const sessionNote = ({ work, branch }) => `This session runs in Codex's workspace-write sandbox, in ${work}, a clone made for this attempt: work only in that folder. ` +
   `Push only with \`git push origin HEAD:refs/heads/${branch}\`, in a call of its own, and name the branch to every forge command, as \`gh pr create --head ${branch}\`.`;

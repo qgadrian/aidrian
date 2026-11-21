@@ -219,8 +219,10 @@ In Codex, only `*` and `main` [agent gates](../hooks.md#agent-gates) are sure to
   registries the base branch's [`projectRun.registries`](../config.md#project-run) lists. A host with no rule is
   refused, so an empty list fails closed. Where the base branch sets [`projectRun.localBinding`](../config.md#project-run),
   the start adds `-c features.network_proxy.allow_local_binding=true`, the proxy's switch for local binding and
-  loopback traffic, read from Codex 0.171.0's binary, not its docs or a live run; a Codex that rejects it exits as for
-  either override below. Until live check 12 shows that a `-c` table override replaces the user's
+  loopback traffic, read from Codex 0.171.0's binary, not a live run; a Codex that rejects it exits as for either
+  override below. In Codex 0.171.0 the same switch also turns off the proxy's refusal of private and link-local
+  destinations (`codex-rs/network-proxy/README.md` at `rust-v0.171.0`), so an allowed host name that resolves to such
+  an address is reached too; preflight's `note local-binding` line says so. Until live check 12 shows that a `-c` table override replaces the user's
   table rather than merging with it, a `config.toml` that sets any `features.network_proxy` key, in any form, halts the
   start, since a user allow rule could open a host the team never listed. No live run has checked the proxy (live check 12): a Codex that rejects
   either override exits before it names its session, and the start stops on that first proof, says which setting was
@@ -286,7 +288,8 @@ Before `verified` changes, a live Codex must show every one of these:
 12. `features.network_proxy` with `domains` allow rules holds `git push`, `gh`, and an install to the listed hosts
     under `codex exec --sandbox workspace-write`, refuses an unlisted host and localhost, and Codex accepts both
     overrides; with `projectRun.localBinding` set, `allow_local_binding` lets a sandboxed command listen on a local
-    port and connect to it; and, with a user `config.toml` holding an allow rule for an unlisted host under
+    port and connect to it, and whether an allowed host name that resolves to a private (`10.0.0.0/8`, `172.16.0.0/12`,
+    `192.168.0.0/16`) or link-local (`169.254.0.0/16`) address is then reached, and an unlisted one still refused; and, with a user `config.toml` holding an allow rule for an unlisted host under
     `[features.network_proxy.domains]`, whether the start's `-c` table replaces it, so that host is refused. Until it
     does, a Codex session's network is held by an unverified proxy alone, and a user proxy setting halts the start.
 13. What a usage limit and a rate limit leave in the `codex exec --json` log, so `logLimit` reads the real record.
@@ -299,8 +302,10 @@ Codex residuals, each open until the live checks hold:
 
 - Until live check 12 holds, a sandboxed command may reach any host, localhost included, if the network proxy does
   not hold as its reference says.
-- With `projectRun.localBinding` set, a sandboxed command reaches this machine's loopback by design, and a service it
-  starts there is open to every other local process.
+- With `projectRun.localBinding` set, a sandboxed command reaches this machine's loopback by design, a service it
+  starts is open to every other local process, and the proxy no longer refuses private and link-local destinations,
+  so an allowed host name that resolves to one, as a DNS answer an attacker controls could make it, reaches that
+  address. Bind each test server to `127.0.0.1`.
 - A sandboxed command reads every file of the user that the workspace-write sandbox does not hide, credential stores
   included, such as `~/.ssh`, `~/.npmrc`, and `~/.yarnrc.yml`: Codex has no read denial the start can pass, unlike
   Claude Code's `denyRead`. The publish commands the agent gate hook refuses, as on Claude Code, keep a session from

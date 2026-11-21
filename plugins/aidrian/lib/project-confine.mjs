@@ -18,7 +18,7 @@
 // git config and its `.claude/settings.json` for writing; remove the keep file of `cache` and `drop`; move each away,
 // put a link in its place, and write through it; read each credential store and the main checkout; connect to a host
 // outside every allowed domain, directly and through the sandbox's proxy; and connect to the listener, which does not
-// run where the team's projectRun.localBinding lets the session reach the machine's loopback. And the cache
+// run where the team's projectRun.localBinding, as the host runs it, lets the session reach the loopback. And the cache
 // variables (project-registries.mjs cacheVars) must be in force in the shell, each with the value the gate wrote.
 // A read the sandbox hides may still open: on Linux the host masks a denied folder with an empty one and a denied file
 // with an empty one. So a read counts as landed only when what it saw matches what the start saw outside the sandbox: an
@@ -174,8 +174,8 @@ function fingerprint(file, nonce, reopened = []) {
 // organization's settings add (capabilities.projectStart.confineDomains); `reads` the credential stores the host's
 // sandbox denies reading (capabilities.projectStart.confineReads); `main` the main checkout and `mainGit` its git
 // folder, which the sandbox opens again; `env` and `home` the environment and home folder the mark folders are named
-// under. `loopback` is the team's projectRun.localBinding: such a session may reach the machine's loopback, so no
-// listener runs and the plan's `local` is null. { plan, listener, prints } or { problem }, with the listener stopped;
+// under. `loopback` says the session reaches this machine's loopback, under the team's projectRun.localBinding as the
+// host runs it (capabilities.projectStart.confineLoopback), so no listener runs and the plan's `local` is null. { plan, listener, prints } or { problem }, with the listener stopped;
 // `prints` maps each read target to its fingerprint, for confineCheck.
 export function prepareConfine({ folder, run, key, attempt, work, git, drop, cache, domains, reads = [], main = null, mainGit = null, env = process.env, home, listen = startListener, watch = WATCH, loopback = false }) {
   const unwatched = loopback ? null : watchProblem(watch);
@@ -473,8 +473,8 @@ export function alive(pid, watch = WATCH) {
 // refused, no read whose sight matches its fingerprint, the listener the start runs alive on its port with no
 // connection, no probe path left, and `cache` and `drop` plain folders with their keep files. It reads the listener's
 // connections once a verdict is there, through sentinelHits, which adds one connection of its own, so it is asked once
-// a verdict: a later call counts the earlier sentinel as a hit, and fails. `loopback`, the team's
-// projectRun.localBinding as the start read it, never the plan, is the one case with no listener to judge.
+// a verdict: a later call counts the earlier sentinel as a hit, and fails. `loopback`, as the start judged it from the
+// team's policy and the host, never the plan, is the one case with no listener to judge.
 // `isAlive` and `sentinel` are a test's.
 export function confineCheck({ folder, session, prints = {}, isAlive = alive, sentinel = sentinelHits, loopback = false }) {
   const plan = readSmallJson(path.join(folder, CONFINE_PLAN));

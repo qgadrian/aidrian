@@ -1,26 +1,48 @@
 // projectRun.localBinding: the team's switch that lets an issue session bind local ports, read from the default branch
 // on the forge and the local ref alike, never a working copy. Off, the default, a session's sandbox keeps
 // `allowLocalBinding: false`, the organization's managed settings may not set it true, and the sandbox proof probes its
-// localhost listener; on, the sandbox starts with `allowLocalBinding: true`, a managed true or false passes, the proof
-// runs no listener, since the session may reach the loopback, and preflight prints a note naming the risk.
+// localhost listener; on, the sandbox starts with `allowLocalBinding: true`, a managed true or false passes, and
+// preflight prints a note naming the host's risk. The proof drops its listener only where the session reaches this
+// machine's loopback as the host runs it: on macOS, with no managed source keeping allowLocalBinding false.
 // Checked on fixtures only (test/project-start-fixture.mjs, on Linux); Codex's side is in project-start-codex.test.mjs.
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
-import { accessProblem, sandboxSettings } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
+import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
+import { accessProblem, localBindingRisk, loopbackReach, sandboxSettings } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
+import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { CONFINE_PLAN, confineCheck, probeAll } from '../plugins/aidrian/lib/project-confine.mjs';
-import { LOCAL_BINDING_NOTE } from '../plugins/aidrian/lib/project-preflight.mjs';
+import { localBindingNote } from '../plugins/aidrian/lib/project-preflight.mjs';
 import { teamPolicy } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { runFixture, STARTED } from './project-start-fixture.mjs';
 
 const REPOSITORY = { host: 'github.com', owner: 'acme', name: 'widgets' };
 const ON = { allow: true, unverifiedHosts: true, localBinding: true };
 const OFF = { allow: true, unverifiedHosts: true };
+
+// Managed settings in `dir`, each document of `values` a managed-settings.d file, lowest rank first: { dir, plists }.
+function managedAt(dir, values = []) {
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(path.join(dir, 'managed-settings.d'), { recursive: true });
+  values.forEach((value, index) => writeFileSync(path.join(dir, 'managed-settings.d', `${10 + index}.json`), JSON.stringify(value)));
+  return { dir, plists: [] };
+}
+
+// Runs `body` with the adapter's loopback judged as on macOS, under the managed settings `managed`, then puts it back.
+function asMacOs(t, managed) {
+  const cap = claudeCode.capabilities.projectStart;
+  const own = cap.confineLoopback;
+  cap.confineLoopback = ({ localBinding }) => loopbackReach({ platform: 'darwin', localBinding, managed });
+  t.after(() => {
+    cap.confineLoopback = own;
+  });
+}
 
 // The start of ENG-1 in `fx`: its --settings value, and the proof's plan in the attempt's folder.
 function started(fx) {
@@ -55,13 +77,29 @@ test('a working copy that sets projectRun.localBinding starts a session whose sa
   assert.equal(plan.local.host, '127.0.0.1', 'the proof still probes its localhost listener');
 });
 
-test('off, the session\'s sandbox refuses local binding and the proof probes its listener; on, it binds and the proof runs no listener', (t) => {
+test('off, the session\'s sandbox refuses local binding and the proof probes its listener; on Linux, it binds and the listener stays required', (t) => {
   const off = started(runFixture(t));
   assert.equal(off.settings.sandbox.network.allowLocalBinding, false);
   assert.equal(off.plan.local.host, '127.0.0.1');
   assert.ok(Number.isInteger(off.plan.local.port));
+  // The fixture's platform is Linux, where the host keeps the session's commands off this machine's loopback.
+  const linux = started(runFixture(t, { projectRun: ON }));
+  assert.equal(linux.settings.sandbox.network.allowLocalBinding, true);
+  assert.equal(linux.plan.local.host, '127.0.0.1', 'the listener stays required on Linux');
+  assert.ok(Number.isInteger(linux.plan.local.port));
+});
 
+test('on macOS a managed allowLocalBinding false keeps the listener required', (t) => {
   const fx = runFixture(t, { projectRun: ON });
+  asMacOs(t, managedAt(path.join(fx.root, 'managed'), [{ sandbox: { network: { allowLocalBinding: false } } }]));
+  const kept = started(fx);
+  assert.equal(kept.settings.sandbox.network.allowLocalBinding, true);
+  assert.equal(kept.plan.local.host, '127.0.0.1');
+});
+
+test('on macOS with no managed false, the session reaches the loopback, so the proof runs no listener, judged from the start and never the plan', (t) => {
+  const fx = runFixture(t, { projectRun: ON });
+  asMacOs(t, managedAt(path.join(fx.root, 'managed')));
   const on = started(fx);
   assert.equal(on.settings.sandbox.network.allowLocalBinding, true);
   assert.deepEqual([on.settings.sandbox.network.strictAllowlist, on.settings.sandbox.network.allowAllUnixSockets], [true, false], 'nothing else of the network widens');
@@ -75,11 +113,28 @@ test('off, the session\'s sandbox refuses local binding and the proof probes its
 
 test('a plan with no listener probes no loopback connection', async (t) => {
   const fx = runFixture(t, { projectRun: ON });
+  asMacOs(t, managedAt(path.join(fx.root, 'managed')));
   const { plan } = started(fx);
+  assert.equal(plan.local, null);
   // The unlisted host a closed local port, so no test reaches the network.
   const results = await probeAll({ ...plan, unlisted: { host: '127.0.0.1', port: 9 } }, {});
   const reaches = results.filter((each) => each.probe === 'reach');
   assert.deepEqual(reaches.map((each) => each.target), ['127.0.0.1:9']);
+});
+
+test('the session reaches the loopback only on macOS, with the key on, where the highest managed source that sets allowLocalBinding sets it true', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-binding-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'managed');
+  const reach = (values, more = {}) => loopbackReach({ platform: 'darwin', localBinding: true, managed: managedAt(dir, values), ...more });
+  assert.equal(reach([]), true, 'no managed source sets it');
+  assert.equal(reach([{ sandbox: { network: { allowLocalBinding: false } } }]), false, 'a managed false');
+  assert.equal(reach([{ sandbox: { network: { allowLocalBinding: false } } }, { sandbox: { network: { allowLocalBinding: true } } }]), true, 'a higher managed true');
+  assert.equal(reach([{ sandbox: { network: { allowLocalBinding: true } } }, { sandbox: { network: { allowLocalBinding: false } } }]), false, 'a higher managed false');
+  assert.equal(reach([], { platform: 'linux' }), false, 'Linux');
+  assert.equal(reach([], { localBinding: false }), false, 'the key off');
+  writeFileSync(path.join(dir, 'managed-settings.json'), 'not json');
+  assert.equal(loopbackReach({ platform: 'darwin', localBinding: true, managed: { dir, plists: [] } }), false, 'managed settings that cannot be read keep the listener');
 });
 
 test('the sandbox settings take allowLocalBinding from localBinding alone', () => {
@@ -105,14 +160,20 @@ test('the organization\'s managed allowLocalBinding passes only at false, or at 
   assert.match(ask('yes', true), /set sandbox\.network\.allowLocalBinding/u, 'a value that is neither');
 });
 
-test('preflight prints the local-binding note naming the risk only when the forge and the local ref both set it', (t) => {
+test('preflight prints the local-binding note naming the host\'s risk only when the forge and the local ref both set it', (t) => {
   const out = (options) => {
     const fx = runFixture(t, { init: false, ...options });
     return fx.cmd(['preflight']).out;
   };
   const on = out({ projectRun: ON });
-  assert.ok(on.includes(LOCAL_BINDING_NOTE), on.join('\n'));
-  assert.match(LOCAL_BINDING_NOTE, /^note local-binding: .*projectRun\.localBinding.*loopback, where any other local process can reach it/u);
+  assert.ok(on.includes(localBindingNote(claudeCode.capabilities.projectStart, 'linux')), on.join('\n'));
+  const mac = localBindingNote(claudeCode.capabilities.projectStart, 'darwin');
+  assert.match(mac, /^note local-binding: the team lets issue sessions bind local ports \(projectRun\.localBinding\): on macOS .*every interface of this machine.*other machines the firewall lets through.*reaches every service listening on this machine's loopback.*bind each test server to 127\.0\.0\.1, never 0\.0\.0\.0$/u);
+  assert.equal(mac.includes(localBindingRisk({ platform: 'darwin' })), true);
+  assert.match(localBindingNote(claudeCode.capabilities.projectStart, 'linux'), /on Linux .*network namespace of their own/u);
+  assert.match(localBindingNote(codex.capabilities.projectStart, 'darwin'), /on Codex .*no longer refuses private and link-local addresses/u);
+  assert.match(localBindingNote({}, 'darwin'), /may listen on this machine's network interfaces.*127\.0\.0\.1/u, 'a host that names no risk');
+  assert.match(localBindingNote({ localBindingRisk: () => { throw new Error('x'); } }, 'darwin'), /may listen on this machine's network interfaces/u);
   assert.ok(!out({}).some((line) => line.startsWith('note local-binding')), 'off');
   assert.ok(!out({ projectRun: OFF, forgeConfig: { version: 1, projectRun: ON } }).some((line) => line.startsWith('note local-binding')), 'the forge alone');
 });

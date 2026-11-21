@@ -4,7 +4,7 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-import { attachLine, findProcesses, logLimit, processEnded, sessionNote, startProject, stopLine, stopProcess } from './codex-exec.mjs';
+import { attachLine, findProcesses, localBindingRisk, logLimit, processEnded, sessionNote, startProject, stopLine, stopProcess } from './codex-exec.mjs';
 import { responseObjects } from './response.mjs';
 
 const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -377,6 +377,7 @@ export default {
       trustStep: 'open Codex and trust every hook of this plugin in its hooks panel, /hooks, after each install and update',
       access: ({ env, guarded = [] }) => sandboxNetworkProblem(env) ?? networkProxyProblem(env) ?? writableRootsProblem(env, guarded),
       sessionNote,
+      localBindingRisk,
       start: ({ cwd, name, prompt, env, hold, identify, run, wait, log, beacon, grants, domains, cacheVars, localBinding }) => startProject({ cwd, name, prompt, env, hold, identify, log, beacon, grants, domains, cacheVars, localBinding, run, wait }),
       stop: ({ id, started, run }) => stopProcess({ id, started, run }),
       ended: ({ id, run }) => processEnded({ id, run }),

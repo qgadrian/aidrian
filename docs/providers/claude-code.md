@@ -439,7 +439,10 @@ port, or connects to one, fails in a confined session. On Linux it has no effect
 sandboxed command off the host's localhost. An issue whose checks need a database, an API server, a worker, or a
 browser on localhost cannot run them so; a team whose issues need them sets
 [`projectRun.localBinding`](../config.md#project-run) on the default branch, which the forge and the local ref must
-both set, and the session starts with `allowLocalBinding: true`. No clone or local file turns it on.
+both set, and the session starts with `allowLocalBinding: true`. No clone or local file turns it on. On macOS that
+opens binding, and inbound connections, on every interface of this machine, not only the loopback (the host's sandbox
+runtime, `src/sandbox/macos-sandbox-utils.ts`), so a project binds each test server to `127.0.0.1`, never `0.0.0.0`.
+On Linux it changes nothing, as above.
 
 No `sandbox.excludedCommands` is passed. Three conditions hold on top of the sandbox:
 
@@ -530,12 +533,14 @@ Residual risks, each known and accepted:
 - A `.claude` link a session's git makes, as by checking out a branch that holds one, is denied by the `**/.claude`
   glob, and the hook refuses a write through it or, while git's index lists it, to the folder it leads to; a link git
   does not list is judged by the path as written alone.
-- With [`projectRun.localBinding`](../config.md#project-run) set, a service an issue session starts, such as a
-  database or an API server for its tests, listens on this machine's loopback, where any other local process of any
-  user can reach it; and on macOS, where `allowLocalBinding` is the switch for localhost, the session's sandboxed
-  commands reach every service listening there too, such as the user's own databases, development servers, and any
-  local admin port, outside the network allowlist. No host's sandbox proof probes the loopback then. A team sets it
-  only on a machine where that is acceptable.
+- With [`projectRun.localBinding`](../config.md#project-run) set, on macOS, where `allowLocalBinding` is the switch
+  for local networking: a service an issue session starts, such as a database or an API server for its tests, may
+  listen on any interface of this machine, where any other local process of any user, and any other machine the
+  firewall lets through when it binds `0.0.0.0`, can reach it; and the session's sandboxed commands reach every service
+  listening on this machine's loopback, such as the user's own databases, development servers, and any local admin
+  port, outside the network allowlist. The sandbox proof runs no localhost listener then, unless a managed source keeps
+  `allowLocalBinding` false. On Linux the network namespace holds as without it, and the proof keeps its listener.
+  Bind each test server to `127.0.0.1`; a team sets the key only on a machine where the rest is acceptable.
 - Each registry `projectRun.registries` lists is a host a sandboxed command can send data to, an accepted channel;
   [Dependency installs](#dependency-installs) names each one's path and the ruling. Hosts an install reaches beyond its registry, such as a
   native module's prebuilt binary, node-gyp's headers, or a toolchain download, stay refused.
@@ -586,7 +591,8 @@ Before `verified` changes, a live Claude Code must show every one of these, each
 12. The plugin's hooks still run under `--setting-sources user`, with the plugin installed at user scope.
 13. A sandboxed process cannot connect to a localhost listener outside the sandbox, on macOS with
     `allowLocalBinding: false`; with `projectRun.localBinding` set, a sandboxed command can listen on a local port and
-    connect to it, on macOS and on Linux.
+    connect to it, on macOS and on Linux, a server it binds to `0.0.0.0` on macOS takes a connection from another
+    machine only where the firewall allows it, and on Linux it still cannot reach a listener outside the sandbox.
 14. `cat ~/.ssh/*` and a Read of it fail, and so do `cat ~/.git-credentials`, a read of the main checkout's `.env`,
     and `echo $NPM_TOKEN` with it set in the driver's environment.
 15. The session lists no claude.ai connector and no other plugin's MCP server, and only the `projectRun.mcpServers`
@@ -659,9 +665,11 @@ its start stays as [its page](codex.md#project-start) says.
    already counting as made; to open the clone's git `config` and `.claude/settings.json` for writing; to remove the
    keep file of `cache` and of `drop`; to move each folder away, or else to put a link beside it, and to write through
    the link; to read each store in the plan; to connect to the unlisted host, directly and through each HTTP proxy the
-   shell's environment names; and to connect to the listener. Where the base branch sets `projectRun.localBinding`, the
-   session may reach the machine's loopback, so the start runs no listener, the plan's `local` is `null`, and the
-   proof neither probes nor judges a listener; the start takes that from the team's policy, never from the plan. It also checks that each cache variable is in force in
+   shell's environment names; and to connect to the listener. Where the session would reach this machine's loopback,
+   which is only on macOS with the base branch's `projectRun.localBinding` set and no managed source keeping
+   `allowLocalBinding` false (the adapter's `confineLoopback`), the start runs no listener, the plan's `local` is
+   `null`, and the proof neither probes nor judges a listener; the start decides that from the team's policy and the
+   host, never from the plan. On Linux, and on macOS under a managed `false`, the listener stays required. It also checks that each cache variable is in force in
    the shell with the value the start wrote. Any write, removal, move, link, or connection that succeeds is undone and
    fails the proof, and so does one whose target is not there. A read that opens is not yet a landed read: on Linux
    the host masks a denied folder with an empty one and a denied file with an empty one, so the proof hands what each

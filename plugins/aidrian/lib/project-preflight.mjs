@@ -43,8 +43,21 @@ const NO_REVIEWER = new Set([null, undefined, '', 'none']);
 // What a `note` says in place of a branch-protection or release-tags blocker the team accepts through
 // projectRun.forgeProtectionAccepted.
 const ACCEPTED_PROTECTION = 'the team accepts no forge protection (projectRun.forgeProtectionAccepted): a script an issue session runs can push to the default branch or a tag with the token, and only the hooks hold it';
-// What a `note` says when the team lets issue sessions bind local ports through projectRun.localBinding.
-export const LOCAL_BINDING_NOTE = 'note local-binding: the team lets issue sessions bind local ports (projectRun.localBinding), so a service a session starts listens on this machine\'s loopback, where any other local process can reach it, and on macOS the session reaches every service listening there too';
+// The risk of projectRun.localBinding where the host names none of its own.
+const LOCAL_BINDING_RISK = 'a service a session starts may listen on this machine\'s network interfaces, where other local processes, and other machines the firewall lets through, reach it, and the session may reach the services listening on this machine';
+
+// The `note` preflight prints when the team lets issue sessions bind local ports through projectRun.localBinding: the
+// risk as the host `cap` says it is on `platform` (capabilities.projectStart.localBindingRisk), and the remedy.
+export function localBindingNote(cap, platform) {
+  let risk = null;
+  try {
+    risk = cap?.localBindingRisk?.({ platform });
+  } catch {
+    risk = null;
+  }
+  const said = typeof risk === 'string' && risk ? risk : LOCAL_BINDING_RISK;
+  return `note local-binding: the team lets issue sessions bind local ports (projectRun.localBinding): ${said}; bind each test server to 127.0.0.1, never 0.0.0.0`;
+}
 
 // Runs every check for `project`, whose loaded config is `config`, with `run` the run these checks are for, which the
 // active-run check leaves out, and returns { exitCode, out, err }: a line `ok NAME`,
@@ -86,7 +99,7 @@ export function preflightCommand({ project, config, run = null, env = process.en
       access = { halt: `the access check failed (${String(error?.message ?? error).split('\n')[0]})` };
     }
     check('access', access?.halt ?? access?.refuse ?? null);
-    if (policy.localBinding === true) lines.push(LOCAL_BINDING_NOTE);
+    if (policy.localBinding === true) lines.push(localBindingNote(cap, platform));
   } else {
     check('access', 'it needs the repository, the state folder, and a host that starts project sessions, which the lines above name');
   }

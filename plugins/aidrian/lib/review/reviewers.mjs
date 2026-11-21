@@ -191,6 +191,10 @@ export const flowBaseBrief = (input) => `Find bugs in ${input.remerge ? `\`git s
 // (lib/review/run.mjs): those changes are the review, and the rest of the diff was reviewed before.
 export const remergeBrief = (input) => `This head is a merge from the base branch: review only the changes the merge commit itself made, its conflict resolutions and any other edit, \`git show --remerge-diff ${input.head}\`. A file listed with no lines there had a conflict whose resolution shows no lines, such as a binary file or a kept side of a modify/delete: check that side was the right one. The rest of \`git diff ${input.base} ${input.head}\` was reviewed before, on this pull request's earlier heads or on the base branch.`;
 
+// What a reviewer of a delta whose range merged the base branch reads (lib/review/step.mjs boundFor): the base's own
+// changes in that range are not this pull request's, so `files` lists only its own, and within them only its own lines count.
+export const baseMergedBrief = (input) => `Between ${input.base} and ${input.head} this branch merged the base branch (${input.baseMerged.merges.join(', ')}): what the base brought was reviewed there and is not this pull request's change. Review only the listed files, and in them only what this pull request changes, \`git diff ${input.baseMerged.base} ${input.head}\`, or what a merge commit itself changed, ${input.baseMerged.merges.map((merge) => `\`git show --remerge-diff ${merge}\``).join(', ')}. Report nothing the base branch alone wrote.`;
+
 // What a reviewer of a project below the repository root reads, with `prefix` the project's folder from the top: a plain
 // `git diff` lists repository-root paths and files outside the project, and a citation of one is refused.
 export const belowRootBrief = (prefix) => `This project is the folder ${prefix} of its repository. Run every \`git diff\` in that folder with \`--relative\`, which lists this project's files by their paths from it. Cite evidence from the project root, as \`files\` lists them.`;
@@ -217,6 +221,7 @@ export function reviewPrompt(input, prefix = '') {
     input.flows.length ? `For each critical flow below, give one verdict per invariant: holds, violated, not_affected, or cannot_verify. Evidence for holds or not_affected must cite file:line at the head commit, or a test name. Earlier reviewers' verdicts are listed: challenge every "holds" you cannot confirm yourself. Where an invariant has a \`source\`, the section of the project doc it cites, judge against that source: \`text\` is only the question. ${VERDICT_MEANING}` : '',
     input.flowBase ? flowBaseBrief(input) : '',
     input.remerge ? remergeBrief(input) : '',
+    input.baseMerged ? baseMergedBrief(input) : '',
     'Answer with JSON only, in the schema you were given.',
     '',
     'Input (JSON):',

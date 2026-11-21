@@ -892,10 +892,20 @@ names, or a flow's invariants doc or a doc an invariant cites. The reviewed head
 the plan's reasons name what changed. A change elsewhere in the config, outside `review`, does not count.
 
 An octopus merge, the merge of a side branch, a merge with no `received` review before it, and every head that is not a
-merge review as before. So does a merge git cannot read this way, such as under a git older than 2.38, which has no
-`git merge-tree --write-tree`: the step reviews the whole change and says why in the plan's reasons. The limit: two
-sides that each passed review can still break together with no textual conflict, and no reviewer sees that; CI still
-runs on the merge head.
+merge plan the whole change, from the merge base. So does a merge git cannot read this way, such as under a git older
+than 2.38, which has no `git merge-tree --write-tree`: the step reviews the whole change and says why in the plan's
+reasons. The limit: two sides that each passed review can still break together with no textual conflict, and no
+reviewer sees that; CI still runs on the merge head.
+
+Whatever came before, a review never takes in code only the base branch wrote. A pass that reviews the change since an
+earlier head, as after a `fix_required` round, whose range merged the base branch (the merge base moved since that head)
+reads only the files of the pull request's own change, `git diff $(git merge-base <base> HEAD) HEAD`, and of each merge
+commit's own changes in the range, `git show --remerge-diff`: its input lists them in `files`, carries `baseMerged`
+with the merge base and the merges, and the reviewer is told to report nothing the base alone wrote. A file only the
+base changed is neither reviewed nor counted against a pass's earlier result. A pass with no such file left, or a range
+holding a merge git cannot read this way, such as an octopus merge, reviews the whole change from the merge base
+instead; so does every pass when the step reviews the whole change for the merge. The round count still reads the
+range's whole change, as a push's: a merge that brings code opens a round, one that brings only prose keeps it.
 
 ### Late rounds
 

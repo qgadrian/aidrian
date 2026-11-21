@@ -14,7 +14,7 @@ import { stateDir } from '../project.mjs';
 import { resolvePublish } from '../config-local.mjs';
 import { fileAt, isAncestor } from './diff.mjs';
 import { blocks, isFindingId, listedTo, recordedFindings } from './findings.mjs';
-import { belowRootBrief, flowBaseBrief, ID_BRIEF, remergeBrief, VERDICT_MEANING } from './reviewers.mjs';
+import { baseMergedBrief, belowRootBrief, flowBaseBrief, ID_BRIEF, remergeBrief, VERDICT_MEANING } from './reviewers.mjs';
 import { contextFindings, idCopy, recordSettled, residualTexts } from './settled.mjs';
 import { patternsOf, textChecker } from './publish.mjs';
 import * as quota from './quota.mjs';
@@ -208,7 +208,13 @@ export function passInput(s, pass, stage) {
   const { config, root, repo, n, head, base, baseTip, changes, scope, state, plan, resultFor, sameFiles, verdictsFor, visual, manifest, isVisual } = s;
   const recorded = state.passes[pass.id];
   const prior = resultFor(pass) ?? (recorded && sameFiles(pass, recorded) ? recorded : null);
-  const from = prior && prior.head !== head && isAncestor(root, prior.head, head) ? prior.head : base;
+  let from = prior && prior.head !== head && isAncestor(root, prior.head, head) ? prior.head : base;
+  // A delta whose range merged the base branch reads only this pull request's own files (step.mjs boundFor): the pass's
+  // own list, else the bounded delta's. With none left, or a merge git cannot read, it reads the whole change instead.
+  const bound = from !== base ? s.boundFor?.(from) ?? null : null;
+  const ownFiles = bound?.files ? s.delta(from).map((change) => change.file) : null;
+  if (bound && (!bound.files || !(pass.files ?? ownFiles).length)) from = base;
+  const merged = bound && from !== base ? bound : null;
   const flows = plan.flows.filter((flow) => (pass.flows ?? []).includes(flow.id) || stage.name !== 'local').map((flow) => ({
     id: flow.id,
     invariants: flow.invariants,
@@ -243,7 +249,8 @@ export function passInput(s, pass, stage) {
   return {
     ...split,
     // A merge's resolutions are the whole review: a pass of every changed file reads only the resolved ones.
-    pr: n, repo, base: from, head, context: from === base ? 'full' : 'delta', files: pass.files ?? (scope ? scope.changes.map((change) => change.file) : null), flows,
+    pr: n, repo, base: from, head, context: from === base ? 'full' : 'delta', files: pass.files ?? (scope ? scope.changes.map((change) => change.file) : merged ? ownFiles : null), flows,
+    ...(merged ? { baseMerged: { base: merged.base, merges: merged.merges } } : {}),
     // Only the ids listed to this pass show: the only ones a finding it returns may take.
     priorFindings: residuals ? [...contextFindings(earlier, listed), ...recordSettled(state, prior, residuals)] : earlier.map((finding) => idCopy(finding, listed)),
     ...(residuals ? { acceptedResiduals: residuals } : {}),
@@ -300,6 +307,7 @@ export function dispatchFor(s, pass, stage) {
     input.flows.length ? VERDICT_MEANING : null,
     input.flowBase ? flowBaseBrief(input) : null,
     input.remerge ? remergeBrief(input) : null,
+    input.baseMerged ? baseMergedBrief(input) : null,
     input.visual ? 'Review the captures in `visual` (open each `file`), with their measured facts, as well as the diff.' : null,
     pass.fallback ? `${quota.owner(pass.fallback.replaces)} is out of quota, and the Human chose this pass as the second look in its place: review the whole change through your own lens. It is recorded as a fallback, not as an independent review.` : null,
     FINDINGS_FILE_BRIEF,

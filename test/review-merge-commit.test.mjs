@@ -366,8 +366,10 @@ test('a merge whose own edit is only a comment opens a round: a merge from the b
   assert.equal(readLocalState(r.project(), 7).rounds.at(-1).quiet, undefined);
 });
 
-// With no received outcome, or from another branch, nothing marks the merge as the base branch's: what it brought is
-// its change, judged as a push's is. The passes it touches run either way.
+// With no received outcome, or from another branch, nothing marks the merge as the base branch's: for the round count,
+// what it brought is its change, judged as a push's is. The passes it touches run either way, and a pass after a merge
+// from the base reads only this pull request's own change: one that changed nothing of it since the pass's head reviews
+// the whole change, from the merge base, never the base's code.
 test('any other merge is judged by its change like a push: one bringing only docs keeps the round, one bringing code opens one', async (t) => {
   const finding = { file: 'src/app.js', line: 1, title: 'off by one', body: 'x', severity: 'high' };
   for (const [what, files, round] of [['docs', { 'docs/guide.md': 'hello\n' }, 1], ['code', { 'src/lib.js': 'export const lib = 1;\n' }, 2]]) {
@@ -376,7 +378,8 @@ test('any other merge is judged by its change like a push: one bringing only doc
     const merge = r.mergeMain(files);
     const seen = recorder();
     const result = await r.step({ exec: seen.exec });
-    assert.deepEqual([result.round, result.carried_from, seen.inputs.length, seen.inputs[0].context, seen.inputs[0].remerge], [round, undefined, 1, 'delta', undefined], `${what} from main after fix_required`);
+    assert.deepEqual([result.round, result.carried_from, seen.inputs.length, seen.inputs[0].context, seen.inputs[0].remerge], [round, undefined, 1, 'full', undefined], `${what} from main after fix_required`);
+    assert.deepEqual([seen.inputs[0].base, seen.inputs[0].files], [r.git('rev-parse', 'main'), null], `${what}: the whole change, from the merge base`);
     const { rounds } = readLocalState(r.project(), 7);
     assert.deepEqual([rounds.length, rounds.at(-1).head, rounds[0].quiet?.[0].from], [round, merge, round === 1 ? r.first : undefined], what);
   }
@@ -392,6 +395,43 @@ test('any other merge is judged by its change like a push: one bringing only doc
   const result = await r.step({ exec: seen.exec });
   assert.deepEqual([result.round, result.carried_from, seen.inputs[0]?.context], [1, undefined, 'delta'], 'docs from another branch after received');
   assert.deepEqual(readLocalState(r.project(), 7).rounds[0].quiet.map((each) => each.from), [r.first]);
+});
+
+// A head whose review ended fix_required, never received, with a finding on src/app.js.
+async function fixRequired(t, options = {}) {
+  const r = repo(t, options);
+  const finding = { file: 'src/app.js', line: 1, title: 'off by one', body: 'x', severity: 'high' };
+  assert.equal((await r.step({ exec: async () => ({ status: 'done', findings: [finding], verdicts: [], dropped: [] }) })).status, 'fix_required');
+  return r;
+}
+
+test('after fix_required, a fix and a merge from the base: the delta reads only the pull request\'s own files, never one only the base changed', async (t) => {
+  const r = await fixRequired(t);
+  r.write('src/app.js', 'export const app = 3;\n');
+  r.commit('fix');
+  const merge = r.mergeMain({ 'src/lib.js': 'export const lib = 1;\n' });
+  const seen = recorder();
+  const result = await r.step({ exec: seen.exec });
+  assert.deepEqual([result.status, result.round, result.carried_from], ['received', 2, undefined]);
+  const [input] = seen.inputs;
+  assert.deepEqual([input.base, input.head, input.context, input.files, input.remerge], [r.first, merge, 'delta', ['src/app.js'], undefined], 'src/lib.js came from main alone');
+  assert.deepEqual(input.baseMerged, { base: r.git('rev-parse', 'main'), merges: [merge] });
+  const prompt = reviewPrompt(input);
+  assert.match(prompt, /Report findings only in these files: src\/app\.js\./u);
+  assert.match(prompt, new RegExp(`only what this pull request changes, \`git diff ${input.baseMerged.base} ${merge}\`, or what a merge commit itself changed, \`git show --remerge-diff ${merge}\``, 'u'));
+});
+
+test('after fix_required, a merge from the base whose resolution takes the base\'s side: the delta holds the resolution, not the base\'s file', async (t) => {
+  const r = await fixRequired(t, { feature: { 'src/app.js': 'export const app = 2;\n', 'src/extra.js': 'export const extra = 1;\n' } });
+  // The resolution keeps main's line, so the pull request's whole change no longer holds src/app.js: only the merge's
+  // own resolution diff does.
+  const merge = r.mergeMain(CONFLICT, { 'src/app.js': 'export const app = 9;\n' });
+  assert.equal(r.git('diff', '--name-only', r.git('merge-base', 'main', 'HEAD'), 'HEAD'), 'src/extra.js', 'the three-dot diff holds only src/extra.js');
+  const seen = recorder();
+  assert.equal((await r.step({ exec: seen.exec })).status, 'received');
+  const [input] = seen.inputs;
+  assert.deepEqual([input.base, input.context, input.files], [r.first, 'delta', ['src/app.js']], 'the resolution is reviewed; src/lib.js, which main alone brought, is not');
+  assert.deepEqual(input.baseMerged.merges, [merge]);
 });
 
 test('a merge with -s ours, which drops what main brought, is no clean merge, and its reviewer runs on the drop', async (t) => {

@@ -75,6 +75,11 @@ attempt <n>`. No Human attends it, and the run's hooks hold it to that issue. Ev
   reminder and a usage-limit warning: the host compacts it, and the run waits out a limit. Record the result only when
   the work ends. A session that must stop before the work ends records `failed` with the pull request's number, so the
   next attempt takes it up; an interruption is never `pr_open`.
+- **A broken environment comes first.** When this session's own environment keeps it from the work, record
+  `environment`, never `failed`, `blocked`, or `pr_open`, whichever step it stops at: a push or forge call that fails
+  on sign-in, permission, or the network, twice in a row; the sandbox refusing a write, a port, or a domain the work
+  needs; or a host tool that will not run. Its `stop` names the command and its error, with no token or password in
+  it. A failing test, a review finding, or a merge rule is the work's own outcome, never `environment`.
 - **The result is the report's last step.** After the report, write the result as JSON to a file in the temporary
   folder (`mktemp`), and run `aidrian project result <run> <key> --file <that file>`. On exit 1, fix what it lists and
   run it again. The fields:

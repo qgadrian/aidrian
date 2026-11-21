@@ -273,16 +273,60 @@ test('result text loses character references that spell a mention marker, before
 test('an environment result halts the run with its stop, keeps the issue open, and its attempt does not count', (t) => {
   const fx = started(t);
   assert.match(fx.result({ status: 'environment', stop: null }).err.join('\n'), /an environment result names in "stop" what failed/u);
-  assert.deepEqual(fx.recorded({ status: 'environment', stop: 'git push: could not read Username for github.com' }).out, ['result ENG-1 environment -> open']);
-  const halts = fx.rows().filter((row) => row.event === 'halt');
-  assert.deepEqual(halts.map((row) => row.cause), ['ENG-1 attempt 1 found its environment broken: git push: could not read Username for `github.com`']);
+  const stop = 'git push: could not read Username for github.com, token ghp_abcdefghijklmnopqrstuvwxyz0123';
+  assert.deepEqual(fx.recorded({ status: 'environment', stop }).out, ['result ENG-1 environment -> open']);
+  const rows = fx.rows();
+  const halt = rows.findIndex((row) => row.event === 'halt');
+  assert.ok(halt >= 0 && halt < rows.findIndex((row) => row.event === 'result'), 'the halt row comes before the result row');
+  assert.deepEqual(rows.filter((row) => row.event === 'halt').map((row) => row.cause), ['ENG-1 attempt 1 found its environment broken: git push: could not read Username for `github.com`, token [redacted]']);
   assert.equal(spentAttempts(readRun(fx.state, 'launch'), 'ENG-1'), 0);
   fx.claude.states[CHILD] = 'done';
   assert.match(fx.cmd(['next', 'launch']).out[0], /^halted ENG-1 attempt 1 found its environment broken/u);
   assert.match(fx.cmd(['start', 'launch', 'ENG-1']).out[0], /^halt the run is halted/u);
+  // The wait sweeps ended attempts, but keeps this one's folder while its issue is open: its clone may hold unpushed work.
+  fx.cmd(['wait', 'launch', '--max-wait', '0']);
+  assert.ok(existsSync(path.join(runFolder(fx.state, 'launch'), 'attempts', 'ENG-1.1')), 'the environment attempt keeps its folder');
   const resumed = fx.cmd(['resume', 'launch'], { session: OTHER });
   assert.equal(resumed.exitCode, 0, resumed.err.join('\n'));
   const next = fx.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(next.exitCode, 0, next.err.join('\n'));
   assert.ok(next.out.includes('started ENG-1 attempt 2 session c0ffee02'), next.out.join('\n'));
+});
+
+test('only the first 3 environment attempts of an issue go uncounted', (t) => {
+  const fx = started(t);
+  for (let n = 0; n < 4; n += 1) {
+    const session = STARTED[n].session;
+    if (n > 0) {
+      assert.equal(fx.cmd(['resume', 'launch'], { session: OTHER }).exitCode, 0);
+      const again = fx.cmd(['start', 'launch', 'ENG-1']);
+      assert.equal(again.exitCode, 0, again.err.join('\n'));
+    }
+    assert.deepEqual(fx.recorded({ status: 'environment', stop: `no network, try ${n + 1}` }, session).out, ['result ENG-1 environment -> open']);
+    fx.claude.states[session] = 'done';
+  }
+  assert.equal(spentAttempts(readRun(fx.state, 'launch'), 'ENG-1'), 1);
+});
+
+test('a result stop has credentials masked', () => {
+  const { result } = validateResult({ status: 'failed', stop: 'push to https://bob:hunter2pass@example.test/x failed; Authorization: Bearer abcdefghijklmnop; key AKIAABCDEFGHIJKL' });
+  assert.doesNotMatch(result.stop, /hunter2pass|abcdefghijklmnop|AKIAABCDEFGHIJKL/u);
+  assert.match(result.stop, /\[redacted\]/u);
+});
+
+test('a start refuses a halt written after it read the run, under the ledger lock it writes ahead under', (t) => {
+  const fx = runFixture(t);
+  let halted = false;
+  const racing = (command, args, options) => {
+    if (!halted) {
+      halted = true;
+      appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'halt', cause: 'ENG-9 attempt 1 found its environment broken: no network', key: 'ENG-9', attempt: 1, at: new Date().toISOString() }] }));
+    }
+    return fx.claude.run(command, args, options);
+  };
+  const start = fx.cmd(['start', 'launch', 'ENG-1'], { spawn: racing });
+  assert.ok(halted, 'the host was asked before the write-ahead');
+  assert.equal(start.exitCode, 1);
+  assert.match(start.out[0], /^halt the run is halted: ENG-9 attempt 1 found its environment broken: no network/u);
+  assert.equal(fx.rows().filter((row) => row.event === 'start' || (row.event === 'issue' && row.state === 'running')).length, 0, 'nothing was written ahead');
 });

@@ -11,6 +11,14 @@ const BREAKS = /[\p{Cc}\p{Zl}\p{Zp}]/gu;
 // inline code span, which a tracker renders as text and never as a link.
 const DOMAIN = /(?<![\w.@-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}(?![\w-])(?:[/:]\S*)?/giu;
 
+// `text` with anything shaped like a credential masked as `[redacted]`: a forge, chat, cloud, or API token by its
+// prefix, a JSON web token, the password of a URL's user part, and the value after an HTTP Authorization scheme.
+export const maskSecrets = (text) => String(text)
+  .replace(/\b(?:gh[pousr]_|github_pat_|glpat-|sk-|xox[abpr]-|AKIA)[A-Za-z0-9_-]{8,}/gu, '[redacted]')
+  .replace(/\b(?:eyJ[A-Za-z0-9_-]{10,}\.){2}[A-Za-z0-9_-]{10,}/gu, '[redacted]')
+  .replace(/(:\/\/[^\s/:@]+:)[^\s/@]+@/gu, '$1[redacted]@')
+  .replace(/\b((?:basic|bearer|token)\s+)[A-Za-z0-9+/=._-]{12,}/giu, '$1[redacted]');
+
 // Text a result keeps of a field: INVISIBLE characters, images, links (their text kept), HTML, bare addresses, backticks,
 // and every `@` before a word, as a mention starts, removed until the text stops changing, so a removal cannot join a new
 // one (`@@name`, `@<b></b>name`); each domain-shaped token wrapped in an inline code span; white space folded, cut at

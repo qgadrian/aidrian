@@ -9,7 +9,7 @@ import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSy
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 
-import { cleanText } from './clean-text.mjs';
+import { cleanText, maskSecrets } from './clean-text.mjs';
 import { changeNotFound } from './forges/index.mjs';
 import { appendToRun, runFolder } from './project-run.mjs';
 import { ISSUE_ATTEMPTS, latestStart, spentAttempts } from './project-run-guard.mjs';
@@ -73,7 +73,7 @@ export function validateResult(value) {
   }
   if (value.status === 'parked' && Array.isArray(given) && given.length === 0) problems.push('a parked result names the decisions it waits on');
   if (value.status === 'environment' && (typeof value.stop !== 'string' || !cleanText(value.stop, CAPS.stop))) problems.push('an environment result names in "stop" what failed');
-  const stop = value.stop === undefined || value.stop === null ? null : cleanText(value.stop, CAPS.stop);
+  const stop = value.stop === undefined || value.stop === null || typeof value.stop !== 'string' ? null : cleanText(maskSecrets(value.stop), CAPS.stop);
   if (value.stop !== undefined && value.stop !== null && typeof value.stop !== 'string') problems.push('"stop" is not text or null');
   return problems.length ? { result: null, problems } : { result: { status: value.status, pr, decisions, stop }, problems };
 }
@@ -230,10 +230,10 @@ function dropRows({ run, key, start, spent, branch, forge, repository, now }) {
   const { result } = checked;
   const next = afterResult(key, start.attempt, result.status, spent);
   return {
-    rows: [
-      { event: 'result', key, attempt: start.attempt, session: start.child, via: 'drop', status: result.status, pr: result.pr, verified: result.status === 'merged', at }, { ...next, at },
-      ...(result.status === 'environment' ? [environmentHalt({ key, attempt: start.attempt, stop: result.stop, at })] : []),
-    ],
+    // An environment result's halt row comes first, as each row is its own append: a wait cut after it leaves the run
+    // halted with the issue still running, whose drop the next wait takes in again.
+    halt: result.status === 'environment' ? environmentHalt({ key, attempt: start.attempt, stop: result.stop, at }) : null,
+    rows: [{ event: 'result', key, attempt: start.attempt, session: start.child, via: 'drop', status: result.status, pr: result.pr, verified: result.status === 'merged', at }, { ...next, at }],
     line: `${result.status} -> ${next.state}${next.decision ? ` ${next.decision}` : ''}`,
     kept: { run, key, attempt: start.attempt, session: start.child, at, via: 'drop', ...result },
   };
@@ -252,7 +252,7 @@ export function ingestDrops({ state, run, found, forge, now }) {
     const taken = dropRows({ run, key, start, spent: spentAttempts(found, key), branch, forge, repository: found.init.repository, now });
     if (!taken) continue;
     const written = safely(() => appendToRun(state, run, (fresh) => (fresh.states.get(key)?.state === 'running' && latestStart(fresh, key)?.attempt === start.attempt
-      ? { rows: taken.rows } : { rows: [] })));
+      ? { rows: taken.halt ? [taken.halt, ...taken.rows] : taken.rows } : { rows: [] })));
     if (!written?.rows?.length) continue;
     if (taken.kept) safely(() => writeResultFile(state, run, key, taken.kept));
     const after = taken.rows[1];

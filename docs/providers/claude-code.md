@@ -516,8 +516,12 @@ the home folder, and only when that record trusts the runs folder itself or a fo
 preflight checks it: an entry for one run's folder below it, or one an earlier start left for the same clone path,
 never stands in for that consent. Nothing else of the state folder is trusted. The consent and the update come from one
 read of the record; the new record is staged in `.claude-trust-stage` beside it, a sandbox read barrier as the record
-is and never a link, under a lock folder there that keeps two starts from undoing each other's update, and renamed
-over it only when the file still holds what was read. That narrows, but cannot close,
+is and never a link, under a lock file there that keeps two starts from undoing each other's update, and renamed
+over it only when the file still holds what was read. The lock holds its start's process id, only its holder removes
+it, and it is never taken over: a lock a start left when it ended is named for the Human to remove. A clone the record
+trusts already needs neither the stage nor the lock. The stage and the record lie in the user's own config folder,
+which no confined session may write, so only a process outside the sandbox could swap the stage for a link between
+its check and the write, and such a process can read the record itself. That narrows, but cannot close,
 the race with a host session that saves the record in the instant between that check and the rename, since the host
 takes no lock a writer outside it could share: such a save can lose the new entry, so that start refuses with
 `Workspace not trusted` and the same trust step, or be lost itself. A session started by an earlier plugin version,

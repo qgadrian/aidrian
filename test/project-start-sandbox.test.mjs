@@ -259,6 +259,28 @@ test('a start whose beacon never comes stops the session and names the proof; on
   }
 });
 
+test('a start takes consent from the runs folder the run names, not one walked up from the clone\'s real path', (t) => {
+  const fx = runFixture(t, { init: false });
+  const { root, cwd, git } = folders(t);
+  // The run names its runs folder through a link, and the Human trusted that spelling alone.
+  const link = `${root}-linked`;
+  symlinkSync(root, link);
+  t.after(() => rmSync(link, { force: true }));
+  const runs = path.join(link, 'runs');
+  const record = path.join(fx.env.CLAUDE_CONFIG_DIR, '.claude.json');
+  writeFileSync(record, JSON.stringify({ projects: { [runs]: { hasTrustDialogAccepted: true } } }));
+  const claude = fakeClaude({ dir: fx.dir });
+  const start = (more) => startProject({
+    session: DRIVER, cwd, prompt: 'Work it.', name: 'launch · ENG-1 · 1', env: fx.env, hold: () => true, identify: () => true, beacon: () => true,
+    sandbox: { git, grants: [git], domains: ['github.com'] }, home: fx.home, platform: 'linux', run: claude.run, wait: () => {}, resolve: () => '/bin/claude', readMode: () => 'acceptEdits', ...more,
+  });
+  const fallback = start({});
+  assert.match(fallback.problem ?? '', /trusts neither the runs folder/u, 'walked up from the clone, the link spelling is never met');
+  const named = start({ runs });
+  assert.equal(named.problem, undefined, named.problem);
+  assert.equal(JSON.parse(readFileSync(record, 'utf8')).projects[cwd].hasTrustDialogAccepted, true, 'the clone is recorded under its real path');
+});
+
 test('a start the host refuses for an untrusted folder names the trust step: the runs folder, never the whole state folder', (t) => {
   const fx = runFixture(t, { init: false });
   const { root, cwd, git } = folders(t, fx);

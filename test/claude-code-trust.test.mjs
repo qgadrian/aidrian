@@ -1,6 +1,6 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -129,32 +129,37 @@ test('the consent step quotes a runs folder a shell would split', (t) => {
   assert.ok(trustProblem({ folder: spaced, env: fx.env }).problem.includes(`mkdir -p '${spaced.replaceAll("'", "'\\''")}'`));
 });
 
-test('two starts never update the record at once: a held stage waits, and a crashed start\'s stale hold is taken over', (t) => {
+test('two starts never update the record at once: a held lock waits, is never taken over, and only its holder removes it', (t) => {
   const fx = layout(t);
   fx.write({ [fx.runs]: { hasTrustDialogAccepted: true } });
   const lock = path.join(fx.config, TRUST_STAGE, 'lock');
-  mkdirSync(lock, { recursive: true });
-  const old = new Date(Date.now() - 60_000);
-  utimesSync(lock, old, old);
-  assert.equal(recordTrust({ work: fx.work, runs: fx.runs, env: fx.env }), null, 'a stale hold is taken over');
-  assert.equal(existsSync(lock), false, 'and released');
-  assert.equal(fx.read().projects[fx.work].hasTrustDialogAccepted, true);
+  mkdirSync(path.dirname(lock), { recursive: true });
+  // A live start's lock: this process holds it.
+  writeFileSync(lock, `${process.pid} 0 x`);
+  assert.match(recordTrust({ work: fx.work, runs: fx.runs, env: fx.env, lockWait: 100 }).problem, /another start held .*lock for over 0\.1 seconds/u);
+  assert.equal(readFileSync(lock, 'utf8'), `${process.pid} 0 x`, 'never taken over');
+  assert.equal(fx.read().projects[fx.work], undefined);
+  // A dead start's lock is named for the Human to remove.
+  writeFileSync(lock, '999999999 0 x');
+  assert.match(recordTrust({ work: fx.work, runs: fx.runs, env: fx.env, lockWait: 100 }).problem, /was left by a start that ended while it held it; remove that file, then start again/u);
+  rmSync(lock);
+  assert.equal(recordTrust({ work: fx.work, runs: fx.runs, env: fx.env }), null);
+  assert.equal(existsSync(lock), false, 'released');
+  // A clone trusted already needs no stage, even one that cannot be made.
+  rmSync(path.dirname(lock), { recursive: true });
+  writeFileSync(path.dirname(lock), 'a file');
+  assert.equal(recordTrust({ work: fx.work, runs: fx.runs, env: fx.env }), null);
 });
 
 test('a copy that cannot be renamed over the record is removed, and the trust error is kept', (t) => {
   const fx = layout(t);
   fx.write({ [fx.runs]: { hasTrustDialogAccepted: true } });
-  // A folder at the record's path makes the rename fail after the copy is made.
-  const record = readFileSync(fx.file, 'utf8');
-  rmSync(fx.file);
-  mkdirSync(fx.file);
-  writeFileSync(path.join(fx.file, 'x'), '');
-  assert.match(recordTrust({ work: fx.work, runs: fx.runs, env: fx.env }).problem, /cannot be read \(EISDIR\)/u);
-  rmSync(fx.file, { recursive: true, force: true });
-  writeFileSync(fx.file, record);
+  // The stage can be written, but the folder that holds the record cannot, so the rename fails after the copy is made.
+  mkdirSync(path.join(fx.config, TRUST_STAGE), { mode: 0o700 });
   chmodSync(fx.config, 0o500);
   t.after(() => existsSync(fx.config) && chmodSync(fx.config, 0o700));
-  assert.match(recordTrust({ work: fx.work, runs: fx.runs, env: fx.env }).problem, /could not be (written|updated) \(EACCES\)/u);
+  assert.match(recordTrust({ work: fx.work, runs: fx.runs, env: fx.env }).problem, /could not be written \(EACCES\), so the attempt's clone is not trusted$/u);
   chmodSync(fx.config, 0o700);
-  assert.deepEqual(readdirSync(path.join(fx.config, TRUST_STAGE)), [], 'no copy left behind');
+  assert.deepEqual(readdirSync(path.join(fx.config, TRUST_STAGE)), [], 'the copy and the lock are gone');
+  assert.equal(fx.read().projects[fx.work], undefined);
 });

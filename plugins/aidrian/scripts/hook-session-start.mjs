@@ -267,8 +267,9 @@ function shareShellVars(input) {
     if (!token) return null;
     const handed = Boolean(token.vars) && start.shellEnv?.({ env: process.env, vars: token.vars }) === true;
     const why = handed ? null : token.problem ?? 'the host\'s session environment file could not be written owner-only';
-    // The verdict the start's proof check reads (lib/project-confine.mjs confineCheck): nothing secret.
-    writeHandoff(token.folder, { handed, why });
+    // The verdict the start's proof check reads (lib/project-confine.mjs confineCheck): nothing secret, and only from the
+    // session that holds the start's claim, so no other session's hook overwrites it.
+    if (token.folder) writeHandoff(token.folder, { handed, why });
     return handed ? null : `Forge token: not handed to this session: ${why}. Its pushes and forge calls will not sign in; report that, and push nothing.`;
   } catch {
     return null;

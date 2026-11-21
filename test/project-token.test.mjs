@@ -19,7 +19,7 @@ import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import { confineReads, sandboxSettings, writeEnvFile } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
-import { confinedTokenVars } from '../plugins/aidrian/lib/project-start.mjs';
+import { accessProblem, confinedTokenVars } from '../plugins/aidrian/lib/project-start.mjs';
 import { receivePackStatus, tokenMayPush } from '../plugins/aidrian/lib/forges/github-token.mjs';
 import { confineCheck } from '../plugins/aidrian/lib/project-confine.mjs';
 import { CLAIM_VAR, DEFAULT_KEYCHAIN_SERVICE, forgeToken, handoffProblem, keychainToken, tokenVars } from '../plugins/aidrian/lib/project-token.mjs';
@@ -182,7 +182,7 @@ test('a start whose token may not push halts, though the driver\'s own login may
   fx.forge.tokenPush = (token) => token !== FIXTURE_TOKEN;
   const halted = fx.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(halted.exitCode, 1, halted.out.join('\n'));
-  assert.equal(halted.out[0], 'halt the forge token from the forge CLI\'s login for github.com may not push to github.com/acme/widgets, as the forge\'s push probe with it answers; give that source a token that may write the repository\'s contents');
+  assert.equal(halted.out[0], 'halt the forge token from the forge CLI\'s login for github.com may not push to github.com/acme/widgets, as the forge\'s push probe with it answers (the forge answered 403); give that source a token that may write the repository\'s contents');
   assert.deepEqual(fx.claude.starts(), [], 'no claude --bg');
   assert.ok(fx.forge.calls.some(([name, repo, options]) => name === 'tokenCanPush' && repo === 'acme/widgets' && options.host === 'github.com' && options.token === 'given'));
   // A probe the forge answers with neither: the start says so, and starts nothing.
@@ -193,9 +193,9 @@ test('a start whose token may not push halts, though the driver\'s own login may
 
 test('the push probe asks GitHub for the receive-pack advertisement, with the token in the environment under the host\'s variable, never an argument', () => {
   const calls = [];
-  const exec = (program, args, options) => (calls.push({ program, args, options }), '403');
-  assert.equal(receivePackStatus('acme/widgets', { host: 'github.com', token: 'github_pat_RO0123456789', exec }), 403);
-  assert.equal(receivePackStatus('acme/widgets', { host: 'ghe.example.com', token: 'ghe_token0123456789', exec }), 403);
+  const exec = (program, args, options) => (calls.push({ program, args, options }), '403 text/plain; charset=utf-8');
+  assert.deepEqual(receivePackStatus('acme/widgets', { host: 'github.com', token: 'github_pat_RO0123456789', exec }), { status: 403, type: 'text/plain; charset=utf-8' });
+  receivePackStatus('acme/widgets', { host: 'ghe.example.com', token: 'ghe_token0123456789', exec });
   assert.equal(calls[0].program, process.execPath);
   assert.deepEqual(calls[0].args.slice(2), ['https://github.com/acme/widgets.git/info/refs?service=git-receive-pack', 'GH_TOKEN']);
   assert.equal(calls[0].options.env.GH_TOKEN, 'github_pat_RO0123456789');
@@ -203,10 +203,49 @@ test('the push probe asks GitHub for the receive-pack advertisement, with the to
   assert.equal(calls[1].options.env.GH_ENTERPRISE_TOKEN, 'ghe_token0123456789');
   assert.ok(calls.every((call) => !call.args.join(' ').includes('token0123456789') && !call.args.join(' ').includes('RO0123456789')), 'never an argument');
   assert.equal(calls[0].options.shell, undefined, 'no shell');
-  // 200 may push; 401, 403, and 404 may not; anything else says neither.
-  const may = (status) => tokenMayPush('acme/widgets', { host: 'github.com', token: 't', probe: () => status });
-  assert.deepEqual([200, 401, 403, 404].map(may), [true, false, false, false]);
-  assert.throws(() => may(500), /the forge answered the push probe with 500/u);
+  // Only a 200 that is a receive-pack advertisement may push; a 200 of HTML, as a login page, may not.
+  const may = (status, type) => tokenMayPush('acme/widgets', { host: 'github.com', token: 't', probe: () => ({ status, type }) });
+  assert.deepEqual(may(200, 'application/x-git-receive-pack-advertisement'), { may: true, why: null });
+  assert.deepEqual(may(200, 'text/html; charset=utf-8'), { may: false, why: 'the forge answered 200 with text/html, not a push advertisement' });
+  assert.deepEqual([401, 403, 404].map((status) => may(status, 'text/plain')), [401, 403, 404].map((status) => ({ may: false, why: `the forge answered ${status}` })));
+  assert.throws(() => may(500, 'text/plain'), /the forge answered the push probe with 500/u);
+});
+
+test('the machine\'s default keychain entry is read for github.com alone: an Enterprise run takes the project entry or its own login', () => {
+  const both = { 'aidrian-forge': KEYCHAIN_TOKEN, 'aidrian-project-run': 'github_pat_DEFAULT0123456789' };
+  const enterprise = { host: 'ghe.example.com', owner: 'acme', name: 'widgets' };
+  const project = entries(both);
+  assert.deepEqual(forgeToken({ forge: login(), repository: enterprise, keychain: ENTRY, platform: 'darwin', exec: project.exec }).id, 'project');
+  const machineOnly = entries({ 'aidrian-project-run': 'github_pat_DEFAULT0123456789' });
+  const forge = login('ghe_LOGIN0123456789');
+  const read = forgeToken({ forge, repository: enterprise, platform: 'darwin', exec: machineOnly.exec });
+  assert.deepEqual([read.token, read.id], ['ghe_LOGIN0123456789', 'login'], 'the Enterprise host\'s own login, never the machine entry');
+  assert.deepEqual(machineOnly.read, [], 'the machine entry is not even read');
+  assert.deepEqual(forge.calls, [{ host: 'ghe.example.com' }]);
+  // The same machine, on github.com, takes the machine entry.
+  assert.equal(forgeToken({ forge: login(), repository: REPOSITORY, platform: 'darwin', exec: entries(both).exec }).id, 'machine');
+  assert.equal(forgeToken({ forge: login(), repository: enterprise, platform: 'darwin', only: 'machine', exec: entries(both).exec }).problem, 'the source the start checked, machine, is not one this machine reads now');
+});
+
+test('a start halts unless one of git\'s credential helpers for the origin is the forge CLI\'s', (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'aidrian-helper-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const main = path.join(root, 'main');
+  execFileSync('git', ['init', '-q', main]);
+  execFileSync('git', ['-C', main, 'remote', 'add', 'origin', 'https://github.com/acme/widgets.git']);
+  const cap = { access: () => null, forgeTokenEnv: true };
+  const forge = { repository: () => ({ permissions: { push: true } }), authToken: () => FIXTURE_TOKEN, tokenCanPush: () => ({ may: true, why: null }) };
+  const ask = (config) => {
+    const file = path.join(root, `gitconfig-${Math.random().toString(16).slice(2)}`);
+    writeFileSync(file, `[user]\n\tname = t\n\temail = t@example.invalid\n${config}`);
+    return accessProblem({ cap, forge, repository: REPOSITORY, env: { ...process.env, GIT_CONFIG_GLOBAL: file, GIT_CONFIG_NOSYSTEM: '1' }, guarded: [], main, platform: 'linux' });
+  };
+  assert.deepEqual(ask(''), { halt: 'git\'s credential helpers for https://github.com (none) hold none of the forge CLI\'s, and the issue session\'s git push gets the forge token only through it; run `gh auth setup-git`, then start again' });
+  assert.equal(ask('[credential]\n\thelper = osxkeychain\n').halt, 'git\'s credential helpers for https://github.com (`osxkeychain`) hold none of the forge CLI\'s, and the issue session\'s git push gets the forge token only through it; run `gh auth setup-git`, then start again');
+  // gh's own, as `gh auth setup-git` writes it for the host, or as the plain helper, passes.
+  for (const config of ['[credential "https://github.com"]\n\thelper =\n\thelper = !/opt/homebrew/bin/gh auth git-credential\n', '[credential]\n\thelper = osxkeychain\n\thelper = !gh auth git-credential\n']) {
+    assert.equal(ask(config).halt, undefined, config);
+  }
 });
 
 test('preflight says ok access with a note naming the token\'s source, and a blocker when there is none', (t) => {
@@ -262,11 +301,13 @@ test('the SessionStart hook hands GH_TOKEN, from the source the start checked, t
   mkdirSync(path.dirname(envFile('again')), { recursive: true });
   assert.equal(hook(STARTED[0].session, work, envFile('again'), { [CLAIM_VAR]: claim }).status, 0);
   assert.deepEqual(JSON.parse(readFileSync(path.join(attempt, 'token-handoff.json'), 'utf8')), { handed: true });
-  // The same session without the claim, as one another person opened, gets no token, and is told why.
+  // The same session without the claim, as one another person opened, gets no token, is told why, and leaves the
+  // record of the successful handoff as it was.
   const bare = envFile('bare');
   const unclaimed = hook(STARTED[0].session, work, bare);
   assert.doesNotMatch(text(bare), /GH_TOKEN/u);
   assert.match(unclaimed.stdout, /Forge token: not handed to this session: this session does not hold the claim the start gave the session it launched/u);
+  assert.deepEqual(JSON.parse(readFileSync(path.join(path.dirname(work), 'token-handoff.json'), 'utf8')), { handed: true }, 'a stranger overwrites no verdict');
   // Another session in that clone, and the session elsewhere, get none either, even with the claim.
   for (const [session, cwd] of [['abcd1234-0000-4000-8000-00000000ff01', work], [STARTED[0].session, fx.dir]]) {
     const other = envFile(`${session}-${path.basename(cwd)}`);
@@ -296,7 +337,7 @@ test('in the launch window, while the host has not named the session, only the s
   const stranger = 'abcd1234-0000-4000-8000-00000000fe01';
   const token = () => ({ token: FIXTURE_TOKEN, source: 'the login' });
   const folder = path.dirname(work);
-  assert.deepEqual(confinedTokenVars({ session: stranger, cwd: work, env: fx.env, token }), { problem: 'this session does not hold the claim the start gave the session it launched, so it is not that session', folder });
+  assert.deepEqual(confinedTokenVars({ session: stranger, cwd: work, env: fx.env, token }), { problem: 'this session does not hold the claim the start gave the session it launched, so it is not that session', folder: null });
   assert.deepEqual(confinedTokenVars({ session: stranger, cwd: work, env: { ...fx.env, [CLAIM_VAR]: 'f'.repeat(48) }, token }).problem, 'this session does not hold the claim the start gave the session it launched, so it is not that session', 'a wrong claim');
   assert.deepEqual(confinedTokenVars({ session: stranger, cwd: work, env: { ...fx.env, [CLAIM_VAR]: claim }, token }), { vars: { GH_TOKEN: FIXTURE_TOKEN }, folder }, 'the launched session, before the host names it');
 });

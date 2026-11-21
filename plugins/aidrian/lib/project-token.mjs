@@ -2,8 +2,9 @@
 // the session (docs/providers/claude-code.md#project-start). Three sources, in order, each with an id:
 //   1. `project`, on macOS: the keychain entry the main checkout's local file (LOCAL_FILE) names in
 //      projectRun.forgeTokenKeychain, read with `security find-generic-password -s <service> -a <account> -w`;
-//   2. `machine`, on macOS: the machine's default keychain entry, service DEFAULT_KEYCHAIN_SERVICE with any account,
-//      which every project on the machine shares: `security find-generic-password -s aidrian-project-run -w`;
+//   2. `machine`, on macOS and for github.com alone: the machine's default keychain entry, service
+//      DEFAULT_KEYCHAIN_SERVICE with any account, which every project on the machine shares:
+//      `security find-generic-password -s aidrian-project-run -w`;
 //   3. `login`: the forge CLI's own login for the repository's host (forgeFor's authToken), wherever the CLI keeps it.
 // Each keychain read is an argv with no shell. The start picks the first source that gives a token, checks that token
 // may push, and records the source's id and the token's digest, with the digest of a claim it gives the session it
@@ -71,7 +72,8 @@ function sources({ keychain, platform, forge, host, env, exec, timeoutMs }) {
   const options = { env, exec, timeoutMs };
   const list = [];
   if (platform === 'darwin' && keychain) list.push({ id: 'project', label: projectEntry(keychain), read: () => keychainToken(keychain, options) });
-  if (platform === 'darwin') list.push({ id: 'machine', label: DEFAULT_ENTRY, quiet: true, read: () => keychainToken({ service: DEFAULT_KEYCHAIN_SERVICE }, options) });
+  // The machine's default entry holds a github.com token: a run on any other host never reads it, so never sends it.
+  if (platform === 'darwin' && String(host ?? '').toLowerCase() === 'github.com') list.push({ id: 'machine', label: DEFAULT_ENTRY, quiet: true, read: () => keychainToken({ service: DEFAULT_KEYCHAIN_SERVICE }, options) });
   list.push({ id: 'login', label: `the forge CLI's login for ${host}`, read: () => loginToken(forge, host) });
   return list;
 }

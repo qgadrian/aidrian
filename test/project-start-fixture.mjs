@@ -112,7 +112,8 @@ export function fakeForge(config, head, views = {}, { push = () => true, token =
     },
     tokenCanPush: (repo, options) => {
       calls.push(['tokenCanPush', repo, { host: options?.host, token: typeof options?.token === 'string' ? 'given' : 'none' }]);
-      return forge.tokenPush(options.token);
+      const may = forge.tokenPush(options.token);
+      return { may, why: may ? null : 'the forge answered 403' };
     },
     contents: (repo, file, ref, options) => {
       calls.push(['contents', repo, file, ref, options]);

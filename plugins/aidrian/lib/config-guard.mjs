@@ -151,7 +151,7 @@ export function machineSwitchWriteDenial(input, project, { names: { human } }, {
   const aimed = targets.length > 0 || names.some((name) => name.toLowerCase().includes(local)) || globbed();
   const reached = !aimed && opaque && opaqueGlobbedFile(globs, locals, seen, project.checkouts) !== null;
   if (!aimed && !reached && !(erases && !opaque && erasesOtherwise(input, project, plain, globs))) return null;
-  const hit = opaque || isBash ? named[0] ?? EVERY_SWITCH : named.find((each) => changesSwitch(input, targets[0], each));
+  const hit = opaque || isBash ? named[0] ?? EVERY_SWITCH : named.find((each) => changesSwitch(input, targets[0], each, local));
   if (!hit || (!subagent && !unattended())) return null;
   // A session no Human attends is a main session, so the reason names the Human, not the main session.
   const only = (text) => (subagent ? text : `${text.replace(/^only the main session/u, 'only a main session a Human attends')}, and the background handoff route started this one, with no Human`);
@@ -223,15 +223,37 @@ export const bashCall = (input) => input.tool_name === 'Bash';
 // names the key, or when the file it leaves parses to another value than the file on disk, which covers
 // `"off"` to `"on"`, a JSON escape, a removed key, and a file left unparsable. A patch changes it when a line it adds or
 // removes names the key, or the switch's own `patched` shape: a patch is not applied here, so a value on a line of its own
-// that names neither, or a key spelled with a JSON escape, is not seen.
-function changesSwitch({ tool_name: tool, tool_input: given }, file, { key, valueIn, patched }) {
+// that names neither, or a key spelled with a JSON escape, is not seen. Each operation of a patch whose file, or the
+// file it moves to, is the local file named `local` is judged alone, against that file as it is on disk, from the
+// call's folder `cwd`.
+function changesSwitch({ tool_name: tool, tool_input: given, cwd }, file, { key, valueIn, patched }, local = path.basename(file ?? '')) {
   const edit = fileEditOf({ tool_name: tool, tool_input: given });
-  if (edit?.shape === 'patch') return typeof patched === 'function' ? patched(edit.text, readText(file)) : patched.test(edit.text);
+  if (edit?.shape === 'patch') {
+    return patchOperations(edit.text).some(({ files, text }) => files.filter((each) => path.basename(each).toLowerCase() === local.toLowerCase())
+      .some((each) => (typeof patched === 'function' ? patched(text, readText(path.resolve(typeof cwd === 'string' ? cwd : process.cwd(), each))) : patched.test(text))));
+  }
   const written = edit?.shape === 'write' ? edit.content : edit?.shape === 'edit' ? edit.newText : undefined;
   if (typeof written !== 'string') return false;
   if (written.includes(key)) return true;
   const before = readText(file);
   return switchIn(before, valueIn) !== switchIn(edit.shape === 'write' ? written : editedText(before, given), valueIn);
+}
+
+// The operations of an apply_patch text, each { files, text }: the file its `*** Add File:`, `*** Update File:`, or
+// `*** Delete File:` header names, and a `*** Move to:` one, with the operation's own lines, headers included.
+function patchOperations(text) {
+  const operations = [];
+  for (const line of String(text ?? '').split(/\r?\n/u)) {
+    const header = /^\*\*\* (?:Add|Update|Delete) File: (.+)$/u.exec(line);
+    const move = /^\*\*\* Move to: (.+)$/u.exec(line);
+    if (header) operations.push({ files: [header[1].trim()], text: `${line}\n` });
+    else if (/^\*\*\* (?:Begin|End) Patch/u.test(line)) continue;
+    else if (operations.length) {
+      if (move) operations.at(-1).files.push(move[1].trim());
+      operations.at(-1).text += `${line}\n`;
+    }
+  }
+  return operations;
 }
 
 // `text` after an Edit, with its new text taken literally: a replacer function keeps `$&` from meaning what it replaces.

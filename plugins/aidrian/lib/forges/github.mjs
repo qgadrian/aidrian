@@ -966,7 +966,7 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // The token gh signs in to `host` with, from its own login wherever gh keeps it, the system keyring included, or
     // from its token variables: no network call. Throws when gh has none.
     authToken: ({ host } = {}) => gh(['auth', 'token', ...(host ? ['--hostname', host] : [])]).trim(),
-    // Whether `token` may push to `repo` on `host` (default github.com), by a probe that writes nothing: true, false, or
+    // Whether `token` may push to `repo` on `host` (default github.com), by a probe that writes nothing: { may, why }, or
     // a throw when the forge's answer says neither (github-token.mjs tokenMayPush).
     tokenCanPush: (repo, { host = DEFAULT_HOST, token } = {}) => tokenMayPush(repo, { host, token, probe }),
     // The comments on the pull request's conversation, not those on its diff (reviewComments).

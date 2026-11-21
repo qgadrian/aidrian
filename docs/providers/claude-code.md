@@ -495,11 +495,15 @@ No `sandbox.excludedCommands` is passed. Three conditions hold on top of the san
   Enterprise Server host, as gh reads it) in its sandboxed commands' environment:
   the start reads it outside the sandbox, from the first of the project's keychain entry
   ([`projectRun.forgeTokenKeychain`](../config.md#project-run) in `.aidrian.local.json`), the machine's default entry,
-  service `aidrian-project-run`, both on macOS, and `gh auth token --hostname <host>`, and halts when none gives one,
-  or when that very token may not push, whatever the driver's own login may do: the start asks GitHub for the
+  service `aidrian-project-run`, both on macOS, the default entry for a github.com run alone, so no github.com token
+  reaches another host, and `gh auth token --hostname <host>`. It halts when none gives one; when none of git's
+  credential helpers for the origin (`credential.<origin>.helper` and `credential.helper`) is gh's, which is how the
+  session's git push gets the token (fix: `gh auth setup-git`); or when that very token may not push, whatever the
+  driver's own login may do: the start asks GitHub for the
   repository's receive-pack advertisement, `https://<host>/<owner>/<name>.git/info/refs?service=git-receive-pack`,
   with the token as basic auth, from a Node process with no shell that gets the token in its environment. GitHub
-  answers 200 only to a token that may write the contents, and 401 or 403 otherwise; the probe writes nothing. The
+  answers 200 with `application/x-git-receive-pack-advertisement` only to a token that may write the contents, and
+  401 or 403 otherwise; a 200 of any other content type counts as not writable. The probe writes nothing. The
   start records which source gave the token and the token's SHA-256, with the digest of a random claim it passes the
   session it launches as the one `env` key of its inline settings, `AIDRIAN_START_CLAIM`. The plugin's SessionStart
   hook of the confined session hands the token over only when its environment holds that claim, so no other session
@@ -507,8 +511,8 @@ No `sandbox.excludedCommands` is passed. Three conditions hold on top of the san
   sandbox, from that one source, never another, hands it over only when its SHA-256 is the one the start recorded, and
   appends it, in a file it first makes owner-only, to the file `CLAUDE_ENV_FILE` names, as it does the cache
   variables. A source that gives no token then, or another one, or a session without the claim, gets a line saying
-  why instead, and no token. The hook records in the attempt's folder whether it handed the token over, and why not,
-  nothing secret, and the start's check of the sandbox proof fails a start whose record is missing or says not
+  why instead, and no token. The hook of the session that holds the claim, and only it, records in the attempt's
+  folder whether it handed the token over, and why not, nothing secret, and the start's check of the sandbox proof fails a start whose record is missing or says not
   handed, so the run halts as on a failed proof. The host reads that file in its own
   process and runs its lines ahead of each Bash command (2.1.330: "Session environment loaded from CLAUDE_ENV_FILE"),
   so the sandbox hides the whole `session-env` tree and each session still gets its own variables, while no session

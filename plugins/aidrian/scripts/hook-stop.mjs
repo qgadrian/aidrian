@@ -70,7 +70,7 @@ const HOOK_PREFIX = /^\[.*?\]: /u;
 
 // The hook's body, for the payload `input`; `start` is when the call began, 0 for the hook's own process (lib/hook-io.mjs
 // callHook).
-export async function handle(input, { start = 0 } = {}) {
+export async function handle(input) {
   const settled = input.stop_hook_active === false;
   const caused = input.stop_hook_active === true;
   // The result hold goes first, wherever the session's folder is.

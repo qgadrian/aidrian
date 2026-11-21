@@ -7,7 +7,7 @@
 import { agentCall } from '../lib/agent-models.mjs';
 import { loadConfig } from '../lib/config.mjs';
 import { foregroundDispatch } from '../lib/foreground-dispatch.mjs';
-import { isMain, out, runHook } from '../lib/hook-io.mjs';
+import { isMain, print, runHook } from '../lib/hook-io.mjs';
 import { findProject } from '../lib/project.mjs';
 
 // The hook's body, for the payload `input` (lib/hook-io.mjs callHook).
@@ -17,7 +17,7 @@ export async function handle(input) {
   if (!project) return;
   const modelled = agentCall(input.tool_input, loadConfig(project).config.models);
   const updatedInput = foregroundDispatch(input, modelled ?? input.tool_input) ?? modelled;
-  if (updatedInput) out(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput } }));
+  if (updatedInput) print(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput } }));
 }
 
 if (isMain(import.meta.url)) await runHook(handle);

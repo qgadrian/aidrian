@@ -37,8 +37,8 @@ function writeErr(text) {
   else writeSync(2, text);
 }
 
-// Writes `text` and a newline to stdout, where a hook hands the host its JSON or context; callHook keeps it instead.
-export function out(text) {
+// Prints `text` and a newline on stdout, where a hook hands the host its JSON or context; callHook keeps it instead.
+export function print(text) {
   if (called) called.stdout += `${text}\n`;
   else writeSync(1, `${text}\n`);
 }

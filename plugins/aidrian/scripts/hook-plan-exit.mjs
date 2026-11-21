@@ -6,7 +6,7 @@
 // with `background` in the session the gate starts in the background.
 
 import { loadConfig } from '../lib/config.mjs';
-import { isMain, out, runHook } from '../lib/hook-io.mjs';
+import { isMain, print, runHook } from '../lib/hook-io.mjs';
 import { detectHost } from '../lib/hosts/index.mjs';
 import { findProject } from '../lib/project.mjs';
 import { continuation, planApprovedContext, sessionUsage } from '../lib/session-length.mjs';
@@ -21,7 +21,7 @@ export async function handle(input) {
   const { handoff } = config.session;
   const text = readText(input.transcript_path);
   const context = text ? planApprovedContext(handoff, sessionUsage(text), await continuation(handoff, detectHost({ input }), project, config)) : null;
-  if (context) out(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: context } }));
+  if (context) print(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: context } }));
 }
 
 if (isMain(import.meta.url)) await runHook(handle);

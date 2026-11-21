@@ -7,7 +7,7 @@
 // or compact command, and a prompt in a session that handed its work to a background session gets one line naming it.
 
 import { loadConfig } from '../lib/config.mjs';
-import { isMain, out, runHook } from '../lib/hook-io.mjs';
+import { isMain, print, runHook } from '../lib/hook-io.mjs';
 import { continueRoutes, detectHost } from '../lib/hosts/index.mjs';
 import { lastReply, replyWords } from '../lib/names.mjs';
 import { findProject } from '../lib/project.mjs';
@@ -29,7 +29,7 @@ export async function handle(input) {
     out.push(`Names: the last reply said ${words.map((w) => JSON.stringify(w)).join(', ')}. In this reply, call the human ` +
       `${JSON.stringify(names.human)} and yourself ${JSON.stringify(ai)}; a word that quotes someone goes in quotes or backticks.`);
   }
-  if (out.length) out(out.join('\n'));
+  if (out.length) print(out.join('\n'));
 }
 
 if (isMain(import.meta.url)) await runHook(handle);

@@ -31,7 +31,7 @@ import { auditNudge } from '../lib/audits.mjs';
 import { loadConfig, versionFloorProblem } from '../lib/config.mjs';
 import { ageDays, parseDecisions } from '../lib/decisions.mjs';
 import { saveGateSnapshot } from '../lib/gate-snapshot.mjs';
-import { isMain, out, runHook } from '../lib/hook-io.mjs';
+import { isMain, print, runHook } from '../lib/hook-io.mjs';
 import { continueRoutes, detectHost } from '../lib/hosts/index.mjs';
 import { indexedPaths, indexRows, loadKnowledge } from '../lib/knowledge.mjs';
 import { inboxPath, nudge } from '../lib/lesson-inbox.mjs';
@@ -50,7 +50,7 @@ const FOOTER_LINE = 'Pull requests: a body here never carries the "Generated wit
 
 // The hook's body, for the payload `input`; `start` is when the call began, 0 for the hook's own process (lib/hook-io.mjs
 // callHook).
-export async function handle(input, { start = 0 } = {}) {
+export async function handle(input) {
   if (!process.argv.includes('--subagent')) shareShellVars(input);
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (!project) return;
@@ -83,7 +83,7 @@ export async function handle(input, { start = 0 } = {}) {
   const lines = `${line}\n${names}\n${voiceLine(human)}${footer ? `\n${footer}` : ''}${commands ? `\n${commands}` : ''}`;
 
   if (subagent) {
-    out(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: lines } }));
+    print(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: lines } }));
   } else {
     await mainSessionOutput(input, project, { lines, config, buckets });
   }
@@ -122,10 +122,10 @@ async function mainSessionOutput(input, project, { lines, config, buckets }) {
     if (input.source === 'clear' && !input.agent_id) delivery = await clearDelivery(input, project, config);
   } finally {
     const plain = out.join('\n');
-    if (!delivery) out(plain);
+    if (!delivery) print(plain);
     else {
       const additionalContext = delivery.context ? `${plain}\n${delivery.context}` : plain;
-      out(JSON.stringify({ systemMessage: delivery.systemMessage, hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext } }));
+      print(JSON.stringify({ systemMessage: delivery.systemMessage, hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext } }));
     }
   }
 }

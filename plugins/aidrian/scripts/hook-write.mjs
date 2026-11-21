@@ -8,7 +8,7 @@ import path from 'node:path';
 
 import { loadConfig } from '../lib/config.mjs';
 import { anchorClones } from '../lib/attempt-clone.mjs';
-import { block, isMain, out, runHook } from '../lib/hook-io.mjs';
+import { block, isMain, print, runHook } from '../lib/hook-io.mjs';
 import { isIgnored } from '../lib/git.mjs';
 import { findProject } from '../lib/project.mjs';
 import { checkTool } from '../lib/rules/main-checkout.mjs';
@@ -36,7 +36,7 @@ export async function handle(input) {
     ].join('\n'));
   }
   const context = [`The write adds ${hits.length} term(s) the project's terms file warns about; use the replacements in a follow-up edit:`, ...shown(hits)].join('\n');
-  out(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: context } }));
+  print(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: context } }));
 }
 
 if (isMain(import.meta.url)) await runHook(handle);

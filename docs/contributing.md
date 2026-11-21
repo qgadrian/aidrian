@@ -18,8 +18,11 @@ npm run check    # npm run check:static && npm test, what CI runs on the pushed 
 `npm run check:static` is everything but the tests: the generated-files check, `aidrian check` on the example and on
 this repository, `npm run lint`, the version check, and the code-shape scan. For each of Node 22, 24, and 26, CI runs it
 as `Static checks (Node N)` and the tests as `Tests (Node N, 1/2)` and `Tests (Node N, 2/2)`, half the test files each,
-every file whole in one shard and held to its [budget](test-processes.md#child-process-budget) there; `Check (Node N)`,
-the required check, passes only when every one of those jobs passed.
+every file whole in one shard and held to its [budget](test-processes.md#child-process-budget) there. Each of those jobs
+that passes uploads a record of it, `passed-tests-nodeN-shardS` or `passed-static-nodeN`. `Check (Node N)`, the required
+check, passes only when every one of those jobs passed and it finds every one's record: a matrix job's result can read
+success when one of its jobs was cancelled before a runner took it, so a missing record fails the check instead.
+`test/ci-workflow.test.mjs` holds the list the check looks for to the jobs' matrices.
 
 Push a change once its touched tests pass, and let CI run the commands of `npm run check`: a full local run on a loaded machine once
 held a fix back for two hours. Run it locally only when CI cannot, once, before marking ready.

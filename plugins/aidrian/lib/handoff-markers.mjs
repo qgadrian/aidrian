@@ -496,6 +496,7 @@ export function startedFolders(store, session, { now = Date.now() } = {}) {
     ? foldCase(record.id) === own || (record.id.length >= SHORT_ID && own.startsWith(foldCase(record.id)))
     : foldCase(record.session) === own);
   const folders = new Set();
+  // Accepted residual: the store's one listing runs before the first deadline check; each file read after it checks.
   for (const name of listStore(store)) {
     checkDeadline();
     const ran = STARTED_FILE.exec(name)?.[1];

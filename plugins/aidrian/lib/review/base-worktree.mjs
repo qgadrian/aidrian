@@ -47,8 +47,8 @@ export async function inBaseWorktree(root, baseTip, use) {
 // The part of a failed command's stderr worth showing: its last few non-empty lines, cut to a length, with anything
 // shaped like a token masked. A runtime's own last line (Node prints its version) would otherwise hide the cause.
 export function stderrTail(stderr, { lines = 6, chars = 800 } = {}) {
-  const kept = String(stderr ?? '').split('\n').map((line) => line.trimEnd()).filter((line) => line.trim() !== '').slice(-lines).join(' | ');
-  const masked = maskSecrets(kept);
+  // Each line is masked on its own, before the join, so a header's mask never takes the lines after it.
+  const masked = String(stderr ?? '').split('\n').map((line) => maskSecrets(line.trimEnd())).filter((line) => line.trim() !== '').slice(-lines).join(' | ');
   return masked.length > chars ? `...${masked.slice(-chars)}` : masked;
 }
 

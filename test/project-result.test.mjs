@@ -9,7 +9,8 @@
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -17,6 +18,7 @@ import { noteStarted } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { cleanText, RESULT_CAP, validateResult } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { DROP_FILE } from '../plugins/aidrian/lib/project-result.mjs';
 import { stderrTail } from '../plugins/aidrian/lib/review/base-worktree.mjs';
+import { appendRowsAtOnce } from '../plugins/aidrian/lib/jsonl.mjs';
 import { LINGER_GRACE } from '../plugins/aidrian/lib/project-linger.mjs';
 import { appendToRun, readRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { DROP_FILE as GUARD_DROP_FILE, resultHoldReason, spentAttempts } from '../plugins/aidrian/lib/project-run-guard.mjs';
@@ -320,6 +322,10 @@ test('a result stop has credentials masked', () => {
   assert.doesNotMatch(stderrTail('fatal: header Authorization: Basic eDp5 refused'), /eDp5/u);
   assert.doesNotMatch(validateResult({ status: 'failed', stop: '{"Authorization": "Basic eDp5"} and Authorization: Digest username="u", response="abc123"' }).result.stop, /eDp5|abc123/u);
   assert.doesNotMatch(stderrTail('{"authorization":"Basic eDp5"}'), /eDp5/u);
+  const digest = JSON.stringify({ headers: { Authorization: 'Digest username="u7x", response="r9y"' } });
+  assert.doesNotMatch(validateResult({ status: 'failed', stop: digest }).result.stop, /u7x|r9y/u);
+  assert.doesNotMatch(stderrTail(digest), /u7x|r9y/u);
+  assert.match(stderrTail('Authorization: Basic eDp5\nfatal: the plan failed'), /Authorization: \[redacted\] \| fatal: the plan failed$/u);
   assert.match(result.stop, /\[redacted\]/u);
 });
 
@@ -338,4 +344,13 @@ test('a start refuses a halt written after it read the run, under the ledger loc
   assert.equal(start.exitCode, 1);
   assert.match(start.out[0], /^halt the run is halted: ENG-9 attempt 1 found its environment broken: no network/u);
   assert.equal(fx.rows().filter((row) => row.event === 'start' || (row.event === 'issue' && row.state === 'running')).length, 0, 'nothing was written ahead');
+});
+
+test('appendRowsAtOnce writes every row in one append, after a cut last line', (t) => {
+  const folder = mkdtempSync(path.join(tmpdir(), 'rows-'));
+  t.after(() => rmSync(folder, { recursive: true, force: true }));
+  const file = path.join(folder, 'ledger.jsonl');
+  writeFileSync(file, '{"cut":');
+  appendRowsAtOnce(file, [{ a: 1 }, { b: 2 }]);
+  assert.equal(readFileSync(file, 'utf8'), '{"cut":\n{"a":1}\n{"b":2}\n');
 });

@@ -17,7 +17,7 @@ export const maskSecrets = (text) => String(text)
   .replace(/\b(?:gh[pousr]_|github_pat_|glpat-|sk-|xox[abpr]-|AKIA)[A-Za-z0-9_-]{8,}/gu, '[redacted]')
   .replace(/\b(?:eyJ[A-Za-z0-9_-]{10,}\.){2}[A-Za-z0-9_-]{10,}/gu, '[redacted]')
   .replace(/(:\/\/[^\s/:@]+:)[^\s/@]+@/gu, '$1[redacted]@')
-  .replace(/\b(authorization["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\n]*)/giu, '$1[redacted]')
+  .replace(/\b(authorization\\?["']?\s*[:=]\s*)(?:\\?"(?:\\.|[^"\\])*\\?"|'(?:\\.|[^'\\])*'|[^\n|]*)/giu, '$1[redacted]')
   .replace(/\b((?:basic|bearer|token)\s+)(?!\[redacted\])[A-Za-z0-9+/=._-]{12,}/giu, '$1[redacted]');
 
 // Text a result keeps of a field: INVISIBLE characters, images, links (their text kept), HTML, bare addresses, backticks,

@@ -28,7 +28,7 @@ import { runGit } from './git.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
 import { RUNS_FOLDER, startedUnattended } from './handoff-guard.mjs';
 import { looseFolder, openStore, SESSION_ID } from './handoff-markers.mjs';
-import { appendRow, withLocks } from './jsonl.mjs';
+import { appendRow, appendRowsAtOnce, withLocks } from './jsonl.mjs';
 import { committedConfigFile, defaultStateDir, stateDir, stateRoot } from './project.mjs';
 import { dropIssueReads, recordedTexts, sweepIssueReads, writeIssueTexts } from './project-issue-text.mjs';
 import { endedIn } from './run-driver.mjs';
@@ -523,7 +523,7 @@ export function haltOf(found) {
 }
 
 // Appends to the ledger of run `run`, under its lock, the rows `build(found)` returns for the run as readRun reads it under
-// that lock: { rows } appended in order, or { problem } appending none, which is what it returns. The run's folder must
+// that lock: { rows } appended in order, in one write, or { problem } appending none, which is what it returns. The run's folder must
 // hold snapshot.json before the lock is taken, so a missing run gets no folder or lock file. Throws jsonl.mjs's LOCKED when another holds the lock
 // past `waitMs`, jsonl.mjs's wait by default.
 export function appendToRun(state, run, build, { waitMs } = {}) {
@@ -535,7 +535,8 @@ export function appendToRun(state, run, build, { waitMs } = {}) {
     if (found.problem) return { problem: found.problem };
     const built = build(found);
     if (built.problem) return built;
-    for (const row of built.rows) appendRow(file, row);
+    // One write for every row, so a transition's rows land together (an issue's result and its state).
+    appendRowsAtOnce(file, built.rows);
     return built;
   }, waitMs === undefined ? {} : { waitMs });
 }

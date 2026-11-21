@@ -528,7 +528,7 @@ test('preflight blocks a runs folder the host does not trust, passes one under a
   writeFileSync(record, JSON.stringify({ projects: { [fx.dir]: { hasTrustDialogAccepted: true }, [fx.state]: { hasTrustDialogAccepted: false } } }));
   const blocked = line('blocker trust:');
   assert.ok(blocked?.includes(`the host does not trust ${runs} or a folder above it`), blocked);
-  assert.ok(blocked.includes(`create it with \`mkdir -p ${runs}\` if it does not exist yet, then run \`claude\` in it once and accept its trust question`), blocked);
+  assert.ok(blocked.includes(`create it with \`mkdir -p '${runs}'\` if it does not exist yet, then run \`claude\` in it once and accept its trust question`), blocked);
   writeFileSync(record, JSON.stringify({ projects: { [path.dirname(fx.state)]: { hasTrustDialogAccepted: true } } }));
   assert.ok(fx.cmd(['preflight']).out.includes('ok trust'), 'a folder above the runs folder covers it');
   writeFileSync(record, '{ not json');

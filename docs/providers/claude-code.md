@@ -512,13 +512,15 @@ trusts the project's runs folder, `<state>/runs`, once: `mkdir -p` it when the r
 `claude` there and accept its trust question. Inside a git repository the host looks trust up at the repository's own
 root alone (2.1.330, checked live), so an attempt's clone, a repository of its own, never inherits that trust: each
 start records the host's trust for its own clone in the host's trust record, `.claude.json` in `CLAUDE_CONFIG_DIR` or
-the home folder, and only when that record trusts the runs folder or a folder above it at that moment. An entry an
-earlier start left for the same path never stands in for that consent. Nothing else of the state folder is trusted.
-The consent and the update come from one read of the record; the new record is staged in `.claude-trust-stage` beside
-it, a sandbox read barrier as the record is, and renamed over it only when the file still holds what was read, so a
-change the host made meanwhile is never undone; a record that keeps changing is read again, up to three times. A host
-session that writes the record in the instant between that check and the rename can still drop the new entry, and that
-start then refuses with `Workspace not trusted` and the same trust step. `aidrian project preflight` reads the record
+the home folder, and only when that record trusts the runs folder itself or a folder above it at that moment, as
+preflight checks it: an entry for one run's folder below it, or one an earlier start left for the same clone path,
+never stands in for that consent. Nothing else of the state folder is trusted. The consent and the update come from one
+read of the record; the new record is staged in `.claude-trust-stage` beside it, a sandbox read barrier as the record
+is and never a link, and renamed over it only when the file still holds what was read. That narrows, but cannot close,
+the race with a host session that saves the record in the instant between that check and the rename, since the host
+takes no lock a writer outside it could share: such a save can lose the new entry, so that start refuses with
+`Workspace not trusted` and the same trust step, or be lost itself. A session started by an earlier plugin version,
+whose settings predate the staging folder's read barrier, could read the staged copy while it exists. `aidrian project preflight` reads the record
 and blocks a runs folder that neither it nor a folder above it trusts; a record it cannot read is only a note, since
 the file is the host's own and undocumented.
 

@@ -74,8 +74,10 @@ const DOMAIN = /^(?:\*\.)?[a-z0-9.-]+$/iu;
 // What a start the host refused for an untrusted folder tells the Human to do once: trust the run's runs folder, the
 // folder of every attempt's clone, `<state>/runs`, four folders above the clone `work`
 // (`runs/<run>/attempts/<issue>.<attempt>/work`), never the whole state folder.
+// The runs folder of an attempt's clone, `<runs>/<run>/attempts/<issue>.<n>/work`.
+const runsOf = (work) => path.resolve(work, '../../../..');
 const trustStep = (work) => {
-  const runs = path.resolve(work, '../../../..');
+  const runs = runsOf(work);
   const named = path.basename(runs) === 'runs' ? `the project's runs folder, ${runs},` : 'the folder that holds the run\'s attempts';
   return `trust ${named} once by running \`claude\` there and accepting its trust question, then start again`;
 };
@@ -368,7 +370,7 @@ export function startProject({ session, cwd, prompt, name, effort, efforts = [],
   const user = home ?? homedir();
   const settings = sandboxSettings({ ...box, work, temp: tempFolders(), home: user, config: configFolder(env, user), platform, secrets: secretVars(env, box.tokens), stores: npmGlobalConfigs(env) });
   // The clone is a repository of its own, so it never inherits the runs folder's trust: the start records it.
-  const trust = recordTrust({ work, env, home: user });
+  const trust = recordTrust({ work, runs: runsOf(work), env, home: user });
   if (trust) return { problem: `${trust.problem}; ${trustStep(work)}` };
   const started = startIn({ cwd: work, prompt, name, mode: read.mode, effort, efforts, settings, mcp: mcpConfig(mcp), env, hold, run, wait, resolve: () => claude });
   if (started.problem) return REFUSED.test(started.problem) && started.uncertain === false ? { ...started, problem: `${started.problem}; ${trustStep(work)}` } : started;

@@ -32,7 +32,7 @@ test('the trust record is .claude.json in CLAUDE_CONFIG_DIR when set, else in th
 test('a start records trust for its clone when the Human trusted a folder above it, and keeps the rest of the record and its mode', (t) => {
   const fx = layout(t);
   fx.write({ [fx.runs]: { hasTrustDialogAccepted: true, allowedTools: [] }, '/other': { hasTrustDialogAccepted: false } }, { numStartups: 7 });
-  assert.equal(recordTrust({ work: fx.work, env: fx.env }), null);
+  assert.equal(recordTrust({ work: fx.work, runs: fx.runs, env: fx.env }), null);
   const record = fx.read();
   assert.equal(record.numStartups, 7);
   assert.deepEqual(record.projects['/other'], { hasTrustDialogAccepted: false });
@@ -45,26 +45,26 @@ test('a start records trust for its clone when the Human trusted a folder above 
 test('an entry an earlier start left for the clone never stands in for the runs folder\'s consent, which is read again each start', (t) => {
   const fx = layout(t);
   fx.write({ [fx.runs]: { hasTrustDialogAccepted: true } });
-  assert.equal(recordTrust({ work: fx.work, env: fx.env }), null);
+  assert.equal(recordTrust({ work: fx.work, runs: fx.runs, env: fx.env }), null);
   // The launch was refused, the Human revoked the runs folder's trust, and a retry makes the clone at the same path.
   const record = fx.read();
   record.projects[fx.runs].hasTrustDialogAccepted = false;
   writeFileSync(fx.file, JSON.stringify(record));
-  assert.match(recordTrust({ work: fx.work, env: fx.env }).problem, /trusts no folder above the attempt's clone/u);
+  assert.match(recordTrust({ work: fx.work, runs: fx.runs, env: fx.env }).problem, /trusts neither the runs folder .* nor a folder above it/u);
   // With the consent back, a clone trusted already is not rewritten, and an entry of its own keeps its other fields.
   fx.write({ [fx.runs]: { hasTrustDialogAccepted: true }, [fx.work]: { hasTrustDialogAccepted: true, lastCost: 1 } });
   const before = readFileSync(fx.file, 'utf8');
-  assert.equal(recordTrust({ work: fx.work, env: fx.env }), null);
+  assert.equal(recordTrust({ work: fx.work, runs: fx.runs, env: fx.env }), null);
   assert.equal(readFileSync(fx.file, 'utf8'), before, 'not rewritten');
   fx.write({ [fx.runs]: { hasTrustDialogAccepted: true }, [fx.work]: { hasTrustDialogAccepted: false, lastCost: 2 } });
-  assert.equal(recordTrust({ work: fx.work, env: fx.env }), null);
+  assert.equal(recordTrust({ work: fx.work, runs: fx.runs, env: fx.env }), null);
   assert.deepEqual(fx.read().projects[fx.work], { hasTrustDialogAccepted: true, lastCost: 2 });
 });
 
 test('the new record is staged under a sandbox read barrier and removed, and the staging folder is one of the barriers', (t) => {
   const fx = layout(t);
   fx.write({ [fx.runs]: { hasTrustDialogAccepted: true } });
-  assert.equal(recordTrust({ work: fx.work, env: fx.env }), null);
+  assert.equal(recordTrust({ work: fx.work, runs: fx.runs, env: fx.env }), null);
   assert.deepEqual(readdirSync(path.join(fx.config, TRUST_STAGE)), [], 'no copy left behind');
   assert.ok(CREDENTIAL_PATHS.includes(TRUST_STAGE), 'beside a record in the home folder');
   assert.ok(CREDENTIAL_PATHS.includes('.claude.json'));
@@ -73,14 +73,14 @@ test('the new record is staged under a sandbox read barrier and removed, and the
 test('no trust above the clone records nothing and says so; an unreadable record records nothing either', (t) => {
   const fx = layout(t);
   fx.write({ [fx.runs]: { hasTrustDialogAccepted: false }, [path.join(fx.runs, 'other')]: { hasTrustDialogAccepted: true } });
-  const untrusted = recordTrust({ work: fx.work, env: fx.env });
-  assert.equal(untrusted.problem, `the host trusts no folder above the attempt's clone ${fx.work}, which, a repository of its own, inherits no trust`);
+  const untrusted = recordTrust({ work: fx.work, runs: fx.runs, env: fx.env });
+  assert.equal(untrusted.problem, `the host trusts neither the runs folder ${fx.runs} nor a folder above it, and the attempt's clone, a repository of its own, inherits no trust`);
   assert.equal(fx.read().projects[fx.work], undefined);
   assert.match(trustProblem({ folder: fx.runs, env: fx.env }).problem, /does not trust .* or a folder above it/u);
   writeFileSync(fx.file, '{ not json');
-  assert.match(recordTrust({ work: fx.work, env: fx.env }).problem, /cannot be read \(not JSON\), so the attempt's clone cannot be trusted$/u);
+  assert.match(recordTrust({ work: fx.work, runs: fx.runs, env: fx.env }).problem, /cannot be read \(not JSON\), so the attempt's clone cannot be trusted$/u);
   rmSync(fx.file);
-  assert.match(recordTrust({ work: fx.work, env: fx.env }).problem, /cannot be read \(ENOENT\)/u);
+  assert.match(recordTrust({ work: fx.work, runs: fx.runs, env: fx.env }).problem, /cannot be read \(ENOENT\)/u);
   assert.match(trustProblem({ folder: fx.runs, env: fx.env }).note, /cannot be read \(ENOENT\)/u);
 });
 
@@ -89,9 +89,41 @@ test('preflight finds trust recorded on the real path when the runs folder does 
   const parent = path.dirname(path.dirname(fx.runs));
   const link = `${parent}-linked`;
   symlinkSync(parent, link);
+  t.after(() => rmSync(link, { force: true }));
   fx.write({ [path.dirname(fx.runs)]: { hasTrustDialogAccepted: true } });
   const runs = path.join(link, path.basename(path.dirname(fx.runs)), 'runs-not-made-yet');
   assert.equal(trustProblem({ folder: runs, env: fx.env }), null);
   fx.write({});
-  assert.ok(trustProblem({ folder: runs, env: fx.env }).problem.includes(`create it with \`mkdir -p ${runs}\` if it does not exist yet`));
+  assert.ok(trustProblem({ folder: runs, env: fx.env }).problem.includes(`create it with \`mkdir -p '${runs}'\` if it does not exist yet`));
+});
+
+test('consent below the runs folder, such as one run\'s folder, never stands in for the runs folder\'s own', (t) => {
+  const fx = layout(t);
+  fx.write({ [path.join(fx.runs, 'launch')]: { hasTrustDialogAccepted: true } });
+  assert.match(recordTrust({ work: fx.work, runs: fx.runs, env: fx.env }).problem, /trusts neither the runs folder/u);
+  assert.equal(fx.read().projects[fx.work], undefined);
+  assert.ok(trustProblem({ folder: fx.runs, env: fx.env }).problem);
+});
+
+test('a staging folder that is a link or a file refuses the update and leaves the record and the link\'s target as they were', (t) => {
+  const fx = layout(t);
+  fx.write({ [fx.runs]: { hasTrustDialogAccepted: true } });
+  const before = readFileSync(fx.file, 'utf8');
+  const elsewhere = path.join(path.dirname(fx.config), 'elsewhere');
+  mkdirSync(elsewhere);
+  symlinkSync(elsewhere, path.join(fx.config, TRUST_STAGE));
+  assert.match(recordTrust({ work: fx.work, runs: fx.runs, env: fx.env }).problem, /could not be written \(.*is not a folder\)/u);
+  assert.deepEqual(readdirSync(elsewhere), [], 'no copy outside the barrier');
+  assert.equal(readFileSync(fx.file, 'utf8'), before);
+  rmSync(path.join(fx.config, TRUST_STAGE));
+  writeFileSync(path.join(fx.config, TRUST_STAGE), 'a file');
+  assert.match(recordTrust({ work: fx.work, runs: fx.runs, env: fx.env }).problem, /could not be written \((EEXIST|ENOTDIR|.*is not a folder)\)/u);
+  assert.equal(readFileSync(path.join(fx.config, TRUST_STAGE), 'utf8'), 'a file', 'nothing of its own removed');
+});
+
+test('the consent step quotes a runs folder a shell would split', (t) => {
+  const fx = layout(t);
+  fx.write({});
+  const spaced = path.join(path.dirname(fx.runs), "it's runs");
+  assert.ok(trustProblem({ folder: spaced, env: fx.env }).problem.includes(`mkdir -p '${spaced.replaceAll("'", "'\\''")}'`));
 });

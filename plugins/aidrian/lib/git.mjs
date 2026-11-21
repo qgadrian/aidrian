@@ -179,13 +179,14 @@ export function gateGit(args, cwd, { env = process.env, ...options } = {}) {
 }
 
 // The variables that point git at another git folder, work tree, index, object store, ref namespace, or config file
-// than the repository at its folder: git's own list (`git rev-parse --local-env-vars`, git 2.56) and GIT_NAMESPACE, but
+// than the repository at its folder: git's own list (`git rev-parse --local-env-vars`, git 2.56), GIT_NAMESPACE, and
+// GIT_TEMPLATE_DIR, whose files a new repository copies into its git folder, but
 // the -c settings it lists too (GIT_CONFIG_COUNT, GIT_CONFIG_PARAMETERS), which a call keeps, and GIT_NO_REPLACE_OBJECTS,
 // which runGit sets itself.
 export const LOCATION_VARS = Object.freeze([
   'GIT_DIR', 'GIT_WORK_TREE', 'GIT_IMPLICIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY',
   'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE', 'GIT_CONFIG', 'GIT_GRAFT_FILE', 'GIT_SHALLOW_FILE',
-  'GIT_REPLACE_REF_BASE', 'GIT_PREFIX',
+  'GIT_REPLACE_REF_BASE', 'GIT_PREFIX', 'GIT_TEMPLATE_DIR',
 ]);
 
 // `env` (this process's by default) without LOCATION_VARS: for a git call that must read and write only the repository

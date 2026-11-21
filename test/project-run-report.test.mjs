@@ -591,6 +591,21 @@ test('preflight probes a commit in a clone made as an attempt\'s, blocks one tha
   assert.equal(line({ GIT_CONFIG_GLOBAL: signing, ...pointed }), 'ok commit');
   assert.deepEqual([readdirSync(outside), readdirSync(path.join(outside, 'gitdir'))], [['gitdir'], []], 'nothing written outside the scratch');
   assert.deepEqual(scratch(), []);
+
+  // A template whose commondir points elsewhere, by GIT_TEMPLATE_DIR or init.templateDir: the scratch takes no template.
+  const away = mkdtempSync(path.join(fx.root, 'away-'));
+  const template = mkdtempSync(path.join(fx.root, 'template-'));
+  writeFileSync(path.join(template, 'commondir'), `${away}\n`);
+  const templated = path.join(fx.root, 'templated.gitconfig');
+  writeFileSync(templated, `[user]\n\tname = t\n\temail = t@example.invalid\n[init]\n\ttemplateDir = ${template}\n`);
+  assert.equal(line({ GIT_CONFIG_GLOBAL: templated }), 'ok commit');
+  assert.equal(line({ GIT_CONFIG_GLOBAL: signing, GIT_TEMPLATE_DIR: template }), 'ok commit');
+  assert.deepEqual(readdirSync(away), [], 'nothing written where the template pointed');
+
+  // A signing key git cannot read as a boolean fails closed.
+  const unread = line({ GIT_CONFIG_GLOBAL: signing, GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'commit.gpgsign', GIT_CONFIG_VALUE_0: 'maybe' });
+  assert.match(unread ?? '', /^blocker commit: git cannot read commit\.gpgsign in a clone made as an attempt's \(fatal: bad boolean config value 'maybe' for 'commit\.gpgsign'\)/u, unread);
+  assert.deepEqual(scratch(), []);
 });
 
 test('preflight passes the host\'s own user memory in a home folder above the runs folder, and blocks a project file in that home', (t) => {

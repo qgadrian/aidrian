@@ -287,6 +287,28 @@ test('start halts before any session when the prepared clone would still sign, a
   assert.deepEqual(fx.claude.starts(), []);
   assert.deepEqual(fx.rows(), [], 'a halt records nothing');
   assert.equal(existsSync(path.dirname(work(fx))), false, 'the clone is removed');
+  // A read that fails is no answer: a value git cannot read as a boolean halts too, naming git's error.
+  const bad = fx.cmd(['start', 'launch', 'ENG-1'], { env: { ...env, GIT_CONFIG_VALUE_0: 'maybe' } });
+  const unread = bad.out.find((line) => line.startsWith('halt ')) ?? '';
+  assert.match(unread, /^halt the attempt's clone .* is not started: git cannot read commit\.gpgsign in a clone made as an attempt's \(fatal: bad boolean config value 'maybe' for 'commit\.gpgsign'\), so whether its commits would sign cannot be told/u, JSON.stringify(bad));
+  assert.deepEqual(fx.claude.starts(), []);
+});
+
+// A template folder, the user's init.templateDir, that would put a commondir in the clone's git folder: the clone takes
+// no template, so git never reads it, and the hooks folder is there, empty, for the sandbox's write denial.
+test('the attempt\'s clone takes no template, so a template\'s commondir leads no write elsewhere', (t) => {
+  const fx = runFixture(t);
+  const global = testGlobalConfig(t);
+  const outside = mkdtempSync(path.join(fx.root, 'outside-'));
+  const template = mkdtempSync(path.join(fx.root, 'template-'));
+  writeFileSync(path.join(template, 'commondir'), `${outside}\n`);
+  appendFileSync(global, `[init]\n\ttemplateDir = ${template}\n`);
+  const started = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(started.exitCode, 0, started.err.join('\n'));
+  const git = path.join(path.dirname(work(fx)), 'git');
+  assert.equal(readFileSync(path.join(git, 'commondir'), 'utf8'), '.\n', 'the gate\'s own placeholder, not the template\'s');
+  assert.deepEqual(readdirSync(path.join(git, 'hooks')), [], 'an empty hooks folder');
+  assert.deepEqual(readdirSync(outside), [], 'nothing written where the template pointed');
 });
 
 // The keys go to the checkout's own config whatever the caller's environment points git at; never a real repository:
@@ -303,6 +325,9 @@ test('setUnsigned and signingProblem write and read only the checkout\'s own con
   assert.deepEqual(UNSIGNED.map(([key]) => execFileSync('git', ['config', '--file', path.join(work, '.git', 'config'), '--get', key], { encoding: 'utf8' }).trim()), ['false', 'false']);
   assert.equal(signingProblem(work, env), null);
   assert.deepEqual([readdirSync(outside), readdirSync(path.join(outside, 'gitdir'))], [['gitdir'], []], 'nothing written outside the checkout');
+  // A read git fails is no answer: it fails closed, naming git's error.
+  assert.match(signingProblem(work, { ...process.env, GIT_CONFIG_COUNT: 'x' }) ?? '', /^git cannot read commit\.gpgsign in a clone made as an attempt's \(error: bogus count in GIT_CONFIG_COUNT; fatal: unable to parse command-line config\)/u);
+  assert.match(signingProblem(work, { ...process.env, GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'commit.gpgsign', GIT_CONFIG_VALUE_0: 'maybe' }) ?? '', /\(fatal: bad boolean config value 'maybe' for 'commit\.gpgsign'\), so whether its commits would sign cannot be told: fix that config$/u);
 });
 
 test('a claim that is no plain object with a boolean kept, or is too large to read, counts as kept once past its write', (t) => {

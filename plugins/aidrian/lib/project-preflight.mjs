@@ -93,7 +93,8 @@ export function preflightCommand({ project, config, run = null, env = process.en
     // Every issue session commits in its clone, unsigned (project-start.mjs UNSIGNED), so a commit that fails there
     // parks every issue with its work staged.
     const origin = gateGit(['remote', 'get-url', 'origin'], main, { env: withoutLocation(env), timeout: 30_000 });
-    const commit = commitProblem({ state: place.state, env, url: origin.status === 0 ? origin.stdout.trim() : null, branch: runBranch(place.state, run) ?? PROBE_BRANCH });
+    const branch = runBranch(place.state, run);
+    const commit = commitProblem({ state: place.state, env, url: origin.status === 0 ? origin.stdout.trim() : null, branch: branch ?? PROBE_BRANCH, run: branch ? run : null });
     check('commit', commit ? `${commit} (setup: ${COMMIT_SETUP})` : null);
   }
   const base = baseBranchTip(project.root) ? baseBranchConfig(project, 'projectRun') : { why: 'git names no base branch commit' };

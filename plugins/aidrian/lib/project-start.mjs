@@ -236,8 +236,15 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, tip,
   const failed = (what, result) => gone(`the attempt's clone could not be made (${what}: ${String(result.stderr ?? '').trim().split('\n').at(-1) || `exit ${result.status}`})`);
   const url = gateGit(['remote', 'get-url', 'origin'], main, { timeout: 30_000 });
   if (url.status !== 0) return failed('origin', url);
-  const cloned = gateGit(['clone', '--quiet', '--shared', '--no-checkout', '--separate-git-dir', git, main, work], folder, { env });
+  // No template: a template folder, from GIT_TEMPLATE_DIR or init.templateDir, could put a commondir or hooks in the git
+  // folder. The hooks folder is made empty instead, so the sandbox's write denial has a path to hold.
+  const cloned = gateGit(['clone', '--quiet', '--template=', '--shared', '--no-checkout', '--separate-git-dir', git, main, work], folder, { env });
   if (cloned.status !== 0) return failed('clone', cloned);
+  try {
+    mkdirSync(path.join(git, 'hooks'), { mode: 0o700 });
+  } catch (error) {
+    return gone(`the attempt's clone could not be made (hooks: ${error.code ?? 'no code'})`);
+  }
   const origin = gateGit(['remote', 'set-url', 'origin', url.stdout.trim()], work);
   if (origin.status !== 0) return failed('origin', origin);
   const unsigned = setUnsigned(work, env);
@@ -282,13 +289,16 @@ export function setUnsigned(work, env = process.env) {
 }
 
 // Why a commit in the checkout `cwd`, under `env`, would still sign, or null: a key of UNSIGNED that git reads as true
-// there, from every scope it reads and the environment, whose -c settings win over the checkout's own config. The start
-// asks it of each attempt's clone, and the preflight's probe of its scratch clone.
+// there, from every scope it reads and the environment, whose -c settings win over the checkout's own config, or a read
+// that fails, which fails closed: only exit 0 (a value) and exit 1 (no value) answer. The start asks it of each
+// attempt's clone, and the preflight's probe of its scratch clone.
 export function signingProblem(cwd, env = process.env) {
-  const signed = UNSIGNED.map(([key]) => key).filter((key) => {
+  const signed = [];
+  for (const [key] of UNSIGNED) {
     const read = gateGit(['config', '--type=bool', '--get', key], cwd, { env: withoutLocation(env), timeout: 30_000 });
-    return read.status === 0 && read.stdout.trim() === 'true';
-  });
+    if (read.status !== 0 && read.status !== 1) return `git cannot read ${key} in a clone made as an attempt's (${gitSaid(read)}), so whether its commits would sign cannot be told: fix that config`;
+    if (read.status === 0 && read.stdout.trim() === 'true') signed.push(key);
+  }
   if (!signed.length) return null;
   return `git still reads ${signed.join(' and ')} as true in a clone whose own config sets it false, as a GIT_CONFIG_COUNT or GIT_CONFIG_PARAMETERS setting in this environment makes it; the issue session's sandbox hides the signing keys, so its every commit would fail: unset that setting`;
 }
@@ -311,9 +321,12 @@ const gitSaid = (result) => {
 // (git.mjs withoutLocation), so nothing outside the scratch folder is written. The preflight runs outside the issue
 // session's sandbox, where the user's signing keys are in reach, so a commit that would still sign (signingProblem)
 // refuses before the commit: in the sandbox it would fail. Otherwise git's own error refuses, as no identity would. The
-// scratch folder is removed either way.
-export function commitProblem({ state, env = process.env, url = null, branch = PROBE_BRANCH }) {
-  const runs = runsFolder(state);
+// scratch folder is removed either way. With the run `run` named, the scratch lies in its attempts folder, as a clone
+// does; before a run exists it lies in the runs folder and checks out PROBE_BRANCH, so an includeIf on an attempt's
+// gitdir or branch may read it otherwise. That residual is accepted: the start's own signingProblem in the real clone
+// guards each attempt.
+export function commitProblem({ state, env = process.env, url = null, branch = PROBE_BRANCH, run = null }) {
+  const runs = run ? path.join(runFolder(state, run), 'attempts') : runsFolder(state);
   let scratch;
   try {
     mkdirSync(runs, { recursive: true, mode: 0o700 });
@@ -324,7 +337,7 @@ export function commitProblem({ state, env = process.env, url = null, branch = P
   const work = path.join(scratch, 'work');
   const git = (args, cwd = work) => gateGit(args, cwd, { env: withoutLocation(env), timeout: 30_000 });
   try {
-    const made = git(['init', '--quiet', `--initial-branch=${branch}`, '--separate-git-dir', path.join(scratch, 'git'), work], scratch);
+    const made = git(['init', '--quiet', '--template=', `--initial-branch=${branch}`, '--separate-git-dir', path.join(scratch, 'git'), work], scratch);
     if (made.status !== 0) return `git cannot make a scratch repository for the probe (${gitSaid(made)})`;
     const origin = url ? git(['remote', 'add', 'origin', url]) : null;
     if (origin && origin.status !== 0) return `git cannot give the probe's scratch repository origin's URL (${gitSaid(origin)})`;

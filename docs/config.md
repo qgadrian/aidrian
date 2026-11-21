@@ -1936,7 +1936,9 @@ user's config signs would fail once the work is done and park the issue with its
 signature of a branch commit, and the run merges each pull request by squash. The writes run without git's location
 variables (`GIT_DIR`, `GIT_INDEX_FILE`, `GIT_CONFIG`, and the rest), so only the clone's config is written. A clone in
 which git still reads either key as true, as a `GIT_CONFIG_COUNT` or `GIT_CONFIG_PARAMETERS` setting in the driver's
-environment makes it, halts the start before any session, with the preflight's own check. The session hands its
+environment makes it, halts the start before any session, with the preflight's own check; so does a read of either
+key that git fails, naming git's error. The clone takes no template (`--template=`), so neither `GIT_TEMPLATE_DIR` nor
+`init.templateDir` puts a file in its git folder; its `hooks` folder is made empty. The session hands its
 result over in its attempt's `drop` folder, and `wait` records it as a `result` row with `via: "drop"`, or ends the
 attempt `bad_result`, as it does at once for a pull request the forge says it does not have; a result the forge cannot
 confirm yet waits for the next `wait`, until `issueHours`, when its sessions are stopped and it ends `bad_result`.
@@ -2037,13 +2039,15 @@ is skipped and names it. `--json` prints the whole plan, with the `maxParallel` 
 `preflight [RUN]` runs, at once, every check a start would refuse or halt on, and starts nothing: the repository, the
 state folder and any other active run but `RUN`, a host instruction file, such as a `CLAUDE.md`, in a folder above the
 runs folder, which every attempt's clone would load, a commit in a clone made as an attempt's (`commit`: an empty commit
-in a scratch repository under the runs folder, its git folder apart, origin set to the main checkout's origin URL, the
-run's first issue branch checked out (`fix/aidrian-commit-probe` before a run exists), and signing off in its own
-config, so a config `includeIf` keyed on the folder, the remote URL, or the branch reads it as a clone's; every git call
+in a scratch repository with no template, its git folder apart, origin set to the main checkout's origin URL, and
+signing off in its own config; with `RUN` named it lies in that run's attempts folder and checks out the run's first
+issue branch, before a run exists in the runs folder on `fix/aidrian-commit-probe`, so an `includeIf` on an attempt's
+folder or branch may read it otherwise, a residual the start's own check of each real clone covers; every git call
 runs without git's location variables, and the scratch is removed after;
 preflight runs outside the issue session's sandbox, where the signing keys are in reach, so it blocks when git still
 reads `commit.gpgsign` or `tag.gpgsign` as true there, as a `GIT_CONFIG_COUNT` or `GIT_CONFIG_PARAMETERS` setting in
-the environment makes it, and otherwise on git's own error, such as no identity), `projectRun.allow` through the forge, the machine's switch, the host's
+the environment makes it, or cannot read either, and otherwise on git's own error, such as no identity),
+`projectRun.allow` through the forge, the machine's switch, the host's
 start and its `projectRun.unverifiedHosts`, the host's access check (push rights, an HTTPS origin, nothing outside the
 sandbox that `projectRun.outsideSandbox` does not name, and, on Claude Code, a forge token to hand the issue sessions,
 from the project's keychain entry `projectRun.forgeTokenKeychain` names, the machine's default entry `aidrian-project-run`

@@ -530,6 +530,8 @@ function launchStart(context, place) {
       launch: (hold, identify) => {
         const started = cap.start({
           session, cwd, name, prompt, env, hold, identify, run: spawn, wait, log, git, grants, domains, cacheVars: vars, main, mainGit, tokens: forgeTokenVars(),
+          // The runs folder as the run names it, whose trust the host's record must hold for the clone to be trusted.
+          runs: runsFolder(state),
           // The sign-off store, which a merge no Human asks for reads as the Human's word: no confined session writes it.
           guarded: guardedStore({ env, home }),
           mcp: context.policy.mcpServers, localBinding, home, platform: context.platform, beacon: (id) => readBeacon(id, { env, home, since }), confined,

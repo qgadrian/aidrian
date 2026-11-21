@@ -511,6 +511,13 @@ test('a session no Human attends may not move the state root of an `aidrian pr` 
   assert.equal(prEnvDenial(bash('XDG_STATE_HOME=/tmp/x aidrian check'), names, held), null, 'not an `aidrian pr` command');
 });
 
+test('a session no Human attends may not say a Human attends an `aidrian pr` command', () => {
+  const names = { names: { human: 'Adrian' } };
+  const command = { tool_name: 'Bash', tool_input: { command: 'CLAUDE_CODE_SESSION_ATTENDED=1 aidrian pr auto-merge 7' }, cwd: '/w' };
+  assert.match(prEnvDenial(command, names, { unattended: () => true })?.reason ?? '', /CLAUDE_CODE_SESSION_ATTENDED set or unset .* whether a Human attends it/u);
+  assert.equal(prEnvDenial(command, names, { unattended: () => false }), null, 'an attended session');
+});
+
 test('Codex: a writable root or a temporary folder that reaches the sign-off store halts the start; a state work folder linked to it is a problem', (t) => {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-codex-store-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));

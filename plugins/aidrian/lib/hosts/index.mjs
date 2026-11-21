@@ -103,7 +103,8 @@ export const reachesAHook = (name, hosts = HOSTS) => hookForms(name, hosts).incl
 // Every way hosts spell a server's name, the written one first.
 export const serverSpellings = (server, hosts = HOSTS) => [...new Set([server, ...hosts.map((host) => host.serverSpelling(server))])];
 
-// The variables that say which session a process belongs to. A reviewer or a test runs without them.
+// The variables that say which session a process belongs to, whether a Human attends that session, and its host
+// process. A reviewer or a test runs without them.
 export const IDENTITY_VARS = Object.freeze([...new Set(HOSTS.flatMap((host) => host.identityVars))]);
 // The variables that say which host runs a process. The test suite runs without them, so it gives one result everywhere.
 export const DETECT_VARS = Object.freeze([...new Set(HOSTS.flatMap((host) => host.detectVars))]);

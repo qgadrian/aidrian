@@ -3,7 +3,8 @@
 // attended session before `aidrian project init`, so the Human sees each blocker before walking away. It reads and
 // starts nothing. Each check is the start gate's own (lib/project-run-gate.mjs, lib/project-start.mjs): the repository
 // origin names, the state folder and any other active run, a host instruction file above the runs folder, the team's projectRun through the forge, the machine's
-// switch, the host's start (confined, verified or allowed through projectRun.unverifiedHosts, hooks trusted), and the
+// switch, the host's start (confined, verified or allowed through projectRun.unverifiedHosts, hooks trusted), the host's
+// trust in the runs folder, and the
 // host's access check (push rights, an HTTPS origin the sandbox can push to, and nothing that would run outside the
 // sandbox: other enabled plugins, user hooks, a status line, a credential helper it cannot reach), and whether the host
 // carries on by itself after a usage limit, which stops the driver too. Then the base branch's reviewer bot. A check whose input a failed one gives is still run where it can be, on what the base branch says alone,
@@ -91,6 +92,12 @@ export function preflightCommand({ project, config, run = null, env = process.en
   else if (cap.confined !== true) host = 'this host\'s project start is not confined to a fresh clone under its own sandbox';
   else host = hostStartProblem(cap, policy, env);
   check('host', host);
+  // A start in a folder the host has not trusted starts nothing, so a host that can read its trust says so for the runs folder.
+  if (typeof cap?.trust === 'function' && !place.problem) {
+    const trust = cap.trust({ folder: runsFolder(place.state), env, home });
+    if (trust?.note) lines.push(`note trust: ${trust.note}`);
+    else check('trust', trust?.problem ?? null);
+  }
   if (cap && repository && !place.problem) {
     let access;
     try {

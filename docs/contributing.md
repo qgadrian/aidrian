@@ -19,11 +19,18 @@ Push a change once its touched tests pass, and let CI run `npm run check`: a ful
 held a fix back for two hours. Run it locally only when CI cannot, once, before marking ready.
 This repository opts into [push first](hooks.md#push-first) and the [check-run record](hooks.md#check-runs):
 `.aidrian/config.json` sets
-`"testing": { "fullSuite": ["npm run check", "npm test", "npm run test"], "pushFirstMinutes": 5 }`, since `npm test`
-runs the whole suite here too. So a session's `npm run check` or bare `npm test` is refused while the pushed branch
-lacks a commit older than 5 minutes, and a `## Tests run` line that says one of them passed needs a finished run of it.
+`"testing": { "fullSuite": ["npm run check", "npm test", "npm run test", "node scripts/run-tests.mjs"], "pushFirstMinutes": 5 }`,
+since `npm test` and the script behind it run the whole suite here too. So a session's `npm run check`, bare `npm test`,
+or bare `node scripts/run-tests.mjs` is refused while the pushed branch lacks a commit older than 5 minutes, and a `## Tests run` line that says one of them passed needs a finished run of it.
 `npm test -- <files>` runs only those files, and push first leaves it alone. Its `requires.aidrian` asks for 0.73.1, the first release whose
 config check knows the `testing` keys; an older installed plugin rejects them.
+
+`npm test` and `npm run check` run the suite through `scripts/run-tests.mjs`, which runs `node --test` with its arguments
+and passes the runner's output through. After the run it prints on stderr the ten test files that took the most time,
+each with its seconds, its `git` calls, and its other child processes, and a line of totals summed over every file:
+the numbers a change to the suite's time moves. The counts cover the processes a test file's own process starts:
+a command or hook a test starts counts as one, and the processes it starts in turn are not counted.
+A file run alone, `node --test test/<name>.test.mjs`, still works the same way, with no table.
 
 `make` lists the same tasks.
 
@@ -83,6 +90,16 @@ returns spawnSync's `{ status, stderr, stdout }`, without starting a node proces
 time: `callHook` (`lib/hook-io.mjs`) swaps in the call's folder and environment, and each call starts with no stopped
 git call and no clone anchor, as a host's fresh process does. A hook with a time budget counts it from the call's start.
 
+A lib call outside `withGitFacts` (`lib/git.mjs`) asks git every time, so a test may change a repository between two
+calls, such as with `git remote add`. Inside one, a checkout's roots, its prefix, origin's URL, and the remote URLs are
+each read once per folder, until the call ends. A review step runs inside one (`lib/review/run.mjs` reviewStep), so a
+test that changes a repository's remotes or folders does it between steps, or during the bot wait: that wait runs in
+`withoutGitFacts`, which asks git for each read and makes the step forget every answer once the wait ends. Outside a review
+step, one read or write of the review record (`lib/review/state.mjs` readLocalState and writeLocalState,
+`lib/review/record.mjs` recordPass) opens one for that call alone, and inside one it shares the step's, so a test changes
+the remotes between two such calls. The forge reading a record write may ask for runs in `withoutGitFacts` too.
+Nothing opens one for a whole process, a hook's or a command's.
+
 A test still starts the script as a program where only a process shows the behaviour: its stdin reading, a `timeout`
 or signal it relies on, exit timing, or a deadline it measures. Keep at least one such run for each hook script a file
 covers, so the script's own entry stays tested. A hook body that reads the clock under `Date.now` can be held still
@@ -90,6 +107,37 @@ in process by replacing `Date.now` around the call, as `test/ready-hold.test.mjs
 
 The tests' git config holds a user identity: without one, git guesses an email from the machine's host name, and on a
 machine whose name does not resolve each clone, checkout, or commit waits about 5 seconds for that lookup.
+
+## Commands in the test's process
+
+`bin/aidrian` starts `lib/cli.mjs`, which sets the process's exit code to `await runCli(argv)`, its export that holds
+the command table, the usage, and the error handling. It runs the command unless a switch that only test code sets is
+on: `test/cli-in-process.mjs` sets `Symbol.for('aidrian.test.cliInProcess')` on `globalThis` before `lib/cli.mjs` loads,
+so importing it exposes `runCli` without running a command. The switch is never read from the arguments or from how the
+module was started, so a run that misses the check still runs the command. A test runs a command with
+`await cliCall(args, { cwd, env })` (`test/cli-call.mjs`), which calls `runCli` in the test's own process and returns
+spawnSync's `{ status, stdout, stderr }`, without starting a node process for each call. It swaps in the call's folder and
+environment, keeps what the command writes to `process.stdout` and `process.stderr`, and starts and ends the call with no
+stopped git call and no clone anchor, as `hookCall` does; afterwards the folder, the environment, both writes, and
+`process.exitCode` are as they were, whether the command returned or threw. Calls run one at a time, and a second call
+while one runs throws. An error `runCli` does not handle reaches the test, where a process prints it and exits 1, and a
+command that calls `process.exit` throws to the test instead of ending the test run. A write from outside the call,
+such as the test runner reporting an earlier test, goes to the stream as before. A command that reads stdin, with
+`readFileSync(0)` or `readFileSync('/dev/stdin')`, throws to the test too: the test runner's stdin never closes, so the
+read would hang the file until CI stops it. `cliCall` swaps `fs.readFileSync` for the call and back, with
+`syncBuiltinESMExports` so a module's own `import { readFileSync } from 'node:fs'` sees both swaps.
+
+Each command's module is imported once per test file, so a cache it keeps lasts across calls, where each process run
+started fresh: `codexAvailable` (`lib/review/reviewers.mjs`) asks once whether Codex runs here, `guardedMain`
+(`lib/rules/main-checkout/checkout.mjs`) reads each folder's guarded main checkout once, and `rootsOf`
+(`lib/rules/main-checkout/directory-change.mjs`) each folder's checkout roots once. A test that changes what one of
+them reads between two calls keeps a process run.
+
+A test still runs `bin/aidrian` as a process where only a process shows the behaviour: a command that reads stdin
+(`cliCall` throws when given `input`, or when the command reads it), exit timing, a signal or `timeout` it relies on, a deadline it measures, what
+the test preload records about the processes a file starts, or output a child writes straight to the terminal's
+descriptors. Keep at least one process run for each command a file tests, so the command's own entry stays tested;
+a command the file only touches in passing, such as a row in a table of config errors, needs none.
 
 ## What the tests hold
 

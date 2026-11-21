@@ -1,16 +1,18 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { GATE_CONFIG } from '../plugins/aidrian/lib/git.mjs';
 import { reviewProblem } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { splitPasses } from '../plugins/aidrian/lib/review/split.mjs';
 import { recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
 import { escapeLines, gitPaths, postedCopy, textChecker, untextedBlocking } from '../plugins/aidrian/lib/review/publish.mjs';
+import { recordPass } from '../plugins/aidrian/lib/review/record.mjs';
 import {
   BODY_LIMIT, clip, emptyState, HELD_LINE, heldMessage, heldRevision, prunePasses, publishState, readLocalState, readRecord, refreshSummary, stateFromComment, summaryBody, writeLocalState,
 } from '../plugins/aidrian/lib/review/state.mjs';
@@ -799,4 +801,91 @@ test('the record with 200 itemized findings in one pass, each with a full body a
   const record = stateFromComment(body, 7);
   if (record) assert.deepEqual([record.passes['engine:codex-local'].list.length, Object.keys(record.index).length], [200, 200]);
   else assert.equal(heldRevision(body), 3, 'held, as before');
+});
+
+// The four reads lib/git.mjs withGitFacts remembers, by name, with their arguments as a plugin call gives them.
+const FACT_READS = {
+  roots: 'rev-parse --path-format=absolute --git-common-dir --git-dir --show-toplevel',
+  prefix: 'rev-parse --show-prefix',
+  origin: 'config --get remote.origin.url',
+  remotes: 'config --get-regexp ^remote\\..*\\.url$',
+};
+// The line a test's forge reading writes to the git log, so a fact read after it shows.
+const READING_MARK = 'forge reading';
+
+// The log of the git calls `act(mark)` makes while a `git` that logs each call and runs the real one comes first on PATH:
+// each fact read as `<working folder> <fact name>`, and READING_MARK each time `act` calls `mark()`. Other calls are left out.
+function factReads(t, act) {
+  const bin = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-git-log-')));
+  t.after(() => rmSync(bin, { recursive: true, force: true }));
+  const log = path.join(bin, 'calls.log');
+  const real = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  writeFileSync(path.join(bin, 'git'), `#!/bin/sh\nprintf '%s %s\\n' "$(pwd -P)" "$*" >> "${log}"\nexec "${real}" "$@"\n`, { mode: 0o755 });
+  const before = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${before}`;
+  try {
+    act(() => writeFileSync(log, `${READING_MARK}\n`, { flag: 'a' }));
+  } finally {
+    process.env.PATH = before;
+  }
+  // Every plugin git call runs hardened (lib/git.mjs GATE_CONFIG): the log shows each call's own arguments after it.
+  const hardened = ` ${GATE_CONFIG.join(' ')}`;
+  const lines = existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : [];
+  return lines.map((line) => line.replace(hardened, '')).flatMap((line) => {
+    if (line === READING_MARK) return [line];
+    const fact = Object.entries(FACT_READS).find(([, args]) => line.endsWith(` ${args}`));
+    return fact ? [`${line.slice(0, -fact[1].length - 1)} ${fact[0]}`] : [];
+  });
+}
+
+// How many times each line of `reads` occurs, as an object.
+const tally = (reads) => Object.fromEntries([...new Set(reads)].map((line) => [line, reads.filter((each) => each === line).length]));
+
+// Each call of the review record this test makes, on pull request 7 of o/r at `head`.
+function recordCalls(project, head) {
+  return {
+    'readLocalState of a repository': () => assert.equal(readLocalState(project, 7, 'o/r').pr, 7),
+    'readLocalState with no repository': () => assert.equal(readLocalState(project, 7).pr, 7),
+    writeLocalState: () => writeLocalState(project, emptyState(7, 'o/r'), { repo: 'o/r' }),
+    recordPass: () => recordPass(project, { pr: 7, repo: 'o/r', pass: 'engine:codex-local', head, reviewer: 'codex-local', findings: 0, fixed: 0 }),
+  };
+}
+
+test('one read or write of the review record asks git once for each fact it reads in its folder', (t) => {
+  // No state.dir: the default state folder is keyed by origin's URL and the prefix, and every other remote's folder is
+  // read too. With an origin, the roots go unread (project.mjs projectId reads them only without one); with no remote,
+  // a config read that exits 1 is kept once the roots read answers, so each call reads all four. Without a scope of its
+  // own, each call reads some of them several times.
+  const fixtures = {
+    'origin and another remote': { remotes: [['origin', 'https://github.com/o/r.git'], ['parent', 'https://github.com/up/r.git']], facts: ['prefix', 'origin', 'remotes'] },
+    'no remote': { remotes: [], facts: Object.keys(FACT_READS) },
+  };
+  for (const [fixture, { remotes, facts }] of Object.entries(fixtures)) {
+    const { root, head } = checkout(t, fixture);
+    for (const [name, url] of remotes) execFileSync('git', ['-C', root, 'remote', 'add', name, url]);
+    const project = projectAt(root);
+    writeLocalState(project, emptyState(7, 'o/r'), { repo: 'o/r' });
+    const once = Object.fromEntries(facts.map((fact) => [`${root} ${fact}`, 1]));
+    for (const [name, act] of Object.entries(recordCalls(project, head))) {
+      assert.deepEqual(tally(factReads(t, act)), once, `${fixture}: ${name} reads each of ${facts.join(', ')} once`);
+    }
+  }
+});
+
+test('attest reads the forge outside its git facts, and reads them again for the write after it', (t) => {
+  const { root, head } = checkout(t);
+  execFileSync('git', ['-C', root, 'remote', 'add', 'origin', 'https://github.com/o/r.git']);
+  const project = projectAt(root);
+  writeLocalState(project, emptyState(7, 'o/r'), { repo: 'o/r' });
+  // A posted copy newer than this machine's record, so readRecord asks for the forge's reading, which says public.
+  const posted = summaryBody({ ...emptyState(7, 'o/r'), revision: 9 }, null, 'x', { reading: { visibility: 'PUBLIC', inside: true }, checker: checker(), root, names: [] });
+  const remote = [{ id: 1, body: posted, author_association: 'MEMBER' }];
+  const reads = factReads(t, (mark) => recordPass(project, {
+    pr: 7, repo: 'o/r', pass: 'engine:codex-local', head, reviewer: 'codex-local', findings: 0, fixed: 0, remote,
+    reading: () => (mark(), { visibility: 'PUBLIC', inside: true }),
+  }));
+  const at = reads.indexOf(READING_MARK);
+  assert.ok(at > 0, `the reading ran after the record's first reads: ${reads.join(' | ')}`);
+  assert.ok(reads.slice(at + 1).includes(`${root} origin`), `the write after the reading reads origin again: ${reads.join(' | ')}`);
+  assert.equal(readLocalState(project, 7, 'o/r').passes['engine:codex-local'].head, head, 'the pass is written');
 });

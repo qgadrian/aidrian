@@ -29,29 +29,35 @@ const COMMANDS = {
   test: './test-changed.mjs',
 };
 
-const [command, ...args] = process.argv.slice(2);
+// The switch only test code sets (test/cli-in-process.mjs), before it imports this module, to call runCli in its own
+// process (test/cli-call.mjs). Unset, as it always is when bin/aidrian starts this file, the command runs.
+export const IN_PROCESS = Symbol.for('aidrian.test.cliInProcess');
 
-if (['--help', '-h', 'help'].includes(command)) {
-  console.log(await usage());
-  process.exit(0);
-}
-if (!Object.hasOwn(COMMANDS, command ?? '')) await fail(command && `unknown command: ${command}`);
-const { commands } = await import(COMMANDS[command]);
-try {
-  process.exitCode = await commands[command].run(args);
-} catch (error) {
-  if (error.code === CONFIG_ERROR) {
-    // config.json has errors, so the command stopped before it acted (config.mjs commandConfig).
-    console.error(error.message);
-    process.exitCode = error.exitCode;
-  } else if (error.code === LOCKED) {
-    // Another process held a file's lock past the wait (jsonl.mjs withLocks): nothing was written.
-    console.error(error.message);
-    process.exitCode = 1;
-  } else if (error.code?.startsWith('ERR_PARSE_ARGS')) {
+// The exit code of `aidrian <argv>`: the usage with 0, or with 1 on an unknown command or option, or what the command
+// returns. An error no case below names is thrown, as the process prints it and exits 1.
+export async function runCli(argv) {
+  const [command, ...args] = argv;
+  if (['--help', '-h', 'help'].includes(command)) {
+    console.log(await usage());
+    return 0;
+  }
+  if (!Object.hasOwn(COMMANDS, command ?? '')) return fail(command && `unknown command: ${command}`);
+  const { commands } = await import(COMMANDS[command]);
+  try {
+    return await commands[command].run(args);
+  } catch (error) {
+    if (error.code === CONFIG_ERROR) {
+      // config.json has errors, so the command stopped before it acted (config.mjs commandConfig).
+      console.error(error.message);
+      return error.exitCode;
+    }
+    if (error.code === LOCKED) {
+      // Another process held a file's lock past the wait (jsonl.mjs withLocks): nothing was written.
+      console.error(error.message);
+      return 1;
+    }
     // node:util parseArgs throws these for an unknown option or a missing value.
-    await fail(error.message);
-  } else {
+    if (error.code?.startsWith('ERR_PARSE_ARGS')) return fail(error.message);
     throw error;
   }
 }
@@ -68,5 +74,7 @@ async function usage() {
 
 async function fail(problem) {
   console.error(problem ? `${await usage()}\n\n${problem}` : await usage());
-  process.exit(1);
+  return 1;
 }
+
+if (globalThis[IN_PROCESS] !== true) process.exitCode = await runCli(process.argv.slice(2));

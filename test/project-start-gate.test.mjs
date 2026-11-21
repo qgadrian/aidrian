@@ -513,6 +513,8 @@ test('the host\'s own user memory in a home folder above the state folder refuse
   const fx = runFixture(t);
   const user = path.join(fx.root, '.claude');
   renameSync(fx.env.CLAUDE_CONFIG_DIR, user);
+  // With CLAUDE_CONFIG_DIR unset, the host keeps its trust record in the home folder itself.
+  renameSync(path.join(user, '.claude.json'), path.join(fx.root, '.claude.json'));
   const env = { ...fx.env, HOME: fx.root };
   delete env.CLAUDE_CONFIG_DIR;
   writeFileSync(path.join(user, 'CLAUDE.md'), 'The user\'s own rules.\n');

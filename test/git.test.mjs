@@ -1,12 +1,12 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { checkoutRoots, currentRoot, gateGit, GIT_TIMEOUT_MS, isIgnored, isRefName, mainRoot, memoGit, REF_NAME_MAX_BYTES, repositoryCheckouts } from '../plugins/aidrian/lib/git.mjs';
+import { checkoutRoots, currentRoot, gateGit, gitFolders, GIT_TIMEOUT_MS, isIgnored, isRefName, knownPrefix, mainRoot, memoGit, readOriginUrl, readPrefix, readRemoteUrls, REF_NAME_MAX_BYTES, repositoryCheckouts, resetGitStall, runGit, showPrefix, withGitFacts, withoutGitFacts } from '../plugins/aidrian/lib/git.mjs';
 
 // A repository with one commit, an ignored folder, and a worktree inside that folder.
 function repo(t) {
@@ -176,4 +176,210 @@ test('isRefName takes a branch name git takes, in pure JS, and refuses each shap
 
 test('isRefName starts no process: its code names no runner', () => {
   assert.doesNotMatch(isRefName.toString(), /runGit|spawn|exec|firstLine/u);
+});
+
+// A `git` first on PATH for the rest of the test that logs each call's arguments and runs the real one. `count(arg)` is
+// how many calls named `arg` so far.
+function loggingGit(t) {
+  const bin = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-git-log-')));
+  const log = path.join(bin, 'calls.log');
+  const real = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  writeFileSync(path.join(bin, 'git'), `#!/bin/sh\nprintf '%s\\n' "$*" >> "${log}"\nexec "${real}" "$@"\n`, { mode: 0o755 });
+  const before = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${before}`;
+  t.after(() => {
+    process.env.PATH = before;
+    rmSync(bin, { recursive: true, force: true });
+  });
+  const lines = () => (existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : []);
+  return { count: (arg) => lines().filter((line) => line.includes(arg)).length };
+}
+
+test('outside withGitFacts every read asks git, so a test may change the repository between two reads', (t) => {
+  const { dir } = repo(t);
+  const git = loggingGit(t);
+  assert.equal(readOriginUrl(dir).status, 1);
+  execFileSync('git', ['-C', dir, 'remote', 'add', 'origin', 'https://example.com/o/r.git']);
+  const after = readOriginUrl(dir);
+  assert.deepEqual([after.status, after.stdout], [0, 'https://example.com/o/r.git\n']);
+  assert.equal(git.count('remote.origin.url'), 2);
+});
+
+test('inside withGitFacts a fact is read once per folder, and a read after the scope asks git again', async (t) => {
+  const { dir, worktree } = repo(t);
+  const git = loggingGit(t);
+  execFileSync('git', ['-C', dir, 'remote', 'add', 'origin', 'https://example.com/o/r.git']);
+  const urls = () => readRemoteUrls(dir).stdout;
+  let late = null;
+  await withGitFacts(async () => {
+    assert.equal(readOriginUrl(dir).stdout, 'https://example.com/o/r.git\n');
+    assert.equal(urls(), 'remote.origin.url https://example.com/o/r.git\n');
+    assert.deepEqual(checkoutRoots(path.join(dir, 'src')), { main: dir, current: dir });
+    assert.equal(knownPrefix(path.join(dir, 'src')), 'src/');
+    execFileSync('git', ['-C', dir, 'remote', 'set-url', 'origin', 'https://example.com/o/moved.git']);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(readOriginUrl(dir).stdout, 'https://example.com/o/r.git\n', 'the remembered answer');
+    assert.equal(urls(), 'remote.origin.url https://example.com/o/r.git\n');
+    assert.deepEqual(gitFolders(path.join(dir, 'src')), { common: path.join(dir, '.git'), gitDir: path.join(dir, '.git'), top: dir }, 'the same read as checkoutRoots');
+    assert.equal(showPrefix(path.join(dir, 'src')), 'src/');
+    assert.equal(readPrefix(path.join(dir, 'src')).stdout, 'src/\n');
+    // Another folder is another key.
+    assert.equal(checkoutRoots(worktree).current, worktree);
+    late = new Promise((resolve) => setTimeout(() => resolve(readOriginUrl(dir).stdout), 20));
+  });
+  assert.equal(git.count('remote.origin.url'), 1);
+  assert.equal(git.count('--get-regexp'), 1);
+  assert.equal(git.count('--show-prefix'), 1);
+  assert.equal(git.count('--git-common-dir'), 2, 'one for the main checkout\'s folder, one for the worktree');
+  assert.equal(readOriginUrl(dir).stdout, 'https://example.com/o/moved.git\n', 'a read after the scope sees the change');
+  assert.equal(await late, 'https://example.com/o/moved.git\n', 'so does a timer the scope started, once it has ended');
+  assert.equal(git.count('remote.origin.url'), 3);
+});
+
+test('inside withGitFacts a folder git cannot answer for is asked again, and a read given an environment always asks', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-git-later-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = loggingGit(t);
+  withGitFacts(() => {
+    assert.equal(checkoutRoots(dir), null);
+    assert.equal(knownPrefix(dir), null);
+    execFileSync('git', ['init', '-q', '-b', 'main', dir]);
+    assert.deepEqual(checkoutRoots(dir), { main: dir, current: dir });
+    assert.equal(knownPrefix(dir), '');
+    for (let i = 0; i < 2; i += 1) assert.equal(readOriginUrl(dir, { env: process.env }).status, 1);
+  });
+  assert.equal(git.count('--git-common-dir'), 2);
+  assert.equal(git.count('--show-prefix'), 2);
+  assert.equal(git.count('remote.origin.url'), 2);
+});
+
+test('inside withGitFacts a read given an option but a timeout asks git, so its answer never stands in for another read`s', (t) => {
+  const { dir } = repo(t);
+  const src = path.join(dir, 'src');
+  const git = loggingGit(t);
+  withGitFacts(() => {
+    assert.equal(showPrefix(src), 'src/');
+    assert.ok(Buffer.isBuffer(readPrefix(src, { encoding: 'buffer' }).stdout), 'a buffer read after a default read');
+  });
+  withGitFacts(() => {
+    assert.ok(Buffer.isBuffer(readPrefix(src, { encoding: 'buffer' }).stdout));
+    assert.equal(showPrefix(src), 'src/', 'a default read after a buffer read');
+    assert.equal(knownPrefix(src, { timeout: GIT_TIMEOUT_MS }), 'src/', 'a timeout alone keeps the remembered answer');
+    assert.equal(knownPrefix(src, Object.create({ env: process.env })), 'src/', 'an inherited env asks git too');
+  });
+  assert.equal(git.count('--show-prefix'), 5);
+});
+
+test('a nested withGitFacts shares the open scope, and two scopes in a row share nothing', async (t) => {
+  const { dir } = repo(t);
+  const git = loggingGit(t);
+  const answer = withGitFacts(() => {
+    readPrefix(dir);
+    return withGitFacts(() => readPrefix(dir).status);
+  });
+  assert.equal(answer, 0, 'the body\'s value comes back');
+  assert.equal(git.count('--show-prefix'), 1);
+  await withGitFacts(async () => readPrefix(dir));
+  await withGitFacts(async () => readPrefix(dir));
+  assert.equal(git.count('--show-prefix'), 3);
+  assert.throws(() => withGitFacts(() => {
+    readPrefix(dir);
+    throw new Error('boom');
+  }), /boom/u);
+  readPrefix(dir);
+  assert.equal(git.count('--show-prefix'), 5, 'a scope that throws is closed too');
+});
+
+test('a remembered checkout read in an attempt clone answers null once the clone\'s own config sets a program key', (t) => {
+  const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-git-clone-')));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const attempt = path.join(base, 'runs/r1/attempts/1.1');
+  const work = path.join(attempt, 'work');
+  mkdirSync(work, { recursive: true });
+  execFileSync('git', ['init', '-q', '-b', 'main', '--separate-git-dir', '../git'], { cwd: work });
+  withGitFacts(() => {
+    assert.deepEqual(gitFolders(work), { common: path.join(attempt, 'git'), gitDir: path.join(attempt, 'git'), top: work });
+    execFileSync('git', ['--git-dir', path.join(attempt, 'git'), 'config', 'core.sshCommand', 'touch ran']);
+    assert.equal(gitFolders(work), null);
+    assert.equal(checkoutRoots(work), null);
+    assert.equal(knownPrefix(work), null);
+  });
+});
+
+test('inside withGitFacts a stopped git answers before a remembered fact', (t) => {
+  const { dir } = repo(t);
+  t.after(resetGitStall);
+  withGitFacts(() => {
+    assert.equal(knownPrefix(path.join(dir, 'src')), 'src/');
+    const bin = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-git-hang-')));
+    t.after(() => rmSync(bin, { recursive: true, force: true }));
+    writeFileSync(path.join(bin, 'git'), '#!/bin/sh\nexec sleep 30\n', { mode: 0o755 });
+    const before = process.env.PATH;
+    process.env.PATH = `${bin}${path.delimiter}${before}`;
+    try {
+      assert.equal(runGit(['status'], dir).error?.code, 'ETIMEDOUT');
+    } finally {
+      process.env.PATH = before;
+    }
+    assert.equal(readPrefix(path.join(dir, 'src')).status, null, 'the stopped call, not the remembered prefix');
+    assert.equal(knownPrefix(path.join(dir, 'src')), null);
+  });
+});
+
+test('an async withGitFacts body that rejects closes the scope', async (t) => {
+  const { dir } = repo(t);
+  const git = loggingGit(t);
+  await assert.rejects(withGitFacts(async () => {
+    readPrefix(dir);
+    await new Promise((resolve) => setImmediate(resolve));
+    throw new Error('boom');
+  }), /boom/u);
+  readPrefix(dir);
+  assert.equal(git.count('--show-prefix'), 2);
+});
+
+test('inside withGitFacts a repository with no origin is asked for it once, with its roots read once to know it is one', (t) => {
+  const { dir } = repo(t);
+  const git = loggingGit(t);
+  withGitFacts(() => {
+    for (let i = 0; i < 2; i += 1) assert.equal(readOriginUrl(dir).status, 1);
+    for (let i = 0; i < 2; i += 1) assert.equal(readRemoteUrls(dir).status, 1);
+    assert.deepEqual(checkoutRoots(dir), { main: dir, current: dir });
+  });
+  assert.equal(git.count('remote.origin.url'), 1);
+  assert.equal(git.count('--get-regexp'), 1);
+  assert.equal(git.count('--git-common-dir'), 1);
+});
+
+test('inside withGitFacts an origin read before `git init` is asked again after it and `git remote add`', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-git-later-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  withGitFacts(() => {
+    assert.equal(checkoutRoots(dir), null);
+    assert.equal(readOriginUrl(dir).status, 1, 'outside a repository the config read exits 1 too');
+    execFileSync('git', ['init', '-q', '-b', 'main', dir]);
+    execFileSync('git', ['-C', dir, 'remote', 'add', 'origin', 'https://example.com/o/r.git']);
+    const after = readOriginUrl(dir);
+    assert.deepEqual([after.status, after.stdout], [0, 'https://example.com/o/r.git\n']);
+  });
+});
+
+test('withoutGitFacts asks git inside it, and the open scope asks again after it', async (t) => {
+  const { dir } = repo(t);
+  const git = loggingGit(t);
+  execFileSync('git', ['-C', dir, 'remote', 'add', 'origin', 'https://example.com/o/r.git']);
+  const origin = () => readOriginUrl(dir).stdout;
+  await withGitFacts(async () => {
+    assert.equal(origin(), 'https://example.com/o/r.git\n');
+    const during = await withoutGitFacts(async () => {
+      await new Promise((resolve) => setImmediate(resolve));
+      execFileSync('git', ['-C', dir, 'remote', 'set-url', 'origin', 'https://example.com/o/moved.git']);
+      return [origin(), origin()];
+    });
+    assert.deepEqual(during, ['https://example.com/o/moved.git\n', 'https://example.com/o/moved.git\n'], 'each read in the wait asks git');
+    assert.equal(origin(), 'https://example.com/o/moved.git\n', 'a read after the wait is fresh');
+    assert.equal(origin(), 'https://example.com/o/moved.git\n');
+  });
+  assert.equal(git.count('remote.origin.url'), 4, 'one before the wait, two in it, one after');
+  assert.equal(withoutGitFacts(() => readPrefix(dir).status), 0, 'with no scope open it runs the body as it is');
 });

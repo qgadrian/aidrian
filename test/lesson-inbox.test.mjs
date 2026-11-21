@@ -11,13 +11,17 @@ import { appendRow } from '../plugins/aidrian/lib/jsonl.mjs';
 import { formatStats } from '../plugins/aidrian/lib/lesson-cli.mjs';
 import { fold, lessonStats, moveLessons, nudge, parseCapture, similarLessons, triageOrder } from '../plugins/aidrian/lib/lesson-inbox.mjs';
 import { pluginProjectId } from '../plugins/aidrian/lib/project.mjs';
+import { cliCall } from './cli-call.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
 const DAY = 86_400_000;
 const NOW = Date.parse('2026-10-29T12:00:00Z');
 const at = (daysAgo) => new Date(NOW - daysAgo * DAY).toISOString();
 
-// A git repository with an `origin`, and an empty state folder for it.
+// A git repository with an `origin`, and an empty state folder for it. `run` runs a lesson command in the test's process
+// (test/cli-call.mjs); `pipe` runs one as a process, since only a process reads the text it is given on stdin, and
+// `runProcess` runs one as a process where only a process shows the behaviour,
+// docs/contributing.md#commands-in-the-tests-process, each with why.
 function setup(t) {
   const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-lessons-')));
   t.after(() => rmSync(base, { recursive: true, force: true }));
@@ -25,26 +29,30 @@ function setup(t) {
   spawnSync('git', ['init', '-q', '-b', 'main', repo]);
   spawnSync('git', ['-C', repo, 'remote', 'add', 'origin', 'git@example.test:acme/notes.git']);
   const env = { ...process.env, XDG_STATE_HOME: path.join(base, 'state'), CLAUDE_CODE_AGENT: 'planner', CLAUDE_CODE_SESSION_ID: 'session-1' };
-  const run = (args, input = '') => spawnSync(CLI, ['lesson', ...args], { cwd: repo, input, encoding: 'utf8', env });
-  const inbox = () => path.join(spawnSync(CLI, ['state'], { cwd: repo, encoding: 'utf8', env }).stdout.trim(), 'lessons/inbox.jsonl');
-  const rows = () => readFileSync(inbox(), 'utf8').trim().split('\n').filter((line) => line.startsWith('{"')).map((line) => JSON.parse(line));
-  const json = (args) => JSON.parse(run([...args, '--json']).stdout);
-  const add = (note, args = []) => run(['add', ...args], note).stdout.split('\n')[0];
-  return { base, repo, env, run, inbox, rows, json, add };
+  const run = (args) => cliCall(['lesson', ...args], { cwd: repo, env });
+  const pipe = (args, input) => spawnSync(CLI, ['lesson', ...args], { cwd: repo, input, encoding: 'utf8', env });
+  const runProcess = (args) => spawnSync(CLI, ['lesson', ...args], { cwd: repo, encoding: 'utf8', env });
+  const inbox = async () => path.join((await cliCall(['state'], { cwd: repo, env })).stdout.trim(), 'lessons/inbox.jsonl');
+  const rows = async () => readFileSync(await inbox(), 'utf8').trim().split('\n').filter((line) => line.startsWith('{"')).map((line) => JSON.parse(line));
+  const json = async (args) => JSON.parse((await run([...args, '--json'])).stdout);
+  const add = (note, args = []) => pipe(['add', ...args], note).stdout.split('\n')[0];
+  return { base, repo, env, run, pipe, runProcess, inbox, rows, json, add };
 }
 
 // Another checkout in the same state folder: `remote` is its origin, such as the plugin's own repository. Commands run in it
 // as in `setup`, and `inbox` is its own inbox.
-function checkout({ base, env }, name, remote) {
+async function checkout({ base, env }, name, remote) {
   const repo = path.join(base, name);
   spawnSync('git', ['init', '-q', '-b', 'main', repo]);
   spawnSync('git', ['-C', repo, 'remote', 'add', 'origin', remote]);
-  const run = (args, input = '') => spawnSync(CLI, ['lesson', ...args], { cwd: repo, input, encoding: 'utf8', env });
-  const json = (args) => JSON.parse(run([...args, '--json']).stdout);
-  const add = (note, args = []) => run(['add', ...args], note).stdout.split('\n')[0];
-  const inbox = () => path.join(spawnSync(CLI, ['state'], { cwd: repo, encoding: 'utf8', env }).stdout.trim(), 'lessons/inbox.jsonl');
-  const id = path.basename(path.dirname(path.dirname(inbox())));
-  return { repo, run, json, add, inbox, id };
+  const run = (args) => cliCall(['lesson', ...args], { cwd: repo, env });
+  // As a process: only a process reads the text it is given on stdin.
+  const pipe = (args, input) => spawnSync(CLI, ['lesson', ...args], { cwd: repo, input, encoding: 'utf8', env });
+  const json = async (args) => JSON.parse((await run([...args, '--json'])).stdout);
+  const add = (note, args = []) => pipe(['add', ...args], note).stdout.split('\n')[0];
+  const inbox = async () => path.join((await cliCall(['state'], { cwd: repo, env })).stdout.trim(), 'lessons/inbox.jsonl');
+  const id = path.basename(path.dirname(path.dirname(await inbox())));
+  return { repo, run, pipe, json, add, inbox, id };
 }
 
 const readRowsOf = (file) => (existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []);
@@ -63,119 +71,119 @@ test('parseCapture takes leading evidence lines, blank lines between them, then 
   }, 'a leading title line is the title, in any order with the evidence lines');
 });
 
-test('add takes a leading title line as the title, never as part of the note', (t) => {
+test('add takes a leading title line as the title, never as part of the note', async (t) => {
   const { json, add } = setup(t);
   add('title: plugin lessons never reach the plugin triage\nevidence: x.jsonl\nThe longer story.');
-  assert.deepEqual(json(['list']).map((row) => [row.title, row.note, row.evidence]), [['plugin lessons never reach the plugin triage', 'The longer story.', ['x.jsonl']]]);
+  assert.deepEqual((await json(['list'])).map((row) => [row.title, row.note, row.evidence]), [['plugin lessons never reach the plugin triage', 'The longer story.', ['x.jsonl']]]);
 });
 
-test('a plugin lesson lands in the plugin\'s inbox, names its project, and the plugin\'s checkout lists it', (t) => {
+test('a plugin lesson lands in the plugin\'s inbox, names its project, and the plugin\'s checkout lists it', async (t) => {
   const consumer = setup(t);
-  const plugin = checkout(consumer, 'plugin', pluginRepository());
-  const other = checkout(consumer, 'other', 'git@example.test:acme/other.git');
-  const notes = path.basename(path.dirname(path.dirname(consumer.inbox())));
+  const plugin = await checkout(consumer, 'plugin', pluginRepository());
+  const other = await checkout(consumer, 'other', 'git@example.test:acme/other.git');
+  const notes = path.basename(path.dirname(path.dirname(await consumer.inbox())));
   assert.equal(plugin.id, pluginProjectId(), 'the plugin\'s checkout has the id its manifest gives, so every project finds its inbox');
   const id = consumer.add('the worktree hook blocked a branch switch in a linked worktree', ['--target', 'plugin', '--kind', 'bug']);
   const local = consumer.add('our docs miss the deploy step', ['--target', 'project']);
-  assert.deepEqual(consumer.rows().map((row) => row.id), [local], 'only the project lesson is in the project\'s inbox');
-  assert.deepEqual(readRowsOf(plugin.inbox()).map((row) => [row.id, row.target, row.project]), [[id, 'plugin', notes]]);
-  assert.deepEqual(consumer.json(['list']).map((row) => row.id), [local]);
-  assert.deepEqual(plugin.json(['list']).map((row) => [row.id, row.project]), [[id, notes]], 'the plugin\'s triage reads it');
-  assert.match(plugin.run(['list']).stdout, new RegExp(`^${id}  .*\\[P2 open plugin/bug from ${notes}\\]  the worktree hook`));
-  assert.match(plugin.run(['list', id]).stdout, new RegExp(`\\n {10}project: ${notes}\\n`));
-  assert.deepEqual(consumer.json(['list', '--target', 'plugin']).map((row) => row.id), [id], '--target plugin reads the plugin\'s inbox from any project');
+  assert.deepEqual((await consumer.rows()).map((row) => row.id), [local], 'only the project lesson is in the project\'s inbox');
+  assert.deepEqual(readRowsOf(await plugin.inbox()).map((row) => [row.id, row.target, row.project]), [[id, 'plugin', notes]]);
+  assert.deepEqual((await consumer.json(['list'])).map((row) => row.id), [local]);
+  assert.deepEqual((await plugin.json(['list'])).map((row) => [row.id, row.project]), [[id, notes]], 'the plugin\'s triage reads it');
+  assert.match((await plugin.run(['list'])).stdout, new RegExp(`^${id}  .*\\[P2 open plugin/bug from ${notes}\\]  the worktree hook`));
+  assert.match((await plugin.run(['list', id])).stdout, new RegExp(`\\n {10}project: ${notes}\\n`));
+  assert.deepEqual((await consumer.json(['list', '--target', 'plugin'])).map((row) => row.id), [id], '--target plugin reads the plugin\'s inbox from any project');
   // --same, the similar names, and a key all match against the plugin's inbox, where the lesson is.
-  assert.equal(consumer.run(['add', '--same', id], 'evidence: log.txt\nagain\n').stdout, `${id}\nSeen 2 times.\n`);
-  assert.deepEqual(readRowsOf(plugin.inbox()).at(-1).project, notes);
-  const similar = other.run(['add', '--target', 'plugin'], 'the worktree hook blocked a branch switch inside a linked worktree again').stdout;
+  assert.equal(consumer.pipe(['add', '--same', id], 'evidence: log.txt\nagain\n').stdout, `${id}\nSeen 2 times.\n`);
+  assert.deepEqual(readRowsOf(await plugin.inbox()).at(-1).project, notes);
+  const similar = other.pipe(['add', '--target', 'plugin'], 'the worktree hook blocked a branch switch inside a linked worktree again').stdout;
   assert.match(similar, new RegExp(`Similar lessons\\. .*\\n  ${id}  `), 'a lesson from another project is compared with the plugin\'s inbox');
   const keyed = consumer.add('first', ['--target', 'plugin', '--key', 'hook-deny:x']);
-  assert.equal(other.run(['add', '--target', 'plugin', '--key', 'hook-deny:x'], 'second').stdout, `${keyed}\nSeen 2 times.\n`, 'one key is one lesson across projects');
-  assert.equal(consumer.run(['resolve', id, '--outcome', 'mechanism', '--link', 'abc1234']).stdout, `${id} -> mechanism\n`, 'an id resolves in the inbox that holds it');
-  assert.deepEqual(plugin.json(['list', id]).map((row) => [row.status, row.seen]), [['resolved', 2]]);
-  assert.equal(existsSync(other.inbox()), false, 'a project that only captured plugin lessons has no inbox of its own');
+  assert.equal(other.pipe(['add', '--target', 'plugin', '--key', 'hook-deny:x'], 'second').stdout, `${keyed}\nSeen 2 times.\n`, 'one key is one lesson across projects');
+  assert.equal((await consumer.run(['resolve', id, '--outcome', 'mechanism', '--link', 'abc1234'])).stdout, `${id} -> mechanism\n`, 'an id resolves in the inbox that holds it');
+  assert.deepEqual((await plugin.json(['list', id])).map((row) => [row.status, row.seen]), [['resolved', 2]]);
+  assert.equal(existsSync(await other.inbox()), false, 'a project that only captured plugin lessons has no inbox of its own');
 });
 
-test('update moves a lesson whose target changes: into the plugin\'s inbox, and back to the project it came from', (t) => {
+test('update moves a lesson whose target changes: into the plugin\'s inbox, and back to the project it came from', async (t) => {
   const consumer = setup(t);
-  const plugin = checkout(consumer, 'plugin', pluginRepository());
-  const notes = path.basename(path.dirname(path.dirname(consumer.inbox())));
+  const plugin = await checkout(consumer, 'plugin', pluginRepository());
+  const notes = path.basename(path.dirname(path.dirname(await consumer.inbox())));
   const id = consumer.add('evidence: a.txt\nthe review agent missed a finding', ['--tier', 'P3']);
-  consumer.run(['add', '--same', id], 'again');
-  const moved = consumer.run(['update', id, '--target', 'plugin']);
-  assert.match(moved.stdout, new RegExp(`^${id}  .*\\[P3 open x2 plugin/- from ${notes}\\]  the review agent missed a finding\\nMoved to ${plugin.inbox()}\\n$`));
-  assert.deepEqual(consumer.json(['list']), []);
-  assert.deepEqual(plugin.json(['list']).map((row) => [row.id, row.seen, row.evidence, row.project, row.target]), [[id, 2, ['a.txt'], notes, 'plugin']]);
-  const back = plugin.run(['update', id, '--target', 'project']);
-  assert.match(back.stdout, new RegExp(`\\nMoved to ${consumer.inbox()}\\n$`));
-  assert.deepEqual(plugin.json(['list']), []);
-  assert.deepEqual(consumer.json(['list']).map((row) => [row.id, row.seen, row.target]), [[id, 2, 'project']]);
-  assert.doesNotMatch(consumer.run(['list']).stdout, / from /, 'back in its own project, it names no project of origin');
-  assert.match(consumer.run(['update', id, '--target', 'plugin']).stdout, /\nMoved to /, 'and into the plugin\'s inbox again');
-  assert.deepEqual(plugin.json(['list']).map((row) => [row.id, row.seen]), [[id, 2]]);
+  consumer.pipe(['add', '--same', id], 'again');
+  const moved = await consumer.run(['update', id, '--target', 'plugin']);
+  assert.match(moved.stdout, new RegExp(`^${id}  .*\\[P3 open x2 plugin/- from ${notes}\\]  the review agent missed a finding\\nMoved to ${await plugin.inbox()}\\n$`));
+  assert.deepEqual(await consumer.json(['list']), []);
+  assert.deepEqual((await plugin.json(['list'])).map((row) => [row.id, row.seen, row.evidence, row.project, row.target]), [[id, 2, ['a.txt'], notes, 'plugin']]);
+  const back = await plugin.run(['update', id, '--target', 'project']);
+  assert.match(back.stdout, new RegExp(`\\nMoved to ${await consumer.inbox()}\\n$`));
+  assert.deepEqual(await plugin.json(['list']), []);
+  assert.deepEqual((await consumer.json(['list'])).map((row) => [row.id, row.seen, row.target]), [[id, 2, 'project']]);
+  assert.doesNotMatch((await consumer.run(['list'])).stdout, / from /, 'back in its own project, it names no project of origin');
+  assert.match((await consumer.run(['update', id, '--target', 'plugin'])).stdout, /\nMoved to /, 'and into the plugin\'s inbox again');
+  assert.deepEqual((await plugin.json(['list'])).map((row) => [row.id, row.seen]), [[id, 2]]);
 });
 
-test('a project with state.dir gets its lesson back in that folder when the move runs from its checkout', (t) => {
+test('a project with state.dir gets its lesson back in that folder when the move runs from its checkout', async (t) => {
   const consumer = setup(t);
-  const plugin = checkout(consumer, 'plugin', pluginRepository());
+  const plugin = await checkout(consumer, 'plugin', pluginRepository());
   const own = path.join(consumer.base, 'own-state');
   mkdirSync(path.join(consumer.repo, '.aidrian'));
   writeFileSync(path.join(consumer.repo, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: own } }));
-  assert.equal(consumer.inbox(), path.join(own, 'lessons/inbox.jsonl'));
+  assert.equal(await consumer.inbox(), path.join(own, 'lessons/inbox.jsonl'));
   const id = consumer.add('the planner skipped a step', ['--target', 'plugin']);
-  assert.deepEqual(plugin.json(['list']).map((row) => row.id), [id]);
-  const back = consumer.run(['update', id, '--target', 'project']);
-  assert.match(back.stdout, new RegExp(`\\nMoved to ${consumer.inbox()}\\n$`));
-  assert.deepEqual(consumer.json(['list']).map((row) => [row.id, row.target]), [[id, 'project']]);
-  assert.deepEqual(plugin.json(['list']), []);
+  assert.deepEqual((await plugin.json(['list'])).map((row) => row.id), [id]);
+  const back = await consumer.run(['update', id, '--target', 'project']);
+  assert.match(back.stdout, new RegExp(`\\nMoved to ${await consumer.inbox()}\\n$`));
+  assert.deepEqual((await consumer.json(['list'])).map((row) => [row.id, row.target]), [[id, 'project']]);
+  assert.deepEqual(await plugin.json(['list']), []);
 });
 
-test('a state.dir that reaches the plugin\'s inbox through a symlink is one inbox: add runs at once, update moves nothing', (t) => {
+test('a state.dir that reaches the plugin\'s inbox through a symlink is one inbox: add runs at once, update moves nothing', async (t) => {
   const consumer = setup(t);
-  const plugin = checkout(consumer, 'plugin', pluginRepository());
-  const real = path.dirname(path.dirname(plugin.inbox()));
+  const plugin = await checkout(consumer, 'plugin', pluginRepository());
+  const real = path.dirname(path.dirname(await plugin.inbox()));
   mkdirSync(real, { recursive: true });
   const link = path.join(consumer.base, 'plugin-state');
   symlinkSync(real, link);
   mkdirSync(path.join(plugin.repo, '.aidrian'));
   writeFileSync(path.join(plugin.repo, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: link } }));
-  assert.equal(plugin.inbox(), path.join(link, 'lessons/inbox.jsonl'), 'its own inbox is the plugin\'s, spelled through the link');
+  assert.equal(await plugin.inbox(), path.join(link, 'lessons/inbox.jsonl'), 'its own inbox is the plugin\'s, spelled through the link');
   const started = Date.now();
-  const added = plugin.run(['add', '--target', 'plugin'], 'a plugin lesson');
+  const added = plugin.pipe(['add', '--target', 'plugin'], 'a plugin lesson');
   assert.deepEqual([added.status, added.stderr], [0, '']);
   assert.ok(Date.now() - started < 3000, `add took ${Date.now() - started} ms`);
   assert.deepEqual(readdirSync(path.join(real, 'lessons')).filter((name) => name.includes('.lock')).sort(), ['inbox.jsonl.lock.1', 'inbox.jsonl.lock.1.released'], 'one lock, taken once');
   const id = plugin.add('a project lesson', ['--target', 'project']);
-  const moved = plugin.run(['update', id, '--target', 'plugin']);
+  const moved = await plugin.run(['update', id, '--target', 'plugin']);
   assert.deepEqual([moved.status, /Moved to/.test(moved.stdout)], [0, false], 'the lesson is already in the inbox its target names');
-  assert.deepEqual(plugin.json(['list', id]).map((row) => [row.id, row.target]), [[id, 'plugin']], 'and it is still there');
+  assert.deepEqual((await plugin.json(['list', id])).map((row) => [row.id, row.target]), [[id, 'plugin']], 'and it is still there');
 });
 
-test('only a new target moves a lesson; list shows a lesson once for two of its ids; a known key lands where its lesson is', (t) => {
+test('only a new target moves a lesson; list shows a lesson once for two of its ids; a known key lands where its lesson is', async (t) => {
   const consumer = setup(t);
-  const plugin = checkout(consumer, 'plugin', pluginRepository());
+  const plugin = await checkout(consumer, 'plugin', pluginRepository());
   // A plugin lesson an earlier version left in the project's own inbox: a new tier leaves it there.
-  appendRow(consumer.inbox(), { event: 'add', id: 'cccc0001', at: new Date().toISOString(), tier: 'P2', target: 'plugin', note: 'left behind', evidence: [] });
-  assert.doesNotMatch(consumer.run(['update', 'cccc0001', '--tier', 'P1']).stdout, /Moved to/);
-  assert.deepEqual(consumer.json(['list']).map((row) => [row.id, row.tier]), [['cccc0001', 'P1']]);
+  appendRow(await consumer.inbox(), { event: 'add', id: 'cccc0001', at: new Date().toISOString(), tier: 'P2', target: 'plugin', note: 'left behind', evidence: [] });
+  assert.doesNotMatch((await consumer.run(['update', 'cccc0001', '--tier', 'P1'])).stdout, /Moved to/);
+  assert.deepEqual((await consumer.json(['list'])).map((row) => [row.id, row.tier]), [['cccc0001', 'P1']]);
   const kept = consumer.add('kept lesson about the review agent');
   const dup = consumer.add('a duplicate of the review agent lesson');
-  consumer.run(['resolve', dup, '--outcome', 'merged', '--link', kept]);
-  assert.deepEqual(consumer.json(['list', kept, dup]).map((row) => row.id), [kept], 'a lesson and the one merged into it list once');
+  await consumer.run(['resolve', dup, '--outcome', 'merged', '--link', kept]);
+  assert.deepEqual((await consumer.json(['list', kept, dup])).map((row) => row.id), [kept], 'a lesson and the one merged into it list once');
   const keyed = plugin.add('blocked', ['--target', 'plugin', '--key', 'hook-deny:y']);
-  const before = readFileSync(consumer.inbox(), 'utf8');
-  assert.equal(consumer.run(['add', '--key', 'hook-deny:y'], 'blocked again').stdout, `${keyed}\nSeen 2 times.\n`, 'with no --target, the key finds the plugin\'s lesson');
-  assert.equal(readFileSync(consumer.inbox(), 'utf8'), before);
+  const before = readFileSync(await consumer.inbox(), 'utf8');
+  assert.equal(consumer.pipe(['add', '--key', 'hook-deny:y'], 'blocked again').stdout, `${keyed}\nSeen 2 times.\n`, 'with no --target, the key finds the plugin\'s lesson');
+  assert.equal(readFileSync(await consumer.inbox(), 'utf8'), before);
 });
 
-test('migrate moves every plugin lesson out of each project inbox, whole, and a second run changes nothing', (t) => {
+test('migrate moves every plugin lesson out of each project inbox, whole, and a second run changes nothing', async (t) => {
   const consumer = setup(t);
-  const plugin = checkout(consumer, 'plugin', pluginRepository());
-  const other = checkout(consumer, 'other', 'git@example.test:acme/other.git');
-  const notes = path.basename(path.dirname(path.dirname(consumer.inbox())));
+  const plugin = await checkout(consumer, 'plugin', pluginRepository());
+  const other = await checkout(consumer, 'other', 'git@example.test:acme/other.git');
+  const notes = path.basename(path.dirname(path.dirname(await consumer.inbox())));
   const old = (daysAgo) => new Date(Date.now() - daysAgo * DAY).toISOString();
   // Rows an earlier version wrote: plugin lessons in the project's own inbox.
-  const own = consumer.inbox();
+  const own = await consumer.inbox();
   const write = (row) => appendRow(own, row);
   write({ event: 'add', id: 'aaaa0001', at: old(9), tier: 'P1', kind: 'bug', target: 'plugin', key: null, source: 'manual', note: 'plugin bug', evidence: ['e1'] });
   write({ event: 'seen', id: 'aaaa0001', at: old(8), note: 'again', evidence: ['e2'] });
@@ -190,64 +198,65 @@ test('migrate moves every plugin lesson out of each project inbox, whole, and a 
   write({ event: 'add', id: 'aaaa0007', at: old(3), tier: 'P2', kind: null, target: null, key: null, source: 'manual', note: 'no target', evidence: [] });
   write({ event: 'add', id: 'aaaa0008', at: old(3), tier: 'P2', kind: null, target: 'project', key: null, source: 'manual', note: 'retargeted', evidence: [] });
   write({ event: 'update', id: 'aaaa0008', at: old(2), target: 'plugin' });
-  appendRow(other.inbox(), { event: 'add', id: 'bbbb0001', at: old(2), tier: 'P2', target: 'plugin', note: 'from the other project', evidence: [] });
+  appendRow(await other.inbox(), { event: 'add', id: 'bbbb0001', at: old(2), tier: 'P2', target: 'plugin', note: 'from the other project', evidence: [] });
   // The plugin's inbox already holds the key of one of them.
   const holder = plugin.add('blocked here too', ['--target', 'plugin', '--key', 'hook-deny:pr-body']);
   const before = readFileSync(own, 'utf8');
 
-  const dry = consumer.run(['migrate', '--dry-run']);
-  assert.equal(dry.stdout.split('\n')[0], `Would move 4 plugin lessons to ${plugin.inbox()}`);
+  // As a process, so the migrate command stays tested through bin/aidrian's own entry.
+  const dry = consumer.runProcess(['migrate', '--dry-run']);
+  assert.equal(dry.stdout.split('\n')[0], `Would move 4 plugin lessons to ${await plugin.inbox()}`);
   assert.match(dry.stdout, new RegExp(`\\n  ${notes}: aaaa0001, aaaa0003, aaaa0008\\n    aaaa0003 joins ${holder}, which holds its key there\\n  other-[0-9a-f]{8}: bbbb0001\\n$`));
   assert.equal(readFileSync(own, 'utf8'), before, 'a dry run writes nothing');
 
-  const first = consumer.json(['migrate']);
+  const first = await consumer.json(['migrate']);
   assert.deepEqual([first.moved, first.projects.map((item) => [item.project, item.ids])], [4, [[notes, ['aaaa0001', 'aaaa0003', 'aaaa0008']], [other.id, ['bbbb0001']]]]);
-  assert.deepEqual(consumer.json(['list', '--all']).map((row) => row.id).sort(), ['aaaa0005', 'aaaa0007'], 'project lessons, and the one merged into one, stay');
-  assert.equal(consumer.json(['list', 'aaaa0006'])[0].id, 'aaaa0005');
-  const [fixed] = plugin.json(['list', 'aaaa0001']);
+  assert.deepEqual((await consumer.json(['list', '--all'])).map((row) => row.id).sort(), ['aaaa0005', 'aaaa0007'], 'project lessons, and the one merged into one, stay');
+  assert.equal((await consumer.json(['list', 'aaaa0006']))[0].id, 'aaaa0005');
+  const [fixed] = await plugin.json(['list', 'aaaa0001']);
   assert.deepEqual(
     [fixed.id, fixed.seen, fixed.evidence, fixed.occurrences.map((item) => item.note), fixed.status, fixed.outcome, fixed.expect, fixed.merged, fixed.project],
     ['aaaa0001', 3, ['e1'], ['again', 'a duplicate, merged in'], 'resolved', 'mechanism', 'no more', ['aaaa0002'], notes],
   );
-  assert.equal(plugin.json(['list', 'aaaa0002'])[0].id, 'aaaa0001', 'the duplicate merged into it moved with it');
-  const [keyed] = plugin.json(['list', 'aaaa0003']);
+  assert.equal((await plugin.json(['list', 'aaaa0002']))[0].id, 'aaaa0001', 'the duplicate merged into it moved with it');
+  const [keyed] = await plugin.json(['list', 'aaaa0003']);
   assert.deepEqual([keyed.id, keyed.seen], [holder, 3], 'a key the plugin\'s inbox holds takes the moved lesson as seen again');
-  assert.deepEqual(plugin.json(['list', 'aaaa0008']).map((row) => [row.id, row.target, row.project]), [['aaaa0008', 'plugin', notes]]);
-  assert.deepEqual(plugin.json(['list', 'bbbb0001']).map((row) => row.project), [other.id]);
+  assert.deepEqual((await plugin.json(['list', 'aaaa0008'])).map((row) => [row.id, row.target, row.project]), [['aaaa0008', 'plugin', notes]]);
+  assert.deepEqual((await plugin.json(['list', 'bbbb0001'])).map((row) => row.project), [other.id]);
 
-  const files = () => [own, other.inbox(), plugin.inbox()].map((file) => readFileSync(file, 'utf8'));
-  const after = files();
-  assert.equal(consumer.run(['migrate']).stdout, `Moved 0 plugin lessons to ${plugin.inbox()}\n`);
-  assert.deepEqual(files(), after, 'a second run writes nothing');
+  const files = async () => [own, await other.inbox(), await plugin.inbox()].map((file) => readFileSync(file, 'utf8'));
+  const after = await files();
+  assert.equal((await consumer.run(['migrate'])).stdout, `Moved 0 plugin lessons to ${await plugin.inbox()}\n`);
+  assert.deepEqual(await files(), after, 'a second run writes nothing');
 
   // A move cut short after its copies and before its move rows copies nothing twice when it runs again.
   // (aaaa0003 is left out: it joined the holder, so its rows there are rewritten as occurrences.)
   const cut = path.join(consumer.base, 'cut.jsonl');
   writeFileSync(cut, before);
-  const plugged = readFileSync(plugin.inbox(), 'utf8');
-  assert.deepEqual(moveLessons(cut, plugin.inbox(), ['aaaa0001', 'aaaa0003', 'aaaa0008'], { project: notes }), ['aaaa0001', 'aaaa0003', 'aaaa0008']);
-  assert.equal(readFileSync(plugin.inbox(), 'utf8'), plugged);
+  const plugged = readFileSync(await plugin.inbox(), 'utf8');
+  assert.deepEqual(moveLessons(cut, await plugin.inbox(), ['aaaa0001', 'aaaa0003', 'aaaa0008'], { project: notes }), ['aaaa0001', 'aaaa0003', 'aaaa0008']);
+  assert.equal(readFileSync(await plugin.inbox(), 'utf8'), plugged);
 });
 
-test('a project key never joins a lesson in the plugin\'s inbox, and a plugin-inbox lesson with no project stays there', (t) => {
+test('a project key never joins a lesson in the plugin\'s inbox, and a plugin-inbox lesson with no project stays there', async (t) => {
   const consumer = setup(t);
-  const plugin = checkout(consumer, 'plugin', pluginRepository());
+  const plugin = await checkout(consumer, 'plugin', pluginRepository());
   // The plugin's checkout keeps its own project lessons in the plugin's inbox.
   const theirs = plugin.add('their project lesson', ['--target', 'project', '--key', 'docs-gap']);
   const mine = consumer.add('our project lesson', ['--target', 'project', '--key', 'docs-gap']);
   assert.notEqual(mine, theirs);
-  assert.deepEqual(consumer.json(['list']).map((row) => [row.id, row.key]), [[mine, 'docs-gap']], 'it lands in the consumer\'s own inbox');
-  assert.deepEqual(plugin.json(['list', theirs]).map((row) => row.seen), [1]);
+  assert.deepEqual((await consumer.json(['list'])).map((row) => [row.id, row.key]), [[mine, 'docs-gap']], 'it lands in the consumer\'s own inbox');
+  assert.deepEqual((await plugin.json(['list', theirs])).map((row) => row.seen), [1]);
   const untargeted = consumer.add('again, with no target', ['--key', 'docs-gap']);
   assert.equal(untargeted, mine, 'with no target, the project\'s own lesson holds the key');
-  rmSync(consumer.inbox());
+  rmSync(await consumer.inbox());
   assert.notEqual(consumer.add('with no target and no lesson here', ['--key', 'docs-gap']), theirs, 'a project lesson in the plugin\'s inbox never holds it');
   // A lesson in the plugin's inbox that names no project is the plugin repository's own: a move to `project` keeps it there.
-  appendRow(plugin.inbox(), { event: 'add', id: 'ffff0001', at: new Date().toISOString(), tier: 'P2', target: 'plugin', note: 'unstamped', evidence: [] });
-  const kept = consumer.run(['update', 'ffff0001', '--target', 'project']);
+  appendRow(await plugin.inbox(), { event: 'add', id: 'ffff0001', at: new Date().toISOString(), tier: 'P2', target: 'plugin', note: 'unstamped', evidence: [] });
+  const kept = await consumer.run(['update', 'ffff0001', '--target', 'project']);
   assert.doesNotMatch(kept.stdout, /Moved to/);
-  assert.deepEqual(plugin.json(['list', 'ffff0001']).map((row) => row.target), ['project']);
-  assert.deepEqual(consumer.json(['list']).map((row) => row.id).includes('ffff0001'), false);
+  assert.deepEqual((await plugin.json(['list', 'ffff0001'])).map((row) => row.target), ['project']);
+  assert.deepEqual((await consumer.json(['list'])).map((row) => row.id).includes('ffff0001'), false);
 });
 
 test('a lesson that joins a holder by key brings only its occurrences: the holder keeps its labels and its fix', (t) => {
@@ -338,21 +347,21 @@ test('a move cut short after only a keyed lesson\'s add row resumes on the next 
   assert.equal(fold(readRowsOf(from)).find('eeee0001'), null);
 });
 
-test('migrate after a move cut short names no lesson as joining itself, and moves the rest of it', (t) => {
+test('migrate after a move cut short names no lesson as joining itself, and moves the rest of it', async (t) => {
   const consumer = setup(t);
-  const plugin = checkout(consumer, 'plugin', pluginRepository());
-  const notes = path.basename(path.dirname(path.dirname(consumer.inbox())));
+  const plugin = await checkout(consumer, 'plugin', pluginRepository());
+  const notes = path.basename(path.dirname(path.dirname(await consumer.inbox())));
   const old = (daysAgo) => new Date(Date.now() - daysAgo * DAY).toISOString();
   const added = { event: 'add', id: 'aaaa0003', at: old(5), tier: 'P3', kind: 'gap', target: 'plugin', key: 'hook-deny:pr-body', source: 'auto', note: 'blocked', evidence: [] };
-  appendRow(consumer.inbox(), added);
-  appendRow(consumer.inbox(), { event: 'update', id: 'aaaa0003', at: old(4), tier: 'P1' });
-  appendRow(consumer.inbox(), { event: 'resolve', id: 'aaaa0003', at: old(3), outcome: 'rule', link: 'docs/x.md' });
-  appendRow(plugin.inbox(), { ...added, project: notes });
-  assert.doesNotMatch(consumer.run(['migrate', '--dry-run']).stdout, /joins/);
-  const moved = consumer.json(['migrate']);
+  appendRow(await consumer.inbox(), added);
+  appendRow(await consumer.inbox(), { event: 'update', id: 'aaaa0003', at: old(4), tier: 'P1' });
+  appendRow(await consumer.inbox(), { event: 'resolve', id: 'aaaa0003', at: old(3), outcome: 'rule', link: 'docs/x.md' });
+  appendRow(await plugin.inbox(), { ...added, project: notes });
+  assert.doesNotMatch((await consumer.run(['migrate', '--dry-run'])).stdout, /joins/);
+  const moved = await consumer.json(['migrate']);
   assert.deepEqual(moved.projects.map((item) => [item.ids, item.joins]), [[['aaaa0003'], {}]]);
-  assert.deepEqual(plugin.json(['list', 'aaaa0003', '--all']).map((row) => [row.id, row.tier, row.status, row.outcome]), [['aaaa0003', 'P1', 'resolved', 'rule']]);
-  assert.deepEqual(consumer.json(['list', '--all']), []);
+  assert.deepEqual((await plugin.json(['list', 'aaaa0003', '--all'])).map((row) => [row.id, row.tier, row.status, row.outcome]), [['aaaa0003', 'P1', 'resolved', 'rule']]);
+  assert.deepEqual(await consumer.json(['list', '--all']), []);
 });
 
 test('a row another process appends while a move runs reaches the destination, never only the inbox it left', async (t) => {
@@ -374,7 +383,8 @@ test('a row another process appends while a move runs reaches the destination, n
 test('every lesson command that writes waits for the inbox lock: resolve, add --same, and update', async (t) => {
   const consumer = setup(t);
   const id = consumer.add('to resolve');
-  const inbox = consumer.inbox();
+  const inbox = await consumer.inbox();
+  // As processes: each starts while the lock holder runs, and waits on its lock beside this test, and add --same reads stdin.
   const later = (args, input = '') => new Promise((resolve) => {
     const child = spawn(CLI, ['lesson', ...args], { cwd: consumer.repo, env: consumer.env });
     child.on('close', resolve);
@@ -386,43 +396,43 @@ test('every lesson command that writes waits for the inbox lock: resolve, add --
     const status = later(args, input);
     await holder.done;
     assert.equal(await status, 0);
-    const events = consumer.rows().slice(-2).map((row) => [row.event, row.note ?? null]);
+    const events = (await consumer.rows()).slice(-2).map((row) => [row.event, row.note ?? null]);
     assert.equal(events[0][1], 'held', `${args[0]} appends after the lock holder's row, not before it`);
   }
 });
 
-test('a writer whose lock stays held fails with one line and writes nothing', (t) => {
+test('a writer whose lock stays held fails with one line and writes nothing', async (t) => {
   const { run, add, inbox } = setup(t);
   const id = add('to resolve');
-  const before = readFileSync(inbox(), 'utf8');
+  const before = readFileSync(await inbox(), 'utf8');
   // This test's own process holds the lock and never lets it go while the command waits.
-  const lock = holdLock(inbox());
-  const resolved = run(['resolve', id, '--outcome', 'rejected', '--link', 'x']);
-  assert.deepEqual([resolved.status, resolved.stdout, resolved.stderr], [1, '', `${inbox()} is locked by another process (pid ${process.pid}, ${lock}); try again\n`]);
-  assert.equal(readFileSync(inbox(), 'utf8'), before);
+  const lock = holdLock(await inbox());
+  const resolved = await run(['resolve', id, '--outcome', 'rejected', '--link', 'x']);
+  assert.deepEqual([resolved.status, resolved.stdout, resolved.stderr], [1, '', `${await inbox()} is locked by another process (pid ${process.pid}, ${lock}); try again\n`]);
+  assert.equal(readFileSync(await inbox(), 'utf8'), before);
 });
 
-test('update writes nothing when it cannot lock the inbox a new target moves the lesson to', (t) => {
+test('update writes nothing when it cannot lock the inbox a new target moves the lesson to', async (t) => {
   const consumer = setup(t);
-  const plugin = checkout(consumer, 'plugin', pluginRepository());
+  const plugin = await checkout(consumer, 'plugin', pluginRepository());
   const id = consumer.add('a plugin lesson', ['--target', 'plugin']);
-  const before = readFileSync(plugin.inbox(), 'utf8');
+  const before = readFileSync(await plugin.inbox(), 'utf8');
   // The move back goes to the consumer's inbox, which the plugin's checkout neither reads nor writes otherwise.
-  const lock = holdLock(consumer.inbox());
-  const back = plugin.run(['update', id, '--target', 'project']);
-  assert.deepEqual([back.status, back.stdout, back.stderr], [1, '', `${consumer.inbox()} is locked by another process (pid ${process.pid}, ${lock}); try again\n`]);
-  assert.equal(readFileSync(plugin.inbox(), 'utf8'), before, 'no update row without its move');
-  assert.deepEqual(plugin.json(['list', id]).map((row) => row.target), ['plugin']);
+  const lock = holdLock(await consumer.inbox());
+  const back = await plugin.run(['update', id, '--target', 'project']);
+  assert.deepEqual([back.status, back.stdout, back.stderr], [1, '', `${await consumer.inbox()} is locked by another process (pid ${process.pid}, ${lock}); try again\n`]);
+  assert.equal(readFileSync(await plugin.inbox(), 'utf8'), before, 'no update row without its move');
+  assert.deepEqual((await plugin.json(['list', id])).map((row) => row.target), ['plugin']);
 });
 
-test('add appends one add row with tier, kind, target, and where it was captured, and prints its id', (t) => {
-  const { run, rows } = setup(t);
+test('add appends one add row with tier, kind, target, and where it was captured, and prints its id', async (t) => {
+  const { pipe, rows } = setup(t);
   const note = 'ran `git rev-parse` and $(false) with "$HOME" & saw: Error: ENOENT\nmore detail';
-  const added = run(['add', '--tier', 'P1', '--kind', 'bug', '--target', 'project'], `evidence: scripts/it's.mjs\n${note}\n`);
+  const added = pipe(['add', '--tier', 'P1', '--kind', 'bug', '--target', 'project'], `evidence: scripts/it's.mjs\n${note}\n`);
   assert.equal(added.status, 0, added.stderr);
   assert.match(added.stdout, /^[0-9a-f]{8}\n$/);
-  assert.equal(run(['add'], 'second').status, 0);
-  const [first, second] = rows();
+  assert.equal(pipe(['add'], 'second').status, 0);
+  const [first, second] = await rows();
   assert.deepEqual(
     { ...first, at: undefined, worktree: undefined },
     {
@@ -435,99 +445,99 @@ test('add appends one add row with tier, kind, target, and where it was captured
   assert.deepEqual([second.tier, second.kind, second.target], ['P2', null, null], 'P2 is the default tier; kind and target stay open');
 });
 
-test('add refuses an empty note and a bad tier, kind, or target, and writes nothing', (t) => {
-  const { run } = setup(t);
-  assert.deepEqual([run(['add'], 'evidence: x\n\n').status, run(['add'], 'evidence: x\n').stderr], [1, 'the lesson needs a note on stdin, after any "title:" or "evidence: <ref>" lines\n']);
-  assert.equal(run(['add', '--tier', 'P0'], 'note').stderr, '--tier must be one of P1, P2, P3\n');
-  assert.equal(run(['add', '--kind', 'harness'], 'note').stderr, '--kind must be one of bug, gap, improvement, rule\n');
-  assert.equal(run(['add', '--target', 'other'], 'note').stderr, '--target must be one of plugin, project\n');
-  assert.equal(run(['add', 'extra'], 'note').stderr, 'unexpected argument: extra\n');
-  assert.equal(run(['list']).stdout.startsWith('no open lessons in '), true);
+test('add refuses an empty note and a bad tier, kind, or target, and writes nothing', async (t) => {
+  const { run, pipe } = setup(t);
+  assert.deepEqual([pipe(['add'], 'evidence: x\n\n').status, pipe(['add'], 'evidence: x\n').stderr], [1, 'the lesson needs a note on stdin, after any "title:" or "evidence: <ref>" lines\n']);
+  assert.equal(pipe(['add', '--tier', 'P0'], 'note').stderr, '--tier must be one of P1, P2, P3\n');
+  assert.equal(pipe(['add', '--kind', 'harness'], 'note').stderr, '--kind must be one of bug, gap, improvement, rule\n');
+  assert.equal(pipe(['add', '--target', 'other'], 'note').stderr, '--target must be one of plugin, project\n');
+  assert.equal(pipe(['add', 'extra'], 'note').stderr, 'unexpected argument: extra\n');
+  assert.equal((await run(['list'])).stdout.startsWith('no open lessons in '), true);
 });
 
-test('add --same records the lesson again; --key does the same for a row that names a known key', (t) => {
-  const { run, rows, json, add } = setup(t);
+test('add --same records the lesson again; --key does the same for a row that names a known key', async (t) => {
+  const { pipe, rows, json, add } = setup(t);
   const id = add('the push hung', ['--key', 'push-hang']);
-  const again = run(['add', '--same', id], 'evidence: log.txt\nhung again\n');
+  const again = pipe(['add', '--same', id], 'evidence: log.txt\nhung again\n');
   assert.deepEqual([again.status, again.stdout], [0, `${id}\nSeen 2 times.\n`]);
-  assert.equal(run(['add', '--same', id], '').status, 0, 'a recurrence needs no note');
-  assert.equal(rows().at(-1).event, 'seen');
-  const keyed = run(['add', '--key', 'push-hang', '--tier', 'P1'], 'third time');
+  assert.equal(pipe(['add', '--same', id], '').status, 0, 'a recurrence needs no note');
+  assert.equal((await rows()).at(-1).event, 'seen');
+  const keyed = pipe(['add', '--key', 'push-hang', '--tier', 'P1'], 'third time');
   assert.equal(keyed.stdout, `${id}\nSeen 4 times.\n`, 'the row lands on the lesson that holds the key');
-  const [only] = json(['list']);
+  const [only] = await json(['list']);
   assert.deepEqual([only.id, only.seen, only.tier, only.occurrences.map((item) => item.note)], [id, 4, 'P2', ['hung again', null, 'third time']]);
   assert.deepEqual(only.occurrences[0].evidence, ['log.txt']);
-  assert.equal(run(['add', '--same', 'ffffffff'], 'x').stderr, 'no lesson with id ffffffff\n');
-  assert.match(run(['add', '--same', id, '--tier', 'P1'], 'x').stderr, /^--same records the lesson again and takes no --tier/);
+  assert.equal(pipe(['add', '--same', 'ffffffff'], 'x').stderr, 'no lesson with id ffffffff\n');
+  assert.match(pipe(['add', '--same', id, '--tier', 'P1'], 'x').stderr, /^--same records the lesson again and takes no --tier/);
 });
 
 test('add names similar lessons and the command that merges into one; an unrelated note gets no hint', (t) => {
-  const { run, add } = setup(t);
+  const { pipe, add } = setup(t);
   const push = add('git push exited 141 after the pre-push hook passed, and the remote branch did not move');
   add('the markdown line-length hook reported a table row');
-  const similar = run(['add'], 'git push exits 141 once the pre-push hook passes; the remote branch is not updated');
+  const similar = pipe(['add'], 'git push exits 141 once the pre-push hook passes; the remote branch is not updated');
   const [id, hint, candidate, rest] = similar.stdout.split('\n');
   assert.equal(hint, `Similar lessons. If one is the same problem, merge this one into it: aidrian lesson resolve ${id} --outcome merged --link <id>`);
   assert.match(candidate, new RegExp(`^  ${push}  \\d{4}-\\d\\d-\\d\\d  \\[P2 open\\]  git push exited 141`));
   assert.equal(rest, '');
-  assert.equal(run(['add'], 'session handoff brief lost its worktree path').stdout.split('\n').length, 2, 'only the id, then the final newline');
+  assert.equal(pipe(['add'], 'session handoff brief lost its worktree path').stdout.split('\n').length, 2, 'only the id, then the final newline');
 });
 
-test('list shows open lessons by tier then age, filters them, and shows one in full by id', (t) => {
+test('list shows open lessons by tier then age, filters them, and shows one in full by id', async (t) => {
   const { run, inbox, json, add } = setup(t);
   const old = add('old polish', ['--tier', 'P3', '--target', 'project', '--kind', 'improvement']);
   const mid = add('costly retry', ['--kind', 'gap']);
   const urgent = add('lost a commit', ['--tier', 'P1', '--kind', 'bug']);
-  appendFileSync(inbox(), '{"torn": \n{"no":"id"}\n');
-  assert.deepEqual(json(['list']).map((row) => row.id), [urgent, mid, old]);
-  assert.deepEqual(json(['list', '--tier', 'P3']).map((row) => row.id), [old]);
-  assert.deepEqual(json(['list', '--target', 'project']).map((row) => row.id), [old]);
-  assert.deepEqual(json(['list', '--kind', 'bug']).map((row) => row.id), [urgent]);
-  assert.deepEqual(json(['list', '--source', 'auto']), []);
-  assert.deepEqual(json(['list', '--limit', '2']).map((row) => row.id), [urgent, mid]);
-  run(['resolve', urgent, '--outcome', 'mechanism', '--link', 'abc1234']);
-  assert.deepEqual(json(['list', '--status', 'resolved']).map((row) => row.id), [urgent]);
-  assert.deepEqual(json(['list', '--all']).map((row) => row.id), [mid, old, urgent], 'open first');
-  assert.match(run(['list']).stdout, new RegExp(`^${mid}  \\d{4}-\\d\\d-\\d\\d  \\[P2 open -/gap\\]  costly retry\\n${old}  .*\\[P3 open project/improvement\\]  old polish\\n$`));
-  const full = run(['list', urgent]).stdout;
+  appendFileSync(await inbox(), '{"torn": \n{"no":"id"}\n');
+  assert.deepEqual((await json(['list'])).map((row) => row.id), [urgent, mid, old]);
+  assert.deepEqual((await json(['list', '--tier', 'P3'])).map((row) => row.id), [old]);
+  assert.deepEqual((await json(['list', '--target', 'project'])).map((row) => row.id), [old]);
+  assert.deepEqual((await json(['list', '--kind', 'bug'])).map((row) => row.id), [urgent]);
+  assert.deepEqual(await json(['list', '--source', 'auto']), []);
+  assert.deepEqual((await json(['list', '--limit', '2'])).map((row) => row.id), [urgent, mid]);
+  await run(['resolve', urgent, '--outcome', 'mechanism', '--link', 'abc1234']);
+  assert.deepEqual((await json(['list', '--status', 'resolved'])).map((row) => row.id), [urgent]);
+  assert.deepEqual((await json(['list', '--all'])).map((row) => row.id), [mid, old, urgent], 'open first');
+  assert.match((await run(['list'])).stdout, new RegExp(`^${mid}  \\d{4}-\\d\\d-\\d\\d  \\[P2 open -/gap\\]  costly retry\\n${old}  .*\\[P3 open project/improvement\\]  old polish\\n$`));
+  const full = (await run(['list', urgent])).stdout;
   assert.match(full, new RegExp(`^${urgent}  .*\\[P1 resolved: mechanism -/bug\\]  lost a commit\\n {10}planner @ main, session session-1\\n {10}lost a commit\\n {10}mechanism \\d{4}-\\d\\d-\\d\\d: abc1234\\n$`));
-  assert.equal(run(['list', 'ffffffff']).stderr, 'no lesson with id ffffffff\n');
-  assert.equal(run(['list', '--status', 'done']).stderr, '--status must be open, resolved, or all\n');
-  assert.equal(run(['list', '--limit', '0']).stderr, '--limit takes a whole number above 0\n');
+  assert.equal((await run(['list', 'ffffffff'])).stderr, 'no lesson with id ffffffff\n');
+  assert.equal((await run(['list', '--status', 'done'])).stderr, '--status must be open, resolved, or all\n');
+  assert.equal((await run(['list', '--limit', '0'])).stderr, '--limit takes a whole number above 0\n');
 });
 
-test('resolve appends the resolution, needs a link, reads it from stdin, and records what a fix should move', (t) => {
-  const { run, inbox, rows, json, add } = setup(t);
+test('resolve appends the resolution, needs a link, reads it from stdin, and records what a fix should move', async (t) => {
+  const { run, pipe, inbox, rows, json, add } = setup(t);
   const first = add('first');
   const second = add('second');
-  appendFileSync(inbox(), 'not json\n');
-  const before = readFileSync(inbox(), 'utf8');
-  assert.equal(run(['resolve', second, '--outcome', 'rule']).stderr, 'resolve needs --link: the commit, pull request, issue, lesson id, or reason it ends in\n');
-  assert.equal(run(['resolve', second, '--outcome', 'rule', '--link', '-'], ' \n').stderr, '--link - read nothing from stdin; pipe the link in or pass --link <ref>\n');
-  const resolved = run(['resolve', second, '--outcome', 'rule', '--link', '-', '--expect', 'report: planner re-dispatched under 10%'], "the reason's $(here)\n");
+  appendFileSync(await inbox(), 'not json\n');
+  const before = readFileSync(await inbox(), 'utf8');
+  assert.equal((await run(['resolve', second, '--outcome', 'rule'])).stderr, 'resolve needs --link: the commit, pull request, issue, lesson id, or reason it ends in\n');
+  assert.equal(pipe(['resolve', second, '--outcome', 'rule', '--link', '-'], ' \n').stderr, '--link - read nothing from stdin; pipe the link in or pass --link <ref>\n');
+  const resolved = pipe(['resolve', second, '--outcome', 'rule', '--link', '-', '--expect', 'report: planner re-dispatched under 10%'], "the reason's $(here)\n");
   assert.deepEqual([resolved.status, resolved.stdout], [0, `${second} -> rule\n`]);
-  assert.ok(readFileSync(inbox(), 'utf8').startsWith(before), 'every earlier line is byte for byte the same: the file is only appended to');
-  assert.deepEqual({ ...rows().at(-1), at: undefined }, { event: 'resolve', id: second, at: undefined, outcome: 'rule', link: "the reason's $(here)", expect: 'report: planner re-dispatched under 10%' });
-  const listed = json(['list', '--all']);
+  assert.ok(readFileSync(await inbox(), 'utf8').startsWith(before), 'every earlier line is byte for byte the same: the file is only appended to');
+  assert.deepEqual({ ...(await rows()).at(-1), at: undefined }, { event: 'resolve', id: second, at: undefined, outcome: 'rule', link: "the reason's $(here)", expect: 'report: planner re-dispatched under 10%' });
+  const listed = await json(['list', '--all']);
   assert.deepEqual(listed.map((row) => [row.id, row.status, row.outcome, row.expect]), [[first, 'open', null, null], [second, 'resolved', 'rule', 'report: planner re-dispatched under 10%']]);
-  assert.equal(run(['resolve', second, '--outcome', 'rule', '--link', 'x']).stderr, `no open lesson with id ${second}\n`);
-  assert.equal(run(['resolve', first, '--outcome', 'dropped', '--link', 'x']).stderr, 'resolve needs --outcome mechanism|rule|issue|merged|rejected\n');
-  assert.equal(run(['resolve', first, '--outcome', 'merged', '--link', 'ffffffff']).stderr, 'merged needs --link to name a lesson; no lesson with id ffffffff\n');
-  assert.equal(run(['resolve', first, '--outcome', 'merged', '--link', first]).stderr, 'a lesson cannot be merged into itself\n');
+  assert.equal((await run(['resolve', second, '--outcome', 'rule', '--link', 'x'])).stderr, `no open lesson with id ${second}\n`);
+  assert.equal((await run(['resolve', first, '--outcome', 'dropped', '--link', 'x'])).stderr, 'resolve needs --outcome mechanism|rule|issue|merged|rejected\n');
+  assert.equal((await run(['resolve', first, '--outcome', 'merged', '--link', 'ffffffff'])).stderr, 'merged needs --link to name a lesson; no lesson with id ffffffff\n');
+  assert.equal((await run(['resolve', first, '--outcome', 'merged', '--link', first])).stderr, 'a lesson cannot be merged into itself\n');
 });
 
-test('merged moves a lesson\'s occurrences to the lesson it names, and later rows for it follow', (t) => {
-  const { run, json, add } = setup(t);
+test('merged moves a lesson\'s occurrences to the lesson it names, and later rows for it follow', async (t) => {
+  const { run, pipe, json, add } = setup(t);
   const keep = add('the push hung');
   const copy = add('the push hung again', ['--key', 'push-hang']);
-  run(['add', '--same', copy], 'and again');
-  assert.equal(run(['resolve', copy, '--outcome', 'merged', '--link', keep]).status, 0);
-  run(['add', '--same', copy], 'after the merge');
-  run(['add', '--key', 'push-hang'], 'by key');
-  const [kept] = json(['list']);
+  pipe(['add', '--same', copy], 'and again');
+  assert.equal((await run(['resolve', copy, '--outcome', 'merged', '--link', keep])).status, 0);
+  pipe(['add', '--same', copy], 'after the merge');
+  pipe(['add', '--key', 'push-hang'], 'by key');
+  const [kept] = await json(['list']);
   assert.deepEqual([kept.id, kept.seen, kept.merged], [keep, 5, [copy]]);
   assert.deepEqual(kept.occurrences.map((item) => item.note), ['the push hung again', 'and again', 'after the merge', 'by key']);
-  assert.deepEqual(json(['list', copy]).map((row) => row.id), [keep], 'a merged id shows the lesson it went to');
+  assert.deepEqual((await json(['list', copy])).map((row) => row.id), [keep], 'a merged id shows the lesson it went to');
 });
 
 test('a fix that recurs reopens its lesson; an issue keeps counting; an old duplicate merged in never reopens', () => {
@@ -623,46 +633,46 @@ test('rows the first version wrote, and a resolved row rewritten in place, still
   );
 });
 
-test('update changes a lesson\'s tier, kind, or target and nothing else', (t) => {
+test('update changes a lesson\'s tier, kind, or target and nothing else', async (t) => {
   const { run, json, add } = setup(t);
   const id = add('polish', ['--tier', 'P3']);
-  assert.match(run(['update', id, '--tier', 'P1', '--target', 'project']).stdout, new RegExp(`^${id}  .*\\[P1 open project/-\\]  polish\\n$`));
-  assert.deepEqual(json(['list']).map((row) => [row.tier, row.kind, row.target, row.seen]), [['P1', null, 'project', 1]]);
-  assert.equal(run(['update', id]).stderr, 'update needs --tier, --kind, --target, or --triage -\n');
-  assert.equal(run(['update', 'ffffffff', '--tier', 'P1']).stderr, 'no lesson with id ffffffff\n');
-  assert.equal(run(['update', id, '--kind', 'idea']).stderr, '--kind must be one of bug, gap, improvement, rule\n');
+  assert.match((await run(['update', id, '--tier', 'P1', '--target', 'project'])).stdout, new RegExp(`^${id}  .*\\[P1 open project/-\\]  polish\\n$`));
+  assert.deepEqual((await json(['list'])).map((row) => [row.tier, row.kind, row.target, row.seen]), [['P1', null, 'project', 1]]);
+  assert.equal((await run(['update', id])).stderr, 'update needs --tier, --kind, --target, or --triage -\n');
+  assert.equal((await run(['update', 'ffffffff', '--tier', 'P1'])).stderr, 'no lesson with id ffffffff\n');
+  assert.equal((await run(['update', id, '--kind', 'idea'])).stderr, '--kind must be one of bug, gap, improvement, rule\n');
 });
 
 const TRIAGE = { existing: ['docs/lessons.md', 'owner/repo#12'], proposed_end: 'Fix now', owner: 'harness-librarian', expect: 'no new occurrence', verdict: null, reason: null };
 
-test('update --triage - keeps what triage found on the lesson, stamped with when, where, and the target it had', (t) => {
-  const { run, rows, json, add, inbox } = setup(t);
-  const here = path.basename(path.dirname(path.dirname(inbox())));
+test('update --triage - keeps what triage found on the lesson, stamped with when, where, and the target it had', async (t) => {
+  const { run, pipe, rows, json, add, inbox } = setup(t);
+  const here = path.basename(path.dirname(path.dirname(await inbox())));
   const id = add('the planner re-reads every doc', ['--target', 'project']);
   const before = Date.now();
-  const written = run(['update', id, '--triage', '-', '--json'], JSON.stringify(TRIAGE));
+  const written = pipe(['update', id, '--triage', '-', '--json'], JSON.stringify(TRIAGE));
   assert.equal(written.status, 0, written.stderr);
   const { triage } = JSON.parse(written.stdout);
   assert.deepEqual({ ...triage, at: undefined }, { ...TRIAGE, project: here, target: 'project', at: undefined });
   assert.ok(Date.parse(triage.at) >= before - 1000, 'the command stamps the time of the row');
-  assert.deepEqual(rows().at(-1), { event: 'update', id, at: triage.at, triage });
-  assert.deepEqual(json(['list']).map((lesson) => lesson.triage), [triage], 'list --json shows the record');
-  assert.deepEqual(json(['list', id]).map((lesson) => [lesson.tier, lesson.target]), [['P2', 'project']], 'it changes no label');
+  assert.deepEqual((await rows()).at(-1), { event: 'update', id, at: triage.at, triage });
+  assert.deepEqual((await json(['list'])).map((lesson) => lesson.triage), [triage], 'list --json shows the record');
+  assert.deepEqual((await json(['list', id])).map((lesson) => [lesson.tier, lesson.target]), [['P2', 'project']], 'it changes no label');
   // A second write replaces the record whole.
-  run(['update', id, '--triage', '-'], JSON.stringify({ ...TRIAGE, verdict: 'declined', reason: 'the Human wants an issue' }));
-  assert.deepEqual({ ...json(['list'])[0].triage, at: undefined }, { ...TRIAGE, verdict: 'declined', reason: 'the Human wants an issue', project: here, target: 'project', at: undefined });
-  run(['update', id, '--triage', '-'], JSON.stringify({ existing: [], proposed_end: 'Issue', owner: 'planner' }));
-  assert.deepEqual({ ...json(['list'])[0].triage, at: undefined }, {
+  pipe(['update', id, '--triage', '-'], JSON.stringify({ ...TRIAGE, verdict: 'declined', reason: 'the Human wants an issue' }));
+  assert.deepEqual({ ...(await json(['list']))[0].triage, at: undefined }, { ...TRIAGE, verdict: 'declined', reason: 'the Human wants an issue', project: here, target: 'project', at: undefined });
+  pipe(['update', id, '--triage', '-'], JSON.stringify({ existing: [], proposed_end: 'Issue', owner: 'planner' }));
+  assert.deepEqual({ ...(await json(['list']))[0].triage, at: undefined }, {
     existing: [], proposed_end: 'Issue', owner: 'planner', expect: null, verdict: null, reason: null, project: here, target: 'project', at: undefined,
   }, 'each write replaces the record whole, and an absent expect, verdict, or reason is null');
-  run(['resolve', id, '--outcome', 'rejected', '--link', 'noise']);
-  assert.equal(json(['list', id])[0].triage, null, 'a resolution clears it');
+  await run(['resolve', id, '--outcome', 'rejected', '--link', 'noise']);
+  assert.equal((await json(['list', id]))[0].triage, null, 'a resolution clears it');
 });
 
-test('update --triage - fails with one line and writes nothing on a missing or malformed record', (t) => {
-  const { run, inbox, add } = setup(t);
+test('update --triage - fails with one line and writes nothing on a missing or malformed record', async (t) => {
+  const { pipe, inbox, add } = setup(t);
   const id = add('a lesson to triage');
-  const before = readFileSync(inbox(), 'utf8');
+  const before = readFileSync(await inbox(), 'utf8');
   const failures = [
     [['--triage', '-'], ' \n', '--triage - read nothing from stdin; pipe the JSON record in'],
     [['--triage', '-'], '[1]', '--triage - needs one JSON object on stdin'],
@@ -678,46 +688,46 @@ test('update --triage - fails with one line and writes nothing on a missing or m
     [['--triage', 'record.json'], JSON.stringify(TRIAGE), '--triage takes -: pipe the JSON record in on stdin'],
   ];
   for (const [args, input, message] of failures) {
-    const result = run(['update', id, ...args], input);
+    const result = pipe(['update', id, ...args], input);
     assert.deepEqual([result.status, result.stderr], [1, `${message}\n`], input);
   }
-  assert.equal(readFileSync(inbox(), 'utf8'), before, 'no row was appended');
+  assert.equal(readFileSync(await inbox(), 'utf8'), before, 'no row was appended');
 });
 
-test('update --triage - takes a record resent with its stamps, and stamps it afresh', (t) => {
-  const { run, json, add, inbox } = setup(t);
-  const here = path.basename(path.dirname(path.dirname(inbox())));
+test('update --triage - takes a record resent with its stamps, and stamps it afresh', async (t) => {
+  const { pipe, json, add, inbox } = setup(t);
+  const here = path.basename(path.dirname(path.dirname(await inbox())));
   const id = add('a lesson to triage again', ['--target', 'project']);
   const stale = { ...TRIAGE, at: '2020-01-01T00:00:00.000Z', project: 'notes-1', target: 'plugin' };
-  const written = run(['update', id, '--triage', '-', '--json'], JSON.stringify({ ...stale, verdict: 'declined', reason: 'the Human wants an issue' }));
+  const written = pipe(['update', id, '--triage', '-', '--json'], JSON.stringify({ ...stale, verdict: 'declined', reason: 'the Human wants an issue' }));
   assert.equal(written.status, 0, written.stderr);
   const { triage } = JSON.parse(written.stdout);
   assert.deepEqual({ ...triage, at: undefined }, { ...TRIAGE, verdict: 'declined', reason: 'the Human wants an issue', project: here, target: 'project', at: undefined });
   assert.notEqual(triage.at, stale.at, 'the command stamps its own time');
   // The record as list --json prints it goes back in whole.
-  const shown = json(['list'])[0].triage;
-  const resent = run(['update', id, '--triage', '-'], JSON.stringify({ ...shown, verdict: 'failed', reason: 'the route failed' }));
+  const shown = (await json(['list']))[0].triage;
+  const resent = pipe(['update', id, '--triage', '-'], JSON.stringify({ ...shown, verdict: 'failed', reason: 'the route failed' }));
   assert.equal(resent.status, 0, resent.stderr);
-  assert.deepEqual({ ...json(['list'])[0].triage, at: undefined }, { ...TRIAGE, verdict: 'failed', reason: 'the route failed', project: here, target: 'project', at: undefined });
+  assert.deepEqual({ ...(await json(['list']))[0].triage, at: undefined }, { ...TRIAGE, verdict: 'failed', reason: 'the route failed', project: here, target: 'project', at: undefined });
 });
 
-test('the triage record is reused for 14 days, only in the project that wrote it, and a later occurrence clears it', (t) => {
-  const { run, json, add, inbox } = setup(t);
-  const here = path.basename(path.dirname(path.dirname(inbox())));
+test('the triage record is reused for 14 days, only in the project that wrote it, and a later occurrence clears it', async (t) => {
+  const { pipe, json, add, inbox } = setup(t);
+  const here = path.basename(path.dirname(path.dirname(await inbox())));
   const ago = (days) => new Date(Date.now() - days * DAY).toISOString();
   const record = (days, project = here) => ({ ...TRIAGE, at: ago(days), project, target: null });
   const id = add('a lesson triaged before');
   const fresh = record(13);
-  appendRow(inbox(), { event: 'update', id, at: fresh.at, triage: fresh });
-  assert.deepEqual(json(['list'])[0].triage, fresh, 'at 13 days it is shown');
-  appendRow(inbox(), { event: 'update', id, at: ago(15), triage: record(15) });
-  assert.equal(json(['list'])[0].triage, null, 'at 15 days it is not');
-  appendRow(inbox(), { event: 'update', id, at: ago(1), triage: record(1, 'other-12345678') });
-  assert.equal(json(['list'])[0].triage, null, 'nor one written in another project');
-  run(['update', id, '--triage', '-'], JSON.stringify(TRIAGE));
-  assert.notEqual(json(['list'])[0].triage, null);
-  run(['add', '--same', id], 'it happened again');
-  assert.equal(json(['list'])[0].triage, null, 'an occurrence after the record clears it');
+  appendRow(await inbox(), { event: 'update', id, at: fresh.at, triage: fresh });
+  assert.deepEqual((await json(['list']))[0].triage, fresh, 'at 13 days it is shown');
+  appendRow(await inbox(), { event: 'update', id, at: ago(15), triage: record(15) });
+  assert.equal((await json(['list']))[0].triage, null, 'at 15 days it is not');
+  appendRow(await inbox(), { event: 'update', id, at: ago(1), triage: record(1, 'other-12345678') });
+  assert.equal((await json(['list']))[0].triage, null, 'nor one written in another project');
+  pipe(['update', id, '--triage', '-'], JSON.stringify(TRIAGE));
+  assert.notEqual((await json(['list']))[0].triage, null);
+  pipe(['add', '--same', id], 'it happened again');
+  assert.equal((await json(['list']))[0].triage, null, 'an occurrence after the record clears it');
 });
 
 test('fold clears the triage record on a resolution, a new target, and an occurrence later than it, and nothing else', () => {
@@ -742,14 +752,14 @@ test('fold clears the triage record on a resolution, a new target, and an occurr
   assert.equal(triage([...resolved, { event: 'seen', id: 'aaaa0001', at: at(4) }]), null, 'resolved or not');
 });
 
-test('a move carries no triage record: a whole move clears it by its new target, and a lesson joining by key brings none', (t) => {
+test('a move carries no triage record: a whole move clears it by its new target, and a lesson joining by key brings none', async (t) => {
   const consumer = setup(t);
-  const plugin = checkout(consumer, 'plugin', pluginRepository());
+  const plugin = await checkout(consumer, 'plugin', pluginRepository());
   const id = consumer.add('a lesson triaged in its project');
-  consumer.run(['update', id, '--triage', '-'], JSON.stringify(TRIAGE));
-  consumer.run(['update', id, '--target', 'plugin']);
-  assert.deepEqual(readRowsOf(plugin.inbox()).filter((row) => row.triage).length, 1, 'the record row moves with the lesson');
-  assert.equal(fold(readRowsOf(plugin.inbox())).find(id).triage, null, 'but the new target cleared it');
+  consumer.pipe(['update', id, '--triage', '-'], JSON.stringify(TRIAGE));
+  await consumer.run(['update', id, '--target', 'plugin']);
+  assert.deepEqual(readRowsOf(await plugin.inbox()).filter((row) => row.triage).length, 1, 'the record row moves with the lesson');
+  assert.equal(fold(readRowsOf(await plugin.inbox())).find(id).triage, null, 'but the new target cleared it');
   const from = path.join(consumer.base, 'from.jsonl');
   const to = path.join(consumer.base, 'to.jsonl');
   const old = (days) => new Date(Date.now() - days * DAY).toISOString();
@@ -776,9 +786,9 @@ test('triageOrder puts open lessons first, then by tier, then oldest first', () 
   assert.deepEqual(fold(rows).lessons.sort(triageOrder).map((item) => item.id), ['cccccccc', 'dddddddd', 'bbbbbbbb', 'aaaaaaaa']);
 });
 
-test('the nudge is silent with nothing open, calm under the limits, and escalates naming every reason', (t) => {
+test('the nudge is silent with nothing open, calm under the limits, and escalates naming every reason', async (t) => {
   const { inbox } = setup(t);
-  const file = inbox();
+  const file = await inbox();
   const write = (rows) => {
     rmSync(file, { force: true });
     for (const row of rows) appendFileSync(file, `${JSON.stringify(row)}\n`, { flag: 'a' });
@@ -842,51 +852,55 @@ test('lessonStats counts what is open, what moved in the window, and whether eac
   );
 });
 
-test('stats prints the summary, and --json the same numbers', (t) => {
-  const { run, add } = setup(t);
+test('stats prints the summary, and --json the same numbers', async (t) => {
+  const { run, runProcess, add } = setup(t);
   add('one', ['--tier', 'P1']);
-  assert.match(run(['stats']).stdout, /^Lesson inbox .*inbox\.jsonl\nOpen: 1 \(P1 1, P2 0, P3 0\); plugin 0, project 0, no target 1; the oldest from today\.\nSince 30d: 1 added, 0 seen again, 0 resolved\.\nFixes since 30d: 0\.\n$/);
-  const json = JSON.parse(run(['stats', '--since', '7d', '--json']).stdout);
+  // As a process, so the stats command stays tested through bin/aidrian's own entry.
+  assert.match(runProcess(['stats']).stdout, /^Lesson inbox .*inbox\.jsonl\nOpen: 1 \(P1 1, P2 0, P3 0\); plugin 0, project 0, no target 1; the oldest from today\.\nSince 30d: 1 added, 0 seen again, 0 resolved\.\nFixes since 30d: 0\.\n$/);
+  const json = JSON.parse((await run(['stats', '--since', '7d', '--json'])).stdout);
   assert.deepEqual([json.since, json.open.count, json.window.added], ['7d', 1, 1]);
-  assert.equal(run(['stats', '--since', 'soon']).stderr, '--since takes 7d, 24h, 30m, or YYYY-MM-DD, not soon\n');
+  assert.equal((await run(['stats', '--since', 'soon'])).stderr, '--since takes 7d, 24h, 30m, or YYYY-MM-DD, not soon\n');
 });
 
-test('--project reads another project\'s inbox, and a missing or unknown action prints the usage', (t) => {
+test('--project reads another project\'s inbox, and a missing or unknown action prints the usage', async (t) => {
   const { repo, env, add } = setup(t);
   const id = add('from the project');
+  // As a process, so the list command stays tested through bin/aidrian's own entry, the exit code it sets, and what it writes.
   const elsewhere = spawnSync(CLI, ['lesson', 'list', '--json', '--project', repo], { cwd: tmpdir(), encoding: 'utf8', env });
   assert.deepEqual(JSON.parse(elsewhere.stdout).map((row) => row.id), [id]);
   for (const args of [[], ['show']]) {
-    const usage = spawnSync(CLI, ['lesson', ...args], { cwd: repo, encoding: 'utf8', env });
+    const usage = await cliCall(['lesson', ...args], { cwd: repo, env });
     assert.deepEqual([usage.status, usage.stderr.startsWith('usage: aidrian lesson add [--tier P1|P2|P3]')], [1, true]);
   }
 });
 
-test('a lesson another session writes while a resolve runs is never lost', (t) => {
+test('a lesson another session writes while a resolve runs is never lost', async (t) => {
   // The other session opened the inbox before the resolve and writes after it. A resolve that replaced the file would
   // leave that write in the replaced copy, and the lesson would be gone.
   const { run, inbox, json, add } = setup(t);
   const target = add('to resolve');
-  const other = openSync(inbox(), 'a');
-  assert.equal(run(['resolve', target, '--outcome', 'rejected', '--link', 'x']).status, 0);
+  const other = openSync(await inbox(), 'a');
+  assert.equal((await run(['resolve', target, '--outcome', 'rejected', '--link', 'x'])).status, 0);
   writeSync(other, `${JSON.stringify({ event: 'add', id: 'feedf00d', at: new Date().toISOString(), note: 'from another session' })}\n`);
   closeSync(other);
-  assert.deepEqual(json(['list', '--all']).map((row) => [row.note, row.status]), [['from another session', 'open'], ['to resolve', 'resolved']]);
+  assert.deepEqual((await json(['list', '--all'])).map((row) => [row.note, row.status]), [['from another session', 'open'], ['to resolve', 'resolved']]);
 });
 
 test('every worktree of a repository shares one inbox, and two processes appending at once both land', async (t) => {
   const { repo, env, run, rows } = setup(t);
   spawnSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@example.test', '-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', 'init']);
   spawnSync('git', ['-C', repo, 'worktree', 'add', '-q', '-b', 'task', path.join(repo, '..', 'task')]);
+  // As a process: add reads its note on stdin.
   const fromWorktree = spawnSync(CLI, ['lesson', 'add'], { cwd: path.join(repo, '..', 'task'), input: 'from the worktree', encoding: 'utf8', env });
   assert.equal(fromWorktree.status, 0);
+  // As processes, so the eight appends run at once, each reading its note on stdin.
   const add = (note) => new Promise((resolve) => {
     const child = spawn(CLI, ['lesson', 'add'], { cwd: repo, env });
     child.on('close', resolve);
     child.stdin.end(note);
   });
   assert.deepEqual(await Promise.all(Array.from({ length: 8 }, (_, i) => add(`parallel ${i}`))), Array(8).fill(0));
-  assert.equal(rows().length, 9);
-  assert.equal(rows()[0].branch, 'task');
-  assert.match(run(['list']).stdout, /from the worktree/);
+  assert.equal((await rows()).length, 9);
+  assert.equal((await rows())[0].branch, 'task');
+  assert.match((await run(['list'])).stdout, /from the worktree/);
 });

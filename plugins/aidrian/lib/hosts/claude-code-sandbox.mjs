@@ -65,7 +65,7 @@ export const CREDENTIAL_PATHS = Object.freeze([
   '.config/op', '.1password', 'Library/Application Support/Google/Chrome', 'Library/Application Support/Firefox',
   'Library/Application Support/BraveSoftware', 'Library/Application Support/Microsoft Edge', '.mozilla', '.config/google-chrome',
   '.config/chromium', '.git-credentials', '.npmrc', '.pypirc', '.cargo/credentials.toml', '.cargo/credentials', '.gem/credentials',
-  '.vault-token', '.config/hub', '.claude.json', '.claude/.credentials.json', '.claude/ide', '.local/share/keyrings',
+  '.vault-token', '.config/hub', '.claude.json', '.claude-trust-stage', '.claude/.credentials.json', '.claude/ide', '.local/share/keyrings',
   '.bash_history', '.zsh_history', '.local/share/fish',
   // The package registries' token stores, beside .npmrc, .pypirc, and cargo's and gem's above: yarn's, npm's XDG
   // config, bun's, gem's XDG credentials, bundler's config, pnpm's own config, pip's config, which may name an index
@@ -76,7 +76,8 @@ export const CREDENTIAL_PATHS = Object.freeze([
 ]);
 
 // The host's own credential files in its user config folder, wherever CLAUDE_CONFIG_DIR moves it.
-const CONFIG_CREDENTIALS = Object.freeze(['.credentials.json', 'ide', '.claude.json']);
+// `.claude-trust-stage` is where a start stages the trust record it updates (claude-code-trust.mjs TRUST_STAGE).
+const CONFIG_CREDENTIALS = Object.freeze(['.credentials.json', 'ide', '.claude.json', '.claude-trust-stage']);
 
 // An environment variable whose name says it holds a credential, which the sandbox unsets before each sandboxed command
 // runs; and the well-known ones, unset whether or not the driver's environment has them, since the host's background

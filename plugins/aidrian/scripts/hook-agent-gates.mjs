@@ -194,7 +194,7 @@ async function gate(input) {
     const held = marked ?? project;
     const placesOf = () => (places ??= unattendedPlaces({
       cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), mark, project: held,
-      config: held === project ? config : loadConfig(held).config, base: held === project ? base : baseReader(held), own,
+      config: held === project ? config : loadConfig(held).config, base: held === project ? base : baseReader(held), own, session: input.session_id,
     }));
     // The driver's run project is one of `others`, so a call from another project's folder still meets its run's stores.
     denial = withinDeadline(budget, () => guards(input, project, config, gated, snapshot, [() => marked, origin, drivenProject], { unattended, drives, drove, issue, mark }, base, own)

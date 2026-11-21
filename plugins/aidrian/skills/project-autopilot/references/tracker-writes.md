@@ -32,7 +32,9 @@ Right after `aidrian project start` succeeds, set the issue's started status onc
 issue's key and its started status type alone, such as Linear `save_issue` with `id` and `state: "started"`. No other
 field, and no comment. It owes no report, and needs no `recorded`. When the call fails, make it again at most twice,
 right away, with no wait. If it still fails, go on, and name the issue in the final report as one whose started status
-was not set; the issue's own session sets the status too. With no tracker run tools, skip it.
+was not set; the issue's own session sets the status too. Only this driver session knows of its failed writes: a
+driver that takes the run over does not learn of an earlier one's, so its final report names only its own. With no
+tracker run tools, skip it.
 
 ## Writing one
 

@@ -122,7 +122,8 @@ function buildReport({ state, run, key, cause, after, policy }) {
 // that held its session, its latest start's outcome `started`, and that the snapshot holds in a status before started.
 // `status` is the adapter's started status type (`run.issue.started`), none when `policy.adapter` names none. The
 // snapshot is read at init and no tracker is read here, so a status that moved since, after init or between attempts,
-// is not seen: each write can set the issue back to started once.
+// is not seen: each write can set the issue back to started once. Accepted residual of #489's review (R1-3): a status
+// read before the write would put tracker text in the driver's context, and Linear's write takes no expected state.
 export function startedWrites({ found, policy }) {
   const status = policy.adapter?.run?.issue?.started;
   if (typeof status !== 'string' || status === '') return [];

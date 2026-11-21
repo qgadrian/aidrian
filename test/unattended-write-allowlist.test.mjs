@@ -502,7 +502,7 @@ test('the session\'s own worktree is the folder its mark says it started in, nev
   gitIn(fx.dir)('worktree', 'add', '-q', '-b', 'feat/y', second);
   assert.match(fx.ask(write(path.join(second, 'a.txt')), { cwd: second })?.reason ?? '', /outside the places/u, 'another worktree of the same repository');
   assert.match(fx.ask(write(path.join(fx.dir, 'a.txt')), { cwd: fx.dir })?.reason ?? '', /outside the places/u, 'the main checkout');
-  // A mark filed before the start folder was recorded names no worktree.
+  // A mark filed before the start folder was recorded starts in its main checkout: a worktree beside it stays outside.
   assert.match(fx.ask(write(path.join(fx.worktree, 'a.txt')), { held: { root: fx.dir } })?.reason ?? '', /outside the places/u);
   // A repository under a dot folder of the home folder writes itself, but never its git folder.
   const dotfiles = path.join(fx.home, '.dotfiles');
@@ -519,6 +519,46 @@ test('the session\'s own worktree is the folder its mark says it started in, nev
   assert.equal(fx.ask(write(path.join(dotfiles, 'zshrc')), { held, owner, cwd: dotfiles }), null);
   assert.match(fx.ask(write(path.join(dotfiles, '.git', 'info', 'exclude')), { held, owner, cwd: dotfiles })?.reason ?? '', /the repository's shared git folder/u);
   assert.match(fx.ask(write(path.join(fx.home, '.zshrc')), { held, owner, cwd: dotfiles })?.reason ?? '', /a shell startup file/u, 'the refused list stays first');
+});
+
+// Next.js route segment folders, whose names hold glob and shell characters: a dynamic segment, a catch-all, an optional
+// catch-all, a route group, a parallel route slot, and intercepting routes.
+const SEGMENTS = ['[uid]', '[...slug]', '[[...slug]]', '(group)', '@slot', '(.)photo', '(..)(..)feed'];
+
+test('a mark filed before the start folder was recorded takes its main checkout as that folder: a task worktree inside it passes, whatever its folders are named', (t) => {
+  const fx = fixture(t);
+  const nested = path.join(fx.dir, '.claude', 'worktrees', 'eng-1-hours');
+  gitIn(fx.dir)('worktree', 'add', '-q', '-b', 'feat/hours', nested);
+  const files = SEGMENTS.map((segment) => path.join(nested, 'src', 'app', 'api', segment, 'route.ts'));
+  const edit = (file) => ({ tool_name: 'Edit', tool_input: { file_path: file, old_string: 'a', new_string: 'b' } });
+  // The mark an older gate filed, { root, at }, and the marks a gate files now, naming the main checkout or the worktree.
+  for (const held of [{ root: fx.dir }, { root: fx.dir, cwd: fx.dir }, { root: fx.dir, cwd: nested }]) {
+    const label = JSON.stringify(held);
+    const ask = (input) => fx.ask(input, { held, cwd: nested })?.reason ?? null;
+    for (const file of files) {
+      for (const input of [edit(file), write(file), write(file, { agent_id: 'a5f0c1' })]) assert.equal(ask(input), null, `${label} ${input.tool_name} ${file}`);
+      const spelled = path.relative(nested, file);
+      for (const command of [`printf x > '${spelled}'`, `printf x > "${file}"`, `sed -i '' 's/a/b/' '${spelled}'`]) assert.equal(ask(bash(command)), null, `${label} ${command}`);
+    }
+    // The same names outside every place, and the entries refused wherever they lie, stay refused.
+    for (const segment of SEGMENTS) {
+      const outside = path.join(fx.root, 'elsewhere', segment, 'route.ts');
+      assert.match(ask(edit(outside)) ?? '', /outside the places/u, `${label} ${outside}`);
+      assert.match(ask(bash(`printf x > "${outside}"`)) ?? '', /outside the places/u, `${label} shell ${outside}`);
+    }
+    // The worktree beside the main checkout is not this session's, so its `.git` pointer is refused as outside instead.
+    for (const [file, reason] of refusedOf(fx)) assert.match(ask(write(file)) ?? '', file.startsWith(fx.worktree) ? /outside the places/u : reason, `${label} ${file}`);
+    assert.match(ask(write(path.join(nested, '.git'))) ?? '', /pointer to its git folder|git folder/u, label);
+  }
+  // Only the checkout a start folder gives passes: a worktree beside the main checkout stays outside for the older mark.
+  assert.match(fx.ask(write(path.join(fx.worktree, SEGMENTS[0], 'a.ts')), { held: { root: fx.dir }, cwd: fx.worktree })?.reason ?? '', /outside the places/u);
+  // The host files a later session in the main checkout loads stay refused.
+  assert.match(fx.ask(write(path.join(fx.dir, '.claude', 'settings.json')), { held: { root: fx.dir }, cwd: nested })?.reason ?? '', /a host file a later session/u);
+  // A project run's issue session works in its attempt's clone, which its mark names: one whose mark names no start
+  // folder gets no worktree, so not the main checkout either.
+  const issue = { root: fx.dir, project: 'launch', issue: 'ENG-1' };
+  assert.match(fx.ask(write(files[0]), { held: issue, cwd: nested })?.reason ?? '', /outside the places/u);
+  assert.match(fx.ask(write(path.join(fx.dir, 'README.md')), { held: issue, cwd: fx.dir })?.reason ?? '', /outside the places/u);
 });
 
 test('the agent gate hook holds a marked session to its places, a pending hold to the refused entries, and lets a call run when it cannot read its input', async (t) => {

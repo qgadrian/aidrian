@@ -105,8 +105,8 @@ const refuser = (list) => (file, what, folder = false, allows = null) => list.pu
 //     hold, with `specific` the state folders of `project` that pass among those.
 //   - specific: its attempt's work, drop, and cache folders (`own()`, project-run-guard.mjs ownAttemptFolder), and HAND_FOLDERS of
 //     every state folder of `project`, the project the mark names, that is no link; `reviews`, each state's reviews folder.
-//   - worktree: the checkout of the folder its mark says it started in, when it shares its git folder with the mark's
-//     main checkout, and `worktreeCommon` its git common folder; never the call's folder. `nested` holds the attempt's
+//   - worktree: the checkout of the folder its mark says it started in (startFolder), when it shares its git folder with
+//     the mark's main checkout, and `worktreeCommon` its git common folder; never the call's folder. `nested` holds the attempt's
 //     clone, { root, work, common, links }, `common` the git folder the start cloned it with. `temp`: the temporary
 //     folders, this process's and /tmp by default. `states`: every state folder of `project`, where only `specific`
 //     and `reviews` pass, even inside a temporary folder, as a state folder under /tmp is.
@@ -173,13 +173,24 @@ function gitRefused(refuse, { common, gitDir, top }) {
 // The options stateFolders takes: the call's base-branch reader and home folder, when given.
 const stateOptions = (base, home) => ({ ...(base ? { base } : {}), ...(home ? { home } : {}) });
 
+// The folder a session its own mark holds started in, whose checkout is its worktree: the mark's `cwd`. A mark a gate
+// filed before it recorded the start folder names none. Such a gate started the session in the folder of the session
+// that ran it, the main checkout the mark names for a session a Human opened there, so that checkout stands in, as a
+// mark naming it would. A project run's issue session works in its attempt's clone, which its mark names: one whose
+// mark names none, or cannot be read, gets no worktree.
+function startFolder(mark, issueHeld) {
+  if (absolute(mark.cwd)) return mark.cwd;
+  return issueHeld ? null : mark.root;
+}
+
 // The places of a session its own mark holds (unattendedPlaces).
 function ownPlaces(places, { mark, project, config, base, own, home, temp }, refuse) {
   checkDeadline();
   const repo = gitFolders(mark.root, gitBudget());
   if (repo) gitRefused(refuse, repo);
   checkDeadline();
-  const start = repo && absolute(mark.cwd) ? gitFolders(mark.cwd, gitBudget()) : null;
+  const from = startFolder(mark, places.issueHeld);
+  const start = repo && from ? gitFolders(from, gitBudget()) : null;
   if (places.issueHeld) places.issue = ownIssue(project, config, mark, stateOptions(base, home));
   if (start && real(start.common) === real(repo.common)) {
     places.worktree = real(start.top);
@@ -429,13 +440,21 @@ function placeOf(target, spelled, places, { holds = true } = {}) {
     return late ? { refused: late } : null;
   };
   if ([...places.specific, ...places.reviews].some((dir) => isWithin(dir, target))) return passes();
-  if (places.worktree && isWithin(places.worktree, target)) return passes();
+  if (places.worktree && isWithin(places.worktree, target)) return gitEntry(places.worktree, target, spelled) ?? passes();
   const below = isWithin(places.home, target) ? path.relative(places.home, target).split(path.sep)[0] : '';
   if (below.startsWith('.')) return { refused: { what: 'a dot file or folder of the user\'s home folder', spelled } };
   if (places.limited) return passes();
   const inState = (places.states ?? []).some((dir) => isWithin(dir, target));
   if (!inState && places.temp.some((dir) => isWithin(dir, target))) return passes();
   return { outside: true };
+}
+
+// A `.git` entry at any depth of the session's worktree `top`, below its own, which gitRefused names: a checkout nested
+// in it, as a task worktree under the main checkout's `.claude/worktrees/` is, and that checkout's pointer to its git
+// folder. Only git writes there: { refused } for the real, case-folded path `target`, or null.
+const GIT_ENTRY = 'a nested checkout\'s git folder or pointer to one, which only git writes';
+function gitEntry(top, target, spelled) {
+  return path.relative(top, target).split(path.sep).includes('.git') ? { refused: { what: GIT_ENTRY, spelled } } : null;
 }
 
 // A spelled path as placeOf meets it: a device always passes, before any path is resolved.

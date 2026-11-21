@@ -1157,7 +1157,10 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   mark holds, read by the hook payload's session id, and every subagent of it, writes only:
   - its own worktree: the checkout of the folder its mark says the gate started it in, when that checkout shares its git
     folder with the main checkout the mark names; never the call's folder, so another worktree of the same repository
-    is outside. A mark filed before the start folder was recorded names no worktree;
+    is outside, unless it lies inside that checkout, as a task worktree under the main checkout's `.claude/worktrees/`
+    does for a session started in the main checkout. A mark filed before the start folder was recorded, by an older
+    gate, which started the session in the folder of the session that ran it, takes the main checkout it names as that
+    folder; a project run's issue session whose mark names no start folder gets no worktree;
   - its issue's running attempt folders `work`, `drop`, and `cache`, under `<state>/runs/<run>/attempts/`, each only
     while it is a plain folder: one replaced by a link is refused, and so is the keep file `.keep-attempt` in `drop`
     and `cache`;
@@ -1180,7 +1183,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
 
   Everything else is refused, and these always, inside a place or not, checked first: every git folder, whole (the
   shared one, the worktree's own, and the attempt's; only git writes there, and git running is no write this guard
-  sees), and a worktree's or the attempt clone's `.git` pointer; `~/.gitconfig`, the `git` folder of `$XDG_CONFIG_HOME`
+  sees), and a worktree's or the attempt clone's `.git` pointer, with every `.git` entry at any depth of the session's
+  worktree, such as the pointer of a worktree nested in it; `~/.gitconfig`, the `git` folder of `$XDG_CONFIG_HOME`
   and of `~/.config`, and the global and system git config files git itself names (`git var GIT_CONFIG_GLOBAL` and
   `GIT_CONFIG_SYSTEM`, such as a package manager's `etc/gitconfig`, asked only for a write that would otherwise pass);
   the shell startup files in the home folder and in `ZDOTDIR`; the user's macOS launch agents, `~/Library/LaunchAgents`;

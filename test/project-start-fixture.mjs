@@ -20,10 +20,10 @@ import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { openStore } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { noteBeacon } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { CONFINE_PLAN, CONFINE_VERDICT } from '../plugins/aidrian/lib/project-confine.mjs';
-import { writeCheckedAccount, writeHandoff } from '../plugins/aidrian/lib/project-token.mjs';
+import { writeHandoff } from '../plugins/aidrian/lib/project-token.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { projectCommand } from '../plugins/aidrian/lib/project-run-cli.mjs';
-import { appendToRun, initRun, readRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
+import { appendToRun, initRun, readRun } from '../plugins/aidrian/lib/project-run.mjs';
 
 export const DRIVER = 'abcd1234-0000-4000-8000-00000000d001';
 export const OTHER = 'abcd1234-0000-4000-8000-00000000e001';
@@ -98,11 +98,10 @@ const gitIn = (dir) => (...args) => execFileSync('git', ['-c', 'user.name=t', '-
 // `.aidrian/config.json` (`config`, as text), no `.aidrian.json`, the pull requests in `views`, by number, the push
 // permission `push()` gives, and the forge CLI's login token `token()` gives, a fine-grained one by default; a `token`
 // that throws is a CLI with no login. The push probe with a token, as the start checks the issue session's, answers what
-// `tokenPush(token)` gives: true, false (the forge's 403), or a throw. The user a token belongs to is what
-// `tokenUser(token)` gives, and the forge CLI's own login what `viewerLogin()` gives, `octo` for both by default.
-// `calls` records each call.
+// `tokenPush(token)` gives: true, false (the forge's 403), or a throw. `withToken(token)` gives this forge bound to that
+// token, each method call through it recorded as ['token', name] before the method's own record. `calls` records each call.
 export const FIXTURE_TOKEN = 'github_pat_FIXTURE0123456789';
-export function fakeForge(config, head, views = {}, { push = () => true, token = () => FIXTURE_TOKEN, tokenPush = () => true, tokenUser = () => 'octo', viewer = () => 'octo' } = {}) {
+export function fakeForge(config, head, views = {}, { push = () => true, token = () => FIXTURE_TOKEN, tokenPush = () => true } = {}) {
   const calls = [];
   const missing = () => Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)' });
   const forge = {
@@ -117,15 +116,14 @@ export function fakeForge(config, head, views = {}, { push = () => true, token =
       const may = forge.tokenPush(options.token);
       return { may, why: may ? null : 'the forge answered 403' };
     },
-    tokenUser,
-    viewerLogin: viewer,
-    tokenLogin: (options) => {
-      calls.push(['tokenLogin', { host: options?.host, token: typeof options?.token === 'string' ? 'given' : 'none' }]);
-      return forge.tokenUser(options.token);
-    },
-    viewer: (options) => {
-      calls.push(['viewer', options]);
-      return forge.viewerLogin();
+    withToken: (given) => {
+      calls.push(['withToken', given === FIXTURE_TOKEN ? 'fixture' : 'other']);
+      return new Proxy(forge, {
+        get: (target, key) => {
+          const value = target[key];
+          return typeof value === 'function' && key !== 'withToken' ? (...args) => (calls.push(['token', key]), value(...args)) : value;
+        },
+      });
     },
     contents: (repo, file, ref, options) => {
       calls.push(['contents', repo, file, ref, options]);
@@ -277,8 +275,6 @@ export function runFixture(t, { projectRun = { allow: true, unverifiedHosts: tru
     writeFileSync(file, JSON.stringify({ issues }));
     const started = initRun({ project, config, run: 'launch', file, session: DRIVER, env, home });
     if (started.exitCode !== 0) throw new Error(started.err.join('\n'));
-    // The account a passed preflight checked the forge's rules for, which every start holds the token to.
-    writeCheckedAccount(runsFolder(state), { host: 'github.com', owner: 'acme', name: 'widgets' }, 'octo');
   }
   const as = (session) => ({ ...env, CLAUDE_CODE_SESSION_ID: session });
   // `aidrian project` in this process as the session `session`, the driver by default.

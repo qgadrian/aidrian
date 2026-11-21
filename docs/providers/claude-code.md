@@ -492,15 +492,15 @@ No `sandbox.excludedCommands` is passed. Three conditions hold on top of the san
   `~/Library/Application Support/pypoetry`, and `~/.local/share/uv/credentials`. Credential-named environment variables are unset in the sandbox, as the table says, and the
   main checkout is unreadable but its git folder. The forge CLI's login, `~/.config/gh`, and its token variables stay:
   the session pushes and opens pull requests through them. Since the sandbox also hides the system keyring, where gh
-  keeps its token by default, the session gets the forge token as `GH_TOKEN` (`GH_ENTERPRISE_TOKEN` for a GitHub
-  Enterprise Server host, as gh reads it) in its sandboxed commands' environment:
+  keeps its token by default, the session gets the forge token in every variable gh reads one from, `GH_TOKEN`,
+  `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN`, and `GITHUB_ENTERPRISE_TOKEN`, so gh's own pick of one for the host always
+  finds it, in its sandboxed commands' environment:
   the start reads it outside the sandbox, from the first of the project's keychain entry
   ([`projectRun.forgeTokenKeychain`](../config.md#project-run) in `.aidrian.local.json`), the machine's default entry,
   service `aidrian-project-run`, both on macOS, the default entry for a github.com run alone, so no github.com token
-  reaches another host, and `gh auth token --hostname <host>`. It halts when none gives one, when the token belongs
-  to another account than the one a passed preflight recorded checking the forge's rules for, `gh api user` asked
-  with the token alone ([Forge token in the keychain](../project-run-setup.md#forge-token-in-the-keychain)), or when
-  that very token may not push, whatever the driver's own login may do: the start asks GitHub for the
+  reaches another host, and `gh auth token --hostname <host>`. The preflight runs its forge checks with that same
+  token ([Forge token in the keychain](../project-run-setup.md#forge-token-in-the-keychain)). It halts when none
+  gives one, or when that very token may not push, whatever the driver's own login may do: the start asks GitHub for the
   repository's receive-pack advertisement, `https://<host>/<owner>/<name>.git/info/refs?service=git-receive-pack`,
   with the token as basic auth, from a Node process with no shell that gets the token in its environment. GitHub
   answers 200 with `application/x-git-receive-pack-advertisement` only to a token that may write the contents, and

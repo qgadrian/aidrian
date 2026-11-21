@@ -277,11 +277,10 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   signs in to `host` with, from its own login wherever it keeps it, read with no network call (`gh auth token`), and
   `tokenCanPush(repo, { host, token })`, whether that token may push there, by a probe that writes nothing (GitHub: the
   receive-pack advertisement, which answers 200 with that content type only to a token that may write the contents):
-  `{ may, why }`, or a throw when the answer says neither; and `tokenLogin({ host, token })`, the login of the user
-  that token belongs to, asked with the token alone in every variable the CLI reads one from, never an argument
-  (GitHub: `gh api user`), null when the answer names none, or a throw, which a start reads as a user it cannot tell.
-  A start halts on a token whose user is not the `viewer` a passed preflight recorded, since the forge's rules are
-  checked for that login alone.
+  `{ may, why }`, or a throw when the answer says neither; and `withToken(token)`, the same adapter with every call made
+  with that token alone, in every variable the CLI reads one from, never an argument, so `aidrian project preflight`
+  reads the forge's rules for the account an issue session acts as. A read the forge refuses that token for throws
+  naming the token permission to add (GitHub: the fine-grained permission each route asks for).
 - Conversation: `conversationComments`, the comments on the pull request rather than on its diff, `comment(repo, id, { host, pr })`,
   one of them by id, held to pull request `pr` when the option names it (null for a comment of any other, or one the forge
   does not find), `postComment`, `editComment`, `deleteComment(repo, id)`, and `reactions`.

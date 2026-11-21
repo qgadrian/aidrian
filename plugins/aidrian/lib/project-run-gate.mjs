@@ -57,7 +57,7 @@ import { chainEnded, lingerLine, lingerProblem, notStopped, settleLingering, sto
 import { checkedLimit, limitEndRows, limitRecorded, pausedTime, pauseOf, pauseRow, recordedPauseRuns } from './project-limit.mjs';
 import { closeVerdict, confineCheck, prepareConfine } from './project-confine.mjs';
 import { cacheVars, registryHosts } from './project-registries.mjs';
-import { checkedAccount, CLAIM_VAR, newClaim, writeClaim } from './project-token.mjs';
+import { CLAIM_VAR, newClaim, writeClaim } from './project-token.mjs';
 import { afterFailure, cleanText, CAPS, DROP_FILE, ingestDrops, RESULT_CAP, validateResult, writeDrop } from './project-result.mjs';
 import { writeIssueFile } from './project-issue-text.mjs';
 import { appendToRun, attendedProblem, haltOf, planRun, readCapped, readRun, runFolder, runPlace, runsFolder, RUN_ID, SERIAL } from './project-run.mjs';
@@ -384,7 +384,7 @@ function startPlace(context) {
   if (early) return refuse(early, orphans);
   const access = accessProblem({
     cap, forge: facade, repository: found.init.repository, env, home, guarded: guardedFolders({ main, state, env, home }), main, platform: context.platform, allowed: policy.outsideSandbox, localBinding: policy.localBinding,
-    keychain: project.localForgeTokenKeychain, ...(context.exec ? { exec: context.exec } : {}), checked: checkedAccount(runsFolder(state), found.init.repository),
+    keychain: project.localForgeTokenKeychain, ...(context.exec ? { exec: context.exec } : {}),
   });
   if (access?.refuse) return refuse(access.refuse, orphans);
   const tripped = access?.halt ?? linkTripwire({ state, run, store, env, home, main });

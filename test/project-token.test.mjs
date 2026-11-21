@@ -15,6 +15,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { localForgeTokenKeychain } from '../plugins/aidrian/lib/config-local.mjs';
+import { forgeTokenVars } from '../plugins/aidrian/lib/forges/index.mjs';
 import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import { confineReads, sandboxSettings, writeEnvFile } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
@@ -113,10 +114,11 @@ test('no token from either source is a problem naming both and the fix, and a br
   const classic = forgeToken({ forge: login('gho_classic0123456789'), repository: REPOSITORY, platform: 'linux' });
   assert.deepEqual(classic.notes, ['it is an OAuth token of gh\'s own login, which reaches every repository and scope its user has, not only this one; a fine-grained token limited to this repository narrows that']);
   assert.ok(!JSON.stringify({ ...classic, token: null }).includes('gho_classic'), 'only `token` holds it');
-  assert.deepEqual(tokenVars('x', 'github.com'), { GH_TOKEN: 'x' });
-  // gh reads a GitHub Enterprise Server host's token from GH_ENTERPRISE_TOKEN, and a ghe.com tenancy's from GH_TOKEN.
-  assert.deepEqual(tokenVars('x', 'ghe.example.com'), { GH_ENTERPRISE_TOKEN: 'x' });
-  assert.deepEqual(tokenVars('x', 'acme.ghe.com'), { GH_TOKEN: 'x' });
+  // Every variable gh reads a token from, whichever it picks for the session's host: gh reads www.github.com as
+  // github.com, from GH_TOKEN, where the host's own variable would be GH_ENTERPRISE_TOKEN. The sandbox keeps each.
+  const every = { GH_TOKEN: 'x', GITHUB_TOKEN: 'x', GH_ENTERPRISE_TOKEN: 'x', GITHUB_ENTERPRISE_TOKEN: 'x' };
+  assert.deepEqual(tokenVars('x'), every);
+  assert.deepEqual(Object.keys(every).filter((name) => !forgeTokenVars().includes(name)), [], 'the sandbox keeps every one');
 });
 
 test('the local file\'s projectRun.forgeTokenKeychain is checked, and read only from the main checkout\'s untracked file', (t) => {
@@ -191,33 +193,6 @@ test('a start whose token may not push halts, though the driver\'s own login may
   assert.equal(other.cmd(['start', 'launch', 'ENG-1']).out[0], 'halt whether the forge token from the forge CLI\'s login for github.com may push to github.com/acme/widgets cannot be told (the forge answered the push probe with 500); start again');
 });
 
-test('a start holds the token to the account the passed preflight checked the forge\'s rules for, not the forge CLI\'s login now', (t) => {
-  // The fixture's run follows a preflight that passed as "octo". The forge CLI then signs in as another account, whose
-  // own login gives the token: the rules were never checked for it, so the start halts.
-  const fx = runFixture(t);
-  fx.forge.viewerLogin = () => 'mallory';
-  fx.forge.tokenUser = () => 'mallory';
-  const halted = fx.cmd(['start', 'launch', 'ENG-1']);
-  assert.equal(halted.exitCode, 1, halted.out.join('\n'));
-  assert.equal(halted.out[0], 'halt the forge token from the forge CLI\'s login for github.com belongs to "mallory", not "octo", the account the preflight checked branch protection, tag rules, and environment reviewers for, so those checks say nothing of what the token may bypass; run `aidrian project preflight` again, with the forge CLI signed in as the account the token belongs to, so it checks the forge\'s rules for that account, or give that source a token of "octo"');
-  assert.deepEqual(fx.claude.starts(), [], 'no claude --bg');
-  assert.ok(fx.forge.calls.some(([name, options]) => name === 'tokenLogin' && options.host === 'github.com' && options.token === 'given'), 'the forge was asked with that very token');
-  assert.ok(!fx.forge.calls.some(([name]) => name === 'viewer'), 'a start never reads the forge CLI\'s login now');
-  // The same switch with a token still of "octo", as a keychain entry gives, starts: the login now plays no part.
-  const keyed = runFixture(t);
-  keyed.forge.viewerLogin = () => 'mallory';
-  keyed.forge.tokenUser = () => 'OCTO';
-  assert.equal(keyed.cmd(['start', 'launch', 'ENG-1']).exitCode, 0, 'logins match whatever their case');
-  // Fails closed: no recorded account, and a token the forge names no account for, as an app's installation token.
-  const unchecked = runFixture(t);
-  rmSync(path.join(runsFolder(unchecked.state), 'checked-account.json'));
-  assert.equal(unchecked.cmd(['start', 'launch', 'ENG-1']).out[0], 'halt no passed `aidrian project preflight` recorded the account it checked the forge\'s rules of github.com/acme/widgets for, so whether the forge token from the forge CLI\'s login for github.com is the account\'s the forge\'s rules were checked for cannot be told; run `aidrian project preflight` again, with the forge CLI signed in as the account the token belongs to, so it checks the forge\'s rules for that account');
-  const app = runFixture(t);
-  app.forge.tokenUser = () => { throw new Error('gh: Resource not accessible by integration (HTTP 403)'); };
-  assert.match(app.cmd(['start', 'launch', 'ENG-1']).out[0], /^halt the forge cannot say which account the forge token from the forge CLI's login for github\.com belongs to \(gh: Resource not accessible by integration \(HTTP 403\)\), so the forge's rules, checked for "octo", may not hold it; give that source a token of "octo"$/u);
-  assert.deepEqual([unchecked, app].flatMap((each) => each.claude.starts()), []);
-});
-
 test('the push probe asks GitHub for the receive-pack advertisement, with the token in the environment under the host\'s variable, never an argument', () => {
   const calls = [];
   const exec = (program, args, options) => (calls.push({ program, args, options }), '403 text/plain; charset=utf-8');
@@ -236,8 +211,6 @@ test('the push probe asks GitHub for the receive-pack advertisement, with the to
   assert.deepEqual(may(200, 'text/html; charset=utf-8'), { may: false, why: 'the forge answered 200 with text/html, not a push advertisement' });
   assert.deepEqual([401, 403, 404].map((status) => may(status, 'text/plain')), [401, 403, 404].map((status) => ({ may: false, why: `the forge answered ${status}` })));
   assert.throws(() => may(500, 'text/plain'), /the forge answered the push probe with 500/u);
-  // A redirect, as GitHub answers for www.github.com, says neither: the start halts before it hands any token over.
-  assert.throws(() => may(301, 'text/html'), /the forge answered the push probe with 301/u);
 });
 
 test('the machine\'s default keychain entry is read for github.com alone: an Enterprise run takes the project entry or its own login', () => {

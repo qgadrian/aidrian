@@ -817,12 +817,14 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     repo: () => json(['repo', 'view', '--json', 'nameWithOwner']).nameWithOwner,
     // The repository itself, such as its `default_branch`.
     repository: (repo, { host } = {}) => rest(`repos/${repo}`, { host }),
-    // Whether the reviewer `login` reviewed any of the repository's last `limit` pull requests, for a project run's
-    // preflight: { changes, seen }, with a bot's login compared with or without its `[bot]` suffix.
+    // Whether the reviewer `login` reviewed or commented on any of the repository's last `limit` pull requests, for a
+    // project run's preflight: { changes, seen }, with a bot's login compared with or without its `[bot]` suffix. A
+    // review bot that finds nothing on a clean head may post only a conversation comment, and no formal review.
     reviewerSeen: (repo, login, { host, limit = 20 } = {}) => {
-      const list = json(['pr', 'list', '--repo', host ? `${host}/${repo}` : repo, '--state', 'all', '--limit', String(limit), '--json', 'number,reviews']);
+      const list = json(['pr', 'list', '--repo', host ? `${host}/${repo}` : repo, '--state', 'all', '--limit', String(limit), '--json', 'number,reviews,comments']);
       const bare = (name) => String(name ?? '').replace(/\[bot\]$/u, '').toLowerCase();
-      const seen = Array.isArray(list) && list.some((change) => (change.reviews ?? []).some((review) => bare(review.author?.login) === bare(login)));
+      const by = (entry) => bare(entry?.author?.login) === bare(login);
+      const seen = Array.isArray(list) && list.some((change) => (change.reviews ?? []).some(by) || (change.comments ?? []).some(by));
       return { changes: Array.isArray(list) ? list.length : 0, seen };
     },
     // The names of the repository's active CI workflows, for a project run's preflight.

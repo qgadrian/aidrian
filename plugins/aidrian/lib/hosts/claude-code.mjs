@@ -326,7 +326,7 @@ export default {
       access: ({ env, home, guarded, pushUrl, platform, allowed, helpers }) => accessProblem({ env, home, guarded, pushUrl, platform, allowed, helpers }),
       cloneProblem: ({ work, allowed }) => cloneProblem({ work, allowed }),
       // Whether a driver on this host would carry on by itself after a usage limit (aidrian project preflight).
-      limitContinue: ({ env, home }) => limitContinueProblem({ env, home }),
+      limitContinue: ({ env, home, project }) => limitContinueProblem({ env, home, project }),
       placeholders: PLACEHOLDERS,
       sessionNote,
       // The package managers' caches reach the session's sandboxed commands alone: the SessionStart hook appends them to

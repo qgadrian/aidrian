@@ -90,7 +90,7 @@ export function preflightCommand({ project, config, run = null, env = process.en
   let limit = null;
   if (typeof cap?.limitContinue === 'function') {
     try {
-      limit = cap.limitContinue({ env, home });
+      limit = cap.limitContinue({ env, home, project: main });
     } catch (error) {
       limit = `the host's usage-limit setting cannot be read (${String(error?.message ?? error).split('\n')[0]})`;
     }

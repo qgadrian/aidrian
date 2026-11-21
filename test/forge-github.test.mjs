@@ -531,6 +531,24 @@ test('the reviews report`s calls: the merged list and its search string, +1 reac
   ]);
 });
 
+test('reviewerSeen: a bot that only comments on a clean head is seen, and so is a formal review', () => {
+  const receipt = 'Codex Review: Didn\'t find any major issues.';
+  const seen = (changes, login = 'chatgpt-codex-connector') => {
+    const { forge, args } = recorded(() => JSON.stringify(changes));
+    return { result: forge.reviewerSeen('acme/notes', login, { limit: 5 }), args: args() };
+  };
+  const comment = seen([{ number: 6, reviews: [], comments: [{ author: { login: 'chatgpt-codex-connector' }, body: receipt }] }]);
+  assert.deepEqual(comment.result, { changes: 1, seen: true }, 'a receipt comment alone');
+  assert.deepEqual(comment.args, [['pr', 'list', '--repo', 'acme/notes', '--state', 'all', '--limit', '5', '--json', 'number,reviews,comments']]);
+  for (const login of ['ChatGPT-Codex-Connector[bot]', 'chatgpt-codex-connector[bot]']) {
+    assert.equal(seen([{ number: 6, reviews: [], comments: [{ author: { login: 'chatgpt-codex-connector' } }] }], login).result.seen, true, `${login}: any case, with or without [bot]`);
+  }
+  assert.equal(seen([{ number: 5, reviews: [{ author: { login: 'chatgpt-codex-connector' } }], comments: [] }]).result.seen, true, 'a formal review still counts');
+  const quoted = seen([{ number: 7, reviews: [{ author: { login: 'adrian' } }], comments: [{ author: { login: 'adrian' }, body: `> ${receipt}` }] }]);
+  assert.deepEqual(quoted.result, { changes: 1, seen: false }, 'another login quoting the receipt');
+  assert.deepEqual(seen([{ number: 8 }]).result, { changes: 1, seen: false }, 'no reviews or comments listed');
+});
+
 test('reviewsWithComments: the reviews report`s GraphQL call, query and variables as it sent them', () => {
   const query = `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {

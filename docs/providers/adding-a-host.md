@@ -290,7 +290,7 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   rebase. `changeCommits(repo, n, { host })` lists its commits with their messages, for the auto-merge gate's
   closing-word check ([config.md](../config.md#when-it-is-on)).
 - A project run's preflight (`lib/project-preflight.mjs`): `reviewerSeen(repo, login, { host, limit })`, whether the
-  reviewer reviewed any of the repository's last `limit` pull requests, as `{ changes, seen }`, a bot's login compared
+  reviewer reviewed or commented on any of the repository's last `limit` pull requests, as `{ changes, seen }`, a bot's login compared
   with or without its `[bot]` suffix; `ciWorkflows(repo, { host })`, the names of its active CI workflows;
   `refProtection(repo, { host })`, `{ branch, protected, why, tags }`: the default branch's name, whether a rule that
   asks for a pull request there binds the signed-in user (true; false; null when the forge shows the rule's settings

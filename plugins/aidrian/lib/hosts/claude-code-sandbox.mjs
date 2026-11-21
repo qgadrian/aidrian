@@ -724,9 +724,24 @@ export const sessionNote = ({ work, branch }) => `This session runs in Claude Co
 // run's driver at the same moment as the issues' sessions, and only a driver whose host continues on its own takes the
 // run on once the limit lifts. The user's settings must set `autoContinueAtUsageLimit` to true. It reads only the user's
 // settings, where the host's own code honors the key; a project or managed setting is not read, and is no answer.
-export function limitContinueProblem({ env, home }) {
+// When the checkout `project` sets the key in a settings file of its own, the reason names that file, which the host
+// ignores for this key.
+export function limitContinueProblem({ env, home, project }) {
   const settings = userSettings(configFolder(env, home ?? env.HOME ?? homedir()));
   if (settings.problem) return settings.problem;
   if (settings.value.autoContinueAtUsageLimit === true) return null;
-  return `the host's user settings ${settings.file} do not set "autoContinueAtUsageLimit": true, so a usage limit would stop the driver for good; add it`;
+  const why = `the host's user settings ${settings.file} do not set "autoContinueAtUsageLimit": true, so a usage limit would stop the driver for good; add it`;
+  const local = projectLimitFile(project);
+  return local ? `${why} there: ${local} sets it, but the host reads this key from the user's settings only, so a project file does not count` : why;
+}
+
+// The settings file of the checkout `project` that sets `autoContinueAtUsageLimit`, or null.
+function projectLimitFile(project) {
+  if (typeof project !== 'string' || !project) return null;
+  for (const name of ['settings.json', 'settings.local.json']) {
+    const file = path.join(project, '.claude', name);
+    const read = readJson(file);
+    if (!read.missing && !read.problem && isObject(read.value) && Object.hasOwn(read.value, 'autoContinueAtUsageLimit')) return file;
+  }
+  return null;
 }

@@ -50,8 +50,8 @@ Read [references/loop.md](references/loop.md) once turn 1 ends, and follow it: n
 
 ## Tracker writes
 
-The driver writes only what `aidrian project report` owes: each settled issue's status, label, and comment, posted
-exactly as printed, then `aidrian project recorded` closes it. The tracker guard refuses any other write, and an issue's
+The driver writes only what `aidrian project report` owes: each started issue's started status, and each settled
+issue's status, label, and comment, posted exactly as printed, then `aidrian project recorded` closes it. The tracker guard refuses any other write, and an issue's
 session may write only its own issue. [references/tracker-writes.md](references/tracker-writes.md) says how; read it
 before the first report.
 

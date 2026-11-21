@@ -273,7 +273,8 @@ export function runCallKind({ tool, rawTool, input, tracker = null, writeTools =
 //                                   image, HTML, or hidden character; a create, a UUID, or another tool is refused;
 //   { role: 'driver', run, owed }   the run's current driver: it writes only what `aidrian project report` owes, each
 //                                   [{ key, status, label, sha256 }]: the status and label as printed, and a comment
-//                                   whose body has that sha256;
+//                                   whose body has that sha256; a report with a null sha256, such as an issue's
+//                                   started status, owes no comment;
 //   { role: 'unattended' }          a session no Human attends outside a run: the merge and ready rules alone;
 //   { role: 'held', why }           a session that cannot be told apart from one of these: every write refused.
 // Any role but null is refused a tool a merge verb names on any server. For the child, driver, and held roles, every call
@@ -391,6 +392,7 @@ function driverRefusal(writer, call, adapter, short, human) {
   if (call.kind === 'comment') {
     const extra = call.fields.find((field) => ![call.spec.key, call.spec.body].includes(field));
     if (extra) return refused(`${short} sets ${extra}, and ${only}`, `Pass only ${call.spec.key} and ${call.spec.body}`);
+    if (owed.sha256 === null) return refused(`${report} owes no comment on ${owed.key}`, `Set only ${describeWanted({ [adapter.run.issue.status]: owed.status, [adapter.run.issue.label]: owed.label === null ? null : [owed.label] })}`);
     const body = call.input[call.spec.body];
     if (typeof body !== 'string' || bodyHash(body) !== owed.sha256) return refused(`the comment on ${owed.key} is not the body ${report} printed`, `Post that body exactly, as its JSON gives it, with sha256 ${owed.sha256}`);
     return null;

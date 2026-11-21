@@ -43,6 +43,21 @@ test('every rule is wired: process kill and listing, and the grep chain', () => 
   assert.equal(bashHook(bash('pkill -f eslint'), { AIDRIAN_ALLOW_PROCESS_KILL_BY_NAME: '1' }).status, 0);
 });
 
+test('a guarded command in a case arm whose pattern is a glob or a variable, or behind builtin, is still judged', () => {
+  for (const command of [
+    'case $v in *) git commit --amend -m x;; esac', 'case "$1" in "$x") git commit --amend -m x;; esac', 'case $v in feat/*) git commit --amend -m x;; esac',
+    'builtin command git commit --amend -m x', 'builtin exec git commit --amend -m x',
+    'case $v in a ) git commit --amend -m x;; esac', 'f () { git commit --amend -m x; }; f',
+    'noglob git commit --amend -m x', 'nocorrect git commit --amend -m x', '- git commit --amend -m x', 'repeat 2 git commit --amend -m x',
+    'builtin builtin command git commit --amend -m x',
+  ]) {
+    const { status, stderr } = bashHook(bash(command, OUTSIDE));
+    assert.equal(status, 2, command);
+    assert.match(stderr, /^Blocked: `git commit --amend`/u, command);
+  }
+  assert.equal(bashHook(bash('case $v in *) echo ok;; esac', OUTSIDE)).status, 0, 'an arm that runs nothing guarded');
+});
+
 test('the pull request body rule is wired, inside a project folder', () => {
   const inExample = (command) => JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd: path.resolve(import.meta.dirname, '../examples/consumer') });
   // A body and a title the public text rule reads, so the result is the same with or without a private words file in

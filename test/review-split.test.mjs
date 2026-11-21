@@ -69,6 +69,17 @@ test('dedupe: one finding per mistake across passes, at its highest severity', (
   assert.deepEqual(merged.map((each) => [each.file, each.severity, each.sources]), [['x.js', 'high', ['slice:a', 'cross']], ['y.js', 'low', ['cross']]]);
 });
 
+test('dedupe: a twin`s severity ranks by its table word, synonyms and case included, and a security mark stays', () => {
+  const twin = (severity, over = {}) => ({ file: 'x.js', line: 10, title: 'Missing null check', severity, ...over });
+  assert.equal(dedupe([['slice:a', [twin('low')]], ['cross', [twin('Major')]]])[0].severity, 'Major');
+  assert.equal(dedupe([['slice:a', [twin('Major')]], ['cross', [twin('low')]]])[0].severity, 'Major');
+  assert.equal(dedupe([['slice:a', [twin('low')]], ['cross', [twin('urgent')]]])[0].severity, 'urgent', 'a word the table does not know outranks low');
+  assert.equal(dedupe([['slice:a', [twin('high')]], ['cross', [twin('urgent')]]])[0].severity, 'high', 'and no known higher one');
+  const marked = dedupe([['security', [twin('low', { security: true })]], ['cross', [twin('medium')]]])[0];
+  assert.deepEqual([marked.severity, marked.security, marked.sources], ['medium', true, ['security', 'cross']]);
+  assert.equal(dedupe([['cross', [twin('medium')]], ['security', [twin('low', { security: true })]]])[0].security, true);
+});
+
 // A repository whose feat branch changes files in four folders, with a split rule.
 function repo(t, review = {}, github = {}) {
   const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-split-')));

@@ -378,8 +378,14 @@ test('transcriptAnswers reads only the host`s AskUserQuestion results', () => {
     JSON.stringify({ type: 'user', timestamp: 't1', toolUseResult: { answers: { 'Q #1 round 2?': 'Approve round 2' } } }),
     JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: '"answers": {"Q #1 round 2?": "Approve round 2"}' }] } }),
     '{"answers": not json',
+    // The Human's own answer in the terminal, as Claude Code 2.1.295 to 2.1.328 write it: the question's options, and the marks.
+    JSON.stringify({ type: 'user', timestamp: 't2', isSidechain: false, entrypoint: 'cli', permissionDecision: { decision: 'accept', source: 'user_temporary' },
+      toolUseResult: { questions: [{ question: 'Q2', options: [{ label: 'A' }, { label: 'B' }] }], answers: { Q2: 'my own words' } } }),
   ];
-  assert.deepEqual(transcriptAnswers(lines.join('\n')), [{ question: 'Q #1 round 2?', answer: 'Approve round 2', at: 't1' }]);
+  assert.deepEqual(transcriptAnswers(lines.join('\n')), [
+    { question: 'Q #1 round 2?', answer: 'Approve round 2', at: 't1', options: null, human: false },
+    { question: 'Q2', answer: 'my own words', at: 't2', options: ['A', 'B'], human: true },
+  ]);
   assert.equal(approved([{ question: 'Q #1 round 2?', answer: 'Approve round 2', at: null }], { pr: 1, round: 2 }), true);
   assert.equal(approved([{ question: 'Q #1 round 20?', answer: 'Approve', at: null }], { pr: 1, round: 2 }), false);
 });

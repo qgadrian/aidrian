@@ -192,6 +192,17 @@ dispatch log were both the main session's id, never another one; the live runs u
 snapshot's [worktree links](adding-a-host.md#session-links) are still written by the PostToolUse Bash hook, under the
 payload's `session_id`, since Codex's shell variable is not its hooks' id in a subagent, and one writer serves both hosts.
 
+## Answers the Human gave
+
+The adapter's `humanAnswer` says whether an AskUserQuestion result entry of the transcript is the Human's own answer in
+the terminal: `isSidechain` false (not merely absent), not a meta entry or a compaction summary, `entrypoint` `cli`, and
+`permissionDecision.source` `user_temporary`. Read from local transcripts on 2026-11-19 and 2026-11-20: every answer on
+Claude Code 2.1.295 to 2.1.328 from the terminal carries all three, the desktop app writes `entrypoint`
+`claude-desktop`, and before 2.1.295 no entry carries the permission decision. No host document states the shape, so a
+shape the adapter does not know never counts. Whether an SDK callback or a hook that answers the question writes other
+marks is not verified: its entry counts only if it carries all three. The
+[round limit delegation rule](../hooks.md#bash-rules) reads it.
+
 ## Handoff continuation
 
 Claude Code does the `clear` route of [`session.handoff.continue`](../handoff.md#continue): after the brief, the Human

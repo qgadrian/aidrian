@@ -50,6 +50,11 @@ export function sessionIdentity(env = process.env) {
   return { session: host.sessionId(env), agent: host.agentName(env) };
 }
 
+// Whether `entry`, an AskUserQuestion result entry of a session transcript, carries a host's positive marks of an answer
+// the Human gave in its terminal, by an adapter's `humanAnswer`. A host whose adapter has none never gives such an answer,
+// so a rule that needs one refuses there.
+export const humanAnswer = (entry, hosts = HOSTS) => hosts.some((host) => host.humanAnswer?.(entry) === true);
+
 // `raw`, a hook's payload, in the standard names the shared code reads: `tool_name` as mcp__<server>__<tool> for an MCP tool.
 export const normalizeHookInput = (raw, env = process.env) => detectHost({ env, input: raw }).hookInput(raw);
 

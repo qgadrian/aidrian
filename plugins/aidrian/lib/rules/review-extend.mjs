@@ -22,6 +22,7 @@
 
 import { readFileSync } from 'node:fs';
 
+import { humanAnswer } from '../hosts/index.mjs';
 import { findProject } from '../project.mjs';
 import { readLocalState } from '../review/state.mjs';
 import { aidrianArgs, walkCommands } from '../shell-lex.mjs';
@@ -101,8 +102,12 @@ function extendCall(words) {
   return answer === undefined ? null : { answer, pr: pr ?? null, words };
 }
 
-// The Human's answers to AskUserQuestion in a Claude Code transcript, oldest first: [{ question, answer, at }]. Claude
-// Code writes each as a user entry whose `toolUseResult.answers` maps the question to the chosen label.
+// The Human's answers to AskUserQuestion in a Claude Code transcript, oldest first: [{ question, answer, at, options,
+// human }]. Claude Code writes each as a user entry whose `toolUseResult.answers` maps the question to the chosen label,
+// or to the Human's own words, and whose `toolUseResult.questions` lists each question with its options. `options` are
+// the labels the question offered, or null when the entry does not list that question. `human` is whether the entry
+// carries a host's positive marks of an answer the Human gave in the terminal, which the host's adapter reads
+// (lib/hosts/index.mjs humanAnswer), for a rule that must not take one a program gave.
 export function transcriptAnswers(text) {
   const out = [];
   for (const line of String(text ?? '').split('\n')) {
@@ -115,8 +120,14 @@ export function transcriptAnswers(text) {
     }
     const answers = entry?.type === 'user' ? entry.toolUseResult?.answers : null;
     if (!answers || typeof answers !== 'object' || Array.isArray(answers)) continue;
+    const asked = Array.isArray(entry.toolUseResult.questions) ? entry.toolUseResult.questions : [];
+    const human = humanAnswer(entry);
     for (const [question, answer] of Object.entries(answers)) {
-      if (typeof answer === 'string') out.push({ question, answer, at: typeof entry.timestamp === 'string' ? entry.timestamp : null });
+      if (typeof answer !== 'string') continue;
+      const listed = asked.find((each) => each?.question === question);
+      const label = (option) => (typeof option?.label === 'string' ? option.label : null);
+      const options = Array.isArray(listed?.options) ? listed.options.map(label) : null;
+      out.push({ question, answer, at: typeof entry.timestamp === 'string' ? entry.timestamp : null, options, human });
     }
   }
   return out;

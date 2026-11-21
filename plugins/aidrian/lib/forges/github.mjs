@@ -568,6 +568,10 @@ const planWhy = (ownerType) => {
 // could not resolve the number, which `gh pr view` gives. Any other failure, such as a network error, may pass.
 export const changeNotFound = (error) => notFound(error)
   || /Could not resolve to a PullRequest with the number/u.test(`${error?.message ?? ''} ${error?.stderr ?? ''}`);
+// Whether a `diff` call failed because GitHub refuses a pull request's diff past its size limit: gh ends that answer
+// with the line `PullRequest.diff too_large`, GitHub's error resource, field, and code. Any other failure, such as a
+// network error, a 404, or a 406 for another reason, is not one.
+export const diffTooLarge = (error) => /^\s*PullRequest\.diff too_large\s*$/mu.test(`${error?.message ?? ''}\n${error?.stderr ?? ''}`);
 
 // One `gh pr checks` row in the forge's shape: its name and state, the workflow, event, and run that reported it, and
 // `workflowId`, the workflow file's id (filled in by workflowIds), null until it is read. `host` and `repo` name the
@@ -1104,6 +1108,13 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     pull: (repo, n, { host } = {}) => rest(`repos/${repo}/pulls/${n}`, { host }),
     // The pull request `ref`'s diff, as gh prints it: text, not JSON. `repo` reads it from that repository.
     diff: (ref, { repo = null } = {}) => gh(['pr', 'diff', String(ref), ...(repo ? ['--repo', repo] : [])]),
+    // The two commits the pull request `ref`'s diff spans, { base, head }: the base branch's commit and the head commit
+    // as GitHub answers them now, each its text or null. `repo` reads them from that repository.
+    changeEnds: (ref, { repo = null } = {}) => {
+      const view = json(['pr', 'view', String(ref), '--json', 'baseRefOid,headRefOid', ...(repo ? ['--repo', repo] : [])]);
+      const text = (value) => (typeof value === 'string' ? value : null);
+      return { base: text(view?.baseRefOid), head: text(view?.headRefOid) };
+    },
     // The pull request a GraphQL node id names: GitHub's answer, `data.node.url`, whose node is null for any other id.
     nodeChange: (id) => json(['api', 'graphql', '-f', `query=${NODE_QUERY}`, '-f', `id=${id}`]),
     // Every changed file of the pull request, each as GitHub's REST entry ({ filename, status, ... }), all pages, 100 a

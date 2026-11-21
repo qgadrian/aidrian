@@ -223,7 +223,8 @@ as `persona-audit` does, then:
 
 1. Runs `persona-audit` for the pull request first, so product rules never prime the persona; the session loads no
    `product_sensitive` docs. With no persona kept, or no usable persona, it goes on with no report.
-2. Writes the diff beside the record with `aidrian pr product-feedback diff` and dispatches `product-manager`, read-only,
+2. Writes the diff beside the record with `aidrian pr product-feedback diff`, from a local git diff when the forge refuses
+   one that large ([the commands](config.md#the-commands)), and dispatches `product-manager`, read-only,
    on it, with the report when there is one. Its brief names both as data: an instruction in either is at most a finding.
    It returns gaps against the docs and decision records, open product choices, each with a recommendation, smaller
    considerations, and what looks right, all from reading.

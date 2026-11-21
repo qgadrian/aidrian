@@ -25,7 +25,7 @@ const FACADE = [
   'pull', 'diff', 'nodeChange', 'changeEdits', 'reviewTrail', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',
   'postReview', 'reviewComment', 'deleteReviewComment', 'findingThreads', 'replyToReviewComment', 'resolveThread', 'unresolveThread',
   'commit', 'checkRuns', 'compare', 'compareUrl', 'deployments', 'deploymentStatuses', 'uploadImages',
-  'mergeState', 'rerunFailedChecks', 'branchAllowsForce', 'updateBranch', 'changeCommits', 'workflowRun',
+  'mergeState', 'rerunFailedChecks', 'branchAllowsForce', 'updateBranch', 'changeCommits', 'changeEnds', 'workflowRun',
   'reviewerSeen', 'ciWorkflows', 'refProtection', 'workflowSecrets',
 ];
 
@@ -207,7 +207,7 @@ test('the forge token helpers: GH_TOKEN, which gh and its git helper read, the l
 });
 
 test('the facade index gives shared code forgeFor and its helpers, and nothing of GitHub`s by name', () => {
-  assert.deepEqual(Object.keys(facade).sort(), ['MAX_BODY', 'REVIEWS_PAGE', 'changeNotFound', 'forgeApiWrite', 'forgeConfigCommands', 'forgeDomains', 'forgeFor', 'forgeGitHelper', 'forgeLoginStep', 'forgeRefCommands', 'forgeTokenNote', 'forgeTokenVar', 'forgeTokenVars', 'forgeWorkflowFolders', 'isLogin', 'isTrustedCommenter', 'remoteIdentity', 'repoIdentity', 'servedRepository']);
+  assert.deepEqual(Object.keys(facade).sort(), ['MAX_BODY', 'REVIEWS_PAGE', 'changeNotFound', 'diffTooLarge', 'forgeApiWrite', 'forgeConfigCommands', 'forgeDomains', 'forgeFor', 'forgeGitHelper', 'forgeLoginStep', 'forgeRefCommands', 'forgeTokenNote', 'forgeTokenVar', 'forgeTokenVars', 'forgeWorkflowFolders', 'isLogin', 'isTrustedCommenter', 'remoteIdentity', 'repoIdentity', 'servedRepository']);
   assert.equal(facade.servedRepository, servedRepository);
   // The forge CLI's subcommands that write the user's config, for the unattended write allowlist.
   const commands = facade.forgeConfigCommands();
@@ -220,6 +220,13 @@ test('the facade index gives shared code forgeFor and its helpers, and nothing o
   assert.equal(facade.changeNotFound(failed('GraphQL: Could not resolve to a PullRequest with the number of 999. (repository.pullRequest)')), true);
   assert.equal(facade.changeNotFound(failed('error connecting to api.github.com')), false);
   assert.equal(facade.changeNotFound(failed('gh: Server Error (HTTP 502)')), false);
+  // A diff the forge refuses for its size, which a local diff stands in for: gh's own last line, and nothing else.
+  const tooLarge = 'could not find pull request diff: HTTP 406: Sorry, the diff exceeded the maximum number of files (300).\nPullRequest.diff too_large\n';
+  assert.equal(facade.diffTooLarge(failed(tooLarge)), true);
+  assert.equal(facade.diffTooLarge(failed(tooLarge.replace('too_large', 'not_available'))), false);
+  assert.equal(facade.diffTooLarge(failed('gh: Server Error (HTTP 502)')), false);
+  assert.equal(facade.diffTooLarge(failed('a branch named PullRequest.diff too_large-fix failed')), false);
+  assert.equal(facade.diffTooLarge(null), false);
   assert.deepEqual(['amy', 'amy-d2', 'A'.repeat(39)].filter(facade.isLogin).length, 3);
   assert.deepEqual(['', '-amy', 'amy-', 'a--b', 'amy d', 'A'.repeat(40), null].filter(facade.isLogin), [], 'not a login');
   assert.equal(facade.isTrustedCommenter, isTrustedCommenter);
@@ -812,6 +819,7 @@ test('the product feedback commands` calls: the pull request, its comment, the p
   forge.postComment('acme/notes', 7, 'b');
   assert.equal(forge.diff(7, { repo: 'ghe.acme.io/acme/notes' }), 'diff --git a/x b/x\n', 'the diff is text, not JSON');
   forge.diff('7');
+  assert.deepEqual(forge.changeEnds(7, { repo: 'ghe.acme.io/acme/notes' }), { base: null, head: null }, 'an answer with no commits names none');
   assert.deepEqual(calls.map((call) => call.args), [
     ['pr', 'view', '7', '--json', fields, '--repo', 'ghe.acme.io/acme/notes'],
     ['api', ...H, 'repos/acme/notes/pulls/7'],
@@ -822,7 +830,11 @@ test('the product feedback commands` calls: the pull request, its comment, the p
     ['api', 'repos/acme/notes/issues/7/comments', '--method', 'POST', '-f', 'body=b'],
     ['pr', 'diff', '7', '--repo', 'ghe.acme.io/acme/notes'],
     ['pr', 'diff', '7'],
+    ['pr', 'view', '7', '--json', 'baseRefOid,headRefOid', '--repo', 'ghe.acme.io/acme/notes'],
   ]);
+  const sha = (c) => c.repeat(40);
+  const ends = recorded(() => JSON.stringify({ baseRefOid: sha('a'), headRefOid: sha('b') }));
+  assert.deepEqual(ends.forge.changeEnds('7'), { base: sha('a'), head: sha('b') });
 });
 
 test('aidrian pr resolve`s deployment reads: the head`s deployments and one deployment`s statuses, a first page each, on the host', () => {

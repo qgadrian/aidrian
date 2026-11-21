@@ -713,8 +713,29 @@ aidrian pr product-feedback diff <PR>
 `--json` gives `head`, gh's head now; `recorded_head`, the head the record was written at, which the comment names; `limited`; and each
 item's id, title, kind, source, `audit_key`, `found_at` head, `state`, decision, re-check with its own head, and the command that answers it.
 `diff` writes the pull request's diff, read with `--repo <host>/<owner>/<name>`, to `diff.patch` beside the record, a path held
-inside the state folder, and prints that path: the [pr-product-feedback](personas.md#product-feedback-on-a-pull-request) skill's
+inside the state folder, and prints that path, alone, on stdout: the [pr-product-feedback](personas.md#product-feedback-on-a-pull-request) skill's
 product-manager read takes it, since that agent runs no shell.
+When the forge refuses the diff as too large (GitHub's `PullRequest.diff too_large`, past its size limit), and only then,
+`diff` reads the pull request's base and head commits from the forge and writes
+`git diff --no-relative --ignore-submodules=none --submodule=short <base>...<head>` from the current checkout instead, the merge base to the
+head, as the forge shows a pull request: every changed file by its path from the repository's top, even from a project in a
+subfolder with `diff.relative` set, and every changed submodule pointer, even one whose `submodule.<name>.ignore` is `all`. A shallow checkout
+(`git rev-parse --is-shallow-repository` prints `true`) is refused first, with nothing written and nothing fetched, whether
+or not its diff would succeed: its merge base may be missing or an older one, so the diff could fail or be wrong. The
+refusal names the fix: `git fetch --unshallow '<remote>'` in that checkout, the remote's name shell-quoted, and then `diff`
+again, or `diff` from a full clone, since a clone that fetches one branch alone may still lack the base after that fetch.
+A probe that fails, or answers anything but `true` or `false`, exits 3 with git's own error, and nothing is fetched.
+A commit the checkout lacks is fetched first,
+`git -c fetch.bundleURI= fetch --no-tags --no-prune --no-write-fetch-head --refmap= <remote> <sha>...`: the commit ids are
+the only refspecs, with no destination, the empty `--refmap=` applies none of the remote's configured `fetch` refspecs, and
+the empty `fetch.bundleURI` imports no bundle and its `refs/bundles/*`, so no ref is written or pruned and `FETCH_HEAD`
+stays as it was.
+`<remote>` is the one whose fetch URL in `git remote -v`, the list the remotes check reads, names the pull request's
+repository, else `origin`; that list applies `url.*.insteadOf` and holds a remote set in any config scope.
+git runs from an argument list, never a shell, under the plugin's hardened git settings. A line on stderr says the diff came
+from this local fallback, showing the diff command with its flags and both commits, and naming any commit it fetched. Nothing downstream caps the diff, so the local one is written
+whole, as the forge's is; one past 64 MB, as with any gh read, exits 3. Any other forge failure, and a local diff or fetch
+that fails, exits 3 with nothing written, so the feedback stays owed.
 
 | `status --json` `reason` | Exit | Means |
 | --- | --- | --- |

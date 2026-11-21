@@ -25,11 +25,12 @@ import path from 'node:path';
 import { ATTEMPT_KEEP, attemptOf, GIT_PLACEHOLDERS, KEPT_FOLDERS } from './attempt-clone.mjs';
 import { isWithin, readSmallJson, resolvedPath } from './fs.mjs';
 import { gateGit } from './git.mjs';
+import { claimedSource, forgeToken, gitCredentialVars, sessionToken, tokenDigest, tokenVars } from './project-token.mjs';
 import { loadConfig } from './config.mjs';
 import { findProject, stateRoot } from './project.mjs';
 import { CACHE_VAR_NAMES, NPM_CONFIGS, varsProblem } from './project-registries.mjs';
 import { DROP_FILE, plainFolderProblem } from './project-result.mjs';
-import { runFolder, runsFolder } from './project-run.mjs';
+import { pinnedRepository, runFolder, runsFolder } from './project-run.mjs';
 import { latestStart, ownAttemptFolder, startRows } from './project-run-guard.mjs';
 import { signoffFolders } from './review/signoff-store.mjs';
 import { archiveStops } from './stop-history.mjs';
@@ -79,7 +80,35 @@ export function hostStartProblem(cap, policy, env) {
 // session pushes to (`pushUrl`, which confinedRoom holds the clone to); `helpers` are the git credential helpers its
 // config names; `platform` the operating system, `allowed` the base branch's projectRun.outsideSandbox, and
 // `localBinding` its projectRun.localBinding, which lets the host's settings allow local binding too.
-export function accessProblem({ cap, forge, repository, env, home, guarded, main, platform = process.platform, allowed = [], localBinding = false }) {
+// On a host that hands its session the forge token (`forgeTokenEnv`), a start halts too when no source gives a token
+// (lib/project-token.mjs: the keychain entry `keychain`, the machine's default entry, or the forge CLI's login), or when
+// the forge, asked with that very token, does not let it push to the repository; { pushUrl, token } then names its
+// source `id`, its `source` label, and `notes`, never the token, which the session's SessionStart hook reads again from
+// that one source.
+export function accessProblem({ cap, forge, repository, env, home, guarded, main, platform = process.platform, allowed = [], localBinding = false, keychain = null, exec }) {
+  const pushed = pushAccess({ cap, forge, repository, env, home, guarded, main, platform, allowed, localBinding });
+  if (!pushed?.pushUrl || cap.forgeTokenEnv !== true) return pushed;
+  const read = forgeToken({ forge, repository, keychain, platform, env, ...(exec ? { exec } : {}) });
+  if (read.problem) return { halt: read.problem, token: { notes: read.notes } };
+  const token = { id: read.id, source: read.source, notes: read.notes, digest: tokenDigest(read.token) };
+  const denied = tokenPushProblem({ forge, repository, read });
+  return denied ? { halt: denied, token } : { ...pushed, token };
+}
+
+// Why the token `read` gave may not push to `repository`, by the forge's push probe with that very token, or null.
+function tokenPushProblem({ forge, repository, read }) {
+  const named = `${repository.host}/${repository.owner}/${repository.name}`;
+  let answer;
+  try {
+    answer = forge.tokenCanPush(`${repository.owner}/${repository.name}`, { host: repository.host, token: read.token });
+  } catch (error) {
+    return `whether the forge token from ${read.source} may push to ${named} cannot be told (${String(error?.message ?? error).split('\n')[0].slice(0, 200)}); start again`;
+  }
+  if (answer?.may === true) return null;
+  return `the forge token from ${read.source} may not push to ${named}, as the forge's push probe with it answers (${answer?.why ?? 'no answer'}); give that source a token that may write the repository's contents`;
+}
+
+function pushAccess({ cap, forge, repository, env, home, guarded, main, platform, allowed, localBinding }) {
   const named = `${repository.host}/${repository.owner}/${repository.name}`;
   let view;
   try {
@@ -350,18 +379,8 @@ export function writeShellVars(folder, vars) {
 // only the names cacheVars gives. Never throws.
 export function confinedShellVars({ session, cwd, env = process.env, home }) {
   try {
-    const attempt = typeof cwd === 'string' && path.isAbsolute(cwd) ? attemptOf(cwd) : null;
+    const { attempt } = confinedAttempt({ session, cwd, env, home }) ?? {};
     if (!attempt) return null;
-    const mark = readUnattendedMark(session, { env, ...(home ? { home } : {}) });
-    const real = (file) => {
-      try {
-        return realpathSync(file);
-      } catch {
-        return null;
-      }
-    };
-    const starting = mark?.pending === true && typeof mark.cwd === 'string' && real(mark.cwd) === real(attempt.work);
-    if (!starting && !recordedAttempt(mark, attempt, real, home)) return null;
     const read = readSmallJson(path.join(attempt.folder, SHELL_VARS), SHELL_VARS_CAP);
     if (!read || varsProblem(read)) return null;
     const vars = Object.fromEntries(Object.entries(read).filter(([name]) => CACHE_VAR_NAMES.includes(name)));
@@ -369,6 +388,53 @@ export function confinedShellVars({ session, cwd, env = process.env, home }) {
   } catch {
     return null;
   }
+}
+
+// The forge token the sandboxed commands of `session`, whose hook runs in `cwd` under `env`, get, with `folder` its
+// attempt's folder: { vars, folder }, the forge CLI's token variable for the host; { problem, folder }, why it was not
+// handed over, `folder` null for a session that does not hold the claim; or null for a session of no confined attempt. Only the session the start launched gets it: one whose
+// environment holds the start's claim (project-token.mjs claimedSource), so no other session opened in the clone does,
+// while the host has yet to name it or after. The token is read again, outside the sandbox, from the one source the
+// start checked, never another (sessionToken), and handed over only when it is the token the start checked, by its
+// digest, with the command-scope git config that makes git take it from the forge CLI's helper (gitCredentialVars). `token` is a test's stand-in for that read. Never throws.
+export function confinedTokenVars({ session, cwd, env = process.env, home, token = sessionToken }) {
+  const found = safely(() => confinedAttempt({ session, cwd, env, home }));
+  if (!found) return null;
+  const { folder } = found.attempt;
+  try {
+    // A session without the claim gets no folder: it records no handoff, so it overwrites none.
+    const claim = claimedSource(folder, env);
+    if (claim.problem) return { problem: claim.problem, folder: null };
+    const project = typeof found.mark?.root === 'string' ? findProject(found.mark.root) : null;
+    const repository = project ? pinnedRepository(project) : null;
+    if (!repository) return { problem: 'the main checkout the session\'s mark names gives no repository', folder };
+    const read = token({ root: project.root, repository, keychain: project.localForgeTokenKeychain, env, only: claim.source });
+    if (!read.token) return { problem: read.problem, folder };
+    if (tokenDigest(read.token) !== claim.token) return { problem: `${read.source} now gives another token than the one the start checked`, folder };
+    // git takes the token only through the forge CLI's helper, set in the same handoff, in the command scope.
+    const git = gitCredentialVars(env, repository.host);
+    if (!git) return { problem: 'the forge CLI is not on an absolute folder of PATH, or the forge has no plain host name, so git could not take the token through it', folder };
+    return { vars: { ...tokenVars(read.token, repository.host), ...git }, folder };
+  } catch (error) {
+    return { problem: `the token could not be read (${String(error?.message ?? error).split('\n')[0].slice(0, 200)})`, folder };
+  }
+}
+
+// The confined attempt `cwd` lies in and the mark of `session`, its session, or null (confinedShellVars).
+function confinedAttempt({ session, cwd, env, home }) {
+  const attempt = typeof cwd === 'string' && path.isAbsolute(cwd) ? attemptOf(cwd) : null;
+  if (!attempt) return null;
+  const mark = readUnattendedMark(session, { env, ...(home ? { home } : {}) });
+  const real = (file) => {
+    try {
+      return realpathSync(file);
+    } catch {
+      return null;
+    }
+  };
+  const starting = mark?.pending === true && typeof mark.cwd === 'string' && real(mark.cwd) === real(attempt.work);
+  if (!starting && !recordedAttempt(mark, attempt, real, home)) return null;
+  return { attempt, mark };
 }
 
 // Whether `attempt` is the attempt folder the run's ledger, in the project at the main checkout the session's own mark

@@ -13,7 +13,7 @@ import { globParts } from '../plugins/aidrian/lib/fs.mjs';
 import { defaultSessionsFolders } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { noteFrom, openStore } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { forgetGateSnapshot, saveGateSnapshot } from '../plugins/aidrian/lib/gate-snapshot.mjs';
-import { configFiles, findProject, stateDir, stateRoot } from '../plugins/aidrian/lib/project.mjs';
+import { configFiles, findProject, LOCAL_FILE as LOCAL_NAME, stateDir, stateRoot } from '../plugins/aidrian/lib/project.mjs';
 import { sessionFolder } from '../plugins/aidrian/lib/session-folder.mjs';
 import { originFolder, readOrigins } from '../plugins/aidrian/lib/session-origins.mjs';
 
@@ -491,6 +491,7 @@ test('a main session the background handoff route started may not set any machin
     ['unattendedSignoff', { unattendedSignoff: 'on' }],
     ['handoff.background', { handoff: { background: 'on' } }],
     ['review.productFeedback', { review: { productFeedback: { auto: true } } }],
+    ['projectRun.forgeTokenKeychain', { projectRun: { forgeTokenKeychain: { service: 'other', account: 'me' } } }],
   ];
   for (const session of [full, short]) {
     for (const [name, value] of writes) {
@@ -675,6 +676,45 @@ test('a subagent may not change the machine\'s product feedback choice, by any s
   }
   const { agent_id: _ignored, agent_type: _alsoIgnored, ...main } = subagent(dir, 'Write', { file_path: local, content: JSON.stringify({ review: { productFeedback: { auto: false } } }) });
   assert.equal((await run(main)).status, 0, 'the main session may');
+});
+
+test('a subagent may not change the keychain entry a project run takes its forge token from, nor void it by a sibling key', async (t) => {
+  const { dir } = project(t, { version: 1 });
+  const local = path.join(dir, LOCAL_NAME);
+  const run = (input) => inHook({ input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
+  writeFileSync(local, `${JSON.stringify({ names: { human: 'off' }, projectRun: { forgeTokenKeychain: { service: 'aidrian-forge', account: 'me' } } }, null, 2)}\n`);
+  const edit = (from, to) => ['Edit', { file_path: local, old_string: from, new_string: to }];
+  const patch = (file, ...lines) => ({ command: `*** Begin Patch\n*** Update File: ${file}\n@@\n${lines.join('\n')}\n*** End Patch\n` });
+  for (const [tool, toolInput] of [
+    // A sibling under projectRun makes the reader drop the whole setting, so the token falls to the next source.
+    edit('"projectRun": {', '"projectRun": {\n    "x": 1,'),
+    edit('"service": "aidrian-forge"', '"service": "aidrian-forge", "extra": 1'),
+    edit('"account": "me"', '"account": "other"'),
+    ['Write', { file_path: local, content: JSON.stringify({ names: { human: 'off' } }) }],
+    // A patch is not applied: while the file selects an entry, any line it adds or removes counts.
+    ['apply_patch', patch(local, '+    "x": 1,')],
+    ['apply_patch', patch(local, '-  "names": { "human": "off" },')],
+    ['apply_patch', patch(LOCAL_NAME, '+  "projectRun": {}')],
+    // A delete or a move of the file has no line to add or remove, and drops the setting all the same.
+    ['apply_patch', { command: `*** Begin Patch\n*** Delete File: ${local}\n*** End Patch\n` }],
+    ['apply_patch', { command: `*** Begin Patch\n*** Update File: ${local}\n*** Move to: ${path.join(dir, 'moved.json')}\n*** End Patch\n` }],
+    // Several operations, the second one on the local file: each is judged against its own file.
+    ['apply_patch', { command: `*** Begin Patch\n*** Update File: ${path.join(dir, 'notes', LOCAL_NAME)}\n@@\n+{}\n*** Delete File: ${local}\n*** End Patch\n` }],
+    ['apply_patch', { command: `*** Begin Patch\n*** Add File: ${path.join(dir, 'docs.md')}\n+notes\n*** Update File: ${local}\n*** Move to: ${path.join(dir, 'moved.json')}\n*** End Patch\n` }],
+  ]) {
+    const result = await run(subagent(dir, tool, toolInput));
+    assert.equal(result.status, 2, JSON.stringify(toolInput));
+    assert.match(result.stderr, /projectRun\.forgeTokenKeychain/u, JSON.stringify(toolInput));
+  }
+  // A local file that selects no entry takes a patch or an edit of another key, as before.
+  writeFileSync(local, `${JSON.stringify({ names: { human: 'off' } }, null, 2)}\n`);
+  // But a move into it of a file that would select one is judged as the new local file, and refused.
+  writeFileSync(path.join(dir, 'staged.json'), JSON.stringify({ projectRun: { forgeTokenKeychain: { service: 'other', account: 'me' } } }));
+  const into = await run(subagent(dir, 'apply_patch', { command: `*** Begin Patch\n*** Update File: ${path.join(dir, 'staged.json')}\n*** Move to: ${local}\n*** End Patch\n` }));
+  assert.equal(into.status, 2, into.stderr);
+  assert.match(into.stderr, /projectRun\.forgeTokenKeychain/u);
+  assert.equal((await run(subagent(dir, 'apply_patch', patch(local, '-  "names": {}', '+  "names": { "human": "x" }')))).status, 0);
+  assert.equal((await run(subagent(dir, 'Edit', { file_path: local, old_string: '"human": "off"', new_string: '"human": "on"' }))).status, 0);
 });
 
 test('a subagent may not change the auto-merge switch without naming it: the guard reads what an Edit, Write, or apply_patch leaves', async (t) => {

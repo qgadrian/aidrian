@@ -6,7 +6,8 @@
 // switch, the host's start (confined, verified or allowed through projectRun.unverifiedHosts, hooks trusted), the host's
 // trust in the runs folder, and the
 // host's access check (push rights, an HTTPS origin the sandbox can push to, and nothing that would run outside the
-// sandbox: other enabled plugins, user hooks, a status line, a credential helper it cannot reach), and whether the host
+// sandbox: other enabled plugins, user hooks, a status line, a credential helper it cannot reach; and, on a host that
+// hands its sessions the forge token, a token to hand, with a note naming its source), and whether the host
 // carries on by itself after a usage limit, which stops the driver too. Then the base branch's reviewer bot. A check whose input a failed one gives is still run where it can be, on what the base branch says alone,
 // so one pass names every blocker. Then what the run needs to finish with no one: the tracker's server among the
 // team's projectRun.mcpServers, each tracker server there mapped so the run rule can hold it, auto-merge on with
@@ -62,8 +63,9 @@ export function localBindingNote(cap, platform) {
 
 // Runs every check for `project`, whose loaded config is `config`, with `run` the run these checks are for, which the
 // active-run check leaves out, and returns { exitCode, out, err }: a line `ok NAME`,
-// `blocker NAME: WHY`, or `ask NAME: WHAT` per check, exit 1 when any blocker. `forge`, `home`, and `platform` are a test's.
-export function preflightCommand({ project, config, run = null, env = process.env, home, forge, platform = process.platform }) {
+// `blocker NAME: WHY`, or `ask NAME: WHAT` per check, exit 1 when any blocker. `forge`, `home`, `platform`, and `exec`,
+// the keychain read's execFileSync, are a test's.
+export function preflightCommand({ project, config, run = null, env = process.env, home, forge, platform = process.platform, exec }) {
   const lines = [];
   const check = (name, problem) => lines.push(problem ? `blocker ${name}: ${problem}` : `ok ${name}`);
   const main = project.checkouts.at(-1);
@@ -99,13 +101,7 @@ export function preflightCommand({ project, config, run = null, env = process.en
     else check('trust', trust?.problem ?? null);
   }
   if (cap && repository && !place.problem) {
-    let access;
-    try {
-      access = accessProblem({ cap, forge: facade, repository, env, home, guarded: guardedFolders({ main, state: place.state, env, home }), main, platform, allowed: policy.outsideSandbox, localBinding: policy.localBinding === true });
-    } catch (error) {
-      access = { halt: `the access check failed (${String(error?.message ?? error).split('\n')[0]})` };
-    }
-    check('access', access?.halt ?? access?.refuse ?? null);
+    lines.push(...accessLines({ cap, facade, repository, env, home, main, state: place.state, platform, allowed: policy.outsideSandbox, localBinding: policy.localBinding === true, keychain: project.localForgeTokenKeychain, exec }));
     if (policy.localBinding === true) lines.push(localBindingNote(cap, platform));
   } else {
     check('access', 'it needs the repository, the state folder, and a host that starts project sessions, which the lines above name');
@@ -142,6 +138,23 @@ export function preflightCommand({ project, config, run = null, env = process.en
   if (typeof cap?.limitContinue !== 'function') lines.push('ask usage-limit: confirm this host carries on by itself after a usage limit, since a limit stops the driver too');
   const blocked = lines.some((line) => line.startsWith('blocker '));
   return { exitCode: blocked ? 1 : 0, out: lines, err: blocked ? ['aidrian project preflight: fix each blocker line, then run it again'] : [] };
+}
+
+// The access check, the start gate's own (project-start.mjs accessProblem): `ok access` or its blocker, then, on a host
+// that hands its sessions the forge token, a `note token:` line naming the source the token came from, and one for each
+// note on it, such as a token that reaches more than this repository. Never the token itself.
+function accessLines({ cap, facade, repository, env, home, main, state, platform, allowed, localBinding, keychain, exec }) {
+  let access;
+  try {
+    access = accessProblem({ cap, forge: facade, repository, env, home, guarded: guardedFolders({ main, state, env, home }), main, platform, allowed, localBinding, keychain, ...(exec ? { exec } : {}) });
+  } catch (error) {
+    access = { halt: `the access check failed (${String(error?.message ?? error).split('\n')[0]})` };
+  }
+  const problem = access?.halt ?? access?.refuse ?? null;
+  const lines = [problem ? `blocker access: ${problem}` : 'ok access'];
+  if (access?.token?.source) lines.push(`note token: ${access.token.source} gives the issue sessions their forge token`);
+  for (const note of access?.token?.notes ?? []) lines.push(`note token: ${note}`);
+  return lines;
 }
 
 // The tracker check: the base branch's tracker adapter, and a server of it among the team's projectRun.mcpServers, which

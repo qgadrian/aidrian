@@ -25,6 +25,7 @@ import { sessionLengthMarker } from '../plugins/aidrian/lib/session-length.mjs';
 import { refusalMarker } from '../plugins/aidrian/lib/tracker-guard.mjs';
 import claudeCode, { READ_TOOLS } from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import { accessProblem, confineDomains, managedPlists, managedSettings } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
+import { writeHandoff } from '../plugins/aidrian/lib/project-token.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { fileReadOf } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { childSendBacks, storeChildSendBacks } from '../plugins/aidrian/lib/child-send-backs.mjs';
@@ -578,6 +579,8 @@ test('a passed proof the start cannot file in the session`s mark holds no sessio
     const work = path.join(realpathSync(fx.state), 'runs', 'launch', 'attempts', 'ENG-1.1', 'work');
     const made = readSmallJson(path.join(path.dirname(work), CONFINE_PLAN));
     writeFileSync(path.join(path.dirname(work), 'drop', CONFINE_VERDICT), JSON.stringify(passVerdict(made, STARTED[0].session)));
+    // As the session's SessionStart hook records it, having handed the forge token over.
+    writeHandoff(path.dirname(work), { handed: true });
     chmodSync(folder, 0o500);
   };
   let result;

@@ -15,6 +15,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
+import { localForgeTokenKeychain } from './config-local.mjs';
 import { checkDeadline } from './deadline.mjs';
 import { foldCase, globParts, isEntry, isWithin } from './fs.mjs';
 import { folderOf, GLOB_WORD, globLinksTo, globStarts, linkBelow, linkReaches, linkWalk, partMatches, reachesFile, realOf, sameFile } from './glob-links.mjs';
@@ -82,12 +83,26 @@ const SWITCHES = Object.freeze([
   Object.freeze({ key: 'background', valueIn: (parsed) => parsed?.handoff?.background, name: 'handoff.background', why: 'only the main session may let a handoff start sessions in the background with no Human', patched: /^[+-].*"background"\s*:/mu }),
   // In a pretty-printed file the value sits on its own line, under a key the patch does not touch.
   Object.freeze({ key: 'productFeedback', valueIn: (parsed) => parsed?.review?.productFeedback, name: 'review.productFeedback', why: 'only the main session may choose whether this machine owes product feedback', patched: /^[+-].*(?:productFeedback|"auto"\s*:)/mu }),
+  // Which keychain entry gives a project run's issue sessions their forge token (lib/project-token.mjs), as the reader
+  // takes it, so a sibling key that voids the whole setting changes it too. A patch, which is not applied here, changes
+  // it when a line names projectRun or its keys, or, while the file selects an entry, when it adds or removes any line,
+  // or deletes or moves a file, which no added or removed line shows.
+  Object.freeze({
+    key: 'forgeTokenKeychain', valueIn: (parsed) => localForgeTokenKeychain(parsed, []) ?? undefined, name: 'projectRun.forgeTokenKeychain', why: 'only the main session may choose which keychain entry gives a project run\'s sessions their forge token',
+    patched: (text, before) => /^[+-].*(?:projectRun|forgeTokenKeychain|"service"\s*:|"account"\s*:)/mu.test(text) || (selectsKeychain(before) && /^(?:[+-](?![+-])|\*\*\* (?:Delete File|Move to):)/mu.test(text)),
+  }),
 ]);
+
+// Whether the local file's text `text` selects a keychain entry for the forge token, as the reader takes it.
+function selectsKeychain(text) {
+  const set = switchIn(text, (parsed) => localForgeTokenKeychain(parsed, []) ?? undefined);
+  return set !== undefined;
+}
 
 // What a Bash write to the local file that names no key changes: every switch in it, a local "off" among them.
 const EVERY_SWITCH = Object.freeze({ name: 'every machine switch', why: 'only the main session may change the machine\'s switches, a local "off" among them' });
 
-// Why the subagent call in `input` may not set one of the machine's switches, the auto-merge switch, the unattended waiver, review approvals,
+// Why the subagent call in `input` may not set one of the machine's switches, the auto-merge switch, the unattended waiver, review approvals, the forge token's keychain entry,
 // the background handoff, or the product feedback choice, or null: { match, reason }. It targets the project's local file and either changes the
 // switch (changesSwitch) or is a Bash command that writes it: any Bash write, move, remove, truncate, or copy over the
 // file counts as changing every switch, whether or not it names a key, since erasing a local "off" lets the team's
@@ -136,7 +151,7 @@ export function machineSwitchWriteDenial(input, project, { names: { human } }, {
   const aimed = targets.length > 0 || names.some((name) => name.toLowerCase().includes(local)) || globbed();
   const reached = !aimed && opaque && opaqueGlobbedFile(globs, locals, seen, project.checkouts) !== null;
   if (!aimed && !reached && !(erases && !opaque && erasesOtherwise(input, project, plain, globs))) return null;
-  const hit = opaque || isBash ? named[0] ?? EVERY_SWITCH : named.find((each) => changesSwitch(input, targets[0], each));
+  const hit = opaque || isBash ? named[0] ?? EVERY_SWITCH : named.find((each) => changesSwitch(input, targets[0], each, local));
   if (!hit || (!subagent && !unattended())) return null;
   // A session no Human attends is a main session, so the reason names the Human, not the main session.
   const only = (text) => (subagent ? text : `${text.replace(/^only the main session/u, 'only a main session a Human attends')}, and the background handoff route started this one, with no Human`);
@@ -208,15 +223,46 @@ export const bashCall = (input) => input.tool_name === 'Bash';
 // names the key, or when the file it leaves parses to another value than the file on disk, which covers
 // `"off"` to `"on"`, a JSON escape, a removed key, and a file left unparsable. A patch changes it when a line it adds or
 // removes names the key, or the switch's own `patched` shape: a patch is not applied here, so a value on a line of its own
-// that names neither, or a key spelled with a JSON escape, is not seen.
-function changesSwitch({ tool_name: tool, tool_input: given }, file, { key, valueIn, patched }) {
+// that names neither, or a key spelled with a JSON escape, is not seen. Each operation of a patch whose file is the
+// local file named `local` is judged alone, against that file as it is on disk, from the call's folder `cwd`; one that
+// moves a file into it, by the moved file and its update lines, as the new local file.
+function changesSwitch({ tool_name: tool, tool_input: given, cwd }, file, { key, valueIn, patched }, local = path.basename(file ?? '')) {
   const edit = fileEditOf({ tool_name: tool, tool_input: given });
-  if (edit?.shape === 'patch') return patched.test(edit.text);
+  if (edit?.shape === 'patch') {
+    const from = (each) => path.resolve(typeof cwd === 'string' ? cwd : process.cwd(), each);
+    const isLocal = (each) => typeof each === 'string' && path.basename(each).toLowerCase() === local.toLowerCase();
+    const judged = (text, before) => (typeof patched === 'function' ? patched(text, before) : patched.test(text));
+    return patchOperations(edit.text).some(({ file, move, text }) => {
+      if (isLocal(file) && judged(text, readText(from(file)))) return true;
+      if (!isLocal(move)) return false;
+      // A move into the local file leaves the moved file, with this operation's update lines, as the new local file.
+      const moved = readText(from(file));
+      return switchIn(moved, valueIn) !== switchIn(readText(from(move)), valueIn) || judged(text, moved);
+    });
+  }
   const written = edit?.shape === 'write' ? edit.content : edit?.shape === 'edit' ? edit.newText : undefined;
   if (typeof written !== 'string') return false;
   if (written.includes(key)) return true;
   const before = readText(file);
   return switchIn(before, valueIn) !== switchIn(edit.shape === 'write' ? written : editedText(before, given), valueIn);
+}
+
+// The operations of an apply_patch text, each { file, move, text }: the file its `*** Add File:`, `*** Update File:`, or
+// `*** Delete File:` header names, the file a `*** Move to:` line moves it to, or null, and the operation's own lines,
+// headers included.
+function patchOperations(text) {
+  const operations = [];
+  for (const line of String(text ?? '').split(/\r?\n/u)) {
+    const header = /^\*\*\* (?:Add|Update|Delete) File: (.+)$/u.exec(line);
+    const move = /^\*\*\* Move to: (.+)$/u.exec(line);
+    if (header) operations.push({ file: header[1].trim(), move: null, text: `${line}\n` });
+    else if (/^\*\*\* (?:Begin|End) Patch/u.test(line)) continue;
+    else if (operations.length) {
+      if (move) operations.at(-1).move = move[1].trim();
+      operations.at(-1).text += `${line}\n`;
+    }
+  }
+  return operations;
 }
 
 // `text` after an Edit, with its new text taken literally: a replacer function keeps `$&` from meaning what it replaces.

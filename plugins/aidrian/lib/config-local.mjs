@@ -94,3 +94,23 @@ export function resolvePublish(team, local) {
   if (local.inline === false) out.inline = false;
   return out;
 }
+
+// The longest keychain service or account name the local file may give, and what neither may hold.
+const KEYCHAIN_NAME_MAX = 255;
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/u;
+
+// The local file's `projectRun.forgeTokenKeychain`, `{ service, account }`: the macOS keychain entry the driver reads a
+// project run's forge token from, before the forge CLI's own login (lib/project-token.mjs). Null when unset. `projectRun`
+// takes that one key, and the entry exactly a non-empty `service` and `account`, each text with no control character;
+// anything else is an error in `errors`, named for the local file `file`, and reads null, so the next source gives it.
+export function localForgeTokenKeychain(raw, errors, file = 'the local file') {
+  if (!isObject(raw) || !Object.hasOwn(raw, 'projectRun')) return null;
+  const given = raw.projectRun;
+  const entry = isObject(given) ? given.forgeTokenKeychain : undefined;
+  const name = (value) => typeof value === 'string' && value.trim() !== '' && value.length <= KEYCHAIN_NAME_MAX && !CONTROL.test(value);
+  const onlyKey = isObject(given) && Object.keys(given).every((key) => key === 'forgeTokenKeychain');
+  const shaped = onlyKey && isObject(entry) && Object.keys(entry).sort().join(',') === 'account,service' && name(entry.service) && name(entry.account);
+  if (shaped) return { service: entry.service, account: entry.account };
+  errors.push(`${file}: "projectRun" must be { "forgeTokenKeychain": { "service": "<name>", "account": "<name>" } }, each name text of at most ${KEYCHAIN_NAME_MAX} characters`);
+  return null;
+}

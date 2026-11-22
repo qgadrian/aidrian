@@ -447,7 +447,6 @@ const endedOnLimit = (found, key, attempt) => found.rows.some((row) => row.event
 function confinedRoom({ project, state, run, key, branch, fresh, reserved, attempt, tip, env, home, found, cap, policy, main, pushUrl, session, checked, facade }) {
   const folders = stateWorkFolders(state, { env, home });
   if (folders.problem) return { halt: folders.problem };
-  // The pull request the latest result of the issue named, for a refusal that asks a person to take its branch in.
   const clone = prepareAttempt({ project, state, run, key, attempt, branch, fresh, reserved, tip, env });
   if (clone.halt) return { halt: clone.halt };
   if (clone.problem) return { problem: clone.problem };

@@ -1963,8 +1963,8 @@ takes, halts the start too, before the host starts anything ([the push preflight
 clone under its host's sandbox, and a host that is not halts the start. A later attempt goes on from its issue's branch
 as the forge holds it, the branch of its latest start that ran a session. When that head differs from the base tip in a
 host config or instruction file, it goes on from the tip on the same branch if the tip already holds the head, and
-otherwise, when that branch changed such a file no review saw, such as a knowledge index a docs issue registered its
-doc in, it leaves the branch as it is and cuts a fresh one from the base tip, the snapshot's branch with
+otherwise, such as when the branch changed a knowledge index a docs issue registered its doc in, or only the base
+changed such a file after the branch diverged (an accepted residual: going on would need the tip merged in), it leaves the branch as it is and cuts a fresh one from the base tip, the snapshot's branch with
 `-a<attempt>` added, which its start row records. Everything after the start uses that branch: the session's push, its
 result, and `stop-action`; the merge guard holds a pull request from any branch an attempt recorded. Nothing of the old
 branch is reused. The session's task gives only a count of those files, and the start's stderr names the first few,

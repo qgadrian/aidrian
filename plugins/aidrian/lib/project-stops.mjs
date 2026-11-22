@@ -33,7 +33,7 @@ import { sessionIdentity } from './hosts/index.mjs';
 import { changesRequested, defaultBranch, ghError, runAutoMerge } from './pr-auto-merge.mjs';
 import { computeVerdict, currentRows } from './pr-checks.mjs';
 import { CAPS, cleanText } from './project-result.mjs';
-import { readRun, runPlace, RUN_ID } from './project-run.mjs';
+import { issueBranch, readRun, runPlace, RUN_ID } from './project-run.mjs';
 import { latestStart, runStore, startsOf, stopActorProblem } from './project-run-guard.mjs';
 import { hostOf, repoName } from './remotes.mjs';
 import { appendStops, issueStops, STOPS_FILE } from './stop-history.mjs';
@@ -265,7 +265,7 @@ export function stopAction({ project, config, run, key, env = process.env, home,
   if (actor) return refuse(actor);
   const start = latestStart(found, key);
   if (typeof start?.drop !== 'string') return refuse(`no start of ${key} names a drop folder to keep its stop history in`);
-  const { branch } = found.snapshot.issues.find((issue) => issue.key === key);
+  const branch = issueBranch(found, key);
   const { repository } = found.init;
   const named = `${repository.owner}/${repository.name}`;
   const history = issueStops({ state: place.state, run, key, starts: startsOf(found, key) });

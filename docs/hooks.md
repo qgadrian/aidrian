@@ -726,7 +726,7 @@ read on the waiver's clock below, `aidrian pr auto-merge`'s policy and [merge tr
 the paths check with `includeGuardedPaths` and the policy files, the gh user's own pull request, no outsider's comment
 or review in comment and review lists the forge gave whole, no changes requested, not a draft, and every check of exactly the head finished and passed, so gh merges at
 once rather than leave the merge to auto-merge or a merge queue. For a pull request of a [project run](config.md#project-run)'s
-issue, the issue its mark names, or, for any other mark such as the driver's, the issue whose snapshot branch is the
+issue, the issue its mark names, or, for any other mark such as the driver's, the issue whose snapshot branch, or a branch any attempt of it recorded, is the
 pull request's head, the merge also keeps [`closes`](config.md#when-it-is-on): its title, body, and every commit
 message, as the same read gives them at merge time, and the merge's own subject and body (`-t`, `-b`, `commit_title`,
 `commit_message`), close or name no other issue of a team the run knows. A body from a file (`-F`, `@file`,
@@ -1408,8 +1408,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
 - **What a project run's issue session asks of the forge** (`lib/issue-forge-guard.mjs`, asked through the write
   allowlist above, for the same sessions and their subagents). The session keeps the forge token in its sandbox, so
   the hook holds what it runs with it:
-  - `git push` only as `git push origin HEAD:refs/heads/<branch>`, `<branch>` the one the run's snapshot names for its
-    issue, in a call of its own, from its own worktree or attempt clone, with `+`, `--force`, or `--force-with-lease` (bare, or naming that
+  - `git push` only as `git push origin HEAD:refs/heads/<branch>`, `<branch>` the one its issue's latest start names
+    (the snapshot's, or a fresh one a later attempt cut), in a call of its own, from its own worktree or attempt clone, with `+`, `--force`, or `--force-with-lease` (bare, or naming that
     branch) and the switches `-u`, `-q`, `-v`, `-n`, `--set-upstream`, `--quiet`, `--verbose`, `--progress`,
     `--porcelain`, `--dry-run`, and `--force-if-includes`. Refused: a tag, `--tags`, `--follow-tags`, `--mirror`,
     `--all`, `--delete`, `-d`, a `:ref` delete, any other ref or a second refspec, a URL or another remote, `--repo`,

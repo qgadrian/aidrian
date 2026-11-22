@@ -5,8 +5,8 @@
 // docs/hooks.md#agent-gates says what passes; docs/review.md names what a script the session runs can still do.
 //   - A session is held when its unattended mark names an issue, with any tag shape, or cannot be read; a pending
 //     mark's hold, an attended session, and a run's driver are not (unattended-mark.mjs issueHeld).
-//   - `git push`: only `git push origin HEAD:refs/heads/<branch>`, `<branch>` the one the run's snapshot names for its
-//     issue (project-run-guard.mjs ownIssue), with a `+` or a force option that names only that branch, and switches
+//   - `git push`: only `git push origin HEAD:refs/heads/<branch>`, `<branch>` the one its issue's latest start names
+//     (project-run-guard.mjs ownIssue), with a `+` or a force option that names only that branch, and switches
 //     that change nothing else, in a call of its own: beside it only `cd`, git's reads (BESIDE_GIT) with the options
 //     that only read (BESIDE_OPTIONS), and text filters (BESIDE_PROGRAMS), so no command of the call changes the commits
 //     it carries after the guard read them. git then

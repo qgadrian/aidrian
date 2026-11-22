@@ -95,8 +95,8 @@ record: report the failure.
 
 Then take each open product choice to the Human, one question at a time, with the host's question tool
 (AskUserQuestion in Claude Code). The question names `#<number>`, the item's id, and its title in double quotes, and no
-other item; it gives the recommendation in one plain line. Each option is one decision alone, such as `fix-now` or
-`defer`, the recommended first. Record the answer with
+other item; it gives the recommendation in one plain line. Each option is one decision, such as `fix-now` or
+`defer`, alone or with a note after a comma, colon, or dash, the recommended first. Record the answer with
 `aidrian pr product-feedback answer '<pr>' <id> <decision> --by human`, adding `--reason` with the Human's words when
 the decision needs one. With no Human present, or on a host whose answers no hook can read, such as Codex, ask nothing:
 list each question with its command, for the Human to run in their own shell.

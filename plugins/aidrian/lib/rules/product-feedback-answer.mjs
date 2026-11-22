@@ -139,8 +139,10 @@ export function readCall(invocation) {
 // What a question to the Human must name for this item of this record.
 const askOf = (record, item) => ({ pr: record.pr, id: item.id, title: item.title, others: record.items.filter((each) => each !== item && each.title !== item.title).map((each) => each.title), since: record.recorded_at });
 
-// The whole label the option must be: "fix-now" also reads as "Fix now".
-const onlyDecision = (decision) => new RegExp(`^\\s*${decision.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace('-', '[- ]')}\\s*[.!]?\\s*$`, 'iu');
+// The label the option must be: the decision word, alone or closed by punctuation before any note, as "Fix now, in
+// this pull request"; "fix-now" also reads as "Fix now". A word straight after it, as "Drop nothing", reads as another
+// answer.
+const onlyDecision = (decision) => new RegExp(`^\\s*${decision.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace('-', '[- ]')}\\s*(?:$|[.!,:;(\u2013\u2014]|-\\s)`, 'iu');
 
 // Why `answers` hold no word of the Human on this decision, or null when they do. Names the nearest miss.
 function answerMismatch(answers, { pr, id, title, others, since }, decision) {
@@ -162,14 +164,14 @@ function answerMismatch(answers, { pr, id, title, others, since }, decision) {
   if (!onItem.length) return 'the question names another item\'s title too, so its answer is not about this one';
   const only = onlyDecision(decision);
   if (onItem.some((each) => only.test(each.answer))) return null;
-  return `the Human picked ${JSON.stringify(cleanTitle(onItem.at(-1).answer))}, and the option must be ${decision} alone`;
+  return `the Human picked ${JSON.stringify(cleanTitle(onItem.at(-1).answer))}, and the option must be ${decision} alone, or ${decision} then a comma, colon, or dash before a note`;
 }
 
 const judgeAsk = (ask, decision, input) => {
   const why = answerMismatch(transcriptAnswers(readTranscript(input?.transcript_path)), ask, decision);
   if (why === null) return null;
   return `${HUMAN_LEAD}, and this session holds no such answer (${why}). Ask the Human with AskUserQuestion: a question naming #${ask.pr}, ${ask.id}, and ${JSON.stringify(ask.title)}, the title in double quotes, ` +
-    `and no other item, with one option that is ${decision} alone. Or the Human runs the command in their own shell.`;
+    `and no other item, with one option that is ${decision} alone, or ${decision} then a comma, colon, or dash before a note. Or the Human runs the command in their own shell.`;
 };
 
 const unreadableReason = (what) =>

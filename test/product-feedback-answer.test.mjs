@@ -430,8 +430,8 @@ test('a title of any length is asked about by its id and its quotes', (t) => {
   }
 });
 
-test('the option must be the decision alone, and given after the record', (t) => {
-  for (const [picked, passes] of [['Drop', true], ['drop', true], [' Drop.', true], ['Drop nothing, keep it open', false], ['Do not drop', false], ['Drop it', false], ['Fix now', false]]) {
+test('the option must be the decision alone or closed by punctuation before a note, and given after the record', (t) => {
+  for (const [picked, passes] of [['Drop', true], ['drop', true], [' Drop.', true], ['Drop nothing, keep it open', false], ['Do not drop', false], ['Drop it', false], ['Fix now', false], ['Drop, it is out of scope', true], ['Drop: out of scope', true], ['Drop — out of scope', true], ['Drop - out of scope', true], ['Drop (Recommended)', true], ['Dropped', false]]) {
     const g = guarded(t);
     g.answer(QUESTION, picked);
     assert.equal(g.run(ANSWER) === null, passes, picked);
@@ -440,6 +440,10 @@ test('the option must be the decision alone, and given after the record', (t) =>
   g.answer(QUESTION, 'Fix now');
   assert.match(g.run(ANSWER) ?? '', /"Fix now"/u, 'the deny names what the Human picked');
   assert.equal(g.run('aidrian pr product-feedback answer 7 PF1 fix-now --by human'), null, 'fix-now also reads as "Fix now"');
+  assert.match(g.run(ANSWER) ?? '', /drop then a comma, colon, or dash before a note/u, 'the deny names the label rule');
+  const noted = guarded(t);
+  noted.answer(QUESTION, 'Fix now, in this pull request');
+  assert.equal(noted.run('aidrian pr product-feedback answer 7 PF1 fix-now --by human'), null, 'a note after a comma');
   const old = guarded(t);
   old.answer(QUESTION, 'Drop', '2026-11-02T09:00:00.000Z');
   assert.match(old.run(ANSWER) ?? '', /after it was recorded/u, 'an answer older than the record');

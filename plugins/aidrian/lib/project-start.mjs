@@ -85,9 +85,10 @@ export function hostStartProblem(cap, policy, env) {
 // `localBinding` its projectRun.localBinding, which lets the host's settings allow local binding too.
 // On a host that hands its session the forge token (`forgeTokenEnv`), a start halts too when no source gives a token
 // (lib/project-token.mjs: the keychain entry `keychain`, the machine's default entry, or the forge CLI's login), or when
-// the forge, asked with that very token, does not let it push to the repository; { pushUrl, token } then names its
-// source `id`, its `source` label, and `notes`, never the token, which the session's SessionStart hook reads again from
-// that one source.
+// the forge, asked with that very token, does not let it push to the repository, or make the reads its session makes
+// (tokenReadProblems: `reads`, a line each, which the halt joins); { pushUrl, token, reads } then names its source `id`,
+// its `source` label, and `notes`, never the token, which the session's SessionStart hook reads again from that one
+// source, and `reads` is empty, or missing for a forge with no such read.
 export function accessProblem({ cap, forge, repository, env, home, guarded, main, platform = process.platform, allowed = [], localBinding = false, keychain = null, exec }) {
   const pushed = pushAccess({ cap, forge, repository, env, home, guarded, main, platform, allowed, localBinding });
   if (!pushed?.pushUrl || cap.forgeTokenEnv !== true) return pushed;
@@ -95,7 +96,26 @@ export function accessProblem({ cap, forge, repository, env, home, guarded, main
   if (read.problem) return { halt: read.problem, token: { notes: read.notes } };
   const token = { id: read.id, source: read.source, notes: read.notes, digest: tokenDigest(read.token) };
   const denied = tokenPushProblem({ forge, repository, read });
-  return denied ? { halt: denied, token } : { ...pushed, token };
+  if (denied) return { halt: denied, token };
+  const reads = tokenReadProblems({ forge, repository, read });
+  if (reads === null) return { ...pushed, token };
+  return reads.length ? { halt: reads.join('; '), token, reads } : { ...pushed, token, reads };
+}
+
+// What the token `read` gave may not read of `repository` that an issue session reads, such as the reactions the review
+// step reads and the statuses `gh pr checks` reads, by the forge's own reads with that very token: a line each, naming
+// the permission to add, or one line when the forge cannot tell; none when all pass, and null for a forge with no such
+// read (`tokenReads`).
+function tokenReadProblems({ forge, repository, read }) {
+  if (typeof forge.tokenReads !== 'function') return null;
+  const named = `${repository.host}/${repository.owner}/${repository.name}`;
+  let missing;
+  try {
+    missing = forge.tokenReads(`${repository.owner}/${repository.name}`, { host: repository.host, token: read.token });
+  } catch (error) {
+    return [`what the forge token from ${read.source} may read of ${named} cannot be told (${String(error?.message ?? error).split('\n')[0].slice(0, 200)}); start again`];
+  }
+  return (Array.isArray(missing) ? missing : []).map((each) => `the forge token from ${read.source} cannot ${each.what} (${each.why} for ${named}); give it the fine-grained permission ${each.permission}`);
 }
 
 // Why the token `read` gave may not push to `repository`, by the forge's push probe with that very token, or null.

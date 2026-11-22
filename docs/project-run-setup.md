@@ -130,11 +130,7 @@ Fine-grained tokens, Generate new token:
   public resources, and the probe fails.
 - **Repository access**: Only select repositories, and pick the run's repository when the token is created. A token
   that does not name the repository fails the probe.
-- **Permissions**: Contents read and write (push, merge), Pull requests read and write (open one, comment, answer
-  review threads, update its branch), Actions read and write (read runs, rerun failed jobs), Checks read, and Commit
-  statuses read; Metadata read comes with them. Leave Workflows off, so the token cannot push a change to a workflow
-  file. This list follows the calls an issue session makes through `lib/forges/github.mjs`; no live run has checked
-  a token with exactly these permissions.
+- **Permissions**: the list in [Forge token permissions](#forge-token-permissions).
 - **Expiration**: a token that expires fails the probe, and the preflight names it as `blocker access`.
 
 Store it with macOS's `security`, `-w` last so it asks for the token instead of taking it on the command line:
@@ -159,6 +155,26 @@ error and reads unset. It is read only while git tracks no `.aidrian.local.json`
 it. For one token every github.com project on the machine shares, store it under the default service instead, with no
 local key: `security add-generic-password -s aidrian-project-run -a '<account>' -w`.
 On another platform the keychain key is a `note`, and the gh login gives the token.
+
+## Forge token permissions
+
+A fine-grained token's repository permissions, by the names GitHub's token page gives them:
+
+| Permission | Access | What the issue session does with it |
+| --- | --- | --- |
+| Contents | Read and write | push its branch, merge its pull request |
+| Pull requests | Read and write | open one, comment, answer review threads, update its branch |
+| Issues | Read-only | read the reactions on its pull request, as `aidrian pr review --with-bot` does |
+| Commit statuses | Read-only | read its commit's statuses, as `gh pr checks` does |
+| Actions | Read and write | read its workflow runs, as `gh pr checks` does, and rerun failed jobs |
+| Metadata | Read-only | comes with any of the above |
+
+Leave Workflows off, so the token cannot push a change to a workflow file. GitHub offers a fine-grained token no
+Checks permission. The preflight and every start check the reads with the token the issue session gets, each a GET
+that writes nothing (`lib/forges/github-token.mjs`): the repository, its pull requests, the reactions on the newest
+one (or the issues list, with no pull request), the default branch's commit statuses, and the workflow runs. A read
+the forge answers 401, 403, or 404 is a `blocker token-reads:` line naming the permission to add, and halts a start;
+the writes are not probed, since a probe writes nothing.
 
 ## The decision label
 

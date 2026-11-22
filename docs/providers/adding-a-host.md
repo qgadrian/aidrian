@@ -280,7 +280,10 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   signs in to `host` with, from its own login wherever it keeps it, read with no network call (`gh auth token`), and
   `tokenCanPush(repo, { host, token })`, whether that token may push there, by a probe that writes nothing (GitHub: the
   receive-pack advertisement, which answers 200 with that content type only to a token that may write the contents):
-  `{ may, why }`, or a throw when the answer says neither.
+  `{ may, why }`, or a throw when the answer says neither; and `tokenReads(repo, { host, token })`, the reads an issue
+  session makes that the token may not, by reads that write nothing, each `{ read, what, permission, why }` with
+  `permission` the forge's own name for what to add (GitHub: the repository, its pull requests, the reactions on one,
+  a commit's statuses, and its workflow runs), none when all pass, or a throw when an answer says neither.
 - Conversation: `conversationComments`, the comments on the pull request rather than on its diff, `comment(repo, id, { host, pr })`,
   one of them by id, held to pull request `pr` when the option names it (null for a comment of any other, or one the forge
   does not find), `postComment`, `editComment`, `deleteComment(repo, id)`, and `reactions`.

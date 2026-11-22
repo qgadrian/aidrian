@@ -20,9 +20,10 @@ import { confineReads, sandboxSettings, writeEnvFile } from '../plugins/aidrian/
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { confinedShellVars, confinedTokenVars } from '../plugins/aidrian/lib/project-start.mjs';
-import { receivePackStatus, tokenMayPush } from '../plugins/aidrian/lib/forges/github-token.mjs';
+import { apiStatus, receivePackStatus, tokenMayPush, TOKEN_READS, tokenReadProblems } from '../plugins/aidrian/lib/forges/github-token.mjs';
 import { confineCheck } from '../plugins/aidrian/lib/project-confine.mjs';
 import { CLAIM_VAR, DEFAULT_KEYCHAIN_SERVICE, forgeToken, gitCredentialVars, handoffProblem, keychainToken, tokenVars } from '../plugins/aidrian/lib/project-token.mjs';
+import { setupDocUrl } from '../plugins/aidrian/lib/project-preflight.mjs';
 import { markPending } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { DRIVER, FIXTURE_TOKEN, runFixture, STARTED } from './project-start-fixture.mjs';
 
@@ -245,6 +246,52 @@ test('preflight says ok access with a note naming the token\'s source, and a blo
   assert.ok(classic.some((line) => /^note token: it is a classic personal access token, which reaches every repository/u.test(line)), classic.join('\n'));
   const none = fx.cmd(['preflight'], { forge: { ...fx.forge, authToken: () => { throw new Error('not logged in'); } } }).out;
   assert.match(none.find((line) => line.startsWith('blocker access:')) ?? '', /^blocker access: no source gives a forge token for github\.com, of the forge CLI's login \(the login: not logged in\)/u);
+});
+
+// The GitHub adapter's reads with a fine-grained token that may push but holds no Issues permission, as the live run's
+// token: GitHub answers the reactions read 403, "Resource not accessible by personal access token".
+const noIssues = (asked = []) => (repo, { host, token }) => tokenReadProblems(repo, {
+  host, token, probe: (route, options) => {
+    asked.push([route, options.token]);
+    if (route === `repos/${repo}`) return { status: 200, body: { default_branch: 'main' } };
+    if (route.includes('/pulls')) return { status: 200, body: [{ number: 12 }] };
+    return { status: route.includes('/reactions') ? 403 : 200, body: [] };
+  },
+});
+
+test('preflight blocks on a token whose reactions read the forge answers 403, naming the fine-grained permission, and the start halts on it', (t) => {
+  const fx = runFixture(t);
+  const asked = [];
+  fx.forge.tokenReads = noIssues(asked);
+  const pre = fx.cmd(['preflight', 'launch']);
+  assert.equal(pre.exitCode, 1);
+  assert.ok(pre.out.includes('ok access'), 'the push passed');
+  assert.deepEqual(pre.out.filter((line) => line.startsWith('blocker token-reads:')), [
+    `blocker token-reads: the forge token from the forge CLI's login for github.com cannot read the reactions on a pull request, as \`aidrian pr review --with-bot\` does (the forge answered 403 for github.com/acme/widgets); give it the fine-grained permission Issues: Read-only (setup: ${setupDocUrl()}#forge-token-permissions)`,
+  ], pre.out.join('\n'));
+  assert.ok(asked.every(([, token]) => token === FIXTURE_TOKEN), 'every read is the issue session\'s token');
+  assert.ok(asked.some(([route]) => route === 'repos/acme/widgets/issues/12/reactions?per_page=1'), 'on the newest pull request');
+  const halted = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(halted.exitCode, 1, halted.out.join('\n'));
+  assert.match(halted.out[0], /^halt the forge token from the forge CLI's login for github\.com cannot read the reactions on a pull request/u);
+  assert.deepEqual(fx.claude.starts(), [], 'no session started');
+});
+
+test('the read probe asks the REST API with the token in the environment, and each read names its permission', () => {
+  const calls = [];
+  const exec = (program, args, options) => (calls.push({ program, args, options }), '403\n{"message":"Resource not accessible by personal access token"}');
+  assert.deepEqual(apiStatus('repos/acme/widgets/issues/12/reactions', { host: 'github.com', token: 'github_pat_RO0123456789', exec }), { status: 403, body: { message: 'Resource not accessible by personal access token' } });
+  apiStatus('repos/acme/widgets', { host: 'ghe.example.com', token: 'ghe_token0123456789', exec });
+  assert.deepEqual(calls[0].args.slice(2), ['https://api.github.com/repos/acme/widgets/issues/12/reactions', 'GH_TOKEN']);
+  assert.equal(calls[0].options.env.GH_TOKEN, 'github_pat_RO0123456789');
+  assert.deepEqual(calls[1].args.slice(2), ['https://ghe.example.com/api/v3/repos/acme/widgets', 'GH_ENTERPRISE_TOKEN']);
+  assert.ok(calls.every((call) => !call.args.join(' ').includes('0123456789')), 'never an argument');
+  assert.deepEqual(Object.values(TOKEN_READS).map((each) => each.permission), ['Metadata: Read-only, with the repository selected under Repository access', 'Pull requests: Read and write', 'Issues: Read-only', 'Commit statuses: Read-only', 'Actions: Read and write']);
+  // A token that cannot read the repository is one problem; an answer that says neither throws.
+  const answer = (map) => (route) => ({ status: map(route), body: route.endsWith('widgets') ? { default_branch: 'main' } : [] });
+  assert.deepEqual(tokenReadProblems('acme/widgets', { host: 'github.com', token: 't', probe: answer(() => 404) }).map((each) => each.read), ['repository']);
+  assert.deepEqual(tokenReadProblems('acme/widgets', { host: 'github.com', token: 't', probe: answer((route) => (/status$|runs/u.test(route) ? 403 : 200)) }).map((each) => each.read), ['statuses', 'actions']);
+  assert.throws(() => tokenReadProblems('acme/widgets', { host: 'github.com', token: 't', probe: answer(() => 500) }), /the forge answered the repository read with 500/u);
 });
 
 test('the SessionStart hook hands GH_TOKEN, from the source the start checked, to the sandboxed commands of the session the start launched alone', (t) => {

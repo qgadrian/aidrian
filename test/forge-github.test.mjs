@@ -20,7 +20,7 @@ import { viewForge, viewPrAt } from '../plugins/aidrian/lib/rules/github/merge-r
 // Every name the facade gives its callers.
 const FACADE = [
   'id', 'cwd', 'isTrustedCommenter', 'hosts', 'changeRef', 'changesState', 'changeUrl',
-  'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'branchHead', 'contents', 'tree', 'visibility', 'viewer', 'authToken', 'tokenCanPush',
+  'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'branchHead', 'contents', 'tree', 'visibility', 'viewer', 'authToken', 'tokenCanPush', 'tokenReads',
   'conversationComments', 'comment', 'issue', 'postComment', 'editComment', 'deleteComment', 'reactions',
   'pull', 'diff', 'nodeChange', 'changeEdits', 'reviewTrail', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',
   'postReview', 'reviewComment', 'deleteReviewComment', 'findingThreads', 'replyToReviewComment', 'resolveThread', 'unresolveThread',
@@ -185,6 +185,20 @@ test('tokenCanPush: the push probe the adapter was given, for the repository and
   assert.deepEqual(forge.tokenCanPush('acme/widgets', { host: 'github.com', token: 'github_pat_RO' }), { may: false, why: 'the forge answered 403' });
   assert.deepEqual(forge.tokenCanPush('acme/widgets', { token: 'github_pat_RO' }), { may: false, why: 'the forge answered 403' });
   assert.deepEqual(asked, [['acme/widgets', { host: 'github.com', token: 'github_pat_RO' }], ['acme/widgets', { host: 'github.com', token: 'github_pat_RO' }]]);
+});
+
+test('tokenReads: the read probe the adapter was given, route by route, with the token, and no gh', () => {
+  const asked = [];
+  const readProbe = (route, options) => {
+    asked.push([route, options]);
+    if (route === 'repos/acme/widgets') return { status: 200, body: { default_branch: 'main' } };
+    if (route.startsWith('repos/acme/widgets/pulls')) return { status: 200, body: [{ number: 7 }] };
+    return { status: route.includes('/reactions') ? 403 : 200, body: {} };
+  };
+  const forge = createGithubForge({ cwd: '/repo', run: () => assert.fail('no gh'), readProbe });
+  assert.deepEqual(forge.tokenReads('acme/widgets', { token: 'github_pat_RO' }).map((each) => [each.read, each.permission, each.why]), [['reactions', 'Issues: Read-only', 'the forge answered 403']]);
+  assert.deepEqual(asked.map(([route]) => route), ['repos/acme/widgets', 'repos/acme/widgets/pulls?state=all&per_page=1', 'repos/acme/widgets/issues/7/reactions?per_page=1', 'repos/acme/widgets/commits/main/status', 'repos/acme/widgets/actions/runs?per_page=1']);
+  assert.ok(asked.every(([, options]) => options.host === 'github.com' && options.token === 'github_pat_RO'));
 });
 
 test('the forge token helpers: GH_TOKEN, which gh and its git helper read, the login step, and a note on any token but a fine-grained one', () => {

@@ -8,7 +8,8 @@
 // trust in the runs folder, and the
 // host's access check (push rights, an HTTPS origin the sandbox can push to, and nothing that would run outside the
 // sandbox: other enabled plugins, user hooks, a status line, a credential helper it cannot reach; and, on a host that
-// hands its sessions the forge token, a token to hand, with a note naming its source), and whether the host
+// hands its sessions the forge token, a token to hand that may make the forge reads its session makes, with a note
+// naming its source), and whether the host
 // carries on by itself after a usage limit, which stops the driver too. Then the base branch's reviewer bot. A check whose input a failed one gives is still run where it can be, on what the base branch says alone,
 // so one pass names every blocker. Then what the run needs to finish with no one: the tracker's server among the
 // team's projectRun.mcpServers, each tracker server there mapped so the run rule can hold it, auto-merge on with
@@ -64,7 +65,7 @@ export function setupDocUrl() {
 export const SETUP_SECTIONS = Object.freeze({
   repository: 'origin-over-https', state: 'state-folder', run: 'after-a-halt-or-a-stop', instructions: 'state-folder',
   policy: 'team-config', machine: 'this-machine', commit: 'commits-in-attempt-clones', host: 'host-start', trust: 'trust-the-runs-folder', access: 'host-settings',
-  token: 'forge-token-in-the-keychain', 'usage-limit': 'host-settings', tracker: 'team-config', 'auto-merge': 'auto-merge-and-ci',
+  token: 'forge-token-in-the-keychain', 'token-reads': 'forge-token-permissions', 'usage-limit': 'host-settings', tracker: 'team-config', 'auto-merge': 'auto-merge-and-ci',
   handoff: 'team-config', reviewer: 'review-bot', 'reviewer-seen': 'review-bot', ci: 'auto-merge-and-ci',
   'branch-protection': 'forge-rules', 'release-tags': 'forge-rules', 'workflow-secrets': 'forge-rules', labels: 'the-decision-label',
 });
@@ -179,8 +180,9 @@ export function preflightCommand({ project, config, run = null, env = process.en
 }
 
 // The access check, the start gate's own (project-start.mjs accessProblem): `ok access` or its blocker, then, on a host
-// that hands its sessions the forge token, a `note token:` line naming the source the token came from, and one for each
-// note on it, such as a token that reaches more than this repository. Never the token itself.
+// that hands its sessions the forge token, `ok token-reads` or a `blocker token-reads:` line for each read of an issue
+// session that token may not make, naming the permission to add, a `note token:` line naming the source the token came
+// from, and one for each note on it, such as a token that reaches more than this repository. Never the token itself.
 function accessLines({ cap, facade, repository, env, home, main, state, platform, allowed, localBinding, keychain, exec }) {
   let access;
   try {
@@ -188,9 +190,12 @@ function accessLines({ cap, facade, repository, env, home, main, state, platform
   } catch (error) {
     access = { halt: `the access check failed (${String(error?.message ?? error).split('\n')[0]})` };
   }
-  const problem = access?.halt ?? access?.refuse ?? null;
+  // The reads the token may not make are their own blockers, one each, after the access check they passed.
+  const reads = Array.isArray(access?.reads) ? access.reads : null;
+  const problem = reads?.length ? null : access?.halt ?? access?.refuse ?? null;
   // A halt that carries the token's record is the token's own: no source gave one, or it may not push.
   const lines = [problem ? blockerLine('access', problem, access?.token ? 'token' : 'access') : 'ok access'];
+  if (reads) lines.push(...(reads.length ? reads.map((each) => blockerLine('token-reads', each)) : ['ok token-reads']));
   if (access?.token?.source) lines.push(`note token: ${access.token.source} gives the issue sessions their forge token`);
   for (const note of access?.token?.notes ?? []) lines.push(`note token: ${note}`);
   return lines;

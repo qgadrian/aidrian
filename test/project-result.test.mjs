@@ -70,22 +70,6 @@ test('only the session the run started for the issue records its result, and onl
   assert.match(fx.result(failed).err[0], /the issue ENG-1 is not running in the run launch, so it has no result to record/u, 'a second result');
 });
 
-// The run's own record of the attempt's push, which a later attempt's start compares the branch head with.
-test('the result row records the head of the issue\'s branch on the forge when the driver takes the result in, and none the forge does not name', (t) => {
-  const fx = started(t);
-  const own = fx.forge.branchHead;
-  const sha = 'a'.repeat(40);
-  // The fixture's forge records the call, and names a head for the default branch alone.
-  fx.forge.branchHead = (repo, branch, options) => own(repo, branch, options) ?? (branch === 'feat/eng-1-export' ? sha : null);
-  assert.equal(fx.recorded({ status: 'failed', pr: null, stop: 'the tests cannot run here' }).exitCode, 0);
-  const row = fx.rows().find((each) => each.event === 'result');
-  assert.equal(row.head, sha);
-  assert.ok(fx.forge.calls.some(([kind, repo, branch, options]) => kind === 'branchHead' && repo === 'acme/widgets' && branch === 'feat/eng-1-export' && options?.host === 'github.com'), 'read from the pinned repository');
-  const none = started(t);
-  assert.equal(none.recorded({ status: 'failed', pr: null, stop: 'x' }).exitCode, 0);
-  assert.equal(Object.hasOwn(none.rows().find((each) => each.event === 'result'), 'head'), false, 'a branch the forge names no head for');
-});
-
 test('a start row with no drop folder takes no result: every start is confined, so no gate wrote it', (t) => {
   const fx = started(t);
   const start = fx.rows().find((row) => row.event === 'start' && row.outcome === 'started');

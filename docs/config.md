@@ -1960,20 +1960,11 @@ attempt's clone pushes to, read before its session starts, and a clone that push
 `remote.origin.pushurl` in the user's git config makes it, halts the start; the issue session's one push goes only there
 ([hooks.md](hooks.md#agent-gates)). A host that would refuse that push in the driver session's permission mode, which the session
 takes, halts the start too, before the host starts anything ([the push preflight](handoff.md#the-push-preflight)). Every start is confined to a fresh
-clone under its host's sandbox, and a host that is not halts the start. A later attempt's clone checks out the issue's
-branch as the forge holds it, unless that head differs from the base tip in a host config or instruction file, such as
-a knowledge index a docs issue changed, which no review saw. Then the clone starts at the base tip, on the same
-branch, and the session's task names that head's full commit and has it run `git merge --no-edit <commit>` before any
-other work, so it loads only reviewed instructions at its start, and its push of the branch stays a fast-forward. That
-holds only for the run's own push: the head must be the `head` of the latest `result` row of an earlier attempt of the
-issue, which `wait` reads from the forge as it takes that result in. And it holds only for a merge the sandbox lets
-land: no file the head changes from its merge base with the tip may be one the sandbox denies the session, such as
-`.mcp.json` or a `.claude/settings.json` or file under `.claude/skills/` at any depth, so a change made only on the
-default branch counts for nothing here. Otherwise the start refuses, naming the commit and the cause: a person merges
-that pull request, or closes it and deletes the branch. This is an accepted residual: the head is proven to be this
-run's own unattended session's push, and in any attempt the knowledge commands read the index that session edits, so
-the start guard covers only what loads before the session's first call, and a retry adds no new author
-([A project run](handoff.md#a-project-run)). Each attempt's clone commits unsigned: the
+clone under its host's sandbox, and a host that is not halts the start. A later attempt starts from its issue's branch
+as the forge holds it, so when that branch changes a host config or instruction file no review saw, such as a knowledge
+index a docs issue registered its doc in, the start refuses, naming the branch, the earlier pull request when the run
+knows it, and the files: a person merges that pull request, or closes it and deletes the branch so the next attempt
+starts fresh from the base tip. Each attempt's clone commits unsigned: the
 start sets `commit.gpgsign` and `tag.gpgsign` to `false` in the clone's own git config, on every attempt, and never in
 the user's global or system config. The sandbox hides the signing keys (`~/.gnupg` and `~/.ssh`), so a commit the
 user's config signs would fail once the work is done and park the issue with its change staged; the forge asks no
@@ -1985,7 +1976,7 @@ which git still reads either key as true, as a `GIT_CONFIG_COUNT` or `GIT_CONFIG
 environment makes it, halts the start before any session, with the preflight's own check; so does a read of either
 key that git fails, naming git's error. The clone takes no template (`--template=`), so neither `GIT_TEMPLATE_DIR` nor
 `init.templateDir` puts a file in its git folder; its `hooks` folder is made empty. The session hands its
-result over in its attempt's `drop` folder, and `wait` records it as a `result` row with `via: "drop"` and `head`, the issue branch's head as the forge names it then, or ends the
+result over in its attempt's `drop` folder, and `wait` records it as a `result` row with `via: "drop"`, or ends the
 attempt `bad_result`, as it does at once for a pull request the forge says it does not have; a result the forge cannot
 confirm yet waits for the next `wait`, until `issueHours`, when its sessions are stopped and it ends `bad_result`.
 The Stop hook holds the result: when the newest session of a running issue's chain ends a turn before it handed its

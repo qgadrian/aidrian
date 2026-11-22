@@ -19,7 +19,7 @@ import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { forgeFor, forgeGitHelper, forgeLoginStep, forgeTokenNote, forgeTokenVar } from './forges/index.mjs';
-import { writeJson } from './confine-guard.mjs';
+import { exists, writeJson } from './confine-guard.mjs';
 import { readSmallJson } from './fs.mjs';
 import { programNames, programOnPath } from './hosts/process.mjs';
 import { LOCAL_FILE } from './project.mjs';
@@ -177,6 +177,10 @@ export function claimedSource(folder, env) {
 // Records in the attempt's folder `folder` whether the hook handed the token over (`handed`) and, when not, `why`:
 // nothing secret. Null, or why it could not.
 export const writeHandoff = (folder, { handed, why = null }) => writeJson(path.join(folder, HANDOFF_FILE), handed ? { handed: true } : { handed: false, why });
+
+// Whether the attempt in `folder` still waits on its session's SessionStart hook: the start wrote its token claim, and
+// no hook has recorded a handoff yet, as when the host runs the session's first tool call before that hook.
+export const handoffPending = (folder) => Boolean(readSmallJson(path.join(folder, CLAIM_FILE), 4096)) && !exists(path.join(folder, HANDOFF_FILE));
 
 // Why the attempt in `folder` holds no forge token its session was handed, or null: only for a start that expected one,
 // whose claim is there; then a missing record, or one that says not handed, is the problem.

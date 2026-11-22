@@ -23,8 +23,9 @@
 //   6. an issue `next` does not list, and a start past a cap in code: PROJECT_STARTS a run and PROJECT_PARALLEL
 //      running, each also under the base branch's projectRun.maxStarts and maxParallel, clamped to CEILINGS,
 //      PROJECT_STARTS_PER_DAY a project, and ISSUE_ATTEMPTS an issue (capProblem); each attempt counts once, and one
-//      given back (`void`) not at all, nor, toward ISSUE_ATTEMPTS, one a usage or rate limit ended, which the run's
-//      LIMIT_WAITS bounds instead;
+//      given back (`void`) not at all, but toward the day's starts after a proof, and as an attempt after a host race
+//      (`raced`); nor, toward ISSUE_ATTEMPTS, one a usage or rate limit ended, which the run's LIMIT_WAITS bounds
+//      instead;
 //   7. what the held start would refuse (heldProblem), asked before any folder is made; then a user the forge does not let
 //      push, or a session the host says could not push, reach the forge, run as confined as it is meant to, or would be
 //      let write a guarded folder (a halt); a forge that cannot be asked now; a state file with a second hard link (a
@@ -38,7 +39,8 @@
 //      the host's access check read, and a host that would refuse the push of a session in the driver's permission mode
 //      to the clone's remote (push-preflight.mjs; each a halt).
 // A start whose proof failed, as a Codex session that never named itself or whose hooks never ran, gives its attempt
-// back and halts the run with a `halt` row.
+// back and halts the run with a `halt` row; one whose sandbox proof never ran, as the host never ran the session's
+// SessionStart hook, gives it back with no halt, and exits RETRY_EXIT.
 
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
@@ -55,7 +57,7 @@ import { detectHost, sessionIdentity } from './hosts/index.mjs';
 import { branchPolicies, defaultBranch, soloOn } from './pr-auto-merge.mjs';
 import { chainEnded, lingerLine, lingerProblem, notStopped, settleLingering, stopChain } from './project-linger.mjs';
 import { checkedLimit, limitEndRows, limitRecorded, pausedTime, pauseOf, pauseRow, recordedPauseRuns } from './project-limit.mjs';
-import { closeVerdict, confineCheck, prepareConfine } from './project-confine.mjs';
+import { closeVerdict, confineCheck, hookPending, prepareConfine } from './project-confine.mjs';
 import { cacheVars, registryHosts } from './project-registries.mjs';
 import { CLAIM_VAR, newClaim, writeClaim } from './project-token.mjs';
 import { afterFailure, cleanText, CAPS, DROP_FILE, ingestDrops, RESULT_CAP, validateResult, writeDrop } from './project-result.mjs';
@@ -213,8 +215,9 @@ const custodyRows = (held, session, now) => (held.role === 'successor' ? [{ even
 // written (unattended-mark.mjs markDriver): each start and wait refreshes it, and it names the state folder `state`.
 const markCustodian = (session, found, run, state, env) => markDriver(session, { run, root: found.init.main, state: resolvedPath(state) ?? state, env });
 
-// The attempts a run's rows count: one each, and none given back.
-const counted = (rows) => rows.filter((row) => row.outcome !== 'void');
+// The attempts a run's rows count: one each, and none given back but one the host's race gave back (`raced`), which
+// keeps its number, so the caps count each such start.
+const counted = (rows) => rows.filter((row) => row.outcome !== 'void' || row.raced === true);
 // The starts a day's cap counts: every attempt, and each one given back after its proof failed, which ran a session.
 const ranToday = (rows) => rows.filter((row) => row.outcome !== 'void' || row.proof === true);
 
@@ -528,6 +531,7 @@ function launchStart(context, place) {
   // The hours the team confirmed for this start, which a wait the forge cannot answer holds the session to (settlePolicy).
   const base = { event: 'start', key, attempt, session, name, cwd, branch, issueHours: context.policy.issueHours, ...(drop ? { drop } : {}), ...(pushUrl ? { pushUrl } : {}) };
   let proof = null;
+  let raced = false;
   // Why the write-ahead row was refused under the ledger's lock, when the order or the cap moved since the start read it.
   const ahead = {};
   const since = Date.now();
@@ -544,8 +548,10 @@ function launchStart(context, place) {
           guarded: guardedStore({ env, home }),
           mcp: context.policy.mcpServers, localBinding, home, platform: context.platform, beacon: (id) => readBeacon(id, { env, home, since }), confined,
         });
-        // A failed proof halts the run whatever came of stopping its session (startLines).
+        // A failed proof halts the run whatever came of stopping its session (startLines), but for a sandbox proof that
+        // never ran because the host never ran the session's SessionStart hook (hookPending): a missing hook, no breach.
         if (started?.proof) proof = started.problem;
+        if (started?.proof === 'confine' && proving) raced = hookPending(folder);
         return started;
       },
       stop: (id) => cap.stop({ id, env, run: spawn }),
@@ -573,7 +579,7 @@ function launchStart(context, place) {
     safely(() => rmSync(folder, { recursive: true, force: true }));
     return noted(ahead.retry ? retryAnswer('start', ahead.why, place.orphans) : { exitCode: 1, out: place.orphans, err: [`aidrian project start: ${ahead.why}`] });
   }
-  return noted(startLines({ result, state, run, key, attempt, session, base, proof, cap, orphans: place.orphans, now: context.now }));
+  return noted(startLines({ result, state, run, key, attempt, session, base, proof, raced, cap, orphans: place.orphans, now: context.now }));
 }
 
 // Writes the start of `base` ahead, before the host starts anything: a start row with `outcome: 'uncertain'` and
@@ -660,17 +666,20 @@ export function forgeBase(project, repository, forge, env = process.env) {
 // The one settling append of a start written ahead, and the start's answer. A start that held its session records it
 // `started`; one whose outcome is unknown, or that could not be held or stopped, stays `uncertain` or `unheld` for
 // settleOrphans; any other gives its attempt back (`void`) and opens the issue again, and one whose proof failed also
-// halts the run. A start that never got as far as its write-ahead row records nothing.
-function startLines({ result, state, run, key, attempt, session, base, proof, cap, orphans, now }) {
+// halts the run. One whose sandbox proof never ran, `raced`, since the host never ran the session's SessionStart hook,
+// halts nothing: given back, it answers RETRY_EXIT, so the driver's next start tries again, and its row (`raced`) keeps
+// its attempt number and counts toward every cap. A start that never got as far as its write-ahead row records nothing.
+function startLines({ result, state, run, key, attempt, session, base, proof, raced = false, cap, orphans, now }) {
   const at = iso(now);
   let rows = [];
-  const halt = proof ? [{ event: 'halt', cause: cleanText(`the start of ${key} attempt ${attempt} failed its proof: ${proof}`, CAPS.stop), key, attempt, at }] : [];
+  const marked = { ...(proof ? { proof: true } : {}), ...(proof && raced ? { raced: true } : {}) };
+  const halt = proof && !raced ? [{ event: 'halt', cause: cleanText(`the start of ${key} attempt ${attempt} failed its proof: ${proof}`, CAPS.stop), key, attempt, at }] : [];
   // A session whose stop is unknown stays for settleOrphans, and a failed proof halts the run all the same.
   if (result.intended && result.outcome === 'started') rows = [{ ...base, at, outcome: 'started', id: result.marker.id, child: result.marker.session ?? null }];
   else if (result.intended && (result.outcome === 'uncertain' || (result.outcome === 'unheld' && !result.stopped))) {
-    rows = [{ ...base, at, outcome: result.outcome === 'uncertain' ? 'uncertain' : 'unheld', stopped: false, ...(proof ? { proof: true } : {}) }, ...halt];
+    rows = [{ ...base, at, outcome: result.outcome === 'uncertain' ? 'uncertain' : 'unheld', stopped: false, ...marked }, ...halt];
   } else if (result.intended) {
-    rows = [{ ...base, at, outcome: 'void', ...(proof ? { proof: true } : {}) }, { event: 'issue', key, state: 'open', at }, ...halt];
+    rows = [{ ...base, at, outcome: 'void', ...marked }, { event: 'issue', key, state: 'open', at }, ...halt];
   }
   const settle = (fresh) => (driverOf(fresh).session === session ? { rows } : { problem: 'custody of the run moved while the session started' });
   const written = rows.length ? safely(() => appendToRun(state, run, settle)) : null;
@@ -679,7 +688,8 @@ function startLines({ result, state, run, key, attempt, session, base, proof, ca
     const look = cap.attachLine?.({ id: result.marker.id, name: result.marker.name }) ?? `its id is ${result.marker.id}`;
     return { exitCode: 0, out: [...orphans, `started ${key} attempt ${attempt} session ${result.marker.id}`, `clone: ${base.cwd}`, `branch: ${base.branch}`, `say: The issue ${key} runs in the background session ${result.marker.id}: ${look}.`], err: [] };
   }
-  if (proof && result.outcome !== 'started') return haltAnswer(`the start of ${key} attempt ${attempt} failed its proof: ${proof}`, { lines: orphans, lift: RESUME(run) });
+  if (raced && rows[0]?.outcome === 'void') return retryAnswer('start', `the start of ${key} attempt ${attempt} gave its attempt back: the host ran the session's first tool call before its SessionStart hook, which never ran, so its sandbox proof never ran (${proof}); a start again tries a new session`, orphans);
+  if (proof && !raced && result.outcome !== 'started') return haltAnswer(`the start of ${key} attempt ${attempt} failed its proof: ${proof}`, { lines: orphans, lift: RESUME(run) });
   const why = {
     refused: result.busy ? `the start claim of this session is busy (${result.busy}); a start from it may still run` : `this session's earlier start, ${result.earlier?.id}, has not ended as the host lists it`,
     none: `no session started: ${result.problem}`,

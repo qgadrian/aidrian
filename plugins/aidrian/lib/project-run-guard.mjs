@@ -196,11 +196,12 @@ export function startRows(found) {
 // The start rows of issue `key`, one an attempt, in order.
 export const startsOf = (found, key) => startRows(found).filter((row) => row.key === key);
 
-// The attempts of issue `key` that count toward ISSUE_ATTEMPTS: each start not given back (`void`), but one a usage or
-// rate limit ended (an `ended` row with reason `limit`).
+// The attempts of issue `key` that count toward ISSUE_ATTEMPTS: each start not given back (`void`), and one given back
+// because the host never ran its session's SessionStart hook (`raced`), but one a usage or rate limit ended (an `ended`
+// row with reason `limit`).
 export function spentAttempts(found, key) {
   const limited = new Set(found.rows.filter((row) => row.event === 'ended' && row.key === key && row.reason === 'limit').map((row) => row.attempt));
-  return startsOf(found, key).filter((row) => row.outcome !== 'void' && !limited.has(row.attempt)).length;
+  return startsOf(found, key).filter((row) => (row.outcome !== 'void' || row.raced === true) && !limited.has(row.attempt)).length;
 }
 
 // The latest start of issue `key` that held its session, or null.

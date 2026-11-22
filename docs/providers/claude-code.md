@@ -787,6 +787,17 @@ its start stays as [its page](codex.md#project-start) says.
    `aidrian project resume`; when the stop itself fails, the start stays for `wait` to settle, and the run halts all
    the same. The hook refuses that session every later call. The listener stops when the start ends.
 
+The host can run a session's first tool call before that session's SessionStart hooks, as seen when `claude --bg`
+claimed a prewarmed spare session. That hook gives the shell its cache variables and the forge token and writes
+`token-handoff.json` beside the start's `token-claim.json`, so a proof that ran first would find every cache variable
+missing and fail. So while the claim has no handoff record, `aidrian project confine` exits 1 with `the host has not
+run this session's SessionStart hook yet; run the same command again in a few seconds`, before its lock: it writes no
+lock and no verdict, and the agent gate hook still lets the session run that exact command again. When the 180 seconds
+pass that way, with no lock and no verdict, the start stops the session and gives the attempt back with no `halt`
+row: a missing hook is no sandbox breach. It exits 75 with a `retry:` line, so the driver's next start tries again, and
+its `void` start row, marked `raced`, keeps its attempt number, so the issue's attempts, the run's starts, and the
+day's starts each count it. A start that hands its session no token writes no claim, and its proof runs as above.
+
 A start whose proof cannot be prepared refuses with `the sandbox proof cannot be prepared`, records nothing, and leaves
 no attempt folder; [Project run](../config.md#project-run) names each cause and its fix.
 

@@ -145,8 +145,9 @@ export function fakeForge(config, head, views = {}, { push = () => true, token =
 // session's first tool call; `beacon: false` files none, as a host that does not run the plugin's hooks. Where the
 // start wrote a sandbox proof plan beside the clone, each such session also hands over the verdict `confine` gives for
 // that plan (passVerdict by default, as a session whose sandbox refused every probe; null hands none over).
-// `stoppable: false` makes every `claude stop` fail, as a supervisor that does not answer.
-export function fakeClaude({ dir, start = null, hidden = false, env = null, beacon = true, confine = passVerdict, stoppable = true } = {}) {
+// `stoppable: false` makes every `claude stop` fail, as a supervisor that does not answer; `handoff: false` writes no
+// SessionStart hook's token handoff, as a host that ran the session's first call before that hook.
+export function fakeClaude({ dir, start = null, hidden = false, env = null, beacon = true, confine = passVerdict, stoppable = true, handoff = true } = {}) {
   const calls = [];
   const sessions = [];
   const states = {};
@@ -172,7 +173,7 @@ export function fakeClaude({ dir, start = null, hidden = false, env = null, beac
     }
     if (!hidden) sessions.push({ id: ids.id, sessionId: ids.session, name, kind: 'background', cwd: options.cwd });
     if (!hidden && env && beacon) noteBeacon(ids.session, { env });
-    if (!hidden && confine) handVerdict(options.cwd, ids.session, confine);
+    if (!hidden) handVerdict(options.cwd, ids.session, confine, { handoff });
     return { status: 0, stdout: `backgrounded · ${ids.id} · ${name}\n`, stderr: '' };
   };
   return { run, calls, sessions, states, starts: () => calls.filter((call) => call.args[0] === '--bg') };
@@ -183,16 +184,16 @@ export const passVerdict = (plan, session) => ({ version: 1, run: plan.run, key:
 
 // Writes in the drop folder beside the clone `work` the verdict `confine(plan, session)` gives, when the start wrote a
 // plan there; and, where the start wrote a token claim, the SessionStart hook's record that it handed the token over.
-export function handVerdict(work, session, confine = passVerdict) {
+export function handVerdict(work, session, confine = passVerdict, { handoff = true } = {}) {
   const folder = path.dirname(work);
-  if (existsSync(path.join(folder, 'token-claim.json'))) writeHandoff(folder, { handed: true });
+  if (handoff && existsSync(path.join(folder, 'token-claim.json'))) writeHandoff(folder, { handed: true });
   let plan;
   try {
     plan = JSON.parse(readFileSync(path.join(folder, CONFINE_PLAN), 'utf8'));
   } catch {
     return;
   }
-  const verdict = confine(plan, session);
+  const verdict = confine?.(plan, session);
   if (verdict) writeFileSync(path.join(folder, 'drop', CONFINE_VERDICT), JSON.stringify(verdict));
 }
 

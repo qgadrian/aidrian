@@ -785,7 +785,7 @@ A project adds its own in `review.reviewers`:
   JSON (the agent writes no file), and which the step names under the state folder, outside every checkout, so their text is
   never committed: the pass id with every character but a letter, digit, `.`, `_`, or `-` as `-`, its first 100
   characters, then the first 8 hex digits of the whole id's SHA-256, so two passes never share a file, in a folder
-  keyed by the pull request's repository, `review-<PR>-<owner>--<name>`, so two repositories' pull requests of one number never do either ([Findings one by one](#findings-one-by-one)), and the agent's final JSON on stdin: either the bare verdicts array or the whole `{ findings, verdicts, contracts, cross_notes }`
+  keyed by the pull request's repository, `review-<PR>-<owner>--<name>`, so two repositories' pull requests of one number never do either ([Findings one by one](#findings-one-by-one)); in a project run's issue session the folder leads with the issue key, `<key>-review-<PR>-<owner>--<name>`, since that session writes in `tmp/` only what is named for its issue ([Agent gates](hooks.md#agent-gates)), and the agent's final JSON on stdin: either the bare verdicts array or the whole `{ findings, verdicts, contracts, cross_notes }`
   object. `--verdicts FILE` reads a file instead; `--findings-file` takes a file only.
   `aidrian worktree cleanup execute` removes the `review-<PR>/` folder once the pull request is merged or closed
   ([Local state](project-folder.md#local-state)).

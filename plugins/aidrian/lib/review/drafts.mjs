@@ -1,7 +1,7 @@
 // The drafts a pull request leaves in the state folder's `tmp/` (docs/project-folder.md#local-state), and their removal
 // once the pull request is merged or closed. A draft is named for its pull request's number: the findings files each
 // agent pass of `aidrian pr review` writes, in `review-<n>/`, or `review-<n>-<owner>--<name>/` for a pull request of
-// another remote's repository (dispatch.mjs findingsFile), and the files skills draft for
+// another remote's repository, either led by the issue key in an issue session (dispatch.mjs findingsFile), and the files skills draft for
 // one pull request, `pr-<n>-review.md` and `product-feedback-<n>.md` with its `product-feedback-<n>-items.json`.
 // They hold full finding text, from security passes too, and nothing reads them once the pull request has closed.
 // A draft whose pull request is open, or whose state the forge cannot give, is kept. Drafts named for a branch, such
@@ -17,7 +17,8 @@ import { recordRepos } from './state.mjs';
 
 // A draft's name, with its pull request's number in the one group that matched.
 // A findings folder of another remote's repository names it, `<owner>--<name>`: GitHub owners hold no `--`.
-const DRAFT = /^(?:review-([1-9]\d{0,9})(?:-([\w.-]+?)--([\w.-]+))?|pr-([1-9]\d{0,9})-review\.md|product-feedback-([1-9]\d{0,9})(?:-items\.json|\.md))$/u;
+// An issue session's findings folder leads with its issue key (dispatch.mjs findingsFile).
+const DRAFT = /^(?:(?:(?:[a-z][a-z0-9]{0,15}-)?[1-9][0-9]{0,8}-)?review-([1-9]\d{0,9})(?:-([\w.-]+?)--([\w.-]+))?|pr-([1-9]\d{0,9})-review\.md|product-feedback-([1-9]\d{0,9})(?:-items\.json|\.md))$/u;
 // The most pull requests one sweep reads the state of, lowest number first: each is one forge call.
 export const MAX_SWEPT = 50;
 // The forge's states of a pull request no draft is kept for.

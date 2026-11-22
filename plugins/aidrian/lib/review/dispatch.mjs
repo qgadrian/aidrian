@@ -7,6 +7,8 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 
 import { isLogin } from '../forges/index.mjs';
+import { sessionIdentity } from '../hosts/index.mjs';
+import { issueHeld, ISSUE_TAG, readUnattendedMark } from '../unattended-mark.mjs';
 import { showPrefix } from '../git.mjs';
 import { refusalContext } from '../pr-product-feedback.mjs';
 import { fromOutside } from '../pr-resolve.mjs';
@@ -298,8 +300,11 @@ export const shellQuote = (value) => `'${String(value).replaceAll("'", "'\\''")}
 export const FILE_PREFIX = 100;
 // The folder is one a repository and number (state.mjs repoKey), `review-<N>-<owner>--<name>`, whichever remote is
 // origin, so two repositories' pull requests of one number never share a pass's findings file; `review-<N>` with none.
-export function findingsFile(project, n, passId, repo = null) {
-  const dir = path.join(stateDir(project), 'tmp', `review-${n}${repoKey(repo)}`);
+// A project run's issue session (`issue`, sessionIssue) writes in `tmp/` only what is named for its issue
+// (unattended-write.mjs issueWork), so its folder leads with the issue key: `<key>-review-<N>-<owner>--<name>`.
+export function findingsFile(project, n, passId, repo = null, issue = null) {
+  const lead = typeof issue === 'string' && ISSUE_TAG.test(issue) ? `${issue.toLowerCase()}-` : '';
+  const dir = path.join(stateDir(project), 'tmp', `${lead}review-${n}${repoKey(repo)}`);
   try {
     mkdirSync(dir, { recursive: true });
   } catch {}
@@ -308,11 +313,22 @@ export function findingsFile(project, n, passId, repo = null) {
   return path.join(dir, `${id.replace(/[^\w.-]/gu, '-').slice(0, FILE_PREFIX)}-${tag}.findings.json`);
 }
 
+// The issue key of the project run's issue session this command runs in (unattended-mark.mjs issueHeld), else null.
+export function sessionIssue(env = process.env) {
+  try {
+    const { session } = sessionIdentity(env);
+    const mark = session ? readUnattendedMark(session, { env }) : null;
+    return issueHeld(mark) && typeof mark.issue === 'string' ? mark.issue : null;
+  } catch {
+    return null;
+  }
+}
+
 // One agent pass's entry in a `dispatch` result: who runs it, on what, and the command that records it.
 export function dispatchFor(s, pass, stage) {
   const { root, n, head, map, isVisual } = s;
   const input = passInput(s, pass, stage);
-  const file = findingsFile(s.project, n, pass.id, s.repo);
+  const file = findingsFile(s.project, n, pass.id, s.repo, sessionIssue());
   const prefix = showPrefix(root);
   const briefs = [
     prefix ? belowRootBrief(prefix) : null,

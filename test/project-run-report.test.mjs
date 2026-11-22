@@ -7,6 +7,7 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -18,6 +19,7 @@ import { SETUP_DOC, SETUP_SECTIONS, setupDocUrl } from '../plugins/aidrian/lib/p
 import { pluginRepository } from '../plugins/aidrian/lib/config-version.mjs';
 import { owedReports, reportBody, reportCalls, reportPolicy, runWriter, startedWrites } from '../plugins/aidrian/lib/project-report.mjs';
 import { readRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
+import { commitProblem } from '../plugins/aidrian/lib/project-start.mjs';
 import { bodyHash } from '../plugins/aidrian/lib/tracker-guard.mjs';
 import linear from '../plugins/aidrian/lib/trackers/linear.mjs';
 import { markDriver, markPending, markUnattended, readDriverMark, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
@@ -645,6 +647,20 @@ test('preflight blocks a host instruction file above the runs folder, which ever
 
 // A commit in a clone made as an attempt's: the user's global config may sign, since the clone's own config turns it off,
 // but a setting in the environment that wins over the clone's, or no identity, blocks with git's own words.
+test('the preflight commit probe starts no automatic gc or maintenance, which would still write in its scratch folder', (t) => {
+  const base = mkdtempSync(path.join(tmpdir(), 'aidrian-probe-trace-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const config = path.join(base, 'global.gitconfig');
+  writeFileSync(config, '[user]\n\tname = t\n\temail = t@example.invalid\n[maintenance]\n\tauto = true\n[gc]\n\tauto = 1\n');
+  const trace = path.join(base, 'trace.json');
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: config, GIT_CONFIG_NOSYSTEM: '1', GIT_TRACE2_EVENT: trace, HOME: base };
+  assert.equal(commitProblem({ state: path.join(base, 'state'), env }), null);
+  const started = readFileSync(trace, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line))
+    .filter((event) => event.event === 'child_start').map((event) => event.argv.join(' '));
+  assert.deepEqual(started.filter((argv) => /\b(?:maintenance|gc)\b/u.test(argv)), [], started.join('\n'));
+  assert.deepEqual(readdirSync(path.join(base, 'state', 'runs')).filter((name) => name.startsWith('.commit-probe-')), []);
+});
+
 test('preflight probes a commit in a clone made as an attempt\'s, blocks one that would still sign or fails, and leaves no scratch', (t) => {
   const fx = runFixture(t, { init: false, ...READY });
   const runs = path.join(fx.state, 'runs');

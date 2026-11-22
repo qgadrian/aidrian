@@ -350,10 +350,18 @@ export function commitProblem({ state, env = process.env, url = null, branch = P
     if (set) return `git cannot set ${UNSIGNED.map(([key]) => key).join(' and ')} in a clone's own config (${gitSaid(set)})`;
     const signing = signingProblem(work, env);
     if (signing) return signing;
-    const commit = git(['commit', '--quiet', '--allow-empty', '-m', 'aidrian preflight commit probe']);
+    // No automatic gc or maintenance: git starts it detached after a commit, and it would still write in the scratch
+    // folder while the folder is removed below.
+    const commit = git(['-c', 'gc.auto=0', '-c', 'maintenance.auto=false', 'commit', '--quiet', '--allow-empty', '-m', 'aidrian preflight commit probe']);
     return commit.status === 0 ? null : `a commit in a clone made as an attempt's fails (${gitSaid(commit)})`;
   } finally {
-    rmSync(scratch, { recursive: true, force: true });
+    try {
+      // Node retries a transient EBUSY, ENOTEMPTY, or EPERM itself.
+      rmSync(scratch, { recursive: true, force: true, maxRetries: 3 });
+    } catch {
+      // A folder that still will not go never masks the probe's own answer: a leftover `.commit-probe-*` folder holds
+      // only an empty probe commit, and the next probe makes a fresh one.
+    }
   }
 }
 

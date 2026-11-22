@@ -146,7 +146,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── plans/                local plans
 ├── handoffs/             session handoff briefs, which the session-continue skill reads
 │   ├── .prior/           the brief a refresh supersedes, and the last brief that passed aidrian handoff check
-│   └── .continue/        the handoff continuation's markers: check stamps, armed and ready continuations, chain floors, requests to end, follow records
+│   └── .continue/        the handoff continuation's markers: check stamps, armed and ready continuations, chain floors, requests to end, follow records, the worktrees aidrian worktree new made per session
 ├── dispatch/             machine handoffs that dispatched agents write for the orchestrator and the skills it runs
 ├── reviews/              review manifests, and the agents the specialist-review skill keeps warm
 ├── quorum/               quorum ledgers, one per plan or question file and its hash

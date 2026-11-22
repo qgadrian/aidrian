@@ -30,7 +30,7 @@ import { GIT_TIMEOUT_MS, runGit, withGitFacts } from './git.mjs';
 import { changesGitTarget } from './git-push.mjs';
 import { globLinksTo, globStarts, linkWalk } from './glob-links.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
-import { ARMING_FILE, openStore, SESSION_ID, startedFolders, startedInBackground, storePath } from './handoff-markers.mjs';
+import { ARMING_FILE, madeWorktrees, openStore, SESSION_ID, startedFolders, startedInBackground, storePath } from './handoff-markers.mjs';
 import { DETECT_VARS, HOSTS, IDENTITY_VARS, mainCheckoutPaths, opaqueShellCommand } from './hosts/index.mjs';
 import { defaultStateDir, findProject, projectCheckouts, stateDir, stateRoot } from './project.mjs';
 import { GIT_VARS } from './review/env.mjs';
@@ -106,6 +106,21 @@ export function startedFolder(project, config, session, { home, base } = {}) {
     for (const each of found) folders.add(each);
   }
   return folders.size === 1 ? [...folders][0] : null;
+}
+
+// The task worktrees `aidrian worktree new` made in the session `session` (handoff-markers.mjs madeWorktrees), in the
+// continuation stores of the state folders `states` (stateFolders), each path once: a record grants a worktree, as a
+// start record does, so it is read only from a store outside every checkout of `checkouts`, the repository's, and [] when
+// git could not list them or the session id has the wrong shape. It runs no git; each store's file reads check the
+// guards' deadline. `maxChain` is session.handoff.maxChain, as openStore takes it.
+export function sessionWorktrees(states, session, checkouts, maxChain) {
+  if (typeof session !== 'string' || !SESSION_ID.test(session) || !Array.isArray(checkouts)) return [];
+  const found = new Set();
+  for (const state of states) {
+    checkDeadline();
+    for (const each of madeWorktrees(openStore(state, { checkouts, maxChain }), session)) found.add(each);
+  }
+  return [...found];
 }
 
 // The base branch's config of `project`, read once however often it is asked: a function that gives { config },
@@ -622,7 +637,7 @@ function walkedRemoteChange(command, cwd) {
 // record (`from-`, `tasks-`) is not one: their names are common words, and the path rules cover them.
 const MARKER_NAME = new RegExp(ARMING_FILE.source, 'iu');
 // An unsure glob's part whose plain start names such a file, as `armed-*`.
-const MARKER_GLOB = /^(?:armed|ready|taken|gone|checked|started|claim|continued)-/iu;
+const MARKER_GLOB = /^(?:armed|ready|taken|gone|checked|started|claim|continued|worktree)-/iu;
 // A request to end a session or a record that a terminal follows one (lib/terminal-replace.mjs), whose forgery would end
 // an attended session or move a terminal: named by the id shape a host gives a session, 8 hex digits or a whole UUID, as
 // the store writes them. `ending-` and `follow-` are common words, so a name such as `follow-up.json` stays out of it.
@@ -632,7 +647,7 @@ const RECORD_GLOB = /^(?:ending|follow)-[0-9a-f-]*$/iu;
 // A word of a command no lexer reads that names the store's folder by its own name.
 const STORE_FOLDER = /^\.continue$/iu;
 // A text that names the store's folder, or a marker in it.
-const STORE_NAME = /(?<![\w.-])(?:handoffs\/\.continue(?![\w-])|\.continue\/(?:armed|ready|from|checked|gone|tasks|taken|started|claim|continued|ending|follow)-)/iu;
+const STORE_NAME = /(?<![\w.-])(?:handoffs\/\.continue(?![\w-])|\.continue\/(?:armed|ready|from|checked|gone|tasks|taken|started|claim|continued|ending|follow|worktree)-)/iu;
 // A path part a change of mode or owner reaches the store through: its folder, or the handoffs folder that holds it.
 const STORE_PART = /^(?:handoffs|\.continue)$/iu;
 // The programs that change a file's mode or owner. A store, handoffs, or state folder every user may write, or a marker

@@ -1254,6 +1254,31 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     and within the guards' time budget; with no such record, or records that name two folders, the session gets no worktree, so it
     writes none of the main checkout's task worktrees. A start record lasts a day. A project run's issue session whose
     mark names no start folder gets no worktree;
+  - each task worktree `aidrian worktree new` made in the session, so an orchestrator that started in one worktree
+    dispatches an editing subagent to another it made: the command records the worktree's real path for the session its
+    caller's host names (verified on Claude Code, whose `CLAUDE_CODE_SESSION_ID` a subagent's shell shares with its main
+    session; on Codex it is `CODEX_THREAD_ID`, and a grant holds only where that is the hook payload's session id), as
+    `worktree-<session id>.<hash>.json` in the continuation store the hook opens for the session: the store of the
+    project at its unattended mark's root, under that project's config, so neither a worktree whose own config moves
+    `state.dir` nor another project of the same repository, as in a monorepo, changes where it goes; a session with no
+    mark records in the store of the calling project at the main checkout. Such a session and every subagent never
+    write that store by hand, as above, by a path, a glob, or a marker's name. The hook reads the records for the
+    payload's session id (`lib/handoff-guard.mjs sessionWorktrees`), and checks each one on every call, one git call
+    apiece, only for that session's records. A record grants a worktree only while git lists a checkout of the
+    repository at exactly that path, as git prints it, never resolved, and git, asked at that path, reads it as a linked
+    worktree of the mark's repository whose top is that path, as the start worktree is told. Both must hold, so none of
+    these grants anything: a stale registration whose folder another checkout took, a folder restored at a path git
+    moved the worktree away from, and a registration a link aliases to an old path. The path, and every part above it,
+    must be no link, and lie in no state folder, no host folder of any
+    of the repository's checkouts, such as `.claude/skills`, and no dot folder of the home folder outside the main
+    checkout, since the worktrees folder is the config's. It keeps its nested checkouts, git folders, `.git` pointer, and
+    host files refused from the same call on, as the start worktree does, a host file that is a link included. A worktree
+    made by plain `git worktree add`, by another session, or by a shell with no session id, is outside, and a project
+    run's issue session gets none: it stays confined to its attempt. The session ledger's `links.jsonl` is display data
+    that a call's output can forge, so no grant reads it. A record lasts 30 days. Accepted residuals: a recorded checkout
+    git is slow to read spends the guards' time budget on every call, as the start worktree's read does; and a record is
+    told by its path alone, so one forged by running the plugin's own code, which no guard sees, grants only another
+    linked worktree of the same repository;
   - its issue's running attempt folders `work`, `drop`, and `cache`, under `<state>/runs/<run>/attempts/`, each only
     while it is a plain folder: one replaced by a link is refused, and so is the keep file `.keep-attempt` in `drop`
     and `cache`;

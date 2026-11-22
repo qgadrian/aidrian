@@ -18,6 +18,9 @@
 //                              whose `shell` is null when no terminal follows it: it then only stops, once `id` started
 //   follow-<session>.json      { shell, at }   a background session the terminal of the shell `shell` follows, written
 //                              when the session before it ended itself (lib/terminal-replace.mjs)
+//   worktree-<session>.<hash>.json  { session, worktree, at }   a task worktree `aidrian worktree new` made in that
+//                              session (lib/worktree.mjs), one file each, named by the first 12 hex digits of the
+//                              sha256 of its path; a session no Human attends writes it as its own (lib/unattended-write.mjs)
 // A floor may be filed under the short id a host prints for a session before it lists the session's full id: readFrom
 // takes it for every session id that starts with it, and the highest of those and the session's own wins. A floor of
 // route `background` marks a session no Human attends (startedInBackground).
@@ -59,8 +62,8 @@ export const ENDING_WINDOW = 30 * 60 * 1000;
 // How long a record that a terminal follows a background session holds: a hop's session rarely runs longer.
 export const FOLLOW_AGE = 12 * 60 * 60 * 1000;
 // How long each kind of file lives: a read past it ignores the file, and the sweep deletes it.
-const AGES = { armed: DAY, ready: DAY, checked: DAY, tasks: DAY, taken: DAY, started: DAY, claim: DAY, from: 30 * DAY, gone: 30 * DAY, continued: 30 * DAY, ending: ENDING_WINDOW, follow: FOLLOW_AGE };
-const KIND = /^(armed|ready|checked|tasks|taken|started|claim|from|gone|continued|ending|follow)-/u;
+const AGES = { armed: DAY, ready: DAY, checked: DAY, tasks: DAY, taken: DAY, started: DAY, claim: DAY, from: 30 * DAY, gone: 30 * DAY, continued: 30 * DAY, ending: ENDING_WINDOW, follow: FOLLOW_AGE, worktree: 30 * DAY };
+const KIND = /^(armed|ready|checked|tasks|taken|started|claim|from|gone|continued|ending|follow|worktree)-/u;
 // The highest chain a floor may hold. A floor is never read against session.handoff.maxChain: a floor above the limit of
 // the config that reads it is stricter, never void, so a lower maxChain in a worktree cannot drop it.
 export const CHAIN_CEILING = 10_000;
@@ -75,10 +78,10 @@ const MODE = /^[A-Za-z]{1,32}$/u;
 // The names of the files the store writes, and of its temporary files: the sweep deletes nothing else.
 const SESSION_PART = String.raw`[\w-]{1,128}`;
 const BRIEF_PART = String.raw`\d{4}-\d{2}-\d{2}-[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.md`;
-const STORE_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|tasks|started|claim|from|gone|ending|follow)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
-// The names of the files whose forgery would arm or deliver a continuation: lib/handoff-guard.mjs refuses a subagent's
-// write of one in any folder it cannot place.
-export const ARMING_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|gone|started|claim)-${SESSION_PART}|checked-${BRIEF_PART}|taken-${SESSION_PART}\.\d+\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
+const STORE_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|tasks|started|claim|from|gone|ending|follow)-${SESSION_PART}|checked-${BRIEF_PART}|(?:taken-${SESSION_PART}\.\d+|worktree-${SESSION_PART})\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
+// The names of the files whose forgery would arm or deliver a continuation, or grant a session a worktree to write:
+// lib/handoff-guard.mjs refuses a subagent's write of one in any folder it cannot place.
+export const ARMING_FILE = new RegExp(String.raw`^(?:(?:(?:armed|ready|gone|started|claim)-${SESSION_PART}|checked-${BRIEF_PART}|(?:taken-${SESSION_PART}\.\d+|worktree-${SESSION_PART})\.[0-9a-f]{12})\.json|continued-[0-9a-f]{64}\.md)$`, 'u');
 const TEMPORARY = /^\.(.+)\.\d+\.[0-9a-f]{12}\.tmp$/u;
 // No read follows a symlink, and none waits on a FIFO or a device that has no writer.
 const NO_FOLLOW = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
@@ -504,6 +507,37 @@ export function startedFolders(store, session, { now = Date.now() } = {}) {
     if (record && names(record)) folders.add(record.cwd);
   }
   return [...folders];
+}
+
+// A task worktree's record (noteWorktree): the file of `worktree` made in `session`, and its shape.
+const WORKTREE_FILE = new RegExp(String.raw`^worktree-(${SESSION_PART})\.[0-9a-f]{12}\.json$`, 'u');
+const worktreeFile = (session, worktree) => sessionFile('worktree', session)?.replace(/\.json$/u, `.${createHash('sha256').update(worktree).digest('hex').slice(0, 12)}.json`) ?? null;
+const isWorktree = (value) => isObject(value) && typeof value.session === 'string' && SESSION_ID.test(value.session)
+  && typeof value.worktree === 'string' && path.isAbsolute(value.worktree) && !hasControl(value.worktree) && Number.isFinite(value.at);
+
+// Records that `aidrian worktree new` made the task worktree `worktree`, its real absolute path, in the session `session`:
+// a file of its own, so two made at once both stand. Returns the file, or null when the store is refused or a value has
+// a wrong shape.
+export function noteWorktree(store, session, worktree, { now = Date.now() } = {}) {
+  const value = { session, worktree, at: now };
+  return isWorktree(value) ? writeMarker(store, worktreeFile(session, worktree), value) : null;
+}
+
+// The task worktrees made in `session` in the last 30 days (noteWorktree), each path once, in the case the disk folds
+// the session id to; [] for a refused store or a session id of the wrong shape. Each file read checks the guards'
+// deadline (deadline.mjs), as startedFolders does.
+export function madeWorktrees(store, session, { now = Date.now() } = {}) {
+  if (store.refused || typeof session !== 'string' || !SESSION_ID.test(session)) return [];
+  const own = foldCase(session);
+  const found = new Set();
+  for (const name of listStore(store)) {
+    const named = WORKTREE_FILE.exec(name)?.[1];
+    if (named === undefined || foldCase(named) !== own) continue;
+    checkDeadline();
+    const record = readMarker(store, name, { now, field: 'at', shape: isWorktree });
+    if (record && foldCase(record.session) === own && worktreeFile(record.session, record.worktree) === name) found.add(record.worktree);
+  }
+  return [...found];
 }
 
 // readStarted's record with the modification time of its file: { record, mtimeMs }, or null. A project run moves its

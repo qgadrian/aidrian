@@ -86,7 +86,7 @@ const ID = { findings: /^F[1-9]\d*$/u, not_reached: /^N[1-9]\d*$/u, doc_gaps: /^
 const DATE = /^\d{4}-\d{2}-\d{2}$/u;
 const ROLE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 // A report file name: `<personas>-<YYYY-MM-DD>.md`, with `-2`, `-3` for a second and third run that day.
-export const REPORT = /^(.+)-(\d{4}-\d{2}-\d{2})(?:-\d+)?\.md$/u;
+const REPORT = /^(.+)-(\d{4}-\d{2}-\d{2})(?:-\d+)?\.md$/u;
 // A pull request run's keys: the pull request, as `<owner/name>#<n>`, and its head at the walk's start.
 const SIDECAR_PR = /^([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)#[1-9]\d*$/u;
 const SIDECAR_HEAD = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;

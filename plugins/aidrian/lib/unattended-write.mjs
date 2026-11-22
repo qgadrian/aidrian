@@ -443,17 +443,33 @@ function limitedPlaces(places, { cwd, mark, project, config, base, home }, refus
   if (!project) return;
   for (const state of stateFolders(project, config, stateOptions(base, home))) {
     places.specific.push(real(state));
-    auditsRefused(refuse, state);
+    triageRefused(refuse, state);
   }
 }
 
-// The persona audits folder of the state folder `state`: its reports and triage record are written only through
-// `aidrian audits`, refused by hand in every layout, a state folder inside the session's own checkout included.
-const auditsRefused = (refuse, state) => refuse(path.join(state, 'audits'), 'the persona audits and their triage record, which only `aidrian audits` writes', true);
+// The persona audits' triage record of the state folder `state`, which only `aidrian audits` and the Human write: the
+// record, its lock, and a temporary copy of either, refused wherever a grant above them lies (`always`), the record also
+// through a hard link to it. With `allows`, the rest of the audits folder passes (auditAllows); without, a confined
+// issue session's, all of it is refused.
+const TRIAGE = 'the persona audits\' triage record, which only `aidrian audits` and the Human write';
+function triageRefused(refuse, state, allows = auditAllows) {
+  const audits = path.join(state, 'audits');
+  refuse(audits, allows ? TRIAGE : 'the persona audits, which a project run\'s issue session never writes', true, allows, true);
+  refuse(path.join(audits, 'triage.json'), TRIAGE, false, null, true);
+}
+
+// Whether `target` inside the audits folder `folder` is one the persona-audit skill writes by hand: a report, its
+// sidecar, or its screenshots, anything but the triage record (audits.mjs TRIAGE_FILE), its lock, and a temporary copy
+// of either, told at a file name boundary, so a persona named `triage.json.md` still passes.
+function auditAllows(target, folder) {
+  const [first] = path.relative(folder, target).split(path.sep).filter(Boolean);
+  return first !== undefined && !/^triage\.json(?:$|\.(?:lock|\d+\.tmp)$)/iu.test(first);
+}
 
 // Each state folder's HAND_FOLDERS that is no link, as `specific`; its reviews folder, refused but for a manifest or
 // a capture (reviewAllows); its dispatch folder, refused but for a handoff file in it (dispatchAllows); and the dispatch
-// log and the audits folder beside them, refused. Returns the state folders, as stateFolders gives them.
+// log beside them, refused; and its audits folder, refused but for a report, sidecar, or screenshot (triageRefused),
+// and only refused in an issue session. Returns the state folders, as stateFolders gives them.
 function stateWork(places, { project, config, base, home }, refuse) {
   const states = [...stateFolders(project, config, stateOptions(base, home))];
   for (const state of states) {
@@ -465,12 +481,15 @@ function stateWork(places, { project, config, base, home }, refuse) {
     else {
       for (const name of HAND_FOLDERS.filter(plain)) places.specific.push(foldCase(path.join(root, name)));
       refuse(path.join(root, 'dispatch'), 'the dispatch records, where a session writes only its handoff file', true, dispatchAllows);
+      // The audits folder passes as the reviews folder does, but never as a grant into a checkout it holds or lies in.
+      const audits = real(path.join(root, 'audits'));
+      if (plain('audits') && !(places.checkouts ?? []).some((top) => isWithin(top, audits) || isWithin(audits, top))) places.reviews.push(foldCase(path.join(root, 'audits')));
     }
+    triageRefused(refuse, root, places.issueHeld ? null : auditAllows);
     refuse(path.join(root, 'reviews'), 'the review and attest records, which only the review commands write', true, reviewAllows);
     if (plain('reviews')) places.reviews.push(foldCase(path.join(root, 'reviews')));
     if (plain('dispatch')) places.reviews.push(foldCase(path.join(root, 'dispatch')));
     refuse(path.join(root, 'dispatch-log.jsonl'), 'the dispatch log, which only the plugin writes');
-    auditsRefused(refuse, root);
   }
   return states;
 }
@@ -700,7 +719,7 @@ function pushRoots(places) {
 function sayer(input, human, opaque, mark) {
   const verb = opaque ? 'may change' : 'writes';
   let suffix = '';
-  let list = 'its own worktree or its attempt\'s folders, a task worktree `aidrian worktree new` made in it, the state folders it writes by hand (plans, tmp, handoffs, quorum, and a review manifest or capture), and the temporary folder';
+  let list = 'its own worktree or its attempt\'s folders, a task worktree `aidrian worktree new` made in it, the state folders it writes by hand (plans, tmp, handoffs, quorum, a review manifest or capture, and a persona audit\'s report, sidecar, or screenshots), and the temporary folder';
   const deny = (match, why) => ({ match, reason: projectRuleReason(input, `${why}${suffix}`, human, 'to make that change, or where the work should go instead', { mark }) });
   return {
     verb,

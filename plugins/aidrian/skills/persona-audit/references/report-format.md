@@ -121,14 +121,10 @@ Personas are synthetic: this report is a lead for the Human, not a substitute fo
   title, such as "as in a moved booking cannot be saved", and another report by persona, kind, and date, such as
   "the floor-manager read-only run on 2026-11-03", with its path once, as its location. A task is named by its
   title, never by its number: "Seat a walk-in party", not "Task 2". `aidrian audits check` warns on "Task <n>".
-- The run drafts in a folder of its own, `<state>/tmp/<report name>-<session id>/`, with literal paths: the report
-  `<personas>-<date>.md`, its sidecar beside it, and each screenshot in `<report name>/` beside them. A folder per run
-  keeps two runs of one day apart. `aidrian audits save <draft folder>` copies them to `<state>/audits/`, replacing a
-  copy saved before, and the guard of a session no Human attends refuses that folder by hand. The report cites each
-  screenshot by its path from the audits folder.
-- A project run's issue session, confined to its attempt, writes the shared `tmp` folder only under its issue key and
-  never the audits folder: it drafts in `<state>/tmp/<issue key, lowercased>-<report name>/` and returns that path in
-  its result instead of saving.
+- A screenshot the run saves goes in `<state>/audits/<report name>/`, beside the report, and the report cites its path.
+- A project run's issue session, confined to its attempt, writes no audits folder: it writes the report, its sidecar,
+  and its screenshots folder in `<state>/tmp/<issue key, lowercased>-<report name>/` instead, skips the check, and
+  returns that folder's path in its result.
 - An outcome other than `not walked` or `out of scope` needs `walked` in the Evidence column.
   An `out of scope` task was not looked at, so its Evidence is `-`.
 - The walk stays within the tasks in scope. A suggested task is an idea that came up in character during the walk, such

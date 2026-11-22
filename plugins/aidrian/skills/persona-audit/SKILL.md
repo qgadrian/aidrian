@@ -10,7 +10,7 @@ missing or wrong translations, dead ends, and whether each of their tasks can be
 The project writes its personas as knowledge docs; this skill is the run.
 
 Read-only: it never edits code, docs, or config, files an issue, posts to a pull request or opens one, and never
-signs anything off. It writes `<state>/audits/` only through `aidrian audits save`.
+signs anything off. It writes only under `<state>/audits/`: the report, its sidecar, and the screenshots it cites.
 The Human picks what follows.
 
 Before you start, follow the `knowledge` skill. Knowledge tags: `i18n` when the product ships more than one language.
@@ -96,8 +96,9 @@ finding only from a walk: report-format.md § A task the product cannot do.
 
 ## 5. Report
 
-Draft the report, its sidecar, and its screenshots as report-format.md § The report and § The sidecar say, then
-`aidrian audits save` them and run `aidrian audits check <report>.md`; fix the draft and save again until it prints `ok`.
+Write the report to `<state>/audits/<personas>-<date>.md`, as report-format.md § The report says (an issue
+session writes elsewhere), and beside it its sidecar, the same name with `.json`, as § The sidecar says; then run
+`aidrian audits check <report>.md` and fix the report or the sidecar until it prints `ok`.
 A run that repeats a report `aidrian audits list` shows replaces it: § A run that replaces a report.
 
 Then reply to the Human with the report's path, each persona's task table, the blockers by title, and what the run

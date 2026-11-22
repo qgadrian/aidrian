@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -1058,72 +1058,4 @@ test('the two spellings of a replaced finding are one finding: neither listed tw
   assert.equal((await run('import', NEW, '--not-rechecked', `${OLD}#F2,F3`, '--carried-forward', 'F1', '--write')).status, 0, 'one of each');
   const items = JSON.parse((await run('pending', NEW, '--json')).stdout).groups.flatMap((g) => g.items).filter((i) => i.kind === 'not_rechecked');
   assert.deepEqual(items.map((i) => i.audit_key), [`${OLD}#F2`, `${OLD}#F3`]);
-});
-
-// A session no Human attends may not write the audits folder by hand, so the skill drafts elsewhere and saves through
-// the command: the report, its sidecar, and its screenshots, and nothing else, never through a link.
-test('aidrian audits save copies a drafted report, its sidecar, and its screenshots, and nothing else', async (t) => {
-  const { root, audits, run } = project(t);
-  const draft = path.join(root, 'draft');
-  const name = 'host-2026-11-22';
-  mkdirSync(path.join(draft, name), { recursive: true });
-  writeFileSync(path.join(draft, `${name}.md`), '# report\n');
-  writeFileSync(path.join(draft, `${name}.json`), '{}\n');
-  writeFileSync(path.join(draft, name, 'home.png'), 'png');
-  let result = await run('save', draft);
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /3 files/u);
-  assert.equal(readFileSync(path.join(audits, `${name}.md`), 'utf8'), '# report\n');
-  assert.equal(readFileSync(path.join(audits, name, 'home.png'), 'utf8'), 'png');
-  // Saved again, it replaces its own copy.
-  writeFileSync(path.join(draft, `${name}.md`), '# report, fixed\n');
-  assert.equal((await run('save', draft)).status, 0);
-  assert.equal(readFileSync(path.join(audits, `${name}.md`), 'utf8'), '# report, fixed\n');
-  // Any other file, such as a triage record, keeps the whole save off.
-  writeFileSync(path.join(draft, 'triage.json'), '{}\n');
-  result = await run('save', draft);
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /triage\.json is neither the report/u);
-  rmSync(path.join(draft, 'triage.json'));
-  // A link in the draft, or one waiting in the audits folder, is never followed.
-  symlinkSync(path.join(audits, 'elsewhere.png'), path.join(draft, name, 'link.png'));
-  assert.match((await run('save', draft)).stderr, /must be a plain file, no link/u);
-  rmSync(path.join(draft, name, 'link.png'));
-  rmSync(path.join(audits, `${name}.json`));
-  symlinkSync(path.join(root, 'outside.json'), path.join(audits, `${name}.json`));
-  writeFileSync(path.join(draft, `${name}.md`), '# report, refused\n');
-  assert.match((await run('save', draft)).stderr, /is not a plain file, so it is left as it is/u);
-  assert.equal(existsSync(path.join(root, 'outside.json')), false);
-  // A refused save writes nothing: the saved report and its evidence stay as they were, and no staging folder is left.
-  assert.equal(readFileSync(path.join(audits, `${name}.md`), 'utf8'), '# report, fixed\n');
-  assert.equal(readFileSync(path.join(audits, name, 'home.png'), 'utf8'), 'png');
-  assert.deepEqual(readdirSync(audits).filter((each) => each.startsWith('.save-')), []);
-  rmSync(path.join(audits, `${name}.json`));
-  // A draft without the sidecar an earlier save left would pair the new report with the old items.
-  writeFileSync(path.join(audits, `${name}.json`), '{}\n');
-  rmSync(path.join(draft, `${name}.json`));
-  assert.match((await run('save', draft)).stderr, /sidecar of an earlier save/u);
-  writeFileSync(path.join(draft, `${name}.json`), '{}\n');
-  // Two reports, or none, is no draft.
-  writeFileSync(path.join(draft, 'other-2026-11-22.md'), '# other\n');
-  assert.match((await run('save', draft)).stderr, /exactly one report/u);
-});
-
-test('aidrian audits save takes any persona name the readers take, and never writes an audits folder in a checkout', async (t) => {
-  const { root, audits, run } = project(t);
-  const draft = path.join(root, 'draft-accent');
-  const name = 'réception+front desk-2026-11-22';
-  mkdirSync(path.join(draft, name), { recursive: true });
-  writeFileSync(path.join(draft, `${name}.md`), '# report\n');
-  writeFileSync(path.join(draft, name, 'café.png'), 'png');
-  const saved = await run('save', draft);
-  assert.equal(saved.status, 0, saved.stderr);
-  assert.equal(readFileSync(path.join(audits, name, 'café.png'), 'utf8'), 'png');
-  // A state folder whose audits folder is a checkout, as a repository cloned there would be: refused before any write.
-  rmSync(audits, { recursive: true });
-  assert.equal(spawnSync('git', ['init', '-q', audits]).status, 0);
-  const refused = await run('save', draft);
-  assert.equal(refused.status, 1);
-  assert.match(refused.stderr, /lies in a git checkout/u);
-  assert.equal(existsSync(path.join(audits, `${name}.md`)), false);
 });

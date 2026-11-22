@@ -893,8 +893,11 @@ in this round, at or after the request, and no earlier than the comment. A comme
 a receipt. The 👍 is never an answer: it names no commit, and the receipt it follows may name the head before a push,
 may predate the request, or may be one the read missed. A receipt answers the head when its 10-hex short commit is a
 prefix of it; a commit that shares that prefix reads as covered too, so this is no proof, and merge trust reads no
-receipt. A comment the status card vouches for answers the card's full commit, compared whole with the head. The
-newest answer for the head counts, so a later review of an older head never hides it. The receipt's footer quotes
+receipt. A comment the status card vouches for answers the card's full commit, compared whole with the head; a card
+that gives fewer than 40 hex vouches for nothing. The newest answer stands, except one whose commit is not the head:
+then the newest older answer whose commit is the head counts, so a later review of an older head never hides it. An
+answer with no commit, such as a usage-limit notice, is judged by its time and never revived past a newer one. The
+receipt's footer quotes
 "@codex review", and like the status card it is never a request, nor is a 👀 on it an acknowledgement. Any other
 answer holds at least one open finding, and a usage-limit notice stays `blocked_quota`. A moved head ends the request
 at once as `incomplete`; the cap (`round_limit`) and a usage-limit notice (`blocked_quota`) are reported from the

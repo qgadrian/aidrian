@@ -113,7 +113,7 @@ export const isCleanReceipt = (body) => {
 
 
 // The full commit the reviewer's newest status card says its code review of `commit` completed on with no unresolved
-// finding, or null. The card vouches for `comment` only when it was last updated at or after `since` and no earlier
+// finding, or null, as it is for a card that names its commit in fewer than 40 hex. The card vouches for `comment` only when it was last updated at or after `since` and no earlier
 // than that comment: a card left from an earlier round, or one that has not caught up with the comment, says nothing
 // of it. Its full SHA, not the comment's short one, is what the head is checked against.
 const cardCommit = (issueComments, reviewer, commit, comment, since) => {
@@ -124,7 +124,8 @@ const cardCommit = (issueComments, reviewer, commit, comment, since) => {
   const updated = ms(card?.updated_at ?? card?.created_at);
   if (!Number.isFinite(updated) || (since && !(updated >= ms(since))) || !(updated >= ms(comment?.created_at))) return null;
   const review = cardState(card?.body)?.code_review;
-  const clean = review?.status === 'completed' && review.has_unresolved_findings === false && typeof review.commit_sha === 'string' && sameCommit(review.commit_sha, commit);
+  const clean = review?.status === 'completed' && review.has_unresolved_findings === false && typeof review.commit_sha === 'string'
+    && /^[0-9a-f]{40}$/iu.test(review.commit_sha) && sameCommit(review.commit_sha, commit);
   return clean ? review.commit_sha : null;
 };
 
@@ -229,8 +230,9 @@ export const reviewedCommit = (body) => (typeof body === 'string' ? body.match(R
 
 // Latest bot signal at or after `since`: a review (with commit) or a bot comment, such as the receipt of a clean pass;
 // a comment's `commit_id` is the short SHA its "Reviewed commit" line names, or the full one of the status card that
-// vouches for it, or null. The newest signal that `covers` (the head) wins, else the newest, so a late review of an
-// older head never hides an answer for this one. A 👍 is never a signal: it names no commit, the receipt it follows is
+// vouches for it, or null. The newest signal stands, except one whose commit does not cover the head (`covers`): then
+// the newest older signal with a commit that does wins, so a late review of an older head never hides an answer for
+// this one. A signal with no commit, such as a quota notice, is judged by its time, and an older one is never revived. A 👍 is never a signal: it names no commit, the receipt it follows is
 // the answer, and one alone may belong to an earlier head's review whose receipt came before the trigger, or whose
 // receipt this read missed. The usage-limit notice is classified `quota_exhausted` here and the status card dropped, so
 // no caller can mistake either for feedback.
@@ -255,7 +257,9 @@ export const latestBotSignal = ({ reviews, reviewComments, issueComments = [], r
       return { kind, at: comment.created_at, review_id: null, commit_id: full ?? commit, state: null, line_comments: 0, comment_id: comment.id ?? null, ...(clean ? { clean: true } : {}) };
     });
   const newestFirst = [...reviewSignals, ...commentSignals].sort((a, b) => ms(b.at) - ms(a.at));
-  return newestFirst.find(covers) ?? newestFirst[0] ?? null;
+  const [newest] = newestFirst;
+  if (!newest?.commit_id || covers(newest)) return newest ?? null;
+  return newestFirst.find((each) => each.commit_id && covers(each)) ?? newest;
 };
 
 // The bot's acknowledgement at or after `since`, as { at, headSha } or null: started, not finished. `headSha` is the

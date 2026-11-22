@@ -1337,6 +1337,13 @@ test('awaitReview: a late review of an older head, or a later receipt of one, ne
     const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 0, intervalSec: 60 }, { forge, git: { pushedHead: () => null, behind: () => false }, ...clock() });
     assert.deepEqual([r.status, r.signal.kind, r.signal.commit_id, r.signal.clean, r.stale, forge.posts.length], ['already_present', 'comment', head.slice(0, 10), true, false, 0], what);
   }
+  // A quota notice has no commit, so it is judged by its time: a review of the previous head submitted after it means
+  // the bot is reviewing again, and the notice is never revived past it. The wait asks for this head instead.
+  const handTyped = { id: 4, user: { login: 'adrian' }, body: REQUEST_COMMENT, created_at: T(5) };
+  const quota = { id: 5, user: BOT, created_at: T(6), body: QUOTA_BODY };
+  const resumed = fakeForge([{ head, headCommittedAt: T(4), reviews: [{ ...late, submitted_at: T(7) }], issueComments: [handTyped, quota] }]);
+  const asked = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 0, intervalSec: 60 }, { forge: resumed, git: { pushedHead: () => null, behind: () => false }, ...clock() });
+  assert.deepEqual([asked.status, resumed.posts.length], ['timed_out', 1], 'not blocked_quota: the notice is older than the review');
   // With no answer for this head, the newest one is reported, stale.
   const signal = latestBotSignal({ reviews: [late], reviewComments: [], issueComments: [trigger], reviewer: DEFAULT_REVIEWER, since: T(5), covers: (each) => !isStale(each, head, T(4), head) });
   assert.deepEqual([signal.kind, signal.commit_id, isStale(signal, head, T(4), head)], ['review', previous, true]);
@@ -1354,4 +1361,7 @@ test('latestBotSignal: the status card`s full commit, not the comment`s short on
   assert.equal(isStale(shared, head, T(1), head), true, 'a commit that only shares the short SHA is not the head');
   const own = latestBotSignal({ ...base, issueComments: [card(head), comment] });
   assert.deepEqual([own.clean, own.commit_id, isStale(own, head, T(1), head)], [true, head, false]);
+  // A card that names its commit in fewer than 40 hex is no evidence of which commit it reviewed.
+  const abbreviated = latestBotSignal({ ...base, issueComments: [card(short), comment] });
+  assert.deepEqual([abbreviated.clean, abbreviated.commit_id], [undefined, short]);
 });

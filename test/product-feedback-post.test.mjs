@@ -96,11 +96,13 @@ test('a cd right before the post counts after a heredoc, and a project it cannot
   for (const command of [`${heredoc}cd ${member.dir} && ${member.post}`, `true; cd ${member.dir} && ${member.post}`]) {
     assert.equal(check(command, { cwd: elsewhere, input: member.main, env: {} }), null, command);
   }
-  // A call the words cannot read, such as through npx, takes the same folder.
-  assert.equal(check(`${heredoc}cd ${member.dir} && npx ${member.post}`, { cwd: elsewhere, input: member.main, env: {} }), null, 'npx');
+  // A call the words cannot read, such as through npx, may run anywhere: it keeps no chained folder.
+  assert.ok(check(`${heredoc}cd ${member.dir} && npx ${member.post}`, { cwd: elsewhere, input: member.main, env: {} }), 'npx');
   // An eval may change the folder where the walk cannot see it: the folder stays unknown.
   const held = project(t, { limited: true });
-  assert.match(check(`true; cd ${member.dir} && eval "cd ${held.dir}" && ${member.post}`, { cwd: elsewhere, input: member.main, env: {} }) ?? '', /cannot read which project/u, 'eval');
+  for (const runs of [`eval "cd ${held.dir}"`, `builtin cd ${held.dir}`]) {
+    assert.match(check(`true; cd ${member.dir} && ${runs} && ${member.post}`, { cwd: elsewhere, input: member.main, env: {} }) ?? '', /cannot read which project/u, runs);
+  }
   const unknown = check(`${heredoc}cd ${member.dir} || true; ${member.post}`, { cwd: elsewhere, input: member.main, env: {} }) ?? '';
   assert.match(unknown, /cannot read which project this post runs in, so it cannot tell whether this pull request is one/u);
   assert.doesNotMatch(unknown, /on a pull request from outside the team posts only/u);

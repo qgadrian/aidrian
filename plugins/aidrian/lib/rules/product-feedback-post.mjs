@@ -137,12 +137,13 @@ export function check(command, { cwd = process.cwd(), input = {}, env = process.
     const project = projectIn(folder);
     return project === UNKNOWN || (Boolean(project) && heldRecords(project).length > 0);
   };
-  // The folder each call runs in whenever it runs: a `cd <folder> &&` right before it counts after a heredoc or a `;`
-  // too (shell-lex walkCommands `chained`), unless the command runs an `eval`, `source`, or `.`, whose directory change
-  // the walk never carries back, so the folder stays unknown there.
-  const walked = walkCommands(command, cwd);
-  const blind = walked.some(({ invocation }) => ['eval', 'source', '.'].includes(invocation.program));
-  const entries = walked.map((entry) => ({ ...entry, folder: entry.folder ?? (blind ? null : entry.chained ?? null) }));
+  const entries = walkCommands(command, cwd);
+  // The folder a post call itself runs in whenever it runs: a `cd <folder> &&` right before it counts after a heredoc or
+  // a `;` too (shell-lex walkCommands `chained`), unless the command runs an `eval`, `source`, `.`, or `builtin`, whose
+  // directory change the walk never carries back. Only the post's own call takes it; a call the words cannot read keeps
+  // the leading cd's folder, since its child may run anywhere.
+  const blind = entries.some(({ invocation }) => ['eval', 'source', '.', 'builtin'].includes(invocation.program));
+  const postFolder = (entry) => entry.folder ?? (blind ? null : entry.chained ?? null);
   const posts = new Map(entries.map((entry) => [entry, entry.unread === undefined ? readPost(entry.invocation) : null]));
   const writes = (self) => entries.some((other) => other !== self && other.unread === undefined && writesUnseen(readCall(other.invocation)));
   const judged = new Set();
@@ -157,10 +158,11 @@ export function check(command, { cwd = process.cwd(), input = {}, env = process.
     judged.add(entry);
     // A post beside a call that may write its record after this check: the record on disk says nothing yet.
     if (call.type === 'post' && writes(entry)) return subagent ? SUBAGENT : CHAINED;
-    const project = projectIn(folder);
+    const where = postFolder(entry);
+    const project = projectIn(where);
     if (!project) continue;
     if (project === UNKNOWN) return UNKNOWN_PROJECT;
-    const denied = judgePost(call, project, folder, input, subagent, postAlone(command, entries));
+    const denied = judgePost(call, project, where, input, subagent, postAlone(command, entries));
     if (denied) return denied;
   }
   const names = (text, folder) => /\bproduct-feedback\b/u.test(text) && /\bpost\b/u.test(text) && holds(folder);

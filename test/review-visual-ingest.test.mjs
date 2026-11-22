@@ -142,9 +142,15 @@ test('captureVisual captures over an ingest-only manifest and carries its ingest
   const forged = await run({ baseUrl: 'http://localhost:3000', spawn: () => ({ status: 1, stdout: '', stderr: 'capturing 1 of 1: https://x.example/?t=1\n', error: timeout }) });
   assert.equal(forged.reason, `the capture ran past its 15-minute limit and was stopped${logged}${note}`, 'a key that is no screen\'s is not shown');
   const crashed = await run({ baseUrl: 'http://localhost:3000', spawn: () => ({ status: null, signal: 'SIGKILL', stdout: '', stderr: `capturing 1 of 1: ${key}\n` }) });
-  assert.equal(crashed.reason, `killed by SIGKILL with no error output at screen 1 of 1, ${key}${logged}${note}`, 'progress alone is no error line');
+  assert.equal(crashed.reason, `killed by SIGKILL with no error line at screen 1 of 1, ${key}${logged}${note}`, 'progress alone is no error line');
+  const earlier = await run({ baseUrl: 'http://localhost:3000', spawn: () => ({ status: null, signal: 'SIGKILL', stdout: '', stderr: `protocol: cookie=secret\ncapturing 9 of 99: ${key}\n` }) });
+  assert.equal(earlier.reason, `killed by SIGKILL with no error line at screen 1 of 1, ${key}${logged}${note}`, 'an earlier diagnostic and the printed numbers stay out');
+  mkdirSync(path.dirname(log), { recursive: true });
+  writeFileSync(log, 'old');
+  assert.equal((await run({ baseUrl: null })).status, 'unavailable');
+  assert.equal(existsSync(log), false, 'an attempt that never starts the adapter clears the log too');
   const silent = await run({ baseUrl: 'http://localhost:3000', spawn: () => ({ status: 1, stdout: '', stderr: '\n\n' }) });
-  assert.equal(silent.reason, `exit 1 with no error output${note}`);
+  assert.equal(silent.reason, `exit 1 with no error line${note}`);
   assert.equal(existsSync(log), false, 'an attempt clears the log of the last one');
   const captured = await run({ baseUrl: 'http://localhost:3000', spawn: fakeAdapter });
   assert.deepEqual([captured.status, captured.reason, captured.entries.filter((entry) => entry.sha256).length, captured.ingested.length], ['captured', undefined, 1, 1]);

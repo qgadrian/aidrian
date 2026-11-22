@@ -547,9 +547,9 @@ facts measured in the page: horizontal overflow, text cut off by its box, and co
   on that head (`visual.passes` on the record). From then on both say the visual passes reviewed this head without the
   capture, and drop the reason, which no longer asks for anything; an ingest note stays. The step that sees the result
   edits the captures comment. A capture that runs past its 15-minute limit says so, with the screen the adapter's last
-  progress line names; an adapter that exits with no error output says that, with its exit status or signal. A reason
-  past the limit holds none of the adapter's own text. Its whole error output is kept, readable by its owner only, as
-  `capture-stderr.log` in the head's capture folder, cleared by each new attempt.
+  progress line names; an adapter whose last line is no error line says so, with its exit status or signal and that
+  screen. Such a reason holds none of the adapter's own text: the screen is numbered from the capture's own list. Its whole error output is kept, readable by its owner only, as
+  `capture-stderr.log` in the head's capture folder, cleared when each new attempt starts.
 - **Ingested images**: `aidrian pr ingest` ([Ingesting images](#sign-off-by-the-human)) adds images taken
   elsewhere to the manifest's own `ingested` list, never to the tool's entries. Each key is
   `ingest-<file name>-<6 hex of its hash>`, so the same image under the same file name ingests again in place. The

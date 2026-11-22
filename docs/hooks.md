@@ -393,7 +393,7 @@ What each rule matches:
   [feedback record](config.md#product-feedback) lists, before and after its answer. A call with an `agent_id` is refused, whatever key
   it names. A main session passes only when the transcript holds an AskUserQuestion answer, given after the record was written,
   to a question naming `#<PR>`, not after a `/` or a word character, the item's id, and its title in double quotes, and no other item,
-  whose chosen option is that decision alone, or an offered option of that decision with a note after a comma, colon, dash, or parenthesis, as "Fix now, in this pull request" (a typed reply is the decision alone): `fix-now` also reads as "Fix now", and "Drop nothing, keep it open" is no drop.
+  whose chosen option is that decision alone: `fix-now` also reads as "Fix now", and "Drop nothing, keep it open" is no drop. A note goes in the option's description: "Fix now, in this pull request" as a label is refused, since a typed reply and a picked label read the same, and the refusal says so.
   A call whose folder or project it cannot read is refused only while this machine keeps product feedback: a `product-feedback/` folder
   in a project's state folder under the state root, or in the current project's state folder. That is a call after a `cd` it cannot
   follow, such as `cd "$D" &&`, `cd ~/x &&`, `(cd "$D"; …)`, `pushd "$D" &&`, or `env -C "$D"`; after a `cd` whose word the shell

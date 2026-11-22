@@ -62,7 +62,7 @@ import { ATTEMPT_ENV, cacheVars, registryHosts } from './project-registries.mjs'
 import { CLAIM_VAR, newClaim, writeClaim } from './project-token.mjs';
 import { afterFailure, cleanText, CAPS, DROP_FILE, ingestDrops, openPullOf, RESULT_CAP, validateResult, writeDrop } from './project-result.mjs';
 import { writeIssueFile } from './project-issue-text.mjs';
-import { appendToRun, attendedProblem, haltOf, issueBranch, planRun, readCapped, readRun, runFolder, runPlace, runsFolder, RUN_ID, SERIAL } from './project-run.mjs';
+import { appendToRun, attemptBranches, attendedProblem, haltOf, issueBranch, planRun, readCapped, readRun, runFolder, runPlace, runsFolder, RUN_ID, SERIAL } from './project-run.mjs';
 import { custody, driverOf, endedIn, hostContinued, ISSUE_ATTEMPTS, latestStart, resultAuthorProblem, resumerProblem, runStore, spentAttempts, startRows, startsOf, timeOf, ATTEMPT_CEILING } from './project-run-guard.mjs';
 import { accessProblem, guardedFolders, haltAnswer, hostStartProblem, linkTripwire, placeHolders, prepareAttempt, runLog, runLogFile, stateWorkFolders, sweepAttempts, unverifiedNote, writeShellVars } from './project-start.mjs';
 import { ancestorProblem, namedFiles, pushProblem, repositoryProblem, trustProblem } from './project-trust.mjs';
@@ -211,9 +211,9 @@ export function projectPrompt({ run, key, attempt, branch, clone, skill = SKILL,
 
 // The line of projectPrompt for an attempt that left the branch `left.branch` for `branch`.
 function supersededLine(left, branch) {
-  const files = `${left.count} host config or instruction ${left.count === 1 ? 'file' : 'files'} no review saw (${left.files})`;
+  const files = `${left.count} host config or instruction ${left.count === 1 ? 'file' : 'files'} no review saw`;
   const close = left.pr
-    ? `Once this attempt's own pull request is open, close pull request #${left.pr}, from ${left.branch}, with the comment "superseded by #<the new pull request's number>": closing can be undone by reopening it, and no branch is deleted.`
+    ? `Once this attempt's own pull request is open, and only if \`gh pr view ${left.pr} --json state,baseRefName,headRefName,headRefOid\` still shows it OPEN, into ${left.base}, from ${left.branch}, at ${left.sha}, close pull request #${left.pr} with the comment "superseded by #<the new pull request's number>": closing can be undone by reopening it, and no branch is deleted.`
     : `Leave ${left.branch} as it is, and close no pull request.`;
   return `An earlier attempt's branch ${left.branch} changes ${files}, so this attempt starts fresh from the base tip on the branch ${branch} and reuses nothing of ${left.branch}: do the issue's work again there. ${close}`;
 }
@@ -419,7 +419,9 @@ function startPlace(context) {
   // The branch the issue's latest start worked on, and the fresh one this attempt cuts from the tip if it leaves that.
   const branch = issueBranch(current, key);
   const fresh = `${current.snapshot.issues.find((issue) => issue.key === key).branch}-a${capped.attempt}`;
-  const where = { ...context, found: current, attempt: capped.attempt, tip: base.tip, branch, fresh, pushUrl: access?.pushUrl, checked: access?.token?.id ? access.token : null };
+  // Every branch another issue of the run names or recorded, which a fresh one may never take.
+  const reserved = new Set(current.snapshot.issues.filter((issue) => issue.key !== key).flatMap((issue) => [issue.branch, ...attemptBranches(current, issue.key)]));
+  const where = { ...context, found: current, attempt: capped.attempt, tip: base.tip, branch, fresh, reserved, pushUrl: access?.pushUrl, checked: access?.token?.id ? access.token : null };
   const room = confinedRoom(where);
   if (room.halt) return { answer: noted(haltAnswer(room.halt, { lines: orphans })) };
   if (room.problem) return refuse(room.problem, orphans);
@@ -442,11 +444,11 @@ const endedOnLimit = (found, key, attempt) => found.rows.some((row) => row.event
 // A host that would refuse the push of a session the driver `session` starts in the clone halts too (pushPreflight, in
 // the driver's permission mode, which the session takes): the clone is the folder the start passes the host, judged
 // once, and a remote or folder it cannot read answers unknown and starts. Last, the host's placeholders go in (placeHolders).
-function confinedRoom({ project, state, run, key, branch, fresh, attempt, tip, env, home, found, cap, policy, main, pushUrl, session, checked, facade }) {
+function confinedRoom({ project, state, run, key, branch, fresh, reserved, attempt, tip, env, home, found, cap, policy, main, pushUrl, session, checked, facade }) {
   const folders = stateWorkFolders(state, { env, home });
   if (folders.problem) return { halt: folders.problem };
   // The pull request the latest result of the issue named, for a refusal that asks a person to take its branch in.
-  const clone = prepareAttempt({ project, state, run, key, attempt, branch, fresh, tip, env });
+  const clone = prepareAttempt({ project, state, run, key, attempt, branch, fresh, reserved, tip, env });
   if (clone.halt) return { halt: clone.halt };
   if (clone.problem) return { problem: clone.problem };
   const trust = trustProblem(clone.work, tip) ?? ancestorProblem(clone.work, { project, tip, env }) ?? pushProblem(clone.work, found.init.repository);
@@ -491,14 +493,16 @@ function confinedRoom({ project, state, run, key, branch, fresh, attempt, tip, e
   return { folder: clone.folder, cwd: clone.work, git: clone.git, grants: [clone.git, clone.drop, clone.cache, ...folders.folders], drop: clone.drop, cache: clone.cache, vars, main: resolvedPath(main) ?? main, mainGit, issueFile: issueFile?.file ?? null, pushUrl: url || null, claim, branch: clone.branch, superseded: supersededOf(clone.superseded, { found, key, facade }) };
 }
 
-// What the session is told of the branch `left` an attempt left (prepareAttempt): { branch, count, files, pr }, `files`
-// the first of its changed instruction files cleaned (namedFiles), and `pr` the pull request the issue's latest result
-// named only when the forge shows it open from that branch's head (openPullOf), or null; null when none was left.
+// What the start says of the branch `left` an attempt left (prepareAttempt): { branch, sha, count, files, pr, base },
+// `files` the first of its changed instruction files cleaned (namedFiles), for the driver's stderr alone, never the
+// session's task, since a file name is the old branch's text; and `pr` the pull request the issue's latest result named,
+// with `base` the default branch, only when the forge shows it open into that branch from that head (openPullOf), else
+// null; null when none was left.
 function supersededOf(left, { found, key, facade }) {
   if (!left) return null;
   const named = found.rows.findLast((row) => row.event === 'result' && row.key === key && Number.isInteger(row.pr))?.pr ?? null;
-  const pr = openPullOf({ forge: facade, repository: found.init.repository, pr: named, branch: left.branch, head: left.sha }) ? named : null;
-  return { branch: left.branch, count: left.files.length, files: namedFiles(left.files), pr };
+  const base = openPullOf({ forge: facade, repository: found.init.repository, pr: named, branch: left.branch, head: left.sha });
+  return { branch: left.branch, sha: left.sha, count: left.files.length, files: namedFiles(left.files), pr: base ? named : null, base };
 }
 
 // Writes `<attempt>/issue.md` from `<run>/issues/<KEY>.json`, read as untrusted: { file }, null when the run kept no text
@@ -616,7 +620,10 @@ function launchStart(context, place) {
     safely(() => rmSync(folder, { recursive: true, force: true }));
     return noted(ahead.retry ? retryAnswer('start', ahead.why, place.orphans) : { exitCode: 1, out: place.orphans, err: [`aidrian project start: ${ahead.why}`] });
   }
-  return noted(startLines({ result, state, run, key, attempt, session, base, proof, proofKind: sandboxFailed ? 'sandbox' : 'proof', cap, orphans: place.orphans, now: context.now }));
+  const answer = noted(startLines({ result, state, run, key, attempt, session, base, proof, proofKind: sandboxFailed ? 'sandbox' : 'proof', cap, orphans: place.orphans, now: context.now }));
+  // The names of the files that made this attempt leave the old branch, cleaned, for the driver alone.
+  const left = place.superseded;
+  return left && answer.exitCode === 0 ? { ...answer, err: [...answer.err, `aidrian project start: ${key} attempt ${attempt} left ${left.branch} for ${branch}, since it changes ${left.count} host config or instruction ${left.count === 1 ? 'file' : 'files'} no review saw: ${left.files}`] } : answer;
 }
 
 // Writes the start of `base` ahead, before the host starts anything: a start row with `outcome: 'uncertain'` and

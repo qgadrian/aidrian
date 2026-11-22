@@ -16,7 +16,7 @@ import { readdirSync } from 'node:fs';
 import { loadConfig } from './config.mjs';
 import { stateFolders } from './handoff-guard.mjs';
 import { findProject } from './project.mjs';
-import { ISSUE_KEY, issueBranch, readRun, RUN_ID, runsFolder } from './project-run.mjs';
+import { attemptBranches, ISSUE_KEY, readRun, RUN_ID, runsFolder } from './project-run.mjs';
 import { readUnattendedMark } from './unattended-mark.mjs';
 
 // The words that close an issue at a merge, in each form: GitHub's close, fix, and resolve, and Linear's complete too.
@@ -185,8 +185,8 @@ export function closingContextOf(read, options = {}) {
 // What the merge guard holds a merge no Human asks for to, for the pull request from the branch `headRef`, made by a
 // session whose held mark is `mark` (an unattended mark, or the { root } a driver mark stands for), in the project of the
 // main checkout `home`: { own, prefixes } or undefined. A mark that names a run's issue holds it to that issue in that
-// run; any other mark, the driver's among them, to the issue of a run in `home`'s state folders whose branch
-// (project-run.mjs issueBranch) is `headRef`; a pull request of no run's issue is not held.
+// run; any other mark, the driver's among them, to the issue of a run in `home`'s state folders whose snapshot branch,
+// or a branch any attempt of it recorded (project-run.mjs attemptBranches), is `headRef`; a pull request of no run's issue is not held.
 export function mergeClosingContext(mark, home, headRef) {
   if (mark?.pending || mark?.root === null) return { own: null, prefixes: null };
   if (mark?.issue !== undefined || mark?.project !== undefined) {
@@ -204,7 +204,7 @@ export function mergeClosingContext(mark, home, headRef) {
     }
     for (const name of names.filter((each) => RUN_ID.test(each))) {
       const found = readRun(state, name);
-      const issue = found.problem ? null : found.snapshot.issues.find((each) => issueBranch(found, each.key) === headRef);
+      const issue = found.problem ? null : found.snapshot.issues.find((each) => each.branch === headRef || attemptBranches(found, each.key).includes(headRef));
       if (issue) return { own: issue.key, prefixes: prefixesOf(found, issue.key) };
     }
   }

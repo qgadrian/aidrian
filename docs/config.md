@@ -1961,15 +1961,20 @@ attempt's clone pushes to, read before its session starts, and a clone that push
 ([hooks.md](hooks.md#agent-gates)). A host that would refuse that push in the driver session's permission mode, which the session
 takes, halts the start too, before the host starts anything ([the push preflight](handoff.md#the-push-preflight)). Every start is confined to a fresh
 clone under its host's sandbox, and a host that is not halts the start. A later attempt goes on from its issue's branch
-as the forge holds it. When that branch changes a host config or instruction file no review saw, such as a knowledge
-index a docs issue registered its doc in, the attempt leaves it as it is and cuts a fresh branch from the base tip
-instead, the snapshot's branch with `-a<attempt>` added, which its start row records, and everything after the start
-uses that branch: the session's push, its result, `stop-action`, and the merge guard. Nothing of the old branch is
-reused. The session's task names the old branch, a count of those files and the first few of them cleaned to one line,
-and the old branch's pull request, but only when the forge shows it open in the pinned repository from the old branch
-at the head the attempt fetched: once the new pull request is open, the session closes it with the comment
-`superseded by #<new>`, which reopening undoes, and deletes no branch. With no such pull request, it closes nothing.
-A fresh branch already on the forge refuses the start, as for a first attempt. Each attempt's clone commits unsigned: the
+as the forge holds it, the branch of its latest start that ran a session. When that head differs from the base tip in a
+host config or instruction file, it goes on from the tip on the same branch if the tip already holds the head, and
+otherwise, when that branch changed such a file no review saw, such as a knowledge index a docs issue registered its
+doc in, it leaves the branch as it is and cuts a fresh one from the base tip, the snapshot's branch with
+`-a<attempt>` added, which its start row records. Everything after the start uses that branch: the session's push, its
+result, and `stop-action`; the merge guard holds a pull request from any branch an attempt recorded. Nothing of the old
+branch is reused. The session's task gives only a count of those files, and the start's stderr names the first few,
+cleaned to one line. The task names the old branch's pull request only when the forge shows it open in the pinned
+repository, into the default branch, from the old branch at the head the attempt fetched, and the session closes it,
+once the new pull request is open, with the comment `superseded by #<new>`, only if `gh pr view` still shows the same;
+reopening undoes it, and no branch is deleted. With no such pull request, it closes nothing: a pull request an attempt
+opened but never named in a result stays open beside the new one, an accepted residual, since the merge guard still
+holds it to the issue and nothing merges it. A fresh branch already on the forge, or one another issue of the run names
+or recorded, refuses the start. Each attempt's clone commits unsigned: the
 start sets `commit.gpgsign` and `tag.gpgsign` to `false` in the clone's own git config, on every attempt, and never in
 the user's global or system config. The sandbox hides the signing keys (`~/.gnupg` and `~/.ssh`), so a commit the
 user's config signs would fail once the work is done and park the issue with its change staged; the forge asks no

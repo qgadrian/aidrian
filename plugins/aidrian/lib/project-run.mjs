@@ -827,9 +827,16 @@ export function summaryText(run, found) {
 // The branch issue `key` of the run `found` works on now: the one its latest start row names, since a later attempt
 // moves to a fresh branch when the earlier one changes instruction files no review saw (project-start.mjs
 // prepareAttempt), else the one the snapshot names.
+// Only an attempt that ran counts: the latest row of each attempt, but one given back (`void`), which ran no session.
 export function issueBranch(found, key) {
-  const start = found.rows.findLast((row) => row.event === 'start' && row.key === key && typeof row.branch === 'string' && row.branch !== '');
-  return start?.branch ?? found.snapshot.issues.find((issue) => issue.key === key)?.branch ?? null;
+  return attemptBranches(found, key).at(-1) ?? found.snapshot.issues.find((issue) => issue.key === key)?.branch ?? null;
+}
+
+// The branches the attempts of issue `key` that ran recorded, in order (issueBranch).
+export function attemptBranches(found, key) {
+  const latest = new Map();
+  for (const row of found.rows) if (row.event === 'start' && row.key === key) latest.set(row.attempt, row);
+  return [...latest.values()].filter((row) => row.outcome !== 'void' && typeof row.branch === 'string' && row.branch !== '').map((row) => row.branch);
 }
 
 // Writes summary.md of run `run` from its ledger, through a temporary file, and returns { text, file } or { problem }.

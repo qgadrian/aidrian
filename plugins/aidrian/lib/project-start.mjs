@@ -252,8 +252,9 @@ export function stateWorkFolders(state, { env, home }) {
 // branch head differs from the tip in a host config or instruction file (project-trust.mjs isGuarded) leaves that
 // branch as it is and checks out the branch `fresh` from the tip instead, since no session no Human attends starts on
 // instructions no review saw (trustProblem): `branch` is the one checked out, and `superseded` names the one left,
-// { branch, sha, files }, else null. `env` is the environment of its network calls.
-export function prepareAttempt({ project, state, run, key, attempt, branch, fresh, tip, env }) {
+// { branch, sha, files }, else null. A head the tip already holds goes on from the tip, and a `fresh` name another
+// issue's branch takes (`reserved`) is { problem }. `env` is the environment of its network calls.
+export function prepareAttempt({ project, state, run, key, attempt, branch, fresh, reserved = new Set(), tip, env }) {
   const folder = attemptFolder(state, run, key, attempt);
   const [work, gitFolder, drop, cache] = ['work', 'git', 'drop', 'cache'].map((name) => path.join(folder, name));
   const main = project.checkouts.at(-1);
@@ -303,9 +304,14 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, fres
       const changed = git(['diff', '--name-only', '--no-renames', '-z', tip, from, '--']);
       if (changed.status !== 0) return failed('diff', changed);
       const guarded = changed.stdout.split('\0').filter((file) => file !== '' && isGuarded(file));
-      if (guarded.length) {
+      // A head the tip already holds changed nothing itself: the branch goes on from the tip, and its push fast-forwards.
+      const holds = guarded.length ? git(['merge-base', '--is-ancestor', from, tip]) : null;
+      if (holds && holds.status !== 0 && holds.status !== 1) return failed('merge-base', holds);
+      if (holds?.status === 0) from = tip;
+      else if (guarded.length) {
         const head = git(['rev-parse', '--verify', '--quiet', `${from}^{commit}`]);
         if (head.status !== 0) return failed('rev-parse', head);
+        if (reserved.has(fresh)) return gone(`the branch ${fresh}, which an attempt that leaves ${branch} would cut fresh, is another issue's branch in this run; rename one of them in the snapshot of a new run`);
         const again = git(['ls-remote', '--exit-code', '--heads', 'origin', `refs/heads/${fresh}`]);
         if (again.status === 0) return gone(`the branch ${fresh} is on the forge already, and an attempt that leaves ${branch} cuts it fresh from the base tip; delete it on the forge, then start again`);
         if (again.status !== 2) return failed('ls-remote', again);

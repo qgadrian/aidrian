@@ -726,7 +726,7 @@ read on the waiver's clock below, `aidrian pr auto-merge`'s policy and [merge tr
 the paths check with `includeGuardedPaths` and the policy files, the gh user's own pull request, no outsider's comment
 or review in comment and review lists the forge gave whole, no changes requested, not a draft, and every check of exactly the head finished and passed, so gh merges at
 once rather than leave the merge to auto-merge or a merge queue. For a pull request of a [project run](config.md#project-run)'s
-issue, the issue its mark names, or, for any other mark such as the driver's, the issue whose branch, the one its latest start names, is the
+issue, the issue its mark names, or, for any other mark such as the driver's, the issue whose snapshot branch, or a branch any attempt of it recorded, is the
 pull request's head, the merge also keeps [`closes`](config.md#when-it-is-on): its title, body, and every commit
 message, as the same read gives them at merge time, and the merge's own subject and body (`-t`, `-b`, `commit_title`,
 `commit_message`), close or name no other issue of a team the run knows. A body from a file (`-F`, `@file`,

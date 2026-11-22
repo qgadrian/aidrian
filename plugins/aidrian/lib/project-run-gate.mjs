@@ -998,9 +998,6 @@ export function resumeRun({ project, config, run, env = process.env, home, now =
     const note = named ? [`note: the driver ${driver} is not a background session the host lists as ended; if it was a session the Human ran and closed, resume that same host session, which keeps its id and so the run's custody`] : [];
     return { exitCode: 0, out: [`not halted ${run}`, ...(other.length ? other : note)], err: [] };
   }
-  // The driver mark comes first: a session that would drive without one would not be held as a driver. A mark filed for
-  // a custody row that then fails leaves the session held, writing nothing, since the ledger names another driver.
-  if (stranded && !markCustodian(session, opened.found, run, opened.state, env)) return refuse('this session\'s driver mark cannot be filed, so custody stays where it is; run resume again');
   const written = appendToRun(opened.state, run, (fresh) => {
     const driver = driverOf(fresh);
     // Under the lock, the run must still be live, and a continuation still the host's word for this session.
@@ -1008,6 +1005,9 @@ export function resumeRun({ project, config, run, env = process.env, home, now =
     const again = stranded ? hostContinued(fresh, { env, home }) : null;
     if (stranded && (continued ? again?.id !== session : again !== null)) return { problem: 'the host\'s record of the run\'s driver changed while this command read it; run resume again' };
     const take = stranded && driver.session === stranded ? [{ event: 'driver', session, from: driver.session, sha256: sha256(Buffer.from(`resume ${run} ${session} ${iso(now)}`)), via: 'resume', at: iso(now) }] : [];
+    // The driver mark comes before the custody row, under the lock and only once every check passed and custody moves:
+    // a session that would drive without one would not be held as a driver, and a refused resume files none.
+    if (take.length && !markCustodian(session, fresh, run, opened.state, env)) return { problem: 'this session\'s driver mark cannot be filed, so custody stays where it is; run resume again' };
     return { rows: [...(haltOf(fresh) ? [{ event: 'resume', session, at: iso(now) }] : []), ...take] };
   });
   if (written.problem) return refuse(written.problem);

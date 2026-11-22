@@ -969,6 +969,7 @@ test('the host continuing the driver under a new id strands the run, so an atten
   assert.equal(other.exitCode, 0, other.err.join('\n'));
   assert.deepEqual(other.out, ['not halted launch', `note: the host continued the run's driver ${DRIVER} as ${NEXT}, and only that session takes custody of it`], 'it may lift a halt, and takes no custody');
   assert.equal(fx.rows().some((each) => each.event === 'driver'), false);
+  assert.notEqual(runWriter({ session: 'abcd1234-0000-4000-8000-00000000f001', env: fx.env, home: fx.home })?.role, 'driver', 'a refused takeover files no driver mark');
   // A copy of the old transcript in another project folder never outranks the main checkout's.
   const copy = path.join(fx.env.CLAUDE_CONFIG_DIR, 'projects', '-a-linked-worktree', `${DRIVER}.jsonl`);
   mkdirSync(path.dirname(copy), { recursive: true });

@@ -40,6 +40,8 @@ const MAX_ORIGIN = 300;
 const NOTE_PART = 80;
 const URL_RE = /^https?:\/\/[^\s/]+(?:\/\S*)?$/u;
 const CAPTURE_MS = 15 * 60_000;
+// The capture adapter's error output of the last attempt on a head, kept beside its manifest (failureReason).
+const STDERR_LOG = 'capture-stderr.log';
 // The most uploaded hashes the review record keeps; the oldest go first.
 const MAX_UPLOADED = 600;
 
@@ -250,23 +252,30 @@ function urlFrom(text, what) {
   return line.replace(/\/+$/u, '');
 }
 
-const lastLine = (text) => String(text ?? '').split('\n').map((line) => line.trim()).filter(Boolean).at(-1) ?? '';
+// The adapter's progress line before each screen (visual-web.mjs), `capturing <i> of <n>: <key>`.
+const PROGRESS = /^capturing (\d+) of (\d+): (\S+)$/u;
 
-// Why the capture adapter's run `run` failed, its last error line `last` included: a run past CAPTURE_MS says so, as
-// Playwright's own SIGTERM handler can turn the stop into a plain exit 1, and the adapter's progress line names the
-// screen it stopped at. Its whole error output is kept as capture-stderr.log in `dir`; the reason, which the review
-// summary may show, names the file and never this machine's path.
-function failureReason(run, last, dir) {
-  const timedOut = run.error?.code === 'ETIMEDOUT';
-  const why = timedOut
-    ? `the capture ran past its ${CAPTURE_MS / 60_000}-minute limit and was stopped${last ? `; its last line: ${last}` : ''}`
-    : last || (run.signal ? `killed by ${run.signal}` : run.error ? run.error.message : `exit ${run.status} with no error output`);
-  const text = String(run.stderr ?? '');
-  if (!text.trim()) return why;
+// Why the capture adapter's run `run` failed. The reason may be posted, so it holds only what this code makes: the
+// time limit, the exit status or signal, and the screen the last progress line names when its key is one of `keys`;
+// past the limit Playwright's own SIGTERM handler can turn the stop into a plain exit 1. Short of the limit it keeps
+// the adapter's last error line, as before. The whole error output is kept, owner-only, as capture-stderr.log in
+// `dir`, which the reason names by file name only.
+function failureReason(run, keys, dir) {
+  const lines = String(run.stderr ?? '').split('\n').map((line) => line.trim()).filter(Boolean);
+  const progress = lines.map((line) => PROGRESS.exec(line)).filter((match) => match && keys.has(match[3])).at(-1);
+  const at = progress ? ` at screen ${progress[1]} of ${progress[2]}, ${progress[3]}` : '';
+  const said = lines.filter((line) => !PROGRESS.test(line)).at(-1);
+  const stopped = run.signal ? `killed by ${run.signal}` : run.error ? `failed to run (${run.error.code ?? 'error'})` : `exit ${run.status}`;
+  const why = run.error?.code === 'ETIMEDOUT'
+    ? `the capture ran past its ${CAPTURE_MS / 60_000}-minute limit and was stopped${at}`
+    : said ?? `${stopped} with no error output${at}`;
+  if (!lines.length) return why;
   try {
     mkdirSync(dir, { recursive: true });
-    writeFileSync(path.join(dir, 'capture-stderr.log'), text);
-    return `${why} (its error output: capture-stderr.log in this head's capture folder)`;
+    const log = path.join(dir, STDERR_LOG);
+    writeFileSync(log, String(run.stderr), { mode: 0o600 });
+    chmodSync(log, 0o600);
+    return `${why} (its error output: ${STDERR_LOG} in this head's capture folder)`;
   } catch {
     return why;
   }
@@ -359,12 +368,13 @@ export async function captureVisual({ project, pr, head, visual, entries, baseUr
       variant: entry.variant,
       ...(profileOf(entry).auth ? { auth: profileOf(entry).auth } : {}),
     }));
+    rmSync(path.join(dir, STDERR_LOG), { force: true });
     const run = spawn(process.execPath, [ADAPTERS[visual.platform]], {
       cwd: project.root, env, input: JSON.stringify({ outDir: dir, entries: jobs, storageStates: prepared.storageStates }), encoding: 'utf8', timeout: CAPTURE_MS, maxBuffer: 64 * 1024 * 1024,
     });
-    const reason = lastLine(run.stderr);
+    const reason = String(run.stderr ?? '').trim().split('\n').at(-1) ?? '';
     if (run.status === 3 && !run.error) return write({ ...base, status: 'unavailable', reason, entries: [] });
-    if (run.status !== 0 || run.error) return write({ ...base, status: 'failed', reason: failureReason(run, reason, dir), entries: [] });
+    if (run.status !== 0 || run.error) return write({ ...base, status: 'failed', reason: failureReason(run, new Set(jobs.map((job) => job.key)), dir), entries: [] });
     const results = new Map((JSON.parse(run.stdout).results ?? []).map((result) => [result.key, result]));
     const captured = entries.map((entry) => {
       if (missingBase.has(entry.key)) return { ...entry, error: missingBase.get(entry.key) };

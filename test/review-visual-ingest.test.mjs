@@ -4,7 +4,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -130,12 +130,22 @@ test('captureVisual captures over an ingest-only manifest and carries its ingest
   assert.deepEqual([failed.status, failed.reason, failed.ingested.length], ['failed', `boom (its error output: capture-stderr.log in this head's capture folder); ingested, not captured: ${shot.key} from \`e2e-runner run 12\` by \`Tester\` via \`e2e-runner\``, 1]);
   const note = `; ingested, not captured: ${shot.key} from \`e2e-runner run 12\` by \`Tester\` via \`e2e-runner\``;
   const logged = ' (its error output: capture-stderr.log in this head\'s capture folder)';
-  // Past the time limit, Playwright's SIGTERM handler can end the adapter with exit 1 and its progress line last.
-  const stopped = await run({ baseUrl: 'http://localhost:3000', spawn: () => ({ status: 1, stdout: '', stderr: 'capturing 3 of 9: staff-wide\n', error: Object.assign(new Error('spawnSync node ETIMEDOUT'), { code: 'ETIMEDOUT' }) }) });
-  assert.equal(stopped.reason, `the capture ran past its 15-minute limit and was stopped; its last line: capturing 3 of 9: staff-wide${logged}${note}`);
-  assert.equal(readFileSync(path.join(captureDir(p.project, 7, HEAD), 'capture-stderr.log'), 'utf8'), 'capturing 3 of 9: staff-wide\n');
+  const key = entries[0].key;
+  const log = path.join(captureDir(p.project, 7, HEAD), 'capture-stderr.log');
+  // Past the time limit, Playwright's SIGTERM handler can end the adapter with exit 1; a raw diagnostic after the
+  // progress line stays in the log, never in the reason.
+  const timeout = Object.assign(new Error('spawnSync node ETIMEDOUT'), { code: 'ETIMEDOUT' });
+  const stopped = await run({ baseUrl: 'http://localhost:3000', spawn: () => ({ status: 1, stdout: '', stderr: `capturing 1 of 1: ${key}\nprotocol: cookie=secret\n`, error: timeout }) });
+  assert.equal(stopped.reason, `the capture ran past its 15-minute limit and was stopped at screen 1 of 1, ${key}${logged}${note}`);
+  assert.equal(readFileSync(log, 'utf8'), `capturing 1 of 1: ${key}\nprotocol: cookie=secret\n`);
+  assert.equal(statSync(log).mode & 0o777, 0o600, 'owner-only');
+  const forged = await run({ baseUrl: 'http://localhost:3000', spawn: () => ({ status: 1, stdout: '', stderr: 'capturing 1 of 1: https://x.example/?t=1\n', error: timeout }) });
+  assert.equal(forged.reason, `the capture ran past its 15-minute limit and was stopped${logged}${note}`, 'a key that is no screen\'s is not shown');
+  const crashed = await run({ baseUrl: 'http://localhost:3000', spawn: () => ({ status: null, signal: 'SIGKILL', stdout: '', stderr: `capturing 1 of 1: ${key}\n` }) });
+  assert.equal(crashed.reason, `killed by SIGKILL with no error output at screen 1 of 1, ${key}${logged}${note}`, 'progress alone is no error line');
   const silent = await run({ baseUrl: 'http://localhost:3000', spawn: () => ({ status: 1, stdout: '', stderr: '\n\n' }) });
   assert.equal(silent.reason, `exit 1 with no error output${note}`);
+  assert.equal(existsSync(log), false, 'an attempt clears the log of the last one');
   const captured = await run({ baseUrl: 'http://localhost:3000', spawn: fakeAdapter });
   assert.deepEqual([captured.status, captured.reason, captured.entries.filter((entry) => entry.sha256).length, captured.ingested.length], ['captured', undefined, 1, 1]);
   const reused = await run({ baseUrl: 'http://localhost:3000', spawn: () => assert.fail('captured twice') });

@@ -18,7 +18,6 @@ import { captureKeys } from './visual.mjs';
 import { inBaseWorktree } from './base-worktree.mjs';
 import { captureAndAttach, closingRange, dispatchFor, listedFor, passInput, planPasses } from './dispatch.mjs';
 import { refusedAtHead } from './in-force.mjs';
-import { confinedReason } from './reviewers.mjs';
 
 export const MAX_ATTEMPTS = 3;
 
@@ -163,13 +162,6 @@ export async function runStages(s) {
       // shell call. The rest run on the next step, which `running` asks for.
       const ready = pending.filter((pass) => map[pass.reviewer]?.kind === 'exec');
       const execs = ready.slice(0, review.split?.parallel ?? 4);
-      // The last word before a reviewer starts: in a confined session (step.mjs confinedSession), a pass whose reviewer
-      // cannot run inside the host's sandbox (reviewers.mjs `confinable`) is refused, whatever put it in the plan.
-      const held = s.confined ? execs.find((pass) => map[pass.reviewer]?.confinable === false) : null;
-      if (held) {
-        undoRound();
-        return finish('unsatisfied', { reason: `pass ${held.id} is not launched: ${confinedReason(held.reviewer, s.confined)}`, retry_recommended: false });
-      }
       if (execs.length) {
         if (resolve(root, 'HEAD') !== head || !isClean(root)) {
           undoRound();

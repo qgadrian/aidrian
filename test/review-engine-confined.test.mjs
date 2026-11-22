@@ -12,12 +12,12 @@ import { recordPass } from '../plugins/aidrian/lib/review/run.mjs';
 import { readLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { confinedSession } from '../plugins/aidrian/lib/review/step.mjs';
 import { markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
-import { holdsAll, repo } from './review-run-fixture.mjs';
+import { repo } from './review-run-fixture.mjs';
 
 // A project run's confined issue session cannot start codex-local: Codex sets up a sandbox of its own and needs the
 // network, which the host's sandbox denies. There codex-local is not ready, as when Codex is not installed, and the
-// step takes the route it takes for that today; a codex-local pass that reaches the stages anyway is refused, never
-// launched. Anywhere else nothing changes.
+// step takes the route it takes for that today; a plan whose codex-local pass would launch is refused before any
+// round. Anywhere else nothing changes.
 
 const PINNED = { version: 1, review: { engine: 'codex-local' } };
 const noExec = async () => assert.fail('codex-local must not run in a confined session');
@@ -81,18 +81,27 @@ test('a plan refused for confinement opens no round, sets no override, and asks 
   assert.deepEqual([state.rounds.length, state.overrides ?? [], state.botRequest ?? null], [0, [], null]);
 });
 
-test('in a confined session, auto takes self, which answers an independent-only flow`s invariants, and the bot stage --with-bot adds', async (t) => {
+test('in a confined session, auto takes self, and a flow that requires independent-model is unsatisfied, naming the session', async (t) => {
   const flows = { pay: { files: ['src/pay/**'], require: ['independent-model'] } };
-  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, change: (write) => write('src/pay/a.js', '1\n') });
-  const deps = { exec: noExec, codex: never, env: confinedEnv(r.dir), awaitBot: async () => ({ status: 'received', requested: true, signal: { kind: 'thumbs_up' } }) };
-  const first = await r.step(deps, { withBot: true });
+  const setup = { baseConfig: { version: 1, review: { flows } }, change: (write) => write('src/pay/a.js', '1\n') };
+  const r = repo(t, setup);
+  const alone = await r.step({ exec: noExec, codex: never, env: confinedEnv(r.dir), awaitBot: async () => assert.fail('the bot joins only with --with-bot') });
+  assert.deepEqual([alone.status, alone.reason], ['unsatisfied', `the plan requires independent-model, and the engine here is self (auto: ${CANNOT}, so self)`]);
+  const bot = repo(t, setup);
+  const withBot = await bot.step({ exec: noExec, codex: never, env: confinedEnv(bot.dir), awaitBot: async () => assert.fail('the bot is not asked about a refused plan') }, { withBot: true });
+  assert.deepEqual([withBot.status, withBot.reason], ['unsatisfied', `flow pay needs a reviewer that answers its invariants, and the review bot does not: ${CANNOT}, so require an agent for the flow`], 'the bot gives no verdicts, and self answers no flow it was not given');
+});
+
+test('in a confined session, a codex-local pass with a result on the head launches nothing and is not refused', async (t) => {
+  const planner = "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>console.log(JSON.stringify({depth:'single',stages:[{name:'independent',passes:[{id:'extra:check',reviewer:'codex-local',kind:'exec',files:null}]}]})))";
+  const config = { version: 1, github: { reviewer: 'none' }, review: { engine: 'self', planCommand: 'node scripts/plan.mjs' } };
+  const r = repo(t, { baseConfig: config, baseFiles: { 'scripts/plan.mjs': planner }, change: (write) => write('src/app.js', 'p\n') });
+  let ran = 0;
+  const first = await r.step({ exec: async () => ((ran += 1), clean()) });
   assert.equal(first.status, 'dispatch', first.reason);
-  assert.deepEqual(first.engine, { name: 'self', reason: `auto: ${CANNOT}, so self` });
-  assert.deepEqual(first.plan.stages.map((stage) => [stage.name, stage.passes]), [['local', ['agent:code-reviewer']], ['remote', ['engine:pr-bot']]]);
-  const [self] = first.dispatch;
-  assert.deepEqual([self.agent, self.flows.map((flow) => flow.id)], ['code-reviewer', ['pay']], 'self answers the flow`s invariants');
-  recordPass(r.project, { pr: 7, repo: 'o/r', pass: self.pass, head: first.head, reviewer: 'code-reviewer', findings: 0, fixed: 0, verdictsText: holdsAll(self, 'src/pay/a.js:1') });
-  assert.equal((await r.step(deps, { withBot: true })).status, 'received', 'self`s verdicts and the bot`s pass the review');
+  recordAgent(r, first);
+  assert.deepEqual([(await r.step({ exec: noExec })).status, ran], ['received', 1], 'outside a confined session the pass runs');
+  assert.equal((await r.step({ exec: noExec, codex: never, env: confinedEnv(r.dir) })).status, 'received', 'its result answers in the confined session');
 });
 
 test('outside a confined session, the advice for a flow no reviewer answers still names codex-local', async (t) => {

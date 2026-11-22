@@ -408,9 +408,9 @@ How issue sessions and the driver relate to the cap of five background continuat
 - `aidrian pr review` in an issue's session never starts `codex-local`, since Codex needs a sandbox of its own and the
   network, which this sandbox denies. There `codex-local` is not ready, as when Codex is not installed: a
   `review.engine` set to it leaves the step `unsatisfied`, the reason naming the session, and `auto` takes `self`,
-  whose passes answer every flow's invariants, with the bot as the stage `--with-bot` adds. A plan with a
-  `codex-local` pass, as one a plan command adds, is refused before any round opens
-  ([The engine](../review.md#the-engine)).
+  with the bot only as the stage `--with-bot` adds. A flow that requires `independent-model` leaves the step
+  `unsatisfied` there. A plan with a `codex-local` pass and no result to reuse for it, as one a plan command adds,
+  is refused before any round opens ([The engine](../review.md#the-engine)).
 - An issue's session starts no continuation: `aidrian handoff continue` from it prints `continue: none`, and
   `aidrian handoff route` `route: none`, before any floor, mark, or start record. It pushes its work and records its result.
 - A usage or rate limit is read from the session's transcript alone (`lib/hosts/claude-code-limit.mjs`): its last

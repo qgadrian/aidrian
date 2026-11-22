@@ -278,9 +278,7 @@ export async function prepareStep(s) {
   state.revision -= 1;
   Object.assign(run, { pr: n, head, repo });
 
-  // A confined session is kept for the stages, which launch no reviewer that cannot run there (stages.mjs).
   const confined = confinedSession(env);
-  s.confined = confined;
   const engine = resolveEngine(effective, { ...(codex ? { codex } : {}), confined });
   if (engine.problem) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: engine.problem });
   // Flows whose files the globs miss: a changed file whose whole head content, or whose callers, hand it the flow's
@@ -473,16 +471,14 @@ export async function prepareStep(s) {
   // A pass nobody can run would never finish and never block: refuse the plan instead.
   const orphan = passes.find((pass) => pass.kind !== 'agent' && !map[pass.reviewer]);
   if (orphan) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `pass ${orphan.id} names reviewer "${orphan.reviewer}", which is not an agent pass or a reviewer of review.reviewers`, plan });
-  // A plan that holds a pass no reviewer can run in this confined session is refused here, before the stages open a
-  // round, set an override, or ask the bot; stages.mjs refuses one again right before a launch.
-  const unconfinable = confined ? passes.find((pass) => map[pass.reviewer]?.confinable === false) : null;
+  // A pass that would launch a reviewer this confined session cannot run is refused here, before the stages open a
+  // round, set an override, or ask the bot. A pass with a result on this head launches nothing, so it stays.
+  const unconfinable = confined ? passes.find((pass) => map[pass.reviewer]?.confinable === false && !resultFor(pass)) : null;
   if (unconfinable) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `pass ${unconfinable.id} is not launched: ${confinedReason(unconfinable.reviewer, confined)}`, plan });
   // Every pass after the local stage answers for every flow: a violated from any reviewer blocks the flow, and a flow
   // only the independent model reviews is signed by it. The review bot gives no verdicts, so a flow needs another
   // pass that can answer for it.
   for (const stage of plan.stages) if (stage.name !== 'local') for (const pass of stage.passes) pass.flows = plan.flows.map((flow) => flow.id);
-  // In a confined session self stands where codex-local's pass would, so its passes answer every flow too.
-  if (confined && engine.reviewer.name === 'self') for (const pass of passes) if (pass.kind === 'agent' && pass.reviewer === engine.reviewer.agent) pass.flows = plan.flows.map((flow) => flow.id);
   for (const word of plan.require) {
     if (!satisfies(word, passes, map) && word === 'independent-model' && fallbacks.length) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: quota.refusal(plan, fallbacks[0], [], map), plan });
     if (!satisfies(word, passes, map)) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `the plan requires ${word}, and the engine here is ${engine.reviewer.name} (${engine.reason})`, plan });

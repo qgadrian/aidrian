@@ -101,8 +101,8 @@ export function codexAvailable(run = spawnSync) {
 // else the local file's. { reviewer, reason } or { problem }. `auto` takes codex-local, else the review bot, else self,
 // and says which and why; a project's engine says it came from the project config. `confined` names the confined
 // session the step runs in (lib/review/step.mjs confinedSession), or is null: there a reviewer that is not `confinable`
-// is not ready, as Codex not installed is, and `auto` takes self, never the review bot, so an agent answers every flow's
-// invariants and the bot joins only as the stage `--with-bot` adds.
+// is not ready, as Codex not installed is, and `auto` takes self, never the review bot, which joins only as the stage
+// `--with-bot` adds.
 export function resolveEngine(config, { codex = codexAvailable, confined = null } = {}) {
   const map = reviewerMap(config);
   const project = config.review?.engine ?? null;

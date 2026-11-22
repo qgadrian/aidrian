@@ -790,11 +790,13 @@ its start stays as [its page](codex.md#project-start) says.
 The host can run a session's first tool call before that session's SessionStart hooks, as seen when `claude --bg`
 claimed a prewarmed spare session, and that shell then holds none of the environment the hook hands it. So the start
 writes one more variable beside the cache variables in `shell-env.json`, `AIDRIAN_ATTEMPT_ENV=<run>/<key>.<attempt>`,
-which the hook hands over with them. While the shell lacks it, `aidrian project confine` exits 1 with `the host has not
-given this shell its SessionStart hook's environment yet; run the same command again in a few seconds`, before its
-lock: it writes no lock and no verdict, and the agent gate hook still lets the session run that exact command again,
-within the 180 seconds above. A cache variable the shell inherited, such as the user's own `PNPM_HOME`, does not count.
-With the marker there, every variable must hold the start's value, the marker too, or the proof fails.
+which the hook hands over last, after the cache variables, the forge token, and the token's handoff record, so a shell
+that sees it sees a recorded handoff too, a failed one included. Until the shell holds that exact value, `aidrian
+project confine` exits 1 with `the host has not given this shell its SessionStart hook's environment yet; run the same
+command again in a few seconds`, before its lock: it writes no lock and no verdict, and the agent gate hook still lets
+the session run that exact command again, within the 180 seconds above. An empty, inherited, or other attempt's marker
+counts as not ready, and so does a cache variable the shell inherited, such as the user's own `PNPM_HOME`. With the
+marker there, every cache variable must hold the start's value, or the proof fails.
 
 A start whose proof cannot be prepared refuses with `the sandbox proof cannot be prepared`, records nothing, and leaves
 no attempt folder; [Project run](../config.md#project-run) names each cause and its fix.

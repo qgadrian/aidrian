@@ -340,22 +340,26 @@ function marked(t) {
   return { at, vars, confine, locked: () => existsSync(path.join(at.drop, CONFINE_LOCK)) };
 }
 
-test('a confine call whose shell lacks the attempt`s marker answers a retry and takes no lock, though it inherited a cache variable', async (t) => {
-  const { at, confine, locked } = marked(t);
-  // The user's own PNPM_HOME, inherited from the host's process: not the hook's environment.
-  const early = await confine({ PNPM_HOME: path.join(at.home, '.local', 'share', 'pnpm') });
-  assert.equal(early.exitCode, 1);
-  assert.deepEqual(early.err, [`aidrian project confine: ${HOOK_PENDING}`]);
+test('a confine call whose shell lacks the attempt`s marker, or holds another value of it, answers a retry and takes no lock', async (t) => {
+  const { at, vars, confine, locked } = marked(t);
+  // The user's own PNPM_HOME, inherited from the host's process, is not the hook's environment; nor is an empty, an
+  // inherited, or another attempt's marker, though every cache variable is right.
+  const inherited = { PNPM_HOME: path.join(at.home, '.local', 'share', 'pnpm') };
+  for (const env of [inherited, { ...vars, [ATTEMPT_ENV]: '' }, { ...vars, [ATTEMPT_ENV]: 'launch/ENG-1.2' }, { ...vars, [ATTEMPT_ENV]: 'other/ENG-1.1' }]) {
+    const early = await confine(env);
+    assert.equal(early.exitCode, 1, JSON.stringify(env[ATTEMPT_ENV]));
+    assert.deepEqual(early.err, [`aidrian project confine: ${HOOK_PENDING}`]);
+    assert.deepEqual([locked(), existsSync(path.join(at.drop, CONFINE_VERDICT))], [false, false], 'no lock and no verdict');
+  }
   assert.match(HOOK_PENDING, /SessionStart hook's environment yet; run the same command again in a few seconds/u);
-  assert.deepEqual([locked(), existsSync(path.join(at.drop, CONFINE_VERDICT))], [false, false], 'no lock and no verdict');
   // The agent gate hook still lets the session run that exact command again, and nothing else.
   const mark = { root: at.root, cwd: at.work, project: 'launch', issue: 'ENG-1', confine: true };
   assert.equal(confineDenial(bash('aidrian project confine launch ENG-1', at.work), { mark, env: {} }), null);
   assert.match(confineDenial(bash('ls', at.work), { mark, env: {} }).reason, /its first call must be exactly/u);
 });
 
-test('a confine call whose shell holds the marker but a cache variable with another value, or another marker, fails the proof', async (t) => {
-  for (const off of [{ PNPM_HOME: '/elsewhere' }, { [ATTEMPT_ENV]: 'launch/ENG-1.2' }]) {
+test('a confine call whose shell holds the marker but a cache variable with another value, or none, fails the proof', async (t) => {
+  for (const off of [{ PNPM_HOME: '/elsewhere' }, { PNPM_HOME: undefined }]) {
     const { vars, confine, locked, at } = marked(t);
     const result = await confine({ ...vars, ...off });
     assert.equal(result.exitCode, 1);

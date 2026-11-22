@@ -278,6 +278,13 @@ test('the SessionStart hook hands GH_TOKEN, from the source the start checked, t
   assert.equal(statSync(file).mode & 0o777, 0o600);
   const seen = spawnSync('/bin/sh', ['-c', `. '${file}'; printf '%s' "$GH_TOKEN"`], { encoding: 'utf8' });
   assert.equal(seen.stdout, hookToken);
+  // The attempt's marker comes last, after the token and the record of its handoff, so a shell that sees the marker,
+  // which the sandbox proof waits for, sees that record too.
+  const lines = text(file).trim().split('\n');
+  assert.match(lines.at(-1), /^export AIDRIAN_ATTEMPT_ENV='launch\/ENG-1\.1'$/u);
+  assert.equal(lines.filter((line) => line.startsWith('export AIDRIAN_ATTEMPT_ENV=')).length, 1, 'once');
+  assert.ok(lines.findIndex((line) => line.startsWith('export GH_TOKEN=')) < lines.length - 1, 'after the token');
+  assert.ok(statSync(path.join(path.dirname(work), 'token-handoff.json')).mtimeMs <= statSync(file).mtimeMs, 'after the handoff record');
   // And git's command-scope config: every helper of the user's and the repository's config dropped, then gh's own.
   const git = spawnSync('/bin/sh', ['-c', `. '${file}'; printf '%s|' "$GIT_CONFIG_COUNT" "$GIT_CONFIG_KEY_0" "$GIT_CONFIG_VALUE_0" "$GIT_CONFIG_KEY_1" "$GIT_CONFIG_VALUE_1"`], { encoding: 'utf8' });
   assert.equal(git.stdout, `2|credential.https://github.com.helper||credential.https://github.com.helper|!'${path.join(fx.bin, 'gh')}' auth git-credential|`);
@@ -411,6 +418,8 @@ test('a credential that disappears after the access check fails the start: the h
   assert.equal(ran.status, 0, ran.stderr);
   const record = JSON.parse(readFileSync(path.join(folder, 'token-handoff.json'), 'utf8'));
   assert.equal(record.handed, false);
+  // The marker is still handed over, last, so the proof runs and fails on the failed handoff.
+  assert.match(readFileSync(file, 'utf8').trim().split('\n').at(-1), /^export AIDRIAN_ATTEMPT_ENV='launch\/ENG-1\.1'$/u);
   assert.match(record.why, /^the forge CLI's login for github\.com, the source the start checked, gives no token now \(/u);
   assert.match(handoffProblem(folder), /^the forge token was not handed to the session: the forge CLI's login for github\.com, the source the start checked, gives no token now/u);
   // The proof check fails on it, before it reads anything else of the proof.

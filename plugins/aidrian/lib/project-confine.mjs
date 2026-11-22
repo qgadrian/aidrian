@@ -397,9 +397,10 @@ export function shellVarsProblem(folder, env) {
   return off.length ? `the cache variables ${off.join(', ')} are not in force in the session's shell` : null;
 }
 
-// What the proof answers while the shell lacks the attempt's marker (ATTEMPT_ENV) the start wrote: the host has not
-// given this shell the environment the session's SessionStart hook hands it, as when it runs the session's first call
-// before that hook. With the marker there, every cache variable must hold its value.
+// What the proof answers while the shell's attempt marker (ATTEMPT_ENV) is not the value the start wrote, as one empty,
+// inherited, or another attempt's: the host has not given this shell the environment the session's SessionStart hook
+// hands it, as when it runs the session's first call before that hook. The hook hands the marker last, after the forge
+// token's handoff record. With the marker there, every cache variable must hold its value.
 export const HOOK_PENDING = 'the host has not given this shell its SessionStart hook\'s environment yet; run the same command again in a few seconds';
 
 // `aidrian project confine RUN ISSUE`, from the session's sandboxed shell in its clone `cwd`, with `env` its
@@ -413,7 +414,8 @@ export async function runConfine({ run, key, cwd = process.cwd(), env = process.
   const plan = readSmallJson(path.join(attempt.folder, CONFINE_PLAN));
   if (!plan || plan.run !== run || plan.key !== key || plan.attempt !== attempt.attempt || !NONCE.test(plan.nonce ?? '')) return refuse(`the start wrote no plan for the sandbox proof of ${key} attempt ${attempt.attempt}`);
   // Before the lock: the proof runs once, and a shell the hook has not given the attempt's environment yet would fail it.
-  if (typeof readSmallJson(path.join(attempt.folder, SHELL_VARS))?.[ATTEMPT_ENV] === 'string' && env[ATTEMPT_ENV] === undefined) return refuse(HOOK_PENDING);
+  const marker = readSmallJson(path.join(attempt.folder, SHELL_VARS))?.[ATTEMPT_ENV];
+  if (typeof marker === 'string' && env[ATTEMPT_ENV] !== marker) return refuse(HOOK_PENDING);
   try {
     closeSync(openSync(path.join(attempt.drop, CONFINE_LOCK), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NO_FOLLOW, 0o600));
   } catch (error) {

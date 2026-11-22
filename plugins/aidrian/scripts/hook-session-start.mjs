@@ -24,7 +24,8 @@
 // First of all, for the session of a confined attempt of a project run, it hands the host the environment its sandboxed
 // commands get (lib/project-start.mjs confinedShellVars), on a host that takes it (capabilities.projectStart.shellEnv),
 // and then, on a host that hands its session the forge token (`forgeTokenEnv`), that token, read for itself outside the
-// sandbox (confinedTokenVars), so no file carries it from the start.
+// sandbox (confinedTokenVars), so no file carries it from the start, and last the attempt's marker, which the sandbox
+// proof waits for (lib/project-confine.mjs runConfine).
 
 import { accessSync, constants, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
@@ -39,6 +40,7 @@ import { indexedPaths, indexRows, loadKnowledge } from '../lib/knowledge.mjs';
 import { inboxPath, nudge } from '../lib/lesson-inbox.mjs';
 import { inheritedOverrideLine, unpushedMainLine } from '../lib/main-commits.mjs';
 import { findProject, projectCheckouts, stateDir } from '../lib/project.mjs';
+import { ATTEMPT_ENV } from '../lib/project-registries.mjs';
 import { confinedShellVars, confinedTokenVars } from '../lib/project-start.mjs';
 import { writeHandoff } from '../lib/project-token.mjs';
 import { noteOrigin } from '../lib/session-origins.mjs';
@@ -251,16 +253,31 @@ function binCommand(name) {
   return /\s/.test(full) ? `"${full}"` : full;
 }
 
-// Hands the host the environment of a confined attempt's sandboxed commands, when this session is one, and then its forge
-// token: a line saying why the token was not handed over, or null. Never throws, so
-// the lines above still print.
+// Hands the host the environment of a confined attempt's sandboxed commands, when this session is one, then its forge
+// token and the record of that handoff, then the attempt's marker alone (ATTEMPT_ENV), which the sandbox proof waits
+// for: a shell that sees the marker sees a recorded handoff too, a failed one included, which fails the proof. A line
+// saying why the token was not handed over, or null. Never throws, so the lines above still print.
 function shareShellVars(input) {
+  let marker = null;
   try {
-    const vars = confinedShellVars({ session: input.session_id, cwd: input.cwd, env: process.env });
-    if (vars) detectHost({ input }).capabilities.projectStart?.shellEnv?.({ env: process.env, vars });
+    const { [ATTEMPT_ENV]: mark, ...vars } = confinedShellVars({ session: input.session_id, cwd: input.cwd, env: process.env }) ?? {};
+    if (typeof mark === 'string') marker = { [ATTEMPT_ENV]: mark };
+    if (Object.keys(vars).length) detectHost({ input }).capabilities.projectStart?.shellEnv?.({ env: process.env, vars });
   } catch {
     // No environment handed over: a sandboxed install then fails to write its cache, and writes nowhere else.
   }
+  const line = shareToken(input);
+  try {
+    if (marker) detectHost({ input }).capabilities.projectStart?.shellEnv?.({ env: process.env, vars: marker });
+  } catch {
+    // No marker: the session's proof waits for it, and the start's wait ends it.
+  }
+  return line;
+}
+
+// Hands the host the forge token of a confined attempt's session that holds the start's claim, and records whether it
+// did in the attempt's folder: a line saying why it was not handed over, or null. Never throws.
+function shareToken(input) {
   try {
     const start = detectHost({ input }).capabilities.projectStart;
     const token = start?.forgeTokenEnv === true ? confinedTokenVars({ session: input.session_id, cwd: input.cwd, env: process.env }) : null;

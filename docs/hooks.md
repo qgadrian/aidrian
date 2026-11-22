@@ -1638,9 +1638,11 @@ dispatch of the same name left, a link, or a folder is stale and owed, and the h
 a new temporary file renamed over it, so a link is replaced, never followed, and the file it named stays as it was; a
 folder stays owed. A brief names the run's own file on a line that starts with `Handoff file:`, such as
 `Handoff file: <state>/dispatch/<branch>-signoff-product-manager.json`, or `**Handoff file:**` or `**Handoff file**:`,
-after an optional list marker. Each such line names one file: the first token after the marker, bare or in backticks,
-which must be an absolute path in the state folder's `dispatch/`; prose after it is not read.
-With such a line, only the files these lines name are owed.
+in any case, after an optional list marker.
+Each such line names one file: everything inside the backticks that open its value, spaces included, else its first word.
+The whole value must be an absolute path in the state folder's `dispatch/` that ends in `.json`; prose after it is not read.
+With such a line, only the files these lines name are owed, even when no line names a valid path.
+Without one, only a complete file name counts, never the start of a longer one such as `x.json.backup`.
 Another file of the agent's role the brief names, such as the gate run's `<branch>-gate-product-manager.json`
 to read, is never written, whether it is there or not. A brief with no such line owes its one file of the agent's role,
 and none when it names several, since it cannot say which is the output.

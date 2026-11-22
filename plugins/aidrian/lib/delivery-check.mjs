@@ -80,7 +80,7 @@ function handedIn(file, since) {
 // The handoff files a subagent's brief asks it to write that it has not written (handedIn): each absolute
 // `<state>/dispatch/<name>.json` in the transcript's first prompt whose `<name>` ends with the agent's own name, such as `feat-12-S1-code-reviewer.json`
 // or `S1-code-reviewer-result.json` for `aidrian:code-reviewer`. A path named for another agent, such as a handoff the brief tells it to read, is not its own.
-// With `Handoff file:` lines, only the paths on them count; without, only a brief that names one such file owes it.
+// With `Handoff file:` lines, only the one absolute path each names counts; without, only a brief that names one such file owes it.
 // No brief, no agent name, or no state folder: none.
 export function unwrittenHandoffs(input, project) {
   const agent = typeof input.agent_type === 'string' ? input.agent_type.split(':').pop() : '';
@@ -93,22 +93,26 @@ export function unwrittenHandoffs(input, project) {
   } catch {
     return [];
   }
-  const pathIn = (text) => [...text.matchAll(new RegExp(`${escapeRegExp(folder)}/([\\w.@+-]+\\.json)`, 'gu'))];
+  const name = `${escapeRegExp(folder)}/[\\w.@+-]+\\.json`;
+  const dispatchFile = new RegExp(`(?<![\\w.~/-])${name}(?![\\w/-])`, 'gu');
+  const wholePath = new RegExp(`^${name}$`, 'u');
   // The agent's name as the file name's last word, or the one before a last word such as `result`: a branch that holds
   // the name, as in `fix-code-reviewer-S1-backend-developer.json`, does not make the file this agent's.
   const word = new RegExp(`(?:^|[-_.])${escapeRegExp(agent)}(?:[-_.]\\w+)?\\.json$`, 'u');
-  const ownIn = (text) => [...new Set(pathIn(text).filter((match) => word.test(match[1])).map((match) => match[0]))];
-  // The brief's `Handoff file:` lines name the run's output; any other file of its role there is one to read.
+  const ownOf = (files) => [...new Set(files.filter((file) => word.test(path.basename(file))))];
+  // The brief's `Handoff file:` lines name the run's output, one path each; any other file of its role is one to read.
   // With no such line, a brief that names one file of its role owes it, and one that names several owes none.
-  const marked = brief.split('\n').filter((line) => HANDOFF_MARKER.test(line));
-  const own = marked.length ? ownIn(marked.join('\n')) : ownIn(brief);
+  const marked = brief.split('\n').flatMap((line) => HANDOFF_MARKER.exec(line)?.[1].replace(/[.,;:)]+$/u, '') ?? []);
+  const own = marked.length ? ownOf(marked.filter((file) => wholePath.test(file))) : ownOf(brief.match(dispatchFile) ?? []);
   const briefed = marked.length || own.length === 1 ? own : [];
   const since = handoffSince(input);
   return briefed.filter((file) => !handedIn(file, since));
 }
 
-// A brief line that names the run's handoff file: `Handoff file: <path>`, in any case, after an optional list marker.
-const HANDOFF_MARKER = /^\s*(?:[-*]\s+)?(?:\*\*)?handoff file:/iu;
+// A brief line that names the run's handoff file, after an optional list marker: `Handoff file: <path>`,
+// `**Handoff file:** <path>`, or `**Handoff file**: <path>`. The path is the first token after it, in backticks or bare;
+// any prose after it is not read.
+const HANDOFF_MARKER = /^\s*(?:[-*]\s+)?(?:Handoff file:|\*\*Handoff file:\*\*|\*\*Handoff file\*\*:)\s*`?([^\s`]+)`?/u;
 
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 

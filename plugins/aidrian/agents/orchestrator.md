@@ -46,7 +46,8 @@ code is the implementing agent's.
 - Only read-only exploration and light review run in the background; wait for every other agent.
 - Require a machine handoff file, the record. An agent with a file tool or a shell writes it to an absolute path you give,
   `<state>/dispatch/<branch>-<slice>-<agent>.json` (each `/` in the branch becomes `-`), then sends a short summary.
-  The brief names it on its own line, `Handoff file: <path>`: the stop hook writes only that file, never another one the brief names to read.
+  The brief names it on its own line, `Handoff file: <path>`. On Claude Code the stop hook writes the agent's report there
+  when the agent does not, and only that file, never another one the brief names to read; elsewhere the agent writes it.
   One with neither, such as `explorer`, returns it as its final message.
 - You write `<state>` files, such as dispatch handoffs, only through `aidrian` commands or a shell redirect.
 - Dispatch disjoint slices together, each writer in its own worktree; never report done while an agent has not returned.

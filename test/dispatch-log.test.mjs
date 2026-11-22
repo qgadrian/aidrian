@@ -400,6 +400,27 @@ test('the stop hook writes only the handoff file its own run was briefed with, n
   assert.equal(read(gate), 'gate');
   assert.throws(() => readFileSync(wording), /ENOENT/u);
   assert.deepEqual(log().map((row) => [row.agent_id, row.handoffs_written]), [['s0', 1], ['g1', 1], ['d1', 1], ['s1', 1], ['w1', 0]]);
+
+  // One path per marker line, its first token: prose after it that names a second file of the role is never read.
+  // The three spellings count, with or without a list marker; another spelling is no marker.
+  const input = file('copy-input');
+  const forms = [
+    ['m1', (out) => `Handoff file: ${out} (after you read ${input})`],
+    ['m2', (out) => `- **Handoff file:** \`${out}\`, then read ${input}.`],
+    ['m3', (out) => `* **Handoff file**: ${out}. Inputs: ${input}`],
+  ];
+  for (const [id, line] of forms) {
+    const out = file(`copy-${id}`);
+    assert.equal((await run(id, `Rule on the copy.\n${line(out)}`, id)).status, 0, id);
+    assert.equal(read(out), id, id);
+  }
+  assert.throws(() => readFileSync(input), /ENOENT/u, 'a path in the prose after the marker is never written');
+  const lower = file('copy-lower');
+  assert.equal((await run('m4', `handoff file: ${lower}\nRead ${input}.`, 'm4')).status, 0);
+  assert.throws(() => readFileSync(lower), /ENOENT/u, 'another spelling is no marker, and two files without one owe none');
+  const relative = file('copy-relative');
+  assert.equal((await run('m5', `Handoff file: x${relative}`, 'm5')).status, 0);
+  assert.throws(() => readFileSync(relative), /ENOENT/u, 'a marked path must be absolute, in the dispatch folder');
 });
 
 test('claimedPaths leaves out a path shortened with an ellipsis: its full form cannot be checked', () => {

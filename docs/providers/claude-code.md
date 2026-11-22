@@ -742,7 +742,12 @@ its start stays as [its page](codex.md#project-start) says.
    and a Glob's `path` and its pattern's literal folder are joined as text, as a leading `~` and the home folder are,
    so that `..` is not folded away first. Each reading matches a store by its path and by the file system's identity,
    device and inode, of it and of each folder above it, so another path to the same file or folder, such as a hard link
-   or macOS's `/System/Volumes/Data` path to a folder of the Data volume, reaches the store too.
+   or macOS's `/System/Volumes/Data` path to a folder of the Data volume, reaches the store too. On macOS each store is
+   also matched by its Data volume path, so a read of `/System/Volumes/Data`, or of a folder above it, reaches every
+   store on that volume, though the system keeps that path and no store's own path or folders pass through it. A hard
+   link to a store the plan lists as a file is refused; a hard link made beforehand to a file inside a store folder is
+   not detected, since the hook knows only each store's own identity and those of the folders above it, not the files
+   a folder holds.
    A call's folder counts as in a clone when any reading lies in one: the system's resolution, the folded spelling
    resolved, or, where the path does not resolve, as with a dangling link or a missing folder, the nearest folder
    above it that is there, with the rest of the spelling.

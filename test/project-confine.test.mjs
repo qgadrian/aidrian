@@ -895,6 +895,16 @@ test('a file-tool read of a store by another name for the same file or folder re
   assert.equal(call('LS', { path: at.work }), null, 'the clone, which holds no store');
 });
 
+// An APFS inode passes 2^53, where a plain number rounds: on macOS /bin/cat's and /bin/ls's inodes round alike.
+test('a file-tool read matches a store by its exact inode, so a file whose inode rounds alike is no store', { skip: !existsSync('/bin/cat') || !existsSync('/bin/ls') }, (t) => {
+  const at = attempt(t);
+  plan(at, { reads: [at.secret, at.keys, '/bin/cat'] });
+  const mark = { root: at.root, cwd: at.work, project: 'launch', issue: 'ENG-1', confine: 'passed' };
+  const call = (file) => confineDenial({ session_id: SESSION, tool_name: 'Read', tool_input: { file_path: file }, cwd: at.work }, { mark, env: {} });
+  assert.match(call('/bin/cat')?.reason ?? '', /hides/u, 'the store');
+  assert.equal(call('/bin/ls'), null, 'another file beside it');
+});
+
 // On macOS, the Data volume's own path to a folder is the same folder as its standard path, with another real path.
 test('a file-tool read of a store through the macOS Data volume`s path to it reaches that store', { skip: process.platform !== 'darwin' }, (t) => {
   const at = attempt(t);
@@ -908,4 +918,9 @@ test('a file-tool read of a store through the macOS Data volume`s path to it rea
     assert.match(call(tool, input)?.reason ?? '', /hides/u, `${tool} ${JSON.stringify(input)}`);
   }
   assert.equal(call('Read', { file_path: alias(path.join(at.work, 'README.md')) }), null, 'the clone by the same path');
+  // The Data volume's root and each folder above it hold every store by its Data volume path, though no standard path.
+  for (const folder of ['/System/Volumes/Data', '/System/Volumes', '/System']) {
+    assert.match(call('Grep', { pattern: 'x', path: folder })?.reason ?? '', /hides/u, `Grep ${folder}`);
+    assert.match(call('Glob', { pattern: '**/*', path: folder })?.reason ?? '', /hides/u, `Glob ${folder}`);
+  }
 });

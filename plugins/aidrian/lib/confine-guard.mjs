@@ -109,14 +109,23 @@ function realOf(file) {
   return above === file ? file : path.join(realOf(above), path.basename(file));
 }
 
-// The file system's identity of `file`, its device and inode, or null when it is not there.
+// The file system's identity of `file`, its device and inode, or null when it is not there. Read as big integers: an
+// APFS inode passes 2^53, so as a plain number two files' inodes, as /bin/cat's and /bin/ls's on macOS, can round alike.
 function identity(file) {
   try {
-    const { dev, ino } = statSync(file);
+    const { dev, ino } = statSync(file, { bigint: true });
     return `${dev}:${ino}`;
   } catch {
     return null;
   }
+}
+
+// On macOS, the Data volume's own path to `store`, when one is there, else null.
+const DATA_VOLUME = '/System/Volumes/Data';
+function dataPath(store) {
+  if (process.platform !== 'darwin' || within(DATA_VOLUME, store)) return null;
+  const alias = `${DATA_VOLUME}${store}`;
+  return exists(alias) ? alias : null;
 }
 
 // The identities of `file` and of each folder above it that is there, `file` first.
@@ -134,19 +143,25 @@ function lineage(file) {
 // folder. Each path is read both ways a tool may: folded as text first, and as the system resolves it, where a `..`
 // after a link climbs from the link's target. Each reading is matched by its path, and by the file system's identity of
 // it and the folders above it, so another path to the same file or folder, as a hard link or macOS's
-// `/System/Volumes/Data` path to a folder of the Data volume, matches too.
+// `/System/Volumes/Data` path to a folder of the Data volume, matches too. On macOS each store is also read by its Data
+// volume path, since the system keeps that path as it is: a read of the Data volume's root, or of a folder above it,
+// holds every store there, though no store's standard path or identity lineage passes through it.
 function readsStore(input, unreadable) {
   const targets = fileReadOf(input);
   if (!targets) return null;
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
-  const stores = unreadable.filter((each) => typeof each === 'string' && path.isAbsolute(each)).map((each) => realOf(each));
+  const stores = unreadable.filter((each) => typeof each === 'string' && path.isAbsolute(each)).map((each) => realOf(each))
+    .map((store) => ({ store, paths: [store, dataPath(store)].filter(Boolean) }));
   let known = null;
   for (const target of targets) {
     const spelled = typeof target === 'string' && target !== '' ? target : '.';
     const files = [realOf(path.resolve(cwd, spelled)), real(path.isAbsolute(spelled) ? spelled : `${cwd}/${spelled}`)].filter(Boolean);
-    const store = stores.find((each) => files.some((file) => within(each, file) || within(file, each)));
-    if (store) return store;
-    known ??= stores.map((each) => ({ store: each, id: identity(each), ids: lineage(each) }));
+    const store = stores.find((each) => each.paths.some((at) => files.some((file) => within(at, file) || within(file, at))));
+    if (store) return store.store;
+    known ??= stores.flatMap(({ store, paths }) => paths.map((at) => ({ store, id: identity(at), ids: lineage(at) })));
+    // The read's file or a folder above it is the store, or the read's file is the store or a folder above it.
+    // Only a store's own lineage is known, so a hard link made beforehand to a file inside a store folder is not caught:
+    // nothing scans the folder's tree for the identities of the files it holds.
     for (const file of files) {
       const [id, ids] = [identity(file), lineage(file)];
       const found = known.find((each) => (each.id !== null && ids.includes(each.id)) || (id !== null && each.ids.includes(id)));

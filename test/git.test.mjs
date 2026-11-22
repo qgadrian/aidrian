@@ -143,7 +143,11 @@ test('repositoryCheckouts lists every checkout but a gone one; [] only outside a
   symlinkSync(path.join(dir, 'src'), path.join(outside, 'link'));
   assert.equal(underGit(`${outside}/link/..`), true, 'the folder the system lands in');
   assert.equal(answer(`${outside}/link/..`, bin), null, 'a failed git through a link and `..` into a repository');
-  assert.equal(underGit(path.join(outside, 'gone', '..')), false, 'a folder that does not resolve, folded');
+  // A spelling the system cannot resolve, kept as text so `..` reaches underGit: it is folded, and its folded folders
+  // walked. Through a link out of the repository, the folded folders lie in it, but the link's target does not.
+  assert.equal(underGit(`${outside}/gone/..`), false, 'a folder that does not resolve, folded, outside');
+  symlinkSync(outside, path.join(dir, 'src', 'out'));
+  assert.equal(underGit(`${dir}/src/out/gone/..`), true, 'a folder that does not resolve, folded, not its link\'s target');
 });
 
 test('repositoryCheckouts is null when the environment points git at another repository, or keeps it from this one', (t) => {

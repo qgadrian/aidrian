@@ -15,6 +15,7 @@ import { CONFIG_ERROR, commandConfig } from './config.mjs';
 import { forgeFor } from './forges/index.mjs';
 import { checkoutRoots, cloneGitProblem, hardenedArgs, isIgnored } from './git.mjs';
 import { projectAt, worktreesDir } from './project.mjs';
+import { shellQuote } from './review/dispatch.mjs';
 import { sweepDrafts } from './review/drafts.mjs';
 import { usageLines } from './usage.mjs';
 
@@ -177,7 +178,7 @@ export function createWorktree({ branch, slug, base, fetch = false, plan = false
     const setup = run('sh', ['-c', ctx.config.git.worktrees.bootstrap], { cwd: dir });
     if (setup.status !== 0) {
       const tail = `${setup.stdout}${setup.stderr}`.trim().split('\n').slice(-OUTPUT_TAIL_LINES).join('\n');
-      throw blocked('bootstrap', `the worktree ${dir} was created, but its bootstrap failed:\n${tail}`, `cd ${JSON.stringify(dir)} && ${ctx.config.git.worktrees.bootstrap}`);
+      throw blocked('bootstrap', `the worktree ${dir} was created, but its bootstrap failed:\n${tail}`, `sh -c ${shellQuote(`command cd ${shellQuote(dir)} || exit 1; ${ctx.config.git.worktrees.bootstrap}`)}`);
     }
   }
   return { status: 'created', ...report };

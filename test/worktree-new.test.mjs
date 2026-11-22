@@ -125,15 +125,35 @@ test('a worktrees folder inside the repository that git does not ignore blocks c
 });
 
 test('a failing bootstrap keeps the worktree and reports the end of its output and the command to rerun', (t) => {
-  const { repo, blocked } = fixture(t, { version: 1, git: { worktrees: { bootstrap: 'for i in $(seq 1 30); do echo line $i; done; echo broke >&2; exit 3' } } });
+  const { repo, blocked } = fixture(t, { version: 1, git: { worktrees: { bootstrap: 'pwd > where.txt; for i in $(seq 1 30); do echo line $i; done; echo broke >&2; exit 3' } } });
   const result = blocked({ branch: 'feat/x' });
   const dir = path.join(repo, '.worktrees/x');
   assert.equal(result.phase, 'bootstrap');
   assert.match(result.reason, new RegExp(`^the worktree ${dir} was created, but its bootstrap failed:\\n`));
   assert.match(result.reason, /line 30\nbroke$/);
   assert.doesNotMatch(result.reason, /line 1\n/, 'only the end of the output');
-  assert.match(result.next, /^cd ".*\/\.worktrees\/x" && for i/);
+  assert.match(result.next, /^sh -c 'command cd '\\''.*\/\.worktrees\/x'\\'' \|\| exit 1; pwd > where\.txt; for i/, 'the rerun names the worktree in a shell of its own');
+  rmSync(path.join(dir, 'where.txt'));
+  const rerun = spawnSync('sh', ['-c', result.next], { cwd: repo, encoding: 'utf8' });
+  assert.deepEqual([rerun.status, rerun.stderr.trim()], [3, 'broke'], 'the rerun runs the whole bootstrap again, with its status');
+  const after = spawnSync('sh', ['-c', `${result.next}; pwd`], { cwd: repo, encoding: 'utf8' });
+  assert.equal(after.stdout.trim().split('\n').at(-1), realpathSync(repo), 'the rerun leaves the calling shell where it was');
+  assert.equal(readFileSync(path.join(dir, 'where.txt'), 'utf8').trim(), realpathSync(dir), 'the bootstrap reruns in the worktree');
+  assert.equal(existsSync(path.join(repo, 'where.txt')), false);
   assert.equal(existsSync(dir), true);
+});
+
+test('the bootstrap rerun line runs nothing when its worktree is gone', (t) => {
+  const { repo, blocked } = fixture(t, { version: 1, git: { worktrees: { bootstrap: 'touch ran.txt; exit 3' } } });
+  const result = blocked({ branch: 'feat/x' });
+  rmSync(path.join(repo, '.worktrees/x'), { recursive: true, force: true });
+  const rerun = spawnSync('sh', ['-c', result.next], { cwd: repo, encoding: 'utf8' });
+  assert.equal(rerun.status, 1);
+  assert.equal(existsSync(path.join(repo, 'ran.txt')), false, 'no step of the bootstrap ran in the caller');
+  // An exported shell function named cd that does nothing is passed over.
+  const shadowed = spawnSync('sh', ['-c', result.next], { cwd: repo, encoding: 'utf8', env: { ...process.env, 'BASH_FUNC_cd%%': '() { return 0; }' } });
+  assert.notEqual(shadowed.status, 3);
+  assert.equal(existsSync(path.join(repo, 'ran.txt')), false, 'a cd function does not run the bootstrap in the caller');
 });
 
 test('without an origin the base is the local default branch, and worktrees.dir moves the folder', (t) => {

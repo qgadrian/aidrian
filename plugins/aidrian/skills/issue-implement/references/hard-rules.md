@@ -52,7 +52,9 @@ Note each in the report under decided alone.
   The review-only `INTEGRATION-REVIEW` slice makes no commit.
 - **Run every task command in the worktree**, with `git -C <worktree>`, or check `git rev-parse --show-toplevel` first.
   A shell that drifted back to the main checkout gives a clean, meaningless result: a subagent's Bash folder resets between calls,
-  so every command names its worktree in the same call (`git -C <worktree>`, `cd <worktree> && …`, or the runner's root flag).
+  so every command names its worktree in the same call (`git -C <worktree> …`, `env -C <worktree> …`, or the runner's root flag), never a `cd`, which the host carries into later calls.
+  The calling shell still reads redirects and globs from where it is, so those take absolute worktree paths, and each
+  pipeline stage that reads the worktree takes its own `-C`.
 - **Check each claim.** After a dispatch, confirm with git that the claimed files changed. Never report a result no handoff or command shows.
   A test, check, or CI result quotes output a tool returned in this run; a run stopped or still running is "not finished",
   never a result. The pull request body rule and the subagent stop hook refuse a pass no finished run shows.

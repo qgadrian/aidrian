@@ -29,11 +29,11 @@ import { writeHandoff } from '../plugins/aidrian/lib/project-token.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { fileReadOf } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { childSendBacks, storeChildSendBacks } from '../plugins/aidrian/lib/child-send-backs.mjs';
-import { alive, CONFINE_PLAN, CONFINE_VERDICT, confineCheck, confineDenial, hostVarsProblem, isConfineCall, LISTENER_START, prepareConfine, runConfine, sentinelHits, SHELL_VARS, shellVarsProblem, startListener, unlistedHost, watchProblem } from '../plugins/aidrian/lib/project-confine.mjs';
+import { alive, CONFINE_PLAN, CONFINE_VERDICT, confineCheck, confineDenial, HOOK_PENDING, hostVarsProblem, isConfineCall, LISTENER_START, prepareConfine, runConfine, sentinelHits, SHELL_VARS, shellVarsProblem, startListener, unlistedHost, watchProblem } from '../plugins/aidrian/lib/project-confine.mjs';
 import { ACTIONS, projectCommand } from '../plugins/aidrian/lib/project-run-cli.mjs';
 import { projectPrompt } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { projectCommandDenial } from '../plugins/aidrian/lib/project-run-guard.mjs';
-import { REGISTRY_NAMES, registryHosts } from '../plugins/aidrian/lib/project-registries.mjs';
+import { ATTEMPT_ENV, REGISTRY_NAMES, registryHosts } from '../plugins/aidrian/lib/project-registries.mjs';
 import { SHELL_VARS as START_SHELL_VARS } from '../plugins/aidrian/lib/project-start.mjs';
 import { markFolder, markFolders, markPending, markUnattended, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { hookCall } from './hook-call.mjs';
@@ -328,6 +328,81 @@ test('the hook lets a session whose proof is owed run only the exact confine com
   assert.match(confineDenial(exact, { mark: mark('bogus'), env }).reason, /refuses every later call/u, 'a confine state that cannot be read');
   rmSync(path.join(at.folder, CONFINE_PLAN));
   assert.equal(confineDenial(bash('ls', at.work), { mark: { root: at.root, cwd: at.work, project: 'launch', issue: 'ENG-1' }, env }), null, 'no proof and no plan, as on Codex');
+});
+
+// An attempt whose shell environment holds the start's marker, and its plan, offline.
+function marked(t) {
+  const at = attempt(t);
+  offline(at, plan(at));
+  const vars = { ...at.vars, PNPM_HOME: path.join(at.cache, 'pnpm'), [ATTEMPT_ENV]: 'launch/ENG-1.1' };
+  writeFileSync(path.join(at.folder, SHELL_VARS), JSON.stringify(vars));
+  const confine = (env) => runConfine({ run: 'launch', key: 'ENG-1', cwd: at.work, env: { ...env, CLAUDE_CODE_SESSION_ID: SESSION } });
+  return { at, vars, confine, locked: () => existsSync(path.join(at.drop, CONFINE_LOCK)) };
+}
+
+test('a confine call whose shell lacks the attempt`s marker, or holds another value of it, answers a retry and takes no lock', async (t) => {
+  const { at, vars, confine, locked } = marked(t);
+  // The user's own PNPM_HOME, inherited from the host's process, is not the hook's environment; nor is an empty, an
+  // inherited, or another attempt's marker, though every cache variable is right.
+  const inherited = { PNPM_HOME: path.join(at.home, '.local', 'share', 'pnpm') };
+  for (const env of [inherited, { ...vars, [ATTEMPT_ENV]: '' }, { ...vars, [ATTEMPT_ENV]: 'launch/ENG-1.2' }, { ...vars, [ATTEMPT_ENV]: 'other/ENG-1.1' }]) {
+    const early = await confine(env);
+    assert.equal(early.exitCode, 1, JSON.stringify(env[ATTEMPT_ENV]));
+    assert.deepEqual(early.err, [`aidrian project confine: ${HOOK_PENDING}`]);
+    assert.deepEqual([locked(), existsSync(path.join(at.drop, CONFINE_VERDICT))], [false, false], 'no lock and no verdict');
+  }
+  assert.match(HOOK_PENDING, /SessionStart hook's environment yet; run the same command again in a few seconds/u);
+  // The agent gate hook still lets the session run that exact command again, and nothing else.
+  const mark = { root: at.root, cwd: at.work, project: 'launch', issue: 'ENG-1', confine: true };
+  assert.equal(confineDenial(bash('aidrian project confine launch ENG-1', at.work), { mark, env: {} }), null);
+  assert.match(confineDenial(bash('ls', at.work), { mark, env: {} }).reason, /its first call must be exactly/u);
+});
+
+test('each launch gets a marker of its own, so a launch that reuses a given-back attempt number retries on the earlier one', async (t) => {
+  const fx = runFixture(t);
+  const markerOf = (cwd) => JSON.parse(readFileSync(path.join(path.dirname(cwd), SHELL_VARS), 'utf8'))[ATTEMPT_ENV];
+  // The first launch's proof fails, so the start gives attempt 1 back and halts the run, which a person lifts.
+  let first = null;
+  const claude = fakeClaude({ dir: fx.dir, env: fx.env, confine: (made, session) => {
+    if (first !== null) return passVerdict(made, session);
+    first = markerOf(made.work);
+    return { ...passVerdict(made, session), pass: false, failed: ['write /x'] };
+  } });
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1'], { spawn: claude.run }).exitCode, 1);
+  assert.equal(fx.rows().filter((row) => row.event === 'start').at(-1).outcome, 'void');
+  assert.equal(fx.cmd(['resume', 'launch'], { session: OTHER }).exitCode, 0);
+  const result = fx.cmd(['start', 'launch', 'ENG-1'], { spawn: claude.run });
+  assert.equal(result.exitCode, 0, result.err.join('\n'));
+  const work = path.join(realpathSync(fx.state), 'runs', 'launch', 'attempts', 'ENG-1.1', 'work');
+  const second = markerOf(work);
+  for (const each of [first, second]) assert.match(each ?? '', /^launch\/ENG-1\.1\/[0-9a-f]{16}$/u);
+  assert.notEqual(first, second, 'a marker of its own');
+  // A shell that holds the earlier launch's marker, with every cache variable right, is not this launch's.
+  const vars = JSON.parse(readFileSync(path.join(path.dirname(work), SHELL_VARS), 'utf8'));
+  const stale = await runConfine({ run: 'launch', key: 'ENG-1', cwd: work, env: { ...vars, [ATTEMPT_ENV]: first } });
+  assert.deepEqual(stale.err, [`aidrian project confine: ${HOOK_PENDING}`]);
+  assert.equal(existsSync(path.join(path.dirname(work), 'drop', CONFINE_LOCK)), false, 'no lock');
+});
+
+test('a confine call whose shell holds the marker but a cache variable with another value, or none, fails the proof', async (t) => {
+  for (const off of [{ PNPM_HOME: '/elsewhere' }, { PNPM_HOME: undefined }]) {
+    const { vars, confine, locked, at } = marked(t);
+    const result = await confine({ ...vars, ...off });
+    assert.equal(result.exitCode, 1);
+    assert.ok(locked(), 'the lock');
+    const [name] = Object.keys(off);
+    assert.ok(verdictAt(at).failed.includes(`the cache variables ${name} are not in force in the session's shell`), verdictAt(at).failed.join('\n'));
+  }
+});
+
+test('a confine call whose shell holds the marker and every cache variable runs the proof', async (t) => {
+  const { vars, confine, locked, at } = marked(t);
+  const result = await confine(vars);
+  assert.doesNotMatch(result.err.join('\n'), /SessionStart hook/u);
+  assert.ok(locked(), 'the lock');
+  // Outside a sandbox the probes succeed, so this verdict fails on them alone.
+  assert.ok(verdictAt(at).probes > 0, 'the probes ran');
+  assert.ok(!verdictAt(at).failed.some((each) => /cache variables/u.test(each)), verdictAt(at).failed.join('\n'));
 });
 
 test('with no readable mark of its own, whichever pending mark it reads, a call in a clone with a plan owes the proof', (t) => {

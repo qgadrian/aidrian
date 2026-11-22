@@ -91,8 +91,14 @@ export function cacheVars(cache, env = {}, { registries = [] } = {}) {
   };
 }
 
-// Every name cacheVars may give, whatever the registries: the only names a host hands its sandboxed commands.
+// Every name cacheVars may give, whatever the registries.
 export const CACHE_VAR_NAMES = Object.freeze(Object.keys(cacheVars('/', {}, { registries: REGISTRY_NAMES })));
+// The variable the start writes beside the cache variables, `<run>/<key>.<attempt>/<random hex>`, new for each launch,
+// which marks a shell the host gave that launch's environment: the sandbox proof waits for it (project-confine.mjs
+// runConfine).
+export const ATTEMPT_ENV = 'AIDRIAN_ATTEMPT_ENV';
+// The only names a host hands its sandboxed commands: cacheVars' and the attempt's marker.
+export const SHELL_VAR_NAMES = Object.freeze([...CACHE_VAR_NAMES, ATTEMPT_ENV]);
 
 // A variable name a shell takes.
 export const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/u;

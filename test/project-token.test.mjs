@@ -369,6 +369,13 @@ test('the SessionStart hook hands GH_TOKEN, from the source the start checked, t
   assert.equal(statSync(file).mode & 0o777, 0o600);
   const seen = spawnSync('/bin/sh', ['-c', `. '${file}'; printf '%s' "$GH_TOKEN"`], { encoding: 'utf8' });
   assert.equal(seen.stdout, hookToken);
+  // The attempt's marker comes last, after the token and the record of its handoff, so a shell that sees the marker,
+  // which the sandbox proof waits for, sees that record too.
+  const lines = text(file).trim().split('\n');
+  assert.match(lines.at(-1), /^export AIDRIAN_ATTEMPT_ENV='launch\/ENG-1\.1\/[0-9a-f]{16}'$/u);
+  assert.equal(lines.filter((line) => line.startsWith('export AIDRIAN_ATTEMPT_ENV=')).length, 1, 'once');
+  assert.ok(lines.findIndex((line) => line.startsWith('export GH_TOKEN=')) < lines.length - 1, 'after the token');
+  assert.ok(statSync(path.join(path.dirname(work), 'token-handoff.json')).mtimeMs <= statSync(file).mtimeMs, 'after the handoff record');
   // And git's command-scope config: every helper of the user's and the repository's config dropped, then gh's own.
   const git = spawnSync('/bin/sh', ['-c', `. '${file}'; printf '%s|' "$GIT_CONFIG_COUNT" "$GIT_CONFIG_KEY_0" "$GIT_CONFIG_VALUE_0" "$GIT_CONFIG_KEY_1" "$GIT_CONFIG_VALUE_1"`], { encoding: 'utf8' });
   assert.equal(git.stdout, `2|credential.https://github.com.helper||credential.https://github.com.helper|!'${path.join(fx.bin, 'gh')}' auth git-credential|`);
@@ -381,8 +388,10 @@ test('the SessionStart hook hands GH_TOKEN, from the source the start checked, t
   // The same session without the claim, as one another person opened, gets no token, is told why, and leaves the
   // record of the successful handoff as it was.
   const bare = envFile('bare');
+  mkdirSync(path.dirname(bare), { recursive: true });
   const unclaimed = hook(STARTED[0].session, work, bare);
-  assert.doesNotMatch(text(bare), /GH_TOKEN|GIT_CONFIG/u);
+  assert.doesNotMatch(text(bare), /GH_TOKEN|GIT_CONFIG|AIDRIAN_ATTEMPT_ENV/u, 'no token, and no marker without the claim');
+  assert.match(text(bare), /^export npm_config_cache='/mu, 'the cache variables still');
   assert.match(unclaimed.stdout, /Forge token: not handed to this session: this session does not hold the claim the start gave the session it launched/u);
   assert.deepEqual(JSON.parse(readFileSync(path.join(path.dirname(work), 'token-handoff.json'), 'utf8')), { handed: true }, 'a stranger overwrites no verdict');
   // Another session in that clone, and the session elsewhere, get none either, even with the claim.
@@ -485,6 +494,35 @@ test('the session environment file is made owner-only before anything is written
 });
 
 
+test('a hook that cannot write the token`s handoff record hands no marker, so the proof keeps waiting', { skip: process.getuid?.() === 0 }, (t) => {
+  const fx = runFixture(t);
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  const claim = claimOf(fx);
+  const work = path.join(runsFolder(fx.state), 'launch', 'attempts', 'ENG-1.1', 'work');
+  const folder = path.dirname(work);
+  writeFileSync(path.join(fx.bin, 'gh'), `#!/bin/sh\n[ "$1 $2 $3 $4" = "auth token --hostname github.com" ] && { echo ${FIXTURE_TOKEN}; exit 0; }\nexit 1\n`, { mode: 0o755 });
+  const file = path.join(fx.root, 'session-env', 'unrecorded', 'sessionstart-hook-0.sh');
+  mkdirSync(path.dirname(file), { recursive: true });
+  // The attempt's folder takes no new file, so the handoff's record cannot be written; the fake host wrote one at its
+  // launch, which goes first.
+  rmSync(path.join(folder, 'token-handoff.json'), { force: true });
+  chmodSync(folder, 0o500);
+  let ran;
+  try {
+    ran = spawnSync(process.execPath, [SESSION_START], {
+      input: JSON.stringify({ session_id: STARTED[0].session, cwd: work, hook_event_name: 'SessionStart', source: 'startup' }),
+      env: { ...fx.env, CLAUDE_ENV_FILE: file, CLAUDE_CODE_SESSION_ID: STARTED[0].session, [CLAIM_VAR]: claim }, encoding: 'utf8',
+    });
+  } finally {
+    chmodSync(folder, 0o700);
+  }
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.throws(() => readFileSync(path.join(folder, 'token-handoff.json')), /ENOENT/u, 'no record');
+  const handed = readFileSync(file, 'utf8');
+  assert.match(handed, /^export npm_config_cache='/mu, 'the cache variables');
+  assert.doesNotMatch(handed, /AIDRIAN_ATTEMPT_ENV/u, 'no marker');
+});
+
 test('a credential that disappears after the access check fails the start: the hook records no handoff, and the proof check reads that', (t) => {
   const fx = runFixture(t);
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
@@ -502,6 +540,8 @@ test('a credential that disappears after the access check fails the start: the h
   assert.equal(ran.status, 0, ran.stderr);
   const record = JSON.parse(readFileSync(path.join(folder, 'token-handoff.json'), 'utf8'));
   assert.equal(record.handed, false);
+  // The record says not handed, and it was written: the marker still follows, last, so the proof runs and fails on it.
+  assert.match(readFileSync(file, 'utf8').trim().split('\n').at(-1), /^export AIDRIAN_ATTEMPT_ENV='launch\/ENG-1\.1\/[0-9a-f]{16}'$/u);
   assert.match(record.why, /^the forge CLI's login for github\.com, the source the start checked, gives no token now \(/u);
   assert.match(handoffProblem(folder), /^the forge token was not handed to the session: the forge CLI's login for github\.com, the source the start checked, gives no token now/u);
   // The proof check fails on it, before it reads anything else of the proof.

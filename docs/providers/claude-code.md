@@ -792,6 +792,20 @@ its start stays as [its page](codex.md#project-start) says.
    `aidrian project resume`; when the stop itself fails, the start stays for `wait` to settle, and the run halts all
    the same. The hook refuses that session every later call. The listener stops when the start ends.
 
+The host can run a session's first tool call before that session's SessionStart hooks, as seen when `claude --bg`
+claimed a prewarmed spare session, and that shell then holds none of the environment the hook hands it. So the start
+writes one more variable beside the cache variables in `shell-env.json`, `AIDRIAN_ATTEMPT_ENV`, set to
+`<run>/<key>.<attempt>/<random hex>` and new for each launch, since a start given back lets the next reuse its attempt
+number. The hook hands it over last. Where the start made a token claim, the hook hands it only after it wrote the
+token's handoff record, whether that record says handed or not, and hands none when it could not write the record or
+the session lacks the claim. Until the shell holds this launch's exact value, `aidrian project confine` exits 1 with
+`the host has not given this shell its SessionStart hook's environment yet; run the same command again in a few
+seconds`, before its lock: it writes no lock and no verdict, and the agent gate hook still lets the session run that
+exact command again. An empty, inherited, or earlier launch's marker gets that answer too, and a cache variable the
+shell inherited, such as the user's own `PNPM_HOME`, does not stand in for the marker. A marker that never comes leaves
+the start's 180-second wait to stop the session and halt the run, as above. Once the marker matches, every cache
+variable must hold the start's value, or the proof fails.
+
 A start whose proof cannot be prepared refuses with `the sandbox proof cannot be prepared`, records nothing, and leaves
 no attempt folder; [Project run](../config.md#project-run) names each cause and its fix.
 

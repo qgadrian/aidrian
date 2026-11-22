@@ -608,9 +608,10 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   base tip, or one git does not track or ignores: `the attempt's clone <path> is not started: it holds host config or
   instruction files git does not track, which no review saw: <files>`. A later attempt whose branch head on the forge
   changes such a file, as one that registered a doc in a knowledge index did, starts at the base tip instead, on the
-  same branch, and merges that head once its session runs, when its sandbox lets it write each such file; one that
-  changes a file the sandbox denies, such as `.claude/settings.json`, is refused, for a person to merge or close that
-  pull request ([Project run](config.md#project-run), which states the residual). It refuses too when a folder above the clone
+  same branch, and merges that head once its session runs, when the head is the push the run recorded for an earlier
+  attempt and its merge writes no file the sandbox denies the session; any other head, such as one another writer
+  pushed or one that changes `.claude/settings.json`, is refused, for a person to merge or close that pull request
+  ([Project run](config.md#project-run), which states the residual). It refuses too when a folder above the clone
   holds a host instruction file, such as a `CLAUDE.md`, that lies outside the main checkout, or that no review saw
   there; move it away. Only a host's own user folder itself, and the files in it that host loads as the user's own
   instructions for every session (Claude Code's `CLAUDE.md`, Codex's `AGENTS.md` and `AGENTS.override.md`), such as

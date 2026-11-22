@@ -408,7 +408,9 @@ function startPlace(context) {
   const base = forgeBase(project, found.init.repository, facade, env);
   if (base.problem) return refuse(base.problem, orphans);
   const { branch } = current.snapshot.issues.find((issue) => issue.key === key);
-  const where = { ...context, attempt: capped.attempt, tip: base.tip, branch, pushUrl: access?.pushUrl, checked: access?.token?.id ? access.token : null };
+  // The branch head the run recorded when it took in an earlier attempt's result, the latest one (project-result.mjs).
+  const recorded = current.rows.findLast((row) => row.event === 'result' && row.key === key && row.attempt < capped.attempt && typeof row.head === 'string')?.head ?? null;
+  const where = { ...context, attempt: capped.attempt, tip: base.tip, branch, recorded, pushUrl: access?.pushUrl, checked: access?.token?.id ? access.token : null };
   const room = confinedRoom(where);
   if (room.halt) return { answer: noted(haltAnswer(room.halt, { lines: orphans })) };
   if (room.problem) return refuse(room.problem, orphans);
@@ -429,10 +431,10 @@ const endedOnLimit = (found, key, attempt) => found.rows.some((row) => row.event
 // A host that would refuse the push of a session the driver `session` starts in the clone halts too (pushPreflight, in
 // the driver's permission mode, which the session takes): the clone is the folder the start passes the host, judged
 // once, and a remote or folder it cannot read answers unknown and starts. Last, the host's placeholders go in (placeHolders).
-function confinedRoom({ project, state, run, key, branch, attempt, tip, env, home, found, cap, policy, main, pushUrl, session, checked }) {
+function confinedRoom({ project, state, run, key, branch, attempt, tip, recorded, env, home, found, cap, policy, main, pushUrl, session, checked }) {
   const folders = stateWorkFolders(state, { env, home });
   if (folders.problem) return { halt: folders.problem };
-  const clone = prepareAttempt({ project, state, run, key, attempt, branch, tip, env });
+  const clone = prepareAttempt({ project, state, run, key, attempt, branch, tip, recorded, env });
   if (clone.halt) return { halt: clone.halt };
   if (clone.problem) return { problem: clone.problem };
   const trust = trustProblem(clone.work, tip) ?? ancestorProblem(clone.work, { project, tip, env }) ?? pushProblem(clone.work, found.init.repository);

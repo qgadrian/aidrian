@@ -211,6 +211,18 @@ function droppedPullProblem({ forge, repository, result, branch, since }) {
   return typeof view.headRefOid === 'string' && view.headRefOid === head ? null : `pull request #${result.pr}'s head is not the head of ${branch} on the forge`;
 }
 
+// The head of the issue's `branch` on the forge as it reads when the driver takes a result in, a full commit, or null
+// when the forge names none or cannot answer: the run's own record of the attempt's push, which a later attempt's start
+// compares the branch's head with (project-start.mjs prepareAttempt).
+function pushedHead(forge, repository, branch) {
+  try {
+    const sha = forge.branchHead(`${repository.owner}/${repository.name}`, branch, { host: repository.host });
+    return typeof sha === 'string' && /^[0-9a-f]{40}$/u.test(sha) ? sha : null;
+  } catch {
+    return null;
+  }
+}
+
 // What the drop of the running issue `key`'s latest start holds: { rows, line } to record, or null while there is none,
 // or the forge cannot answer.
 function dropRows({ run, key, start, spent, branch, forge, repository, now }) {
@@ -228,9 +240,11 @@ function dropRows({ run, key, start, spent, branch, forge, repository, now }) {
   if (pull) return bad(pull);
   const { result } = checked;
   const next = afterResult(key, start.attempt, result.status, spent);
+  const head = pushedHead(forge, repository, branch);
   return {
     rows: [{
       event: 'result', key, attempt: start.attempt, session: start.child, via: 'drop', status: result.status, pr: result.pr, verified: result.status === 'merged',
+      ...(head ? { head } : {}),
       ...(result.status === 'environment' ? { halt: haltCause({ key, attempt: start.attempt, stop: result.stop }) } : {}), at,
     }, { ...next, at }],
     line: `${result.status} -> ${next.state}${next.decision ? ` ${next.decision}` : ''}`,

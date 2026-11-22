@@ -252,10 +252,11 @@ export function stateWorkFolders(state, { env, home }) {
 // base tip `tip` on the first attempt, or from the forge on a later one when the forge has it. A later attempt whose
 // branch head on the forge differs from the tip in a host config or instruction file (project-trust.mjs isGuarded)
 // starts at the tip instead, and `prior` names that head, { sha, branch }, for the session to merge; else `prior` is
-// null. One that changes a file the session's sandbox never lets it write (sandboxDenied), such as
+// null. A head that is not `recorded`, the run's record of an earlier attempt's push, or whose change from its merge
+// base with the tip writes a file the session's sandbox never lets it write (sandboxDenied), such as
 // `.claude/settings.json`, is { problem }: only a person can take that work in. Its own config turns signing off (UNSIGNED); a clone whose commits would still sign (signingProblem) is
 // { halt }. `env` is the environment of its network calls.
-export function prepareAttempt({ project, state, run, key, attempt, branch, tip, env }) {
+export function prepareAttempt({ project, state, run, key, attempt, branch, tip, recorded = null, env }) {
   const folder = attemptFolder(state, run, key, attempt);
   const [work, gitFolder, drop, cache] = ['work', 'git', 'drop', 'cache'].map((name) => path.join(folder, name));
   const main = project.checkouts.at(-1);
@@ -305,14 +306,22 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, tip,
       const sha = head.stdout.trim();
       // A head whose host config or instruction files differ from the base tip's holds instructions no review saw, and
       // a session no Human attends never loads those at its start (trustProblem): the clone starts at the tip, and the
-      // session brings that head in once it runs (projectPrompt). Only a merge its sandbox lets land, though.
+      // session brings that head in once it runs (projectPrompt). Only the run's own recorded push, though, and only a
+      // merge its sandbox lets land: every file the head changes from its merge base with the tip.
       const changed = git(['diff', '--name-only', '--no-renames', '-z', tip, sha, '--']);
       if (changed.status !== 0) return failed('diff', changed);
-      const guarded = changed.stdout.split('\0').filter((file) => file !== '' && isGuarded(file));
-      const denied = guarded.find(sandboxDenied);
-      if (denied) return gone(`the attempt's clone ${work} is not started: the head of ${branch} on the forge, commit ${sha}, which an earlier attempt pushed, changes ${denied}, a host file the issue session's sandbox never lets it write, so it could not merge that work; a person merges that pull request, or closes it and deletes the branch, then starts again`);
-      if (guarded.length) prior = { sha, branch };
-      else from = sha;
+      if (!changed.stdout.split('\0').some((file) => file !== '' && isGuarded(file))) from = sha;
+      else {
+        const refused = (why) => gone(`the attempt's clone ${work} is not started: the head of ${branch} on the forge, commit ${sha}, changes host config or instruction files, and ${why}; a person merges that pull request, or closes it and deletes the branch, then starts again`);
+        if (sha !== recorded) return refused(`is not the commit the run recorded as an earlier attempt's push (${recorded ?? 'none'}), so another writer may have pushed it`);
+        const base = git(['merge-base', tip, sha]);
+        if (base.status !== 0) return failed('merge-base', base);
+        const written = git(['diff', '--name-only', '--no-renames', '-z', base.stdout.trim(), sha, '--']);
+        if (written.status !== 0) return failed('diff', written);
+        const denied = written.stdout.split('\0').find((file) => file !== '' && sandboxDenied(file));
+        if (denied) return refused(`changes ${denied}, a host file the issue session's sandbox never lets it write, so it could not merge that work`);
+        prior = { sha, branch };
+      }
     } else if (listed.status !== 2) return failed('ls-remote', listed);
   }
   const checkout = git(['checkout', '--quiet', '-b', branch, from]);

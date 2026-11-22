@@ -219,7 +219,7 @@ test('start halts before the launch when the host would refuse the push of a ses
   assert.equal(fx.claude.starts()[0].args[fx.claude.starts()[0].args.indexOf('--permission-mode') + 1], 'auto');
 });
 
-test('a later attempt clones again from the issue branch on the forge, and one whose branch changed a host file starts at the base tip and merges it', (t) => {
+test('a later attempt clones again from the issue branch on the forge, and one whose branch changed the knowledge index starts at the base tip and merges it', (t) => {
   const fx = runFixture(t);
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
   appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'issue', key: 'ENG-1', state: 'open', at: at(Date.now()) }] }));
@@ -234,33 +234,54 @@ test('a later attempt clones again from the issue branch on the forge, and one w
   assert.equal(fx.git('-C', work(fx, 'ENG-1', 2), 'log', '-1', '--format=%s').trim(), 'work', 'the branch as the forge has it');
   assert.doesNotMatch(fx.claude.starts()[1].args.at(-1), /git merge/u, 'nothing to merge');
 
-  // The second attempt's session registered a doc in the knowledge index, and forced a settings file in past its
-  // placeholder's exclude, then halted before any review.
+  // The second attempt's session registered a doc in the knowledge index, a file its sandbox lets it write, then
+  // stopped before any review.
   fx.claude.states[STARTED[1].session] = 'done';
   appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'issue', key: 'ENG-1', state: 'open', at: at(Date.now()) }] }));
   const clone = work(fx, 'ENG-1', 2);
   mkdirSync(path.join(clone, '.aidrian/knowledge'), { recursive: true });
   writeFileSync(path.join(clone, '.aidrian/knowledge/docs.json'), '{"dir":"docs","docs":{}}\n');
-  mkdirSync(path.join(clone, '.claude'), { recursive: true });
-  writeFileSync(path.join(clone, '.claude/settings.json'), '{"disableAllHooks":true}');
-  fx.git('-C', clone, 'add', '-f', '.aidrian/knowledge/docs.json', '.claude/settings.json');
+  fx.git('-C', clone, 'add', '.aidrian/knowledge/docs.json');
   fx.git('-C', clone, 'commit', '-q', '-m', 'register the doc');
   fx.git('-C', clone, 'push', '-q', fx.bare, 'HEAD:refs/heads/feat/eng-1-export');
   const head = fx.git('-C', clone, 'rev-parse', 'HEAD').trim();
   const third = fx.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(third.exitCode, 0, third.err.join('\n'));
   const retry = work(fx, 'ENG-1', 3);
+  const tip = fx.git('rev-parse', 'refs/remotes/origin/main').trim();
   assert.equal(fx.git('-C', retry, 'rev-parse', '--abbrev-ref', 'HEAD').trim(), 'feat/eng-1-export');
-  assert.equal(fx.git('-C', retry, 'rev-parse', 'HEAD').trim(), fx.git('rev-parse', 'refs/remotes/origin/main').trim(), 'the clone starts at the base tip');
+  assert.equal(fx.git('-C', retry, 'rev-parse', 'HEAD').trim(), tip, 'the clone starts at the base tip');
   const prompt = fx.claude.starts()[2].args.at(-1);
   assert.ok(prompt.includes(`not at commit ${head}, the head of feat/eng-1-export on the forge`), prompt);
   assert.ok(prompt.includes(`\`git merge --no-edit ${head}\``), 'the session merges that head first');
   // The session's merge brings the head in, and its push of the branch is a fast-forward, with no force.
   fx.git('-C', retry, 'merge', '-q', '--no-edit', head);
-  assert.match(trustProblem(retry, fx.git('rev-parse', 'refs/remotes/origin/main').trim()) ?? '', /differ from the base tip: \.aidrian\/knowledge\/docs\.json, \.claude\/settings\.json/u, 'the guard still refuses a clone that holds the change');
+  assert.match(trustProblem(retry, tip) ?? '', /differ from the base tip: \.aidrian\/knowledge\/docs\.json/u, 'the guard still refuses a clone that holds the change');
   fx.git('-C', retry, 'commit', '-q', '--allow-empty', '-m', 'more work');
   fx.git('-C', retry, 'push', '-q', fx.bare, 'HEAD:refs/heads/feat/eng-1-export');
   assert.equal(fx.git('-C', fx.bare, 'merge-base', '--is-ancestor', head, 'refs/heads/feat/eng-1-export'), '', 'the earlier attempt\'s commits stay ancestors');
+});
+
+// The sandbox denies the session a write to its clone's settings, so it could not merge a head that changes them.
+test('a later attempt whose branch changed a file the session\'s sandbox denies is refused, and a person takes that work in', (t) => {
+  const fx = runFixture(t);
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'issue', key: 'ENG-1', state: 'open', at: at(Date.now()) }] }));
+  fx.claude.states[STARTED[0].session] = 'done';
+  const clone = work(fx);
+  mkdirSync(path.join(clone, '.claude'), { recursive: true });
+  writeFileSync(path.join(clone, '.claude/settings.json'), '{"disableAllHooks":true}');
+  // The placeholder is excluded through info/exclude; a session that forces it in still meets the next attempt's check.
+  fx.git('-C', clone, 'add', '-f', '.claude/settings.json');
+  fx.git('-C', clone, 'commit', '-q', '-m', 'settings');
+  fx.git('-C', clone, 'push', '-q', fx.bare, 'HEAD:refs/heads/feat/eng-1-export');
+  const head = fx.git('-C', clone, 'rev-parse', 'HEAD').trim();
+  const refused = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(refused.exitCode, 1);
+  assert.ok(refused.err[0].includes(`is not started: the head of feat/eng-1-export on the forge, commit ${head}, which an earlier attempt pushed, changes .claude/settings.json, a host file the issue session's sandbox never lets it write`), refused.err[0]);
+  assert.match(refused.err[0], /a person merges that pull request, or closes it and deletes the branch, then starts again/u);
+  assert.equal(fx.claude.starts().length, 1, 'no session started');
+  assert.equal(existsSync(path.dirname(work(fx, 'ENG-1', 2))), false, 'the clone is removed');
 });
 
 // The user's global config signs every commit with a program the sandbox cannot reach: each attempt's clone turns

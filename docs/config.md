@@ -1962,9 +1962,14 @@ attempt's clone pushes to, read before its session starts, and a clone that push
 takes, halts the start too, before the host starts anything ([the push preflight](handoff.md#the-push-preflight)). Every start is confined to a fresh
 clone under its host's sandbox, and a host that is not halts the start. A later attempt's clone checks out the issue's
 branch as the forge holds it, unless that head differs from the base tip in a host config or instruction file, such as
-a knowledge index a docs issue changed, which no review saw: then the clone starts at the base tip, on the same branch,
-and the session's task names that head's full commit and has it run `git merge --no-edit <commit>` before any other
-work, so it loads only reviewed instructions at its start, and its push of the branch stays a fast-forward
+a knowledge index a docs issue changed, which no review saw. Then, when the issue session's sandbox lets it write every
+such file, the clone starts at the base tip, on the same branch, and the session's task names that head's full commit
+and has it run `git merge --no-edit <commit>` before any other work, so it loads only reviewed instructions at its
+start, and its push of the branch stays a fast-forward. When one is a file the sandbox denies the session, such as
+`.claude/settings.json` or a file under `.claude/skills/`, the start refuses, naming the commit and the file: a person
+merges that pull request, or closes it and deletes the branch. This is an accepted residual: the head was written by
+this run's own unattended session, and in any attempt the knowledge commands read the index that session edits, so the
+start guard covers only what loads before the session's first call, and a retry adds no new author
 ([A project run](handoff.md#a-project-run)). Each attempt's clone commits unsigned: the
 start sets `commit.gpgsign` and `tag.gpgsign` to `false` in the clone's own git config, on every attempt, and never in
 the user's global or system config. The sandbox hides the signing keys (`~/.gnupg` and `~/.ssh`), so a commit the

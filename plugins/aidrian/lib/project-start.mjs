@@ -14,7 +14,8 @@
 //     alternates, `drop/`, where the session hands its result over (lib/project-result.mjs), and `cache/`, where its
 //     package managers keep their caches (lib/project-registries.mjs). The branch comes from
 //     the forge: the first attempt cuts it from the base tip, a later one fetches it, and starts at the base tip when
-//     that head changes a host config or instruction file, which its session then merges. The main repository never fetches from the clone, the gate never runs git
+//     that head changes a host config or instruction file, which its session then merges, unless its sandbox denies
+//     the session one of those files, when the start refuses. The main repository never fetches from the clone, the gate never runs git
 //     in a clone a session had, and the driver removes an attempt's folder once its session ended (sweepAttempts).
 //     The session may also write the state work folders, plans, reviews, tmp, and dispatch, each a plain folder of the
 //     user directly in the state folder that holds no guarded folder and lies in none.
@@ -36,6 +37,7 @@ import { NPM_CONFIGS, SHELL_VAR_NAMES, varsProblem } from './project-registries.
 import { DROP_FILE, plainFolderProblem } from './project-result.mjs';
 import { pinnedRepository, runFolder, runsFolder } from './project-run.mjs';
 import { isGuarded } from './project-trust.mjs';
+import { nestedProtected, protectedPaths } from './hosts/index.mjs';
 import { latestStart, ownAttemptFolder, startRows } from './project-run-guard.mjs';
 import { signoffFolders } from './review/signoff-store.mjs';
 import { archiveStops } from './stop-history.mjs';
@@ -250,7 +252,8 @@ export function stateWorkFolders(state, { env, home }) {
 // base tip `tip` on the first attempt, or from the forge on a later one when the forge has it. A later attempt whose
 // branch head on the forge differs from the tip in a host config or instruction file (project-trust.mjs isGuarded)
 // starts at the tip instead, and `prior` names that head, { sha, branch }, for the session to merge; else `prior` is
-// null. Its own config turns signing off (UNSIGNED); a clone whose commits would still sign (signingProblem) is
+// null. One that changes a file the session's sandbox never lets it write (sandboxDenied), such as
+// `.claude/settings.json`, is { problem }: only a person can take that work in. Its own config turns signing off (UNSIGNED); a clone whose commits would still sign (signingProblem) is
 // { halt }. `env` is the environment of its network calls.
 export function prepareAttempt({ project, state, run, key, attempt, branch, tip, env }) {
   const folder = attemptFolder(state, run, key, attempt);
@@ -302,10 +305,13 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, tip,
       const sha = head.stdout.trim();
       // A head whose host config or instruction files differ from the base tip's holds instructions no review saw, and
       // a session no Human attends never loads those at its start (trustProblem): the clone starts at the tip, and the
-      // session brings that head in once it runs (projectPrompt).
+      // session brings that head in once it runs (projectPrompt). Only a merge its sandbox lets land, though.
       const changed = git(['diff', '--name-only', '--no-renames', '-z', tip, sha, '--']);
       if (changed.status !== 0) return failed('diff', changed);
-      if (changed.stdout.split('\0').some((file) => file !== '' && isGuarded(file))) prior = { sha, branch };
+      const guarded = changed.stdout.split('\0').filter((file) => file !== '' && isGuarded(file));
+      const denied = guarded.find(sandboxDenied);
+      if (denied) return gone(`the attempt's clone ${work} is not started: the head of ${branch} on the forge, commit ${sha}, which an earlier attempt pushed, changes ${denied}, a host file the issue session's sandbox never lets it write, so it could not merge that work; a person merges that pull request, or closes it and deletes the branch, then starts again`);
+      if (guarded.length) prior = { sha, branch };
       else from = sha;
     } else if (listed.status !== 2) return failed('ls-remote', listed);
   }
@@ -316,6 +322,15 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, tip,
   if (signing) return { halt: gone(`the attempt's clone ${work} is not started: ${signing}`).problem };
   const plain = plainFolderProblem(drop) ?? plainFolderProblem(cache);
   return plain ? gone(plain) : { folder, work, git: gitFolder, drop, cache, prior };
+}
+
+// Whether the session of an attempt's clone may never write the path `file`, from the clone's root: a host file a
+// host's sandbox and the agent gate hook deny it there (hosts/index.mjs protectedPaths and nestedProtected, the lists
+// lib/unattended-write.mjs and the sandbox's denyWrite are made from), compared in lower case as a disk that folds case
+// reads it. A merge of a head that changes one cannot land in the clone.
+function sandboxDenied(file) {
+  const lower = file.toLowerCase();
+  return protectedPaths().some((each) => lower === each.toLowerCase() || lower.startsWith(`${each.toLowerCase()}/`)) || nestedProtected(file.split('/'));
 }
 
 // The signing keys each attempt's clone turns off, in its own config and nowhere else, so the user's global and system

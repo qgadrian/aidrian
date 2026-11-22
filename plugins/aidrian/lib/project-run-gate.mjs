@@ -57,7 +57,8 @@ import { detectHost, sessionIdentity } from './hosts/index.mjs';
 import { branchPolicies, defaultBranch, soloOn } from './pr-auto-merge.mjs';
 import { chainEnded, lingerLine, lingerProblem, notStopped, settleLingering, stopChain } from './project-linger.mjs';
 import { checkedLimit, limitEndRows, limitRecorded, pausedTime, pauseOf, pauseRow, recordedPauseRuns } from './project-limit.mjs';
-import { closeVerdict, confineCheck, hookPending, prepareConfine } from './project-confine.mjs';
+import { CONFINE_LOCK, closeVerdict, confineCheck, prepareConfine } from './project-confine.mjs';
+import { exists } from './confine-guard.mjs';
 import { cacheVars, registryHosts } from './project-registries.mjs';
 import { CLAIM_VAR, newClaim, writeClaim } from './project-token.mjs';
 import { afterFailure, cleanText, CAPS, DROP_FILE, ingestDrops, RESULT_CAP, validateResult, writeDrop } from './project-result.mjs';
@@ -512,11 +513,14 @@ function launchStart(context, place) {
     }
   }
   const tags = { project: run, issue: key, ...(proving ? { confine: true } : {}) };
-  // The session whose proof was last read, so a failed or missing proof is filed in its mark.
+  // The session whose proof was last read, so a failed or missing proof is filed in its mark; and whether the proof had
+  // taken no lock at that read, the host's last before it stops a session whose proof timed out.
   let proved = null;
+  let unlocked = false;
   const fileProof = (own, result) => safely(() => markUnattended(own, { root: context.main, cwd: resolvedPath(cwd) ?? cwd, env, tags: { ...tags, confine: result } }));
   const confined = proving ? (own) => {
     proved = own;
+    unlocked = !exists(path.join(drop, CONFINE_LOCK));
     const answer = confineCheck({ folder, session: own, prints: confine.prints, loopback });
     if (answer === null) return null;
     const filed = fileProof(own, answer.pass ? 'passed' : 'failed');
@@ -549,9 +553,10 @@ function launchStart(context, place) {
           mcp: context.policy.mcpServers, localBinding, home, platform: context.platform, beacon: (id) => readBeacon(id, { env, home, since }), confined,
         });
         // A failed proof halts the run whatever came of stopping its session (startLines), but for a sandbox proof that
-        // never ran because the host never ran the session's SessionStart hook (hookPending): a missing hook, no breach.
+        // timed out with no lock taken: it never ran, as when the host never gave the shell its SessionStart hook's
+        // environment, and confine only answered to try again. A missing hook is no breach.
         if (started?.proof) proof = started.problem;
-        if (started?.proof === 'confine' && proving) raced = hookPending(folder);
+        raced = proving && started?.proof === 'timeout' && unlocked;
         return started;
       },
       stop: (id) => cap.stop({ id, env, run: spawn }),
@@ -666,9 +671,11 @@ export function forgeBase(project, repository, forge, env = process.env) {
 // The one settling append of a start written ahead, and the start's answer. A start that held its session records it
 // `started`; one whose outcome is unknown, or that could not be held or stopped, stays `uncertain` or `unheld` for
 // settleOrphans; any other gives its attempt back (`void`) and opens the issue again, and one whose proof failed also
-// halts the run. One whose sandbox proof never ran, `raced`, since the host never ran the session's SessionStart hook,
-// halts nothing: given back, it answers RETRY_EXIT, so the driver's next start tries again, and its row (`raced`) keeps
-// its attempt number and counts toward every cap. A start that never got as far as its write-ahead row records nothing.
+// halts the run. One whose sandbox proof timed out with no lock taken, `raced`, halts nothing: its row (`raced`) keeps
+// its attempt number and counts toward every cap, and it answers RETRY_EXIT, so the driver's next start tries again,
+// once `wait` stopped a session the start could not; given back on the issue's last attempt, it parks the issue as any
+// failed attempt does (afterFailure) and answers `parked`. A start that never got as far as its write-ahead row records
+// nothing.
 function startLines({ result, state, run, key, attempt, session, base, proof, raced = false, cap, orphans, now }) {
   const at = iso(now);
   let rows = [];
@@ -681,14 +688,23 @@ function startLines({ result, state, run, key, attempt, session, base, proof, ra
   } else if (result.intended) {
     rows = [{ ...base, at, outcome: 'void', ...marked }, { event: 'issue', key, state: 'open', at }, ...halt];
   }
-  const settle = (fresh) => (driverOf(fresh).session === session ? { rows } : { problem: 'custody of the run moved while the session started' });
+  const settle = (fresh) => {
+    if (driverOf(fresh).session !== session) return { problem: 'custody of the run moved while the session started' };
+    // A raced attempt given back counts as spent, so its last one parks the issue, as settleOrphans does.
+    if (raced && rows[0]?.outcome === 'void') rows[1] = { ...afterFailure(key, spentAttempts(fresh, key)), at };
+    return { rows };
+  };
   const written = rows.length ? safely(() => appendToRun(state, run, settle)) : null;
   if (rows.length && (!written || written.problem)) return { exitCode: 1, out: orphans, err: [`aidrian project start: the session's start could not be recorded in the ledger: ${written?.problem ?? 'the write failed'}`] };
   if (result.outcome === 'started') {
     const look = cap.attachLine?.({ id: result.marker.id, name: result.marker.name }) ?? `its id is ${result.marker.id}`;
     return { exitCode: 0, out: [...orphans, `started ${key} attempt ${attempt} session ${result.marker.id}`, `clone: ${base.cwd}`, `branch: ${base.branch}`, `say: The issue ${key} runs in the background session ${result.marker.id}: ${look}.`], err: [] };
   }
-  if (raced && rows[0]?.outcome === 'void') return retryAnswer('start', `the start of ${key} attempt ${attempt} gave its attempt back: the host ran the session's first tool call before its SessionStart hook, which never ran, so its sandbox proof never ran (${proof}); a start again tries a new session`, orphans);
+  if (raced) {
+    const why = `the start of ${key} attempt ${attempt} gave its attempt back: its sandbox proof never ran, as when the host runs the session's first tool call before its SessionStart hook (${result.problem ?? proof})`;
+    if (rows[1]?.state === 'parked') return { exitCode: 1, out: [...orphans, `parked ${key} attempts: ${why}; it was the issue's last attempt`], err: [`aidrian project start: parked ${key}: ${why}`] };
+    return retryAnswer('start', `${why}; ${rows[0]?.outcome === 'void' ? 'a start again tries a new session' : `\`aidrian project wait ${run}\` stops that session, then a start again tries a new one`}`, orphans);
+  }
   if (proof && !raced && result.outcome !== 'started') return haltAnswer(`the start of ${key} attempt ${attempt} failed its proof: ${proof}`, { lines: orphans, lift: RESUME(run) });
   const why = {
     refused: result.busy ? `the start claim of this session is busy (${result.busy}); a start from it may still run` : `this session's earlier start, ${result.earlier?.id}, has not ended as the host lists it`,

@@ -458,7 +458,7 @@ function proveHooks({ started, identify, beacon, confined, env, run, wait, claud
 }
 
 // Waits for the sandbox proof of the session `own`, which `started` named (proveHooks): `started` once `confined`
-// confirms it, else what `stopped` answers for the proof `confine`.
+// confirms it, else what `stopped` answers for the proof `confine` when it failed, or `timeout` when none came in time.
 function proveSandbox({ started, own, confined, wait, stopped }) {
   for (let step = 0; step <= CONFINE_WAIT / BEACON_STEP; step += 1) {
     if (step > 0) wait(BEACON_STEP);
@@ -471,7 +471,7 @@ function proveSandbox({ started, own, confined, wait, stopped }) {
     if (answer === true) return started;
     if (answer && typeof answer.problem === 'string') return stopped(`the session's sandbox proof failed: ${answer.problem}`, 'confine');
   }
-  return stopped(`the session did not prove its sandbox with \`aidrian project confine\` within ${CONFINE_WAIT / 1000} seconds of its first tool call`, 'confine');
+  return stopped(`the session did not prove its sandbox with \`aidrian project confine\` within ${CONFINE_WAIT / 1000} seconds of its first tool call`, 'timeout');
 }
 
 // The background sessions `claude agents --json --all` lists in the folder `cwd` under the exact name `name`, as [{ id,

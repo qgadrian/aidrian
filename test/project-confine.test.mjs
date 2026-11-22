@@ -29,7 +29,7 @@ import { writeClaim, writeHandoff } from '../plugins/aidrian/lib/project-token.m
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { fileReadOf } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { childSendBacks, storeChildSendBacks } from '../plugins/aidrian/lib/child-send-backs.mjs';
-import { alive, CONFINE_PLAN, CONFINE_VERDICT, confineCheck, confineDenial, HOOK_PENDING, hookPending, hostVarsProblem, isConfineCall, LISTENER_START, prepareConfine, runConfine, sentinelHits, SHELL_VARS, shellVarsProblem, startListener, unlistedHost, watchProblem } from '../plugins/aidrian/lib/project-confine.mjs';
+import { alive, CONFINE_PLAN, CONFINE_VERDICT, confineCheck, confineDenial, HOOK_PENDING, hostVarsProblem, isConfineCall, LISTENER_START, prepareConfine, runConfine, sentinelHits, SHELL_VARS, shellVarsProblem, startListener, unlistedHost, watchProblem } from '../plugins/aidrian/lib/project-confine.mjs';
 import { ACTIONS, projectCommand } from '../plugins/aidrian/lib/project-run-cli.mjs';
 import { projectPrompt } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { projectCommandDenial } from '../plugins/aidrian/lib/project-run-guard.mjs';
@@ -141,7 +141,8 @@ test('run outside any sandbox, the proof finds every probe succeed, undoes each,
   const planText = readFileSync(path.join(at.folder, CONFINE_PLAN), 'utf8');
   for (const each of ['id_test', 's3cret', ...Object.values(made.prints)]) assert.ok(!planText.includes(each), each);
   const config = readFileSync(path.join(at.git, 'config'), 'utf8');
-  const result = await runConfine({ run: 'launch', key: 'ENG-1', cwd: at.work, env: { CLAUDE_CODE_SESSION_ID: SESSION } });
+  // One cache variable with another value: the shell has the hook's environment, and it is not the start's.
+  const result = await runConfine({ run: 'launch', key: 'ENG-1', cwd: at.work, env: { CLAUDE_CODE_SESSION_ID: SESSION, GOFLAGS: '-mod=mod' } });
   assert.equal(result.exitCode, 1);
   assert.match(result.out[0], /^halt the sandbox does not hold for this session/u);
   const verdict = verdictAt(at);
@@ -170,7 +171,7 @@ test('run outside any sandbox, the proof finds every probe succeed, undoes each,
   assert.match(confineCheck({ folder: at.folder, session: SESSION, prints: made.prints }).problem, /reached the localhost listener/u);
   assert.equal(shellVarsProblem(at.folder, at.vars), null);
   // The proof runs once a start.
-  assert.match((await runConfine({ run: 'launch', key: 'ENG-1', cwd: at.work, env: {} })).err.join('\n'), /ran already, and runs once/u);
+  assert.match((await runConfine({ run: 'launch', key: 'ENG-1', cwd: at.work, env: at.vars })).err.join('\n'), /ran already, and runs once/u);
 });
 
 test('on Linux the host masks a hidden store with an empty one: a read that opens it and sees nothing is refused', async (t) => {
@@ -330,36 +331,40 @@ test('the hook lets a session whose proof is owed run only the exact confine com
   assert.equal(confineDenial(bash('ls', at.work), { mark: { root: at.root, cwd: at.work, project: 'launch', issue: 'ENG-1' }, env }), null, 'no proof and no plan, as on Codex');
 });
 
-test('a confine call before the session`s SessionStart hook ran answers a retry and takes no lock; after the hook, the same call runs the proof', async (t) => {
+test('a confine call whose shell has none of the cache variables answers a retry and takes no lock, though the hook wrote its handoff', async (t) => {
   const at = attempt(t);
   offline(at, plan(at));
   const [lock, verdict] = [path.join(at.drop, CONFINE_LOCK), path.join(at.drop, CONFINE_VERDICT)];
-  const confine = () => runConfine({ run: 'launch', key: 'ENG-1', cwd: at.work, env: { ...at.vars, CLAUDE_CODE_SESSION_ID: SESSION } });
-  // A start that hands its session no forge token writes no claim: nothing waits on the hook, as before.
-  assert.equal(hookPending(at.folder), false);
-  // The start's claim, with no handoff record yet: the host ran the session's first call before its SessionStart hook.
+  const confine = (vars) => runConfine({ run: 'launch', key: 'ENG-1', cwd: at.work, env: { ...vars, CLAUDE_CODE_SESSION_ID: SESSION } });
+  // The hook ran and recorded its handoff, but the host gave this shell, loaded before, none of its environment.
   assert.equal(writeClaim(at.folder, { claim: 'c'.repeat(48), source: 'login', token: 'd'.repeat(64) }), null);
-  assert.equal(hookPending(at.folder), true);
-  const early = await confine();
+  writeHandoff(at.folder, { handed: true });
+  const early = await confine({});
   assert.equal(early.exitCode, 1);
   assert.deepEqual(early.err, [`aidrian project confine: ${HOOK_PENDING}`]);
-  assert.match(HOOK_PENDING, /has not run this session's SessionStart hook yet; run the same command again in a few seconds/u);
+  assert.match(HOOK_PENDING, /SessionStart hook's environment yet; run the same command again in a few seconds/u);
   assert.deepEqual([existsSync(lock), existsSync(verdict)], [false, false], 'no lock and no verdict');
   // The agent gate hook still lets the session run that exact command again, and nothing else.
   const mark = { root: at.root, cwd: at.work, project: 'launch', issue: 'ENG-1', confine: true };
   assert.equal(confineDenial(bash('aidrian project confine launch ENG-1', at.work), { mark, env: {} }), null);
   assert.match(confineDenial(bash('ls', at.work), { mark, env: {} }).reason, /its first call must be exactly/u);
-  // Once the hook recorded its handoff, the same call takes the lock and runs every probe, with the cache variables in
-  // force; outside a sandbox the probes succeed, so this verdict fails on them alone.
-  writeHandoff(at.folder, { handed: true });
-  assert.equal(hookPending(at.folder), false);
-  const ran = await confine();
+  // With the variables in force, the same call takes the lock and runs every probe; outside a sandbox the probes
+  // succeed, so this verdict fails on them alone.
+  const ran = await confine(at.vars);
   assert.doesNotMatch(ran.err.join('\n'), /SessionStart hook/u);
   assert.ok(existsSync(lock), 'the lock');
   const written = verdictAt(at);
   assert.ok(written.probes > 0, 'the probes ran');
   assert.ok(!written.failed.some((each) => /cache variables/u.test(each)), written.failed.join('\n'));
-  assert.equal(hookPending(at.folder), false);
+});
+
+test('a confine call whose shell has some cache variable, with another value, fails the proof as before', async (t) => {
+  const at = attempt(t);
+  offline(at, plan(at));
+  const result = await runConfine({ run: 'launch', key: 'ENG-1', cwd: at.work, env: { npm_config_cache: '/elsewhere' } });
+  assert.equal(result.exitCode, 1);
+  assert.ok(existsSync(path.join(at.drop, CONFINE_LOCK)), 'the lock');
+  assert.ok(verdictAt(at).failed.includes('the cache variables npm_config_cache, GOFLAGS are not in force in the session\'s shell'), verdictAt(at).failed.join('\n'));
 });
 
 test('with no readable mark of its own, whichever pending mark it reads, a call in a clone with a plan owes the proof', (t) => {
@@ -589,7 +594,10 @@ test('a start writes the plan, holds the session once its proof passed, and file
 test('a start whose proof failed, or never came, stops the session, files the failure in its mark, and halts the run', (t) => {
   for (const [confine, cause] of [
     [(made, session) => ({ ...passVerdict(made, session), pass: false, failed: ['write /user-home/x'] }), /failed its proof: the session's sandbox proof failed: write \/user-home\/x/u],
-    [null, /did not prove its sandbox with `aidrian project confine` within 180 seconds/u],
+    // A plan the start cannot read fails at its first read, before any wait runs out: it halts, with no lock taken.
+    [(made) => void rmSync(path.join(made.folder, CONFINE_PLAN)), /failed its proof: the session's sandbox proof failed: the sandbox proof's plan in .* cannot be read/u],
+    // A proof that took its lock and wrote no verdict in time: it ran, so it halts.
+    [(made) => void writeFileSync(path.join(made.drop, CONFINE_LOCK), ''), /did not prove its sandbox with `aidrian project confine` within 180 seconds/u],
     [(made, session) => ({ ...passVerdict(made, session), nonce: 'f'.repeat(16) }), /not this start's/u],
   ]) {
     const fx = runFixture(t);
@@ -615,30 +623,43 @@ test('a failed proof whose session could not be stopped still halts the run, and
   assert.match(fx.cmd(['start', 'launch', 'ENG-1']).out[0], /^halt the run is halted/u);
 });
 
-test('a start whose session`s SessionStart hook never ran gives its attempt back and exits 75, with no halt row', (t) => {
+test('a start whose sandbox proof timed out with no lock gives its attempt back and exits 75, with no halt row; the last attempt parks the issue', (t) => {
   const fx = runFixture(t);
-  // The session runs its first call, the beacon comes, and the hook never records a handoff: confine only retries.
-  const claude = fakeClaude({ dir: fx.dir, env: fx.env, confine: null, handoff: false });
+  // The session runs its first call and the beacon comes, but its proof never takes its lock: confine only retried.
+  const claude = fakeClaude({ dir: fx.dir, env: fx.env, confine: null });
   const result = fx.cmd(['start', 'launch', 'ENG-1'], { spawn: claude.run });
   assert.equal(result.exitCode, 75, [...result.out, ...result.err].join('\n'));
-  assert.match(result.out.find((line) => line.startsWith('retry: ')) ?? '', /^retry: the start of ENG-1 attempt 1 gave its attempt back: the host ran the session's first tool call before its SessionStart hook, which never ran, so its sandbox proof never ran \(.*within 180 seconds/u);
+  assert.match(result.out.find((line) => line.startsWith('retry: ')) ?? '', /^retry: the start of ENG-1 attempt 1 gave its attempt back: its sandbox proof never ran, as when the host runs the session's first tool call before its SessionStart hook \(.*within 180 seconds.*; the session was stopped\); a start again tries a new session$/u);
   const rows = fx.rows();
   assert.deepEqual(rows.filter((row) => row.event === 'halt'), [], 'no halt row');
   assert.deepEqual([rows.at(-2).event, rows.at(-2).outcome, rows.at(-2).proof, rows.at(-2).raced, rows.at(-1).event, rows.at(-1).state], ['start', 'void', true, true, 'issue', 'open']);
   assert.deepEqual(claude.calls.filter((call) => call.args[0] === 'stop').map((call) => call.args[1]), [STARTED[0].id], 'the session was stopped');
   assert.equal(readUnattendedMark(STARTED[0].session, { env: fx.env, home: fx.home }).confine, 'failed');
-  assert.doesNotMatch(fx.cmd(['next', 'launch']).out[0] ?? '', /^halted/u);
-  // Each such start keeps its attempt number and counts toward the caps, so a host that never runs the hook stops at the
-  // issue's cap, unhalted.
-  for (const tries of [2, 3]) {
-    const again = fx.cmd(['start', 'launch', 'ENG-1'], { spawn: claude.run });
-    assert.equal(again.exitCode, 75, `start ${tries}`);
-    assert.match(again.out.find((line) => line.startsWith('retry: ')) ?? '', new RegExp(`attempt ${tries} gave its attempt back`, 'u'));
-  }
-  const capped = fx.cmd(['start', 'launch', 'ENG-1'], { spawn: claude.run });
-  assert.equal(capped.exitCode, 1);
-  assert.match(capped.err.join('\n'), /the issue ENG-1 was started 3 times, and an issue is started at most 3/u);
+  assert.match(fx.cmd(['next', 'launch']).out.join('\n'), /^next ENG-1 /mu, 'the issue is open again, and nothing halted');
+  // Each such start keeps its attempt number and counts toward the caps: the second retries, and the third, the issue's
+  // last attempt, parks it, so `next` moves on to the next issue.
+  const second = fx.cmd(['start', 'launch', 'ENG-1'], { spawn: claude.run });
+  assert.equal(second.exitCode, 75);
+  assert.match(second.out.find((line) => line.startsWith('retry: ')) ?? '', /attempt 2 gave its attempt back/u);
+  const third = fx.cmd(['start', 'launch', 'ENG-1'], { spawn: claude.run });
+  assert.equal(third.exitCode, 1);
+  assert.match(third.out.find((line) => line.startsWith('parked ')) ?? '', /^parked ENG-1 attempts: the start of ENG-1 attempt 3 gave its attempt back: .*it was the issue's last attempt$/u);
+  assert.deepEqual([fx.rows().at(-1).event, fx.rows().at(-1).state, fx.rows().at(-1).decision], ['issue', 'parked', 'attempts']);
+  const next = fx.cmd(['next', 'launch']).out.join('\n');
+  assert.match(next, /^next ENG-4 /mu, next);
+  assert.doesNotMatch(next, /^next ENG-1 /mu);
   assert.deepEqual(fx.rows().filter((row) => row.event === 'halt'), [], 'still no halt row');
+});
+
+test('a raced start whose session could not be stopped keeps the session for wait, names it, halts nothing, and exits 75', (t) => {
+  const fx = runFixture(t);
+  const claude = fakeClaude({ dir: fx.dir, env: fx.env, stoppable: false, confine: null });
+  const result = fx.cmd(['start', 'launch', 'ENG-1'], { spawn: claude.run });
+  assert.equal(result.exitCode, 75, [...result.out, ...result.err].join('\n'));
+  assert.match(result.out.find((line) => line.startsWith('retry: ')) ?? '', new RegExp(`its SessionStart hook \\(.*within 180 seconds.*, and the session ${STARTED[0].id} could not be stopped\\); \`aidrian project wait launch\` stops that session, then a start again tries a new one$`, 'u'));
+  const rows = fx.rows();
+  assert.deepEqual(rows.filter((row) => row.event === 'halt'), [], 'no halt row');
+  assert.deepEqual([rows.at(-1).event, rows.at(-1).outcome, rows.at(-1).stopped, rows.at(-1).proof, rows.at(-1).raced], ['start', 'uncertain', false, true, true]);
 });
 
 test('a start whose proof cannot be prepared refuses, leaves no attempt folder, and records nothing', (t) => {

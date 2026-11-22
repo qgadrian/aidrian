@@ -36,7 +36,7 @@ import { CONFINE_LOCK, CONFINE_PLAN, CONFINE_VERDICT, exists, SHELL_VARS, VERDIC
 import { pauseSync, readOnce, readSmallJson } from './fs.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { REGISTRY_NAMES, registryHosts } from './project-registries.mjs';
-import { handoffPending, handoffProblem } from './project-token.mjs';
+import { handoffProblem } from './project-token.mjs';
 import { markFolders } from './unattended-mark.mjs';
 
 export { CONFINE_LOCK, CONFINE_PLAN, CONFINE_VERDICT, SHELL_VARS };
@@ -397,14 +397,10 @@ export function shellVarsProblem(folder, env) {
   return off.length ? `the cache variables ${off.join(', ')} are not in force in the session's shell` : null;
 }
 
-// What the proof answers while the start's token claim has no handoff record (project-token.mjs handoffPending): the
-// host ran the session's first call before its SessionStart hook, which hands the shell its variables and its token.
-export const HOOK_PENDING = 'the host has not run this session\'s SessionStart hook yet; run the same command again in a few seconds';
-
-// Whether the start of the attempt in `folder` waited only on its session's SessionStart hook: the token claim with no
-// handoff record, and no lock and no verdict in the drop folder, so no probe ran. While the proof is owed the agent gate
-// hook lets the session run nothing but the confine command, so nothing in the session made it look so.
-export const hookPending = (folder) => handoffPending(folder) && !exists(path.join(folder, 'drop', CONFINE_LOCK)) && !exists(path.join(folder, 'drop', CONFINE_VERDICT));
+// What the proof answers while none of the cache variables the start wrote is in the shell's environment at all: the
+// host has not applied the session's SessionStart hook, which hands the shell those variables and the forge token, to
+// this shell yet, as when it runs the session's first call before that hook. Some there with another value still fail.
+export const HOOK_PENDING = 'the host has not given this shell its SessionStart hook\'s environment yet; run the same command again in a few seconds';
 
 // `aidrian project confine RUN ISSUE`, from the session's sandboxed shell in its clone `cwd`, with `env` its
 // environment: every probe, then the verdict in the drop folder, once a start (CONFINE_LOCK). { exitCode, out, err }: 0
@@ -417,7 +413,8 @@ export async function runConfine({ run, key, cwd = process.cwd(), env = process.
   const plan = readSmallJson(path.join(attempt.folder, CONFINE_PLAN));
   if (!plan || plan.run !== run || plan.key !== key || plan.attempt !== attempt.attempt || !NONCE.test(plan.nonce ?? '')) return refuse(`the start wrote no plan for the sandbox proof of ${key} attempt ${attempt.attempt}`);
   // Before the lock: the proof runs once, and a shell the hook has not given its variables yet would fail it.
-  if (handoffPending(attempt.folder)) return refuse(HOOK_PENDING);
+  const expected = Object.keys(readSmallJson(path.join(attempt.folder, SHELL_VARS)) ?? {});
+  if (expected.length && expected.every((name) => env[name] === undefined)) return refuse(HOOK_PENDING);
   try {
     closeSync(openSync(path.join(attempt.drop, CONFINE_LOCK), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NO_FOLLOW, 0o600));
   } catch (error) {

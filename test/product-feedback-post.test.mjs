@@ -85,6 +85,22 @@ test('a subagent is refused a held post, whatever the transcript holds', (t) => 
   }
 });
 
+test('a cd right before the post counts after a heredoc, and a project it cannot read is never called outside the team', (t) => {
+  // This machine keeps product feedback, so a post in a folder the rule cannot read is held.
+  mkdirSync(path.join(process.env.XDG_STATE_HOME, 'aidrian/projects/other-0123abcd/product-feedback'), { recursive: true });
+  t.after(() => rmSync(path.join(process.env.XDG_STATE_HOME, 'aidrian'), { recursive: true, force: true }));
+  const member = project(t, { limited: false });
+  const elsewhere = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-post-elsewhere-')));
+  t.after(() => rmSync(elsewhere, { recursive: true, force: true }));
+  const heredoc = `cat > ${member.body} <<'EOF'\nIt is feedback.\nEOF\n`;
+  for (const command of [`${heredoc}cd ${member.dir} && ${member.post}`, `true; cd ${member.dir} && ${member.post}`]) {
+    assert.equal(check(command, { cwd: elsewhere, input: member.main, env: {} }), null, command);
+  }
+  const unknown = check(`${heredoc}cd ${member.dir} || true; ${member.post}`, { cwd: elsewhere, input: member.main, env: {} }) ?? '';
+  assert.match(unknown, /cannot read which project this post runs in, so it cannot tell whether this pull request is one/u);
+  assert.doesNotMatch(unknown, /on a pull request from outside the team posts only/u);
+});
+
 test('a member\'s pull request posts with no answer, a subagent included, and a project with no feedback sees nothing', (t) => {
   const member = project(t, { limited: false });
   assert.equal(member.run(member.post), null);

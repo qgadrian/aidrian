@@ -30,8 +30,10 @@ const CHAINED = `${LEAD}, and this command also runs \`aidrian pr product-feedba
   `it is judged against only after this check. Run \`record\` on its own first, then \`post\` as its own command. ${OWN_SHELL}`;
 const BESIDE = `${LEAD}, and this command runs more than the post, which can rewrite the comment after the Human saw it. ` +
   `Run \`post\` as its own command, with at most a plain cd <folder> && before it. ${OWN_SHELL}`;
-const UNKNOWN_PROJECT = `${LEAD}, and the rule cannot read which project it runs in while this machine keeps product feedback. ` +
-  `Write the folder out in the command, such as a plain cd <folder> &&. ${OWN_SHELL}`;
+// Not the lead the others share: the rule cannot tell whether this pull request is from outside the team at all.
+const UNKNOWN_PROJECT = 'Blocked: `aidrian pr product-feedback post` waits for the Human\'s own word on a pull request from outside the team, ' +
+  'and the rule cannot read which project this post runs in, so it cannot tell whether this pull request is one, while this machine keeps product feedback. ' +
+  `Write the folder out in the command, such as a plain cd <folder> && right before the post. ${OWN_SHELL}`;
 
 // Only a command holding one of these can be a call: every other Bash call pays for this one look, and reads no disk.
 const CANDIDATE = /aidrian|cli\.mjs|product-feedback|[$`]/u;
@@ -140,7 +142,10 @@ export function check(command, { cwd = process.cwd(), input = {}, env = process.
   const writes = (self) => entries.some((other) => other !== self && other.unread === undefined && writesUnseen(readCall(other.invocation)));
   const judged = new Set();
   for (const entry of entries) {
-    const { unread, folder } = entry;
+    // The folder a post runs in whenever it runs: a `cd <folder> &&` right before it counts after a heredoc or a `;` too
+    // (shell-lex walkCommands `chained`).
+    const { unread } = entry;
+    const folder = entry.folder ?? entry.chained ?? null;
     if (unread !== undefined) {
       if (/\bproduct-feedback\b/u.test(unread) && /\bpost\b/u.test(unread) && holds(folder)) return subagent ? SUBAGENT : UNREAD;
       continue;

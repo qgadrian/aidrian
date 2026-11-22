@@ -11,14 +11,14 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { ATTEMPT_KEEP, KEPT_FOLDERS } from '../plugins/aidrian/lib/attempt-clone.mjs';
-import { CONFINE_LOCK, sandboxEscapeDenial } from '../plugins/aidrian/lib/confine-guard.mjs';
+import { CONFINE_LOCK, identity, sandboxEscapeDenial } from '../plugins/aidrian/lib/confine-guard.mjs';
 import { readOwnText, readSmallJson, writeOwnText } from '../plugins/aidrian/lib/fs.mjs';
 import { HOOK_COUNTS_AGE, sweepHookCounts } from '../plugins/aidrian/lib/lesson-signals.mjs';
 import { sessionLengthMarker } from '../plugins/aidrian/lib/session-length.mjs';
@@ -895,8 +895,49 @@ test('a file-tool read of a store by another name for the same file or folder re
   assert.equal(call('LS', { path: at.work }), null, 'the clone, which holds no store');
 });
 
-// An APFS inode passes 2^53, where a plain number rounds: on macOS /bin/cat's and /bin/ls's inodes round alike.
-test('a file-tool read matches a store by its exact inode, so a file whose inode rounds alike is no store', { skip: !existsSync('/bin/cat') || !existsSync('/bin/ls') }, (t) => {
+test('a file`s identity keeps an inode past 2^53 whole, where a plain number rounds two files` inodes alike', () => {
+  const inodes = { '/a': 2n ** 60n + 4n, '/b': 2n ** 60n + 40n };
+  assert.equal(Number(inodes['/a']), Number(inodes['/b']), 'the two inodes round alike as plain numbers');
+  // As statSync: big integers only when asked for them, plain numbers otherwise.
+  const stat = (file, options) => (options?.bigint ? { dev: 7n, ino: inodes[file] } : { dev: 7, ino: Number(inodes[file]) });
+  assert.notEqual(identity('/a', stat), identity('/b', stat));
+  assert.equal(identity('/a', stat), identity('/a', stat));
+  assert.equal(identity('/gone', () => { throw new Error('ENOENT'); }), null, 'a file that is not there');
+});
+
+test('a file-tool read of a file beside a store, through a linked folder above both, is no store', (t) => {
+  const at = attempt(t);
+  // As /bin is a link to usr/bin on Linux: the store and its neighbour sit in a folder reached by a link.
+  const folder = path.join(at.root, 'usr', 'bin');
+  mkdirSync(folder, { recursive: true });
+  for (const name of ['cat', 'ls']) writeFileSync(path.join(folder, name), name);
+  const linked = path.join(at.root, 'bin');
+  symlinkSync(path.join('usr', 'bin'), linked);
+  plan(at, { reads: [at.secret, at.keys, path.join(linked, 'cat')] });
+  const mark = { root: at.root, cwd: at.work, project: 'launch', issue: 'ENG-1', confine: 'passed' };
+  const call = (file) => confineDenial({ session_id: SESSION, tool_name: 'Read', tool_input: { file_path: file }, cwd: at.work }, { mark, env: {} });
+  assert.match(call(path.join(linked, 'cat'))?.reason ?? '', /hides/u, 'the store by the link');
+  assert.match(call(path.join(folder, 'cat'))?.reason ?? '', /hides/u, 'the store by its real path');
+  assert.equal(call(path.join(linked, 'ls')), null, 'the file beside it by the link');
+  assert.equal(call(path.join(folder, 'ls')), null, 'the file beside it by its real path');
+  assert.match(call(linked)?.reason ?? '', /hides/u, 'the folder that holds the store');
+});
+
+// Two files on this disk whose exact identities differ but round alike as plain numbers, as /bin/cat's and /bin/ls's
+// on macOS, where an APFS inode passes 2^53; else the reason the test below cannot run here. On Linux both can be one
+// file: a multicall coreutils binary, hard linked under each name, is one identity, and a read of either is the store.
+function roundingPair(first, second) {
+  try {
+    const [a, b] = [first, second].map((file) => statSync(file, { bigint: true }));
+    if (a.dev === b.dev && a.ino === b.ino) return { skip: `${first} and ${second} are one file here` };
+    if (Number(a.dev) !== Number(b.dev) || Number(a.ino) !== Number(b.ino)) return { skip: `${first}'s and ${second}'s identities do not round alike here` };
+    return { skip: false };
+  } catch {
+    return { skip: `no ${first} or ${second} here` };
+  }
+}
+
+test('a file-tool read matches a store by its exact inode, so a file whose inode rounds alike is no store', roundingPair('/bin/cat', '/bin/ls'), (t) => {
   const at = attempt(t);
   plan(at, { reads: [at.secret, at.keys, '/bin/cat'] });
   const mark = { root: at.root, cwd: at.work, project: 'launch', issue: 'ENG-1', confine: 'passed' };

@@ -109,11 +109,12 @@ function realOf(file) {
   return above === file ? file : path.join(realOf(above), path.basename(file));
 }
 
-// The file system's identity of `file`, its device and inode, or null when it is not there. Read as big integers: an
-// APFS inode passes 2^53, so as a plain number two files' inodes, as /bin/cat's and /bin/ls's on macOS, can round alike.
-function identity(file) {
+// The file system's identity of `file`, its device and inode, or null when it is not there; `stat` is statSync but in
+// a test. Read as big integers: an APFS inode passes 2^53, so as a plain number two files' inodes, as /bin/cat's and
+// /bin/ls's on macOS, can round alike.
+export function identity(file, stat = statSync) {
   try {
-    const { dev, ino } = statSync(file, { bigint: true });
+    const { dev, ino } = stat(file, { bigint: true });
     return `${dev}:${ino}`;
   } catch {
     return null;

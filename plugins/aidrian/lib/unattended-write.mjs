@@ -84,7 +84,8 @@ const issueNamed = (issue) => (target, folder) => {
   const key = issue.key.toLowerCase();
   if (name === key || name.startsWith(`${key}-`) || name.startsWith(`${key}.`)) return true;
   // In tmp, the body file the pr-write skill and the pull request body hook name for its own branch (pr-body.mjs
-  // bodyFilePath), each `/` a `-`: a branch is its issue's alone.
+  // bodyFilePath), each `/` a `-`, unless another issue's branch is spelled the same (ownIssue slugShared).
+  if (issue.slugShared) return false;
   const branch = issue.branch.replaceAll('/', '-').toLowerCase();
   return path.basename(folder) === 'tmp' && ['pr-body', 'issue-body', 'comment-body', 'merge-body'].some((stem) => name === `${stem}-${branch}.md`);
 };
@@ -92,7 +93,7 @@ const issueNamed = (issue) => (target, folder) => {
 // ({ branch }): `<branch>-<slice>-<agent>.json`, each `/` of the branch a `-`.
 const issueHandoff = (issue) => (target, folder) => {
   const name = path.relative(folder, target);
-  return Boolean(issue) && HANDOFF.test(name) && name.toLowerCase().startsWith(`${issue.branch.replaceAll('/', '-').toLowerCase()}-`);
+  return Boolean(issue) && !issue.slugShared && HANDOFF.test(name) && name.toLowerCase().startsWith(`${issue.branch.replaceAll('/', '-').toLowerCase()}-`);
 };
 const absolute = (each) => typeof each === 'string' && path.isAbsolute(each);
 // The time a git call may take: what the guards' budget leaves, or git's own default outside one.

@@ -112,7 +112,7 @@ const write = (file) => ({ tool_name: 'Write', tool_input: { file_path: file, co
 
 test('an issue session pushes only its own branch to origin, and asks the forge for no release, workflow, or write outside its pull request', (t) => {
   const fx = issueFixture(t);
-  assert.deepEqual(ownIssue(fx.project, fx.config, fx.mark, { home: fx.home }), { key: 'ENG-1', branch: BRANCH, pushUrl: fx.dir });
+  assert.deepEqual(ownIssue(fx.project, fx.config, fx.mark, { home: fx.home }), { key: 'ENG-1', branch: BRANCH, pushUrl: fx.dir, slugShared: false });
   for (const command of REFUSED) {
     const denial = fx.ask(bash(command));
     assert.match(denial?.reason ?? '', /a project run's issue session never does that: only the Human does/u, command);
@@ -344,6 +344,15 @@ test('an issue session pushes only from its own clone\'s repository, to the URL 
   git(fx.work, 'config', '--add', 'remote.origin.pushurl', fx.dir);
   git(fx.work, 'config', '--add', 'remote.origin.pushurl', other);
   assert.match(fx.ask(bash(EXACT))?.reason ?? '', /one of the 2 URLs origin pushes to, and origin pushes only to/u, 'a second push URL');
+});
+
+test('an issue session whose branch another issue of the run spells the same writes no file named for it', (t) => {
+  const issues = [{ key: 'ENG-1', branch: BRANCH, status: 'unstarted', priority: 1 }, { key: 'ENG-2', branch: 'feat-eng-1/export', status: 'unstarted', priority: 2 }];
+  const fx = issueFixture(t, { issues });
+  for (const file of [path.join(fx.state, 'tmp', 'pr-body-feat-eng-1-export.md'), path.join(fx.state, 'dispatch', 'feat-eng-1-export-S1-explorer.json')]) {
+    assert.ok(fx.ask(write(file))?.reason, file);
+  }
+  assert.equal(fx.ask(write(path.join(fx.state, 'tmp', 'eng-1-body.md'))), null, 'a file named for the issue key stays its own');
 });
 
 test('an issue session whose start pinned no push URL pushes nothing', (t) => {

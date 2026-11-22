@@ -23,7 +23,7 @@ import { openStore, readStarted, readStartedDated, SESSION_ID } from './handoff-
 import { isWithin, resolvedPath } from './fs.mjs';
 import { detectHost, opaqueShellCommand } from './hosts/index.mjs';
 import { findProject } from './project.mjs';
-import { activeRuns, attendedProblem, ISSUE_KEY, issueBranch, readRun, RUN_ID, runPlace } from './project-run.mjs';
+import { activeRuns, attemptBranches, attendedProblem, ISSUE_KEY, issueBranch, readRun, RUN_ID, runPlace } from './project-run.mjs';
 import { aidrianArgs, walkCommands } from './shell-lex.mjs';
 import { driverAfter, endedIn, runDriver } from './run-driver.mjs';
 import { marksNaming, readUnattendedMark } from './unattended-mark.mjs';
@@ -174,9 +174,20 @@ export function ownIssue(project, config, mark, { base, home } = {}) {
     if (!start || !['started', 'uncertain'].includes(start.outcome)) continue;
     const branch = issueBranch(found, mark.issue);
     const pushUrl = typeof start.pushUrl === 'string' && start.pushUrl !== '' ? start.pushUrl : null;
-    if (typeof branch === 'string' && branch !== '') return { key: mark.issue, branch, pushUrl };
+    if (typeof branch === 'string' && branch !== '') return { key: mark.issue, branch, pushUrl, slugShared: slugShared(found, mark.issue, branch) };
   }
   return null;
+}
+
+// A branch as the files named for it spell it (pr-body.mjs bodyFilePath, a dispatch handoff): each `/` a `-`, in lower case.
+export const branchSlug = (branch) => branch.replaceAll('/', '-').toLowerCase();
+
+// Whether another issue of the run `found` has a branch, planned or attempted, spelled as `branch` of issue `key` is
+// (branchSlug): then a file named for that spelling is not the issue's alone, and the guard grants it to neither.
+function slugShared(found, key, branch) {
+  const own = branchSlug(branch);
+  return found.snapshot.issues.some((issue) => issue.key !== key
+    && [issue.branch, ...attemptBranches(found, issue.key)].some((other) => typeof other === 'string' && branchSlug(other) === own));
 }
 
 // Whether `row` is a start row as the gate writes it.

@@ -1254,6 +1254,21 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     and within the guards' time budget; with no such record, or records that name two folders, the session gets no worktree, so it
     writes none of the main checkout's task worktrees. A start record lasts a day. A project run's issue session whose
     mark names no start folder gets no worktree;
+  - each task worktree `aidrian worktree new` made in the session, so an orchestrator that started in one worktree
+    dispatches an editing subagent to another it made: the command records the worktree's real path for the session its
+    caller's host names (verified on Claude Code, whose `CLAUDE_CODE_SESSION_ID` a subagent's shell shares with its main
+    session; on Codex it is `CODEX_THREAD_ID`, and a grant holds only where that is the hook payload's session id), as
+    `worktree-<session id>.<hash>.json` in the continuation store, which such a session and every subagent never write
+    by hand, as above, and the hook reads the records for the payload's session id (`lib/handoff-guard.mjs
+    sessionWorktrees`). A record grants a worktree only while git lists it among the checkouts of the mark's repository,
+    at that path, as a linked worktree, and the path is no link; never in a state folder, in a host folder of any of
+    the repository's checkouts, such as `.claude/skills`, or in a dot folder of the home folder outside the main
+    checkout, since the worktrees folder is the config's. It keeps its nested checkouts, `.git` pointer, and host files
+    refused as the start worktree does. A worktree made by plain `git worktree add`, by another session, or by a shell
+    with no session id, is outside, and a project run's issue session gets none: it stays confined to its attempt. The
+    session ledger's `links.jsonl` is display data that a call's output can forge, so no grant reads it. A record lasts
+    30 days. Accepted residual: a record is told by its path alone, so one forged by running the plugin's own code,
+    which no guard sees, grants only another linked worktree of the same repository;
   - its issue's running attempt folders `work`, `drop`, and `cache`, under `<state>/runs/<run>/attempts/`, each only
     while it is a plain folder: one replaced by a link is refused, and so is the keep file `.keep-attempt` in `drop`
     and `cache`;

@@ -891,8 +891,11 @@ that opens with "Codex Review: Didn't find any major issues", and the reviewed c
 code review the bot's status card records as completed with no unresolved findings, where the card was last updated
 in this round, at or after the request, and no earlier than the comment. A comment that only quotes the phrase is not
 a receipt. The 👍 is never an answer: it names no commit, and the receipt it follows may name the head before a push,
-may predate the request, or may be one the read missed. The receipt's commit says which head it answers. Its footer
-quotes "@codex review", and like the status card it is never a request, nor is a 👀 on it an acknowledgement. Any other
+may predate the request, or may be one the read missed. A receipt answers the head when its 10-hex short commit is a
+prefix of it; a commit that shares that prefix reads as covered too, so this is no proof, and merge trust reads no
+receipt. A comment the status card vouches for answers the card's full commit, compared whole with the head. The
+newest answer for the head counts, so a later review of an older head never hides it. The receipt's footer quotes
+"@codex review", and like the status card it is never a request, nor is a 👀 on it an acknowledgement. Any other
 answer holds at least one open finding, and a usage-limit notice stays `blocked_quota`. A moved head ends the request
 at once as `incomplete`; the cap (`round_limit`) and a usage-limit notice (`blocked_quota`) are reported from the
 bot's stage, after the earlier stages, as before. An answer for a commit other than the one under review counts for

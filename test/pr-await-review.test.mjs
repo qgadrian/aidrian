@@ -1322,3 +1322,36 @@ test('acknowledgement: a 👀 on the bot`s receipt, whose footer quotes "@codex 
   const trigger = { body: `${REQUEST_COMMENT}\n\n<!-- pr-await-review: head=${head} -->`, created_at: T(5), reactions: { eyes: 1 } };
   assert.deepEqual(acknowledgement({ reactions: [], issueComments: [trigger, seen], reviewer: DEFAULT_REVIEWER, since: T(5) }), { at: T(5), headSha: head });
 });
+
+test('awaitReview: a late review of an older head, or a later receipt of one, never hides the answer for this head', async () => {
+  const previous = '7c806f2c55aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const head = '4bc7ec01bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  const trigger = { id: 1, user: { login: 'adrian' }, body: requestCommentBody(head), created_at: T(5) };
+  // The review of the previous head was still running when the head moved; it submits after this head's receipt.
+  const late = { id: 3, user: BOT, submitted_at: T(8), commit_id: previous, state: 'COMMENTED' };
+  for (const [what, frame] of [
+    ['a review of the previous head after the receipt', { reviews: [late], issueComments: [trigger, receiptAt(head, 6)] }],
+    ['a receipt of the previous head after this one', { issueComments: [trigger, receiptAt(head, 6, 71), receiptAt(previous, 7, 72)] }],
+  ]) {
+    const forge = fakeForge([{ head, headCommittedAt: T(4), ...frame }]);
+    const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 0, intervalSec: 60 }, { forge, git: { pushedHead: () => null, behind: () => false }, ...clock() });
+    assert.deepEqual([r.status, r.signal.kind, r.signal.commit_id, r.signal.clean, r.stale, forge.posts.length], ['already_present', 'comment', head.slice(0, 10), true, false, 0], what);
+  }
+  // With no answer for this head, the newest one is reported, stale.
+  const signal = latestBotSignal({ reviews: [late], reviewComments: [], issueComments: [trigger], reviewer: DEFAULT_REVIEWER, since: T(5), covers: (each) => !isStale(each, head, T(4), head) });
+  assert.deepEqual([signal.kind, signal.commit_id, isStale(signal, head, T(4), head)], ['review', previous, true]);
+});
+
+test('latestBotSignal: the status card`s full commit, not the comment`s short one, is checked against the head', () => {
+  const short = 'cdc936e80c';
+  const head = `${short}${'1'.repeat(30)}`;
+  const other = `${short}${'2'.repeat(30)}`;
+  const comment = { id: 7, user: BOT, created_at: T(7), body: `Codex Review: here is what changed.\n\n**Reviewed commit:** \`${short}\`` };
+  const card = (sha) => ({ id: 2, user: BOT, created_at: T(6), updated_at: T(8), body: STATE_CARD_BODY(sha, false) });
+  const base = { reviews: [], reviewComments: [], reviewer: DEFAULT_REVIEWER, since: T(5) };
+  const shared = latestBotSignal({ ...base, issueComments: [card(other), comment] });
+  assert.deepEqual([shared.clean, shared.commit_id], [true, other], 'the card names the commit it reviewed in full');
+  assert.equal(isStale(shared, head, T(1), head), true, 'a commit that only shares the short SHA is not the head');
+  const own = latestBotSignal({ ...base, issueComments: [card(head), comment] });
+  assert.deepEqual([own.clean, own.commit_id, isStale(own, head, T(1), head)], [true, head, false]);
+});

@@ -606,7 +606,9 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   git-ignored `.claude/settings.local.json` or an untracked skill under `.claude/skills/`, refuse no start. A start
   refuses, and records nothing, when the clone itself holds a host config or instruction file that differs from the
   base tip, or one git does not track or ignores: `the attempt's clone <path> is not started: it holds host config or
-  instruction files git does not track, which no review saw: <files>`. It refuses too when a folder above the clone
+  instruction files git does not track, which no review saw: <files>`. A later attempt whose branch head on the forge
+  changes such a file, as one that registered a doc in a knowledge index did, starts at the base tip instead, on the
+  same branch, and merges that head once its session runs ([Project run](config.md#project-run)). It refuses too when a folder above the clone
   holds a host instruction file, such as a `CLAUDE.md`, that lies outside the main checkout, or that no review saw
   there; move it away. Only a host's own user folder itself, and the files in it that host loads as the user's own
   instructions for every session (Claude Code's `CLAUDE.md`, Codex's `AGENTS.md` and `AGENTS.override.md`), such as

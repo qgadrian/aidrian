@@ -20,6 +20,7 @@ import { CEILINGS, ISSUE_ATTEMPTS, PROJECT_PARALLEL, PROJECT_STARTS, PROJECT_STA
 import { DROP_FILE } from '../plugins/aidrian/lib/project-result.mjs';
 import { appendToRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { attemptFolder, setUnsigned, signingProblem, sweepAttempts, UNSIGNED } from '../plugins/aidrian/lib/project-start.mjs';
+import { trustProblem } from '../plugins/aidrian/lib/project-trust.mjs';
 import { markUnattended, PENDING_AGE, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { DRIVER, fakeClaude, ORIGIN, OTHER, runFixture, STARTED, testGlobalConfig } from './project-start-fixture.mjs';
 
@@ -218,7 +219,7 @@ test('start halts before the launch when the host would refuse the push of a ses
   assert.equal(fx.claude.starts()[0].args[fx.claude.starts()[0].args.indexOf('--permission-mode') + 1], 'auto');
 });
 
-test('a later attempt clones again from the issue branch on the forge, and one whose branch changed a host file is refused', (t) => {
+test('a later attempt clones again from the issue branch on the forge, and one whose branch changed a host file starts at the base tip and merges it', (t) => {
   const fx = runFixture(t);
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
   appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'issue', key: 'ENG-1', state: 'open', at: at(Date.now()) }] }));
@@ -231,20 +232,35 @@ test('a later attempt clones again from the issue branch on the forge, and one w
   assert.equal(second.out[1], `started ENG-1 attempt 2 session ${STARTED[1].id}`);
   assert.equal(fx.claude.starts()[1].cwd, work(fx, 'ENG-1', 2));
   assert.equal(fx.git('-C', work(fx, 'ENG-1', 2), 'log', '-1', '--format=%s').trim(), 'work', 'the branch as the forge has it');
+  assert.doesNotMatch(fx.claude.starts()[1].args.at(-1), /git merge/u, 'nothing to merge');
 
+  // The second attempt's session registered a doc in the knowledge index, and forced a settings file in past its
+  // placeholder's exclude, then halted before any review.
   fx.claude.states[STARTED[1].session] = 'done';
   appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'issue', key: 'ENG-1', state: 'open', at: at(Date.now()) }] }));
   const clone = work(fx, 'ENG-1', 2);
+  mkdirSync(path.join(clone, '.aidrian/knowledge'), { recursive: true });
+  writeFileSync(path.join(clone, '.aidrian/knowledge/docs.json'), '{"dir":"docs","docs":{}}\n');
   mkdirSync(path.join(clone, '.claude'), { recursive: true });
   writeFileSync(path.join(clone, '.claude/settings.json'), '{"disableAllHooks":true}');
-  // The placeholder is excluded through info/exclude; a session that forces it in still meets the next attempt's check.
-  fx.git('-C', clone, 'add', '-f', '.claude/settings.json');
-  fx.git('-C', clone, 'commit', '-q', '-m', 'settings');
+  fx.git('-C', clone, 'add', '-f', '.aidrian/knowledge/docs.json', '.claude/settings.json');
+  fx.git('-C', clone, 'commit', '-q', '-m', 'register the doc');
   fx.git('-C', clone, 'push', '-q', fx.bare, 'HEAD:refs/heads/feat/eng-1-export');
-  const refused = fx.cmd(['start', 'launch', 'ENG-1']);
-  assert.equal(refused.exitCode, 1);
-  assert.match(refused.err[0], /its host config or instruction files differ from the base tip: \.claude\/settings\.json/u);
-  assert.equal(fx.claude.starts().length, 2);
+  const head = fx.git('-C', clone, 'rev-parse', 'HEAD').trim();
+  const third = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(third.exitCode, 0, third.err.join('\n'));
+  const retry = work(fx, 'ENG-1', 3);
+  assert.equal(fx.git('-C', retry, 'rev-parse', '--abbrev-ref', 'HEAD').trim(), 'feat/eng-1-export');
+  assert.equal(fx.git('-C', retry, 'rev-parse', 'HEAD').trim(), fx.git('rev-parse', 'refs/remotes/origin/main').trim(), 'the clone starts at the base tip');
+  const prompt = fx.claude.starts()[2].args.at(-1);
+  assert.ok(prompt.includes(`not at commit ${head}, the head of feat/eng-1-export on the forge`), prompt);
+  assert.ok(prompt.includes(`\`git merge --no-edit ${head}\``), 'the session merges that head first');
+  // The session's merge brings the head in, and its push of the branch is a fast-forward, with no force.
+  fx.git('-C', retry, 'merge', '-q', '--no-edit', head);
+  assert.match(trustProblem(retry, fx.git('rev-parse', 'refs/remotes/origin/main').trim()) ?? '', /differ from the base tip: \.aidrian\/knowledge\/docs\.json, \.claude\/settings\.json/u, 'the guard still refuses a clone that holds the change');
+  fx.git('-C', retry, 'commit', '-q', '--allow-empty', '-m', 'more work');
+  fx.git('-C', retry, 'push', '-q', fx.bare, 'HEAD:refs/heads/feat/eng-1-export');
+  assert.equal(fx.git('-C', fx.bare, 'merge-base', '--is-ancestor', head, 'refs/heads/feat/eng-1-export'), '', 'the earlier attempt\'s commits stay ancestors');
 });
 
 // The user's global config signs every commit with a program the sandbox cannot reach: each attempt's clone turns

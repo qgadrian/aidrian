@@ -13,7 +13,8 @@
 //     `work/`, the clone, `git/`, its separate git folder, which borrows the main checkout's objects read-only through
 //     alternates, `drop/`, where the session hands its result over (lib/project-result.mjs), and `cache/`, where its
 //     package managers keep their caches (lib/project-registries.mjs). The branch comes from
-//     the forge: the first attempt cuts it from the base tip, a later one fetches it. The main repository never fetches from the clone, the gate never runs git
+//     the forge: the first attempt cuts it from the base tip, a later one fetches it, and starts at the base tip when
+//     that head changes a host config or instruction file, which its session then merges. The main repository never fetches from the clone, the gate never runs git
 //     in a clone a session had, and the driver removes an attempt's folder once its session ended (sweepAttempts).
 //     The session may also write the state work folders, plans, reviews, tmp, and dispatch, each a plain folder of the
 //     user directly in the state folder that holds no guarded folder and lies in none.
@@ -34,6 +35,7 @@ import { findProject, stateRoot } from './project.mjs';
 import { NPM_CONFIGS, SHELL_VAR_NAMES, varsProblem } from './project-registries.mjs';
 import { DROP_FILE, plainFolderProblem } from './project-result.mjs';
 import { pinnedRepository, runFolder, runsFolder } from './project-run.mjs';
+import { isGuarded } from './project-trust.mjs';
 import { latestStart, ownAttemptFolder, startRows } from './project-run-guard.mjs';
 import { signoffFolders } from './review/signoff-store.mjs';
 import { archiveStops } from './stop-history.mjs';
@@ -245,9 +247,11 @@ export function stateWorkFolders(state, { env, home }) {
 // (project-registries.mjs cacheVars), which holds only npm's empty config files (NPM_CONFIGS) at first; it and `drop`
 // each hold a read-only keep file (attempt-clone.mjs ATTEMPT_KEEP). Any folder the attempt had is removed first. The clone borrows the main checkout's objects
 // read-only, takes origin's URL from the main checkout, which pushProblem checked, and checks out `branch`: from the
-// base tip `tip` on the first attempt, or from the forge on a later one when the forge has it. Its own config turns
-// signing off (UNSIGNED); a clone whose commits would still sign (signingProblem) is { halt }. `env` is the environment
-// of its network calls.
+// base tip `tip` on the first attempt, or from the forge on a later one when the forge has it. A later attempt whose
+// branch head on the forge differs from the tip in a host config or instruction file (project-trust.mjs isGuarded)
+// starts at the tip instead, and `prior` names that head, { sha, branch }, for the session to merge; else `prior` is
+// null. Its own config turns signing off (UNSIGNED); a clone whose commits would still sign (signingProblem) is
+// { halt }. `env` is the environment of its network calls.
 export function prepareAttempt({ project, state, run, key, attempt, branch, tip, env }) {
   const folder = attemptFolder(state, run, key, attempt);
   const [work, gitFolder, drop, cache] = ['work', 'git', 'drop', 'cache'].map((name) => path.join(folder, name));
@@ -288,11 +292,21 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, tip,
   // A first attempt cuts the branch fresh from the base tip: one the forge has already is someone else's work.
   if (attempt === 1 && listed.status === 0) return gone(`the branch ${branch} is on the forge already, and a first attempt cuts it fresh from the base tip; delete it on the forge, or name the issue another branch, then start again`);
   if (attempt === 1 && listed.status !== 2) return failed('ls-remote', listed);
+  let prior = null;
   if (attempt > 1) {
     if (listed.status === 0) {
       const fetched = git(['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`]);
       if (fetched.status !== 0) return failed('fetch', fetched);
-      from = `refs/remotes/origin/${branch}`;
+      const head = git(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}^{commit}`]);
+      if (head.status !== 0) return failed('rev-parse', head);
+      const sha = head.stdout.trim();
+      // A head whose host config or instruction files differ from the base tip's holds instructions no review saw, and
+      // a session no Human attends never loads those at its start (trustProblem): the clone starts at the tip, and the
+      // session brings that head in once it runs (projectPrompt).
+      const changed = git(['diff', '--name-only', '--no-renames', '-z', tip, sha, '--']);
+      if (changed.status !== 0) return failed('diff', changed);
+      if (changed.stdout.split('\0').some((file) => file !== '' && isGuarded(file))) prior = { sha, branch };
+      else from = sha;
     } else if (listed.status !== 2) return failed('ls-remote', listed);
   }
   const checkout = git(['checkout', '--quiet', '-b', branch, from]);
@@ -301,7 +315,7 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, tip,
   const signing = signingProblem(work, env);
   if (signing) return { halt: gone(`the attempt's clone ${work} is not started: ${signing}`).problem };
   const plain = plainFolderProblem(drop) ?? plainFolderProblem(cache);
-  return plain ? gone(plain) : { folder, work, git: gitFolder, drop, cache };
+  return plain ? gone(plain) : { folder, work, git: gitFolder, drop, cache, prior };
 }
 
 // The signing keys each attempt's clone turns off, in its own config and nowhere else, so the user's global and system

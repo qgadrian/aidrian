@@ -1960,7 +1960,12 @@ attempt's clone pushes to, read before its session starts, and a clone that push
 `remote.origin.pushurl` in the user's git config makes it, halts the start; the issue session's one push goes only there
 ([hooks.md](hooks.md#agent-gates)). A host that would refuse that push in the driver session's permission mode, which the session
 takes, halts the start too, before the host starts anything ([the push preflight](handoff.md#the-push-preflight)). Every start is confined to a fresh
-clone under its host's sandbox, and a host that is not halts the start. Each attempt's clone commits unsigned: the
+clone under its host's sandbox, and a host that is not halts the start. A later attempt's clone checks out the issue's
+branch as the forge holds it, unless that head differs from the base tip in a host config or instruction file, such as
+a knowledge index a docs issue changed, which no review saw: then the clone starts at the base tip, on the same branch,
+and the session's task names that head's full commit and has it run `git merge --no-edit <commit>` before any other
+work, so it loads only reviewed instructions at its start, and its push of the branch stays a fast-forward
+([A project run](handoff.md#a-project-run)). Each attempt's clone commits unsigned: the
 start sets `commit.gpgsign` and `tag.gpgsign` to `false` in the clone's own git config, on every attempt, and never in
 the user's global or system config. The sandbox hides the signing keys (`~/.gnupg` and `~/.ssh`), so a commit the
 user's config signs would fail once the work is done and park the issue with its change staged; the forge asks no

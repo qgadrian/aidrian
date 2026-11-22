@@ -17,7 +17,9 @@ import { recordRepos } from './state.mjs';
 
 // A draft's name, with its pull request's number in the one group that matched.
 // A findings folder of another remote's repository names it, `<owner>--<name>`: GitHub owners hold no `--`.
-// An issue session's findings folder leads with its issue key (dispatch.mjs findingsFile).
+// An issue session's findings folder leads with its issue key (dispatch.mjs findingsFile). Accepted residual (pull
+// request #560): a draft goes by its name alone, as `review-<n>` does, so scratch an issue session named exactly
+// `<key>-review-<n>...` goes with it once that pull request ends.
 const DRAFT = /^(?:(?:(?:[a-z][a-z0-9]{0,15}-)?[1-9][0-9]{0,8}-)?review-([1-9]\d{0,9})(?:-([\w.-]+?)--([\w.-]+))?|pr-([1-9]\d{0,9})-review\.md|product-feedback-([1-9]\d{0,9})(?:-items\.json|\.md))$/u;
 // The most pull requests one sweep reads the state of, lowest number first: each is one forge call.
 export const MAX_SWEPT = 50;

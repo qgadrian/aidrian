@@ -107,9 +107,8 @@ export function fakeForge(config, head, views = {}, { push = () => true, token =
   const forge = {
     calls,
     tokenPush,
-    // The GitHub adapter's own identity and canonical link check, which makes no call.
-    id: 'github',
-    changeUrl: (row) => forgeFor(process.cwd()).changeUrl(row),
+    // The GitHub adapter's own canonical link check, which makes no call.
+    pullUrl: (row) => forgeFor(process.cwd()).pullUrl(row),
     repository: (repo, options) => {
       calls.push(['repository', repo, options]);
       return { default_branch: 'main', permissions: { pull: true, push: push() } };

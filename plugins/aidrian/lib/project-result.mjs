@@ -198,8 +198,8 @@ export function openPullOf({ forge, repository, pr, branch, head }) {
   } catch {
     return null;
   }
-  // The forge's adapter takes the link only as the canonical one of the pinned repository's pull request `pr` (changeUrl).
-  const url = typeof forge.changeUrl === 'function' ? forge.changeUrl({ forge: forge.id, host: repository.host, repo: named, number: pr, url: view?.url }) : null;
+  // The forge's adapter takes the link only as the canonical one of the pinned repository's pull request `pr` (pullUrl).
+  const url = typeof forge.pullUrl === 'function' ? forge.pullUrl({ host: repository.host, repo: named, number: pr, url: view?.url }) : null;
   const ok = view?.state === 'OPEN' && view.baseRefName === main && view.isCrossRepository === false && view.headRefName === branch && view.headRefOid === head && url !== null;
   return ok ? { base: main, url } : null;
 }

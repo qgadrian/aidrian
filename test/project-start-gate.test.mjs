@@ -347,6 +347,10 @@ test('the pull request a fresh attempt closes is one the forge shows open into t
   assert.equal(ask({ state: 'CLOSED' }), null);
   assert.equal(ask({ url: 'https://github.com/acme/widgets/pull/4' }), null, 'a link to another pull request');
   assert.equal(ask({ url: 'https://github.com/acme/other/pull/3' }), null, 'a link into another repository');
+  const enterprise = { host: 'git.acme.example', owner: 'acme', name: 'widgets' };
+  const onEnterprise = { ...forgeFor(process.cwd()), repository: () => ({ default_branch: 'main' }), change: () => ({ ...view, url: 'https://git.acme.example/acme/widgets/pull/3' }) };
+  assert.deepEqual(openPullOf({ forge: onEnterprise, repository: enterprise, pr: 3, branch: 'feat/x', head }), { base: 'main', url: 'https://git.acme.example/acme/widgets/pull/3' }, 'a pinned host other than github.com');
+  assert.equal(openPullOf({ forge: onEnterprise, repository, pr: 3, branch: 'feat/x', head }), null, 'a link on a host other than the pinned one');
   assert.equal(openPullOf({ forge: { repository: () => ({ default_branch: 'main' }), change: () => { throw new Error('HTTP 502'); } }, repository, pr: 3, branch: 'feat/x', head }), null, 'a forge that cannot answer');
 });
 

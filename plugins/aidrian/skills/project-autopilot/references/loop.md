@@ -26,7 +26,6 @@ named and go on from that output as step 2 says.
    - `paused until <time>`, exit 1: a usage limit paused the run. Not a refusal: § Pause.
    - a line `halt <cause>`, exit 1: § Halt.
    - exit 75, `retry: <why>`: § Retry. A session that runs on after its issue settled gives this too: a wait.
-   - `parked <key> attempts: <why>`, exit 1: that start spent the issue's last attempt, and the run parked it; step 1.
    - any other exit 1: § Stop, with its stderr line as the cause.
 3. `aidrian project wait <run> --max-wait 150`:
    - `note outage: <why>`: the forge cannot answer now; not a refusal. Go on by the other lines; `start`'s exit 75 goes to § Retry.

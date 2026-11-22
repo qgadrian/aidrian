@@ -21,7 +21,7 @@ import { pauseSync, resolvedPath } from '../plugins/aidrian/lib/fs.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { BEACON_GRACE, configFlags, FIRST_TOOL_WAIT, findProcesses, firstEvent, firstTool, launchCommand, processEnded, processState, PS_BUFFER, runCommand, SESSION_WAIT, START_CAP, startProject, stopProcess } from '../plugins/aidrian/lib/hosts/codex-exec.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
-import { cacheVars } from '../plugins/aidrian/lib/project-registries.mjs';
+import { ATTEMPT_ENV, cacheVars } from '../plugins/aidrian/lib/project-registries.mjs';
 import { projectCommand } from '../plugins/aidrian/lib/project-run-cli.mjs';
 import { projectCommandDenial } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { appendToRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
@@ -453,7 +453,7 @@ test('start on Codex works in a fresh clone with exactly its granted folders, ho
   const state = resolvedPath(fx.state);
   const { argv, pid, caches } = fx.fake.call();
   // The network proxy holds the session to the forge's hosts, and the cache variables reach its sandboxed commands alone.
-  const vars = cacheVars(path.join(fx.attempt(), 'cache'), fx.env);
+  const vars = { ...cacheVars(path.join(fx.attempt(), 'cache'), fx.env), [ATTEMPT_ENV]: 'launch/ENG-1.1' };
   assert.deepEqual(argv.slice(0, -1), ['exec', '--json', '--sandbox', 'workspace-write', ...configFlags({ domains: ['github.com', 'api.github.com'], cacheVars: vars }), '--cd', work,
     '--add-dir', git, '--add-dir', drop, '--add-dir', cache, ...['plans', 'reviews', 'tmp', 'dispatch'].flatMap((name) => ['--add-dir', path.join(state, name)])]);
   assert.ok(Object.values(caches).every((value) => !value.startsWith(cache) && !value.startsWith(path.join(fx.attempt(), 'cache'))), 'none in the codex process\'s own environment');

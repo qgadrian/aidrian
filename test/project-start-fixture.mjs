@@ -172,7 +172,7 @@ export function fakeClaude({ dir, start = null, hidden = false, env = null, beac
     }
     if (!hidden) sessions.push({ id: ids.id, sessionId: ids.session, name, kind: 'background', cwd: options.cwd });
     if (!hidden && env && beacon) noteBeacon(ids.session, { env });
-    if (!hidden) handVerdict(options.cwd, ids.session, confine);
+    if (!hidden && confine) handVerdict(options.cwd, ids.session, confine);
     return { status: 0, stdout: `backgrounded · ${ids.id} · ${name}\n`, stderr: '' };
   };
   return { run, calls, sessions, states, starts: () => calls.filter((call) => call.args[0] === '--bg') };
@@ -192,7 +192,7 @@ export function handVerdict(work, session, confine = passVerdict) {
   } catch {
     return;
   }
-  const verdict = confine?.(plan, session);
+  const verdict = confine(plan, session);
   if (verdict) writeFileSync(path.join(folder, 'drop', CONFINE_VERDICT), JSON.stringify(verdict));
 }
 

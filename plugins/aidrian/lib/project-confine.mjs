@@ -35,7 +35,7 @@ import { ATTEMPT_KEEP, attemptOf, KEPT_FOLDERS } from './attempt-clone.mjs';
 import { CONFINE_LOCK, CONFINE_PLAN, CONFINE_VERDICT, exists, SHELL_VARS, VERDICT_CAP, writeJson } from './confine-guard.mjs';
 import { pauseSync, readOnce, readSmallJson } from './fs.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
-import { REGISTRY_NAMES, registryHosts } from './project-registries.mjs';
+import { ATTEMPT_ENV, REGISTRY_NAMES, registryHosts } from './project-registries.mjs';
 import { handoffProblem } from './project-token.mjs';
 import { markFolders } from './unattended-mark.mjs';
 
@@ -397,9 +397,9 @@ export function shellVarsProblem(folder, env) {
   return off.length ? `the cache variables ${off.join(', ')} are not in force in the session's shell` : null;
 }
 
-// What the proof answers while none of the cache variables the start wrote is in the shell's environment at all: the
-// host has not applied the session's SessionStart hook, which hands the shell those variables and the forge token, to
-// this shell yet, as when it runs the session's first call before that hook. Some there with another value still fail.
+// What the proof answers while the shell lacks the attempt's marker (ATTEMPT_ENV) the start wrote: the host has not
+// given this shell the environment the session's SessionStart hook hands it, as when it runs the session's first call
+// before that hook. With the marker there, every cache variable must hold its value.
 export const HOOK_PENDING = 'the host has not given this shell its SessionStart hook\'s environment yet; run the same command again in a few seconds';
 
 // `aidrian project confine RUN ISSUE`, from the session's sandboxed shell in its clone `cwd`, with `env` its
@@ -412,9 +412,8 @@ export async function runConfine({ run, key, cwd = process.cwd(), env = process.
   if (!attempt || attempt.run !== run || attempt.key !== key) return refuse(`this folder is not a clone of the run ${run}'s issue ${key}; run it in the clone the session started in`);
   const plan = readSmallJson(path.join(attempt.folder, CONFINE_PLAN));
   if (!plan || plan.run !== run || plan.key !== key || plan.attempt !== attempt.attempt || !NONCE.test(plan.nonce ?? '')) return refuse(`the start wrote no plan for the sandbox proof of ${key} attempt ${attempt.attempt}`);
-  // Before the lock: the proof runs once, and a shell the hook has not given its variables yet would fail it.
-  const expected = Object.keys(readSmallJson(path.join(attempt.folder, SHELL_VARS)) ?? {});
-  if (expected.length && expected.every((name) => env[name] === undefined)) return refuse(HOOK_PENDING);
+  // Before the lock: the proof runs once, and a shell the hook has not given the attempt's environment yet would fail it.
+  if (typeof readSmallJson(path.join(attempt.folder, SHELL_VARS))?.[ATTEMPT_ENV] === 'string' && env[ATTEMPT_ENV] === undefined) return refuse(HOOK_PENDING);
   try {
     closeSync(openSync(path.join(attempt.drop, CONFINE_LOCK), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NO_FOLLOW, 0o600));
   } catch (error) {

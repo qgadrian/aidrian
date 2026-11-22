@@ -788,18 +788,13 @@ its start stays as [its page](codex.md#project-start) says.
    the same. The hook refuses that session every later call. The listener stops when the start ends.
 
 The host can run a session's first tool call before that session's SessionStart hooks, as seen when `claude --bg`
-claimed a prewarmed spare session, and a shell loaded before the hook ran keeps none of the environment the hook gives
-it, the cache variables and the forge token. A proof that ran then would find every cache variable missing and fail.
-So while none of the cache variables the start wrote is in the shell at all, `aidrian project confine` exits 1 with
-`the host has not given this shell its SessionStart hook's environment yet; run the same command again in a few
-seconds`, before its lock, whether or not `token-handoff.json` is there: it writes no lock and no verdict, and the
-agent gate hook still lets the session run that exact command again. One variable there with another value still
-fails the proof. When the 180 seconds pass with no lock taken, the adapter answers `proof: 'timeout'`, and the start
-stops the session and gives the attempt back with no `halt` row: a proof that never ran is no sandbox breach. It exits
-75 with a `retry:` line, so the driver's next start tries again; a session the start could not stop stays for
-`wait`, named in that line. Its start row, marked `raced`, keeps its attempt number, so the issue's attempts, the
-run's starts, and the day's starts each count it, and the issue's last attempt parks it (`parked <key> attempts`,
-exit 1), so `next` moves on. A timed-out proof that took its lock, and any failed verdict, halt as above.
+claimed a prewarmed spare session, and that shell then holds none of the environment the hook hands it. So the start
+writes one more variable beside the cache variables in `shell-env.json`, `AIDRIAN_ATTEMPT_ENV=<run>/<key>.<attempt>`,
+which the hook hands over with them. While the shell lacks it, `aidrian project confine` exits 1 with `the host has not
+given this shell its SessionStart hook's environment yet; run the same command again in a few seconds`, before its
+lock: it writes no lock and no verdict, and the agent gate hook still lets the session run that exact command again,
+within the 180 seconds above. A cache variable the shell inherited, such as the user's own `PNPM_HOME`, does not count.
+With the marker there, every variable must hold the start's value, the marker too, or the proof fails.
 
 A start whose proof cannot be prepared refuses with `the sandbox proof cannot be prepared`, records nothing, and leaves
 no attempt folder; [Project run](../config.md#project-run) names each cause and its fix.

@@ -3,7 +3,7 @@
 // docs/providers/adding-a-host.md lists the fields; docs/providers/claude-code.md says what was checked on this host.
 
 import { lstatSync, realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import path from 'node:path';
 
 import { attachLine, findLine, findSessions, nameMatcher, sessionEnded, sessionFinished, startBackground, startFolder, startProject, stopBackground, stopLine, stopOwnBackground } from './claude-code-background.mjs';
@@ -94,25 +94,25 @@ const humanAnswer = (entry) => entry !== null && typeof entry === 'object' && en
 // later. Claude Code marks a peer session's message `origin.kind: "peer"`, a hook's or the host's own text `isMeta`, and
 // the prompt a background session starts with is prompt 1, which the start wrote, not a person at the terminal.
 // docs/providers/claude-code.md#prompts-the-human-typed.
-// The transcript must be the session's own, `<session>.jsonl` under the home folder's `.claude/projects`, which the
-// write guard refuses an unattended session (lib/unattended-write.mjs); a transcript the host keeps elsewhere, as under
-// CLAUDE_CONFIG_DIR, never counts, since a session could write its own proof there.
-const humanPrompt = (file, entry, { session, home = homedir() } = {}) => ownTranscript(file, session, home) && humanEntry(entry);
-function ownTranscript(file, session, home) {
-  try {
-    // No link on the way: the folder and the file are where the home folder's own path says, so the write guard's
-    // refusal of that home dot folder covers what is read.
-    const root = path.join(realpathSync(home), '.claude', 'projects');
-    const real = realpathSync(file);
-    return typeof session === 'string' && realpathSync(root) === root && real === path.resolve(file)
-      && path.basename(real) === `${session}.jsonl` && path.dirname(path.dirname(real)) === root;
-  } catch {
-    return false;
-  }
-}
-const humanEntry = (entry) => entry !== null && typeof entry === 'object' && entry.type === 'user' && entry.isSidechain === false &&
+const humanPrompt = (entry) => entry !== null && typeof entry === 'object' && entry.type === 'user' && entry.isSidechain === false &&
   entry.isMeta !== true && entry.isCompactSummary !== true && entry.entrypoint === 'cli' && entry.origin?.kind === 'human' &&
   entry.turnOrigin === 'human' && Number.isInteger(entry.turnPosition?.promptIndex) && entry.turnPosition.promptIndex >= 2;
+
+// The real path of `file` when it is the transcript of `session` the host keeps where an unattended session cannot
+// write: `<session>.jsonl` in a folder of `.claude/projects` under the account's home folder, the one the write guard
+// protects (lib/unattended-write.mjs, userInfo), reached through no link. Null otherwise: a transcript under another
+// HOME, or under CLAUDE_CONFIG_DIR, could be the session's own writing.
+function ownTranscript(file, { session, home = userInfo().homedir } = {}) {
+  try {
+    if (typeof session !== 'string' || typeof file !== 'string' || !path.isAbsolute(file)) return null;
+    const root = path.join(realpathSync(home), '.claude', 'projects');
+    const real = realpathSync(file);
+    const fits = realpathSync(root) === root && real === path.resolve(file) && path.basename(real) === `${session}.jsonl` && path.dirname(path.dirname(real)) === root;
+    return fits ? real : null;
+  } catch {
+    return null;
+  }
+}
 
 // Its command line that starts or resumes a session, which lib/handoff-guard.mjs hostSessionStartDenial refuses a
 // subagent and a session the background handoff route started, so no session starts outside the handoff gate.
@@ -234,6 +234,7 @@ export default {
   opaqueShellTools: OPAQUE_SHELL_TOOLS,
   humanAnswer,
   humanPrompt,
+  ownTranscript,
   sessionStart: { programs: ['claude'], starts: startsSession },
   // The subcommands of its program that write its own user or project config: MCP servers, settings, and plugins, and
   // its global options that take the next word. The agent gate hook refuses them to a session no Human attends

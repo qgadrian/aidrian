@@ -270,38 +270,57 @@ export function isAttended(session, { env = process.env, home, now = Date.now() 
 }
 
 // Records that the Human has typed into `session`, a background continuation, so it is attended from then on
-// (docs/handoff.md#the-background-route). `isHuman(file, entry)` is the session's host adapter's word on whether an
-// entry of the transcript `file` is a prompt the Human typed after the start, in a transcript the session cannot write
-// itself (hosts/index.mjs humanPrompt); a peer's message, a scheduled prompt, and the start prompt never are. Only a
-// session whose own mark is plain is lifted: a project run's issue session, a session whose sandbox proof the mark
-// tracks, a pending hold, and a mark it cannot read stay held, whoever types. It reads at most PROMPT_TAIL bytes of the
-// transcript's end, from a regular file only. Returns whether the session is attended; never throws.
-export function liftAttended(session, transcriptPath, { env = process.env, home, now = Date.now(), isHuman = () => false } = {}) {
+// (docs/handoff.md#the-background-route). `file` is the real path of the session's own transcript, where the session
+// cannot write, and `isHuman(entry)` says whether an entry is a prompt the Human typed after the start, both from the
+// session's host adapter (hosts/index.mjs humanPrompts); a peer's message, a scheduled prompt, and the start prompt
+// never are. Only a session whose every mark is plain is lifted: a project run's issue mark, a mark that tracks a
+// sandbox proof, a mark it cannot read, and a pending hold stay, whoever types. The record goes beside the plain mark
+// that holds it, after a sweep of that folder. It reads at most PROMPT_TAIL bytes of the transcript's end, from the
+// regular file the path names when it opens it. Returns whether it recorded the session attended; never throws.
+export function liftAttended(session, file, { env = process.env, home, now = Date.now(), isHuman = () => false } = {}) {
   try {
-    if (typeof transcriptPath !== 'string' || !path.isAbsolute(transcriptPath)) return false;
-    const mark = readUnattendedMark(session, { env, home, now });
-    if (!mark || mark.pending || !plainMark(mark)) return false;
-    if (!tailEntries(transcriptPath).some((entry) => isHuman(transcriptPath, entry))) return false;
-    // Beside the session's own mark, so a caller that finds the mark finds the record too.
-    const folder = markFolders({ env, home }).find((each) => {
-      try {
-        return readdirSync(each).some((name) => name === `${session}.json` || (SHORT.exec(name)?.[1] !== undefined && session.startsWith(SHORT.exec(name)[1])));
-      } catch {
-        return false;
-      }
-    });
-    return folder !== undefined && writeMark(folder, ATTENDED(session), { at: now }) !== null;
+    if (typeof session !== 'string' || !SESSION_ID.test(session) || typeof file !== 'string' || !path.isAbsolute(file)) return false;
+    const holds = ownHolds(session, { env, home, now });
+    if (holds === null || !holds.length || !holds.every(({ mark }) => plainMark(mark))) return false;
+    if (!tailEntries(file).some((entry) => isHuman(entry))) return false;
+    const { folder } = holds[0];
+    sweepMarks(folder, now);
+    return writeMark(folder, ATTENDED(session), { at: now }) !== null;
   } catch {
     return false;
   }
 }
 
-// The entries of the last PROMPT_TAIL bytes of the regular JSONL file `file`, the cut first line left out.
+// Every mark of `session`'s own that holds, under its full id or a short one, in each of markFolders, as
+// [{ mark, folder }], or null when one cannot be read.
+function ownHolds(session, { env, home, now }) {
+  const uid = processUid();
+  const holds = [];
+  for (const folder of markFolders({ env, home })) {
+    let names;
+    try {
+      names = readdirSync(folder);
+    } catch (error) {
+      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') continue;
+      return null;
+    }
+    for (const name of names.filter((each) => each === `${session}.json` || (SHORT.exec(each)?.[1] !== undefined && session.startsWith(SHORT.exec(each)[1])))) {
+      const mark = readMark(path.join(folder, name), uid, now);
+      if (mark === 'unchecked') return null;
+      if (mark) holds.push({ mark, folder });
+    }
+  }
+  return holds;
+}
+
+// The entries of the last PROMPT_TAIL bytes of the regular JSONL file `file`, the cut first line left out: the file the
+// descriptor opened must be the one the path names now, so a swap between the check and the read reads nothing.
 function tailEntries(file) {
   const fd = openSync(file, NO_FOLLOW);
   try {
     const stat = fstatSync(fd);
-    if (!stat.isFile()) return [];
+    const named = lstatSync(file);
+    if (!stat.isFile() || stat.dev !== named.dev || stat.ino !== named.ino) return [];
     const length = Math.min(stat.size, PROMPT_TAIL);
     const buffer = Buffer.alloc(length);
     readSync(fd, buffer, 0, length, stat.size - length);

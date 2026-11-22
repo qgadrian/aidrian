@@ -55,13 +55,16 @@ export function sessionIdentity(env = process.env) {
 // so a rule that needs one refuses there.
 export const humanAnswer = (entry, hosts = HOSTS) => hosts.some((host) => host.humanAnswer?.(entry) === true);
 
-// Whether `entry` of the transcript `file` of `session` is a prompt the Human typed into it after its start, by the
-// adapter of the host this call runs under (`input`, a hook's payload), never another's. A host whose adapter has no
-// `humanPrompt` never shows one, so its unattended sessions stay held.
-export const humanPrompt = (input, file, entry, hosts = HOSTS) => {
+// The prompt the Human typed into a session, as the adapter of the host the call runs under (`input`, a hook's
+// payload) reads its transcript: { file, isHuman }, where `file` is the real path of the session's own transcript, kept
+// where the session cannot write (an adapter's `ownTranscript`), and `isHuman(entry)` its `humanPrompt`; null when that
+// host has neither, or the payload's transcript is not the session's own. Never another host's adapter.
+export function humanPrompts(input, hosts = HOSTS) {
   const host = detectHost({ input }, hosts);
-  return host.humanPrompt?.(file, entry, { session: input?.session_id }) === true;
-};
+  if (typeof host.humanPrompt !== 'function' || typeof host.ownTranscript !== 'function') return null;
+  const file = host.ownTranscript(input?.transcript_path, { session: input?.session_id });
+  return file ? { file, isHuman: (entry) => host.humanPrompt(entry) === true } : null;
+}
 
 // `raw`, a hook's payload, in the standard names the shared code reads: `tool_name` as mcp__<server>__<tool> for an MCP tool.
 export const normalizeHookInput = (raw, env = process.env) => detectHost({ env, input: raw }).hookInput(raw);

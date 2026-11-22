@@ -2,21 +2,23 @@
 // how much of it is untriaged; `check` validates a sidecar against its report; `import` drafts, then writes, the sidecar
 // of a report written without one; `pending` prints one report's untriaged items in the order the Human answers them;
 // `record` keeps one decision in triage.json; `save` copies a report the persona-audit skill drafted elsewhere, its
-// sidecar, and its screenshots into the audits folder, since a session no Human attends may not write there by hand. docs/personas.md#triage describes each subcommand.
+// sidecar, and its screenshots into the audits folder, which the unattended write guard refuses to a session no Human
+// attends (unattended-write.mjs stateWork, limitedPlaces). docs/personas.md#triage describes each subcommand.
 //
 // What a person reads, the text output and every warning and problem, names a report by its personas, kind, and date
 // and an item by its title, never by its id or file name; `--json` carries the ids and file names the commands take.
 
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { parseReport } from './audit-import.mjs';
 import {
-  allowedDecisions, liveReport, TRIAGE_UNREADABLE, decisionProblem, DECISIONS, DOC_FORMS, held, verdictCitation, verdictProblem, VERDICTS, itemWords, slugOf, PRIORITIES, priorityProblem, untriaged, taskNumbers, listAudits, OWNER_WORDS, pendingGroups, proseProblems, readTriage, recordDecision, reportName, reportTitle, searchLabels, sidecarName, sidecarProblems, today,
+  allowedDecisions, liveReport, REPORT, TRIAGE_UNREADABLE, decisionProblem, DECISIONS, DOC_FORMS, held, verdictCitation, verdictProblem, VERDICTS, itemWords, slugOf, PRIORITIES, priorityProblem, untriaged, taskNumbers, listAudits, OWNER_WORDS, pendingGroups, proseProblems, readTriage, recordDecision, reportName, reportTitle, searchLabels, sidecarName, sidecarProblems, today,
 } from './audits.mjs';
 import { commandConfig } from './config.mjs';
 import { isObject } from './fs.mjs';
+import { underGit } from './git.mjs';
 import { unfencedLines } from './markdown-sections.mjs';
 import { projectAt, stateDir } from './project.mjs';
 import { usageLines } from './usage.mjs';
@@ -102,57 +104,99 @@ function statusText(each, titles = new Map(), reports = []) {
   return each.untriaged ? `${counts}, ${each.untriaged} of ${each.items.length} items untriaged` : `${counts}, fully triaged`;
 }
 
-// A report's file name: `<personas>-<date>.md`, with an optional `-<n>` after the date (report-format.md).
-const REPORT_FILE = /^[\w.+-]+-\d{4}-\d{2}-\d{2}(?:-\d+)?\.md$/u;
-// A screenshot a report cites, in the folder named for the report.
-const SHOT = /^[\w.+-]+\.(?:png|jpe?g|gif|webp)$/iu;
+// A screenshot a report cites, in the folder named for the report: any name but a dot file, as persona names are.
+const SHOT = /^[^.].*\.(?:png|jpe?g|gif|webp)$/iu;
 
-// Copies the draft in `folder` into the audits folder `dir`: its one report `<name>.md`, the sidecar `<name>.json` when
-// there is one, and the screenshots in `<name>/`, each a plain file, replacing a copy saved before. Nothing else in the
-// folder may be there, so no draft can write the triage record or another report's files.
+// Copies the draft in `folder` into the audits folder `dir`: its one report `<name>.md` (audits.mjs REPORT, the rule
+// every reader takes), the sidecar `<name>.json` when there is one, and the screenshots in `<name>/`, replacing a copy
+// saved before. Nothing else may be in the draft, so no draft writes the triage record or another report's files.
+// Every source is read without following a link, every destination is checked before the first write, and the copies
+// are staged in a fresh folder inside the audits folder, then renamed into place, so a refusal leaves the saved audit
+// as it was and no write goes through a link waiting at a destination. An audits folder in a checkout is refused: the
+// command writes no checkout, which a session no Human attends may hold no grant for.
 function save({ rest: [folder], dir }) {
   if (!folder) return fail('name the folder that holds the drafted report, its sidecar, and its screenshots');
   const from = path.resolve(folder);
-  const kind = (file) => {
-    try {
-      const stat = lstatSync(file);
-      return stat.isFile() && stat.nlink === 1 ? 'file' : stat.isDirectory() ? 'dir' : 'other';
-    } catch {
-      return 'missing';
-    }
-  };
-  if (kind(from) !== 'dir') return fail(`no such folder: ${from}`);
+  if (kindOf(from) !== 'dir') return fail(`no such folder: ${from}`);
   const names = readdirSync(from);
-  const reports = names.filter((name) => REPORT_FILE.test(name));
+  const reports = names.filter((name) => REPORT.test(name));
   if (reports.length !== 1) return fail(`${from} must hold exactly one report named <personas>-<date>.md; it holds ${reports.length}`);
   const [report] = reports;
   const stem = report.slice(0, -'.md'.length);
-  const copies = [report];
+  const sidecar = sidecarName(report);
   for (const name of names) {
-    if (name === report) continue;
-    if (name === sidecarName(report) || name === stem) continue;
-    return fail(`${path.join(from, name)} is neither the report, its sidecar ${sidecarName(report)}, nor its screenshot folder ${stem}/`);
+    if (![report, sidecar, stem].includes(name)) return fail(`${path.join(from, name)} is neither the report, its sidecar ${sidecar}, nor its screenshot folder ${stem}/`);
   }
-  if (names.includes(sidecarName(report))) copies.push(sidecarName(report));
+  const copies = names.filter((name) => name !== stem);
   if (names.includes(stem)) {
-    if (kind(path.join(from, stem)) !== 'dir') return fail(`${path.join(from, stem)} must be a folder of screenshots`);
+    if (kindOf(path.join(from, stem)) !== 'dir') return fail(`${path.join(from, stem)} must be a folder of screenshots`);
     for (const shot of readdirSync(path.join(from, stem))) {
       if (!SHOT.test(shot)) return fail(`${path.join(from, stem, shot)} is no screenshot: a .png, .jpg, .gif, or .webp file`);
       copies.push(path.join(stem, shot));
     }
   }
-  for (const each of copies) if (kind(path.join(from, each)) !== 'file') return fail(`${path.join(from, each)} must be a plain file, no link`);
-  if (kind(dir) === 'missing') mkdirSync(dir, { recursive: true, mode: 0o700 });
-  if (kind(dir) !== 'dir') return fail(`${dir} is not a plain folder`);
+  const contents = new Map();
   for (const each of copies) {
-    const target = path.join(dir, each);
-    if (!['file', 'missing'].includes(kind(target))) return fail(`${target} is not a plain file, so it is left as it is`);
-    if (kind(path.dirname(target)) !== 'dir') mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
-    if (kind(path.dirname(target)) !== 'dir') return fail(`${path.dirname(target)} is not a plain folder`);
-    copyFileSync(path.join(from, each), target);
+    const content = readPlain(path.join(from, each));
+    if (content === null) return fail(`${path.join(from, each)} must be a plain file, no link`);
+    contents.set(each, content);
+  }
+  const audits = realFolder(dir);
+  if (underGit(audits)) return fail(`${dir} lies in a git checkout, which this command never writes; set state.dir outside every checkout`);
+  if (kindOf(audits) === 'missing') mkdirSync(audits, { recursive: true, mode: 0o700 });
+  if (kindOf(audits) !== 'dir') return fail(`${dir} is not a plain folder`);
+  // A saved sidecar this draft has none for would pair the new report with the old run's items.
+  if (!contents.has(sidecar) && kindOf(path.join(audits, sidecar)) !== 'missing') return fail(`${path.join(audits, sidecar)} is the sidecar of an earlier save, and this draft has none to replace it: add it to the draft`);
+  if (!['dir', 'missing'].includes(kindOf(path.join(audits, stem)))) return fail(`${path.join(audits, stem)} is not a plain folder, so it is left as it is`);
+  for (const each of copies) {
+    const target = path.join(audits, each);
+    if (!['file', 'missing'].includes(kindOf(target))) return fail(`${target} is not a plain file, so it is left as it is`);
+  }
+  const stage = mkdtempSync(path.join(audits, '.save-'));
+  try {
+    if (copies.some((each) => each.startsWith(`${stem}${path.sep}`))) mkdirSync(path.join(stage, stem));
+    for (const [each, content] of contents) writeFileSync(path.join(stage, each), content, { flag: 'wx', mode: 0o600 });
+    if (kindOf(path.join(stage, stem)) === 'dir' && kindOf(path.join(audits, stem)) === 'missing') mkdirSync(path.join(audits, stem), { mode: 0o700 });
+    // The report last, so a reader never meets the new report beside the evidence of the old one.
+    for (const each of [...copies.filter((one) => one !== report), report]) renameSync(path.join(stage, each), path.join(audits, each));
+  } finally {
+    rmSync(stage, { recursive: true, force: true });
   }
   console.log(`saved ${capital(reportTitle(report))} to ${dir}: ${copies.length} file${copies.length === 1 ? '' : 's'}`);
   return 0;
+}
+
+// What `file` is, by lstat, never following a link: 'file' (a plain file with one name), 'dir', 'other', or 'missing'.
+function kindOf(file) {
+  try {
+    const stat = lstatSync(file);
+    return stat.isFile() && stat.nlink === 1 ? 'file' : stat.isDirectory() ? 'dir' : 'other';
+  } catch {
+    return 'missing';
+  }
+}
+
+// The contents of the plain file `file`, opened without following a link, or null.
+function readPlain(file) {
+  let fd;
+  try {
+    fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const stat = fstatSync(fd);
+    return stat.isFile() && stat.nlink === 1 ? readFileSync(fd) : null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+// `dir` with its nearest existing folder resolved, so every link above it is followed once, before any check.
+function realFolder(dir) {
+  const rest = [];
+  for (let current = path.resolve(dir); ; current = path.dirname(current)) {
+    if (kindOf(current) !== 'missing') return path.join(realpathSync(current), ...rest.reverse());
+    rest.push(path.basename(current));
+  }
 }
 
 // The report `name` in the audits folder, or a problem.

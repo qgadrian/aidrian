@@ -441,12 +441,19 @@ function limitedPlaces(places, { cwd, mark, project, config, base, home }, refus
     if (repo) sharedRefused(refuse, repo.common);
   }
   if (!project) return;
-  for (const state of stateFolders(project, config, stateOptions(base, home))) places.specific.push(real(state));
+  for (const state of stateFolders(project, config, stateOptions(base, home))) {
+    places.specific.push(real(state));
+    auditsRefused(refuse, state);
+  }
 }
+
+// The persona audits folder of the state folder `state`: its reports and triage record are written only through
+// `aidrian audits`, refused by hand in every layout, a state folder inside the session's own checkout included.
+const auditsRefused = (refuse, state) => refuse(path.join(state, 'audits'), 'the persona audits and their triage record, which only `aidrian audits` writes', true);
 
 // Each state folder's HAND_FOLDERS that is no link, as `specific`; its reviews folder, refused but for a manifest or
 // a capture (reviewAllows); its dispatch folder, refused but for a handoff file in it (dispatchAllows); and the dispatch
-// log beside them, refused. Returns the state folders, as stateFolders gives them.
+// log and the audits folder beside them, refused. Returns the state folders, as stateFolders gives them.
 function stateWork(places, { project, config, base, home }, refuse) {
   const states = [...stateFolders(project, config, stateOptions(base, home))];
   for (const state of states) {
@@ -463,6 +470,7 @@ function stateWork(places, { project, config, base, home }, refuse) {
     if (plain('reviews')) places.reviews.push(foldCase(path.join(root, 'reviews')));
     if (plain('dispatch')) places.reviews.push(foldCase(path.join(root, 'dispatch')));
     refuse(path.join(root, 'dispatch-log.jsonl'), 'the dispatch log, which only the plugin writes');
+    auditsRefused(refuse, root);
   }
   return states;
 }

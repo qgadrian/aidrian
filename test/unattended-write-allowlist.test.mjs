@@ -239,6 +239,23 @@ test('a pending or unreadable hold refuses only the entries refused wherever the
   const places = () => unattendedPlaces({ cwd: other, mark: held, project, config: loadConfig(project).config, env: fx.env, home: fx.home, temp: [fx.temp] });
   assert.equal(fx.ask(write(path.join(state, 'plans', 'x.md')), { held, places, cwd: other }), null);
   assert.match(fx.ask(write(path.join(fx.home, '.local', 'other.md')), { held, places, cwd: other })?.reason ?? '', /a dot file or folder/u);
+  // Its audits folder stays refused, as every layout's is: only `aidrian audits` writes it.
+  assert.match(fx.ask(write(path.join(state, 'audits', 'triage.json')), { held, places, cwd: other })?.reason ?? '', /the persona audits/u);
+});
+
+test('the persona audits folder is refused by hand, a state folder inside the session\'s own worktree included', (t) => {
+  const fx = fixture(t);
+  for (const file of [path.join(fx.state, 'audits', 'triage.json'), path.join(fx.state, 'audits', 'host-2026-11-22.md')]) {
+    for (const input of [write(file), bash(`echo '{}' > ${file}`)]) assert.match(fx.ask(input)?.reason ?? '', /the persona audits/u, file);
+  }
+  // A state folder inside the worktree: the checkout grant passes the rest of it, never its audits folder.
+  const state = path.join(fx.worktree, '.state');
+  mkdirSync(state, { recursive: true });
+  writeFileSync(path.join(fx.dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: state } }));
+  const project = findProject(fx.dir);
+  const places = () => unattendedPlaces({ cwd: fx.worktree, mark: fx.mark, project, config: loadConfig(project).config, env: fx.env, home: fx.home, temp: [fx.temp] });
+  assert.equal(fx.ask(write(path.join(state, 'plans', 'x.md')), { places }), null);
+  assert.match(fx.ask(write(path.join(state, 'audits', 'triage.json')), { places })?.reason ?? '', /the persona audits/u);
 });
 
 test('a target in /dev passes, by its spelled path', (t) => {

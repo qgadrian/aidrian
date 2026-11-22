@@ -26,7 +26,7 @@ import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirS
 import path from 'node:path';
 
 import { ATTEMPT_KEEP, attemptOf, GIT_PLACEHOLDERS, KEPT_FOLDERS, systemReal } from './attempt-clone.mjs';
-import { isWithin, readSmallJson, resolvedPath } from './fs.mjs';
+import { isWithin, pauseSync, readSmallJson, resolvedPath } from './fs.mjs';
 import { gateGit } from './git.mjs';
 import { claimedSource, forgeToken, gitCredentialVars, sessionToken, tokenDigest, tokenVars } from './project-token.mjs';
 import { loadConfig } from './config.mjs';
@@ -355,7 +355,20 @@ export function commitProblem({ state, env = process.env, url = null, branch = P
     const commit = git(['-c', 'gc.auto=0', '-c', 'maintenance.auto=false', 'commit', '--quiet', '--allow-empty', '-m', 'aidrian preflight commit probe']);
     return commit.status === 0 ? null : `a commit in a clone made as an attempt's fails (${gitSaid(commit)})`;
   } finally {
-    rmSync(scratch, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    removeScratch(scratch);
+  }
+}
+
+// Removes the probe's scratch folder, the whole removal again on a failure, as a late write leaves a folder that one
+// removal's single listing misses; never throws, so a commit's own diagnostic is never masked.
+function removeScratch(scratch) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      rmSync(scratch, { recursive: true, force: true });
+      return;
+    } catch {
+      pauseSync(50);
+    }
   }
 }
 

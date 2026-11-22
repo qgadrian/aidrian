@@ -1292,9 +1292,13 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     there could become a driver's prior ([handoff.md](handoff.md#the-check)), and no `quorum`, whose hard calls it
     parks for the Human (`aidrian quorum route` routes them to `human`); in `plans` and `tmp`, only an entry named for
     its own issue, the key itself or the key followed by `-` or `.` in any case, such as `plans/eng-1-implementation.md`
-    or `tmp/eng-1/`; and in `dispatch`, only a handoff file named for its own branch, each `/` a `-`, such as
+    or `tmp/eng-1/`, and in `tmp` also the body files the pr-write skill and the pull request body hook name for its own
+    branch, such as `tmp/pr-body-feat-eng-1-export.md`; and in `dispatch`, only a handoff file named for its own branch, each `/` a `-`, such as
     `feat-eng-1-export-S1-explorer.json`. Its issue and branch are the run snapshot's, read while the ledger names its
-    issue running (`lib/project-run-guard.mjs ownIssue`); with none, it writes none of them;
+    issue running (`lib/project-run-guard.mjs ownIssue`); with none, it writes none of them. When another issue of the
+    run has a branch, planned or attempted, spelled the same once each `/` is a `-` (as `feat/eng-1-export` and
+    `feat-eng-1/export`), or spelled the same and then `-` more, a body or handoff file named for the branch is neither
+    issue's: the refusal names a key-named body file, such as `tmp/eng-1-pr-body.md`, which `--body-file` takes;
   - the temporary folder, this process's `TMPDIR` and `/tmp`, but for a state folder inside it, as one under `/tmp`
     is, where only the state places above pass, and for any checkout of the repository inside it, which keeps the rules
     above: a checkout that is not the session's worktree stays outside, and the worktree's host files and `.git` entries

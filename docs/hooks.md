@@ -44,7 +44,7 @@ A file edit is an Edit, Write, or NotebookEdit call, or Codex's `apply_patch`.
 ## Start lines
 
 Before anything else, in a main session whose own mark names a run and issue whose ledger gives it the confined
-attempt it starts in, or whose pending mark starts it in that attempt's clone, the hook hands the host the environment that attempt's sandboxed commands get,
+attempt it starts in, or whose pending mark starts it in that attempt's clone, and whose folder resolves inside that clone, the hook hands the host the environment that attempt's sandboxed commands get,
 the package managers' caches in its `cache` folder, on a host that takes it: Claude Code, through the file it names in
 `CLAUDE_ENV_FILE` ([Dependency installs](providers/claude-code.md#dependency-installs)). On a host that declares
 `forgeTokenEnv`, as Claude Code does, it then hands over the forge token as `GH_TOKEN` the same way, only to a session
@@ -1084,14 +1084,15 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   `aidrian project confine <run> <issue>` of its own issue, alone, on one line, in Bash, and only while no verdict is in
   the drop folder, until the start files the passed proof in its mark; a call it makes before then is refused,
   wherever it runs. A session with no readable mark of its own, whichever pending mark it reads, is held the same way
-  whenever its call runs in an attempt's clone whose start wrote the proof's plan. Once the mark or the verdict in the
+  whenever its call's folder, as the system resolves it or as its spelling folds, lies in an attempt's clone whose
+  start wrote the proof's plan. Once the mark or the verdict in the
   drop folder says the proof failed, or the mark's proof state cannot be read, every call is refused, the confine
   command too. Before and after the proof, a file-tool read (Read, Grep, Glob, or LS, as the host's adapter names its
   read tools) that reaches a store the plan lists as hidden, or a folder that holds one, is refused. A Glob pattern
   with a `..` segment past its literal folder climbs from wherever a glob matched, so it reaches the file system's root
   and is refused. The hook also refuses the confine command, and writes a failed verdict, when
   its own environment, the host process's, holds a variable whose value names the attempt's `cache` folder. Only that
-  issue's session may run the confine command (`lib/project-run-guard.mjs`). A session with no proof in its mark
+  issue's session may run the confine command (`lib/project-run-guard.mjs`), and one its pending mark starts only from a folder that resolves inside its clone. A session with no proof in its mark
   and no plan beside its clone, as Codex's, is not held so. And a session an unattended mark holds never runs a call
   that asks the host to run it outside its sandbox (`sandbox_escape`, Claude Code's `dangerouslyDisableSandbox`).
 - With or without gates or a project, a subagent, and a main session the background handoff route started, may not
@@ -1221,7 +1222,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   stands before every git call of the plugin, in a hook or a command, whose folder lies in a clone's work or git folder:
   `lib/git.mjs runGit` and `gateGit`, the committed config's `git show` (`lib/config-committed.mjs`), the review
   selector's reads (`lib/review/content.mjs`), and `aidrian worktree` (`lib/worktree.mjs`), each through
-  `lib/attempt-clone.mjs cloneGitProblem`; while it fails, the call runs no git and answers as git failing. Every git
+  `lib/attempt-clone.mjs cloneGitProblem`; while it fails, the call runs no git and answers as git failing. The call's
+  folder and the `.git` pointer's target are each resolved as the system resolves them, where git lands, so a `..`
+  after a link, as in `<folder>/link/..`, climbs from the link's target and is never folded as text first. Every git
   call of the plugin runs with `core.fsmonitor`, `core.hooksPath`, submodule recursion, the `ext::` transport, and
   signature display turned off (`lib/git.mjs`), the start gate's that make each attempt clone among them; another
   `commondir` would lead git to a config those settings do not cover. One call runs as the person's own git would:
@@ -1271,7 +1274,7 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     is, where only the state places above pass, and for any checkout of the repository inside it, which keeps the rules
     above: a checkout that is not the session's worktree stays outside, and the worktree's host files and `.git` entries
     stay refused; with checkouts git cannot list, or a main checkout git cannot read though a `.git` lies at or above it,
-    the temporary folder passes nothing and no checkout is granted;
+    as the system resolves its folder, the temporary folder passes nothing and no checkout is granted;
   - `/dev/null`, `/dev/stdout`, `/dev/stderr`, `/dev/tty`, and `/dev/fd/<n>`, by the path a command spells.
 
   Everything else is refused, and these always, inside a place or not, checked first: every git folder, whole (the

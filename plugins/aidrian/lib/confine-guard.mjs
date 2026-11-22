@@ -4,10 +4,10 @@
 // docs/providers/claude-code.md#the-sandbox-proof.
 
 import { randomBytes } from 'node:crypto';
-import { lstatSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { attemptOf } from './attempt-clone.mjs';
+import { attemptOf, systemReal } from './attempt-clone.mjs';
 import { bashCall } from './config-guard.mjs';
 import { readSmallJson } from './fs.mjs';
 import { fileReadOf } from './hosts/index.mjs';
@@ -24,13 +24,8 @@ export const SHELL_VARS = 'shell-env.json';
 // The largest verdict read: one with every read's salted sight.
 export const VERDICT_CAP = 1024 * 1024;
 
-export const real = (file) => {
-  try {
-    return realpathSync(file);
-  } catch {
-    return null;
-  }
-};
+// The real path of `file` where the system lands (attempt-clone.mjs systemReal), or null.
+const real = systemReal;
 // Whether `file` is `folder` or under it, the file system's root included.
 export const within = (folder, file) => file === folder || file.startsWith(folder.endsWith(path.sep) ? folder : `${folder}${path.sep}`);
 // Whether something is at `file`; a path that cannot be checked counts as there.
@@ -67,12 +62,16 @@ export function hostVarsProblem(folder, env) {
 }
 
 // The attempt whose clone holds the folder of the call in `input`, when the start wrote a proof plan beside it, as a
-// hold that owes the proof; else null.
+// hold that owes the proof; else null. The folder is read every way readsStore reads a path: as the system resolves
+// it, where a `..` after a link climbs from the link's target, and folded as text first, from the nearest folder above
+// it that is there when it does not resolve, as a dangling link or a missing folder.
 function cloneHold(input) {
-  const at = typeof input.cwd === 'string' ? real(input.cwd) : null;
-  const attempt = at ? attemptOf(at) : null;
-  if (!attempt || !within(attempt.work, at)) return null;
-  return exists(path.join(attempt.folder, CONFINE_PLAN)) ? { attempt, state: true } : null;
+  if (typeof input.cwd !== 'string') return null;
+  for (const at of [real(input.cwd), realOf(path.resolve(input.cwd))]) {
+    const attempt = at ? attemptOf(at) : null;
+    if (attempt && within(attempt.work, at) && exists(path.join(attempt.folder, CONFINE_PLAN))) return { attempt, state: true };
+  }
+  return null;
 }
 
 // What holds the session of `input`, by its unattended mark `mark`, to its sandbox proof: { attempt, state } with
@@ -110,18 +109,69 @@ function realOf(file) {
   return above === file ? file : path.join(realOf(above), path.basename(file));
 }
 
+// The file system's identity of `file`, its device and inode, or null when it is not there; `stat` is statSync but in
+// a test. Read as big integers: an APFS inode passes 2^53, so as a plain number two files' inodes, as /bin/cat's and
+// /bin/ls's on macOS, can round alike.
+export function identity(file, stat = statSync) {
+  try {
+    const { dev, ino } = stat(file, { bigint: true });
+    return `${dev}:${ino}`;
+  } catch {
+    return null;
+  }
+}
+
+// On macOS, the Data volume's own path to `store`, when that path is the store itself by its exact identity, else null.
+// The same path under the Data volume is not always the same folder: /System/Volumes/Data/usr/share is not /usr/share,
+// the sealed system volume's. A store that is not there has no identity, so it gets no Data volume path.
+const DATA_VOLUME = '/System/Volumes/Data';
+function dataPath(store) {
+  if (process.platform !== 'darwin' || within(DATA_VOLUME, store)) return null;
+  const alias = `${DATA_VOLUME}${store}`;
+  const own = identity(store);
+  return own !== null && identity(alias) === own ? alias : null;
+}
+
+// The identities of `file` and of each folder above it that is there, `file` first.
+function ancestry(file) {
+  const found = [];
+  for (let at = file; ; at = path.dirname(at)) {
+    const each = identity(at);
+    if (each) found.push(each);
+    if (path.dirname(at) === at) return found;
+  }
+}
+
 // The store of `unreadable` a file-tool read in `input` reaches, a folder it names holding one, or one holding it, or
 // null: the host names its read tools and their paths (hosts/index.mjs fileReadOf), a path with none being the call's
-// folder.
+// folder. Each path is read both ways a tool may: folded as text first, and as the system resolves it, where a `..`
+// after a link climbs from the link's target. Each reading is matched by its path, and by the file system's identity of
+// it and the folders above it, so another path to the same file or folder, as a hard link or macOS's
+// `/System/Volumes/Data` path to a folder of the Data volume, matches too. On macOS each store is also read by its Data
+// volume path, when that path is the store itself (dataPath), since the system keeps that path as it is: a read of the
+// Data volume's root, or of a folder above it, holds every store there, though no store's standard path or identity
+// ancestry passes through it.
 function readsStore(input, unreadable) {
   const targets = fileReadOf(input);
   if (!targets) return null;
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
-  const stores = unreadable.filter((each) => typeof each === 'string' && path.isAbsolute(each)).map((each) => realOf(each));
+  const stores = unreadable.filter((each) => typeof each === 'string' && path.isAbsolute(each)).map((each) => realOf(each))
+    .map((store) => ({ store, paths: [store, dataPath(store)].filter(Boolean) }));
+  let known = null;
   for (const target of targets) {
-    const file = realOf(path.resolve(cwd, typeof target === 'string' && target !== '' ? target : '.'));
-    const store = stores.find((each) => within(each, file) || within(file, each));
-    if (store) return store;
+    const spelled = typeof target === 'string' && target !== '' ? target : '.';
+    const files = [realOf(path.resolve(cwd, spelled)), real(path.isAbsolute(spelled) ? spelled : `${cwd}/${spelled}`)].filter(Boolean);
+    const store = stores.find((each) => each.paths.some((at) => files.some((file) => within(at, file) || within(file, at))));
+    if (store) return store.store;
+    known ??= stores.flatMap(({ store, paths }) => paths.map((at) => ({ store, id: identity(at), ids: ancestry(at) })));
+    // The read's file or a folder above it is the store, or the read's file is the store or a folder above it.
+    // Only a store's own ancestry is known, so a hard link made beforehand to a file inside a store folder is not caught:
+    // nothing scans the folder's tree for the identities of the files it holds.
+    for (const file of files) {
+      const [id, ids] = [identity(file), ancestry(file)];
+      const found = known.find((each) => (each.id !== null && ids.includes(each.id)) || (id !== null && each.ids.includes(id)));
+      if (found) return found.store;
+    }
   }
   return null;
 }

@@ -11,14 +11,14 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { ATTEMPT_KEEP, KEPT_FOLDERS } from '../plugins/aidrian/lib/attempt-clone.mjs';
-import { CONFINE_LOCK, sandboxEscapeDenial } from '../plugins/aidrian/lib/confine-guard.mjs';
+import { CONFINE_LOCK, identity, sandboxEscapeDenial } from '../plugins/aidrian/lib/confine-guard.mjs';
 import { readOwnText, readSmallJson, writeOwnText } from '../plugins/aidrian/lib/fs.mjs';
 import { HOOK_COUNTS_AGE, sweepHookCounts } from '../plugins/aidrian/lib/lesson-signals.mjs';
 import { sessionLengthMarker } from '../plugins/aidrian/lib/session-length.mjs';
@@ -347,6 +347,16 @@ test('with no readable mark of its own, whichever pending mark it reads, a call 
   }
   assert.equal(confineDenial(bash('aidrian project confine launch ENG-1', at.work), { mark: read, env: {} }), null);
   assert.equal(confineDenial(bash('ls', at.root), { mark: read, env: {} }), null, 'a call outside every clone');
+  // A folder spelled `<x>/link/..`, with the link into the clone, is the clone to the system, which runs the call there.
+  symlinkSync(path.join(at.work, '.claude'), path.join(other, 'link'));
+  assert.match(confineDenial(bash('ls', `${other}/link/..`), { mark: null, env: {} })?.reason ?? '', /its first call must be exactly/u, 'a link and `..` into the clone');
+  // `<work>/out/..`, with `out` a link out of the clone, is the folder above that link's target to the system and the
+  // clone folded as text; a dangling link in the clone resolves nowhere. Each holds by the spelling that lies in the clone.
+  symlinkSync(path.join(at.root, 'gone'), path.join(at.work, 'dangling'));
+  assert.match(confineDenial(bash('ls', path.join(at.work, 'dangling')), { mark: null, env: {} })?.reason ?? '', /its first call must be exactly/u, 'a dangling link in the clone');
+  symlinkSync(other, path.join(at.work, 'out'));
+  assert.equal(realpathSync.native(`${at.work}/out/..`), at.root, 'the system lands outside every clone');
+  assert.match(confineDenial(bash('ls', `${at.work}/out/..`), { mark: null, env: {} })?.reason ?? '', /its first call must be exactly/u, 'a `..` after a link out of the clone');
   writeVerdict(at, { pass: false, failed: ['write /x'] });
   assert.match(confineDenial(bash('aidrian project confine launch ENG-1', at.work), { mark: null, env: {} }).reason, /refuses every later call/u);
 });
@@ -365,12 +375,28 @@ test('a session a proof plan holds never reads a hidden store with the file tool
     rmSync(path.join(at.work, 'key'), { force: true });
     symlinkSync(path.join(at.keys, 'id_test'), path.join(at.work, 'key'));
     assert.match(call('Read', { file_path: path.join(at.work, 'key') })?.reason ?? '', /hides/u);
+    // `link/..`, with the link into a store's folder, is that folder's parent to the system, though it folds to the clone.
+    rmSync(path.join(at.work, 'keys'), { force: true });
+    symlinkSync(at.keys, path.join(at.work, 'keys'));
+    assert.match(call('Read', { file_path: `${at.work}/keys/../.npmrc` })?.reason ?? '', /hides/u, 'a link and `..` to a store');
+    assert.match(call('Read', { file_path: 'keys/../.npmrc' })?.reason ?? '', /hides/u, 'the same, relative to the call\'s folder');
+    // A Glob whose `path` is a link to a folder beside a store, and whose pattern climbs from it: the store to the system.
+    mkdirSync(path.join(at.home, 'side'), { recursive: true });
+    rmSync(path.join(at.work, 'side'), { force: true });
+    symlinkSync(path.join(at.home, 'side'), path.join(at.work, 'side'));
+    assert.match(call('Glob', { pattern: '../.ssh/*', path: path.join(at.work, 'side') })?.reason ?? '', /hides/u, 'a Glob climbing from a link');
+    assert.match(call('Glob', { pattern: '../.ssh/*', path: 'side' })?.reason ?? '', /hides/u, 'the same, relative to the call\'s folder');
+    // An empty `path` is the call's folder: a pattern that climbs from there to a store reaches it.
+    const climb = `${path.relative(at.work, at.keys)}/*`;
+    assert.match(call('Glob', { pattern: climb, path: '' })?.reason ?? '', /hides/u, 'an empty path, the call\'s folder');
     if (confine === 'passed') {
       assert.equal(call('Read', { file_path: path.join(at.work, 'README.md') }), null);
       assert.equal(call('Grep', { pattern: 'x' }), null, 'the call`s folder, the clone');
     }
   }
   assert.deepEqual(fileReadOf({ tool_name: 'Glob', tool_input: { pattern: '/a/b/*.pem', path: '/c' } }), ['/c', '/a/b/']);
+  assert.deepEqual(fileReadOf({ tool_name: 'Glob', tool_input: { pattern: '../x/*.pem', path: '/c/l/' } }), ['/c/l/', '/c/l/../x/'], 'joined as text, not folded');
+  assert.deepEqual(fileReadOf({ tool_name: 'Glob', tool_input: { pattern: '../x/*.pem', path: '' } }), ['', '../x/'], 'an empty path, the call\'s folder');
   assert.equal(fileReadOf({ tool_name: 'Bash', tool_input: { command: 'cat x' } }), null);
 });
 
@@ -495,6 +521,13 @@ test('`aidrian project confine` runs only in its issue`s clone, and its hook rul
   assert.ok(markPending('pending-driver', { cwd: work, root: fx.dir, known: [], env: fx.env }));
   assert.equal(confine('unlisted-new-1'), null);
   assert.match(confine('unlisted-new-1', fx.dir)?.reason ?? '', /not that one/u);
+  // A folder in the clone that is there runs it; one that is not there, or one beside the clone that a link in it
+  // reaches, as its drop folder, does not.
+  assert.equal(confine('unlisted-new-1', path.join(work, '.claude')), null);
+  symlinkSync(path.join(path.dirname(work), 'drop'), path.join(work, 'beside'));
+  for (const cwd of [path.join(work, 'missing'), path.join(work, 'beside'), path.join(work, 'gone', 'deeper')]) {
+    assert.match(confine('unlisted-new-1', cwd)?.reason ?? '', /not that one/u, cwd);
+  }
 });
 
 test('a start writes the plan, holds the session once its proof passed, and files the pass in its mark; the listener stops', async (t) => {
@@ -825,4 +858,147 @@ test('the counts folder sweeps entries a session that never ended left, past the
 test('the host`s read tools are pinned: a read tool the host adds fails this until the read refusal covers it', () => {
   assert.deepEqual([...READ_TOOLS], ['Read', 'Grep', 'Glob', 'NotebookRead', 'LS']);
   assert.deepEqual(claudeCode.fileReadTools, READ_TOOLS);
+});
+
+test('a file-tool read through `~/..`, with the home folder a link, climbs from the link`s target to the store it names', (t) => {
+  const at = attempt(t);
+  plan(at);
+  // The home folder is a link to a folder inside the real one: `~/..` climbs from the link's target, where the stores are.
+  const inner = path.join(at.home, 'inner');
+  mkdirSync(inner);
+  const linked = path.join(at.root, 'home-link');
+  symlinkSync(inner, linked);
+  const saved = process.env.HOME;
+  process.env.HOME = linked;
+  t.after(() => (saved === undefined ? delete process.env.HOME : (process.env.HOME = saved)));
+  assert.deepEqual(fileReadOf({ tool_name: 'Read', tool_input: { file_path: '~/../x' } }), [`${linked}/../x`], 'expanded as text, not folded');
+  assert.deepEqual(fileReadOf({ tool_name: 'LS', tool_input: { path: '~' } }), [linked]);
+  const mark = { root: at.root, cwd: at.work, project: 'launch', issue: 'ENG-1', confine: 'passed' };
+  const call = (tool, input) => confineDenial({ session_id: SESSION, tool_name: tool, tool_input: input, cwd: at.work }, { mark, env: {} });
+  for (const [tool, input] of [['Read', { file_path: '~/../.ssh/id_test' }], ['Read', { file_path: '~/../.npmrc' }], ['Grep', { pattern: 'x', path: '~/../.ssh' }],
+    ['Glob', { pattern: '~/../.ssh/*' }], ['Glob', { pattern: '*', path: '~/../.ssh' }], ['LS', { path: '~/../.ssh' }]]) {
+    assert.match(call(tool, input)?.reason ?? '', /hides/u, `${tool} ${JSON.stringify(input)}`);
+  }
+  assert.equal(call('Read', { file_path: '~/notes.md' }), null, 'a file in the linked home folder, no store');
+});
+
+test('a file-tool read of a store by another name for the same file or folder reaches that store', (t) => {
+  const at = attempt(t);
+  plan(at);
+  const mark = { root: at.root, cwd: at.work, project: 'launch', issue: 'ENG-1', confine: 'passed' };
+  const call = (tool, input) => confineDenial({ session_id: SESSION, tool_name: tool, tool_input: input, cwd: at.work }, { mark, env: {} });
+  // A hard link in the clone to a store's file: no link to resolve, one file on the disk.
+  linkSync(at.secret, path.join(at.work, 'notes'));
+  assert.match(call('Read', { file_path: path.join(at.work, 'notes') })?.reason ?? '', /hides/u, 'a hard link to a store');
+  assert.match(call('Read', { file_path: 'notes' })?.reason ?? '', /hides/u, 'the same, relative to the call\'s folder');
+  assert.equal(call('Read', { file_path: path.join(at.work, 'README.md') }), null, 'a file of the clone of its own');
+  assert.equal(call('LS', { path: at.work }), null, 'the clone, which holds no store');
+});
+
+// The documented limit (docs/providers/claude-code.md, the sandbox proof): only a store's own identity and those of the
+// folders above it are known, so a hard link made beforehand to a file inside a store folder is not caught. Pinned
+// here so the limit stays deliberate: a change that starts catching it updates that doc and this test together.
+test('a file-tool read through a hard link made beforehand to a file inside a store folder is not detected', (t) => {
+  const at = attempt(t);
+  plan(at);
+  const mark = { root: at.root, cwd: at.work, project: 'launch', issue: 'ENG-1', confine: 'passed' };
+  const call = (tool, input) => confineDenial({ session_id: SESSION, tool_name: tool, tool_input: input, cwd: at.work }, { mark, env: {} });
+  linkSync(path.join(at.keys, 'id_test'), path.join(at.work, 'key-copy'));
+  assert.match(call('Read', { file_path: path.join(at.keys, 'id_test') })?.reason ?? '', /hides/u, 'the file by its own path');
+  assert.equal(call('Read', { file_path: path.join(at.work, 'key-copy') }), null, 'the same file by a hard link outside the store folder');
+});
+
+test('a file`s identity keeps an inode past 2^53 whole, where a plain number rounds two files` inodes alike', () => {
+  const inodes = { '/a': 2n ** 60n + 4n, '/b': 2n ** 60n + 40n };
+  assert.equal(Number(inodes['/a']), Number(inodes['/b']), 'the two inodes round alike as plain numbers');
+  // As statSync: big integers only when asked for them, plain numbers otherwise.
+  const stat = (file, options) => (options?.bigint ? { dev: 7n, ino: inodes[file] } : { dev: 7, ino: Number(inodes[file]) });
+  assert.notEqual(identity('/a', stat), identity('/b', stat));
+  assert.equal(identity('/a', stat), identity('/a', stat));
+  assert.equal(identity('/gone', () => { throw new Error('ENOENT'); }), null, 'a file that is not there');
+});
+
+test('a file-tool read of a file beside a store, through a linked folder above both, is no store', (t) => {
+  const at = attempt(t);
+  // As /bin is a link to usr/bin on Linux: the store and its neighbour sit in a folder reached by a link.
+  const folder = path.join(at.root, 'usr', 'bin');
+  mkdirSync(folder, { recursive: true });
+  for (const name of ['cat', 'ls']) writeFileSync(path.join(folder, name), name);
+  const linked = path.join(at.root, 'bin');
+  symlinkSync(path.join('usr', 'bin'), linked);
+  plan(at, { reads: [at.secret, at.keys, path.join(linked, 'cat')] });
+  const mark = { root: at.root, cwd: at.work, project: 'launch', issue: 'ENG-1', confine: 'passed' };
+  const call = (file) => confineDenial({ session_id: SESSION, tool_name: 'Read', tool_input: { file_path: file }, cwd: at.work }, { mark, env: {} });
+  assert.match(call(path.join(linked, 'cat'))?.reason ?? '', /hides/u, 'the store by the link');
+  assert.match(call(path.join(folder, 'cat'))?.reason ?? '', /hides/u, 'the store by its real path');
+  assert.equal(call(path.join(linked, 'ls')), null, 'the file beside it by the link');
+  assert.equal(call(path.join(folder, 'ls')), null, 'the file beside it by its real path');
+  assert.match(call(linked)?.reason ?? '', /hides/u, 'the folder that holds the store');
+});
+
+// Two files on this disk whose exact identities differ but round alike as plain numbers, as /bin/cat's and /bin/ls's
+// on macOS, where an APFS inode passes 2^53; else the reason the test below cannot run here. On Linux both can be one
+// file: a multicall coreutils binary, hard linked under each name, is one identity, and a read of either is the store.
+function roundingPair(first, second) {
+  try {
+    const [a, b] = [first, second].map((file) => statSync(file, { bigint: true }));
+    if (a.dev === b.dev && a.ino === b.ino) return { skip: `${first} and ${second} are one file here` };
+    if (Number(a.dev) !== Number(b.dev) || Number(a.ino) !== Number(b.ino)) return { skip: `${first}'s and ${second}'s identities do not round alike here` };
+    return { skip: false };
+  } catch {
+    return { skip: `no ${first} or ${second} here` };
+  }
+}
+
+test('a file-tool read matches a store by its exact inode, so a file whose inode rounds alike is no store', roundingPair('/bin/cat', '/bin/ls'), (t) => {
+  const at = attempt(t);
+  plan(at, { reads: [at.secret, at.keys, '/bin/cat'] });
+  const mark = { root: at.root, cwd: at.work, project: 'launch', issue: 'ENG-1', confine: 'passed' };
+  const call = (file) => confineDenial({ session_id: SESSION, tool_name: 'Read', tool_input: { file_path: file }, cwd: at.work }, { mark, env: {} });
+  assert.match(call('/bin/cat')?.reason ?? '', /hides/u, 'the store');
+  assert.equal(call('/bin/ls'), null, 'another file beside it');
+});
+
+// On macOS, the Data volume's own path to a folder is the same folder as its standard path, with another real path.
+test('a file-tool read of a store through the macOS Data volume`s path to it reaches that store', { skip: process.platform !== 'darwin' }, (t) => {
+  const at = attempt(t);
+  plan(at);
+  const alias = (file) => `/System/Volumes/Data${file}`;
+  if (!existsSync(alias(at.home)) || realpathSync.native(alias(at.home)) === at.home) return t.skip('no Data volume path to the temporary folder');
+  const mark = { root: at.root, cwd: at.work, project: 'launch', issue: 'ENG-1', confine: 'passed' };
+  const call = (tool, input) => confineDenial({ session_id: SESSION, tool_name: tool, tool_input: input, cwd: at.work }, { mark, env: {} });
+  for (const [tool, input] of [['Read', { file_path: alias(at.secret) }], ['Read', { file_path: alias(path.join(at.keys, 'id_test')) }], ['Grep', { pattern: 'x', path: alias(at.keys) }],
+    ['Grep', { pattern: 'x', path: alias(at.home) }], ['LS', { path: alias(at.keys) }], ['Glob', { pattern: '*', path: alias(at.home) }], ['Read', { file_path: alias(path.join(at.keys, 'gone')) }]]) {
+    assert.match(call(tool, input)?.reason ?? '', /hides/u, `${tool} ${JSON.stringify(input)}`);
+  }
+  assert.equal(call('Read', { file_path: alias(path.join(at.work, 'README.md')) }), null, 'the clone by the same path');
+  // The Data volume's root and each folder above it hold every store by its Data volume path, though no standard path.
+  for (const folder of ['/System/Volumes/Data', '/System/Volumes', '/System']) {
+    assert.match(call('Grep', { pattern: 'x', path: folder })?.reason ?? '', /hides/u, `Grep ${folder}`);
+    assert.match(call('Glob', { pattern: '**/*', path: folder })?.reason ?? '', /hides/u, `Glob ${folder}`);
+  }
+});
+
+// On macOS, a folder the Data volume holds under the same path is not always the same folder: /usr/share is the sealed
+// system volume's, and /System/Volumes/Data/usr/share another folder. A store's Data volume path counts only when it
+// is the store itself, by its exact identity; else the reason the test below cannot run here.
+function unrelatedDataPath(store) {
+  if (process.platform !== 'darwin') return { skip: 'macOS only: no Data volume elsewhere' };
+  const data = `/System/Volumes/Data${store}`;
+  const [a, b] = [identity(store), identity(data)];
+  if (!a || !b) return { skip: `no ${store} or ${data} here` };
+  return a === b ? { skip: `${data} is ${store} itself here` } : { skip: false };
+}
+
+test('a file-tool read of a folder at a store`s Data volume path that is another folder is no store', unrelatedDataPath('/usr/share'), (t) => {
+  const at = attempt(t);
+  plan(at, { reads: [at.secret, at.keys, '/usr/share'] });
+  const mark = { root: at.root, cwd: at.work, project: 'launch', issue: 'ENG-1', confine: 'passed' };
+  const call = (tool, input) => confineDenial({ session_id: SESSION, tool_name: tool, tool_input: input, cwd: at.work }, { mark, env: {} });
+  const data = '/System/Volumes/Data/usr/share';
+  assert.match(call('LS', { path: '/usr/share' })?.reason ?? '', /hides/u, 'the store by its own path');
+  assert.equal(call('LS', { path: data }), null, 'the other folder at its Data volume path');
+  assert.equal(call('Read', { file_path: path.join(data, 'gone') }), null, 'a file under that other folder');
+  // A store whose Data volume path is the store itself, the temporary home folder, is still reached through it.
+  if (existsSync(`/System/Volumes/Data${at.keys}`)) assert.match(call('LS', { path: `/System/Volumes/Data${at.keys}` })?.reason ?? '', /hides/u, 'a store by its own Data volume path');
 });

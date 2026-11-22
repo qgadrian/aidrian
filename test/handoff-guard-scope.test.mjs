@@ -18,6 +18,7 @@ import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { activeRuns, appendToRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { ownAttemptFolder, projectRunActive } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
+import { factReads, tally } from './git-call-log.mjs';
 import { DRIVER, OTHER, runFixture } from './project-start-fixture.mjs';
 
 // A plain project with no project run: a config.json naming a state folder of its own, one commit, and a home folder.
@@ -126,4 +127,17 @@ test('a live unattended mark that names the project is a run under way', (t) => 
   assert.equal(projectRunActive(fx.project, fx.config, { home: fx.home }), false);
   markUnattended(OTHER, { root: fx.dir, env: { ...process.env, XDG_STATE_HOME: path.join(fx.home, '.local/state') } });
   assert.equal(projectRunActive(fx.project, fx.config, { home: fx.home }), true);
+});
+
+test('one call for the whole list of state folders reads each checkout\'s roots once, and the lazy form is still an iterator', (t) => {
+  const fx = plainProject(t);
+  let folders;
+  const reads = factReads(t, () => (folders = stateFolders(fx.project, fx.config, { home: fx.home })));
+  assert.ok(Array.isArray(folders) && folders.includes(fx.state), `the list holds the configured state folder: ${folders}`);
+  const roots = reads.filter((line) => line.endsWith(' roots'));
+  assert.ok(roots.includes(`${fx.dir} roots`), `the checkout's roots are read: ${roots.join(' | ')}`);
+  assert.deepEqual(tally(roots), Object.fromEntries(roots.map((line) => [line, 1])), 'each folder\'s roots once');
+  const lazy = stateFolders(fx.project, fx.config, { home: fx.home, lazy: true });
+  assert.ok(!Array.isArray(lazy) && typeof lazy.next === 'function', 'with lazy, an iterator');
+  assert.deepEqual([...lazy], folders, 'that gives the same folders');
 });

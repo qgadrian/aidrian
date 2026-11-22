@@ -27,6 +27,7 @@ import { findProject, projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { placeHolders } from '../plugins/aidrian/lib/project-start.mjs';
 import { markPending, markUnattended, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 
+import { factReads, gitLog, tally } from './git-call-log.mjs';
 import { hookCall } from './hook-call.mjs';
 
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-agent-gates.mjs');
@@ -753,6 +754,36 @@ test('the start record scan checks the guards\' deadline on each file it reads',
   assert.throws(() => withinDeadline(performance.now() - 1, () => unattendedPlaces({ cwd: fx.worktree, mark: { root: fx.dir }, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.temp], session: SESSION })), PastDeadline);
 });
 
+test('one call of the places reads each checkout\'s roots once, though its state folders and its worktree each ask for them', (t) => {
+  const fx = fixture(t);
+  const reads = factReads(t, () => assert.ok(unattendedPlaces({ cwd: fx.worktree, mark: fx.mark, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.temp], session: SESSION })?.worktree));
+  const roots = reads.filter((line) => line.endsWith(' roots'));
+  assert.ok(roots.includes(`${fx.dir} roots`) && roots.includes(`${fx.worktree} roots`), `both checkouts' roots are read: ${roots.join(' | ')}`);
+  assert.deepEqual(tally(roots), Object.fromEntries(roots.map((line) => [line, 1])), 'each folder\'s roots once');
+});
+
+// The git commands a guard reads with, as `<command> <first arguments>`: a logged call outside them writes.
+const GIT_READS = [/^rev-parse\b/u, /^config --get\b/u, /^config --get-regexp\b/u, /^config --file\b/u, /^worktree list\b/u, /^remote$/u, /^show\b/u, /^var\b/u, /^ls-files\b/u, /^cat-file\b/u];
+
+test('one agent gate hook call of a marked session\'s write in its worktree runs only git reads, and no more of them than it measured', async (t) => {
+  const fx = fixture(t);
+  const git = gitLog(t);
+  const file = path.join(fx.worktree, 'notes.md');
+  const result = await hookCall(HOOK, { input: JSON.stringify({ session_id: SESSION, cwd: fx.worktree, ...write(file) }), cwd: fx.worktree, env: { ...fx.env, PATH: git.path }, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  // Each line is `<working folder> <arguments>`, its folder one of the fixture's, or the root folder where git names
+  // its config files.
+  const calls = git.calls().map((line) => {
+    if (line.startsWith(`${path.sep} `)) return line.slice(2);
+    assert.ok(line.startsWith(`${fx.root}${path.sep}`), `a git call in the fixture or the root folder: ${line}`);
+    return line.slice(line.indexOf(' ', fx.root.length) + 1);
+  });
+  assert.ok(calls.length > 0, 'the hook reads git');
+  for (const call of calls) assert.ok(GIT_READS.some((read) => read.test(call)), `a git read: ${call}`);
+  // 45 before the places read each checkout's facts once, 32 after.
+  assert.ok(calls.length <= 32, `at most 32 git calls, as measured once the places read each checkout's facts once: ${calls.length}`);
+});
+
 test('a `.git` entry in an attempt folder or a state folder a session writes is refused too', (t) => {
   const fx = fixture(t);
   const ask = (input) => fx.ask(input)?.reason ?? null;
@@ -918,6 +949,21 @@ test('a call in an attempt clone whose .git points at another git folder is refu
   assert.match(cloneConfigProblem(work) ?? '', /is not a pointer file to its own git folder/u);
 });
 
+test('a .git pointer whose `..` follows a link is read where git lands, past the link\'s target, not folded before it', (t) => {
+  const root = tempRoot(t, 'aidrian-pointer-dots-');
+  const { attempt, work } = clone({ state: path.join(root, 'state'), main: path.join(root, 'main') });
+  // `away/git` is another git folder; `work/l` leads to `away/a/b`, so `l/../../git` is `attempt/git` to the eye and
+  // `away/git` to git.
+  const away = path.join(root, 'away');
+  mkdirSync(path.join(away, 'a', 'b'), { recursive: true });
+  execFileSync('git', ['init', '-q', '--bare', path.join(away, 'git')], { stdio: 'pipe' });
+  symlinkSync(path.join(away, 'a', 'b'), path.join(work, 'l'));
+  writeFileSync(path.join(work, '.git'), 'gitdir: l/../../git\n');
+  assert.equal(path.resolve(work, 'l/../../git'), path.join(attempt, 'git'), 'folded, the spelling names the attempt\'s own');
+  assert.equal(execFileSync('git', ['rev-parse', '--absolute-git-dir'], { cwd: work, encoding: 'utf8' }).trim(), realpathSync(path.join(away, 'git')), 'git runs on the other one');
+  assert.match(cloneConfigProblem(work) ?? '', /points at another git folder than its own/u);
+});
+
 test('a call in an attempt clone whose git folder holds a commondir or config.worktree file is refused, and the clone links to no main checkout', (t) => {
   const root = tempRoot(t, 'aidrian-extras-');
   const env = { ...process.env, XDG_STATE_HOME: path.join(root, 'marks') };
@@ -1053,6 +1099,26 @@ test('every plugin git call in an attempt clone whose git folder holds a commond
   writeFileSync(planted, GIT_PLACEHOLDERS.commondir);
   assert.equal(runGit(['rev-parse', '--git-dir'], work).status, 0, 'the gate\'s placeholder passes');
   assert.doesNotThrow(() => committedConfig(project, 'HEAD'));
+});
+
+test('a git call whose folder reaches an attempt clone through a link and `..` is refused where the system lands, not where the spelling folds', (t) => {
+  const root = tempRoot(t, 'aidrian-rungit-dots-');
+  const state = path.join(root, 'state');
+  const main = path.join(root, 'main');
+  onMain(main, { version: 1, state: { dir: state } });
+  const { attempt, work } = clone({ state, main });
+  mkdirSync(path.join(work, 'sub'));
+  const outside = path.join(root, 'x');
+  mkdirSync(outside);
+  symlinkSync(path.join(work, 'sub'), path.join(outside, 'link'));
+  // `x/link/..` folds to `x` as text, and is `work` to the system: git runs in the clone.
+  const cwd = `${outside}/link/..`;
+  assert.equal(path.resolve(cwd), outside);
+  assert.equal(spawnSync('git', ['rev-parse', '--absolute-git-dir'], { cwd, encoding: 'utf8' }).stdout.trim(), realpathSync(path.join(attempt, 'git')), 'git runs in the clone');
+  writeFileSync(path.join(attempt, 'git', 'commondir'), `${path.join(main, '.git')}\n`);
+  assert.match(cloneGitProblem(cwd) ?? '', /holds .*commondir, through which git reads another config/u);
+  const refused = runGit(['rev-parse', '--git-dir'], cwd);
+  assert.deepEqual([refused.status, refused.error?.code], [null, 'EREFUSED']);
 });
 
 test('a confined session never writes a host file its clone loads from any depth, by the write tool, the shell, a link, or a glob', (t) => {

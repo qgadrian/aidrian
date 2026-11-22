@@ -26,7 +26,7 @@ import { checkDeadline, PastDeadline, remainingMs } from './deadline.mjs';
 import { loadConfig } from './config.mjs';
 import { bashCall, globNamesFile, opaqueTexts, unquoted, writeTargets } from './config-guard.mjs';
 import { foldCase, globParts, isEntry, isWithin, partsReach } from './fs.mjs';
-import { GIT_TIMEOUT_MS, runGit } from './git.mjs';
+import { GIT_TIMEOUT_MS, runGit, withGitFacts } from './git.mjs';
 import { changesGitTarget } from './git-push.mjs';
 import { globLinksTo, globStarts, linkWalk } from './glob-links.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
@@ -142,7 +142,8 @@ function mainConfig(project) {
 // puts it (project.mjs stateDir) and where the user's own does (defaultStateDir), each once. A working copy that moves
 // state.dir still leaves the other folders guarded. A folder that cannot be resolved is left out. With `lazy`, an
 // iterator that reads the base branch's config, which runs git, only once the other folders are taken. `base` is a
-// baseReader to share; `home` is for a test.
+// baseReader to share; `home` is for a test. Without `lazy`, one call reads each folder's roots, prefix, and remote URLs
+// once (lib/git.mjs withGitFacts), or as the open call does; the iterator reads them as its caller's loop does.
 export function stateFolders(project, config, { home, lazy = false, base = baseReader(project) } = {}) {
   const own = (settings) => defaultStateDir(project, { config: settings, ...(home ? { home } : {}) });
   let main;
@@ -168,7 +169,7 @@ export function stateFolders(project, config, { home, lazy = false, base = baseR
       yield state;
     }
   }
-  return lazy ? each() : [...each()];
+  return lazy ? each() : withGitFacts(() => [...each()]);
 }
 
 // Why the subagent's Bash call in `input` may not run because it runs `aidrian handoff continue`, or null:

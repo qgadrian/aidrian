@@ -24,6 +24,7 @@ import { markDriver, markPending, markUnattended, readDriverMark, readUnattended
 import { signoffFolder } from '../plugins/aidrian/lib/review/signoff-store.mjs';
 import { drivesRun, droveRun } from '../plugins/aidrian/lib/run-driver.mjs';
 import { startHeld } from '../plugins/aidrian/lib/session-start-gate.mjs';
+import { gitLog } from './git-call-log.mjs';
 import { hookCall } from './hook-call.mjs';
 import { DRIVER, ISSUES, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
 
@@ -202,6 +203,17 @@ function hook(fx, session, tool, input, cwd = fx.dir, more = {}, run = hookCall)
   const env = { ...fx.env, HOME: fx.home, ...more };
   return run(PRE, { input: JSON.stringify({ cwd, session_id: session, tool_name: tool, tool_input: input }), cwd, env, encoding: 'utf8' });
 }
+
+test('one tracker pre hook call of an issue\'s session on its own issue runs no more git calls than it measured', async (t) => {
+  const fx = started(t);
+  const git = gitLog(t);
+  const result = await hook(fx, CHILD, 'mcp__linear__save_issue', { id: 'ENG-1', state: 'started', estimate: 2 }, fx.dir, { PATH: git.path });
+  assert.equal(result.status, 0, result.stderr);
+  const calls = git.calls();
+  assert.ok(calls.length > 0, 'the hook reads git');
+  // 8 both before and after the guards read each checkout's facts once: a pin for the hook's own facts scope to lower.
+  assert.ok(calls.length <= 8, `at most 8 git calls, as measured: ${calls.length}`);
+});
 
 test('the hook holds an issue\'s session to its own issue, with the tracker off in the working copy', async (t) => {
   const fx = started(t);

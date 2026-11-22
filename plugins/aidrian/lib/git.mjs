@@ -3,9 +3,10 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { spawnSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
 
-import { attemptClone, cloneGitProblem } from './attempt-clone.mjs';
+import { attemptClone, cloneGitProblem, systemReal } from './attempt-clone.mjs';
 import { isDirectory, isEntry, isFile } from './fs.mjs';
 
 // The clone check every git call of the plugin asks first, for the modules that spawn git themselves.
@@ -131,14 +132,20 @@ export function withoutGitFacts(body) {
 // kept only when git ran with no error and exited 0, or, for a `config` read, 1 (no such key) in a folder whose roots
 // read answers, itself remembered: outside a repository a config read exits 1 too. A read given any option but `timeout`,
 // such as `env` or `encoding`, always asks: the key holds no options, and those can change the answer or its form.
-// The key is the folder as given, resolved but not through links, a NUL, and the arguments: a folder swapped while the
-// call is open, as by a rename or a new `.git`, keeps its old answers, though the clone refusal still runs first.
+// The key is the real folder git runs in, as the system resolves it (realpathSync.native: the plain one folds a `..`
+// before the link it follows), a NUL, and the arguments; a folder that cannot be resolved asks git. A folder whose `.git` changes while the call is open keeps its
+// old answers, though the clone refusal still runs first.
 function readFact(args, cwd, options = {}, config = false) {
   const scope = gitFacts.getStore();
   if (!scope?.open || options.env !== undefined || Object.keys(options).some((key) => key !== 'timeout')) return runGit(args, cwd, options);
   const held = heldBack(cwd, options);
   if (held) return held;
-  const folder = path.resolve(cwd ?? process.cwd());
+  let folder;
+  try {
+    folder = realpathSync.native(cwd ?? process.cwd());
+  } catch {
+    return runGit(args, cwd, options);
+  }
   const key = [folder, ...args].join('\0');
   const known = scope.answers.get(key);
   if (known) return known;
@@ -304,9 +311,9 @@ const REDIRECTS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR'];
 export const holdsCheckout = (dir) => isFile(path.join(dir, '.git')) || isDirectory(path.join(dir, '.git'));
 
 // Whether `dir` or a folder above it holds a `.git` entry, where git looks for a repository. It reads the disk alone, so
-// it answers when git does not.
+// it answers when git does not, from where the system lands in `dir`, folded as text only when that does not resolve.
 export function underGit(dir) {
-  for (let current = path.resolve(dir); ; current = path.dirname(current)) {
+  for (let current = systemReal(dir) ?? path.resolve(dir); ; current = path.dirname(current)) {
     if (isEntry(path.join(current, '.git'))) return true;
     if (path.dirname(current) === current) return false;
   }

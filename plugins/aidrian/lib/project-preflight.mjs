@@ -96,7 +96,7 @@ export function localBindingNote(cap, platform) {
 
 // Runs every check for `project`, whose loaded config is `config`, with `run` the run these checks are for, which the
 // active-run check leaves out, and returns { exitCode, out, err }: a line `ok NAME`,
-// `blocker NAME: WHY (setup: URL#SECTION)`, `retry NAME: WHY` for a read the forge could not answer now, or
+// `blocker NAME: WHY (setup: URL#SECTION)`, `retry NAME: WHY` for a read the forge could not answer, or
 // `ask NAME: WHAT` per check, exit 1 when any blocker or retry. `forge`, `home`, `platform`, and `exec`,
 // the keychain read's execFileSync, are a test's.
 export function preflightCommand({ project, config, run = null, env = process.env, home, forge, platform = process.platform, exec }) {
@@ -223,8 +223,8 @@ export function recheckLines({ project, config, run, repository, names, env = pr
 
 // The access check, the start gate's own (project-start.mjs accessProblem): `ok access` or its blocker, then, on a host
 // that hands its sessions the forge token, `ok token-reads` or a `blocker token-reads:` line for each read of an issue
-// session that token may not make, naming the permission to add, or a `retry token-reads:` line when the forge could
-// not answer now, then a `note token-reads:` line for each read not verified, a `note token:` line naming the source the token came
+// session that token may not make, naming the permission to add, and a `retry token-reads:` line when the forge could
+// not answer, then a `note token-reads:` line for each read not verified, a `note token:` line naming the source the token came
 // from, and one for each note on it, such as a token that reaches more than this repository. Never the token itself.
 function accessLines({ cap, facade, repository, env, home, main, state, platform, allowed, localBinding, keychain, exec }) {
   let access;
@@ -234,9 +234,9 @@ function accessLines({ cap, facade, repository, env, home, main, state, platform
     access = { halt: `the access check failed (${String(error?.message ?? error).split('\n')[0]})` };
   }
   // The reads the token may not make are their own blockers, one each, after the access check they passed; a read the
-  // forge could not answer now, as a rate limit, is a `retry token-reads:` line, which names no permission.
+  // forge could not answer, whatever the reason, is one `retry token-reads:` line, which names no permission.
   const reads = Array.isArray(access?.reads) ? access.reads : null;
-  const retry = typeof access?.readRetry === 'string' ? access.readRetry : null;
+  const retry = typeof access?.unanswered === 'string' ? access.unanswered : null;
   const problem = reads?.length || retry ? null : access?.halt ?? access?.refuse ?? null;
   // A halt that carries the token's record is the token's own: no source gave one, or it may not push.
   const lines = [problem ? blockerLine('access', problem, access?.token ? 'token' : 'access') : 'ok access'];

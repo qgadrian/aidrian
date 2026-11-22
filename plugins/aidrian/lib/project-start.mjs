@@ -89,7 +89,7 @@ export function hostStartProblem(cap, policy, env) {
 // (tokenReadProblems: `reads`, a line each, which the halt joins); { pushUrl, token, reads, readNotes } then names its
 // source `id`, its `source` label, and `notes`, never the token, which the session's SessionStart hook reads again from
 // that one source, `reads` is empty, or missing for a forge with no such read, and `readNotes` the reads not verified.
-// A read the forge could not answer now, as a rate limit, is { refuse, retry: true, readRetry }: no halt.
+// A read the forge could not answer, with none refused, is { refuse, retry: true, unanswered }: no halt.
 export function accessProblem({ cap, forge, repository, env, home, guarded, main, platform = process.platform, allowed = [], localBinding = false, keychain = null, exec }) {
   const pushed = pushAccess({ cap, forge, repository, env, home, guarded, main, platform, allowed, localBinding });
   if (!pushed?.pushUrl || cap.forgeTokenEnv !== true) return pushed;
@@ -101,31 +101,32 @@ export function accessProblem({ cap, forge, repository, env, home, guarded, main
   const reads = tokenReadProblems({ forge, repository, read });
   if (reads === null) return { ...pushed, token };
   // A refused read is reported whatever else the forge could not answer; with none, an unanswered read may pass later.
-  const kept = { token, reads: reads.lines, readNotes: reads.notes, ...(reads.retry ? { readRetry: reads.retry } : {}) };
+  const kept = { token, reads: reads.lines, readNotes: reads.notes, ...(reads.unanswered ? { unanswered: reads.unanswered } : {}) };
   if (reads.lines.length) return { halt: reads.lines.join('; '), ...kept };
-  if (reads.retry) return { refuse: reads.retry, retry: true, ...kept };
+  if (reads.unanswered) return { refuse: reads.unanswered, retry: true, ...kept };
   return { ...pushed, ...kept };
 }
 
 // What the token `read` gave may not read of `repository` that an issue session reads, such as the reactions the review
 // step reads and the check rollup `gh pr checks` reads, by the forge's own reads with that very token: { lines, notes,
-// retry }, `lines` a line for each read refused, naming the permission to add, `notes` one for each read that could not
-// be made here, and `retry` why the forge could not answer some read now, as a rate limit or a body that does not
-// parse, which says nothing of the token and may pass when tried again. Null for a forge with no such read (`tokenReads`).
+// unanswered }, `lines` a line for each read refused, naming the permission to add, `notes` one for each read that
+// could not be made here, and `unanswered` a line naming the reads the forge could not answer, whatever the reason,
+// which says nothing of the token, or null. Null for a forge with no such read (`tokenReads`).
 function tokenReadProblems({ forge, repository, read }) {
   if (typeof forge.tokenReads !== 'function') return null;
   const named = `${repository.host}/${repository.owner}/${repository.name}`;
   let answer;
   try {
     answer = forge.tokenReads(`${repository.owner}/${repository.name}`, { host: repository.host, token: read.token });
-  } catch (error) {
-    return { lines: [], notes: [], retry: `what the forge token from ${read.source} may read of ${named} cannot be told now (${String(error?.message ?? error).split('\n')[0].slice(0, 200)}); start again` };
+  } catch {
+    answer = { unanswered: ['token'] };
   }
-  const unanswered = answer?.unanswered ?? [];
-  const retry = unanswered.length ? `${unanswered.join('; ')}, for ${named}; start again` : null;
+  const names = answer?.unanswered ?? [];
+  const reads = names.length > 1 ? 'reads' : 'read';
+  const unanswered = names.length ? `the forge could not answer the ${names.join(', ')} ${reads} of ${named} with the forge token from ${read.source}; start again` : null;
   const say = (each) => `the forge token from ${read.source} cannot ${each.what} (${each.why} for ${named}); give it the fine-grained permission ${each.permission}`;
   const notes = (answer?.unverified ?? []).map((each) => `whether the forge token from ${read.source} may ${each.what} is not verified: ${each.why}; it needs ${each.permission}`);
-  return { lines: (answer?.missing ?? []).map(say), notes, retry };
+  return { lines: (answer?.missing ?? []).map(say), notes, unanswered };
 }
 
 // Why the token `read` gave may not push to `repository`, by the forge's push probe with that very token, or null.

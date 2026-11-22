@@ -975,8 +975,8 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     tokenCanPush: (repo, { host = DEFAULT_HOST, token } = {}) => tokenMayPush(repo, { host, token, probe }),
     // The reads a project run's issue session makes that `token` may not make on `repo` of `host` (default github.com),
     // by REST and GraphQL reads with that token that write nothing: { missing, unverified, unanswered }, each read
-    // { read, what, permission, why } with `permission` the fine-grained permission to add, and `unanswered` why each
-    // read the forge could not answer now, as a rate limit, which names none (github-token.mjs tokenReadProblems).
+    // { read, what, permission, why } with `permission` the fine-grained permission to add, and `unanswered` the
+    // names of the reads the forge could not answer, which name none (github-token.mjs tokenReadProblems).
     tokenReads: (repo, { host = DEFAULT_HOST, token } = {}) => tokenReadProblems(repo, { host, token, probe: readProbe }),
     // The comments on the pull request's conversation, not those on its diff (reviewComments).
     conversationComments: (repo, n, { host } = {}) => list(`repos/${repo}/issues/${n}/comments`, { host }),

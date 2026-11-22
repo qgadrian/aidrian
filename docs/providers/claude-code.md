@@ -517,7 +517,7 @@ No `sandbox.excludedCommands` is passed. Three conditions hold on top of the san
   401 or 403 otherwise; a 200 of any other content type counts as not writable. The probe writes nothing. It halts
   too when that token may not make the reads its session makes, each a REST GET or a GraphQL query with the token as a
   bearer token from the same kind of Node process, named with the fine-grained permission to add, and refuses the start
-  to be tried again when GitHub rate-limits one
+  to be tried again when GitHub cannot answer one
   ([Forge token permissions](../project-run-setup.md#forge-token-permissions)).
   The start records which source gave the token and the token's SHA-256, with the digest of a random claim it passes the
   session it launches as the one `env` key of its inline settings, `AIDRIAN_START_CLAIM`. The plugin's SessionStart

@@ -395,7 +395,7 @@ function startPlace(context) {
     cap, forge: facade, repository: found.init.repository, env, home, guarded: guardedFolders({ main, state, env, home }), main, platform: context.platform, allowed: policy.outsideSandbox, localBinding: policy.localBinding,
     keychain: project.localForgeTokenKeychain, ...(context.exec ? { exec: context.exec } : {}),
   });
-  // A forge read that could not answer now, as a rate limit, may pass when tried again.
+  // A token read the forge could not answer, with none refused, may pass when tried again.
   if (access?.refuse && access.retry) return { answer: noted(retryAnswer('start', access.refuse, orphans)) };
   if (access?.refuse) return refuse(access.refuse, orphans);
   const tripped = access?.halt ?? linkTripwire({ state, run, store, env, home, main });

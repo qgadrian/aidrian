@@ -284,8 +284,8 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   session makes that the token may not, by reads that write nothing: `{ missing, unverified, unanswered }`, `missing`
   and `unverified` lists of `{ read, what, permission, why }` with `permission` the forge's own name for what to add
   (GitHub: the repository, its pull requests, the reactions on one, a commit's statuses, its workflow runs, and a pull
-  request's check rollup, `unverified` with no pull request yet), and `unanswered` why each read the forge could not
-  answer now, as a rate limit or a body that does not parse, which names no permission.
+  request's check rollup, `unverified` with no pull request yet), and `unanswered` the names of the reads the forge
+  could not answer, whatever the reason, which names no permission. It never throws: a probe that fails is unanswered.
 - Conversation: `conversationComments`, the comments on the pull request rather than on its diff, `comment(repo, id, { host, pr })`,
   one of them by id, held to pull request `pr` when the option names it (null for a comment of any other, or one the forge
   does not find), `postComment`, `editComment`, `deleteComment(repo, id)`, and `reactions`.

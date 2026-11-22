@@ -86,8 +86,8 @@ export const graphqlUrl = (host) => `${apiRoot(host).replace(/\/api\/v3$/u, '/ap
 // The read probe, run as the push probe is: a GET of the URL its first argument names, or with a third argument a POST
 // of that GraphQL body, with the token in the variable its second argument names as a bearer token. It parses the whole
 // answer in its own process and prints one JSON line of the fields a read needs: the status, whether the body parsed,
-// the first `number` and the `default_branch` it holds, whether it holds GraphQL `data`, the GraphQL error types, the
-// first message, and the rate-limit headers. No body crosses the pipe, so none is cut short.
+// the first `number` and the `default_branch` it holds, whether it holds GraphQL `data`, the GraphQL error types, and
+// the headers that say no request is left or to come back later. No body crosses the pipe, so none is cut short.
 const READ_PROBE = [
   'const [url, name, query] = process.argv.slice(1);',
   'const headers = { Authorization: `Bearer ${process.env[name] ?? ""}`, Accept: "application/vnd.github+json" };',
@@ -98,12 +98,12 @@ const READ_PROBE = [
   '  const errors = Array.isArray(body?.errors) ? body.errors : [];',
   '  process.stdout.write(JSON.stringify({ status: answer.status, parsed: body !== undefined && body !== null, number: Number.isSafeInteger(first?.number) ? first.number : null,',
   '    branch: typeof body?.default_branch === "string" ? body.default_branch : null, data: Boolean(body?.data), errors: errors.slice(0, 5).map((each) => String(each?.type ?? "")),',
-  '    said: String(body?.message ?? errors[0]?.message ?? "").slice(0, 200), remaining: answer.headers.get("x-ratelimit-remaining"), retry: answer.headers.get("retry-after") }));',
+  '    remaining: answer.headers.get("x-ratelimit-remaining"), retry: answer.headers.get("retry-after") }));',
   '}, (error) => { process.stderr.write(String(error?.message ?? error)); process.exit(2); });',
 ].join('\n');
 
 // What GitHub answers the REST route `route` of `host`, or with `query` its GraphQL endpoint, for `token`: the probe's
-// fields, { status, parsed, number, branch, data, errors, said, remaining, retry }. The token reaches the probe through
+// fields, { status, parsed, number, branch, data, errors, remaining, retry }. The token reaches the probe through
 // its environment, never an argument. An answer that is not the probe's one line throws.
 export function apiStatus(route, { host, token, query = null, exec = execFileSync }) {
   const name = tokenVarFor(host);
@@ -131,33 +131,40 @@ export const TOKEN_READS = Object.freeze({
 // each context's type and, on a check run, its name and status.
 const ROLLUP = 'query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){commits(last:1){nodes{commit{statusCheckRollup{contexts(first:1){nodes{__typename ... on CheckRun{name status}}}}}}}}}}';
 
-// Whether GitHub's answer `read` is a rate limit, primary or secondary, which says nothing of the token's permissions:
-// a 403 or 429 with no request left or a Retry-After, or a GraphQL answer whose errors say RATE_LIMITED.
-const rateLimited = (read) => ((read.status === 403 || read.status === 429) && (read.remaining === '0' || (typeof read.retry === 'string' && read.retry !== '')))
-  || (read.errors ?? []).includes('RATE_LIMITED');
+// What GitHub's answer `got` to the read probe says of the token: 'allowed', 'refused', or null when it says neither.
+// A 2xx whose body parses allows a REST read, and a GraphQL read when it holds data and no error. A 401 or 404 refuses
+// it, and so does a 403 that does not say no request is left or to come back later, and a GraphQL error FORBIDDEN.
+// Anything else, such as a 5xx, a 429, or a body that does not parse, says neither.
+function readVerdict(got, graphql) {
+  const ok = got.status >= 200 && got.status < 300 && got.parsed === true;
+  const errors = Array.isArray(got.errors) ? got.errors : [];
+  if (ok && graphql && errors.includes('FORBIDDEN')) return 'refused';
+  if (ok && graphql) return got.data && !errors.length ? 'allowed' : null;
+  if (ok) return 'allowed';
+  if (got.status === 401 || got.status === 404) return 'refused';
+  return got.status === 403 && got.remaining !== '0' && !got.retry ? 'refused' : null;
+}
 
 // The reads of TOKEN_READS that `token` may not make on `repo` of `host`, by reads that write nothing:
-// { missing, unverified, unanswered }. `missing` holds each read refused, { read, what, permission, why }, in the order
-// asked; `unverified` each read that could not be made here, in the same shape, as the check rollup of a repository with
-// no pull request yet; `unanswered` why each read the forge could not answer now, as a rate limit, a 2xx whose body
-// does not parse, or any other status, which says nothing of the token. Every read is asked, so a refusal is reported
-// whatever else went unanswered. A 401, 403, or 404 is a read refused, and so is a GraphQL answer whose errors say
-// FORBIDDEN or that holds no data. The reactions are read on the newest pull request, or the newest issue with none; a
+// { missing, unverified, unanswered }. `missing` holds each read refused (readVerdict), { read, what, permission, why },
+// in the order asked; `unverified` each read that could not be made here, in the same shape, as the check rollup of a
+// repository with no pull request yet; `unanswered` the name of each read the forge could not answer, whatever the
+// reason, a probe that threw among them, which says nothing of the token. Every read is asked, so a refusal is reported
+// whatever else went unanswered. The reactions are read on the newest pull request, or the newest issue with none; a
 // repository with neither proves the Issues read by that list. `probe` is apiStatus's shape, the test seam.
 export function tokenReadProblems(repo, { host, token, probe = apiStatus }) {
   const answer = { missing: [], unverified: [], unanswered: [] };
-  const said = (got) => (got.said ? `: ${got.said}` : '');
   const ask = (read, route, query = null) => {
-    const got = probe(route, { host, token, ...(query ? { query } : {}) });
-    const ok = got.status >= 200 && got.status < 300;
-    let refused = null;
-    if (rateLimited(got)) answer.unanswered.push(`the forge rate-limited the ${read} read (${got.status}${said(got)})`);
-    else if (ok && !got.parsed) answer.unanswered.push(`the forge answered the ${read} read with a body that does not parse`);
-    else if (ok && query && ((got.errors ?? []).includes('FORBIDDEN') || !got.data)) refused = `the forge answered ${(got.errors ?? []).join(', ') || 'no data'}${said(got)}`;
-    else if (ok) return got;
-    else if ([401, 403, 404].includes(got.status)) refused = `the forge answered ${got.status}`;
-    else answer.unanswered.push(`the forge answered the ${read} read with ${Number.isFinite(got.status) ? got.status : 'no status'}`);
-    if (refused) answer.missing.push({ read, ...TOKEN_READS[read], why: refused });
+    let got = null;
+    try {
+      got = probe(route, { host, token, ...(query ? { query } : {}) });
+    } catch {
+      got = null;
+    }
+    const verdict = got ? readVerdict(got, query !== null) : null;
+    if (verdict === 'allowed') return got;
+    if (verdict === 'refused') answer.missing.push({ read, ...TOKEN_READS[read], why: `the forge answered ${got.status}${got.errors?.length ? ` ${got.errors.join(', ')}` : ''}` });
+    else if (!answer.unanswered.includes(read)) answer.unanswered.push(read);
     return null;
   };
   const [owner, name] = String(repo).split('/');

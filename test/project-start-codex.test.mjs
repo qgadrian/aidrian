@@ -585,7 +585,7 @@ test('a start whose hooks never ran under codex exec gives its attempt back and 
   // However long ago the halt was written.
   assert.match(fx.cmd(['start', 'launch', 'ENG-1'], { now: Date.now() + 20 * 60 * 1000 }).out[0], /^halt the run is halted: /u, '20 minutes on');
   assert.match(fx.cmd(['next', 'launch']).out[0], /^halted /u);
-  assert.equal(fx.rows().length, 12, 'a halted run records no other start, and one re-check row');
+  assert.equal(fx.rows().length, 11, 'a halted run records no other start, and the re-check that kept it no row');
   // The driver may not lift its own halt; another session a person attends may.
   const driver = fx.cmd(['resume', 'launch']);
   assert.equal(driver.exitCode, 1);

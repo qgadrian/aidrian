@@ -243,6 +243,10 @@ test('a pending or unreadable hold refuses only the entries refused wherever the
   assert.equal(fx.ask(write(path.join(state, 'audits', 'host-2026-11-22.md')), { held, places, cwd: other }), null);
   assert.match(fx.ask(write(path.join(state, 'audits', 'triage.json')), { held, places, cwd: other })?.reason ?? '', /triage record/u);
   assert.match(fx.ask(bash(`rm -rf ${state}`), { held, places, cwd: other })?.reason ?? '', /triage record/u);
+  // A mark that cannot be read may be an issue session's: none of the audits folder passes.
+  const unread = { root: null };
+  const unreadPlaces = () => unattendedPlaces({ cwd: other, mark: unread, project, config: loadConfig(project).config, env: fx.env, home: fx.home, temp: [fx.temp] });
+  assert.match(fx.ask(write(path.join(state, 'audits', 'host-2026-11-22.md')), { held: unread, places: unreadPlaces, cwd: other })?.reason ?? '', /issue session never writes/u);
 });
 
 test('a persona audit\'s report, sidecar, and screenshots pass by hand, and its triage record never does', (t) => {
@@ -254,7 +258,7 @@ test('a persona audit\'s report, sidecar, and screenshots pass by hand, and its 
     const file = path.join(audits, name);
     for (const input of [write(file), bash(`echo x > ${file}`)]) assert.equal(fx.ask(input), null, name);
   }
-  for (const name of ['triage.json', 'triage.json.lock', 'triage.json.123.tmp', 'TRIAGE.JSON']) {
+  for (const name of ['triage.json', 'triage.json.lock', 'triage.json.lock.3', 'triage.json.lock.3.released', 'triage.json.123.tmp', 'TRIAGE.JSON']) {
     const file = path.join(audits, name);
     for (const input of [write(file), bash(`echo x > ${file}`), bash(`rm -f ${file}`)]) assert.match(fx.ask(input)?.reason ?? '', /triage record/u, name);
   }
@@ -277,6 +281,7 @@ test('a state folder inside the session\'s own worktree keeps its triage record,
   let project = findProject(fx.dir);
   let places = () => unattendedPlaces({ cwd: fx.worktree, mark: fx.mark, project, config: loadConfig(project).config, env: fx.env, home: fx.home, temp: [fx.temp] });
   assert.equal(fx.ask(write(path.join(state, 'audits', 'host-2026-11-22.md')), { places }), null);
+  assert.equal(fx.ask(bash(`mkdir -p ${path.join(state, 'audits')}`), { places }), null, 'a fresh audits folder');
   assert.match(fx.ask(write(path.join(state, 'audits', 'triage.json')), { places })?.reason ?? '', /triage record/u);
   // Another checkout of the repository at `<state>/audits`: the audits grant never reaches into it.
   const other = path.join(fx.root, 'other-state');

@@ -443,7 +443,8 @@ function limitedPlaces(places, { cwd, mark, project, config, base, home }, refus
   if (!project) return;
   for (const state of stateFolders(project, config, stateOptions(base, home))) {
     places.specific.push(real(state));
-    triageRefused(refuse, state);
+    // A mark that cannot be read may be an issue session's, which writes none of the audits folder.
+    triageRefused(refuse, state, places.issueHeld ? null : auditAllows);
   }
 }
 
@@ -459,11 +460,11 @@ function triageRefused(refuse, state, allows = auditAllows) {
 }
 
 // Whether `target` inside the audits folder `folder` is one the persona-audit skill writes by hand: a report, its
-// sidecar, or its screenshots, anything but the triage record (audits.mjs TRIAGE_FILE), its lock, and a temporary copy
-// of either, told at a file name boundary, so a persona named `triage.json.md` still passes.
+// sidecar, or its screenshots, anything but the triage record (audits.mjs TRIAGE_FILE), its lock generations and their
+// release marks (jsonl.mjs lockName), and a temporary copy of the record, told at a file name boundary, so a persona named `triage.json.md` still passes.
 function auditAllows(target, folder) {
   const [first] = path.relative(folder, target).split(path.sep).filter(Boolean);
-  return first !== undefined && !/^triage\.json(?:$|\.(?:lock|\d+\.tmp)$)/iu.test(first);
+  return first !== undefined && !/^triage\.json(?:$|\.lock(?:$|\.)|\.\d+\.tmp$)/iu.test(first);
 }
 
 // Each state folder's HAND_FOLDERS that is no link, as `specific`; its reviews folder, refused but for a manifest or
@@ -481,9 +482,12 @@ function stateWork(places, { project, config, base, home }, refuse) {
     else {
       for (const name of HAND_FOLDERS.filter(plain)) places.specific.push(foldCase(path.join(root, name)));
       refuse(path.join(root, 'dispatch'), 'the dispatch records, where a session writes only its handoff file', true, dispatchAllows);
-      // The audits folder passes as the reviews folder does, but never as a grant into a checkout it holds or lies in.
+      // The audits folder passes as the reviews folder does, but never as a grant into a checkout it holds, or into one
+      // it lies in other than the session's own worktree, which it writes already.
       const audits = real(path.join(root, 'audits'));
-      if (plain('audits') && !(places.checkouts ?? []).some((top) => isWithin(top, audits) || isWithin(audits, top))) places.reviews.push(foldCase(path.join(root, 'audits')));
+      const own = [places.worktree, ...(places.made ?? [])].filter(Boolean);
+      const crosses = (places.checkouts ?? []).some((top) => isWithin(audits, top) || (isWithin(top, audits) && !own.includes(foldCase(top))));
+      if (plain('audits') && !crosses) places.reviews.push(foldCase(path.join(root, 'audits')));
     }
     triageRefused(refuse, root, places.issueHeld ? null : auditAllows);
     refuse(path.join(root, 'reviews'), 'the review and attest records, which only the review commands write', true, reviewAllows);
@@ -754,7 +758,7 @@ function madeFolders(files, shell) {
   return new Set(made.filter((file) => !other.has(file) && count(made, file) >= count(writes, file)));
 }
 
-// Whether a write to `spelled` is only a `mkdir` of a reviews or dispatch folder itself (`made`), which passes: the
+// Whether a write to `spelled` is only a `mkdir` of a reviews, dispatch, or audits folder itself (`made`), which passes: the
 // review commands and a subagent's handoff write there, and the folder may not be there yet. Below it, and any other
 // write of it, such as rm, rmdir, or mv, the folder's own rule judges.
 const madeOnly = (spelled, made, found) => made.has(path.resolve(spelled)) && found.reviews.includes(real(spelled));

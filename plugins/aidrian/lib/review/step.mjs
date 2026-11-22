@@ -29,6 +29,9 @@ import { headToReview } from './pushed.mjs';
 import { runPlanCommand, stderrTail } from './base-worktree.mjs';
 import { baseReviewAt, baseReviewMoved, commandFiles, holdToBase, reviewInForce } from './in-force.mjs';
 import { evidenceOf, keptSignoffsOf } from './evidence.mjs';
+import { attemptOf } from '../attempt-clone.mjs';
+import { sessionIdentity } from '../hosts/index.mjs';
+import { readUnattendedMark } from '../unattended-mark.mjs';
 
 export const MAX_LINES = 20000;
 
@@ -86,6 +89,17 @@ function quietChange({ root, from, head, since, review, harnessFiles }) {
   if (since.some((change) => harnessFiles.has(change.file)) || touchedCitations(root, from, head, review.flows, sincePaths).length) return false;
   if (detectFlows(review.flows, { sorted, addedLines: lines.addedLines, removedFiles: lines.removedFiles }).length) return false;
   return contentFlows({ root, head, changes: since, addedLines: lines.addedLines, flows: review.flows }).length === 0;
+}
+
+// The project run's confined issue session the step runs in, in words for the engine's reason, or null: the session's
+// unattended mark names a run and an issue (lib/unattended-mark.mjs), or `root` lies in an attempt's folder
+// (lib/attempt-clone.mjs attemptOf), where only such a session works. It only decides which engine can run, never what
+// the plan requires, so a folder that merely looks like an attempt's costs no rule. `home` is the mark readers'.
+export function confinedSession(root, env, { home } = {}) {
+  const mark = readUnattendedMark(sessionIdentity(env).session, { env, ...(home ? { home } : {}) });
+  if (mark && mark.pending !== true && typeof mark.project === 'string' && typeof mark.issue === 'string') return `the confined session of project run ${mark.project}, issue ${mark.issue}`;
+  const at = attemptOf(root);
+  return at ? `the confined session of project run ${at.run}, issue ${at.key}, whose attempt clone this is` : null;
 }
 
 // Plans the step into `s`. Returns the step's result when it ends here, or null when the stages run next.
@@ -269,7 +283,7 @@ export async function prepareStep(s) {
   state.revision -= 1;
   Object.assign(run, { pr: n, head, repo });
 
-  const engine = resolveEngine(effective, codex ? { codex } : {});
+  const engine = resolveEngine(effective, { ...(codex ? { codex } : {}), confined: confinedSession(root, env) });
   if (engine.problem) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: engine.problem });
   // Flows whose files the globs miss: a changed file whose whole head content, or whose callers, hand it the flow's
   // privileged value (review.flows.<id>.content). A git failure stops the review rather than plan less.

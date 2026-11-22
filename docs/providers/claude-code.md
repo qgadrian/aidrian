@@ -405,6 +405,9 @@ How issue sessions and the driver relate to the cap of five background continuat
 - The beacon proves only that the hooks run. Before the start holds the session, the session proves from inside its
   sandbox that the sandbox is in force ([The sandbox proof](#the-sandbox-proof)): its first call must be `aidrian
   project confine <run> <issue>`, and nothing else runs until the start confirmed it.
+- `aidrian pr review` in an issue's session never starts `codex-local`, since Codex needs a sandbox of its own and the
+  network, which this sandbox denies: an engine set to it reviews with the `self` agent reviewer, and `engine.reason`
+  says why ([The engine](../review.md#the-engine)).
 - An issue's session starts no continuation: `aidrian handoff continue` from it prints `continue: none`, and
   `aidrian handoff route` `route: none`, before any floor, mark, or start record. It pushes its work and records its result.
 - A usage or rate limit is read from the session's transcript alone (`lib/hosts/claude-code-limit.mjs`): its last

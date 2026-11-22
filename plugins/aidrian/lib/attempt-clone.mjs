@@ -34,13 +34,17 @@ export const ATTEMPT_KEEP = '.keep-attempt';
 // The largest ledger read for a clone's link.
 const LEDGER_CAP = 16 * 1024 * 1024;
 
-const real = (file) => {
+// The real path of `file` as the system resolves it, where git and the kernel land, or null: realpathSync.native, since
+// the plain one folds a `..` as text before it follows the link ahead of it, so `<x>/link/..` reads as `<x>`, not as
+// the folder above the link's target. On a disk that folds case, it answers in the disk's own case.
+export const systemReal = (file) => {
   try {
-    return realpathSync(file);
+    return realpathSync.native(file);
   } catch {
     return null;
   }
 };
+const real = systemReal;
 
 // The attempt whose folder holds the path `file`, by its real path: { state, run, key, attempt, folder, work, git,
 // drop, cache }, or null.
@@ -200,7 +204,9 @@ function pointerProblem(at) {
     if (fd !== undefined) closeSync(fd);
   }
   const named = /^gitdir: (.+?)\r?\n?$/u.exec(text)?.[1];
-  const target = named ? real(path.resolve(at.work, named)) : null;
+  // Joined as text, not by path.resolve, which folds a `..` before the link git follows ahead of it.
+  const spelled = named && !path.isAbsolute(named) ? `${at.work}/${named}` : named;
+  const target = spelled ? real(spelled) : null;
   return target !== null && target === real(at.git) ? null : `the attempt clone's ${file} points at another git folder than its own, ${at.git}, so no call runs there until it is restored`;
 }
 

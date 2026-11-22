@@ -715,7 +715,7 @@ Before `verified` changes, a live Claude Code must show every one of these, each
     does too; and whether server-managed settings, which the start does not read, leave a local cache a later check
     could read.
 23. Claude Code's file tools expand a leading `~` and `~/` to the home folder of the user the host runs as, as the
-    adapter's `filePath` does for every guard of a file tool; and a Glob pattern's `..` reaches above its path. A `..`
+    adapter's `filePath` does, as text, for every guard of a file tool; and a Glob pattern's `..` reaches above its path. A `..`
     past the pattern's first glob character is bounded by no folder, so the adapter reads it as the file system's root.
 
 ### The sandbox proof
@@ -739,7 +739,23 @@ its start stays as [its page](codex.md#project-start) says.
    ([hooks](../hooks.md#agent-gates)). The hook also refuses the confine command, and fails the proof, when its own
    environment, which is the host process's, holds a cache variable of the session: those reach the session's
    sandboxed commands alone. Before and after the proof, the hook refuses a Read, Grep, Glob, or LS that reaches a store
-   the plan lists as hidden, a folder that holds one included, since the file tools run outside the sandbox.
+   the plan lists as hidden, a folder that holds one included, since the file tools run outside the sandbox. A path is
+   read both as folded text and as the system resolves it, where a `..` after a link climbs from the link's target,
+   and a Glob's `path` and its pattern's literal folder are joined as text, as a leading `~` and the home folder are,
+   so that `..` is not folded away first. Each reading matches a store by its path and by the file system's identity,
+   device and inode, of it and of each folder above it, so another path to the same file or folder, such as a hard link
+   or macOS's `/System/Volumes/Data` path to a folder of the Data volume, reaches the store too. On macOS each store is
+   also matched by its Data volume path, verified as an alias: only when that path is the store itself, by its exact
+   device and inode, since the same path there can be another folder, as `/System/Volumes/Data/usr/share` is not
+   `/usr/share`, and a store that is not there gets none. So a read of `/System/Volumes/Data`, or of a folder above it,
+   reaches every store on that volume, though the system keeps that path and no store's own path or folders pass
+   through it. A hard
+   link to a store the plan lists as a file is refused; a hard link made beforehand to a file inside a store folder is
+   not detected, since the hook knows only each store's own identity and those of the folders above it, not the files
+   a folder holds.
+   A call's folder counts as in a clone when any reading lies in one: the system's resolution, the folded spelling
+   resolved, or, where the path does not resolve, as with a dangling link or a missing folder, the nearest folder
+   above it that is there, with the rest of the spelling.
 3. `aidrian project confine` runs once a start, under a lock in the drop folder, in the session's sandboxed shell, and
    tries: to make a file in each unattended mark folder, in the attempt's folder, and in the home folder, one there
    already counting as made; to open the clone's git `config` and `.claude/settings.json` for writing; to remove the
@@ -811,7 +827,8 @@ driver's `wait` removes it with the attempt. The variables reach the session's s
 host's own process, whose hooks, MCP servers, language servers, and status line run outside the sandbox. The gate
 writes them to `shell-env.json` in the attempt's folder, which no confined session writes, before the launch; the
 plugin's SessionStart hook, for a session whose own mark names a run and issue whose ledger gives it exactly that
-attempt's folder, or whose pending mark starts it in that very clone, appends one `export NAME='value'` line for each
+attempt's folder, or whose pending mark starts it in that very clone, and whose folder resolves, as the system lands
+there, inside that clone, never a folder that is not there or one beside the clone, appends one `export NAME='value'` line for each
 name the gate gives, and no other, single-quoted with each quote escaped, to the
 file the host names in `CLAUDE_ENV_FILE`, which it reads and runs ahead of each Bash command. No package manager
 variable is passed in the settings' `env`, whose one key is the start's claim (Project start, above). On Codex the same variables reach its sandboxed commands through `shell_environment_policy.set`.

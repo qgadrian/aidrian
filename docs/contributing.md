@@ -114,6 +114,11 @@ test that changes a repository's remotes or folders does it between steps, or du
 step, one read or write of the review record (`lib/review/state.mjs` readLocalState and writeLocalState,
 `lib/review/record.mjs` recordPass) opens one for that call alone, and inside one it shares the step's, so a test changes
 the remotes between two such calls. The forge reading a record write may ask for runs in `withoutGitFacts` too.
+Two guard reads open one for that call alone as well: the places of a session no Human attends
+(`lib/unattended-write.mjs` unattendedPlaces) and the whole list of a project's state folders (`lib/handoff-guard.mjs`
+stateFolders without `lazy`, whose iterator opens none), so a test changes a repository between two such calls.
+`test/git-call-log.mjs` logs the git calls a test makes: `factReads` gives the fact reads of a call in the test's process,
+and `gitLog` a PATH value for an environment the test hands a call.
 Nothing opens one for a whole process, a hook's or a command's.
 
 A test still starts the script as a program where only a process shows the behaviour: its stdin reading, a `timeout`

@@ -14,13 +14,13 @@ import { existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
-import { attemptOf } from './attempt-clone.mjs';
+import { attemptOf, systemReal } from './attempt-clone.mjs';
 import { bashCall, opaqueTexts } from './config-guard.mjs';
 import { loadConfig } from './config.mjs';
 import { BACKGROUND_HOPS } from './handoff-continue.mjs';
 import { PROJECT_SUB, PROJECT_SUBCOMMANDS, PROJECT_WORD, stateFolders } from './handoff-guard.mjs';
 import { openStore, readStarted, readStartedDated, SESSION_ID } from './handoff-markers.mjs';
-import { resolvedPath } from './fs.mjs';
+import { isWithin, resolvedPath } from './fs.mjs';
 import { detectHost, opaqueShellCommand } from './hosts/index.mjs';
 import { findProject } from './project.mjs';
 import { activeRuns, attendedProblem, ISSUE_KEY, readRun, RUN_ID, runPlace } from './project-run.mjs';
@@ -426,8 +426,10 @@ const RULES = Object.freeze({
     const run = found.init.run;
     if (mark && !mark.pending && mark.project === run && mark.issue === key) return null;
     const at = typeof input?.cwd === 'string' ? attemptOf(input.cwd) : null;
-    const clone = mark?.pending && typeof mark.cwd === 'string' ? resolvedPath(mark.cwd) : null;
-    if (at && clone && at.run === run && at.key === key && at.work === clone) return null;
+    // Resolved as attemptOf resolves the call's folder, where the system lands; that folder must be there, in the clone.
+    const clone = mark?.pending && typeof mark.cwd === 'string' ? systemReal(mark.cwd) : null;
+    const here = at ? systemReal(input.cwd) : null;
+    if (at && clone && here && at.run === run && at.key === key && at.work === clone && isWithin(clone, here)) return null;
     return `\`aidrian project confine\` proves the sandbox of the session the run started for the issue ${key}, and this session is not that one`;
   },
   result: ({ found, store, key, session, home }) => {

@@ -119,7 +119,7 @@ function fileRead(tool, given) {
     const at = given.pattern.search(/[*?[{]/u);
     const literal = at < 0 ? given.pattern : given.pattern.slice(0, given.pattern.lastIndexOf('/', at) + 1);
     const expanded = filePath(literal);
-    named.push(path.isAbsolute(expanded) || base === null ? expanded || null : path.join(filePath(base), expanded));
+    named.push(path.isAbsolute(expanded) || base === null ? expanded || null : textJoin(filePath(base), expanded));
     // A `..` segment past that folder, in a path or a brace list, climbs from wherever a glob matched, so no folder
     // bounds it: the read reaches the file system's root, which holds every store a confined session may not read.
     if (/(?:^|[/{,])\.\.(?:[/},]|$)/u.test(given.pattern.slice(literal.length))) named.push(path.parse(process.cwd()).root);
@@ -127,11 +127,21 @@ function fileRead(tool, given) {
   return named;
 }
 
+// `file` under the folder `folder`, joined as text and never folded: a `..` after a link in `folder` climbs from the
+// link's target, which the confine guard's read check resolves (lib/confine-guard.mjs readsStore). An empty `folder`
+// is the call's folder, so `file` stays relative to it.
+function textJoin(folder, file) {
+  if (folder === '') return file;
+  return file === '' ? folder : `${folder.replace(/\/+$/u, '')}/${file}`;
+}
+
 // A path its file tools name, as they resolve it: a leading `~` or `~/` is the home folder of the user the host runs as
-// (live check 23). Every other path is as it is, relative ones from the call's folder.
+// (live check 23), joined as text and never folded, so a `..` after it climbs from the home folder's target when that is
+// a link (lib/confine-guard.mjs readsStore). Every other path is as it is, relative ones from the call's folder.
 function filePath(file) {
   if (typeof file !== 'string') return file;
-  return file === '~' || file.startsWith('~/') ? path.join(homedir(), file.slice(1)) : file;
+  if (file === '~') return homedir();
+  return file.startsWith('~/') ? textJoin(homedir(), file.slice(2)) : file;
 }
 
 const startsSession = (args) => {

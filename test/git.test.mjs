@@ -1,12 +1,12 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { checkoutRoots, currentRoot, gateGit, gitFolders, GIT_TIMEOUT_MS, isIgnored, isRefName, knownPrefix, mainRoot, memoGit, readOriginUrl, readPrefix, readRemoteUrls, REF_NAME_MAX_BYTES, repositoryCheckouts, resetGitStall, runGit, showPrefix, withGitFacts, withoutGitFacts } from '../plugins/aidrian/lib/git.mjs';
+import { checkoutRoots, currentRoot, gateGit, gitFolders, GIT_TIMEOUT_MS, isIgnored, isRefName, knownPrefix, mainRoot, memoGit, readOriginUrl, readPrefix, readRemoteUrls, REF_NAME_MAX_BYTES, repositoryCheckouts, resetGitStall, runGit, showPrefix, underGit, withGitFacts, withoutGitFacts } from '../plugins/aidrian/lib/git.mjs';
 
 // A repository with one commit, an ignored folder, and a worktree inside that folder.
 function repo(t) {
@@ -139,6 +139,15 @@ test('repositoryCheckouts lists every checkout but a gone one; [] only outside a
   assert.equal(answer(dir, empty), null, 'no git inside a repository');
   assert.equal(answer(worktree, empty), null, 'no git inside a linked worktree');
   assert.deepEqual(answer(outside, empty), [], 'no git outside every repository');
+  // `link/..`, with the link into the repository, is the repository to the system, though it folds to the folder outside.
+  symlinkSync(path.join(dir, 'src'), path.join(outside, 'link'));
+  assert.equal(underGit(`${outside}/link/..`), true, 'the folder the system lands in');
+  assert.equal(answer(`${outside}/link/..`, bin), null, 'a failed git through a link and `..` into a repository');
+  // A spelling the system cannot resolve, kept as text so `..` reaches underGit: it is folded, and its folded folders
+  // walked. Through a link out of the repository, the folded folders lie in it, but the link's target does not.
+  assert.equal(underGit(`${outside}/gone/..`), false, 'a folder that does not resolve, folded, outside');
+  symlinkSync(outside, path.join(dir, 'src', 'out'));
+  assert.equal(underGit(`${dir}/src/out/gone/..`), true, 'a folder that does not resolve, folded, not its link\'s target');
 });
 
 test('repositoryCheckouts is null when the environment points git at another repository, or keeps it from this one', (t) => {
@@ -268,6 +277,18 @@ test('inside withGitFacts a read given an option but a timeout asks git, so its 
     assert.equal(knownPrefix(src, Object.create({ env: process.env })), 'src/', 'an inherited env asks git too');
   });
   assert.equal(git.count('--show-prefix'), 5);
+});
+
+test('inside withGitFacts a folder is keyed by where the system lands, so a `..` after a link never takes another folder`s answer', (t) => {
+  const { dir } = repo(t);
+  const other = repo(t).dir;
+  // `<dir>/link/..` reads as `<dir>` by its text, but the system follows the link first and lands in `<other>`.
+  symlinkSync(path.join(other, 'src'), path.join(dir, 'link'));
+  const through = `${dir}${path.sep}link${path.sep}..`;
+  withGitFacts(() => {
+    assert.deepEqual(checkoutRoots(dir), { main: dir, current: dir });
+    assert.deepEqual(checkoutRoots(through), { main: other, current: other }, 'the folder git ran in, never the text\'s');
+  });
 });
 
 test('a nested withGitFacts shares the open scope, and two scopes in a row share nothing', async (t) => {

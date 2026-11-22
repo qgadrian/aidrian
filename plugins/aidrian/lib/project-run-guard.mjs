@@ -174,7 +174,7 @@ export function ownIssue(project, config, mark, { base, home } = {}) {
     if (!start || !['started', 'uncertain'].includes(start.outcome)) continue;
     const branch = issueBranch(found, mark.issue);
     const pushUrl = typeof start.pushUrl === 'string' && start.pushUrl !== '' ? start.pushUrl : null;
-    if (typeof branch === 'string' && branch !== '') return { key: mark.issue, branch, pushUrl, slugShared: slugShared(found, mark.issue, branch) };
+    if (typeof branch === 'string' && branch !== '') return { key: mark.issue, branch, pushUrl, ...slugsShared(found, mark.issue, branch) };
   }
   return null;
 }
@@ -182,13 +182,18 @@ export function ownIssue(project, config, mark, { base, home } = {}) {
 // A branch as the files named for it spell it (pr-body.mjs bodyFilePath, a dispatch handoff): each `/` a `-`, in lower case.
 export const branchSlug = (branch) => branch.replaceAll('/', '-').toLowerCase();
 
-// Whether another issue of the run `found` has a branch, planned or attempted, spelled as `branch` of issue `key` is
-// (branchSlug), or spelled as it is and then `-` more: a handoff `<branch>-<slice>-<agent>.json` names its branch only
-// by that prefix. Then a file named for the spelling is not the issue's alone, and the guard grants it to neither.
-function slugShared(found, key, branch) {
+// How the branch `branch` of issue `key` shares its spelling (branchSlug) with another issue's branch, planned or
+// attempted, in the run `found`: `slugShared` when it is the same, so a body file named for it is neither issue's, and
+// `handoffShared` also when either spelling is the other's and then `-` more, since a handoff
+// `<branch>-<slice>-<agent>.json` names its branch only by that prefix. The guard grants such a file to neither issue.
+function slugsShared(found, key, branch) {
   const own = branchSlug(branch);
-  return found.snapshot.issues.some((issue) => issue.key !== key
-    && [issue.branch, ...attemptBranches(found, issue.key)].some((other) => typeof other === 'string' && (branchSlug(other) === own || branchSlug(other).startsWith(`${own}-`))));
+  const others = found.snapshot.issues.filter((issue) => issue.key !== key)
+    .flatMap((issue) => [issue.branch, ...attemptBranches(found, issue.key)]).filter((other) => typeof other === 'string').map(branchSlug);
+  return {
+    slugShared: others.includes(own),
+    handoffShared: others.some((other) => other === own || other.startsWith(`${own}-`) || own.startsWith(`${other}-`)),
+  };
 }
 
 // Whether `row` is a start row as the gate writes it.

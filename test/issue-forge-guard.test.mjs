@@ -112,7 +112,7 @@ const write = (file) => ({ tool_name: 'Write', tool_input: { file_path: file, co
 
 test('an issue session pushes only its own branch to origin, and asks the forge for no release, workflow, or write outside its pull request', (t) => {
   const fx = issueFixture(t);
-  assert.deepEqual(ownIssue(fx.project, fx.config, fx.mark, { home: fx.home }), { key: 'ENG-1', branch: BRANCH, pushUrl: fx.dir, slugShared: false });
+  assert.deepEqual(ownIssue(fx.project, fx.config, fx.mark, { home: fx.home }), { key: 'ENG-1', branch: BRANCH, pushUrl: fx.dir, slugShared: false, handoffShared: false });
   for (const command of REFUSED) {
     const denial = fx.ask(bash(command));
     assert.match(denial?.reason ?? '', /a project run's issue session never does that: only the Human does/u, command);
@@ -354,6 +354,10 @@ test('an issue session whose branch another issue of the run spells the same wri
   // A branch another's spelling only starts with, then `-`: a handoff name could be either's.
   const prefix = issueFixture(t, { issues: [{ key: 'ENG-1', branch: BRANCH, status: 'unstarted' }, { key: 'ENG-2', branch: `${BRANCH}-v2`, status: 'unstarted' }] });
   assert.match(prefix.ask(write(path.join(prefix.state, 'dispatch', 'feat-eng-1-export-v2-S1-explorer.json')))?.reason ?? '', /and none here/u);
+  assert.equal(prefix.ask(write(path.join(prefix.state, 'tmp', 'pr-body-feat-eng-1-export.md'))), null, 'a prefix leaves the body file its own');
+  // The other way round: the session of the longer branch, whose spelling starts with the shorter one's.
+  const longer = issueFixture(t, { issues: [{ key: 'ENG-1', branch: BRANCH, status: 'unstarted' }, { key: 'ENG-2', branch: 'feat/eng-1', status: 'unstarted' }] });
+  assert.match(longer.ask(write(path.join(longer.state, 'dispatch', 'feat-eng-1-export-S1-explorer.json')))?.reason ?? '', /and none here/u);
   // The path that refusal names is one the session may write.
   assert.equal(fx.ask(write(path.join(fx.state, 'tmp', 'eng-1-pr-body.md'))), null, 'a body named for the issue key stays its own');
 });

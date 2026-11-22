@@ -16,7 +16,7 @@
       "Check (Node 26)",
       "Conventional Commit title"
     ],
-    "autoMerge": { "allow": true, "strategy": "squash", "deleteBranch": true }
+    "autoMerge": { "allow": true, "strategy": "squash", "deleteBranch": true, "includeGuardedPaths": true }
   },
   "review": { "engine": "codex-local", "record": "local" },
   "session": { "handoff": { "mode": "auto" } },

@@ -19,7 +19,7 @@ import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { forgeFor, forgeGitHelper, forgeLoginStep, forgeTokenNote, forgeTokenVar } from './forges/index.mjs';
-import { writeJson } from './confine-guard.mjs';
+import { exists, writeJson } from './confine-guard.mjs';
 import { readSmallJson } from './fs.mjs';
 import { programNames, programOnPath } from './hosts/process.mjs';
 import { LOCAL_FILE } from './project.mjs';
@@ -165,10 +165,10 @@ export function writeClaim(folder, { claim, source, token }) {
 
 // The source id and the checked token's digest the start recorded for the attempt's folder `folder`, when `env` holds
 // the claim it gave the session it launched: { source, token }, or { problem } for a session that does not hold it, or
-// an attempt with no claim.
+// an attempt with no claim, with `unclaimed: true` when the start wrote no claim file at all.
 export function claimedSource(folder, env) {
   const read = readSmallJson(path.join(folder, CLAIM_FILE), 4096);
-  if (!read || typeof read.claim !== 'string' || !SOURCE_IDS.includes(read.source) || typeof read.token !== 'string') return { problem: 'the start recorded no token claim for this attempt' };
+  if (!read || typeof read.claim !== 'string' || !SOURCE_IDS.includes(read.source) || typeof read.token !== 'string') return { problem: 'the start recorded no token claim for this attempt', ...(exists(path.join(folder, CLAIM_FILE)) ? {} : { unclaimed: true }) };
   const given = env?.[CLAIM_VAR];
   if (typeof given !== 'string' || digest(given) !== read.claim) return { problem: 'this session does not hold the claim the start gave the session it launched, so it is not that session' };
   return { source: read.source, token: read.token };

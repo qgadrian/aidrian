@@ -179,15 +179,16 @@ export function ownIssue(project, config, mark, { base, home } = {}) {
   return null;
 }
 
-// A branch as the body files named for it spell it (pr-body.mjs bodyFilePath): each `/` a `-`, in lower case.
+// A branch as the files named for it spell it (pr-body.mjs bodyFilePath, a dispatch handoff): each `/` a `-`, in lower case.
 export const branchSlug = (branch) => branch.replaceAll('/', '-').toLowerCase();
 
 // Whether another issue of the run `found` has a branch, planned or attempted, spelled as `branch` of issue `key` is
-// (branchSlug): then a file named for that spelling is not the issue's alone, and the guard grants it to neither.
+// (branchSlug), or spelled as it is and then `-` more: a handoff `<branch>-<slice>-<agent>.json` names its branch only
+// by that prefix. Then a file named for the spelling is not the issue's alone, and the guard grants it to neither.
 function slugShared(found, key, branch) {
   const own = branchSlug(branch);
   return found.snapshot.issues.some((issue) => issue.key !== key
-    && [issue.branch, ...attemptBranches(found, issue.key)].some((other) => typeof other === 'string' && branchSlug(other) === own));
+    && [issue.branch, ...attemptBranches(found, issue.key)].some((other) => typeof other === 'string' && (branchSlug(other) === own || branchSlug(other).startsWith(`${own}-`))));
 }
 
 // Whether `row` is a start row as the gate writes it.

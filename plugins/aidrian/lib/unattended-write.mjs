@@ -93,7 +93,7 @@ const issueNamed = (issue) => (target, folder) => {
 // ({ branch }): `<branch>-<slice>-<agent>.json`, each `/` of the branch a `-`.
 const issueHandoff = (issue) => (target, folder) => {
   const name = path.relative(folder, target);
-  return Boolean(issue) && HANDOFF.test(name) && name.toLowerCase().startsWith(`${issue.branch.replaceAll('/', '-').toLowerCase()}-`);
+  return Boolean(issue) && !issue.slugShared && HANDOFF.test(name) && name.toLowerCase().startsWith(`${issue.branch.replaceAll('/', '-').toLowerCase()}-`);
 };
 const absolute = (each) => typeof each === 'string' && path.isAbsolute(each);
 // The time a git call may take: what the guards' budget leaves, or git's own default outside one.
@@ -479,7 +479,7 @@ function stateWork(places, { project, config, base, home }, refuse) {
 // The body files an issue session's tmp refusal names: those named for its branch, or, when another issue of the run
 // spells its branch the same (ownIssue slugShared), a body file named for its key, which `--body-file` takes as well.
 const bodyNote = (issue) => (issue.slugShared
-  ? `; another issue of the run spells its branch ${issue.branch} the same, so write a body under the key, such as tmp/${issue.key.toLowerCase()}-pr-body.md, and pass it with --body-file`
+  ? `; another issue of the run spells its branch ${issue.branch} alike, so write a body under the key, such as tmp/${issue.key.toLowerCase()}-pr-body.md, and pass it with --body-file`
   : `, and the body files named for its branch, such as tmp/pr-body-${issue.branch.replaceAll('/', '-')}.md`);
 
 function issueWork(places, root, plain, refuse) {
@@ -491,7 +491,7 @@ function issueWork(places, root, plain, refuse) {
     refuse(path.join(root, name), what, true, issueNamed(issue));
     if (plain(name)) places.reviews.push(foldCase(path.join(root, name)));
   }
-  const handoff = issue ? `, ${issue.branch.replaceAll('/', '-')}-<slice>-<agent>.json` : '';
+  const handoff = !issue ? '' : issue.slugShared ? `, and none here, since another issue of the run spells its branch ${issue.branch} alike` : `, ${issue.branch.replaceAll('/', '-')}-<slice>-<agent>.json`;
   refuse(path.join(root, 'dispatch'), `the dispatch records, where an issue session writes only a handoff file named for its own branch${handoff}`, true, issueHandoff(issue));
 }
 

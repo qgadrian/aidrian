@@ -16,6 +16,7 @@ import { forgeFor } from './forges/index.mjs';
 import { checkoutRoots, cloneGitProblem, hardenedArgs, isIgnored } from './git.mjs';
 import { noteWorktree, openStore } from './handoff-markers.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
+import { readUnattendedMark } from './unattended-mark.mjs';
 import { findProject, projectAt, projectCheckouts, stateDir, worktreesDir } from './project.mjs';
 import { shellQuote } from './review/dispatch.mjs';
 import { sweepDrafts } from './review/drafts.mjs';
@@ -190,15 +191,19 @@ export function createWorktree({ branch, slug, base, fetch = false, plan = false
 
 // Records the worktree `dir` that createWorktree made for the session its host names in `env` (hosts/index.mjs
 // sessionIdentity), in the project's continuation store (handoff-markers.mjs noteWorktree), so a session no Human attends
-// and its subagents write it as their own (docs/hooks.md#agent-gates). The store is the one of the project at the main
-// checkout, under that checkout's config, as the agent gate hook reads a mark's, whose root is the main checkout: a
-// worktree whose own config moves state.dir sends no record where the hook never looks. With no session, a store that is
+// and its subagents write it as their own (docs/hooks.md#agent-gates). The store is the one the agent gate hook opens for
+// the session: that of the project at its unattended mark's root (unattended-mark.mjs readUnattendedMark), under that
+// project's config, so neither a worktree whose own config moves state.dir nor another project of the same repository,
+// as in a monorepo, sends the record where the hook never looks. A session with no such mark, which the hook holds to no
+// allowlist, records in the store of the caller's project at the main checkout. With no session, a store that is
 // refused, or a write that fails, the worktree stands unrecorded, and such a session writes there only as it could before.
 function recordWorktree(ctx, dir, env) {
   const { session } = sessionIdentity(env);
   if (!session) return;
   try {
-    const project = (ctx.main !== ctx.current && findProject(path.join(ctx.main, path.relative(ctx.current, ctx.project.root)))) || ctx.project;
+    const mark = readUnattendedMark(session, { env });
+    const marked = typeof mark?.root === 'string' ? findProject(mark.root) : null;
+    const project = marked ?? ((ctx.main !== ctx.current && findProject(path.join(ctx.main, path.relative(ctx.current, ctx.project.root)))) || ctx.project);
     const { config } = loadConfig(project);
     const store = openStore(stateDir(project, { config, env }), { checkouts: projectCheckouts(project), maxChain: config.session.handoff.maxChain });
     noteWorktree(store, session, realpathSync(dir));

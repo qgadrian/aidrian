@@ -127,7 +127,15 @@ test('captureVisual captures over an ingest-only manifest and carries its ingest
   assert.ok(/^no base URL: /u.test(unavailable.reason) && unavailable.reason.endsWith(`; ingested, not captured: ${shot.key} from \`e2e-runner run 12\` by \`Tester\` via \`e2e-runner\``), unavailable.reason);
   assert.deepEqual(readManifest(p.project, 7, HEAD), unavailable);
   const failed = await run({ baseUrl: 'http://localhost:3000', spawn: () => ({ status: 1, stdout: '', stderr: 'boom\n' }) });
-  assert.deepEqual([failed.status, failed.reason, failed.ingested.length], ['failed', `boom; ingested, not captured: ${shot.key} from \`e2e-runner run 12\` by \`Tester\` via \`e2e-runner\``, 1]);
+  assert.deepEqual([failed.status, failed.reason, failed.ingested.length], ['failed', `boom (its error output: capture-stderr.log in this head's capture folder); ingested, not captured: ${shot.key} from \`e2e-runner run 12\` by \`Tester\` via \`e2e-runner\``, 1]);
+  const note = `; ingested, not captured: ${shot.key} from \`e2e-runner run 12\` by \`Tester\` via \`e2e-runner\``;
+  const logged = ' (its error output: capture-stderr.log in this head\'s capture folder)';
+  // Past the time limit, Playwright's SIGTERM handler can end the adapter with exit 1 and its progress line last.
+  const stopped = await run({ baseUrl: 'http://localhost:3000', spawn: () => ({ status: 1, stdout: '', stderr: 'capturing 3 of 9: staff-wide\n', error: Object.assign(new Error('spawnSync node ETIMEDOUT'), { code: 'ETIMEDOUT' }) }) });
+  assert.equal(stopped.reason, `the capture ran past its 15-minute limit and was stopped; its last line: capturing 3 of 9: staff-wide${logged}${note}`);
+  assert.equal(readFileSync(path.join(captureDir(p.project, 7, HEAD), 'capture-stderr.log'), 'utf8'), 'capturing 3 of 9: staff-wide\n');
+  const silent = await run({ baseUrl: 'http://localhost:3000', spawn: () => ({ status: 1, stdout: '', stderr: '\n\n' }) });
+  assert.equal(silent.reason, `exit 1 with no error output${note}`);
   const captured = await run({ baseUrl: 'http://localhost:3000', spawn: fakeAdapter });
   assert.deepEqual([captured.status, captured.reason, captured.entries.filter((entry) => entry.sha256).length, captured.ingested.length], ['captured', undefined, 1, 1]);
   const reused = await run({ baseUrl: 'http://localhost:3000', spawn: () => assert.fail('captured twice') });

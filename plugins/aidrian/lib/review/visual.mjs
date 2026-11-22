@@ -250,6 +250,28 @@ function urlFrom(text, what) {
   return line.replace(/\/+$/u, '');
 }
 
+const lastLine = (text) => String(text ?? '').split('\n').map((line) => line.trim()).filter(Boolean).at(-1) ?? '';
+
+// Why the capture adapter's run `run` failed, its last error line `last` included: a run past CAPTURE_MS says so, as
+// Playwright's own SIGTERM handler can turn the stop into a plain exit 1, and the adapter's progress line names the
+// screen it stopped at. Its whole error output is kept as capture-stderr.log in `dir`; the reason, which the review
+// summary may show, names the file and never this machine's path.
+function failureReason(run, last, dir) {
+  const timedOut = run.error?.code === 'ETIMEDOUT';
+  const why = timedOut
+    ? `the capture ran past its ${CAPTURE_MS / 60_000}-minute limit and was stopped${last ? `; its last line: ${last}` : ''}`
+    : last || (run.signal ? `killed by ${run.signal}` : run.error ? run.error.message : `exit ${run.status} with no error output`);
+  const text = String(run.stderr ?? '');
+  if (!text.trim()) return why;
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, 'capture-stderr.log'), text);
+    return `${why} (its error output: capture-stderr.log in this head's capture folder)`;
+  } catch {
+    return why;
+  }
+}
+
 // Captures this head's matrix and writes its manifest; a captured manifest already there for the head is returned as
 // is, so the capture runs once per head. Every write keeps the images ingested for the head (withIngested), and an
 // ingest-only manifest is captured over, never taken for a capture. `withBase(use)` runs `use(hook)` in a checkout of the base, where `hook(command,
@@ -340,9 +362,9 @@ export async function captureVisual({ project, pr, head, visual, entries, baseUr
     const run = spawn(process.execPath, [ADAPTERS[visual.platform]], {
       cwd: project.root, env, input: JSON.stringify({ outDir: dir, entries: jobs, storageStates: prepared.storageStates }), encoding: 'utf8', timeout: CAPTURE_MS, maxBuffer: 64 * 1024 * 1024,
     });
-    const reason = String(run.stderr ?? '').trim().split('\n').at(-1) ?? '';
-    if (run.status === 3) return write({ ...base, status: 'unavailable', reason, entries: [] });
-    if (run.status !== 0) return write({ ...base, status: 'failed', reason: reason || (run.signal ? `killed by ${run.signal}` : `exit ${run.status}`), entries: [] });
+    const reason = lastLine(run.stderr);
+    if (run.status === 3 && !run.error) return write({ ...base, status: 'unavailable', reason, entries: [] });
+    if (run.status !== 0 || run.error) return write({ ...base, status: 'failed', reason: failureReason(run, reason, dir), entries: [] });
     const results = new Map((JSON.parse(run.stdout).results ?? []).map((result) => [result.key, result]));
     const captured = entries.map((entry) => {
       if (missingBase.has(entry.key)) return { ...entry, error: missingBase.get(entry.key) };

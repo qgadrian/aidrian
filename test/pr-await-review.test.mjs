@@ -44,6 +44,10 @@ import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 
 const BOT = { login: DEFAULT_REVIEWER };
 const T = (m) => `2026-08-23T07:${String(m).padStart(2, '0')}:00Z`;
+// The bot's clean receipt of commit `sha`, posted at minute `m`: the answer of a clean pass, which its 👍 follows.
+const receiptAt = (sha, m, id = 70) => ({ id, user: BOT, created_at: T(m), body: `<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues. Breezy!\n\n**Reviewed commit:** \`${sha.slice(0, 10)}\`` });
+const B40 = 'b'.repeat(40);
+const C40 = 'c'.repeat(40);
 
 test('parseArgs: defaults, URL form, #n form, and strict flag parsing', () => {
   const d = parseArgs([]);
@@ -148,13 +152,14 @@ test('latestBotSignal: with no trigger, a Codex task summary is not a review of 
   assert.equal(latestBotSignal({ ...base, issueComments: [quota] }).kind, 'quota_exhausted');
 });
 
-test('latestBotSignal: a thumbs-up with no review is a completed review with nothing to address', () => {
-  const s = latestBotSignal({ reviews: [], reviewComments: [], reactions: [{ user: BOT, content: '+1', created_at: T(6) }], reviewer: DEFAULT_REVIEWER, since: T(5) });
-  assert.equal(s.kind, 'thumbs_up');
-  assert.equal(s.line_comments, 0);
-  assert.equal(isStale(s, 'anything', null), false, 'no head date known → not stale');
-  assert.equal(isStale(s, 'anything', T(5)), false, 'head committed before the 👍 → covered');
-  assert.equal(isStale(s, 'anything', T(9)), true, 'head committed after the 👍 → stale');
+test('latestBotSignal: a 👍 is never a signal; the receipt it follows is the clean answer', () => {
+  const base = { reviews: [], reviewComments: [], reactions: [{ user: BOT, content: '+1', created_at: T(6) }], reviewer: DEFAULT_REVIEWER };
+  assert.equal(latestBotSignal({ ...base, since: T(5) }), null, 'a 👍 alone after a trigger');
+  assert.equal(latestBotSignal({ ...base, since: null }), null, 'a 👍 alone with no trigger');
+  const s = latestBotSignal({ ...base, since: T(5), issueComments: [receiptAt(B40, 6)] });
+  assert.deepEqual([s.kind, s.clean, s.commit_id, s.line_comments], ['comment', true, B40.slice(0, 10), 0]);
+  assert.equal(isStale(s, B40, T(9)), false, 'the receipt names the head');
+  assert.equal(isStale(s, C40, T(1)), true, 'the receipt names another commit');
 });
 
 test('acknowledgedAt: a 👀 reaction is in-progress, not a completed signal', () => {
@@ -493,12 +498,12 @@ test('awaitReview: review already on the PR → already_present, exit-0 shape, n
 });
 
 test('awaitReview: polls until the bot signal lands, then received; times out otherwise', async () => {
-  const forge = fakeForge([{}, {}, { reactions: [{ user: BOT, content: '+1', created_at: T(12) }] }]);
+  const forge = fakeForge([{}, {}, { issueComments: [receiptAt(B40, 12)], reactions: [{ user: BOT, content: '+1', created_at: T(12) }] }], { head: B40 });
   const c = clock();
   const sleep = async (s) => { await c.sleep(s); forge.advance(); };
   const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 900, intervalSec: 60 }, { forge, now: c.now, sleep });
   assert.equal(r.status, 'received');
-  assert.equal(r.signal.kind, 'thumbs_up');
+  assert.deepEqual([r.signal.kind, r.signal.clean], ['comment', true]);
   assert.equal(r.waited_sec, 120);
 
   const forge2 = fakeForge([{}]);
@@ -533,7 +538,7 @@ test('awaitReview: an acknowledged timeout is retry-recommended, an unacknowledg
 
   // Timeout-only: a run that got its answer keeps the exact shape it had
   // before this field existed.
-  const forge3 = fakeForge([{ reactions: [{ user: BOT, content: '+1', created_at: T(6) }] }]);
+  const forge3 = fakeForge([{ issueComments: [receiptAt(B40, 6)], reactions: [{ user: BOT, content: '+1', created_at: T(6) }] }], { head: B40 });
   const c3 = clock();
   const r3 = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 120, intervalSec: 60 }, { forge: forge3, ...c3 });
   assert.equal(r3.status, 'already_present');
@@ -567,12 +572,16 @@ test('awaitReview --request: a 👍 older than the head commit re-requests', asy
   assert.equal(r.head_committed_at, T(8));
 });
 
-test('awaitReview --request: a 👍 newer than the head commit does NOT re-request', async () => {
-  const forge = fakeForge([{ reactions: [{ user: BOT, content: '+1', created_at: T(6) }] }], { head: 'bbb', headCommittedAt: T(1) });
+test('awaitReview --request: a receipt naming the head does NOT re-request; a 👍 alone, newer than the head commit, does', async () => {
+  const thumbsUp = { user: BOT, content: '+1', created_at: T(6) };
+  const forge = fakeForge([{ issueComments: [receiptAt(B40, 6)], reactions: [thumbsUp] }], { head: B40, headCommittedAt: T(1) });
   const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 900, intervalSec: 60 }, { forge, ...clock() });
   assert.equal(forge.posts.length, 0);
   assert.equal(r.status, 'already_present');
   assert.equal(r.stale, false);
+  const alone = fakeForge([{ reactions: [thumbsUp] }], { head: B40, headCommittedAt: T(1) });
+  const asked = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 0, intervalSec: 60 }, { forge: alone, ...clock() });
+  assert.deepEqual([alone.posts.length, asked.status, asked.signal], [1, 'timed_out', null]);
 });
 
 test('latestTriggerHead: the head the latest trigger recorded; a later hand-typed trigger names none', () => {
@@ -583,10 +592,10 @@ test('latestTriggerHead: the head the latest trigger recorded; a later hand-type
   assert.equal(latestTriggerHead({ issueComments: [] }), null);
 });
 
-test('isStale: a 👍, comment, or quota notice is bound to the head its trigger recorded, not to the committer date', () => {
+test('isStale: a comment or quota notice is bound to the head its trigger recorded, not to the committer date', () => {
   // ccc was committed at T(3), before the bot answered at T(6), and pushed after: the committer date alone called it
   // covered, though the trigger the answer belongs to asked about bbb.
-  for (const kind of ['thumbs_up', 'comment', 'quota_exhausted']) {
+  for (const kind of ['comment', 'quota_exhausted']) {
     const signal = { kind, at: T(6), commit_id: null };
     assert.equal(isStale(signal, 'ccc', T(3), 'bbb'), true, `${kind}: answers bbb, so ccc is not covered`);
     assert.equal(isStale(signal, 'ccc', T(9), 'ccc'), false, `${kind}: the trigger named this head, whatever the dates say`);
@@ -624,7 +633,7 @@ test('awaitReview: a 👍 answering head A does not cover head B, committed befo
     { forge: fakeForge(frames, { head: 'ccc', headCommittedAt: T(3) }), ...clock() },
   );
   assert.equal(waited.status, 'timed_out', 'the 👍 answers bbb, so the wait for ccc does not end on it');
-  assert.equal(waited.stale, true);
+  assert.equal(waited.signal, null, 'a 👍 is no signal at all');
 
   const forge = fakeForge(frames, { head: 'ccc', headCommittedAt: T(3) });
   const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 60, intervalSec: 60 }, { forge, ...clock() });
@@ -633,12 +642,15 @@ test('awaitReview: a 👍 answering head A does not cover head B, committed befo
   assert.equal(r.status, 'timed_out');
 });
 
-test('awaitReview --request: a 👍 answering a trigger for the current head ends the wait, though the head is newer', async () => {
-  const trigger = { user: { login: 'someone' }, body: requestCommentBody('ccc'), created_at: T(5), reactions: { eyes: 1 } };
-  const forge = fakeForge([{ issueComments: [trigger], reactions: [{ user: BOT, content: '+1', created_at: T(6) }] }], { head: 'ccc', headCommittedAt: T(9) });
+test('awaitReview --request: a 👍 after a trigger for the current head never ends the wait; the receipt naming the head does', async () => {
+  const trigger = { user: { login: 'someone' }, body: requestCommentBody(C40), created_at: T(5), reactions: { eyes: 1 } };
+  const thumbsUp = { user: BOT, content: '+1', created_at: T(6) };
+  const forge = fakeForge([{ issueComments: [trigger], reactions: [thumbsUp] }], { head: C40, headCommittedAt: T(9) });
   const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 60, intervalSec: 60 }, { forge, ...clock() });
-  assert.equal(r.status, 'already_present');
-  assert.equal(forge.posts.length, 0);
+  assert.deepEqual([r.status, r.signal, forge.posts.length], ['timed_out', null, 0], 'acknowledged for this head, so nothing more is asked');
+  const answered = fakeForge([{ issueComments: [trigger, receiptAt(C40, 6)], reactions: [thumbsUp] }], { head: C40, headCommittedAt: T(9) });
+  const done = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 60, intervalSec: 60 }, { forge: answered, ...clock() });
+  assert.deepEqual([done.status, done.signal.clean, answered.posts.length], ['already_present', true, 0]);
 });
 
 test('awaitReview: a push that lands mid-wait moves the target — a review of the old head is stale, not received', async () => {
@@ -794,7 +806,7 @@ test('latestBotSignal: the review-summary status card is never a signal, at any 
   // Completed: still not the signal; the 👍 / review / result comment that accompanies completion is.
   assert.equal(latestBotSignal({ ...base, issueComments: [{ ...card, body: COMPLETED_CARD_BODY }] }), null);
   const withThumbs = latestBotSignal({ ...base, issueComments: [{ ...card, body: COMPLETED_CARD_BODY }], reactions: [{ user: BOT, content: '+1', created_at: T(7) }] });
-  assert.equal(withThumbs.kind, 'thumbs_up');
+  assert.equal(withThumbs, null, 'nor is a 👍 beside it');
   // Another shape: the "Didn't find any major issues" result comment lands beside the card and is the comment signal, not the card.
   const result = { id: 5511479468, user: BOT, created_at: T(7), body: "Codex Review: Didn't find any major issues. Another round soon." };
   const withResult = latestBotSignal({ ...base, issueComments: [{ ...card, body: COMPLETED_CARD_BODY }, result] });
@@ -1263,4 +1275,67 @@ test('latestBotSignal: a draft`s clean receipt, or a card with nothing unresolve
   assert.equal(latestBotSignal({ ...base, issueComments: [at('Codex Review: two findings below.')] }).clean, undefined, 'a comment that names findings');
   assert.equal(latestBotSignal({ ...base, issueComments: [at(STATE_CARD_BODY(head, false), 6, 2), at(QUOTA_BODY)] }).kind, 'quota_exhausted');
   assert.equal(latestBotSignal({ ...base, issueComments: [at(STATE_CARD_BODY(head, false), 6, 2), at(QUOTA_BODY)] }).clean, undefined, 'the quota notice is never clean');
+});
+
+// The bot's clean receipt as it posts one on every clean pass: its footer quotes the trigger, and its 👍 follows a few
+// seconds later.
+const FOOTED_RECEIPT = (sha) => `${RECEIPT_BODY(sha).replace('</details>', 'Comment "@codex review" to ask for another review.\n</details>')}`;
+
+test('latestTrigger: the bot`s receipt quotes "@codex review" in its footer, and is never a trigger', () => {
+  const head = 'cdc936e80c1f2a3b4c5d6e7f8091a2b3c4d5e6f7';
+  const trigger = { body: `${REQUEST_COMMENT}\n\n<!-- pr-await-review: head=${head} -->`, created_at: T(2) };
+  const answer = { id: 9, user: BOT, created_at: T(6), body: FOOTED_RECEIPT(head) };
+  assert.ok(answer.body.toLowerCase().includes(REQUEST_COMMENT), 'the footer quotes the trigger');
+  assert.equal(latestTrigger({ issueComments: [trigger, answer] }), T(2));
+  assert.equal(latestTriggerHead({ issueComments: [trigger, answer] }), head);
+  assert.equal(latestTrigger({ issueComments: [answer] }), null);
+});
+
+test('awaitReview: a 👍 just after a receipt naming an older commit never passes the new head, in either order', async () => {
+  // The pull request this was learned on: the bot reviewed the previous head, the new head was pushed, and the receipt
+  // and its 👍 landed after the push.
+  const previous = '7c806f2c55aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const head = '4bc7ec01bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  const trigger = (m) => ({ id: 1, user: { login: 'adrian' }, body: `${REQUEST_COMMENT}\n\n<!-- pr-await-review: head=${head} -->`, created_at: T(m) });
+  const answer = (sha) => ({ id: 2, user: BOT, created_at: T(6), body: FOOTED_RECEIPT(sha) });
+  const thumbsUp = { user: BOT, content: '+1', created_at: '2026-08-23T07:06:04Z' };
+  const run = (issueComments) => awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 0, intervalSec: 60 },
+    { forge: fakeForge([{ head, headCommittedAt: T(4), issueComments, reactions: [thumbsUp] }]), git: { pushedHead: () => null, behind: () => false }, ...clock() });
+  // The trigger before the receipt: the receipt names the previous head, so the answer is stale.
+  const stale = await run([trigger(5), answer(previous)]);
+  assert.deepEqual([stale.status, stale.signal.kind, stale.signal.commit_id, stale.stale], ['timed_out', 'comment', previous.slice(0, 10), true]);
+  assert.equal(stale.trigger_at, T(5), 'the receipt is not the trigger');
+  // The trigger for the new head between the receipt and its 👍: the receipt is before the trigger, and the 👍 alone is no answer.
+  const between = await run([answer(previous), { ...trigger(6), created_at: '2026-08-23T07:06:02Z' }]);
+  assert.deepEqual([between.status, between.signal], ['timed_out', null]);
+  // The read gave the 👍 but not the receipt, which landed between the two reads: still no answer.
+  const missed = await run([trigger(5)]);
+  assert.deepEqual([missed.status, missed.signal], ['timed_out', null]);
+  const covered = await run([trigger(5), answer(head)]);
+  assert.deepEqual([covered.status, covered.signal.commit_id, covered.stale], ['already_present', head.slice(0, 10), false]);
+});
+
+test('acknowledgement: a 👀 on the bot`s receipt, whose footer quotes "@codex review", is no acknowledgement of a trigger', () => {
+  const head = 'cdc936e80c1f2a3b4c5d6e7f8091a2b3c4d5e6f7';
+  const seen = { id: 9, user: BOT, created_at: T(6), body: FOOTED_RECEIPT(head), reactions: { eyes: 1 } };
+  assert.equal(acknowledgement({ reactions: [], issueComments: [seen], reviewer: DEFAULT_REVIEWER, since: T(5) }), null);
+  const trigger = { body: `${REQUEST_COMMENT}\n\n<!-- pr-await-review: head=${head} -->`, created_at: T(5), reactions: { eyes: 1 } };
+  assert.deepEqual(acknowledgement({ reactions: [], issueComments: [trigger, seen], reviewer: DEFAULT_REVIEWER, since: T(5) }), { at: T(5), headSha: head });
+});
+
+test('latestBotSignal: the status card`s full commit, not the comment`s short one, is checked against the head', () => {
+  const short = 'cdc936e80c';
+  const head = `${short}${'1'.repeat(30)}`;
+  const other = `${short}${'2'.repeat(30)}`;
+  const comment = { id: 7, user: BOT, created_at: T(7), body: `Codex Review: here is what changed.\n\n**Reviewed commit:** \`${short}\`` };
+  const card = (sha) => ({ id: 2, user: BOT, created_at: T(6), updated_at: T(8), body: STATE_CARD_BODY(sha, false) });
+  const base = { reviews: [], reviewComments: [], reviewer: DEFAULT_REVIEWER, since: T(5) };
+  const shared = latestBotSignal({ ...base, issueComments: [card(other), comment] });
+  assert.deepEqual([shared.clean, shared.commit_id], [true, other], 'the card names the commit it reviewed in full');
+  assert.equal(isStale(shared, head, T(1), head), true, 'a commit that only shares the short SHA is not the head');
+  const own = latestBotSignal({ ...base, issueComments: [card(head), comment] });
+  assert.deepEqual([own.clean, own.commit_id, isStale(own, head, T(1), head)], [true, head, false]);
+  // A card that names its commit in fewer than 40 hex is no evidence of which commit it reviewed.
+  const abbreviated = latestBotSignal({ ...base, issueComments: [card(short), comment] });
+  assert.deepEqual([abbreviated.clean, abbreviated.commit_id], [undefined, short]);
 });

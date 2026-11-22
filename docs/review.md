@@ -884,13 +884,20 @@ code-reviewer pass is on record, with the gate's marker. The request goes out on
 cap (`botRequest` on the record): later steps on that head only wait for the answer, and `aidrian pr await-review
 <n> --request` run by hand asks again. A round the bot was asked on is kept when a reviewer then fails. The bot's
 stage is still awaited and judged last: the step returns an earlier stage's findings first, and `received` only once
-the bot has answered, so a pull request is marked ready only on the bot's clean answer. A clean answer leaves the bot's
-pass with no open finding: a 👍, or, on a draft, the bot's receipt comment, matched on its layout (the
-`codex-review-receipt:v1` marker first, then text that opens with "Codex Review: Didn't find any major issues", and
-the reviewed commit), or a comment for a commit whose code review the bot's status card records as completed with no
-unresolved findings, where the card was last updated in this round, at or after the request, and no earlier than the
-comment. A comment that only quotes the phrase is not a receipt. Any other answer holds at least one open
-finding, and a usage-limit notice stays `blocked_quota`. A moved head ends the request
+the bot has answered, so a pull request is marked ready only on the bot's clean answer. On every clean pass the bot
+posts its receipt comment, then adds a 👍 to the pull request about 4 seconds later. A clean answer leaves the bot's
+pass with no open finding: the receipt, matched on its layout (the `codex-review-receipt:v1` marker first, then text
+that opens with "Codex Review: Didn't find any major issues", and the reviewed commit), or a comment for a commit whose
+code review the bot's status card records as completed with no unresolved findings, where the card was last updated
+in this round, at or after the request, and no earlier than the comment. A comment that only quotes the phrase is not
+a receipt. The 👍 is never an answer: it names no commit, and the receipt it follows may name the head before a push,
+may predate the request, or may be one the read missed. A receipt answers the head when its 10-hex short commit is a
+prefix of it; a commit that shares that prefix reads as covered too, so this is no proof, and merge trust reads no
+receipt. A comment the status card vouches for answers the card's full commit, compared whole with the head; a card
+that gives fewer than 40 hex vouches for nothing. The newest answer is the one judged: a later review of an older
+head hides an earlier answer for this one, so the wait asks again or times out, and never records a pass for it. The
+receipt's footer quotes "@codex review", and like the status card it is never a request, nor is a 👀 on it an
+acknowledgement. Any other answer holds at least one open finding, and a usage-limit notice stays `blocked_quota`. A moved head ends the request
 at once as `incomplete`; the cap (`round_limit`) and a usage-limit notice (`blocked_quota`) are reported from the
 bot's stage, after the earlier stages, as before. An answer for a commit other than the one under review counts for
 nothing. A flow's required checks are read for that commit too.
@@ -1424,15 +1431,19 @@ for both: the waiver's read serves merge trust.
    that full commit completed and found nothing (`has_any_findings` false, since marking the bot's threads resolved
    clears `has_unresolved_findings`), with every edit of the card the bot's, its last editor and anyone who deleted an
    edit from its history included. A review of that commit by the bot in any other state, a dismissed one included,
-   keeps it off. A clean receipt or a 👍 names no full commit, so neither counts. The check holds whatever the record's
-   outcome: a `none_needed` pull request merges unattended only once the bot is requested on it, with
-   `aidrian pr await-review <PR> --request`, and has passed. With no bot set, the check is off with no route: a session
-   no Human attends merges nothing, and the refusal says to set `github.reviewer` on the default branch, or that the
-   Human merges. One GraphQL call reads it, the forge's review trail: the head, the base, the author, the review decision,
-   the head's checks, the first 100 changed files, the last 100 reviews, the first 100 conversation comments with their
-   edits, and both branches' pointer file and `config.json`, with the default branch's knowledge folder. Only a pointer to
-   another folder reads those over REST too. On a real pull request the whole check takes about 1 to 1.5 seconds; a read
-   that runs out of the guard's 4 seconds refuses, and says one more try is safe.
+   keeps it off. A clean receipt or a 👍 never counts. The receipt names a 10-hex short commit, which a commit ground to
+   share it matches (about 2^40 hashes), and the forge gives no push time of a fast-forward push that would bind it to
+   the head: GraphQL's `Commit.pushedDate` is always null and a pull request's commits carry no date. The 👍 names no
+   commit, and lands seconds after the receipt, so after a push it answers the head before it. A pull request the bot
+   passed only with a receipt is the Human's to merge. The check holds whatever the record's outcome: a `none_needed`
+   pull request merges unattended only once the bot is requested on it, with `aidrian pr await-review <PR> --request`,
+   and has passed. With no bot set, the check is off with no route: a session no Human attends merges nothing, and the
+   refusal says to set `github.reviewer` on the default branch, or that the Human merges. One GraphQL call reads it, the
+   forge's review trail: the head, the base, the author, the review decision, the head's checks, the first 100 changed
+   files, the last 100 reviews, the first 100 conversation comments with their edits, and both branches' pointer file
+   and `config.json`, with the default branch's knowledge folder. Only a pointer to another folder reads those over REST
+   too. On a real pull request the whole check takes about 1 to 1.5 seconds; a read that runs out of the guard's 4
+   seconds refuses, and says one more try is safe.
 2. **The Human's sign-offs, from the sign-off store.** `aidrian pr signoff <PR> --flow <id>` also writes the sign-off to
    `$XDG_STATE_HOME/aidrian/signoffs/<owner>/<name>/<PR>.json`, first: a store it cannot write keeps the record unwritten
    too. It keeps the head the Human typed, resolved to its full commit in their checkout, a prefix two commits share

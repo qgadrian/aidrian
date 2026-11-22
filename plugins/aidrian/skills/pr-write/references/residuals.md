@@ -15,7 +15,9 @@ An accepted residual that contradicts a decision on record never ships.
    wording it contradicts. The pairing lists only `confirmed` and `unconfirmed` decisions: a `rejected` one is no rule,
    so the command leaves it out.
 3. Write the rows as a JSON array to `<state>/tmp/pr-residuals-<branch>.json`, with the same `<branch>` spelling as the
-   body file, and run `aidrian decisions residuals --body <file> --judged <that file>`.
+   body file, and run `aidrian decisions residuals --body <file> --judged <that file>`. Spell both paths out, with the
+   folder `aidrian state` prints and the branch put in before the command, as the body file's is: the Bash hook refuses a
+   write to a path built in a shell variable, such as `> $S/pr-residuals.json`.
 4. Each printed contradiction goes back to the owner of the change, who fixes the defect or drops the residual; an
    `invalid:` row goes back to `product-manager`. Rerun steps 1 to 3 until the judged run exits 0: the body ships only then.
 

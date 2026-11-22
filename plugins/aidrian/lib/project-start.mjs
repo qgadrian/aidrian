@@ -356,9 +356,11 @@ export function commitProblem({ state, env = process.env, url = null, branch = P
     return commit.status === 0 ? null : `a commit in a clone made as an attempt's fails (${gitSaid(commit)})`;
   } finally {
     try {
-      rmSync(scratch, { recursive: true, force: true });
+      // Node retries a transient EBUSY, ENOTEMPTY, or EPERM itself.
+      rmSync(scratch, { recursive: true, force: true, maxRetries: 3 });
     } catch {
-      // A folder that will not go never masks the probe's own answer; the next probe makes a fresh one.
+      // A folder that still will not go never masks the probe's own answer: a leftover `.commit-probe-*` folder holds
+      // only an empty probe commit, and the next probe makes a fresh one.
     }
   }
 }

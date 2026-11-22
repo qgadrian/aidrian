@@ -130,7 +130,7 @@ function dataPath(store) {
 }
 
 // The identities of `file` and of each folder above it that is there, `file` first.
-function lineage(file) {
+function ancestry(file) {
   const found = [];
   for (let at = file; ; at = path.dirname(at)) {
     const each = identity(at);
@@ -146,7 +146,7 @@ function lineage(file) {
 // it and the folders above it, so another path to the same file or folder, as a hard link or macOS's
 // `/System/Volumes/Data` path to a folder of the Data volume, matches too. On macOS each store is also read by its Data
 // volume path, since the system keeps that path as it is: a read of the Data volume's root, or of a folder above it,
-// holds every store there, though no store's standard path or identity lineage passes through it.
+// holds every store there, though no store's standard path or identity ancestry passes through it.
 function readsStore(input, unreadable) {
   const targets = fileReadOf(input);
   if (!targets) return null;
@@ -159,12 +159,12 @@ function readsStore(input, unreadable) {
     const files = [realOf(path.resolve(cwd, spelled)), real(path.isAbsolute(spelled) ? spelled : `${cwd}/${spelled}`)].filter(Boolean);
     const store = stores.find((each) => each.paths.some((at) => files.some((file) => within(at, file) || within(file, at))));
     if (store) return store.store;
-    known ??= stores.flatMap(({ store, paths }) => paths.map((at) => ({ store, id: identity(at), ids: lineage(at) })));
+    known ??= stores.flatMap(({ store, paths }) => paths.map((at) => ({ store, id: identity(at), ids: ancestry(at) })));
     // The read's file or a folder above it is the store, or the read's file is the store or a folder above it.
-    // Only a store's own lineage is known, so a hard link made beforehand to a file inside a store folder is not caught:
+    // Only a store's own ancestry is known, so a hard link made beforehand to a file inside a store folder is not caught:
     // nothing scans the folder's tree for the identities of the files it holds.
     for (const file of files) {
-      const [id, ids] = [identity(file), lineage(file)];
+      const [id, ids] = [identity(file), ancestry(file)];
       const found = known.find((each) => (each.id !== null && ids.includes(each.id)) || (id !== null && each.ids.includes(id)));
       if (found) return found.store;
     }

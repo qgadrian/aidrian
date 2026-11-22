@@ -11,7 +11,7 @@ import { packageRoots } from './split.mjs';
 import { contentFlows } from './content.mjs';
 import { touchedCitations } from './cited.mjs';
 import { buildPlan, classify, DEPTHS, detectFlows, HARNESS_FLOW, mergePlans, mergeStages, pathPattern } from './plan.mjs';
-import { BUILT_IN, confinedReason, confinePlan, resolveEngine, reviewerMap, satisfies } from './reviewers.mjs';
+import { BUILT_IN, confinedReason, resolveEngine, reviewerMap, satisfies } from './reviewers.mjs';
 import { buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
 import { heldMessage, noteLocalOutcome, publishState, readLocalState, readRecord, recordFile, sameCommit, summaryToEdit } from './state.mjs';
 import { isObject } from '../fs.mjs';
@@ -278,7 +278,9 @@ export async function prepareStep(s) {
   state.revision -= 1;
   Object.assign(run, { pr: n, head, repo });
 
+  // A confined session is kept for the stages, which launch no reviewer that cannot run there (stages.mjs).
   const confined = confinedSession(env);
+  s.confined = confined;
   const engine = resolveEngine(effective, { ...(codex ? { codex } : {}), confined });
   if (engine.problem) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: engine.problem });
   // Flows whose files the globs miss: a changed file whose whole head content, or whose callers, hand it the flow's
@@ -314,13 +316,6 @@ export async function prepareStep(s) {
   }
   plan.engine = { name: engine.reviewer.name, reason: engine.reason };
   const map = reviewerMap(effective);
-  // In a confined session, a reviewer that cannot run there, the engine's or one a plan command names, has its passes
-  // run by self (reviewers.mjs confinePlan); the plan's requirements stay as they are.
-  for (const name of confined ? confinePlan(plan, map) : []) {
-    const why = `${confinedReason(name, confined)}, so the agent reviewer self runs its passes`;
-    plan.reasons = [...plan.reasons, why];
-    if (name === engine.reviewer.name) plan.engine = { name: 'self', reason: `${engine.reason}, but ${why}` };
-  }
   // A reviewer out of quota on this head, and the Human's choice of what replaces it (lib/review/quota.mjs). The flag
   // answers a stop on this head only, and is refused where the plan requires an independent model.
   if (opts.quotaFallback) {
@@ -484,7 +479,7 @@ export async function prepareStep(s) {
   for (const stage of plan.stages) if (stage.name !== 'local') for (const pass of stage.passes) pass.flows = plan.flows.map((flow) => flow.id);
   for (const word of plan.require) {
     if (!satisfies(word, passes, map) && word === 'independent-model' && fallbacks.length) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: quota.refusal(plan, fallbacks[0], [], map), plan });
-    if (!satisfies(word, passes, map)) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `the plan requires ${word}, and the engine here is ${plan.engine.name} (${plan.engine.reason})`, plan });
+    if (!satisfies(word, passes, map)) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `the plan requires ${word}, and the engine here is ${engine.reviewer.name} (${engine.reason})`, plan });
   }
   // A flow's deleted test stops the review whatever else the change does, even when nothing else needs a review.
   const removedTests = [];
@@ -498,7 +493,7 @@ export async function prepareStep(s) {
   // would count for nothing: a violated invariant is fixed, never signed away.
   state.signoffable = { head, flows: [...new Set([...plan.flows.filter((flow) => flow.signoff === 'human').map((flow) => flow.id), ...removedTests.map((each) => each.flow)])].sort() };
   const answerless = plan.flows.find((flow) => !passes.some((pass) => (pass.flows ?? []).includes(flow.id) && map[pass.reviewer]?.kind !== 'remote'));
-  if (answerless) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `flow ${answerless.id} needs a reviewer that answers its invariants, and the review bot does not: run codex-local, or require an agent for the flow`, plan });
+  if (answerless) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `flow ${answerless.id} needs a reviewer that answers its invariants, and the review bot does not: ${confined ? `${confinedReason('codex-local', confined)}, so require an agent for the flow` : 'run codex-local, or require an agent for the flow'}`, plan });
   // A plan with no pass is `none_needed` only at depth none: a depth above it with nothing to run is a review lost.
   if (!passes.length && !removedTests.length && !fallbacks.length && plan.depth !== 'none') return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `the plan asks for a ${plan.depth} review and names no pass to run it`, plan });
   if (!passes.length && !removedTests.length && !fallbacks.length) return settle({ status: 'none_needed', pr: n, repo, head, base, depth: plan.depth, engine: plan.engine, plan: { depth: plan.depth, reasons: plan.reasons, flows: [], stages: [] } });

@@ -406,10 +406,9 @@ How issue sessions and the driver relate to the cap of five background continuat
   sandbox that the sandbox is in force ([The sandbox proof](#the-sandbox-proof)): its first call must be `aidrian
   project confine <run> <issue>`, and nothing else runs until the start confirmed it.
 - `aidrian pr review` in an issue's session never starts `codex-local`, since Codex needs a sandbox of its own and the
-  network, which this sandbox denies: every `codex-local` pass of the plan, the engine's or a plan command's, runs as
-  the `self` agent reviewer in the same stage, answering the same flows' invariants, and `engine.reason` says why.
-  `self` is no independent model, so a flow that requires `independent-model` passes only with the bot stage
-  `--with-bot` adds; with no review bot set, the step is `unsatisfied`, and its reason names the session
+  network, which this sandbox denies. There `codex-local` is not ready, as when Codex is not installed: `auto` takes
+  the review bot, else `self`, and a `review.engine` set to `codex-local` leaves the step `unsatisfied`, the reason
+  naming the session. A `codex-local` pass a plan command adds is refused before it launches
   ([The engine](../review.md#the-engine)).
 - An issue's session starts no continuation: `aidrian handoff continue` from it prints `continue: none`, and
   `aidrian handoff route` `route: none`, before any floor, mark, or start record. It pushes its work and records its result.

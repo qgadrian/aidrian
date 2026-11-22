@@ -823,10 +823,10 @@ rest of the review config it is the base branch's. Unset, each machine picks its
 
 In a project run's confined issue session, one whose own unattended mark names a run and an issue, a reviewer that
 declares `confinable: false` cannot run: `codex-local` starts Codex, whose own sandbox and network the host's sandbox
-denies. There `auto` passes it over, and every pass of it in the final plan, the engine's or one a plan command adds,
-runs as `self` in the same stage, with the same files and flows and an id of its own; `engine.reason` and the plan's
-reasons say so. `self` answers those flows' invariants but is no independent model: only the bot stage `--with-bot`
-adds meets `independent-model`, and with no review bot the step is `unsatisfied`, its reason naming the session.
+denies. There it is not ready, as when Codex is not installed or not logged in: `auto` takes the review bot, else
+`self`, and an engine set to it leaves the step `unsatisfied`, each with a reason that names the session. A pass of it
+that reaches the stages anyway, as one a plan command adds, is never launched: the step is `unsatisfied`, naming the
+pass and the session.
 
 ## Rounds
 

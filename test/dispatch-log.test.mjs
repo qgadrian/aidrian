@@ -202,10 +202,10 @@ test('the delivery check sends a subagent back once for a handoff file its brief
   // Another agent's handoff, on a branch whose name holds this agent's: still not this agent's.
   const other = path.join(dispatch, 'fix-code-reviewer-delivery-S1-backend-developer.json');
   const transcript = path.join(base, 'agent-a6.jsonl');
-  const brief = `Review slice S1. Read the implementer's handoff at ${other}.\nWrite your machine handoff to \`${own}\` before you hand back.`;
+  const brief = `Review slice S1. Read the implementer's handoff at ${other}.\nHandoff file: \`${own}\`\nWrite your machine handoff there before you hand back.`;
   writeFileSync(transcript, [
     JSON.stringify({ type: 'user', message: { role: 'user', content: brief } }),
-    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: `A later message naming ${path.join(dispatch, 'x-code-reviewer.json')}` }] } }),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: `Handoff file: ${path.join(dispatch, 'x-code-reviewer.json')}` }] } }),
   ].join('\n'));
   const stop = (active, agentType = 'aidrian:code-reviewer') => hook('hook-subagent-stop.mjs', {
     cwd: dir, agent_id: 'a6', agent_type: agentType, agent_transcript_path: transcript, last_assistant_message: '', stop_hook_active: active,
@@ -233,7 +233,7 @@ test('the stop hook writes a subagent\'s final report to the handoff file its br
   const transcriptFor = (id, file, lines = []) => {
     const transcript = path.join(base, `agent-${id}.jsonl`);
     writeFileSync(transcript, [
-      JSON.stringify({ type: 'user', message: { role: 'user', content: `Rule on the copy. Try to also write it to ${file}; if you cannot, the final message is enough.` } }),
+      JSON.stringify({ type: 'user', message: { role: 'user', content: `Rule on the copy.\nHandoff file: ${file}\nTry to also write it there; if you cannot, the final message is enough.` } }),
       ...lines.map((line) => JSON.stringify(line)),
     ].join('\n'));
     return transcript;
@@ -299,7 +299,7 @@ test('the stop hook writes the handoff from the report of the stop it lets end, 
   const { base, dir, state, log, hook } = project(t);
   const file = path.join(state(), 'dispatch', 'docs-S1-product-manager.json');
   const transcript = path.join(base, 'agent-p6.jsonl');
-  writeFileSync(transcript, JSON.stringify({ type: 'user', message: { role: 'user', content: `Rule on the copy. Write your machine handoff to ${file}.` } }));
+  writeFileSync(transcript, JSON.stringify({ type: 'user', message: { role: 'user', content: `Rule on the copy.\nHandoff file: ${file}` } }));
   const stop = (message, active) => hook('hook-subagent-stop.mjs', {
     cwd: dir, agent_id: 'p6', agent_type: 'aidrian:product-manager', agent_transcript_path: transcript, last_assistant_message: message, stop_hook_active: active,
   });
@@ -323,7 +323,7 @@ test('the stop hook replaces a stale handoff file, a link, but keeps one this ru
   mkdirSync(dispatch, { recursive: true });
   const transcriptFor = (id, file, timestamp) => {
     const transcript = path.join(base, `agent-${id}.jsonl`);
-    writeFileSync(transcript, JSON.stringify({ type: 'user', ...(timestamp ? { timestamp } : {}), message: { role: 'user', content: `Write your machine handoff to ${file}.` } }));
+    writeFileSync(transcript, JSON.stringify({ type: 'user', ...(timestamp ? { timestamp } : {}), message: { role: 'user', content: `Handoff file: ${file}` } }));
     return transcript;
   };
   const stop = (id, transcript) => hook('hook-subagent-stop.mjs', {
@@ -394,15 +394,14 @@ test('the stop hook writes only the handoff file its own run was briefed with, n
   assert.equal((await run('s1', signoffBrief, 'signoff')).status, 0);
   assert.deepEqual([read(gate), read(decide), read(signoff)], ['gate', 'decide', 'signoff']);
 
-  // No marker and two files of the role: the hook cannot tell the output, so it writes neither.
+  // No marker: the brief owes no file, even the one it says to write.
   const wording = file('wording');
-  assert.equal((await run('w1', `Read the gate at ${gate}. Write your machine handoff to ${wording}.`, 'wording')).status, 0);
-  assert.equal(read(gate), 'gate');
+  assert.equal((await run('w1', `Write your machine handoff to ${wording}.`, 'wording')).status, 0);
   assert.throws(() => readFileSync(wording), /ENOENT/u);
   assert.deepEqual(log().map((row) => [row.agent_id, row.handoffs_written]), [['s0', 1], ['g1', 1], ['d1', 1], ['s1', 1], ['w1', 0]]);
 
   // One path per marker line, its first token: prose after it that names a second file of the role is never read.
-  // The three spellings count, in any case, with or without a list marker.
+  // The three spellings count, in any case, with or without a list marker, and with CRLF line ends.
   const input = file('copy-input');
   const forms = [
     ['m1', (out) => `Handoff file: ${out} (after you read ${input})`],
@@ -411,9 +410,12 @@ test('the stop hook writes only the handoff file its own run was briefed with, n
     ['m4', (out) => `handoff file: ${out}\nRead ${input}.`],
   ];
   for (const [id, line] of forms) {
-    const out = file(`copy-${id}`);
-    assert.equal((await run(id, `Rule on the copy.\n${line(out)}`, id)).status, 0, id);
-    assert.equal(read(out), id, id);
+    for (const [end, suffix] of [['\n', ''], ['\r\n', '-crlf']]) {
+      const out = file(`copy-${id}${suffix}`);
+      const brief = `Rule on the copy.\n${line(out)}\n`.replaceAll('\n', end);
+      assert.equal((await run(`${id}${suffix}`, brief, id)).status, 0, `${id}${suffix}`);
+      assert.equal(read(out), id, `${id}${suffix}`);
+    }
   }
   assert.throws(() => readFileSync(input), /ENOENT/u, 'a path in the prose after the marker is never written');
   const relative = file('copy-relative');
@@ -422,15 +424,12 @@ test('the stop hook writes only the handoff file its own run was briefed with, n
   // A marker with no valid path still marks the brief: the one file of the role its prose names is an input, kept.
   await sleep(30);
   assert.equal((await run('m6', `Handoff file:\nRead the gate at ${gate}.`, 'm6')).status, 0);
+  assert.equal((await run('m6-crlf', `Handoff file:\r\nRead the gate at ${gate}.\r\n`, 'm6')).status, 0);
   assert.equal(read(gate), 'gate');
   // A backticked value is one path: a `.json` inside it does not end it early.
   const short = file('copy-short');
   assert.equal((await run('m7', `Handoff file: \`${short} copy.json\``, 'm7')).status, 0);
   assert.throws(() => readFileSync(short), /ENOENT/u, 'the shorter file is never written');
-  // With no marker, only a complete `.json` file name counts, never the start of `.json.backup`.
-  const backup = file('copy-backup');
-  assert.equal((await run('m8', `Write your machine handoff to ${backup}.backup.`, 'm8')).status, 0);
-  assert.throws(() => readFileSync(backup), /ENOENT/u);
 });
 
 // A state folder whose path holds a space: a backticked marker path is read whole, and the run's file is written.

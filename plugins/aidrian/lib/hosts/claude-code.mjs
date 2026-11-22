@@ -100,9 +100,12 @@ const humanAnswer = (entry) => entry !== null && typeof entry === 'object' && en
 const humanPrompt = (file, entry, { session, home = homedir() } = {}) => ownTranscript(file, session, home) && humanEntry(entry);
 function ownTranscript(file, session, home) {
   try {
+    // No link on the way: the folder and the file are where the home folder's own path says, so the write guard's
+    // refusal of that home dot folder covers what is read.
+    const root = path.join(realpathSync(home), '.claude', 'projects');
     const real = realpathSync(file);
-    const root = realpathSync(path.join(home, '.claude', 'projects'));
-    return typeof session === 'string' && path.basename(real) === `${session}.jsonl` && path.dirname(path.dirname(real)) === root;
+    return typeof session === 'string' && realpathSync(root) === root && real === path.resolve(file)
+      && path.basename(real) === `${session}.jsonl` && path.dirname(path.dirname(real)) === root;
   } catch {
     return false;
   }

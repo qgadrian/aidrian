@@ -43,7 +43,9 @@ const SHORT = /^([0-9A-Za-z][0-9A-Za-z-]{3,63})\.json$/u;
 const MARK = /^[\w-]{1,128}\.json$/u;
 // A pending mark, named for the session that ran the gate; the dot keeps it apart from a mark under a short id.
 const PENDING = /^pending\.[\w-]{1,128}\.json$/u;
-const TEMPORARY = /^\.(?:pending\.|beacon\.|driver\.)?[\w-]{1,128}\.json\.\d+\.[0-9a-f]{12}\.tmp$/u;
+const TEMPORARY = /^\.(?:pending\.|beacon\.|driver\.|attended\.)?[\w-]{1,128}\.json\.\d+\.[0-9a-f]{12}\.tmp$/u;
+// A session's attended record (liftAttended), swept with the marks it lifts.
+const ATTENDED_FILE = /^attended\.[\w-]{1,128}\.json$/u;
 // The beacon of a session a pending mark holds, which the agent gate hook files on its first call (noteBeacon).
 const BEACON = /^beacon\.[\w-]{1,128}\.json$/u;
 const DAY = 24 * 60 * 60 * 1000;
@@ -212,6 +214,8 @@ export function readUnattendedMark(session, { env = process.env, home, now = Dat
   if (typeof session !== 'string' || !SESSION_ID.test(session)) return null;
   const uid = processUid();
   let unchecked = false;
+  let lifted = false;
+  let attended;
   const pending = [];
   for (const folder of markFolders({ env, home })) {
     let names;
@@ -227,11 +231,14 @@ export function readUnattendedMark(session, { env = process.env, home, now = Dat
     for (const name of ours) {
       const found = readMark(path.join(folder, name), uid, now);
       if (found === 'unchecked') unchecked = true;
-      else if (found) return plainMark(found) && isAttended(session, { env, home, now }) ? null : found;
+      // A plain mark the Human's presence lifted holds nothing; a stronger one later in the scan still does.
+      else if (found && plainMark(found) && (attended ??= isAttended(session, { env, home, now }))) lifted = true;
+      else if (found) return found;
     }
     pending.push(...names.filter((name) => PENDING.test(name)).map((name) => path.join(folder, name)));
   }
   if (unchecked) return { root: null };
+  if (lifted) return null;
   return pendingHold(pending, session, uid, now);
 }
 
@@ -275,7 +282,15 @@ export function liftAttended(session, transcriptPath, { env = process.env, home,
     const mark = readUnattendedMark(session, { env, home, now });
     if (!mark || mark.pending || !plainMark(mark)) return false;
     if (!tailEntries(transcriptPath).some((entry) => isHuman(transcriptPath, entry))) return false;
-    return writeMark(ownFolder(env, now), ATTENDED(session), { at: now }) !== null;
+    // Beside the session's own mark, so a caller that finds the mark finds the record too.
+    const folder = markFolders({ env, home }).find((each) => {
+      try {
+        return readdirSync(each).some((name) => name === `${session}.json` || (SHORT.exec(name)?.[1] !== undefined && session.startsWith(SHORT.exec(name)[1])));
+      } catch {
+        return false;
+      }
+    });
+    return folder !== undefined && writeMark(folder, ATTENDED(session), { at: now }) !== null;
   } catch {
     return false;
   }
@@ -459,7 +474,7 @@ function sweepMarks(folder, now) {
   } catch {
     return;
   }
-  const ages = [[MARK, MARK_AGE], [PENDING, PENDING_AGE], [BEACON, PENDING_AGE], [TEMPORARY, DAY]];
+  const ages = [[MARK, MARK_AGE], [ATTENDED_FILE, MARK_AGE], [PENDING, PENDING_AGE], [BEACON, PENDING_AGE], [TEMPORARY, DAY]];
   for (const name of names) {
     const age = ages.find(([pattern]) => pattern.test(name))?.[1];
     if (age === undefined) continue;

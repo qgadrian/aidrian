@@ -7,7 +7,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
@@ -396,6 +396,15 @@ test('a background session the Human types into is attended from then on; a peer
   t.after(() => rmSync(other, { force: true }));
   lines(other, start, typed);
   assert.equal(liftAttended(session, other, { home: TEST_HOME, isHuman: claude(session) }), false, 'another session\'s transcript');
+  // A projects folder that is a link may lead anywhere a session writes.
+  const linkedHome = folder(t, 'aidrian-linked-home-');
+  const target = folder(t, 'aidrian-linked-target-');
+  mkdirSync(path.join(linkedHome, '.claude'), { recursive: true });
+  symlinkSync(target, path.join(linkedHome, '.claude', 'projects'));
+  mkdirSync(path.join(target, '-z'));
+  const linked = path.join(linkedHome, '.claude', 'projects', '-z', `${session}.jsonl`);
+  lines(linked, start, typed);
+  assert.equal(claudeCode.humanPrompt(linked, typed, { session, home: linkedHome }), false, 'a linked projects folder');
   // A project run's issue session stays held whoever types.
   const issue = 'feed000a-0000-4000-8000-00000000000a';
   assert.ok(markUnattended(issue, { root: dir, tags: { project: 'r1', issue: 'ENG-1' } }));
@@ -410,6 +419,10 @@ test('a background session the Human types into is attended from then on; a peer
   assert.equal(read(session), null);
   assert.equal(isAttended(session, { home: TEST_HOME }), true);
   assert.equal(isAttended(issue, { home: TEST_HOME }), false);
+  // An issue mark beside the lifted plain one still holds: attendance lifts only the plain hold.
+  writeFileSync(path.join(markFolder(), `${session.slice(0, 8)}.json`), JSON.stringify({ root: dir, project: 'r1', issue: 'ENG-1', at: Date.now() }));
+  t.after(() => rmSync(path.join(markFolder(), `${session.slice(0, 8)}.json`), { force: true }));
+  assert.equal(read(session)?.issue, 'ENG-1', 'a stronger hold later in the scan');
 });
 
 test('the agent gate hook lifts a session the Human typed into on its main call, never a subagent\'s', async (t) => {

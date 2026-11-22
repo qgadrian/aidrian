@@ -95,7 +95,7 @@ async function gate(input) {
   if (planted) await block(input, 'config-guard', projectRuleReason(input, planted, DEFAULTS.names.human, 'that the attempt clone\'s git config must be checked'), { match: 'attempt clone git config' });
   const snapshot = typeof input.agent_id === 'string' && input.agent_id !== '' ? readGateSnapshot(input) : null;
   // A background continuation the Human has typed into is attended from then on: its own mark goes before it is read.
-  if (typeof input.agent_id !== 'string' || input.agent_id === '') liftAttended(input.session_id, input.transcript_path, { isHuman: (entry) => humanPrompt(entry) });
+  if (typeof input.agent_id !== 'string' || input.agent_id === '') liftAttended(input.session_id, input.transcript_path, { isHuman: (file, entry) => humanPrompt(input, file, entry) });
   // Read before any guard, wherever the call runs: a session the background route started stays held outside its project.
   const mark = readUnattendedMark(input.session_id);
   // A session a gate's pending mark holds, or one that works an issue of a project run, files its beacon on its first

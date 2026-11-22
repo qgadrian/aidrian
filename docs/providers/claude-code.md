@@ -212,9 +212,12 @@ background continuation on Claude Code 2.1.330, on 2026-11-22: a prompt the Huma
 `human`; a peer session's message carries `origin.kind` `peer`, `isMeta` true, and the peer's verified process; a hook's
 feedback and a skill's text are meta entries; and the prompt the background start sends is prompt 1, with
 `origin.kind` `human` too, so it never counts. No host document states the shape, so a shape the adapter does not
-know never counts. The agent gate hook reads the last 256 KB of the transcript on each main-session call while the
-session holds an unattended mark, and on such an entry removes the mark
-([The background route](../handoff.md#the-background-route)).
+know never counts. The transcript must be the session's own, `<session id>.jsonl` in a folder of the home folder's
+`.claude/projects`, which the write guard refuses an unattended session; one the host keeps elsewhere, as under
+`CLAUDE_CONFIG_DIR`, never counts, since a session could write its own proof there. The agent gate hook reads the last
+256 KB of it, a regular file only, on each main-session call while the session holds a plain unattended mark, and on
+such an entry records the session attended ([The background route](../handoff.md#the-background-route)). Claude Code
+runs a call's hooks in parallel, so another hook can still read the session as unattended on that first call.
 
 ## Handoff continuation
 

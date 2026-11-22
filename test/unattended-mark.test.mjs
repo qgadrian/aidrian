@@ -17,8 +17,8 @@ import { startedUnattended } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { noteFrom, openStore, storePath } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { defaultStateDir, findProject, projectCheckouts, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { GIT_VARS } from '../plugins/aidrian/lib/review/env.mjs';
-import { humanPrompt } from '../plugins/aidrian/lib/hosts/index.mjs';
-import { dropPending, liftAttended, MARK_AGE, markFolder, markPending, markUnattended, PENDING_AGE, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
+import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
+import { dropPending, isAttended, liftAttended, MARK_AGE, markFolder, markPending, markUnattended, PENDING_AGE, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { TEST_HOME } from './fixtures/test-home.mjs';
 import { hookCall } from './hook-call.mjs';
 
@@ -368,31 +368,72 @@ test('every test call that reads the unattended marks or the user\'s own chain f
   assert.deepEqual(missing, [], 'pass `home`, such as TEST_HOME from test/fixtures/test-home.mjs');
 });
 
-test('a background session the Human types into is attended from then on; a peer, the start prompt, and an issue session are not', async (t) => {
+test('a background session the Human types into is attended from then on; a peer, the start prompt, a foreign transcript, and an issue session are not', async (t) => {
   const dir = project(t);
-  const transcript = path.join(folder(t, 'aidrian-transcript-'), 'session.jsonl');
+  const session = 'feed0009-0000-4000-8000-000000000009';
+  const projects = path.join(TEST_HOME, '.claude', 'projects', '-x');
+  mkdirSync(projects, { recursive: true });
+  const transcript = path.join(projects, `${session}.jsonl`);
+  t.after(() => rmSync(transcript, { force: true }));
   const entry = (more) => ({ type: 'user', isSidechain: false, entrypoint: 'cli', message: { role: 'user', content: 'x' }, ...more });
   const start = entry({ origin: { kind: 'human' }, turnOrigin: 'human', turnPosition: { promptIndex: 1, turnIndex: 1 } });
   const peer = entry({ isMeta: true, origin: { kind: 'peer', from: 'uds:/tmp/x.sock' }, turnOrigin: 'peer', turnPosition: { promptIndex: 2, turnIndex: 3 } });
   const typed = entry({ origin: { kind: 'human' }, turnOrigin: 'human', turnPosition: { promptIndex: 3, turnIndex: 4 } });
-  const lines = (...entries) => writeFileSync(transcript, `${entries.map((each) => JSON.stringify(each)).join('\n')}\n`);
-  const session = 'feed0009-0000-4000-8000-000000000009';
+  const lines = (file, ...entries) => writeFileSync(file, `${entries.map((each) => JSON.stringify(each)).join('\n')}\n`);
+  const claude = (id) => (file, value) => claudeCode.humanPrompt(file, value, { session: id, home: TEST_HOME });
+  const read = (id) => readUnattendedMark(id, { home: TEST_HOME });
   assert.ok(markUnattended(session, { root: dir }));
   for (const [what, entries] of [['the start prompt', [start]], ['a peer message', [start, peer]], ['a meta entry marked human', [start, { ...typed, isMeta: true }]], ['a subagent\'s', [start, { ...typed, isSidechain: true }]]]) {
-    lines(...entries);
-    assert.equal(liftAttended(session, transcript, { home: TEST_HOME, isHuman: humanPrompt }), false, what);
-    assert.ok(readUnattendedMark(session, { home: TEST_HOME }), what);
+    lines(transcript, ...entries);
+    assert.equal(liftAttended(session, transcript, { home: TEST_HOME, isHuman: claude(session) }), false, what);
+    assert.ok(read(session), what);
   }
+  // A transcript outside the host's own folder, which a session could write, proves nothing; nor one named for another session.
+  const elsewhere = path.join(folder(t, 'aidrian-transcript-'), `${session}.jsonl`);
+  lines(elsewhere, start, typed);
+  assert.equal(liftAttended(session, elsewhere, { home: TEST_HOME, isHuman: claude(session) }), false, 'a foreign transcript');
+  const other = path.join(projects, 'feed000b-0000-4000-8000-00000000000b.jsonl');
+  t.after(() => rmSync(other, { force: true }));
+  lines(other, start, typed);
+  assert.equal(liftAttended(session, other, { home: TEST_HOME, isHuman: claude(session) }), false, 'another session\'s transcript');
   // A project run's issue session stays held whoever types.
   const issue = 'feed000a-0000-4000-8000-00000000000a';
   assert.ok(markUnattended(issue, { root: dir, tags: { project: 'r1', issue: 'ENG-1' } }));
-  lines(start, typed);
-  assert.equal(liftAttended(issue, transcript, { home: TEST_HOME, isHuman: humanPrompt }), false, 'an issue session');
-  assert.ok(readUnattendedMark(issue, { home: TEST_HOME }));
-  // Through the agent gate hook: the Human's prompt lifts the mark before the call is judged.
-  const run = (input) => hookCall(HOOK, { input: JSON.stringify({ session_id: session, cwd: dir, transcript_path: transcript, ...input }), cwd: dir, encoding: 'utf8' });
-  assert.equal((await run({ agent_id: 'a5f0c1', agent_type: 'aidrian:explorer', tool_name: 'Bash', tool_input: { command: 'true' } })).status, 0);
+  const issueTranscript = path.join(projects, `${issue}.jsonl`);
+  t.after(() => rmSync(issueTranscript, { force: true }));
+  lines(issueTranscript, start, typed);
+  assert.equal(liftAttended(issue, issueTranscript, { home: TEST_HOME, isHuman: claude(issue) }), false, 'an issue session');
+  assert.ok(read(issue));
+  // The Human typed: the session is attended, its mark read as none and its background floor no longer holding it.
+  lines(transcript, start, peer, typed);
+  assert.equal(liftAttended(session, transcript, { home: TEST_HOME, isHuman: claude(session) }), true);
+  assert.equal(read(session), null);
+  assert.equal(isAttended(session, { home: TEST_HOME }), true);
+  assert.equal(isAttended(issue, { home: TEST_HOME }), false);
+});
+
+test('the agent gate hook lifts a session the Human typed into on its main call, never a subagent\'s', async (t) => {
+  const dir = project(t);
+  const session = 'feed000c-0000-4000-8000-00000000000c';
+  const projects = path.join(TEST_HOME, '.claude', 'projects', '-y');
+  mkdirSync(projects, { recursive: true });
+  const transcript = path.join(projects, `${session}.jsonl`);
+  t.after(() => rmSync(transcript, { force: true }));
+  const typed = { type: 'user', isSidechain: false, entrypoint: 'cli', origin: { kind: 'human' }, turnOrigin: 'human', turnPosition: { promptIndex: 2, turnIndex: 2 }, message: { role: 'user', content: 'go' } };
+  writeFileSync(transcript, `${JSON.stringify(typed)}\n`);
+  assert.ok(markUnattended(session, { root: dir }));
+  // The hook runs in this process: the host it detects and the home folder it reads are this process's.
+  const saved = { HOME: process.env.HOME, CLAUDECODE: process.env.CLAUDECODE };
+  Object.assign(process.env, { HOME: TEST_HOME, CLAUDECODE: '1' });
+  t.after(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  const run = (input) => hookCall(HOOK, { input: JSON.stringify({ session_id: session, cwd: dir, transcript_path: transcript, tool_name: 'Bash', tool_input: { command: 'true' }, ...input }), cwd: dir, env: { ...process.env, CLAUDECODE: '1' }, encoding: 'utf8' });
+  assert.equal((await run({ agent_id: 'a5f0c1', agent_type: 'aidrian:explorer' })).status, 0);
   assert.ok(readUnattendedMark(session, { home: TEST_HOME }), 'a subagent\'s call lifts nothing');
-  assert.equal((await run({ tool_name: 'Bash', tool_input: { command: 'true' } })).status, 0);
-  assert.equal(readUnattendedMark(session, { home: TEST_HOME }), null, 'the Human typed: the mark is gone');
+  assert.equal((await run({})).status, 0);
+  assert.equal(readUnattendedMark(session, { home: TEST_HOME }), null, 'the main call after the Human typed lifts it');
 });

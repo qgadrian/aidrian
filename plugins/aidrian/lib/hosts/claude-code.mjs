@@ -94,7 +94,20 @@ const humanAnswer = (entry) => entry !== null && typeof entry === 'object' && en
 // later. Claude Code marks a peer session's message `origin.kind: "peer"`, a hook's or the host's own text `isMeta`, and
 // the prompt a background session starts with is prompt 1, which the start wrote, not a person at the terminal.
 // docs/providers/claude-code.md#prompts-the-human-typed.
-const humanPrompt = (entry) => entry !== null && typeof entry === 'object' && entry.type === 'user' && entry.isSidechain === false &&
+// The transcript must be the session's own, `<session>.jsonl` under the home folder's `.claude/projects`, which the
+// write guard refuses an unattended session (lib/unattended-write.mjs); a transcript the host keeps elsewhere, as under
+// CLAUDE_CONFIG_DIR, never counts, since a session could write its own proof there.
+const humanPrompt = (file, entry, { session, home = homedir() } = {}) => ownTranscript(file, session, home) && humanEntry(entry);
+function ownTranscript(file, session, home) {
+  try {
+    const real = realpathSync(file);
+    const root = realpathSync(path.join(home, '.claude', 'projects'));
+    return typeof session === 'string' && path.basename(real) === `${session}.jsonl` && path.dirname(path.dirname(real)) === root;
+  } catch {
+    return false;
+  }
+}
+const humanEntry = (entry) => entry !== null && typeof entry === 'object' && entry.type === 'user' && entry.isSidechain === false &&
   entry.isMeta !== true && entry.isCompactSummary !== true && entry.entrypoint === 'cli' && entry.origin?.kind === 'human' &&
   entry.turnOrigin === 'human' && Number.isInteger(entry.turnPosition?.promptIndex) && entry.turnPosition.promptIndex >= 2;
 

@@ -447,12 +447,14 @@ the handoff goes on by the clear route with what to change, and nothing is kept,
    floor under the short id the start printed, and every session id that starts with it reads that floor. Under the
    same id it files the session's unattended mark, `$XDG_STATE_HOME/aidrian/unattended/<id>.json`, which names the
    project's main checkout, so the hooks know the session wherever its calls run (Limits, below). Once the Human
-   types into the session, the agent gate hook removes that mark on the session's next tool call, and the session is
-   attended from then on: the host adapter's `humanPrompt` says which transcript entries are prompts the Human typed
-   after the start, and a peer session's message, a scheduled prompt, and the start prompt never are
+   types into the session, the agent gate hook files `attended.<id>.json` beside the marks on the session's next main
+   tool call, and the session is attended from then on: its mark reads as none, and its chain floor, kept for the
+   count, no longer holds it. The session's own host adapter's `humanPrompt` says which entries of the session's own
+   transcript are prompts the Human typed after the start; a peer session's message, a scheduled prompt, the start
+   prompt, and a transcript the session could write itself never count
    ([Claude Code](providers/claude-code.md#prompts-the-human-typed)). A mark that names a project run's issue, one that
-   tracks a sandbox proof, and a pending hold stay, whoever types. A host whose adapter has no `humanPrompt` keeps the
-   mark for the session's life (`lib/unattended-mark.mjs liftAttended`).
+   tracks a sandbox proof, a pending hold, and a mark that cannot be read stay, whoever types. A host whose adapter has
+   no `humanPrompt` keeps the mark for the session's life (`lib/unattended-mark.mjs liftAttended`, `isAttended`).
    A start that surely made nothing, one whose host command never ran or refused the start in a way the host adapter
    knows, such as an untrusted folder, while the listing shows no new session, falls back to the clear route. A start
    whose outcome is unknown, such as one that exited non-zero for any other reason, timed out, was stopped by a signal,

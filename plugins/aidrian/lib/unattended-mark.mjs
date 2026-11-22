@@ -227,7 +227,7 @@ export function readUnattendedMark(session, { env = process.env, home, now = Dat
     for (const name of ours) {
       const found = readMark(path.join(folder, name), uid, now);
       if (found === 'unchecked') unchecked = true;
-      else if (found) return found;
+      else if (found) return plainMark(found) && isAttended(session, { env, home, now }) ? null : found;
     }
     pending.push(...names.filter((name) => PENDING.test(name)).map((name) => path.join(folder, name)));
   }
@@ -238,37 +238,60 @@ export function readUnattendedMark(session, { env = process.env, home, now = Dat
 // The most of a transcript's end liftAttended reads: the gate asks on every tool call, so a prompt the Human typed since
 // the last call is near the end.
 export const PROMPT_TAIL = 256 * 1024;
+// The record that the Human has typed into a session, `attended.<session>.json` in markFolder: the dot keeps it apart
+// from a mark under a short id, and the marks folder is one no unattended session writes (lib/unattended-write.mjs).
+const ATTENDED = (session) => `attended.${session}.json`;
 
-// Removes the unattended mark of `session` once the Human has typed into it: a background continuation the Human
-// attaches to and types in is attended from then on (docs/hooks.md#unattended-sessions). `isHuman(entry)` says whether a
-// transcript entry is a prompt the Human typed after the session's start, as a host adapter's `humanPrompt` does; a
-// peer's message, a scheduled prompt, and the start prompt never are. Only a plain mark of the session's own is
-// removed: a project run's issue session, a session whose sandbox proof the mark tracks, and a pending hold stay
-// held, whoever types. It reads at most PROMPT_TAIL bytes of the transcript at `transcriptPath`. Returns whether it
-// removed the mark; never throws.
-export function liftAttended(session, transcriptPath, { env = process.env, home, isHuman = () => false } = {}) {
+// Whether `mark` (readUnattendedMark's own mark of a session) is a plain background mark the Human's presence lifts: no
+// project run's issue, no sandbox proof it tracks, and a main checkout it could read.
+const plainMark = (mark) => mark.root !== null && mark.project === undefined && mark.issue === undefined && mark.confine === undefined;
+
+// Whether the Human has typed into `session` (liftAttended): its attended record, of this user, within MARK_AGE, is in
+// one of markFolders. readUnattendedMark then reads its plain mark as none, and a background floor no longer holds it
+// (handoff-guard.mjs startedUnattended, handoff-continue.mjs). Never throws.
+export function isAttended(session, { env = process.env, home, now = Date.now() } = {}) {
+  if (typeof session !== 'string' || !SESSION_ID.test(session)) return false;
+  const uid = processUid();
+  return markFolders({ env, home }).some((folder) => {
+    try {
+      const stat = lstatSync(path.join(folder, ATTENDED(session)));
+      return stat.isFile() && (!Number.isInteger(uid) || stat.uid === uid) && now - Math.floor(stat.mtimeMs) <= MARK_AGE;
+    } catch {
+      return false;
+    }
+  });
+}
+
+// Records that the Human has typed into `session`, a background continuation, so it is attended from then on
+// (docs/handoff.md#the-background-route). `isHuman(file, entry)` is the session's host adapter's word on whether an
+// entry of the transcript `file` is a prompt the Human typed after the start, in a transcript the session cannot write
+// itself (hosts/index.mjs humanPrompt); a peer's message, a scheduled prompt, and the start prompt never are. Only a
+// session whose own mark is plain is lifted: a project run's issue session, a session whose sandbox proof the mark
+// tracks, a pending hold, and a mark it cannot read stay held, whoever types. It reads at most PROMPT_TAIL bytes of the
+// transcript's end, from a regular file only. Returns whether the session is attended; never throws.
+export function liftAttended(session, transcriptPath, { env = process.env, home, now = Date.now(), isHuman = () => false } = {}) {
   try {
     if (typeof transcriptPath !== 'string' || !path.isAbsolute(transcriptPath)) return false;
-    const mark = readUnattendedMark(session, { env, home });
-    if (!mark || mark.pending || mark.root === null || issueHeld(mark) || mark.project !== undefined || mark.confine !== undefined) return false;
-    if (!tailEntries(transcriptPath).some((entry) => isHuman(entry))) return false;
-    unlinkSync(path.join(markFolder(env), `${session}.json`));
-    return true;
+    const mark = readUnattendedMark(session, { env, home, now });
+    if (!mark || mark.pending || !plainMark(mark)) return false;
+    if (!tailEntries(transcriptPath).some((entry) => isHuman(transcriptPath, entry))) return false;
+    return writeMark(ownFolder(env, now), ATTENDED(session), { at: now }) !== null;
   } catch {
     return false;
   }
 }
 
-// The entries of the last PROMPT_TAIL bytes of the JSONL file `file`, the cut first line left out.
+// The entries of the last PROMPT_TAIL bytes of the regular JSONL file `file`, the cut first line left out.
 function tailEntries(file) {
-  const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  const fd = openSync(file, NO_FOLLOW);
   try {
-    const size = fstatSync(fd).size;
-    const length = Math.min(size, PROMPT_TAIL);
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) return [];
+    const length = Math.min(stat.size, PROMPT_TAIL);
     const buffer = Buffer.alloc(length);
-    readSync(fd, buffer, 0, length, size - length);
+    readSync(fd, buffer, 0, length, stat.size - length);
     const lines = buffer.toString('utf8').split('\n');
-    if (length < size) lines.shift();
+    if (length < stat.size) lines.shift();
     return lines.flatMap((line) => {
       try {
         return line.trim() ? [JSON.parse(line)] : [];

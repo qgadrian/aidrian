@@ -51,7 +51,7 @@ import { safely, startHeld } from './session-start-gate.mjs';
 import { drivenRunStart } from './run-driver.mjs';
 import { olderWrap } from './shell-init.mjs';
 import { OPEN_ID, readFollows, replacer, shellPid, terminalOf } from './terminal-replace.mjs';
-import { PENDING_AGE, readDriverMark, readUnattendedMark } from './unattended-mark.mjs';
+import { isAttended, PENDING_AGE, readDriverMark, readUnattendedMark } from './unattended-mark.mjs';
 
 // How old a brief the gate arms may be: it runs in the turn that wrote the brief, and a check and fix round fits.
 export const BRIEF_WINDOW = 15 * 60 * 1000;
@@ -531,7 +531,7 @@ function followed({ host, store, session, env, run, now, next = null }) {
 // that cannot be read counts. The Stop hook asks it too, before a session ends itself. `home` as continueBrief.
 export function unattendedHere(session, { store, env, home, now }) {
   try {
-    return readUnattendedMark(session, { env, home, now }) !== null || startedInBackground(store, session, { now });
+    return readUnattendedMark(session, { env, home, now }) !== null || (startedInBackground(store, session, { now }) && !isAttended(session, { env, home, now }));
   } catch {
     return true;
   }

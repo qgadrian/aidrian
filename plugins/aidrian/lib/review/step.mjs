@@ -11,7 +11,7 @@ import { packageRoots } from './split.mjs';
 import { contentFlows } from './content.mjs';
 import { touchedCitations } from './cited.mjs';
 import { buildPlan, classify, DEPTHS, detectFlows, HARNESS_FLOW, mergePlans, mergeStages, pathPattern } from './plan.mjs';
-import { BUILT_IN, resolveEngine, reviewerMap, satisfies } from './reviewers.mjs';
+import { BUILT_IN, confinedReason, confinePlan, resolveEngine, reviewerMap, satisfies } from './reviewers.mjs';
 import { buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
 import { heldMessage, noteLocalOutcome, publishState, readLocalState, readRecord, recordFile, sameCommit, summaryToEdit } from './state.mjs';
 import { isObject } from '../fs.mjs';
@@ -29,7 +29,6 @@ import { headToReview } from './pushed.mjs';
 import { runPlanCommand, stderrTail } from './base-worktree.mjs';
 import { baseReviewAt, baseReviewMoved, commandFiles, holdToBase, reviewInForce } from './in-force.mjs';
 import { evidenceOf, keptSignoffsOf } from './evidence.mjs';
-import { attemptOf } from '../attempt-clone.mjs';
 import { sessionIdentity } from '../hosts/index.mjs';
 import { readUnattendedMark } from '../unattended-mark.mjs';
 
@@ -91,15 +90,11 @@ function quietChange({ root, from, head, since, review, harnessFiles }) {
   return contentFlows({ root, head, changes: since, addedLines: lines.addedLines, flows: review.flows }).length === 0;
 }
 
-// The project run's confined issue session the step runs in, in words for the engine's reason, or null: the session's
-// unattended mark names a run and an issue (lib/unattended-mark.mjs), or `root` lies in an attempt's folder
-// (lib/attempt-clone.mjs attemptOf), where only such a session works. It only decides which engine can run, never what
-// the plan requires, so a folder that merely looks like an attempt's costs no rule. `home` is the mark readers'.
-export function confinedSession(root, env, { home } = {}) {
+// The project run's confined issue session the step runs in, in words for the engine's reason, or null: only a session
+// whose own unattended mark names a run and an issue (lib/unattended-mark.mjs) is one. `home` is the mark readers'.
+export function confinedSession(env, { home } = {}) {
   const mark = readUnattendedMark(sessionIdentity(env).session, { env, ...(home ? { home } : {}) });
-  if (mark && mark.pending !== true && typeof mark.project === 'string' && typeof mark.issue === 'string') return `the confined session of project run ${mark.project}, issue ${mark.issue}`;
-  const at = attemptOf(root);
-  return at ? `the confined session of project run ${at.run}, issue ${at.key}, whose attempt clone this is` : null;
+  return mark && mark.pending !== true && typeof mark.project === 'string' && typeof mark.issue === 'string' ? `the confined session of project run ${mark.project}, issue ${mark.issue}` : null;
 }
 
 // Plans the step into `s`. Returns the step's result when it ends here, or null when the stages run next.
@@ -283,7 +278,8 @@ export async function prepareStep(s) {
   state.revision -= 1;
   Object.assign(run, { pr: n, head, repo });
 
-  const engine = resolveEngine(effective, { ...(codex ? { codex } : {}), confined: confinedSession(root, env) });
+  const confined = confinedSession(env);
+  const engine = resolveEngine(effective, { ...(codex ? { codex } : {}), confined });
   if (engine.problem) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: engine.problem });
   // Flows whose files the globs miss: a changed file whose whole head content, or whose callers, hand it the flow's
   // privileged value (review.flows.<id>.content). A git failure stops the review rather than plan less.
@@ -318,6 +314,13 @@ export async function prepareStep(s) {
   }
   plan.engine = { name: engine.reviewer.name, reason: engine.reason };
   const map = reviewerMap(effective);
+  // In a confined session, a reviewer that cannot run there, the engine's or one a plan command names, has its passes
+  // run by self (reviewers.mjs confinePlan); the plan's requirements stay as they are.
+  for (const name of confined ? confinePlan(plan, map) : []) {
+    const why = `${confinedReason(name, confined)}, so the agent reviewer self runs its passes`;
+    plan.reasons = [...plan.reasons, why];
+    if (name === engine.reviewer.name) plan.engine = { name: 'self', reason: `${engine.reason}, but ${why}` };
+  }
   // A reviewer out of quota on this head, and the Human's choice of what replaces it (lib/review/quota.mjs). The flag
   // answers a stop on this head only, and is refused where the plan requires an independent model.
   if (opts.quotaFallback) {
@@ -481,7 +484,7 @@ export async function prepareStep(s) {
   for (const stage of plan.stages) if (stage.name !== 'local') for (const pass of stage.passes) pass.flows = plan.flows.map((flow) => flow.id);
   for (const word of plan.require) {
     if (!satisfies(word, passes, map) && word === 'independent-model' && fallbacks.length) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: quota.refusal(plan, fallbacks[0], [], map), plan });
-    if (!satisfies(word, passes, map)) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `the plan requires ${word}, and the engine here is ${engine.reviewer.name} (${engine.reason})`, plan });
+    if (!satisfies(word, passes, map)) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `the plan requires ${word}, and the engine here is ${plan.engine.name} (${plan.engine.reason})`, plan });
   }
   // A flow's deleted test stops the review whatever else the change does, even when nothing else needs a review.
   const removedTests = [];

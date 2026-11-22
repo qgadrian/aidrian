@@ -100,8 +100,8 @@ export function codexAvailable(run = spawnSync) {
 // The engine this machine reviews with: config.json `review.engine` when the project sets it, which is policy and wins,
 // else the local file's. { reviewer, reason } or { problem }. `auto` takes codex-local, else the review bot, else self,
 // and says which and why; a project's engine says it came from the project config. `confined` names the confined
-// session the step runs in (confinedSession), or is null: there a reviewer that is not `confinable` cannot run, so `auto`
-// passes it over, and an engine set to it takes the agent reviewer, self, in its place, under the same plan and rules.
+// session the step runs in (lib/review/step.mjs confinedSession), or is null: there `auto` passes over a reviewer that
+// is not `confinable`, and an engine set to one is not asked whether it can run, since confinePlan replaces its passes.
 export function resolveEngine(config, { codex = codexAvailable, confined = null } = {}) {
   const map = reviewerMap(config);
   const project = config.review?.engine ?? null;
@@ -109,9 +109,9 @@ export function resolveEngine(config, { codex = codexAvailable, confined = null 
   const key = project ? 'config.json review.engine' : 'review.engine';
   const said = (reason) => (project ? `${reason} (set by the project config)` : reason);
   const botOn = config.github.reviewer !== null;
-  const held = (name) => (confined && map[name]?.confinable === false ? `${name} cannot run inside the host's sandbox of ${confined}` : null);
+  const held = (name) => Boolean(confined) && map[name]?.confinable === false;
   if (wanted === 'auto') {
-    const ready = held('codex-local') ? { ok: false, reason: held('codex-local') } : codex();
+    const ready = held('codex-local') ? { ok: false, reason: confinedReason('codex-local', confined) } : codex();
     if (ready.ok) return { reviewer: map['codex-local'], reason: said('auto: codex is installed and logged in') };
     if (botOn) return { reviewer: map['pr-bot'], reason: said(`auto: ${ready.reason}, so the review bot`) };
     return { reviewer: map.self, reason: said(`auto: ${ready.reason} and no review bot, so self`) };
@@ -119,12 +119,37 @@ export function resolveEngine(config, { codex = codexAvailable, confined = null 
   if (!Object.hasOwn(map, wanted)) return { problem: `${key} "${wanted}" is not a built-in engine or a reviewer of review.reviewers` };
   if (map[wanted].pending) return { problem: `${key} "${wanted}" is a reviewer this pull request adds: it runs once it is on the base branch` };
   if (wanted === 'pr-bot' && !botOn) return { problem: `${key} is "pr-bot", but config.json github.reviewer is none` };
-  if (held(wanted)) return { reviewer: map.self, reason: said(`review.engine: ${wanted}, but ${held(wanted)}, so the agent reviewer self`) };
-  if (wanted === 'codex-local') {
+  if (wanted === 'codex-local' && !held(wanted)) {
     const ready = codex();
     if (!ready.ok) return { problem: `${key} is "codex-local", but ${ready.reason}` };
   }
   return { reviewer: map[wanted], reason: said(`review.engine: ${wanted}`) };
+}
+
+// Why the reviewer `name` cannot run in the confined session `confined`.
+export const confinedReason = (name, confined) => `${name} cannot run inside the host's sandbox of ${confined}`;
+
+// In a confined session, every pass of the final plan whose reviewer is not `confinable` runs as the agent reviewer
+// self instead: the same stage, files, flows, and order, so a pass after the local stage still answers every flow's
+// invariants, and self stays no independent model. Each such pass takes an id of its own (the reviewer's name in it
+// becomes `self`, or `:self` is added), so its result never stands for that reviewer's on a later head; a pass that
+// waits for it follows the new id. Changes `plan` in place, and returns the names of the reviewers it replaced.
+export function confinePlan(plan, map) {
+  const ids = new Map();
+  const replaced = new Set();
+  for (const pass of plan.stages.flatMap((stage) => stage.passes)) {
+    if (map[pass.reviewer]?.confinable !== false) continue;
+    replaced.add(pass.reviewer);
+    const parts = pass.id.split(':');
+    ids.set(pass.id, parts.includes(pass.reviewer) ? parts.map((part) => (part === pass.reviewer ? 'self' : part)).join(':') : `${pass.id}:self`);
+  }
+  for (const stage of plan.stages) {
+    stage.passes = stage.passes.map((pass) => {
+      const moved = pass.after ? { ...pass, after: pass.after.map((id) => ids.get(id) ?? id) } : pass;
+      return ids.has(pass.id) ? { ...moved, id: ids.get(pass.id), reviewer: 'self', kind: 'agent' } : moved;
+    });
+  }
+  return [...replaced];
 }
 
 // Whether `reviewers` (the names of the passes a plan will run) meet a `require` word. `independent-model` needs a

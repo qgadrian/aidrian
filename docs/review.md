@@ -821,10 +821,12 @@ A project that wants one engine everywhere sets `review.engine` in config.json, 
 it wins over every machine's local setting, the result's reason says it came from the project config, and like the
 rest of the review config it is the base branch's. Unset, each machine picks its own.
 
-In a project run's confined issue session, one whose unattended mark names a run and an issue or whose checkout is an
-attempt clone, an engine that declares `confinable: false` cannot run: `codex-local` starts Codex, whose own sandbox
-and network the host's sandbox denies. There `auto` passes it over, and an engine set to it takes `self` instead, under
-the same plan and `require` rules, with `engine.reason` naming the session.
+In a project run's confined issue session, one whose own unattended mark names a run and an issue, a reviewer that
+declares `confinable: false` cannot run: `codex-local` starts Codex, whose own sandbox and network the host's sandbox
+denies. There `auto` passes it over, and every pass of it in the final plan, the engine's or one a plan command adds,
+runs as `self` in the same stage, with the same files and flows and an id of its own; `engine.reason` and the plan's
+reasons say so. `self` answers those flows' invariants but is no independent model: only the bot stage `--with-bot`
+adds meets `independent-model`, and with no review bot the step is `unsatisfied`, its reason naming the session.
 
 ## Rounds
 

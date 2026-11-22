@@ -32,6 +32,11 @@ How to build, check, and release a change is in [contributing.md](contributing.m
   `test/host-coupling.test.mjs` fails on shared code that reads a host's variable or branches on its tool,
   and `test/forge-coupling.test.mjs` on shared code that imports a forge adapter, runs gh, or builds a GitHub route.
   A doc states which hosts a feature is verified on, as the Host column of [hooks.md](hooks.md) and `docs/providers/` do.
+- Support what shipped in about the last five years: current macOS, Linux distributions, shells, Node, and git.
+  An older or stripped-down platform, such as an old macOS or BusyBox, gets no fallback, version note, or gate.
+  A review finding that only such a platform meets is out of scope: answer it with this rule, and change nothing.
+- Keep each mechanism small. When review keeps finding edge cases of one mechanism, simplify or remove it,
+  or state the residual in the pull request; never add a gate for every case.
 - A change to a surface updates that surface's doc in the same branch, and [agents-and-skills.md](agents-and-skills.md)
   when an agent or skill is added, renamed, or removed.
 - A pull request never changes the version: the release workflow raises it on main after the merge, at the level

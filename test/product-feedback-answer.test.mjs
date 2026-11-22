@@ -45,7 +45,8 @@ function guarded(t) {
   writeFileSync(file, JSON.stringify(record));
   const transcript = path.join(dir, 'session.jsonl');
   writeFileSync(transcript, '');
-  const answer = (question, picked, at = '2026-11-03T11:00:00.000Z') => appendFileSync(transcript, `${JSON.stringify({ type: 'user', timestamp: at, toolUseResult: { answers: { [question]: picked } } })}\n`);
+  // `offered`: the option labels the question listed, as the host records them; none, as a typed reply reads.
+  const answer = (question, picked, at = '2026-11-03T11:00:00.000Z', offered = null) => appendFileSync(transcript, `${JSON.stringify({ type: 'user', timestamp: at, toolUseResult: { answers: { [question]: picked }, ...(offered ? { questions: [{ question, options: offered.map((label) => ({ label })) }] } : {}) } })}\n`);
   const main = { transcript_path: transcript };
   return { dir, audits, file, record, transcript, answer, run: (command, input = main, cwd = dir) => check(command, { cwd, input }) };
 }
@@ -441,8 +442,9 @@ test('the option must be the decision alone, and given after the record', (t) =>
   assert.match(g.run(ANSWER) ?? '', /"Fix now"/u, 'the deny names what the Human picked');
   assert.match(g.run(ANSWER) ?? '', /label must be drop alone, as "Drop", with any note in the option's description/u, 'the deny names the label rule');
   const noted = guarded(t);
-  noted.answer(QUESTION, 'Drop, it is out of scope');
-  assert.match(noted.run(ANSWER) ?? '', /any note in the option's description/u, 'a note in the label');
+  noted.answer(QUESTION, 'Drop, it is out of scope', undefined, ['Drop, it is out of scope', 'Fix now']);
+  assert.match(noted.run(ANSWER) ?? '', /any note in the option's description/u, 'a note in an offered label');
+  assert.match(noted.run(RECORD) ?? '', /any note in the option's description/u, 'and through audits record');
   assert.equal(g.run('aidrian pr product-feedback answer 7 PF1 fix-now --by human'), null, 'fix-now also reads as "Fix now"');
   const old = guarded(t);
   old.answer(QUESTION, 'Drop', '2026-11-02T09:00:00.000Z');

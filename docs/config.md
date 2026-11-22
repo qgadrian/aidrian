@@ -1968,8 +1968,10 @@ changed such a file after the branch diverged (an accepted residual: going on wo
 `-a<attempt>` added, which its start row records. Everything after the start uses that branch: the session's push, its
 result, and `stop-action`; the merge guard holds a pull request from any branch an attempt recorded. Nothing of the old
 branch is reused. The session's task and the start's stderr give only a count of those files; the first few names,
-cleaned to one line, go to `logs/<KEY>.<attempt>.left.txt` in the run's folder, beside the run log a host may truncate.
-The task names the old branch's pull request, by the canonical link the forge returned, only when the forge shows it
+cleaned to one line, go to `logs/<KEY>.<attempt>.left.txt` in the run's folder, beside the run log a host may truncate;
+when that file cannot be written, the start still goes on, and its stderr says the names could not be written.
+The task names the old branch's pull request by its link, which the forge adapter takes only as the canonical link of
+the pinned repository's pull request with the number the result named, and only when the forge shows it
 open in the pinned repository, into the default branch, from the old branch at the head the attempt fetched, and the
 session closes it by that link, once the new pull request is open, with the comment `superseded by #<new>`, only if
 `gh pr view` still shows the same;

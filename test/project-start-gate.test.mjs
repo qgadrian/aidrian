@@ -20,6 +20,7 @@ import { CEILINGS, ISSUE_ATTEMPTS, PROJECT_PARALLEL, PROJECT_STARTS, PROJECT_STA
 import { DROP_FILE, openPullOf } from '../plugins/aidrian/lib/project-result.mjs';
 import { mergeClosingContext } from '../plugins/aidrian/lib/closing-words.mjs';
 import { appendToRun, issueBranch, readRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
+import { forgeFor } from '../plugins/aidrian/lib/forges/index.mjs';
 import { attemptFolder, runLogFile, setUnsigned, signingProblem, sweepAttempts, UNSIGNED } from '../plugins/aidrian/lib/project-start.mjs';
 import { markUnattended, PENDING_AGE, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { DRIVER, fakeClaude, ORIGIN, OTHER, runFixture, STARTED, testGlobalConfig } from './project-start-fixture.mjs';
@@ -338,7 +339,7 @@ test('the pull request a fresh attempt closes is one the forge shows open into t
   const repository = { host: 'github.com', owner: 'acme', name: 'widgets' };
   const head = 'b'.repeat(40);
   const view = { state: 'OPEN', baseRefName: 'main', headRefName: 'feat/x', headRefOid: head, url: 'https://github.com/acme/widgets/pull/3', isCrossRepository: false };
-  const forge = (more) => ({ repository: () => ({ default_branch: 'main' }), change: () => ({ ...view, ...more }) });
+  const forge = (more) => ({ ...forgeFor(process.cwd()), repository: () => ({ default_branch: 'main' }), change: () => ({ ...view, ...more }) });
   const ask = (more) => openPullOf({ forge: forge(more), repository, pr: 3, branch: 'feat/x', head });
   assert.deepEqual(ask({}), { base: 'main', url: 'https://github.com/acme/widgets/pull/3' });
   assert.equal(ask({ baseRefName: 'release' }), null, 'another target');

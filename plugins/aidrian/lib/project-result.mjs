@@ -198,10 +198,9 @@ export function openPullOf({ forge, repository, pr, branch, head }) {
   } catch {
     return null;
   }
-  // The link the task names is built from the pinned repository and `pr`, and the forge's own link must be it.
-  const url = `https://${repository.host}/${named}/pull/${pr}`;
-  const ok = view?.state === 'OPEN' && view.baseRefName === main && view.isCrossRepository === false && view.headRefName === branch && view.headRefOid === head
-    && typeof view.url === 'string' && view.url.toLowerCase() === url.toLowerCase();
+  // The forge's adapter takes the link only as the canonical one of the pinned repository's pull request `pr` (changeUrl).
+  const url = typeof forge.changeUrl === 'function' ? forge.changeUrl({ forge: forge.id, host: repository.host, repo: named, number: pr, url: view?.url }) : null;
+  const ok = view?.state === 'OPEN' && view.baseRefName === main && view.isCrossRepository === false && view.headRefName === branch && view.headRefOid === head && url !== null;
   return ok ? { base: main, url } : null;
 }
 

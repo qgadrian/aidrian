@@ -253,7 +253,7 @@ test('a stop sent back for a running background task files no delivery lesson fo
   const file = path.join(stateDir(projectAt(dir)), 'dispatch', 'docs-S1-product-manager.json');
   const transcript = path.join(dir, 'agent-p1.jsonl');
   writeFileSync(transcript, [
-    JSON.stringify({ type: 'user', message: { role: 'user', content: `Rule on the copy. Write your machine handoff to ${file}.` } }),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: `Rule on the copy.\nHandoff file: ${file}` } }),
     JSON.stringify({ type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { subagent_type: 'Explore', prompt: 'x' } }] } }),
     JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'launched' }] }, toolUseResult: { status: 'async_launched', agentId: 'achild001' } }),
   ].join('\n'));
@@ -275,7 +275,7 @@ test('a stop the cap lets end with a shell and an agent running leaves the hando
   const file = path.join(stateDir(projectAt(dir)), 'dispatch', 'docs-S1-fixer.json');
   const transcript = path.join(dir, 'agent-f1.jsonl');
   writeFileSync(transcript, [
-    JSON.stringify({ type: 'user', message: { role: 'user', content: `Push the fix. Write your machine handoff to ${file}.` } }),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: `Push the fix.\nHandoff file: ${file}` } }),
     JSON.stringify({ type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'git push', run_in_background: true } }] } }),
     JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'Command running in background with ID: bpush0001.' }] }, toolUseResult: { stdout: '', stderr: '', backgroundTaskId: 'bpush0001' } }),
     JSON.stringify({ type: 'assistant', message: { id: 'm2', content: [{ type: 'tool_use', id: 't2', name: 'Agent', input: { subagent_type: 'Explore', prompt: 'x' } }] } }),
@@ -310,7 +310,7 @@ test('a pending handoff the report names on a delivery line is not missing; anot
   const file = path.join(stateDir(projectAt(dir)), 'dispatch', 'docs-S1-product-manager.json');
   const transcript = path.join(dir, 'agent-p1.jsonl');
   writeFileSync(transcript, [
-    JSON.stringify({ type: 'user', message: { role: 'user', content: `Rule on the copy. Write your machine handoff to ${file}.` } }),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: `Rule on the copy.\nHandoff file: ${file}` } }),
     JSON.stringify({ type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 't1', name: 'Agent', input: { subagent_type: 'Explore', prompt: 'x' } }] } }),
     JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'launched' }] }, toolUseResult: { status: 'async_launched', agentId: 'achild001' } }),
   ].join('\n'));

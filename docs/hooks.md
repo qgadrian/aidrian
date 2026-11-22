@@ -1650,8 +1650,17 @@ skill's folder (`references/tracker.md`), or the end of a file the agent's own R
 doc in another project. An absolute or `~/` path is checked as written.
 A path shortened with `...` or `…`, such as `.../review/x.json`, cannot be checked, so it is never sent back.
 
-The check also reads the subagent's brief, the first prompt of its transcript. A handoff file the brief asks this agent to
-write must exist when it stops: an absolute path in the state folder's `dispatch/` whose file name ends with the agent's name,
+The check also reads the subagent's brief, the first prompt of its transcript.
+A brief names the run's own handoff file on a line that starts with `Handoff file:`, such as
+`Handoff file: <state>/dispatch/<branch>-signoff-product-manager.json`, or `**Handoff file:**` or `**Handoff file**:`,
+in any case, after an optional list marker, with LF or CRLF line ends.
+Each such line names one file: everything inside the backticks that open its value, spaces included, else its first word.
+The whole value must be an absolute path in the state folder's `dispatch/` that ends in `.json`; prose after it is not read.
+Only the files these lines name are owed, and a brief with no such line owes none: the agent still writes its own file,
+and the hook no longer searches the brief's prose for one, since a file named to read there could be taken for the output.
+Another file of the agent's role the brief names, such as the gate run's `<branch>-gate-product-manager.json` to read,
+is never written, whether it is there or not.
+A file a marker line names must exist when the agent stops: an absolute path in the state folder's `dispatch/` whose file name ends with the agent's name,
 or with it and one more word, such as `<state>/dispatch/feat-12-S1-code-reviewer.json` or `S1-code-reviewer-result.json`
 for `code-reviewer`. A branch name that holds the agent's name does not make another agent's file its own. When one does not,
 the hook writes the agent's final report there: the message of its last handback call (Claude Code's `SubagentHandback`)
@@ -1661,7 +1670,9 @@ in the meantime, such as one its dispatcher wrote, is kept. A file counts as wri
 regular file changed at or after the subagent's transcript began, by the timestamp of its first entry: one an earlier
 dispatch of the same name left, a link, or a folder is stale and owed, and the hook replaces it with the report through
 a new temporary file renamed over it, so a link is replaced, never followed, and the file it named stays as it was; a
-folder stays owed. A transcript with no timestamp keeps the older test, that the file is there. So a brief that names the file for an agent with no file tool
+folder stays owed.
+A transcript with no timestamp keeps the older test, that the file is there.
+So a brief that names the file for an agent with no file tool
 or shell, or makes it optional, costs no send-back, and the report also no longer counts as naming a missing file.
 The hook sends the agent back once, on the first stop of its turn, to write the file only when it has no report to write.
 While a background task of its own still runs and a later stop is sure to come, that stop is no end of its work, so the
@@ -1677,8 +1688,7 @@ file then. A shell that never ends, such as a dev server, never wakes the agent 
 with that shell stopped. It writes the file only on a stop it lets end: a stop sent back, as for another missing path, has a report the agent will correct, and the file holds
 the corrected one. The file is the record its dispatcher reads:
 a subagent's handback can reach another session than the one that dispatched it, such as the main session for an agent
-a named teammate started, or none once that one has ended. A path named for another agent, such as a handoff the brief
-says to read, is not asked of it. A forked subagent's first prompt is its parent's, so the check finds nothing there.
+a named teammate started, or none once that one has ended. A forked subagent's first prompt is its parent's, so the check finds nothing there.
 [dispatch-log.md](dispatch-log.md) describes the rows and `aidrian report`.
 
 ## Background check

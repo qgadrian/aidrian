@@ -26,8 +26,8 @@ code is the implementing agent's.
 ## Delegation boundary and triggers
 
 - When a needed agent cannot run, report the block; never build the result yourself.
-- Asked to do it yourself, say you cannot edit; name the agent you'll send.
-- Read the repository only to route, with at most one confirming read; further discovery goes to `explorer`.
+- Asked to do it yourself, say you cannot edit; name the agent instead.
+- Read the repository only to route, with one confirming read at most; more discovery goes to `explorer`.
 - Always delegate a code change, a review, an end-to-end or verification run, multi-owner or multi-phase work, and a critical-flow change.
 
 ## Delegation discipline
@@ -36,16 +36,16 @@ code is the implementing agent's.
 - When a skill owns the flow, such as `issue-implement` or `pr-review`, its gates win, and its end is a step of your task, not the task's end;
   this file's gates cover only work no skill owns.
   For such work, before the first code-writing dispatch of non-trivial work, have `planning-agent` lock a slice plan.
-- Each slice gets its own owner and review; one agent for a modest slice; no second verifier for work its owner verified.
+- Each slice gets its own owner and review; one agent for a modest slice; no second verifier after its owner's.
 - Each dispatch is fresh and carries only its slice: acceptance criteria, scope, files, upstream summary, non-goals, and knowledge tags.
   Do not load an agent's knowledge yourself.
-- Only read-only exploration and light review run in the background; wait for every other agent.
-- Require a machine handoff file, the record. An agent with a file tool or a shell writes it to an absolute path you give,
-  `<state>/dispatch/<branch>-<slice>-<agent>.json` (each `/` in the branch becomes `-`), then sends a short summary.
-  One with neither, such as `explorer`, returns it as its final message.
-- You write `<state>` files, such as dispatch handoffs, only through `aidrian` commands or a shell redirect.
-- Dispatch disjoint slices together, each writer in its own worktree; never report done while an agent has not returned.
-- Before a slice that adds a script, check, or schema field, search its likely home; one that exists makes the slice a `no_op`.
+- Only read-only exploration and light review run in the background; wait for the rest.
+- Require a machine handoff file. An agent with a file tool or a shell writes it to the path its brief gives on one line,
+  `Handoff file: <state>/dispatch/<branch>-<slice>-<agent>.json` (`/` in the branch becomes `-`), then sends a summary;
+  on Claude Code the stop hook fills only that file. One with neither, such as `explorer`, returns it as its final message.
+- Write `<state>` files, such as dispatch handoffs, only with `aidrian` commands or a shell redirect.
+- Dispatch disjoint slices together, each writer in its own worktree; never report done before every agent returns.
+- Before a slice adds a script, check, or schema field, search its likely home; one that exists makes it a `no_op`.
 
 ## Core loop
 

@@ -8,7 +8,8 @@
 // trust in the runs folder, and the
 // host's access check (push rights, an HTTPS origin the sandbox can push to, and nothing that would run outside the
 // sandbox: other enabled plugins, user hooks, a status line, a credential helper it cannot reach; and, on a host that
-// hands its sessions the forge token, a token to hand, with a note naming its source), and whether the host
+// hands its sessions the forge token, a token to hand that may make the forge reads its session makes, with a note
+// naming its source), and whether the host
 // carries on by itself after a usage limit, which stops the driver too. Then the base branch's reviewer bot. A check whose input a failed one gives is still run where it can be, on what the base branch says alone,
 // so one pass names every blocker. Then what the run needs to finish with no one: the tracker's server among the
 // team's projectRun.mcpServers, each tracker server there mapped so the run rule can hold it, auto-merge on with
@@ -37,7 +38,7 @@ import { recordedTexts } from './project-issue-text.mjs';
 import { activeRuns, nextLines, pinnedRepository, planRun, readRun, readSnapshotInput, refNames, runPlace, runsFolder, teamsNote } from './project-run.mjs';
 import { runParallel, teamPolicy } from './project-run-gate.mjs';
 import { accessProblem, commitProblem, guardedFolders, hostStartProblem, PROBE_BRANCH } from './project-start.mjs';
-import { ancestorProblem } from './project-trust.mjs';
+import { ancestorProblem, pushProblem, repositoryProblem } from './project-trust.mjs';
 import { cardState, REVIEW_SUMMARY_CARD_MARKER } from './review/bot-card.mjs';
 import { trackerOfEndpoint } from './tracker-guard.mjs';
 import { knownServers, trackerById, trackerOfTools, TRACKERS } from './trackers/index.mjs';
@@ -64,7 +65,7 @@ export function setupDocUrl() {
 export const SETUP_SECTIONS = Object.freeze({
   repository: 'origin-over-https', state: 'state-folder', run: 'after-a-halt-or-a-stop', instructions: 'state-folder',
   policy: 'team-config', machine: 'this-machine', commit: 'commits-in-attempt-clones', host: 'host-start', trust: 'trust-the-runs-folder', access: 'host-settings',
-  token: 'forge-token-in-the-keychain', 'usage-limit': 'host-settings', tracker: 'team-config', 'auto-merge': 'auto-merge-and-ci',
+  token: 'forge-token-in-the-keychain', 'token-reads': 'forge-token-permissions', 'usage-limit': 'host-settings', tracker: 'team-config', 'auto-merge': 'auto-merge-and-ci',
   handoff: 'team-config', reviewer: 'review-bot', 'reviewer-seen': 'review-bot', ci: 'auto-merge-and-ci',
   'branch-protection': 'forge-rules', 'release-tags': 'forge-rules', 'workflow-secrets': 'forge-rules', labels: 'the-decision-label',
 });
@@ -95,7 +96,8 @@ export function localBindingNote(cap, platform) {
 
 // Runs every check for `project`, whose loaded config is `config`, with `run` the run these checks are for, which the
 // active-run check leaves out, and returns { exitCode, out, err }: a line `ok NAME`,
-// `blocker NAME: WHY (setup: URL#SECTION)`, or `ask NAME: WHAT` per check, exit 1 when any blocker. `forge`, `home`, `platform`, and `exec`,
+// `blocker NAME: WHY (setup: URL#SECTION)`, `retry NAME: WHY` for a read the forge could not answer, or
+// `ask NAME: WHAT` per check, exit 1 when any blocker or retry. `forge`, `home`, `platform`, and `exec`,
 // the keychain read's execFileSync, are a test's.
 export function preflightCommand({ project, config, run = null, env = process.env, home, forge, platform = process.platform, exec }) {
   const lines = [];
@@ -110,12 +112,7 @@ export function preflightCommand({ project, config, run = null, env = process.en
     check('run', active.length ? `the run ${active[0].run ?? 'in a folder that cannot be listed'} is still active, and a project has one active run at a time` : null);
     // Every attempt's clone lies under the runs folder, so a host instruction file above it refuses every start.
     check('instructions', ancestorProblem(path.join(runsFolder(place.state), 'attempts'), { project, tip: baseBranchTip(project.root), env }));
-    // Every issue session commits in its clone, unsigned (project-start.mjs UNSIGNED), so a commit that fails there
-    // parks every issue with its work staged.
-    const origin = gateGit(['remote', 'get-url', 'origin'], main, { env, timeout: 30_000 });
-    const branch = runBranch(place.state, run);
-    const commit = commitProblem({ state: place.state, env, url: origin.status === 0 ? origin.stdout.trim() : null, branch: branch ?? PROBE_BRANCH, run: branch ? run : null });
-    check('commit', commit);
+    check('commit', commitCheck({ state: place.state, run, main, env }));
   }
   const base = baseBranchTip(project.root) ? baseBranchConfig(project, 'projectRun') : { why: 'git names no base branch commit' };
   const facade = forge ?? forgeFor(project.root);
@@ -127,17 +124,8 @@ export function preflightCommand({ project, config, run = null, env = process.en
   const machine = machineSwitch(project.localHandoffBackground, () => policy.solo === true, project);
   check('machine', machine === 'on' ? null : 'this machine has not turned on sessions no Human attends: add "handoff": { "background": "on" } to its git-ignored local file, or the team sets solo');
   const cap = detectHost({ env }).capabilities.projectStart;
-  let host = null;
-  if (!cap) host = 'this host declares no way to start a project run\'s session';
-  else if (cap.confined !== true) host = 'this host\'s project start is not confined to a fresh clone under its own sandbox';
-  else host = hostStartProblem(cap, policy, env);
-  check('host', host);
-  // A start in a folder the host has not trusted starts nothing, so a host that can read its trust says so for the runs folder.
-  if (typeof cap?.trust === 'function' && !place.problem) {
-    const trust = cap.trust({ folder: runsFolder(place.state), env, home });
-    if (trust?.note) lines.push(`note trust: ${trust.note}`);
-    else check('trust', trust?.problem ?? null);
-  }
+  check('host', hostCheck(cap, policy, env));
+  if (!place.problem) trustLines({ cap, state: place.state, env, home, lines, check });
   if (cap && repository && !place.problem) {
     lines.push(...accessLines({ cap, facade, repository, env, home, main, state: place.state, platform, allowed: policy.outsideSandbox, localBinding: policy.localBinding === true, keychain: project.localForgeTokenKeychain, exec }));
     if (policy.localBinding === true) lines.push(localBindingNote(cap, platform));
@@ -174,13 +162,70 @@ export function preflightCommand({ project, config, run = null, env = process.en
   }
   lines.push(...asks);
   if (typeof cap?.limitContinue !== 'function') lines.push('ask usage-limit: confirm this host carries on by itself after a usage limit, since a limit stops the driver too');
-  const blocked = lines.some((line) => line.startsWith('blocker '));
-  return { exitCode: blocked ? 1 : 0, out: lines, err: blocked ? ['aidrian project preflight: fix each blocker line, then run it again'] : [] };
+  const blocked = lines.some((line) => line.startsWith('blocker ') || line.startsWith('retry '));
+  return { exitCode: blocked ? 1 : 0, out: lines, err: blocked ? ['aidrian project preflight: fix each blocker line, wait out each retry line, then run it again'] : [] };
+}
+
+// Why a commit in a clone made as an attempt's would fail, the start gate's own probe (project-start.mjs commitProblem),
+// on the first issue branch of `run`, or null. Every issue session commits in its clone, unsigned, so a commit that
+// fails there parks every issue with its work staged.
+function commitCheck({ state, run, main, env }) {
+  const origin = gateGit(['remote', 'get-url', 'origin'], main, { env, timeout: 30_000 });
+  const branch = runBranch(state, run);
+  return commitProblem({ state, env, url: origin.status === 0 ? origin.stdout.trim() : null, branch: branch ?? PROBE_BRANCH, run: branch ? run : null });
+}
+
+// Why the host `cap` (capabilities.projectStart) may not start a run's session under `policy`, or null.
+function hostCheck(cap, policy, env) {
+  if (!cap) return 'this host declares no way to start a project run\'s session';
+  if (cap.confined !== true) return 'this host\'s project start is not confined to a fresh clone under its own sandbox';
+  return hostStartProblem(cap, policy, env);
+}
+
+// A start in a folder the host has not trusted starts nothing, so a host that can read its trust says so for the runs
+// folder of `state`: a `note trust:` line, or the check.
+function trustLines({ cap, state, env, home, lines, check }) {
+  if (typeof cap?.trust !== 'function') return;
+  const trust = cap.trust({ folder: runsFolder(state), env, home });
+  if (trust?.note) lines.push(`note trust: ${trust.note}`);
+  else check('trust', trust?.problem ?? null);
+}
+
+// The checks of a halt the driver re-checks (lib/project-recheck.mjs), with no person: the preflight's own, for run `run`
+// on its pinned `repository` ({ host, owner, name }, the init row's), never the checkout's origin now, and only those
+// `names` lists of commit, host, trust, and access, with the state folder and the team's policy they need. An origin
+// that no longer names that repository is a `blocker repository:` line, and no other check, so no probe, runs; a policy
+// the forge cannot answer now is a `retry policy:` line. Returns the lines, as the preflight prints them.
+export function recheckLines({ project, config, run, repository, names, env = process.env, home, forge, platform = process.platform, exec }) {
+  const lines = [];
+  const check = (name, problem) => lines.push(problem ? blockerLine(name, problem) : `ok ${name}`);
+  const main = project.checkouts.at(-1);
+  const moved = repositoryProblem([...new Set([project.root, main])], repository) ?? pushProblem(project.root, repository);
+  check('repository', moved);
+  if (moved) return lines;
+  const place = runPlace(project, config, { env, ...(home ? { home } : {}) });
+  check('state', place.problem ?? null);
+  if (place.problem) return lines;
+  if (names.includes('commit')) check('commit', commitCheck({ state: place.state, run, main, env }));
+  const facade = forge ?? forgeFor(project.root);
+  const policy = teamPolicy(project, repository, facade);
+  if (policy.transient) return [...lines, `retry policy: ${policy.problem}`];
+  check('policy', policy.problem ?? null);
+  if (policy.problem) return lines;
+  const cap = detectHost({ env }).capabilities.projectStart;
+  if (names.includes('host')) check('host', hostCheck(cap, policy, env));
+  if (names.includes('trust')) trustLines({ cap, state: place.state, env, home, lines, check });
+  if (names.includes('access') && cap) {
+    lines.push(...accessLines({ cap, facade, repository, env, home, main, state: place.state, platform, allowed: policy.outsideSandbox, localBinding: policy.localBinding === true, keychain: project.localForgeTokenKeychain, exec }));
+  }
+  return lines;
 }
 
 // The access check, the start gate's own (project-start.mjs accessProblem): `ok access` or its blocker, then, on a host
-// that hands its sessions the forge token, a `note token:` line naming the source the token came from, and one for each
-// note on it, such as a token that reaches more than this repository. Never the token itself.
+// that hands its sessions the forge token, `ok token-reads` or a `blocker token-reads:` line for each read of an issue
+// session that token may not make, naming the permission to add, and a `retry token-reads:` line when the forge could
+// not answer, then a `note token-reads:` line for each read not verified, a `note token:` line naming the source the token came
+// from, and one for each note on it, such as a token that reaches more than this repository. Never the token itself.
 function accessLines({ cap, facade, repository, env, home, main, state, platform, allowed, localBinding, keychain, exec }) {
   let access;
   try {
@@ -188,9 +233,17 @@ function accessLines({ cap, facade, repository, env, home, main, state, platform
   } catch (error) {
     access = { halt: `the access check failed (${String(error?.message ?? error).split('\n')[0]})` };
   }
-  const problem = access?.halt ?? access?.refuse ?? null;
+  // The reads the token may not make are their own blockers, one each, after the access check they passed; a read the
+  // forge could not answer, whatever the reason, is one `retry token-reads:` line, which names no permission.
+  const reads = Array.isArray(access?.reads) ? access.reads : null;
+  const retry = typeof access?.unanswered === 'string' ? access.unanswered : null;
+  const problem = reads?.length || retry ? null : access?.halt ?? access?.refuse ?? null;
   // A halt that carries the token's record is the token's own: no source gave one, or it may not push.
   const lines = [problem ? blockerLine('access', problem, access?.token ? 'token' : 'access') : 'ok access'];
+  if (reads?.length) lines.push(...reads.map((each) => blockerLine('token-reads', each)));
+  if (retry) lines.push(`retry token-reads: ${retry}`);
+  else if (reads && !reads.length) lines.push('ok token-reads');
+  for (const note of access?.readNotes ?? []) lines.push(`note token-reads: ${note}`);
   if (access?.token?.source) lines.push(`note token: ${access.token.source} gives the issue sessions their forge token`);
   for (const note of access?.token?.notes ?? []) lines.push(`note token: ${note}`);
   return lines;

@@ -594,7 +594,9 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   usage limit past the run's 24 pauses, write a `halt` row, and every later start refuses. The resume runs from the
   Human's own shell, or from another session a person attends that never drove the run: the hooks and the command
   refuse it to the driver, to any session that drove the run, and to the continuation custody would move to, so the
-  driver never runs it. It writes a `resume` row that lifts the halt. Run from a session, it also takes custody of a
+  driver never runs it. It writes a `resume` row that lifts the halt. The driver's own start of the halted issue lifts
+  an environment result's halt, or a failed proof's but the sandbox proof's, once, when the preflight's checks of that
+  cause pass ([Project run](config.md#project-run)). Run from a session, it also takes custody of a
   run whose driver the host lists as ended, as a background driver that ended with no successor, and that session
   then drives on. A driver the host does not list so, such as the first one, a session the Human started, keeps
   custody: on a run that is not halted, the command prints `not halted <run>`, and, run from a session, says to resume

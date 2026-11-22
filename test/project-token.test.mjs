@@ -20,9 +20,10 @@ import { confineReads, sandboxSettings, writeEnvFile } from '../plugins/aidrian/
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { confinedShellVars, confinedTokenVars } from '../plugins/aidrian/lib/project-start.mjs';
-import { receivePackStatus, tokenMayPush } from '../plugins/aidrian/lib/forges/github-token.mjs';
+import { apiStatus, receivePackStatus, tokenMayPush, TOKEN_READS, tokenReadProblems } from '../plugins/aidrian/lib/forges/github-token.mjs';
 import { confineCheck } from '../plugins/aidrian/lib/project-confine.mjs';
 import { CLAIM_VAR, DEFAULT_KEYCHAIN_SERVICE, forgeToken, gitCredentialVars, handoffProblem, keychainToken, tokenVars } from '../plugins/aidrian/lib/project-token.mjs';
+import { setupDocUrl } from '../plugins/aidrian/lib/project-preflight.mjs';
 import { markPending } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { DRIVER, FIXTURE_TOKEN, runFixture, STARTED } from './project-start-fixture.mjs';
 
@@ -245,6 +246,107 @@ test('preflight says ok access with a note naming the token\'s source, and a blo
   assert.ok(classic.some((line) => /^note token: it is a classic personal access token, which reaches every repository/u.test(line)), classic.join('\n'));
   const none = fx.cmd(['preflight'], { forge: { ...fx.forge, authToken: () => { throw new Error('not logged in'); } } }).out;
   assert.match(none.find((line) => line.startsWith('blocker access:')) ?? '', /^blocker access: no source gives a forge token for github\.com, of the forge CLI's login \(the login: not logged in\)/u);
+});
+
+// What the read probe prints for one answer of GitHub (github-token.mjs apiStatus), with `more` over a 200 that parsed.
+const probed = (more = {}) => ({ status: 200, parsed: true, number: null, branch: null, rollup: true, errors: [], array: true, keys: ['state', 'workflow_runs'], remaining: '4000', retry: null, ...more });
+
+// The GitHub adapter's reads with a fine-grained token that may push but holds no Issues permission, as the live run's
+// token: GitHub answers the reactions read 403, "Resource not accessible by personal access token".
+const noIssues = (asked = []) => (repo, { host, token }) => tokenReadProblems(repo, {
+  host, token, probe: (route, options) => {
+    asked.push([route, options.token]);
+    if (route === `repos/${repo}`) return probed({ branch: 'main' });
+    if (route.includes('/pulls')) return probed({ number: 12 });
+    return route.includes('/reactions') ? probed({ status: 403 }) : probed();
+  },
+});
+
+test('preflight blocks on a token whose reactions read the forge answers 403, naming the fine-grained permission, and the start halts on it', (t) => {
+  const fx = runFixture(t);
+  const asked = [];
+  fx.forge.tokenReads = noIssues(asked);
+  const pre = fx.cmd(['preflight', 'launch']);
+  assert.equal(pre.exitCode, 1);
+  assert.ok(pre.out.includes('ok access'), 'the push passed');
+  assert.deepEqual(pre.out.filter((line) => line.startsWith('blocker token-reads:')), [
+    `blocker token-reads: the forge token from the forge CLI's login for github.com cannot read the reactions on a pull request, as \`aidrian pr review --with-bot\` does (the forge answered 403 for github.com/acme/widgets); give it the fine-grained permission Issues: Read-only (setup: ${setupDocUrl()}#forge-token-permissions)`,
+  ], pre.out.join('\n'));
+  assert.ok(asked.every(([, token]) => token === FIXTURE_TOKEN), 'every read is the issue session\'s token');
+  assert.ok(asked.some(([route]) => route === 'repos/acme/widgets/issues/12/reactions?per_page=1'), 'on the newest pull request');
+  assert.ok(asked.some(([route]) => route === 'graphql'), 'and the check rollup gh pr checks reads');
+  const halted = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(halted.exitCode, 1, halted.out.join('\n'));
+  assert.match(halted.out[0], /^halt the forge token from the forge CLI's login for github\.com cannot read the reactions on a pull request/u);
+  assert.deepEqual(fx.claude.starts(), [], 'no session started');
+  // A read the forge could not answer says nothing of the token: one retry line, no permission, and a start that may
+  // pass when tried again.
+  fx.forge.tokenReads = () => ({ missing: [], unverified: [], unanswered: ['pulls', 'actions'] });
+  const limited = fx.cmd(['preflight', 'launch']);
+  assert.deepEqual(limited.out.filter((line) => line.includes('token-reads')), ['retry token-reads: the forge could not answer the pulls, actions reads of github.com/acme/widgets with the forge token from the forge CLI\'s login for github.com; start again'], limited.out.join('\n'));
+  assert.equal(limited.exitCode, 1);
+  const later = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.deepEqual([later.exitCode, later.out.find((line) => line.startsWith('retry: '))?.slice(0, 48)], [75, 'retry: the forge could not answer the pulls, act']);
+  // A forge adapter that throws is the same: no answer.
+  fx.forge.tokenReads = () => { throw new Error('socket hang up'); };
+  assert.deepEqual(fx.cmd(['preflight', 'launch']).out.filter((line) => line.includes('token-reads')), ['retry token-reads: the forge could not answer the token read of github.com/acme/widgets with the forge token from the forge CLI\'s login for github.com; start again']);
+});
+
+test('the read probe asks the REST API or GraphQL with the token in the environment, and passes back only the fields a read needs', () => {
+  const calls = [];
+  const line = JSON.stringify(probed({ status: 403, parsed: true }));
+  const exec = (program, args, options) => (calls.push({ program, args, options }), line);
+  assert.deepEqual(apiStatus('repos/acme/widgets/issues/12/reactions', { host: 'github.com', token: 'github_pat_RO0123456789', exec }), JSON.parse(line));
+  apiStatus('repos/acme/widgets', { host: 'ghe.example.com', token: 'ghe_token0123456789', exec });
+  apiStatus('graphql', { host: 'ghe.example.com', token: 'ghe_token0123456789', query: '{"query":"{viewer{login}}"}', exec });
+  assert.deepEqual(calls[0].args.slice(2), ['https://api.github.com/repos/acme/widgets/issues/12/reactions', 'GH_TOKEN']);
+  assert.equal(calls[0].options.env.GH_TOKEN, 'github_pat_RO0123456789');
+  assert.deepEqual(calls[1].args.slice(2), ['https://ghe.example.com/api/v3/repos/acme/widgets', 'GH_ENTERPRISE_TOKEN']);
+  assert.deepEqual(calls[2].args.slice(2), ['https://ghe.example.com/api/graphql', 'GH_ENTERPRISE_TOKEN', '{"query":"{viewer{login}}"}']);
+  assert.ok(calls.every((call) => !call.args.join(' ').includes('0123456789')), 'never an argument');
+  assert.throws(() => apiStatus('repos/acme/widgets', { host: 'github.com', token: 't', exec: () => '200\n[{"number":' }), /JSON/u, 'a cut answer is no answer');
+  assert.deepEqual(Object.values(TOKEN_READS).map((each) => each.permission), ['Metadata: Read-only, with the repository selected under Repository access', 'Pull requests: Read and write', 'Issues: Read-only', 'Commit statuses: Read-only', 'Actions: Read and write', 'Commit statuses: Read-only and Actions: Read and write']);
+});
+
+test('the token reads: refusals name their permission, the check rollup with no pull request is not verified, and an answer that says neither is unanswered', () => {
+  const reads = (answer) => tokenReadProblems('acme/widgets', { host: 'github.com', token: 't', probe: (route, options) => answer(route, options) ?? probed(route.endsWith('widgets') ? { branch: 'main' } : {}) });
+  assert.deepEqual(reads(() => probed({ status: 404 })).missing.map((each) => each.read), ['repository'], 'a token that cannot read the repository is one problem');
+  const statuses = reads((route) => (/status$|runs/u.test(route) ? probed({ status: 403 }) : null));
+  assert.deepEqual([statuses.missing.map((each) => each.read), statuses.unverified.map((each) => each.read)], [['statuses', 'actions'], ['rollup']], 'no pull request: the rollup is not verified');
+  const rollup = (answer) => reads((route, options) => (route.includes('/pulls') ? probed({ number: 7 }) : options.query ? probed(answer) : null));
+  assert.deepEqual(rollup({ rollup: false, errors: ['FORBIDDEN'] }).missing.map((each) => [each.read, each.permission, each.why]), [['rollup', 'Commit statuses: Read-only and Actions: Read and write', 'the forge answered 200 FORBIDDEN']]);
+  const empty = rollup({ rollup: true });
+  assert.deepEqual([empty.missing, empty.unanswered], [[], []], 'an empty rollup passes');
+  for (const answer of [{ rollup: false, errors: ['NOT_FOUND'] }, { rollup: true, errors: ['INTERNAL'] }, { rollup: false, errors: ['RATE_LIMITED'] }, { rollup: false }]) {
+    assert.deepEqual([rollup(answer).missing, rollup(answer).unanswered], [[], ['rollup']], JSON.stringify(answer));
+  }
+  assert.deepEqual(reads(() => probed({ status: 500 })).unanswered, ['repository', 'pulls', 'reactions', 'statuses', 'actions']);
+  // A 200 of another shape than its route answers is no answer: a repository with no default branch, a pull list that is
+  // no list, and workflow runs without their list.
+  const shapes = reads((route) => (route === 'repos/acme/widgets/pulls?state=all&per_page=1' ? probed({ array: false, keys: ['message'] }) : route.includes('/runs') ? probed({ keys: [] }) : null));
+  assert.deepEqual([shapes.missing, shapes.unanswered], [[], ['pulls', 'actions']]);
+  assert.deepEqual(reads((route) => (route === 'repos/acme/widgets' ? probed({ array: false, keys: [] }) : null)).unanswered, ['repository', 'statuses'], 'a repository answer of {}');
+  assert.deepEqual(reads((route) => (route === 'repos/acme/widgets' ? probed({ branch: '' }) : null)).unanswered, ['repository', 'statuses'], 'an empty default branch');
+  // The reads that need only the repository's name are asked when its own read gets no answer.
+  const mixed = reads((route) => (route === 'repos/acme/widgets' ? probed({ status: 500 }) : route.includes('/runs') ? probed({ status: 403 }) : null));
+  assert.deepEqual([mixed.missing.map((each) => each.read), mixed.unanswered], [['actions'], ['repository', 'statuses']], 'the Actions refusal beside an unanswered repository read');
+  assert.deepEqual(reads((route) => (route.includes('/pulls') ? probed({ parsed: false }) : null)).unanswered, ['pulls'], 'an unparseable 200 is no pass');
+});
+
+test('a read the forge could not answer names no permission, and a refusal beside it, or before a probe that throws, is still reported', () => {
+  const reads = (pulls, issues = null) => tokenReadProblems('acme/widgets', { host: 'github.com', token: 't', probe: (route) => {
+    if (route.includes('/pulls')) return pulls();
+    if (issues && route.includes('/issues')) return issues();
+    if (route.includes('/status')) throw new Error('timed out');
+    return probed(route.endsWith('widgets') ? { branch: 'main' } : {});
+  } });
+  for (const limited of [{ status: 403, remaining: '0' }, { status: 403, retry: '30' }, { status: 429 }, { status: 502 }]) {
+    const answer = reads(() => probed(limited));
+    assert.deepEqual([answer.missing, answer.unanswered], [[], ['pulls', 'statuses']], JSON.stringify(limited));
+  }
+  assert.deepEqual(reads(() => probed({ status: 403 })).missing.map((each) => each.read), ['pulls'], 'a 403 with requests left is a refusal');
+  const both = reads(() => probed({ number: 7 }), () => probed({ status: 403 }));
+  assert.deepEqual([both.missing.map((each) => each.read), both.unanswered], [['reactions'], ['statuses']], 'the reactions refusal survives the statuses probe that threw');
 });
 
 test('the SessionStart hook hands GH_TOKEN, from the source the start checked, to the sandboxed commands of the session the start launched alone', (t) => {

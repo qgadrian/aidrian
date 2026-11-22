@@ -10,7 +10,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -21,6 +21,7 @@ import { stderrTail } from '../plugins/aidrian/lib/review/base-worktree.mjs';
 import { appendRowsAtOnce } from '../plugins/aidrian/lib/jsonl.mjs';
 import { LINGER_GRACE } from '../plugins/aidrian/lib/project-linger.mjs';
 import { appendToRun, readRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
+import { recheckHalt } from '../plugins/aidrian/lib/project-recheck.mjs';
 import { DROP_FILE as GUARD_DROP_FILE, resultHoldReason, spentAttempts } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { DRIVER, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
@@ -44,10 +45,11 @@ function started(t, options) {
   const result = (value, session = CHILD, more) => fx.cmd(['result', 'launch', 'ENG-1', '--file', file(value)], { session, ...more });
   // A result handed over, then the driver's wait that takes it in: the wait's lines but `idle`, and but the `lingering`
   // line of the session the fixture's host still lists working after it handed its result over (project-linger.mjs).
-  const recorded = (value, session = CHILD) => {
+  // `wait` is the wait's --max-wait, 0 s by default.
+  const recorded = (value, session = CHILD, wait = '0') => {
     const handed = result(value, session);
     if (handed.exitCode !== 0) return handed;
-    const waited = fx.cmd(['wait', 'launch', '--max-wait', '0']);
+    const waited = fx.cmd(['wait', 'launch', '--max-wait', wait]);
     return { ...waited, out: waited.out.filter((line) => line !== 'idle' && !line.startsWith('lingering ')) };
   };
   return { ...fx, file, result, recorded };
@@ -273,39 +275,147 @@ test('result text loses character references that spell a mention marker, before
   assert.equal(cleanText('Tom&Jerry and R&D stay', 99), 'Tom&Jerry and R&D stay');
 });
 
-test('an environment result halts the run with its stop, and the issue goes on as after failed', (t) => {
+// The `resume` rows the driver's re-check wrote (lib/project-recheck.mjs), but their times, and any `recheck` row, which
+// the re-check never writes.
+const rechecks = (fx) => fx.rows().filter((row) => row.event === 'recheck' || (row.event === 'resume' && row.via === 'recheck')).map(({ at: _at, ...row }) => row);
+// The checks an environment halt's re-check runs, as their `ok` lines name them, in the fixture, whose forge has no reads.
+const ENV_CHECKS = ['repository', 'state', 'commit', 'policy', 'host', 'trust', 'access'];
+// The token reads of the GitHub adapter: none refused, one refused, which fails the re-check's `token-reads`, and one
+// the forge could not answer.
+const READS_OK = { missing: [], unverified: [], unanswered: [] };
+const NO_ISSUES = { ...READS_OK, missing: [{ read: 'reactions', what: 'read the reactions on a pull request', permission: 'Issues: Read-only', why: 'the forge answered 403' }] };
+const NO_ANSWER = { ...READS_OK, unanswered: ['pulls'] };
+
+test('an environment result halts the run with its stop; wait never re-checks it, and the driver\'s next start of the issue lifts it once its checks pass', (t) => {
   const fx = started(t);
   assert.match(fx.result({ status: 'environment', stop: null }).err.join('\n'), /an environment result names in "stop" what failed/u);
   const stop = 'git push: could not read Username for github.com, token ghp_abcdefghijklmnopqrstuvwxyz0123';
-  assert.deepEqual(fx.recorded({ status: 'environment', stop }).out, ['result ENG-1 environment -> open']);
-  assert.deepEqual(fx.rows().filter((row) => row.event === 'result').map((row) => row.halt), ['ENG-1 attempt 1 found its environment broken: git push: could not read Username for `github.com`, token [redacted]']);
+  const cause = 'ENG-1 attempt 1 found its environment broken: git push: could not read Username for `github.com`, token [redacted]';
+  assert.deepEqual(fx.recorded({ status: 'environment', stop }, CHILD, '150').out, ['result ENG-1 environment -> open'], 'no wait re-checks a halt');
+  assert.deepEqual(fx.rows().filter((row) => row.event === 'result').map((row) => row.halt), [cause]);
+  assert.deepEqual(rechecks(fx), []);
   assert.equal(spentAttempts(readRun(fx.state, 'launch'), 'ENG-1'), 1);
   fx.claude.states[CHILD] = 'done';
-  assert.match(fx.cmd(['next', 'launch']).out[0], /^halted ENG-1 attempt 1 found its environment broken/u);
-  assert.match(fx.cmd(['start', 'launch', 'ENG-1']).out[0], /^halt the run is halted/u);
-  // The wait sweeps ended attempts, but keeps this one's folder while its issue is open: its clone may hold unpushed work.
-  fx.cmd(['wait', 'launch', '--max-wait', '0']);
-  assert.ok(existsSync(path.join(runFolder(fx.state, 'launch'), 'attempts', 'ENG-1.1')), 'the environment attempt keeps its folder');
-  const resumed = fx.cmd(['resume', 'launch'], { session: OTHER });
-  assert.equal(resumed.exitCode, 0, resumed.err.join('\n'));
+  assert.match(fx.cmd(['next', 'launch']).out[0], /^halted/u);
+  // A start of another issue does not re-check ENG-1's halt.
+  assert.match(fx.cmd(['start', 'launch', 'ENG-4']).out[0], /^halt the run is halted/u);
+  assert.deepEqual(rechecks(fx), []);
+  // The start that lifts the halt launches nothing; the next one starts the issue afresh.
+  const starts = fx.claude.starts().length;
+  const lifting = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.deepEqual([lifting.exitCode, lifting.out], [0, [`recheck lifted the halt: ${cause}; ok ${ENV_CHECKS.join(', ')}`, 'lifted the environment halt of ENG-1; start it again']]);
+  assert.equal(fx.claude.starts().length, starts, 'no session started');
+  assert.deepEqual(rechecks(fx), [{ event: 'resume', session: DRIVER, kind: 'environment', key: 'ENG-1', attempt: 1, via: 'recheck', checks: ENV_CHECKS }]);
   const next = fx.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(next.exitCode, 0, next.err.join('\n'));
   assert.ok(next.out.includes('started ENG-1 attempt 2 session c0ffee02'), next.out.join('\n'));
+  assert.ok(existsSync(path.join(runFolder(fx.state, 'launch'), 'attempts', 'ENG-1.1')), 'the environment attempt keeps its folder');
 });
 
-test('an environment result that spends the last attempt parks the issue on attempts, and the run still halts', (t) => {
+test('an environment halt whose re-check does not pass, a refused read and a read the forge could not answer alike, stays and writes nothing; the next start lifts it once its checks pass', (t) => {
+  const fx = started(t);
+  fx.forge.tokenReads = () => NO_ISSUES;
+  assert.equal(fx.recorded({ status: 'environment', stop: 'gh api repos/acme/widgets/issues/12/reactions: HTTP 403' }).out[0], 'result ENG-1 environment -> open');
+  fx.claude.states[CHILD] = 'done';
+  const kept = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.match(kept.out[0], /^halt the run is halted: ENG-1 attempt 1 found its environment broken/u);
+  assert.ok(kept.out.some((line) => line.startsWith('recheck kept the halt: ENG-1 attempt 1 ')), kept.out.join('\n'));
+  assert.ok(kept.out.some((line) => /^blocker token-reads: the forge token from the forge CLI's login for github\.com cannot read the reactions on a pull request .*Issues: Read-only/u.test(line)), kept.out.join('\n'));
+  assert.deepEqual(rechecks(fx), [], 'no row');
+  // A forge that could not answer a read keeps the halt the same way, and says so in one line naming no permission.
+  fx.forge.tokenReads = () => NO_ANSWER;
+  const unanswered = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.match(unanswered.out[0], /^halt the run is halted/u);
+  assert.deepEqual(unanswered.out.filter((line) => line.includes('token-reads')), ['retry token-reads: the forge could not answer the pulls read of github.com/acme/widgets with the forge token from the forge CLI\'s login for github.com; start again'], unanswered.out.join('\n'));
+  // A refused read beside an unanswered one is still the refusal.
+  fx.forge.tokenReads = () => ({ ...NO_ISSUES, unanswered: ['actions'] });
+  assert.ok(fx.cmd(['start', 'launch', 'ENG-1']).out.some((line) => line.startsWith('blocker token-reads: ')));
+  assert.deepEqual(rechecks(fx), []);
+  // Fixed now: the next start re-checks, lifts the halt, and starts the issue.
+  fx.forge.tokenReads = () => READS_OK;
+  const lifted = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(lifted.exitCode, 0, lifted.out.join('\n'));
+  assert.ok(lifted.out.some((line) => line.startsWith('recheck lifted the halt: ENG-1 attempt 1 ')), lifted.out.join('\n'));
+  assert.deepEqual(rechecks(fx).map((row) => [row.event, row.via]), [['resume', 'recheck']]);
+});
+
+test('the re-check probes the repository the run pinned: an origin moved off it refuses the lift before any probe', (t) => {
+  const fx = started(t);
+  let reads = 0;
+  fx.forge.tokenReads = () => ((reads += 1), READS_OK);
+  fx.recorded({ status: 'environment', stop: 'gh pr checks 12: HTTP 403' });
+  fx.claude.states[CHILD] = 'done';
+  fx.git('remote', 'set-url', 'origin', 'https://github.com/other/widgets.git');
+  const before = fx.forge.calls.length;
+  const kept = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.ok(kept.out.some((line) => /^blocker repository: .*github\.com\/acme\/widgets/u.test(line)), kept.out.join('\n'));
+  assert.equal(reads, 0, 'no token read');
+  assert.deepEqual(fx.forge.calls.slice(before).filter(([name]) => ['authToken', 'tokenCanPush'].includes(name)), [], 'no token read, no push probe');
+  assert.deepEqual(rechecks(fx), [], 'no row');
+});
+
+test('a forge that could not answer a read: a start with no halt exits 75 to be tried again, and a refused read beside it halts', (t) => {
+  const fx = runFixture(t);
+  fx.forge.tokenReads = () => NO_ANSWER;
+  const limited = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(limited.exitCode, 75, limited.out.join('\n'));
+  fx.forge.tokenReads = () => ({ ...NO_ISSUES, unanswered: ['pulls'] });
+  const denied = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(denied.exitCode, 1);
+  assert.match(denied.out[0], /^halt the forge token from the forge CLI's login for github\.com cannot read the reactions on a pull request/u);
+  assert.deepEqual(fx.claude.starts(), []);
+});
+
+test('under the ledger lock, a self-lift is written only while the run is live and custody rests where the caller read it, and says when it is not', (t) => {
+  const fx = runFixture(t);
+  appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'result', key: 'ENG-1', attempt: 1, status: 'environment', halt: 'ENG-1 attempt 1 found its environment broken: no network', at: new Date().toISOString() }] }));
+  const lift = (custodian) => recheckHalt({ state: fx.state, run: 'launch', found: readRun(fx.state, 'launch'), session: DRIVER, key: 'ENG-1', custodian, recheck: () => ['ok host', 'ok access'] });
+  const changed = ['the checks passed, but the run changed meanwhile: its halt was lifted, it ended, or custody moved'];
+  assert.deepEqual(lift(OTHER), { lifted: false, lines: changed }, 'custody rests with another session');
+  appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'end', session: DRIVER, at: new Date().toISOString() }] }));
+  assert.deepEqual(lift(DRIVER), { lifted: false, lines: changed }, 'the run ended');
+  assert.deepEqual(rechecks(fx), []);
+});
+
+test('a resume row the re-check cannot write is its own line, and a ledger another process holds exits 75 to be tried again', (t) => {
+  const fx = started(t);
+  fx.recorded({ status: 'environment', stop: 'no network' });
+  fx.claude.states[CHILD] = 'done';
+  const folder = runFolder(fx.state, 'launch');
+  // Another process takes the ledger's lock while the re-check probes the forge.
+  fx.forge.tokenReads = () => (writeFileSync(path.join(folder, 'ledger.jsonl.lock.99'), JSON.stringify({ pid: process.pid, host: hostname(), nonce: 'other' })), READS_OK);
+  const locked = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(locked.exitCode, 75, locked.out.join('\n'));
+  assert.match(locked.out[0], /^retry: .*locked by another process/u);
+  writeFileSync(path.join(folder, 'ledger.jsonl.lock.99.released'), '');
+  assert.deepEqual(rechecks(fx), []);
+  // A run whose files go away under the re-check: the checks passed, and the row could not be written.
+  const found = readRun(fx.state, 'launch');
+  const gone = recheckHalt({ state: fx.state, run: 'launch', found, session: DRIVER, key: 'ENG-1', recheck: () => (rmSync(path.join(folder, 'snapshot.json')), ['ok host']) });
+  assert.equal(gone.lifted, false);
+  assert.match(gone.lines.at(-1), /^the checks passed, but the resume row could not be written: no run launch in /u);
+});
+
+test('a second environment halt of the same issue after a self-lift stays for a person, and spends its attempts as before', (t) => {
   const fx = started(t);
   for (let n = 0; n < 3; n += 1) {
     const session = STARTED[n].session;
+    if (n === 2) assert.equal(fx.cmd(['resume', 'launch'], { session: OTHER }).exitCode, 0);
     if (n > 0) {
-      assert.equal(fx.cmd(['resume', 'launch'], { session: OTHER }).exitCode, 0);
+      if (n === 1) assert.ok(fx.cmd(['start', 'launch', 'ENG-1']).out[0].startsWith('recheck lifted the halt: ENG-1 attempt 1 '));
       const again = fx.cmd(['start', 'launch', 'ENG-1']);
       assert.equal(again.exitCode, 0, again.err.join('\n'));
     }
     const expected = n < 2 ? 'result ENG-1 environment -> open' : 'result ENG-1 environment -> parked attempts';
     assert.deepEqual(fx.recorded({ status: 'environment', stop: `no network, try ${n + 1}` }, session).out, [expected]);
     fx.claude.states[session] = 'done';
+    if (n === 1) {
+      const kept = fx.cmd(['start', 'launch', 'ENG-1']);
+      assert.match(kept.out[0], /^halt the run is halted: ENG-1 attempt 2 /u);
+      assert.ok(kept.out.includes('the run lifted a halt of ENG-1 of this kind (environment) by itself once, so this one waits on a person'), kept.out.join('\n'));
+    }
   }
+  assert.deepEqual(rechecks(fx).map((row) => [row.event, row.attempt]), [['resume', 1]], 'one lift, and no row for the halt it kept');
   assert.equal(fx.rows().filter((row) => row.event === 'result' && row.halt).length, 3);
   assert.match(fx.cmd(['next', 'launch']).out[0], /^halted ENG-1 attempt 3 found its environment broken: no network, try 3/u);
   // The attempt folder of each environment attempt stays.
@@ -314,6 +424,16 @@ test('an environment result that spends the last attempt parks the issue on atte
   const report = JSON.parse(fx.cmd(['report', 'launch', '--json']).out[0]);
   const owed = report.owed.find((each) => each.key === 'ENG-1');
   assert.match(owed?.body ?? '', /ENG-1, attempt 3, stopped: its session found its environment broken\./u, JSON.stringify(report).slice(0, 400));
+});
+
+test('a halt the preflight cannot check again, as a failed sandbox proof\'s or a usage limit\'s, is never re-checked', (t) => {
+  const fx = runFixture(t);
+  for (const row of [{ event: 'halt', kind: 'sandbox', cause: 'the start of ENG-1 attempt 1 failed its proof: write /x', key: 'ENG-1', attempt: 1 }, { event: 'halt', cause: 'ENG-1 met a usage limit 25 times', key: 'ENG-1', attempt: 1 }]) {
+    appendToRun(fx.state, 'launch', () => ({ rows: [{ ...row, at: new Date().toISOString() }] }));
+    assert.match(fx.cmd(['start', 'launch', 'ENG-1']).out[0], /^halt the run is halted/u);
+    assert.deepEqual(rechecks(fx), []);
+    assert.equal(fx.cmd(['resume', 'launch'], { session: OTHER }).exitCode, 0);
+  }
 });
 
 test('a result stop has credentials masked', () => {

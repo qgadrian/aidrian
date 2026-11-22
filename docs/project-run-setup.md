@@ -130,11 +130,7 @@ Fine-grained tokens, Generate new token:
   public resources, and the probe fails.
 - **Repository access**: Only select repositories, and pick the run's repository when the token is created. A token
   that does not name the repository fails the probe.
-- **Permissions**: Contents read and write (push, merge), Pull requests read and write (open one, comment, answer
-  review threads, update its branch), Actions read and write (read runs, rerun failed jobs), Checks read, and Commit
-  statuses read; Metadata read comes with them. Leave Workflows off, so the token cannot push a change to a workflow
-  file. This list follows the calls an issue session makes through `lib/forges/github.mjs`; no live run has checked
-  a token with exactly these permissions.
+- **Permissions**: the list in [Forge token permissions](#forge-token-permissions).
 - **Expiration**: a token that expires fails the probe, and the preflight names it as `blocker access`.
 
 Store it with macOS's `security`, `-w` last so it asks for the token instead of taking it on the command line:
@@ -159,6 +155,39 @@ error and reads unset. It is read only while git tracks no `.aidrian.local.json`
 it. For one token every github.com project on the machine shares, store it under the default service instead, with no
 local key: `security add-generic-password -s aidrian-project-run -a '<account>' -w`.
 On another platform the keychain key is a `note`, and the gh login gives the token.
+
+## Forge token permissions
+
+A fine-grained token's repository permissions, by the names GitHub's token page gives them:
+
+| Permission | Access | What the issue session does with it |
+| --- | --- | --- |
+| Contents | Read and write | push its branch, merge its pull request |
+| Pull requests | Read and write | open one, comment, answer review threads, update its branch |
+| Issues | Read-only | read the reactions on its pull request, as `aidrian pr review --with-bot` does |
+| Commit statuses | Read-only | read its commit's statuses, as `gh pr checks` does |
+| Actions | Read and write | read its workflow runs, as `gh pr checks` does, and rerun failed jobs |
+| Metadata | Read-only | comes with any of the above |
+
+Leave Workflows off, so the token cannot push a change to a workflow file. GitHub offers a fine-grained token no
+Checks permission. The preflight and every start check the reads with the token the issue session gets, each one that
+writes nothing (`lib/forges/github-token.mjs`): the repository, its pull requests, the reactions on the newest one (or
+the issues list, with no pull request), the default branch's commit statuses, the workflow runs, and the GraphQL check
+rollup of the newest pull request. The rollup read samples the one `gh pr checks` makes, with fewer fields: its first
+context, with its type and, on a check run, its name and status. It passes only when the answer holds the repository,
+the pull request, and its last commit's rollup field. A read the forge answers 401 or 404, a 403 that does not say no request is left or to come back
+later (`x-ratelimit-remaining: 0` or a `Retry-After`), or a GraphQL answer with `FORBIDDEN` is a `blocker
+token-reads:` line naming the permission to add, and halts a start; an empty rollup passes. With no pull request yet,
+the rollup is a `note token-reads:` line: the first pull request proves it. Any other answer, or none, as a 5xx, a
+429, a body that does not parse, a GraphQL answer with a null repository, or a probe that fails, says nothing of the
+token: one `retry token-reads:` line naming those reads, and a start that exits 75 to be tried again. A refused read is
+reported whatever else went unanswered. When the repository's own read gets no answer, the reads that need only its
+name are still asked, and the commit statuses, which need its default branch, are unanswered. A 200 of another shape than its route answers,
+such as a repository with no default branch, a list route that gives no list, or workflow runs with no
+`workflow_runs`, is unanswered too.
+Each probe parses
+the answer in its own process and hands back only the fields the read needs. The writes are not probed, since a probe
+writes nothing.
 
 ## The decision label
 
@@ -309,9 +338,14 @@ folder this command resolves. Every attempt's clone lies under the runs folder, 
 
 ## After a halt or a stop
 
-A **halt** stops every start of the run until a person lifts it: a start whose proof failed, as a session whose hooks
-never ran or whose sandbox proof failed, and a usage limit past the run's 24 pauses. `aidrian project next` prints
-`halted <cause>` first. Fix the cause, then run, from the Human's own shell, outside the driver:
+A **halt** stops every start of the run: an issue session's `environment` result, a start whose proof failed, as a
+session whose hooks never ran or whose sandbox proof failed, and a usage limit past the run's 24 pauses. `aidrian
+project next` prints `halted <cause>` first. The driver's start of the halted issue lifts an environment result's halt,
+and a failed proof's but the sandbox proof's, once, when the preflight's checks of that cause pass
+([Project run](config.md#project-run)); any other halt, and a second such halt of the same issue, wait on a person.
+A re-check that does not pass leaves the halt in place for the next driver start of that issue, which re-checks it
+again; one the forge could not answer passes once the forge answers. `aidrian project resume` is for a person who
+fixed the cause. Fix the cause, then run, from the Human's own shell, outside the driver:
 
 ```sh
 aidrian project resume <run>

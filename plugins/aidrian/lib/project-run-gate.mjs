@@ -9,7 +9,8 @@
 // session id. Every git call here goes through gateGit (lib/git.mjs). A start is refused, in this order:
 //   1. a session the run cannot tell apart from another's start (a pending mark), one whose mark names an issue, which
 //      is an issue's session, and any session but the driver, or a continuation custody moves to; a halted run, until
-//      an attended session runs `aidrian project resume`; and a run paused on a usage or rate limit an issue's session
+//      an attended session runs `aidrian project resume`, or, for an environment result's halt or a failed proof's, the
+//      re-check of the preflight that the driver's start of that issue runs passes (project-recheck.mjs); and a run paused on a usage or rate limit an issue's session
 //      met, until the pause ends (lib/project-limit.mjs);
 //   2. a repository whose git state could run a program or move a fetch (project-trust.mjs repositoryProblem, a halt),
 //      checked before any other git call, and an origin whose fetch or push URL, with pushurl and insteadOf applied,
@@ -56,6 +57,7 @@ import { branchPolicies, defaultBranch, soloOn } from './pr-auto-merge.mjs';
 import { chainEnded, lingerLine, lingerProblem, notStopped, settleLingering, stopChain } from './project-linger.mjs';
 import { checkedLimit, limitEndRows, limitRecorded, pausedTime, pauseOf, pauseRow, recordedPauseRuns } from './project-limit.mjs';
 import { closeVerdict, confineCheck, prepareConfine } from './project-confine.mjs';
+import { recheckHalt } from './project-recheck.mjs';
 import { ATTEMPT_ENV, cacheVars, registryHosts } from './project-registries.mjs';
 import { CLAIM_VAR, newClaim, writeClaim } from './project-token.mjs';
 import { afterFailure, cleanText, CAPS, DROP_FILE, ingestDrops, RESULT_CAP, validateResult, writeDrop } from './project-result.mjs';
@@ -322,8 +324,9 @@ export function startIssue(given) {
   return launchStart(context, place);
 }
 
-// What every start reads before it touches the run's issues: the session, the run, custody, the repository, the team's
-// policy, the machine's switch, and the host's start, as { ...given, session, state, found, store, held, facade,
+// What every start reads before it touches the run's issues: the session, the run, custody, a halt, which `recheck()`,
+// the run's preflight, may lift (project-recheck.mjs), the repository, the team's policy, the machine's switch, and the
+// host's start, as { ...given, session, state, found, store, held, facade,
 // policy, cap, refuse, noted }, or { answer } when the start ends here.
 function startContext(given) {
   const { project, config, run, env, home } = given;
@@ -334,12 +337,19 @@ function startContext(given) {
   if (marked) return plain(marked);
   const opened = openRun(project, config, run, { env, home });
   if (opened.problem) return plain(opened.problem);
-  const { state, found, store } = opened;
-  const held = custody({ found, store, session, now: given.now, env });
+  const { state, store } = opened;
+  const held = custody({ found: opened.found, store, session, now: given.now, env });
   if (held.problem) return plain(held.problem);
-  if (endedIn(found)) return plain(`the run ${run} ended, and starts no issue`);
+  if (endedIn(opened.found)) return plain(`the run ${run} ended, and starts no issue`);
+  // A halt of this issue the preflight can check again lifts itself once its checks pass (project-recheck.mjs); any
+  // other waits on a person.
+  const custodian = held.role === 'successor' ? held.driver.session : session;
+  const rechecked = recheckHalt({ state, run, found: opened.found, session, key: given.key, custodian, recheck: given.recheck, now: given.now });
+  // A start that lifts a halt launches nothing: the next start reads the run, its policy, and its access afresh.
+  if (rechecked.lifted) return { answer: { exitCode: 0, out: rechecked.lines, err: [] } };
+  const { found } = opened;
   const halted = haltOf(found);
-  if (halted) return { answer: haltAnswer(`the run is halted: ${halted}`, { lift: RESUME(run) }) };
+  if (halted) return { answer: haltAnswer(`the run is halted: ${halted}`, { lift: RESUME(run), lines: rechecked.lines }) };
   const paused = pauseOf(found, given.now);
   if (paused) return plain(`the run waits out a ${paused.kind} limit the session of ${paused.key} met, until ${paused.until}; \`aidrian project wait ${run}\` waits with it, and a start runs once it is over`, [`paused until ${paused.until}`]);
   const main = project.checkouts.at(-1);
@@ -360,7 +370,7 @@ function startContext(given) {
   }
   const hostProblem = hostStartProblem(cap, policy, env);
   if (hostProblem) return { answer: haltAnswer(hostProblem, { note: unverifiedNote(cap) }) };
-  const note = unverifiedNote(cap);
+  const note = [...unverifiedNote(cap), ...rechecked.lines];
   const noted = (answer) => ({ ...answer, out: answer.out[0]?.startsWith('halt ') ? [answer.out[0], ...note, ...answer.out.slice(1)] : [...note, ...answer.out] });
   const refuse = (why, lines = []) => ({ answer: noted({ exitCode: 1, out: lines, err: [`aidrian project start: ${why}`] }) });
   return { ...given, session, state, found, store, held, facade, policy, cap, refuse, noted, main };
@@ -386,6 +396,8 @@ function startPlace(context) {
     cap, forge: facade, repository: found.init.repository, env, home, guarded: guardedFolders({ main, state, env, home }), main, platform: context.platform, allowed: policy.outsideSandbox, localBinding: policy.localBinding,
     keychain: project.localForgeTokenKeychain, ...(context.exec ? { exec: context.exec } : {}),
   });
+  // A token read the forge could not answer, with none refused, may pass when tried again.
+  if (access?.refuse && access.retry) return { answer: noted(retryAnswer('start', access.refuse, orphans)) };
   if (access?.refuse) return refuse(access.refuse, orphans);
   const tripped = access?.halt ?? linkTripwire({ state, run, store, env, home, main });
   if (tripped) return { answer: noted(haltAnswer(tripped, { lines: orphans })) };
@@ -512,6 +524,8 @@ function launchStart(context, place) {
   const tags = { project: run, issue: key, ...(proving ? { confine: true } : {}) };
   // The session whose proof was last read, so a failed or missing proof is filed in its mark.
   let proved = null;
+  // Whether the sandbox's own proof failed, a halt no preflight checks again (project-recheck.mjs): a person decides it.
+  let sandboxFailed = false;
   const fileProof = (own, result) => safely(() => markUnattended(own, { root: context.main, cwd: resolvedPath(cwd) ?? cwd, env, tags: { ...tags, confine: result } }));
   const confined = proving ? (own) => {
     proved = own;
@@ -520,6 +534,7 @@ function launchStart(context, place) {
     const filed = fileProof(own, answer.pass ? 'passed' : 'failed');
     if (!answer.pass) {
       closeVerdict(folder);
+      sandboxFailed = true;
       return { problem: answer.problem };
     }
     return filed ? true : { problem: 'the start could not file the passed proof in the session\'s mark' };
@@ -574,7 +589,7 @@ function launchStart(context, place) {
     safely(() => rmSync(folder, { recursive: true, force: true }));
     return noted(ahead.retry ? retryAnswer('start', ahead.why, place.orphans) : { exitCode: 1, out: place.orphans, err: [`aidrian project start: ${ahead.why}`] });
   }
-  return noted(startLines({ result, state, run, key, attempt, session, base, proof, cap, orphans: place.orphans, now: context.now }));
+  return noted(startLines({ result, state, run, key, attempt, session, base, proof, proofKind: sandboxFailed ? 'sandbox' : 'proof', cap, orphans: place.orphans, now: context.now }));
 }
 
 // Writes the start of `base` ahead, before the host starts anything: a start row with `outcome: 'uncertain'` and
@@ -661,11 +676,11 @@ export function forgeBase(project, repository, forge, env = process.env) {
 // The one settling append of a start written ahead, and the start's answer. A start that held its session records it
 // `started`; one whose outcome is unknown, or that could not be held or stopped, stays `uncertain` or `unheld` for
 // settleOrphans; any other gives its attempt back (`void`) and opens the issue again, and one whose proof failed also
-// halts the run. A start that never got as far as its write-ahead row records nothing.
-function startLines({ result, state, run, key, attempt, session, base, proof, cap, orphans, now }) {
+// halts the run, with a halt row of `kind` 'sandbox' when the sandbox's own proof failed, else 'proof' (`proofKind`). A start that never got as far as its write-ahead row records nothing.
+function startLines({ result, state, run, key, attempt, session, base, proof, proofKind = 'proof', cap, orphans, now }) {
   const at = iso(now);
   let rows = [];
-  const halt = proof ? [{ event: 'halt', cause: cleanText(`the start of ${key} attempt ${attempt} failed its proof: ${proof}`, CAPS.stop), key, attempt, at }] : [];
+  const halt = proof ? [{ event: 'halt', kind: proofKind, cause: cleanText(`the start of ${key} attempt ${attempt} failed its proof: ${proof}`, CAPS.stop), key, attempt, at }] : [];
   // A session whose stop is unknown stays for settleOrphans, and a failed proof halts the run all the same.
   if (result.intended && result.outcome === 'started') rows = [{ ...base, at, outcome: 'started', id: result.marker.id, child: result.marker.session ?? null }];
   else if (result.intended && (result.outcome === 'uncertain' || (result.outcome === 'unheld' && !result.stopped))) {
@@ -971,7 +986,8 @@ export function endRun({ project, config, run, env = process.env, home, now = Da
 // Lifts the halt of run `run` (project-run.mjs haltOf) for the Human's own shell, which names no session, or an attended
 // main session, as attendedProblem reads the session the host names in `env`, that neither drives the run nor did, nor
 // is the continuation custody would move to (project-run-guard.mjs resumerProblem): a `resume` row, and `resumed RUN`.
-// A run that is not halted answers `not halted`. The driver never runs it: a halt waits on a person.
+// A run that is not halted answers `not halted`. The driver never runs it: a halt waits on a person, but for one the
+// driver's start of its issue re-checks and lifts (project-recheck.mjs).
 export function resumeRun({ project, config, run, env = process.env, home, now = Date.now(), spawn }) {
   const refuse = (why) => ({ exitCode: 1, out: [], err: [`aidrian project resume: ${why}`] });
   const { session } = sessionIdentity(env);

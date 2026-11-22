@@ -401,7 +401,8 @@ How issue sessions and the driver relate to the cap of five background continuat
 - The start holds the session only once the plugin's agent gate hook files its beacon on the session's first tool
   call, within 180 seconds, as on Codex: it shows the plugin's hooks still load under `--setting-sources user`. The
   session's floor and mark are filed first, as soon as the host lists its id. A session whose beacon never comes is
-  stopped, gives its attempt back, and halts the run until an attended `aidrian project resume`.
+  stopped, gives its attempt back, and halts the run until an attended `aidrian project resume`, or the driver's
+  next start of that issue re-checks and lifts it once ([Project run](../config.md#project-run)).
 - The beacon proves only that the hooks run. Before the start holds the session, the session proves from inside its
   sandbox that the sandbox is in force ([The sandbox proof](#the-sandbox-proof)): its first call must be `aidrian
   project confine <run> <issue>`, and nothing else runs until the start confirmed it.
@@ -519,8 +520,12 @@ No `sandbox.excludedCommands` is passed. Three conditions hold on top of the san
   repository's receive-pack advertisement, `https://<host>/<owner>/<name>.git/info/refs?service=git-receive-pack`,
   with the token as basic auth, from a Node process with no shell that gets the token in its environment. GitHub
   answers 200 with `application/x-git-receive-pack-advertisement` only to a token that may write the contents, and
-  401 or 403 otherwise; a 200 of any other content type counts as not writable. The probe writes nothing. The
-  start records which source gave the token and the token's SHA-256, with the digest of a random claim it passes the
+  401 or 403 otherwise; a 200 of any other content type counts as not writable. The probe writes nothing. It halts
+  too when that token may not make the reads its session makes, each a REST GET or a GraphQL query with the token as a
+  bearer token from the same kind of Node process, named with the fine-grained permission to add, and refuses the start
+  to be tried again when GitHub cannot answer one
+  ([Forge token permissions](../project-run-setup.md#forge-token-permissions)).
+  The start records which source gave the token and the token's SHA-256, with the digest of a random claim it passes the
   session it launches as the one `env` key of its inline settings, `AIDRIAN_START_CLAIM`. The plugin's SessionStart
   hook of the confined session hands the token over only when its environment holds that claim, so no other session
   opened in the clone gets it, before the host names the launched one or after; it reads the token again, outside the

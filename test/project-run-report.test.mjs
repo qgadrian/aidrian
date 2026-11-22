@@ -537,7 +537,7 @@ test('preflight names every blocker at once, and starts nothing', (t) => {
   writeFileSync(path.join(ready.env.CLAUDE_CONFIG_DIR, 'settings.json'), JSON.stringify({ autoContinueAtUsageLimit: true }));
   writeFileSync(path.join(ready.env.CLAUDE_CONFIG_DIR, '.claude.json'), JSON.stringify({ projects: { [ready.state]: { hasTrustDialogAccepted: true } } }));
   let asked = null;
-  Object.assign(ready.forge, { reviewerSeen: (repo, login, options) => ((asked = options), { changes: 4, seen: true }), ciWorkflows: () => ['test'], refProtection: () => GUARDED, workflowSecrets: () => NO_SECRETS });
+  Object.assign(ready.forge, { reviewerSeen: (repo, login, options) => ((asked = options), { changes: 4, seen: true }), ciWorkflows: () => ['test'], refProtection: () => GUARDED, workflowSecrets: () => NO_SECRETS, tokenReads: () => ({ missing: [], unverified: [], unanswered: [] }) });
   const ok = ready.cmd(['preflight']);
   assert.equal(asked?.counts?.('You have reached your Codex usage limits for code reviews.'), false, 'a usage-limit notice shows no review');
   assert.equal(asked?.counts?.('<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn\'t find any major issues.'), true, 'a clean receipt counts');
@@ -550,7 +550,7 @@ test('preflight names every blocker at once, and starts nothing', (t) => {
   assert.equal(asked?.counts?.(older('✅ **Completed**').replace('\n\n## Codex', '\n<!-- codex-review-state:v1 {not json} -->\n\n## Codex')), false, 'a state that does not parse shows nothing, whatever the row says');
   assert.equal(asked?.counts?.(card('completed')), true, 'a card whose review completed counts');
   assert.equal(asked?.counts?.('The card opens with `<!-- codex-pull-request-review-summary -->`, so match it at the start.'), true, 'a review that quotes the card marker counts');
-  assert.deepEqual(ok.out.filter((line) => !/^(ask|note) /u.test(line)), ['ok repository', 'ok state', 'ok run', 'ok instructions', 'ok commit', 'ok policy', 'ok machine', 'ok host', 'ok trust', 'ok access', 'ok usage-limit', 'ok tracker', 'ok auto-merge', 'ok handoff', 'ok reviewer', 'ok reviewer-seen', 'ok ci', 'ok branch-protection', 'ok release-tags', 'ok workflow-secrets'], ok.out.join('\n'));
+  assert.deepEqual(ok.out.filter((line) => !/^(ask|note) /u.test(line)), ['ok repository', 'ok state', 'ok run', 'ok instructions', 'ok commit', 'ok policy', 'ok machine', 'ok host', 'ok trust', 'ok access', 'ok token-reads', 'ok usage-limit', 'ok tracker', 'ok auto-merge', 'ok handoff', 'ok reviewer', 'ok reviewer-seen', 'ok ci', 'ok branch-protection', 'ok release-tags', 'ok workflow-secrets'], ok.out.join('\n'));
   assert.equal(ok.exitCode, 0);
   assert.deepEqual(ok.out.filter((line) => line.startsWith('ask ')).map((line) => line.split(':')[0]), ['ask labels']);
   assert.equal(ready.claude.starts().length, 0);

@@ -57,9 +57,9 @@ const defaultRead = () => undefined;
 // load it cannot follow); the agents that review, as generated and as sources; the skills with every reference and step
 // file they tell a session to read; the Codex install; and the plugin manifests. The modules behind the other `aidrian`
 // subcommands, such as check.mjs, lint.mjs, worktree.mjs, and report-*.mjs, are not guarded, except project-run.mjs,
-// project-run-cli.mjs, project-run-gate.mjs, project-run-guard.mjs, and project-stops.mjs: they decide which session may
-// start a project run, which issue it starts, which session records its result, and what an issue whose merge stopped
-// does, so a pull request that auto-merged itself cannot change them.
+// project-run-cli.mjs, project-run-gate.mjs, project-run-guard.mjs, project-recheck.mjs, and project-stops.mjs: they decide
+// which session may start a project run, which issue it starts, which session records its result, when a halt lifts,
+// and what an issue whose merge stopped does, so a pull request that auto-merged itself cannot change them.
 // At the repository root: the marketplace manifests that install the plugin, and the optional `aidrian-claude-mod`
 // plugin's folder, whole, since it picks and runs the aidrian binary.
 const GUARDED_LIB = [
@@ -70,7 +70,7 @@ const GUARDED_LIB = [
   'git-push', 'glob-links', 'handoff-continue', 'handoff-guard', 'handoff-markers', 'handoff-sections', 'hidden-text', 'hook-deny', 'hook-io', 'issue-forge-guard', 'issue-push-checkout',
   'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits', 'markdown-prose', 'markdown-sections', 'markdown-wrap',
   'model-prices', 'names', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review', 'pr-checks', 'pr-diff', 'pr-product-feedback',
-  'pr-resolve', 'project', 'project-confine', 'project-issue-text', 'project-limit', 'project-linger', 'project-preflight', 'project-registries', 'project-report',
+  'pr-resolve', 'project', 'project-confine', 'project-issue-text', 'project-limit', 'project-linger', 'project-preflight', 'project-recheck', 'project-registries', 'project-report',
   'project-result', 'project-run', 'project-run-cli', 'project-run-gate', 'project-run-guard', 'project-start', 'project-stops', 'project-token', 'project-trust', 'push-preflight',
   'remotes', 'review-gate', 'run-driver', 'session-folder', 'session-length', 'session-links', 'session-links-writer', 'session-origins',
   'session-prs', 'session-rows', 'session-start-gate', 'shell-init', 'shell-lex', 'solo', 'stop-announce', 'stop-handback', 'stop-history', 'stop-review-loop',

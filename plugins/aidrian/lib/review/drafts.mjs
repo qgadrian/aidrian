@@ -7,7 +7,7 @@
 // A draft whose pull request is open, or whose state the forge cannot give, is kept. Drafts named for a branch, such
 // as `pr-body-<branch>.md`, are not a pull request's by number, and stay.
 
-import { readdirSync, rmSync } from 'node:fs';
+import { readdirSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { forgeFor } from '../forges/index.mjs';
@@ -16,6 +16,18 @@ import { remoteRepos } from '../remotes.mjs';
 import { recordRepos } from './state.mjs';
 
 // A draft's name, with its pull request's number in the one group that matched.
+// An issue session may name its own scratch files for its issue too, so a draft led by an issue key goes only when it is
+// a folder of findings files and nothing else (findingsOnly).
+const ISSUE_LED = /^(?:[a-z][a-z0-9]{0,15}-)?[1-9][0-9]{0,8}-review-/u;
+const findingsOnly = (folder) => {
+  try {
+    if (!statSync(folder).isDirectory()) return false;
+    const names = readdirSync(folder);
+    return names.length > 0 && names.every((name) => name.endsWith('.findings.json'));
+  } catch {
+    return false;
+  }
+};
 // A findings folder of another remote's repository names it, `<owner>--<name>`: GitHub owners hold no `--`.
 // An issue session's findings folder leads with its issue key (dispatch.mjs findingsFile).
 const DRAFT = /^(?:(?:(?:[a-z][a-z0-9]{0,15}-)?[1-9][0-9]{0,8}-)?review-([1-9]\d{0,9})(?:-([\w.-]+?)--([\w.-]+))?|pr-([1-9]\d{0,9})-review\.md|product-feedback-([1-9]\d{0,9})(?:-items\.json|\.md))$/u;
@@ -37,7 +49,7 @@ export function draftsByPr(dir) {
   const out = new Map();
   for (const name of names.sort()) {
     const match = DRAFT.exec(name);
-    if (!match) continue;
+    if (!match || (ISSUE_LED.test(name) && !findingsOnly(path.join(dir, name)))) continue;
     const pr = Number(match[1] ?? match[4] ?? match[5]);
     const repo = match[2] ? `${match[2]}/${match[3]}`.toLowerCase() : null;
     const key = repo ? `${pr}@${repo}` : String(pr);

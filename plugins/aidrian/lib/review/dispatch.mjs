@@ -328,7 +328,7 @@ export function sessionIssue(env = process.env) {
 export function dispatchFor(s, pass, stage) {
   const { root, n, head, map, isVisual } = s;
   const input = passInput(s, pass, stage);
-  const file = findingsFile(s.project, n, pass.id, s.repo, sessionIssue());
+  const file = findingsFile(s.project, n, pass.id, s.repo, sessionIssue(s.env ?? process.env));
   const prefix = showPrefix(root);
   const briefs = [
     prefix ? belowRootBrief(prefix) : null,

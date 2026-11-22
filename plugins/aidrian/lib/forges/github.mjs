@@ -36,6 +36,15 @@ export function servedRepository(identity) {
   return `${host}/${parts[0]}/${parts[1]}`;
 }
 
+// The link `url` when it is `https://<host>/<repo>/pull/<number>` for a plain host, an `owner/name` repo, and a pull
+// request number, in printable ASCII and equal to it but for letter case, as GitHub writes an owner's name; else null.
+function pinnedPullUrl({ host, repo, number, url }) {
+  const parts = typeof repo === 'string' ? repo.split('/') : [];
+  if (typeof host !== 'string' || !/^[A-Za-z0-9.-]+(?::\d+)?$/u.test(host) || parts.length !== 2 || !isLogin(parts[0]) || !REPOSITORY_NAME.test(parts[1]) || !isChangeNumber(number)) return null;
+  const built = `https://${host}/${repo}/pull/${number}`;
+  return typeof url === 'string' && /^[\x21-\x7e]+$/u.test(url) && url.toLowerCase() === built.toLowerCase() ? url : null;
+}
+
 // The largest pull request number a GraphQL call takes: GitHub's `Int` is a signed 32-bit integer, and one variable past
 // it fails the whole operation, every alias of a batch included. REST ids, such as a comment's, stay unbounded.
 const GRAPHQL_INT_MAX = 2_147_483_647;
@@ -841,9 +850,11 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     changeUrl: (row) => {
       const repo = typeof row?.repo === 'string' ? row.repo : '';
       if (row?.forge !== FORGE_ID || changeRef({ host: row.host, path: repo, number: row.number }) === null) return null;
-      const built = `https://${CHANGES_HOST}/${repo}/pull/${row.number}`;
-      return typeof row.url === 'string' && /^[\x21-\x7e]+$/u.test(row.url) && row.url.toLowerCase() === built.toLowerCase() ? row.url : null;
+      return pinnedPullUrl({ host: CHANGES_HOST, repo, number: row.number, url: row.url });
     },
+    // The link `url` of pull request `number` in the repository `repo` (`owner/name`) on `host`, such as a project run
+    // pins from origin, when it is the one this adapter builds for them, by the same rule as changeUrl; else null.
+    pullUrl: ({ host, repo, number, url }) => pinnedPullUrl({ host, repo, number, url }),
     // The pull request `ref` (a number, a branch, or a URL; none: the current branch's), with the gh `fields` named;
     // `repo` looks in that repository instead of the default one. With a `repo`, an empty `ref` still goes to gh, as the
     // merge guard has always sent it: gh needs an argument with `--repo`, and an empty one is the current branch's.

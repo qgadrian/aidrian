@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
+import { forgeFor } from '../plugins/aidrian/lib/forges/index.mjs';
 import { openStore } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { noteBeacon } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { CONFINE_PLAN, CONFINE_VERDICT } from '../plugins/aidrian/lib/project-confine.mjs';
@@ -106,6 +107,8 @@ export function fakeForge(config, head, views = {}, { push = () => true, token =
   const forge = {
     calls,
     tokenPush,
+    // The GitHub adapter's own canonical link check, which makes no call.
+    pullUrl: (row) => forgeFor(process.cwd()).pullUrl(row),
     repository: (repo, options) => {
       calls.push(['repository', repo, options]);
       return { default_branch: 'main', permissions: { pull: true, push: push() } };

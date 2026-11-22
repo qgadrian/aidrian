@@ -1967,10 +1967,14 @@ otherwise, such as when the branch changed a knowledge index a docs issue regist
 changed such a file after the branch diverged (an accepted residual: going on would need the tip merged in), it leaves the branch as it is and cuts a fresh one from the base tip, the snapshot's branch with
 `-a<attempt>` added, which its start row records. Everything after the start uses that branch: the session's push, its
 result, and `stop-action`; the merge guard holds a pull request from any branch an attempt recorded. Nothing of the old
-branch is reused. The session's task gives only a count of those files, and the start's stderr names the first few,
-cleaned to one line. The task names the old branch's pull request only when the forge shows it open in the pinned
-repository, into the default branch, from the old branch at the head the attempt fetched, and the session closes it,
-once the new pull request is open, with the comment `superseded by #<new>`, only if `gh pr view` still shows the same;
+branch is reused. The session's task and the start's stderr give only a count of those files; the first few names,
+cleaned to one line, go to `logs/<KEY>.<attempt>.left.txt` in the run's folder, beside the run log a host may truncate;
+when that file cannot be written, the start still goes on, and its stderr says the names could not be written.
+The task names the old branch's pull request by its link, which the forge adapter takes only as the canonical link of
+the pinned repository's pull request with the number the result named, and only when the forge shows it
+open in the pinned repository, into the default branch, from the old branch at the head the attempt fetched, and the
+session closes it by that link, once the new pull request is open, with the comment `superseded by #<new>`, only if
+`gh pr view` still shows the same;
 reopening undoes it, and no branch is deleted. With no such pull request, it closes nothing: a pull request an attempt
 opened but never named in a result stays open beside the new one, an accepted residual, since the merge guard still
 holds it to the issue and nothing merges it. A fresh branch already on the forge, or one another issue of the run names

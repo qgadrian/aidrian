@@ -259,6 +259,9 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   `changeUrl(row)`, text only: a change row's `url` when it is the link the adapter builds for the row's `forge`,
   `host`, `repo`, and `number` (GitHub's compares in printable ASCII, ignoring letter case), else null. The snapshot
   passes every row it shows through it, so a cached row never shows a link to another host.
+  `pullUrl({ host, repo, number, url })`, text only: `url` when it is the link the adapter builds for pull request
+  `number` of `repo` on `host`, the host a project run pins from origin, by the same rule, else null. A fresh project run
+  attempt names an earlier pull request to its session only by a link this takes.
   A forge's reader of its own command for the ledger, such as GitHub's `gh pr` calls, `GH_REPO`, and the pull request
   URL in gh's output, sits under `lib/rules/<forge id>/`, as `lib/rules/github/session-calls.mjs` does. It runs nothing,
   exports `FORGE`, its adapter's `id`, `readCall`, `createdChanges`, and `variables`, the environment its command reads

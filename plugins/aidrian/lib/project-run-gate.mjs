@@ -42,7 +42,7 @@
 // back and halts the run with a `halt` row.
 
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { baseBranchTip, machineSwitch } from './config.mjs';
@@ -213,7 +213,7 @@ export function projectPrompt({ run, key, attempt, branch, clone, skill = SKILL,
 function supersededLine(left, branch) {
   const files = `${left.count} host config or instruction ${left.count === 1 ? 'file' : 'files'} no review saw`;
   const close = left.pr
-    ? `Once this attempt's own pull request is open, and only if \`gh pr view ${left.pr} --json state,baseRefName,headRefName,headRefOid\` still shows it OPEN, into ${left.base}, from ${left.branch}, at ${left.sha}, close pull request #${left.pr} with the comment "superseded by #<the new pull request's number>": closing can be undone by reopening it, and no branch is deleted.`
+    ? `Once this attempt's own pull request is open, and only if \`gh pr view ${left.url} --json state,baseRefName,headRefName,headRefOid\` still shows it OPEN, into ${left.base}, from ${left.branch}, at ${left.sha}, close pull request ${left.url} with the comment "superseded by #<the new pull request's number>": closing can be undone by reopening it, and no branch is deleted.`
     : `Leave ${left.branch} as it is, and close no pull request.`;
   return `An earlier attempt's branch ${left.branch} changes ${files}, so this attempt starts fresh from the base tip on the branch ${branch} and reuses nothing of ${left.branch}: do the issue's work again there. ${close}`;
 }
@@ -492,16 +492,16 @@ function confinedRoom({ project, state, run, key, branch, fresh, reserved, attem
   return { folder: clone.folder, cwd: clone.work, git: clone.git, grants: [clone.git, clone.drop, clone.cache, ...folders.folders], drop: clone.drop, cache: clone.cache, vars, main: resolvedPath(main) ?? main, mainGit, issueFile: issueFile?.file ?? null, pushUrl: url || null, claim, branch: clone.branch, superseded: supersededOf(clone.superseded, { found, key, facade }) };
 }
 
-// What the start says of the branch `left` an attempt left (prepareAttempt): { branch, sha, count, files, pr, base },
-// `files` the first of its changed instruction files cleaned (namedFiles), for the driver's stderr alone, never the
-// session's task, since a file name is the old branch's text; and `pr` the pull request the issue's latest result named,
-// with `base` the default branch, only when the forge shows it open into that branch from that head (openPullOf), else
-// null; null when none was left.
+// What the start says of the branch `left` an attempt left (prepareAttempt): { branch, sha, count, files, pr, base, url },
+// `files` the first of its changed instruction files cleaned (namedFiles), for the attempt's file of them alone
+// (leftFile), never the session's task or the driver's stderr, since a file name is the old branch's text; and `pr`
+// the pull request the issue's latest result named, with `base` the default branch and `url` its canonical link, only
+// when the forge shows it open into that branch from that head (openPullOf), else null; null when none was left.
 function supersededOf(left, { found, key, facade }) {
   if (!left) return null;
   const named = found.rows.findLast((row) => row.event === 'result' && row.key === key && Number.isInteger(row.pr))?.pr ?? null;
-  const base = openPullOf({ forge: facade, repository: found.init.repository, pr: named, branch: left.branch, head: left.sha });
-  return { branch: left.branch, sha: left.sha, count: left.files.length, files: namedFiles(left.files), pr: base ? named : null, base };
+  const open = openPullOf({ forge: facade, repository: found.init.repository, pr: named, branch: left.branch, head: left.sha });
+  return { branch: left.branch, sha: left.sha, count: left.files.length, files: namedFiles(left.files), pr: open ? named : null, base: open?.base ?? null, url: open?.url ?? null };
 }
 
 // Writes `<attempt>/issue.md` from `<run>/issues/<KEY>.json`, read as untrusted: { file }, null when the run kept no text
@@ -620,9 +620,23 @@ function launchStart(context, place) {
     return noted(ahead.retry ? retryAnswer('start', ahead.why, place.orphans) : { exitCode: 1, out: place.orphans, err: [`aidrian project start: ${ahead.why}`] });
   }
   const answer = noted(startLines({ result, state, run, key, attempt, session, base, proof, proofKind: sandboxFailed ? 'sandbox' : 'proof', cap, orphans: place.orphans, now: context.now }));
-  // The names of the files that made this attempt leave the old branch, cleaned, for the driver alone.
+  // The count of the files that made this attempt leave the old branch on stderr, and their cleaned names in a file
+  // beside the attempt's run log, since a file name is the old branch's text.
   const left = place.superseded;
-  return left && answer.exitCode === 0 ? { ...answer, err: [...answer.err, `aidrian project start: ${key} attempt ${attempt} left ${left.branch} for ${branch}, since it changes ${left.count} host config or instruction ${left.count === 1 ? 'file' : 'files'} no review saw: ${left.files}`] } : answer;
+  if (!left || answer.exitCode !== 0) return answer;
+  const named = leftFile(state, run, key, attempt, left.files);
+  const where = named ? `; their names are in ${named}` : '; their names could not be written beside the run log';
+  return { ...answer, err: [...answer.err, `aidrian project start: ${key} attempt ${attempt} left ${left.branch} for ${branch}, since it changes ${left.count} host config or instruction ${left.count === 1 ? 'file' : 'files'} no review saw${where}`] };
+}
+
+// Writes `files`, the cleaned names of an attempt's left branch, to `<run>/logs/<key>.<attempt>.left.txt`, beside the
+// run log a host may truncate: the file, or null when it cannot be written.
+function leftFile(state, run, key, attempt, files) {
+  const file = runLogFile(state, run, key, attempt).replace(/\.jsonl$/u, '.left.txt');
+  return safely(() => {
+    writeFileSync(file, `${files}\n`, { mode: 0o600, flag: 'wx' });
+    return file;
+  }) ?? null;
 }
 
 // Writes the start of `base` ahead, before the host starts anything: a start row with `outcome: 'uncertain'` and

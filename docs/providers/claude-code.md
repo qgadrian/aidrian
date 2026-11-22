@@ -743,8 +743,11 @@ its start stays as [its page](codex.md#project-start) says.
    so that `..` is not folded away first. Each reading matches a store by its path and by the file system's identity,
    device and inode, of it and of each folder above it, so another path to the same file or folder, such as a hard link
    or macOS's `/System/Volumes/Data` path to a folder of the Data volume, reaches the store too. On macOS each store is
-   also matched by its Data volume path, so a read of `/System/Volumes/Data`, or of a folder above it, reaches every
-   store on that volume, though the system keeps that path and no store's own path or folders pass through it. A hard
+   also matched by its Data volume path, verified as an alias: only when that path is the store itself, by its exact
+   device and inode, since the same path there can be another folder, as `/System/Volumes/Data/usr/share` is not
+   `/usr/share`, and a store that is not there gets none. So a read of `/System/Volumes/Data`, or of a folder above it,
+   reaches every store on that volume, though the system keeps that path and no store's own path or folders pass
+   through it. A hard
    link to a store the plan lists as a file is refused; a hard link made beforehand to a file inside a store folder is
    not detected, since the hook knows only each store's own identity and those of the folders above it, not the files
    a folder holds.

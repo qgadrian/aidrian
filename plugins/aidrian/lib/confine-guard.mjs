@@ -121,12 +121,15 @@ export function identity(file, stat = statSync) {
   }
 }
 
-// On macOS, the Data volume's own path to `store`, when one is there, else null.
+// On macOS, the Data volume's own path to `store`, when that path is the store itself by its exact identity, else null.
+// The same path under the Data volume is not always the same folder: /System/Volumes/Data/usr/share is not /usr/share,
+// the sealed system volume's. A store that is not there has no identity, so it gets no Data volume path.
 const DATA_VOLUME = '/System/Volumes/Data';
 function dataPath(store) {
   if (process.platform !== 'darwin' || within(DATA_VOLUME, store)) return null;
   const alias = `${DATA_VOLUME}${store}`;
-  return exists(alias) ? alias : null;
+  const own = identity(store);
+  return own !== null && identity(alias) === own ? alias : null;
 }
 
 // The identities of `file` and of each folder above it that is there, `file` first.
@@ -145,8 +148,9 @@ function ancestry(file) {
 // after a link climbs from the link's target. Each reading is matched by its path, and by the file system's identity of
 // it and the folders above it, so another path to the same file or folder, as a hard link or macOS's
 // `/System/Volumes/Data` path to a folder of the Data volume, matches too. On macOS each store is also read by its Data
-// volume path, since the system keeps that path as it is: a read of the Data volume's root, or of a folder above it,
-// holds every store there, though no store's standard path or identity ancestry passes through it.
+// volume path, when that path is the store itself (dataPath), since the system keeps that path as it is: a read of the
+// Data volume's root, or of a folder above it, holds every store there, though no store's standard path or identity
+// ancestry passes through it.
 function readsStore(input, unreadable) {
   const targets = fileReadOf(input);
   if (!targets) return null;

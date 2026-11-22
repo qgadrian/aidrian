@@ -895,6 +895,19 @@ test('a file-tool read of a store by another name for the same file or folder re
   assert.equal(call('LS', { path: at.work }), null, 'the clone, which holds no store');
 });
 
+// The documented limit (docs/providers/claude-code.md, the sandbox proof): only a store's own identity and those of the
+// folders above it are known, so a hard link made beforehand to a file inside a store folder is not caught. Pinned
+// here so the limit stays deliberate: a change that starts catching it updates that doc and this test together.
+test('a file-tool read through a hard link made beforehand to a file inside a store folder is not detected', (t) => {
+  const at = attempt(t);
+  plan(at);
+  const mark = { root: at.root, cwd: at.work, project: 'launch', issue: 'ENG-1', confine: 'passed' };
+  const call = (tool, input) => confineDenial({ session_id: SESSION, tool_name: tool, tool_input: input, cwd: at.work }, { mark, env: {} });
+  linkSync(path.join(at.keys, 'id_test'), path.join(at.work, 'key-copy'));
+  assert.match(call('Read', { file_path: path.join(at.keys, 'id_test') })?.reason ?? '', /hides/u, 'the file by its own path');
+  assert.equal(call('Read', { file_path: path.join(at.work, 'key-copy') }), null, 'the same file by a hard link outside the store folder');
+});
+
 test('a file`s identity keeps an inode past 2^53 whole, where a plain number rounds two files` inodes alike', () => {
   const inodes = { '/a': 2n ** 60n + 4n, '/b': 2n ** 60n + 40n };
   assert.equal(Number(inodes['/a']), Number(inodes['/b']), 'the two inodes round alike as plain numbers');
@@ -964,4 +977,28 @@ test('a file-tool read of a store through the macOS Data volume`s path to it rea
     assert.match(call('Grep', { pattern: 'x', path: folder })?.reason ?? '', /hides/u, `Grep ${folder}`);
     assert.match(call('Glob', { pattern: '**/*', path: folder })?.reason ?? '', /hides/u, `Glob ${folder}`);
   }
+});
+
+// On macOS, a folder the Data volume holds under the same path is not always the same folder: /usr/share is the sealed
+// system volume's, and /System/Volumes/Data/usr/share another folder. A store's Data volume path counts only when it
+// is the store itself, by its exact identity; else the reason the test below cannot run here.
+function unrelatedDataPath(store) {
+  if (process.platform !== 'darwin') return { skip: 'macOS only: no Data volume elsewhere' };
+  const data = `/System/Volumes/Data${store}`;
+  const [a, b] = [identity(store), identity(data)];
+  if (!a || !b) return { skip: `no ${store} or ${data} here` };
+  return a === b ? { skip: `${data} is ${store} itself here` } : { skip: false };
+}
+
+test('a file-tool read of a folder at a store`s Data volume path that is another folder is no store', unrelatedDataPath('/usr/share'), (t) => {
+  const at = attempt(t);
+  plan(at, { reads: [at.secret, at.keys, '/usr/share'] });
+  const mark = { root: at.root, cwd: at.work, project: 'launch', issue: 'ENG-1', confine: 'passed' };
+  const call = (tool, input) => confineDenial({ session_id: SESSION, tool_name: tool, tool_input: input, cwd: at.work }, { mark, env: {} });
+  const data = '/System/Volumes/Data/usr/share';
+  assert.match(call('LS', { path: '/usr/share' })?.reason ?? '', /hides/u, 'the store by its own path');
+  assert.equal(call('LS', { path: data }), null, 'the other folder at its Data volume path');
+  assert.equal(call('Read', { file_path: path.join(data, 'gone') }), null, 'a file under that other folder');
+  // A store whose Data volume path is the store itself, the temporary home folder, is still reached through it.
+  if (existsSync(`/System/Volumes/Data${at.keys}`)) assert.match(call('LS', { path: `/System/Volumes/Data${at.keys}` })?.reason ?? '', /hides/u, 'a store by its own Data volume path');
 });

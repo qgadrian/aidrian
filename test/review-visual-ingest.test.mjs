@@ -139,6 +139,13 @@ test('captureVisual captures over an ingest-only manifest and carries its ingest
   assert.equal(stopped.reason, `the capture ran past its 15-minute limit and was stopped at screen 1 of 1, ${key}${logged}${note}`);
   assert.equal(readFileSync(log, 'utf8'), `capturing 1 of 1: ${key}\nprotocol: cookie=secret\n`);
   assert.equal(statSync(log).mode & 0o777, 0o600, 'owner-only');
+  // A log the cleanup left in place, as one another attempt made after it: the failure is still told, the file keeps
+  // its text, and the reason claims no saved output.
+  const occupied = await run({ baseUrl: 'http://localhost:3000', spawn: () => {
+    writeFileSync(log, 'kept');
+    return { status: 1, stdout: '', stderr: 'boom\n' };
+  } });
+  assert.deepEqual([occupied.status, occupied.reason, readFileSync(log, 'utf8')], ['failed', `boom${note}`, 'kept']);
   const forged = await run({ baseUrl: 'http://localhost:3000', spawn: () => ({ status: 1, stdout: '', stderr: 'capturing 1 of 1: https://x.example/?t=1\n', error: timeout }) });
   assert.equal(forged.reason, `the capture ran past its 15-minute limit and was stopped${logged}${note}`, 'a key that is no screen\'s is not shown');
   const mixed = await run({ baseUrl: 'http://localhost:3000', spawn: () => ({ status: 1, stdout: '', stderr: `capturing 1 of 1: ${key}\ncapturing 2 of 2: nope\n`, error: timeout }) });

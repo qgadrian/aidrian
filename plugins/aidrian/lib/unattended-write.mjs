@@ -445,7 +445,8 @@ function limitedPlaces(places, { cwd, mark, project, config, base, home }, refus
 }
 
 // Each state folder's HAND_FOLDERS that is no link, as `specific`; its reviews folder, refused but for a manifest or
-// a capture (reviewAllows); its dispatch folder, refused but for a handoff file in it (dispatchAllows); and the dispatch
+// a capture (reviewAllows); its dispatch folder, refused but for a handoff file in it (dispatchAllows); its audits
+// folder, refused but for a report, sidecar, or evidence (auditAllows), outside an issue session; and the dispatch
 // log beside them, refused. Returns the state folders, as stateFolders gives them.
 function stateWork(places, { project, config, base, home }, refuse) {
   const states = [...stateFolders(project, config, stateOptions(base, home))];
@@ -458,6 +459,8 @@ function stateWork(places, { project, config, base, home }, refuse) {
     else {
       for (const name of HAND_FOLDERS.filter(plain)) places.specific.push(foldCase(path.join(root, name)));
       refuse(path.join(root, 'dispatch'), 'the dispatch records, where a session writes only its handoff file', true, dispatchAllows);
+      refuse(path.join(root, 'audits'), 'the persona audits\' triage record, triage.json, which only `aidrian audits` and the Human write', true, auditAllows);
+      if (plain('audits')) places.reviews.push(foldCase(path.join(root, 'audits')));
     }
     refuse(path.join(root, 'reviews'), 'the review and attest records, which only the review commands write', true, reviewAllows);
     if (plain('reviews')) places.reviews.push(foldCase(path.join(root, 'reviews')));
@@ -491,6 +494,13 @@ function reviewAllows(target, folder) {
   const parts = path.relative(folder, target).split(path.sep).filter(Boolean);
   if (parts.length === 1) return isManifestPath(target);
   return parts.length >= 2 && /^pr-\d+$/u.test(parts[0]) && parts[1] === 'captures';
+}
+
+// Whether `target` inside the audits folder `folder` is one the persona-audit skill writes by hand: a report, its
+// sidecar, or its evidence, anything but the triage record (audits.mjs), its lock, and a temporary copy of either.
+function auditAllows(target, folder) {
+  const parts = path.relative(folder, target).split(path.sep).filter(Boolean);
+  return parts.length > 0 && !/^\.?triage\.json/iu.test(parts[0]);
 }
 
 // Whether `target` inside the dispatch folder `folder` is a handoff file a subagent writes by hand: a `.json` file in
@@ -692,7 +702,7 @@ function pushRoots(places) {
 function sayer(input, human, opaque, mark) {
   const verb = opaque ? 'may change' : 'writes';
   let suffix = '';
-  let list = 'its own worktree or its attempt\'s folders, a task worktree `aidrian worktree new` made in it, the state folders it writes by hand (plans, tmp, handoffs, quorum, and a review manifest or capture), and the temporary folder';
+  let list = 'its own worktree or its attempt\'s folders, a task worktree `aidrian worktree new` made in it, the state folders it writes by hand (plans, tmp, handoffs, quorum, an audit report or sidecar, and a review manifest or capture), and the temporary folder';
   const deny = (match, why) => ({ match, reason: projectRuleReason(input, `${why}${suffix}`, human, 'to make that change, or where the work should go instead', { mark }) });
   return {
     verb,

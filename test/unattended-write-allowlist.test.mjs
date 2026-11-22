@@ -150,6 +150,9 @@ test('a session no Human attends writes its own worktree, its attempt\'s work an
     ...['plans', 'tmp', 'handoffs', 'quorum'].map((name) => path.join(fx.state, name, 'x.md')),
     path.join(fx.state, 'dispatch', 'feat-x-S1-explorer.json'),
     path.join(fx.state, 'quorum', 'product', 'ledger.md'),
+    path.join(fx.state, 'audits', 'owner-2026-11-22.md'),
+    path.join(fx.state, 'audits', 'owner-2026-11-22.json'),
+    path.join(fx.state, 'audits', 'evidence', 'home.png'),
     path.join(fx.state, 'reviews', 'pr-7.json'),
     path.join(fx.state, 'reviews', '.pr-7.json.tmp'),
     path.join(fx.state, 'reviews', 'pr-7', 'captures', 'abc', 'home.png'),
@@ -166,6 +169,11 @@ test('a session no Human attends writes its own worktree, its attempt\'s work an
   }
   assert.equal(fx.ask(bash('cp notes.md .')), null, 'a copy into its worktree');
   assert.equal(fx.ask(bash(`rm -f ${fx.worktree}/*.log`)), null, 'a glob in its worktree');
+  // The audits' triage record, the Human's decisions, stays refused, as does a lock or a temporary copy of it.
+  for (const name of ['triage.json', 'triage.json.lock', '.triage.json.tmp']) {
+    const file = path.join(fx.state, 'audits', name);
+    for (const input of [write(file), bash(`echo x > ${file}`)]) assert.match(fx.ask(input)?.reason ?? '', /triage record/u, `${input.tool_name} ${name}`);
+  }
   // Its attempt's git folder and its work folder's pointer stay refused.
   for (const [file, reason] of [['git/config', /the attempt clone's git config/u], ['git/hooks/pre-push', /the attempt clone's git hooks/u], ['git/x.json', /the attempt clone's git folder/u], ['work/.git', /the attempt clone's pointer/u]]) {
     assert.match(fx.ask(write(path.join(fx.attempt, file)), { own })?.reason ?? '', reason, file);

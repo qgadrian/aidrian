@@ -364,30 +364,42 @@ test('the stop hook replaces a stale handoff file, a link, but keeps one this ru
   assert.deepEqual(readdirSync(dispatch).filter((name) => name.endsWith('.tmp')), [], 'no temporary file left');
 });
 
-// Two runs of one role on one branch, each briefed with its own file: the later brief names the earlier run's file to read.
-// That file was there before the later run began, so it is never this run's to write, though its name ends with the role.
+// Runs of one role on one branch, each briefed with its own file on a `Handoff file:` line: a later brief names the earlier
+// runs' files to read. Only the marked file is the run's to write, whether the files to read are there or not, and a
+// retried run's stale file of the same name is replaced. A brief with no marker that names several such files owes none.
 test('the stop hook writes only the handoff file its own run was briefed with, never an earlier run\'s of the same role', async (t) => {
   const { base, dir, state, log, hook } = project(t);
   const dispatch = path.join(state(), 'dispatch');
-  const gate = path.join(dispatch, 'ada-feat-12-gate-product-manager.json');
-  const decide = path.join(dispatch, 'ada-feat-12-decide-product-manager.json');
-  const signoff = path.join(dispatch, 'ada-feat-12-signoff-product-manager.json');
-  const run = (id, brief, message) => {
+  const file = (step) => path.join(dispatch, `ada-feat-12-${step}-product-manager.json`);
+  const [gate, decide, signoff] = ['gate', 'decide', 'signoff'].map(file);
+  const run = (id, brief, decision) => {
     const transcript = path.join(base, `agent-${id}.jsonl`);
     writeFileSync(transcript, JSON.stringify({ type: 'user', timestamp: new Date().toISOString(), message: { role: 'user', content: brief } }));
     return hook('hook-subagent-stop.mjs', {
-      cwd: dir, agent_id: id, agent_type: 'aidrian:product-manager', agent_transcript_path: transcript, last_assistant_message: message, stop_hook_active: false,
+      cwd: dir, agent_id: id, agent_type: 'aidrian:product-manager', agent_transcript_path: transcript, last_assistant_message: JSON.stringify({ status: 'done', decision }), stop_hook_active: false,
     });
   };
-  const read = (file) => JSON.parse(readFileSync(file, 'utf8'));
-  assert.equal((await run('g1', `Gate the plan. Write your machine handoff to ${gate}.`, '{"status":"done","decision":"gate"}')).status, 0);
+  const read = (target) => JSON.parse(readFileSync(target, 'utf8')).decision;
+  const signoffBrief = `Sign off. Read the gate at ${gate} and the decision at ${decide}.\nHandoff file: ${signoff}`;
+
+  // The gate's input is not there yet: the sign-off is still written only under its own name.
+  assert.equal((await run('s0', signoffBrief, 'early signoff')).status, 0);
+  assert.equal(read(signoff), 'early signoff');
+  assert.throws(() => readFileSync(gate), /ENOENT/u, 'a missing file to read is never written');
+
+  assert.equal((await run('g1', `Gate the plan.\nHandoff file: ${gate}`, 'gate')).status, 0);
+  assert.equal((await run('d1', `Read the gate at ${gate}.\n- Handoff file: \`${decide}\``, 'decide')).status, 0);
   await sleep(30);
-  assert.equal((await run('d1', `Read the gate at ${gate}. Write your machine handoff to ${decide}.`, '{"status":"done","decision":"decide"}')).status, 0);
-  await sleep(30);
-  const brief = `Sign off. Read the gate at ${gate} and the decision at ${decide}. Write your machine handoff to ${signoff}.`;
-  assert.equal((await run('s1', brief, '{"status":"done","decision":"signoff"}')).status, 0);
-  assert.deepEqual([read(gate), read(decide), read(signoff)].map((handoff) => handoff.decision), ['gate', 'decide', 'signoff']);
-  assert.deepEqual(log().map((row) => [row.agent_id, row.handoffs_written]), [['g1', 1], ['d1', 1], ['s1', 1]]);
+  // A retried sign-off of the same name: its stale file is replaced, and the files it reads are kept.
+  assert.equal((await run('s1', signoffBrief, 'signoff')).status, 0);
+  assert.deepEqual([read(gate), read(decide), read(signoff)], ['gate', 'decide', 'signoff']);
+
+  // No marker and two files of the role: the hook cannot tell the output, so it writes neither.
+  const wording = file('wording');
+  assert.equal((await run('w1', `Read the gate at ${gate}. Write your machine handoff to ${wording}.`, 'wording')).status, 0);
+  assert.equal(read(gate), 'gate');
+  assert.throws(() => readFileSync(wording), /ENOENT/u);
+  assert.deepEqual(log().map((row) => [row.agent_id, row.handoffs_written]), [['s0', 1], ['g1', 1], ['d1', 1], ['s1', 1], ['w1', 0]]);
 });
 
 test('claimedPaths leaves out a path shortened with an ellipsis: its full form cannot be checked', () => {

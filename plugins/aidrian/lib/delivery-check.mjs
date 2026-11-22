@@ -12,8 +12,9 @@
 // and the report is the handoff either way. The agent is sent back for it only when it has no report to write.
 // A handoff file counts as written only when it is a regular file changed at or after the subagent's transcript began,
 // by its first entry's timestamp: one an earlier dispatch left, a link, or a folder is stale, owed, and replaced. A
-// transcript with no timestamp keeps the file's existence as the test. A brief that names several files of the agent's
-// role, as a sign-off brief names an earlier run's handoff to read, owes none that was there before the run began.
+// transcript with no timestamp keeps the file's existence as the test. The brief's `Handoff file: <path>` lines name the
+// run's output, so a sign-off brief that names an earlier run's handoff of the same role to read never owes it; a brief
+// with no such line owes its one file of the agent's role, and none when it names several.
 // While one of its own background tasks runs and a later stop is sure, the file is not due yet, and owes nothing.
 // docs/hooks.md#delivery-check.
 
@@ -79,6 +80,7 @@ function handedIn(file, since) {
 // The handoff files a subagent's brief asks it to write that it has not written (handedIn): each absolute
 // `<state>/dispatch/<name>.json` in the transcript's first prompt whose `<name>` ends with the agent's own name, such as `feat-12-S1-code-reviewer.json`
 // or `S1-code-reviewer-result.json` for `aidrian:code-reviewer`. A path named for another agent, such as a handoff the brief tells it to read, is not its own.
+// With `Handoff file:` lines, only the paths on them count; without, only a brief that names one such file owes it.
 // No brief, no agent name, or no state folder: none.
 export function unwrittenHandoffs(input, project) {
   const agent = typeof input.agent_type === 'string' ? input.agent_type.split(':').pop() : '';
@@ -91,27 +93,22 @@ export function unwrittenHandoffs(input, project) {
   } catch {
     return [];
   }
-  const named = [...brief.matchAll(new RegExp(`${escapeRegExp(folder)}/([\\w.@+-]+\\.json)`, 'gu'))];
+  const pathIn = (text) => [...text.matchAll(new RegExp(`${escapeRegExp(folder)}/([\\w.@+-]+\\.json)`, 'gu'))];
   // The agent's name as the file name's last word, or the one before a last word such as `result`: a branch that holds
   // the name, as in `fix-code-reviewer-S1-backend-developer.json`, does not make the file this agent's.
   const word = new RegExp(`(?:^|[-_.])${escapeRegExp(agent)}(?:[-_.]\\w+)?\\.json$`, 'u');
-  const own = [...new Set(named.filter((match) => word.test(match[1])).map((match) => match[0]))];
+  const ownIn = (text) => [...new Set(pathIn(text).filter((match) => word.test(match[1])).map((match) => match[0]))];
+  // The brief's `Handoff file:` lines name the run's output; any other file of its role there is one to read.
+  // With no such line, a brief that names one file of its role owes it, and one that names several owes none.
+  const marked = brief.split('\n').filter((line) => HANDOFF_MARKER.test(line));
+  const own = marked.length ? ownIn(marked.join('\n')) : ownIn(brief);
+  const briefed = marked.length || own.length === 1 ? own : [];
   const since = handoffSince(input);
-  // A brief that names several files of this role, as a sign-off brief names the gate's handoff to read, owes only those
-  // that were not there before the run began: one that was is an earlier run's handoff, never replaced from this report.
-  const briefed = own.length > 1 ? own.filter((file) => !leftBefore(file, since)) : own;
   return briefed.filter((file) => !handedIn(file, since));
 }
 
-// Whether `file` was there before the run began at `since`, and has not changed since: false without `since`.
-function leftBefore(file, since) {
-  if (since === null) return false;
-  try {
-    return lstatSync(file).ctimeMs < since;
-  } catch {
-    return false;
-  }
-}
+// A brief line that names the run's handoff file: `Handoff file: <path>`, in any case, after an optional list marker.
+const HANDOFF_MARKER = /^\s*(?:[-*]\s+)?(?:\*\*)?handoff file:/iu;
 
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 

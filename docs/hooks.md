@@ -1636,10 +1636,13 @@ in the meantime, such as one its dispatcher wrote, is kept. A file counts as wri
 regular file changed at or after the subagent's transcript began, by the timestamp of its first entry: one an earlier
 dispatch of the same name left, a link, or a folder is stale and owed, and the hook replaces it with the report through
 a new temporary file renamed over it, so a link is replaced, never followed, and the file it named stays as it was; a
-folder stays owed. A brief that names more than one file of the agent's role, such as a sign-off brief that names the
-gate run's `<branch>-gate-product-manager.json` to read beside its own `<branch>-signoff-product-manager.json`, owes only
-the files that were not there before its run began: one that was is an earlier run's handoff, and the hook never writes
-over it. A transcript with no timestamp keeps the older test, that the file is there. So a brief that names the file for an agent with no file tool
+folder stays owed. A brief names the run's own file on a line that starts with `Handoff file:`, such as
+`Handoff file: <state>/dispatch/<branch>-signoff-product-manager.json`; with such a line, only the files it names are
+owed, and another file of the agent's role the brief names, such as the gate run's `<branch>-gate-product-manager.json`
+to read, is never written, whether it is there or not. A brief with no such line owes its one file of the agent's role,
+and none when it names several, since it cannot say which is the output.
+A transcript with no timestamp keeps the older test, that the file is there.
+So a brief that names the file for an agent with no file tool
 or shell, or makes it optional, costs no send-back, and the report also no longer counts as naming a missing file.
 The hook sends the agent back once, on the first stop of its turn, to write the file only when it has no report to write.
 While a background task of its own still runs and a later stop is sure to come, that stop is no end of its work, so the

@@ -49,6 +49,7 @@ Work anchored to a plan with no issue belongs to the `plan-implement` skill, whi
 - **Two delivery legs.** An agent with a file tool or a shell gets an absolute handoff path,
   `<state>/dispatch/<branch>-<slice>-<agent>.json`, where `<state>` is the folder `aidrian state` prints
   and each `/` in the branch becomes `-`.
+  The brief names it on its own line, `Handoff file: <path>`, so the stop hook never writes a handoff the brief names to read.
   It writes its machine handoff there first, then sends a short summary as its last message.
   The file is the record: a handback can reach another session, or none once the dispatcher has ended,
   and an idle notice that replays a result already read is stale.

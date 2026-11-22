@@ -34,6 +34,8 @@ named and go on from that output as step 2 says.
      `result <key> environment -> ...` halted the run on that session's environment; step 4, then step 1's `halted`.
    - `recheck lifted the halt: <cause>; ok <checks>`: the preflight's checks of that halt passed, and the run goes on;
      step 4, then step 1. `recheck kept the halt: <cause>`, then its blocker lines: step 4, then step 1's `halted`.
+     `recheck waits: <cause>; ...`: the forge could not answer now, and `wait` re-checks it once the time it names has
+     passed; step 3 again.
    - `limit <key> <kind> until <time> -> open`, or `limit <key> <kind> halt -> open`: the issue's attempt ended on a
      usage or rate limit; step 1, whose `next` says whether the run is paused or halted.
    - `paused <key> ...`: that issue's session waits out a limit and goes on by itself; step 3 again.

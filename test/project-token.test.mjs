@@ -248,14 +248,17 @@ test('preflight says ok access with a note naming the token\'s source, and a blo
   assert.match(none.find((line) => line.startsWith('blocker access:')) ?? '', /^blocker access: no source gives a forge token for github\.com, of the forge CLI's login \(the login: not logged in\)/u);
 });
 
+// What the read probe prints for one answer of GitHub (github-token.mjs apiStatus), with `more` over a 200 that parsed.
+const probed = (more = {}) => ({ status: 200, parsed: true, number: null, branch: null, data: true, errors: [], said: '', remaining: '4000', retry: null, ...more });
+
 // The GitHub adapter's reads with a fine-grained token that may push but holds no Issues permission, as the live run's
 // token: GitHub answers the reactions read 403, "Resource not accessible by personal access token".
 const noIssues = (asked = []) => (repo, { host, token }) => tokenReadProblems(repo, {
   host, token, probe: (route, options) => {
     asked.push([route, options.token]);
-    if (route === `repos/${repo}`) return { status: 200, body: { default_branch: 'main' } };
-    if (route.includes('/pulls')) return { status: 200, body: [{ number: 12 }] };
-    return { status: route.includes('/reactions') ? 403 : 200, body: [] };
+    if (route === `repos/${repo}`) return probed({ branch: 'main' });
+    if (route.includes('/pulls')) return probed({ number: 12 });
+    return route.includes('/reactions') ? probed({ status: 403, said: 'Resource not accessible by personal access token' }) : probed();
   },
 });
 
@@ -271,27 +274,56 @@ test('preflight blocks on a token whose reactions read the forge answers 403, na
   ], pre.out.join('\n'));
   assert.ok(asked.every(([, token]) => token === FIXTURE_TOKEN), 'every read is the issue session\'s token');
   assert.ok(asked.some(([route]) => route === 'repos/acme/widgets/issues/12/reactions?per_page=1'), 'on the newest pull request');
+  assert.ok(asked.some(([route]) => route === 'graphql'), 'and the check rollup gh pr checks reads');
   const halted = fx.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(halted.exitCode, 1, halted.out.join('\n'));
   assert.match(halted.out[0], /^halt the forge token from the forge CLI's login for github\.com cannot read the reactions on a pull request/u);
   assert.deepEqual(fx.claude.starts(), [], 'no session started');
+  // A rate limit says nothing of the token: a retry line, no permission, and a start that may pass when tried again.
+  fx.forge.tokenReads = () => ({ missing: [], unverified: [], limited: { why: 'the forge rate-limited the pulls read (403: API rate limit exceeded); try again in 60 s', after: 60 } });
+  const limited = fx.cmd(['preflight', 'launch']);
+  assert.deepEqual(limited.out.filter((line) => line.includes('token-reads')), ['retry token-reads: the forge rate-limited the pulls read (403: API rate limit exceeded); try again in 60 s, for github.com/acme/widgets; start again'], limited.out.join('\n'));
+  assert.equal(limited.exitCode, 1);
+  const later = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.deepEqual([later.exitCode, later.out.find((line) => line.startsWith('retry: '))?.slice(0, 40)], [75, 'retry: the forge rate-limited the pulls ']);
 });
 
-test('the read probe asks the REST API with the token in the environment, and each read names its permission', () => {
+test('the read probe asks the REST API or GraphQL with the token in the environment, and passes back only the fields a read needs', () => {
   const calls = [];
-  const exec = (program, args, options) => (calls.push({ program, args, options }), '403\n{"message":"Resource not accessible by personal access token"}');
-  assert.deepEqual(apiStatus('repos/acme/widgets/issues/12/reactions', { host: 'github.com', token: 'github_pat_RO0123456789', exec }), { status: 403, body: { message: 'Resource not accessible by personal access token' } });
+  const line = JSON.stringify(probed({ status: 403, parsed: true, said: 'Resource not accessible by personal access token' }));
+  const exec = (program, args, options) => (calls.push({ program, args, options }), line);
+  assert.deepEqual(apiStatus('repos/acme/widgets/issues/12/reactions', { host: 'github.com', token: 'github_pat_RO0123456789', exec }), JSON.parse(line));
   apiStatus('repos/acme/widgets', { host: 'ghe.example.com', token: 'ghe_token0123456789', exec });
+  apiStatus('graphql', { host: 'ghe.example.com', token: 'ghe_token0123456789', query: '{"query":"{viewer{login}}"}', exec });
   assert.deepEqual(calls[0].args.slice(2), ['https://api.github.com/repos/acme/widgets/issues/12/reactions', 'GH_TOKEN']);
   assert.equal(calls[0].options.env.GH_TOKEN, 'github_pat_RO0123456789');
   assert.deepEqual(calls[1].args.slice(2), ['https://ghe.example.com/api/v3/repos/acme/widgets', 'GH_ENTERPRISE_TOKEN']);
+  assert.deepEqual(calls[2].args.slice(2), ['https://ghe.example.com/api/graphql', 'GH_ENTERPRISE_TOKEN', '{"query":"{viewer{login}}"}']);
   assert.ok(calls.every((call) => !call.args.join(' ').includes('0123456789')), 'never an argument');
-  assert.deepEqual(Object.values(TOKEN_READS).map((each) => each.permission), ['Metadata: Read-only, with the repository selected under Repository access', 'Pull requests: Read and write', 'Issues: Read-only', 'Commit statuses: Read-only', 'Actions: Read and write']);
-  // A token that cannot read the repository is one problem; an answer that says neither throws.
-  const answer = (map) => (route) => ({ status: map(route), body: route.endsWith('widgets') ? { default_branch: 'main' } : [] });
-  assert.deepEqual(tokenReadProblems('acme/widgets', { host: 'github.com', token: 't', probe: answer(() => 404) }).map((each) => each.read), ['repository']);
-  assert.deepEqual(tokenReadProblems('acme/widgets', { host: 'github.com', token: 't', probe: answer((route) => (/status$|runs/u.test(route) ? 403 : 200)) }).map((each) => each.read), ['statuses', 'actions']);
-  assert.throws(() => tokenReadProblems('acme/widgets', { host: 'github.com', token: 't', probe: answer(() => 500) }), /the forge answered the repository read with 500/u);
+  assert.throws(() => apiStatus('repos/acme/widgets', { host: 'github.com', token: 't', exec: () => '200\n[{"number":' }), /JSON/u, 'a cut answer is no answer');
+  assert.deepEqual(Object.values(TOKEN_READS).map((each) => each.permission), ['Metadata: Read-only, with the repository selected under Repository access', 'Pull requests: Read and write', 'Issues: Read-only', 'Commit statuses: Read-only', 'Actions: Read and write', 'Commit statuses: Read-only and Actions: Read and write']);
+});
+
+test('the token reads: refusals name their permission, the check rollup with no pull request is not verified, and an answer that says neither throws', () => {
+  const reads = (answer) => tokenReadProblems('acme/widgets', { host: 'github.com', token: 't', probe: (route, options) => answer(route, options) ?? probed(route.endsWith('widgets') ? { branch: 'main' } : {}) });
+  assert.deepEqual(reads(() => probed({ status: 404 })).missing.map((each) => each.read), ['repository'], 'a token that cannot read the repository is one problem');
+  const statuses = reads((route) => (/status$|runs/u.test(route) ? probed({ status: 403 }) : null));
+  assert.deepEqual([statuses.missing.map((each) => each.read), statuses.unverified.map((each) => each.read)], [['statuses', 'actions'], ['rollup']], 'no pull request: the rollup is not verified');
+  const rollup = reads((route, options) => (route.includes('/pulls') ? probed({ number: 7 }) : options.query ? probed({ data: false, errors: ['FORBIDDEN'], said: 'Resource not accessible by personal access token' }) : null));
+  assert.deepEqual(rollup.missing.map((each) => [each.read, each.permission]), [['rollup', 'Commit statuses: Read-only and Actions: Read and write']]);
+  assert.throws(() => reads(() => probed({ status: 500 })), /the forge answered the repository read with 500/u);
+  assert.throws(() => reads((route) => (route.includes('/pulls') ? probed({ parsed: false }) : null)), /the forge answered the pulls read with a body that does not parse/u, 'an unparseable 200 is no pass');
+  assert.throws(() => reads((route, options) => (route.includes('/pulls') ? probed({ number: 7 }) : options.query ? probed({ data: false, errors: ['INTERNAL'] }) : null)), /the forge answered the rollup read with no data/u);
+});
+
+test('a 403 or 429 GitHub marks as a rate limit stops the reads, names no permission, and says how long to wait', () => {
+  const reads = (limited) => tokenReadProblems('acme/widgets', { host: 'github.com', token: 't', probe: (route) => (route.includes('/pulls') ? probed(limited) : probed(route.endsWith('widgets') ? { branch: 'main' } : {})) });
+  for (const [limited, after] of [[{ status: 403, remaining: '0', said: 'API rate limit exceeded for user' }, 60], [{ status: 429, retry: '30' }, 30], [{ status: 403, said: 'You have exceeded a secondary rate limit' }, 60]]) {
+    const answer = reads(limited);
+    assert.deepEqual([answer.missing, answer.unverified, answer.limited?.after], [[], [], after], JSON.stringify(limited));
+    assert.match(answer.limited.why, /^the forge rate-limited the pulls read \((403|429)/u);
+  }
+  assert.deepEqual(reads({ status: 403, said: 'Resource not accessible by personal access token' }).missing.map((each) => each.read), ['pulls'], 'a plain 403 is a refusal');
 });
 
 test('the SessionStart hook hands GH_TOKEN, from the source the start checked, to the sandboxed commands of the session the start launched alone', (t) => {

@@ -170,11 +170,16 @@ A fine-grained token's repository permissions, by the names GitHub's token page 
 | Metadata | Read-only | comes with any of the above |
 
 Leave Workflows off, so the token cannot push a change to a workflow file. GitHub offers a fine-grained token no
-Checks permission. The preflight and every start check the reads with the token the issue session gets, each a GET
-that writes nothing (`lib/forges/github-token.mjs`): the repository, its pull requests, the reactions on the newest
-one (or the issues list, with no pull request), the default branch's commit statuses, and the workflow runs. A read
-the forge answers 401, 403, or 404 is a `blocker token-reads:` line naming the permission to add, and halts a start;
-the writes are not probed, since a probe writes nothing.
+Checks permission. The preflight and every start check the reads with the token the issue session gets, each one that
+writes nothing (`lib/forges/github-token.mjs`): the repository, its pull requests, the reactions on the newest one (or
+the issues list, with no pull request), the default branch's commit statuses, the workflow runs, and the GraphQL check
+rollup of the newest pull request, the read `gh pr checks` makes. A read the forge answers 401, 403, or 404, or a
+GraphQL `FORBIDDEN`, is a `blocker token-reads:` line naming the permission to add, and halts a start. With no pull
+request yet, the rollup is a `note token-reads:` line: the first pull request proves it. A 403 or 429 GitHub marks as a
+rate limit (no request left, a `Retry-After`, or a message naming a rate limit), and a 200 whose body does not parse,
+say nothing of the token: a `retry token-reads:` line, and a start that exits 75 to be tried again. Each probe parses
+the answer in its own process and hands back only the fields the read needs. The writes are not probed, since a probe
+writes nothing.
 
 ## The decision label
 

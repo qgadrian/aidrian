@@ -75,77 +75,116 @@ export function tokenMayPush(repo, { host, token, probe = receivePackStatus }) {
 }
 
 // The REST API root of `host`: api.github.com for github.com, api.<tenant> for a ghe.com tenancy, and /api/v3 of a
-// GitHub Enterprise Server host.
+// GitHub Enterprise Server host; and its GraphQL endpoint, which a Server host serves at /api/graphql.
 export function apiRoot(host) {
   const named = String(host ?? 'github.com').toLowerCase();
   if (named === 'github.com') return 'https://api.github.com';
   return named.endsWith('.ghe.com') ? `https://api.${named}` : `https://${named}/api/v3`;
 }
+export const graphqlUrl = (host) => `${apiRoot(host).replace(/\/api\/v3$/u, '/api')}/graphql`;
 
-// The read probe, run as the push probe is: a GET of the URL its first argument names, with the token in the variable
-// its second argument names as a bearer token, printing the HTTP status, a newline, and at most 64 KiB of the body.
+// The read probe, run as the push probe is: a GET of the URL its first argument names, or with a third argument a POST
+// of that GraphQL body, with the token in the variable its second argument names as a bearer token. It parses the whole
+// answer in its own process and prints one JSON line of the fields a read needs: the status, whether the body parsed,
+// the first `number` and the `default_branch` it holds, whether it holds GraphQL `data`, the GraphQL error types, the
+// first message, and the rate-limit headers. No body crosses the pipe, so none is cut short.
 const READ_PROBE = [
-  'const [url, name] = process.argv.slice(1);',
-  'fetch(url, { headers: { Authorization: `Bearer ${process.env[name] ?? ""}`, Accept: "application/vnd.github+json" }, redirect: "manual" })',
-  '  .then(async (answer) => process.stdout.write(`${answer.status}\\n${(await answer.text()).slice(0, 65536)}`), (error) => { process.stderr.write(String(error?.message ?? error)); process.exit(2); });',
+  'const [url, name, query] = process.argv.slice(1);',
+  'const headers = { Authorization: `Bearer ${process.env[name] ?? ""}`, Accept: "application/vnd.github+json" };',
+  'const init = query ? { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: query } : { headers };',
+  'fetch(url, { ...init, redirect: "manual" }).then(async (answer) => {',
+  '  let body; try { body = JSON.parse(await answer.text()); } catch { body = undefined; }',
+  '  const first = Array.isArray(body) ? body[0] : body;',
+  '  const errors = Array.isArray(body?.errors) ? body.errors : [];',
+  '  process.stdout.write(JSON.stringify({ status: answer.status, parsed: body !== undefined && body !== null, number: Number.isSafeInteger(first?.number) ? first.number : null,',
+  '    branch: typeof body?.default_branch === "string" ? body.default_branch : null, data: Boolean(body?.data), errors: errors.slice(0, 5).map((each) => String(each?.type ?? "")),',
+  '    said: String(body?.message ?? errors[0]?.message ?? "").slice(0, 200), remaining: answer.headers.get("x-ratelimit-remaining"), retry: answer.headers.get("retry-after") }));',
+  '}, (error) => { process.stderr.write(String(error?.message ?? error)); process.exit(2); });',
 ].join('\n');
 
-// What GitHub answers a GET of the REST route `route` of `host` with, for `token`: { status, body }, the body parsed, or
-// null when it is not JSON. The token reaches the probe through its environment, never an argument.
-export function apiStatus(route, { host, token, exec = execFileSync }) {
+// What GitHub answers the REST route `route` of `host`, or with `query` its GraphQL endpoint, for `token`: the probe's
+// fields, { status, parsed, number, branch, data, errors, said, remaining, retry }. The token reaches the probe through
+// its environment, never an argument. An answer that is not the probe's one line throws.
+export function apiStatus(route, { host, token, query = null, exec = execFileSync }) {
   const name = tokenVarFor(host);
-  const out = String(exec(process.execPath, ['-e', READ_PROBE, `${apiRoot(host)}/${route}`, name], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: PROBE_TIMEOUT_MS, env: { ...process.env, [name]: token } }));
-  const line = out.indexOf('\n');
-  let body = null;
-  try {
-    body = JSON.parse(line < 0 ? '' : out.slice(line + 1));
-  } catch {
-    body = null;
-  }
-  return { status: Number(line < 0 ? out.trim() : out.slice(0, line)), body };
+  const url = query ? graphqlUrl(host) : `${apiRoot(host)}/${route}`;
+  const out = String(exec(process.execPath, ['-e', READ_PROBE, url, name, ...(query ? [query] : [])], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: PROBE_TIMEOUT_MS, env: { ...process.env, [name]: token } }));
+  const read = JSON.parse(out);
+  if (typeof read !== 'object' || read === null || !Number.isInteger(read.status)) throw new Error('the read probe gave no status');
+  return read;
 }
 
 // The reads an issue session's token makes, beyond the push, each with what it is for and the fine-grained token
 // permission that grants it, as GitHub's "Permissions required for fine-grained personal access tokens" names them, at
 // the level the session needs (it also writes pull requests, and reruns failed jobs). GitHub offers fine-grained tokens
-// no Checks permission: `gh pr checks` reads a commit's statuses and its workflow runs.
+// no Checks permission: `gh pr checks` reads a pull request's check rollup in GraphQL, its statuses and its runs.
 export const TOKEN_READS = Object.freeze({
   repository: { what: 'read the repository', permission: 'Metadata: Read-only, with the repository selected under Repository access' },
   pulls: { what: 'read its pull requests, as the review step and the driver do', permission: 'Pull requests: Read and write' },
   reactions: { what: 'read the reactions on a pull request, as `aidrian pr review --with-bot` does', permission: 'Issues: Read-only' },
   statuses: { what: 'read a commit\'s statuses, as `gh pr checks` does', permission: 'Commit statuses: Read-only' },
   actions: { what: 'read its workflow runs, as `gh pr checks` and the checks read do', permission: 'Actions: Read and write' },
+  rollup: { what: 'read a pull request\'s check rollup, the GraphQL read `gh pr checks` makes', permission: 'Commit statuses: Read-only and Actions: Read and write' },
 });
 
-// The reads of TOKEN_READS that `token` may not make on `repo` of `host`, by GETs that write nothing: each
-// { read, what, permission, why }, in the order asked, none when every read passed. A 401, 403, or 404 is a read the
-// token may not make; any other answer but a 2xx throws, since it says nothing either way. The reactions are read on the
-// newest pull request, or the newest issue with none; a repository with neither proves the Issues read by that list.
-// `probe` is apiStatus's shape, the test seam.
+// The GraphQL read `gh pr checks` makes, cut to one field: the state of the check rollup of a pull request's last commit.
+const ROLLUP = 'query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}';
+// How long a rate limit holds a read off when GitHub names no time, and the longest it holds one off, in seconds.
+const LIMIT_WAIT_S = 60;
+const LIMIT_CAP_S = 3600;
+
+// The seconds GitHub's answer `read` asks a client to wait, when it is a rate limit, primary or secondary, which says
+// nothing of the token's permissions: a 403 or 429 with a Retry-After, no request left, or a message that names a rate
+// limit. Null for any other answer.
+function limitOf(read) {
+  if (read.status !== 403 && read.status !== 429) return null;
+  const retry = typeof read.retry === 'string' && /^\d+$/u.test(read.retry.trim()) ? Number(read.retry) : null;
+  if (retry !== null) return Math.min(Math.max(retry, 1), LIMIT_CAP_S);
+  return read.remaining === '0' || /rate limit/iu.test(read.said ?? '') ? LIMIT_WAIT_S : null;
+}
+
+// The reads of TOKEN_READS that `token` may not make on `repo` of `host`, by reads that write nothing:
+// { missing, unverified, limited }. `missing` holds each read refused, { read, what, permission, why }, in the order
+// asked; `unverified` each read that could not be made here, in the same shape, as the check rollup of a repository with
+// no pull request yet; `limited`, when GitHub rate-limited a read, { why, after } with the seconds to wait, and the reads
+// stop there, since that answer says nothing of the token. A 401, 403, or 404, and a GraphQL answer whose errors say
+// FORBIDDEN, is a read refused; a 2xx whose body does not parse, a GraphQL answer with no data, and any other answer
+// throw, since they say nothing either way. The reactions are read on the newest pull request, or the newest issue with
+// none; a repository with neither proves the Issues read by that list. `probe` is apiStatus's shape, the test seam.
 export function tokenReadProblems(repo, { host, token, probe = apiStatus }) {
-  const problems = [];
-  const ask = (read, route) => {
-    const { status, body } = probe(route, { host, token });
-    if (status >= 200 && status < 300) return body ?? {};
-    if ([401, 403, 404].includes(status)) {
-      problems.push({ read, ...TOKEN_READS[read], why: `the forge answered ${status}` });
+  const answer = { missing: [], unverified: [], limited: null };
+  const refused = (read, why) => {
+    answer.missing.push({ read, ...TOKEN_READS[read], why });
+    return null;
+  };
+  const ask = (read, route, query = null) => {
+    if (answer.limited) return null;
+    const got = probe(route, { host, token, ...(query ? { query } : {}) });
+    const after = limitOf(got);
+    if (after !== null) {
+      answer.limited = { why: `the forge rate-limited the ${read} read (${got.status}${got.said ? `: ${got.said}` : ''}); try again in ${after} s`, after };
       return null;
     }
-    throw new Error(`the forge answered the ${read} read with ${Number.isFinite(status) ? status : 'no status'}`);
+    const ok = got.status >= 200 && got.status < 300;
+    if (ok && !got.parsed) throw new Error(`the forge answered the ${read} read with a body that does not parse`);
+    if (ok && query && (got.errors ?? []).includes('FORBIDDEN')) return refused(read, `the forge answered FORBIDDEN${got.said ? `: ${got.said}` : ''}`);
+    if (ok && query && !got.data) throw new Error(`the forge answered the ${read} read with no data${got.said ? ` (${got.said})` : ''}`);
+    if (ok) return got;
+    if ([401, 403, 404].includes(got.status)) return refused(read, `the forge answered ${got.status}`);
+    throw new Error(`the forge answered the ${read} read with ${Number.isFinite(got.status) ? got.status : 'no status'}`);
   };
-  const first = (list) => (Array.isArray(list) && Number.isSafeInteger(list[0]?.number) ? list[0].number : null);
+  const [owner, name] = String(repo).split('/');
   const about = ask('repository', `repos/${repo}`);
   // A token that cannot read the repository can read nothing of it.
-  if (!about) return problems;
-  let number = first(ask('pulls', `repos/${repo}/pulls?state=all&per_page=1`));
-  if (number === null) {
-    const issues = ask('reactions', `repos/${repo}/issues?state=all&per_page=1`);
-    number = issues ? first(issues) : null;
-  }
+  if (!about) return answer;
+  const pull = ask('pulls', `repos/${repo}/pulls?state=all&per_page=1`)?.number ?? null;
+  const number = pull ?? ask('reactions', `repos/${repo}/issues?state=all&per_page=1`)?.number ?? null;
   if (number !== null) ask('reactions', `repos/${repo}/issues/${number}/reactions?per_page=1`);
-  if (typeof about.default_branch === 'string' && about.default_branch !== '') ask('statuses', `repos/${repo}/commits/${encodeURIComponent(about.default_branch)}/status`);
+  if (typeof about.branch === 'string' && about.branch !== '') ask('statuses', `repos/${repo}/commits/${encodeURIComponent(about.branch)}/status`);
   ask('actions', `repos/${repo}/actions/runs?per_page=1`);
-  return problems;
+  if (pull !== null) ask('rollup', 'graphql', JSON.stringify({ query: ROLLUP, variables: { o: owner, r: name, n: pull } }));
+  else if (!answer.limited) answer.unverified.push({ read: 'rollup', ...TOKEN_READS.rollup, why: 'the repository has no pull request yet, so its first one proves it' });
+  return answer;
 }
 
 // The git credential helper that answers git with the token in gh's variable: gh's own `auth git-credential`, by the

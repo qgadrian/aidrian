@@ -535,7 +535,7 @@ test('preflight names every blocker at once, and starts nothing', (t) => {
   writeFileSync(path.join(ready.env.CLAUDE_CONFIG_DIR, 'settings.json'), JSON.stringify({ autoContinueAtUsageLimit: true }));
   writeFileSync(path.join(ready.env.CLAUDE_CONFIG_DIR, '.claude.json'), JSON.stringify({ projects: { [ready.state]: { hasTrustDialogAccepted: true } } }));
   let asked = null;
-  Object.assign(ready.forge, { reviewerSeen: (repo, login, options) => ((asked = options), { changes: 4, seen: true }), ciWorkflows: () => ['test'], refProtection: () => GUARDED, workflowSecrets: () => NO_SECRETS, tokenReads: () => [] });
+  Object.assign(ready.forge, { reviewerSeen: (repo, login, options) => ((asked = options), { changes: 4, seen: true }), ciWorkflows: () => ['test'], refProtection: () => GUARDED, workflowSecrets: () => NO_SECRETS, tokenReads: () => ({ missing: [], unverified: [], limited: null }) });
   const ok = ready.cmd(['preflight']);
   assert.equal(asked?.counts?.('You have reached your Codex usage limits for code reviews.'), false, 'a usage-limit notice shows no review');
   assert.equal(asked?.counts?.('<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn\'t find any major issues.'), true, 'a clean receipt counts');

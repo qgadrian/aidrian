@@ -1896,16 +1896,23 @@ a halt again under the ledger's lock. The attempt counts toward the issue's 3, a
 run's life, so work its clone holds that a failed push never sent can be recovered from
 `<state>/runs/RUN/attempts/ISSUE.ATTEMPT/work`.
 The driver lifts two kinds of halt by itself, once each, when the preflight's own checks of that cause pass
-(`lib/project-recheck.mjs`): an environment result's, re-checked by `commit`, `host`, `trust`, `access`, and
+(`lib/project-recheck.mjs`): an environment result's, re-checked by `commit`, `host`, `trust`, and `access` with its
 `token-reads`, and a failed proof's but the sandbox proof's, by `host`, `trust`, and `access`. When the driver's
-`wait` or `start` meets such a halt, it runs `aidrian project preflight RUN`'s checks, with no person: when none of
-those is a blocker and at least one is `ok`, it writes a `resume` row with `via: "recheck"`, the halt's `kind`, issue,
-and attempt, and the `checks` that passed, prints `recheck lifted the halt: <cause>; ok <checks>`, and goes on; else it
-writes a `recheck` row with `pass: false` and the blocker lines, prints `recheck kept the halt: <cause>` and them, and
-the halt waits on a person as above. Each halt row is re-checked once. A second halt of the same kind on the same
-issue after a self-lift is kept with no re-check, so a cause the preflight cannot see, such as a missing host tool,
-costs that issue one more attempt at most. A failed sandbox proof, a usage limit past the run's pauses, and any halt
-row an older plugin wrote wait on a person.
+`wait` or `start` meets such a halt, it runs only those checks of `aidrian project preflight RUN`, with no person, on
+the repository the run's init row pinned: first `repository`, the start gate's own check that origin still names it,
+which on a moved origin keeps the halt before any probe runs, then the state folder and the team's policy the others
+need. When no line is a blocker and at least one is `ok`, it writes a `resume` row with `via: "recheck"`, the halt's
+`kind`, issue, and attempt, and the `checks` that passed, prints `recheck lifted the halt: <cause>; ok <checks>`, and
+goes on; else it writes a `recheck` row with `pass: false` and the blocker lines, prints `recheck kept the halt:
+<cause>` and them, and the halt waits on a person as above. Either row goes in under the ledger's lock only while the
+halt stands, the run has not ended, and custody rests where the caller read it. A forge that could not answer now, as
+a rate limit or a read that does not parse, is a `retry` line: the re-check writes a `recheck` row with `retry: true`
+and the time GitHub names, 60 seconds by default, prints `recheck waits: <cause>; ...`, and a later `wait` or `start`
+re-checks it after that time; it uses up nothing. A `wait` with less than 90 seconds left
+(`RECHECK_TIMEOUT_MS`) skips the re-check, and a later one runs it; `start` has no deadline. Each halt row is
+re-checked once. A second halt of the same kind on the same issue after a self-lift is kept with no re-check, so a cause
+the preflight cannot see, such as a missing host tool, costs that issue one more attempt at most. A failed sandbox proof,
+a usage limit past the run's pauses, and any halt row an older plugin wrote wait on a person.
 When an issue's pull request does not merge, its session runs `aidrian project stop-action RUN ISSUE`, as the
 autopilot skill's phases say. Only the issue's own session runs it: the newest session of the chain of the issue's
 latest start, while the issue runs, whose mark names that run and issue; never the driver. It finds the pull request
@@ -2079,7 +2086,9 @@ sandbox that `projectRun.outsideSandbox` does not name, and, on Claude Code, a f
 from the project's keychain entry `projectRun.forgeTokenKeychain` names, the machine's default entry `aidrian-project-run`
 for a github.com run alone, or the forge CLI's login, in that order, that the forge's push probe with that token says may write the repository,
 then `token-reads`, the reads the issue session makes with that token, each a blocker line naming the fine-grained
-permission to add ([Forge token permissions](project-run-setup.md#forge-token-permissions)), with a
+permission to add, a `retry token-reads:` line when the forge rate-limited a read or answered one it could not parse,
+and a `note token-reads:` line for the check rollup of a repository with no pull request yet
+([Forge token permissions](project-run-setup.md#forge-token-permissions)), with a
 `note token:` line that names the source it used and, for any token but a fine-grained one, its kind, never the token
 itself), and whether the host carries on by itself after a usage limit
 (in Claude Code, `"autoContinueAtUsageLimit": true` in the user's own settings, the one source preflight reads, so managed policy and `--settings` go unverified; the host ignores it in a project's settings), since

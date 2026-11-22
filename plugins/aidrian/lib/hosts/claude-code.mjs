@@ -101,10 +101,12 @@ const humanPrompt = (entry) => entry !== null && typeof entry === 'object' && en
 // The real path of `file` when it is the transcript of `session` the host keeps where an unattended session cannot
 // write: `<session>.jsonl` in a folder of `.claude/projects` under the account's home folder, the one the write guard
 // protects (lib/unattended-write.mjs, userInfo), reached through no link. Null otherwise: a transcript under another
-// HOME, or under CLAUDE_CONFIG_DIR, could be the session's own writing.
-function ownTranscript(file, { session, home = userInfo().homedir } = {}) {
+// HOME, or under CLAUDE_CONFIG_DIR, could be the session's own writing. The write guard refuses that folder to every
+// unattended session whatever its places, and the home dot folders above it, so no ancestor can be swapped either.
+function ownTranscript(file, { session, home } = {}) {
   try {
     if (typeof session !== 'string' || typeof file !== 'string' || !path.isAbsolute(file)) return null;
+    home ??= userInfo().homedir;
     const root = path.join(realpathSync(home), '.claude', 'projects');
     const real = realpathSync(file);
     const fits = realpathSync(root) === root && real === path.resolve(file) && path.basename(real) === `${session}.jsonl` && path.dirname(path.dirname(real)) === root;
@@ -235,6 +237,7 @@ export default {
   humanAnswer,
   humanPrompt,
   ownTranscript,
+  transcriptFolders: (home) => [path.join(home, '.claude', 'projects')],
   sessionStart: { programs: ['claude'], starts: startsSession },
   // The subcommands of its program that write its own user or project config: MCP servers, settings, and plugins, and
   // its global options that take the next word. The agent gate hook refuses them to a session no Human attends

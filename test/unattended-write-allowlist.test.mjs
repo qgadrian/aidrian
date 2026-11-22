@@ -225,6 +225,7 @@ test('a pending or unreadable hold refuses only the entries refused wherever the
       [bash('echo x >> "$UNSET_DIR/.bashrc"'), /names a shell startup file/u],
       [bash('git config --global user.name x'), /the user's git config/u],
       [write(path.join(fx.home, 'Library', 'LaunchAgents', 'com.x.plist')), /the user's launch agents/u],
+      [write(path.join(fx.home, '.claude', 'projects', '-x', 'feed0000-0000-4000-8000-000000000001.jsonl')), /the host's session transcripts/u],
     ]) {
       const denial = fx.ask(input, { held, owner, cwd: other });
       assert.match(denial?.reason ?? '', reason, `${label} ${input.tool_input.command ?? input.tool_input.file_path}`);

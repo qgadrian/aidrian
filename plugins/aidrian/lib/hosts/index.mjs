@@ -55,6 +55,10 @@ export function sessionIdentity(env = process.env) {
 // so a rule that needs one refuses there.
 export const humanAnswer = (entry, hosts = HOSTS) => hosts.some((host) => host.humanAnswer?.(entry) === true);
 
+// The folders under the account's home folder `home` where any host keeps the transcripts its `ownTranscript` vouches
+// for: the write guard refuses them to every unattended session (lib/unattended-write.mjs).
+export const transcriptFolders = (home, hosts = HOSTS) => hosts.flatMap((host) => host.transcriptFolders?.(home) ?? []);
+
 // The prompt the Human typed into a session, as the adapter of the host the call runs under (`input`, a hook's
 // payload) reads its transcript: { file, isHuman }, where `file` is the real path of the session's own transcript, kept
 // where the session cannot write (an adapter's `ownTranscript`), and `isHuman(entry)` its `humanPrompt`; null when that
@@ -63,7 +67,8 @@ export function humanPrompts(input, hosts = HOSTS) {
   const host = detectHost({ input }, hosts);
   if (typeof host.humanPrompt !== 'function' || typeof host.ownTranscript !== 'function') return null;
   const file = host.ownTranscript(input?.transcript_path, { session: input?.session_id });
-  return file ? { file, isHuman: (entry) => host.humanPrompt(entry) === true } : null;
+  // Checked again after the read: the entries count only while the path still names the session's own transcript.
+  return file ? { file, isHuman: (entry) => host.humanPrompt(entry) === true, still: () => host.ownTranscript(file, { session: input?.session_id }) === file } : null;
 }
 
 // `raw`, a hook's payload, in the standard names the shared code reads: `tool_name` as mcp__<server>__<tool> for an MCP tool.

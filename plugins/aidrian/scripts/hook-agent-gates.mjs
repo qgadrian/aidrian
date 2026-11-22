@@ -96,8 +96,11 @@ async function gate(input) {
   const snapshot = typeof input.agent_id === 'string' && input.agent_id !== '' ? readGateSnapshot(input) : null;
   // A background continuation the Human has typed into is attended from then on: its own mark goes before it is read.
   if (typeof input.agent_id !== 'string' || input.agent_id === '') {
-    const prompts = humanPrompts(input);
-    if (prompts) liftAttended(input.session_id, prompts.file, { isHuman: prompts.isHuman });
+    let prompts = null;
+    try {
+      prompts = humanPrompts(input);
+    } catch {}
+    if (prompts) liftAttended(input.session_id, prompts.file, { isHuman: prompts.isHuman, still: prompts.still });
   }
   // Read before any guard, wherever the call runs: a session the background route started stays held outside its project.
   const mark = readUnattendedMark(input.session_id);

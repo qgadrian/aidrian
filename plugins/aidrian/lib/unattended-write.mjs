@@ -26,7 +26,7 @@ import { foldCase, isWithin } from './fs.mjs';
 import { gitConfigFiles, gitFolders, repositoryCheckouts, runGit, underGit, withGitFacts } from './git.mjs';
 import { GLOB_WORD, globStarts, sameFile } from './glob-links.mjs';
 import { globReaches, modeTargets, sessionWorktrees, startedFolder, stateFolders } from './handoff-guard.mjs';
-import { fileEditOf, nestedProtected, opaqueShellCommand, protectedPaths } from './hosts/index.mjs';
+import { fileEditOf, nestedProtected, opaqueShellCommand, protectedPaths, transcriptFolders } from './hosts/index.mjs';
 import { issueForgeDenial } from './issue-forge-guard.mjs';
 import { ownIssue } from './project-run-guard.mjs';
 import { canonical } from './rules/main-checkout.mjs';
@@ -153,6 +153,9 @@ function userRefused(refuse, user, env) {
   for (const name of [...STARTUP, ...ZSH_STARTUP]) refuse(path.join(user, name), 'a shell startup file');
   if (absolute(env.ZDOTDIR)) for (const name of ZSH_STARTUP) refuse(path.join(env.ZDOTDIR, name), 'a shell startup file');
   refuse(path.join(user, 'Library', 'LaunchAgents'), 'the user\'s launch agents, which macOS runs at every login', true);
+  // Whatever the session's places, as a checkout at the home folder's own root: a host's transcripts there are its proof
+  // that the Human typed into a session (lib/unattended-mark.mjs liftAttended), which no unattended session may write.
+  for (const folder of transcriptFolders(user)) refuse(folder, 'the host\'s session transcripts, the proof that a Human typed into a session', true, null, true);
 }
 
 // The user's and the system's git config files git names under `env`: a git call each, so read only when needed.

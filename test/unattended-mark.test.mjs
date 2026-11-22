@@ -427,6 +427,7 @@ test('a background session the Human types into is attended from then on; a peer
   const bothTranscript = path.join(projects, `${both}.jsonl`);
   t.after(() => rmSync(bothTranscript, { force: true }));
   lines(bothTranscript, start, typed);
+  assert.equal(read(both)?.issue, 'ENG-1', 'the read gives the stronger hold, whatever the scan order');
   assert.equal(lift(both, bothTranscript), false, 'a stronger hold beside a plain one');
   assert.equal(isAttended(both, { home: TEST_HOME }), false);
   // The Human typed: the session is attended, its mark read as none and its background floor no longer holding it.

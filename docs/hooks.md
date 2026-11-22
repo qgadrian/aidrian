@@ -1315,6 +1315,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   and of `~/.config`, and the global and system git config files git itself names (`git var GIT_CONFIG_GLOBAL` and
   `GIT_CONFIG_SYSTEM`, such as a package manager's `etc/gitconfig`, asked only for a write that would otherwise pass);
   the shell startup files in the home folder and in `ZDOTDIR`; the user's macOS launch agents, `~/Library/LaunchAgents`;
+  the host's session transcripts under the account's home folder, as an adapter's `transcriptFolders` names them
+  (Claude Code's `~/.claude/projects`), whatever the session's places, since one is the proof that a Human typed into a
+  session ([The background route](handoff.md#the-background-route));
   the review and attest records in `reviews`, by a write or a delete; any other path in `dispatch`, and the dispatch log
   beside it, `<state>/dispatch-log.jsonl`; the host files every host's adapter protects (`protectedPaths`), in the
   session's own worktree, each checkout of the repository nested in it, and its attempt's clone: `.claude/settings.json`, `.claude/settings.local.json`,

@@ -214,8 +214,7 @@ export function readUnattendedMark(session, { env = process.env, home, now = Dat
   if (typeof session !== 'string' || !SESSION_ID.test(session)) return null;
   const uid = processUid();
   let unchecked = false;
-  let lifted = false;
-  let attended;
+  let plain = null;
   const pending = [];
   for (const folder of markFolders({ env, home })) {
     let names;
@@ -231,14 +230,14 @@ export function readUnattendedMark(session, { env = process.env, home, now = Dat
     for (const name of ours) {
       const found = readMark(path.join(folder, name), uid, now);
       if (found === 'unchecked') unchecked = true;
-      // A plain mark the Human's presence lifted holds nothing; a stronger one later in the scan still does.
-      else if (found && plainMark(found) && (attended ??= isAttended(session, { env, home, now }))) lifted = true;
+      // A plain mark waits for the whole scan, so a stronger one later still holds; the Human's presence lifts a plain one.
+      else if (found && plainMark(found)) plain ??= found;
       else if (found) return found;
     }
     pending.push(...names.filter((name) => PENDING.test(name)).map((name) => path.join(folder, name)));
   }
   if (unchecked) return { root: null };
-  if (lifted) return null;
+  if (plain) return isAttended(session, { env, home, now }) ? null : plain;
   return pendingHold(pending, session, uid, now);
 }
 
@@ -277,18 +276,26 @@ export function isAttended(session, { env = process.env, home, now = Date.now() 
 // sandbox proof, a mark it cannot read, and a pending hold stay, whoever types. The record goes beside the plain mark
 // that holds it, after a sweep of that folder. It reads at most PROMPT_TAIL bytes of the transcript's end, from the
 // regular file the path names when it opens it. Returns whether it recorded the session attended; never throws.
-export function liftAttended(session, file, { env = process.env, home, now = Date.now(), isHuman = () => false } = {}) {
+export function liftAttended(session, file, { env = process.env, home, now = Date.now(), isHuman = () => false, still = () => true } = {}) {
   try {
     if (typeof session !== 'string' || !SESSION_ID.test(session) || typeof file !== 'string' || !path.isAbsolute(file)) return false;
     const holds = ownHolds(session, { env, home, now });
     if (holds === null || !holds.length || !holds.every(({ mark }) => plainMark(mark))) return false;
-    if (!tailEntries(file).some((entry) => isHuman(entry))) return false;
+    if (!tailEntries(file).some((entry) => isHuman(entry)) || !still()) return false;
     const { folder } = holds[0];
+    if (!trustedFolder(folder)) return false;
     sweepMarks(folder, now);
     return writeMark(folder, ATTENDED(session), { at: now }) !== null;
   } catch {
     return false;
   }
+}
+
+// Whether `folder` is a marks folder a lift may write and sweep: a real folder, no link, of this user, as ownFolder holds.
+function trustedFolder(folder) {
+  const stat = lstatSync(folder);
+  const uid = processUid();
+  return stat.isDirectory() && (!Number.isInteger(uid) || stat.uid === uid);
 }
 
 // Every mark of `session`'s own that holds, under its full id or a short one, in each of markFolders, as

@@ -45,7 +45,8 @@ function guarded(t) {
   writeFileSync(file, JSON.stringify(record));
   const transcript = path.join(dir, 'session.jsonl');
   writeFileSync(transcript, '');
-  // `offered`: the option labels the question listed, as the host records them; none, as a typed reply reads.
+  // `offered`: the option labels the question listed, as the host records them; by default the fixture leaves out the
+  // question's metadata, which a test that needs no options does not read. A typed reply keeps its options too.
   const answer = (question, picked, at = '2026-11-03T11:00:00.000Z', offered = null) => appendFileSync(transcript, `${JSON.stringify({ type: 'user', timestamp: at, toolUseResult: { answers: { [question]: picked }, ...(offered ? { questions: [{ question, options: offered.map((label) => ({ label })) }] } : {}) } })}\n`);
   const main = { transcript_path: transcript };
   return { dir, audits, file, record, transcript, answer, run: (command, input = main, cwd = dir) => check(command, { cwd, input }) };

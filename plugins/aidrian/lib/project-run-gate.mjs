@@ -625,7 +625,7 @@ function launchStart(context, place) {
   const left = place.superseded;
   if (!left || answer.exitCode !== 0) return answer;
   const named = leftFile(state, run, key, attempt, left.files);
-  const where = named ? `; their names are in ${named}` : '';
+  const where = named ? `; their names are in ${named}` : '; their names could not be written beside the run log';
   return { ...answer, err: [...answer.err, `aidrian project start: ${key} attempt ${attempt} left ${left.branch} for ${branch}, since it changes ${left.count} host config or instruction ${left.count === 1 ? 'file' : 'files'} no review saw${where}`] };
 }
 

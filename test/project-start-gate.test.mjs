@@ -318,6 +318,21 @@ test('a fresh attempt names no pull request the forge does not show open from th
   assert.doesNotMatch(names.trimEnd(), /[\u0000-\u001f]/u);
 });
 
+// A names file the start cannot write is said on stderr, still with no file name, and the start goes on.
+test('a fresh attempt whose names file cannot be written says so and still starts', (t) => {
+  const fx = runFixture(t);
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  pushFiles(fx, work(fx), { '.aidrian/knowledge/docs.json': '{}\n' });
+  reopen(fx, 1);
+  const names = runLogFile(fx.state, 'launch', 'ENG-1', 2).replace(/\.jsonl$/u, '.left.txt');
+  mkdirSync(path.dirname(names), { recursive: true });
+  writeFileSync(names, 'there already\n');
+  const second = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(second.exitCode, 0, second.err.join('\n'));
+  assert.ok(second.err.at(-1).endsWith('no review saw; their names could not be written beside the run log'), second.err.at(-1));
+  assert.doesNotMatch(second.err.join('\n'), /docs\.json/u);
+});
+
 // The close is asked only for a pull request open into the default branch, from the old branch, at the fetched head.
 test('the pull request a fresh attempt closes is one the forge shows open into the default branch from the old head', () => {
   const repository = { host: 'github.com', owner: 'acme', name: 'widgets' };
@@ -329,6 +344,8 @@ test('the pull request a fresh attempt closes is one the forge shows open into t
   assert.equal(ask({ baseRefName: 'release' }), null, 'another target');
   assert.equal(ask({ headRefOid: 'c'.repeat(40) }), null, 'a head that moved');
   assert.equal(ask({ state: 'CLOSED' }), null);
+  assert.equal(ask({ url: 'https://github.com/acme/widgets/pull/4' }), null, 'a link to another pull request');
+  assert.equal(ask({ url: 'https://github.com/acme/other/pull/3' }), null, 'a link into another repository');
   assert.equal(openPullOf({ forge: { repository: () => ({ default_branch: 'main' }), change: () => { throw new Error('HTTP 502'); } }, repository, pr: 3, branch: 'feat/x', head }), null, 'a forge that cannot answer');
 });
 

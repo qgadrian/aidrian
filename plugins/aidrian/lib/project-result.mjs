@@ -198,9 +198,11 @@ export function openPullOf({ forge, repository, pr, branch, head }) {
   } catch {
     return null;
   }
+  // The link the task names is built from the pinned repository and `pr`, and the forge's own link must be it.
+  const url = `https://${repository.host}/${named}/pull/${pr}`;
   const ok = view?.state === 'OPEN' && view.baseRefName === main && view.isCrossRepository === false && view.headRefName === branch && view.headRefOid === head
-    && repoName(view.url) === named.toLowerCase() && hostOf(view.url)?.toLowerCase() === repository.host.toLowerCase();
-  return ok ? { base: main, url: view.url } : null;
+    && typeof view.url === 'string' && view.url.toLowerCase() === url.toLowerCase();
+  return ok ? { base: main, url } : null;
 }
 
 // Why the forge does not show the pull request of a handed-over `result` as the issue's own work, null when it does,

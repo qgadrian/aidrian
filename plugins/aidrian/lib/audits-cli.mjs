@@ -1,12 +1,13 @@
 // `aidrian audits`: the persona audits in the state folder and their triage (audits.mjs). `list` shows each report and
 // how much of it is untriaged; `check` validates a sidecar against its report; `import` drafts, then writes, the sidecar
 // of a report written without one; `pending` prints one report's untriaged items in the order the Human answers them;
-// `record` keeps one decision in triage.json. docs/personas.md#triage describes each subcommand.
+// `record` keeps one decision in triage.json; `save` copies a report the persona-audit skill drafted elsewhere, its
+// sidecar, and its screenshots into the audits folder, since a session no Human attends may not write there by hand. docs/personas.md#triage describes each subcommand.
 //
 // What a person reads, the text output and every warning and problem, names a report by its personas, kind, and date
 // and an item by its title, never by its id or file name; `--json` carries the ids and file names the commands take.
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
@@ -34,15 +35,15 @@ const OPTIONS = {
   doc: { type: 'string' },
 };
 
-const ACTIONS = { list, check, import: importReport, pending, record, rank, verdict };
+const ACTIONS = { list, check, import: importReport, pending, record, rank, verdict, save };
 
 export const commands = {
   audits: {
     usage:
-      'list [--json] | check REPORT | import REPORT [--not-rechecked IDS] [--carried-forward IDS] [--from FILE] [--write] [--json] ' +
+      'list [--json] | check REPORT | save FOLDER | import REPORT [--not-rechecked IDS] [--carried-forward IDS] [--from FILE] [--write] [--json] ' +
       `| pending REPORT [--json] | record REPORT KEYS ${DECISIONS.join('|')} [--issue KEY] [--url URL] [--reason TEXT] [--doc PATH#SECTION] [--by WHO] ` +
       `| rank REPORT KEYS ${PRIORITIES.join('|')} --by WHO [--reason TEXT] | verdict REPORT KEYS ${VERDICTS.join('|')} --by ROLE --reason TEXT`,
-    about: 'list the persona audits in the state folder and what is untriaged, check or import a sidecar, and record triage decisions',
+    about: 'list the persona audits in the state folder and what is untriaged, save a drafted report, check or import a sidecar, and record triage decisions',
     async run(args) {
       const { values, positionals } = parseArgs({ args, allowPositionals: true, options: OPTIONS });
       const [action, ...rest] = positionals;
@@ -99,6 +100,59 @@ function statusText(each, titles = new Map(), reports = []) {
   if (each.status === 'no-sidecar') return `${counts}, no sidecar: import needed${sort}`;
   if (each.status === 'invalid') return `${counts}, invalid sidecar: ${each.problems[0]}`;
   return each.untriaged ? `${counts}, ${each.untriaged} of ${each.items.length} items untriaged` : `${counts}, fully triaged`;
+}
+
+// A report's file name: `<personas>-<date>.md`, with an optional `-<n>` after the date (report-format.md).
+const REPORT_FILE = /^[\w.+-]+-\d{4}-\d{2}-\d{2}(?:-\d+)?\.md$/u;
+// A screenshot a report cites, in the folder named for the report.
+const SHOT = /^[\w.+-]+\.(?:png|jpe?g|gif|webp)$/iu;
+
+// Copies the draft in `folder` into the audits folder `dir`: its one report `<name>.md`, the sidecar `<name>.json` when
+// there is one, and the screenshots in `<name>/`, each a plain file, replacing a copy saved before. Nothing else in the
+// folder may be there, so no draft can write the triage record or another report's files.
+function save({ rest: [folder], dir }) {
+  if (!folder) return fail('name the folder that holds the drafted report, its sidecar, and its screenshots');
+  const from = path.resolve(folder);
+  const kind = (file) => {
+    try {
+      const stat = lstatSync(file);
+      return stat.isFile() && stat.nlink === 1 ? 'file' : stat.isDirectory() ? 'dir' : 'other';
+    } catch {
+      return 'missing';
+    }
+  };
+  if (kind(from) !== 'dir') return fail(`no such folder: ${from}`);
+  const names = readdirSync(from);
+  const reports = names.filter((name) => REPORT_FILE.test(name));
+  if (reports.length !== 1) return fail(`${from} must hold exactly one report named <personas>-<date>.md; it holds ${reports.length}`);
+  const [report] = reports;
+  const stem = report.slice(0, -'.md'.length);
+  const copies = [report];
+  for (const name of names) {
+    if (name === report) continue;
+    if (name === sidecarName(report) || name === stem) continue;
+    return fail(`${path.join(from, name)} is neither the report, its sidecar ${sidecarName(report)}, nor its screenshot folder ${stem}/`);
+  }
+  if (names.includes(sidecarName(report))) copies.push(sidecarName(report));
+  if (names.includes(stem)) {
+    if (kind(path.join(from, stem)) !== 'dir') return fail(`${path.join(from, stem)} must be a folder of screenshots`);
+    for (const shot of readdirSync(path.join(from, stem))) {
+      if (!SHOT.test(shot)) return fail(`${path.join(from, stem, shot)} is no screenshot: a .png, .jpg, .gif, or .webp file`);
+      copies.push(path.join(stem, shot));
+    }
+  }
+  for (const each of copies) if (kind(path.join(from, each)) !== 'file') return fail(`${path.join(from, each)} must be a plain file, no link`);
+  if (kind(dir) === 'missing') mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (kind(dir) !== 'dir') return fail(`${dir} is not a plain folder`);
+  for (const each of copies) {
+    const target = path.join(dir, each);
+    if (!['file', 'missing'].includes(kind(target))) return fail(`${target} is not a plain file, so it is left as it is`);
+    if (kind(path.dirname(target)) !== 'dir') mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+    if (kind(path.dirname(target)) !== 'dir') return fail(`${path.dirname(target)} is not a plain folder`);
+    copyFileSync(path.join(from, each), target);
+  }
+  console.log(`saved ${capital(reportTitle(report))} to ${dir}: ${copies.length} file${copies.length === 1 ? '' : 's'}`);
+  return 0;
 }
 
 // The report `name` in the audits folder, or a problem.

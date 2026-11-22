@@ -210,7 +210,7 @@ it: the report says so, and the sidecar names it in `supersedes`, with the earli
 `carried_forward` and those it did not re-check in `not_rechecked`. A run with a pull request adds `pr`, as
 `<owner/name>#<n>`, and `head`, the pull request's head at the walk's start, from `aidrian pr resolve`. It replaces only a
 report of the same pull request, so never one that names another or none. A report naming a pull request can be replaced
-only by a run of it, or by a whole-product run with a valid sidecar. `aidrian audits check <report>` validates the sidecar. The skill never edits code, files an issue, posts to a pull
+only by a run of it, or by a whole-product run with a valid sidecar. `aidrian audits save <folder>` copies a drafted report, its sidecar, and its screenshots folder into `<state>/audits/`, and nothing else: any other file in the folder, or a link on either side, refuses the save, so a session no Human attends, which may not write the audits folder by hand, never touches `triage.json`. `aidrian audits check <report>` validates the sidecar. The skill never edits code, files an issue, posts to a pull
 request or opens one, and never signs off. With a pull request, the report is input to the Human's review of a user-facing
 change; it never approves, blocks, or posts. A project that wants a persona pass in its sign-off wires the skill in by its own rules;
 [Product feedback on a pull request](#product-feedback-on-a-pull-request) is the one that posts.

@@ -1285,12 +1285,11 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   - the state folders it writes by hand, each when it is no link, of every state folder of the project its mark names:
     `plans`, `tmp`, `handoffs` (the continuation store in it stays refused, as above), and `quorum`, where the product
     quorum runs under auto decisions; in `reviews`, only a review manifest, `pr-<n>.json` or a temporary copy of it,
-    and a capture under `pr-<n>/captures/`; in `dispatch`, only a subagent's handoff file, a `.json` file directly
-    in it; and in `audits`, a persona audit's report, sidecar, and evidence, never `triage.json`, the triage
-    decisions `aidrian audits` records. A confined host is granted `plans`, `reviews`, `tmp`, and `dispatch` for the programs it runs, such as the
+    and a capture under `pr-<n>/captures/`; and in `dispatch`, only a subagent's handoff file, a `.json` file directly
+    in it. A confined host is granted `plans`, `reviews`, `tmp`, and `dispatch` for the programs it runs, such as the
     review commands, which write the records there. A project run's issue session, one whose mark names an issue, or
     whose mark cannot be read, is held tighter there: it writes no `handoffs`, since it asks for no handoff and a brief
-    there could become a driver's prior ([handoff.md](handoff.md#the-check)), no `audits`, and no `quorum`, whose hard calls it
+    there could become a driver's prior ([handoff.md](handoff.md#the-check)), and no `quorum`, whose hard calls it
     parks for the Human (`aidrian quorum route` routes them to `human`); in `plans` and `tmp`, only an entry named for
     its own issue, the key itself or the key followed by `-` or `.` in any case, such as `plans/eng-1-implementation.md`
     or `tmp/eng-1/`; and in `dispatch`, only a handoff file named for its own branch, each `/` a `-`, such as

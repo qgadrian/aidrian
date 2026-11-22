@@ -137,15 +137,17 @@ export function check(command, { cwd = process.cwd(), input = {}, env = process.
     const project = projectIn(folder);
     return project === UNKNOWN || (Boolean(project) && heldRecords(project).length > 0);
   };
-  const entries = walkCommands(command, cwd);
+  // The folder each call runs in whenever it runs: a `cd <folder> &&` right before it counts after a heredoc or a `;`
+  // too (shell-lex walkCommands `chained`), unless the command runs an `eval`, `source`, or `.`, whose directory change
+  // the walk never carries back, so the folder stays unknown there.
+  const walked = walkCommands(command, cwd);
+  const blind = walked.some(({ invocation }) => ['eval', 'source', '.'].includes(invocation.program));
+  const entries = walked.map((entry) => ({ ...entry, folder: entry.folder ?? (blind ? null : entry.chained ?? null) }));
   const posts = new Map(entries.map((entry) => [entry, entry.unread === undefined ? readPost(entry.invocation) : null]));
   const writes = (self) => entries.some((other) => other !== self && other.unread === undefined && writesUnseen(readCall(other.invocation)));
   const judged = new Set();
   for (const entry of entries) {
-    // The folder a post runs in whenever it runs: a `cd <folder> &&` right before it counts after a heredoc or a `;` too
-    // (shell-lex walkCommands `chained`).
-    const { unread } = entry;
-    const folder = entry.folder ?? entry.chained ?? null;
+    const { unread, folder } = entry;
     if (unread !== undefined) {
       if (/\bproduct-feedback\b/u.test(unread) && /\bpost\b/u.test(unread) && holds(folder)) return subagent ? SUBAGENT : UNREAD;
       continue;

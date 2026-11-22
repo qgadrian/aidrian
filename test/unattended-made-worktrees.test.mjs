@@ -8,7 +8,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { linkSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -30,7 +30,8 @@ const gitIn = (dir) => (...args) => execFileSync('git', ['-c', 'user.name=t', '-
 
 // A project on `main` with `.worktrees/` ignored, a state folder outside it, and a linked worktree `wt` the session
 // SESSION started in, marked unattended there with `tags`. `made(branch, session)` runs `aidrian worktree new` from that
-// worktree as the host's shell of `session` would; `ask(input)` asks the guard as the agent gate hook does.
+// worktree as the host's shell of `session` would; `ask(input)` asks the guard as the agent gate hook does, which expands
+// a target's variables from `hookEnv`.
 function fixture(t, { tags = null } = {}) {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-made-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -50,9 +51,9 @@ function fixture(t, { tags = null } = {}) {
   const project = findProject(dir);
   const { config } = loadConfig(project);
   const made = (branch, session = SESSION) => createWorktree({ branch }, { cwd: start, env: { ...env, CLAUDE_CODE_SESSION_ID: session } }).worktree_path;
-  const ask = (input) => unattendedWriteDenial({ session_id: SESSION, cwd: start, ...input }, config, {
+  const ask = (input, hookEnv = env) => unattendedWriteDenial({ session_id: SESSION, cwd: start, ...input }, config, {
     mark,
-    env,
+    env: hookEnv,
     places: () => unattendedPlaces({ cwd: start, mark, project, config, env, home, temp: [temp], session: SESSION }),
   });
   const store = () => openStore(state, { checkouts: project.checkouts, maxChain: config.session.handoff.maxChain });
@@ -78,6 +79,17 @@ test('a session no Human attends, and its subagents, write a task worktree `aidr
   writeFileSync(path.join(fx.start, 'notes.json'), '{}');
   symlinkSync(path.join(fx.start, 'notes.json'), path.join(made, '.claude', 'settings.json'));
   assert.match(fx.ask(write(path.join(made, '.claude', 'settings.json')))?.reason ?? '', /a host file a later session in that checkout loads/u, 'through a link');
+  // A direct write to that link's target, and to a hard link of a protected file, meet the same refusal.
+  assert.match(fx.ask(write(path.join(fx.start, 'notes.json')))?.reason ?? '', /a host file a later session in that checkout loads/u, 'the link\'s target');
+  writeFileSync(path.join(made, '.mcp.json'), '{}');
+  linkSync(path.join(made, '.mcp.json'), path.join(fx.start, 'alias.json'));
+  assert.match(fx.ask(write(path.join(fx.start, 'alias.json')))?.reason ?? '', /a host file a later session in that checkout loads/u, 'a hard link');
+  // A target the shell builds from a variable the hook expands (unattended-shell.mjs shellWrites) lands in the made
+  // worktree and passes as a literal one does; one built there to its host file is refused.
+  const hookEnv = { ...fx.env, TMPDIR: path.dirname(made) };
+  const slug = path.basename(made);
+  assert.equal(fx.ask({ tool_name: 'Bash', tool_input: { command: `echo x > "$TMPDIR/${slug}/notes.md"` } }, hookEnv), null, 'a variable redirect');
+  assert.ok(fx.ask({ tool_name: 'Bash', tool_input: { command: `echo x > "$TMPDIR/${slug}/.mcp.json"` } }, hookEnv), 'a variable redirect to a host file');
   assert.match(fx.ask(write(path.join(fx.dir, 'README.md')))?.reason ?? '', /outside the places/u);
 });
 

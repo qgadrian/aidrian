@@ -364,6 +364,32 @@ test('the stop hook replaces a stale handoff file, a link, but keeps one this ru
   assert.deepEqual(readdirSync(dispatch).filter((name) => name.endsWith('.tmp')), [], 'no temporary file left');
 });
 
+// Two runs of one role on one branch, each briefed with its own file: the later brief names the earlier run's file to read.
+// That file was there before the later run began, so it is never this run's to write, though its name ends with the role.
+test('the stop hook writes only the handoff file its own run was briefed with, never an earlier run\'s of the same role', async (t) => {
+  const { base, dir, state, log, hook } = project(t);
+  const dispatch = path.join(state(), 'dispatch');
+  const gate = path.join(dispatch, 'ada-feat-12-gate-product-manager.json');
+  const decide = path.join(dispatch, 'ada-feat-12-decide-product-manager.json');
+  const signoff = path.join(dispatch, 'ada-feat-12-signoff-product-manager.json');
+  const run = (id, brief, message) => {
+    const transcript = path.join(base, `agent-${id}.jsonl`);
+    writeFileSync(transcript, JSON.stringify({ type: 'user', timestamp: new Date().toISOString(), message: { role: 'user', content: brief } }));
+    return hook('hook-subagent-stop.mjs', {
+      cwd: dir, agent_id: id, agent_type: 'aidrian:product-manager', agent_transcript_path: transcript, last_assistant_message: message, stop_hook_active: false,
+    });
+  };
+  const read = (file) => JSON.parse(readFileSync(file, 'utf8'));
+  assert.equal((await run('g1', `Gate the plan. Write your machine handoff to ${gate}.`, '{"status":"done","decision":"gate"}')).status, 0);
+  await sleep(30);
+  assert.equal((await run('d1', `Read the gate at ${gate}. Write your machine handoff to ${decide}.`, '{"status":"done","decision":"decide"}')).status, 0);
+  await sleep(30);
+  const brief = `Sign off. Read the gate at ${gate} and the decision at ${decide}. Write your machine handoff to ${signoff}.`;
+  assert.equal((await run('s1', brief, '{"status":"done","decision":"signoff"}')).status, 0);
+  assert.deepEqual([read(gate), read(decide), read(signoff)].map((handoff) => handoff.decision), ['gate', 'decide', 'signoff']);
+  assert.deepEqual(log().map((row) => [row.agent_id, row.handoffs_written]), [['g1', 1], ['d1', 1], ['s1', 1]]);
+});
+
 test('claimedPaths leaves out a path shortened with an ellipsis: its full form cannot be checked', () => {
   const message = 'Wrote .../review/b-verdicts-r34-cr.json, …/dispatch/x-harness-mechanic.json, and ../docs/real.md.';
   assert.deepEqual(claimedPaths(message), ['../docs/real.md']);

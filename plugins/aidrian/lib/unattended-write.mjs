@@ -241,45 +241,45 @@ function ownPlaces(places, { mark, project, config, base, own, home, temp, sessi
 }
 
 // The task worktrees `aidrian worktree new` made in the session (`recorded()`, handoff-guard.mjs sessionWorktrees), each
-// a place of the session's, as `made`, as its start worktree is: one git lists among the checkouts of the mark's
-// repository at that path (`checkouts`), and one git, asked at that path, reads as a linked worktree of that repository
-// (`repo`) whose top is that path (startTop), as the start worktree is told, while the path is no link, with its nested
-// checkouts, git folders, and host files refused as the start worktree's are. Both checks hold, so neither a stale
-// registration whose folder another checkout took, nor a folder restored at a path git moved the worktree away from,
-// grants anything. A project run's issue session stays confined to its attempt and gets none. None lies in a state
-// folder, in a host folder of a checkout of the repository, as a worktrees folder set to `.claude/skills` would place it,
-// or in a dot entry of the home folder outside the main checkout, since config.json, which the session may edit, names
-// the folder the command makes it in. Only those checks run here, with no git: `places.settle(targets)` asks git at a
-// candidate only once a write's target or glob start lies in it or holds it, so a write elsewhere pays nothing for the
-// records, however many or slow. Accepted residual: a record is told by its path alone, so one a session forged by
-// running the plugin's code, which no guard sees, grants another linked worktree of the same repository.
+// a place of the session's, as `made`, as its start worktree is, with its nested checkouts, git folders, and host files
+// refused at once, as the start worktree's are. A recorded path is one only when both hold: git lists a checkout of the
+// mark's repository at exactly that path (`checkouts`, compared as git prints them, never resolved), and git, asked at that
+// path, reads it as a linked worktree of that repository (`repo`) whose top is that path (startTop), as the start
+// worktree is told. Neither the path nor any part above it is a link, so a stale registration whose folder another
+// checkout took, a folder restored at a path git moved the worktree away from, and a registration a link aliases to an
+// old path all grant nothing. None lies in a state folder, in a host folder of a checkout of the repository, as a
+// worktrees folder set to `.claude/skills` would place it, or in a dot entry of the home folder outside the main checkout,
+// since config.json, which the session may edit, names the folder the command makes it in. A project run's issue session
+// stays confined to its attempt and gets none. Each candidate costs one git call per hook call, only for this session's
+// records. Accepted residuals: a checkout git is slow to read spends the guards' budget; and a record is told by its path
+// alone, so one a session forged by running the plugin's code, which no guard sees, grants another linked worktree of the
+// same repository.
 function madePlaces(places, { repo, checkouts, recorded }, refuse) {
   if (places.issueHeld || !checkouts) return;
   const main = real(repo.top);
-  const listed = new Set(checkouts.map(real));
   const hosts = places.checkouts.flatMap((top) => protectedPaths().map((each) => real(path.join(top, each))));
   const dotted = (top) => isWithin(places.home, top) && !isWithin(main, top) && path.relative(places.home, top).split(path.sep)[0].startsWith('.');
-  const unsettled = [];
   for (const each of recorded()) {
     checkDeadline();
     const top = real(each);
-    if (top === main || top === places.worktree || unsettled.some((one) => one.top === top) || !listed.has(top) || canonical(each) !== each) continue;
+    if (top === main || top === places.worktree || places.made.includes(top) || !checkouts.includes(each) || isLink(each) || canonical(each) !== each) continue;
     if (places.states.some((state) => isWithin(state, top)) || hosts.some((host) => isWithin(host, top)) || dotted(top)) continue;
-    unsettled.push({ each, top });
+    const made = gitFolders(each, gitBudget());
+    if (!made || real(made.common) !== real(repo.common) || !startTop(made, each) || real(made.top) !== top) continue;
+    if (!nestedRefused(refuse, checkouts, each)) continue;
+    places.made.push(top);
+    gitRefused(refuse, made);
+    hostRefused(refuse, each);
   }
-  places.settle = (targets) => {
-    const reached = unsettled.filter(({ top }) => targets.some((target) => isWithin(top, target) || isWithin(target, top)));
-    for (const { each, top } of reached) {
-      unsettled.splice(unsettled.findIndex((one) => one.top === top), 1);
-      checkDeadline();
-      const made = gitFolders(each, gitBudget());
-      if (!made || real(made.common) !== real(repo.common) || !startTop(made, each) || real(made.top) !== top) continue;
-      if (!nestedRefused(refuse, checkouts, each)) continue;
-      places.made.push(top);
-      gitRefused(refuse, made);
-      hostRefused(refuse, each);
-    }
-  };
+}
+
+// Whether `file` is a symbolic link itself, by lstat; false when it is not there.
+function isLink(file) {
+  try {
+    return lstatSync(file).isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 
 // Whether the checkout `start` (gitFolders) of the start folder `from` is the session's worktree: a linked worktree,
@@ -673,9 +673,6 @@ export function unattendedWriteDenial(input, { names: { human } }, { mark = null
   const texts = [...names, ...unplaced.map(({ text }) => text), ...globs.filter((each) => each.unsure || each.opaque).map(({ text }) => text),
     ...(shell?.removed ?? []).filter((each) => !removed.includes(each)).map(({ text }) => text)];
   const made = madeFolders(files, shell);
-  // The task worktrees the session made are asked of git only now, and only those a target or a glob's start reaches.
-  const globStartsOf = globs.flatMap((glob) => globStarts(glob).map(({ start }) => start));
-  found.settle?.([...files, ...placedModes, ...removed.map(({ text, folder }) => path.resolve(folder ?? '/', text)), ...globStartsOf].map(real));
   return pathDenial([...files.filter((each) => !madeOnly(each, made, found)), ...placedModes, ...removed.map(({ text, folder }) => path.resolve(folder ?? '/', text))], found, say)
     ?? shellDenial(shell, found, say, texts)
     ?? globDenial(globs.filter((each) => !each.unsure), found, say)

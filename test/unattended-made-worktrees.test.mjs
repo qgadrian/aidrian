@@ -8,7 +8,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -59,7 +59,6 @@ function fixture(t, { tags = null } = {}) {
   return { root, dir, state, home, start, env, git, made, ask, store };
 }
 
-const readFileSyncOr = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : '');
 const write = (file, more = {}) =>({ tool_name: 'Write', tool_input: { file_path: file, content: 'x' }, ...more });
 
 test('a session no Human attends, and its subagents, write a task worktree `aidrian worktree new` made in it', (t) => {
@@ -74,6 +73,11 @@ test('a session no Human attends, and its subagents, write a task worktree `aidr
   // Kept as the start worktree is: its pointer and host files stay refused, and the main checkout stays outside.
   assert.match(fx.ask(write(path.join(made, '.git')))?.reason ?? '', /the checkout's pointer to its git folder/u);
   assert.match(fx.ask(write(path.join(made, '.claude', 'settings.json')))?.reason ?? '', /a host file a later session in that checkout loads/u);
+  // A host file that is a link to a file of the start worktree stays refused, though the write resolves outside it.
+  mkdirSync(path.join(made, '.claude'));
+  writeFileSync(path.join(fx.start, 'notes.json'), '{}');
+  symlinkSync(path.join(fx.start, 'notes.json'), path.join(made, '.claude', 'settings.json'));
+  assert.match(fx.ask(write(path.join(made, '.claude', 'settings.json')))?.reason ?? '', /a host file a later session in that checkout loads/u, 'through a link');
   assert.match(fx.ask(write(path.join(fx.dir, 'README.md')))?.reason ?? '', /outside the places/u);
 });
 
@@ -125,32 +129,18 @@ test('a record grants only a linked worktree git lists at that path: never the m
   fx.git('worktree', 'move', restored, `${restored}-new`);
   execFileSync('cp', ['-Rp', `${restored}-new`, restored]);
   assert.equal(gitIn(restored)('rev-parse', '--show-toplevel').trim(), restored, 'git reads the restored copy at its own path');
+  // A made worktree git moved, whose folder was then moved back to its old path with a link left at the registered
+  // one: git's listing names the link, which resolves to the recorded path, but no registration is at that path itself.
+  const aliased = fx.made('feat/aliased');
+  fx.git('worktree', 'move', aliased, `${aliased}-new`);
+  renameSync(`${aliased}-new`, aliased);
+  symlinkSync(aliased, `${aliased}-new`);
+  assert.equal(gitIn(aliased)('rev-parse', '--show-toplevel').trim(), aliased, 'git reads the folder back at its old path');
+  assert.ok(fx.git('worktree', 'list', '--porcelain').includes(`worktree ${aliased}-new\n`), 'git lists the link\'s path');
   for (const each of [fx.dir, loose, dotted, skills]) assert.ok(noteWorktree(store, SESSION, each), each);
-  for (const each of [path.join(fx.dir, 'a.ts'), path.join(loose, 'a.ts'), path.join(dotted, 'SKILL.md'), path.join(skills, 'SKILL.md'), path.join(linked, 'a.ts'), path.join(taken, 'a.ts'), path.join(restored, 'a.ts')]) {
+  for (const each of [path.join(fx.dir, 'a.ts'), path.join(loose, 'a.ts'), path.join(dotted, 'SKILL.md'), path.join(skills, 'SKILL.md'), path.join(linked, 'a.ts'), path.join(taken, 'a.ts'), path.join(restored, 'a.ts'), path.join(aliased, 'a.ts'), path.join(`${aliased}-new`, 'a.ts')]) {
     assert.ok(fx.ask(write(each)), each);
   }
-});
-
-test('a write that reaches no made worktree never asks git there, however slow git is to read it', (t) => {
-  const fx = fixture(t);
-  const made = realpathSync(fx.made('feat/slow'));
-  // A git that takes 5 seconds in the made worktree, past the agent gate hook's whole budget, and logs where it runs.
-  const bin = path.join(fx.root, 'bin');
-  mkdirSync(bin);
-  const log = path.join(bin, 'calls.log');
-  const real = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
-  writeFileSync(path.join(bin, 'git'), `#!/bin/sh\nhere=$(pwd -P)\nprintf '%s\\n' "$here" >> "${log}"\n[ "$here" = "${made}" ] && sleep 5\nexec "${real}" "$@"\n`, { mode: 0o755 });
-  const saved = process.env.PATH;
-  process.env.PATH = `${bin}${path.delimiter}${saved}`;
-  t.after(() => { process.env.PATH = saved; });
-  const asked = () => (readFileSyncOr(log)).split('\n').filter((line) => line === made).length;
-  const before = performance.now();
-  assert.equal(fx.ask(write(path.join(fx.start, 'src', 'a.ts'))), null, 'a write in the start worktree');
-  assert.equal(fx.ask({ tool_name: 'Bash', tool_input: { command: `rm -f ${path.join(fx.start, 'src')}/*.ts` } }), null, 'a glob there');
-  assert.ok(performance.now() - before < 2500, 'never waits on the slow checkout');
-  assert.equal(asked(), 0, 'git never ran in the made worktree');
-  process.env.PATH = saved;
-  assert.equal(fx.ask(write(path.join(made, 'a.ts'))), null, 'a write into it asks, and passes');
 });
 
 test('in a monorepo, the record goes to the store of the project the session is marked for, from whichever project it runs', async (t) => {

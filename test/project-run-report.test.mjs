@@ -954,6 +954,49 @@ test('an attended resume takes custody of a run whose driver the host lists as e
   assert.match(fx.cmd(['resume', 'launch'], { session: DRIVER, spawn: listing }).err[0], /drives the run launch, or did/u);
 });
 
+test('the host continuing the driver under a new id strands the run, so an attended resume takes custody, and never on a row that does not hold', (t) => {
+  const fx = started(t);
+  const NEXT = 'abcd1234-0000-4000-8000-00000000c0n1';
+  const transcript = path.join(fx.env.CLAUDE_CONFIG_DIR, 'projects', fx.dir.replace(/[^A-Za-z0-9]/gu, '-'), `${DRIVER}.jsonl`);
+  mkdirSync(path.dirname(transcript), { recursive: true });
+  const init = Date.parse(fx.run().init.at);
+  const row = (to, ms) => `${JSON.stringify({ type: 'continued-in', timestamp: new Date(ms).toISOString(), sessionId: DRIVER, continuedInSessionId: to })}\n`;
+  const resume = () => fx.cmd(['resume', 'launch'], { session: NEXT });
+  // Before the host recorded anything, the driver still runs.
+  assert.equal(resume().out[0], 'not halted launch');
+  // A row dated before the row that made the driver strands nothing.
+  appendFileSync(transcript, row(NEXT, init - 1000));
+  assert.equal(resume().out[0], 'not halted launch', 'a stale row');
+  // A row the old session went on after strands nothing.
+  appendFileSync(transcript, row(NEXT, init + 1000));
+  appendFileSync(transcript, `${JSON.stringify({ type: 'assistant', sessionId: DRIVER })}\n`);
+  assert.equal(resume().out[0], 'not halted launch', 'a voided row');
+  // The driver's commands name the way out to the continued session, and grant it nothing by themselves.
+  appendFileSync(transcript, row(NEXT, init + 2000));
+  assert.match(fx.cmd(['wait', 'launch', '--max-wait', '0'], { session: NEXT }).err[0], /which the host continued as abcd1234-0000-4000-8000-00000000c0n1: custody moves only through `aidrian project resume launch`/u);
+  assert.equal(fx.rows().some((each) => each.event === 'driver'), false);
+  assert.match(fx.cmd(['end', 'launch'], { session: NEXT }).err[0], /custody moves only through `aidrian project resume launch`/u, 'end names it too');
+  // Only the session the host names takes custody this way.
+  const other = fx.cmd(['resume', 'launch'], { session: 'abcd1234-0000-4000-8000-00000000f001' });
+  assert.equal(other.exitCode, 0, other.err.join('\n'));
+  assert.deepEqual(other.out, ['not halted launch', `note: the host continued the run's driver ${DRIVER} as ${NEXT}, and only that session takes custody of it`], 'it may lift a halt, and takes no custody');
+  assert.equal(fx.rows().some((each) => each.event === 'driver'), false);
+  assert.notEqual(runWriter({ session: 'abcd1234-0000-4000-8000-00000000f001', env: fx.env, home: fx.home })?.role, 'driver', 'a refused takeover files no driver mark');
+  // A copy of the old transcript in another project folder never outranks the main checkout's.
+  const copy = path.join(fx.env.CLAUDE_CONFIG_DIR, 'projects', '-a-linked-worktree', `${DRIVER}.jsonl`);
+  mkdirSync(path.dirname(copy), { recursive: true });
+  writeFileSync(copy, `${row(NEXT, init + 2000)}${JSON.stringify({ type: 'user', sessionId: DRIVER })}\n`);
+  // The attended continuation resumes, and drives on.
+  const taken = resume();
+  assert.equal(taken.exitCode, 0, taken.err.join('\n'));
+  assert.match(taken.out.join('\n'), /custody: this session now drives the run launch/u);
+  const last = fx.rows().at(-1);
+  assert.deepEqual([last.event, last.session, last.from, last.via], ['driver', NEXT, DRIVER, 'resume']);
+  assert.equal(runWriter({ session: NEXT, env: fx.env, home: fx.home }).role, 'driver');
+  assert.equal(fx.cmd(['wait', 'launch', '--max-wait', '0'], { session: NEXT }).exitCode, 0);
+  assert.match(fx.cmd(['wait', 'launch', '--max-wait', '0'], { session: DRIVER }).err[0], /this session is not the driver of the run launch/u, 'the old id lost custody');
+});
+
 test('a command whose ledger another process holds locked exits 75 with a retry line', async (t) => {
   const fx = started(t);
   fx.settle({ status: 'merged', pr: 12 });

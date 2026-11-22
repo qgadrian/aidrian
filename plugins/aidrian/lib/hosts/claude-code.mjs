@@ -11,6 +11,7 @@ import { configDir } from './claude-code-config.mjs';
 import { pushPermission } from './claude-code-push.mjs';
 import { attended, END_SIGNAL, hasClient, hostProcess, isWrappedHost, PROGRAM } from './claude-code-terminal.mjs';
 import modelPrices from './claude-code-prices.mjs';
+import { continuedIn } from './claude-code-continuation.mjs';
 import { transcriptLimit } from './claude-code-limit.mjs';
 import { accessProblem, cloneProblem, confineDomains, confineReads, limitContinueProblem, localBindingRisk, loopbackReach, nestedProtected, PLACEHOLDERS, PROTECTED_PATHS, sessionNote, writeEnvFile } from './claude-code-sandbox.mjs';
 import { trustProblem } from './claude-code-trust.mjs';
@@ -253,6 +254,9 @@ export default {
     settings: [{ file: '.claude/settings.local.json' }],
   },
   capabilities: {
+    // The session a session went on as, when the host continued it under a new id (hosts/claude-code-continuation.mjs),
+    // as { id, at }, or null: a project run whose driver it continued is stranded (lib/project-run-gate.mjs strandedDriver).
+    continuedIn: ({ session, cwd, env, home }) => continuedIn({ session, cwd, env, home }),
     // Reads Claude Code's transcripts (lib/transcript.mjs): cost, names reminder, session length, and attribution's model.
     // Also opts it into the review-rounds rule's reading of the Human's answers and typed grants of review rounds.
     transcripts: true,

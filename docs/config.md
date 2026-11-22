@@ -2156,6 +2156,8 @@ recorded none, so one failed read stops no session the team gave longer.
 So the driver's halt wait reaches `idle` and `end` can follow.
 `resume` names a driver it cannot read as an ended background session, such as the first one the Human ran: the Human
 resumes that same host session, which keeps its id and custody.
+A driver the host continued under a new id is stranded the same way, and only the continued session, attended,
+resumes the run to drive on ([handoff.md](handoff.md#a-project-run)).
 
 The [tracker write guard](#tracker) holds a project run's sessions whatever the working copy's `tracker.enabled` says,
 knowing each by its marks alone, never the folder a call runs in. An issue's session writes only its own issue, by its

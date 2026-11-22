@@ -6,7 +6,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -286,6 +286,20 @@ test('the remote rule, the project command rule, and the guards\' limits name an
   const many = Array.from({ length: WRITE_TARGETS + 1 }, (_, i) => `: > a${i}`).join('; ');
   assert.match(writeLimitDenial(bash(many, { session_id: OTHER, cwd: fx.dir }), fx.config, { unattended, issue, mark })?.reason ?? '', session);
   assert.match(deadlineDenial(bash(': > a', { session_id: OTHER, cwd: fx.dir }), fx.config, { unattended, issue, mark })?.reason ?? '', session);
+});
+
+test('the agent gate hook names resume to the session the host continued the driver as, and lets it resume', (t) => {
+  const fx = runFixture(t);
+  const ask = (command) => spawnHook(AGENT_HOOK, { session_id: OTHER, tool_name: 'Bash', tool_input: { command }, cwd: fx.dir }, fx.env);
+  const transcript = path.join(fx.env.CLAUDE_CONFIG_DIR, 'projects', fx.dir.replace(/[^A-Za-z0-9]/gu, '-'), `${DRIVER}.jsonl`);
+  mkdirSync(path.dirname(transcript), { recursive: true });
+  const moved = new Date(Date.parse(fx.run().init.at) + 1000).toISOString();
+  appendFileSync(transcript, `${JSON.stringify({ type: 'continued-in', timestamp: moved, sessionId: DRIVER, continuedInSessionId: OTHER })}\n`);
+  const waited = ask('aidrian project wait launch --max-wait 60');
+  assert.equal(waited.status, 2);
+  assert.match(waited.stderr, /which the host continued as .*: custody moves only through `aidrian project resume launch`/u);
+  const resumed = ask('aidrian project resume launch');
+  assert.equal(resumed.status, 0, resumed.stderr);
 });
 
 test('the hook scripts hold the new guards: a subagent\'s project start, an unattended write into the runs, and an issue session\'s stop', async (t) => {

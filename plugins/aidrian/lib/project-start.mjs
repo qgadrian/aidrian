@@ -355,7 +355,11 @@ export function commitProblem({ state, env = process.env, url = null, branch = P
     const commit = git(['-c', 'gc.auto=0', '-c', 'maintenance.auto=false', 'commit', '--quiet', '--allow-empty', '-m', 'aidrian preflight commit probe']);
     return commit.status === 0 ? null : `a commit in a clone made as an attempt's fails (${gitSaid(commit)})`;
   } finally {
-    rmSync(scratch, { recursive: true, force: true });
+    try {
+      rmSync(scratch, { recursive: true, force: true });
+    } catch {
+      // A folder that will not go never masks the probe's own answer; the next probe makes a fresh one.
+    }
   }
 }
 

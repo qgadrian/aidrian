@@ -409,7 +409,7 @@ How issue sessions and the driver relate to the cap of five background continuat
   network, which this sandbox denies. There `codex-local` is not ready, as when Codex is not installed: a
   `review.engine` set to it leaves the step `unsatisfied`, the reason naming the session, and `auto` takes `self`,
   with the bot only as the stage `--with-bot` adds. A flow that requires `independent-model` leaves the step
-  `unsatisfied` there. A plan with a `codex-local` pass and no result to reuse for it, as one a plan command adds,
+  `unsatisfied` there, unless `--with-bot` adds the bot and an agent answers the flow. A plan with a `codex-local` pass and no result to reuse for it, as one a plan command adds,
   is refused before any round opens ([The engine](../review.md#the-engine)).
 - An issue's session starts no continuation: `aidrian handoff continue` from it prints `continue: none`, and
   `aidrian handoff route` `route: none`, before any floor, mark, or start record. It pushes its work and records its result.

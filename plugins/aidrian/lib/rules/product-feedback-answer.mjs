@@ -139,10 +139,14 @@ export function readCall(invocation) {
 // What a question to the Human must name for this item of this record.
 const askOf = (record, item) => ({ pr: record.pr, id: item.id, title: item.title, others: record.items.filter((each) => each !== item && each.title !== item.title).map((each) => each.title), since: record.recorded_at });
 
-// The label the option must be: the decision word, alone or closed by punctuation before any note, as "Fix now, in
-// this pull request"; "fix-now" also reads as "Fix now". A word straight after it, as "Drop nothing", reads as another
-// answer.
-const onlyDecision = (decision) => new RegExp(`^\\s*${decision.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace('-', '[- ]')}\\s*(?:$|[.!,:;(\u2013\u2014]|-\\s)`, 'iu');
+// The answer that is the decision: the word alone, or ending in a period or `!`; "fix-now" also reads as "Fix now". An
+// option the question offered may add a note after a comma, colon, dash, or parenthesis, as "Fix now, in this pull
+// request"; a reply the Human typed may not, so "Drop, keep it open" typed is no drop. A word straight after the
+// decision, as "Drop nothing", reads as another answer either way.
+const decisionWord = (decision) => decision.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace('-', '[- ]');
+const onlyDecision = (decision) => new RegExp(`^\\s*${decisionWord(decision)}\\s*[.!]?\\s*$`, 'iu');
+const notedDecision = (decision) => new RegExp(`^\\s*${decisionWord(decision)}\\s*(?:[,:(\u2013\u2014]|-\\s)`, 'iu');
+const answersDecision = (each, decision) => onlyDecision(decision).test(each.answer) || (Boolean(each.options?.includes(each.answer)) && notedDecision(decision).test(each.answer));
 
 // Why `answers` hold no word of the Human on this decision, or null when they do. Names the nearest miss.
 function answerMismatch(answers, { pr, id, title, others, since }, decision) {
@@ -162,16 +166,15 @@ function answerMismatch(answers, { pr, id, title, others, since }, decision) {
   if (!onId.length) return `the question must name ${id} and no other item's id`;
   const onItem = onId.filter((each) => !others.some((other) => each.question.includes(`"${other}"`)));
   if (!onItem.length) return 'the question names another item\'s title too, so its answer is not about this one';
-  const only = onlyDecision(decision);
-  if (onItem.some((each) => only.test(each.answer))) return null;
-  return `the Human picked ${JSON.stringify(cleanTitle(onItem.at(-1).answer))}, and the option must be ${decision} alone, or ${decision} then a comma, colon, or dash before a note`;
+  if (onItem.some((each) => answersDecision(each, decision))) return null;
+  return `the Human picked ${JSON.stringify(cleanTitle(onItem.at(-1).answer))}, and the option must be ${decision} alone, or an offered option of ${decision} then a comma, colon, dash, or parenthesis before a note`;
 }
 
 const judgeAsk = (ask, decision, input) => {
   const why = answerMismatch(transcriptAnswers(readTranscript(input?.transcript_path)), ask, decision);
   if (why === null) return null;
   return `${HUMAN_LEAD}, and this session holds no such answer (${why}). Ask the Human with AskUserQuestion: a question naming #${ask.pr}, ${ask.id}, and ${JSON.stringify(ask.title)}, the title in double quotes, ` +
-    `and no other item, with one option that is ${decision} alone, or ${decision} then a comma, colon, or dash before a note. Or the Human runs the command in their own shell.`;
+    `and no other item, with one option that is ${decision} alone, or ${decision} then a comma, colon, dash, or parenthesis before a note. Or the Human runs the command in their own shell.`;
 };
 
 const unreadableReason = (what) =>

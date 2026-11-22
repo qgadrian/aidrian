@@ -45,7 +45,8 @@ function guarded(t) {
   writeFileSync(file, JSON.stringify(record));
   const transcript = path.join(dir, 'session.jsonl');
   writeFileSync(transcript, '');
-  const answer = (question, picked, at = '2026-11-03T11:00:00.000Z') => appendFileSync(transcript, `${JSON.stringify({ type: 'user', timestamp: at, toolUseResult: { answers: { [question]: picked } } })}\n`);
+  // `offered`: the option labels the question listed; none, as a reply the Human typed reads.
+  const answer = (question, picked, at = '2026-11-03T11:00:00.000Z', offered = null) => appendFileSync(transcript, `${JSON.stringify({ type: 'user', timestamp: at, toolUseResult: { answers: { [question]: picked }, ...(offered ? { questions: [{ question, options: offered.map((label) => ({ label })) }] } : {}) } })}\n`);
   const main = { transcript_path: transcript };
   return { dir, audits, file, record, transcript, answer, run: (command, input = main, cwd = dir) => check(command, { cwd, input }) };
 }
@@ -431,18 +432,24 @@ test('a title of any length is asked about by its id and its quotes', (t) => {
 });
 
 test('the option must be the decision alone or closed by punctuation before a note, and given after the record', (t) => {
-  for (const [picked, passes] of [['Drop', true], ['drop', true], [' Drop.', true], ['Drop nothing, keep it open', false], ['Do not drop', false], ['Drop it', false], ['Fix now', false], ['Drop, it is out of scope', true], ['Drop: out of scope', true], ['Drop — out of scope', true], ['Drop - out of scope', true], ['Drop (Recommended)', true], ['Dropped', false]]) {
+  for (const [picked, passes] of [['Drop', true], ['drop', true], [' Drop.', true], ['Drop nothing, keep it open', false], ['Do not drop', false], ['Drop it', false], ['Fix now', false], ['Drop, it is out of scope', true], ['Drop: out of scope', true], ['Drop — out of scope', true], ['Drop - out of scope', true], ['Drop (Recommended)', true], ['Dropped', false], ['Drop. Keep it open', false], ['Drop; keep it open', false], ['Drop!', true]]) {
     const g = guarded(t);
-    g.answer(QUESTION, picked);
+    g.answer(QUESTION, picked, undefined, [picked, 'Fix now']);
     assert.equal(g.run(ANSWER) === null, passes, picked);
+  }
+  // A typed reply carries no note: it is the decision alone, or no answer of it.
+  for (const [typed, passes] of [['Drop', true], ['Drop, keep it open', false], ['Drop (Recommended)', false]]) {
+    const g = guarded(t);
+    g.answer(QUESTION, typed);
+    assert.equal(g.run(ANSWER) === null, passes, `typed ${typed}`);
   }
   const g = guarded(t);
   g.answer(QUESTION, 'Fix now');
   assert.match(g.run(ANSWER) ?? '', /"Fix now"/u, 'the deny names what the Human picked');
   assert.equal(g.run('aidrian pr product-feedback answer 7 PF1 fix-now --by human'), null, 'fix-now also reads as "Fix now"');
-  assert.match(g.run(ANSWER) ?? '', /drop then a comma, colon, or dash before a note/u, 'the deny names the label rule');
+  assert.match(g.run(ANSWER) ?? '', /drop then a comma, colon, dash, or parenthesis before a note/u, 'the deny names the label rule');
   const noted = guarded(t);
-  noted.answer(QUESTION, 'Fix now, in this pull request');
+  noted.answer(QUESTION, 'Fix now, in this pull request', undefined, ['Fix now, in this pull request', 'Defer']);
   assert.equal(noted.run('aidrian pr product-feedback answer 7 PF1 fix-now --by human'), null, 'a note after a comma');
   const old = guarded(t);
   old.answer(QUESTION, 'Drop', '2026-11-02T09:00:00.000Z');

@@ -1292,7 +1292,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     there could become a driver's prior ([handoff.md](handoff.md#the-check)), and no `quorum`, whose hard calls it
     parks for the Human (`aidrian quorum route` routes them to `human`); in `plans` and `tmp`, only an entry named for
     its own issue, the key itself or the key followed by `-` or `.` in any case, such as `plans/eng-1-implementation.md`
-    or `tmp/eng-1/`; and in `dispatch`, only a handoff file named for its own branch, each `/` a `-`, such as
+    or `tmp/eng-1/`, and in `tmp` also the body files the pr-write skill and the pull request body hook name for its own
+    branch, such as `tmp/pr-body-feat-eng-1-export.md`; and in `dispatch`, only a handoff file named for its own branch, each `/` a `-`, such as
     `feat-eng-1-export-S1-explorer.json`. Its issue and branch are the run snapshot's, read while the ledger names its
     issue running (`lib/project-run-guard.mjs ownIssue`); with none, it writes none of them;
   - the temporary folder, this process's `TMPDIR` and `/tmp`, but for a state folder inside it, as one under `/tmp`

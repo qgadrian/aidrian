@@ -363,6 +363,9 @@ test('an issue session writes no workflow file, no handoff brief or snapshot, no
     [path.join(fx.state, 'plans', 'eng-12-implementation.md'), /not named for this session's issue ENG-1/u],
     [path.join(fx.state, 'plans', 'billing-plan.md'), /an issue session writes only plans\/eng-1-\.\.\. there/u],
     [path.join(fx.state, 'tmp', 'eng-2', 'log.txt'), /not named for this session's issue/u],
+    // The body file of another issue's branch, or one in plans, is not this session's.
+    [path.join(fx.state, 'tmp', 'pr-body-feat-eng-2-import.md'), /and the body files named for its branch, such as tmp\/pr-body-feat-eng-1-export\.md/u],
+    [path.join(fx.state, 'plans', 'pr-body-feat-eng-1-export.md'), /not named for this session's issue/u],
     [path.join(fx.state, 'dispatch', 'feat-eng-2-import-S1-explorer.json'), /a handoff file named for its own branch, feat-eng-1-export-<slice>-<agent>\.json/u],
   ];
   for (const [file, why] of refused) {
@@ -371,7 +374,8 @@ test('an issue session writes no workflow file, no handoff brief or snapshot, no
   }
   for (const file of [path.join(fx.work, 'src', 'x.js'), path.join(fx.work, '.github', 'ISSUE_TEMPLATE', 'bug.md'), path.join(fx.state, 'plans', 'eng-1-implementation.md'),
     path.join(fx.state, 'plans', 'ENG-1-implementation.md'), path.join(fx.state, 'tmp', 'eng-1', 'log.txt'), path.join(fx.state, 'tmp', 'eng-1.snapshot.json'),
-    path.join(fx.state, 'dispatch', 'feat-eng-1-export-S1-explorer.json'), path.join(fx.state, 'reviews', 'pr-3.json.tmp')]) {
+    path.join(fx.state, 'dispatch', 'feat-eng-1-export-S1-explorer.json'), path.join(fx.state, 'reviews', 'pr-3.json.tmp'),
+    path.join(fx.state, 'tmp', 'pr-body-feat-eng-1-export.md'), path.join(fx.state, 'tmp', 'comment-body-feat-eng-1-export.md')]) {
     assert.equal(fx.ask(write(file)), null, file);
   }
   // A session no issue names, as an attended session's background continuation, writes those state folders as before.

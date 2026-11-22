@@ -82,7 +82,11 @@ const issueNamed = (issue) => (target, folder) => {
   const [first = ''] = path.relative(folder, target).split(path.sep);
   const name = first.toLowerCase();
   const key = issue.key.toLowerCase();
-  return name === key || name.startsWith(`${key}-`) || name.startsWith(`${key}.`);
+  if (name === key || name.startsWith(`${key}-`) || name.startsWith(`${key}.`)) return true;
+  // In tmp, the body file the pr-write skill and the pull request body hook name for its own branch (pr-body.mjs
+  // bodyFilePath), each `/` a `-`: a branch is its issue's alone.
+  const branch = issue.branch.replaceAll('/', '-').toLowerCase();
+  return path.basename(folder) === 'tmp' && ['pr-body', 'issue-body', 'comment-body', 'merge-body'].some((stem) => name === `${stem}-${branch}.md`);
 };
 // Whether `target`, inside the dispatch folder `folder`, is a handoff file named for the branch of the issue `issue`
 // ({ branch }): `<branch>-<slice>-<agent>.json`, each `/` of the branch a `-`.
@@ -475,7 +479,7 @@ function issueWork(places, root, plain, refuse) {
   const { issue } = places;
   for (const name of ISSUE_FOLDERS) {
     const what = issue
-      ? `a file of the shared ${name} folder not named for this session's issue ${issue.key}, which another session may work from; an issue session writes only ${name}/${issue.key.toLowerCase()}-... there`
+      ? `a file of the shared ${name} folder not named for this session's issue ${issue.key}, which another session may work from; an issue session writes only ${name}/${issue.key.toLowerCase()}-... there${name === 'tmp' ? `, and the body files named for its branch, such as tmp/pr-body-${issue.branch.replaceAll('/', '-')}.md` : ''}`
       : `the shared ${name} folder, where an issue session whose running start cannot be read writes nothing`;
     refuse(path.join(root, name), what, true, issueNamed(issue));
     if (plain(name)) places.reviews.push(foldCase(path.join(root, name)));

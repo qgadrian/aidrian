@@ -31,7 +31,7 @@ import { gateGit } from './git.mjs';
 import { claimedSource, forgeToken, gitCredentialVars, sessionToken, tokenDigest, tokenVars } from './project-token.mjs';
 import { loadConfig } from './config.mjs';
 import { findProject, stateRoot } from './project.mjs';
-import { CACHE_VAR_NAMES, NPM_CONFIGS, varsProblem } from './project-registries.mjs';
+import { NPM_CONFIGS, SHELL_VAR_NAMES, varsProblem } from './project-registries.mjs';
 import { DROP_FILE, plainFolderProblem } from './project-result.mjs';
 import { pinnedRepository, runFolder, runsFolder } from './project-run.mjs';
 import { latestStart, ownAttemptFolder, startRows } from './project-run-guard.mjs';
@@ -489,14 +489,14 @@ export function writeShellVars(folder, vars) {
 // session its own mark names (project-run-guard.mjs ownAttemptFolder), or the session is held by a pending mark to
 // start in that very clone; a folder shaped like an attempt's inside a clone, which its session may write, is neither.
 // Only what the gate wrote there (writeShellVars), read without following a link, from a regular file of one link, and
-// only the names cacheVars gives. Never throws.
+// only the names cacheVars gives and the attempt's marker (SHELL_VAR_NAMES). Never throws.
 export function confinedShellVars({ session, cwd, env = process.env, home }) {
   try {
     const { attempt } = confinedAttempt({ session, cwd, env, home }) ?? {};
     if (!attempt) return null;
     const read = readSmallJson(path.join(attempt.folder, SHELL_VARS), SHELL_VARS_CAP);
     if (!read || varsProblem(read)) return null;
-    const vars = Object.fromEntries(Object.entries(read).filter(([name]) => CACHE_VAR_NAMES.includes(name)));
+    const vars = Object.fromEntries(Object.entries(read).filter(([name]) => SHELL_VAR_NAMES.includes(name)));
     return Object.keys(vars).length ? vars : null;
   } catch {
     return null;
@@ -517,7 +517,7 @@ export function confinedTokenVars({ session, cwd, env = process.env, home, token
   try {
     // A session without the claim gets no folder: it records no handoff, so it overwrites none.
     const claim = claimedSource(folder, env);
-    if (claim.problem) return { problem: claim.problem, folder: null };
+    if (claim.problem) return { problem: claim.problem, folder: null, ...(claim.unclaimed ? { unclaimed: true } : {}) };
     const project = typeof found.mark?.root === 'string' ? findProject(found.mark.root) : null;
     const repository = project ? pinnedRepository(project) : null;
     if (!repository) return { problem: 'the main checkout the session\'s mark names gives no repository', folder };

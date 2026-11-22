@@ -2,7 +2,8 @@
 // driver's `aidrian project start` of the halted issue meets a run halted by that issue's environment result or a start
 // of it whose proof failed, it runs the preflight's checks of that cause for that run (lib/project-preflight.mjs
 // recheckLines, the same checks, on the repository the run pinned, with no person), and when they all pass, writes a
-// `resume` row by the driver, `via: "recheck"`, naming the checks. A re-check that does not pass, for whatever reason,
+// `resume` row by the driver, `via: "recheck"`, naming the checks, and that start launches nothing: the next one starts
+// the issue afresh. A re-check that does not pass, for whatever reason,
 // writes nothing: the halt stays, and the driver's Halt steps end the run for a person. A halt of the same kind on the
 // same issue after a self-lift stays for a person with no re-check, so a cause the preflight cannot see never starts the
 // issue over and over. Any other halt, such as a usage limit's or a failed sandbox proof's, stays for a person as before.
@@ -63,5 +64,5 @@ export function recheckHalt({ state, run, found, session, key, custodian = sessi
   }
   if (written?.problem) return unwritten(written.problem);
   if (!written?.rows?.length) return { lifted: false, lines: ['the checks passed, but the run changed meanwhile: its halt was lifted, it ended, or custody moved'] };
-  return { lifted: true, lines: [`recheck lifted the halt: ${halt.cause}; ok ${passed.join(', ')}`] };
+  return { lifted: true, lines: [`recheck lifted the halt: ${halt.cause}; ok ${passed.join(', ')}`, `lifted the ${halt.kind} halt of ${halt.key}; start it again`] };
 }

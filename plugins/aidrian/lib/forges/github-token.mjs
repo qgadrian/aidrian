@@ -88,7 +88,8 @@ export const graphqlUrl = (host) => `${apiRoot(host).replace(/\/api\/v3$/u, '/ap
 // answer in its own process and prints one JSON line of the fields a read needs: the status, whether the body parsed,
 // the first `number` and the `default_branch` it holds, whether it holds the check rollup's answer (ROLLUP: the
 // repository, its pull request, and its last commit with its `statusCheckRollup` field, null with no checks), the
-// GraphQL error types, and the headers that say no request is left or to come back later. No body crosses the pipe, so none is cut short.
+// GraphQL error types, whether the body is a list and its top-level keys, and the headers that say no request is left or
+// to come back later. No body crosses the pipe, so none is cut short.
 const READ_PROBE = [
   'const [url, name, query] = process.argv.slice(1);',
   'const headers = { Authorization: `Bearer ${process.env[name] ?? ""}`, Accept: "application/vnd.github+json" };',
@@ -100,12 +101,13 @@ const READ_PROBE = [
   '  const commit = body?.data?.repository?.pullRequest?.commits?.nodes?.[0]?.commit;',
   '  process.stdout.write(JSON.stringify({ status: answer.status, parsed: body !== undefined && body !== null, number: Number.isSafeInteger(first?.number) ? first.number : null,',
   '    branch: typeof body?.default_branch === "string" ? body.default_branch : null, rollup: typeof commit === "object" && commit !== null && "statusCheckRollup" in commit, errors: errors.slice(0, 5).map((each) => String(each?.type ?? "")),',
+  '    array: Array.isArray(body), keys: body && typeof body === "object" && !Array.isArray(body) ? Object.keys(body).slice(0, 40) : [],',
   '    remaining: answer.headers.get("x-ratelimit-remaining"), retry: answer.headers.get("retry-after") }));',
   '}, (error) => { process.stderr.write(String(error?.message ?? error)); process.exit(2); });',
 ].join('\n');
 
 // What GitHub answers the REST route `route` of `host`, or with `query` its GraphQL endpoint, for `token`: the probe's
-// fields, { status, parsed, number, branch, rollup, errors, remaining, retry }. The token reaches the probe through
+// fields, { status, parsed, number, branch, rollup, errors, array, keys, remaining, retry }. The token reaches the probe through
 // its environment, never an argument. An answer that is not the probe's one line throws.
 export function apiStatus(route, { host, token, query = null, exec = execFileSync }) {
   const name = tokenVarFor(host);
@@ -135,19 +137,26 @@ export const TOKEN_READS = Object.freeze({
 const ROLLUP = 'query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){commits(last:1){nodes{commit{statusCheckRollup{contexts(first:1){nodes{__typename ... on CheckRun{name status}}}}}}}}}}';
 
 // What GitHub's answer `got` to the read probe says of the token: 'allowed', 'refused', or null when it says neither.
-// A 2xx whose body parses allows a REST read, and a GraphQL read when it holds the rollup's answer and no error, so a
-// null repository or pull request allows nothing. A 401 or 404 refuses
-// it, and so does a 403 that does not say no request is left or to come back later, and a GraphQL error FORBIDDEN.
-// Anything else, such as a 5xx, a 429, or a body that does not parse, says neither.
-function readVerdict(got, graphql) {
+// A 2xx whose body parses allows a REST read when it has the shape `shape` says its route answers (SHAPES), and a
+// GraphQL read when it holds the rollup's answer and no error, so a null repository or pull request allows nothing. A
+// 401 or 404 refuses it, and so does a 403 that does not say no request is left or to come back later, and a GraphQL
+// error FORBIDDEN. Anything else, such as a 5xx, a 429, a body that does not parse, or one of another shape, says neither.
+function readVerdict(got, graphql, shape) {
   const ok = got.status >= 200 && got.status < 300 && got.parsed === true;
   const errors = Array.isArray(got.errors) ? got.errors : [];
   if (ok && graphql && errors.includes('FORBIDDEN')) return 'refused';
   if (ok && graphql) return got.rollup === true && !errors.length ? 'allowed' : null;
-  if (ok) return 'allowed';
+  if (ok) return shape(got) ? 'allowed' : null;
   if (got.status === 401 || got.status === 404) return 'refused';
   return got.status === 403 && got.remaining !== '0' && !got.retry ? 'refused' : null;
 }
+
+// The shape of a REST answer each read's route gives: the repository with its default branch, a list, the combined
+// status with its state, and the workflow runs.
+const SHAPES = Object.freeze({
+  repository: (got) => typeof got.branch === 'string', list: (got) => got.array === true,
+  statuses: (got) => got.keys?.includes('state'), actions: (got) => got.keys?.includes('workflow_runs'),
+});
 
 // The reads of TOKEN_READS that `token` may not make on `repo` of `host`, by reads that write nothing:
 // { missing, unverified, unanswered }. `missing` holds each read refused (readVerdict), { read, what, permission, why },
@@ -158,14 +167,14 @@ function readVerdict(got, graphql) {
 // repository with neither proves the Issues read by that list. `probe` is apiStatus's shape, the test seam.
 export function tokenReadProblems(repo, { host, token, probe = apiStatus }) {
   const answer = { missing: [], unverified: [], unanswered: [] };
-  const ask = (read, route, query = null) => {
+  const ask = (read, route, query = null, shape = SHAPES[read] ?? SHAPES.list) => {
     let got = null;
     try {
       got = probe(route, { host, token, ...(query ? { query } : {}) });
     } catch {
       got = null;
     }
-    const verdict = got ? readVerdict(got, query !== null) : null;
+    const verdict = got ? readVerdict(got, query !== null, shape) : null;
     if (verdict === 'allowed') return got;
     if (verdict === 'refused') answer.missing.push({ read, ...TOKEN_READS[read], why: `the forge answered ${got.status}${got.errors?.length ? ` ${got.errors.join(', ')}` : ''}` });
     else if (!answer.unanswered.includes(read)) answer.unanswered.push(read);
@@ -176,12 +185,12 @@ export function tokenReadProblems(repo, { host, token, probe = apiStatus }) {
   // A token refused the repository can read nothing of it; one the forge could not answer still has the reads that
   // need only its name asked, and the statuses read, which needs its default branch, is unanswered.
   if (answer.missing.length) return answer;
-  if (!about) answer.unanswered.push('statuses');
   const pulls = ask('pulls', `repos/${repo}/pulls?state=all&per_page=1`);
   const pull = pulls?.number ?? null;
   const number = pull ?? ask('reactions', `repos/${repo}/issues?state=all&per_page=1`)?.number ?? null;
   if (number !== null) ask('reactions', `repos/${repo}/issues/${number}/reactions?per_page=1`);
-  if (typeof about?.branch === 'string' && about.branch !== '') ask('statuses', `repos/${repo}/commits/${encodeURIComponent(about.branch)}/status`);
+  if (about) ask('statuses', `repos/${repo}/commits/${encodeURIComponent(about.branch)}/status`);
+  else answer.unanswered.push('statuses');
   ask('actions', `repos/${repo}/actions/runs?per_page=1`);
   if (pull !== null) ask('rollup', 'graphql', JSON.stringify({ query: ROLLUP, variables: { o: owner, r: name, n: pull } }));
   else if (pulls) answer.unverified.push({ read: 'rollup', ...TOKEN_READS.rollup, why: 'the repository has no pull request yet, so its first one proves it' });

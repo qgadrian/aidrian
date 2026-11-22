@@ -300,11 +300,15 @@ test('an environment result halts the run with its stop; wait never re-checks it
   // A start of another issue does not re-check ENG-1's halt.
   assert.match(fx.cmd(['start', 'launch', 'ENG-4']).out[0], /^halt the run is halted/u);
   assert.deepEqual(rechecks(fx), []);
+  // The start that lifts the halt launches nothing; the next one starts the issue afresh.
+  const starts = fx.claude.starts().length;
+  const lifting = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.deepEqual([lifting.exitCode, lifting.out], [0, [`recheck lifted the halt: ${cause}; ok ${ENV_CHECKS.join(', ')}`, 'lifted the environment halt of ENG-1; start it again']]);
+  assert.equal(fx.claude.starts().length, starts, 'no session started');
+  assert.deepEqual(rechecks(fx), [{ event: 'resume', session: DRIVER, kind: 'environment', key: 'ENG-1', attempt: 1, via: 'recheck', checks: ENV_CHECKS }]);
   const next = fx.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(next.exitCode, 0, next.err.join('\n'));
-  assert.ok(next.out.includes(`recheck lifted the halt: ${cause}; ok ${ENV_CHECKS.join(', ')}`), next.out.join('\n'));
   assert.ok(next.out.includes('started ENG-1 attempt 2 session c0ffee02'), next.out.join('\n'));
-  assert.deepEqual(rechecks(fx), [{ event: 'resume', session: DRIVER, kind: 'environment', key: 'ENG-1', attempt: 1, via: 'recheck', checks: ENV_CHECKS }]);
   assert.ok(existsSync(path.join(runFolder(fx.state, 'launch'), 'attempts', 'ENG-1.1')), 'the environment attempt keeps its folder');
 });
 
@@ -392,28 +396,15 @@ test('a resume row the re-check cannot write is its own line, and a ledger anoth
   assert.match(gone.lines.at(-1), /^the checks passed, but the resume row could not be written: no run launch in /u);
 });
 
-test('a start whose re-check lifted the halt probes the forge token once', (t) => {
-  const fx = started(t);
-  let reads = 0;
-  fx.forge.tokenReads = () => ((reads += 1), READS_OK);
-  fx.recorded({ status: 'environment', stop: 'no network' });
-  fx.claude.states[CHILD] = 'done';
-  const before = fx.forge.calls.filter(([name]) => name === 'tokenCanPush').length;
-  const lifted = fx.cmd(['start', 'launch', 'ENG-1']);
-  assert.equal(lifted.exitCode, 0, lifted.out.join('\n'));
-  assert.ok(lifted.out.some((line) => line.startsWith('recheck lifted the halt: ')), lifted.out.join('\n'));
-  assert.deepEqual([reads, fx.forge.calls.filter(([name]) => name === 'tokenCanPush').length - before], [1, 1]);
-});
-
 test('a second environment halt of the same issue after a self-lift stays for a person, and spends its attempts as before', (t) => {
   const fx = started(t);
   for (let n = 0; n < 3; n += 1) {
     const session = STARTED[n].session;
     if (n === 2) assert.equal(fx.cmd(['resume', 'launch'], { session: OTHER }).exitCode, 0);
     if (n > 0) {
+      if (n === 1) assert.ok(fx.cmd(['start', 'launch', 'ENG-1']).out[0].startsWith('recheck lifted the halt: ENG-1 attempt 1 '));
       const again = fx.cmd(['start', 'launch', 'ENG-1']);
       assert.equal(again.exitCode, 0, again.err.join('\n'));
-      if (n === 1) assert.ok(again.out.some((line) => line.startsWith('recheck lifted the halt: ENG-1 attempt 1 ')), again.out.join('\n'));
     }
     const expected = n < 2 ? 'result ENG-1 environment -> open' : 'result ENG-1 environment -> parked attempts';
     assert.deepEqual(fx.recorded({ status: 'environment', stop: `no network, try ${n + 1}` }, session).out, [expected]);

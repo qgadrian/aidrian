@@ -195,9 +195,8 @@ function trustLines({ cap, state, env, home, lines, check }) {
 // on its pinned `repository` ({ host, owner, name }, the init row's), never the checkout's origin now, and only those
 // `names` lists of commit, host, trust, and access, with the state folder and the team's policy they need. An origin
 // that no longer names that repository is a `blocker repository:` line, and no other check, so no probe, runs; a policy
-// the forge cannot answer now is a `retry policy:` line. Returns the lines, as the preflight prints them; `keep` gets the
-// access check's result (project-start.mjs accessProblem), for the start to reuse.
-export function recheckLines({ project, config, run, repository, names, env = process.env, home, forge, platform = process.platform, exec, keep }) {
+// the forge cannot answer now is a `retry policy:` line. Returns the lines, as the preflight prints them.
+export function recheckLines({ project, config, run, repository, names, env = process.env, home, forge, platform = process.platform, exec }) {
   const lines = [];
   const check = (name, problem) => lines.push(problem ? blockerLine(name, problem) : `ok ${name}`);
   const main = project.checkouts.at(-1);
@@ -217,7 +216,7 @@ export function recheckLines({ project, config, run, repository, names, env = pr
   if (names.includes('host')) check('host', hostCheck(cap, policy, env));
   if (names.includes('trust')) trustLines({ cap, state: place.state, env, home, lines, check });
   if (names.includes('access') && cap) {
-    lines.push(...accessLines({ cap, facade, repository, env, home, main, state: place.state, platform, allowed: policy.outsideSandbox, localBinding: policy.localBinding === true, keychain: project.localForgeTokenKeychain, exec, keep }));
+    lines.push(...accessLines({ cap, facade, repository, env, home, main, state: place.state, platform, allowed: policy.outsideSandbox, localBinding: policy.localBinding === true, keychain: project.localForgeTokenKeychain, exec }));
   }
   return lines;
 }
@@ -227,14 +226,13 @@ export function recheckLines({ project, config, run, repository, names, env = pr
 // session that token may not make, naming the permission to add, and a `retry token-reads:` line when the forge could
 // not answer, then a `note token-reads:` line for each read not verified, a `note token:` line naming the source the token came
 // from, and one for each note on it, such as a token that reaches more than this repository. Never the token itself.
-function accessLines({ cap, facade, repository, env, home, main, state, platform, allowed, localBinding, keychain, exec, keep }) {
+function accessLines({ cap, facade, repository, env, home, main, state, platform, allowed, localBinding, keychain, exec }) {
   let access;
   try {
     access = accessProblem({ cap, forge: facade, repository, env, home, guarded: guardedFolders({ main, state, env, home }), main, platform, allowed, localBinding, keychain, ...(exec ? { exec } : {}) });
   } catch (error) {
     access = { halt: `the access check failed (${String(error?.message ?? error).split('\n')[0]})` };
   }
-  keep?.(access);
   // The reads the token may not make are their own blockers, one each, after the access check they passed; a read the
   // forge could not answer, whatever the reason, is one `retry token-reads:` line, which names no permission.
   const reads = Array.isArray(access?.reads) ? access.reads : null;

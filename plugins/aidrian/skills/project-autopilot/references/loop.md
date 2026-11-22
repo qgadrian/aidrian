@@ -25,8 +25,8 @@ named and go on from that output as step 2 says.
    - an `unverified:` line is a note, not a refusal.
    - `paused until <time>`, exit 1: a usage limit paused the run. Not a refusal: § Pause.
    - a line `halt <cause>`, exit 1: § Halt. A `recheck kept the halt:` line after it names what kept it.
-   - a `recheck lifted the halt: <cause>; ok <checks>` line: the start re-checked the halt of this issue, and the run
-     goes on; read its other lines as this step says, and on exit 1 go to step 1.
+   - exit 0, `recheck lifted the halt: <cause>; ok <checks>`: the start lifted the halt of this issue and launched
+     nothing. Run this step again for the same `<key>` at once.
    - exit 75, `retry: <why>`: § Retry. A session that runs on after its issue settled gives this too: a wait.
    - any other exit 1: § Stop, with its stderr line as the cause.
 3. `aidrian project wait <run> --max-wait 150`:

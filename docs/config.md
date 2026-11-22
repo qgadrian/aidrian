@@ -1903,8 +1903,9 @@ person, on the repository the run's init row pinned: first `repository`, the sta
 which on a moved origin keeps the halt before any probe runs, then the state folder and the team's policy the others
 need. When every line is `ok` or a `note`, it writes a `resume` row with `via: "recheck"`, the halt's `kind`, issue,
 and attempt, and the `checks` that passed, under the ledger's lock only while the halt stands, the run has not ended,
-and custody rests where the caller read it, prints `recheck lifted the halt: <cause>; ok <checks>`, and goes on,
-reusing the access check the re-check made, so the forge is probed once. A run that changed meanwhile prints `the checks
+and custody rests where the caller read it, prints `recheck lifted the halt: <cause>; ok <checks>` and
+`lifted the <kind> halt of <issue>; start it again`, and exits 0 having launched nothing: the driver's next start of the
+issue reads the run, its policy, and its access afresh, and launches it. A run that changed meanwhile prints `the checks
 passed, but the run changed meanwhile`; a row that could not be written prints `the checks passed, but the resume row
 could not be written: <why>`; and a ledger another process holds exits 75, to be tried again. Any other line, a blocker
 or a forge that could not answer alike, keeps the halt and writes nothing: the start prints `recheck kept the halt:

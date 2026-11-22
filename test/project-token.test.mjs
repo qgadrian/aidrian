@@ -249,7 +249,7 @@ test('preflight says ok access with a note naming the token\'s source, and a blo
 });
 
 // What the read probe prints for one answer of GitHub (github-token.mjs apiStatus), with `more` over a 200 that parsed.
-const probed = (more = {}) => ({ status: 200, parsed: true, number: null, branch: null, rollup: true, errors: [], remaining: '4000', retry: null, ...more });
+const probed = (more = {}) => ({ status: 200, parsed: true, number: null, branch: null, rollup: true, errors: [], array: true, keys: ['state', 'workflow_runs'], remaining: '4000', retry: null, ...more });
 
 // The GitHub adapter's reads with a fine-grained token that may push but holds no Issues permission, as the live run's
 // token: GitHub answers the reactions read 403, "Resource not accessible by personal access token".
@@ -320,7 +320,12 @@ test('the token reads: refusals name their permission, the check rollup with no 
   for (const answer of [{ rollup: false, errors: ['NOT_FOUND'] }, { rollup: true, errors: ['INTERNAL'] }, { rollup: false, errors: ['RATE_LIMITED'] }, { rollup: false }]) {
     assert.deepEqual([rollup(answer).missing, rollup(answer).unanswered], [[], ['rollup']], JSON.stringify(answer));
   }
-  assert.deepEqual(reads(() => probed({ status: 500 })).unanswered, ['repository', 'statuses', 'pulls', 'reactions', 'actions']);
+  assert.deepEqual(reads(() => probed({ status: 500 })).unanswered, ['repository', 'pulls', 'reactions', 'statuses', 'actions']);
+  // A 200 of another shape than its route answers is no answer: a repository with no default branch, a pull list that is
+  // no list, and workflow runs without their list.
+  const shapes = reads((route) => (route === 'repos/acme/widgets/pulls?state=all&per_page=1' ? probed({ array: false, keys: ['message'] }) : route.includes('/runs') ? probed({ keys: [] }) : null));
+  assert.deepEqual([shapes.missing, shapes.unanswered], [[], ['pulls', 'actions']]);
+  assert.deepEqual(reads((route) => (route === 'repos/acme/widgets' ? probed({ array: false, keys: [] }) : null)).unanswered, ['repository', 'statuses'], 'a repository answer of {}');
   // The reads that need only the repository's name are asked when its own read gets no answer.
   const mixed = reads((route) => (route === 'repos/acme/widgets' ? probed({ status: 500 }) : route.includes('/runs') ? probed({ status: 403 }) : null));
   assert.deepEqual([mixed.missing.map((each) => each.read), mixed.unanswered], [['actions'], ['repository', 'statuses']], 'the Actions refusal beside an unanswered repository read');

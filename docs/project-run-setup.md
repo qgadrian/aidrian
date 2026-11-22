@@ -182,7 +182,9 @@ the rollup is a `note token-reads:` line: the first pull request proves it. Any 
 429, a body that does not parse, a GraphQL answer with a null repository, or a probe that fails, says nothing of the
 token: one `retry token-reads:` line naming those reads, and a start that exits 75 to be tried again. A refused read is
 reported whatever else went unanswered. When the repository's own read gets no answer, the reads that need only its
-name are still asked, and the commit statuses, which need its default branch, are unanswered.
+name are still asked, and the commit statuses, which need its default branch, are unanswered. A 200 of another shape than its route answers,
+such as a repository with no default branch, a list route that gives no list, or workflow runs with no
+`workflow_runs`, is unanswered too.
 Each probe parses
 the answer in its own process and hands back only the fields the read needs. The writes are not probed, since a probe
 writes nothing.

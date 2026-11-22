@@ -345,9 +345,9 @@ function startContext(given) {
   // other waits on a person.
   const custodian = held.role === 'successor' ? held.driver.session : session;
   const rechecked = recheckHalt({ state, run, found: opened.found, session, key: given.key, custodian, recheck: given.recheck, now: given.now });
-  // Read again after any re-check, which may have lifted the halt or met a run another process changed.
-  const found = rechecked.lines.length ? readRun(state, run) : opened.found;
-  if (found.problem) return plain(found.problem);
+  // A start that lifts a halt launches nothing: the next start reads the run, its policy, and its access afresh.
+  if (rechecked.lifted) return { answer: { exitCode: 0, out: rechecked.lines, err: [] } };
+  const { found } = opened;
   const halted = haltOf(found);
   if (halted) return { answer: haltAnswer(`the run is halted: ${halted}`, { lift: RESUME(run), lines: rechecked.lines }) };
   const paused = pauseOf(found, given.now);
@@ -373,7 +373,7 @@ function startContext(given) {
   const note = [...unverifiedNote(cap), ...rechecked.lines];
   const noted = (answer) => ({ ...answer, out: answer.out[0]?.startsWith('halt ') ? [answer.out[0], ...note, ...answer.out.slice(1)] : [...note, ...answer.out] });
   const refuse = (why, lines = []) => ({ answer: noted({ exitCode: 1, out: lines, err: [`aidrian project start: ${why}`] }) });
-  return { ...given, session, state, found, store, held, facade, policy, cap, refuse, noted, main, lifted: rechecked.lifted };
+  return { ...given, session, state, found, store, held, facade, policy, cap, refuse, noted, main };
 }
 
 // Where the start runs, once the run's issues allow it: { orphans, attempt, tip, branch, cwd, grants, drop, log }, or
@@ -392,8 +392,7 @@ function startPlace(context) {
   if (capped.problem) return refuse(capped.problem, orphans);
   const early = heldProblem({ store, session, cap, env, spawn, state, run });
   if (early) return refuse(early, orphans);
-  // A start whose re-check lifted the halt reuses the access check that re-check made, so the forge is probed once.
-  const access = (context.lifted ? context.checkedAccess?.() : null) ?? accessProblem({
+  const access = accessProblem({
     cap, forge: facade, repository: found.init.repository, env, home, guarded: guardedFolders({ main, state, env, home }), main, platform: context.platform, allowed: policy.outsideSandbox, localBinding: policy.localBinding,
     keychain: project.localForgeTokenKeychain, ...(context.exec ? { exec: context.exec } : {}),
   });

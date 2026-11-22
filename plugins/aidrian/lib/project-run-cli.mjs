@@ -130,10 +130,8 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
   const gate = { project, config, run, env, home, ...(now === undefined ? {} : { now }), ...(forge ? { forge } : {}) };
   // The preflight's checks of a halt's cause, for this run on its pinned repository, which the driver's start of the
   // halted issue runs (project-recheck.mjs).
-  // Its access check is kept, so a start the re-check lifted probes the forge once.
-  let checked = null;
-  const recheck = ({ repository, names }) => recheckLines({ project, config, run, repository, names, env, home, keep: (access) => { checked = access; }, ...(forge ? { forge } : {}), ...(platform ? { platform } : {}), ...(exec ? { exec } : {}) });
-  if (action === 'start') return startIssue({ ...gate, key: second, spawn, wait, recheck, checkedAccess: () => checked, ...(platform ? { platform } : {}), ...(exec ? { exec } : {}) });
+  const recheck = ({ repository, names }) => recheckLines({ project, config, run, repository, names, env, home, ...(forge ? { forge } : {}), ...(platform ? { platform } : {}), ...(exec ? { exec } : {}) });
+  if (action === 'start') return startIssue({ ...gate, key: second, spawn, wait, recheck, ...(platform ? { platform } : {}), ...(exec ? { exec } : {}) });
   if (action === 'result') {
     if (!values.file) return fail('project result needs --file');
     return recordResult({ ...gate, key: second, file: path.resolve(cwd, values.file) });

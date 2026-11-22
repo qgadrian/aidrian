@@ -571,11 +571,15 @@ test('a start whose hooks never ran under codex exec gives its attempt back and 
   const next = fx.cmd(['next', 'launch']);
   assert.match(next.out[0], /^halted the start of ENG-1 attempt 1 failed its proof/u);
   assert.match(JSON.parse(fx.cmd(['next', 'launch', '--json']).out[0]).halt, /failed its proof/u);
-  // The driver's next start re-checks the host, its trust, and its access, which pass, so it lifts the halt and starts;
-  // the hooks still do not run, so the proof fails again, and this second halt of ENG-1 waits on a person.
+  // The driver's next start re-checks the host, its trust, and its access, which pass, so it lifts the halt and launches
+  // nothing; the start after it runs, the hooks still do not, so the proof fails again, and this second halt of ENG-1
+  // waits on a person.
+  const lifting = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(lifting.exitCode, 0, lifting.out.join('\n'));
+  assert.match(lifting.out[0], /^recheck lifted the halt: the start of ENG-1 attempt 1 failed its proof/u);
+  assert.equal(lifting.out[1], 'lifted the proof halt of ENG-1; start it again');
   const again = fx.cmd(['start', 'launch', 'ENG-1'], { wait: fx.ready() });
   assert.match(again.out[0], /^halt the start of ENG-1 attempt 1 failed its proof/u, again.out.join('\n'));
-  assert.ok(again.out.some((line) => /^recheck lifted the halt: the start of ENG-1 attempt 1 failed its proof/u.test(line)), again.out.join('\n'));
   assert.deepEqual(shape(), [...proofRows, ['resume', 'recheck'], ...proofRows]);
   const lifted = fx.rows()[5];
   assert.deepEqual([lifted.session, lifted.kind, lifted.key, lifted.checks.includes('host')], [DRIVER, 'proof', 'ENG-1', true]);

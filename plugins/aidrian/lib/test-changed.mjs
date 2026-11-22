@@ -3,7 +3,9 @@
 // The change is the checkout's files against `--base`, else the branch's remote copy, else the merge base with the
 // default branch on `origin`: committed, uncommitted, and untracked files that git does not ignore. A test file it touches
 // is one the change itself adds or edits, one that names a changed file (needlesOf), or a Go `_test.go` beside a changed
-// `.go` file. A nested package's tests are left out, since its own runner runs them. With nothing to run it prints the
+// `.go` file. A nested package's tests are left out, since its own runner runs them. With no `testing.changedCommand`,
+// only a module `node --test` loads (`.mjs`, `.cjs`, `.js`) or a Go test is kept: a fixture, a data file under `test/`,
+// or a `.tsx` test would fail as a test and hide the real result. With nothing to run it prints the
 // node runner's zero summary, so its row shows no test passed, and supports no claim.
 // The command is config.json `testing.changedCommand`, else `npm test --` when package.json has a test script, with the
 // files after it; its exit status is the command's.
@@ -20,6 +22,8 @@ import { findProject } from './project.mjs';
 import { remoteCopy } from './rules/push-first.mjs';
 
 export { TEST_FILE };
+
+const NODE_MODULE = /\.(?:mjs|cjs|js)$/u;
 
 const lines = (result) => (result.status === 0 ? result.stdout.split('\n').map((line) => line.trim()).filter(Boolean) : null);
 
@@ -53,11 +57,12 @@ export function needlesOf(file) {
 
 // The test files the change touches: the changed ones that still exist, then the ones that name a changed file. A test
 // file in a nested package, a folder below the top with a package.json of its own, is left out: its own runner runs it.
-export function touchedTests(root, files, git = runGit) {
+// `nodeOnly` keeps only the modules `node --test` loads, for the default `npm test --` command.
+export function touchedTests(root, files, git = runGit, { nodeOnly = false } = {}) {
   const listed = lines(git(['ls-files', '--cached', '--others', '--exclude-standard'], root)) ?? [];
   const exists = new Set(listed);
   const packages = listed.filter((file) => file.includes('/') && path.posix.basename(file) === 'package.json').map((file) => `${path.posix.dirname(file)}/`);
-  const ours = (file) => TEST_FILE.test(file) && !packages.some((folder) => file.startsWith(folder));
+  const ours = (file) => TEST_FILE.test(file) && (!nodeOnly || NODE_MODULE.test(file)) && !packages.some((folder) => file.startsWith(folder));
   const own = files.filter((file) => ours(file) && exists.has(file));
   const needles = [...new Set(files.flatMap(needlesOf))];
   // Go tests a package from the same folder, and names no file: every `_test.go` beside a changed `.go` file.
@@ -104,7 +109,7 @@ export const commands = {
         console.error(`aidrian test changed: git cannot read the change against ${base ?? 'a base'}; pass --base <revision>`);
         return 2;
       }
-      const tests = touchedTests(root, files);
+      const tests = touchedTests(root, files, runGit, { nodeOnly: !config?.testing?.changedCommand });
       const command = testCommand(root, config?.testing);
       if (values.list) {
         console.log(tests.join('\n'));

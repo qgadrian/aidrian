@@ -673,6 +673,8 @@ test('aidrian test changed finds the changed test files and the ones that name a
       'other/x_test.go': 'package other\n',
       'mod/package.json': '{}',
       'mod/tests/a.test.tsx': "import '../../lib/a.mjs';\n",
+      'test/fixtures/a.json': '{"file": "lib/b.mjs"}\n',
+      'test/fixtures/notes.md': 'see lib/b.mjs\n',
     },
   });
   git('push', '-q', 'origin', 'feat/x');
@@ -686,6 +688,11 @@ test('aidrian test changed finds the changed test files and the ones that name a
   assert.deepEqual(touchedTests(dir, ['lib/a.mjs', 'test/c.test.mjs']), ['test/a.test.mjs', 'test/c.test.mjs'], 'a nested package\'s tests are its own runner\'s');
   assert.deepEqual(touchedTests(dir, ['lib/widget.ts']), ['test/widget.test.ts'], 'an import with no extension');
   assert.deepEqual(touchedTests(dir, ['pkg/sum.go']), ['pkg/sum_test.go'], 'Go tests beside the changed file');
+  const nodeOnly = (files) => touchedTests(dir, files, undefined, { nodeOnly: true });
+  assert.deepEqual(touchedTests(dir, ['lib/b.mjs']), ['test/b.test.mjs', 'test/fixtures/a.json', 'test/fixtures/notes.md'], 'a configured command decides what it runs');
+  assert.deepEqual(nodeOnly(['lib/b.mjs', 'test/fixtures/a.json']), ['test/b.test.mjs'], 'a fixture or Markdown file is no test module');
+  assert.deepEqual(nodeOnly(['lib/widget.ts']), [], 'node --test loads no .ts test');
+  assert.deepEqual(nodeOnly(['pkg/sum.go']), ['pkg/sum_test.go'], 'Go tests stay');
   assert.equal(testCommand(dir, {}), 'npm test --');
   assert.equal(testCommand(dir, { changedCommand: 'node --test' }), 'node --test');
   const listed = spawnSync(process.execPath, [CLI, 'test', 'changed', '--list'], { cwd: dir, env: ENV, encoding: 'utf8' });

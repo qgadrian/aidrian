@@ -325,9 +325,12 @@ folder this command resolves. Every attempt's clone lies under the runs folder, 
 
 ## After a halt or a stop
 
-A **halt** stops every start of the run until a person lifts it: a start whose proof failed, as a session whose hooks
-never ran or whose sandbox proof failed, and a usage limit past the run's 24 pauses. `aidrian project next` prints
-`halted <cause>` first. Fix the cause, then run, from the Human's own shell, outside the driver:
+A **halt** stops every start of the run: an issue session's `environment` result, a start whose proof failed, as a
+session whose hooks never ran or whose sandbox proof failed, and a usage limit past the run's 24 pauses. `aidrian
+project next` prints `halted <cause>` first. The driver lifts an environment result's halt, and a failed proof's but
+the sandbox proof's, once by itself, when the preflight's checks of that cause pass
+([Project run](config.md#project-run)); any other halt, a re-check that fails, and a second such halt of
+the same issue wait on a person. Fix the cause, then run, from the Human's own shell, outside the driver:
 
 ```sh
 aidrian project resume <run>

@@ -555,7 +555,7 @@ test('a drop the driver cannot trust ends the attempt bad_result', (t) => {
   }
 });
 
-test('a start whose hooks never ran under codex exec gives its attempt back and halts the run until another attended session resumes it', (t) => {
+test('a start whose hooks never ran under codex exec gives its attempt back and halts the run; the driver\'s re-check lifts it once, and the second halt waits on another attended session', (t) => {
   const fx = codexRun(t, { mode: { event: 'thread', hook: false } });
   const result = fx.cmd(['start', 'launch', 'ENG-1'], { wait: fx.ready() });
   assert.equal(result.exitCode, 1);
@@ -563,16 +563,28 @@ test('a start whose hooks never ran under codex exec gives its attempt back and 
   assert.match(result.out[1], /^unverified: /u);
   assert.match(result.err[0], /aidrian project resume launch/u);
   assert.ok(gone(fx.fake.call().pid));
-  assert.deepEqual(fx.rows().map((row) => [row.event, row.outcome ?? row.state ?? null]), [['start', 'uncertain'], ['issue', 'running'], ['start', 'void'], ['issue', 'open'], ['halt', null]]);
+  const shape = () => fx.rows().map((row) => [row.event, row.outcome ?? row.state ?? row.via ?? null]);
+  const proofRows = [['start', 'uncertain'], ['issue', 'running'], ['start', 'void'], ['issue', 'open'], ['halt', null]];
+  assert.deepEqual(shape(), proofRows);
+  assert.equal(fx.rows().at(-1).kind, 'proof');
   const next = fx.cmd(['next', 'launch']);
   assert.match(next.out[0], /^halted the start of ENG-1 attempt 1 failed its proof/u);
   assert.match(JSON.parse(fx.cmd(['next', 'launch', '--json']).out[0]).halt, /failed its proof/u);
-  const again = fx.cmd(['start', 'launch', 'ENG-1']);
-  assert.match(again.out[0], /^halt the run is halted: /u);
+  // The driver's next start re-checks the host, its trust, and its access, which pass, so it lifts the halt and starts;
+  // the hooks still do not run, so the proof fails again, and this second halt of ENG-1 waits on a person.
+  const again = fx.cmd(['start', 'launch', 'ENG-1'], { wait: fx.ready() });
+  assert.match(again.out[0], /^halt the start of ENG-1 attempt 1 failed its proof/u, again.out.join('\n'));
+  assert.ok(again.out.some((line) => /^recheck lifted the halt: the start of ENG-1 attempt 1 failed its proof/u.test(line)), again.out.join('\n'));
+  assert.deepEqual(shape(), [...proofRows, ['resume', 'recheck'], ...proofRows]);
+  const lifted = fx.rows()[5];
+  assert.deepEqual([lifted.session, lifted.kind, lifted.key, lifted.checks.includes('host')], [DRIVER, 'proof', 'ENG-1', true]);
+  const kept = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.match(kept.out[0], /^halt the run is halted: /u);
+  assert.ok(kept.out.includes('the run lifted a halt of ENG-1 of this kind (proof) by itself once, so this one waits on a person'), kept.out.join('\n'));
   // However long ago the halt was written.
   assert.match(fx.cmd(['start', 'launch', 'ENG-1'], { now: Date.now() + 20 * 60 * 1000 }).out[0], /^halt the run is halted: /u, '20 minutes on');
   assert.match(fx.cmd(['next', 'launch']).out[0], /^halted /u);
-  assert.equal(fx.rows().length, 5, 'a halted run records no other start');
+  assert.equal(fx.rows().length, 12, 'a halted run records no other start, and one re-check row');
   // The driver may not lift its own halt; another session a person attends may.
   const driver = fx.cmd(['resume', 'launch']);
   assert.equal(driver.exitCode, 1);

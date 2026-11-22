@@ -1895,6 +1895,17 @@ a halt again under the ledger's lock. The attempt counts toward the issue's 3, a
 `aidrian project resume RUN` lets the next start take the same issue up again. The attempt's folder stays for the
 run's life, so work its clone holds that a failed push never sent can be recovered from
 `<state>/runs/RUN/attempts/ISSUE.ATTEMPT/work`.
+The driver lifts two kinds of halt by itself, once each, when the preflight's own checks of that cause pass
+(`lib/project-recheck.mjs`): an environment result's, re-checked by `commit`, `host`, `trust`, `access`, and
+`token-reads`, and a failed proof's but the sandbox proof's, by `host`, `trust`, and `access`. When the driver's
+`wait` or `start` meets such a halt, it runs `aidrian project preflight RUN`'s checks, with no person: when none of
+those is a blocker and at least one is `ok`, it writes a `resume` row with `via: "recheck"`, the halt's `kind`, issue,
+and attempt, and the `checks` that passed, prints `recheck lifted the halt: <cause>; ok <checks>`, and goes on; else it
+writes a `recheck` row with `pass: false` and the blocker lines, prints `recheck kept the halt: <cause>` and them, and
+the halt waits on a person as above. Each halt row is re-checked once. A second halt of the same kind on the same
+issue after a self-lift is kept with no re-check, so a cause the preflight cannot see, such as a missing host tool,
+costs that issue one more attempt at most. A failed sandbox proof, a usage limit past the run's pauses, and any halt
+row an older plugin wrote wait on a person.
 When an issue's pull request does not merge, its session runs `aidrian project stop-action RUN ISSUE`, as the
 autopilot skill's phases say. Only the issue's own session runs it: the newest session of the chain of the issue's
 latest start, while the issue runs, whose mark names that run and issue; never the driver. It finds the pull request

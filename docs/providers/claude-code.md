@@ -401,7 +401,8 @@ How issue sessions and the driver relate to the cap of five background continuat
 - The start holds the session only once the plugin's agent gate hook files its beacon on the session's first tool
   call, within 180 seconds, as on Codex: it shows the plugin's hooks still load under `--setting-sources user`. The
   session's floor and mark are filed first, as soon as the host lists its id. A session whose beacon never comes is
-  stopped, gives its attempt back, and halts the run until an attended `aidrian project resume`.
+  stopped, gives its attempt back, and halts the run until an attended `aidrian project resume`, or the driver's
+  re-check lifts it once ([Project run](../config.md#project-run)).
 - The beacon proves only that the hooks run. Before the start holds the session, the session proves from inside its
   sandbox that the sandbox is in force ([The sandbox proof](#the-sandbox-proof)): its first call must be `aidrian
   project confine <run> <issue>`, and nothing else runs until the start confirmed it.

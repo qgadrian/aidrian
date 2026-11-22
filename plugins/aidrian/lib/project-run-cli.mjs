@@ -128,7 +128,9 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
   if (action === 'report') return reportCommand({ project, config, run, json: values.json === true, env, home });
   if (action === 'recorded') return recordedCommand({ project, config, run, key: second, env, home, ...(now === undefined ? {} : { now }) });
   const gate = { project, config, run, env, home, ...(now === undefined ? {} : { now }), ...(forge ? { forge } : {}) };
-  if (action === 'start') return startIssue({ ...gate, key: second, spawn, wait, ...(platform ? { platform } : {}), ...(exec ? { exec } : {}) });
+  // The preflight for this run, which the driver's start and wait run again on a halt it can check (project-recheck.mjs).
+  const recheck = () => preflightCommand({ project, config, run, env, home, ...(forge ? { forge } : {}), ...(platform ? { platform } : {}), ...(exec ? { exec } : {}) });
+  if (action === 'start') return startIssue({ ...gate, key: second, spawn, wait, recheck, ...(platform ? { platform } : {}), ...(exec ? { exec } : {}) });
   if (action === 'result') {
     if (!values.file) return fail('project result needs --file');
     return recordResult({ ...gate, key: second, file: path.resolve(cwd, values.file) });
@@ -140,7 +142,7 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
   if (action === 'wait') {
     const given = values['max-wait'] ?? String(WAIT_DEFAULT);
     if (!/^\d{1,4}$/u.test(given) || Number(given) > WAIT_CEILING) return fail(`project wait takes --max-wait as whole seconds from 0 to ${WAIT_CEILING}`);
-    return waitRun({ ...gate, maxWait: Number(given), spawn, ...(pause ? { pause } : {}) });
+    return waitRun({ ...gate, maxWait: Number(given), spawn, recheck, ...(pause ? { pause } : {}) });
   }
   const place = runPlace(project, config, { env, home });
   if (place.problem) return refused(action, place.problem);

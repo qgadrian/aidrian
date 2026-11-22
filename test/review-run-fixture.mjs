@@ -15,12 +15,16 @@ import { HELD_LINE } from '../plugins/aidrian/lib/review/state.mjs';
 import { runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
 
 // A repository with `main` (carrying `baseConfig`) and a `feat` branch made by `change(dir)`. Returns the helpers a
-// review step needs, with GitHub faked in memory.
-export function repo(t, { baseConfig = { version: 1 }, change, headConfig, baseFiles = {} } = {}) {
+// review step needs, with GitHub faked in memory. `attempt`, as `<run>/<issue>.<n>`, makes it the work folder of that
+// attempt of a project run, as lib/project-start.mjs lays one out: `<state>/runs/<run>/attempts/<issue>.<n>/work`, with
+// its git folder beside it.
+export function repo(t, { baseConfig = { version: 1 }, change, headConfig, baseFiles = {}, attempt = null } = {}) {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-review-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const dir = path.join(root, 'repo');
-  mkdirSync(dir);
+  const [run, issue] = attempt ? attempt.split('/') : [];
+  const folder = attempt ? path.join(root, 'state', 'runs', run, 'attempts', issue) : null;
+  const dir = attempt ? path.join(folder, 'work') : path.join(root, 'repo');
+  mkdirSync(dir, { recursive: true });
   const git = (...args) => {
     const r = spawnSync('git', ['-c', 'commit.gpgsign=false', ...args], { cwd: dir, encoding: 'utf8' });
     if (r.status !== 0) throw new Error(r.stderr);
@@ -30,7 +34,7 @@ export function repo(t, { baseConfig = { version: 1 }, change, headConfig, baseF
     mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
     writeFileSync(path.join(dir, file), text);
   };
-  git('init', '-q', '-b', 'main');
+  git('init', '-q', '-b', 'main', ...(attempt ? ['--separate-git-dir', path.join(folder, 'git')] : []));
   git('config', 'user.email', 't@example.com');
   git('config', 'user.name', 'Tester');
   write('.aidrian/config.json', JSON.stringify(baseConfig));

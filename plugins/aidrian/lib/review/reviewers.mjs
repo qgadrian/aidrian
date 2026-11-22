@@ -70,9 +70,11 @@ export const FINDINGS_SCHEMA = Object.freeze({
 });
 
 // The built-in reviewers. `codex-local` runs Codex on this machine, read-only; `self` is the plugin's code-reviewer
-// agent, never the author; `pr-bot` is config.json `github.reviewer`.
+// agent, never the author; `pr-bot` is config.json `github.reviewer`. `confinable: false` says a reviewer cannot run
+// inside a host's sandbox, as in a project run's confined issue session: Codex sets up a sandbox of its own and needs
+// the network, which that sandbox denies.
 export const BUILT_IN = Object.freeze({
-  'codex-local': { kind: 'exec', builtIn: 'codex', stage: 'independent', independent: true, timeoutSec: 780 },
+  'codex-local': { kind: 'exec', builtIn: 'codex', stage: 'independent', independent: true, timeoutSec: 780, confinable: false },
   self: { kind: 'agent', agent: 'code-reviewer', stage: 'local', independent: false },
   'pr-bot': { kind: 'remote', stage: 'remote', independent: true },
 });
@@ -97,17 +99,22 @@ export function codexAvailable(run = spawnSync) {
 
 // The engine this machine reviews with: config.json `review.engine` when the project sets it, which is policy and wins,
 // else the local file's. { reviewer, reason } or { problem }. `auto` takes codex-local, else the review bot, else self,
-// and says which and why; a project's engine says it came from the project config.
-export function resolveEngine(config, { codex = codexAvailable } = {}) {
+// and says which and why; a project's engine says it came from the project config. `confined` names the confined
+// session the step runs in (lib/review/step.mjs confinedSession), or is null: there a reviewer that is not `confinable`
+// is not ready, as Codex not installed is, and `auto` takes self, never the review bot, which joins only as the stage
+// `--with-bot` adds.
+export function resolveEngine(config, { codex = codexAvailable, confined = null } = {}) {
   const map = reviewerMap(config);
   const project = config.review?.engine ?? null;
   const wanted = project ?? config.reviewEngine ?? 'auto';
   const key = project ? 'config.json review.engine' : 'review.engine';
   const said = (reason) => (project ? `${reason} (set by the project config)` : reason);
   const botOn = config.github.reviewer !== null;
+  const codexReady = () => (confined && map['codex-local']?.confinable === false ? { ok: false, reason: confinedReason('codex-local', confined) } : codex());
   if (wanted === 'auto') {
-    const ready = codex();
+    const ready = codexReady();
     if (ready.ok) return { reviewer: map['codex-local'], reason: said('auto: codex is installed and logged in') };
+    if (confined) return { reviewer: map.self, reason: said(`auto: ${ready.reason}, so self`) };
     if (botOn) return { reviewer: map['pr-bot'], reason: said(`auto: ${ready.reason}, so the review bot`) };
     return { reviewer: map.self, reason: said(`auto: ${ready.reason} and no review bot, so self`) };
   }
@@ -115,11 +122,14 @@ export function resolveEngine(config, { codex = codexAvailable } = {}) {
   if (map[wanted].pending) return { problem: `${key} "${wanted}" is a reviewer this pull request adds: it runs once it is on the base branch` };
   if (wanted === 'pr-bot' && !botOn) return { problem: `${key} is "pr-bot", but config.json github.reviewer is none` };
   if (wanted === 'codex-local') {
-    const ready = codex();
+    const ready = codexReady();
     if (!ready.ok) return { problem: `${key} is "codex-local", but ${ready.reason}` };
   }
   return { reviewer: map[wanted], reason: said(`review.engine: ${wanted}`) };
 }
+
+// Why the reviewer `name` cannot run in the confined session `confined`.
+export const confinedReason = (name, confined) => `${name} cannot run inside the host's sandbox of ${confined}`;
 
 // Whether `reviewers` (the names of the passes a plan will run) meet a `require` word. `independent-model` needs a
 // reviewer that is not the author's model, and a pass standing in for an out-of-quota reviewer never is one, whatever

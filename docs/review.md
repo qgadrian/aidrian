@@ -821,6 +821,16 @@ A project that wants one engine everywhere sets `review.engine` in config.json, 
 it wins over every machine's local setting, the result's reason says it came from the project config, and like the
 rest of the review config it is the base branch's. Unset, each machine picks its own.
 
+In a project run's confined issue session, one whose own unattended mark names a run and an issue, a reviewer that
+declares `confinable: false` cannot run: `codex-local` starts Codex, whose own sandbox and network the host's sandbox
+denies. There it is not ready, as when Codex is not installed or not logged in, and an engine set to it leaves the
+step `unsatisfied`, its reason naming the session. `auto` takes `self`, never the review bot, which joins only as the
+stage `--with-bot` adds. `self` answers only the flows its passes are given, so under `auto` a flow that requires
+`independent-model` leaves the step `unsatisfied` there, its reason naming the session, unless `--with-bot` adds the
+bot and an agent answers the flow. A plan with such a pass and no result to reuse for
+it, as one a plan command adds, is refused before any round opens or the bot is asked: the step is `unsatisfied`,
+naming the pass and the session. A result an unconfined session recorded for it is reused, as any pass's is.
+
 ## Rounds
 
 A round is one run of the plan on one head. Right after a push, GitHub can still report the commit the push built

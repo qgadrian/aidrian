@@ -41,6 +41,7 @@
     "review-below-root.test.mjs": 1100,
     "review-delegation.test.mjs": 1950,
     "review-extension.test.mjs": 2850,
+    "review-engine-confined.test.mjs": 800,
     "review-gate.test.mjs": 2500,
     "review-merge-commit.test.mjs": 5350,
     "review-publish.test.mjs": 750,

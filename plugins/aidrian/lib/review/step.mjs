@@ -11,7 +11,7 @@ import { packageRoots } from './split.mjs';
 import { contentFlows } from './content.mjs';
 import { touchedCitations } from './cited.mjs';
 import { buildPlan, classify, DEPTHS, detectFlows, HARNESS_FLOW, mergePlans, mergeStages, pathPattern } from './plan.mjs';
-import { BUILT_IN, resolveEngine, reviewerMap, satisfies } from './reviewers.mjs';
+import { BUILT_IN, confinedReason, resolveEngine, reviewerMap, satisfies } from './reviewers.mjs';
 import { buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
 import { heldMessage, noteLocalOutcome, publishState, readLocalState, readRecord, recordFile, sameCommit, summaryToEdit } from './state.mjs';
 import { isObject } from '../fs.mjs';
@@ -29,6 +29,8 @@ import { headToReview } from './pushed.mjs';
 import { runPlanCommand, stderrTail } from './base-worktree.mjs';
 import { baseReviewAt, baseReviewMoved, commandFiles, holdToBase, reviewInForce } from './in-force.mjs';
 import { evidenceOf, keptSignoffsOf } from './evidence.mjs';
+import { sessionIdentity } from '../hosts/index.mjs';
+import { readUnattendedMark } from '../unattended-mark.mjs';
 
 export const MAX_LINES = 20000;
 
@@ -86,6 +88,13 @@ function quietChange({ root, from, head, since, review, harnessFiles }) {
   if (since.some((change) => harnessFiles.has(change.file)) || touchedCitations(root, from, head, review.flows, sincePaths).length) return false;
   if (detectFlows(review.flows, { sorted, addedLines: lines.addedLines, removedFiles: lines.removedFiles }).length) return false;
   return contentFlows({ root, head, changes: since, addedLines: lines.addedLines, flows: review.flows }).length === 0;
+}
+
+// The project run's confined issue session the step runs in, in words for the engine's reason, or null: only a session
+// whose own unattended mark names a run and an issue (lib/unattended-mark.mjs) is one. `home` is the mark readers'.
+export function confinedSession(env, { home } = {}) {
+  const mark = readUnattendedMark(sessionIdentity(env).session, { env, ...(home ? { home } : {}) });
+  return mark && mark.pending !== true && typeof mark.project === 'string' && typeof mark.issue === 'string' ? `the confined session of project run ${mark.project}, issue ${mark.issue}` : null;
 }
 
 // Plans the step into `s`. Returns the step's result when it ends here, or null when the stages run next.
@@ -269,7 +278,8 @@ export async function prepareStep(s) {
   state.revision -= 1;
   Object.assign(run, { pr: n, head, repo });
 
-  const engine = resolveEngine(effective, codex ? { codex } : {});
+  const confined = confinedSession(env);
+  const engine = resolveEngine(effective, { ...(codex ? { codex } : {}), confined });
   if (engine.problem) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: engine.problem });
   // Flows whose files the globs miss: a changed file whose whole head content, or whose callers, hand it the flow's
   // privileged value (review.flows.<id>.content). A git failure stops the review rather than plan less.
@@ -461,6 +471,10 @@ export async function prepareStep(s) {
   // A pass nobody can run would never finish and never block: refuse the plan instead.
   const orphan = passes.find((pass) => pass.kind !== 'agent' && !map[pass.reviewer]);
   if (orphan) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `pass ${orphan.id} names reviewer "${orphan.reviewer}", which is not an agent pass or a reviewer of review.reviewers`, plan });
+  // A pass that would launch a reviewer this confined session cannot run is refused here, before the stages open a
+  // round, set an override, or ask the bot. A pass with a result on this head launches nothing, so it stays.
+  const unconfinable = confined ? passes.find((pass) => map[pass.reviewer]?.confinable === false && !resultFor(pass)) : null;
+  if (unconfinable) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `pass ${unconfinable.id} is not launched: ${confinedReason(unconfinable.reviewer, confined)}`, plan });
   // Every pass after the local stage answers for every flow: a violated from any reviewer blocks the flow, and a flow
   // only the independent model reviews is signed by it. The review bot gives no verdicts, so a flow needs another
   // pass that can answer for it.
@@ -481,7 +495,7 @@ export async function prepareStep(s) {
   // would count for nothing: a violated invariant is fixed, never signed away.
   state.signoffable = { head, flows: [...new Set([...plan.flows.filter((flow) => flow.signoff === 'human').map((flow) => flow.id), ...removedTests.map((each) => each.flow)])].sort() };
   const answerless = plan.flows.find((flow) => !passes.some((pass) => (pass.flows ?? []).includes(flow.id) && map[pass.reviewer]?.kind !== 'remote'));
-  if (answerless) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `flow ${answerless.id} needs a reviewer that answers its invariants, and the review bot does not: run codex-local, or require an agent for the flow`, plan });
+  if (answerless) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `flow ${answerless.id} needs a reviewer that answers its invariants, and the review bot does not: ${confined ? `${confinedReason('codex-local', confined)}, so require an agent for the flow` : 'run codex-local, or require an agent for the flow'}`, plan });
   // A plan with no pass is `none_needed` only at depth none: a depth above it with nothing to run is a review lost.
   if (!passes.length && !removedTests.length && !fallbacks.length && plan.depth !== 'none') return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `the plan asks for a ${plan.depth} review and names no pass to run it`, plan });
   if (!passes.length && !removedTests.length && !fallbacks.length) return settle({ status: 'none_needed', pr: n, repo, head, base, depth: plan.depth, engine: plan.engine, plan: { depth: plan.depth, reasons: plan.reasons, flows: [], stages: [] } });

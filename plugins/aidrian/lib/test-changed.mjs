@@ -4,8 +4,8 @@
 // default branch on `origin`: committed, uncommitted, and untracked files that git does not ignore. A test file it touches
 // is one the change itself adds or edits, one that names a changed file (needlesOf), or a Go `_test.go` beside a changed
 // `.go` file. A nested package's tests are left out, since its own runner runs them. With no `testing.changedCommand`, the
-// files go to `node --test`, so a test is a file named as one that node loads (NODE_TEST); any other file under `test/`,
-// such as a fixture, is an input like a code file, and its tests are the ones that name it. With nothing to run it prints the
+// files go to `node --test`, so a test file must also be a module node loads with no flag (NODE_MODULE); any other file
+// in a test folder, such as a fixture, is an input, and its tests are the ones that name it. With nothing to run it prints the
 // node runner's zero summary, so its row shows no test passed, and supports no claim.
 // The command is config.json `testing.changedCommand`, else `npm test --` when package.json has a test script, with the
 // files after it; its exit status is the command's.
@@ -23,9 +23,8 @@ import { remoteCopy } from './rules/push-first.mjs';
 
 export { TEST_FILE };
 
-// A test file `node --test` runs: named `*.test.*`, `*_test.*`, or `*-test.*`, with an extension node loads (type
-// stripping loads `.ts`, `.mts`, `.cts`; nothing loads `.tsx`).
-export const NODE_TEST = /[._-]test\.(?:[cm]?js|[cm]?ts)$/u;
+// A module `node --test` loads on every supported Node with no flag; a TypeScript project sets `testing.changedCommand`.
+export const NODE_MODULE = /\.[cm]?js$/u;
 
 const lines = (result) => (result.status === 0 ? result.stdout.split('\n').map((line) => line.trim()).filter(Boolean) : null);
 
@@ -46,10 +45,11 @@ export function changedFiles(root, base, git = runGit) {
 }
 
 // The words a test names a changed file by, none for a test file itself: a code file by its name, and by its name with no
-// extension, as an import often writes it (`./check-runs`); `index.*` by its folder and name; any other file by its path.
+// extension, as an import often writes it (`./check-runs`); `index.*` by its folder and name; a fixture in a test folder by
+// its path and its name, as a test joins it to its folder; any other file by its path.
 export function needlesOf(file, isTest = (name) => TEST_FILE.test(name)) {
   if (isTest(file)) return [];
-  if (!CODE_FILE.test(file)) return [file];
+  if (!CODE_FILE.test(file)) return TEST_FILE.test(file) ? [...new Set([file, path.posix.basename(file)])] : [file];
   const name = path.posix.basename(file);
   const stem = name.replace(/\.[^.]+$/u, '');
   const named = name.startsWith('index.') ? path.posix.join(path.posix.basename(path.posix.dirname(file)), name) : name;
@@ -59,12 +59,12 @@ export function needlesOf(file, isTest = (name) => TEST_FILE.test(name)) {
 
 // The test files the change touches: the changed ones that still exist, then the ones that name a changed file. A test
 // file in a nested package, a folder below the top with a package.json of its own, is left out: its own runner runs it.
-// `nodeOnly`, for the default `npm test --` command, takes a test to be a NODE_TEST file, and leaves Go to a configured command.
+// `nodeOnly`, for the default `npm test --` command, keeps only NODE_MODULE test files, and leaves Go to a configured command.
 export function touchedTests(root, files, git = runGit, { nodeOnly = false } = {}) {
   const listed = lines(git(['ls-files', '--cached', '--others', '--exclude-standard'], root)) ?? [];
   const exists = new Set(listed);
   const packages = listed.filter((file) => file.includes('/') && path.posix.basename(file) === 'package.json').map((file) => `${path.posix.dirname(file)}/`);
-  const isTest = (file) => (nodeOnly ? NODE_TEST : TEST_FILE).test(file);
+  const isTest = (file) => TEST_FILE.test(file) && (!nodeOnly || NODE_MODULE.test(file));
   const ours = (file) => isTest(file) && !packages.some((folder) => file.startsWith(folder));
   const own = files.filter((file) => ours(file) && exists.has(file));
   const needles = [...new Set(files.flatMap((file) => needlesOf(file, isTest)))];

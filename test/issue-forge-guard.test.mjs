@@ -346,13 +346,12 @@ test('an issue session pushes only from its own clone\'s repository, to the URL 
   assert.match(fx.ask(bash(EXACT))?.reason ?? '', /one of the 2 URLs origin pushes to, and origin pushes only to/u, 'a second push URL');
 });
 
-test('an issue session whose branch another issue of the run spells the same writes no file named for it', (t) => {
+test('an issue session whose branch another issue of the run spells the same writes no body file named for it, and is told the key-named one', (t) => {
   const issues = [{ key: 'ENG-1', branch: BRANCH, status: 'unstarted', priority: 1 }, { key: 'ENG-2', branch: 'feat-eng-1/export', status: 'unstarted', priority: 2 }];
   const fx = issueFixture(t, { issues });
-  for (const file of [path.join(fx.state, 'tmp', 'pr-body-feat-eng-1-export.md'), path.join(fx.state, 'dispatch', 'feat-eng-1-export-S1-explorer.json')]) {
-    assert.ok(fx.ask(write(file))?.reason, file);
-  }
-  assert.equal(fx.ask(write(path.join(fx.state, 'tmp', 'eng-1-body.md'))), null, 'a file named for the issue key stays its own');
+  assert.match(fx.ask(write(path.join(fx.state, 'tmp', 'pr-body-feat-eng-1-export.md')))?.reason ?? '', /spells its branch feat\/eng-1-export the same, so write a body under the key, such as tmp\/eng-1-pr-body\.md/u);
+  // The path that refusal names is one the session may write.
+  assert.equal(fx.ask(write(path.join(fx.state, 'tmp', 'eng-1-pr-body.md'))), null, 'a body named for the issue key stays its own');
 });
 
 test('an issue session whose start pinned no push URL pushes nothing', (t) => {

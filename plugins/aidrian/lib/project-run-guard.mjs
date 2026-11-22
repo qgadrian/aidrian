@@ -179,7 +179,7 @@ export function ownIssue(project, config, mark, { base, home } = {}) {
   return null;
 }
 
-// A branch as the files named for it spell it (pr-body.mjs bodyFilePath, a dispatch handoff): each `/` a `-`, in lower case.
+// A branch as the body files named for it spell it (pr-body.mjs bodyFilePath): each `/` a `-`, in lower case.
 export const branchSlug = (branch) => branch.replaceAll('/', '-').toLowerCase();
 
 // Whether another issue of the run `found` has a branch, planned or attempted, spelled as `branch` of issue `key` is

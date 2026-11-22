@@ -254,9 +254,11 @@ function binCommand(name) {
 }
 
 // Hands the host the environment of a confined attempt's sandboxed commands, when this session is one, then its forge
-// token and the record of that handoff, then the attempt's marker alone (ATTEMPT_ENV), which the sandbox proof waits
-// for: a shell that sees the marker sees a recorded handoff too, a failed one included, which fails the proof. A line
-// saying why the token was not handed over, or null. Never throws, so the lines above still print.
+// token and the record of that handoff, then the launch's marker alone (ATTEMPT_ENV), which the sandbox proof waits for.
+// Where the start made a token claim, the marker goes only after the handoff was recorded, handed or not; when the
+// record could not be written, or this session lacks the claim, no marker goes, so the proof keeps waiting and the
+// start's wait ends it. A start that made no claim gets the marker after the cache variables. A line saying why the
+// token was not handed over, or null. Never throws, so the lines above still print.
 function shareShellVars(input) {
   let marker = null;
   try {
@@ -266,9 +268,9 @@ function shareShellVars(input) {
   } catch {
     // No environment handed over: a sandboxed install then fails to write its cache, and writes nowhere else.
   }
-  const line = shareToken(input);
+  const { line, recorded } = shareToken(input);
   try {
-    if (marker) detectHost({ input }).capabilities.projectStart?.shellEnv?.({ env: process.env, vars: marker });
+    if (marker && recorded) detectHost({ input }).capabilities.projectStart?.shellEnv?.({ env: process.env, vars: marker });
   } catch {
     // No marker: the session's proof waits for it, and the start's wait ends it.
   }
@@ -276,19 +278,20 @@ function shareShellVars(input) {
 }
 
 // Hands the host the forge token of a confined attempt's session that holds the start's claim, and records whether it
-// did in the attempt's folder: a line saying why it was not handed over, or null. Never throws.
+// did in the attempt's folder: { line, recorded }, with `line` why it was not handed over, or null, and `recorded`
+// whether the marker may follow: the handoff's record was written, or the start made no claim. Never throws.
 function shareToken(input) {
   try {
     const start = detectHost({ input }).capabilities.projectStart;
     const token = start?.forgeTokenEnv === true ? confinedTokenVars({ session: input.session_id, cwd: input.cwd, env: process.env }) : null;
-    if (!token) return null;
+    if (!token) return { line: null, recorded: true };
     const handed = Boolean(token.vars) && start.shellEnv?.({ env: process.env, vars: token.vars }) === true;
     const why = handed ? null : token.problem ?? 'the host\'s session environment file could not be written owner-only';
     // The verdict the start's proof check reads (lib/project-confine.mjs confineCheck): nothing secret, and only from the
     // session that holds the start's claim, so no other session's hook overwrites it.
-    if (token.folder) writeHandoff(token.folder, { handed, why });
-    return handed ? null : `Forge token: not handed to this session: ${why}. Its pushes and forge calls will not sign in; report that, and push nothing.`;
+    const recorded = token.folder ? writeHandoff(token.folder, { handed, why }) === null : token.unclaimed === true;
+    return { line: handed ? null : `Forge token: not handed to this session: ${why}. Its pushes and forge calls will not sign in; report that, and push nothing.`, recorded };
   } catch {
-    return null;
+    return { line: null, recorded: false };
   }
 }

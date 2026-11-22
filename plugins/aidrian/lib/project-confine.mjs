@@ -397,10 +397,11 @@ export function shellVarsProblem(folder, env) {
   return off.length ? `the cache variables ${off.join(', ')} are not in force in the session's shell` : null;
 }
 
-// What the proof answers while the shell's attempt marker (ATTEMPT_ENV) is not the value the start wrote, as one empty,
-// inherited, or another attempt's: the host has not given this shell the environment the session's SessionStart hook
-// hands it, as when it runs the session's first call before that hook. The hook hands the marker last, after the forge
-// token's handoff record. With the marker there, every cache variable must hold its value.
+// What the proof answers while the shell's marker (ATTEMPT_ENV) is not the value this launch's start wrote, as an empty,
+// an inherited, or an earlier launch's: this shell does not yet have the environment the session's SessionStart hook
+// hands it, as when the host runs the session's first call before that hook. Where the start made a token claim, the
+// hook hands the marker only once it recorded the token's handoff, and none when it could not. Once the marker matches,
+// every cache variable must hold its value.
 export const HOOK_PENDING = 'the host has not given this shell its SessionStart hook\'s environment yet; run the same command again in a few seconds';
 
 // `aidrian project confine RUN ISSUE`, from the session's sandboxed shell in its clone `cwd`, with `env` its

@@ -40,7 +40,7 @@
 // A start whose proof failed, as a Codex session that never named itself or whose hooks never ran, gives its attempt
 // back and halts the run with a `halt` row.
 
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 
@@ -446,9 +446,9 @@ function confinedRoom({ project, state, run, key, branch, attempt, tip, env, hom
   const common = gateGit(['rev-parse', '--path-format=absolute', '--git-common-dir'], main, { timeout: 30_000 });
   const mainGit = common.status === 0 ? resolvedPath(common.stdout.trim()) : null;
   // The package managers' caches, for the session's sandboxed commands alone: the host's SessionStart hook reads them
-  // from the attempt's folder (Claude Code), or the start passes them to its shell policy (Codex); with the attempt's
-  // marker, which the sandbox proof waits for.
-  const vars = { ...cacheVars(clone.cache, env, { registries: policy.registries }), [ATTEMPT_ENV]: `${run}/${key}.${attempt}` };
+  // from the attempt's folder (Claude Code), or the start passes them to its shell policy (Codex); with the marker of
+  // this launch, which the sandbox proof waits for: random, since a start given back lets the next reuse its number.
+  const vars = { ...cacheVars(clone.cache, env, { registries: policy.registries }), [ATTEMPT_ENV]: `${run}/${key}.${attempt}/${randomBytes(8).toString('hex')}` };
   const written = writeShellVars(clone.folder, vars);
   if (written) return { problem: written };
   // The claim that marks the session this start launches, and the token source the access check chose with the checked

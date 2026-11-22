@@ -419,7 +419,9 @@ test('a start on Claude Code reaches the registries both reads of the default br
   }
   // The variables wait in the attempt's folder, which no confined session writes, for the SessionStart hook, with the
   // attempt's marker, which the sandbox proof waits for.
-  assert.deepEqual(JSON.parse(readFileSync(path.join(attempt, SHELL_VARS), 'utf8')), { ...cacheVars(cache, fx.env, { registries: ['npm', 'pypi'] }), [ATTEMPT_ENV]: 'launch/ENG-1.1' });
+  const { [ATTEMPT_ENV]: launched, ...written } = JSON.parse(readFileSync(path.join(attempt, SHELL_VARS), 'utf8'));
+  assert.deepEqual(written, cacheVars(cache, fx.env, { registries: ['npm', 'pypi'] }));
+  assert.match(launched, /^launch\/ENG-1\.1\/[0-9a-f]{16}$/u, 'the launch\'s marker');
   assert.equal(lstatSync(path.join(attempt, SHELL_VARS)).mode & 0o777, 0o600);
 
   // A registry only one read lists is not reached: a working copy or the forge alone widens nothing.
@@ -432,7 +434,9 @@ test('a start on Claude Code reaches the registries both reads of the default br
   const none = runFixture(t);
   assert.equal(none.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
   assert.deepEqual(settingsOf(none).value.sandbox.network.allowedDomains, forge);
-  assert.deepEqual(JSON.parse(readFileSync(path.join(path.dirname(work(none)), SHELL_VARS), 'utf8')), { ...cacheVars(path.join(path.dirname(work(none)), 'cache'), none.env), [ATTEMPT_ENV]: 'launch/ENG-1.1' });
+  const { [ATTEMPT_ENV]: noneMarker, ...noneVars } = JSON.parse(readFileSync(path.join(path.dirname(work(none)), SHELL_VARS), 'utf8'));
+  assert.deepEqual(noneVars, cacheVars(path.join(path.dirname(work(none)), 'cache'), none.env));
+  assert.match(noneMarker, /^launch\/ENG-1\.1\/[0-9a-f]{16}$/u);
 });
 
 test('the SessionStart hook hands the cache variables to the sandboxed commands of a confined attempt\'s session alone, through the host\'s session environment file', (t) => {
@@ -453,7 +457,8 @@ test('the SessionStart hook hands the cache variables to the sandboxed commands 
   assert.match(text, /^export npm_config_cache='/mu);
   // What a sandboxed Bash command of the session sees once the host sources the file.
   const seen = spawnSync('/bin/sh', ['-c', `. '${file}'; printf '%s\\n' "$npm_config_cache" "$GOFLAGS" "$COREPACK_NPM_REGISTRY" "$AIDRIAN_ATTEMPT_ENV"`], { encoding: 'utf8' });
-  assert.deepEqual(seen.stdout.trim().split('\n'), [vars.npm_config_cache, vars.GOFLAGS, 'https://registry.npmjs.org', 'launch/ENG-1.1'], 'the attempt\'s marker too');
+  assert.deepEqual(seen.stdout.split('\n'), [vars.npm_config_cache, vars.GOFLAGS, 'https://registry.npmjs.org', '', ''], 'no marker: this hook lacks the start\'s claim');
+  assert.match(vars[ATTEMPT_ENV], /^launch\/ENG-1\.1\/[0-9a-f]{16}$/u);
   assert.doesNotMatch(text, /EVIL/u, 'only the names cacheVars gives');
   // A folder shaped like an attempt's inside the clone, which the session may write, hands over nothing, though the
   // session's own mark names that run and issue.

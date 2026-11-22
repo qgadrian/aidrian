@@ -358,6 +358,32 @@ test('a confine call whose shell lacks the attempt`s marker, or holds another va
   assert.match(confineDenial(bash('ls', at.work), { mark, env: {} }).reason, /its first call must be exactly/u);
 });
 
+test('each launch gets a marker of its own, so a launch that reuses a given-back attempt number retries on the earlier one', async (t) => {
+  const fx = runFixture(t);
+  const markerOf = (cwd) => JSON.parse(readFileSync(path.join(path.dirname(cwd), SHELL_VARS), 'utf8'))[ATTEMPT_ENV];
+  // The first launch's proof fails, so the start gives attempt 1 back and halts the run, which a person lifts.
+  let first = null;
+  const claude = fakeClaude({ dir: fx.dir, env: fx.env, confine: (made, session) => {
+    if (first !== null) return passVerdict(made, session);
+    first = markerOf(made.work);
+    return { ...passVerdict(made, session), pass: false, failed: ['write /x'] };
+  } });
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1'], { spawn: claude.run }).exitCode, 1);
+  assert.equal(fx.rows().filter((row) => row.event === 'start').at(-1).outcome, 'void');
+  assert.equal(fx.cmd(['resume', 'launch'], { session: OTHER }).exitCode, 0);
+  const result = fx.cmd(['start', 'launch', 'ENG-1'], { spawn: claude.run });
+  assert.equal(result.exitCode, 0, result.err.join('\n'));
+  const work = path.join(realpathSync(fx.state), 'runs', 'launch', 'attempts', 'ENG-1.1', 'work');
+  const second = markerOf(work);
+  for (const each of [first, second]) assert.match(each ?? '', /^launch\/ENG-1\.1\/[0-9a-f]{16}$/u);
+  assert.notEqual(first, second, 'a marker of its own');
+  // A shell that holds the earlier launch's marker, with every cache variable right, is not this launch's.
+  const vars = JSON.parse(readFileSync(path.join(path.dirname(work), SHELL_VARS), 'utf8'));
+  const stale = await runConfine({ run: 'launch', key: 'ENG-1', cwd: work, env: { ...vars, [ATTEMPT_ENV]: first } });
+  assert.deepEqual(stale.err, [`aidrian project confine: ${HOOK_PENDING}`]);
+  assert.equal(existsSync(path.join(path.dirname(work), 'drop', CONFINE_LOCK)), false, 'no lock');
+});
+
 test('a confine call whose shell holds the marker but a cache variable with another value, or none, fails the proof', async (t) => {
   for (const off of [{ PNPM_HOME: '/elsewhere' }, { PNPM_HOME: undefined }]) {
     const { vars, confine, locked, at } = marked(t);

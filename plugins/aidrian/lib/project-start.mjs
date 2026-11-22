@@ -511,7 +511,7 @@ export function confinedTokenVars({ session, cwd, env = process.env, home, token
   try {
     // A session without the claim gets no folder: it records no handoff, so it overwrites none.
     const claim = claimedSource(folder, env);
-    if (claim.problem) return { problem: claim.problem, folder: null };
+    if (claim.problem) return { problem: claim.problem, folder: null, ...(claim.unclaimed ? { unclaimed: true } : {}) };
     const project = typeof found.mark?.root === 'string' ? findProject(found.mark.root) : null;
     const repository = project ? pinnedRepository(project) : null;
     if (!repository) return { problem: 'the main checkout the session\'s mark names gives no repository', folder };

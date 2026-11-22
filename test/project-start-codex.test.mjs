@@ -453,7 +453,8 @@ test('start on Codex works in a fresh clone with exactly its granted folders, ho
   const state = resolvedPath(fx.state);
   const { argv, pid, caches } = fx.fake.call();
   // The network proxy holds the session to the forge's hosts, and the cache variables reach its sandboxed commands alone.
-  const vars = { ...cacheVars(path.join(fx.attempt(), 'cache'), fx.env), [ATTEMPT_ENV]: 'launch/ENG-1.1' };
+  const vars = { ...cacheVars(path.join(fx.attempt(), 'cache'), fx.env), [ATTEMPT_ENV]: JSON.parse(readFileSync(path.join(fx.attempt(), 'shell-env.json'), 'utf8'))[ATTEMPT_ENV] };
+  assert.match(vars[ATTEMPT_ENV], /^launch\/ENG-1\.1\/[0-9a-f]{16}$/u, 'the launch\'s marker');
   assert.deepEqual(argv.slice(0, -1), ['exec', '--json', '--sandbox', 'workspace-write', ...configFlags({ domains: ['github.com', 'api.github.com'], cacheVars: vars }), '--cd', work,
     '--add-dir', git, '--add-dir', drop, '--add-dir', cache, ...['plans', 'reviews', 'tmp', 'dispatch'].flatMap((name) => ['--add-dir', path.join(state, name)])]);
   assert.ok(Object.values(caches).every((value) => !value.startsWith(cache) && !value.startsWith(path.join(fx.attempt(), 'cache'))), 'none in the codex process\'s own environment');

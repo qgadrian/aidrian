@@ -1254,6 +1254,31 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     and within the guards' time budget; with no such record, or records that name two folders, the session gets no worktree, so it
     writes none of the main checkout's task worktrees. A start record lasts a day. A project run's issue session whose
     mark names no start folder gets no worktree;
+  - each task worktree `aidrian worktree new` made in the session, so an orchestrator that started in one worktree
+    dispatches an editing subagent to another it made: the command records the worktree's real path for the session its
+    caller's host names (verified on Claude Code, whose `CLAUDE_CODE_SESSION_ID` a subagent's shell shares with its main
+    session; on Codex it is `CODEX_THREAD_ID`, and a grant holds only where that is the hook payload's session id), as
+    `worktree-<session id>.<hash>.json` in the continuation store the hook opens for the session: the store of the
+    project at its unattended mark's root, under that project's config, so neither a worktree whose own config moves
+    `state.dir` nor another project of the same repository, as in a monorepo, changes where it goes; a session with no
+    mark records in the store of the calling project at the main checkout. Such a session and every subagent never
+    write that store by hand, as above, by a path, a glob, or a marker's name. The hook reads the records for the
+    payload's session id (`lib/handoff-guard.mjs sessionWorktrees`), and checks each one on every call, one git call
+    apiece, only for that session's records. A record grants a worktree only while git lists a checkout of the
+    repository at exactly that path, as git prints it, never resolved, and git, asked at that path, reads it as a linked
+    worktree of the mark's repository whose top is that path, as the start worktree is told. Both must hold, so none of
+    these grants anything: a stale registration whose folder another checkout took, a folder restored at a path git
+    moved the worktree away from, and a registration a link aliases to an old path. The path, and every part above it,
+    must be no link, and lie in no state folder, no host folder of any
+    of the repository's checkouts, such as `.claude/skills`, and no dot folder of the home folder outside the main
+    checkout, since the worktrees folder is the config's. It keeps its nested checkouts, git folders, `.git` pointer, and
+    host files refused from the same call on, as the start worktree does, a host file that is a link included. A worktree
+    made by plain `git worktree add`, by another session, or by a shell with no session id, is outside, and a project
+    run's issue session gets none: it stays confined to its attempt. The session ledger's `links.jsonl` is display data
+    that a call's output can forge, so no grant reads it. A record lasts 30 days. Accepted residuals: a recorded checkout
+    git is slow to read spends the guards' time budget on every call, as the start worktree's read does; and a record is
+    told by its path alone, so one forged by running the plugin's own code, which no guard sees, grants only another
+    linked worktree of the same repository;
   - its issue's running attempt folders `work`, `drop`, and `cache`, under `<state>/runs/<run>/attempts/`, each only
     while it is a plain folder: one replaced by a link is refused, and so is the keep file `.keep-attempt` in `drop`
     and `cache`;
@@ -1625,8 +1650,17 @@ skill's folder (`references/tracker.md`), or the end of a file the agent's own R
 doc in another project. An absolute or `~/` path is checked as written.
 A path shortened with `...` or `…`, such as `.../review/x.json`, cannot be checked, so it is never sent back.
 
-The check also reads the subagent's brief, the first prompt of its transcript. A handoff file the brief asks this agent to
-write must exist when it stops: an absolute path in the state folder's `dispatch/` whose file name ends with the agent's name,
+The check also reads the subagent's brief, the first prompt of its transcript.
+A brief names the run's own handoff file on a line that starts with `Handoff file:`, such as
+`Handoff file: <state>/dispatch/<branch>-signoff-product-manager.json`, or `**Handoff file:**` or `**Handoff file**:`,
+in any case, after an optional list marker, with LF or CRLF line ends.
+Each such line names one file: everything inside the backticks that open its value, spaces included, else its first word.
+The whole value must be an absolute path in the state folder's `dispatch/` that ends in `.json`; prose after it is not read.
+Only the files these lines name are owed, and a brief with no such line owes none: the agent still writes its own file,
+and the hook no longer searches the brief's prose for one, since a file named to read there could be taken for the output.
+Another file of the agent's role the brief names, such as the gate run's `<branch>-gate-product-manager.json` to read,
+is never written, whether it is there or not.
+A file a marker line names must exist when the agent stops: an absolute path in the state folder's `dispatch/` whose file name ends with the agent's name,
 or with it and one more word, such as `<state>/dispatch/feat-12-S1-code-reviewer.json` or `S1-code-reviewer-result.json`
 for `code-reviewer`. A branch name that holds the agent's name does not make another agent's file its own. When one does not,
 the hook writes the agent's final report there: the message of its last handback call (Claude Code's `SubagentHandback`)
@@ -1636,7 +1670,9 @@ in the meantime, such as one its dispatcher wrote, is kept. A file counts as wri
 regular file changed at or after the subagent's transcript began, by the timestamp of its first entry: one an earlier
 dispatch of the same name left, a link, or a folder is stale and owed, and the hook replaces it with the report through
 a new temporary file renamed over it, so a link is replaced, never followed, and the file it named stays as it was; a
-folder stays owed. A transcript with no timestamp keeps the older test, that the file is there. So a brief that names the file for an agent with no file tool
+folder stays owed.
+A transcript with no timestamp keeps the older test, that the file is there.
+So a brief that names the file for an agent with no file tool
 or shell, or makes it optional, costs no send-back, and the report also no longer counts as naming a missing file.
 The hook sends the agent back once, on the first stop of its turn, to write the file only when it has no report to write.
 While a background task of its own still runs and a later stop is sure to come, that stop is no end of its work, so the
@@ -1652,8 +1688,7 @@ file then. A shell that never ends, such as a dev server, never wakes the agent 
 with that shell stopped. It writes the file only on a stop it lets end: a stop sent back, as for another missing path, has a report the agent will correct, and the file holds
 the corrected one. The file is the record its dispatcher reads:
 a subagent's handback can reach another session than the one that dispatched it, such as the main session for an agent
-a named teammate started, or none once that one has ended. A path named for another agent, such as a handoff the brief
-says to read, is not asked of it. A forked subagent's first prompt is its parent's, so the check finds nothing there.
+a named teammate started, or none once that one has ended. A forked subagent's first prompt is its parent's, so the check finds nothing there.
 [dispatch-log.md](dispatch-log.md) describes the rows and `aidrian report`.
 
 ## Background check

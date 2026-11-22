@@ -263,7 +263,8 @@ or a brief another user owns, a marker of the wrong shape, and a time outside it
 A store whose state, handoffs, or store folder another user owns, or every user may write, is neither written nor read,
 where the system has user ids (not on Windows, where Node reports every writable folder as writable by others);
 a folder its group may write passes, since a umask of 002 is common. A sweep deletes the armed, ready, started, and
-stamp files after 24 hours, and the chain floors and the kept briefs of the background route after 30 days.
+stamp files after 24 hours, and the chain floors, the kept briefs of the background route, and the records of the task
+worktrees `aidrian worktree new` made in a session ([agent gates](hooks.md#agent-gates)) after 30 days.
 
 ### The chain
 

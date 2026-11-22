@@ -4,7 +4,7 @@
 // a real report named a file from, and that the check once missed: the state folder (`dispatch/`, `plans/`, `reviews/`,
 // `tmp/`), the plugin and its skill folders (`references/tracker.md`, `skills/<name>/...`), the project and every worktree
 // of its repository, and any file the agent's own Read, Write, or Edit calls named, such as one in another project.
-// The check also reads the subagent's brief: a handoff file the brief asks this agent to write, an absolute
+// The check also reads the subagent's brief: a handoff file the brief names on a `Handoff file: <path>` line, an absolute
 // `<state>/dispatch/*.json` path whose name holds the agent's own, must exist when it stops. A handback can reach another
 // session than the one that dispatched it, or none once that one has ended, so the file is the record its dispatcher reads.
 // When the agent stops without it, with none of its own background tasks running, and is not sent back for another reason,
@@ -12,7 +12,8 @@
 // and the report is the handoff either way. The agent is sent back for it only when it has no report to write.
 // A handoff file counts as written only when it is a regular file changed at or after the subagent's transcript began,
 // by its first entry's timestamp: one an earlier dispatch left, a link, or a folder is stale, owed, and replaced. A
-// transcript with no timestamp keeps the file's existence as the test.
+// transcript with no timestamp keeps the file's existence as the test. Only the marker lines name the run's output, so a
+// sign-off brief that names an earlier run's handoff of the same role to read never owes it, and a brief with none owes none.
 // While one of its own background tasks runs and a later stop is sure, the file is not due yet, and owes nothing.
 // docs/hooks.md#delivery-check.
 
@@ -76,9 +77,10 @@ function handedIn(file, since) {
 }
 
 // The handoff files a subagent's brief asks it to write that it has not written (handedIn): each absolute
-// `<state>/dispatch/<name>.json` in the transcript's first prompt whose `<name>` ends with the agent's own name, such as `feat-12-S1-code-reviewer.json`
-// or `S1-code-reviewer-result.json` for `aidrian:code-reviewer`. A path named for another agent, such as a handoff the brief tells it to read, is not its own.
-// No brief, no agent name, or no state folder: none.
+// `<state>/dispatch/<name>.json` a `Handoff file:` line of the transcript's first prompt names, whose `<name>` ends with
+// the agent's own name, such as `feat-12-S1-code-reviewer.json` or `S1-code-reviewer-result.json` for
+// `aidrian:code-reviewer`. A path anywhere else in the brief, such as a handoff it tells the agent to read, is never owed.
+// No brief, no marker line, no agent name, or no state folder: none.
 export function unwrittenHandoffs(input, project) {
   const agent = typeof input.agent_type === 'string' ? input.agent_type.split(':').pop() : '';
   const transcript = agent && typeof input.agent_transcript_path === 'string' ? readText(input.agent_transcript_path) : null;
@@ -90,13 +92,27 @@ export function unwrittenHandoffs(input, project) {
   } catch {
     return [];
   }
-  const named = [...brief.matchAll(new RegExp(`${escapeRegExp(folder)}/([\\w.@+-]+\\.json)`, 'gu'))];
+  const wholePath = new RegExp(`^${escapeRegExp(folder)}/[^/]+\\.json$`, 'u');
   // The agent's name as the file name's last word, or the one before a last word such as `result`: a branch that holds
   // the name, as in `fix-code-reviewer-S1-backend-developer.json`, does not make the file this agent's.
   const word = new RegExp(`(?:^|[-_.])${escapeRegExp(agent)}(?:[-_.]\\w+)?\\.json$`, 'u');
-  const own = named.filter((match) => word.test(match[1])).map((match) => match[0]);
+  // A CRLF brief's line keeps its `\r` after the split: it is dropped before the marker is matched.
+  const marked = brief.split('\n').map((line) => HANDOFF_MARKER.exec(line.replace(/\r$/u, ''))).filter(Boolean).map(markedPath);
+  const own = marked.filter((file) => wholePath.test(file) && word.test(path.basename(file)));
   const since = handoffSince(input);
   return [...new Set(own)].filter((file) => !handedIn(file, since));
+}
+
+// A brief line that names the run's handoff file, in any case, after an optional list marker: `Handoff file: <path>`,
+// `**Handoff file:** <path>`, or `**Handoff file**: <path>`. Its match holds the rest of the line, as `value`.
+const HANDOFF_MARKER = /^\s*(?:[-*]\s+)?(?:handoff file:|\*\*handoff file:\*\*|\*\*handoff file\*\*:)(?<value>.*)$/iu;
+
+// The path a marker line names: all inside the backticks that open its value, spaces included, else its first word
+// without trailing punctuation. Any prose after it is not read.
+function markedPath(match) {
+  const value = match.groups.value.trim();
+  const quoted = /^`([^`]+)`/u.exec(value);
+  return quoted ? quoted[1] : (value.split(/\s/u)[0] ?? '').replace(/[.,;:)]+$/u, '');
 }
 
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');

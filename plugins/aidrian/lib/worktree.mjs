@@ -11,10 +11,13 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
-import { CONFIG_ERROR, commandConfig } from './config.mjs';
+import { CONFIG_ERROR, commandConfig, loadConfig } from './config.mjs';
 import { forgeFor } from './forges/index.mjs';
 import { checkoutRoots, cloneGitProblem, hardenedArgs, isIgnored } from './git.mjs';
-import { projectAt, worktreesDir } from './project.mjs';
+import { noteWorktree, openStore } from './handoff-markers.mjs';
+import { sessionIdentity } from './hosts/index.mjs';
+import { readUnattendedMark } from './unattended-mark.mjs';
+import { findProject, projectAt, projectCheckouts, stateDir, worktreesDir } from './project.mjs';
 import { shellQuote } from './review/dispatch.mjs';
 import { sweepDrafts } from './review/drafts.mjs';
 import { usageLines } from './usage.mjs';
@@ -119,10 +122,11 @@ function projectConfig(project) {
 // default branch without one) with no upstream, so a bare `git push` cannot target the default branch. An existing
 // local or remote branch is reused only with `reuseExisting`, after a person approved the plan that named it.
 // `git worktree add` runs with the repository's hooks, as it would by hand, so a post-checkout hook a project's setup
-// relies on (husky, pre-commit, git-lfs) runs in the new worktree. The command runs as the process that called it, inside
+// relies on (husky, pre-commit, git-lfs) runs in the new worktree. Once it is made, it is recorded for the session that
+// ran the command, by `env` (recordWorktree). The command runs as the process that called it, inside
 // a confined session's sandbox when an issue session runs it, so it has no more rights than a hand-typed
 // `git worktree add` there. A project run's attempt clones are lib/project-start.mjs's, made with hardened git.
-export function createWorktree({ branch, slug, base, fetch = false, plan = false, reuseExisting = false }, { cwd = process.cwd() } = {}) {
+export function createWorktree({ branch, slug, base, fetch = false, plan = false, reuseExisting = false }, { cwd = process.cwd(), env = process.env } = {}) {
   const ctx = context(cwd);
   if (run('git', ['check-ref-format', '--branch', branch]).status !== 0) throw blocked('validate', `invalid branch name: ${branch}`);
   const name = slug ?? branch.split('/').pop();
@@ -174,6 +178,7 @@ export function createWorktree({ branch, slug, base, fetch = false, plan = false
   }
   const added = git(ctx.main, addArgs, { repositoryHooks: true });
   if (added.status !== 0) throw blocked('create', failure(added), 'Fix the git error and run again; nothing was removed.');
+  recordWorktree(ctx, dir, env);
   if (ctx.config.git.worktrees.bootstrap) {
     const setup = run('sh', ['-c', ctx.config.git.worktrees.bootstrap], { cwd: dir });
     if (setup.status !== 0) {
@@ -182,6 +187,29 @@ export function createWorktree({ branch, slug, base, fetch = false, plan = false
     }
   }
   return { status: 'created', ...report };
+}
+
+// Records the worktree `dir` that createWorktree made for the session its host names in `env` (hosts/index.mjs
+// sessionIdentity), in the project's continuation store (handoff-markers.mjs noteWorktree), so a session no Human attends
+// and its subagents write it as their own (docs/hooks.md#agent-gates). The store is the one the agent gate hook opens for
+// the session: that of the project at its unattended mark's root (unattended-mark.mjs readUnattendedMark), under that
+// project's config, so neither a worktree whose own config moves state.dir nor another project of the same repository,
+// as in a monorepo, sends the record where the hook never looks. A session with no such mark, which the hook holds to no
+// allowlist, records in the store of the caller's project at the main checkout. With no session, a store that is
+// refused, or a write that fails, the worktree stands unrecorded, and such a session writes there only as it could before.
+function recordWorktree(ctx, dir, env) {
+  const { session } = sessionIdentity(env);
+  if (!session) return;
+  try {
+    const mark = readUnattendedMark(session, { env });
+    const marked = typeof mark?.root === 'string' ? findProject(mark.root) : null;
+    const project = marked ?? ((ctx.main !== ctx.current && findProject(path.join(ctx.main, path.relative(ctx.current, ctx.project.root)))) || ctx.project);
+    const { config } = loadConfig(project);
+    const store = openStore(stateDir(project, { config, env }), { checkouts: projectCheckouts(project), maxChain: config.session.handoff.maxChain });
+    noteWorktree(store, session, realpathSync(dir));
+  } catch {
+    // The worktree is made; only its record is missing.
+  }
 }
 
 // `git worktree list --porcelain` as [{ path, main, head, branch, locked, prunable }]. The first entry is the main

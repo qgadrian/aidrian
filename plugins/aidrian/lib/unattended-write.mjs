@@ -1,8 +1,8 @@
 // The write allowlist of a session no Human attends: a session an unattended or pending mark holds
 // (lib/unattended-mark.mjs readUnattendedMark), and its subagents, which the agent gate hook asks on every call
 // (scripts/hook-agent-gates.mjs). docs/hooks.md#agent-gates says what passes and what refuses.
-//   - Its own mark: it writes only its own worktree (the checkout of the folder its mark says it started in), its
-//     attempt's work, drop, and cache folders, the state folders it writes by hand (HAND_FOLDERS), a review manifest or capture,
+//   - Its own mark: it writes only its own worktree (the checkout of the folder its mark says it started in), the task
+//     worktrees `aidrian worktree new` made in it (madePlaces), its attempt's work, drop, and cache folders, the state folders it writes by hand (HAND_FOLDERS), a review manifest or capture,
 //     and the temporary folder. Wherever it lies, it never writes a git folder, the user's or the system's git config, a
 //     shell startup file, another dot entry of the home folder, a review or attest record, or the dispatch records.
 //   - A pending mark, held while a gate starts a session, or a mark that cannot be read: only the entries refused
@@ -25,7 +25,7 @@ import { forgeWorkflowFolders } from './forges/index.mjs';
 import { foldCase, isWithin } from './fs.mjs';
 import { gitConfigFiles, gitFolders, repositoryCheckouts, runGit, underGit, withGitFacts } from './git.mjs';
 import { GLOB_WORD, globStarts, sameFile } from './glob-links.mjs';
-import { globReaches, modeTargets, startedFolder, stateFolders } from './handoff-guard.mjs';
+import { globReaches, modeTargets, sessionWorktrees, startedFolder, stateFolders } from './handoff-guard.mjs';
 import { fileEditOf, nestedProtected, opaqueShellCommand, protectedPaths } from './hosts/index.mjs';
 import { issueForgeDenial } from './issue-forge-guard.mjs';
 import { ownIssue } from './project-run-guard.mjs';
@@ -114,6 +114,7 @@ const refuser = (list) => (file, what, folder = false, allows = null, always = f
 //     and `reviews` pass, even inside a temporary folder, as a state folder under /tmp is. `checkouts`: every checkout of
 //     the mark's repository, where a temporary folder passes nothing either, so a checkout under /tmp keeps its own rules;
 //     with checkouts git cannot list, no temporary folder passes. A main checkout that is no git repository has none.
+//   - made: the task worktrees `aidrian worktree new` made in the session (madePlaces), each kept as `worktree` is.
 //   - refused, each refused wherever it lies, and `later()`, the user's and the system's git config as git names them
 //     (git.mjs gitConfigFiles), read only for a target that would pass.
 // Null when the mark names a main checkout but no project can be read there, or a read fails. `env` is the hook's, and
@@ -130,7 +131,7 @@ function placesOf({ cwd, mark, project, config, base, own = null, env = process.
   if (!limited && !project) return null;
   try {
     const user = home ?? userInfo().homedir;
-    const places = { limited, pending: mark.pending === true, specific: [], reviews: [], worktree: null, worktreeCommon: null, temp: [], states: [], refused: [], nested: [], home: real(user), issue: null, issueHeld: issueHeld(mark) };
+    const places = { limited, pending: mark.pending === true, specific: [], reviews: [], worktree: null, worktreeCommon: null, made: [], temp: [], states: [], refused: [], nested: [], home: real(user), issue: null, issueHeld: issueHeld(mark) };
     const refuse = refuser(places.refused);
     userRefused(refuse, user, env);
     let named;
@@ -234,8 +235,51 @@ function ownPlaces(places, { mark, project, config, base, own, home, temp, sessi
     refuse(path.join(attempt, 'git'), 'the attempt clone\'s git folder, which only git writes', true);
     refuse(path.join(attempt, 'work', '.git'), 'the attempt clone\'s pointer to its git folder');
   }
-  stateWork(places, { project, config, base, home }, refuse);
+  const states = stateWork(places, { project, config, base, home }, refuse);
+  if (repo) madePlaces(places, { repo, checkouts, recorded: () => sessionWorktrees(states, session, [...project.checkouts, ...(checkouts ?? [])], config.session.handoff.maxChain) }, refuse);
   places.temp = unknown || (repo && !checkouts) ? [] : (temp ?? [tmpdir(), '/tmp']).filter(absolute).map(real);
+}
+
+// The task worktrees `aidrian worktree new` made in the session (`recorded()`, handoff-guard.mjs sessionWorktrees), each
+// a place of the session's, as `made`, as its start worktree is, with its nested checkouts, git folders, and host files
+// refused at once, as the start worktree's are. A recorded path is one only when both hold: git lists a checkout of the
+// mark's repository at exactly that path (`checkouts`, compared as git prints them, never resolved), and git, asked at that
+// path, reads it as a linked worktree of that repository (`repo`) whose top is that path (startTop), as the start
+// worktree is told. Neither the path nor any part above it is a link, so a stale registration whose folder another
+// checkout took, a folder restored at a path git moved the worktree away from, and a registration a link aliases to an
+// old path all grant nothing. None lies in a state folder, in a host folder of a checkout of the repository, as a
+// worktrees folder set to `.claude/skills` would place it, or in a dot entry of the home folder outside the main checkout,
+// since config.json, which the session may edit, names the folder the command makes it in. A project run's issue session
+// stays confined to its attempt and gets none. Each candidate costs one git call per hook call, only for this session's
+// records. Accepted residuals: a checkout git is slow to read spends the guards' budget; and a record is told by its path
+// alone, so one a session forged by running the plugin's code, which no guard sees, grants another linked worktree of the
+// same repository.
+function madePlaces(places, { repo, checkouts, recorded }, refuse) {
+  if (places.issueHeld || !checkouts) return;
+  const main = real(repo.top);
+  const hosts = places.checkouts.flatMap((top) => protectedPaths().map((each) => real(path.join(top, each))));
+  const dotted = (top) => isWithin(places.home, top) && !isWithin(main, top) && path.relative(places.home, top).split(path.sep)[0].startsWith('.');
+  for (const each of recorded()) {
+    checkDeadline();
+    const top = real(each);
+    if (top === main || top === places.worktree || places.made.includes(top) || !checkouts.includes(each) || isLink(each) || canonical(each) !== each) continue;
+    if (places.states.some((state) => isWithin(state, top)) || hosts.some((host) => isWithin(host, top)) || dotted(top)) continue;
+    const made = gitFolders(each, gitBudget());
+    if (!made || real(made.common) !== real(repo.common) || !startTop(made, each) || real(made.top) !== top) continue;
+    if (!nestedRefused(refuse, checkouts, each)) continue;
+    places.made.push(top);
+    gitRefused(refuse, made);
+    hostRefused(refuse, each);
+  }
+}
+
+// Whether `file` is a symbolic link itself, by lstat; false when it is not there.
+function isLink(file) {
+  try {
+    return lstatSync(file).isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 
 // Whether the checkout `start` (gitFolders) of the start folder `from` is the session's worktree: a linked worktree,
@@ -402,9 +446,10 @@ function limitedPlaces(places, { cwd, mark, project, config, base, home }, refus
 
 // Each state folder's HAND_FOLDERS that is no link, as `specific`; its reviews folder, refused but for a manifest or
 // a capture (reviewAllows); its dispatch folder, refused but for a handoff file in it (dispatchAllows); and the dispatch
-// log beside them, refused.
+// log beside them, refused. Returns the state folders, as stateFolders gives them.
 function stateWork(places, { project, config, base, home }, refuse) {
-  for (const state of stateFolders(project, config, stateOptions(base, home))) {
+  const states = [...stateFolders(project, config, stateOptions(base, home))];
+  for (const state of states) {
     const root = canonical(state);
     places.states.push(foldCase(root));
     // A folder that is a link, as `tmp -> ~`, could lead anywhere: it is no place of the session's.
@@ -419,6 +464,7 @@ function stateWork(places, { project, config, base, home }, refuse) {
     if (plain('dispatch')) places.reviews.push(foldCase(path.join(root, 'dispatch')));
     refuse(path.join(root, 'dispatch-log.jsonl'), 'the dispatch log, which only the plugin writes');
   }
+  return states;
 }
 
 // The state work of a project run's issue session in the state folder `root` (stateWork): it shares the plans, tmp, and
@@ -472,14 +518,14 @@ function refusedHit(target, spelled, entries, { own, holds }) {
 // passes nothing inside a state folder (`states`), whose own places alone pass there, so a state folder under /tmp keeps
 // its handoff briefs, quorum ledgers, and other sessions' files from the session.
 function placeOf(target, spelled, places, { holds = true } = {}) {
-  const own = [...places.specific, places.worktree, ...places.temp].includes(target);
+  const own = [...places.specific, places.worktree, ...(places.made ?? []), ...places.temp].includes(target);
   const hit = refusedHit(target, spelled, places.refused, { own, holds }) ?? nestedHit(target, places.nested ?? [], spelled);
   if (hit) return { refused: hit };
   const passes = () => {
     const late = refusedHit(target, spelled, places.later(), { own, holds });
     return late ? { refused: late } : null;
   };
-  const holder = [...places.specific, ...places.reviews, places.worktree].find((dir) => dir && isWithin(dir, target));
+  const holder = [...places.specific, ...places.reviews, places.worktree, ...(places.made ?? [])].find((dir) => dir && isWithin(dir, target));
   if (holder) return gitEntry(holder, target, spelled) ?? passes();
   const below = isWithin(places.home, target) ? path.relative(places.home, target).split(path.sep)[0] : '';
   if (below.startsWith('.')) return { refused: { what: 'a dot file or folder of the user\'s home folder', spelled } };
@@ -509,7 +555,7 @@ function gitEntry(top, target, spelled) {
 // `places` (gitEntry): it lies in one, or above one, and a later part may name `.git`, as a glob whose own text starts
 // with a dot or is a class or a brace may, since a shell's `*` skips dot names.
 function gitGlob(prefix, rest, places) {
-  const roots = [...places.specific, ...places.reviews, places.worktree].filter(Boolean);
+  const roots = [...places.specific, ...places.reviews, places.worktree, ...(places.made ?? [])].filter(Boolean);
   if (!roots.some((root) => isWithin(root, prefix) || isWithin(prefix, root))) return false;
   return rest.some((part) => (GLOB_WORD.test(part) ? /^[.[{]/u.test(part) && partPattern(part).test('.git') : isGitPart(part)));
 }
@@ -646,7 +692,7 @@ function pushRoots(places) {
 function sayer(input, human, opaque, mark) {
   const verb = opaque ? 'may change' : 'writes';
   let suffix = '';
-  let list = 'its own worktree or its attempt\'s folders, the state folders it writes by hand (plans, tmp, handoffs, quorum, and a review manifest or capture), and the temporary folder';
+  let list = 'its own worktree or its attempt\'s folders, a task worktree `aidrian worktree new` made in it, the state folders it writes by hand (plans, tmp, handoffs, quorum, and a review manifest or capture), and the temporary folder';
   const deny = (match, why) => ({ match, reason: projectRuleReason(input, `${why}${suffix}`, human, 'to make that change, or where the work should go instead', { mark }) });
   return {
     verb,

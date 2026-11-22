@@ -875,6 +875,9 @@ test('a subagent may not write in the handoff continuation store, with or withou
         'cd "$X" && tee started-*',
         'cd "$X" && cp /tmp/x.md continued-*',
         'cd "$X" && echo {} > .continue/started-s1.json',
+        // The record of a task worktree a session made, which grants it that worktree, by its name and by a glob.
+        'cd "$X" && echo {} > worktree-s1.0123456789ab.json',
+        'cd "$X" && rm -f worktree-*',
         'cd "$X" && cp /tmp/x.md .continue/continued-x.md',
         // The claim of a session on a start, which a removal would lift.
         'cd "$X" && rm claim-*',

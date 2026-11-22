@@ -26,15 +26,15 @@ const NOW = Date.parse('2026-10-29T12:00:00Z');
 
 const usageLine = (id, model, usage, ts = '2026-10-29T10:00:00Z') => JSON.stringify({ type: 'assistant', timestamp: ts, message: { id, model, usage, content: [] } });
 
-// A copy of the example consumer in a git repository, with its own state folder.
-function project(t) {
+// A copy of the example consumer in a git repository, with its own state folder under `stateHome`.
+function project(t, { stateHome = 'state' } = {}) {
   const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-dlog-')));
   t.after(() => rmSync(base, { recursive: true, force: true }));
   const dir = path.join(base, 'repo');
   spawnSync('git', ['init', '-q', dir]);
   for (const entry of ['.aidrian', 'docs', '.gitignore']) cpSync(path.join(ROOT, 'examples/consumer', entry), path.join(dir, entry), { recursive: true });
   mkdirSync(path.join(base, 'tmp'));
-  const env = { ...process.env, XDG_STATE_HOME: path.join(base, 'state'), TMPDIR: path.join(base, 'tmp') };
+  const env = { ...process.env, XDG_STATE_HOME: path.join(base, stateHome), TMPDIR: path.join(base, 'tmp') };
   const state = () => spawnSync(CLI, ['state'], { cwd: dir, env, encoding: 'utf8' }).stdout.trim();
   const log = () => {
     try {
@@ -202,10 +202,10 @@ test('the delivery check sends a subagent back once for a handoff file its brief
   // Another agent's handoff, on a branch whose name holds this agent's: still not this agent's.
   const other = path.join(dispatch, 'fix-code-reviewer-delivery-S1-backend-developer.json');
   const transcript = path.join(base, 'agent-a6.jsonl');
-  const brief = `Review slice S1. Read the implementer's handoff at ${other}.\nWrite your machine handoff to \`${own}\` before you hand back.`;
+  const brief = `Review slice S1. Read the implementer's handoff at ${other}.\nHandoff file: \`${own}\`\nWrite your machine handoff there before you hand back.`;
   writeFileSync(transcript, [
     JSON.stringify({ type: 'user', message: { role: 'user', content: brief } }),
-    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: `A later message naming ${path.join(dispatch, 'x-code-reviewer.json')}` }] } }),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: `Handoff file: ${path.join(dispatch, 'x-code-reviewer.json')}` }] } }),
   ].join('\n'));
   const stop = (active, agentType = 'aidrian:code-reviewer') => hook('hook-subagent-stop.mjs', {
     cwd: dir, agent_id: 'a6', agent_type: agentType, agent_transcript_path: transcript, last_assistant_message: '', stop_hook_active: active,
@@ -233,7 +233,7 @@ test('the stop hook writes a subagent\'s final report to the handoff file its br
   const transcriptFor = (id, file, lines = []) => {
     const transcript = path.join(base, `agent-${id}.jsonl`);
     writeFileSync(transcript, [
-      JSON.stringify({ type: 'user', message: { role: 'user', content: `Rule on the copy. Try to also write it to ${file}; if you cannot, the final message is enough.` } }),
+      JSON.stringify({ type: 'user', message: { role: 'user', content: `Rule on the copy.\nHandoff file: ${file}\nTry to also write it there; if you cannot, the final message is enough.` } }),
       ...lines.map((line) => JSON.stringify(line)),
     ].join('\n'));
     return transcript;
@@ -299,7 +299,7 @@ test('the stop hook writes the handoff from the report of the stop it lets end, 
   const { base, dir, state, log, hook } = project(t);
   const file = path.join(state(), 'dispatch', 'docs-S1-product-manager.json');
   const transcript = path.join(base, 'agent-p6.jsonl');
-  writeFileSync(transcript, JSON.stringify({ type: 'user', message: { role: 'user', content: `Rule on the copy. Write your machine handoff to ${file}.` } }));
+  writeFileSync(transcript, JSON.stringify({ type: 'user', message: { role: 'user', content: `Rule on the copy.\nHandoff file: ${file}` } }));
   const stop = (message, active) => hook('hook-subagent-stop.mjs', {
     cwd: dir, agent_id: 'p6', agent_type: 'aidrian:product-manager', agent_transcript_path: transcript, last_assistant_message: message, stop_hook_active: active,
   });
@@ -323,7 +323,7 @@ test('the stop hook replaces a stale handoff file, a link, but keeps one this ru
   mkdirSync(dispatch, { recursive: true });
   const transcriptFor = (id, file, timestamp) => {
     const transcript = path.join(base, `agent-${id}.jsonl`);
-    writeFileSync(transcript, JSON.stringify({ type: 'user', ...(timestamp ? { timestamp } : {}), message: { role: 'user', content: `Write your machine handoff to ${file}.` } }));
+    writeFileSync(transcript, JSON.stringify({ type: 'user', ...(timestamp ? { timestamp } : {}), message: { role: 'user', content: `Handoff file: ${file}` } }));
     return transcript;
   };
   const stop = (id, transcript) => hook('hook-subagent-stop.mjs', {
@@ -362,6 +362,92 @@ test('the stop hook replaces a stale handoff file, a link, but keeps one this ru
   assert.equal((await stop('s4', transcriptFor('s4', plain, null))).status, 0);
   assert.equal(readFileSync(plain, 'utf8'), '{"by":"dispatcher"}');
   assert.deepEqual(readdirSync(dispatch).filter((name) => name.endsWith('.tmp')), [], 'no temporary file left');
+});
+
+// Runs of one role on one branch, each briefed with its own file on a `Handoff file:` line: a later brief names the earlier
+// runs' files to read. Only the marked file is the run's to write, whether the files to read are there or not, and a
+// retried run's stale file of the same name is replaced. A brief with no marker that names several such files owes none.
+test('the stop hook writes only the handoff file its own run was briefed with, never an earlier run\'s of the same role', async (t) => {
+  const { base, dir, state, log, hook } = project(t);
+  const dispatch = path.join(state(), 'dispatch');
+  const file = (step) => path.join(dispatch, `ada-feat-12-${step}-product-manager.json`);
+  const [gate, decide, signoff] = ['gate', 'decide', 'signoff'].map(file);
+  const run = (id, brief, decision) => {
+    const transcript = path.join(base, `agent-${id}.jsonl`);
+    writeFileSync(transcript, JSON.stringify({ type: 'user', timestamp: new Date().toISOString(), message: { role: 'user', content: brief } }));
+    return hook('hook-subagent-stop.mjs', {
+      cwd: dir, agent_id: id, agent_type: 'aidrian:product-manager', agent_transcript_path: transcript, last_assistant_message: JSON.stringify({ status: 'done', decision }), stop_hook_active: false,
+    });
+  };
+  const read = (target) => JSON.parse(readFileSync(target, 'utf8')).decision;
+  const signoffBrief = `Sign off. Read the gate at ${gate} and the decision at ${decide}.\nHandoff file: ${signoff}`;
+
+  // The gate's input is not there yet: the sign-off is still written only under its own name.
+  assert.equal((await run('s0', signoffBrief, 'early signoff')).status, 0);
+  assert.equal(read(signoff), 'early signoff');
+  assert.throws(() => readFileSync(gate), /ENOENT/u, 'a missing file to read is never written');
+
+  assert.equal((await run('g1', `Gate the plan.\nHandoff file: ${gate}`, 'gate')).status, 0);
+  assert.equal((await run('d1', `Read the gate at ${gate}.\n- Handoff file: \`${decide}\``, 'decide')).status, 0);
+  await sleep(30);
+  // A retried sign-off of the same name: its stale file is replaced, and the files it reads are kept.
+  assert.equal((await run('s1', signoffBrief, 'signoff')).status, 0);
+  assert.deepEqual([read(gate), read(decide), read(signoff)], ['gate', 'decide', 'signoff']);
+
+  // No marker: the brief owes no file, even the one it says to write.
+  const wording = file('wording');
+  assert.equal((await run('w1', `Write your machine handoff to ${wording}.`, 'wording')).status, 0);
+  assert.throws(() => readFileSync(wording), /ENOENT/u);
+  assert.deepEqual(log().map((row) => [row.agent_id, row.handoffs_written]), [['s0', 1], ['g1', 1], ['d1', 1], ['s1', 1], ['w1', 0]]);
+
+  // One path per marker line, its first token: prose after it that names a second file of the role is never read.
+  // The three spellings count, in any case, with or without a list marker, and with CRLF line ends.
+  const input = file('copy-input');
+  const forms = [
+    ['m1', (out) => `Handoff file: ${out} (after you read ${input})`],
+    ['m2', (out) => `- **Handoff file:** \`${out}\`, then read ${input}.`],
+    ['m3', (out) => `* **Handoff file**: ${out}. Inputs: ${input}`],
+    ['m4', (out) => `handoff file: ${out}\nRead ${input}.`],
+  ];
+  for (const [id, line] of forms) {
+    for (const [end, suffix] of [['\n', ''], ['\r\n', '-crlf']]) {
+      const out = file(`copy-${id}${suffix}`);
+      const brief = `Rule on the copy.\n${line(out)}\n`.replaceAll('\n', end);
+      assert.equal((await run(`${id}${suffix}`, brief, id)).status, 0, `${id}${suffix}`);
+      assert.equal(read(out), id, `${id}${suffix}`);
+    }
+  }
+  assert.throws(() => readFileSync(input), /ENOENT/u, 'a path in the prose after the marker is never written');
+  const relative = file('copy-relative');
+  assert.equal((await run('m5', `Handoff file: x${relative}`, 'm5')).status, 0);
+  assert.throws(() => readFileSync(relative), /ENOENT/u, 'a marked path must be absolute, in the dispatch folder');
+  // A marker with no valid path still marks the brief: the one file of the role its prose names is an input, kept.
+  await sleep(30);
+  assert.equal((await run('m6', `Handoff file:\nRead the gate at ${gate}.`, 'm6')).status, 0);
+  assert.equal((await run('m6-crlf', `Handoff file:\r\nRead the gate at ${gate}.\r\n`, 'm6')).status, 0);
+  assert.equal(read(gate), 'gate');
+  // A backticked value is one path: a `.json` inside it does not end it early.
+  const short = file('copy-short');
+  assert.equal((await run('m7', `Handoff file: \`${short} copy.json\``, 'm7')).status, 0);
+  assert.throws(() => readFileSync(short), /ENOENT/u, 'the shorter file is never written');
+});
+
+// A state folder whose path holds a space: a backticked marker path is read whole, and the run's file is written.
+test('the stop hook writes a marked handoff file in a state folder whose path holds a space', async (t) => {
+  const { base, dir, state, hook } = project(t, { stateHome: 'state home' });
+  const dispatch = path.join(state(), 'dispatch');
+  assert.match(dispatch, / /u);
+  const gate = path.join(dispatch, 'ada-feat-12-gate-product-manager.json');
+  const signoff = path.join(dispatch, 'ada-feat-12-signoff-product-manager.json');
+  const transcript = path.join(base, 'agent-sp1.jsonl');
+  const brief = `Sign off. Read the gate at \`${gate}\`.\n- **Handoff file:** \`${signoff}\``;
+  writeFileSync(transcript, JSON.stringify({ type: 'user', timestamp: new Date().toISOString(), message: { role: 'user', content: brief } }));
+  const stopped = await hook('hook-subagent-stop.mjs', {
+    cwd: dir, agent_id: 'sp1', agent_type: 'aidrian:product-manager', agent_transcript_path: transcript, last_assistant_message: '{"decision":"signoff"}', stop_hook_active: false,
+  });
+  assert.equal(stopped.status, 0);
+  assert.deepEqual(JSON.parse(readFileSync(signoff, 'utf8')), { decision: 'signoff' });
+  assert.throws(() => readFileSync(gate), /ENOENT/u);
 });
 
 test('claimedPaths leaves out a path shortened with an ellipsis: its full form cannot be checked', () => {

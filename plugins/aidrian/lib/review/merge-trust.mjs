@@ -34,8 +34,10 @@ export const sameBot = (login, reviewer) => botName(login) !== null && botName(l
 // comment counts only when its author is a bot account of that name. Passed: an approving review of exactly `head`, or
 // the bot's status card, whose every edit the bot made, saying its code review of exactly `head` completed and found
 // nothing at all: `has_any_findings` false, since the user can mark the bot's findings resolved, which clears
-// `has_unresolved_findings`; and no review of `head` by the bot in any other state. A clean receipt or a 👍 names no
-// full commit, so neither counts.
+// `has_unresolved_findings`; and no review of `head` by the bot in any other state. A clean receipt or a 👍 never
+// counts: the receipt names a 10-hex short commit, which a commit ground to share it matches, and the forge gives no
+// push time that would bind it to the head; the 👍 names no commit, and lands seconds after the receipt, so after a
+// push it answers the head before it.
 export function botProblem(trail, head, reviewer) {
   const sha7 = head.slice(0, 7);
   if (typeof reviewer !== 'string' || reviewer === '') return NO_BOT;

@@ -113,15 +113,25 @@ test('a record grants only a linked worktree git lists at that path: never the m
   const linked = fx.made('feat/linked');
   renameSync(linked, `${linked}-moved`);
   symlinkSync(fx.home, linked);
+  // A made worktree removed by hand, its registration not pruned yet, whose path an unrelated checkout took: git still
+  // lists the stale entry there, but asked at that path it reads another repository.
+  const taken = fx.made('feat/taken');
+  rmSync(taken, { recursive: true, force: true });
+  execFileSync('git', ['init', '-q', '-b', 'main', taken]);
   for (const each of [fx.dir, loose, dotted, skills]) assert.ok(noteWorktree(store, SESSION, each), each);
-  for (const each of [path.join(fx.dir, 'a.ts'), path.join(loose, 'a.ts'), path.join(dotted, 'SKILL.md'), path.join(skills, 'SKILL.md'), path.join(linked, 'a.ts')]) {
+  for (const each of [path.join(fx.dir, 'a.ts'), path.join(loose, 'a.ts'), path.join(dotted, 'SKILL.md'), path.join(skills, 'SKILL.md'), path.join(linked, 'a.ts'), path.join(taken, 'a.ts')]) {
     assert.ok(fx.ask(write(each)), each);
   }
 });
 
 test('the agent gate hook grants the made worktree by the payload\'s session id, and refuses the session\'s own write of a record', async (t) => {
   const fx = fixture(t);
+  // The start worktree's own config moves state.dir: the record still goes to the main checkout's store, the one the
+  // hook reads for a mark whose root is the main checkout.
+  const moved = path.join(fx.root, 'moved-state');
+  writeFileSync(path.join(fx.start, '.aidrian', 'config.json'), JSON.stringify({ version: 1, state: { dir: moved } }));
   const made = fx.made('feat/slice');
+  assert.deepEqual(madeWorktrees(fx.store(), SESSION), [realpathSync(made)], 'in the main checkout\'s store');
   const run = (file, session = SESSION) => hookCall(HOOK, { input: JSON.stringify({ session_id: session, cwd: fx.start, agent_id: 'a5f0c1', agent_type: 'aidrian:backend-developer', ...write(file) }), cwd: fx.start, env: fx.env });
   const own = await run(path.join(made, 'src', 'a.ts'));
   assert.equal(own.status, 0, own.stderr);

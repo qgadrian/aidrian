@@ -11,12 +11,12 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
-import { CONFIG_ERROR, commandConfig } from './config.mjs';
+import { CONFIG_ERROR, commandConfig, loadConfig } from './config.mjs';
 import { forgeFor } from './forges/index.mjs';
 import { checkoutRoots, cloneGitProblem, hardenedArgs, isIgnored } from './git.mjs';
 import { noteWorktree, openStore } from './handoff-markers.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
-import { projectAt, projectCheckouts, stateDir, worktreesDir } from './project.mjs';
+import { findProject, projectAt, projectCheckouts, stateDir, worktreesDir } from './project.mjs';
 import { shellQuote } from './review/dispatch.mjs';
 import { sweepDrafts } from './review/drafts.mjs';
 import { usageLines } from './usage.mjs';
@@ -190,13 +190,17 @@ export function createWorktree({ branch, slug, base, fetch = false, plan = false
 
 // Records the worktree `dir` that createWorktree made for the session its host names in `env` (hosts/index.mjs
 // sessionIdentity), in the project's continuation store (handoff-markers.mjs noteWorktree), so a session no Human attends
-// and its subagents write it as their own (docs/hooks.md#agent-gates). With no session, a store that is refused, or a
-// write that fails, the worktree stands unrecorded, and such a session writes there only as it could before.
+// and its subagents write it as their own (docs/hooks.md#agent-gates). The store is the one of the project at the main
+// checkout, under that checkout's config, as the agent gate hook reads a mark's, whose root is the main checkout: a
+// worktree whose own config moves state.dir sends no record where the hook never looks. With no session, a store that is
+// refused, or a write that fails, the worktree stands unrecorded, and such a session writes there only as it could before.
 function recordWorktree(ctx, dir, env) {
   const { session } = sessionIdentity(env);
   if (!session) return;
   try {
-    const store = openStore(stateDir(ctx.project, { config: ctx.config, env }), { checkouts: projectCheckouts(ctx.project), maxChain: ctx.config.session.handoff.maxChain });
+    const project = (ctx.main !== ctx.current && findProject(path.join(ctx.main, path.relative(ctx.current, ctx.project.root)))) || ctx.project;
+    const { config } = loadConfig(project);
+    const store = openStore(stateDir(project, { config, env }), { checkouts: projectCheckouts(project), maxChain: config.session.handoff.maxChain });
     noteWorktree(store, session, realpathSync(dir));
   } catch {
     // The worktree is made; only its record is missing.

@@ -241,9 +241,9 @@ function ownPlaces(places, { mark, project, config, base, own, home, temp, sessi
 }
 
 // The task worktrees `aidrian worktree new` made in the session (`recorded()`, handoff-guard.mjs sessionWorktrees), each
-// a place of the session's, as `made`, as its start worktree is: one git lists among the checkouts of the mark's
-// repository (`repo`, `checkouts`), at that path, but its main checkout, while the path is no link, and with its nested
-// checkouts, `.git` pointer, and host files refused as the start worktree's are. A project run's issue session stays
+// a place of the session's, as `made`, as its start worktree is: one git, asked at that path, reads as a linked worktree
+// of the mark's repository (`repo`) whose top is that path (startTop), as the start worktree is told, while the path is
+// no link, and with its nested checkouts (`checkouts`), git folders, and host files refused as the start worktree's are. A project run's issue session stays
 // confined to its attempt and gets none. None lies in a state folder, in a host folder of a checkout of the repository,
 // as a worktrees folder set to `.claude/skills` would place it, or in a dot entry of the home folder outside the main
 // checkout, since config.json, which the session may edit, names the folder the command makes it in. Accepted residual:
@@ -252,17 +252,18 @@ function ownPlaces(places, { mark, project, config, base, own, home, temp, sessi
 function madePlaces(places, { repo, checkouts, recorded }, refuse) {
   if (places.issueHeld || !checkouts) return;
   const main = real(repo.top);
-  const listed = new Set(checkouts.map(real));
   const hosts = places.checkouts.flatMap((top) => protectedPaths().map((each) => real(path.join(top, each))));
   const dotted = (top) => isWithin(places.home, top) && !isWithin(main, top) && path.relative(places.home, top).split(path.sep)[0].startsWith('.');
   for (const each of recorded()) {
     checkDeadline();
     const top = real(each);
-    if (top === main || top === places.worktree || places.made.includes(top) || !listed.has(top) || canonical(each) !== each) continue;
+    if (top === main || top === places.worktree || places.made.includes(top) || canonical(each) !== each) continue;
     if (places.states.some((state) => isWithin(state, top)) || hosts.some((host) => isWithin(host, top)) || dotted(top)) continue;
+    const made = gitFolders(each, gitBudget());
+    if (!made || real(made.common) !== real(repo.common) || !startTop(made, each) || real(made.top) !== top) continue;
     if (!nestedRefused(refuse, checkouts, each)) continue;
     places.made.push(top);
-    refuse(path.join(each, '.git'), 'the checkout\'s pointer to its git folder');
+    gitRefused(refuse, made);
     hostRefused(refuse, each);
   }
 }

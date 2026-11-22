@@ -61,7 +61,7 @@
     "session-snapshot.test.mjs": 900,
     "solo-opt-in.test.mjs": 500,
     "tracker-guard.test.mjs": 900,
-    "unattended-made-worktrees.test.mjs": 500,
+    "unattended-made-worktrees.test.mjs": 550,
     "unattended-mark.test.mjs": 3100,
     "unattended-write-allowlist.test.mjs": 9000,
     "version.test.mjs": 650,

@@ -637,7 +637,7 @@ function walkedRemoteChange(command, cwd) {
 // record (`from-`, `tasks-`) is not one: their names are common words, and the path rules cover them.
 const MARKER_NAME = new RegExp(ARMING_FILE.source, 'iu');
 // An unsure glob's part whose plain start names such a file, as `armed-*`.
-const MARKER_GLOB = /^(?:armed|ready|taken|gone|checked|started|claim|continued)-/iu;
+const MARKER_GLOB = /^(?:armed|ready|taken|gone|checked|started|claim|continued|worktree)-/iu;
 // A request to end a session or a record that a terminal follows one (lib/terminal-replace.mjs), whose forgery would end
 // an attended session or move a terminal: named by the id shape a host gives a session, 8 hex digits or a whole UUID, as
 // the store writes them. `ending-` and `follow-` are common words, so a name such as `follow-up.json` stays out of it.

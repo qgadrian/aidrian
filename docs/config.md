@@ -184,7 +184,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `terms.file` | The [terms file](#terms) of banned terms and their replacements, relative to the project root; `null` turns the rule off. |
 | `docs.wrapLimit` | The longest line, in characters, allowed in a Markdown file an agent writes; `0` turns the check off. |
 | `testing.fullSuite` | The commands that run the whole test suite, as written: [Testing](#testing). |
-| `testing.changedCommand` | The command `aidrian test changed` gives the touched test files; `null`, the default, is `npm test --` when package.json has a test script, given only the `.mjs`, `.cjs`, `.js`, and Go test files: [Testing](#testing). |
+| `testing.changedCommand` | The command `aidrian test changed` gives the touched test files; `null`, the default, is `npm test --` when package.json has a test script, given only the test files `node --test` loads: [Testing](#testing). |
 | `testing.pushFirstMinutes` | How old a commit the branch's remote copy lacks may be before a full suite is refused; `0`, the default, turns the refusal off: [Testing](#testing). |
 | `knowledge.budgets.alwaysBytes` | The bytes all `always` knowledge docs may add up to: [Knowledge budgets](#knowledge-budgets). |
 | `knowledge.budgets.taggedDocBytes` | The bytes one tagged knowledge doc may have: [Knowledge budgets](#knowledge-budgets). |

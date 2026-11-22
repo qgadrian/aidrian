@@ -666,7 +666,7 @@ test('aidrian test changed finds the changed test files and the ones that name a
       'lib/b.mjs': 'export const b = 1;\n',
       'lib/widget.ts': 'export const w = 1;\n',
       'test/a.test.mjs': "import '../lib/a.mjs';\n",
-      'test/b.test.mjs': "import '../lib/b.mjs';\n",
+      'test/b.test.mjs': "import '../lib/b.mjs';\nconst fixture = 'test/fixtures/a.json';\n",
       'test/widget.test.ts': "import { w } from '../lib/widget';\n",
       'pkg/sum.go': 'package pkg\n',
       'pkg/sum_test.go': 'package pkg\n',
@@ -690,9 +690,11 @@ test('aidrian test changed finds the changed test files and the ones that name a
   assert.deepEqual(touchedTests(dir, ['pkg/sum.go']), ['pkg/sum_test.go'], 'Go tests beside the changed file');
   const nodeOnly = (files) => touchedTests(dir, files, undefined, { nodeOnly: true });
   assert.deepEqual(touchedTests(dir, ['lib/b.mjs']), ['test/b.test.mjs', 'test/fixtures/a.json', 'test/fixtures/notes.md'], 'a configured command decides what it runs');
-  assert.deepEqual(nodeOnly(['lib/b.mjs', 'test/fixtures/a.json']), ['test/b.test.mjs'], 'a fixture or Markdown file is no test module');
-  assert.deepEqual(nodeOnly(['lib/widget.ts']), [], 'node --test loads no .ts test');
-  assert.deepEqual(nodeOnly(['pkg/sum.go']), ['pkg/sum_test.go'], 'Go tests stay');
+  assert.deepEqual(nodeOnly(['lib/b.mjs']), ['test/b.test.mjs'], 'a fixture or Markdown file is no test module');
+  assert.deepEqual(nodeOnly(['test/fixtures/a.json']), ['test/b.test.mjs'], 'a changed fixture selects the tests that name it');
+  assert.deepEqual(nodeOnly(['lib/widget.ts']), ['test/widget.test.ts'], 'node strips types from a .ts test');
+  assert.deepEqual(nodeOnly(['lib/a.mjs']), ['test/a.test.mjs'], 'a nested package\'s .tsx test stays out');
+  assert.deepEqual([nodeOnly(['pkg/sum.go']), nodeOnly(['pkg/sum_test.go'])], [[], []], 'Go tests are a configured command\'s');
   assert.equal(testCommand(dir, {}), 'npm test --');
   assert.equal(testCommand(dir, { changedCommand: 'node --test' }), 'node --test');
   const listed = spawnSync(process.execPath, [CLI, 'test', 'changed', '--list'], { cwd: dir, env: ENV, encoding: 'utf8' });

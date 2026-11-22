@@ -3,9 +3,9 @@
 // The change is the checkout's files against `--base`, else the branch's remote copy, else the merge base with the
 // default branch on `origin`: committed, uncommitted, and untracked files that git does not ignore. A test file it touches
 // is one the change itself adds or edits, one that names a changed file (needlesOf), or a Go `_test.go` beside a changed
-// `.go` file. A nested package's tests are left out, since its own runner runs them. With no `testing.changedCommand`,
-// only a module `node --test` loads (`.mjs`, `.cjs`, `.js`) or a Go test is kept: a fixture, a data file under `test/`,
-// or a `.tsx` test would fail as a test and hide the real result. With nothing to run it prints the
+// `.go` file. A nested package's tests are left out, since its own runner runs them. With no `testing.changedCommand`, the
+// files go to `node --test`, so a test is a file named as one that node loads (NODE_TEST); any other file under `test/`,
+// such as a fixture, is an input like a code file, and its tests are the ones that name it. With nothing to run it prints the
 // node runner's zero summary, so its row shows no test passed, and supports no claim.
 // The command is config.json `testing.changedCommand`, else `npm test --` when package.json has a test script, with the
 // files after it; its exit status is the command's.
@@ -23,7 +23,9 @@ import { remoteCopy } from './rules/push-first.mjs';
 
 export { TEST_FILE };
 
-const NODE_MODULE = /\.(?:mjs|cjs|js)$/u;
+// A test file `node --test` runs: named `*.test.*`, `*_test.*`, or `*-test.*`, with an extension node loads (type
+// stripping loads `.ts`, `.mts`, `.cts`; nothing loads `.tsx`).
+export const NODE_TEST = /[._-]test\.(?:[cm]?js|[cm]?ts)$/u;
 
 const lines = (result) => (result.status === 0 ? result.stdout.split('\n').map((line) => line.trim()).filter(Boolean) : null);
 
@@ -45,8 +47,8 @@ export function changedFiles(root, base, git = runGit) {
 
 // The words a test names a changed file by, none for a test file itself: a code file by its name, and by its name with no
 // extension, as an import often writes it (`./check-runs`); `index.*` by its folder and name; any other file by its path.
-export function needlesOf(file) {
-  if (TEST_FILE.test(file)) return [];
+export function needlesOf(file, isTest = (name) => TEST_FILE.test(name)) {
+  if (isTest(file)) return [];
   if (!CODE_FILE.test(file)) return [file];
   const name = path.posix.basename(file);
   const stem = name.replace(/\.[^.]+$/u, '');
@@ -57,17 +59,18 @@ export function needlesOf(file) {
 
 // The test files the change touches: the changed ones that still exist, then the ones that name a changed file. A test
 // file in a nested package, a folder below the top with a package.json of its own, is left out: its own runner runs it.
-// `nodeOnly` keeps only the modules `node --test` loads, for the default `npm test --` command.
+// `nodeOnly`, for the default `npm test --` command, takes a test to be a NODE_TEST file, and leaves Go to a configured command.
 export function touchedTests(root, files, git = runGit, { nodeOnly = false } = {}) {
   const listed = lines(git(['ls-files', '--cached', '--others', '--exclude-standard'], root)) ?? [];
   const exists = new Set(listed);
   const packages = listed.filter((file) => file.includes('/') && path.posix.basename(file) === 'package.json').map((file) => `${path.posix.dirname(file)}/`);
-  const ours = (file) => TEST_FILE.test(file) && (!nodeOnly || NODE_MODULE.test(file)) && !packages.some((folder) => file.startsWith(folder));
+  const isTest = (file) => (nodeOnly ? NODE_TEST : TEST_FILE).test(file);
+  const ours = (file) => isTest(file) && !packages.some((folder) => file.startsWith(folder));
   const own = files.filter((file) => ours(file) && exists.has(file));
-  const needles = [...new Set(files.flatMap(needlesOf))];
+  const needles = [...new Set(files.flatMap((file) => needlesOf(file, isTest)))];
   // Go tests a package from the same folder, and names no file: every `_test.go` beside a changed `.go` file.
   const goFolders = new Set(files.filter((file) => file.endsWith('.go') && !file.endsWith('_test.go')).map((file) => path.posix.dirname(file)));
-  const beside = listed.filter((file) => file.endsWith('_test.go') && goFolders.has(path.posix.dirname(file)));
+  const beside = nodeOnly ? [] : listed.filter((file) => file.endsWith('_test.go') && goFolders.has(path.posix.dirname(file)));
   const named = needles.length
     ? lines(git(['grep', '--no-recurse-submodules', '--untracked', '-l', '-F', ...needles.flatMap((needle) => ['-e', needle]), '--'], root)) ?? []
     : [];

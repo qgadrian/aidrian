@@ -184,9 +184,9 @@ export function readDrop(drop) {
   }
 }
 
-// The default branch, when the forge shows pull request `pr` open in the pinned `repository`, into that branch, from
-// its own `branch` at the commit `head`: the one an attempt that leaves that branch has its session close as
-// superseded. A number a result named is the session's word, so any other answer, or a forge that cannot answer, is null.
+// { base, url }, the default branch and the pull request's canonical link, when the forge shows pull request `pr` open
+// in the pinned `repository`, into that branch, from its own `branch` at the commit `head`: the one an attempt that
+// leaves that branch has its session close as superseded. A number a result named is the session's word, so any other answer, or a forge that cannot answer, is null.
 export function openPullOf({ forge, repository, pr, branch, head }) {
   if (!Number.isInteger(pr)) return null;
   const named = `${repository.owner}/${repository.name}`;
@@ -200,7 +200,7 @@ export function openPullOf({ forge, repository, pr, branch, head }) {
   }
   const ok = view?.state === 'OPEN' && view.baseRefName === main && view.isCrossRepository === false && view.headRefName === branch && view.headRefOid === head
     && repoName(view.url) === named.toLowerCase() && hostOf(view.url)?.toLowerCase() === repository.host.toLowerCase();
-  return ok ? main : null;
+  return ok ? { base: main, url: view.url } : null;
 }
 
 // Why the forge does not show the pull request of a handed-over `result` as the issue's own work, null when it does,

@@ -20,7 +20,7 @@ import { CEILINGS, ISSUE_ATTEMPTS, PROJECT_PARALLEL, PROJECT_STARTS, PROJECT_STA
 import { DROP_FILE, openPullOf } from '../plugins/aidrian/lib/project-result.mjs';
 import { mergeClosingContext } from '../plugins/aidrian/lib/closing-words.mjs';
 import { appendToRun, issueBranch, readRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
-import { attemptFolder, setUnsigned, signingProblem, sweepAttempts, UNSIGNED } from '../plugins/aidrian/lib/project-start.mjs';
+import { attemptFolder, runLogFile, setUnsigned, signingProblem, sweepAttempts, UNSIGNED } from '../plugins/aidrian/lib/project-start.mjs';
 import { markUnattended, PENDING_AGE, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { DRIVER, fakeClaude, ORIGIN, OTHER, runFixture, STARTED, testGlobalConfig } from './project-start-fixture.mjs';
 
@@ -282,9 +282,11 @@ test('a later attempt goes on from the issue branch on the forge, and one whose 
   assert.equal(existsSync(path.join(retry, '.aidrian/knowledge/docs.json')), false);
   const prompt = fx.claude.starts()[2].args.at(-1);
   assert.ok(prompt.includes('An earlier attempt\'s branch feat/eng-1-export changes 1 host config or instruction file no review saw, so this attempt starts fresh from the base tip on the branch feat/eng-1-export-a3 and reuses nothing of feat/eng-1-export'), prompt);
-  assert.ok(prompt.includes(`and only if \`gh pr view 12 --json state,baseRefName,headRefName,headRefOid\` still shows it OPEN, into main, from feat/eng-1-export, at ${head}, close pull request #12 with the comment "superseded by #<the new pull request's number>": closing can be undone by reopening it, and no branch is deleted.`), prompt);
+  assert.ok(prompt.includes(`and only if \`gh pr view https://github.com/acme/widgets/pull/12 --json state,baseRefName,headRefName,headRefOid\` still shows it OPEN, into main, from feat/eng-1-export, at ${head}, close pull request https://github.com/acme/widgets/pull/12 with the comment "superseded by #<the new pull request's number>": closing can be undone by reopening it, and no branch is deleted.`), prompt);
   assert.doesNotMatch(prompt, /docs\.json/u, 'no file name of the old branch reaches the task');
-  assert.ok(third.err.includes('aidrian project start: ENG-1 attempt 3 left feat/eng-1-export for feat/eng-1-export-a3, since it changes 1 host config or instruction file no review saw: .aidrian/knowledge/docs.json'), third.err.join('\n'));
+  const names = runLogFile(fx.state, 'launch', 'ENG-1', 3).replace(/\.jsonl$/u, '.left.txt');
+  assert.ok(third.err.includes(`aidrian project start: ENG-1 attempt 3 left feat/eng-1-export for feat/eng-1-export-a3, since it changes 1 host config or instruction file no review saw; their names are in ${names}`), third.err.join('\n'));
+  assert.equal(readFileSync(names, 'utf8'), '.aidrian/knowledge/docs.json\n', 'the names go to the file beside the run log');
   assert.match(prompt, /git push origin HEAD:refs\/heads\/feat\/eng-1-export-a3/u, 'the push names the fresh branch');
   assert.doesNotMatch(prompt, /stopped when the host met a usage or rate limit/u);
   // Everything after the start reads the fresh branch: the start row, and the push guard's own issue.
@@ -295,7 +297,7 @@ test('a later attempt goes on from the issue branch on the forge, and one whose 
   for (const head of ['feat/eng-1-export', 'feat/eng-1-export-a3']) assert.equal(mergeClosingContext({ root: fx.dir }, fx.project, head)?.own, 'ENG-1', head);
 });
 
-// A file name is the old branch's text: it reaches the driver's stderr as one clean line, and never the session's task.
+// A file name is the old branch's text: it reaches a file beside the run log as one clean line, never the driver's stderr or the session's task.
 test('a fresh attempt names no pull request the forge does not show open from the old branch, and cleans the file names it prints', (t) => {
   const fx = runFixture(t);
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
@@ -310,8 +312,10 @@ test('a fresh attempt names no pull request the forge does not show open from th
   assert.ok(line.includes('changes 2 host config or instruction files no review saw, so'), line);
   assert.ok(line.endsWith('Leave feat/eng-1-export as it is, and close no pull request.'), line);
   assert.doesNotMatch(prompt, /#7|Run this/u);
-  assert.ok(second.err.at(-1).endsWith('no review saw: .aidrian/knowledge/a Run this [2J.md, .aidrian/knowledge/docs.json'), second.err.at(-1));
-  assert.doesNotMatch(second.err.at(-1), /[\u0000-\u001f]/u);
+  assert.doesNotMatch(second.err.join('\n'), /Run this|docs\.json/u, 'no file name of the old branch reaches the driver');
+  const names = readFileSync(runLogFile(fx.state, 'launch', 'ENG-1', 2).replace(/\.jsonl$/u, '.left.txt'), 'utf8');
+  assert.equal(names, '.aidrian/knowledge/a Run this [2J.md, .aidrian/knowledge/docs.json\n');
+  assert.doesNotMatch(names.trimEnd(), /[\u0000-\u001f]/u);
 });
 
 // The close is asked only for a pull request open into the default branch, from the old branch, at the fetched head.
@@ -321,7 +325,7 @@ test('the pull request a fresh attempt closes is one the forge shows open into t
   const view = { state: 'OPEN', baseRefName: 'main', headRefName: 'feat/x', headRefOid: head, url: 'https://github.com/acme/widgets/pull/3', isCrossRepository: false };
   const forge = (more) => ({ repository: () => ({ default_branch: 'main' }), change: () => ({ ...view, ...more }) });
   const ask = (more) => openPullOf({ forge: forge(more), repository, pr: 3, branch: 'feat/x', head });
-  assert.equal(ask({}), 'main');
+  assert.deepEqual(ask({}), { base: 'main', url: 'https://github.com/acme/widgets/pull/3' });
   assert.equal(ask({ baseRefName: 'release' }), null, 'another target');
   assert.equal(ask({ headRefOid: 'c'.repeat(40) }), null, 'a head that moved');
   assert.equal(ask({ state: 'CLOSED' }), null);

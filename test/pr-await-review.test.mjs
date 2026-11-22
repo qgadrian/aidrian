@@ -1323,32 +1323,6 @@ test('acknowledgement: a 👀 on the bot`s receipt, whose footer quotes "@codex 
   assert.deepEqual(acknowledgement({ reactions: [], issueComments: [trigger, seen], reviewer: DEFAULT_REVIEWER, since: T(5) }), { at: T(5), headSha: head });
 });
 
-test('awaitReview: a late review of an older head, or a later receipt of one, never hides the answer for this head', async () => {
-  const previous = '7c806f2c55aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-  const head = '4bc7ec01bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
-  const trigger = { id: 1, user: { login: 'adrian' }, body: requestCommentBody(head), created_at: T(5) };
-  // The review of the previous head was still running when the head moved; it submits after this head's receipt.
-  const late = { id: 3, user: BOT, submitted_at: T(8), commit_id: previous, state: 'COMMENTED' };
-  for (const [what, frame] of [
-    ['a review of the previous head after the receipt', { reviews: [late], issueComments: [trigger, receiptAt(head, 6)] }],
-    ['a receipt of the previous head after this one', { issueComments: [trigger, receiptAt(head, 6, 71), receiptAt(previous, 7, 72)] }],
-  ]) {
-    const forge = fakeForge([{ head, headCommittedAt: T(4), ...frame }]);
-    const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 0, intervalSec: 60 }, { forge, git: { pushedHead: () => null, behind: () => false }, ...clock() });
-    assert.deepEqual([r.status, r.signal.kind, r.signal.commit_id, r.signal.clean, r.stale, forge.posts.length], ['already_present', 'comment', head.slice(0, 10), true, false, 0], what);
-  }
-  // A quota notice has no commit, so it is judged by its time: a review of the previous head submitted after it means
-  // the bot is reviewing again, and the notice is never revived past it. The wait asks for this head instead.
-  const handTyped = { id: 4, user: { login: 'adrian' }, body: REQUEST_COMMENT, created_at: T(5) };
-  const quota = { id: 5, user: BOT, created_at: T(6), body: QUOTA_BODY };
-  const resumed = fakeForge([{ head, headCommittedAt: T(4), reviews: [{ ...late, submitted_at: T(7) }], issueComments: [handTyped, quota] }]);
-  const asked = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 0, intervalSec: 60 }, { forge: resumed, git: { pushedHead: () => null, behind: () => false }, ...clock() });
-  assert.deepEqual([asked.status, resumed.posts.length], ['timed_out', 1], 'not blocked_quota: the notice is older than the review');
-  // With no answer for this head, the newest one is reported, stale.
-  const signal = latestBotSignal({ reviews: [late], reviewComments: [], issueComments: [trigger], reviewer: DEFAULT_REVIEWER, since: T(5), covers: (each) => !isStale(each, head, T(4), head) });
-  assert.deepEqual([signal.kind, signal.commit_id, isStale(signal, head, T(4), head)], ['review', previous, true]);
-});
-
 test('latestBotSignal: the status card`s full commit, not the comment`s short one, is checked against the head', () => {
   const short = 'cdc936e80c';
   const head = `${short}${'1'.repeat(30)}`;

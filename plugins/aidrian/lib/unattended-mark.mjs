@@ -28,7 +28,7 @@
 // it started waits on it (lib/hosts/codex-exec.mjs). It lapses with the pending mark, at PENDING_AGE.
 
 import { randomBytes } from 'node:crypto';
-import { chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import path from 'node:path';
 
@@ -233,6 +233,52 @@ export function readUnattendedMark(session, { env = process.env, home, now = Dat
   }
   if (unchecked) return { root: null };
   return pendingHold(pending, session, uid, now);
+}
+
+// The most of a transcript's end liftAttended reads: the gate asks on every tool call, so a prompt the Human typed since
+// the last call is near the end.
+export const PROMPT_TAIL = 256 * 1024;
+
+// Removes the unattended mark of `session` once the Human has typed into it: a background continuation the Human
+// attaches to and types in is attended from then on (docs/hooks.md#unattended-sessions). `isHuman(entry)` says whether a
+// transcript entry is a prompt the Human typed after the session's start, as a host adapter's `humanPrompt` does; a
+// peer's message, a scheduled prompt, and the start prompt never are. Only a plain mark of the session's own is
+// removed: a project run's issue session, a session whose sandbox proof the mark tracks, and a pending hold stay
+// held, whoever types. It reads at most PROMPT_TAIL bytes of the transcript at `transcriptPath`. Returns whether it
+// removed the mark; never throws.
+export function liftAttended(session, transcriptPath, { env = process.env, home, isHuman = () => false } = {}) {
+  try {
+    if (typeof transcriptPath !== 'string' || !path.isAbsolute(transcriptPath)) return false;
+    const mark = readUnattendedMark(session, { env, home });
+    if (!mark || mark.pending || mark.root === null || issueHeld(mark) || mark.project !== undefined || mark.confine !== undefined) return false;
+    if (!tailEntries(transcriptPath).some((entry) => isHuman(entry))) return false;
+    unlinkSync(path.join(markFolder(env), `${session}.json`));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// The entries of the last PROMPT_TAIL bytes of the JSONL file `file`, the cut first line left out.
+function tailEntries(file) {
+  const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  try {
+    const size = fstatSync(fd).size;
+    const length = Math.min(size, PROMPT_TAIL);
+    const buffer = Buffer.alloc(length);
+    readSync(fd, buffer, 0, length, size - length);
+    const lines = buffer.toString('utf8').split('\n');
+    if (length < size) lines.shift();
+    return lines.flatMap((line) => {
+      try {
+        return line.trim() ? [JSON.parse(line)] : [];
+      } catch {
+        return [];
+      }
+    });
+  } finally {
+    closeSync(fd);
+  }
 }
 
 // Whether the mark `mark` (readUnattendedMark) holds a project run's issue session: it names an issue, as a tag of a

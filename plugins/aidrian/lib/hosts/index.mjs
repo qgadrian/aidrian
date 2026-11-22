@@ -55,6 +55,10 @@ export function sessionIdentity(env = process.env) {
 // so a rule that needs one refuses there.
 export const humanAnswer = (entry, hosts = HOSTS) => hosts.some((host) => host.humanAnswer?.(entry) === true);
 
+// Whether `entry`, a session transcript entry, is a prompt the Human typed into the session after its start, by an
+// adapter's `humanPrompt`. A host whose adapter has none never shows one, so its unattended sessions stay held.
+export const humanPrompt = (entry, hosts = HOSTS) => hosts.some((host) => host.humanPrompt?.(entry) === true);
+
 // `raw`, a hook's payload, in the standard names the shared code reads: `tool_name` as mcp__<server>__<tool> for an MCP tool.
 export const normalizeHookInput = (raw, env = process.env) => detectHost({ env, input: raw }).hookInput(raw);
 

@@ -17,7 +17,8 @@ import { startedUnattended } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { noteFrom, openStore, storePath } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { defaultStateDir, findProject, projectCheckouts, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { GIT_VARS } from '../plugins/aidrian/lib/review/env.mjs';
-import { dropPending, MARK_AGE, markFolder, markPending, markUnattended, PENDING_AGE, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
+import { humanPrompt } from '../plugins/aidrian/lib/hosts/index.mjs';
+import { dropPending, liftAttended, MARK_AGE, markFolder, markPending, markUnattended, PENDING_AGE, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { TEST_HOME } from './fixtures/test-home.mjs';
 import { hookCall } from './hook-call.mjs';
 
@@ -365,4 +366,33 @@ test('every test call that reads the unattended marks or the user\'s own chain f
     });
   }
   assert.deepEqual(missing, [], 'pass `home`, such as TEST_HOME from test/fixtures/test-home.mjs');
+});
+
+test('a background session the Human types into is attended from then on; a peer, the start prompt, and an issue session are not', async (t) => {
+  const dir = project(t);
+  const transcript = path.join(folder(t, 'aidrian-transcript-'), 'session.jsonl');
+  const entry = (more) => ({ type: 'user', isSidechain: false, entrypoint: 'cli', message: { role: 'user', content: 'x' }, ...more });
+  const start = entry({ origin: { kind: 'human' }, turnOrigin: 'human', turnPosition: { promptIndex: 1, turnIndex: 1 } });
+  const peer = entry({ isMeta: true, origin: { kind: 'peer', from: 'uds:/tmp/x.sock' }, turnOrigin: 'peer', turnPosition: { promptIndex: 2, turnIndex: 3 } });
+  const typed = entry({ origin: { kind: 'human' }, turnOrigin: 'human', turnPosition: { promptIndex: 3, turnIndex: 4 } });
+  const lines = (...entries) => writeFileSync(transcript, `${entries.map((each) => JSON.stringify(each)).join('\n')}\n`);
+  const session = 'feed0009-0000-4000-8000-000000000009';
+  assert.ok(markUnattended(session, { root: dir }));
+  for (const [what, entries] of [['the start prompt', [start]], ['a peer message', [start, peer]], ['a meta entry marked human', [start, { ...typed, isMeta: true }]], ['a subagent\'s', [start, { ...typed, isSidechain: true }]]]) {
+    lines(...entries);
+    assert.equal(liftAttended(session, transcript, { home: TEST_HOME, isHuman: humanPrompt }), false, what);
+    assert.ok(readUnattendedMark(session, { home: TEST_HOME }), what);
+  }
+  // A project run's issue session stays held whoever types.
+  const issue = 'feed000a-0000-4000-8000-00000000000a';
+  assert.ok(markUnattended(issue, { root: dir, tags: { project: 'r1', issue: 'ENG-1' } }));
+  lines(start, typed);
+  assert.equal(liftAttended(issue, transcript, { home: TEST_HOME, isHuman: humanPrompt }), false, 'an issue session');
+  assert.ok(readUnattendedMark(issue, { home: TEST_HOME }));
+  // Through the agent gate hook: the Human's prompt lifts the mark before the call is judged.
+  const run = (input) => hookCall(HOOK, { input: JSON.stringify({ session_id: session, cwd: dir, transcript_path: transcript, ...input }), cwd: dir, encoding: 'utf8' });
+  assert.equal((await run({ agent_id: 'a5f0c1', agent_type: 'aidrian:explorer', tool_name: 'Bash', tool_input: { command: 'true' } })).status, 0);
+  assert.ok(readUnattendedMark(session, { home: TEST_HOME }), 'a subagent\'s call lifts nothing');
+  assert.equal((await run({ tool_name: 'Bash', tool_input: { command: 'true' } })).status, 0);
+  assert.equal(readUnattendedMark(session, { home: TEST_HOME }), null, 'the Human typed: the mark is gone');
 });

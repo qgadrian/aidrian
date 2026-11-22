@@ -203,6 +203,19 @@ shape the adapter does not know never counts. Whether an SDK callback or a hook 
 marks is not verified: its entry counts only if it carries all three. The
 [round limit delegation rule](../hooks.md#bash-rules) reads it.
 
+## Prompts the Human typed
+
+The adapter's `humanPrompt` says whether a transcript entry is a prompt the Human typed into the session after its
+start: a `user` entry with `isSidechain` false, not a meta entry or a compaction summary, `entrypoint` `cli`,
+`origin.kind` and `turnOrigin` both `human`, and `turnPosition.promptIndex` 2 or more. Read from a local transcript of a
+background continuation on Claude Code 2.1.330, on 2026-11-22: a prompt the Human typed there carries `origin.kind`
+`human`; a peer session's message carries `origin.kind` `peer`, `isMeta` true, and the peer's verified process; a hook's
+feedback and a skill's text are meta entries; and the prompt the background start sends is prompt 1, with
+`origin.kind` `human` too, so it never counts. No host document states the shape, so a shape the adapter does not
+know never counts. The agent gate hook reads the last 256 KB of the transcript on each main-session call while the
+session holds an unattended mark, and on such an entry removes the mark
+([The background route](../handoff.md#the-background-route)).
+
 ## Handoff continuation
 
 Claude Code does the `clear` route of [`session.handoff.continue`](../handoff.md#continue): after the brief, the Human

@@ -89,6 +89,15 @@ const OPAQUE_SHELL_TOOLS = Object.freeze(['PowerShell']);
 const humanAnswer = (entry) => entry !== null && typeof entry === 'object' && entry.isSidechain === false && entry.isMeta !== true &&
   entry.isCompactSummary !== true && entry.entrypoint === 'cli' && entry.permissionDecision?.source === 'user_temporary';
 
+// Whether a transcript entry is a prompt the Human typed into the session after its start (lib/unattended-mark.mjs
+// liftAttended): a main-session user entry from the CLI whose `origin` and `turnOrigin` are "human", at prompt 2 or
+// later. Claude Code marks a peer session's message `origin.kind: "peer"`, a hook's or the host's own text `isMeta`, and
+// the prompt a background session starts with is prompt 1, which the start wrote, not a person at the terminal.
+// docs/providers/claude-code.md#prompts-the-human-typed.
+const humanPrompt = (entry) => entry !== null && typeof entry === 'object' && entry.type === 'user' && entry.isSidechain === false &&
+  entry.isMeta !== true && entry.isCompactSummary !== true && entry.entrypoint === 'cli' && entry.origin?.kind === 'human' &&
+  entry.turnOrigin === 'human' && Number.isInteger(entry.turnPosition?.promptIndex) && entry.turnPosition.promptIndex >= 2;
+
 // Its command line that starts or resumes a session, which lib/handoff-guard.mjs hostSessionStartDenial refuses a
 // subagent and a session the background handoff route started, so no session starts outside the handoff gate.
 // `claude` with no subcommand starts one, as do `-p`, `--bg`, `--resume`, `--continue`, and a prompt; so does any word
@@ -208,6 +217,7 @@ export default {
   },
   opaqueShellTools: OPAQUE_SHELL_TOOLS,
   humanAnswer,
+  humanPrompt,
   sessionStart: { programs: ['claude'], starts: startsSession },
   // The subcommands of its program that write its own user or project config: MCP servers, settings, and plugins, and
   // its global options that take the next word. The agent gate hook refuses them to a session no Human attends

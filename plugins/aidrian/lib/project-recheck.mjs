@@ -7,6 +7,7 @@
 // same issue after a self-lift stays for a person with no re-check, so a cause the preflight cannot see never starts the
 // issue over and over. Any other halt, such as a usage limit's or a failed sandbox proof's, stays for a person as before.
 
+import { LOCKED } from './jsonl.mjs';
 import { appendToRun, latestHalt } from './project-run.mjs';
 import { driverOf } from './project-run-guard.mjs';
 import { endedIn } from './run-driver.mjs';
@@ -29,7 +30,9 @@ const liftedBefore = (found, { kind, key, index }) => found.rows.slice(0, index)
 // lines to print. It lifts only when every line is `ok` or a `note`, and at least one is `ok`. Nothing happens for a
 // run that is not halted, a halt of another kind or of another issue than `key`, or without `recheck`; a second halt
 // of its kind on its issue after a self-lift is kept with no probe. The `resume` row goes in under the ledger's lock,
-// only while that halt still stands, the run has not ended, and custody still rests with `custodian`, so a halt lifts once.
+// only while that halt still stands, the run has not ended, and custody still rests with `custodian`, so a halt lifts once;
+// a run that changed so meanwhile gets a line saying so, and a write that fails, its own line. A ledger another process
+// holds throws LOCKED, which the command answers with exit 75, to be tried again.
 export function recheckHalt({ state, run, found, session, key, custodian = session, recheck, now = Date.now() }) {
   const halt = latestHalt(found);
   if (!halt || typeof recheck !== 'function' || !RECHECKS[halt.kind] || halt.key !== key) return { lifted: false, lines: [] };
@@ -46,16 +49,19 @@ export function recheckHalt({ state, run, found, session, key, custodian = sessi
   const failed = lines.filter((line) => !line.startsWith('ok ') && !line.startsWith('note '));
   if (failed.length || !passed.length) return { lifted: false, lines: [kept, ...(failed.length ? failed : ['no check of this halt ran'])] };
   const row = { event: 'resume', session, kind: halt.kind, key: halt.key, attempt: halt.attempt, via: 'recheck', checks: passed, at: new Date(now).toISOString() };
-  let written = null;
+  const unwritten = (why) => ({ lifted: false, lines: [kept, `the checks passed, but the resume row could not be written: ${String(why).split('\n')[0].slice(0, 200)}`] });
+  let written;
   try {
     written = appendToRun(state, run, (fresh) => {
       const still = latestHalt(fresh);
       const live = !endedIn(fresh) && driverOf(fresh).session === custodian;
       return live && still && still.index === halt.index ? { rows: [row] } : { rows: [] };
     });
-  } catch {
-    written = null;
+  } catch (error) {
+    if (error?.code === LOCKED) throw error;
+    return unwritten(error?.message ?? error);
   }
-  if (!written || written.problem || !written.rows?.length) return { lifted: false, lines: [] };
+  if (written?.problem) return unwritten(written.problem);
+  if (!written?.rows?.length) return { lifted: false, lines: ['the checks passed, but the run changed meanwhile: its halt was lifted, it ended, or custody moved'] };
   return { lifted: true, lines: [`recheck lifted the halt: ${halt.cause}; ok ${passed.join(', ')}`] };
 }

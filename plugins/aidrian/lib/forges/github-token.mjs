@@ -86,8 +86,9 @@ export const graphqlUrl = (host) => `${apiRoot(host).replace(/\/api\/v3$/u, '/ap
 // The read probe, run as the push probe is: a GET of the URL its first argument names, or with a third argument a POST
 // of that GraphQL body, with the token in the variable its second argument names as a bearer token. It parses the whole
 // answer in its own process and prints one JSON line of the fields a read needs: the status, whether the body parsed,
-// the first `number` and the `default_branch` it holds, whether it holds GraphQL `data`, the GraphQL error types, and
-// the headers that say no request is left or to come back later. No body crosses the pipe, so none is cut short.
+// the first `number` and the `default_branch` it holds, whether it holds the check rollup's answer (ROLLUP: the
+// repository, its pull request, and its last commit with its `statusCheckRollup` field, null with no checks), the
+// GraphQL error types, and the headers that say no request is left or to come back later. No body crosses the pipe, so none is cut short.
 const READ_PROBE = [
   'const [url, name, query] = process.argv.slice(1);',
   'const headers = { Authorization: `Bearer ${process.env[name] ?? ""}`, Accept: "application/vnd.github+json" };',
@@ -96,14 +97,15 @@ const READ_PROBE = [
   '  let body; try { body = JSON.parse(await answer.text()); } catch { body = undefined; }',
   '  const first = Array.isArray(body) ? body[0] : body;',
   '  const errors = Array.isArray(body?.errors) ? body.errors : [];',
+  '  const commit = body?.data?.repository?.pullRequest?.commits?.nodes?.[0]?.commit;',
   '  process.stdout.write(JSON.stringify({ status: answer.status, parsed: body !== undefined && body !== null, number: Number.isSafeInteger(first?.number) ? first.number : null,',
-  '    branch: typeof body?.default_branch === "string" ? body.default_branch : null, data: Boolean(body?.data), errors: errors.slice(0, 5).map((each) => String(each?.type ?? "")),',
+  '    branch: typeof body?.default_branch === "string" ? body.default_branch : null, rollup: typeof commit === "object" && commit !== null && "statusCheckRollup" in commit, errors: errors.slice(0, 5).map((each) => String(each?.type ?? "")),',
   '    remaining: answer.headers.get("x-ratelimit-remaining"), retry: answer.headers.get("retry-after") }));',
   '}, (error) => { process.stderr.write(String(error?.message ?? error)); process.exit(2); });',
 ].join('\n');
 
 // What GitHub answers the REST route `route` of `host`, or with `query` its GraphQL endpoint, for `token`: the probe's
-// fields, { status, parsed, number, branch, data, errors, remaining, retry }. The token reaches the probe through
+// fields, { status, parsed, number, branch, rollup, errors, remaining, retry }. The token reaches the probe through
 // its environment, never an argument. An answer that is not the probe's one line throws.
 export function apiStatus(route, { host, token, query = null, exec = execFileSync }) {
   const name = tokenVarFor(host);
@@ -117,29 +119,31 @@ export function apiStatus(route, { host, token, query = null, exec = execFileSyn
 // The reads an issue session's token makes, beyond the push, each with what it is for and the fine-grained token
 // permission that grants it, as GitHub's "Permissions required for fine-grained personal access tokens" names them, at
 // the level the session needs (it also writes pull requests, and reruns failed jobs). GitHub offers fine-grained tokens
-// no Checks permission: `gh pr checks` reads a pull request's check rollup in GraphQL, its statuses and its runs.
+// no Checks permission: `gh pr checks` reads a pull request's check rollup in GraphQL, which ROLLUP samples, and its
+// statuses and its runs.
 export const TOKEN_READS = Object.freeze({
   repository: { what: 'read the repository', permission: 'Metadata: Read-only, with the repository selected under Repository access' },
   pulls: { what: 'read its pull requests, as the review step and the driver do', permission: 'Pull requests: Read and write' },
   reactions: { what: 'read the reactions on a pull request, as `aidrian pr review --with-bot` does', permission: 'Issues: Read-only' },
   statuses: { what: 'read a commit\'s statuses, as `gh pr checks` does', permission: 'Commit statuses: Read-only' },
   actions: { what: 'read its workflow runs, as `gh pr checks` and the checks read do', permission: 'Actions: Read and write' },
-  rollup: { what: 'read a pull request\'s check rollup, the GraphQL read `gh pr checks` makes', permission: 'Commit statuses: Read-only and Actions: Read and write' },
+  rollup: { what: 'read a pull request\'s check rollup in GraphQL, as `gh pr checks` does', permission: 'Commit statuses: Read-only and Actions: Read and write' },
 });
 
-// The GraphQL read `gh pr checks` makes, cut to its first context: the check rollup of a pull request's last commit,
-// each context's type and, on a check run, its name and status.
+// A sample of the GraphQL read `gh pr checks` makes, not the same fields: the check rollup of a pull request's last
+// commit, its first context's type and, on a check run, its name and status. It shows the token may read the rollup.
 const ROLLUP = 'query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){commits(last:1){nodes{commit{statusCheckRollup{contexts(first:1){nodes{__typename ... on CheckRun{name status}}}}}}}}}}';
 
 // What GitHub's answer `got` to the read probe says of the token: 'allowed', 'refused', or null when it says neither.
-// A 2xx whose body parses allows a REST read, and a GraphQL read when it holds data and no error. A 401 or 404 refuses
+// A 2xx whose body parses allows a REST read, and a GraphQL read when it holds the rollup's answer and no error, so a
+// null repository or pull request allows nothing. A 401 or 404 refuses
 // it, and so does a 403 that does not say no request is left or to come back later, and a GraphQL error FORBIDDEN.
 // Anything else, such as a 5xx, a 429, or a body that does not parse, says neither.
 function readVerdict(got, graphql) {
   const ok = got.status >= 200 && got.status < 300 && got.parsed === true;
   const errors = Array.isArray(got.errors) ? got.errors : [];
   if (ok && graphql && errors.includes('FORBIDDEN')) return 'refused';
-  if (ok && graphql) return got.data && !errors.length ? 'allowed' : null;
+  if (ok && graphql) return got.rollup === true && !errors.length ? 'allowed' : null;
   if (ok) return 'allowed';
   if (got.status === 401 || got.status === 404) return 'refused';
   return got.status === 403 && got.remaining !== '0' && !got.retry ? 'refused' : null;
@@ -169,13 +173,15 @@ export function tokenReadProblems(repo, { host, token, probe = apiStatus }) {
   };
   const [owner, name] = String(repo).split('/');
   const about = ask('repository', `repos/${repo}`);
-  // A token that cannot read the repository can read nothing of it.
-  if (!about) return answer;
+  // A token refused the repository can read nothing of it; one the forge could not answer still has the reads that
+  // need only its name asked, and the statuses read, which needs its default branch, is unanswered.
+  if (answer.missing.length) return answer;
+  if (!about) answer.unanswered.push('statuses');
   const pulls = ask('pulls', `repos/${repo}/pulls?state=all&per_page=1`);
   const pull = pulls?.number ?? null;
   const number = pull ?? ask('reactions', `repos/${repo}/issues?state=all&per_page=1`)?.number ?? null;
   if (number !== null) ask('reactions', `repos/${repo}/issues/${number}/reactions?per_page=1`);
-  if (typeof about.branch === 'string' && about.branch !== '') ask('statuses', `repos/${repo}/commits/${encodeURIComponent(about.branch)}/status`);
+  if (typeof about?.branch === 'string' && about.branch !== '') ask('statuses', `repos/${repo}/commits/${encodeURIComponent(about.branch)}/status`);
   ask('actions', `repos/${repo}/actions/runs?per_page=1`);
   if (pull !== null) ask('rollup', 'graphql', JSON.stringify({ query: ROLLUP, variables: { o: owner, r: name, n: pull } }));
   else if (pulls) answer.unverified.push({ read: 'rollup', ...TOKEN_READS.rollup, why: 'the repository has no pull request yet, so its first one proves it' });

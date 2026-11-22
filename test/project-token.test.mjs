@@ -249,7 +249,7 @@ test('preflight says ok access with a note naming the token\'s source, and a blo
 });
 
 // What the read probe prints for one answer of GitHub (github-token.mjs apiStatus), with `more` over a 200 that parsed.
-const probed = (more = {}) => ({ status: 200, parsed: true, number: null, branch: null, data: true, errors: [], remaining: '4000', retry: null, ...more });
+const probed = (more = {}) => ({ status: 200, parsed: true, number: null, branch: null, rollup: true, errors: [], remaining: '4000', retry: null, ...more });
 
 // The GitHub adapter's reads with a fine-grained token that may push but holds no Issues permission, as the live run's
 // token: GitHub answers the reactions read 403, "Resource not accessible by personal access token".
@@ -314,13 +314,16 @@ test('the token reads: refusals name their permission, the check rollup with no 
   const statuses = reads((route) => (/status$|runs/u.test(route) ? probed({ status: 403 }) : null));
   assert.deepEqual([statuses.missing.map((each) => each.read), statuses.unverified.map((each) => each.read)], [['statuses', 'actions'], ['rollup']], 'no pull request: the rollup is not verified');
   const rollup = (answer) => reads((route, options) => (route.includes('/pulls') ? probed({ number: 7 }) : options.query ? probed(answer) : null));
-  assert.deepEqual(rollup({ data: false, errors: ['FORBIDDEN'] }).missing.map((each) => [each.read, each.permission, each.why]), [['rollup', 'Commit statuses: Read-only and Actions: Read and write', 'the forge answered 200 FORBIDDEN']]);
-  const empty = rollup({ data: true });
+  assert.deepEqual(rollup({ rollup: false, errors: ['FORBIDDEN'] }).missing.map((each) => [each.read, each.permission, each.why]), [['rollup', 'Commit statuses: Read-only and Actions: Read and write', 'the forge answered 200 FORBIDDEN']]);
+  const empty = rollup({ rollup: true });
   assert.deepEqual([empty.missing, empty.unanswered], [[], []], 'an empty rollup passes');
-  for (const answer of [{ data: false, errors: ['NOT_FOUND'] }, { data: true, errors: ['INTERNAL'] }, { data: false, errors: ['RATE_LIMITED'] }]) {
+  for (const answer of [{ rollup: false, errors: ['NOT_FOUND'] }, { rollup: true, errors: ['INTERNAL'] }, { rollup: false, errors: ['RATE_LIMITED'] }, { rollup: false }]) {
     assert.deepEqual([rollup(answer).missing, rollup(answer).unanswered], [[], ['rollup']], JSON.stringify(answer));
   }
-  assert.deepEqual(reads(() => probed({ status: 500 })).unanswered, ['repository']);
+  assert.deepEqual(reads(() => probed({ status: 500 })).unanswered, ['repository', 'statuses', 'pulls', 'reactions', 'actions']);
+  // The reads that need only the repository's name are asked when its own read gets no answer.
+  const mixed = reads((route) => (route === 'repos/acme/widgets' ? probed({ status: 500 }) : route.includes('/runs') ? probed({ status: 403 }) : null));
+  assert.deepEqual([mixed.missing.map((each) => each.read), mixed.unanswered], [['actions'], ['repository', 'statuses']], 'the Actions refusal beside an unanswered repository read');
   assert.deepEqual(reads((route) => (route.includes('/pulls') ? probed({ parsed: false }) : null)).unanswered, ['pulls'], 'an unparseable 200 is no pass');
 });
 

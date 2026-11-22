@@ -10,7 +10,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -362,14 +362,47 @@ test('a forge that could not answer a read: a start with no halt exits 75 to be 
   assert.deepEqual(fx.claude.starts(), []);
 });
 
-test('under the ledger lock, a self-lift is written only while the run is live and custody rests where the caller read it', (t) => {
+test('under the ledger lock, a self-lift is written only while the run is live and custody rests where the caller read it, and says when it is not', (t) => {
   const fx = runFixture(t);
   appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'result', key: 'ENG-1', attempt: 1, status: 'environment', halt: 'ENG-1 attempt 1 found its environment broken: no network', at: new Date().toISOString() }] }));
   const lift = (custodian) => recheckHalt({ state: fx.state, run: 'launch', found: readRun(fx.state, 'launch'), session: DRIVER, key: 'ENG-1', custodian, recheck: () => ['ok host', 'ok access'] });
-  assert.deepEqual(lift(OTHER), { lifted: false, lines: [] }, 'custody rests with another session');
+  const changed = ['the checks passed, but the run changed meanwhile: its halt was lifted, it ended, or custody moved'];
+  assert.deepEqual(lift(OTHER), { lifted: false, lines: changed }, 'custody rests with another session');
   appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'end', session: DRIVER, at: new Date().toISOString() }] }));
-  assert.deepEqual(lift(DRIVER), { lifted: false, lines: [] }, 'the run ended');
+  assert.deepEqual(lift(DRIVER), { lifted: false, lines: changed }, 'the run ended');
   assert.deepEqual(rechecks(fx), []);
+});
+
+test('a resume row the re-check cannot write is its own line, and a ledger another process holds exits 75 to be tried again', (t) => {
+  const fx = started(t);
+  fx.recorded({ status: 'environment', stop: 'no network' });
+  fx.claude.states[CHILD] = 'done';
+  const folder = runFolder(fx.state, 'launch');
+  // Another process takes the ledger's lock while the re-check probes the forge.
+  fx.forge.tokenReads = () => (writeFileSync(path.join(folder, 'ledger.jsonl.lock.99'), JSON.stringify({ pid: process.pid, host: hostname(), nonce: 'other' })), READS_OK);
+  const locked = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(locked.exitCode, 75, locked.out.join('\n'));
+  assert.match(locked.out[0], /^retry: .*locked by another process/u);
+  writeFileSync(path.join(folder, 'ledger.jsonl.lock.99.released'), '');
+  assert.deepEqual(rechecks(fx), []);
+  // A run whose files go away under the re-check: the checks passed, and the row could not be written.
+  const found = readRun(fx.state, 'launch');
+  const gone = recheckHalt({ state: fx.state, run: 'launch', found, session: DRIVER, key: 'ENG-1', recheck: () => (rmSync(path.join(folder, 'snapshot.json')), ['ok host']) });
+  assert.equal(gone.lifted, false);
+  assert.match(gone.lines.at(-1), /^the checks passed, but the resume row could not be written: no run launch in /u);
+});
+
+test('a start whose re-check lifted the halt probes the forge token once', (t) => {
+  const fx = started(t);
+  let reads = 0;
+  fx.forge.tokenReads = () => ((reads += 1), READS_OK);
+  fx.recorded({ status: 'environment', stop: 'no network' });
+  fx.claude.states[CHILD] = 'done';
+  const before = fx.forge.calls.filter(([name]) => name === 'tokenCanPush').length;
+  const lifted = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(lifted.exitCode, 0, lifted.out.join('\n'));
+  assert.ok(lifted.out.some((line) => line.startsWith('recheck lifted the halt: ')), lifted.out.join('\n'));
+  assert.deepEqual([reads, fx.forge.calls.filter(([name]) => name === 'tokenCanPush').length - before], [1, 1]);
 });
 
 test('a second environment halt of the same issue after a self-lift stays for a person, and spends its attempts as before', (t) => {

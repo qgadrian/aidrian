@@ -1903,9 +1903,14 @@ person, on the repository the run's init row pinned: first `repository`, the sta
 which on a moved origin keeps the halt before any probe runs, then the state folder and the team's policy the others
 need. When every line is `ok` or a `note`, it writes a `resume` row with `via: "recheck"`, the halt's `kind`, issue,
 and attempt, and the `checks` that passed, under the ledger's lock only while the halt stands, the run has not ended,
-and custody rests where the caller read it, prints `recheck lifted the halt: <cause>; ok <checks>`, and goes on. Any
-other line, a blocker or a forge that could not answer alike, keeps the halt and writes nothing: the start prints
-`recheck kept the halt: <cause>` and those lines, and the driver stops for a person as above. `wait` never
+and custody rests where the caller read it, prints `recheck lifted the halt: <cause>; ok <checks>`, and goes on,
+reusing the access check the re-check made, so the forge is probed once. A run that changed meanwhile prints `the checks
+passed, but the run changed meanwhile`; a row that could not be written prints `the checks passed, but the resume row
+could not be written: <why>`; and a ledger another process holds exits 75, to be tried again. Any other line, a blocker
+or a forge that could not answer alike, keeps the halt and writes nothing: the start prints `recheck kept the halt:
+<cause>` and those lines, and the driver stops. The halt stays for the next driver start of that issue, which
+re-checks it again, so one the forge could not answer lifts once the forge answers; `aidrian project resume` is for a
+person who fixed the cause. `wait` never
 re-checks a halt. A second halt of the same kind on the same issue after a self-lift is kept with no re-check, so a cause
 the preflight cannot see, such as a missing host tool, costs that issue one more attempt at most. A failed sandbox proof,
 a usage limit past the run's pauses, and any halt row an older plugin wrote wait on a person.

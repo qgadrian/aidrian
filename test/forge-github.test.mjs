@@ -191,7 +191,7 @@ test('tokenReads: the read probe the adapter was given, route by route, with the
   const asked = [];
   const readProbe = (route, options) => {
     asked.push([route, options]);
-    const read = { status: 200, parsed: true, number: null, branch: null, data: true, errors: [], remaining: '4000', retry: null };
+    const read = { status: 200, parsed: true, number: null, branch: null, rollup: true, errors: [], remaining: '4000', retry: null };
     if (route === 'repos/acme/widgets') return { ...read, branch: 'main' };
     if (route.startsWith('repos/acme/widgets/pulls')) return { ...read, number: 7 };
     return { ...read, status: route.includes('/reactions') ? 403 : 200 };

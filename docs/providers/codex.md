@@ -237,8 +237,8 @@ The one-time steps before a run are in [Project run setup](../project-run-setup.
 - A start holds the session only after three proofs, each in a bounded wait: its session id in the first JSON event
   within 30 seconds, its first tool call within 180 seconds, and the agent gate hook's beacon a few seconds after it.
   A failed proof stops the process at once, gives the attempt back, and halts the run until the Human's own shell, or
-  another attended session that never drove the run, runs `aidrian project resume <run>`, or the driver's re-check
-  lifts it once ([Project run](../config.md#project-run)). Only a shell command, a file
+  another attended session that never drove the run, runs `aidrian project resume <run>`, or the driver's next start
+  of that issue re-checks and lifts it once ([Project run](../config.md#project-run)). Only a shell command, a file
   change, or an MCP tool's call counts as a tool call; a `turn.failed` event before one names its cause.
   A top-level `error` event does not end the wait: which of them are fatal is not shown yet, so the wait goes on
   to a tool call, a `turn.failed`, or its limit.

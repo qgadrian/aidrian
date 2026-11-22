@@ -41,8 +41,8 @@ Read [references/loop.md](references/loop.md) once turn 1 ends, and follow it: n
   background wakes the driver.
 - `paused until <time>`, from `start` or `wait`, is a usage limit, not a refusal: the loop's § Pause sits it out.
 - A `halt` line from `start`, or `halted` from `next`: start nothing more, wait until no issue runs, write the owed
-  reports and the summary, tell the Human the cause and the fix, and end, unless a `recheck lifted the halt:` line
-  ends it first. A halt waits on a person: never run `aidrian project resume`, which only an attended session runs.
+  reports and the summary, tell the Human the cause and the fix, and end, unless the loop's start of the halted issue
+  prints `recheck lifted the halt:` first. A halt waits on a person: never run `aidrian project resume`, which only an attended session runs.
 - Exit 75 with a `retry:` line may pass: the loop tries again. Any other refusal stops the loop the same way, with the
   refusal as the cause. Never work around one.
 - When nothing runs and `next` says `done`, `aidrian project end <run>` records the run's end.

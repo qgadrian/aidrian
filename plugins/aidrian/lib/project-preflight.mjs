@@ -240,8 +240,9 @@ function accessLines({ cap, facade, repository, env, home, main, state, platform
   const problem = reads?.length || retry ? null : access?.halt ?? access?.refuse ?? null;
   // A halt that carries the token's record is the token's own: no source gave one, or it may not push.
   const lines = [problem ? blockerLine('access', problem, access?.token ? 'token' : 'access') : 'ok access'];
+  if (reads?.length) lines.push(...reads.map((each) => blockerLine('token-reads', each)));
   if (retry) lines.push(`retry token-reads: ${retry}`);
-  else if (reads) lines.push(...(reads.length ? reads.map((each) => blockerLine('token-reads', each)) : ['ok token-reads']));
+  else if (reads && !reads.length) lines.push('ok token-reads');
   for (const note of access?.readNotes ?? []) lines.push(`note token-reads: ${note}`);
   if (access?.token?.source) lines.push(`note token: ${access.token.source} gives the issue sessions their forge token`);
   for (const note of access?.token?.notes ?? []) lines.push(`note token: ${note}`);

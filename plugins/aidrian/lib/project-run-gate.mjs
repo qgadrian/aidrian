@@ -10,7 +10,7 @@
 //   1. a session the run cannot tell apart from another's start (a pending mark), one whose mark names an issue, which
 //      is an issue's session, and any session but the driver, or a continuation custody moves to; a halted run, until
 //      an attended session runs `aidrian project resume`, or, for an environment result's halt or a failed proof's, the
-//      driver's re-check of the preflight passes (project-recheck.mjs); and a run paused on a usage or rate limit an issue's session
+//      re-check of the preflight that the driver's start of that issue runs passes (project-recheck.mjs); and a run paused on a usage or rate limit an issue's session
 //      met, until the pause ends (lib/project-limit.mjs);
 //   2. a repository whose git state could run a program or move a fetch (project-trust.mjs repositoryProblem, a halt),
 //      checked before any other git call, and an origin whose fetch or push URL, with pushurl and insteadOf applied,
@@ -57,7 +57,7 @@ import { branchPolicies, defaultBranch, soloOn } from './pr-auto-merge.mjs';
 import { chainEnded, lingerLine, lingerProblem, notStopped, settleLingering, stopChain } from './project-linger.mjs';
 import { checkedLimit, limitEndRows, limitRecorded, pausedTime, pauseOf, pauseRow, recordedPauseRuns } from './project-limit.mjs';
 import { closeVerdict, confineCheck, prepareConfine } from './project-confine.mjs';
-import { RECHECK_TIMEOUT_MS, recheckDue, recheckHalt } from './project-recheck.mjs';
+import { recheckHalt } from './project-recheck.mjs';
 import { cacheVars, registryHosts } from './project-registries.mjs';
 import { CLAIM_VAR, newClaim, writeClaim } from './project-token.mjs';
 import { afterFailure, cleanText, CAPS, DROP_FILE, ingestDrops, RESULT_CAP, validateResult, writeDrop } from './project-result.mjs';
@@ -341,9 +341,10 @@ function startContext(given) {
   const held = custody({ found: opened.found, store, session, now: given.now, env });
   if (held.problem) return plain(held.problem);
   if (endedIn(opened.found)) return plain(`the run ${run} ended, and starts no issue`);
-  // A halt the preflight can check again lifts itself once its checks pass (project-recheck.mjs); any other waits on a person.
+  // A halt of this issue the preflight can check again lifts itself once its checks pass (project-recheck.mjs); any
+  // other waits on a person.
   const custodian = held.role === 'successor' ? held.driver.session : session;
-  const rechecked = recheckHalt({ state, run, found: opened.found, session, custodian, recheck: given.recheck, now: given.now });
+  const rechecked = recheckHalt({ state, run, found: opened.found, session, key: given.key, custodian, recheck: given.recheck, now: given.now });
   const found = rechecked.lifted ? readRun(state, run) : opened.found;
   if (found.problem) return plain(found.problem);
   const halted = haltOf(found);
@@ -718,11 +719,8 @@ function startLines({ result, state, run, key, attempt, session, base, proof, pr
 // branch while the run's sessions run, or one the forge cannot answer now, through an outage or a rate limit, refuses no
 // wait: it settles under settlePolicy, with a first `note policy:` line for a refusal or `note outage:` for a read the
 // forge cannot answer now, so the driver's halt wait still stops overdue sessions, takes in results, and reaches `idle`. Only `start` exits 75 on a read the forge cannot answer now.
-// A halt the preflight can check again is re-checked once with `recheck()`, the preflight's checks of its cause
-// (project-recheck.mjs), when RECHECK_TIMEOUT_MS of the wait is left: `recheck lifted the halt: ...`, `recheck kept the
-// halt: ...` with its blocker lines, or `recheck waits: ...` when the forge could not answer now.
 // `pause` is a test's stand-in for the wait between reads.
-export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = process.env, home, now = Date.now(), forge = null, spawn, pause = pauseSync, clock = Date.now, recheck = null }) {
+export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = process.env, home, now = Date.now(), forge = null, spawn, pause = pauseSync, clock = Date.now }) {
   const refuse = (why) => ({ exitCode: 1, out: [], err: [`aidrian project wait: ${why}`] });
   const { session } = sessionIdentity(env);
   const marked = typeof session === 'string' && SESSION_ID.test(session) ? markProblem(session, { env, home }) : null;
@@ -749,14 +747,7 @@ export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = pr
   for (;;) {
     const at = time();
     const { lines, lingering } = waitPass({ state, run, store, cap, env, home, spawn, policy, forge: facade, now: at });
-    const passed = readRun(state, run);
-    if (passed.problem) return refuse(passed.problem);
-    // A halt the preflight can check again, such as the one an environment result this pass took in wrote, is re-checked
-    // once (project-recheck.mjs), when the wait has the time left for it: its line makes the wait return, so the driver
-    // starts the next issue.
-    const rechecked = recheckHalt({ state, run, found: passed, session, recheck, now: at, timeLeft: until - time() });
-    lines.push(...rechecked.lines);
-    const found = rechecked.lifted ? readRun(state, run) : passed;
+    const found = readRun(state, run);
     if (found.problem) return refuse(found.problem);
     for (const [key, was] of before) {
       const is = found.states.get(key);
@@ -765,16 +756,12 @@ export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = pr
     const running = planRun(found.snapshot, found.states, { maxParallel: SERIAL }).running;
     const paused = pauseOf(found, time());
     const busy = running.length > 0 || lingering.length > 0;
-    // A re-check the forge could not answer is waited for, as a pause is, when it falls due with time left to run it.
-    const due = recheckDue(found, time());
-    const held = due > 0 && until - due >= RECHECK_TIMEOUT_MS;
     // An idle run waits out its pause with the driver, up to the deadline, and returns once the pause is over; a session
     // that runs on after its issue settled is waited on as an issue that runs is.
-    if (lines.length || (!busy && !paused && !held) || time() >= until) {
+    if (lines.length || (!busy && !paused) || time() >= until) {
       return { exitCode: 0, out: [...note, ...lines, ...running.map((key) => `running ${key}`), ...lingering.map(lingerLine), ...(paused ? [`paused until ${paused.until}`] : []), ...(busy ? [] : ['idle'])], err: [] };
     }
-    let pauseLeft = paused && !busy ? Date.parse(paused.until) - time() : WAIT_STEP;
-    if (held && !busy) pauseLeft = Math.min(pauseLeft, due - time());
+    const pauseLeft = paused && !busy ? Date.parse(paused.until) - time() : WAIT_STEP;
     pause(Math.max(0, Math.min(WAIT_STEP, pauseLeft, until - time())));
   }
 }
@@ -998,7 +985,7 @@ export function endRun({ project, config, run, env = process.env, home, now = Da
 // main session, as attendedProblem reads the session the host names in `env`, that neither drives the run nor did, nor
 // is the continuation custody would move to (project-run-guard.mjs resumerProblem): a `resume` row, and `resumed RUN`.
 // A run that is not halted answers `not halted`. The driver never runs it: a halt waits on a person, but for one the
-// driver's start or wait re-checks and lifts itself (project-recheck.mjs).
+// driver's start of its issue re-checks and lifts (project-recheck.mjs).
 export function resumeRun({ project, config, run, env = process.env, home, now = Date.now(), spawn }) {
   const refuse = (why) => ({ exitCode: 1, out: [], err: [`aidrian project resume: ${why}`] });
   const { session } = sessionIdentity(env);

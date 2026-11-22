@@ -127,63 +127,51 @@ export const TOKEN_READS = Object.freeze({
   rollup: { what: 'read a pull request\'s check rollup, the GraphQL read `gh pr checks` makes', permission: 'Commit statuses: Read-only and Actions: Read and write' },
 });
 
-// The GraphQL read `gh pr checks` makes, cut to one field: the state of the check rollup of a pull request's last commit.
-const ROLLUP = 'query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}';
-// How long a rate limit holds a read off when GitHub names no time, and the longest it holds one off, in seconds.
-const LIMIT_WAIT_S = 60;
-const LIMIT_CAP_S = 3600;
+// The GraphQL read `gh pr checks` makes, cut to its first context: the check rollup of a pull request's last commit,
+// each context's type and, on a check run, its name and status.
+const ROLLUP = 'query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){commits(last:1){nodes{commit{statusCheckRollup{contexts(first:1){nodes{__typename ... on CheckRun{name status}}}}}}}}}}';
 
-// The seconds GitHub's answer `read` asks a client to wait, when it is a rate limit, primary or secondary, which says
-// nothing of the token's permissions: a 403 or 429 with a Retry-After, no request left, or a message that names a rate
-// limit. Null for any other answer.
-function limitOf(read) {
-  if (read.status !== 403 && read.status !== 429) return null;
-  const retry = typeof read.retry === 'string' && /^\d+$/u.test(read.retry.trim()) ? Number(read.retry) : null;
-  if (retry !== null) return Math.min(Math.max(retry, 1), LIMIT_CAP_S);
-  return read.remaining === '0' || /rate limit/iu.test(read.said ?? '') ? LIMIT_WAIT_S : null;
-}
+// Whether GitHub's answer `read` is a rate limit, primary or secondary, which says nothing of the token's permissions:
+// a 403 or 429 with no request left or a Retry-After, or a GraphQL answer whose errors say RATE_LIMITED.
+const rateLimited = (read) => ((read.status === 403 || read.status === 429) && (read.remaining === '0' || (typeof read.retry === 'string' && read.retry !== '')))
+  || (read.errors ?? []).includes('RATE_LIMITED');
 
 // The reads of TOKEN_READS that `token` may not make on `repo` of `host`, by reads that write nothing:
-// { missing, unverified, limited }. `missing` holds each read refused, { read, what, permission, why }, in the order
+// { missing, unverified, unanswered }. `missing` holds each read refused, { read, what, permission, why }, in the order
 // asked; `unverified` each read that could not be made here, in the same shape, as the check rollup of a repository with
-// no pull request yet; `limited`, when GitHub rate-limited a read, { why, after } with the seconds to wait, and the reads
-// stop there, since that answer says nothing of the token. A 401, 403, or 404, and a GraphQL answer whose errors say
-// FORBIDDEN, is a read refused; a 2xx whose body does not parse, a GraphQL answer with no data, and any other answer
-// throw, since they say nothing either way. The reactions are read on the newest pull request, or the newest issue with
-// none; a repository with neither proves the Issues read by that list. `probe` is apiStatus's shape, the test seam.
+// no pull request yet; `unanswered` why each read the forge could not answer now, as a rate limit, a 2xx whose body
+// does not parse, or any other status, which says nothing of the token. Every read is asked, so a refusal is reported
+// whatever else went unanswered. A 401, 403, or 404 is a read refused, and so is a GraphQL answer whose errors say
+// FORBIDDEN or that holds no data. The reactions are read on the newest pull request, or the newest issue with none; a
+// repository with neither proves the Issues read by that list. `probe` is apiStatus's shape, the test seam.
 export function tokenReadProblems(repo, { host, token, probe = apiStatus }) {
-  const answer = { missing: [], unverified: [], limited: null };
-  const refused = (read, why) => {
-    answer.missing.push({ read, ...TOKEN_READS[read], why });
-    return null;
-  };
+  const answer = { missing: [], unverified: [], unanswered: [] };
+  const said = (got) => (got.said ? `: ${got.said}` : '');
   const ask = (read, route, query = null) => {
-    if (answer.limited) return null;
     const got = probe(route, { host, token, ...(query ? { query } : {}) });
-    const after = limitOf(got);
-    if (after !== null) {
-      answer.limited = { why: `the forge rate-limited the ${read} read (${got.status}${got.said ? `: ${got.said}` : ''}); try again in ${after} s`, after };
-      return null;
-    }
     const ok = got.status >= 200 && got.status < 300;
-    if (ok && !got.parsed) throw new Error(`the forge answered the ${read} read with a body that does not parse`);
-    if (ok && query && (got.errors ?? []).includes('FORBIDDEN')) return refused(read, `the forge answered FORBIDDEN${got.said ? `: ${got.said}` : ''}`);
-    if (ok && query && !got.data) throw new Error(`the forge answered the ${read} read with no data${got.said ? ` (${got.said})` : ''}`);
-    if (ok) return got;
-    if ([401, 403, 404].includes(got.status)) return refused(read, `the forge answered ${got.status}`);
-    throw new Error(`the forge answered the ${read} read with ${Number.isFinite(got.status) ? got.status : 'no status'}`);
+    let refused = null;
+    if (rateLimited(got)) answer.unanswered.push(`the forge rate-limited the ${read} read (${got.status}${said(got)})`);
+    else if (ok && !got.parsed) answer.unanswered.push(`the forge answered the ${read} read with a body that does not parse`);
+    else if (ok && query && ((got.errors ?? []).includes('FORBIDDEN') || !got.data)) refused = `the forge answered ${(got.errors ?? []).join(', ') || 'no data'}${said(got)}`;
+    else if (ok) return got;
+    else if ([401, 403, 404].includes(got.status)) refused = `the forge answered ${got.status}`;
+    else answer.unanswered.push(`the forge answered the ${read} read with ${Number.isFinite(got.status) ? got.status : 'no status'}`);
+    if (refused) answer.missing.push({ read, ...TOKEN_READS[read], why: refused });
+    return null;
   };
   const [owner, name] = String(repo).split('/');
   const about = ask('repository', `repos/${repo}`);
   // A token that cannot read the repository can read nothing of it.
   if (!about) return answer;
-  const pull = ask('pulls', `repos/${repo}/pulls?state=all&per_page=1`)?.number ?? null;
+  const pulls = ask('pulls', `repos/${repo}/pulls?state=all&per_page=1`);
+  const pull = pulls?.number ?? null;
   const number = pull ?? ask('reactions', `repos/${repo}/issues?state=all&per_page=1`)?.number ?? null;
   if (number !== null) ask('reactions', `repos/${repo}/issues/${number}/reactions?per_page=1`);
   if (typeof about.branch === 'string' && about.branch !== '') ask('statuses', `repos/${repo}/commits/${encodeURIComponent(about.branch)}/status`);
   ask('actions', `repos/${repo}/actions/runs?per_page=1`);
   if (pull !== null) ask('rollup', 'graphql', JSON.stringify({ query: ROLLUP, variables: { o: owner, r: name, n: pull } }));
-  else if (!answer.limited) answer.unverified.push({ read: 'rollup', ...TOKEN_READS.rollup, why: 'the repository has no pull request yet, so its first one proves it' });
+  else if (pulls) answer.unverified.push({ read: 'rollup', ...TOKEN_READS.rollup, why: 'the repository has no pull request yet, so its first one proves it' });
   return answer;
 }
 

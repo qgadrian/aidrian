@@ -100,16 +100,18 @@ export function accessProblem({ cap, forge, repository, env, home, guarded, main
   if (denied) return { halt: denied, token };
   const reads = tokenReadProblems({ forge, repository, read });
   if (reads === null) return { ...pushed, token };
-  if (reads.retry) return { refuse: reads.retry, retry: true, token, reads: [], readNotes: [], readRetry: reads.retry };
-  const kept = { token, reads: reads.lines, readNotes: reads.notes };
-  return reads.lines.length ? { halt: reads.lines.join('; '), ...kept } : { ...pushed, ...kept };
+  // A refused read is reported whatever else the forge could not answer; with none, an unanswered read may pass later.
+  const kept = { token, reads: reads.lines, readNotes: reads.notes, ...(reads.retry ? { readRetry: reads.retry } : {}) };
+  if (reads.lines.length) return { halt: reads.lines.join('; '), ...kept };
+  if (reads.retry) return { refuse: reads.retry, retry: true, ...kept };
+  return { ...pushed, ...kept };
 }
 
 // What the token `read` gave may not read of `repository` that an issue session reads, such as the reactions the review
 // step reads and the check rollup `gh pr checks` reads, by the forge's own reads with that very token: { lines, notes,
 // retry }, `lines` a line for each read refused, naming the permission to add, `notes` one for each read that could not
-// be made here, and `retry` why the forge could not answer now, as a rate limit or a body that does not parse, which
-// says nothing of the token and may pass when tried again. Null for a forge with no such read (`tokenReads`).
+// be made here, and `retry` why the forge could not answer some read now, as a rate limit or a body that does not
+// parse, which says nothing of the token and may pass when tried again. Null for a forge with no such read (`tokenReads`).
 function tokenReadProblems({ forge, repository, read }) {
   if (typeof forge.tokenReads !== 'function') return null;
   const named = `${repository.host}/${repository.owner}/${repository.name}`;
@@ -119,10 +121,11 @@ function tokenReadProblems({ forge, repository, read }) {
   } catch (error) {
     return { lines: [], notes: [], retry: `what the forge token from ${read.source} may read of ${named} cannot be told now (${String(error?.message ?? error).split('\n')[0].slice(0, 200)}); start again` };
   }
-  if (answer?.limited) return { lines: [], notes: [], retry: `${answer.limited.why}, for ${named}; start again`, after: answer.limited.after };
+  const unanswered = answer?.unanswered ?? [];
+  const retry = unanswered.length ? `${unanswered.join('; ')}, for ${named}; start again` : null;
   const say = (each) => `the forge token from ${read.source} cannot ${each.what} (${each.why} for ${named}); give it the fine-grained permission ${each.permission}`;
   const notes = (answer?.unverified ?? []).map((each) => `whether the forge token from ${read.source} may ${each.what} is not verified: ${each.why}; it needs ${each.permission}`);
-  return { lines: (answer?.missing ?? []).map(say), notes, retry: null };
+  return { lines: (answer?.missing ?? []).map(say), notes, retry };
 }
 
 // Why the token `read` gave may not push to `repository`, by the forge's push probe with that very token, or null.

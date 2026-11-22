@@ -199,7 +199,7 @@ test('tokenReads: the read probe the adapter was given, route by route, with the
   const forge = createGithubForge({ cwd: '/repo', run: () => assert.fail('no gh'), readProbe });
   const reads = forge.tokenReads('acme/widgets', { token: 'github_pat_RO' });
   assert.deepEqual(reads.missing.map((each) => [each.read, each.permission, each.why]), [['reactions', 'Issues: Read-only', 'the forge answered 403']]);
-  assert.deepEqual([reads.unverified, reads.limited], [[], null]);
+  assert.deepEqual([reads.unverified, reads.unanswered], [[], []]);
   assert.deepEqual(asked.map(([route]) => route), ['repos/acme/widgets', 'repos/acme/widgets/pulls?state=all&per_page=1', 'repos/acme/widgets/issues/7/reactions?per_page=1', 'repos/acme/widgets/commits/main/status', 'repos/acme/widgets/actions/runs?per_page=1', 'graphql']);
   assert.deepEqual(JSON.parse(asked.at(-1)[1].query).variables, { o: 'acme', r: 'widgets', n: 7 }, 'the check rollup of the newest pull request');
   assert.ok(asked.every(([, options]) => options.host === 'github.com' && options.token === 'github_pat_RO'));

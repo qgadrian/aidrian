@@ -280,9 +280,9 @@ test('preflight blocks on a token whose reactions read the forge answers 403, na
   assert.match(halted.out[0], /^halt the forge token from the forge CLI's login for github\.com cannot read the reactions on a pull request/u);
   assert.deepEqual(fx.claude.starts(), [], 'no session started');
   // A rate limit says nothing of the token: a retry line, no permission, and a start that may pass when tried again.
-  fx.forge.tokenReads = () => ({ missing: [], unverified: [], limited: { why: 'the forge rate-limited the pulls read (403: API rate limit exceeded); try again in 60 s', after: 60 } });
+  fx.forge.tokenReads = () => ({ missing: [], unverified: [], unanswered: ['the forge rate-limited the pulls read (403: API rate limit exceeded)'] });
   const limited = fx.cmd(['preflight', 'launch']);
-  assert.deepEqual(limited.out.filter((line) => line.includes('token-reads')), ['retry token-reads: the forge rate-limited the pulls read (403: API rate limit exceeded); try again in 60 s, for github.com/acme/widgets; start again'], limited.out.join('\n'));
+  assert.deepEqual(limited.out.filter((line) => line.includes('token-reads')), ['retry token-reads: the forge rate-limited the pulls read (403: API rate limit exceeded), for github.com/acme/widgets; start again'], limited.out.join('\n'));
   assert.equal(limited.exitCode, 1);
   const later = fx.cmd(['start', 'launch', 'ENG-1']);
   assert.deepEqual([later.exitCode, later.out.find((line) => line.startsWith('retry: '))?.slice(0, 40)], [75, 'retry: the forge rate-limited the pulls ']);
@@ -304,26 +304,38 @@ test('the read probe asks the REST API or GraphQL with the token in the environm
   assert.deepEqual(Object.values(TOKEN_READS).map((each) => each.permission), ['Metadata: Read-only, with the repository selected under Repository access', 'Pull requests: Read and write', 'Issues: Read-only', 'Commit statuses: Read-only', 'Actions: Read and write', 'Commit statuses: Read-only and Actions: Read and write']);
 });
 
-test('the token reads: refusals name their permission, the check rollup with no pull request is not verified, and an answer that says neither throws', () => {
+test('the token reads: refusals name their permission, the check rollup with no pull request is not verified, and an answer that says neither is unanswered', () => {
   const reads = (answer) => tokenReadProblems('acme/widgets', { host: 'github.com', token: 't', probe: (route, options) => answer(route, options) ?? probed(route.endsWith('widgets') ? { branch: 'main' } : {}) });
   assert.deepEqual(reads(() => probed({ status: 404 })).missing.map((each) => each.read), ['repository'], 'a token that cannot read the repository is one problem');
   const statuses = reads((route) => (/status$|runs/u.test(route) ? probed({ status: 403 }) : null));
   assert.deepEqual([statuses.missing.map((each) => each.read), statuses.unverified.map((each) => each.read)], [['statuses', 'actions'], ['rollup']], 'no pull request: the rollup is not verified');
   const rollup = reads((route, options) => (route.includes('/pulls') ? probed({ number: 7 }) : options.query ? probed({ data: false, errors: ['FORBIDDEN'], said: 'Resource not accessible by personal access token' }) : null));
   assert.deepEqual(rollup.missing.map((each) => [each.read, each.permission]), [['rollup', 'Commit statuses: Read-only and Actions: Read and write']]);
-  assert.throws(() => reads(() => probed({ status: 500 })), /the forge answered the repository read with 500/u);
-  assert.throws(() => reads((route) => (route.includes('/pulls') ? probed({ parsed: false }) : null)), /the forge answered the pulls read with a body that does not parse/u, 'an unparseable 200 is no pass');
-  assert.throws(() => reads((route, options) => (route.includes('/pulls') ? probed({ number: 7 }) : options.query ? probed({ data: false, errors: ['INTERNAL'] }) : null)), /the forge answered the rollup read with no data/u);
+  assert.deepEqual(reads(() => probed({ status: 500 })).unanswered, ['the forge answered the repository read with 500']);
+  assert.deepEqual(reads((route) => (route.includes('/pulls') ? probed({ parsed: false }) : null)).unanswered, ['the forge answered the pulls read with a body that does not parse'], 'an unparseable 200 is no pass');
+  const nodata = reads((route, options) => (route.includes('/pulls') ? probed({ number: 7 }) : options.query ? probed({ data: false, errors: ['NOT_FOUND'] }) : null));
+  assert.deepEqual(nodata.missing.map((each) => [each.read, each.why]), [['rollup', 'the forge answered NOT_FOUND']], 'a rollup with no data is refused');
+  const empty = reads((route, options) => (route.includes('/pulls') ? probed({ number: 7 }) : options.query ? probed({ data: true }) : null));
+  assert.deepEqual([empty.missing, empty.unanswered], [[], []], 'an empty rollup passes');
 });
 
-test('a 403 or 429 GitHub marks as a rate limit stops the reads, names no permission, and says how long to wait', () => {
-  const reads = (limited) => tokenReadProblems('acme/widgets', { host: 'github.com', token: 't', probe: (route) => (route.includes('/pulls') ? probed(limited) : probed(route.endsWith('widgets') ? { branch: 'main' } : {})) });
-  for (const [limited, after] of [[{ status: 403, remaining: '0', said: 'API rate limit exceeded for user' }, 60], [{ status: 429, retry: '30' }, 30], [{ status: 403, said: 'You have exceeded a secondary rate limit' }, 60]]) {
+test('a rate limit GitHub marks names no permission and leaves the read unanswered, and a refusal beside it is still reported', () => {
+  const reads = (limited, other = null) => tokenReadProblems('acme/widgets', { host: 'github.com', token: 't', probe: (route, options) => {
+    if (route.includes('/pulls')) return probed({ number: 7, ...(limited.errors ? {} : limited) });
+    if (other && route.includes('/issues')) return probed(other);
+    if (options.query && limited.errors) return probed(limited);
+    return probed(route.endsWith('widgets') ? { branch: 'main' } : {});
+  } });
+  for (const limited of [{ status: 403, remaining: '0', said: 'API rate limit exceeded for user' }, { status: 429, retry: '30' }]) {
     const answer = reads(limited);
-    assert.deepEqual([answer.missing, answer.unverified, answer.limited?.after], [[], [], after], JSON.stringify(limited));
-    assert.match(answer.limited.why, /^the forge rate-limited the pulls read \((403|429)/u);
+    assert.deepEqual([answer.missing, answer.unverified], [[], []], JSON.stringify(limited));
+    assert.match(answer.unanswered[0], /^the forge rate-limited the pulls read \((403|429)/u);
   }
+  const graphql = reads({ errors: ['RATE_LIMITED'], data: false, said: 'API rate limit exceeded' });
+  assert.deepEqual([graphql.missing, graphql.unanswered], [[], ['the forge rate-limited the rollup read (200: API rate limit exceeded)']], 'a GraphQL RATE_LIMITED');
   assert.deepEqual(reads({ status: 403, said: 'Resource not accessible by personal access token' }).missing.map((each) => each.read), ['pulls'], 'a plain 403 is a refusal');
+  const both = reads({ status: 429, retry: '30' }, { status: 403 });
+  assert.deepEqual([both.missing.map((each) => each.read), both.unanswered.length], [['reactions'], 1], 'every read is asked, so the refusal is reported');
 });
 
 test('the SessionStart hook hands GH_TOKEN, from the source the start checked, to the sandboxed commands of the session the start launched alone', (t) => {

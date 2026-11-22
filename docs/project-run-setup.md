@@ -173,11 +173,13 @@ Leave Workflows off, so the token cannot push a change to a workflow file. GitHu
 Checks permission. The preflight and every start check the reads with the token the issue session gets, each one that
 writes nothing (`lib/forges/github-token.mjs`): the repository, its pull requests, the reactions on the newest one (or
 the issues list, with no pull request), the default branch's commit statuses, the workflow runs, and the GraphQL check
-rollup of the newest pull request, the read `gh pr checks` makes. A read the forge answers 401, 403, or 404, or a
-GraphQL `FORBIDDEN`, is a `blocker token-reads:` line naming the permission to add, and halts a start. With no pull
+rollup of the newest pull request, the read `gh pr checks` makes: its first context, with its type and, on a check
+run, its name and status. A read the forge answers 401, 403, or 404, or a GraphQL answer with `FORBIDDEN` or no data,
+is a `blocker token-reads:` line naming the permission to add, and halts a start; an empty rollup passes. With no pull
 request yet, the rollup is a `note token-reads:` line: the first pull request proves it. A 403 or 429 GitHub marks as a
-rate limit (no request left, a `Retry-After`, or a message naming a rate limit), and a 200 whose body does not parse,
-say nothing of the token: a `retry token-reads:` line, and a start that exits 75 to be tried again. Each probe parses
+rate limit (no request left or a `Retry-After`), a GraphQL `RATE_LIMITED`, and a 200 whose body does not parse say
+nothing of the token: a `retry token-reads:` line, and a start that exits 75 to be tried again. A refused read is
+reported whatever else went unanswered. Each probe parses
 the answer in its own process and hands back only the fields the read needs. The writes are not probed, since a probe
 writes nothing.
 
@@ -332,8 +334,8 @@ folder this command resolves. Every attempt's clone lies under the runs folder, 
 
 A **halt** stops every start of the run: an issue session's `environment` result, a start whose proof failed, as a
 session whose hooks never ran or whose sandbox proof failed, and a usage limit past the run's 24 pauses. `aidrian
-project next` prints `halted <cause>` first. The driver lifts an environment result's halt, and a failed proof's but
-the sandbox proof's, once by itself, when the preflight's checks of that cause pass
+project next` prints `halted <cause>` first. The driver's start of the halted issue lifts an environment result's halt,
+and a failed proof's but the sandbox proof's, once, when the preflight's checks of that cause pass
 ([Project run](config.md#project-run)); any other halt, a re-check that fails, and a second such halt of
 the same issue wait on a person. Fix the cause, then run, from the Human's own shell, outside the driver:
 

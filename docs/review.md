@@ -823,10 +823,11 @@ rest of the review config it is the base branch's. Unset, each machine picks its
 
 In a project run's confined issue session, one whose own unattended mark names a run and an issue, a reviewer that
 declares `confinable: false` cannot run: `codex-local` starts Codex, whose own sandbox and network the host's sandbox
-denies. There it is not ready, as when Codex is not installed or not logged in: `auto` takes the review bot, else
-`self`, and an engine set to it leaves the step `unsatisfied`, each with a reason that names the session. A pass of it
-that reaches the stages anyway, as one a plan command adds, is never launched: the step is `unsatisfied`, naming the
-pass and the session.
+denies. There it is not ready, as when Codex is not installed or not logged in, and an engine set to it leaves the
+step `unsatisfied`, its reason naming the session. `auto` takes `self`, never the review bot, and `self`'s passes
+answer every flow's invariants, as `codex-local`'s pass would; the bot joins as the stage `--with-bot` adds. A plan
+that still holds such a pass, as one a plan command adds, is refused before any round opens or the bot is asked: the
+step is `unsatisfied`, naming the pass and the session.
 
 ## Rounds
 

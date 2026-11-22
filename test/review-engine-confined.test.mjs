@@ -9,9 +9,10 @@ import test from 'node:test';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { resolveEngine } from '../plugins/aidrian/lib/review/reviewers.mjs';
 import { recordPass } from '../plugins/aidrian/lib/review/run.mjs';
+import { readLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { confinedSession } from '../plugins/aidrian/lib/review/step.mjs';
 import { markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
-import { repo } from './review-run-fixture.mjs';
+import { holdsAll, repo } from './review-run-fixture.mjs';
 
 // A project run's confined issue session cannot start codex-local: Codex sets up a sandbox of its own and needs the
 // network, which the host's sandbox denies. There codex-local is not ready, as when Codex is not installed, and the
@@ -70,23 +71,44 @@ test('in a confined session, a codex-local pass a plan command adds is refused b
   assert.equal(ran, 1, 'outside a confined session the plan command`s codex-local pass runs as written');
 });
 
-test('in a confined session, auto passes codex-local over as it does a missing Codex, and an unanswered flow`s advice names the session', async (t) => {
-  const flows = { pay: { files: ['src/pay/**'], require: ['independent-model'] } };
-  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, change: (write) => write('src/pay/a.js', '1\n') });
-  const result = await r.step({ exec: noExec, codex: never, env: confinedEnv(r.dir) });
-  assert.equal(result.status, 'unsatisfied');
-  assert.equal(result.reason, `flow pay needs a reviewer that answers its invariants, and the review bot does not: ${CANNOT}, so require an agent for the flow`);
-  const outside = repo(t, { baseConfig: { version: 1, review: { flows } }, change: (write) => write('src/pay/a.js', '1\n') });
-  const plain = await outside.step({ exec: noExec, codex: () => ({ ok: false, reason: 'the codex CLI is not installed' }) });
-  assert.match(plain.reason, /: run codex-local, or require an agent for the flow$/u, 'outside a confined session the advice is as before');
+test('a plan refused for confinement opens no round, sets no override, and asks no bot', async (t) => {
+  const planner = "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>console.log(JSON.stringify({depth:'single',stages:[{name:'independent',passes:[{id:'extra:check',reviewer:'codex-local',kind:'exec',files:null}]}]})))";
+  const config = { version: 1, github: { maxReviewRounds: 1 }, review: { engine: 'self', planCommand: 'node scripts/plan.mjs' } };
+  const r = repo(t, { baseConfig: config, baseFiles: { 'scripts/plan.mjs': planner }, change: (write) => write('src/app.js', 'q\n') });
+  const result = await r.step({ exec: noExec, codex: never, env: confinedEnv(r.dir), awaitBot: async () => assert.fail('the bot is not asked about a refused plan') }, { withBot: true });
+  assert.deepEqual([result.status, result.reason], ['unsatisfied', `pass extra:check is not launched: ${CANNOT}`]);
+  const state = readLocalState(r.project, 7);
+  assert.deepEqual([state.rounds.length, state.overrides ?? [], state.botRequest ?? null], [0, [], null]);
 });
 
-test('resolveEngine: in a confined session codex-local is not ready for auto and for a pinned engine alike', () => {
+test('in a confined session, auto takes self, which answers an independent-only flow`s invariants, and the bot stage --with-bot adds', async (t) => {
+  const flows = { pay: { files: ['src/pay/**'], require: ['independent-model'] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, change: (write) => write('src/pay/a.js', '1\n') });
+  const deps = { exec: noExec, codex: never, env: confinedEnv(r.dir), awaitBot: async () => ({ status: 'received', requested: true, signal: { kind: 'thumbs_up' } }) };
+  const first = await r.step(deps, { withBot: true });
+  assert.equal(first.status, 'dispatch', first.reason);
+  assert.deepEqual(first.engine, { name: 'self', reason: `auto: ${CANNOT}, so self` });
+  assert.deepEqual(first.plan.stages.map((stage) => [stage.name, stage.passes]), [['local', ['agent:code-reviewer']], ['remote', ['engine:pr-bot']]]);
+  const [self] = first.dispatch;
+  assert.deepEqual([self.agent, self.flows.map((flow) => flow.id)], ['code-reviewer', ['pay']], 'self answers the flow`s invariants');
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: self.pass, head: first.head, reviewer: 'code-reviewer', findings: 0, fixed: 0, verdictsText: holdsAll(self, 'src/pay/a.js:1') });
+  assert.equal((await r.step(deps, { withBot: true })).status, 'received', 'self`s verdicts and the bot`s pass the review');
+});
+
+test('outside a confined session, the advice for a flow no reviewer answers still names codex-local', async (t) => {
+  const flows = { pay: { files: ['src/pay/**'], require: ['independent-model'] } };
+  const outside = repo(t, { baseConfig: { version: 1, review: { flows } }, change: (write) => write('src/pay/a.js', '1\n') });
+  const plain = await outside.step({ exec: noExec, codex: () => ({ ok: false, reason: 'the codex CLI is not installed' }) });
+  assert.match(plain.reason, /: run codex-local, or require an agent for the flow$/u);
+});
+
+test('resolveEngine: in a confined session codex-local is not ready, auto takes self, and a pinned engine has its problem', () => {
   const base = loadConfig({ root: '/nowhere', paths: { config: 'none.json', local: 'none' } }).config;
   const noBot = { ...base, github: { ...base.github, reviewer: null } };
   const ready = () => ({ ok: true });
-  assert.deepEqual([resolveEngine(base, { codex: never, confined: CONFINED }).reviewer.name, resolveEngine(base, { codex: never, confined: CONFINED }).reason], ['pr-bot', `auto: ${CANNOT}, so the review bot`]);
-  assert.equal(resolveEngine(noBot, { codex: never, confined: CONFINED }).reason, `auto: ${CANNOT} and no review bot, so self`);
+  assert.deepEqual([resolveEngine(base, { codex: never, confined: CONFINED }).reviewer.name, resolveEngine(base, { codex: never, confined: CONFINED }).reason], ['self', `auto: ${CANNOT}, so self`], 'self, never the bot');
+  assert.equal(resolveEngine(noBot, { codex: never, confined: CONFINED }).reason, `auto: ${CANNOT}, so self`);
+  assert.equal(resolveEngine(base, { codex: () => ({ ok: false, reason: 'the codex CLI is not installed' }) }).reviewer.name, 'pr-bot', 'not confined: auto still takes the bot');
   assert.equal(resolveEngine({ ...noBot, reviewEngine: 'codex-local' }, { codex: never, confined: CONFINED }).problem, `review.engine is "codex-local", but ${CANNOT}`);
   assert.equal(resolveEngine({ ...noBot, reviewEngine: 'self' }, { codex: never, confined: CONFINED }).reason, 'review.engine: self');
   assert.equal(resolveEngine({ ...noBot, reviewEngine: 'codex-local' }, { codex: ready }).reviewer.name, 'codex-local', 'not confined: unchanged');

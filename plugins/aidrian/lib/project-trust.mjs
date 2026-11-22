@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
+import { cleanText } from './clean-text.mjs';
 import { foldCase, isWithin, resolvedPath } from './fs.mjs';
 import { repoIdentity } from './forges/index.mjs';
 import { GATE_CONFIG, gateGit } from './git.mjs';
@@ -247,6 +248,13 @@ export function reviewedMismatch(main, tip, wanted) {
   return rawMismatch(main, head, wanted) ? raw : null;
 }
 
+// The first three of the paths `files`, each cleaned to one bounded line (clean-text.mjs cleanText), since git allows
+// a newline or a control character in a file name, and how many more there are: for a line a person or a session reads.
+export function namedFiles(files) {
+  const names = files.slice(0, 3).map((file) => cleanText(file, 120, { domains: false }) || '(an unprintable name)');
+  return `${names.join(', ')}${files.length > 3 ? `, and ${files.length - 3} more` : ''}`;
+}
+
 // Whether the path `file`, from the repository root, is a host config or instruction file (GUARDED_PATHS), a folder
 // listed with its trailing slash counting as itself.
 export const isGuarded = (file) => GUARDED_PATHS.test(file) || GUARDED_PATHS.test(file.replace(/\/$/u, ''));
@@ -264,9 +272,9 @@ export function trustProblem(dir, tip) {
   const raw = rawMismatch(dir, tip, isGuarded);
   if (raw?.problem) return raw.problem;
   if (raw) differ.push(raw.path);
-  if (differ.length) return `its host config or instruction files differ from the base tip: ${[...new Set(differ)].slice(0, 3).join(', ')}`;
+  if (differ.length) return `its host config or instruction files differ from the base tip: ${namedFiles([...new Set(differ)])}`;
   const local = [...untracked, ...ignored].filter(isGuarded);
-  if (local.length) return `it holds host config or instruction files git does not track, which no review saw: ${local.slice(0, 3).join(', ')}`;
+  if (local.length) return `it holds host config or instruction files git does not track, which no review saw: ${namedFiles(local)}`;
   return null;
 }
 

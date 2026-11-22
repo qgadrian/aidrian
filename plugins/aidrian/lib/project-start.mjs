@@ -13,7 +13,8 @@
 //     `work/`, the clone, `git/`, its separate git folder, which borrows the main checkout's objects read-only through
 //     alternates, `drop/`, where the session hands its result over (lib/project-result.mjs), and `cache/`, where its
 //     package managers keep their caches (lib/project-registries.mjs). The branch comes from
-//     the forge: the first attempt cuts it from the base tip, a later one fetches it. The main repository never fetches from the clone, the gate never runs git
+//     the forge: the first attempt cuts it from the base tip, a later one fetches it, or cuts a fresh one from the base
+//     tip when it changes instruction files no review saw. The main repository never fetches from the clone, the gate never runs git
 //     in a clone a session had, and the driver removes an attempt's folder once its session ended (sweepAttempts).
 //     The session may also write the state work folders, plans, reviews, tmp, and dispatch, each a plain folder of the
 //     user directly in the state folder that holds no guarded folder and lies in none.
@@ -248,11 +249,11 @@ export function stateWorkFolders(state, { env, home }) {
 // read-only, takes origin's URL from the main checkout, which pushProblem checked, and checks out `branch`: from the
 // base tip `tip` on the first attempt, or from the forge on a later one when the forge has it. Its own config turns
 // signing off (UNSIGNED); a clone whose commits would still sign (signingProblem) is { halt }. A later attempt whose
-// branch head differs from the tip in a host config or instruction file (project-trust.mjs isGuarded) is { problem },
-// naming the branch, its pull request `pr` when the run knows it, and the files: no session no Human attends starts on
-// instructions no review saw (trustProblem), and only a person takes that branch in. `env` is the environment of its
-// network calls.
-export function prepareAttempt({ project, state, run, key, attempt, branch, tip, pr = null, env }) {
+// branch head differs from the tip in a host config or instruction file (project-trust.mjs isGuarded) leaves that
+// branch as it is and checks out the branch `fresh` from the tip instead, since no session no Human attends starts on
+// instructions no review saw (trustProblem): `branch` is the one checked out, and `superseded` names the one left,
+// { branch, sha, files }, else null. `env` is the environment of its network calls.
+export function prepareAttempt({ project, state, run, key, attempt, branch, fresh, tip, env }) {
   const folder = attemptFolder(state, run, key, attempt);
   const [work, gitFolder, drop, cache] = ['work', 'git', 'drop', 'cache'].map((name) => path.join(folder, name));
   const main = project.checkouts.at(-1);
@@ -288,6 +289,8 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, tip,
   const unsigned = setUnsigned(work, env);
   if (unsigned) return failed('config', unsigned);
   let from = tip;
+  let used = branch;
+  let superseded = null;
   const listed = git(['ls-remote', '--exit-code', '--heads', 'origin', `refs/heads/${branch}`]);
   // A first attempt cuts the branch fresh from the base tip: one the forge has already is someone else's work.
   if (attempt === 1 && listed.status === 0) return gone(`the branch ${branch} is on the forge already, and a first attempt cuts it fresh from the base tip; delete it on the forge, or name the issue another branch, then start again`);
@@ -300,16 +303,24 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, tip,
       const changed = git(['diff', '--name-only', '--no-renames', '-z', tip, from, '--']);
       if (changed.status !== 0) return failed('diff', changed);
       const guarded = changed.stdout.split('\0').filter((file) => file !== '' && isGuarded(file));
-      if (guarded.length) return gone(`the attempt's clone ${work} is not started: the earlier attempt's branch ${branch}${pr ? ` (pull request #${pr})` : ''} changes host config or instruction files no review saw (${guarded.slice(0, 3).join(', ')}), so a retry cannot start from it; a person merges that pull request, or closes it and deletes the branch so the next attempt starts fresh from the base tip`);
+      if (guarded.length) {
+        const head = git(['rev-parse', '--verify', '--quiet', `${from}^{commit}`]);
+        if (head.status !== 0) return failed('rev-parse', head);
+        const again = git(['ls-remote', '--exit-code', '--heads', 'origin', `refs/heads/${fresh}`]);
+        if (again.status === 0) return gone(`the branch ${fresh} is on the forge already, and an attempt that leaves ${branch} cuts it fresh from the base tip; delete it on the forge, then start again`);
+        if (again.status !== 2) return failed('ls-remote', again);
+        superseded = { branch, sha: head.stdout.trim(), files: guarded };
+        [used, from] = [fresh, tip];
+      }
     } else if (listed.status !== 2) return failed('ls-remote', listed);
   }
-  const checkout = git(['checkout', '--quiet', '-b', branch, from]);
+  const checkout = git(['checkout', '--quiet', '-b', used, from]);
   if (checkout.status !== 0) return failed('checkout', checkout);
   // The same check as the preflight's probe: a clone whose commits would still sign halts before any session starts.
   const signing = signingProblem(work, env);
   if (signing) return { halt: gone(`the attempt's clone ${work} is not started: ${signing}`).problem };
   const plain = plainFolderProblem(drop) ?? plainFolderProblem(cache);
-  return plain ? gone(plain) : { folder, work, git: gitFolder, drop, cache };
+  return plain ? gone(plain) : { folder, work, git: gitFolder, drop, cache, branch: used, superseded };
 }
 
 // The signing keys each attempt's clone turns off, in its own config and nowhere else, so the user's global and system

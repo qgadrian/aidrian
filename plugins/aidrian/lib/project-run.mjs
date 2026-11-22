@@ -794,7 +794,7 @@ export function summaryText(run, found) {
   const position = new Map(plan.order.map((key, i) => [key, i]));
   const keys = found.snapshot.issues.map((issue) => issue.key)
     .sort((a, b) => (position.get(a) ?? Infinity) - (position.get(b) ?? Infinity) || byKey(a, b));
-  const branchOf = new Map(found.snapshot.issues.map((issue) => [issue.key, issue.branch]));
+  const branchOf = new Map(found.snapshot.issues.map((issue) => [issue.key, issueBranch(found, issue.key)]));
   const counts = ['done', 'running', 'parked', 'skipped', 'blocked', 'canceled', 'ready']
     .map((word) => [word, keys.filter((key) => notes.get(key)[0] === word).length])
     .filter(([, count]) => count).map(([word, count]) => `${count} ${word}`);
@@ -822,6 +822,14 @@ export function summaryText(run, found) {
     ...orNone(plan.skipped.map(({ key, skipped_blocked_by: by }) => `- ${key}: blocked by ${by.join(', ')}`)),
     '',
   ].join('\n');
+}
+
+// The branch issue `key` of the run `found` works on now: the one its latest start row names, since a later attempt
+// moves to a fresh branch when the earlier one changes instruction files no review saw (project-start.mjs
+// prepareAttempt), else the one the snapshot names.
+export function issueBranch(found, key) {
+  const start = found.rows.findLast((row) => row.event === 'start' && row.key === key && typeof row.branch === 'string' && row.branch !== '');
+  return start?.branch ?? found.snapshot.issues.find((issue) => issue.key === key)?.branch ?? null;
 }
 
 // Writes summary.md of run `run` from its ledger, through a temporary file, and returns { text, file } or { problem }.

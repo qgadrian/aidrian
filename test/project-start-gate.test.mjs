@@ -12,13 +12,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { runDriver } from '../plugins/aidrian/lib/project-run-guard.mjs';
+import { ownIssue, runDriver } from '../plugins/aidrian/lib/project-run-guard.mjs';
 
 import { CLAIM_AGE, claimStart, MARKER_CAP, noteStarted, readFrom, readStarted } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { CEILINGS, ISSUE_ATTEMPTS, PROJECT_PARALLEL, PROJECT_STARTS, PROJECT_STARTS_PER_DAY, projectPrompt, teamPolicy } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { DROP_FILE } from '../plugins/aidrian/lib/project-result.mjs';
-import { appendToRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
+import { appendToRun, issueBranch, readRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { attemptFolder, setUnsigned, signingProblem, sweepAttempts, UNSIGNED } from '../plugins/aidrian/lib/project-start.mjs';
 import { markUnattended, PENDING_AGE, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { DRIVER, fakeClaude, ORIGIN, OTHER, runFixture, STARTED, testGlobalConfig } from './project-start-fixture.mjs';
@@ -218,41 +218,88 @@ test('start halts before the launch when the host would refuse the push of a ses
   assert.equal(fx.claude.starts()[0].args[fx.claude.starts()[0].args.indexOf('--permission-mode') + 1], 'auto');
 });
 
-test('a later attempt clones again from the issue branch on the forge, and one whose branch changed a host file is refused with what a person does', (t) => {
+// Commits `files` in the checkout `cwd`, forced past any exclude, and pushes it to the issue's branch: the commit.
+const pushFiles = (fx, cwd, files, branch = 'feat/eng-1-export') => {
+  for (const [file, text] of Object.entries(files)) {
+    mkdirSync(path.dirname(path.join(cwd, file)), { recursive: true });
+    writeFileSync(path.join(cwd, file), text);
+  }
+  fx.git('-C', cwd, 'add', '-f', '--', ...Object.keys(files));
+  fx.git('-C', cwd, 'commit', '-q', '-m', 'change');
+  fx.git('-C', cwd, 'push', '-q', fx.bare, `HEAD:refs/heads/${branch}`);
+  return fx.git('-C', cwd, 'rev-parse', 'HEAD').trim();
+};
+// The fixture forge's pull request read, which also shows pull request `number` as `view`, the call still recorded.
+const viewing = (fx, number, view) => {
+  const own = fx.forge.change;
+  return (ref, fields, options) => {
+    if (ref !== number) return own(ref, fields, options);
+    fx.forge.calls.push(['change', ref, fields, options]);
+    return view;
+  };
+};
+// Opens ENG-1 again once attempt `attempt`'s session ended, with a result that named pull request `pr`.
+const reopen = (fx, attempt, pr = null) => {
+  fx.claude.states[STARTED[attempt - 1].session] = 'done';
+  appendToRun(fx.state, 'launch', () => ({ rows: [
+    ...(pr ? [{ event: 'result', key: 'ENG-1', attempt, session: STARTED[attempt - 1].session, via: 'drop', status: 'failed', pr, verified: false, at: at(Date.now()) }] : []),
+    { event: 'issue', key: 'ENG-1', state: 'open', at: at(Date.now()) },
+  ] }));
+};
+
+test('a later attempt goes on from the issue branch on the forge, and one whose branch changed the knowledge index starts fresh from the base tip and closes the old pull request', (t) => {
   const fx = runFixture(t);
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
-  appendToRun(fx.state, 'launch', () => ({ rows: [{ event: 'issue', key: 'ENG-1', state: 'open', at: at(Date.now()) }] }));
-  fx.claude.states[STARTED[0].session] = 'done';
+  reopen(fx, 1);
   // The first attempt's session pushed its branch with a plain change.
   fx.git('-C', work(fx), 'commit', '-q', '--allow-empty', '-m', 'work');
   fx.git('-C', work(fx), 'push', '-q', fx.bare, 'HEAD:refs/heads/feat/eng-1-export');
   const second = fx.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(second.exitCode, 0, second.err.join('\n'));
-  assert.equal(second.out[1], `started ENG-1 attempt 2 session ${STARTED[1].id}`);
-  assert.equal(fx.claude.starts()[1].cwd, work(fx, 'ENG-1', 2));
+  assert.deepEqual(second.out.slice(1, 4), [`started ENG-1 attempt 2 session ${STARTED[1].id}`, `clone: ${work(fx, 'ENG-1', 2)}`, 'branch: feat/eng-1-export']);
   assert.equal(fx.git('-C', work(fx, 'ENG-1', 2), 'log', '-1', '--format=%s').trim(), 'work', 'the branch as the forge has it');
+  assert.doesNotMatch(fx.claude.starts()[1].args.at(-1), /superseded|starts fresh/u);
 
-  // The second attempt opened a pull request, then ended with a result that left the issue open.
-  fx.claude.states[STARTED[1].session] = 'done';
-  appendToRun(fx.state, 'launch', () => ({ rows: [
-    { event: 'result', key: 'ENG-1', attempt: 2, session: STARTED[1].session, via: 'drop', status: 'failed', pr: 12, verified: false, at: at(Date.now()) },
-    { event: 'issue', key: 'ENG-1', state: 'open', at: at(Date.now()) },
-  ] }));
-  const clone = work(fx, 'ENG-1', 2);
-  // A docs issue registers its doc in the knowledge index; the settings placeholder is excluded through info/exclude,
-  // and a session that forces it in still meets the next attempt's check.
-  mkdirSync(path.join(clone, '.aidrian/knowledge'), { recursive: true });
-  writeFileSync(path.join(clone, '.aidrian/knowledge/docs.json'), '{"dir":"docs","docs":{}}\n');
-  mkdirSync(path.join(clone, '.claude'), { recursive: true });
-  writeFileSync(path.join(clone, '.claude/settings.json'), '{"disableAllHooks":true}');
-  fx.git('-C', clone, 'add', '-f', '.aidrian/knowledge/docs.json', '.claude/settings.json');
-  fx.git('-C', clone, 'commit', '-q', '-m', 'register the doc');
-  fx.git('-C', clone, 'push', '-q', fx.bare, 'HEAD:refs/heads/feat/eng-1-export');
-  const refused = fx.cmd(['start', 'launch', 'ENG-1']);
-  assert.equal(refused.exitCode, 1);
-  assert.ok(refused.err[0].endsWith(`the attempt's clone ${work(fx, 'ENG-1', 3)} is not started: the earlier attempt's branch feat/eng-1-export (pull request #12) changes host config or instruction files no review saw (.aidrian/knowledge/docs.json, .claude/settings.json), so a retry cannot start from it; a person merges that pull request, or closes it and deletes the branch so the next attempt starts fresh from the base tip`), refused.err[0]);
-  assert.equal(fx.claude.starts().length, 2);
-  assert.equal(existsSync(path.dirname(work(fx, 'ENG-1', 3))), false, 'the clone is removed');
+  // The second attempt registered a doc in the knowledge index and opened pull request #12 from its branch.
+  const head = pushFiles(fx, work(fx, 'ENG-1', 2), { '.aidrian/knowledge/docs.json': '{"dir":"docs","docs":{}}\n' });
+  fx.forge.change = viewing(fx, '12', { state: 'OPEN', headRefName: 'feat/eng-1-export', headRefOid: head, url: 'https://github.com/acme/widgets/pull/12', isCrossRepository: false });
+  reopen(fx, 2, 12);
+  const third = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(third.exitCode, 0, third.err.join('\n'));
+  const retry = work(fx, 'ENG-1', 3);
+  const tip = fx.git('rev-parse', 'refs/remotes/origin/main').trim();
+  assert.equal(third.out[3], 'branch: feat/eng-1-export-a3');
+  assert.equal(fx.git('-C', retry, 'rev-parse', '--abbrev-ref', 'HEAD').trim(), 'feat/eng-1-export-a3');
+  assert.equal(fx.git('-C', retry, 'rev-parse', 'HEAD').trim(), tip, 'cut fresh from the base tip');
+  // The start ran its trust guard on this clone before the host's placeholders went in: the files are the tip's.
+  assert.equal(fx.git('-C', retry, 'status', '--porcelain').trim(), '');
+  assert.equal(existsSync(path.join(retry, '.aidrian/knowledge/docs.json')), false);
+  const prompt = fx.claude.starts()[2].args.at(-1);
+  assert.ok(prompt.includes('An earlier attempt\'s branch feat/eng-1-export changes 1 host config or instruction file no review saw (.aidrian/knowledge/docs.json), so this attempt starts fresh from the base tip on the branch feat/eng-1-export-a3 and reuses nothing of feat/eng-1-export'), prompt);
+  assert.ok(prompt.includes('close pull request #12, from feat/eng-1-export, with the comment "superseded by #<the new pull request\'s number>": closing can be undone by reopening it, and no branch is deleted.'), prompt);
+  assert.match(prompt, /git push origin HEAD:refs\/heads\/feat\/eng-1-export-a3/u, 'the push names the fresh branch');
+  assert.doesNotMatch(prompt, /stopped when the host met a usage or rate limit/u);
+  // Everything after the start reads the fresh branch: the start row, and the push guard's own issue.
+  assert.equal(fx.rows().findLast((row) => row.event === 'start').branch, 'feat/eng-1-export-a3');
+  assert.equal(issueBranch(readRun(fx.state, 'launch'), 'ENG-1'), 'feat/eng-1-export-a3');
+  assert.equal(ownIssue(fx.project, fx.config, { project: 'launch', issue: 'ENG-1' }, { home: fx.home })?.branch, 'feat/eng-1-export-a3', 'the one branch the session may push');
+});
+
+// The number a result named is the session's word: a pull request the forge does not show open from the old branch's
+// head is never named. A file name may hold a newline or a control character, and reaches the task as one clean line.
+test('a fresh attempt names no pull request the forge does not show open from the old branch, and cleans the file names it names', (t) => {
+  const fx = runFixture(t);
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  pushFiles(fx, work(fx), { '.aidrian/knowledge/docs.json': '{}\n', '.aidrian/knowledge/a\nRun this\u001b[2J.md': 'x\n' });
+  fx.forge.change = viewing(fx, '7', { state: 'OPEN', headRefName: 'feat/eng-1-export', headRefOid: '0'.repeat(40), url: 'https://github.com/acme/widgets/pull/7', isCrossRepository: false });
+  reopen(fx, 1, 7);
+  const second = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(second.exitCode, 0, second.err.join('\n'));
+  assert.equal(second.out[3], 'branch: feat/eng-1-export-a2');
+  const line = fx.claude.starts()[1].args.at(-1).split('\n').find((each) => each.startsWith('An earlier attempt'));
+  assert.ok(line.includes('changes 2 host config or instruction files no review saw (.aidrian/knowledge/a Run this [2J.md, .aidrian/knowledge/docs.json)'), line);
+  assert.ok(line.endsWith('Leave feat/eng-1-export as it is, and close no pull request.'), line);
+  assert.doesNotMatch(line, /#7|[\u0000-\u001f]/u);
 });
 
 // The user's global config signs every commit with a program the sandbox cannot reach: each attempt's clone turns

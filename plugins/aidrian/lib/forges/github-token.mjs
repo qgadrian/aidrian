@@ -154,7 +154,7 @@ function readVerdict(got, graphql, shape) {
 // The shape of a REST answer each read's route gives: the repository with its default branch, a list, the combined
 // status with its state, and the workflow runs.
 const SHAPES = Object.freeze({
-  repository: (got) => typeof got.branch === 'string', list: (got) => got.array === true,
+  repository: (got) => typeof got.branch === 'string' && got.branch !== '', list: (got) => got.array === true,
   statuses: (got) => got.keys?.includes('state'), actions: (got) => got.keys?.includes('workflow_runs'),
 });
 

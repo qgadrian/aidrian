@@ -326,6 +326,7 @@ test('the token reads: refusals name their permission, the check rollup with no 
   const shapes = reads((route) => (route === 'repos/acme/widgets/pulls?state=all&per_page=1' ? probed({ array: false, keys: ['message'] }) : route.includes('/runs') ? probed({ keys: [] }) : null));
   assert.deepEqual([shapes.missing, shapes.unanswered], [[], ['pulls', 'actions']]);
   assert.deepEqual(reads((route) => (route === 'repos/acme/widgets' ? probed({ array: false, keys: [] }) : null)).unanswered, ['repository', 'statuses'], 'a repository answer of {}');
+  assert.deepEqual(reads((route) => (route === 'repos/acme/widgets' ? probed({ branch: '' }) : null)).unanswered, ['repository', 'statuses'], 'an empty default branch');
   // The reads that need only the repository's name are asked when its own read gets no answer.
   const mixed = reads((route) => (route === 'repos/acme/widgets' ? probed({ status: 500 }) : route.includes('/runs') ? probed({ status: 403 }) : null));
   assert.deepEqual([mixed.missing.map((each) => each.read), mixed.unanswered], [['actions'], ['repository', 'statuses']], 'the Actions refusal beside an unanswered repository read');

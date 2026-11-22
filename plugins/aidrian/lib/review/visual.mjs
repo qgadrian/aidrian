@@ -262,8 +262,8 @@ const PROGRESS = /^capturing \d+ of \d+: (\S+)$/u;
 // output is kept, owner-only, as capture-stderr.log in `dir`, which the reason names by file name only.
 function failureReason(run, jobs, dir) {
   const lines = String(run.stderr ?? '').split('\n').map((line) => line.trim()).filter(Boolean);
-  const keyed = lines.map((line) => PROGRESS.exec(line)?.[1]).filter(Boolean).at(-1);
-  const index = keyed ? jobs.findIndex((job) => job.key === keyed) : -1;
+  const keys = jobs.map((job) => job.key);
+  const index = keys.indexOf(lines.map((line) => PROGRESS.exec(line)?.[1]).filter((key) => keys.includes(key)).at(-1));
   const at = index >= 0 ? ` at screen ${index + 1} of ${jobs.length}, ${jobs[index].key}` : '';
   const last = lines.at(-1);
   const stopped = run.signal ? `killed by ${run.signal}` : run.error ? 'the capture could not run' : `exit ${run.status}`;
@@ -273,9 +273,8 @@ function failureReason(run, jobs, dir) {
   if (!lines.length) return why;
   try {
     mkdirSync(dir, { recursive: true });
-    const log = path.join(dir, STDERR_LOG);
-    writeFileSync(log, String(run.stderr), { mode: 0o600 });
-    chmodSync(log, 0o600);
+    // A new file only, made owner-only: a log an earlier attempt left, which could not be removed, takes nothing.
+    writeFileSync(path.join(dir, STDERR_LOG), String(run.stderr), { mode: 0o600, flag: 'wx' });
     return `${why} (its error output: ${STDERR_LOG} in this head's capture folder)`;
   } catch {
     return why;

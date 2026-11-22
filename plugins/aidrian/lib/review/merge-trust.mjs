@@ -5,8 +5,9 @@
 // (lib/rules/github/merge-review.mjs), both ask for them at merge time:
 //   1. the review bot's verdict, read on the forge: the configured `github.reviewer` of the default branch, a bot account,
 //      approved exactly the head commit, or its own status card, edited by no one else, says its review of exactly that
-//      commit finished with nothing unresolved; and no review of that commit by the bot says anything else, a dismissed
-//      one included (botProblem);
+//      commit finished with nothing unresolved, or its own clean receipt, edited by no one else, names a short commit
+//      that only the head is among every commit the head has held; and no review of that commit by the bot says anything
+//      else, a dismissed one included (botProblem);
 //   2. the Human's sign-off of each flow that asks for one, read from the sign-off store, `<state root>/signoffs/`, which
 //      only `aidrian pr signoff` in a session the Human attends writes: the agent gate hook refuses it to a subagent and to
 //      a session no Human attends (lib/handoff-guard.mjs signoffWriteDenial), a confined session's sandbox denies it
@@ -17,7 +18,7 @@
 
 import { isObject } from '../fs.mjs';
 import { POLICY_PATHS } from '../project.mjs';
-import { cardState, isReviewSummaryCard } from './bot-card.mjs';
+import { cardState, isCleanReceipt, isReviewSummaryCard, reviewedCommit } from './bot-card.mjs';
 import { citedDocs } from './cited.mjs';
 import { classify, HARNESS_FLOW, pathPattern } from './plan.mjs';
 import { sameCommit } from './state.mjs';
@@ -29,13 +30,26 @@ export { readHumanSignoffs, recordHumanSignoff, SIGNOFF_FOLDER, signoffFile, sig
 const botName = (login) => (typeof login === 'string' ? login.toLowerCase().replace(/\[bot\]$/u, '') : null);
 export const sameBot = (login, reviewer) => botName(login) !== null && botName(login) === botName(reviewer);
 
+// The shortest commit a receipt may name: the bot writes 10 hex.
+const RECEIPT_COMMIT_MIN = 10;
+
+// Every commit the pull request's head has held, lowercased: the trail's commit list and each force push's commit
+// before and after it. Null when the forge did not give them all, or gave one with no commit.
+const heldCommits = (trail) => {
+  if (trail.messagesComplete !== true || trail.forcePushesComplete !== true) return null;
+  const oids = [...(trail.messages ?? []).map((each) => each?.oid), ...(trail.forcePushes ?? []).flatMap((each) => [each?.before, each?.after])];
+  return oids.every((oid) => typeof oid === 'string' && /^[0-9a-f]{40}$/iu.test(oid)) ? new Set(oids.map((oid) => oid.toLowerCase())) : null;
+};
+
 // Why the review bot's verdict on the forge does not pass `head`, or null when it does. `trail` is the forge's
 // reviewTrail of the pull request; `reviewer` the default branch's `github.reviewer`, read from the forge. A review or a
-// comment counts only when its author is a bot account of that name. Passed: an approving review of exactly `head`, or
-// the bot's status card, whose every edit the bot made, saying its code review of exactly `head` completed and found
-// nothing at all: `has_any_findings` false, since the user can mark the bot's findings resolved, which clears
-// `has_unresolved_findings`; and no review of `head` by the bot in any other state. A clean receipt or a 👍 names no
-// full commit, so neither counts.
+// comment counts only when its author is a bot account of that name, and a comment only when the forge gave its whole
+// edit history and every edit in it is the bot's. Passed: an approving review of exactly `head`; the bot's status card
+// saying its code review of exactly `head` completed and found nothing at all: `has_any_findings` false, since the user
+// can mark the bot's findings resolved, which clears `has_unresolved_findings`; or the bot's clean receipt, whose
+// "Reviewed commit" is at least 10 hex, a prefix of `head`, and a prefix of no other commit the head has held, by the
+// whole commit list and force-push list; and no review of `head` by the bot in any other state. A 👍 names no commit,
+// so it never counts.
 export function botProblem(trail, head, reviewer) {
   const sha7 = head.slice(0, 7);
   if (typeof reviewer !== 'string' || reviewer === '') return NO_BOT;
@@ -44,20 +58,30 @@ export function botProblem(trail, head, reviewer) {
   const other = onHead.find((review) => review.state !== 'APPROVED');
   if (other) return `${reviewer} reviewed head ${sha7} as ${String(other.state ?? 'unknown').toLowerCase()}, so its review of that commit did not pass`;
   if (onHead.length) return null;
-  const cards = (trail.comments ?? []).filter((comment) => comment.bot && sameBot(comment.login, reviewer) && isReviewSummaryCard(comment.body));
-  const whole = cards.filter((card) => card.editsComplete === true);
-  const own = whole.filter((card) => (card.editors ?? []).every((login) => sameBot(login, reviewer)));
-  const passes = own.some((card) => {
+  const lower = head.toLowerCase();
+  const byBot = (kind) => (trail.comments ?? []).filter((comment) => comment.bot && sameBot(comment.login, reviewer) && kind(comment.body));
+  const whole = (comments) => comments.filter((comment) => comment.editsComplete === true);
+  const own = (comments) => whole(comments).filter((comment) => (comment.editors ?? []).every((login) => sameBot(login, reviewer)));
+  const cards = byBot(isReviewSummaryCard);
+  const passes = own(cards).some((card) => {
     const review = cardState(card.body)?.code_review;
     return review?.status === 'completed' && review.has_any_findings === false && review.has_unresolved_findings === false
-      && typeof review.commit_sha === 'string' && review.commit_sha.toLowerCase() === head.toLowerCase();
+      && typeof review.commit_sha === 'string' && review.commit_sha.toLowerCase() === lower;
   });
   if (passes) return null;
+  const receipts = byBot(isCleanReceipt);
+  const named = own(receipts).map((receipt) => reviewedCommit(receipt.body).toLowerCase()).filter((prefix) => prefix.length >= RECEIPT_COMMIT_MIN && lower.startsWith(prefix));
+  const held = named.length ? heldCommits(trail) : null;
+  if (held && named.some((prefix) => [...held].every((oid) => oid === lower || !oid.startsWith(prefix)))) return null;
   let why = '';
-  if (whole.length > own.length) why = ', and its status card was edited by another account';
-  else if (cards.length > whole.length) why = ', and the forge gave only part of its status card\'s edit history, so who edited it cannot be told';
-  else if (!cards.length && trail.commentsComplete === false) why = ', and the pull request has more comments than the forge read gives, so its status card may be past them';
-  return `${reviewer} has not passed head ${sha7} on the forge: no approving review of that commit, and no status card of its own that says its review of that commit finished and found nothing${why}`;
+  if (whole(cards).length > own(cards).length) why = ', and its status card was edited by another account';
+  else if (cards.length > whole(cards).length) why = ', and the forge gave only part of its status card\'s edit history, so who edited it cannot be told';
+  else if (named.length && !held) why = `, and the forge did not give every commit the head has held, so its receipt's short commit ${named[0]} may name another`;
+  else if (named.length) why = `, and its receipt's short commit ${named[0]} also names another commit the head has held`;
+  else if (whole(receipts).length > own(receipts).length) why = ', and its receipt was edited by another account';
+  else if (receipts.length > whole(receipts).length) why = ', and the forge gave only part of its receipt\'s edit history, so who edited it cannot be told';
+  else if (!cards.length && !receipts.length && trail.commentsComplete === false) why = ', and the pull request has more comments than the forge read gives, so its status card or receipt may be past them';
+  return `${reviewer} has not passed head ${sha7} on the forge: no approving review of that commit, no status card of its own that says its review of that commit finished and found nothing, and no receipt of its own that names that commit alone${why}`;
 }
 
 // The refusal when no review bot is set, which names the fix.

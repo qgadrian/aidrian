@@ -443,8 +443,11 @@ const EDITS_QUERY = 'query($o:String!,$r:String!,$n:Int!){repository(owner:$o,na
 // default branch's name, and its config pointer, config.json, and knowledge folder at the paths given; and the pull
 // request's head, base, author, draft state, review decision, latest reviews, the head's checks, the changed files, the
 // newest reviews, and the first conversation comments, each with the login of every edit to it, and the base branch's
-// pointer and config.json; and the head branch, title, body, and first commits' messages, for the closing-word check.
-// A login GraphQL gives a bot carries no `[bot]`; `__typename` says whether the author is a bot.
+// pointer and config.json; and the head branch, title, body, and first commits' messages, for the closing-word check;
+// and the first force pushes of the head, each with its commit before and after, counted by `filteredCount`, since a
+// timeline filtered by item type still counts every item in its `totalCount`. With the commits, they are every commit
+// the head has held, which a short commit the bot's receipt names must pick out alone. A login GraphQL gives a bot
+// carries no `[bot]`; `__typename` says whether the author is a bot.
 export const TRAIL_PAGE = 100;
 const BLOB = '... on Blob { text isTruncated }';
 const POLICY_FILES = `pointer: file(path: $pointer) { object { ${BLOB} } } config: file(path: $config) { object { ${BLOB} } }`;
@@ -467,6 +470,7 @@ const TRAIL_QUERY = `query($o: String!, $r: String!, $n: Int!, $pointer: String!
       baseRef { name target { ... on Commit { ${POLICY_FILES} } } }
       latestReviews(first: ${TRAIL_PAGE}) { nodes { author { login } state } }
       history: commits(first: ${TRAIL_PAGE}) { totalCount nodes { commit { oid message } } }
+      forcePushes: timelineItems(first: ${TRAIL_PAGE}, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) { filteredCount nodes { ... on HeadRefForcePushedEvent { beforeCommit { oid } afterCommit { oid } } } }
       commits(last: 1) {
         nodes { commit { oid statusCheckRollup { contexts(first: ${TRAIL_PAGE}) { totalCount nodes { __typename ... on CheckRun { name status conclusion } ... on StatusContext { context state } } } } } }
       }
@@ -1179,8 +1183,8 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // What an unattended merge of pull request `n` of `repo` confirms on the forge, in the facade's shape: { viewer, head,
     // base, author, draft, reviewDecision, latestReviews: [{ author: { login }, state }], checks: { head, rows, complete },
     // files: [{ path, changeType }], filesTotal, filesComplete, reviews: [{ login, bot, association, state, commit, at }], reviewsComplete,
-    // comments: [{ id, login, bot, association, body, at, editors, editsComplete }], commentsComplete, branches: { default,
-    // base } }. `reviews` are the newest TRAIL_PAGE, `comments` and `files` the first TRAIL_PAGE; `editors` holds the
+    // comments: [{ id, login, bot, association, body, at, editors, editsComplete }], commentsComplete, forcePushes:
+    // [{ before, after }], forcePushesComplete, branches: { default, base } }. `reviews` are the newest TRAIL_PAGE, `comments` and `files` the first TRAIL_PAGE; `editors` holds the
     // login of the comment's last editor, of every edit of it, and of whoever deleted an edit from its history, null for a
     // deleted account or an edit with no editor. `paths` are the pointer file, config.json, and knowledge folder to read on
     // the default branch, and the first two on the base, from the top of the repository. `host` names the GitHub host.
@@ -1216,6 +1220,7 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
       const commit = pr.commits?.nodes?.at(-1)?.commit ?? null;
       const history = trailNodes(pr.history);
       const contexts = trailNodes(commit?.statusCheckRollup?.contexts);
+      const forcePushes = Array.isArray(pr.forcePushes?.nodes) ? pr.forcePushes.nodes : [];
       const association = (each) => (typeof each?.authorAssociation === 'string' ? each.authorAssociation : null);
       return {
         viewer: typeof data?.viewer?.login === 'string' ? data.viewer.login : null,
@@ -1249,6 +1254,9 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
           };
         }),
         commentsComplete: comments.complete,
+        // Each force push of the head, its commit before and after, null for one GitHub no longer gives.
+        forcePushes: forcePushes.map((each) => ({ before: each?.beforeCommit?.oid ?? null, after: each?.afterCommit?.oid ?? null })),
+        forcePushesComplete: Number.isSafeInteger(pr.forcePushes?.filteredCount) && pr.forcePushes.filteredCount <= forcePushes.length,
         branches: {
           default: branchFiles(data?.repository?.defaultBranchRef?.name, data?.repository?.defaultBranchRef?.target, true),
           base: branchFiles(pr.baseRef?.name, pr.baseRef?.target),

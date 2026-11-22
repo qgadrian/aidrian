@@ -1264,3 +1264,38 @@ test('latestBotSignal: a draft`s clean receipt, or a card with nothing unresolve
   assert.equal(latestBotSignal({ ...base, issueComments: [at(STATE_CARD_BODY(head, false), 6, 2), at(QUOTA_BODY)] }).kind, 'quota_exhausted');
   assert.equal(latestBotSignal({ ...base, issueComments: [at(STATE_CARD_BODY(head, false), 6, 2), at(QUOTA_BODY)] }).clean, undefined, 'the quota notice is never clean');
 });
+
+// The bot's clean receipt as it posts one on every clean pass: its footer quotes the trigger, and its 👍 follows a few
+// seconds later.
+const FOOTED_RECEIPT = (sha) => `${RECEIPT_BODY(sha).replace('</details>', 'Comment "@codex review" to ask for another review.\n</details>')}`;
+
+test('latestTrigger: the bot`s receipt quotes "@codex review" in its footer, and is never a trigger', () => {
+  const head = 'cdc936e80c1f2a3b4c5d6e7f8091a2b3c4d5e6f7';
+  const trigger = { body: `${REQUEST_COMMENT}\n\n<!-- pr-await-review: head=${head} -->`, created_at: T(2) };
+  const answer = { id: 9, user: BOT, created_at: T(6), body: FOOTED_RECEIPT(head) };
+  assert.ok(answer.body.toLowerCase().includes(REQUEST_COMMENT), 'the footer quotes the trigger');
+  assert.equal(latestTrigger({ issueComments: [trigger, answer] }), T(2));
+  assert.equal(latestTriggerHead({ issueComments: [trigger, answer] }), head);
+  assert.equal(latestTrigger({ issueComments: [answer] }), null);
+});
+
+test('awaitReview: a 👍 just after a receipt naming an older commit is stale for the new head, whatever the trigger named', async () => {
+  // The pull request this was learned on: the bot reviewed the previous head, the new head was pushed, and the receipt
+  // and its 👍 landed after the push and after a trigger that named the new head.
+  const previous = '7c806f2c55aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const head = '4bc7ec01bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  const trigger = { id: 1, user: { login: 'adrian' }, body: `${REQUEST_COMMENT}\n\n<!-- pr-await-review: head=${head} -->`, created_at: T(5) };
+  const answer = (sha) => ({ id: 2, user: BOT, created_at: T(6), body: FOOTED_RECEIPT(sha) });
+  const thumbsUp = { user: BOT, content: '+1', created_at: '2026-08-23T07:06:04Z' };
+  const run = (sha) => awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 0, intervalSec: 60 },
+    { forge: fakeForge([{ head, headCommittedAt: T(4), issueComments: [trigger, answer(sha)], reactions: [thumbsUp] }]), git: { pushedHead: () => null, behind: () => false }, ...clock() });
+  const stale = await run(previous);
+  assert.deepEqual([stale.status, stale.signal.kind, stale.signal.commit_id, stale.stale], ['timed_out', 'thumbs_up', previous.slice(0, 10), true]);
+  assert.equal(stale.trigger_at, T(5), 'the receipt is not the trigger');
+  const covered = await run(head);
+  assert.deepEqual([covered.status, covered.signal.commit_id, covered.stale], ['already_present', head.slice(0, 10), false]);
+  // With no receipt, the 👍 is bound to the head the trigger named, as before.
+  const alone = latestBotSignal({ reviews: [], reviewComments: [], reactions: [thumbsUp], issueComments: [trigger], reviewer: DEFAULT_REVIEWER, since: T(5) });
+  assert.equal(alone.commit_id, null);
+  assert.equal(isStale(alone, head, T(4), head), false);
+});

@@ -2,11 +2,12 @@
 // with a pull request, then report what it left behind. The bot reviews once per "@codex review" comment, 5 to 25
 // minutes later; opening a pull request or marking it ready triggers nothing; a later push is not re-reviewed; and a
 // clean pass is no review: the bot posts its receipt, a comment naming the commit it reviewed, then adds a 👍 to the pull
-// request a few seconds later, which names no commit. A prose rule cannot hold that, so this command does:
+// request a few seconds later. The 👍 names no commit and may land after a push, so it is never the signal; the receipt
+// is. A prose rule cannot hold that, so this command does:
 //
 //   1. Resolve the pull request (argument, URL, or current branch) and its head commit.
 //   2. Find the latest trigger: the last "@codex review" comment.
-//   3. Find the latest bot signal after it: a review (its commit and line-comment count), a 👍, or a bot comment.
+//   3. Find the latest bot signal after it: a review (its commit and line-comment count) or a bot comment.
 //      A 👀 (on the pull request, or on the trigger comment, where the bot puts it) means the bot started; it is
 //      reported as `acknowledged_at`, never as a finished signal. The usage-limit notice ends the wait as
 //      `blocked_quota`; the review-summary status card is never a signal.
@@ -47,7 +48,7 @@ import { forgeFor } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { repoFlag } from './remotes.mjs';
-import { cardState, isCleanReceipt, isQuotaNotice, isReceipt, isReviewSummaryCard, QUOTA_NOTICE_PATTERN, RECEIPT_MARKER, REVIEW_SUMMARY_CARD_MARKER, REVIEWED_COMMIT_PATTERN, reviewedCommit } from './review/bot-card.mjs';
+import { cardState, isReviewSummaryCard, REVIEW_SUMMARY_CARD_MARKER } from './review/bot-card.mjs';
 import { holdToBase } from './review/in-force.mjs';
 import { REQUEST_COMMENT, REQUEST_INSTRUCTIONS, REQUEST_TEXT } from './review/request-text.mjs';
 
@@ -88,9 +89,28 @@ export const requestCommentBody = (headSha, maxRounds = DEFAULTS.maxRounds, revi
   return reviewMarker ? `${rounds}\n${reviewMarker}` : rounds;
 };
 
-// The bot's review-summary status card and its machine state, its usage-limit notice, the commit an answer names, and
-// its receipt (review/bot-card.mjs).
-export { cardState, isCleanReceipt, isQuotaNotice, isReviewSummaryCard, QUOTA_NOTICE_PATTERN, RECEIPT_MARKER, REVIEW_SUMMARY_CARD_MARKER, REVIEWED_COMMIT_PATTERN, reviewedCommit };
+// The bot's out-of-credits reply: an ordinary comment, by the same author, that names the condition.
+export const QUOTA_NOTICE_PATTERN = /codex usage limits?/i;
+export const isQuotaNotice = (body) => typeof body === 'string' && QUOTA_NOTICE_PATTERN.test(body);
+
+// The bot's review-summary status card and its machine state (review/bot-card.mjs).
+export { cardState, isReviewSummaryCard, REVIEW_SUMMARY_CARD_MARKER };
+
+// The bot's clean answer, its receipt: a conversation comment it posts before its 👍, matched on its layout, never on
+// its words anywhere: it opens with the receipt marker, the text after it opens with "Codex Review: Didn't find any
+// major issues", and it names the reviewed commit. A comment that only quotes the phrase, such as a finding about a
+// screen that shows it, is never clean.
+export const RECEIPT_MARKER = '<!-- codex-review-receipt:v1 -->';
+const isReceipt = (body) => typeof body === 'string' && body.trimStart().startsWith(RECEIPT_MARKER);
+const CLEAN_RECEIPT_LEAD = /^Codex Review: Didn['’]t find any major issues\b/u;
+export const isCleanReceipt = (body) => {
+  if (typeof body !== 'string' || isQuotaNotice(body)) return false;
+  const text = body.trimStart();
+  if (!text.startsWith(RECEIPT_MARKER)) return false;
+  const rest = text.slice(RECEIPT_MARKER.length).trimStart();
+  return CLEAN_RECEIPT_LEAD.test(rest) && reviewedCommit(rest) !== null;
+};
+
 
 // Whether the reviewer's newest status card says its code review of `commit` completed with no unresolved finding. The
 // card vouches for `comment` only when it was last updated at or after `since` and no earlier than that comment: a card
@@ -186,12 +206,13 @@ export const postedTriggerInstant = (posted) =>
 // The pre-POST fallback boundary, floored to the second, as GitHub floors `created_at`.
 export const flooredInstant = (epochMs) => new Date(Math.floor(epochMs / 1000) * 1000).toISOString();
 
-// The latest trigger: the last "@codex review" comment, ours or a person's. The status card and the bot's receipt quote
-// the phrase in their help text, so neither is ever a trigger. Opening a pull request or marking it ready triggers nothing.
+// A trigger: an "@codex review" comment, ours or a person's. The status card and the bot's receipt quote the phrase in
+// their help text, so neither is ever one. Opening a pull request or marking it ready triggers nothing.
+const isTrigger = (body) => typeof body === 'string' && !isReviewSummaryCard(body) && !isReceipt(body) && body.toLowerCase().includes(REQUEST_COMMENT);
+
+// The latest trigger: the last trigger comment.
 const latestTriggerComment = ({ issueComments }) => {
-  const requests = issueComments.filter(
-    (c) => typeof c.body === 'string' && !isReviewSummaryCard(c.body) && !isReceipt(c.body) && c.body.toLowerCase().includes(REQUEST_COMMENT),
-  );
+  const requests = issueComments.filter((c) => isTrigger(c.body));
   const at = latest(...requests.map((c) => c.created_at));
   return requests.find((c) => c.created_at === at) ?? null;
 };
@@ -200,24 +221,20 @@ const latestTriggerComment = ({ issueComments }) => {
 export const latestTrigger = (input) => latestTriggerComment(input)?.created_at ?? null;
 export const latestTriggerHead = (input) => triggerHeadSha(latestTriggerComment(input)?.body);
 
-// The reviewer's newest clean receipt whose instant `after` keeps, or null.
-const newestReceipt = (issueComments, reviewer, after) => issueComments
-  .filter((c) => c.user?.login === reviewer && after(c.created_at) && isCleanReceipt(c.body))
-  .sort((a, b) => ms(b.created_at) - ms(a.created_at))[0] ?? null;
+// The bot names the commit it reviewed in its answer: `**Reviewed commit:** \`cdc936e80c\``, a short SHA.
+export const REVIEWED_COMMIT_PATTERN = /Reviewed commit:\**\s*`([0-9a-f]{7,40})`/i;
+export const reviewedCommit = (body) => (typeof body === 'string' ? body.match(REVIEWED_COMMIT_PATTERN)?.[1] ?? null : null);
 
-// Latest bot signal at or after `since`: a review (with commit), a 👍, or a bot comment, which is how the bot answers on
-// a draft; a comment's `commit_id` is the short SHA its "Reviewed commit" line names, or null. A 👍 names no commit: its
-// `commit_id` is the one the newest clean receipt at or after `since` names, since the bot posts that receipt a few
-// seconds before its 👍, else null. The usage-limit notice is classified `quota_exhausted` here and the status card
-// dropped, so no caller can mistake either for feedback.
-export const latestBotSignal = ({ reviews, reviewComments, reactions, issueComments = [], reviewer, since }) => {
+// Latest bot signal at or after `since`: a review (with commit) or a bot comment, such as the receipt of a clean pass;
+// a comment's `commit_id` is the short SHA its "Reviewed commit" line names, or null. A 👍 is never a signal: it names no
+// commit, the receipt it follows is the answer, and one alone may belong to an earlier head's review whose receipt
+// came before the trigger, or whose receipt this read missed. The usage-limit notice is classified `quota_exhausted`
+// here and the status card dropped, so no caller can mistake either for feedback.
+export const latestBotSignal = ({ reviews, reviewComments, issueComments = [], reviewer, since }) => {
   const after = (iso) => Number.isFinite(ms(iso)) && (!since || ms(iso) >= ms(since));
   const review = reviews
     .filter((r) => r.user?.login === reviewer && after(r.submitted_at))
     .sort((a, b) => ms(b.submitted_at) - ms(a.submitted_at))[0] ?? null;
-  const reaction = reactions
-    .filter((r) => r.user?.login === reviewer && r.content === '+1' && after(r.created_at))
-    .sort((a, b) => ms(b.created_at) - ms(a.created_at))[0] ?? null;
   // A comment that names no reviewed commit counts only as the answer to a trigger: with none, it is the summary of a
   // separate Codex task (it can be posted after a push while describing an older head), not a review of this one.
   const comment = issueComments
@@ -231,7 +248,6 @@ export const latestBotSignal = ({ reviews, reviewComments, reactions, issueComme
     .sort((a, b) => ms(b.created_at) - ms(a.created_at))[0] ?? null;
   const newest = [
     review && { kind: 'review', at: review.submitted_at },
-    reaction && { kind: 'thumbs_up', at: reaction.created_at },
     comment && { kind: 'comment', at: comment.created_at },
   ].filter(Boolean).sort((a, b) => ms(b.at) - ms(a.at))[0] ?? null;
   if (!newest) return null;
@@ -239,15 +255,11 @@ export const latestBotSignal = ({ reviews, reviewComments, reactions, issueComme
     const lineComments = reviewComments.filter((c) => c.pull_request_review_id === review.id).length;
     return { kind: 'review', at: review.submitted_at, review_id: review.id, commit_id: review.commit_id, state: review.state, line_comments: lineComments };
   }
-  if (newest.kind === 'comment') {
-    const kind = isQuotaNotice(comment.body) ? 'quota_exhausted' : 'comment';
-    const commit = reviewedCommit(comment.body);
-    // `clean`: the comment is the clean receipt, or the status card says the review of its commit left nothing open.
-    const clean = kind === 'comment' && (isCleanReceipt(comment.body) || cardClean(issueComments, reviewer, commit, comment, since));
-    return { kind, at: comment.created_at, review_id: null, commit_id: commit, state: null, line_comments: 0, comment_id: comment.id ?? null, ...(clean ? { clean: true } : {}) };
-  }
-  const receipt = newestReceipt(issueComments, reviewer, after);
-  return { kind: 'thumbs_up', at: reaction.created_at, review_id: null, commit_id: receipt ? reviewedCommit(receipt.body) : null, state: null, line_comments: 0 };
+  const kind = isQuotaNotice(comment.body) ? 'quota_exhausted' : 'comment';
+  const commit = reviewedCommit(comment.body);
+  // `clean`: the comment is the clean receipt, or the status card says the review of its commit left nothing open.
+  const clean = kind === 'comment' && (isCleanReceipt(comment.body) || cardClean(issueComments, reviewer, commit, comment, since));
+  return { kind, at: comment.created_at, review_id: null, commit_id: commit, state: null, line_comments: 0, comment_id: comment.id ?? null, ...(clean ? { clean: true } : {}) };
 };
 
 // The bot's acknowledgement at or after `since`, as { at, headSha } or null: started, not finished. `headSha` is the
@@ -266,7 +278,7 @@ export const acknowledgement = ({ reactions, issueComments = [], reviewer, since
     .filter(
       (c) =>
         atOrAfter(c.created_at) &&
-        ((typeof c.body === 'string' && c.body.toLowerCase().includes(REQUEST_COMMENT) && (c.reactions?.eyes ?? 0) > 0) ||
+        ((isTrigger(c.body) && (c.reactions?.eyes ?? 0) > 0) ||
           (triggered && c.user?.login === reviewer && isReviewSummaryCard(c.body))),
     )
     .sort((a, b) => ms(b.created_at) - ms(a.created_at));
@@ -288,15 +300,14 @@ const sameCommit = (a, b) => a === b || (Math.min(a.length, b.length) >= 7 && (a
 // Whether `at`, bound to `sha` when one is known, covers the head: the SHA decides, else the committer-date proxy.
 const coversHeadCommit = (sha, at, headSha, headCommittedAt) => (sha && headSha ? sameCommit(sha, headSha) : coversHead(at, headCommittedAt));
 
-// A signal is stale when it no longer covers the head: a review of another commit, or a 👍, comment, or quota notice
-// for another commit. Those three are bound to the commit a comment's "Reviewed commit" line names, or, for a 👍, the
-// one its receipt names, else to `triggerHead`, the head the trigger they answer recorded; only with neither does the
-// committer date decide. A 👍 beside a receipt is never bound to the trigger: the receipt says which commit it passed.
+// A signal is stale when it no longer covers the head: a review of another commit, or a comment or quota notice for
+// another commit. Those two are bound to the commit a comment's "Reviewed commit" line names, else to
+// `triggerHead`, the head the trigger they answer recorded; only with neither does the committer date decide.
 // A stale quota notice re-requests on purpose, so a later push recovers after a top-up.
 export const isStale = (signal, headSha, headCommittedAt = null, triggerHead = null) => {
   if (!signal) return false;
   if (signal.kind === 'review') return Boolean(signal.commit_id) && signal.commit_id !== headSha;
-  if (signal.kind === 'thumbs_up' || signal.kind === 'comment' || signal.kind === 'quota_exhausted') {
+  if (signal.kind === 'comment' || signal.kind === 'quota_exhausted') {
     return !coversHeadCommit(signal.commit_id ?? triggerHead, signal.at, headSha, headCommittedAt);
   }
   return false;

@@ -893,8 +893,6 @@ test('the review trail: one GraphQL call naming the host and the policy paths it
           title: 'feat: x',
           body: 'Fixes ENG-1',
           history: { totalCount: 101, nodes: [{ commit: { oid: sha, message: 'feat: x' } }] },
-          // A timeline filtered by item type counts every item in totalCount: filteredCount is the force pushes'.
-          forcePushes: { totalCount: 50, filteredCount: 2, nodes: [{ beforeCommit: { oid: 'b'.repeat(40) }, afterCommit: { oid: sha } }, { beforeCommit: null, afterCommit: { oid: 'c'.repeat(40) } }] },
           isDraft: false,
           reviewDecision: 'APPROVED',
           author: { login: 'adrian' },
@@ -928,16 +926,11 @@ test('the review trail: one GraphQL call naming the host and the policy paths it
       { id: 43, login: null, bot: false, association: 'NONE', body: 'gone', at: '2026-11-18T10:02:00Z', editors: [], editsComplete: false },
     ],
     commentsComplete: true,
-    forcePushes: [{ before: 'b'.repeat(40), after: sha }, { before: null, after: 'c'.repeat(40) }], forcePushesComplete: true,
     branches: {
       default: { name: 'main', pointer: null, config: '{"version":1}', knowledge: [{ name: '10-x.json', type: 'blob', text: '{}' }] },
       base: { name: 'release', pointer: false, config: '{}' },
     },
   }, 'the last editor, each edit`s editor, whoever deleted an edit, and a file given only in part as false');
-  const pushes = (forcePushes) => recorded(() => JSON.stringify({ data: { ...answer.data, repository: { ...answer.data.repository, pullRequest: { ...answer.data.repository.pullRequest, forcePushes } } } })).forge.reviewTrail('acme/notes', 7, { paths }).forcePushesComplete;
-  assert.equal(pushes({ totalCount: 2, filteredCount: 3, nodes: answer.data.repository.pullRequest.forcePushes.nodes }), false, 'more force pushes than given');
-  assert.equal(pushes(undefined), false, 'no force-push list');
-  assert.equal(pushes({ totalCount: 0, nodes: [] }), false, 'no filteredCount');
   forge.reviewTrail('acme/notes', 7, { host: 'ghe.example.com', paths: { pointer: 'web/.aidrian.json', config: 'web/.aidrian/config.json', knowledge: 'web/.aidrian/knowledge' } });
   const [plain, enterprise] = args();
   assert.deepEqual(plain.slice(0, 2), ['api', 'graphql']);

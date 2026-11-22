@@ -54,11 +54,10 @@ const trailOf = (text, over = {}) => ({
   reviews: [], reviewsComplete: true, comments: [card()], commentsComplete: true,
   branches: { default: { name: 'main', pointer: null, config: text, knowledge: null }, base: { name: 'main', pointer: null, config: text } },
   headRef: 'feat/eng-1-export', title: 'feat(export): add CSV export', body: 'Fixes ENG-1', messages: [{ oid: HEAD, message: 'feat: export' }], messagesComplete: true,
-  forcePushes: [], forcePushesComplete: true,
   ...over,
 });
 // The bot's clean receipt as it posts one on every clean pass, its footer quoting the trigger, by the bot, every edit
-// the bot's: it names a 10-hex short commit, and its 👍 follows a few seconds later.
+// the bot's: it names a 10-hex short commit, and its 👍 follows a few seconds later. Neither is a verdict.
 const RECEIPT_TEXT = (short) => `<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues. Breezy!\n\n**Reviewed commit:** \`${short}\`\n\n<details> <summary>About Codex in GitHub</summary>\n\nComment "@codex review" to ask for another review.\n</details>`;
 const receipt = (short = HEAD.slice(0, 10), extra = {}) => ({ ...card(), id: 10, body: RECEIPT_TEXT(short), ...extra });
 const changing = (...paths) => ({ files: paths.map((each) => ({ path: each, changeType: 'MODIFIED' })), filesTotal: paths.length });
@@ -204,7 +203,6 @@ test('the bot`s verdict counts only as the bot`s own, on exactly the head, with 
   assert.equal(passes(base()), null, 'its card, every edit its own');
   assert.equal(passes(base({ comments: [], reviews: [{ login: BOT, bot: true, state: 'APPROVED', commit: HEAD, at: 'x' }] })), null, 'an approving review of the head');
   assert.equal(passes(base({ comments: [card(HEAD.toUpperCase())] })), null, 'the SHA in any case');
-  assert.equal(passes(base({ comments: [receipt()] })), null, 'a clean receipt whose short SHA only the head has');
   const refused = [
     ['a card of another commit', base({ comments: [card(OLD)] })],
     ['a card of a short SHA', base({ comments: [card(HEAD.slice(0, 10))] })],
@@ -214,7 +212,7 @@ test('the bot`s verdict counts only as the bot`s own, on exactly the head, with 
     ['a card with an edit from a deleted account', base({ comments: [card(HEAD, { editors: [null] })] })],
     ['a card a user posted under the bot`s name', base({ comments: [card(HEAD, { bot: false })] })],
     ['a card by another bot', base({ comments: [card(HEAD, { login: 'github-actions', editors: ['github-actions'] })] })],
-    ['a clean receipt whose short SHA another commit of the head shares', base({ comments: [receipt()], messages: [{ oid: `${HEAD.slice(0, 10)}${'0'.repeat(30)}` }, { oid: HEAD }] })],
+    ['a clean receipt, which names a short SHA', base({ comments: [receipt()] })],
     ['a review with findings on the head beside a clean card', base({ reviews: [{ login: BOT, bot: true, state: 'COMMENTED', commit: HEAD, at: 'x' }] })],
     ['a dismissed review on the head', base({ reviews: [{ login: BOT, bot: true, state: 'DISMISSED', commit: HEAD, at: 'x' }] })],
     ['an approval by a person under the bot`s name', base({ comments: [], reviews: [{ login: BOT, bot: false, state: 'APPROVED', commit: HEAD, at: 'x' }] })],
@@ -228,45 +226,27 @@ test('the bot`s verdict counts only as the bot`s own, on exactly the head, with 
   assert.match(passes(base({ comments: [], commentsComplete: false })) ?? '', /more comments than the forge read gives/u);
 });
 
-test('the bot`s clean receipt passes a head only when its short commit names that head alone, for auto-merge and the merge guard alike', (t) => {
+test('neither the bot`s clean receipt nor its 👍 passes a head, for auto-merge and the merge guard alike', (t) => {
   const r = repo(t);
   r.record(forged());
-  const PREVIOUS = `${'7c806f2c55'}${'1'.repeat(30)}`;
-  const TWIN = `${HEAD.slice(0, 10)}${'0'.repeat(30)}`;
-  const at = (over) => trailOf(r.text, { comments: [receipt()], messages: [{ oid: OLD }, { oid: HEAD }], forcePushes: [{ before: PREVIOUS, after: OLD }], ...over });
-  // A trigger the user posted for the head, and the bot's 👍: the trail reads no reaction, and a 👍 names no commit.
+  const PREVIOUS = `7c806f2c55${'1'.repeat(30)}`;
+  // A trigger the user posted for the head, and the bot's 👍, which names no commit: the trail reads no reaction.
   const trigger = { id: 11, login: 'adrian', bot: false, association: 'OWNER', body: `@codex review\n\n<!-- pr-await-review: head=${HEAD} -->`, at: '2026-11-18T10:05:00Z', editors: [], editsComplete: true };
   const thumbsUp = { reactions: [{ login: BOT, bot: false, content: '+1', at: '2026-11-18T10:06:10Z' }] };
-  const both = (trail) => [autoMerge(t, r, { trail }), merge(r, MERGE, { trail }), botProblem(trail, HEAD, `${BOT}[bot]`)];
-  const [passed, guard, verdict] = both(at());
-  assert.deepEqual([passed.code, guard, verdict], [0, null, null], 'a receipt by the bot, every edit its own, whose short commit only the head has, by a whole history');
   const refused = [
+    // A short commit a commit ground to share it matches, with no push time on the forge to bind it to the head.
+    ['a clean receipt by the bot naming the head`s short commit, after a trigger naming the head', { comments: [receipt(), trigger], ...thumbsUp }],
     // The pull request this rule was learned on: the receipt named the head before the push, and the 👍 came 70 s after it.
     ['the receipt names the previous head, its 👍 after the push', { comments: [receipt(PREVIOUS.slice(0, 10)), trigger], messages: [{ oid: PREVIOUS }, { oid: HEAD }], ...thumbsUp }],
     ['a 👍 alone after a trigger naming the head', { comments: [trigger], ...thumbsUp }],
-    ['a receipt another account edited', { comments: [receipt(undefined, { editors: [BOT, 'adrian'] })] }],
-    ['a receipt whose edit history the forge cut short', { comments: [receipt(undefined, { editsComplete: false })] }],
-    ['a receipt a user account under the bot`s bare name posted', { comments: [receipt(undefined, { bot: false })] }],
-    ['a receipt the user posted, quoting the bot`s', { comments: [receipt(undefined, { login: 'adrian', bot: false, association: 'OWNER', editors: [] })] }],
-    ['a receipt of fewer than 10 hex', { comments: [receipt(HEAD.slice(0, 9))] }],
-    ['a short commit another commit of the pull request shares', { messages: [{ oid: TWIN }, { oid: HEAD }] }],
-    ['a short commit a force push started from', { forcePushes: [{ before: TWIN, after: HEAD }] }],
-    ['a short commit a force push left', { forcePushes: [{ before: OLD, after: TWIN }] }],
-    ['a force-push list cut short', { forcePushesComplete: false }],
-    ['a force push whose commit GitHub no longer gives', { forcePushes: [{ before: null, after: HEAD }] }],
-    ['a commit list cut short', { messagesComplete: false }],
-    ['a review of the head by the bot that did not approve, beside the receipt', { reviews: [{ login: BOT, bot: true, state: 'COMMENTED', commit: HEAD, at: 'x' }] }],
-    ['a forge head other than the merge`s', { head: OLD }],
   ];
   for (const [what, over] of refused) {
-    const [off, denied, why] = both(at(over));
+    const trail = trailOf(r.text, over);
+    const off = autoMerge(t, r, { trail });
     assert.deepEqual([off.code, off.result.reason, off.result.trust], [1, 'trust', 'bot'], `auto-merge: ${what}`);
-    assert.match(denied ?? '', /^Blocked: no Human attends this session.*(has not passed head abcdef1|gives its head as 1234567|commented, and is no member|reviewed head abcdef1 as commented)/su, `merge guard: ${what}`);
-    assert.match(why ?? '', /./u, what);
+    assert.match(merge(r, MERGE, { trail }) ?? '', /^Blocked: no Human attends this session.*has not passed head abcdef1/su, `merge guard: ${what}`);
+    assert.match(botProblem(trail, HEAD, `${BOT}[bot]`) ?? '', /has not passed head abcdef1/u, what);
   }
-  assert.match(botProblem(at({ messages: [{ oid: TWIN }, { oid: HEAD }] }), HEAD, BOT) ?? '', /short commit abcdef1234 also names another commit the head has held/u);
-  assert.match(botProblem(at({ forcePushesComplete: false }), HEAD, BOT) ?? '', /did not give every commit the head has held/u);
-  assert.match(botProblem(at({ comments: [receipt(undefined, { editors: [BOT, 'adrian'] })] }), HEAD, BOT) ?? '', /its receipt was edited by another account/u);
 });
 
 test('an unattended merge names its number and full head, in the repository the session is pinned to, and never leaves the merge to GitHub', (t) => {

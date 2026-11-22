@@ -273,9 +273,8 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   and its title last renamed, `changeFiles`, every changed file past the 100 `change` lists, and
   `reviewTrail(repo, n, { host })`, what a merge no Human asks for confirms in one call: the head, the base, the first
   100 changed files, the newest 100 reviews, and the first 100 conversation comments, each author's login and whether it
-  is a bot, every editor of a comment, and the first 100 force pushes of the head, each with its commit before and after,
-  whole or not ([Merge trust](../review.md#merge-trust)); and the head branch, title, body, and the first 100 commits
-  with their messages, whole or not, for the closing-word check and the commits the head has held.
+  is a bot, and every editor of a comment ([Merge trust](../review.md#merge-trust)); and the head branch, title, body,
+  and the first 100 commit messages, whole or not, for the closing-word check.
 - The repository: `repo`, `repository`, `branchHead`, the commit a branch points to, `contents`, `tree`, one folder of a
   commit's tree with each entry's mode, `visibility`, `viewer`, `authToken({ host })`, the token the forge's CLI
   signs in to `host` with, from its own login wherever it keeps it, read with no network call (`gh auth token`), and

@@ -61,6 +61,9 @@ That handoff is the evidence a `confirmed_missing_authority` deferral needs unde
 
 ## Review mode
 
+Load the knowledge first, as in every mode: the `always` docs the start hook names, then your tags' docs for the surface
+under review. A pass input, a checklist, or a later round's delta adds to them; it never replaces them.
+
 Findings first. Each finding gives:
 
 - the axes `severity`, `likelihood`, `affects`, and `cost`; the dispatcher's `aidrian pr disposition` decides the verdict, never you

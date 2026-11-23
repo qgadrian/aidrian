@@ -531,6 +531,22 @@ test('telemetry.enabled false: the hooks write no rows, and the delivery check s
   assert.deepEqual(log(), []);
 });
 
+// A subagent that reads its docs with a shell command, as most implementers and designers do, has them on its stop row:
+// through a variable, from a folder a `cd` moved to, or relative to one the row cannot know.
+test('a stop row counts the knowledge docs a subagent printed with cat, sed, or head', async (t) => {
+  const { base, dir, logged, hook } = project(t);
+  const agent = path.join(base, 'agent-sh.jsonl');
+  const bash = (id, command) => JSON.stringify({ type: 'assistant', message: { id, model: 'claude-sonnet-5-5', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'tool_use', name: 'Bash', input: { command } }] } });
+  writeFileSync(agent, [
+    bash('b1', `W=${base}/wt; cat $W/docs/knowledge/engineering/testing.md`),
+    bash('b2', `cd ${dir} && sed -n 1,40p docs/knowledge/product/product-rules.md`),
+    bash('b3', 'cd "$W"; head -20 docs/knowledge/product/sharing.md; grep -n x docs/knowledge/product/other.md'),
+  ].join('\n'));
+  assert.equal((await hook('hook-subagent-stop.mjs', { session_id: 's1', cwd: dir, agent_id: 'sh', agent_type: 'aidrian:designer', agent_transcript_path: agent, last_assistant_message: 'Done.', stop_hook_active: false })).status, 0);
+  const [row] = await logged(1);
+  assert.deepEqual(row.docs_read.map((doc) => doc.path).sort(), ['docs/knowledge/engineering/testing.md', 'docs/knowledge/product/product-rules.md', 'docs/knowledge/product/sharing.md']);
+});
+
 test('telemetry.docReads false: stop and session rows record docs_read null, and the rest as before', async (t) => {
   const { base, dir, hook, logged } = project(t);
   setTelemetry(dir, { docReads: false });

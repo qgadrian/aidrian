@@ -149,8 +149,9 @@ export function subagentTranscripts(transcriptPath, sessionId) {
   }
 }
 
-// Every `file_path` the transcript's Read tool calls name, in order, once each. `keep` takes a request by key, as in
-// partOf; the Read calls of a request it refuses are left out.
+// Every file the transcript's Read tool calls name, and every Markdown file a Bash call prints with a program that reads
+// files (shellReads), in order, once each. `keep` takes a request by key, as in partOf; the calls of a request it refuses
+// are left out. Agents read docs with `cat` or `sed -n` as often as with Read, so the dispatch log's `docs_read` counts both.
 export function filesRead(text, keep = () => true) {
   const read = new Set();
   for (const line of text.split('\n')) {
@@ -158,10 +159,41 @@ export function filesRead(text, keep = () => true) {
     const content = entry?.message?.content;
     if (!Array.isArray(content) || !keep(requestKey(entry))) continue;
     for (const block of content) {
-      if (block?.type === 'tool_use' && block.name === 'Read' && typeof block.input?.file_path === 'string') read.add(block.input.file_path);
+      if (block?.type !== 'tool_use') continue;
+      if (block.name === 'Read' && typeof block.input?.file_path === 'string') read.add(block.input.file_path);
+      if (block.name === 'Bash' && typeof block.input?.command === 'string') for (const file of shellReads(block.input.command)) read.add(file);
     }
   }
   return [...read];
+}
+
+// The programs whose operands are files they print, whole or in part.
+const FILE_READERS = new Set(['cat', 'head', 'tail', 'sed', 'awk', 'less', 'more', 'bat', 'nl']);
+
+// The `.md` operands of the reading programs a shell command runs (shell-lex walkCommands): resolved against the folder a
+// leading `cd` moved to when it is known, else as written, such as `docs/x.md` or `$W/docs/x.md`, whose end still names
+// the doc. A simple brace list, as in `docs/{a,b}.md`, names each file.
+export function shellReads(command) {
+  let commands;
+  try {
+    commands = walkCommands(command, null);
+  } catch {
+    return [];
+  }
+  return commands.flatMap(({ invocation, folder }) => {
+    if (!FILE_READERS.has(path.basename(invocation.program ?? ''))) return [];
+    const words = invocation.args.map((token) => token.text).filter((word) => !word.startsWith('-'));
+    return words.flatMap(braceList).filter((word) => word.endsWith('.md')).map((word) => {
+      const plain = path.normalize(word);
+      return folder && !path.isAbsolute(plain) && !plain.startsWith('$') ? path.resolve(folder, plain) : plain;
+    });
+  });
+}
+
+// The words a brace list such as `docs/{a,b}.md` expands to; any other word as it is.
+function braceList(word) {
+  const match = /^(?<head>[^{}]*)\{(?<items>[^{}]*,[^{}]*)\}(?<tail>[^{}]*)$/u.exec(word);
+  return match ? match.groups.items.split(',').map((item) => `${match.groups.head}${item}${match.groups.tail}`) : [word];
 }
 
 // Every `file_path` the transcript's Read, Write, Edit, MultiEdit, and NotebookEdit calls name, once each: the files the

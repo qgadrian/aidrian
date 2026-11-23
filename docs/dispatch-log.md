@@ -40,7 +40,7 @@ A row holds names, counts, durations, costs, and file paths. It never holds a pr
 | `tokens` | `input`, `output`, `cache_read`, and `cache_write` over the subagent's API requests, each request counted once. |
 | `models`, `cost_usd` | The models it used, and the cost estimated from list prices (the host adapter's `modelPrices`, [Model prices](#model-prices)). |
 | `requests`, `tool_requests`, `tool_calls` | Its API requests, the requests that made a tool call, and its tool calls, as on a `session` row's sides. |
-| `docs_read` | The knowledge docs it opened with the Read tool, as `{ "path", "bytes" }`: index path and size. `null` while `telemetry.docReads` is off. |
+| `docs_read` | The knowledge docs it opened with the Read tool or printed with a shell command (`cat`, `head`, `tail`, `sed`, `awk`, `less`, `more`, `bat`, `nl`), as `{ "path", "bytes" }`: index path and size. A shell path counts by its end, so `$W/docs/x.md` and a `docs/x.md` relative to a `cd` both name `docs/x.md`. `null` while `telemetry.docReads` is off. |
 | `delivered` | `file` when every `.md` or `.json` path its last message presents as delivered exists, `missing` when one does not or a handoff file its brief asked for is not written, `pending` when nothing is missing but such a handoff file is not due yet, since a background task of its own still runs and a later stop is sure ([delivery check](hooks.md#delivery-check)), `chat` for none. A pending file is never in `paths`, even when the message names it. |
 | `paths` | Those paths, at most 20. |
 | `running` | The background shells and agents it started that still ran as it stopped: the [background check](hooks.md#background-check). A row written before the field has none. |

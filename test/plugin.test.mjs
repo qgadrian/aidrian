@@ -163,6 +163,14 @@ test('the orchestrator agent file fits in 9,000 bytes', () => {
   assert.ok(bytes <= MAX_ORCHESTRATOR_BYTES, `orchestrator.md is ${bytes} bytes; move detail into the orchestration skill`);
 });
 
+// Designer review passes read no knowledge doc in 120 of 121 stops: a pass input or a delta round stood in for it.
+test('the designer loads its knowledge before a review pass, whatever the pass input holds', () => {
+  const designer = readFileSync(path.join(PLUGIN, 'agents-src/product-design/designer.md'), 'utf8').replace(/\s+/g, ' ');
+  const review = designer.slice(designer.indexOf('## Review mode'), designer.indexOf('## Implementation mode'));
+  assert.match(review, /Load the knowledge first, as in every mode: the `always` docs the start hook names, then your tags' docs/);
+  assert.match(review, /A pass input, a checklist, or a later round's delta adds to them; it never replaces them\./);
+});
+
 // The handoff-file detail lives in the orchestration skill's briefs reference, so the agent file keeps room under its cap:
 // a brief whose marker path was not absolute went unfilled once the agent's line dropped the word.
 test('the orchestrator names the absolute Handoff file line, and the briefs reference holds its format', () => {

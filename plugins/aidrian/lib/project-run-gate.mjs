@@ -548,7 +548,7 @@ function decisionFor(policy, key, text, folder) {
   const entries = policy.recordedDecisions;
   if (!entries || !Object.hasOwn(entries, key)) return {};
   const entry = entries[key];
-  const checked = recordedDecision(entry, typeof text?.description === 'string' ? text.description : null);
+  const checked = recordedDecision(entry, typeof text?.description === 'string' ? text.description : null, { cut: text?.descriptionCut === true });
   if (checked.void) return { key, void: checked.void };
   try {
     return { key, file: writeDecisionFile(folder, key, entry, checked.section), sha256: checked.sha256 };

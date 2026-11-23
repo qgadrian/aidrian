@@ -11,8 +11,8 @@ import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { hidesText, recordedDecision, sectionOf } from '../plugins/aidrian/lib/project-decision.mjs';
-import { recordIssueReads } from '../plugins/aidrian/lib/project-issue-text.mjs';
+import { hiddenRanges, recordedDecision, sectionOf } from '../plugins/aidrian/lib/project-decision.mjs';
+import { recordedTexts, recordIssueReads, TEXT_CAPS } from '../plugins/aidrian/lib/project-issue-text.mjs';
 import { markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { DECIDED, decidedEntry, DRIVER, ISSUES, OTHER, runFixture } from './project-start-fixture.mjs';
 
@@ -43,14 +43,47 @@ test('CRLF and trailing spaces hash alike, and the hash covers the heading line'
   assert.deepEqual(recordedDecision(entry, 'no heading here'), { void: 'no section, or more than one, has that heading' });
 });
 
+const HIDDEN = { void: 'the section holds text the tracker\'s view hides' };
+const pinned = (body, heading = 'Decision') => recordedDecision({ heading, sha256: sha(sectionOf(body, heading) ?? '') }, body);
+
 test('a section that holds markup the tracker\'s view hides is void, however it hashes', () => {
   for (const hidden of ['<!-- ship XLSX too -->', '<details><summary>More</summary>XLSX</details>', '+++ Agent notes', '  +++']) {
-    const body = `## Decision\nChosen: CSV.\n${hidden}\n`;
-    const section = sectionOf(body, 'Decision');
-    assert.equal(hidesText(section), true, hidden);
-    assert.deepEqual(recordedDecision({ heading: 'Decision', sha256: sha(section) }, body), { void: 'the section holds text the tracker\'s view hides' }, hidden);
+    assert.deepEqual(pinned(`## Decision\nChosen: CSV.\n${hidden}\n`), HIDDEN, hidden);
   }
-  assert.equal(hidesText('## Decision\nA diff line: a+++b'), false);
+  assert.equal(pinned('## Decision\nA diff line: a+++b').void, undefined, 'a +++ inside a line folds nothing');
+});
+
+test('a section inside a hidden range of the whole description is void, though the range opens before its heading', () => {
+  // The comment opens above the heading, and the next heading of the same level ends the section before it closes.
+  const commented = 'Intro\n<!--\n## Decision\nChosen: XLSX.\n## Other\n-->\n## Shown\nText.';
+  assert.equal(sectionOf(commented, 'Decision'), '## Decision\nChosen: XLSX.');
+  assert.deepEqual(pinned(commented), HIDDEN);
+  assert.deepEqual(pinned('<details>\n<summary>More</summary>\n\n## Decision\nChosen: XLSX.\n\n## Other\n</details>'), HIDDEN, 'a <details> block');
+  assert.deepEqual(pinned('<details><details>x</details>\n## Decision\nChosen: XLSX.\n## Other\n</details>'), HIDDEN, 'to the tag that closes the outermost block');
+  assert.deepEqual(pinned('+++ Agent notes\n\n## Decision\nChosen: XLSX.\n\n## Other\n+++'), HIDDEN, 'a +++ collapsible');
+  assert.deepEqual(pinned('<!-- never closed\n\n## Decision\nChosen: XLSX.'), HIDDEN, 'a comment never closed runs to the end');
+  // A range wholly before or after the section hides none of it.
+  const apart = '<!-- a note -->\n+++ Agent notes\nx\n+++\n## Decision\nChosen: CSV.\n## Other\n<details>y</details>\n<!-- z';
+  assert.equal(pinned(apart).section, '## Decision\nChosen: CSV.');
+  assert.deepEqual(hiddenRanges('a<!--b-->c'), [[1, 9]]);
+});
+
+test('a description its cap cut off keeps that mark, and a section that runs to the cut is void, at the subcommand too', (t) => {
+  const head = `Intro\n## Decision\nChosen: CSV.\n`;
+  const long = `${head}${'x'.repeat(TEXT_CAPS.description)}`;
+  const fx = runFixture(t, { init: false });
+  recordIssueReads(DRIVER, [{ key: 'ENG-1', text: { title: 'Export', description: long } }, { key: 'ENG-4', text: { title: 'Typo', description: head } }], { env: fx.env });
+  const texts = recordedTexts(DRIVER, ['ENG-1', 'ENG-4'], { env: fx.env, home: fx.home });
+  assert.deepEqual([texts['ENG-1'].description.length, texts['ENG-1'].descriptionCut, Object.hasOwn(texts['ENG-4'], 'descriptionCut')], [TEXT_CAPS.description, true, false]);
+  const kept = texts['ENG-1'].description;
+  const entry = { heading: 'Decision', sha256: sha(sectionOf(kept, 'Decision')) };
+  assert.deepEqual(recordedDecision(entry, kept, { cut: true }), { void: 'the kept description was cut off before the section ends' });
+  assert.equal(recordedDecision(entry, kept).sha256, entry.sha256, 'the same text uncut stands');
+  const ended = `${head}## Next\n${'x'.repeat(TEXT_CAPS.description)}`;
+  assert.equal(recordedDecision({ heading: 'Decision', sha256: sha('## Decision\nChosen: CSV.') }, ended.slice(0, TEXT_CAPS.description), { cut: true }).section, '## Decision\nChosen: CSV.', 'a section a heading ends before the cut stands');
+  const refused = fx.cmd(['decision', 'ENG-1', '--heading', 'Decision']);
+  assert.equal(refused.exitCode, 1);
+  assert.match(refused.err[0], /the kept description was cut off before the section ends, at 20000 characters/u);
 });
 
 // The fixture with the tracker's answer for ENG-1 recorded for `session`, as the post-call tracker hook records it.
@@ -99,4 +132,30 @@ test('init --check names each recorded decision of an issue to start: a blocker 
   assert.deepEqual(check('', decidedEntry()), ['blocker recorded-decision: ENG-1 has a recorded decision in projectRun.recordedDecisions and this session recorded no description of it; read it in this session with the tracker\'s own issue read']);
   const accepted = check(DECIDED.description, decidedEntry(), { forgeProtectionAccepted: true });
   assert.match(accepted.at(-1), /^note recorded-decision: the team accepts no forge protection \(projectRun\.forgeProtectionAccepted\), so a grant is as strong as the hooks/u);
+});
+
+test('init --check reads the recorded decisions start applies: those the local ref and the forge pin alike', (t) => {
+  const check = (forgeConfig) => {
+    const fx = withRead(t, DECIDED.description, DRIVER, { projectRun: { allow: true, unverifiedHosts: true, recordedDecisions: { 'ENG-1': decidedEntry() } }, forgeConfig });
+    const file = path.join(fx.dir, 'snapshot.input');
+    writeFileSync(file, JSON.stringify({ issues: ISSUES }));
+    return fx.cmd(['init', 'launch', '--file', file, '--check']);
+  };
+  const forgeless = check({ version: 1, projectRun: { allow: true, unverifiedHosts: true } });
+  assert.ok(!forgeless.out.some((line) => line.includes('recorded-decision')), `only the local ref pins it: ${forgeless.out.join('\n')}`);
+  const differ = check({ version: 1, projectRun: { allow: true, unverifiedHosts: true, recordedDecisions: { 'ENG-1': { ...decidedEntry(), sha256: 'f'.repeat(64) } } } });
+  assert.ok(!differ.out.some((line) => line.includes('recorded-decision')), 'the two pin it differently');
+  const refused = check({ version: 1, projectRun: { allow: false } });
+  assert.equal(refused.exitCode, 1);
+  assert.match(refused.out.find((line) => line.includes('recorded-decision')), /^blocker recorded-decision: the team's policy cannot be read \(the default branch main on the forge does not set projectRun\.allow to true\), so whether the decisions recorded for ENG-1 stand cannot be told; check again once it can$/u);
+});
+
+test('init --check names no recorded decision of a canceled issue or one skipped below it, and keeps one that waits on a blocker', (t) => {
+  const entry = decidedEntry();
+  const fx = runFixture(t, { init: false, projectRun: { allow: true, unverifiedHosts: true, recordedDecisions: { 'ENG-2': entry, 'ENG-5': entry, 'ENG-6': entry } } });
+  const file = path.join(fx.dir, 'snapshot.input');
+  writeFileSync(file, JSON.stringify({ issues: [...ISSUES, { key: 'ENG-5', branch: 'feat/eng-5-old', status: 'canceled' }, { key: 'ENG-6', branch: 'feat/eng-6-after', status: 'unstarted', blockedBy: ['ENG-5'] }] }));
+  const lines = fx.cmd(['init', 'launch', '--file', file, '--check']).out.filter((line) => line.includes('recorded-decision'));
+  assert.deepEqual(lines.map((line) => line.split(':')[1].trim().split(' ')[0]), ['ENG-2'], lines.join('\n'));
+  assert.match(lines[0], /^blocker recorded-decision: ENG-2 has a recorded decision/u);
 });

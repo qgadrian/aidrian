@@ -36,9 +36,9 @@ import { branchPolicies } from './pr-auto-merge.mjs';
 import { mayFollowTeamDefault } from './project.mjs';
 import { recordedDecision } from './project-decision.mjs';
 import { recordedTexts } from './project-issue-text.mjs';
-import { activeRuns, nextLines, pinnedRepository, planRun, readRun, readSnapshotInput, refNames, resumedIssues, resumedLine, resumedProblems, runPlace, runsFolder, teamsNote } from './project-run.mjs';
+import { activeRuns, nextLines, pinnedRepository, planRun, readRun, readSnapshotInput, refNames, resumedIssues, resumedLine, resumedProblems, runPlace, runsFolder, SERIAL, teamsNote } from './project-run.mjs';
 import { openPullHead } from './project-result.mjs';
-import { runParallel, teamPolicy } from './project-run-gate.mjs';
+import { parallelOf, teamPolicy } from './project-run-gate.mjs';
 import { accessProblem, commitProblem, guardedFolders, hostStartProblem, PROBE_BRANCH } from './project-start.mjs';
 import { ancestorProblem, pushProblem, repositoryProblem } from './project-trust.mjs';
 import { cardState, REVIEW_SUMMARY_CARD_MARKER } from './review/bot-card.mjs';
@@ -417,10 +417,10 @@ function secretsLine({ facade, named, repository, policy, check, asks }) {
 // when the base branch's projectRun.mcpServers holds no tracker server an issue's session could read
 // the tracker through, a `blocker texts` line for each issue to start whose text no tracker read of `session` recorded
 // (project-issue-text.mjs recordedTexts); then `next` lines as `aidrian project next` prints them for turn 1, with the
-// maxParallel it reads (project-run-gate.mjs runParallel, through `forge` at the repository init would pin), and a
-// `note teams` line when the snapshot names no team of the workspace (project-run.mjs teamsNote). For each issue to
-// start that the base branch's projectRun.recordedDecisions names, a `recorded-decision` line (decisionChecks). Exit 1 on
-// any blocker.
+// maxParallel it reads (as project-run-gate.mjs runParallel reads it, through `forge` at the repository init would pin), and a
+// `note teams` line when the snapshot names no team of the workspace (project-run.mjs teamsNote). For each issue that may
+// still start whose decision the team's policy pins, as start reads it, a `recorded-decision` line (decisionChecks).
+// Exit 1 on any blocker.
 export function snapshotCheck({ project, config, file, session = null, env = process.env, home, forge = null }) {
   const read = readSnapshotInput(file, refNames(project, config));
   if (!read.snapshot) return { exitCode: 1, out: read.problems.slice(0, 50).map((problem) => `blocker snapshot: ${problem}`), err: ['aidrian project init --check: fix the snapshot input, then check it again'] };
@@ -429,12 +429,18 @@ export function snapshotCheck({ project, config, file, session = null, env = pro
   const facade = forge ?? forgeFor(project.root);
   const pullHead = ({ pr, branch, repository }) => openPullHead({ forge: facade, repository, pr, branch });
   const resumed = place.state ? resumedIssues(place.state, read.snapshot, { repository: pinnedRepository(project), pullHead }) : [];
-  const plan = planRun(resumed.length ? { ...read.snapshot, resumed } : read.snapshot, new Map(), { maxParallel: runParallel(project, pinnedRepository(project), facade) });
+  // The team's policy as start reads it (project-run-gate.mjs teamPolicy), read once: the order's maxParallel, as
+  // runParallel gives it, and the recorded decisions a start would apply.
+  const repository = pinnedRepository(project);
+  const policy = repository ? teamPolicy(project, repository, facade) : { problem: 'origin names no forge repository, so the forge\'s config cannot be read' };
+  const plan = planRun(resumed.length ? { ...read.snapshot, resumed } : read.snapshot, new Map(), { maxParallel: policy.problem ? SERIAL : parallelOf(policy) });
   const blockers = [...resumedProblems(read.snapshot, resumed).map((problem) => `blocker snapshot: ${problem}`), ...plan.blocked.filter(({ reason }) => reason === 'cycle' || reason === 'status')
     .map(({ key, reason, on }) => `blocker snapshot: ${key} is ${reason === 'cycle' ? `in a cycle of blockers, ${on.join(', ')}, so it never starts` : `${on[0]} in the tracker, which a run does not start from`}`)];
   const base = baseBranchTip(project.root) ? baseBranchConfig(project, 'projectRun') : {};
   const startable = new Set(plan.order.filter((key) => !plan.done.includes(key)));
-  const decisions = decisionChecks(base, startable, kept.texts);
+  // The issues that may still start: ready now, or once their blockers are done; never a canceled or skipped one.
+  const mayStart = new Set([...plan.ready, ...plan.blocked.filter(({ reason }) => reason === 'waiting').map(({ key }) => key)]);
+  const decisions = decisionChecks({ policy, base, mayStart, texts: kept.texts });
   blockers.push(...decisions.blockers);
   if (!trackerReachable(base)) {
     blockers.push(...read.snapshot.issues.filter((issue) => startable.has(issue.key) && !kept.texts[issue.key])
@@ -445,26 +451,33 @@ export function snapshotCheck({ project, config, file, session = null, env = pro
   return blockers.length ? { exitCode: 1, out, err: ['aidrian project init --check: clear each blocker, then check again'] } : { exitCode: 0, out, err: [] };
 }
 
-// The lines of the decisions the Human recorded on the issues of `startable`, as the base branch's config `base`
-// (baseBranchConfig) pins them in projectRun.recordedDecisions, checked against `texts`, the descriptions this session's
-// tracker reads recorded (project-decision.mjs recordedDecision): { blockers, notes }. An issue with no description
-// recorded is a blocker, since the grant would be void at every start; any other void is a note, and the run goes on
-// without the grant; one that stands is a note naming its heading, and, with projectRun.forgeProtectionAccepted set, a
-// note says the grant is as strong as the hooks that keep a session's script from pushing one to the default branch.
-// The start applies the policy both reads define alike (project-run-gate.mjs teamPolicy).
-function decisionChecks(base, startable, texts) {
-  const entries = base.config?.projectRun?.recordedDecisions ?? {};
-  const granted = Object.keys(entries).filter((key) => startable.has(key)).sort();
+// The lines of the decisions the Human recorded on the issues of `mayStart`, as the team's `policy` pins them, the one
+// start applies (project-run-gate.mjs teamPolicy recordedDecisions, the entries the local ref and the forge define
+// alike), checked against `texts`, the descriptions this session's tracker reads recorded (project-decision.mjs
+// recordedDecision): { blockers, notes }. An issue with no description recorded is a blocker, since the grant would be
+// void at every start; any other void is a note, and the run goes on without the grant; one that stands is a note
+// naming its heading, and, with projectRun.forgeProtectionAccepted set, a note says the grant is as strong as the hooks
+// that keep a session's script from pushing one to the default branch. A policy that cannot be read, while the base
+// branch's config `base` (baseBranchConfig) pins a decision of one of `mayStart`, is a blocker: whether it stands
+// cannot be told.
+function decisionChecks({ policy, base, mayStart, texts }) {
   const blockers = [];
   const notes = [];
+  if (policy.problem) {
+    const pinned = Object.keys(base.config?.projectRun?.recordedDecisions ?? {}).filter((key) => mayStart.has(key)).sort();
+    if (pinned.length) blockers.push(`blocker recorded-decision: the team's policy cannot be read (${policy.problem}), so whether the decisions recorded for ${pinned.join(', ')} stand cannot be told; check again once it can`);
+    return { blockers, notes };
+  }
+  const entries = policy.recordedDecisions ?? {};
+  const granted = Object.keys(entries).filter((key) => mayStart.has(key)).sort();
   for (const key of granted) {
     const description = texts[key]?.description ?? '';
-    const checked = recordedDecision(entries[key], description);
+    const checked = recordedDecision(entries[key], description, { cut: texts[key]?.descriptionCut === true });
     if (description.trim() === '') blockers.push(`blocker recorded-decision: ${key} has a recorded decision in projectRun.recordedDecisions and this session recorded no description of it; read it in this session with the tracker's own issue read`);
     else if (checked.void) notes.push(`note recorded-decision: ${key} void: ${checked.void}`);
     else notes.push(`note recorded-decision: ${key} stands: ${entries[key].heading}`);
   }
-  if (granted.length && base.config.projectRun.forgeProtectionAccepted === true) {
+  if (granted.length && policy.forgeProtectionAccepted === true) {
     notes.push('note recorded-decision: the team accepts no forge protection (projectRun.forgeProtectionAccepted), so a grant is as strong as the hooks that keep a script an issue session runs from pushing one to the default branch');
   }
   return { blockers, notes };

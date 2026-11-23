@@ -23,7 +23,7 @@
     "pr-product-feedback.test.mjs": 3500,
     "product-feedback-answer.test.mjs": 1100,
     "project-confine.test.mjs": 1550,
-    "project-decision.test.mjs": 500,
+    "project-decision.test.mjs": 750,
     "project-limit.test.mjs": 5250,
     "project-local-binding.test.mjs": 1050,
     "project-parallel.test.mjs": 5050,

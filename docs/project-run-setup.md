@@ -204,14 +204,16 @@ issue's description, and the team pins it ([Recorded decisions](config.md#record
 
 1. Write the answer under a heading of its own in the issue's description in the tracker, such as `## Export format`.
    The section stands alone: it names the question and the chosen path in full, never an option's number or "as above",
-   and holds no HTML comment, `<details>` block, or `+++` collapsible.
+   and holds no HTML comment, `<details>` block, or `+++` collapsible, nor sits inside one.
+   In a description past 20,000 characters, end it with a heading before that point.
 2. In the attended driver session, read the issue with the tracker's own full issue read, Linear's `get_issue`, so the
    run records its description.
 3. Run `aidrian project decision <issue> --heading "<heading>"` there. Read the section it prints, then add its last
    line, the entry, to `projectRun.recordedDecisions` in `.aidrian/config.json`.
 4. Merge that change to the default branch before `init`: the forge and the local ref must pin it alike.
 5. `aidrian project init <run> --file <snapshot> --check` prints `note recorded-decision: <issue> stands: <heading>`.
-   A `void` note says why the run goes on without it; a `blocker recorded-decision` asks for step 2 in this session.
+   A `void` note says why the run goes on without it; a `blocker recorded-decision` asks for step 2 in this session, or
+   names the policy read that failed.
 6. Remove the entry once the issue's pull request merges.
 
 The answer settles that one decision and nothing else: the session still parks on anything it does not settle, and on

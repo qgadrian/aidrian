@@ -301,9 +301,9 @@ export const decidedEntry = (description = DECIDED.description, heading = DECIDE
   ({ heading, sha256: createHash('sha256').update(sectionOf(description, heading)).digest('hex') });
 
 // runFixture with ENG-1's recorded decision pinned by `entry` on the base branch, both reads alike, and `description`
-// as the run kept ENG-1's text at init.
-export function decidedFixture(t, { entry = decidedEntry(), description = DECIDED.description, projectRun = { allow: true, unverifiedHosts: true }, ...options } = {}) {
+// as the run kept ENG-1's text at init, marked cut off at its cap when `cut`.
+export function decidedFixture(t, { entry = decidedEntry(), description = DECIDED.description, cut = false, projectRun = { allow: true, unverifiedHosts: true }, ...options } = {}) {
   const fx = runFixture(t, { ...options, projectRun: { ...projectRun, recordedDecisions: { 'ENG-1': entry } } });
-  writeIssueTexts(runFolder(fx.state, 'launch'), { 'ENG-1': { title: 'Export', description, criteria: '', labels: [] } });
+  writeIssueTexts(runFolder(fx.state, 'launch'), { 'ENG-1': { title: 'Export', description, criteria: '', labels: [], ...(cut ? { descriptionCut: true } : {}) } });
   return fx;
 }

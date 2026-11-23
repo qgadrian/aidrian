@@ -519,9 +519,8 @@ No `sandbox.excludedCommands` is passed. Three conditions hold on top of the san
   `~/.config/vivaldi` and `~/.config/vivaldi-snapshot`, `~/.config/opera`, the snap folders of Chromium, Firefox,
   Vivaldi, and Brave under `~/snap`, and the flatpak folders of Chrome, Chromium, Firefox, Vivaldi, Edge, and Brave
   under `~/.var/app` (a profile moved elsewhere, through `XDG_CONFIG_HOME` or `--user-data-dir`, and a browser not
-  named here stay readable; the sandbox proof tries the browser folders after every other store, the ones denied
-  before this list grew first, and checks only the first stores it finds, so a store past that cap is denied but
-  unproven),
+  named here stay readable; the sandbox proof checks only the first stores it finds, so a store past that cap is
+  denied but unproven, and tries the browser folders added on 2026-11-23 after every other store),
   `~/.git-credentials`, `~/.npmrc`, `~/.pypirc`, `~/.cargo/credentials.toml` and `~/.cargo/credentials`,
   `~/.gem/credentials`, `~/.vault-token`, `~/.config/hub`, the host's own `~/.claude.json`,
   `~/.claude/.credentials.json`, `~/.claude/ide`, and its `~/.claude/session-env` tree, which holds every session's

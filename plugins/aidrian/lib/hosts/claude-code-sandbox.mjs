@@ -57,12 +57,14 @@ const nestedGlobs = (work) => [
 ];
 
 // The user's credential stores, from the home folder, which no sandboxed command and no Read of the session reaches:
-// keys, cloud and registry tokens, git's stored credentials, password managers, the host's own login
+// keys, cloud and registry tokens, git's stored credentials, password managers, browser profiles, the host's own login
 // and IDE lock tokens, keyrings, and shell histories. The forge CLI's own login, ~/.config/gh, stays readable: the
 // session pushes and opens pull requests through it.
 export const CREDENTIAL_PATHS = Object.freeze([
   '.ssh', '.gnupg', '.aws', '.netrc', '.docker', '.kube', '.config/gcloud', '.azure', '.oci', 'Library/Keychains', '.password-store',
-  '.config/op', '.1password', '.git-credentials', '.npmrc', '.pypirc', '.cargo/credentials.toml', '.cargo/credentials', '.gem/credentials',
+  '.config/op', '.1password', 'Library/Application Support/Google/Chrome', 'Library/Application Support/Firefox',
+  'Library/Application Support/BraveSoftware', 'Library/Application Support/Microsoft Edge', '.mozilla', '.config/google-chrome',
+  '.config/chromium', '.git-credentials', '.npmrc', '.pypirc', '.cargo/credentials.toml', '.cargo/credentials', '.gem/credentials',
   '.vault-token', '.config/hub', '.claude.json', '.claude-trust-stage', '.claude/.credentials.json', '.claude/ide', '.local/share/keyrings',
   '.bash_history', '.zsh_history', '.local/share/fish',
   // The package registries' token stores, beside .npmrc, .pypirc, and cargo's and gem's above: yarn's, npm's XDG
@@ -73,16 +75,14 @@ export const CREDENTIAL_PATHS = Object.freeze([
   '.config/pypoetry/auth.toml', 'Library/Application Support/pypoetry/auth.toml', '.local/share/uv/credentials',
 ]);
 
-// Every browser's default profile folders, from the home folder, whose local storage and IndexedDB hold session tokens
-// unencrypted: first the ones denied before this list grew, so an entry added later never pushes one of them out of the
-// sandbox proof, which reads only the first stores it finds; then Google's whole folder on macOS (Chrome's channels,
-// Chrome for Testing, and headless Chrome), Chromium, Arc, Vivaldi, Opera, and Edge's channels there, and on Linux
-// Chrome's other channels, Firefox's XDG folder, Edge's channels, Brave, Vivaldi, Opera, and the snap and flatpak
-// installs. A profile a person moved elsewhere, as XDG_CONFIG_HOME or --user-data-dir does, is not covered. The list
-// follows every other store, so the proof checks those first.
+// The other browsers' default profile folders, from the home folder, whose local storage and IndexedDB hold session
+// tokens unencrypted, beside the ones CREDENTIAL_PATHS has always held: Google's whole folder on macOS (Chrome's other
+// channels, Chrome for Testing, and headless Chrome), Chromium, Arc, Vivaldi, Opera, and Edge's channels there, and on
+// Linux Chrome's other channels, Firefox's XDG folder, Edge's channels, Brave, Vivaldi, Opera, and the snap and flatpak
+// installs. A profile a person moved elsewhere, as XDG_CONFIG_HOME or --user-data-dir does, is not covered. They follow
+// every other store, so the sandbox proof, which reads only the first stores it finds, checks each store it checked
+// before they were added.
 export const BROWSER_PROFILES = Object.freeze([
-  'Library/Application Support/Google/Chrome', 'Library/Application Support/Firefox', 'Library/Application Support/BraveSoftware',
-  'Library/Application Support/Microsoft Edge', '.mozilla', '.config/google-chrome', '.config/chromium',
   'Library/Application Support/Google', 'Library/Application Support/Chromium', 'Library/Application Support/Arc',
   'Library/Application Support/Vivaldi', 'Library/Application Support/Vivaldi Snapshot', 'Library/Application Support/com.operasoftware.Opera',
   'Library/Application Support/Microsoft Edge Beta', 'Library/Application Support/Microsoft Edge Dev', 'Library/Application Support/Microsoft Edge Canary',

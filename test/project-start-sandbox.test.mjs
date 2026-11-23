@@ -141,7 +141,9 @@ test('the sandbox settings are pinned whole: the sandbox on and required, writes
     'a git folder outside the main checkout is not denied, so nothing is opened again');
   assert.deepEqual(CREDENTIAL_PATHS, [
     '.ssh', '.gnupg', '.aws', '.netrc', '.docker', '.kube', '.config/gcloud', '.azure', '.oci', 'Library/Keychains', '.password-store',
-    '.config/op', '.1password', '.git-credentials', '.npmrc', '.pypirc', '.cargo/credentials.toml', '.cargo/credentials', '.gem/credentials',
+    '.config/op', '.1password', 'Library/Application Support/Google/Chrome', 'Library/Application Support/Firefox',
+    'Library/Application Support/BraveSoftware', 'Library/Application Support/Microsoft Edge', '.mozilla', '.config/google-chrome',
+    '.config/chromium', '.git-credentials', '.npmrc', '.pypirc', '.cargo/credentials.toml', '.cargo/credentials', '.gem/credentials',
     '.vault-token', '.config/hub', '.claude.json', '.claude-trust-stage', '.claude/.credentials.json', '.claude/ide', '.local/share/keyrings',
     '.bash_history', '.zsh_history', '.local/share/fish',
     '.yarnrc.yml', '.yarnrc', '.config/npm/npmrc', '.bunfig.toml', '.local/share/gem/credentials', '.bundle/config',
@@ -155,13 +157,11 @@ test('the sandbox settings are pinned whole: the sandbox on and required, writes
     assert.ok(denied.some((store) => file === store || file.startsWith(`${store}/`)), each);
   }
   // The sandbox proof reads only the first stores it finds (project-confine.mjs READ_CAP), so the browser profiles come
-  // after every other store, the host's own and npm's global config among them, and never push one out of the proof;
-  // within them, the ones denied before the list grew come first.
+  // after every other store, the host's own and npm's global config among them, and never push one out of the proof.
   const reads = confineReads({ env: { CLAUDE_CONFIG_DIR: '/cfg', npm_config_globalconfig: '/etc/npmrc' }, home });
   const browsers = BROWSER_PROFILES.map((each) => path.join(home, each));
   assert.deepEqual(reads.slice(-browsers.length), browsers);
   for (const each of ['/cfg/session-env', '/etc/npmrc', path.join(home, '.ssh')]) assert.ok(reads.indexOf(each) < reads.length - browsers.length, each);
-  assert.deepEqual(BROWSER_PROFILES.slice(0, 7), ['Library/Application Support/Google/Chrome', 'Library/Application Support/Firefox', 'Library/Application Support/BraveSoftware', 'Library/Application Support/Microsoft Edge', '.mozilla', '.config/google-chrome', '.config/chromium']);
   assert.ok(!CREDENTIAL_PATHS.includes('.config/gh'), 'the forge CLI\'s login stays readable');
   // Each registry token store is unreadable to a sandboxed command and to Read.
   for (const each of ['.yarnrc.yml', '.config/npm/npmrc', '.bunfig.toml', '.local/share/gem/credentials', '.npmrc', '.pypirc', '.cargo/credentials.toml', '.gem/credentials', '.bundle/config', '.config/pypoetry/auth.toml', '.local/share/uv/credentials']) {

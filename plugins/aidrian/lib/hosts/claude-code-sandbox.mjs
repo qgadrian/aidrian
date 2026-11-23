@@ -75,6 +75,24 @@ export const CREDENTIAL_PATHS = Object.freeze([
   '.config/pypoetry/auth.toml', 'Library/Application Support/pypoetry/auth.toml', '.local/share/uv/credentials',
 ]);
 
+// The other browsers' default profile folders, from the home folder, whose local storage and IndexedDB hold session
+// tokens unencrypted, beside the ones CREDENTIAL_PATHS has always held: Google's whole folder on macOS (Chrome's other
+// channels, Chrome for Testing, and headless Chrome), Chromium, Arc, Vivaldi, Opera, and Edge's channels there, and on
+// Linux Chrome's other channels, Firefox's XDG folder, Edge's channels, Brave, Vivaldi, Opera, and the snap and flatpak
+// installs. A profile a person moved elsewhere, as XDG_CONFIG_HOME or --user-data-dir does, is not covered. They follow
+// every other store, so the sandbox proof, which reads only the first stores it finds, checks each store it checked
+// before they were added.
+export const BROWSER_PROFILES = Object.freeze([
+  'Library/Application Support/Google', 'Library/Application Support/Chromium', 'Library/Application Support/Arc',
+  'Library/Application Support/Vivaldi', 'Library/Application Support/Vivaldi Snapshot', 'Library/Application Support/com.operasoftware.Opera',
+  'Library/Application Support/Microsoft Edge Beta', 'Library/Application Support/Microsoft Edge Dev', 'Library/Application Support/Microsoft Edge Canary',
+  '.config/google-chrome-beta', '.config/google-chrome-unstable', '.config/google-chrome-canary', '.config/google-chrome-for-testing',
+  '.config/mozilla', '.config/microsoft-edge', '.config/microsoft-edge-beta', '.config/microsoft-edge-dev', '.config/BraveSoftware',
+  '.config/vivaldi', '.config/vivaldi-snapshot', '.config/opera', 'snap/chromium', 'snap/firefox', 'snap/vivaldi', 'snap/brave',
+  '.var/app/com.google.Chrome', '.var/app/org.chromium.Chromium', '.var/app/org.mozilla.firefox', '.var/app/com.vivaldi.Vivaldi',
+  '.var/app/com.microsoft.Edge', '.var/app/com.brave.Browser',
+]);
+
 // The host's own credential files in its user config folder, wherever CLAUDE_CONFIG_DIR moves it, and its `session-env`
 // tree, whose files hand each session's Bash commands their environment, a confined session's forge token among them.
 // The host reads a session's own file in its own process, outside the sandbox, and runs what it read ahead of each Bash
@@ -154,10 +172,12 @@ const within = (folder, file) => file === folder || file.startsWith(`${folder}${
 // Whether the folders `one` and `other` are one, or one holds the other.
 const meets = (one, other) => within(one, other) || within(other, one);
 
-// The credential stores of the user whose home is `home` and whose host config folder is `config`.
+// The credential stores of the user whose home is `home` and whose host config folder is `config`, but the browser
+// profiles, which `browserProfiles` gives.
 const credentialStores = (home, config) => [...new Set([
   ...CREDENTIAL_PATHS.map((each) => path.join(home, each)), ...CONFIG_CREDENTIALS.map((each) => path.join(config, each)),
 ])];
+const browserProfiles = (home) => BROWSER_PROFILES.map((each) => path.join(home, each));
 
 // The settings object of the session that works in the clone `work`, whose separate git folder is `git`, granted the
 // real folders `grants` (its git, drop, and cache folders, and the state work folders), the network hosts `domains`, and the
@@ -174,7 +194,7 @@ const credentialStores = (home, config) => [...new Set([
 // the host keeps them in a network namespace of their own, so it changes nothing there. Scalars passed with --settings win over the user's settings; lists merge
 // with them, which accessProblem checks.
 export function sandboxSettings({ work, git, grants, domains, temp, home, config = path.join(home, '.claude'), platform, main = null, mainGit = null, secrets = [], guarded = [], stores = [], localBinding = false }) {
-  const credentials = [...new Set([...credentialStores(home, config), ...stores])];
+  const credentials = [...new Set([...credentialStores(home, config), ...stores, ...browserProfiles(home)])];
   const unread = main ? [...credentials, main] : credentials;
   const reopen = main && mainGit && within(main, mainGit) ? { allowRead: [mainGit] } : {};
   return {
@@ -216,7 +236,7 @@ export function sandboxSettings({ work, git, grants, domains, temp, home, config
 // sandbox proof tries to read from inside the session (lib/project-confine.mjs): the proof reads the ones there.
 export const confineReads = ({ env, home }) => {
   const user = home ?? homedir();
-  return [...new Set([...credentialStores(user, configFolder(env, user)), ...npmGlobalConfigs(env)])];
+  return [...new Set([...credentialStores(user, configFolder(env, user)), ...npmGlobalConfigs(env), ...browserProfiles(user)])];
 };
 
 // The npm config files a sandboxed command could read a registry token from beside ~/.npmrc: the user and global config

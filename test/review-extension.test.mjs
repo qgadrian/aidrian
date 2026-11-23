@@ -118,8 +118,19 @@ test('titles: markup, badges, and word order do not make two titles different', 
     [{ pull_request_review_id: 2, path: 'b.js', line: 7, body: 'Two' }],
     'bot',
   );
-  assert.deepEqual(bare[0], { round: 1, head: 'aaa', open: 1, floor: true, findings: [] });
+  assert.deepEqual(bare[0], { round: 1, head: 'aaa', open: 1, floor: true, findings: null });
   assert.equal(signals({ rounds: bare }).converging, null);
+  // Two body-only reviews and no diff to read: no signal, which is a red flag itself.
+  const blind = botRounds([{ id: 1, user: { login: 'bot' }, submitted_at: '2026-01-01', commit_id: 'aaa' }, { id: 2, user: { login: 'bot' }, submitted_at: '2026-01-02', commit_id: 'bbb' }], [], 'bot');
+  assert.deepEqual(signals({ rounds: blind }).unknown, ['converging', 'looping', 'drifting', 'bloating']);
+  // An approval with no inline comment is an exact zero: after one finding, it converges.
+  const approved = botRounds(
+    [{ id: 1, user: { login: 'bot' }, submitted_at: '2026-01-01', commit_id: 'aaa' }, { id: 2, user: { login: 'bot' }, submitted_at: '2026-01-02', commit_id: 'bbb', state: 'APPROVED' }],
+    [{ pull_request_review_id: 1, path: 'a.js', line: 4, body: 'One' }],
+    'bot',
+  );
+  assert.deepEqual(approved[1], { round: 2, head: 'bbb', open: 0, findings: [] });
+  assert.equal(signals({ rounds: approved }).converging, true);
 });
 
 const passing = () => ({ rounds: [round(1, 'a', [finding('a.js', 1, 'one'), finding('a.js', 50, 'two')]), round(2, 'b', [finding('a.js', 90, 'three')])], originalFiles: ['a.js'], originalAdded: 10, files: ['a.js'] });

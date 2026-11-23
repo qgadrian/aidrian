@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
 
+import { heldFolders, noteFeedbackFolder } from '../plugins/aidrian/lib/feedback-record.mjs';
 import { check } from '../plugins/aidrian/lib/rules/product-feedback-post.mjs';
 
 process.env.XDG_STATE_HOME = mkdtempSync(path.join(tmpdir(), 'aidrian-state-'));
@@ -99,11 +100,31 @@ test('a cd right before the post counts after a heredoc, and a project it cannot
   // A call the words cannot read, such as through npx, may run anywhere: it keeps no chained folder.
   assert.ok(check(`${heredoc}cd ${member.dir} && npx ${member.post}`, { cwd: elsewhere, input: member.main, env: {} }), 'npx');
   const held = project(t, { limited: true });
-  // A cd the post may run past, with no folder to tie to it, fails closed whatever state folder the project keeps.
+  // A cd the post may run past, with no folder to tie to it, fails closed while this machine keeps feedback (the folder
+  // above); the next test holds it with the feedback in a moved state folder alone.
   assert.match(check(`cd ${held.dir} || true; ${member.post}`, { cwd: elsewhere, input: member.main, env: {} }) ?? '', /cannot read which project/u, 'unknown after a cd');
   const unknown = check(`${heredoc}cd ${member.dir} || true; ${member.post}`, { cwd: elsewhere, input: member.main, env: {} }) ?? '';
   assert.match(unknown, /cannot read which project this post runs in, so it cannot tell whether this pull request is one/u);
   assert.doesNotMatch(unknown, /on a pull request from outside the team posts only/u);
+});
+
+test('a call whose project it cannot read is held when the only feedback is in a moved state folder noted under the state root', (t) => {
+  const held = project(t, { limited: true });
+  const elsewhere = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-post-elsewhere-')));
+  t.after(() => rmSync(elsewhere, { recursive: true, force: true }));
+  const root = path.join(process.env.XDG_STATE_HOME, 'aidrian');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const commands = [`env -C "$X" ${held.post}`, `cd ${held.dir} || true; ${held.post}`];
+  // Unnoted, the moved folder is out of the rule's sight, as it was before the note.
+  for (const command of commands) assert.equal(check(command, { cwd: elsewhere, input: held.main, env: {} }), null, `unnoted: ${command}`);
+  noteFeedbackFolder(path.join(held.dir, 'state'), root);
+  assert.deepEqual(heldFolders(root), [path.join(held.dir, 'state')]);
+  for (const command of commands) {
+    assert.match(check(command, { cwd: elsewhere, input: held.main, env: {} }) ?? '', /cannot read which project/u, command);
+  }
+  // A folder under the state root's projects/ needs no note.
+  noteFeedbackFolder(path.join(root, 'projects/some-0123abcd'), root);
+  assert.equal(heldFolders(root).length, 1);
 });
 
 test('a member\'s pull request posts with no answer, a subagent included, and a project with no feedback sees nothing', (t) => {

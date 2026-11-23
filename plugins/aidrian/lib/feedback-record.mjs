@@ -2,7 +2,8 @@
 // product-feedback` (pr-product-feedback.mjs) that the answer rule reads too. Every Bash call loads that rule, so this file
 // imports neither gh nor the knowledge loader. docs/config.md#product-feedback describes the record.
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { allowedDecisions, FINAL, held } from './audits.mjs';
@@ -84,6 +85,37 @@ export function recordPath(state, repo, number) {
   const file = path.join(base, ...repo.split('/'), `pr-${number}`, 'record.json');
   if (!isWithin(base, file)) throw new Error(`the record of ${repo}#${number} would leave the state folder`);
   return file;
+}
+
+// `<root>/feedback-folders/<hash>`: one file per state folder outside `<root>/projects/` (a config.json `state.dir`) that
+// has held product feedback, holding that folder's path. The answer and post rules read these when they cannot read which
+// project a call runs in, so a record kept in a moved state folder still holds such a call (heldFolders).
+const FOLDERS = 'feedback-folders';
+
+// Notes `state` under the state root `root` before a record or diff is written there. A folder under `<root>/projects/`
+// needs no note: the rules list those. A note that cannot be written throws, so the record is not written either.
+export function noteFeedbackFolder(state, root) {
+  if (isWithin(path.join(root, 'projects'), state)) return;
+  const folder = path.join(root, FOLDERS);
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(path.join(folder, createHash('sha256').update(state).digest('hex').slice(0, 32)), `${state}\n`);
+}
+
+// The noted state folders under `root`, as written. A note that cannot be read is left out; the caller checks each folder.
+export function heldFolders(root) {
+  const folder = path.join(root, FOLDERS);
+  let names = [];
+  try {
+    names = readdirSync(folder);
+  } catch {}
+  return names.flatMap((name) => {
+    try {
+      const state = readFileSync(path.join(folder, name), 'utf8').trim();
+      return path.isAbsolute(state) ? [state] : [];
+    } catch {
+      return [];
+    }
+  });
 }
 
 const itemProblem = (item) => {

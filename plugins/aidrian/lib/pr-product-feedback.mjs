@@ -29,7 +29,7 @@ import { parseArgs } from 'node:util';
 
 import { decisionProblem, readTriage, recordDecision, reportName, sidecarName, sidecarProblems, today } from './audits.mjs';
 import { commandConfig, DEFAULTS, loadConfig, stateDirProblem, strictConfigFromText } from './config.mjs';
-import { AUDIT_KEY, cleanTitle, decisionFields, decisionOf, heldFor, itemState, openDecisions, KINDS, PERSONA, PRODUCT_MANAGER, readRecord, RECORD_VERSION, recordPath } from './feedback-record.mjs';
+import { AUDIT_KEY, cleanTitle, decisionFields, decisionOf, heldFor, itemState, openDecisions, KINDS, noteFeedbackFolder, PERSONA, PRODUCT_MANAGER, readRecord, RECORD_VERSION, recordPath } from './feedback-record.mjs';
 import { forgeFor } from './forges/index.mjs';
 import { isDirectory, isFile, isObject, isWithin } from './fs.mjs';
 import { runGit } from './git.mjs';
@@ -40,7 +40,7 @@ import { branchConfig, defaultBranch, ghError, notFound, readView, VIEW_FIELDS }
 import { checkoutRemotes } from './pr-checks.mjs';
 import { pullRequestDiff } from './pr-diff.mjs';
 import { changedFilesMatch, fromOutside, parseTarget, projectFolder } from './pr-resolve.mjs';
-import { committedConfigFile, repoRoot, stateDir, strictConfigPathIn } from './project.mjs';
+import { committedConfigFile, repoRoot, stateDir, stateRoot, strictConfigPathIn } from './project.mjs';
 import { FEEDBACK_NO_LIST } from './review/config.mjs';
 import { decodedCopy, neutralized, refusedKind } from './review/publish.mjs';
 
@@ -78,7 +78,10 @@ function tableProblem({ kind }, { decision, by, reason }) {
   return decision === 'fix-now' || human ? null : `this item is a defect, which takes fix-now from a session; ${decision} ${ask}`;
 }
 
+// Every file written here lies in `<state>/product-feedback/`; a moved state folder is noted under the state root first.
 function writeAtomic(file, text) {
+  const at = file.split(path.sep).lastIndexOf('product-feedback');
+  if (at > 0) noteFeedbackFolder(file.split(path.sep).slice(0, at).join(path.sep), stateRoot());
   mkdirSync(path.dirname(file), { recursive: true });
   const temporary = `${file}.${process.pid}.tmp`;
   writeFileSync(temporary, text);

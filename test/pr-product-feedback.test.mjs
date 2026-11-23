@@ -7,10 +7,10 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { auditNudge, readTriage, recordDecision, today } from '../plugins/aidrian/lib/audits.mjs';
-import { itemState } from '../plugins/aidrian/lib/feedback-record.mjs';
+import { heldFolders, itemState } from '../plugins/aidrian/lib/feedback-record.mjs';
 import { createGithubForge } from '../plugins/aidrian/lib/forges/github.mjs';
 import { accessTerms, deriveKind, neutralized, refusalContext, refusedKind, runProductFeedback } from '../plugins/aidrian/lib/pr-product-feedback.mjs';
-import { configPathIn, projectAt, strictConfigPathIn } from '../plugins/aidrian/lib/project.mjs';
+import { configPathIn, projectAt, stateRoot, strictConfigPathIn } from '../plugins/aidrian/lib/project.mjs';
 import { check } from '../plugins/aidrian/lib/rules/product-feedback-answer.mjs';
 
 const AIDRIAN = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
@@ -157,6 +157,12 @@ test('status is clear with each reason, and exit 0', (t) => {
   recorded(t, r, []);
   assert.equal(clear(), 'nothing_open');
   assert.equal(clear({ files: { [MAIN_FILE]: configText({ auto: true }) } }), 'no_file_lists', 'auto with neither list reads as clear');
+});
+
+test('record in a moved state folder notes that folder under the state root, for the rules that cannot read a call\'s project', (t) => {
+  const r = repo(t);
+  recorded(t, r, []);
+  assert.ok(heldFolders(stateRoot()).includes(r.state), `${r.state} is noted`);
 });
 
 test('status owes not run, unanswered, and not re-checked with exit 2; the JSON lists ids and each command', (t) => {

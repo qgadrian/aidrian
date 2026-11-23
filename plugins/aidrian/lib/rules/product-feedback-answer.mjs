@@ -14,7 +14,7 @@
 // a brace list or range, anywhere in the word) is a word it cannot read. A call whose folder or project it cannot read (a
 // `cd` it cannot follow or with two operands, a folder that is no existing directory, a CDPATH in the command or the
 // environment, a dynamic, expanding, or `~` --project) is refused only while this machine holds a `product-feedback/`
-// folder, under the state root or the current project's state folder (feedbackOnMachine), with a reason that claims
+// folder, under the state root, in a moved state folder noted there, or in the current project's state folder (feedbackOnMachine), with a reason that claims
 // nothing about its words.
 // A command that also runs `aidrian pr product-feedback record`, or an aidrian call whose subcommand it cannot read, can write
 // the record a call is judged against after the hook ran, the first one included: there every `audits record` or `answer`
@@ -26,7 +26,7 @@ import { readdirSync } from 'node:fs';
 import path from 'node:path';
 
 import { reportName } from '../audits.mjs';
-import { cleanTitle, listRecords, PERSONA } from '../feedback-record.mjs';
+import { cleanTitle, heldFolders, listRecords, PERSONA } from '../feedback-record.mjs';
 import { isDirectory } from '../fs.mjs';
 import { findProject, stateDir, stateRoot } from '../project.mjs';
 import { aidrianArgs, inlineShellCommand, lexPipeline, readInvocation, readsShellInput, walkCommands } from '../shell-lex.mjs';
@@ -247,15 +247,17 @@ const walkedShell = ({ invocation, unread }) => unread === undefined && (invocat
 // whose subcommand it cannot read.
 export const writesUnseen = (call) => call?.writesRecord === true || call?.type === 'unreadable';
 
-// Whether this machine keeps product feedback anywhere the rule can see in one look: a `product-feedback/` folder in a
-// project's state folder under the state root, or in the current project's, which covers a `state.dir` it moves.
+// Whether this machine keeps product feedback anywhere: a `product-feedback/` folder in a project's state folder under the
+// state root, in a moved state folder a feedback write noted there (heldFolders), or in the current project's.
 function feedbackOnMachine(activeIn, cwd) {
-  const projects = path.join(stateRoot(), 'projects');
+  const root = stateRoot();
+  const projects = path.join(root, 'projects');
   let names = [];
   try {
     names = readdirSync(projects);
   } catch {}
-  return names.some((name) => isDirectory(path.join(projects, name, 'product-feedback'))) || Boolean(activeIn(cwd));
+  const folders = [...names.map((name) => path.join(projects, name)), ...heldFolders(root)];
+  return folders.some((folder) => isDirectory(path.join(folder, 'product-feedback'))) || Boolean(activeIn(cwd));
 }
 
 // `denied` when a command the word pass did not judge names a call (`names(text, folder)`), else null.

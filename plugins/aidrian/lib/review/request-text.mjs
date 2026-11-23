@@ -24,3 +24,7 @@ export const REQUEST_INSTRUCTIONS = [
 
 // The request as the harness posts it, before the markers it adds after it.
 export const REQUEST_TEXT = `${REQUEST_COMMENT}\n\n${REQUEST_INSTRUCTIONS}`;
+
+// The marker line that opens the review bot's receipt, its comment on a review's result (pr-await-review.mjs
+// isCleanReceipt). The local review's prompt names it so a receipt's stock sign-off is not read as a request.
+export const RECEIPT_MARKER = '<!-- codex-review-receipt:v1 -->';

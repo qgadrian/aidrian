@@ -91,6 +91,8 @@ export function mergeProblem({ forge, repository, pr, branch, since }) {
     view = forge.change(String(pr), 'state,mergedAt,headRefName,baseRefName,url,isCrossRepository', { repo: `${repository.host}/${named}` });
     main = defaultBranch(forge, { repo: named, host: repository.host });
   } catch (error) {
+    // A forge that answers it has no such pull request has answered: that is final, never a retry.
+    if (view === undefined && changeNotFound(error)) return `the forge has no pull request #${pr} in ${repository.host}/${named}`;
     return { retry: true, why: `the forge could not describe pull request #${pr} (${String(error.message).split('\n')[0]})` };
   }
   if (view?.state !== 'MERGED') return `the forge says pull request #${pr} is ${typeof view?.state === 'string' ? view.state.toLowerCase() : 'not merged'}`;

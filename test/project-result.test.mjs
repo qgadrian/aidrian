@@ -225,6 +225,16 @@ test('merged is kept only when the forge shows the pull request merged from the 
   gone.forge.branchHead = () => head;
   assert.deepEqual(gone.recorded({ status: 'pr_open', pr: 12, stop: 'review' }).out, ['ended ENG-1 bad_result -> open']);
   assert.equal(gone.rows().find((row) => row.event === 'ended').why, 'the forge has no pull request #12 in github.com/acme/widgets');
+  // So does the merge check's own read, when the first read showed it merged.
+  const vanished = started(t);
+  const own = vanished.forge.change;
+  let calls = 0;
+  vanished.forge.change = (ref, fields, options) => {
+    calls += 1;
+    return calls === 1 ? merged() : own(ref, fields, options);
+  };
+  assert.deepEqual(vanished.recorded({ status: 'merged', pr: 12 }).out, ['ended ENG-1 bad_result -> open']);
+  assert.equal(vanished.rows().find((row) => row.event === 'ended').why, 'the forge has no pull request #12 in github.com/acme/widgets');
   const failing = started(t);
   assert.deepEqual(failing.recorded({ status: 'merged', pr: 12 }).out, ['ended ENG-1 bad_result -> open']);
   assert.equal(failing.rows().find((row) => row.event === 'ended').why, 'the forge has no pull request #12 in github.com/acme/widgets');

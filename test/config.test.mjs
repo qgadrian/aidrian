@@ -424,7 +424,9 @@ test('github.titleIssuePrefix: off by default, so pull request titles are plain 
 
 test('the handoff settings load as a group, and a project sets any of them', (t) => {
   const { config, errors } = loadConfig(project(t, { version: 1, session: { handoff: { mode: 'auto', costRatio: 1.5, maxTokens: 300000 } } }));
-  assert.deepEqual([errors, config.session], [[], { handoff: { mode: 'auto', costRatio: 1.5, maxTokens: 300000, continue: 'background', maxChain: 3 } }]);
+  assert.deepEqual([errors, config.session], [[], { handoff: { mode: 'auto', costRatio: 1.5, maxTokens: 300000, continue: 'background', maxChain: 3, resumeTokens: null } }]);
+  const pinned = loadConfig(project(t, { version: 1, session: { handoff: { resumeTokens: 60000 } } }));
+  assert.deepEqual([pinned.errors, pinned.config.session.handoff.resumeTokens], [[], 60000]);
   const chain = loadConfig(project(t, { version: 1, session: { handoff: { continue: 'clear', maxChain: 5 } } }));
   assert.deepEqual([chain.errors, chain.config.session.handoff], [[], { ...DEFAULTS.session.handoff, continue: 'clear', maxChain: 5 }]);
   const unlimited = loadConfig(project(t, { version: 1, session: { handoff: { maxChain: 'unlimited' } } }));
@@ -433,15 +435,15 @@ test('the handoff settings load as a group, and a project sets any of them', (t)
   assert.deepEqual([some.errors, some.config.session.handoff], [[], { ...DEFAULTS.session.handoff, mode: 'off' }]);
 });
 
-test('the handoff continue route is none by default, a chain is 3 handoffs, and the schema takes every route', () => {
-  assert.deepEqual(DEFAULTS.session.handoff, { mode: 'ask', costRatio: 2, maxTokens: 0, continue: 'none', maxChain: 3 });
+test('the handoff continue route is none by default, a chain is 3 handoffs, resume tokens are measured, and the schema takes every route', () => {
+  assert.deepEqual(DEFAULTS.session.handoff, { mode: 'ask', costRatio: 2, maxTokens: 0, continue: 'none', maxChain: 3, resumeTokens: null });
   assert.deepEqual(CONTINUE_ROUTES, ['none', 'clear', 'compact', 'background']);
-  assert.deepEqual(SCHEMA.session.handoff, { mode: 'handoffMode', costRatio: 'costRatio', maxTokens: 'zeroOrMore', continue: 'continueRoute', maxChain: 'positiveOrUnlimited' });
+  assert.deepEqual(SCHEMA.session.handoff, { mode: 'handoffMode', costRatio: 'costRatio', maxTokens: 'zeroOrMore', continue: 'continueRoute', maxChain: 'positiveOrUnlimited', resumeTokens: 'positiveOrNull' });
 });
 
 test('a string session.handoff, the old shape, loads with the new continue defaults', (t) => {
   const { config } = loadConfig(project(t, { version: 1, session: { handoff: 'auto' } }));
-  assert.deepEqual(config.session.handoff, { mode: 'auto', costRatio: 2, maxTokens: 0, continue: 'background', maxChain: 3 });
+  assert.deepEqual(config.session.handoff, { mode: 'auto', costRatio: 2, maxTokens: 0, continue: 'background', maxChain: 3, resumeTokens: null });
   assert.equal(loadConfig(project(t, { version: 1, session: { handoff: 'ask' } })).config.session.handoff.continue, 'none');
 });
 

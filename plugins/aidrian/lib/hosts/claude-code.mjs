@@ -290,6 +290,9 @@ export default {
     // Reads Claude Code's transcripts (lib/transcript.mjs): cost, names reminder, session length, and attribution's model.
     // Also opts it into the review-rounds rule's reading of the Human's answers and typed grants of review rounds.
     transcripts: true,
+    // The tool calls that end a resume in its transcripts, a file edit or a dispatch: lib/resume-tokens.mjs measures what
+    // a session resumed from a brief read before the first of them (docs/handoff.md#the-cost-model).
+    workTools: ['Edit', 'Write', 'NotebookEdit', 'Agent', 'Task'],
     // The settings files that say whether Claude Code asks for its generated-by footer, first that sets it wins.
     prFooterSettings: (root, env) => [
       path.join(root, '.claude/settings.local.json'),

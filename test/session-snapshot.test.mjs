@@ -139,8 +139,9 @@ test('the JSON object and the line at each handoff level, with the Stop hook`s o
   const [quiet, quietLine] = at(cost, 0);
   assert.deepEqual(Object.keys(quiet.json), ['session', ...SECTIONS, 'ticket', 'errors']);
   assert.deepEqual(quiet.json.session, { id: ID, transcript, cwd: cost.dir });
-  assert.deepEqual(Object.keys(quiet.json.handoff), ['ratio', 'breakEven', 'level', 'nextRatio', 'context', 'ceiling', 'chain', 'maxChain', 'continueArmed', 'lastBrief']);
+  assert.deepEqual(Object.keys(quiet.json.handoff), ['ratio', 'breakEven', 'level', 'nextRatio', 'context', 'ceiling', 'resume', 'chain', 'maxChain', 'continueArmed', 'lastBrief']);
   assert.equal(quiet.json.handoff.level, 'quiet');
+  assert.deepEqual(quiet.json.handoff.resume, { tokens: 44_000, source: 'default', samples: 0 }, 'no samples yet');
   assert.deepEqual(quiet.json.prs, [], 'a session with no ledger: no pull request, and no failure');
   assert.deepEqual(quiet.json.errors, [], 'no origin a forge serves: no merged count, and no failure');
   assert.deepEqual(quiet.json.worktrees, { owned: 0, mergedNotCleaned: null });
@@ -162,6 +163,16 @@ test('the JSON object and the line at each handoff level, with the Stop hook`s o
   assert.equal(top.json.handoff.ceiling, 120_000);
   assert.equal(topLine.stdout, 'handoff now\n');
   for (const each of [quietLine, offerLine, dueLine, remindedLine, topLine]) assert.match(each.stdout, CLEAN);
+  // Five samples of the project's own resume tokens price the fresh session the Stop hook compares against.
+  const samples = Array.from({ length: 5 }, (_, index) => ({ session: `r-${index}`, tokens: 90_000, at: Date.now() - 60_000 }));
+  writeFileSync(path.join(cost.projectState(), 'resume-tokens.json'), JSON.stringify({ samples }));
+  const [measured] = at(cost, 4);
+  assert.deepEqual(measured.json.handoff.resume, { tokens: 90_000, source: 'measured', samples: 5 });
+  assert.ok(measured.json.handoff.ratio < due.json.handoff.ratio, 'a larger B lowers the ratio');
+  const pinned = setup(t, { config: { session: { handoff: { resumeTokens: 90_000 } } } });
+  const [config] = at(pinned, 4);
+  assert.deepEqual(config.json.handoff.resume, { tokens: 90_000, source: 'config', samples: null });
+  assert.equal(config.json.handoff.ratio, measured.json.handoff.ratio, 'the same B gives the same ratio, from config or from samples');
   writeFileSync(transcript, `${JSON.stringify({ type: 'user', message: { content: 'hello' } })}\n`);
   const fresh = cost.run(['--session', 'fresh-1', '--transcript', transcript]);
   assert.equal(fresh.json.handoff.ratio, 0);

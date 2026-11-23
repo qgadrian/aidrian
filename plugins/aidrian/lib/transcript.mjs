@@ -713,6 +713,63 @@ export function firstPrompt(text) {
   return null;
 }
 
+// What a session resumed from a handoff brief read before it started working: { tokens, at }, `tokens` the context of the
+// model call that made the first call of one of `workTools`, the host's file edits and dispatches, that did not fail,
+// less the context of its first model call, and `at` the time of that call's result, null when the entry has none.
+// Null when no such call succeeded yet, or when no resume came before it: a session-continue skill run, a Skill call
+// that did not fail or a typed command, or a `Handoff continuation:` block before the first model call, in the first
+// prompt, the message the background route starts a session with, or in the context a SessionStart hook added, which
+// a clear's delivery writes (lib/handoff-continue.mjs backgroundPrompt, continuationContext). A call counts by its result, matched by id, so one a
+// hook or the permissions refused is not where work began. It reads up to that result and no further, so a long
+// transcript costs no more than its start. lib/resume-tokens.mjs records it.
+const RESUME_SKILL = 'session-continue';
+export const CONTINUATION_LEAD = 'Handoff continuation:';
+const usageContext = (usage) => (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
+const leadsContinuation = (text) => typeof text === 'string' && text.split('\n').some((line) => line.startsWith(CONTINUATION_LEAD));
+// The context a SessionStart hook added, as Claude Code writes it, or null.
+const startContext = (entry) => (entry?.type === 'attachment' && entry.attachment?.type === 'hook_additional_context'
+  && entry.attachment.hookEvent === 'SessionStart' ? [entry.attachment.content].flat() : null);
+// A prompt's own text, '' for a prompt with none, such as an image alone, or null for an entry that is no prompt: a tool
+// result, or the host's own entry (isMeta).
+function promptText(entry) {
+  const content = entry?.message?.content;
+  if (entry?.type !== 'user' || entry.isMeta === true || !isPrompt(content)) return null;
+  if (typeof content === 'string') return content;
+  return content.filter((block) => block?.type === 'text' && typeof block.text === 'string').map((block) => block.text).join('\n');
+}
+const isResumeSkill = (block) => block.name === 'Skill' && typeof block.input?.skill === 'string' && baseName(block.input.skill.replace(/^\//u, '')) === RESUME_SKILL;
+export function resumeRead(text, workTools) {
+  let first = null;
+  let resumed = false;
+  // The pending calls by id: a resume Skill call as true, a work call as the context it read, or null when no resume
+  // came before it.
+  const pending = new Map();
+  let prompted = false;
+  for (const line of text.split('\n')) {
+    const entry = parseLine(line);
+    const prompt = promptText(entry);
+    const opening = first === null && ((prompt !== null && !prompted) || startContext(entry) !== null);
+    if ((opening && [prompt, ...(startContext(entry) ?? [])].some(leadsContinuation)) || typedSkills(entry).some((skill) => baseName(skill) === RESUME_SKILL)) resumed = true;
+    prompted ||= prompt !== null;
+    const { usage, model, content } = entry?.message ?? {};
+    if (!Array.isArray(content)) continue;
+    const call = usage && model && model !== '<synthetic>';
+    if (call) first ??= usageContext(usage);
+    for (const block of content) {
+      if (call && block?.type === 'tool_use' && typeof block.id === 'string') {
+        if (isResumeSkill(block)) pending.set(block.id, true);
+        else if (workTools.includes(block.name)) pending.set(block.id, resumed ? Math.max(usageContext(usage) - first, 0) : null);
+      }
+      if (block?.type !== 'tool_result' || block.is_error === true || !pending.has(block.tool_use_id)) continue;
+      const settled = pending.get(block.tool_use_id);
+      if (settled === true) resumed = true;
+      else if (settled === null) return null;
+      else return { tokens: settled, at: Number.isFinite(Date.parse(entry.timestamp)) ? Date.parse(entry.timestamp) : null };
+    }
+  }
+  return null;
+}
+
 // The message of the transcript's last handback call when no assistant text follows it, else null: the report a subagent
 // delivered through the host's handback tool, which ends its run, so its last message may hold no text of the report.
 // Claude Code names the tool SubagentHandback; a host whose transcript this module does not read has none.

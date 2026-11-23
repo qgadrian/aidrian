@@ -83,7 +83,7 @@ const issueNamed = (issue) => (target, folder) => {
   const [first = ''] = path.relative(folder, target).split(path.sep);
   const name = first.toLowerCase();
   const key = issue.key.toLowerCase();
-  // In tmp, a name drafts cleanup removes once its pull request ends (review/drafts.mjs isDraftName) is no scratch of the
+  // In tmp, a name a review or a skill drafts for a pull request (review/drafts.mjs isDraftName) is no scratch of the
   // session's, though an issue key such as REVIEW-12 or PR-12 may lead it; of those it writes only the findings folder
   // `aidrian pr review` names for its issue, `@<key>-review-<N>...` (review/dispatch.mjs findingsFile).
   if (path.basename(folder) === 'tmp' && isDraftName(name)) return name.startsWith(`@${key}-review-`);

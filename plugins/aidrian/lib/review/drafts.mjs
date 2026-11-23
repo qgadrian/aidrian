@@ -21,9 +21,11 @@ import { recordRepos } from './state.mjs';
 // with `@`, so no session's own scratch matches, and the folder goes whole, as the plain one does. A name with no `@`
 // lead that starts `review-<n>-review-` is read as no draft: an issue such as REVIEW-12 may hold scratch under it, which
 // cleanup once checked file by file, so it is never removed whole. The plain drafts of an owner named `review-...` stay.
-const DRAFT = /^(?!review-[1-9]\d{0,9}-review-)(?:(?:@(?:[a-z][a-z0-9]{0,15}-)?[1-9][0-9]{0,8}-)?review-([1-9]\d{0,9})(?:-([\w.-]+?)--([\w.-]+))?|pr-([1-9]\d{0,9})-review\.md|product-feedback-([1-9]\d{0,9})(?:-items\.json|\.md))$/u;
-// Whether `name` is a draft's, which a sweep removes whole once its pull request ends (unattended-write.mjs issueNamed).
-export const isDraftName = (name) => DRAFT.test(name);
+const NAMED = /^(?:(?:@(?:[a-z][a-z0-9]{0,15}-)?[1-9][0-9]{0,8}-)?review-([1-9]\d{0,9})(?:-([\w.-]+?)--([\w.-]+))?|pr-([1-9]\d{0,9})-review\.md|product-feedback-([1-9]\d{0,9})(?:-items\.json|\.md))$/u;
+const DRAFT = new RegExp(`^(?!review-[1-9]\\d{0,9}-review-)${NAMED.source.slice(1)}`, 'u');
+// Whether `name` is named as a draft is, by `aidrian pr review` or a skill, whether or not a sweep removes it: no issue
+// session writes such a name but its own findings folder (unattended-write.mjs issueNamed).
+export const isDraftName = (name) => NAMED.test(name);
 // The most pull requests one sweep reads the state of, lowest number first: each is one forge call.
 export const MAX_SWEPT = 50;
 // The forge's states of a pull request no draft is kept for.

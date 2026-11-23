@@ -367,7 +367,7 @@ test('an issue session whose key reads like a draft name writes no draft cleanup
   for (const key of ['REVIEW-12', 'PR-12']) {
     const fx = issueFixture(t, { key, issues: [{ key, branch: BRANCH, status: 'unstarted', priority: 1 }] });
     const tmp = path.join(fx.state, 'tmp');
-    for (const name of ['review-12', 'review-12-o--r', 'pr-12-review.md', `@eng-1-review-12`]) {
+    for (const name of ['review-12', 'review-12-o--r', 'review-12-review-34o--r', 'pr-12-review.md', `@eng-1-review-12`]) {
       assert.match(fx.ask(write(path.join(tmp, name, 'x.json')))?.reason ?? '', new RegExp(`not named for this session's issue ${key}`, 'u'), `${key}: ${name}`);
     }
     assert.equal(fx.ask(write(path.join(tmp, `@${key.toLowerCase()}-review-12-o--r`, 'x.findings.json'))), null, `${key}: its own findings folder`);

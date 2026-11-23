@@ -107,6 +107,7 @@ test('a comment-, doc-, or test-only push keeps its round, and the passes it tou
     assert.deepEqual([second.status, second.round, seen.inputs.length], ['received', 1, 2], `a ${what}-only push is reviewed, and opens no round`);
     assert.deepEqual([seen.inputs[1].context, seen.inputs[1].base, seen.inputs[1].head], ['delta', first.head, pushed], `${what}: only the change since the round's head`);
     assert.match(second.plan.reasons.join('\n'), /a comment, doc, or test-only change since [0-9a-f]{7}: the round stays open; the passes it touches re-review it/u, what);
+    assert.deepEqual([second.round_kept.from, second.round_kept.reason], [first.head, second.plan.reasons.at(-1)], `${what}: the output names the kept round, beside its number`);
     const state = readLocalState(r.project, 7);
     assert.equal(state.passes['engine:codex-local'].head, pushed, `${what}: the result is the new head's`);
     assert.deepEqual([state.rounds.length, state.rounds[0].head, state.rounds[0].quiet.map((each) => each.from)], [1, pushed, [first.head]], `${what}: the round moved to the new head`);

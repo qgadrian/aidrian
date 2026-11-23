@@ -85,12 +85,23 @@ export async function runStages(s) {
     if (quiet && !recorded) {
       Object.assign(current, roundBefore);
       if (roundBefore.quiet === undefined) delete current.quiet;
+      delete s.roundKept;
     }
   };
   // A quiet push moves the round to this head before any pass runs, so a step whose passes all carry still moves it.
+  // The step's output says so in `round_kept`, beside its round number.
   if (quiet) {
     openRound();
-    plan.reasons = [...plan.reasons, `a comment, doc, or test-only change since ${roundBefore.head.slice(0, 7)}: the round stays open; the passes it touches re-review it`];
+    const reason = `a comment, doc, or test-only change since ${roundBefore.head.slice(0, 7)}: the round stays open; the passes it touches re-review it`;
+    s.roundKept = { from: roundBefore.head, reason };
+    plan.reasons = [...plan.reasons, reason];
+  }
+  // A pass `aidrian pr attest` recorded on this head before any step opened its round, as a session does that reviews
+  // a push and attests it with no step between, is a review of this head all the same: its round opens here, or the
+  // cap stops it.
+  if (!opened && passes.some((pass) => sameCommit(state.passes[pass.id]?.head, head))) {
+    if (openRound() === 'round_limit') return capReached({ max_rounds: maxRounds });
+    recorded = true;
   }
 
   // The review bot's request: the gate's marker sums every code-reviewer pass that counts for this head (a

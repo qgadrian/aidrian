@@ -857,11 +857,14 @@ always gets its independent review before the cap, then lets the earlier stages 
 when nothing is left to fix, and stops at the cap when a fix would need another head. A reviewer that fails or hits
 its quota gives the round back. After a fix, each pass re-reviews only what changed since its last review; a pass
 the change does not touch carries forward.
+A pass `aidrian pr attest` records on a head no round is on yet, with no step that dispatched it there, opens that head's round on the next step.
+Past the cap, that step stops at `round_limit`, so a pass attested on each new head still counts one round a head.
 
 **A quiet push.** A push whose change since the round's head is quiet opens no round: the round keeps its number,
-cap, and last-round flag, moves to the new head, and records the head it moved from in its `quiet` list. That holds in
-the last round too, so a quiet fix there is reviewed without reaching `round_limit`. A change is quiet when every file
-in it is one of:
+cap, and last-round flag, moves to the new head, and records the head it moved from in its `quiet` list.
+The step's output says so beside `round`: `round_kept` holds `from`, the head the round moved from, and `reason`, the line `plan.reasons` also holds.
+That holds in the last round too, so a quiet fix there is reviewed without reaching `round_limit`.
+A change is quiet when every file in it is one of:
 
 - prose or ignored, by `review.nonBehaviour` and `review.ignore`;
 - a test, by `**/*.test.*`, `**/*.spec.*`, `**/*_test.*`, a `test/`, `tests/`, `__tests__/`, or `spec/` folder, or a

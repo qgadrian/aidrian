@@ -298,7 +298,8 @@ function finish(s, status, extra) {
   mergePosted(s);
   answerRequests(s);
   noteFindings(s, extra);
-  const result = { status, pr: n, repo, head, base, depth: plan.depth, round: state.rounds.length, max_rounds: maxRounds, engine: plan.engine, ...extra };
+  // `round_kept`: a quiet push kept the round (lib/review/stages.mjs), the head it moved from and why.
+  const result = { status, pr: n, repo, head, base, depth: plan.depth, round: state.rounds.length, ...(s.roundKept ? { round_kept: s.roundKept } : {}), max_rounds: maxRounds, engine: plan.engine, ...extra };
   // A security mark this step set itself, after its first sweep (an exec pass's findings, the plan note, the ids given
   // late, each through the twin rule), is deleted for in this same step, before anything posts or the record is written:
   // the same sweep, over the step's final record, skipping every comment the first one dealt with.

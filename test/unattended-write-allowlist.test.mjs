@@ -282,6 +282,9 @@ test('a state folder inside the session\'s own worktree keeps its triage record,
   let places = () => unattendedPlaces({ cwd: fx.worktree, mark: fx.mark, project, config: loadConfig(project).config, env: fx.env, home: fx.home, temp: [fx.temp] });
   assert.equal(fx.ask(write(path.join(state, 'audits', 'host-2026-11-22.md')), { places }), null);
   assert.equal(fx.ask(bash(`mkdir -p ${path.join(state, 'audits')}`), { places }), null, 'a fresh audits folder');
+  mkdirSync(path.join(state, 'audits'));
+  assert.equal(fx.ask(bash(`mkdir -p ${path.join(state, 'audits')}`), { places }), null, 'an audits folder already there');
+  assert.match(fx.ask(bash(`rmdir ${path.join(state, 'audits')}`), { places })?.reason ?? '', /triage record/u, 'a removal of it');
   assert.match(fx.ask(write(path.join(state, 'audits', 'triage.json')), { places })?.reason ?? '', /triage record/u);
   // Another checkout of the repository at `<state>/audits`: the audits grant never reaches into it.
   const other = path.join(fx.root, 'other-state');

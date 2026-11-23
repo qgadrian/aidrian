@@ -168,6 +168,15 @@ test('the JSON object and the line at each handoff level, with the Stop hook`s o
   assert.equal(cost.run(['--session', 'fresh-1', '--transcript', transcript, '--line']).stdout, '\n', 'no model call yet: no handoff segment');
 });
 
+test('the line names the first whole call count above the break-even, so an exact break-even names the next call', () => {
+  const line = (breakEven, level = 'due') => snapshotLine({ handoff: { ratio: 2.3, breakEven, level } });
+  assert.equal(line(37.5), '2.3x · handoff worth it if 38+ calls left');
+  assert.equal(line(38), '2.3x · handoff worth it if 39+ calls left', 'at exactly the break-even a handoff saves nothing yet');
+  assert.equal(line(38.4), '2.3x · handoff worth it if 39+ calls left');
+  for (const level of ['offer', 'reminded']) assert.equal(line(38, level), '2.3x · handoff worth it if 39+ calls left', level);
+  assert.equal(line(null), '2.3x', 'no break-even: the ratio alone');
+});
+
 test('an armed continuation adds its chain to the line; the store is read and left as it was', (t) => {
   const env = setup(t);
   const transcript = path.join(env.base, 'session.jsonl');

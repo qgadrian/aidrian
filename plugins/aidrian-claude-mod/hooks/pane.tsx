@@ -195,7 +195,9 @@ export function registerPane(on: On, options: PluginOptions) {
   }).catch(($, e, next) => next(e))
 
   // Each main-chain request reads and refreshes the prompt cache, so the countdown starts again at the request, not at
-  // the turn's end: a long turn keeps the cache warm. A subagent's request is its own chain's and refreshes none.
+  // the turn's end: a long turn keeps the cache warm. The response's first chunk, or its usage when it streamed none,
+  // says the request reached the model, so a long response restarts the countdown before it ends. A subagent's
+  // request is its own chain's and refreshes none.
   on('turn.step', async function* ($, e, next) {
     if (e.agentId === undefined) {
       if (e.effort !== undefined) {
@@ -204,9 +206,21 @@ export function registerPane(on: On, options: PluginOptions) {
       }
 
       const sentAt = await $.clock.now()
-      const response = yield* next(e)
+      const stream = next(e)
+      let isRefreshed = false
 
-      if (response.usage !== null) {
+      for await (const chunk of stream) {
+        if (!isRefreshed) {
+          isRefreshed = true
+          await update($, cacheAt, () => sentAt)
+        }
+
+        yield chunk
+      }
+
+      const response = await stream.result
+
+      if (!isRefreshed && response.usage !== null) {
         await update($, cacheAt, () => sentAt)
       }
 

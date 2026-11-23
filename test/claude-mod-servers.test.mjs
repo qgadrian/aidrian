@@ -162,11 +162,14 @@ test('a stale entry for the folder never outranks a newer install: the newest ve
     { scope: 'project', projectPath: env.project, installPath: newer },
   ] });
   assert.equal((await cliOf(env.io(), env.project)).cli, cliIn(newer), 'with no version field, the install folder names it');
+  const twin = path.join(env.cache, 'aidrian/1.0.0-copy');
+  write(path.join(twin, 'lib/cli.mjs'));
   installs(env, { [`aidrian@${MARKET}`]: [
     { scope: 'user', installPath: env.install, version: '1.0.0' },
-    { scope: 'local', projectPath: env.project, installPath: env.install, version: '1.0.0' },
+    { scope: 'project', projectPath: env.base, installPath: newer, version: '1.0.0' },
+    { scope: 'local', projectPath: env.project, installPath: twin, version: '1.0.0' },
   ] });
-  assert.equal((await cliOf(env.io(), env.project)).kind, 'plugin', 'a tie still resolves');
+  assert.equal((await cliOf(env.io(), env.project)).cli, cliIn(twin), 'a tie goes to local, whatever the file order');
 });
 
 test('an install outside the marketplace`s aidrian cache, or a linked cli.mjs, is refused', async () => {

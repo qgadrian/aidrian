@@ -139,20 +139,40 @@ export async function ownPlace(io) {
   return { configDir: found[1], marketplace: found[2] };
 }
 
-// The entry installed for the folder `cwd`: the local, then the project, entry whose real projectPath holds the real
-// cwd at a separator boundary, the longest first; else the user entry.
+// The entry installed for the folder `cwd`: of the local and project entries whose real projectPath holds the real
+// cwd at a separator boundary, and the user entry, the one of the newest version. A tie goes to local, then project,
+// the longer projectPath first, then user. Newest first because Claude Code runs the newest install it holds for a
+// folder, not the folder's own record: on Claude Code 2.1.330, a folder with a local entry at 0.7.0 and a user entry
+// at 0.84.14 ran 0.84.14 in its sessions, and reading the 0.7.0 entry left the band with no snapshot.
 async function chosenEntry(io, entries, cwd) {
   const realCwd = (await realStat(io, cwd, 'dir'))?.realPath;
-  for (const scope of ['local', 'project']) {
-    const held = [];
+  const ranked = [];
+  for (const [rank, scope] of ['local', 'project'].entries()) {
     for (const entry of entries) {
       if (own(entry, 'scope') !== scope || !realCwd) continue;
       const real = (await realStat(io, own(entry, 'projectPath'), 'dir'))?.realPath;
-      if (real && within(realCwd, real)) held.push({ entry, length: real.length });
+      if (real && within(realCwd, real)) ranked.push({ entry, rank, length: real.length });
     }
-    if (held.length) return held.sort((a, b) => b.length - a.length)[0].entry;
   }
-  return entries.find((entry) => own(entry, 'scope') === 'user') ?? null;
+  const user = entries.find((entry) => own(entry, 'scope') === 'user');
+  if (user) ranked.push({ entry: user, rank: 2, length: 0 });
+  ranked.sort((a, b) => compareVersions(versionOf(b.entry), versionOf(a.entry)) || a.rank - b.rank || b.length - a.length);
+  return ranked[0]?.entry ?? null;
+}
+
+// An entry's version as numbers: its `version`, else the last segment of its installPath; [] when neither is one.
+function versionOf(entry) {
+  const named = own(entry, 'version');
+  const text = typeof named === 'string' ? named : String(own(entry, 'installPath') ?? '').split('/').at(-1);
+  return /^\d+(\.\d+)*$/u.test(text) ? text.split('.').map(Number) : [];
+}
+
+function compareVersions(a, b) {
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const diff = (a[index] ?? -1) - (b[index] ?? -1);
+    if (diff !== 0) return diff;
+  }
+  return 0;
 }
 
 // The entry of installed_plugins.json under the exact key `aidrian@<marketplace>` installed for `cwd`, or null when

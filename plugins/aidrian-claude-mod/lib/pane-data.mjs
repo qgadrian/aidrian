@@ -1,7 +1,7 @@
 // What the band and the pane read from the engine, git, the transcript, and the Linear answer, as plain values: the
 // hooks gather the raw text and hand it here, so the logic is tested by `node --test` (test/claude-mod-pane.test.mjs).
 // A mod module has no Node: this file imports only the mod's own format.mjs.
-import { displayText } from './format.mjs';
+import { COLORS, displayText } from './format.mjs';
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const stringOf = (value) => (typeof value === 'string' ? value : '');
@@ -126,4 +126,56 @@ export function dateMs(at) {
 export function untilText(at, now) {
   const ms = dateMs(at);
   return ms === null ? '' : formatDuration(ms - now);
+}
+
+// The emoji of a model family on an agent's row; an unknown family gets a neutral one.
+const FAMILY_ICONS = Object.freeze({ fable: '🦄', opus: '🪐', sonnet: '🪶', haiku: '🍃' });
+const AGENT_WINDOW = 200_000;
+const ACTIVE = new Set(['running', 'pending', 'waiting']);
+
+const compactTokens = (tokens) => {
+  if (tokens >= 1_000_000) return `${Math.floor(tokens / 100_000) / 10}M`;
+  return tokens >= 1000 ? `${Math.floor(tokens / 1000)}k` : String(tokens);
+};
+
+// One subagent's row in Claude Code's agent list, from the engine's AgentInfo (`name`, `type`, `label`,
+// `description`, `model`, `effort`, `contextWindowSize`, `tokenCount`, `status`), as `{ text, color }` parts within
+// `columns`: `name [type]  48% (96k) · 🪐 Opus 5.5 xhigh`, and the status after them when it is not running. The name
+// is cut first, then the type dropped, so the context and the model always show. It replaces the deprecated
+// subagentStatusLine script, with the type read from the engine rather than the transcript.
+export function agentRowParts(agent, columns = 80) {
+  const info = isObject(agent) ? agent : {};
+  const firstLine = (value) => stringOf(value).split('\n')[0];
+  const name = displayText(stringOf(info.name) || firstLine(info.label) || firstLine(info.description) || 'agent');
+  const type = displayText(stringOf(info.type));
+  const model = stringOf(info.model);
+  const window = Number.isFinite(info.contextWindowSize) && info.contextWindowSize > 0
+    ? info.contextWindowSize
+    : (/\[1m\]/iu.test(model) ? 1_000_000 : AGENT_WINDOW);
+  const tokens = Number.isFinite(info.tokenCount) && info.tokenCount > 0 ? info.tokenCount : 0;
+  const percent = Math.floor((tokens * 100) / window);
+  const heat = percent >= 75 ? COLORS.failed : percent >= 50 ? COLORS.pending : COLORS.text;
+  const family = modelVersion(model.replace(/\s*\[1m\]$/iu, ''))?.family;
+  const effort = typeof info.effort === 'string' || Number.isFinite(info.effort) ? displayText(String(info.effort)) : '';
+  const status = displayText(stringOf(info.status));
+  const tail = [
+    { text: `  ${percent}%`, color: heat },
+    { text: ` (${compactTokens(tokens)})`, color: COLORS.muted },
+    { text: ` · ${FAMILY_ICONS[family] ?? '✨'} `, color: COLORS.text },
+    { text: model ? cleanModel(model) : '?', color: COLORS.text },
+    ...(effort ? [{ text: ` ${effort}`, color: COLORS.muted }] : []),
+    ...(status && !ACTIVE.has(status) ? [{ text: ` · ${status}`, color: COLORS.muted }] : []),
+  ];
+  // The emoji takes two columns and counts as one or two code points, so each is counted as two.
+  const width = (text) => [...text].reduce((sum, char) => sum + (/\p{Extended_Pictographic}/u.test(char) ? 2 : 1), 0);
+  const room = Math.max(0, columns - tail.reduce((sum, each) => sum + width(each.text), 0));
+  const typeText = type ? ` [${type}]` : '';
+  const keepsType = typeText && room - width(typeText) >= 6;
+  const nameRoom = room - (keepsType ? width(typeText) : 0);
+  const shown = [...name].length > nameRoom ? `${[...name].slice(0, Math.max(0, nameRoom - 1)).join('')}…` : name;
+  return [
+    { text: shown, color: COLORS.armed },
+    ...(keepsType ? [{ text: typeText, color: COLORS.passed }] : []),
+    ...tail,
+  ];
 }

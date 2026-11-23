@@ -48,6 +48,11 @@ gives the snapshot's line without it.
   one of six notices: the `aidrian` plugin is not installed for the folder, is off for it, or failed the mod's safety
   checks; the mod found no `node` on a PATH folder outside the session's folder; or the plugin returned no snapshot
   (update it), or took longer than 10 seconds.
+- **The agent list.** Each subagent's row in Claude Code's agent list under the prompt reads
+  `reviewer [aidrian:code-reviewer]  48% (96k) · 🪐 Opus 5.5 xhigh`: its name, its agent type, its context use and
+  tokens, its model and effort, then its status once it stops running. A narrow row cuts the name first, then drops the
+  type, so the context and the model always show. It is drawn from the engine's own agent info, on the terminal only,
+  and replaces a `subagentStatusLine` script, which Claude Code 2.1.330 deprecates in favor of mods.
 - **Alerts.** A long turn done, a turn stopped on an API error, an approval or a question waiting, Claude Code's
   other notifications, a failed Bash command, a compaction, and the rate limits at 85% and 90%. Each alert is a sound
   plus a toast or a desktop notification. They run only in an interactive terminal
@@ -66,7 +71,8 @@ claude plugin install aidrian-mod@aidrian-harness
 ```
 
 A status line that runs the [status line fallback](#the-status-line-fallback) shows the same data as the band: drop
-that `statusLine` from `~/.claude/settings.json`.
+that `statusLine` from `~/.claude/settings.json`. The mod draws the agent list's rows too, so a `subagentStatusLine`
+there can go as well.
 
 ## Settings
 
@@ -85,7 +91,12 @@ Each is a row of Claude Code's config menu, from `userConfig` in the mod's
 ## How it runs
 
 - **The snapshot.** The mod runs the `lib/cli.mjs` of the `aidrian` plugin installed for the folder, from Claude
-  Code's plugin cache, by `node`, one run at a time with a 10-second limit, and reads nothing more from the plugin.
+  Code's plugin cache: of the local and project entries of `installed_plugins.json` whose folder holds the session's,
+  and the user entry, the newest version, a tie going to local, then project, the deeper folder first, then user.
+  Claude Code runs the newest install it holds, not the folder's own record: on 2.1.330, a folder with a local entry
+  at 0.7.0 and a user entry at 0.84.14 ran 0.84.14, and a mod that read the 0.7.0 entry got no snapshot, so it drew
+  no pull requests, tickets, or handoff. It runs that cli by `node`, one run at a time with a 10-second limit, and
+  reads nothing more from the plugin.
   With the plugin enabled but no entry for the folder, or when the mod runs outside a plugin cache, as with
   `--plugin-dir`, it runs instead the `lib/cli.mjs` beside an `aidrian` command on a checked PATH folder: a regular
   file, not a link, below that plugin folder, and outside the session's folder.
@@ -146,10 +157,12 @@ try {
   const config = process.env.CLAUDE_CONFIG_DIR || path.join(homedir(), '.claude');
   const installed = JSON.parse(readFileSync(path.join(config, 'plugins/installed_plugins.json'), 'utf8'));
   const entries = installed.plugins['aidrian@aidrian-harness'] ?? [];
-  // The install for this folder: the deepest local or project entry that holds it, else the user one.
-  const holds = (entry) => entry.projectPath && (cwd === entry.projectPath || cwd.startsWith(`${entry.projectPath}/`));
-  const entry = entries.filter(holds).sort((a, b) => b.projectPath.length - a.projectPath.length)[0]
-    ?? entries.find((candidate) => candidate.scope === 'user');
+  // The install for this folder: of the entries that hold it and the user one, the newest version, as Claude Code runs.
+  const holds = (entry) => entry.scope === 'user'
+    || (entry.projectPath && (cwd === entry.projectPath || cwd.startsWith(`${entry.projectPath}/`)));
+  const version = (entry) => String(entry.version ?? path.basename(entry.installPath)).split('.').map(Number);
+  const newer = (a, b) => version(b).map((part, index) => part - (version(a)[index] ?? 0)).find((diff) => diff) ?? 0;
+  const entry = entries.filter(holds).sort(newer)[0];
   const args = [path.join(entry.installPath, 'lib/cli.mjs'), 'session', 'snapshot', '--line'];
   if (typeof input.session_id === 'string') args.push(`--session=${input.session_id}`);
   if (typeof input.transcript_path === 'string') args.push(`--transcript=${input.transcript_path}`);
@@ -173,8 +186,8 @@ And point the status line at it in `~/.claude/settings.json`:
 ```
 
 - **Finding the command.** The script runs `aidrian session snapshot` as the `aidrian` command does, by `node` on the
-  plugin's `lib/cli.mjs`. It takes the install path Claude Code records in `installed_plugins.json`: the local or
-  project entry whose folder holds the session's folder, the deepest first, else the user entry. So it needs no
+  plugin's `lib/cli.mjs`. It takes the install path Claude Code records in `installed_plugins.json`: of the entries
+  whose folder holds the session's folder and the user entry, the newest version, as the mod picks it. So it needs no
   `aidrian` on the status line's PATH: the plugin's `bin/` is on the PATH of Claude Code's Bash tool, which the status
   line need not share.
 - **PATH.** The status line's PATH must hold `node`, `git`, and `gh`: the snapshot runs `git` and `gh` by name from

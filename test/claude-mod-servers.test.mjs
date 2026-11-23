@@ -145,6 +145,30 @@ test('another project`s entry is ignored, and a projectPath that only starts lik
   assert.equal((await cliOf(env.io(), sub)).cli, realpathSync(path.join(second, 'lib/cli.mjs')), 'the local entry holding the cwd first');
 });
 
+test('a stale entry for the folder never outranks a newer install: the newest version wins, then local, project, user', async () => {
+  const env = layout();
+  const stale = path.join(env.cache, 'aidrian/0.7.0');
+  write(path.join(stale, 'lib/cli.mjs'));
+  const newer = path.join(env.cache, 'aidrian/0.84.14');
+  write(path.join(newer, 'lib/cli.mjs'));
+  const cliIn = (folder) => realpathSync(path.join(folder, 'lib/cli.mjs'));
+  installs(env, { [`aidrian@${MARKET}`]: [
+    { scope: 'local', projectPath: env.project, installPath: stale, version: '0.7.0' },
+    { scope: 'user', installPath: newer, version: '0.84.14' },
+  ] });
+  assert.equal((await cliOf(env.io(), env.project)).cli, cliIn(newer), 'the user entry is newer than the folder`s local one');
+  installs(env, { [`aidrian@${MARKET}`]: [
+    { scope: 'local', projectPath: env.project, installPath: stale },
+    { scope: 'project', projectPath: env.project, installPath: newer },
+  ] });
+  assert.equal((await cliOf(env.io(), env.project)).cli, cliIn(newer), 'with no version field, the install folder names it');
+  installs(env, { [`aidrian@${MARKET}`]: [
+    { scope: 'user', installPath: env.install, version: '1.0.0' },
+    { scope: 'local', projectPath: env.project, installPath: env.install, version: '1.0.0' },
+  ] });
+  assert.equal((await cliOf(env.io(), env.project)).kind, 'plugin', 'a tie still resolves');
+});
+
 test('an install outside the marketplace`s aidrian cache, or a linked cli.mjs, is refused', async () => {
   const env = layout();
   const outside = path.join(env.base, 'elsewhere/aidrian');

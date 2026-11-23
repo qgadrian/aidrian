@@ -4,7 +4,7 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { cacheTtlOf, cleanModel, dateMs, effortOf, formatDuration, issueOf, modelVersion, repoOf, untilText } from '../plugins/aidrian-claude-mod/lib/pane-data.mjs';
+import { agentRowParts, cacheTtlOf, cleanModel, dateMs, effortOf, formatDuration, issueOf, modelVersion, repoOf, untilText } from '../plugins/aidrian-claude-mod/lib/pane-data.mjs';
 
 const text = (value) => [{ type: 'text', text: JSON.stringify(value) }];
 
@@ -80,4 +80,21 @@ test('the time until a reset is a duration, or empty for a date that does not pa
 test('a reset time is the milliseconds of a date string, or null for any value that is not one', () => {
   assert.equal(dateMs(new Date(185_000).toISOString()), 185_000);
   for (const at of ['not a date', '', '+999999-01-01T00:00:00Z', undefined, null, 7, Number.NaN]) assert.equal(dateMs(at), null, String(at));
+});
+
+test('an agent row shows its name, type, context, model, and effort, from the engine`s agent info', () => {
+  const text = (parts) => parts.map((each) => each.text).join('');
+  const agent = {
+    name: 'reviewer', type: 'aidrian:code-reviewer', label: 'Review the diff', description: 'Review',
+    model: 'claude-opus-5-5', effort: 'xhigh', contextWindowSize: 200_000, tokenCount: 96_000, status: 'running',
+  };
+  assert.equal(text(agentRowParts(agent, 80)), 'reviewer [aidrian:code-reviewer]  48% (96k) · 🪐 Opus 5.5 xhigh');
+  assert.equal(text(agentRowParts({ ...agent, status: 'completed' }, 80)).endsWith(' · completed'), true, 'a status past running shows');
+  assert.equal(text(agentRowParts({ ...agent, name: undefined }, 80)).startsWith('Review the diff ['), true, 'the label names an unnamed agent');
+  assert.equal(text(agentRowParts({ ...agent, contextWindowSize: undefined, model: 'claude-sonnet-5-5[1m]', tokenCount: 1_500_000 }, 80)).includes('150% (1.5M) · 🪶 Sonnet 5.5'), true);
+  const narrow = text(agentRowParts({ ...agent, name: 'a-very-long-agent-name-that-will-not-fit' }, 40));
+  assert.equal(narrow.endsWith('48% (96k) · 🪐 Opus 5.5 xhigh'), true, 'the context and the model always show');
+  assert.equal(narrow.includes('[aidrian:code-reviewer]'), false, 'the type drops before the name vanishes');
+  assert.equal(text(agentRowParts({ name: 'x\u001b[31m', type: 'Explore' }, 80)).includes('\u001b'), false, 'no escape reaches the row');
+  assert.equal(agentRowParts({ ...agent, tokenCount: 160_000 })[2].color, 'error', 'a full context is red');
 });

@@ -4,7 +4,7 @@ import type { EngineInterface, On, PluginOptions, SessionMeasureInput } from 'cl
 import type { AgentRow, Effort, Issue, Repo, SnapshotResult, Usage } from '../types'
 import { bandSegments, changeRows, changesParts, COLORS, displayText, noticeOf, ticketRows, ticketsOf, ticketsSummary } from '../lib/format.mjs'
 import type { Part, Row, Segment } from '../lib/format.mjs'
-import { cacheTtlOf, cleanModel, dateMs, effortOf, formatDuration, issueOf, repoOf } from '../lib/pane-data.mjs'
+import { agentRowParts, cacheTtlOf, cleanModel, dateMs, effortOf, formatDuration, issueOf, repoOf } from '../lib/pane-data.mjs'
 import { ISSUE_TOOL, issueLookup, LINEAR_SERVERS } from '../lib/servers.mjs'
 import { configDirOf, findTranscript, ownPlace, poller, runnerFor, runSnapshot } from '../lib/snapshot-client.mjs'
 
@@ -217,6 +217,25 @@ export function registerPane(on: On, options: PluginOptions) {
     }
 
     return band($.ui.resolve(e), await renderState($), settings, e.props.bodyColumns)
+  })
+
+  // Each subagent's row in the agent list under the prompt, in place of the deprecated subagentStatusLine setting.
+  on('ui.render', { component: 'AgentRow' }, async ($, e, next) => {
+    if (e.surface !== 'terminal' || e.props.isHidden === true) {
+      return next(e)
+    }
+
+    const { Text } = $.ui.resolve(e)
+
+    return (
+      <Text wrap="truncate-end">
+        {agentRowParts(e.props, (e.props.columns ?? 80) - 2).map((each, index) => (
+          <Text key={String(index)} color={each.color}>
+            {each.text}
+          </Text>
+        ))}
+      </Text>
+    )
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e, next) => {

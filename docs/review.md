@@ -857,11 +857,16 @@ always gets its independent review before the cap, then lets the earlier stages 
 when nothing is left to fix, and stops at the cap when a fix would need another head. A reviewer that fails or hits
 its quota gives the round back. After a fix, each pass re-reviews only what changed since its last review; a pass
 the change does not touch carries forward.
+A pass `aidrian pr attest` records on a head no round is on yet, with no step that dispatched it there, opens that head's round on the next step.
+Past the cap, that step stops at `round_limit`, so a pass attested on each new head still counts one round a head.
+Only a result the step would use counts, one whose files are the pass's own and whose evidence was not withheld: a pass it runs again opens nothing.
+A round a usable attested result opened or moved stays on its head when another pass then fails.
 
 **A quiet push.** A push whose change since the round's head is quiet opens no round: the round keeps its number,
-cap, and last-round flag, moves to the new head, and records the head it moved from in its `quiet` list. That holds in
-the last round too, so a quiet fix there is reviewed without reaching `round_limit`. A change is quiet when every file
-in it is one of:
+cap, and last-round flag, moves to the new head, and records the head it moved from in its `quiet` list.
+The step's output says so beside `round`: `round_kept` holds `from`, the head the round moved from, and `reason`, the line `plan.reasons` also holds.
+That holds in the last round too, so a quiet fix there is reviewed without reaching `round_limit`.
+A change is quiet when every file in it is one of:
 
 - prose or ignored, by `review.nonBehaviour` and `review.ignore`;
 - a test, by `**/*.test.*`, `**/*.spec.*`, `**/*_test.*`, a `test/`, `tests/`, `__tests__/`, or `spec/` folder, or a
@@ -1237,6 +1242,7 @@ check. Among them, on exactly that head:
 - the open findings of this machine's own reviewers, the local and independent stages, are the whole cause of the cap,
   each listed, each of `medium` severity or lower, and none a security finding, of a security pass, or of the
   `security-engineer`;
+- a review round stopped on the head: a cause judged past the cap by attested results alone (`past_cap`) is never waived;
 - no sign-off of the Human's is owed on the head;
 - the review bot passed exactly the head on the forge: a verdict never stands in for it;
 - the host confirms the judge's dispatch in the dispatch log, which Codex cannot, and no judge has ruled on the head yet;
@@ -1443,7 +1449,11 @@ shows, such as a waiver's reason, has `<!--` and `-->` escaped, so no text can c
   stage, whether each is listed, the flows left unsigned, deleted flow tests, failing flow checks, passes that never
   reviewed the head, the bot's own round limit, and the flows the Human signs off with no sign-off kept. Its flows are
   every flow of the plan not all held, whichever stage answers for it. The cause of a reviewed head is kept on its
-  round too (`rounds[].cap`), which a later cap on a head no round reviewed reads. The posted copy keeps no `cap`,
+  round too (`rounds[].cap`), which a later cap on a head no round reviewed reads.
+  A head past the cap that holds a result a pass uses, as one `aidrian pr attest` recorded there, is judged by its own results instead.
+  That cause is `past_cap`: the step stopped before the flows' checks, so no waiver passes it until a review round, the Human's extra round, runs.
+  It replaces the round's, so a later head no pass reviewed inherits no cause, and a waiver refuses that head too.
+  The posted copy keeps no `cap`,
   on the outcome or a round, and no waiver's `judge_id` and `session`. Each binds to one head and
   one kind. The summary comment shows them under **Merge guard waivers**, each marked an audit entry, not proof; the
   posted copy keeps no `judge_id` or `session`.

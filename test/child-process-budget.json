@@ -46,6 +46,7 @@
     "review-merge-commit.test.mjs": 5350,
     "review-publish.test.mjs": 750,
     "review-record-repo.test.mjs": 600,
+    "review-round-per-head.test.mjs": 1450,
     "review-rounds-answer.test.mjs": 2250,
     "review-run-posts.test.mjs": 9000,
     "review-run-signoff.test.mjs": 12200,

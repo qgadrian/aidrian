@@ -3,6 +3,7 @@
 `aidrian pr review <n>` prints one JSON object. Every status carries `pr`, `head`, `base`, `depth`, `round`,
 `max_rounds`, `engine`, and `plan` (its depth, reasons, flows, and stages). docs/review.md in the aidrian
 repository describes the plan itself.
+A status on a head a quiet push moved the round to carries `round_kept` too: `from`, the head the round moved from, and `reason`, why it is the same round.
 
 With `--with-bot`, run the step right after each push, before any other review of that head: the step that opens the
 head's round asks the review bot, so the bot, CI, and the local passes review the head together. Never hold the bot

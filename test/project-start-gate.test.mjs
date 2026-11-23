@@ -800,6 +800,52 @@ test('a first attempt whose branch the forge has already is refused, recording n
   assert.equal(existsSync(path.dirname(work(fx))), false, 'no attempt folder is left, as no start row names it for the sweep');
 });
 
+const ISSUE_ONE = { key: 'ENG-1', branch: 'feat/eng-1-export', status: 'unstarted', priority: 1 };
+// A run `first` that started ENG-1 and parked it on its pull request #12, after the branch on the forge got `files`,
+// then the run `launch`, whose snapshot holds ENG-1 as started, as the tracker now shows it: the branch's head.
+const parkedEarlier = (t, files) => {
+  const fx = runFixture(t, { init: false });
+  const input = (name, issues) => {
+    const file = path.join(fx.dir, `${name}.input`);
+    writeFileSync(file, JSON.stringify({ issues, teams: ['ENG'] }));
+    return file;
+  };
+  assert.equal(fx.cmd(['init', 'first', '--file', input('first', [ISSUE_ONE])]).exitCode, 0);
+  const scratch = path.join(fx.root, 'scratch');
+  execFileSync('git', ['clone', '-q', fx.bare, scratch], { stdio: 'pipe' });
+  const head = pushFiles(fx, scratch, files);
+  const now = at(Date.now());
+  appendToRun(fx.state, 'first', () => ({ rows: [
+    { event: 'result', key: 'ENG-1', attempt: 1, status: 'pr_open', pr: 12, at: now },
+    { event: 'issue', key: 'ENG-1', state: 'parked', decision: 'pr-open', at: now },
+  ] }));
+  const launched = fx.cmd(['init', 'launch', '--file', input('launch', [{ ...ISSUE_ONE, status: 'started' }])]);
+  assert.equal(launched.exitCode, 0, launched.err.join('\n'));
+  return { fx, head };
+};
+
+test('a started issue an earlier run parked starts in the new run from its branch on the forge, whose pull request is its own', (t) => {
+  const { fx, head } = parkedEarlier(t, { 'src/export.js': 'export const csv = true;\n' });
+  const started = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(started.exitCode, 0, started.err.join('\n'));
+  assert.equal(started.out.find((line) => line.startsWith('branch: ')), 'branch: feat/eng-1-export');
+  assert.equal(fx.git('-C', work(fx), 'rev-parse', 'HEAD').trim(), head, 'the branch as the forge has it, not a fresh cut');
+  const prompt = fx.claude.starts()[0].args.at(-1);
+  assert.ok(prompt.includes('An earlier run of this project, first, started this issue and parked it: the branch feat/eng-1-export on the forge holds the work it pushed, and an open pull request from that branch is this issue\'s own; go on from there, and open no second one.'), prompt);
+  assert.doesNotMatch(prompt, /superseded|starts fresh/u);
+});
+
+test('a parked issue whose branch changed an instruction file starts fresh in the new run, and closes the earlier run\'s open pull request', (t) => {
+  const { fx, head } = parkedEarlier(t, { '.aidrian/knowledge/docs.json': '{"dir":"docs","docs":{}}\n' });
+  fx.forge.change = viewing(fx, '12', { state: 'OPEN', baseRefName: 'main', headRefName: 'feat/eng-1-export', headRefOid: head, url: 'https://github.com/acme/widgets/pull/12', isCrossRepository: false });
+  const started = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(started.exitCode, 0, started.err.join('\n'));
+  assert.equal(started.out.find((line) => line.startsWith('branch: ')), 'branch: feat/eng-1-export-a1');
+  const prompt = fx.claude.starts()[0].args.at(-1);
+  assert.ok(prompt.includes('close pull request https://github.com/acme/widgets/pull/12 with the comment "superseded by #<the new pull request\'s number>"'), prompt);
+  assert.doesNotMatch(prompt, /An earlier run of this project/u);
+});
+
 test('the main checkout\'s own host files no longer refuse a start: the session works in its clone, and its sandbox denies reads of the main checkout', (t) => {
   const fx = runFixture(t, { ignore: ['.claude/settings.local.json'] });
   mkdirSync(path.join(fx.dir, '.claude/skills/merge-it'), { recursive: true });

@@ -35,7 +35,7 @@ import { isQuotaNotice } from './pr-await-review.mjs';
 import { branchPolicies } from './pr-auto-merge.mjs';
 import { mayFollowTeamDefault } from './project.mjs';
 import { recordedTexts } from './project-issue-text.mjs';
-import { activeRuns, nextLines, pinnedRepository, planRun, readRun, readSnapshotInput, refNames, runPlace, runsFolder, teamsNote } from './project-run.mjs';
+import { activeRuns, nextLines, pinnedRepository, planRun, readRun, readSnapshotInput, refNames, resumedIssues, resumedLine, runPlace, runsFolder, teamsNote } from './project-run.mjs';
 import { runParallel, teamPolicy } from './project-run-gate.mjs';
 import { accessProblem, commitProblem, guardedFolders, hostStartProblem, PROBE_BRANCH } from './project-start.mjs';
 import { ancestorProblem, pushProblem, repositoryProblem } from './project-trust.mjs';
@@ -410,7 +410,9 @@ function secretsLine({ facade, named, repository, policy, check, asks }) {
 
 // `aidrian project init RUN --file PATH --check`: the input's checks, as init makes them, and the order, with no run
 // written: a `blocker snapshot` line for each problem, for each issue blocked by a cycle or by a status the run does not
-// start from, and, when the base branch's projectRun.mcpServers holds no tracker server an issue's session could read
+// start from, a started issue an earlier run parked on the same branch excepted, as init excepts it (project-run.mjs
+// resumedIssues, in the state folder runPlace resolves; none when it refuses), which a `resumed:` line names, and,
+// when the base branch's projectRun.mcpServers holds no tracker server an issue's session could read
 // the tracker through, a `blocker texts` line for each issue to start whose text no tracker read of `session` recorded
 // (project-issue-text.mjs recordedTexts); then `next` lines as `aidrian project next` prints them for turn 1, with the
 // maxParallel it reads (project-run-gate.mjs runParallel, through `forge` at the repository init would pin), and a
@@ -419,7 +421,9 @@ export function snapshotCheck({ project, config, file, session = null, env = pro
   const read = readSnapshotInput(file, refNames(project, config));
   if (!read.snapshot) return { exitCode: 1, out: read.problems.slice(0, 50).map((problem) => `blocker snapshot: ${problem}`), err: ['aidrian project init --check: fix the snapshot input, then check it again'] };
   const kept = { texts: recordedTexts(session, read.snapshot.issues.map((issue) => issue.key), { env, ...(home ? { home } : {}) }) };
-  const plan = planRun(read.snapshot, new Map(), { maxParallel: runParallel(project, pinnedRepository(project), forge ?? forgeFor(project.root)) });
+  const place = runPlace(project, config, { env, home });
+  const resumed = place.state ? resumedIssues(place.state, read.snapshot) : [];
+  const plan = planRun(resumed.length ? { ...read.snapshot, resumed } : read.snapshot, new Map(), { maxParallel: runParallel(project, pinnedRepository(project), forge ?? forgeFor(project.root)) });
   const blockers = plan.blocked.filter(({ reason }) => reason === 'cycle' || reason === 'status')
     .map(({ key, reason, on }) => `blocker snapshot: ${key} is ${reason === 'cycle' ? `in a cycle of blockers, ${on.join(', ')}, so it never starts` : `${on[0]} in the tracker, which a run does not start from`}`);
   if (!trackerReachable(baseBranchTip(project.root) ? baseBranchConfig(project, 'projectRun') : {})) {
@@ -428,7 +432,7 @@ export function snapshotCheck({ project, config, file, session = null, env = pro
       .map((issue) => `blocker texts: ${issue.key} has no text, and projectRun.mcpServers holds no tracker server its session could read it through; read it in this session with the tracker's own issue read, whose answer the run records`));
   }
   const teams = teamsNote(read.snapshot);
-  const out = [`ok snapshot ${read.snapshot.issues.length} issues, ${Object.keys(kept.texts).length} with text`, ...blockers, ...nextLines(plan), ...(teams ? [`note teams: ${teams}`] : [])];
+  const out = [`ok snapshot ${read.snapshot.issues.length} issues, ${Object.keys(kept.texts).length} with text`, ...(resumed.length ? [resumedLine(resumed)] : []), ...blockers, ...nextLines(plan), ...(teams ? [`note teams: ${teams}`] : [])];
   return blockers.length ? { exitCode: 1, out, err: ['aidrian project init --check: clear each blocker, then check again'] } : { exitCode: 0, out, err: [] };
 }
 

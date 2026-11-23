@@ -253,8 +253,10 @@ export function stateWorkFolders(state, { env, home }) {
 // branch as it is and checks out the branch `fresh` from the tip instead, since no session no Human attends starts on
 // instructions no review saw (trustProblem): `branch` is the one checked out, and `superseded` names the one left,
 // { branch, sha, files }, else null. A head the tip already holds goes on from the tip, and a `fresh` name another
-// issue's branch takes (`reserved`) is { problem }. `env` is the environment of its network calls.
-export function prepareAttempt({ project, state, run, key, attempt, branch, fresh, reserved = new Set(), tip, env }) {
+// issue's branch takes (`reserved`) is { problem }. The first attempt of an issue an earlier run parked (`resumed`,
+// project-run.mjs resumedIssues) is taken as a later one: the branch the forge has is that run's work, not someone
+// else's. `env` is the environment of its network calls.
+export function prepareAttempt({ project, state, run, key, attempt, branch, fresh, reserved = new Set(), resumed = false, tip, env }) {
   const folder = attemptFolder(state, run, key, attempt);
   const [work, gitFolder, drop, cache] = ['work', 'git', 'drop', 'cache'].map((name) => path.join(folder, name));
   const main = project.checkouts.at(-1);
@@ -293,10 +295,12 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, fres
   let used = branch;
   let superseded = null;
   const listed = git(['ls-remote', '--exit-code', '--heads', 'origin', `refs/heads/${branch}`]);
-  // A first attempt cuts the branch fresh from the base tip: one the forge has already is someone else's work.
-  if (attempt === 1 && listed.status === 0) return gone(`the branch ${branch} is on the forge already, and a first attempt cuts it fresh from the base tip; delete it on the forge, or name the issue another branch, then start again`);
-  if (attempt === 1 && listed.status !== 2) return failed('ls-remote', listed);
-  if (attempt > 1) {
+  // A first attempt cuts the branch fresh from the base tip: one the forge has already is someone else's work, unless an
+  // earlier run parked the issue on it.
+  const later = attempt > 1 || resumed;
+  if (!later && listed.status === 0) return gone(`the branch ${branch} is on the forge already, and a first attempt cuts it fresh from the base tip; delete it on the forge, or name the issue another branch, then start again`);
+  if (!later && listed.status !== 2) return failed('ls-remote', listed);
+  if (later) {
     if (listed.status === 0) {
       const fetched = git(['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`]);
       if (fetched.status !== 0) return failed('fetch', fetched);

@@ -19,7 +19,7 @@ import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { noteFrom, openStore, storePath } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { LOCKED } from '../plugins/aidrian/lib/jsonl.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
-import { INPUT_CAP, initRun, pinnedRepository, readCapped, readRun, runFolder, runPlace, runsFolder, writeSummary } from '../plugins/aidrian/lib/project-run.mjs';
+import { appendToRun, INPUT_CAP, initRun, pinnedRepository, planRun, readCapped, readRun, runFolder, runPlace, runsFolder, writeSummary } from '../plugins/aidrian/lib/project-run.mjs';
 import { markPending, markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { recordIssue } from './project-start-fixture.mjs';
 
@@ -132,6 +132,48 @@ test('one run per project is active: a second run waits until the first is done,
   for (const key of ['ENG-1', 'ENG-2', 'ENG-3']) recordIssue(state, 'launch', { key, state: 'done' });
   recordIssue(state, 'launch', { key: 'ENG-4', state: 'parked', decision: 'typo-scope' });
   assert.equal(init('second', input(SNAPSHOT)).exitCode, 0, 'nothing runs or may start in the first run, so it is done');
+});
+
+test('init starts a started issue an earlier run parked on the same branch, and keeps every other started issue blocked', (t) => {
+  const { state, input, init } = setup(t);
+  const first = { issues: [
+    { key: 'ENG-1', branch: 'feat/eng-1-export', status: 'unstarted' },
+    { key: 'ENG-5', branch: 'feat/eng-5-done', status: 'unstarted' },
+    { key: 'ENG-6', branch: 'feat/eng-6-moved', status: 'unstarted' },
+  ] };
+  assert.equal(init('first', input(first, 'first.json')).exitCode, 0);
+  const at = new Date().toISOString();
+  // ENG-1 parked on its pull request; ENG-6 parked after its latest attempt moved to a fresh branch; ENG-5 merged.
+  appendToRun(state, 'first', () => ({ rows: [
+    { event: 'result', key: 'ENG-1', attempt: 1, status: 'pr_open', pr: 12, at },
+    { event: 'issue', key: 'ENG-1', state: 'parked', decision: 'pr-open', at },
+    { event: 'start', key: 'ENG-6', attempt: 2, branch: 'feat/eng-6-moved-a2', outcome: 'started', at },
+    { event: 'issue', key: 'ENG-6', state: 'parked', decision: 'blocked', at },
+    { event: 'issue', key: 'ENG-5', state: 'done', at },
+  ] }));
+  const second = { issues: [
+    { key: 'ENG-1', branch: 'feat/eng-1-export', status: 'started' },
+    { key: 'ENG-6', branch: 'feat/eng-6-moved', status: 'started' },
+    { key: 'ENG-7', branch: 'feat/eng-7-outside', status: 'started' },
+    { key: 'ENG-8', branch: 'feat/eng-8-renamed', status: 'unstarted' },
+  ], resumed: [{ key: 'ENG-7', run: 'first', pr: null }] };
+  const result = init('second', input(second, 'second.json'));
+  assert.equal(result.exitCode, 0, result.err.join('\n'));
+  assert.ok(result.out.includes('resumed: 1 started issue an earlier run parked on the same branch, which this run starts again: ENG-1'), result.out.join('\n'));
+  const found = readRun(state, 'second');
+  assert.equal(found.problem, undefined);
+  // The driver's own `resumed` is dropped: only init's read of the earlier runs names one.
+  assert.deepEqual(found.snapshot.resumed, [{ key: 'ENG-1', run: 'first', pr: 12 }]);
+  const plan = planRun(found.snapshot, found.states, { maxParallel: 4 });
+  assert.deepEqual(plan.next.map(({ key }) => key), ['ENG-1', 'ENG-8']);
+  // ENG-6's work is on another branch than the snapshot names, and no run parked ENG-7: someone's work outside the run.
+  assert.deepEqual(plan.blocked, [{ key: 'ENG-6', reason: 'status', on: ['started'] }, { key: 'ENG-7', reason: 'status', on: ['started'] }]);
+  // The latest run that records an issue decides: ENG-1 is done in the second run, so a third does not resume it.
+  for (const key of ['ENG-1', 'ENG-8']) appendToRun(state, 'second', () => ({ rows: [{ event: 'issue', key, state: 'done', at }] }));
+  const later = init('third', input({ issues: [{ key: 'ENG-1', branch: 'feat/eng-1-export', status: 'started' }] }, 'third.json'));
+  assert.equal(later.exitCode, 0, later.err.join('\n'));
+  assert.equal(readRun(state, 'third').snapshot.resumed, undefined);
+  assert.deepEqual(planRun(readRun(state, 'third').snapshot).blocked, [{ key: 'ENG-1', reason: 'status', on: ['started'] }]);
 });
 
 test('init holds the runs lock while it checks and makes the run: a live foreign lock makes it throw, and no run is made', (t) => {

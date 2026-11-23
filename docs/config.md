@@ -1960,7 +1960,8 @@ attempt's clone pushes to, read before its session starts, and a clone that push
 `remote.origin.pushurl` in the user's git config makes it, halts the start; the issue session's one push goes only there
 ([hooks.md](hooks.md#agent-gates)). A host that would refuse that push in the driver session's permission mode, which the session
 takes, halts the start too, before the host starts anything ([the push preflight](handoff.md#the-push-preflight)). Every start is confined to a fresh
-clone under its host's sandbox, and a host that is not halts the start. A later attempt goes on from its issue's branch
+clone under its host's sandbox, and a host that is not halts the start. A later attempt, and the first attempt of an
+issue `resumed` from an earlier run, goes on from its issue's branch
 as the forge holds it, the branch of its latest start that ran a session. When that head differs from the base tip in a
 host config or instruction file, it goes on from the tip on the same branch if the tip already holds the head, and
 otherwise, such as when the branch changed a knowledge index a docs issue registered its doc in, or only the base
@@ -1971,7 +1972,8 @@ branch is reused. The session's task and the start's stderr give only a count of
 cleaned to one line, go to `logs/<KEY>.<attempt>.left.txt` in the run's folder, beside the run log a host may truncate;
 when that file cannot be written, the start still goes on, and its stderr says the names could not be written.
 The task names the old branch's pull request by its link, which the forge adapter takes only as the canonical link of
-the pinned repository's pull request with the number the result named, and only when the forge shows it
+the pinned repository's pull request with the number the result named (for a `resumed` issue with no result in this run, the one
+the earlier run's result named), and only when the forge shows it
 open in the pinned repository, into the default branch, from the old branch at the head the attempt fetched, and the
 session closes it by that link, once the new pull request is open, with the comment `superseded by #<new>`, only if
 `gh pr view` still shows the same;
@@ -2052,7 +2054,13 @@ The snapshot input is one JSON object, at most 1 MiB, read as a regular file and
   points to), does not start with the name of a remote, and has no part that is a HEAD name, such as `HEAD` or `FETCH_HEAD`.
   No part is 40 or 64 hex digits, as a commit id is.
 - `status` is a status type: `triage`, `backlog`, `unstarted`, `started`, `completed`, or `canceled`.
-  A run starts only a `backlog` or `unstarted` issue.
+  A run starts only a `backlog` or `unstarted` issue, and a `started` one that an earlier run of the project parked
+  on the branch the snapshot names: in the runs folder, the run with the latest `init` among those that record the issue
+  records it parked, and the branch its latest start that ran worked on is this one. That run moved it to started and
+  parked it, as on a pull request left open, so the issue is the run's own work; `init` records it in `snapshot.json`
+  as `resumed`, with that run and the pull request its latest result named, prints a `resumed:` line, and `next`,
+  `start`, and the gate read the same plan. A driver's input never gives `resumed`. Any other `started` issue is
+  someone's work outside the run and stays blocked.
 - `priority` is 1, the most urgent, to 4, or 0 for none, which comes last.
 - `outside` lists the status of each blocker outside the project. A blocker that is not `completed`, or not listed, blocks.
 - `teams`, optional, lists every team key of the tracker workspace, at most 500, each a capital letter then capitals or
@@ -2143,7 +2151,7 @@ from any branch, and a `note triggers` line for other services that act on a pus
 preview deploys and ChatOps bots. It prints `ok NAME`, `blocker NAME: WHY`, `note NAME: WHAT`,
 or `ask NAME: WHAT` for a read the forge or tracker lacks, such as the decision label's existence, and exits 1 on any
 blocker. `init RUN --file PATH --check` checks the input as `init` would, prints its blockers
-(problems, cycles, issues started outside the run, and, when `projectRun.mcpServers` holds no tracker server, each issue
+(problems, cycles, issues started outside the run, a `resumed:` line for the started issues an earlier run parked, and, when `projectRun.mcpServers` holds no tracker server, each issue
 to start with no text) and the `next` lines, and writes no run. An issue's text never comes from a file a session
 writes: after each call of a tracker's issue read (Linear's `get_issue` and `list_issues`), whatever `tracker.enabled`
 says, in a project whose base branch's config.json sets `projectRun.allow`, the post-call tracker hook records each

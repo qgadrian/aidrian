@@ -2230,9 +2230,11 @@ extension, `index.*` by its folder and name, any other file by its path. A test 
 its own package.json, is left out for that package's runner. It runs `testing.changedCommand` with the files after it,
 else `npm test --` when package.json has a test script, and exits with that command's status. With `npm test --`, a test
 file must also be a module `node --test` loads with no flag, `.js`, `.mjs`, or `.cjs`, and no Go test is given. Any other
-file in a test folder, such as a fixture, counts as a changed file named by its path or its file name, so the tests that
-name it run instead of the fixture itself. A project with `.ts` tests sets `testing.changedCommand`. A project whose CI cannot
-run the suite leaves `testing.pushFirstMinutes` at 0, and runs the suite once before marking ready.
+file in a test folder, such as a fixture or a `.jsx` file named like a test, counts as a changed file named by its path or
+its file name, so the tests that name it run instead of the fixture itself. A configured command gets every changed file
+in a test folder as it is, with no search for the tests that name it, unless it is no longer a file on disk, staged or not, or is in a nested package.
+A project with `.ts` tests sets `testing.changedCommand`.
+A project whose CI cannot run the suite leaves `testing.pushFirstMinutes` at 0, and runs the suite once before marking ready.
 
 ## Overrides
 

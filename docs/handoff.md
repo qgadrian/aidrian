@@ -447,8 +447,10 @@ the handoff goes on by the clear route with what to change, and nothing is kept,
    floor under the short id the start printed, and every session id that starts with it reads that floor. Under the
    same id it files the session's unattended mark, `$XDG_STATE_HOME/aidrian/unattended/<id>.json`, which names the
    project's main checkout, so the hooks know the session wherever its calls run (Limits, below). A session with
-   several marks, under its full id and a short one or in both mark folders, is held by the most restrictive: a failed
-   sandbox proof, then an owed one, then a mark that cannot be read, then a project run's issue, then a plain mark.
+   several marks, under its full id and a short one or in both mark folders, is held by the most restrictive, as the
+   agent gate hook enforces it: a failed sandbox proof, then an owed one, then a passed one, whose plan still hides its
+   denied stores from the file tools, then a mark that cannot be read, a proof state with no main checkout included,
+   then a project run's issue, then a plain mark.
    Once the Human types into the session, the agent gate hook files `attended.<id>.json` beside each plain mark that
    holds it, in each mark folder, on the session's next main tool call, and the session is attended from then on: its
    mark reads as none, and its chain floor, kept for the count, no longer holds it. Once that record is in each of those
@@ -458,7 +460,7 @@ the handoff goes on by the clear route with what to change, and nothing is kept,
    ([Claude Code](providers/claude-code.md#prompts-the-human-typed)). A mark that names a project run's issue, one that
    tracks a sandbox proof, and a mark that cannot be read stay, whoever types; so does a pending hold, one that cannot be
    read included, which also holds a session already attended, and keeps one from being recorded attended while it
-   lasts. A host whose adapter has no `humanPrompt` keeps the mark for the session's life
+   lasts, a hold filed while the hook reads the transcript included. A host whose adapter has no `humanPrompt` keeps the mark for the session's life
    (`lib/unattended-mark.mjs liftAttended`, `isAttended`).
    A start that surely made nothing, one whose host command never ran or refused the start in a way the host adapter
    knows, such as an untrusted folder, while the listing shows no new session, falls back to the clear route. A start

@@ -221,12 +221,15 @@ export function readUnattendedMark(session, { env = process.env, home, now = Dat
   return pendingHold(pending, session, processUid(), now);
 }
 
-// How much a mark of a session's own refuses, so the scan gives the most: a failed sandbox proof, which runs nothing,
-// then an owed one, then a mark it cannot read, then an issue's, then a plain one.
+// How much a mark of a session's own refuses, so the scan gives the most, as the agent gate hook enforces it
+// (confine-guard.mjs proofHold, which reads a proof state only beside a root): a failed sandbox proof, which runs
+// nothing, then an owed one, then a passed one, whose plan still hides its denied stores from every file-tool read,
+// then a mark it cannot read, a proof state with no root included, then an issue's, then a plain one.
 function restriction(mark) {
-  if (mark.confine === 'failed') return 4;
-  if (mark.confine === true) return 3;
   if (mark.root === null) return 2;
+  if (mark.confine === 'failed') return 5;
+  if (mark.confine === true) return 4;
+  if (mark.confine === 'passed') return 3;
   return plainMark(mark) ? 0 : 1;
 }
 
@@ -292,18 +295,26 @@ function attendedIn(folder, session, now) {
 // session's host adapter (hosts/index.mjs humanPrompts); a peer's message, a scheduled prompt, and the start prompt
 // never are. Only a session whose every mark is plain is lifted: a project run's issue mark, a mark that tracks a
 // sandbox proof, a mark it cannot read, and a pending hold that holds it, one it cannot read included, stay, whoever
-// types. The record goes beside each plain mark that holds it, so a reader of either folder sees it, after a sweep of
+// types, read again after the transcript so a hold filed meanwhile counts too.
+// The record goes beside each plain mark that holds it, so a reader of either folder sees it, after a sweep of
 // that folder. A session already recorded in each of those folders is attended as it is: neither its transcript is read
 // nor its record written again. Otherwise it reads at most PROMPT_TAIL bytes of the transcript's end, from the regular
 // file the path names when it opens it. Returns whether the session is recorded attended; never throws.
 export function liftAttended(session, file, { env = process.env, home, now = Date.now(), isHuman = () => false, still = () => true } = {}) {
   try {
     if (typeof session !== 'string' || !SESSION_ID.test(session) || typeof file !== 'string' || !path.isAbsolute(file)) return false;
-    const { holds, pending, unchecked } = scanMarks(session, { env, home, now });
-    if (unchecked || !holds.length || !holds.every(({ mark }) => plainMark(mark)) || pendingHold(pending, session, processUid(), now)) return false;
-    const missing = [...new Set(holds.map(({ folder }) => folder))].filter((folder) => !attendedIn(folder, session, now));
-    if (!missing.length) return true;
+    // The folders to record the session attended in, or null when a hold other than plain marks holds it.
+    const unrecorded = () => {
+      const { holds, pending, unchecked } = scanMarks(session, { env, home, now });
+      if (unchecked || !holds.length || !holds.every(({ mark }) => plainMark(mark)) || pendingHold(pending, session, processUid(), now)) return null;
+      return [...new Set(holds.map(({ folder }) => folder))].filter((folder) => !attendedIn(folder, session, now));
+    };
+    const before = unrecorded();
+    if (!before?.length) return before !== null;
     if (!tailEntries(file).some((entry) => isHuman(entry)) || !still()) return false;
+    // Read again after the transcript: a hold filed meanwhile still holds.
+    const missing = unrecorded();
+    if (!missing) return false;
     for (const folder of missing) {
       if (!trustedFolder(folder)) return false;
       sweepMarks(folder, now);

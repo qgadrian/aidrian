@@ -13,6 +13,7 @@ import path from 'node:path';
 import test, { after } from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
+import { confineDenial } from '../plugins/aidrian/lib/confine-guard.mjs';
 import { unattendedHere } from '../plugins/aidrian/lib/handoff-continue.mjs';
 import { startedUnattended } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { noteFrom, openStore, storePath } from '../plugins/aidrian/lib/handoff-markers.mjs';
@@ -584,4 +585,45 @@ test('an attended session is not lifted again: its record is neither rewritten n
   assert.equal(lift(session), true, 'still attended');
   assert.equal(Math.floor(statSync(record).mtimeMs / 1000), earlier, 'the record was not rewritten');
   assert.equal(lift(session, path.join(marks, 'no-such.jsonl')), true, 'no transcript is read');
+});
+
+test('the scan gives the mark the agent gate hook enforces: a proof state counts only with a root, and a passed proof keeps its denied stores', (t) => {
+  const { root, ownMarks, marks, write, read } = markSetup(t);
+  const outside = folder(t, 'aidrian-outside-');
+  const call = (input) => ({ session_id: 'x', cwd: outside, tool_name: 'Bash', tool_input: { command: 'ls' }, ...input });
+  // An owed proof with a root, then a failed one whose root cannot be read, which the hook would not hold to its proof.
+  const owed = 'feed0018-0000-4000-8000-000000000018';
+  write(marks, `${owed}.json`, { project: 'r1', issue: 'ENG-1', confine: true });
+  write(ownMarks, `${owed}.json`, { root: 'relative', project: 'r1', issue: 'ENG-1', confine: 'failed' });
+  assert.deepEqual(read(owed), { root, project: 'r1', issue: 'ENG-1', confine: true });
+  assert.equal(confineDenial(call(), { mark: read(owed) })?.match, 'sandbox proof owed', 'outside the clone too');
+  // A passed proof whose plan hides a store, beside a mark that cannot be read and a proof-less issue mark.
+  const work = path.join(folder(t, 'aidrian-run-state-'), 'runs', 'r1', 'attempts', 'ENG-1.1', 'work');
+  mkdirSync(work, { recursive: true });
+  const store = folder(t, 'aidrian-denied-store-');
+  writeFileSync(path.join(path.dirname(work), 'confine-plan.json'), JSON.stringify({ unreadable: [store] }));
+  for (const [first, name] of [['not json', 'feed0019-0000-4000-8000-000000000019'], [{ project: 'r1', issue: 'ENG-1' }, 'feed001a-0000-4000-8000-00000000001a']]) {
+    write(marks, `${name}.json`, first);
+    write(ownMarks, `${name}.json`, { cwd: work, project: 'r1', issue: 'ENG-1', confine: 'passed' });
+    assert.equal(read(name)?.confine, 'passed', name);
+    const reads = call({ tool_name: 'Read', tool_input: { file_path: path.join(store, 'secret') } });
+    assert.equal(confineDenial(reads, { mark: read(name) })?.match, 'reads a denied store', `${name}: a read outside the clone`);
+    assert.equal(confineDenial(call(), { mark: read(name) }), null, `${name}: another call runs`);
+  }
+});
+
+test('a hold filed while the transcript is read keeps the session from being recorded attended', (t) => {
+  const { env, home, root, marks, write } = markSetup(t);
+  const transcript = path.join(folder(t, 'aidrian-transcript-'), 'typed.jsonl');
+  writeFileSync(transcript, `${JSON.stringify({ type: 'user', isSidechain: false, entrypoint: 'cli', message: { role: 'user', content: 'x' }, origin: { kind: 'human' }, turnOrigin: 'human', turnPosition: { promptIndex: 2, turnIndex: 2 } })}\n`);
+  const lift = (session, meanwhile) => liftAttended(session, transcript, { env, home, isHuman: claudeCode.humanPrompt, still: () => (meanwhile(), true) });
+  const pendingSession = 'feed001b-0000-4000-8000-00000000001b';
+  write(marks, `${pendingSession}.json`, {});
+  assert.equal(lift(pendingSession, () => assert.ok(markPending('feed001c-0000-4000-8000-00000000001c', { cwd: root, root, env }))), false, 'a pending hold');
+  assert.equal(isAttended(pendingSession, { env, home }), false);
+  const issueSession = 'feed001d-0000-4000-8000-00000000001d';
+  write(marks, `${issueSession}.json`, {});
+  rmSync(path.join(marks, 'pending.feed001c-0000-4000-8000-00000000001c.json'));
+  assert.equal(lift(issueSession, () => write(marks, `${issueSession.slice(0, 8)}.json`, { project: 'r1', issue: 'ENG-1' })), false, 'an issue mark');
+  assert.equal(isAttended(issueSession, { env, home }), false);
 });

@@ -2217,7 +2217,10 @@ default branch on `origin`, uncommitted and untracked files included. A test fil
 beside a changed `.go` file, or one that names a changed file: a code file by its name and by its name without the
 extension, `index.*` by its folder and name, any other file by its path. A test file in a nested package, a folder with
 its own package.json, is left out for that package's runner. It runs `testing.changedCommand` with the files after it,
-else `npm test --` when package.json has a test script, and exits with that command's status. A project whose CI cannot
+else `npm test --` when package.json has a test script, and exits with that command's status. With `npm test --`, a test
+file must also be a module `node --test` loads with no flag, `.js`, `.mjs`, or `.cjs`, and no Go test is given. Any other
+file in a test folder, such as a fixture, counts as a changed file named by its path or its file name, so the tests that
+name it run instead of the fixture itself. A project with `.ts` tests sets `testing.changedCommand`. A project whose CI cannot
 run the suite leaves `testing.pushFirstMinutes` at 0, and runs the suite once before marking ready.
 
 ## Overrides

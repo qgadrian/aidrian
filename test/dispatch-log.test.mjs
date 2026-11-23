@@ -479,11 +479,21 @@ test('the stop hook fills every briefed handoff file of an orchestrator\'s brief
   const claims = await hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'claims', agent_type: 'aidrian:backend-developer', agent_transcript_path: transcriptOut, last_assistant_message: `Handoff written to ${outside}.`, stop_hook_active: false });
   assert.equal(claims.status, 2);
   assert.doesNotMatch(claims.stderr, /If you meant to write it, write it now/u, claims.stderr);
+  // Nor when the report spells the same path another way.
+  const spelled = path.join(base, 'agent-spelled.jsonl');
+  writeFileSync(spelled, JSON.stringify({ type: 'user', timestamp: new Date().toISOString(), message: { role: 'user', content: 'Implement slice S3.\nHandoff file: ./reports/S3-backend-developer.json' } }));
+  const respelled = await hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'spelled', agent_type: 'aidrian:backend-developer', agent_transcript_path: spelled, last_assistant_message: 'Handoff written to reports/S3-backend-developer.json.', stop_hook_active: false });
+  assert.equal(respelled.status, 2);
+  assert.doesNotMatch(respelled.stderr, /If you meant to write it, write it now/u, respelled.stderr);
   // Two markers on one line, each opening a sentence: both are read.
   const [first, second] = ['S5a', 'S5b'].map((slice) => path.join(dispatch, `feat-eng-7-sync-${slice}-backend-developer.json`));
   const both = await stop('both', `Implement S5. Handoff file: ${first}. Then S5b. Handoff file: x${second}`);
   assert.equal(both.status, 2, 'the second marker on the line is read, and its relative path reported');
   assert.ok(both.stderr.includes(`x${second}`), both.stderr);
+  // A backticked path that holds a sentence and a marker is still one path.
+  const quoted = path.join(dispatch, 'release. Handoff file: v2-backend-developer.json');
+  assert.equal((await stop('quoted', `Implement S6.\nHandoff file: \`${quoted}\``)).status, 0);
+  assert.equal(JSON.parse(readFileSync(quoted, 'utf8')).decision, 'quoted');
   // A relative path an earlier run left is still a mistake to report; one this run wrote is not.
   const relative = path.join(dir, 'handoff-backend-developer.json');
   writeFileSync(relative, '{}');

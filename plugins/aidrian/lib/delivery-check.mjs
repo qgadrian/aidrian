@@ -107,7 +107,7 @@ export function briefHandoffs(input, project) {
   const word = new RegExp(`(?:^|[-_.])${escapeRegExp(agent)}(?:[-_.]\\w+)?\\.json$`, 'u');
   // A CRLF brief's line keeps its `\r` after the split: it is dropped before the marker is matched.
   // A line is cut before each marker that opens a sentence in it, so two markers on one line are both read.
-  const marked = brief.split('\n').flatMap((line) => line.replace(/\r$/u, '').split(SENTENCE_MARKER))
+  const marked = brief.split('\n').flatMap((line) => sentencePieces(line.replace(/\r$/u, '')))
     .map((piece) => HANDOFF_MARKER.exec(piece)).filter(Boolean).map(markedPath);
   const problemOf = (file) => {
     if (!file) return 'names no path';
@@ -127,12 +127,24 @@ export function briefHandoffs(input, project) {
 
 // A brief line that names the run's handoff file, in any case: `Handoff file: <path>`, `**Handoff file:** <path>`, or
 // `**Handoff file**: <path>`, opening the line after an optional list marker, or opening a sentence later in it, as in
-// `Under 4 KB. Handoff file: <path>`: SENTENCE_MARKER cuts the line there first. Inside a sentence, as in
+// `Under 4 KB. Handoff file: <path>`: sentencePieces cuts the line there first. Inside a sentence, as in
 // `Read the earlier handoff file: <path>`, it names a file to read, never one owed. Its match holds the rest of the
 // piece, as `value`.
 const MARKER_WORDS = String.raw`(?:handoff file:|\*\*handoff file:\*\*|\*\*handoff file\*\*:)`;
 const HANDOFF_MARKER = new RegExp(String.raw`^\s*(?:[-*]\s+)?${MARKER_WORDS}(?<value>.*)$`, 'iu');
-const SENTENCE_MARKER = new RegExp(String.raw`(?<=[.!?;])\s+(?=${MARKER_WORDS})`, 'iu');
+const SENTENCE_MARKER = new RegExp(String.raw`(?<=[.!?;])\s+(?=${MARKER_WORDS})`, 'giu');
+
+// `line` cut before each marker that opens a sentence, outside backticks: a backticked path that holds one is one path.
+function sentencePieces(line) {
+  const cuts = [...line.matchAll(SENTENCE_MARKER)].filter((match) => (line.slice(0, match.index).split('`').length - 1) % 2 === 0);
+  const pieces = [];
+  let from = 0;
+  for (const cut of cuts) {
+    pieces.push(line.slice(from, cut.index));
+    from = cut.index + cut[0].length;
+  }
+  return [...pieces, line.slice(from)];
+}
 
 // The path a marker line names: all inside the backticks that open its value, spaces included, else its first word
 // without trailing punctuation. Any prose after it is not read.

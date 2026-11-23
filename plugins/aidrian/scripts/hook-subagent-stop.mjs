@@ -28,6 +28,8 @@
 // What the report quotes from another source, such as a pull request body or another agent's claim, is not its own.
 // config.json `telemetry.enabled: false` drops the row, never the checks or the lessons.
 
+import path from 'node:path';
+
 import { CHILD_SEND_BACKS, childSendBacks, forgetChildSendBacks, storeChildSendBacks } from '../lib/child-send-backs.mjs';
 import { loadConfig } from '../lib/config.mjs';
 import { appendEvent } from '../lib/dispatch-log.mjs';
@@ -160,8 +162,9 @@ export async function handle(input) {
   if (forDelivery) {
     const { unwritten = [] } = delivery;
     // A path the brief's rejected marker names is never one to write, though the report claims it.
-    const refused = new Set((checked.rejected ?? []).map(({ value }) => value));
-    const missing = delivery.missing.filter((file) => !refused.has(file));
+    const cwd = typeof input.cwd === 'string' ? input.cwd : project.root;
+    const refused = new Set((checked.rejected ?? []).map(({ value }) => path.resolve(cwd, value)));
+    const missing = delivery.missing.filter((file) => !refused.has(path.resolve(cwd, file)));
     recordSignal(project, deliverySignal({ agentType: agent.agent_type, agentId, session: agent.session_id, missing: undelivered(delivery) }), { config });
     if (missing.length) {
       reasons.push(

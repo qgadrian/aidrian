@@ -147,7 +147,7 @@ JSON. Save this as `~/.claude/aidrian-statusline.mjs`:
 ```js
 // The aidrian session line for Claude Code's status line: node ~/.claude/aidrian-statusline.mjs
 import { spawnSync } from 'node:child_process';
-import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
@@ -155,35 +155,14 @@ try {
   const input = JSON.parse(readFileSync(0, 'utf8'));
   const cwd = input.workspace?.current_dir ?? input.cwd;
   const config = process.env.CLAUDE_CONFIG_DIR || path.join(homedir(), '.claude');
-  const installed = JSON.parse(readFileSync(path.join(config, 'plugins/installed_plugins.json'), 'utf8'));
-  const entries = installed.plugins['aidrian@aidrian-harness'] ?? [];
-  // The install for this folder, as the mod picks it: of the local and project entries whose real folder holds it, and
-  // the user entry, the newest version; a tie goes to local, then project, the deeper folder first, then user.
-  const real = (folder) => { try { return realpathSync(String(folder)); } catch { return null; } };
-  const here = real(cwd);
-  const holds = (folder) => folder !== null && here !== null
-    && (here === folder || here.startsWith(folder.endsWith('/') ? folder : `${folder}/`));
-  const version = (entry) => {
-    const text = String(entry.version ?? path.basename(String(entry.installPath)));
-    return /^\d+(\.\d+)*$/u.test(text) ? text.split('.').map(Number) : [];
-  };
-  const newer = (a, b) => {
-    const [x, y] = [version(a.entry), version(b.entry)];
-    for (let index = 0; index < Math.max(x.length, y.length); index += 1) {
-      if ((x[index] ?? -1) !== (y[index] ?? -1)) return (y[index] ?? -1) - (x[index] ?? -1);
-    }
-    return 0;
-  };
-  const ranked = entries.flatMap((entry) => {
-    const rank = ['local', 'project', 'user'].indexOf(entry.scope);
-    const folder = rank < 2 ? real(entry.projectPath) : '';
-    return rank >= 0 && (rank === 2 || holds(folder)) ? [{ entry, rank, depth: folder.length }] : [];
-  });
-  ranked.sort((a, b) => newer(a, b) || a.rank - b.rank || b.depth - a.depth);
-  // The chosen install's cli, a regular file at an absolute path, or a blank line: like the mod, no older install.
-  const install = ranked[0]?.entry.installPath;
-  const cli = path.isAbsolute(String(install)) ? path.join(install, 'lib/cli.mjs') : null;
-  if (cli === null || !statSync(cli, { throwIfNoEntry: false })?.isFile()) throw new Error('no aidrian cli');
+  // The newest aidrian release in the plugin cache with a cli, the one Claude Code runs once it has updated.
+  const cache = path.join(config, 'plugins/cache/aidrian-harness/aidrian');
+  const numbers = (name) => name.split('.').map(Number);
+  const newer = (a, b) => numbers(b).map((part, index) => part - (numbers(a)[index] ?? -1)).find(Boolean) ?? 0;
+  const releases = readdirSync(cache).filter((name) => /^\d+\.\d+\.\d+$/u.test(name)).sort(newer);
+  const cli = releases.map((name) => path.join(cache, name, 'lib/cli.mjs'))
+    .find((file) => statSync(file, { throwIfNoEntry: false })?.isFile());
+  if (cli === undefined) throw new Error('no aidrian cli');
   const args = [cli, 'session', 'snapshot', '--line'];
   if (typeof input.session_id === 'string') args.push(`--session=${input.session_id}`);
   if (typeof input.transcript_path === 'string') args.push(`--transcript=${input.transcript_path}`);
@@ -207,11 +186,10 @@ And point the status line at it in `~/.claude/settings.json`:
 ```
 
 - **Finding the command.** The script runs `aidrian session snapshot` as the `aidrian` command does, by `node` on the
-  plugin's `lib/cli.mjs`. It takes the install path Claude Code records in `installed_plugins.json`, chosen as the
-  mod chooses it: of the entries whose real folder holds the session's folder and the user entry, the newest version,
-  a version that is not numbers last, and a tie to local, then project, the deeper folder first, then user. When that
-  install's `lib/cli.mjs` is not a regular file at an absolute path, it prints a blank line and tries no older one.
-  Unlike the mod, it checks no link or cache folder: it is a sample to adapt.
+  plugin's `lib/cli.mjs`, of the newest `<major>.<minor>.<patch>` release in Claude Code's plugin cache that has one:
+  the version Claude Code runs once it has updated. It reads no `installed_plugins.json` entry, so a folder's stale
+  record never sends it to an old release. The mod picks by those entries instead, with checks a status line sample
+  does without ([How it runs](#how-it-runs)).
   It needs no `aidrian` on the status line's PATH: the plugin's `bin/` is on the PATH of Claude Code's Bash tool, which the status
   line need not share.
 - **PATH.** The status line's PATH must hold `node`, `git`, and `gh`: the snapshot runs `git` and `gh` by name from

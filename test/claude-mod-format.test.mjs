@@ -54,8 +54,10 @@ test('the handoff segment at each level, in its color, with the line`s words', (
   const cases = [
     [{ level: 'quiet', ratio: 1.4 }, '1.4x', COLORS.quiet, 'subtle'],
     [{ level: 'offer', ratio: 1.8, breakEven: 59.6 }, '1.8x · handoff worth it if 60+ calls left', COLORS.offer, 'warning'],
-    [{ level: 'due', ratio: 2.3, breakEven: 38 }, '2.3x · handoff worth it if 38+ calls left', COLORS.due, 'claude'],
-    [{ level: 'reminded', ratio: 2.3, breakEven: 38 }, '2.3x · handoff worth it if 38+ calls left', COLORS.reminded, 'claude'],
+    [{ level: 'due', ratio: 2.3, breakEven: 37.5 }, '2.3x · handoff worth it if 38+ calls left', COLORS.due, 'claude'],
+    [{ level: 'reminded', ratio: 2.3, breakEven: 37.5 }, '2.3x · handoff worth it if 38+ calls left', COLORS.reminded, 'claude'],
+    [{ level: 'due', ratio: 2.3, breakEven: 38.4 }, '2.3x · handoff worth it if 39+ calls left', COLORS.due, 'claude'],
+    [{ level: 'due', ratio: 2.3, breakEven: 38 }, '2.3x · handoff worth it if 39+ calls left', COLORS.due, 'claude'],
     [{ level: 'ceiling', ratio: 3 }, 'handoff now', COLORS.ceiling, 'error'],
   ];
   for (const [fields, words, color, key] of cases) {

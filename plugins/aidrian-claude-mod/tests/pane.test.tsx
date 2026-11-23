@@ -560,7 +560,7 @@ describe('the snapshot rows', () => {
     await startIn($, on, world({ snapshot: SNAPSHOT }))
     const drawing = await band($)
 
-    expect(await drawing.find({ type: 'Text', text: /^2\.3x · handoff worth it if 24\+ calls left$/ })).toBeDefined()
+    expect(await drawing.find({ type: 'Text', text: /^2\.3x · handoff worth it if 25\+ calls left$/ })).toBeDefined()
     expect(await drawing.find({ type: 'Text', text: /^armed 1\/3$/ })).toBeDefined()
     expect(await drawing.find({ type: 'Text', text: /^PRs $/ })).toBeDefined()
     expect((await drawing.find({ type: 'Text', text: /^#12$/ }))?.props.color).toBe('success')

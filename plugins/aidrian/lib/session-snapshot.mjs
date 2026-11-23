@@ -272,8 +272,8 @@ function forgeBudget(ms) {
   };
 }
 
-// What each handoff level shows: the ratio, then, with a break-even, how many calls the work left must take for a
-// handoff to be worth it. Offer, due, and reminded share their words; the mod's color tells offer from the other two.
+// What each handoff level shows: the ratio, then, with a break-even, the fewest whole calls the work left must take
+// for a handoff to be worth it: the first above the break-even. Offer, due, and reminded share their words; the mod's color tells offer from the other two.
 const LEVEL_WORDS = {
   quiet: (ratio) => ratio,
   offer: (ratio, worth) => (worth ? `${ratio} · handoff ${worth}` : ratio),
@@ -288,7 +288,7 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 export function snapshotLine({ handoff, prs, lessons: inbox, decisions, worktrees, audits }) {
   const segments = [];
   if (handoff?.ratio > 0) {
-    const worth = handoff.breakEven === null ? '' : `worth it if ${Math.round(handoff.breakEven)}+ calls left`;
+    const worth = handoff.breakEven === null ? '' : `worth it if ${Math.floor(handoff.breakEven) + 1}+ calls left`;
     const armed = handoff.continueArmed ? ` · armed ${handoff.chain}/${handoff.maxChain}` : '';
     segments.push(`${LEVEL_WORDS[handoff.level](`${handoff.ratio.toFixed(1)}x`, worth)}${armed}`);
   }

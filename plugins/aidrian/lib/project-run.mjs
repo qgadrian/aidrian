@@ -7,7 +7,8 @@
 //   snapshot.json  each issue's key, branch, status type, blockedBy keys, and priority, and the status type of each
 //                  blocker outside the project, and, when the driver gives them, the workspace's team keys (`teams`).
 //                  No title, body, or other tracker text, ever: validateSnapshot copies only these fields, each checked,
-//                  and drops every other one. The branch is the one tracker-derived text kept.
+//                  and drops every other one. The branch is the one tracker-derived text kept. Init adds `resumed`, the
+//                  started issues an earlier run parked (resumedIssues), which no driver's input can give.
 //   ledger.jsonl   append-only, each row written under the file's lock (lib/jsonl.mjs withLocks). Its first row, `init`,
 //                  pins the repository, records the driver's session id, and ties the run to snapshot.json by its
 //                  sha256 and issue count; later rows record what happened to an issue, and the rows of the start gate
@@ -42,7 +43,8 @@ export const ISSUE_KEY = /^(?:[A-Z][A-Z0-9]{0,15}-)?[1-9][0-9]{0,8}$/u;
 export const DECISION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
 // The status types an issue may have, as the tracker groups its statuses.
 export const STATUS_TYPES = Object.freeze(['triage', 'backlog', 'unstarted', 'started', 'completed', 'canceled']);
-// The status types a run may start an issue from. `triage` is not accepted yet, and `started` is someone's work already.
+// The status types a run may start an issue from. `triage` is not accepted yet, and `started` is someone's work already,
+// unless init found it an earlier run's parked work (resumedIssues).
 const STARTABLE = new Set(['backlog', 'unstarted']);
 // What the ledger records of an issue, the latest row per key deciding. `open` is an issue back to be started again, as
 // after an attempt that failed (lib/project-run-gate.mjs).
@@ -68,6 +70,8 @@ export const TEAM_KEY = /^[A-Z][A-Z0-9]{0,15}$/u;
 export const MAX_TEAMS = 500;
 // Opens without following a final symlink and without waiting on a FIFO, whose fstat then shows it is no regular file.
 const NO_FOLLOW = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+// A full commit id, as git and the forge name one.
+export const SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 // A timestamp as Date#toISOString writes it.
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 
@@ -376,8 +380,9 @@ const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 // a state folder runPlace refuses, a project whose origin names no forge repository, a run that exists already, and any
 // other run still active. Each issue's text is the tracker's own answer the session's reads recorded
 // (project-issue-text.mjs recordedTexts), never a file a session wrote. Throws jsonl.mjs's LOCKED when another process
-// holds the runs lock. `home` is for a test.
-export function initRun({ project, config, run, file, session, input = {}, env = process.env, home, now = Date.now() }) {
+// holds the runs lock. `pullHead` reads an old ledger's pull request head (resumedIssues), none by default. `home` is for
+// a test.
+export function initRun({ project, config, run, file, session, input = {}, env = process.env, home, now = Date.now(), pullHead }) {
   // Recorded issue reads past their age go first, on every host, whatever init then answers.
   sweepIssueReads({ env, now });
   if (typeof run !== 'string' || !RUN_ID.test(run)) return refuse(`the run id ${quote(run)} is not lower-case letters, digits, and dashes, up to 64, starting with a letter or digit`);
@@ -391,6 +396,11 @@ export function initRun({ project, config, run, file, session, input = {}, env =
   const repository = pinnedRepository(project);
   if (!repository) return refuse('the origin remote names no forge repository, so the run cannot pin one');
   const texts = recordedTexts(session, read.snapshot.issues.map((issue) => issue.key), { env, ...(home ? { home } : {}) });
+  // A started issue an earlier run parked starts again in this one, from its branch: the run records which, so `next`,
+  // `start`, and the gate read one plan. Read before the runs lock, since an old ledger's pull request is read through
+  // the forge; the runs it reads are no longer active, which the lock then checks.
+  const resumed = resumedIssues(state, read.snapshot, { except: run, repository, ...(pullHead ? { pullHead } : {}) });
+  const snapshot = resumed.length ? { ...read.snapshot, resumed } : read.snapshot;
 
   mkdirSync(runsFolder(state), { recursive: true, mode: 0o700 });
   return withLocks([runsLock(state)], () => {
@@ -407,7 +417,7 @@ export function initRun({ project, config, run, file, session, input = {}, env =
       return refuse(`this session's driver mark cannot be filed in ${path.join(stateRoot(env), MARK_FOLDER)}, so the hooks could not hold the run's driver`);
     }
     mkdirSync(runFolder(state, run), { mode: 0o700 });
-    const text = `${JSON.stringify({ run, at: new Date(now).toISOString(), ...read.snapshot })}\n`;
+    const text = `${JSON.stringify({ run, at: new Date(now).toISOString(), ...snapshot })}\n`;
     writeFileSync(snapshotFile(state, run), text, { mode: 0o600, flag: 'wx' });
     // Each issue's text the tracker gave this session, kept apart from snapshot.json, for its session to read from a file
     // (lib/project-issue-text.mjs).
@@ -426,6 +436,7 @@ export function initRun({ project, config, run, file, session, input = {}, env =
         `repository: ${repository.host}/${repository.owner}/${repository.name}`,
         ...(kept ? [`issue text: ${kept} of ${read.snapshot.issues.length} kept for the issues' sessions to read`] : []),
         ...(read.dropped ? [`dropped: ${read.dropped} fields the snapshot never keeps, such as titles and bodies`] : []),
+        ...(resumed.length ? [resumedLine(resumed)] : []),
         ...(teams ? [`teams: ${teams}`] : []),
         `folder: ${runFolder(state, run)}`,
       ],
@@ -435,6 +446,9 @@ export function initRun({ project, config, run, file, session, input = {}, env =
 }
 
 const refuse = (reason) => ({ exitCode: 1, out: [], err: [`aidrian project init: ${reason}`] });
+
+// The line init and its check print for the started issues `resumed` (resumedIssues) the run starts all the same.
+export const resumedLine = (resumed) => `resumed: ${resumed.length} started ${resumed.length === 1 ? 'issue' : 'issues'} an earlier run parked on the same branch, which this run starts again: ${resumed.map(({ key }) => key).join(', ')}`;
 
 // Why init and its check name the snapshot's teams, or null: a snapshot whose issue keys carry a team, with no `teams`,
 // leaves the closing-word check (closing-words.mjs) only the run's own teams, so a key of a team outside the run that a
@@ -490,7 +504,9 @@ export function readRun(state, run) {
     return { problem: `the snapshot of run ${run} is not JSON` };
   }
   const checked = validateSnapshot({ issues: snapshot?.issues, outside: snapshot?.outside, ...(snapshot?.teams === undefined ? {} : { teams: snapshot.teams }) });
-  if (!checked.snapshot || checked.snapshot.issues.length !== init.issues) return { problem: `the snapshot of run ${run} does not pass its checks` };
+  const resumed = checked.snapshot ? resumedOf(snapshot.resumed, checked.snapshot.issues) : null;
+  if (!checked.snapshot || resumed === null || checked.snapshot.issues.length !== init.issues) return { problem: `the snapshot of run ${run} does not pass its checks` };
+  if (resumed.length) checked.snapshot.resumed = resumed;
   const keys = new Set(checked.snapshot.issues.map((issue) => issue.key));
   const states = new Map();
   for (const row of rows.slice(1)) {
@@ -499,6 +515,74 @@ export function readRun(state, run) {
   }
   return { init, snapshot: checked.snapshot, states, rows: rows.slice(1) };
 }
+
+// The `resumed` list of a snapshot.json init wrote (resumedIssues), checked against its `issues`: a copy, [] when it has
+// none, or null when it is not such a list: each entry { key, run, pr, head } names a started issue of `issues` once, a
+// run id, a pull request number or null, and a commit id or null.
+function resumedOf(value, issues) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > issues.length) return null;
+  const started = new Set(issues.filter((issue) => issue.status === 'started').map((issue) => issue.key));
+  const seen = new Set();
+  for (const each of value) {
+    const pr = each?.pr;
+    if (!isObject(each) || !started.has(each.key) || seen.has(each.key) || typeof each.run !== 'string' || !RUN_ID.test(each.run)) return null;
+    if (pr !== null && !(Number.isInteger(pr) && pr > 0)) return null;
+    if (each.head !== null && !(typeof each.head === 'string' && SHA.test(each.head))) return null;
+    seen.add(each.key);
+  }
+  return value.map(({ key, run, pr, head }) => ({ key, run, pr, head }));
+}
+
+// The started issues of `snapshot` a new run may start all the same, as [{ key, run, pr, head }]: each one whose latest
+// record in the runs of `state` other than `except` that pinned `repository` too, the run with the latest init among
+// those whose ledger has a row of it, is parked, on the branch the snapshot names (issueBranch). That run started it in
+// the tracker and parked it, as on a pull request left open or a decision, so the issue is the run's own work, not
+// someone's outside it. `pr` is the pull request that run's latest result of the issue named, or null; `head` the commit
+// that result recorded the branch at (project-result.mjs dropRows), or null, which binds the branch on the forge to that
+// run's work: the start goes on from it only at or after that commit (project-start.mjs prepareAttempt). A result row
+// with no `head` field at all, written before results recorded one, that named a pull request, takes the head
+// `pullHead({ pr, branch, repository })` gives, the forge's open pull request from that branch (project-result.mjs
+// openPullHead), or null; a row with the field never falls back. A run that cannot be read is left out, and each run is
+// read in turn, keeping only the latest candidate of each issue.
+export function resumedIssues(state, snapshot, { except, repository, pullHead = () => null } = {}) {
+  const started = snapshot.issues.filter((issue) => issue.status === 'started');
+  if (!started.length || !repository) return [];
+  let names;
+  try {
+    names = readdirSync(runsFolder(state));
+  } catch {
+    return [];
+  }
+  const latest = new Map();
+  for (const name of names.filter((each) => RUN_ID.test(each) && each !== except)) {
+    const found = readRun(state, name);
+    if (found.problem || !sameRepository(found.init.repository, repository)) continue;
+    const at = Date.parse(found.init.at);
+    for (const issue of started) {
+      if (!found.states.has(issue.key) || (latest.get(issue.key)?.at ?? -Infinity) >= at) continue;
+      const result = found.rows.findLast((row) => row.event === 'result' && row.key === issue.key);
+      latest.set(issue.key, {
+        at,
+        run: name,
+        parked: found.states.get(issue.key).state === 'parked',
+        branch: issueBranch(found, issue.key),
+        pr: found.rows.findLast((row) => row.event === 'result' && row.key === issue.key && Number.isInteger(row.pr) && row.pr > 0)?.pr ?? null,
+        head: typeof result?.head === 'string' && SHA.test(result.head) ? result.head : null,
+        legacy: isObject(result) && !Object.hasOwn(result, 'head') && Number.isInteger(result.pr) && result.pr > 0 ? result.pr : null,
+      });
+    }
+  }
+  return started.filter((issue) => latest.get(issue.key)?.parked && latest.get(issue.key).branch === issue.branch)
+    .map((issue) => {
+      const { run, pr, head, legacy } = latest.get(issue.key);
+      const read = legacy === null ? head : pullHead({ pr: legacy, branch: issue.branch, repository });
+      return { key: issue.key, run, pr, head: typeof read === 'string' && SHA.test(read) ? read : null };
+    });
+}
+
+// Whether the repositories `one` and `other`, as runs pin them, are one, compared in any case.
+const sameRepository = (one, other) => ['host', 'owner', 'name'].every((part) => String(one?.[part]).toLowerCase() === String(other?.[part]).toLowerCase());
 
 // Whether `row` is the init row initRun writes for `run`.
 const isInit = (row, run) => isObject(row) && row.event === 'init' && row.run === run
@@ -594,7 +678,8 @@ const TRACKER_STATE = { completed: 'done', canceled: 'canceled' };
 //             which it names;
 //   blocked   [{ key, reason, on }]: `cycle`, with the keys of its cycle; `waiting`, with the blockers not done, an
 //             outside blocker that is not completed or not listed included; or `status`, with its status type, for an
-//             issue in triage or started outside the run;
+//             issue in triage or started outside the run: a started issue `snapshot.resumed` names (resumedIssues) is
+//             an earlier run's parked work, and starts as an unstarted one does;
 //   ready     the keys that could start, next among them;
 //   verdict   `next` when next holds an issue, `wait` when none may start and some run, else `done`.
 // A completed issue, or one the ledger records done, is done. A blocker counts as done only then: a canceled one is not.
@@ -606,7 +691,8 @@ export function planRun(snapshot, states = new Map(), { maxParallel = SERIAL } =
   const isDone = (key) => status.get(key) === 'done';
   const cycles = cycleMembers(snapshot.issues, byId, isDone);
   const order = topological(snapshot.issues, byId, cycles, isDone);
-  const { ready, blocked, skipped } = sortOpen({ snapshot, byId, status, isDone, cycles, order });
+  const resumed = new Set((snapshot.resumed ?? []).map((each) => each.key));
+  const { ready, blocked, skipped } = sortOpen({ snapshot, byId, status, isDone, cycles, order, resumed });
   const keysIn = (wanted) => snapshot.issues.map((issue) => issue.key).filter((key) => status.get(key) === wanted).sort(byKey);
   const running = keysIn('running');
   const slots = Math.max(0, maxParallel - running.length);
@@ -631,7 +717,7 @@ export function planRun(snapshot, states = new Map(), { maxParallel = SERIAL } =
 // The open issues, those neither done, running, parked, nor canceled, sorted into { ready, blocked, skipped }, each in
 // `order`, with an issue no order holds after, by key. The first that fits decides: skipped below a parked or canceled
 // issue, in a cycle, in a status the run does not start, waiting on a blocker not done, or else ready.
-function sortOpen({ snapshot, byId, status, isDone, cycles, order }) {
+function sortOpen({ snapshot, byId, status, isDone, cycles, order, resumed }) {
   const outside = new Map(snapshot.outside.map((blocker) => [blocker.key, blocker.status]));
   const skippedBy = skippedRoots(snapshot.issues, byId, status);
   const ordered = new Set(order);
@@ -643,7 +729,7 @@ function sortOpen({ snapshot, byId, status, isDone, cycles, order }) {
     const waiting = issue.blockedBy.filter((blocker) => (byId.has(blocker) ? !isDone(blocker) : outside.get(blocker) !== 'completed')).sort(byKey);
     if (skippedBy.has(key)) sorted.skipped.push({ key, skipped_blocked_by: [...skippedBy.get(key)].sort(byKey) });
     else if (cycles.has(key)) sorted.blocked.push({ key, reason: 'cycle', on: cycles.get(key) });
-    else if (!STARTABLE.has(issue.status)) sorted.blocked.push({ key, reason: 'status', on: [issue.status] });
+    else if (!STARTABLE.has(issue.status) && !(issue.status === 'started' && resumed.has(key))) sorted.blocked.push({ key, reason: 'status', on: [issue.status] });
     else if (waiting.length) sorted.blocked.push({ key, reason: 'waiting', on: waiting });
     else sorted.ready.push(key);
   }

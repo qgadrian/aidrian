@@ -151,7 +151,7 @@ test('a created row comes only from a line whose one printing command is gh pr c
 
 test('a leading cd that ; or a newline ends counts as one && ends when it cannot fail, and the row names the folder it entered', async () => {
   const link = `${URL_OF('acme/other', 599)}\n`;
-  for (const lead of [`cd ${OTHER}; `, `cd ${OTHER}\n`, `cd ${OTHER};\n`]) {
+  for (const lead of [`cd ${OTHER}; `, `cd ${OTHER}\n`, `cd ${OTHER};\n`, `cd ${OTHER} # the other checkout\n`]) {
     assert.deepEqual(await rows(`${lead}gh pr create --draft --repo acme/other --fill`, { stdout: link }), [created('acme/other', 599, OTHER)], JSON.stringify(lead));
     assert.deepEqual(await rows(`${lead}gh pr create --fill`, { stdout: link }), [created('acme/other', 599, OTHER)], `${JSON.stringify(lead)}, the remotes of the folder it entered`);
   }
@@ -169,7 +169,7 @@ test('a leading cd that ; or a newline ends counts as one && ends when it cannot
   assert.deepEqual(await rows(`cd ${OTHER}; echo ${URL_OF('acme/other', 9)}; gh pr create --fill`, { stdout: link }), [], 'a command after the cd that may print');
   // A cd that can fail on a part of its segment other than its folder, or that runs outside this shell.
   for (const lead of [`cd ${OTHER} <${gone}; `, `cd ${gone}/../other; `, `f() { cd ${OTHER}; }; `, `coproc cd ${OTHER}; `,
-    `cd ${OTHER} 999999999<<EOF; `, `cd ${OTHER}\r; `]) {
+    `cd ${OTHER} 999999999<<EOF; `, `cd ${OTHER}\r; `, `cd ${OTHER}\u00a0; `]) {
     assert.deepEqual(await rows(`${lead}gh pr create --repo acme/widgets --fill`, { stdout: `${URL_OF('acme/widgets', 7)}\n` }), [], lead);
   }
 });

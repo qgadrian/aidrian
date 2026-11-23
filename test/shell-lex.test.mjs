@@ -299,7 +299,7 @@ test('walkCommands follows a leading cd that ; or a newline ends only when the e
     asked.push(folder);
     return folder === '/x';
   };
-  for (const line of ['cd /x; gh pr view', 'cd /x\ngh pr view']) {
+  for (const line of ['cd /x; gh pr view', 'cd /x\ngh pr view', '  cd /x ;gh pr view', 'cd /x # into x\ngh pr view']) {
     assert.equal(ghFolder(line), null, `${JSON.stringify(line)}: no predicate, as every guard walks it`);
     assert.equal(ghFolder(line, { enters }), '/x', JSON.stringify(line));
   }
@@ -312,7 +312,8 @@ test('walkCommands follows a leading cd that ; or a newline ends only when the e
   for (const line of ['f() { cd /x; }; gh pr view', '{ cd /x; }; gh pr view', 'coproc cd /x; gh pr view', 'pushd -n /x; gh pr view',
     'pushd /x; gh pr view', 'cd -P /x; gh pr view', 'cd /x </missing; gh pr view', 'cd /x 2>/dev/null; gh pr view', 'cd /missing/../x; gh pr view',
     'cd /x/./; gh pr view', 'CDPATH=/ cd /x; gh pr view', 'cd "$X"; gh pr view', 'if cd /x; then gh pr view; fi',
-    'cd /x 999999999<<EOF; gh pr view\nbody\nEOF\n', 'cd /x\r; gh pr view', "cd '/x)'; gh pr view", 'cd "/x"; gh pr view']) {
+    'cd /x 999999999<<EOF; gh pr view\nbody\nEOF\n', 'cd /x\r; gh pr view', "cd '/x)'; gh pr view", 'cd "/x"; gh pr view',
+    'cd /x\u00a0; gh pr view', 'cd /x#; gh pr view']) {
     assert.equal(ghFolder(line, { enters }), null, line);
   }
   asked.length = 0;

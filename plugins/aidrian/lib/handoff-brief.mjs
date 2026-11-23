@@ -247,8 +247,9 @@ function nextSteps(text) {
   const lines = [];
   let inSection = false;
   for (const line of unfencedLines(String(text ?? ''))) {
-    // An indented heading sits inside a list item of the section, and ends nothing.
-    const title = /^\s/u.test(line) ? null : headingOf(line);
+    // SHORTCUT: a heading inside a list item ends the section, as the required-section check reads headings; telling
+    // the two apart takes a Markdown list reader, which a brief with headings inside its steps would need.
+    const title = headingOf(line);
     if (title !== null) inSection = /^next steps(?![\p{L}\p{N}])/iu.test(title);
     else if (inSection) lines.push(line);
   }

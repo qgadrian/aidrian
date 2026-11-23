@@ -258,7 +258,6 @@ test('the check fails a brief whose next steps run a skill only a person can sta
     '1. Run the checks.\n2. Run /aidrian:autopilot after them.',
     '1. Run the checks and tell the Human to type /aidrian:autopilot.',
     '1. Load the plan.\n\n   Run /aidrian:autopilot on it.',
-    '1. Load the plan.\n\n   ## Details\n   Run /aidrian:autopilot on it.',
   ]) assert.match(at(steps) ?? '', /^Next steps: they run `autopilot`, which only a person can start/u, steps);
   for (const steps of [
     '1. Run the `plan-implement` skill on /state/plans/autopilot.md.',
@@ -267,6 +266,8 @@ test('the check fails a brief whose next steps run a skill only a person can sta
     '1. Read /autopilot.md, then run the checks.',
   ]) assert.equal(at(steps), null, `${steps}: a path, or reading a skill, is no start`);
   assert.equal(manualSkillProblem(brief({ risks: '## Open risks and questions\n- The Human runs /aidrian:autopilot after the merge.\n' })), null, 'outside Next steps');
+  assert.match(manualSkillProblem(brief({ next: ' ## Next steps (ordered)\n1. Run /aidrian:autopilot.\n' })) ?? '', /they run `autopilot`/u, 'an indented section heading opens it, as the section check reads it');
+  assert.equal(manualSkillProblem(brief({ next: '## Next steps (ordered)\n1. Run the checks.\n', risks: ' ## Open risks and questions\n- The Human runs /aidrian:autopilot.\n' })), null, 'and an indented one closes it');
 
   const file = write(tempDir(t), 'b.md', brief({ next: '## Next steps (ordered)\n1. Run `/aidrian:autopilot <plan>`.\n' }));
   const checked = checkBrief(file, undefined, 0);

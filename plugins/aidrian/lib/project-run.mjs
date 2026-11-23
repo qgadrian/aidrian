@@ -448,7 +448,7 @@ export function initRun({ project, config, run, file, session, input = {}, env =
 const refuse = (reason) => ({ exitCode: 1, out: [], err: [`aidrian project init: ${reason}`] });
 
 // The line init and its check print for the started issues `resumed` (resumedIssues) the run starts all the same.
-export const resumedLine = (resumed) => `resumed: ${resumed.length} started ${resumed.length === 1 ? 'issue' : 'issues'} an earlier run parked on the same branch, which this run starts again: ${resumed.map(({ key }) => key).join(', ')}`;
+export const resumedLine = (resumed) => `resumed: ${resumed.length} started ${resumed.length === 1 ? 'issue' : 'issues'} an earlier run parked on its branch, which this run starts again: ${resumed.map(({ key }) => key).join(', ')}`;
 
 // Why init and its check name the snapshot's teams, or null: a snapshot whose issue keys carry a team, with no `teams`,
 // leaves the closing-word check (closing-words.mjs) only the run's own teams, so a key of a team outside the run that a
@@ -516,27 +516,35 @@ export function readRun(state, run) {
   return { init, snapshot: checked.snapshot, states, rows: rows.slice(1) };
 }
 
+// Whether `branch` is `base`, an issue's snapshot branch, or an attempt branch a run cut from it, `base` and `-a<n>`
+// (project-run-gate.mjs startPlace).
+const ownBranch = (branch, base) => typeof branch === 'string' && (branch === base || (branch.startsWith(`${base}-a`) && /^[1-9][0-9]{0,3}$/u.test(branch.slice(base.length + 2))));
+
 // The `resumed` list of a snapshot.json init wrote (resumedIssues), checked against its `issues`: a copy, [] when it has
-// none, or null when it is not such a list: each entry { key, run, pr, head } names a started issue of `issues` once, a
-// run id, a pull request number or null, and a commit id or null.
+// none, or null when it is not such a list: each entry { key, run, pr, head, branch } names a started issue of `issues`
+// once, a run id, a pull request number or null, a commit id or null, and the issue's snapshot branch or an attempt
+// branch cut from it (ownBranch). An entry with no `branch`, as init wrote before it recorded one, is on the snapshot's.
 function resumedOf(value, issues) {
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.length > issues.length) return null;
-  const started = new Set(issues.filter((issue) => issue.status === 'started').map((issue) => issue.key));
+  const started = new Map(issues.filter((issue) => issue.status === 'started').map((issue) => [issue.key, issue.branch]));
   const seen = new Set();
   for (const each of value) {
     const pr = each?.pr;
     if (!isObject(each) || !started.has(each.key) || seen.has(each.key) || typeof each.run !== 'string' || !RUN_ID.test(each.run)) return null;
     if (pr !== null && !(Number.isInteger(pr) && pr > 0)) return null;
     if (each.head !== null && !(typeof each.head === 'string' && SHA.test(each.head))) return null;
+    if (each.branch !== undefined && (!ownBranch(each.branch, started.get(each.key)) || branchProblem(each.branch))) return null;
     seen.add(each.key);
   }
-  return value.map(({ key, run, pr, head }) => ({ key, run, pr, head }));
+  return value.map(({ key, run, pr, head, branch }) => ({ key, run, pr, head, branch: branch ?? started.get(key) }));
 }
 
-// The started issues of `snapshot` a new run may start all the same, as [{ key, run, pr, head }]: each one whose latest
-// record in the runs of `state` other than `except` that pinned `repository` too, the run with the latest init among
-// those whose ledger has a row of it, is parked, on the branch the snapshot names (issueBranch). That run started it in
+// The started issues of `snapshot` a new run may start all the same, as [{ key, run, pr, head, branch }]: each one whose
+// latest record in the runs of `state` other than `except` that pinned `repository` too, the run with the latest init
+// among those whose ledger has a row of it, is parked, on `branch`, the branch it worked on last (issueBranch): the one
+// the snapshot names, or an attempt branch cut from it, `-a<n>` (ownBranch), that a start of that run recorded, as when an
+// attempt left the snapshot's branch for a fresh one (project-start.mjs prepareAttempt). That run started it in
 // the tracker and parked it, as on a pull request left open or a decision, so the issue is the run's own work, not
 // someone's outside it. `pr` is the pull request that run's latest result of the issue named, or null; `head` the commit
 // that result recorded the branch at (project-result.mjs dropRows), or null, which binds the branch on the forge to that
@@ -567,17 +575,19 @@ export function resumedIssues(state, snapshot, { except, repository, pullHead = 
         run: name,
         parked: found.states.get(issue.key).state === 'parked',
         branch: issueBranch(found, issue.key),
+        cut: found.rows.some((row) => row.event === 'start' && row.key === issue.key && row.outcome !== 'void' && row.branch === issueBranch(found, issue.key)),
         pr: found.rows.findLast((row) => row.event === 'result' && row.key === issue.key && Number.isInteger(row.pr) && row.pr > 0)?.pr ?? null,
         head: typeof result?.head === 'string' && SHA.test(result.head) ? result.head : null,
         legacy: isObject(result) && !Object.hasOwn(result, 'head') && Number.isInteger(result.pr) && result.pr > 0 ? result.pr : null,
       });
     }
   }
-  return started.filter((issue) => latest.get(issue.key)?.parked && latest.get(issue.key).branch === issue.branch)
+  const worked = ({ parked, branch, cut }, issue) => parked && (branch === issue.branch || (cut && ownBranch(branch, issue.branch) && !branchProblem(branch)));
+  return started.filter((issue) => latest.has(issue.key) && worked(latest.get(issue.key), issue))
     .map((issue) => {
-      const { run, pr, head, legacy } = latest.get(issue.key);
-      const read = legacy === null ? head : pullHead({ pr: legacy, branch: issue.branch, repository });
-      return { key: issue.key, run, pr, head: typeof read === 'string' && SHA.test(read) ? read : null };
+      const { run, pr, head, legacy, branch } = latest.get(issue.key);
+      const read = legacy === null ? head : pullHead({ pr: legacy, branch, repository });
+      return { key: issue.key, run, pr, head: typeof read === 'string' && SHA.test(read) ? read : null, branch };
     });
 }
 
@@ -691,12 +701,13 @@ export function planRun(snapshot, states = new Map(), { maxParallel = SERIAL } =
   const isDone = (key) => status.get(key) === 'done';
   const cycles = cycleMembers(snapshot.issues, byId, isDone);
   const order = topological(snapshot.issues, byId, cycles, isDone);
-  const resumed = new Set((snapshot.resumed ?? []).map((each) => each.key));
+  const resumed = new Map((snapshot.resumed ?? []).map((each) => [each.key, each.branch]));
   const { ready, blocked, skipped } = sortOpen({ snapshot, byId, status, isDone, cycles, order, resumed });
   const keysIn = (wanted) => snapshot.issues.map((issue) => issue.key).filter((key) => status.get(key) === wanted).sort(byKey);
   const running = keysIn('running');
   const slots = Math.max(0, maxParallel - running.length);
-  const next = ready.slice(0, slots).map((key) => ({ key, branch: byId.get(key).branch }));
+  // A resumed issue goes on on the branch its earlier run worked on (resumedIssues).
+  const next = ready.slice(0, slots).map((key) => ({ key, branch: resumed.get(key) ?? byId.get(key).branch }));
   let verdict = 'done';
   if (running.length) verdict = 'wait';
   if (next.length) verdict = 'next';
@@ -912,17 +923,21 @@ export function summaryText(run, found) {
 
 // The branch issue `key` of the run `found` works on now: the one its latest start row names, since a later attempt
 // moves to a fresh branch when the earlier one changes instruction files no review saw (project-start.mjs
-// prepareAttempt), else the one the snapshot names.
+// prepareAttempt), else the earlier run's attempt branch a resumed issue goes on on (resumedIssues), else the one the
+// snapshot names.
 // Only an attempt that ran counts: the latest row of each attempt, but one given back (`void`), which ran no session.
 export function issueBranch(found, key) {
   return attemptBranches(found, key).at(-1) ?? found.snapshot.issues.find((issue) => issue.key === key)?.branch ?? null;
 }
 
-// The branches the attempts of issue `key` that ran recorded, in order (issueBranch).
+// The branches the attempts of issue `key` that ran recorded, in order (issueBranch), after the earlier run's attempt
+// branch a resumed issue goes on on, when it is not the snapshot's (resumedIssues).
 export function attemptBranches(found, key) {
   const latest = new Map();
   for (const row of found.rows) if (row.event === 'start' && row.key === key) latest.set(row.attempt, row);
-  return [...latest.values()].filter((row) => row.outcome !== 'void' && typeof row.branch === 'string' && row.branch !== '').map((row) => row.branch);
+  const own = found.snapshot.issues.find((issue) => issue.key === key)?.branch;
+  const resumed = found.snapshot.resumed?.find((each) => each.key === key)?.branch;
+  return [...(resumed && resumed !== own ? [resumed] : []), ...[...latest.values()].filter((row) => row.outcome !== 'void' && typeof row.branch === 'string' && row.branch !== '').map((row) => row.branch)];
 }
 
 // Writes summary.md of run `run` from its ledger, through a temporary file, and returns { text, file } or { problem }.

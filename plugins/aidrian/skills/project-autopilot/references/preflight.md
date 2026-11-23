@@ -78,7 +78,7 @@ date, such as `billing-v2-20261118`), the file `<state>/tmp/<run>.snapshot.json`
 
 Then run `aidrian project init <run> --file <snapshot file> --check`. It checks the input as init will, writes no run,
 and prints `ok snapshot <n> issues, <m> with text`, a `resumed:` line naming each started issue an earlier run parked
-on the same branch, which the run starts again, a `blocker snapshot:` line for each problem, cycle, or issue
+on its branch, which the run starts again, a `blocker snapshot:` line for each problem, cycle, or issue
 started outside the run, a `blocker texts:` line for each issue whose text no read recorded when
 `projectRun.mcpServers` holds no tracker server its session could read it through, the `next` lines for turn 1, as
 many as `projectRun.maxParallel` starts at once, and a

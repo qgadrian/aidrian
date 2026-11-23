@@ -411,7 +411,7 @@ function secretsLine({ facade, named, repository, policy, check, asks }) {
 
 // `aidrian project init RUN --file PATH --check`: the input's checks, as init makes them, and the order, with no run
 // written: a `blocker snapshot` line for each problem, for each issue blocked by a cycle or by a status the run does not
-// start from, a started issue an earlier run parked on the same branch excepted, as init excepts it (project-run.mjs
+// start from, a started issue an earlier run parked on its branch excepted, as init excepts it (project-run.mjs
 // resumedIssues, in the state folder runPlace resolves; none when it refuses), which a `resumed:` line names, and,
 // when the base branch's projectRun.mcpServers holds no tracker server an issue's session could read
 // the tracker through, a `blocker texts` line for each issue to start whose text no tracker read of `session` recorded

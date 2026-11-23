@@ -19,7 +19,7 @@ import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { noteFrom, openStore, storePath } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { LOCKED } from '../plugins/aidrian/lib/jsonl.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
-import { appendToRun, INPUT_CAP, initRun, pinnedRepository, planRun, readCapped, readRun, runFolder, runPlace, runsFolder, writeSummary } from '../plugins/aidrian/lib/project-run.mjs';
+import { appendToRun, INPUT_CAP, initRun, issueBranch, pinnedRepository, planRun, readCapped, readRun, runFolder, runPlace, runsFolder, writeSummary } from '../plugins/aidrian/lib/project-run.mjs';
 import { markPending, markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { recordIssue } from './project-start-fixture.mjs';
 
@@ -143,11 +143,11 @@ test('init starts a started issue an earlier run parked on the same branch, and 
   ] };
   assert.equal(init('first', input(first, 'first.json')).exitCode, 0);
   const at = new Date().toISOString();
-  // ENG-1 parked on its pull request; ENG-6 parked after its latest attempt moved to a fresh branch; ENG-5 merged.
+  // ENG-1 parked on its pull request; ENG-6 parked after its latest attempt moved to a branch no attempt cuts; ENG-5 merged.
   appendToRun(state, 'first', () => ({ rows: [
     { event: 'result', key: 'ENG-1', attempt: 1, status: 'pr_open', pr: 12, head: 'a'.repeat(40), at },
     { event: 'issue', key: 'ENG-1', state: 'parked', decision: 'pr-open', at },
-    { event: 'start', key: 'ENG-6', attempt: 2, branch: 'feat/eng-6-moved-a2', outcome: 'started', at },
+    { event: 'start', key: 'ENG-6', attempt: 2, branch: 'feat/eng-6-other', outcome: 'started', at },
     { event: 'issue', key: 'ENG-6', state: 'parked', decision: 'blocked', at },
     { event: 'issue', key: 'ENG-5', state: 'done', at },
   ] }));
@@ -159,11 +159,11 @@ test('init starts a started issue an earlier run parked on the same branch, and 
   ], resumed: [{ key: 'ENG-7', run: 'first', pr: null }] };
   const result = init('second', input(second, 'second.json'));
   assert.equal(result.exitCode, 0, result.err.join('\n'));
-  assert.ok(result.out.includes('resumed: 1 started issue an earlier run parked on the same branch, which this run starts again: ENG-1'), result.out.join('\n'));
+  assert.ok(result.out.includes('resumed: 1 started issue an earlier run parked on its branch, which this run starts again: ENG-1'), result.out.join('\n'));
   const found = readRun(state, 'second');
   assert.equal(found.problem, undefined);
   // The driver's own `resumed` is dropped: only init's read of the earlier runs names one.
-  assert.deepEqual(found.snapshot.resumed, [{ key: 'ENG-1', run: 'first', pr: 12, head: 'a'.repeat(40) }]);
+  assert.deepEqual(found.snapshot.resumed, [{ key: 'ENG-1', run: 'first', pr: 12, head: 'a'.repeat(40), branch: 'feat/eng-1-export' }]);
   const plan = planRun(found.snapshot, found.states, { maxParallel: 4 });
   assert.deepEqual(plan.next.map(({ key }) => key), ['ENG-1', 'ENG-8']);
   // ENG-6's work is on another branch than the snapshot names, and no run parked ENG-7: someone's work outside the run.
@@ -196,7 +196,37 @@ test('init resumes no parked issue of a run that pinned another repository, and 
   rmSync(runFolder(state, 'moved'), { recursive: true });
   git('remote', 'set-url', 'origin', 'git@github.com:Acme/widgets.git');
   assert.equal(init('second', input(started, 'second.json')).exitCode, 0);
-  assert.deepEqual(readRun(state, 'second').snapshot.resumed, [{ key: 'ENG-1', run: 'first', pr: null, head: null }, { key: 'ENG-2', run: 'first', pr: null, head: null }]);
+  assert.deepEqual(readRun(state, 'second').snapshot.resumed, [{ key: 'ENG-1', run: 'first', pr: null, head: null, branch: 'feat/eng-1-export' }, { key: 'ENG-2', run: 'first', pr: null, head: null, branch: 'feat/eng-2-import' }]);
+});
+
+test('init resumes a parked issue on the attempt branch its earlier run cut from the snapshot\'s, and on no branch that run did not cut', (t) => {
+  const { state, input, init } = setup(t);
+  const issues = [
+    { key: 'ENG-1', branch: 'feat/eng-1-export', status: 'unstarted' },
+    { key: 'ENG-2', branch: 'feat/eng-2-import', status: 'unstarted' },
+  ];
+  assert.equal(init('first', input({ issues }, 'first.json')).exitCode, 0);
+  const at = new Date().toISOString();
+  const head = 'a'.repeat(40);
+  // ENG-1's second attempt left its branch for a fresh one; ENG-2's latest start is on a name no attempt cuts.
+  appendToRun(state, 'first', () => ({ rows: [
+    { event: 'start', key: 'ENG-1', attempt: 2, branch: 'feat/eng-1-export-a2', outcome: 'started', at },
+    { event: 'result', key: 'ENG-1', attempt: 2, status: 'pr_open', pr: 10, head, at },
+    { event: 'start', key: 'ENG-2', attempt: 2, branch: 'feat/eng-2-import-b2', outcome: 'started', at },
+    ...issues.map(({ key }) => ({ event: 'issue', key, state: 'parked', decision: 'pr-open', at })),
+  ] }));
+  const started = { issues: issues.map((issue) => ({ ...issue, status: 'started' })) };
+  const second = init('second', input(started, 'second.json'));
+  assert.equal(second.exitCode, 0, second.err.join('\n'));
+  const found = readRun(state, 'second');
+  assert.deepEqual(found.snapshot.resumed, [{ key: 'ENG-1', run: 'first', pr: 10, head, branch: 'feat/eng-1-export-a2' }]);
+  // The new run works on that branch from its first attempt, which every reader of the branch takes.
+  assert.equal(issueBranch(found, 'ENG-1'), 'feat/eng-1-export-a2');
+  assert.deepEqual(planRun(found.snapshot, found.states).blocked, [{ key: 'ENG-2', reason: 'status', on: ['started'] }]);
+  // A third run, after the second parked ENG-1 with no start of its own: the second run never cut that branch.
+  appendToRun(state, 'second', () => ({ rows: [{ event: 'issue', key: 'ENG-1', state: 'parked', decision: 'blocked', at }] }));
+  assert.equal(init('third', input(started, 'third.json')).exitCode, 0);
+  assert.equal(readRun(state, 'third').snapshot.resumed, undefined);
 });
 
 test('init holds the runs lock while it checks and makes the run: a live foreign lock makes it throw, and no run is made', (t) => {

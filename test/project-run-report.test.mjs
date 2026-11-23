@@ -955,9 +955,19 @@ test('init --check counts a started issue an earlier run parked on the same bran
   const at = new Date().toISOString();
   appendToRun(fx.state, 'first', () => ({ rows: ['ENG-1', 'ENG-2'].map((key) => ({ event: 'issue', key, state: 'parked', decision: 'pr-open', at })) }));
   const check = (issues) => fx.cmd(['init', 'second', '--file', input(issues), '--check']);
+  // An attempt branch the earlier run cut from the snapshot's counts too: `next` names it.
+  const cut = fx.cmd(['init', 'cut', '--file', input([{ key: 'ENG-4', branch: 'fix/eng-4-typo', status: 'unstarted' }])]);
+  assert.equal(cut.exitCode, 0, cut.err.join('\n'));
+  appendToRun(fx.state, 'cut', () => ({ rows: [
+    { event: 'start', key: 'ENG-4', attempt: 2, branch: 'fix/eng-4-typo-a2', outcome: 'started', at },
+    { event: 'issue', key: 'ENG-4', state: 'parked', decision: 'pr-open', at },
+  ] }));
+  const attempt = check([{ key: 'ENG-4', branch: 'fix/eng-4-typo', status: 'started' }]);
+  assert.equal(attempt.exitCode, 0, attempt.out.join('\n'));
+  assert.ok(attempt.out.includes('next ENG-4 fix/eng-4-typo-a2'), attempt.out.join('\n'));
   const resumed = check([{ key: 'ENG-1', branch: 'feat/eng-1-export', status: 'started' }]);
   assert.equal(resumed.exitCode, 0, resumed.out.join('\n'));
-  assert.ok(resumed.out.includes('resumed: 1 started issue an earlier run parked on the same branch, which this run starts again: ENG-1'), resumed.out.join('\n'));
+  assert.ok(resumed.out.includes('resumed: 1 started issue an earlier run parked on its branch, which this run starts again: ENG-1'), resumed.out.join('\n'));
   assert.ok(resumed.out.includes('next ENG-1 feat/eng-1-export'), resumed.out.join('\n'));
   // ENG-2 on another branch than the one the earlier run parked, and ENG-3, which no run parked: both stay blockers.
   const held = check([{ key: 'ENG-2', branch: 'feat/eng-2-renamed', status: 'started' }, { key: 'ENG-3', branch: 'feat/eng-3-share', status: 'started' }]);

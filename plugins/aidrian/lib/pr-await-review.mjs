@@ -562,15 +562,13 @@ function botHistory(extension, { project, forge, base, reviewer, head }) {
 }
 
 // The check at the cap for the bot's rounds.
-// `reviewerArg` is ` --reviewer <login>` for a wait on another reviewer than the configured one, else '': the rerun the
-// check prints, and the one `aidrian pr extend` prints after it, wait on that reviewer too.
-async function botAtCap(result, { project, config, forge, base, record, policy, env, reviewerArg = '' }) {
+async function botAtCap(result, { project, config, forge, base, record, policy, env }) {
   const extension = await import('./review/extension.mjs');
   const n = Number(base.n);
   const decision = extension.atCap({
     state: record.state, source: 'bot', round: result.codex_rounds, head: result.head_sha, policy, pr: n, repo: base.repo, repoArg: repoFlag(project, base.repo),
-    goal: { title: base.pr?.title ?? null, body: base.pr?.body ?? null }, reviewerArg,
-    command: `aidrian pr await-review ${n} --request${reviewerArg}${repoFlag(project, base.repo)}`,
+    goal: { title: base.pr?.title ?? null, body: base.pr?.body ?? null },
+    command: `aidrian pr await-review ${n} --request${repoFlag(project, base.repo)}`,
     history: botHistory(extension, { project, config, forge, base, reviewer: result.reviewer, head: result.head_sha }),
     // The head of the bot's last review: one read of its reviews, no git. A read that fails says nothing: the cap
     // stands, and no head is named unreviewed.
@@ -661,8 +659,7 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
     // The raise a round_limit prints waits on the configured reviewer: a wait on another `--reviewer` gets none, since
     // its rounds are that reviewer's, and the review-rounds rule approves no `--reviewer`.
     const ownReviewer = !args.includes('--reviewer') || opts.reviewer === config.github.reviewer;
-    const reviewerArg = ownReviewer ? '' : ` --reviewer ${opts.reviewer}`;
-    if (result.status === 'round_limit' && record) result = await botAtCap(result, { project, config, forge, base, record, policy, env, reviewerArg });
+    if (result.status === 'round_limit' && record) result = await botAtCap(result, { project, config, forge, base, record, policy, env });
     else if (moved) await saveRecord(record, { project, config, forge, base, status: result.status });
     else if (result.status === 'round_limit' && base && policy.mode === 'off') {
       const { raiseAsk } = await import('./review/extension.mjs');

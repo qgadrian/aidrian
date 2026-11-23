@@ -37,17 +37,17 @@ const ELIDED = /(?:^|\/)\.{3,}(?:\/|$)/u;
 // This plugin's folder: lib/ is one below it.
 const PLUGIN_FOLDER = path.resolve(import.meta.dirname, '..');
 
-// The paths a subagent's last message presents as delivered, those of them that exist nowhere, and the handoff files its
-// brief asks for that it has not written: { claims, missing, unwritten }.
+// The paths a subagent's last message presents as delivered, those of them that exist nowhere, the handoff files its
+// brief asks for that it has not written, and its brief's markers the hook cannot fill: { claims, missing, unwritten, rejected }.
 // `since` is when the subagent's transcript began, or null (handoffSince).
 export function checkDelivery(input, project) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : project.root;
   const claims = claimedPaths(input.last_assistant_message);
-  const unwritten = unwrittenHandoffs(input, project);
+  const { owed: unwritten, rejected } = briefHandoffs(input, project);
   const since = handoffSince(input);
-  if (!claims.length) return { claims, missing: [], unwritten, since };
+  if (!claims.length) return { claims, missing: [], unwritten, rejected, since };
   const missing = missingPaths(claims, cwd, { roots: () => deliveryRoots(project, cwd), touched: () => touchedFiles(input) });
-  return { claims, missing, unwritten, since };
+  return { claims, missing, unwritten, rejected, since };
 }
 
 // When the subagent's run began: the timestamp of its transcript's first entry, in milliseconds, or null when the
@@ -77,20 +77,29 @@ function handedIn(file, since) {
 }
 
 // The handoff files a subagent's brief asks it to write that it has not written (handedIn): each absolute
-// `<state>/dispatch/<name>.json` a `Handoff file:` line of the transcript's first prompt names, whose `<name>` ends with
+// `<state>/dispatch/<name>.json` a `Handoff file:` marker of the transcript's first prompt names, whose `<name>` ends with
 // the agent's own name, such as `feat-12-S1-code-reviewer.json` or `S1-code-reviewer-result.json` for
 // `aidrian:code-reviewer`. A path anywhere else in the brief, such as a handoff it tells the agent to read, is never owed.
-// No brief, no marker line, no agent name, or no state folder: none.
+// No brief, no marker, no agent name, or no state folder: none.
 export function unwrittenHandoffs(input, project) {
+  return briefHandoffs(input, project).owed;
+}
+
+// The `Handoff file:` markers of a subagent's brief: `owed`, unwrittenHandoffs's files, and `rejected`, each marker the
+// hook cannot fill whose path is not there either, as { value, problem }: one that names no path, or a path that is not
+// an absolute `.json` path in the state folder's `dispatch/`. A rejected marker is a brief's mistake, such as a `<state>`
+// left unexpanded, and is reported, never skipped in silence. A dispatch file named for another agent is no mistake to
+// report: it may be that agent's handoff, for this one to read.
+export function briefHandoffs(input, project) {
   const agent = typeof input.agent_type === 'string' ? input.agent_type.split(':').pop() : '';
   const transcript = agent && typeof input.agent_transcript_path === 'string' ? readText(input.agent_transcript_path) : null;
   const brief = transcript ? firstPrompt(transcript) : null;
-  if (!brief) return [];
+  if (!brief) return { owed: [], rejected: [] };
   let folder;
   try {
     folder = path.join(stateDir(project), 'dispatch');
   } catch {
-    return [];
+    return { owed: [], rejected: [] };
   }
   const wholePath = new RegExp(`^${escapeRegExp(folder)}/[^/]+\\.json$`, 'u');
   // The agent's name as the file name's last word, or the one before a last word such as `result`: a branch that holds
@@ -98,14 +107,24 @@ export function unwrittenHandoffs(input, project) {
   const word = new RegExp(`(?:^|[-_.])${escapeRegExp(agent)}(?:[-_.]\\w+)?\\.json$`, 'u');
   // A CRLF brief's line keeps its `\r` after the split: it is dropped before the marker is matched.
   const marked = brief.split('\n').map((line) => HANDOFF_MARKER.exec(line.replace(/\r$/u, ''))).filter(Boolean).map(markedPath);
+  const problemOf = (file) => {
+    if (!file) return 'names no path';
+    return wholePath.test(file) ? null : `is not an absolute \`.json\` path in \`${folder}/\``;
+  };
   const own = marked.filter((file) => wholePath.test(file) && word.test(path.basename(file)));
+  const cwd = typeof input.cwd === 'string' ? input.cwd : project.root;
+  const rejected = [...new Set(marked)]
+    .map((value) => ({ value, problem: problemOf(value) }))
+    .filter(({ value, problem }) => problem && !(value && existsSync(path.resolve(cwd, value))));
   const since = handoffSince(input);
-  return [...new Set(own)].filter((file) => !handedIn(file, since));
+  return { owed: [...new Set(own)].filter((file) => !handedIn(file, since)), rejected };
 }
 
-// A brief line that names the run's handoff file, in any case, after an optional list marker: `Handoff file: <path>`,
-// `**Handoff file:** <path>`, or `**Handoff file**: <path>`. Its match holds the rest of the line, as `value`.
-const HANDOFF_MARKER = /^\s*(?:[-*]\s+)?(?:handoff file:|\*\*handoff file:\*\*|\*\*handoff file\*\*:)(?<value>.*)$/iu;
+// A brief line that names the run's handoff file, in any case: `Handoff file: <path>`, `**Handoff file:** <path>`, or
+// `**Handoff file**: <path>`, opening the line after an optional list marker, or opening a sentence later in it, as in
+// `Under 4 KB. Handoff file: <path>`. Inside a sentence, as in `Read the earlier handoff file: <path>`, it names a file
+// to read, never one owed. Its match holds the rest of the line, as `value`.
+const HANDOFF_MARKER = /(?:^\s*(?:[-*]\s+)?|[.!?;]\s+)(?:handoff file:|\*\*handoff file:\*\*|\*\*handoff file\*\*:)(?<value>.*)$/iu;
 
 // The path a marker line names: all inside the backticks that open its value, spaces included, else its first word
 // without trailing punctuation. Any prose after it is not read.

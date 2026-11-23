@@ -163,6 +163,16 @@ test('the orchestrator agent file fits in 9,000 bytes', () => {
   assert.ok(bytes <= MAX_ORCHESTRATOR_BYTES, `orchestrator.md is ${bytes} bytes; move detail into the orchestration skill`);
 });
 
+// The handoff-file detail lives in the orchestration skill's briefs reference, so the agent file keeps room under its cap:
+// a brief whose marker path was not absolute went unfilled once the agent's line dropped the word.
+test('the orchestrator names the absolute Handoff file line, and the briefs reference holds its format', () => {
+  const orchestrator = readFileSync(path.join(PLUGIN, 'agents-src/coordination/orchestrator.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(orchestrator, /each brief names its absolute path on its own `Handoff file: <path>` line/);
+  const briefs = readFileSync(path.join(PLUGIN, 'skills/orchestration/references/briefs.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(briefs, /`Handoff file: <state>\/dispatch\/<branch>-<slice>-<agent>\.json`, an absolute path, with `<state>` expanded/);
+  assert.ok(statSync(path.join(CLAUDE_AGENTS, 'orchestrator.md')).size <= MAX_ORCHESTRATOR_BYTES - 100, 'the agent file keeps room under its cap');
+});
+
 test('the orchestrator checks the work against the project`s core invariants, and names only files it can show', () => {
   // A resumed brief's locked scope missed a core product mode, and the orchestrator asked whether to fix the gap; a
   // report named a shortened path and one no agent wrote, and the stop hook sent it back.

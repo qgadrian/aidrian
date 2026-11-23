@@ -408,6 +408,7 @@ test('the stop hook writes only the handoff file its own run was briefed with, n
     ['m2', (out) => `- **Handoff file:** \`${out}\`, then read ${input}.`],
     ['m3', (out) => `* **Handoff file**: ${out}. Inputs: ${input}`],
     ['m4', (out) => `handoff file: ${out}\nRead ${input}.`],
+    ['m8', (out) => `Output: one JSON object. Under 4 KB. Handoff file: ${out} (return the JSON; the main session saves it).`],
   ];
   for (const [id, line] of forms) {
     for (const [end, suffix] of [['\n', ''], ['\r\n', '-crlf']]) {
@@ -418,18 +419,60 @@ test('the stop hook writes only the handoff file its own run was briefed with, n
     }
   }
   assert.throws(() => readFileSync(input), /ENOENT/u, 'a path in the prose after the marker is never written');
+  // A marker inside a sentence names a file to read: an earlier run's file of the role is kept.
+  await sleep(30);
+  assert.equal((await run('m9', `Rule again. Read the earlier handoff file: ${gate} first.`, 'm9')).status, 0);
+  assert.equal(read(gate), 'gate', 'a mid-sentence marker owes no file');
+  // A marker the hook cannot fill is a brief's mistake: the agent is sent back once to say so, and nothing is written.
   const relative = file('copy-relative');
-  assert.equal((await run('m5', `Handoff file: x${relative}`, 'm5')).status, 0);
+  const m5 = await run('m5', `Handoff file: x${relative}`, 'm5');
+  assert.equal(m5.status, 2);
+  assert.ok(m5.stderr.includes(`marker \`x${relative}\` is not an absolute \`.json\` path in \`${dispatch}/\``), m5.stderr);
   assert.throws(() => readFileSync(relative), /ENOENT/u, 'a marked path must be absolute, in the dispatch folder');
   // A marker with no valid path still marks the brief: the one file of the role its prose names is an input, kept.
   await sleep(30);
-  assert.equal((await run('m6', `Handoff file:\nRead the gate at ${gate}.`, 'm6')).status, 0);
-  assert.equal((await run('m6-crlf', `Handoff file:\r\nRead the gate at ${gate}.\r\n`, 'm6')).status, 0);
+  for (const [id, brief] of [['m6', `Handoff file:\nRead the gate at ${gate}.`], ['m6-crlf', `Handoff file:\r\nRead the gate at ${gate}.\r\n`]]) {
+    const sent = await run(id, brief, 'm6');
+    assert.equal(sent.status, 2, id);
+    assert.match(sent.stderr, /marker names no path, so this hook cannot write your handoff there/u, id);
+  }
   assert.equal(read(gate), 'gate');
   // A backticked value is one path: a `.json` inside it does not end it early.
   const short = file('copy-short');
   assert.equal((await run('m7', `Handoff file: \`${short} copy.json\``, 'm7')).status, 0);
   assert.throws(() => readFileSync(short), /ENOENT/u, 'the shorter file is never written');
+});
+
+// An orchestrator's brief, as a background continuation sends it: the marker mid-line after other instructions, or on
+// its own line. Each briefed file exists once the agent stops, written by the hook from its report. A brief whose
+// marker the hook cannot fill, such as one with `<state>` left unexpanded, sends the agent back once, with the reason, and
+// its second stop ends; a marker whose relative path the agent wrote is no mistake.
+test('the stop hook fills every briefed handoff file of an orchestrator\'s briefs, and reports a marker it cannot fill', async (t) => {
+  const { base, dir, state, hook } = project(t);
+  const dispatch = path.join(state(), 'dispatch');
+  const stop = (id, brief, active = false) => {
+    const transcript = path.join(base, `agent-${id}.jsonl`);
+    writeFileSync(transcript, JSON.stringify({ type: 'user', timestamp: new Date().toISOString(), message: { role: 'user', content: brief } }));
+    return hook('hook-subagent-stop.mjs', {
+      cwd: dir, agent_id: id, agent_type: 'aidrian:backend-developer', agent_transcript_path: transcript, last_assistant_message: JSON.stringify({ status: 'done', decision: id }), stop_hook_active: active,
+    });
+  };
+  for (const [id, line] of [
+    ['own-line', (out) => `Implement slice S2 in the worktree.\nHandoff file: ${out}\nThen send a short summary.`],
+    ['mid-line', (out) => `Output: one JSON object as final message. Under 4 KB. Handoff file: ${out} (return the JSON; the main session saves it).`],
+  ]) {
+    const out = path.join(dispatch, `feat-eng-7-sync-S2-${id}-backend-developer.json`);
+    assert.equal((await stop(id, line(out))).status, 0, id);
+    assert.equal(JSON.parse(readFileSync(out, 'utf8')).decision, id, id);
+  }
+  const placeholder = '<state>/dispatch/feat-eng-7-sync-S3-backend-developer.json';
+  const sent = await stop('placeholder', `Implement slice S3.\nHandoff file: ${placeholder}`);
+  assert.equal(sent.status, 2);
+  assert.ok(sent.stderr.startsWith(`Your brief's \`Handoff file:\` marker \`${placeholder}\` is not an absolute`), sent.stderr);
+  assert.match(sent.stderr, /say in it that the brief's handoff path was rejected and why/u);
+  assert.equal((await stop('placeholder', `Implement slice S3.\nHandoff file: ${placeholder}`, true)).status, 0, 'the second stop ends');
+  writeFileSync(path.join(dir, 'handoff-backend-developer.json'), '{}');
+  assert.equal((await stop('relative', 'Implement slice S4.\nHandoff file: handoff-backend-developer.json')).status, 0, 'a file the agent wrote is no mistake');
 });
 
 // A state folder whose path holds a space: a backticked marker path is read whole, and the run's file is written.

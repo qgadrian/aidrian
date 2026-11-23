@@ -24,7 +24,7 @@ import { readFileSync } from 'node:fs';
 
 import { humanAnswer } from '../hosts/index.mjs';
 import { findProject } from '../project.mjs';
-import { readLocalState } from '../review/state.mjs';
+import { checkId, readLocalState } from '../review/state.mjs';
 import { aidrianArgs, walkCommands } from '../shell-lex.mjs';
 import { callRepo, namesChange, NOTIFY_CLAUSE, severalRemotes } from './review-signoff.mjs';
 
@@ -90,16 +90,18 @@ function extendCall(words) {
   if (words?.[0]?.text !== 'pr' || words[1]?.text !== 'extend') return null;
   let answer;
   let pr;
+  let check;
   for (let i = 2; i < words.length; i += 1) {
     const { text, dynamic } = words[i];
     if (text === '--human') {
       answer = words[i + 1] && !words[i + 1].dynamic ? words[i + 1].text : null;
       i += 1;
     } else if (text.startsWith('--human=')) answer = dynamic ? null : text.slice('--human='.length);
+    else if (text === '--check') check = words[(i += 1)] && !words[i].dynamic ? words[i].text : null;
     else if (['--verdict', '--reason', '--head', '--repo'].includes(text)) i += 1;
     else if (pr === undefined && !text.startsWith('-')) pr = !dynamic && /^#?\d+$/u.test(text) ? Number(text.replace('#', '')) : null;
   }
-  return answer === undefined ? null : { answer, pr: pr ?? null, words };
+  return answer === undefined ? null : { answer, pr: pr ?? null, words, check };
 }
 
 // The Human's answers to AskUserQuestion in a Claude Code transcript, oldest first: [{ question, answer, at, options,
@@ -217,6 +219,8 @@ function nextCap(state) {
   const planRounds = !bot && Array.isArray(state?.rounds) ? state.rounds.length : 0;
   const done = Math.max(Number.isInteger(last.round) ? last.round : 0, planRounds);
   const granted = entries.filter((entry) => entry.source === last.source && (entry.reviewer ?? null) === (last.reviewer ?? null) && entry.status === 'granted').length;
+  // SHORTCUT: the suggested --max-rounds counts the latest check's reviewer's grants, every one; the rerun counts the
+  // configured reviewer's under the policy in force, which a switch of reviewer or policy can make differ by a round.
   return { last, next: done ? Math.max(1, done + 1 - granted) : null, bot };
 }
 
@@ -248,7 +252,9 @@ function judge(call, project, input) {
   try {
     state = readLocalState(project, call.pr, target.repo ?? undefined);
   } catch {}
-  const pending = (state?.extensions ?? []).filter((entry) => entry.status === 'asking').at(-1);
+  // The check the call names (`--check`), as the command reads it; with none, the latest waiting, and the command
+  // refuses a call that names none while two checks wait.
+  const pending = (state?.extensions ?? []).filter((entry) => entry.status === 'asking' && (call.check === undefined || checkId(entry) === call.check)).at(-1);
   if (!pending) return noAskReason(call.pr, { ...nextCap(state), several: severalRemotes(project), repo: target.repo });
   const round = pending.round + 1;
   const since = pending.judge?.at ?? pending.decided_at ?? null;

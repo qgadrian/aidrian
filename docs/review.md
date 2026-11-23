@@ -1120,7 +1120,7 @@ It applies to `aidrian pr review` and to `aidrian pr await-review --request`, wh
    flag as real or a false alarm. It records its word:
 
    ```sh
-   aidrian pr extend <PR> --verdict extend|stop --reason "<evidence>" [--head <sha>]
+   aidrian pr extend <PR> --verdict extend|stop --reason "<evidence>" [--head <sha>] [--check <id>]
    ```
 
 4. **Grant.** `stop` is `round_limit`. `extend` grants the round under `"auto"` when no red flag stands. Under
@@ -1128,7 +1128,7 @@ It applies to `aidrian pr review` and to `aidrian pr await-review --request`, wh
    and the session records the answer. The question names the red flags, by name only:
 
    ```sh
-   aidrian pr extend <PR> --human approve|deny
+   aidrian pr extend <PR> --human approve|deny [--check <id>]
    ```
 
 At the cap that stands, `round_limit` carries a `question`, `options`, and `raise` when the repository is known: the
@@ -1165,7 +1165,10 @@ A bot's check, its question, and its grant are for the reviewer whose rounds it 
 reviewer, and another reviewer, such as the one a checkout with another `github.reviewer` waits on, never takes it, counts
 it, or reads it again on a new head. An entry with no reviewer, which an earlier version or an override wrote, belongs to
 none, so the cap is checked afresh. The plan's entries name none. The summary comment's record keeps the reviewer.
-While two bots' checks wait at once, `aidrian pr extend` refuses a verdict or an answer, which names no reviewer.
+Each check has an id, `plan` or `bot:<reviewer>` (`bot` for an entry with no reviewer), and the record commands the
+step prints name it with `--check '<id>'`, so a verdict or an answer lands on the check that asked for it, and a delayed
+one for a check already settled lands on no other. With no `--check`, `aidrian pr extend` refuses while two checks wait,
+and the `review-extend` rule reads the Human's answer against the check the call names.
 
 A grant is exactly one round: the cap rises by one, and the next cap runs the check again. It adds to the cap in
 force, the base branch's or an explicit `--max-rounds`, in both commands; a `--max-rounds` above the base branch's cap

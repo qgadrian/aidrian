@@ -163,7 +163,18 @@ test('the published record keeps a bot check`s reviewer, and two bots` waiting c
     if (where === 'public') assert.equal(read.extensions[1].reviewer, undefined, 'public: anything but a login is dropped');
   }
   state.extensions.push({ source: 'bot', round: 3, head: 'a'.repeat(40), reviewer: 'c-bot[bot]', status: 'judging', by: null, reasons: [] });
-  assert.throws(() => recordVerdict(state, { verdict: 'extend', reason: 'r' }), /checks of bot \(a-bot\[bot\]\) and bot \(c-bot\[bot\]\) both wait for a verdict/u);
+  assert.throws(() => recordVerdict(state, { verdict: 'extend', reason: 'r' }), /checks bot:a-bot\[bot\] and bot:c-bot\[bot\] both wait for a verdict: name the one with --check <id>/u);
+  // Each check's command names it, so each verdict lands on its own check, the other left waiting.
+  const a = recordVerdict(state, { verdict: 'stop', reason: 'r', check: 'bot:a-bot[bot]' });
+  assert.deepEqual([a.reviewer, a.status], ['a-bot[bot]', 'stopped']);
+  assert.equal(state.extensions[2].status, 'judging', 'bot C still waits');
+  assert.equal(recordVerdict(state, { verdict: 'extend', reason: 'r' }).reviewer, 'c-bot[bot]', 'one left waiting needs no --check');
+  assert.throws(() => recordVerdict(state, { verdict: 'extend', reason: 'r', check: 'bot:a-bot[bot]' }), /no extension check waits for a verdict/u, 'a delayed verdict for a settled check lands on no other');
+  // The judge's record command and the Human's names the check, quoted for any shell.
+  const fresh = emptyState(42, 'o/r');
+  const check = atCap({ state: fresh, source: 'bot', round: 3, head: 'h', policy: { mode: 'ask', max: 2 }, history: passing, pr: 42, reviewer: 'a-bot[bot]' });
+  assert.match(check.dispatch[0].record, / --head h --check 'bot:a-bot\[bot\]'$/u);
+  assert.deepEqual(parseExtend(['42', '--human', 'approve', '--check', 'bot:a-bot[bot]']).check, 'bot:a-bot[bot]');
 });
 
 test('atCap: the judge`s verdict and the Human`s answer move one entry, and only a waiting one', () => {
@@ -246,8 +257,8 @@ test('the summary: a fix head a plan round reviewed since is not listed as unrev
 });
 
 test('aidrian pr extend: its arguments are checked before anything is recorded', () => {
-  assert.deepEqual(parseExtend(['#12', '--verdict', 'extend', '--reason', ' a.js:3 is real ', '--head', 'abc1234']), { pr: 12, verdict: 'extend', reason: 'a.js:3 is real', head: 'abc1234', human: null, repo: null });
-  assert.deepEqual(parseExtend(['12', '--human', 'deny']), { pr: 12, verdict: null, reason: null, head: null, human: 'deny', repo: null });
+  assert.deepEqual(parseExtend(['#12', '--verdict', 'extend', '--reason', ' a.js:3 is real ', '--head', 'abc1234']), { pr: 12, verdict: 'extend', reason: 'a.js:3 is real', head: 'abc1234', human: null, repo: null, check: null });
+  assert.deepEqual(parseExtend(['12', '--human', 'deny']), { pr: 12, verdict: null, reason: null, head: null, human: 'deny', repo: null, check: null });
   assert.equal(parseExtend(['12', '--human', 'deny', '--repo', 'Up/Notes']).repo, 'up/notes');
   for (const [args, error] of [
     [[], /needs a pull request number/u],

@@ -239,6 +239,61 @@ test('a pending or unreadable hold refuses only the entries refused wherever the
   const places = () => unattendedPlaces({ cwd: other, mark: held, project, config: loadConfig(project).config, env: fx.env, home: fx.home, temp: [fx.temp] });
   assert.equal(fx.ask(write(path.join(state, 'plans', 'x.md')), { held, places, cwd: other }), null);
   assert.match(fx.ask(write(path.join(fx.home, '.local', 'other.md')), { held, places, cwd: other })?.reason ?? '', /a dot file or folder/u);
+  // Its audits folder passes but for the triage record, which a removal of the whole state folder also meets.
+  assert.equal(fx.ask(write(path.join(state, 'audits', 'host-2026-11-22.md')), { held, places, cwd: other }), null);
+  assert.match(fx.ask(write(path.join(state, 'audits', 'triage.json')), { held, places, cwd: other })?.reason ?? '', /triage record/u);
+  assert.match(fx.ask(bash(`rm -rf ${state}`), { held, places, cwd: other })?.reason ?? '', /triage record/u);
+  // A mark that cannot be read may be an issue session's: none of the audits folder passes.
+  const unread = { root: null };
+  const unreadPlaces = () => unattendedPlaces({ cwd: other, mark: unread, project, config: loadConfig(project).config, env: fx.env, home: fx.home, temp: [fx.temp] });
+  assert.match(fx.ask(write(path.join(state, 'audits', 'host-2026-11-22.md')), { held: unread, places: unreadPlaces, cwd: other })?.reason ?? '', /issue session never writes/u);
+});
+
+test('a persona audit\'s report, sidecar, and screenshots pass by hand, and its triage record never does', (t) => {
+  const fx = fixture(t);
+  const audits = path.join(fx.state, 'audits');
+  mkdirSync(audits, { recursive: true });
+  // A persona may be named anything a file is, `triage.json` included: only the record, its lock, and its copies refuse.
+  for (const name of ['host-2026-11-22.md', 'host-2026-11-22.json', 'host-2026-11-22/home.png', 'triage.json-2026-11-22.md', 'triage.json.md']) {
+    const file = path.join(audits, name);
+    for (const input of [write(file), bash(`echo x > ${file}`)]) assert.equal(fx.ask(input), null, name);
+  }
+  for (const name of ['triage.json', 'triage.json.lock', 'triage.json.lock.3', 'triage.json.lock.3.released', 'triage.json.123.tmp', 'TRIAGE.JSON']) {
+    const file = path.join(audits, name);
+    for (const input of [write(file), bash(`echo x > ${file}`), bash(`rm -f ${file}`)]) assert.match(fx.ask(input)?.reason ?? '', /triage record/u, name);
+  }
+  assert.match(fx.ask(bash(`rm -rf ${audits}`))?.reason ?? '', /triage record/u);
+  assert.ok(fx.ask(bash(`rm -rf ${fx.state}`)), 'the whole state folder');
+  // A hard link to the record, made before, is the record.
+  writeFileSync(path.join(audits, 'triage.json'), '{}\n');
+  mkdirSync(path.join(fx.state, 'tmp'), { recursive: true });
+  linkSync(path.join(audits, 'triage.json'), path.join(fx.state, 'tmp', 'alias.json'));
+  assert.match(fx.ask(write(path.join(fx.state, 'tmp', 'alias.json')))?.reason ?? '', /triage record/u);
+  // A project run's issue session writes none of the audits folder.
+  assert.match(fx.ask(write(path.join(audits, 'host-2026-11-22.md')), { held: { root: fx.dir, project: 'launch', issue: 'ENG-1' } })?.reason ?? '', /issue session never writes/u);
+});
+
+test('a state folder inside the session\'s own worktree keeps its triage record, and an audits folder that is a checkout grants nothing', (t) => {
+  const fx = fixture(t);
+  const state = path.join(fx.worktree, '.state');
+  mkdirSync(state, { recursive: true });
+  writeFileSync(path.join(fx.dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: state } }));
+  let project = findProject(fx.dir);
+  let places = () => unattendedPlaces({ cwd: fx.worktree, mark: fx.mark, project, config: loadConfig(project).config, env: fx.env, home: fx.home, temp: [fx.temp] });
+  assert.equal(fx.ask(write(path.join(state, 'audits', 'host-2026-11-22.md')), { places }), null);
+  assert.equal(fx.ask(bash(`mkdir -p ${path.join(state, 'audits')}`), { places }), null, 'a fresh audits folder');
+  mkdirSync(path.join(state, 'audits'));
+  assert.equal(fx.ask(bash(`mkdir -p ${path.join(state, 'audits')}`), { places }), null, 'an audits folder already there');
+  assert.match(fx.ask(bash(`rmdir ${path.join(state, 'audits')}`), { places })?.reason ?? '', /triage record/u, 'a removal of it');
+  assert.match(fx.ask(write(path.join(state, 'audits', 'triage.json')), { places })?.reason ?? '', /triage record/u);
+  // Another checkout of the repository at `<state>/audits`: the audits grant never reaches into it.
+  const other = path.join(fx.root, 'other-state');
+  mkdirSync(other);
+  gitIn(fx.dir)('worktree', 'add', '-q', '-b', 'feat/audits', path.join(other, 'audits'));
+  writeFileSync(path.join(fx.dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: other } }));
+  project = findProject(fx.dir);
+  places = () => unattendedPlaces({ cwd: fx.worktree, mark: fx.mark, project, config: loadConfig(project).config, env: fx.env, home: fx.home, temp: [fx.temp] });
+  assert.ok(fx.ask(write(path.join(other, 'audits', 'README.md')), { places }), 'a checkout at the audits folder');
 });
 
 test('a target in /dev passes, by its spelled path', (t) => {

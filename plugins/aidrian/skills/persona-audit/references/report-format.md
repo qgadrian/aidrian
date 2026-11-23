@@ -122,6 +122,9 @@ Personas are synthetic: this report is a lead for the Human, not a substitute fo
   "the floor-manager read-only run on 2026-11-03", with its path once, as its location. A task is named by its
   title, never by its number: "Seat a walk-in party", not "Task 2". `aidrian audits check` warns on "Task <n>".
 - A screenshot the run saves goes in `<state>/audits/<report name>/`, beside the report, and the report cites its path.
+- A project run's issue session, confined to its attempt, writes no audits folder: it writes the report, its sidecar,
+  and its screenshots folder in `<state>/tmp/<issue key, lowercased>-<report name>/` instead, skips the check, and
+  returns that folder's path in its result.
 - An outcome other than `not walked` or `out of scope` needs `walked` in the Evidence column.
   An `out of scope` task was not looked at, so its Evidence is `-`.
 - The walk stays within the tasks in scope. A suggested task is an idea that came up in character during the walk, such

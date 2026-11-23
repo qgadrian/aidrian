@@ -1285,8 +1285,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   - the state folders it writes by hand, each when it is no link, of every state folder of the project its mark names:
     `plans`, `tmp`, `handoffs` (the continuation store in it stays refused, as above), and `quorum`, where the product
     quorum runs under auto decisions; in `reviews`, only a review manifest, `pr-<n>.json` or a temporary copy of it,
-    and a capture under `pr-<n>/captures/`; and in `dispatch`, only a subagent's handoff file, a `.json` file directly
-    in it. A confined host is granted `plans`, `reviews`, `tmp`, and `dispatch` for the programs it runs, such as the
+    and a capture under `pr-<n>/captures/`; in `dispatch`, only a subagent's handoff file, a `.json` file directly
+    in it; and in `audits`, a persona audit's report, sidecar, and screenshots, never as a grant into a checkout the
+    folder holds or lies in. A confined host is granted `plans`, `reviews`, `tmp`, and `dispatch` for the programs it runs, such as the
     review commands, which write the records there. A project run's issue session, one whose mark names an issue, or
     whose mark cannot be read, is held tighter there: it writes no `handoffs`, since it asks for no handoff and a brief
     there could become a driver's prior ([handoff.md](handoff.md#the-check)), and no `quorum`, whose hard calls it
@@ -1320,7 +1321,10 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   `GIT_CONFIG_SYSTEM`, such as a package manager's `etc/gitconfig`, asked only for a write that would otherwise pass);
   the shell startup files in the home folder and in `ZDOTDIR`; the user's macOS launch agents, `~/Library/LaunchAgents`;
   the review and attest records in `reviews`, by a write or a delete; any other path in `dispatch`, and the dispatch log
-  beside it, `<state>/dispatch-log.jsonl`; the host files every host's adapter protects (`protectedPaths`), in the
+  beside it, `<state>/dispatch-log.jsonl`; the persona audits' triage record, `<state>/audits/triage.json`, its lock,
+  and a temporary copy of either, by a write, a delete, a removal of a folder above them, or a hard link to the record,
+  in every layout, a state folder inside the session's own checkout or a limited mark's included, and for a project
+  run's issue session the whole `audits` folder; the host files every host's adapter protects (`protectedPaths`), in the
   session's own worktree, each checkout of the repository nested in it, and its attempt's clone: `.claude/settings.json`, `.claude/settings.local.json`,
   `.claude/skills`, `.claude/agents`, `.claude/commands`, `.claude/hooks`, `.claude/workflows`,
   `.claude/scheduled_tasks.json`, and `.mcp.json`, which a later session there loads, whichever host the session runs

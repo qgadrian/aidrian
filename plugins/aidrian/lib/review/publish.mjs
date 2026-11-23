@@ -345,6 +345,7 @@ const URL = /^https:\/\/[^\s<>"'`]{1,500}$/u;
 // A follow-up issue as a delegation names it: `<owner>/<name>#<n>`.
 const ISSUE_REF = /^[\w.-]{1,100}\/[\w.-]{1,100}#\d{1,10}$/u;
 const WORD = /^[a-z_]{1,40}$/u;
+const REVIEWER_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\[bot\])?$/u;
 const CAPTURE_KEY = /^[\w.:/@=+-]{1,200}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const OVERRIDE = /^round \d{1,4} ran the ([\w.:-]{1,80}) stage first$/u;
@@ -678,6 +679,8 @@ function allowlisted(state, post, counter) {
     const decision = check((value) => isObject(value));
     return object(source, {
       source: word(new Set(['plan', 'bot'])),
+      // The bot whose rounds a bot check read: a GitHub login, as `chatgpt-codex-connector[bot]`.
+      reviewer: check((value) => typeof value === 'string' && REVIEWER_LOGIN.test(value)),
       mode: word(),
       status: word(),
       by: word(),

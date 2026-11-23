@@ -617,8 +617,8 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
     // Each extra round the base branch's github.extraRounds granted the bot raises the cap by one.
     const { grantedRounds, policyOf, roundCap } = await import('./review/extension.mjs');
     const policy = policyOf(base?.github ?? config.github);
-    // A wait on another `--reviewer` than the configured one stays outside the check at the cap: its decisions and
-    // grants are keyed by source and round, not by reviewer, so they would mix with the configured reviewer's.
+    // A wait on another `--reviewer` than the configured one stays outside the check at the cap: the reruns it prints,
+    // and the one `aidrian pr extend` prints, name no `--reviewer`, so they would wait on the configured one.
     const ownReviewer = !args.includes('--reviewer') || opts.reviewer === config.github.reviewer;
     const record = base && opts.request && policy.mode !== 'off' && ownReviewer ? await reviewRecord(project, forge, base) : null;
     // The baseline: an explicit --max-rounds, held to the base branch's cap unless the Human set the override, else that

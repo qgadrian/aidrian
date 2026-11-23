@@ -149,6 +149,23 @@ test('atCap, revalidate, and grantedRounds take a bot decision only for its own 
   assert.equal(grantedRounds(plan, 'plan', { mode: 'auto', max: 2 }), 1);
 });
 
+// The reviewer a bot check read rides in the summary comment's record, so another machine matches it too; two bots'
+// checks waiting at once take no verdict or answer, which names no reviewer.
+test('the published record keeps a bot check`s reviewer, and two bots` waiting checks refuse a verdict', () => {
+  const state = emptyState(42, 'o/r');
+  state.extensions = [
+    { source: 'bot', round: 3, head: 'a'.repeat(40), reviewer: 'a-bot[bot]', status: 'judging', by: null, reasons: [] },
+    { source: 'bot', round: 3, head: 'a'.repeat(40), reviewer: 'b bot; rm', status: 'stopped', by: 'judge', reasons: [] },
+  ];
+  for (const [where, post] of [['private', OPEN], ['public', { ...OPEN, reading: { visibility: 'PUBLIC', inside: true } }]]) {
+    const read = stateFromComment(summaryBody(state, null, 'extension_check', post), 42);
+    assert.equal(read.extensions[0].reviewer, 'a-bot[bot]', `${where}: the login is kept`);
+    if (where === 'public') assert.equal(read.extensions[1].reviewer, undefined, 'public: anything but a login is dropped');
+  }
+  state.extensions.push({ source: 'bot', round: 3, head: 'a'.repeat(40), reviewer: 'c-bot[bot]', status: 'judging', by: null, reasons: [] });
+  assert.throws(() => recordVerdict(state, { verdict: 'extend', reason: 'r' }), /checks of bot \(a-bot\[bot\]\) and bot \(c-bot\[bot\]\) both wait for a verdict/u);
+});
+
 test('atCap: the judge`s verdict and the Human`s answer move one entry, and only a waiting one', () => {
   const state = emptyState(7, 'o/r');
   const rows = [];

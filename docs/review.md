@@ -1136,8 +1136,8 @@ question names `<owner>/<name>#<PR>` and `--max-rounds <N>`, its first option st
 `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N>`, with `--with-bot` when the step ran the bot
 (`aidrian pr await-review <PR> --request` for the bot's rounds alone, `"off"` included), ending in
 `--repo <owner>/<name>`, the repository the question names. A wait on a `--reviewer` other than the configured one prints
-no raise and runs no check at the cap: its rounds are that reviewer's, the check's decisions and grants are keyed by
-source and round alone, and the `review-rounds` rule approves no `--reviewer`. The raise runs
+no raise and runs no check at the cap: its rounds are that reviewer's, and the reruns the check prints name no
+`--reviewer`, nor does the `review-rounds` rule approve one. The raise runs
 from a checkout whose remotes name the repository, as the `review-rounds` rule requires. `<N>` allows exactly one more round of the cap that stopped, the bot's when
 its cap stopped `aidrian pr review --with-bot`. The session asks that question word for word, and on the first option runs `raise`: the `review-rounds` rule
 reads that one answer as the grant, so no second question follows, and a second round needs a new answer.
@@ -1164,7 +1164,8 @@ bot's cap.
 A bot's check, its question, and its grant are for the reviewer whose rounds it read: each bot entry names that
 reviewer, and another reviewer, such as the one a checkout with another `github.reviewer` waits on, never takes it, counts
 it, or reads it again on a new head. An entry with no reviewer, which an earlier version or an override wrote, belongs to
-none, so the cap is checked afresh. The plan's entries name none.
+none, so the cap is checked afresh. The plan's entries name none. The summary comment's record keeps the reviewer.
+While two bots' checks wait at once, `aidrian pr extend` refuses a verdict or an answer, which names no reviewer.
 
 A grant is exactly one round: the cap rises by one, and the next cap runs the check again. It adds to the cap in
 force, the base branch's or an explicit `--max-rounds`, in both commands; a `--max-rounds` above the base branch's cap

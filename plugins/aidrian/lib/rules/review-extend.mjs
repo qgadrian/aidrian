@@ -216,7 +216,7 @@ function nextCap(state) {
   const bot = last.source === 'bot';
   const planRounds = !bot && Array.isArray(state?.rounds) ? state.rounds.length : 0;
   const done = Math.max(Number.isInteger(last.round) ? last.round : 0, planRounds);
-  const granted = entries.filter((entry) => entry.source === last.source && entry.status === 'granted').length;
+  const granted = entries.filter((entry) => entry.source === last.source && (entry.reviewer ?? null) === (last.reviewer ?? null) && entry.status === 'granted').length;
   return { last, next: done ? Math.max(1, done + 1 - granted) : null, bot };
 }
 

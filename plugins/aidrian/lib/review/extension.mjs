@@ -368,7 +368,8 @@ export function revalidate({ state, source, round, head, history, reviewer = nul
   return entry;
 }
 
-// The decision at the cap, written into `state` (an entry of `state.extensions` per source and round). Returns the
+// The decision at the cap, written into `state` (an entry of `state.extensions` per source, round, and for the bot,
+// reviewer). Returns the
 // status and what it carries: round_limit with `extension` (off, the ceiling, the judge, or the Human
 // said stop), extension_check with the history and the judge's `dispatch`, or extension_ask with the question.
 // `history` is a function, called only when the signals need reading. `lastReviewed`, when given, is a function that
@@ -457,8 +458,15 @@ export function atCap({ state, source, round, head, policy, history: readHistory
   return { status: 'round_limit', extension: summary, ...(sameCommit(entry.unreviewed?.head, head) ? { unreviewed_head: true } : {}), ...raiseAsk({ pr, repo, source, round, granted, ...raise }) };
 }
 
-// The entry that waits for `status` ("judging" or "asking"): the latest one.
-export const waiting = (state, status) => (state?.extensions ?? []).filter((entry) => entry.status === status).at(-1) ?? null;
+// The entry that waits for `status` ("judging" or "asking"): the latest one. Two that wait, one each for two bots'
+// rounds, are refused: a verdict or an answer carries no reviewer, so it could land on the other bot's check.
+export function waiting(state, status) {
+  const all = (state?.extensions ?? []).filter((entry) => entry.status === status);
+  if (new Set(all.map((entry) => `${entry.source}:${entry.reviewer ?? ''}`)).size > 1) {
+    throw new Error(`checks of ${all.map((entry) => (entry.reviewer ? `${entry.source} (${entry.reviewer})` : entry.source)).join(' and ')} both wait for ${status === 'judging' ? 'a verdict' : 'the Human'}: run the review step for the one to settle, and settle the other later`);
+  }
+  return all.at(-1) ?? null;
+}
 
 // A decision is for the head its signals were read on: refused when the pull request has moved since.
 function sameHead(entry, current) {

@@ -18,9 +18,9 @@ gives the snapshot's line without it.
 
 - **The band.** The model and effort, context use, the prompt cache time left (counted from when the last main-chain
   model request was sent, once its response starts to stream, or from the main turn's end, so a long turn keeps it
-  warm; a subagent's request does not count, and the lifetime is read from the transcript when a main turn ends), the
-  5-hour and 7-day limits (each only
-  once Claude Code reports it, so a plan with no 5-hour limit shows none), the branch
+  warm; after an API retry, from the step's first attempt, so the band may show less time left than there is, never
+  more; a subagent's request does not count, and the lifetime is read from the transcript when a main turn ends), the
+  5-hour and 7-day limits (each only once Claude Code reports it, so a plan with no 5-hour limit shows none), the branch
   or linked worktree (`detached` with no branch), the session's tickets, and the running subagents. The tickets are
   the snapshot's `tickets`, from the branch, the session ledger, and the pull requests the session touched
   ([The snapshot](handoff.md#the-snapshot)): one shows its key with its title and state; two or more show the first

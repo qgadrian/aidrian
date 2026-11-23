@@ -1,6 +1,7 @@
 // The OpenCode bridge (plugins/aidrian/opencode/): on a fake OpenCode context and a fake spawn, what each tool event
 // sends a hook script, how the spawn is pinned, and that no failure reaches OpenCode; then, with the real spawn and this
-// Node, a completed `gh pr create` filed in the session ledger, and a call in a removed folder that leaves spawning on.
+// Node, a completed `gh pr create` filed in the session ledger, and a call in a removed folder that leaves spawning on;
+// and that docs/providers/opencode.md and the README say what runs on OpenCode and that no guard holds a session there.
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
@@ -11,6 +12,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
 
+import { sectionLines } from '../plugins/aidrian/lib/markdown-sections.mjs';
 import { setup } from '../plugins/aidrian/opencode/bridge.mjs';
 import { ROUTES } from '../plugins/aidrian/opencode/routes.mjs';
 import server from '../plugins/aidrian/opencode/server.mjs';
@@ -476,6 +478,62 @@ test('the plugin folder`s package.json is private, aidrian`s version, and export
   assert.deepEqual(Object.keys(loaded), ['id', 'setup']);
   assert.equal(loaded.id, 'aidrian');
   assert.equal(typeof loaded.setup, 'function');
+});
+
+// The OpenCode page (docs/providers/opencode.md) says which hooks run there: its Hooks table has one row for each
+// script hooks.json runs, and its yes rows are the scripts ROUTES names, so a route or a hook added without the page
+// fails here. The README's entry and the page's Limits say no guard holds an OpenCode session.
+const PAGE = readFileSync(path.join(REPO, 'docs/providers/opencode.md'), 'utf8');
+const hooksJsonScripts = () => {
+  const { hooks } = JSON.parse(readFileSync(path.join(PLUGIN, 'hooks/hooks.json'), 'utf8'));
+  const commands = Object.values(hooks).flat().flatMap((entry) => entry.hooks.map((hook) => hook.command));
+  return new Set(commands.map((command) => /scripts\/(hook-[\w-]+\.mjs)/u.exec(command)?.[1]).filter(Boolean));
+};
+// The rows of the Hooks section's table, { script, runs, verified }, by its header's column names.
+function hookRows(page) {
+  const lines = sectionLines(page, 'Hooks').filter((line) => line.startsWith('|'));
+  const cells = (line) => line.slice(1, -1).split('|').map((cell) => cell.trim());
+  const header = cells(lines[0]);
+  assert.deepEqual(header, ['Script', 'Runs on OpenCode', 'Verified', 'Why not']);
+  return lines.slice(2).map(cells).map(([script, runs, verified, why]) => ({ script: script.replaceAll('`', ''), runs, verified, why }));
+}
+
+test('the OpenCode page`s Hooks table has a row for each hooks.json script, and its yes rows are the scripts of ROUTES', () => {
+  const rows = hookRows(PAGE);
+  assert.deepEqual(rows.map((row) => row.script).sort(), [...hooksJsonScripts()].sort());
+  assert.equal(new Set(rows.map((row) => row.script)).size, rows.length, 'one row a script');
+  assert.deepEqual(rows.filter((row) => row.runs === 'yes').map((row) => row.script).sort(), [...new Set(ROUTES.map((route) => route.script))].sort());
+  for (const row of rows) {
+    assert.ok(['yes', 'no'].includes(row.runs), row.script);
+    assert.ok(row.verified === '-' || row.verified === 'fixture only' || /^live on OpenCode \d+\.\d+\.\d+/u.test(row.verified), `${row.script}: ${row.verified}`);
+    if (row.runs === 'no') assert.notEqual(row.why, '', `${row.script} says why it does not run`);
+    else assert.notEqual(row.verified, '-', `${row.script} says how it was verified`);
+  }
+});
+
+test('the hook table check fails on a missing script and on a yes row ROUTES does not name', () => {
+  const rows = hookRows(PAGE.replace(/^\| `hook-stop\.mjs` .*\n/mu, ''));
+  assert.notDeepEqual(rows.map((row) => row.script).sort(), [...hooksJsonScripts()].sort());
+  const yes = hookRows(PAGE.replace('| `hook-bash.mjs` | no |', '| `hook-bash.mjs` | yes |')).filter((row) => row.runs === 'yes').map((row) => row.script);
+  assert.notDeepEqual(yes.sort(), ROUTES.map((route) => route.script).sort());
+});
+
+test('the README`s OpenCode entry says the plugin keeps the session ledger only, and that no guard holds an OpenCode session', () => {
+  const readme = readFileSync(path.join(REPO, 'README.md'), 'utf8');
+  const entry = /^### OpenCode\n([\s\S]*?)(?=^#{2,3} )/mu.exec(readme)?.[1] ?? '';
+  assert.match(entry, /session ledger/u);
+  assert.match(entry.replace(/\s+/gu, ' '), /no aidrian guard holds an OpenCode session/u);
+  // The repository's slug comes from the manifest, so this file never names its owner (test/plugin.test.mjs).
+  const slug = new URL(JSON.parse(readFileSync(path.join(PLUGIN, 'plugin.json'), 'utf8')).repository).pathname.replace(/^\/|\.git$/gu, '');
+  assert.ok(entry.includes(`opencode plugin add 'github:${slug}#main::path:plugins/aidrian'`), entry);
+  assert.match(entry, /docs\/providers\/opencode\.md/u);
+});
+
+test('the OpenCode page`s Limits say aidrian pr auto-merge reads an OpenCode session as attended and gh pr merge runs unchecked', () => {
+  const limits = (sectionLines(PAGE, 'Limits') ?? []).join(' ').replace(/\s+/gu, ' ');
+  assert.match(limits, /`aidrian pr auto-merge` run there reads the session as one a Human attends/u);
+  assert.match(limits, /`gh pr merge` runs unchecked/u);
+  assert.doesNotMatch(PAGE, /write guard holds every write/iu);
 });
 
 // End to end, with the real spawn and this Node: a project checkout whose origin is on GitHub, as test/hook-bash-post.test.mjs makes one.

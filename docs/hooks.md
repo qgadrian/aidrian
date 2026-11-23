@@ -1,7 +1,8 @@
 # Hooks
 
 The plugin's hooks are in [`plugins/aidrian/hooks/hooks.json`](../plugins/aidrian/hooks/hooks.json).
-How each host runs them: [Claude Code](providers/claude-code.md#hooks), [Codex](providers/codex.md#hooks).
+How each host runs them: [Claude Code](providers/claude-code.md#hooks), [Codex](providers/codex.md#hooks),
+[OpenCode](providers/opencode.md#hooks), which runs the session ledger alone, through a bridge plugin.
 
 Every hook lets the action run when it cannot read its input, so a hook never breaks a session.
 Two exceptions: the [merge guard](#merge-guard) refuses a merge whose pull request or head it cannot read,
@@ -20,7 +21,7 @@ the tracker write guard, and the question names check also record each block: se
 | Before any tool call | The [agent gates](#agent-gates), when the project sets any | Claude Code, Codex | yes |
 | A new turn starts: a prompt, a background agent's report, or a scheduled run | In the main session, the cancel of the `clear` [handoff continuation](handoff.md#the-clear-route) it armed, with one line, unless the prompt is the host's own clear or compact command, and one line naming the [background session](handoff.md#the-background-route) that owns the work when the session handed it off in the last 24 hours; then the [names reminder](config.md#names), when the last reply said "I" or "you" | Claude Code; the cancel Claude Code (verified on 2.1.325, [provider page](providers/claude-code.md#handoff-continuation)) | no |
 | Before a Bash command | The [Bash rules](#bash-rules) | Claude Code, Codex | yes |
-| After a Bash command | The [session ledger](#session-ledger): a row for each pull request the command created, pushed a branch of, or acted on; and the [check-run record](#check-runs): a row for each test run the command finished | Claude Code (verified by the hook test on a recorded result); Codex by payload fixture only ([not live](#session-ledger)) | no |
+| After a Bash command | The [session ledger](#session-ledger): a row for each pull request the command created, pushed a branch of, or acted on; and the [check-run record](#check-runs): a row for each test run the command finished | Claude Code (verified by the hook test on a recorded result); Codex by payload fixture only ([not live](#session-ledger)); OpenCode the ledger and links only, no check-run record, by payload fixture only ([provider page](providers/opencode.md#hooks)) | no |
 | Before a file edit | The [main-checkout rule](#main-checkout), when the project turns it on, then the [review-disposition rule](#review-dispositions), then the [terms rule](#terms) | Claude Code, Codex; the review-disposition rule judges no `apply_patch` | yes |
 | Before `EnterWorktree` | In a subagent, a block: the tool would move the whole session into the worktree. In the main session, a block of entering an existing worktree (`path`): outside the repository's `.claude/worktrees/`, such as an `aidrian worktree new` worktree, the host asks the Human before that move whatever the permission rules say, and a session works in a linked worktree by absolute path instead | Claude Code | yes |
 | Before `AskUserQuestion` | A block when a question or option says "I", "me", "my", "you", or "your" (or a form of them, such as "I'm" or "yourself") outside code and quotes: [Names](config.md#names) | Claude Code | yes |
@@ -127,6 +128,7 @@ Hook payloads pass through `lib/hosts/` first, so the guard reads every tool as 
 | On | Live | Not live |
 | --- | --- | --- |
 | Claude Code | The `PostToolUse` payload of a real `get_workspace` call on 2.1.318, kept as `test/fixtures/hosts/claude-code/tracker.json` | The payload of a write, which the same fixture builds from the documented shape |
+| OpenCode | Nothing: no tracker hook runs there, since the bridge forwards no MCP tool call | Every tracker write, which passes unchecked; while `tracker.enabled` is true, `aidrian check` says so where OpenCode is set up ([OpenCode](providers/opencode.md#limits)) |
 | Codex | On 0.166.0, `codex exec --json` called `linear.get_workspace` through the Linear app, with server `codex_apps`, and returned the `url` the guard reads | Any hook on Codex: no session has run the guard with a person's trust. The names and payload come from the source and `test/fixtures/hosts/codex/tracker.json` |
 
 What the Codex source says, at `rust-v0.166.0`:
@@ -1129,9 +1131,13 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   `XDG_STATE_HOME` or `HOME`, or one a host names the session by or says a Human attends it with.
 - With or without gates, a subagent, and a main session the background handoff route started, may not start or resume
   a host's session outside the [handoff gate](handoff.md#the-gate), such as `claude -p`, `claude --bg`,
-  `claude --resume`, or `codex exec`, by the matcher each host adapter declares (`sessionStart`,
+  `claude --resume`, `codex exec`, or `opencode run`, by the matcher each host adapter declares (`sessionStart`,
   [Adding a host](providers/adding-a-host.md)), every host's whatever host runs the session; a shell it cannot read
-  that names such a program counts. A command that only manages sessions, such as `claude agents` or `claude stop`, runs.
+  that names such a program counts, and a package runner, such as `npx`, `pnpm dlx`, or `bunx`, is read as the program
+  its package installs, so `npx @anthropic-ai/claude-code -p` counts as `claude -p`. The refusal says the command
+  "starts or resumes a session of" that host. A command that only manages sessions, such as `claude agents` or
+  `claude stop`, runs; of `opencode`, only the info flags and the nine commands its
+  [page](providers/opencode.md#rules-for-the-other-hosts-sessions) lists run.
 - With or without gates or a project, the same two may not repoint a git remote or gh's default repository, nor
   change how git reads them: `git remote add`, `set-url`, or `rename`; a `git config` write of a `remote.*`,
   `include.path`, `includeIf.*`, `url.*`, or `alias.*` key, or any `--edit`, `--rename-section`, or `--remove-section`;
@@ -1330,15 +1336,18 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   run's issue session the whole `audits` folder; the host files every host's adapter protects (`protectedPaths`), in the
   session's own worktree, each checkout of the repository nested in it, and its attempt's clone: `.claude/settings.json`, `.claude/settings.local.json`,
   `.claude/skills`, `.claude/agents`, `.claude/commands`, `.claude/hooks`, `.claude/workflows`,
-  `.claude/scheduled_tasks.json`, and `.mcp.json`, which a later session there loads, whichever host the session runs
-  on; at any depth of the attempt's clone, the host files a host loads from a nested folder (`nestedProtected`): a
-  `.claude` folder itself, the `skills`, `agents`, `commands`, `hooks`, `workflows`, `scheduled_tasks.json`, and
-  `settings*.json` of any `.claude` folder, and any `SKILL.md`, by the write tool, the shell, a link's target, or a glob
-  that may reach one, such as a part that may name `.claude` or a last part that may name `SKILL.md` (`*.md`); judged
+  `.claude/scheduled_tasks.json`, and `.mcp.json`, and OpenCode's `.opencode` folder, `opencode.json`, and
+  `opencode.jsonc` ([OpenCode](providers/opencode.md#rules-for-the-other-hosts-sessions)), which a later session there
+  loads, to a Claude Code or Codex session alike; at any depth of the attempt's clone, the host files a host loads from a
+  nested folder (`nestedProtected`): a `.claude` folder itself, the `skills`, `agents`, `commands`, `hooks`,
+  `workflows`, `scheduled_tasks.json`, and `settings*.json` of any `.claude` folder, any `SKILL.md`, any `.opencode`
+  folder and all it holds, and any `opencode.json` or `opencode.jsonc`, by the write tool, the shell, a link's target,
+  or a glob that may reach one, such as a part that may name `.claude` or `.opencode`, or a last part that may name
+  `SKILL.md` (`*.md`) or an OpenCode config file; judged
   by the real path's parts, by the path as written past each leading part that resolves into the clone, so a write
   through a `.claude` link counts as one to that host file, and by the parts past each link git's index lists whose own
   path is such a host file, so a write to the folder `pkg/.claude -> ../shared` leads to counts as one under
-  `pkg/.claude` (git lists only the index entries named `.claude`, below one, or `SKILL.md`, and a clone whose links git cannot list then refuses); for a project run's issue session, the forge's workflow folders of its worktree and its attempt's clone, which the forge adapter names (`forgeWorkflowFolders`: `.github/workflows` and `.github/actions` on GitHub), since the forge runs their files with the repository's secrets on a push of any branch, before any review, so an issue that needs such a change is parked for the Human; and any other dot file or folder of the home folder, such as a host's user-level
+  `pkg/.claude` (git lists only the index entries named `.claude`, below one, or `SKILL.md`, and those of each host's `nestedGlobs`, such as `**/.opencode/**`, and a clone whose links git cannot list then refuses); for a project run's issue session, the forge's workflow folders of its worktree and its attempt's clone, which the forge adapter names (`forgeWorkflowFolders`: `.github/workflows` and `.github/actions` on GitHub), since the forge runs their files with the repository's secrets on a push of any branch, before any review, so an issue that needs such a change is parked for the Human; and any other dot file or folder of the home folder, such as a host's user-level
   settings and instruction files, unless it lies in the session's own worktree, a state folder above, or its attempt
   folders. A repository under a dot folder, such as `~/.dotfiles`, still writes itself when it is the session's worktree.
   A write through a hard link to a refused file counts as one to it, and a link a command makes (`ln`, `ln -s`,
@@ -1368,7 +1377,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     (`gh auth setup-git`, `login`, `logout`, `switch`, and `refresh`, `gh config set`, and `gh extension install` on
     GitHub); each host's own config subcommands, which its adapter declares (`configCommands`: `claude mcp add`,
     `claude config set`, `claude plugin install`, and `claude plugin marketplace add` for Claude Code, `codex mcp add`,
-    `codex login`, and `codex logout` for Codex, and their removals); `npm`, `pnpm`, and `yarn config set`, `npm set`,
+    `codex login`, and `codex logout` for Codex, and their removals, and for OpenCode those its
+    [page](providers/opencode.md#rules-for-the-other-hosts-sessions) lists, such as `opencode plugin add`,
+    `opencode auth`, and `opencode service set`); `npm`, `pnpm`, and `yarn config set`, `npm set`,
     `npm login`, `npm adduser`, `crontab` but `-l`, `launchctl` but its reads, and `defaults write`, `delete`, `import`,
     and `rename`; and every command that publishes, withdraws, or changes a package or its owners on a registry:
     `npm`, `pnpm`, `yarn`, and `bun` `publish`, `unpublish`, `dist-tag`, `deprecate`, `owner`, `access`, and `token`,
@@ -1378,7 +1389,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     `workspace <name>`, with the read forms `owner ls`, `dist-tag ls`, and `access list` and `get` passing
     ([Dependency installs](providers/claude-code.md#dependency-installs)). A subcommand is found past the program's global options that take a value, as in
     `codex --profile p login` or `gh -R o/r config set`, and through a package runner: `npx`, `pnpm dlx`, `bunx`,
-    `yarn dlx`, `npm exec`, `npm x`, and `pnpm exec`.
+    `yarn dlx`, `npm exec`, `npm x`, and `pnpm exec`, by a host's own package name too (an adapter's `packages`), so
+    `npx opencode-ai plugin add x` reads as `opencode plugin add x`.
   - A review manifest takes the name of the review gate's old attest record, `pr-<n>.json`, so a write that may give it
     a top-level `reviewer` key is refused: a file tool's text that parses as JSON with that key, escapes read as JSON
     reads them, or, when it does not parse, holds the key or a quoted key with an escape in it; a shell write of a
@@ -1983,8 +1995,8 @@ hands it to `session-prs.mjs` in a table keyed by the adapter's `id`. A later fo
 `lib/rules/<forge id>/` ([Adding a forge](providers/adding-a-host.md#adding-a-forge)).
 
 The output comes from the host's adapter, its `shellOutput`, never from a payload field read in shared code: Claude
-Code's `stdout`, and Codex's one string of output. A response the adapter cannot read gives no `created` row, while
-`pushed` and `touched` rows still record. A call the host reports as interrupted, a session id that fails `SESSION_ID`,
+Code's `stdout`, Codex's one string of output, and OpenCode's `output.output`, the text of its shell tool's result.
+A response the adapter cannot read gives no `created` row, while `pushed` and `touched` rows still record. A call the host reports as interrupted, a session id that fails `SESSION_ID`,
 a payload folder with no project, and input the hook cannot read write nothing. The hook never refuses, always exits 0,
 and prints nothing on stdout or stderr.
 
@@ -2089,6 +2101,7 @@ Where it is verified:
 | --- | --- | --- |
 | Claude Code | `test/hook-bash-post.test.mjs` runs the hook on `test/fixtures/hosts/claude-code/bash-post.json`, whose `tool_response` is the result Claude Code 2.1.326 recorded for a real `gh pr create` Bash call | No hook has received that payload, an accepted limit: a session may not start another to record one, and the fixture says `live: false` |
 | Codex | The same test runs `test/fixtures/hosts/codex/bash-post.json`, built from the source at `rust-v0.169.0` | Any hook on Codex, which runs only after a person trusts it |
+| OpenCode | The same test runs `test/fixtures/hosts/opencode/bash-post.json`, the payload the bridge sends, built from the types of `@opencode/plugin@2.4.0` and the source embedded in the 2.4.0 binary; `test/opencode-bridge.test.mjs` runs the bridge against the real hook | Any hook on a live OpenCode: no live shell payload has been recorded ([OpenCode](providers/opencode.md#hooks)) |
 
 What the Codex source says, at `rust-v0.169.0`: a shell call reaches the hook as `Bash`, with `tool_input` `{ command }`
 (`codex-rs/core/src/tools/handlers/unified_exec.rs`, `post_unified_exec_tool_use_payload`); its `tool_response` is the

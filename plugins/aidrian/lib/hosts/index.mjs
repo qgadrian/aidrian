@@ -226,8 +226,9 @@ export const configCommands = (hosts = HOSTS) => hosts.map((host) => host.config
 export const packagePrograms = (hosts = HOSTS) => Object.fromEntries(hosts.flatMap((host) => Object.entries(host.packages ?? {})));
 
 // The files and folders where the hosts keep their own logins and the state of their services, for the user whose home
-// is `home` under `env`, which a confined session's sandbox never reads (an adapter's optional `credentialStores({ env,
-// home })`): their union, each an absolute path of plain text.
+// is `home` under `env`, which Claude Code's confined sandbox denies reading and its sandbox proof tries; Codex's sandbox
+// takes no such list (docs/providers/codex.md, its residuals). From each adapter's optional `credentialStores({ env,
+// home })`: their union, each an absolute path of plain text.
 export const credentialStores = ({ env = process.env, home } = {}, hosts = HOSTS) => [...new Set(hosts.flatMap((host) => host.credentialStores?.({ env, home }) ?? []))]
   .filter((each) => typeof each === 'string' && path.isAbsolute(each) && !CONTROL.test(each));
 

@@ -140,7 +140,8 @@ export default {
     ],
     valueOptions: ['--server', '--log-level', '--completions', '--session', '-s', '--prompt'],
   },
-  // Its logins and its service's state, which a confined session of another host never reads (lib/hosts/index.mjs).
+  // Its logins and its service's state, which Claude Code's confined sandbox denies reading and its sandbox proof tries;
+  // Codex's sandbox takes no such list (lib/hosts/index.mjs credentialStores).
   credentialStores,
   projectFolders: {},
   // The host files of a checkout a session no Human attends never writes, from its root: `.opencode/plugins/` loads code

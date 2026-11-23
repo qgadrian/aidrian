@@ -475,9 +475,9 @@ test('a tracker whose calls name their workspace judges each call, with no sessi
 test('the page on adding a host says what the adapter does not cover, and names every delivery case and file', () => {
   const text = readFileSync(path.join(ROOT, 'docs/providers/adding-a-host.md'), 'utf8');
   for (const delivery of DELIVERIES) assert.ok(text.includes(`\`${delivery}\``), delivery);
-  for (const name of ['plugins/aidrian/hooks/hooks.json', 'scripts/version.mjs', 'test/hosts.test.mjs', 'lib/agent-models.mjs', 'What the fixtures do not prove']) assert.ok(text.includes(name), name);
+  for (const name of ['plugins/aidrian/hooks/hooks.json', 'scripts/version.mjs', 'test/hosts.test.mjs', 'lib/agent-models.mjs', 'What the fixtures do not prove', 'plugins/aidrian/<id>/routes.mjs', 'plugins/aidrian/<id>/bridge.mjs']) assert.ok(text.includes(name), name);
   assert.doesNotMatch(text, /hookEvents/u);
-  for (const field of ['serverSpelling', 'nativeToolName', 'rawToolName', 'delivery', 'workspaceInput', 'unguardedRoutes', 'capabilities.pushPermission']) assert.ok(text.includes(`\`${field}`), field);
+  for (const field of ['serverSpelling', 'nativeToolName', 'rawToolName', 'delivery', 'workspaceInput', 'unguardedRoutes', 'capabilities.pushPermission', 'payloadMark', 'nestedGlobs', 'packages', 'credentialStores']) assert.ok(text.includes(`\`${field}`), field);
 });
 
 test('a value the file sets for what an adapter fills stays as written', () => {

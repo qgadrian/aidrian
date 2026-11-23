@@ -342,7 +342,8 @@ const programWord = (programs) => new RegExp(String.raw`(?<![\w.-])(?:${programs
 // A command a shell runs that the lexer cannot read, or a command in a shell it cannot read, counts when it names such a
 // program as a word. A package runner, as `npx`, `pnpm dlx`, or `bunx`, is read as the program it runs, by a host's own
 // package name too (an adapter's `packages`). A known limit of the shared lexer, as in handoffContinueDenial: another
-// program that runs its arguments as a command, such as `xargs claude`, and a command word built from a variable, are not read.
+// program that runs its arguments as a command, such as `xargs claude`, a runner's command-string option, as `npx -c`
+// or `--call` and `npm exec -c`, the runner forms `bun x` and `pnpx`, and a command word built from a variable, are not read.
 export function hostSessionStartDenial(input, { names: { human } }, { unattended = () => false } = {}) {
   const opaque = opaqueShellCommand(input);
   const command = opaque ?? (bashCall(input) ? input.tool_input?.command : null);

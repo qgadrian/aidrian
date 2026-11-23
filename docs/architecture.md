@@ -11,14 +11,15 @@ This page is for contributors; [contributing.md](contributing.md) says how to bu
 plugins/aidrian/
 ├── .claude-plugin/plugin.json      Claude Code manifest
 ├── plugin.json                     Codex manifest (same name, version, description)
+├── package.json                    OpenCode package manifest: private, aidrian's version, exports the bridge's server entry
 ├── agents-src/<group>/*.md         the agents, for every host, one folder per group; the source to edit
 ├── providers/<provider>.json       each host's model, effort, and tools per agent
 ├── agent-addons/*.<provider>.md    optional text only that host gets, after the agent's body
 ├── agents/*.md                     generated Claude Code agents; never edit
-├── skills/*/SKILL.md               the skills; both hosts read them as they are
+├── skills/*/SKILL.md               the skills; Claude Code and Codex read them as they are
 ├── bin/aidrian                     project commands; on the Bash PATH in Claude Code sessions
 ├── bin/aidrian-knowledge           the knowledge command; on the same PATH
-├── hooks/hooks.json                the plugin's hooks, for both hosts
+├── hooks/hooks.json                the plugin's hooks, for Claude Code and Codex; OpenCode's bridge runs those it routes
 ├── scripts/hook-*.mjs              the programs those hooks run
 ├── lib/                            the code behind the commands and hooks
 │   ├── forges/                     the code forge facade: forgeFor in index.mjs, the GitHub adapter, and github-cli.mjs, the one way gh runs
@@ -28,9 +29,13 @@ plugins/aidrian/
 │   ├── trackers/                   one adapter per tracker and their registry; what expands the short tracker key
 │   └── rules/                      the rules the Bash and write hooks run; rules/github/ holds those that read only gh,
 │                                   and rules/main-checkout/ the parts of main-checkout.mjs, the rule's entry
-└── codex/
-    ├── agents/aidrian-*.toml       generated Codex roles; never edit
-    └── install-agents.mjs          copies those roles into $CODEX_HOME/agents (~/.codex/agents by default)
+├── codex/
+│   ├── agents/aidrian-*.toml       generated Codex roles; never edit
+│   └── install-agents.mjs          copies those roles into $CODEX_HOME/agents (~/.codex/agents by default)
+└── opencode/                       the OpenCode bridge (docs/providers/opencode.md)
+    ├── routes.mjs                  ROUTES, the hooks it runs, held to hooks.json by the conformance suite
+    ├── bridge.mjs                  registers each route on OpenCode's events, runs its script, and puts bin/ on PATH
+    └── server.mjs                  the package's server entry, { id, setup }
 plugins/aidrian-claude-mod/         the optional Claude mod, aidrian-mod, for Claude Code alone (docs/claude-mod.md)
 ├── .claude-plugin/plugin.json      its manifest, settings, and version
 ├── hooks/                          register.ts, the alerts, and pane.tsx, the band and the /aidrian-mod pane
@@ -52,7 +57,7 @@ test/                               node --test suites
 
 - **Agents**: each agent is written once, in a group folder of `agents-src/`.
   `npm run build` writes the Claude Code agent and the Codex role from it, in flat folders. [agent-sources.md](agent-sources.md) has the details.
-- **Skills**: both hosts read `skills/*/SKILL.md` as they are. Nothing is generated.
+- **Skills**: Claude Code and Codex read `skills/*/SKILL.md` as they are. Nothing is generated.
   They have no group folders: Claude Code finds a plugin skill only at `skills/<name>/SKILL.md`.
 - **Composition**: a skill ends at its own output and never names who continues; the caller's text names the next step.
   A skill that runs another, or the agent that runs a skill, says what follows its end, as the `orchestrator` does after `issue-implement`.
@@ -75,3 +80,5 @@ test/                               node --test suites
 - **Commands**: `bin/aidrian` and `bin/aidrian-knowledge` are shell scripts.
   They run `lib/cli.mjs` and `lib/knowledge-cli.mjs` with `node`.
 - **Codex agents**: Codex plugins cannot carry agents, so `codex/install-agents.mjs` copies the generated roles into Codex.
+- **OpenCode**: OpenCode reads no `hooks.json`, so the plugin folder is also an OpenCode package, installed by Git
+  specifier, whose bridge runs the hooks `opencode/routes.mjs` names on OpenCode's tool events: the session ledger alone.

@@ -201,14 +201,15 @@ A case earns its place when it passes with the plugin and fails without it. Resu
 
 ## Versions
 
-Users receive a change only after its plugin's version changes on main: both hosts install from main and cache by
-version. A version change is a release, and only the release workflow, `.github/workflows/release.yml`, makes one.
+Users receive a change only after its plugin's version changes on main: Claude Code and Codex install from main and
+cache by version. OpenCode is the exception: an entry that follows `#main` gets a merge before its release commit
+([OpenCode](providers/opencode.md#update)). A version change is a release, and only the release workflow, `.github/workflows/release.yml`, makes one.
 Each plugin of the marketplace versions, tags, and releases on its own: the `PLUGINS` table in `scripts/version.mjs`
 names each plugin's folder, its tag prefix, and the files that carry its version.
 
 | Plugin | Folder | Tags | Version files |
 | --- | --- | --- | --- |
-| `aidrian` | `plugins/aidrian/` | `vX.Y.Z` | both plugin manifests, `package.json`, `package-lock.json` |
+| `aidrian` | `plugins/aidrian/` | `vX.Y.Z` | both plugin manifests, `plugins/aidrian/package.json` (the OpenCode package), the root `package.json`, `package-lock.json` |
 | `aidrian-mod` | `plugins/aidrian-claude-mod/` | `aidrian-mod-vX.Y.Z` | `.claude-plugin/plugin.json` |
 
 A marketplace entry that sets a version is one more version file, for the plugin its name matches; an entry that sets
@@ -217,12 +218,15 @@ a version under a name no plugin has fails `npm run check`. A table plugin whose
 A pull request never changes a version, so two open pull requests never conflict on it.
 `npm run check` fails when a plugin's version files disagree, and when the branch holds a version other than its merge
 base with `origin/main` in any of them. A plugin new on the branch, with no version file at the merge base, is not a
-version change: its files need only agree. Main may release while a branch is open: the branch takes the new version
+version change: its files need only agree. Nor is a version file new on the branch, such as a manifest a host gains:
+the check holds it to the plugin's other files. Main may release while a branch is open: the branch takes the new version
 when it merges main, and need not before. Without `origin/main`, or on `main` itself, that comparison is skipped.
 
 After each merge to main, the workflow runs `node scripts/version.mjs release`. For each plugin, it counts the commits
 since that plugin's latest tag that change its folder; with none, that plugin releases nothing. Otherwise it raises
-the version in every file that carries it, and prints one result line for the plugin. A first job, with no write token,
+the version in every file that carries it, and prints one result line for the plugin. It reads the current version
+from the files that its latest tag holds: a version file a pull request added may hold an older version, from the
+branch's last merge of main, and the release raises it with the others. A first job, with no write token,
 runs `release` and writes its commit and result lines as outputs, then installs with `npm ci --ignore-scripts` and runs
 `npm run check`. A second job, the only one with the write token, first fails unless that commit is a full sha that
 is on `origin/main`. It installs nothing, caches nothing, and runs no repository code but `scripts/version.mjs`, one call
@@ -270,5 +274,6 @@ as `aidrian`'s does in a clone with no tags. Tag the commit that set the version
 
 ## Not included
 
-- OpenCode support, or a tracker other than Linear. [Adding a host, a tracker, or a forge](providers/adding-a-host.md) says what each needs.
+- Any guard on OpenCode, which runs the session ledger alone ([OpenCode](providers/opencode.md#limits)), and a tracker
+  other than Linear. [Adding a host, a tracker, or a forge](providers/adding-a-host.md) says what each needs.
 - A band for Codex: the optional Claude mod, `aidrian-mod`, is a Claude Code mod alone.

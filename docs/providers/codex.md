@@ -207,6 +207,9 @@ The one-time steps before a run are in [Project run setup](../project-run-setup.
   still remove them; an install then fails to write its cache outside the writable roots, and nothing reaches another
   folder.
   Its events go to `logs/<issue>.<attempt>.jsonl` in the run's folder.
+- The start makes no placeholders: Codex's confined start declares none, so its clone gets none of any host's. A
+  clone whose index tracks OpenCode's `.opencode`, `opencode.json`, or `opencode.jsonc` as a link, at its root or any
+  depth, is refused at start, as on Claude Code ([OpenCode](opencode.md#rules-for-the-other-hosts-sessions)).
 - Git cannot reach the main checkout from there: nothing under its `.git` is granted, the clone's origin is the
   pinned forge URL, and work moves only through the forge. The session pushes with a full refspec and names the branch
   to every forge command, as its prompt says.
@@ -312,8 +315,9 @@ Codex residuals, each open until the live checks hold:
   so an allowed host name that resolves to one, as a DNS answer an attacker controls could make it, reaches that
   address. Bind each test server to `127.0.0.1`.
 - A sandboxed command reads every file of the user that the workspace-write sandbox does not hide, credential stores
-  included, such as `~/.ssh`, `~/.npmrc`, and `~/.yarnrc.yml`: Codex has no read denial the start can pass, unlike
-  Claude Code's `denyRead`. The publish commands the agent gate hook refuses, as on Claude Code, keep a session from
+  included, such as `~/.ssh`, `~/.npmrc`, `~/.yarnrc.yml`, Codex's own `auth.json`, and OpenCode's data, state, and
+  config folders: Codex has no read denial the start can pass, unlike Claude Code's `denyRead`, so the hosts'
+  `credentialStores` reach no Codex sandbox. The publish commands the agent gate hook refuses, as on Claude Code, keep a session from
   publishing with a token it read; a script that does stays the accepted residual.
 - The keep files of `drop` and `cache` are not denied here: a session may remove either folder and put a link in its
   place, which the agent gate hook then refuses to write through.

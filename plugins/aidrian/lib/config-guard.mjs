@@ -429,7 +429,7 @@ export function writesNothing(input) {
 // Edit did.
 const RETRY = 'only after these steps, in order: a busy machine slows the guards, so 1) retry this same call by itself,'
   + ' up to three times (a retry is the same tool, not another one); 2) if a shell call is still refused, run it as shorter commands;'
-  + ' 3) only when those are refused too, stop and report that the command takes the guards longer than they have';
+  + ' 3) when those are refused too, or the call is no shell call or cannot be split, stop and report that the command takes the guards longer than they have';
 export function deadlineDenial(input, { names: { human } }, { unattended = () => false, drove = () => false, issue = () => false, mark = null } = {}) {
   if (writesNothing(input)) return null;
   const who = onlyMain(input, { unattended, drove, issue });

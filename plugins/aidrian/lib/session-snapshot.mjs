@@ -273,7 +273,7 @@ function forgeBudget(ms) {
 }
 
 // What each handoff level shows: the ratio, then, with a break-even, how many calls the work left must take for a
-// handoff to be worth it. Offer, due, and reminded share their words; the level's color tells them apart.
+// handoff to be worth it. Offer, due, and reminded share their words; the mod's color tells offer from the other two.
 const LEVEL_WORDS = {
   quiet: (ratio) => ratio,
   offer: (ratio, worth) => (worth ? `${ratio} · handoff ${worth}` : ratio),

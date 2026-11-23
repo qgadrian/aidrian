@@ -49,7 +49,7 @@ const NO_FORGE = Object.freeze({ change: 'change', one: 'change', many: 'changes
 const forgeOf = (row) => (typeof row.forge === 'string' && Object.hasOwn(FORGES, row.forge) ? FORGES[row.forge] : NO_FORGE);
 
 // What each handoff level shows, as the snapshot's line words it: the ratio, then, with a break-even, how many calls
-// the work left must take for a handoff to be worth it. Offer, due, and reminded share their words; COLORS tells them apart.
+// the work left must take for a handoff to be worth it. Offer, due, and reminded share their words; COLORS tells offer apart.
 const LEVEL_WORDS = Object.freeze({
   quiet: (ratio) => ratio,
   offer: (ratio, worth) => (worth ? `${ratio} · handoff ${worth}` : ratio),

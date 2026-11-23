@@ -248,7 +248,7 @@ export function ownDelta(before, after) {
 }
 
 // The review bot's rounds as a history: one round per bot review, oldest first, its findings the review's top-level
-// inline comments.
+// inline comments, or a floor of one when it has none.
 export function botRounds(reviews, reviewComments, reviewer) {
   return (reviews ?? [])
     .filter((review) => review?.user?.login === reviewer)
@@ -257,7 +257,8 @@ export function botRounds(reviews, reviewComments, reviewer) {
       const findings = (reviewComments ?? [])
         .filter((comment) => comment.pull_request_review_id === review.id && !comment.in_reply_to_id)
         .map((comment) => ({ title: findingTitle(comment.body), file: comment.path ?? null, line: Number.isInteger(comment.line) ? comment.line : Number.isInteger(comment.original_line) ? comment.original_line : null }));
-      return { round: index + 1, head: review.commit_id ?? null, open: findings.length, findings };
+      // A review with no inline comment holds its findings in its body: at least one, a floor (stages.mjs recordBot).
+      return { round: index + 1, head: review.commit_id ?? null, open: Math.max(1, findings.length), ...(findings.length ? {} : { floor: true }), findings };
     });
 }
 

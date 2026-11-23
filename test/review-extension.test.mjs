@@ -112,6 +112,14 @@ test('titles: markup, badges, and word order do not make two titles different', 
     { round: 1, head: 'aaa', open: 1, findings: [{ title: 'One', file: 'a.js', line: 4 }] },
     { round: 2, head: 'bbb', open: 1, findings: [{ title: 'Two', file: 'b.js', line: 7 }] },
   ]);
+  // A review whose findings sit in its body holds at least one: one inline finding after it cannot tell.
+  const bare = botRounds(
+    [{ id: 1, user: { login: 'bot' }, submitted_at: '2026-01-01', commit_id: 'aaa' }, { id: 2, user: { login: 'bot' }, submitted_at: '2026-01-02', commit_id: 'bbb' }],
+    [{ pull_request_review_id: 2, path: 'b.js', line: 7, body: 'Two' }],
+    'bot',
+  );
+  assert.deepEqual(bare[0], { round: 1, head: 'aaa', open: 1, floor: true, findings: [] });
+  assert.equal(signals({ rounds: bare }).converging, null);
 });
 
 const passing = () => ({ rounds: [round(1, 'a', [finding('a.js', 1, 'one'), finding('a.js', 50, 'two')]), round(2, 'b', [finding('a.js', 90, 'three')])], originalFiles: ['a.js'], originalAdded: 10, files: ['a.js'] });

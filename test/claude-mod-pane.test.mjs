@@ -4,7 +4,7 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { agentRowParts, cacheTtlOf, cleanModel, dateMs, effortOf, formatDuration, issueOf, modelVersion, repoOf, untilText } from '../plugins/aidrian-claude-mod/lib/pane-data.mjs';
+import { agentRowParts, cacheTtlOf, cleanModel, dateMs, effortOf, formatDuration, issueOf, modelVersion, passResponse, repoOf, untilText } from '../plugins/aidrian-claude-mod/lib/pane-data.mjs';
 
 const text = (value) => [{ type: 'text', text: JSON.stringify(value) }];
 
@@ -28,6 +28,45 @@ test('the cache lifetime is the bucket the last main-chain reply wrote to', () =
   assert.equal(cacheTtlOf(tail), 300_000, 'a subagent line and a cut line are skipped');
   assert.equal(cacheTtlOf(reply({ ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 })), null, 'a reply that wrote nothing keeps the lifetime');
   assert.equal(cacheTtlOf(''), null);
+});
+
+// A response stream as turn.step's next(e) gives it: its chunks, then its result, on `result` too.
+const responseOf = (chunks, usage) => {
+  const result = { stopReason: usage === null ? null : 'end_turn', usage };
+  const stream = (async function* () {
+    yield* chunks;
+    return result;
+  })();
+  return Object.assign(stream, { result: Promise.resolve(result) });
+};
+
+// Runs passResponse over a response, and gives each chunk it passed on with how many times it had called back by then.
+const passed = async (chunks, usage) => {
+  let calls = 0;
+  const seen = [];
+  const stream = passResponse(responseOf(chunks, usage), async () => {
+    calls += 1;
+  });
+  let step = await stream.next();
+  while (!step.done) {
+    seen.push([step.value, calls]);
+    step = await stream.next();
+  }
+  return { seen, calls, result: step.value };
+};
+
+test('a response restarts the cache countdown once, at its first piece of model output, never at an engine chunk', async () => {
+  const usage = { input_tokens: 3, output_tokens: 1 };
+  const marker = { kind: 'engine', ref: 1 };
+  const text = { kind: 'text', index: 0, text: 'hi' };
+  const streamed = await passed([marker, text, { kind: 'stop' }], usage);
+  assert.deepEqual(streamed.seen, [[marker, 0], [text, 1], [{ kind: 'stop' }, 1]], 'every chunk passes on, the call at the text');
+  assert.equal(streamed.calls, 1);
+  assert.deepEqual(streamed.result, { stopReason: 'end_turn', usage });
+  assert.equal((await passed([marker], null)).calls, 0, 'a retry marker and no response');
+  assert.equal((await passed([marker], usage)).calls, 1, 'usage at the end counts when no model output streamed');
+  assert.equal((await passed([], usage)).calls, 1);
+  assert.equal((await passed([], null)).calls, 0);
 });
 
 test('the checkout is the branch, or a linked worktree`s folder name, with a dot for changes', () => {

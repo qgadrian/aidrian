@@ -6,6 +6,10 @@ export type Repo = { label: string; isWorktree: boolean; isDirty: boolean }
 
 export function issueOf(key: string, content: unknown): Issue | null
 export function cacheTtlOf(tail: unknown): number | null
+export function passResponse<C extends { kind: string }, R extends { usage: unknown }>(
+  stream: AsyncIterable<C> & { readonly result: Promise<R> },
+  onResponse: () => Promise<unknown>,
+): AsyncGenerator<C, R>
 export function repoOf(answers: { branch: unknown; gitDir: unknown; status: unknown }): Repo
 export function modelVersion(id: string): { family: string; major: number; minor: number } | null
 export function effortOf(inputs: { seen?: Effort | null; fromEnv: unknown; model: string; settings: unknown }): Effort | null

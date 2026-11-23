@@ -45,6 +45,23 @@ export function cacheTtlOf(tail) {
   return null;
 }
 
+// A model request's response stream (a turn.step `next(e)`), passed on unchanged, with `onResponse` called once when
+// it shows the request reached the model: at its first piece of model output, any chunk but an opaque `engine` one
+// such as a retry marker, or at its end, when none streamed, if the result reports usage. Returns the stream's result.
+export async function* passResponse(stream, onResponse) {
+  let isSeen = false;
+  for await (const chunk of stream) {
+    if (!isSeen && chunk?.kind !== 'engine') {
+      isSeen = true;
+      await onResponse();
+    }
+    yield chunk;
+  }
+  const result = await stream.result;
+  if (!isSeen && result?.usage != null) await onResponse();
+  return result;
+}
+
 // A linked worktree's git folder: `<repository>/.git/worktrees/<name>`, the name at the end.
 const LINKED_WORKTREE_DIR = /\/\.git\/worktrees\/([^/]+)$/u;
 

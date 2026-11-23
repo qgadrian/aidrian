@@ -98,8 +98,9 @@ export async function runStages(s) {
   }
   // A pass `aidrian pr attest` recorded on this head before any step opened its round, as a session does that reviews
   // a push and attests it with no step between, is a review of this head all the same: its round opens here, or the
-  // cap stops it.
-  if (!opened && passes.some((pass) => sameCommit(state.passes[pass.id]?.head, head))) {
+  // cap stops it. Only a result the step would use counts (resultFor), and it keeps the round, a quiet one too, when
+  // another pass then fails.
+  if (passes.some((pass) => sameCommit(resultFor(pass)?.head, head))) {
     if (openRound() === 'round_limit') return capReached({ max_rounds: maxRounds });
     recorded = true;
   }

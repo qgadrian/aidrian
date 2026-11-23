@@ -859,6 +859,8 @@ its quota gives the round back. After a fix, each pass re-reviews only what chan
 the change does not touch carries forward.
 A pass `aidrian pr attest` records on a head no round is on yet, with no step that dispatched it there, opens that head's round on the next step.
 Past the cap, that step stops at `round_limit`, so a pass attested on each new head still counts one round a head.
+Only a result the step would use counts, one whose files are the pass's own and whose evidence was not withheld: a pass it runs again opens nothing.
+A round a usable attested result opened or moved stays on its head when another pass then fails.
 
 **A quiet push.** A push whose change since the round's head is quiet opens no round: the round keeps its number,
 cap, and last-round flag, moves to the new head, and records the head it moved from in its `quiet` list.

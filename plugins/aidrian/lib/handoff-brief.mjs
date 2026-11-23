@@ -33,7 +33,7 @@ import { readFrom, stampChecked, verifyKept } from './handoff-markers.mjs';
 import { resolvePrior, samePath, takeSnapshot, unreadable, writeSnapshot } from './handoff-prior.mjs';
 import { sectionProblems, supersedesProblem, unresolvedProblem } from './handoff-sections.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
-import { headingOf, unfencedLines } from './markdown-sections.mjs';
+import { fencedLines, headingOf } from './markdown-sections.mjs';
 import { findWrapViolations } from './markdown-wrap.mjs';
 import { projectAt } from './project.mjs';
 import { usageLines } from './usage.mjs';
@@ -241,18 +241,21 @@ export function manualSkills(folder = SKILLS) {
   }));
 }
 
-// The text of the brief's Next steps section, outside code fences: '' without one. The whole section, since a
-// continuation runs every step, and reading where one Markdown list item ends took a Markdown reader.
+// The text of the brief's Next steps section, its fenced code included: '' without one. A heading in a fence ends
+// nothing, but a skill a fenced step body names is still run by the session that follows the brief. The whole
+// section, since a continuation runs every step, and reading where one Markdown list item ends took a Markdown reader.
 function nextSteps(text) {
+  const body = String(text ?? '');
+  const fenced = fencedLines(body);
   const lines = [];
   let inSection = false;
-  for (const line of unfencedLines(String(text ?? ''))) {
+  body.split(/\r?\n/u).forEach((line, at) => {
     // SHORTCUT: a heading inside a list item ends the section, as the required-section check reads headings; telling
     // the two apart takes a Markdown list reader, which a brief with headings inside its steps would need.
-    const title = headingOf(line);
+    const title = fenced[at] ? null : headingOf(line);
     if (title !== null) inSection = /^next steps(?![\p{L}\p{N}])/iu.test(title);
     else if (inSection) lines.push(line);
-  }
+  });
   return lines.join('\n');
 }
 

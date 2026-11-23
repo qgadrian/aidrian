@@ -1180,7 +1180,7 @@ A project that adopts the group sets `requires.aidrian` to the release that ship
     A heading matches by its first words in any case, so `## Next steps (ordered)` counts; a line inside a code fence does not.
   - a Next steps section that runs a skill only a person can start, one whose `SKILL.md` frontmatter sets
     `disable-model-invocation: true`, such as `autopilot`, named as `/aidrian:<name>`, `/<name>`, or the `<name>` skill,
-    in any step, since a continuation runs them all. The Skill tool of the session that resumes the brief refuses it,
+    in any step, a fenced step body included, since a continuation runs them all. The Skill tool of the session that resumes the brief refuses it,
     so a continuation would stop there; the gate starts none for a brief that fails the check. A file such as
     `/autopilot.md` is not counted, and any mention is, one for a person to type included: a person's part goes under
     Open risks and questions, or the Human resumes the brief and types the skill.

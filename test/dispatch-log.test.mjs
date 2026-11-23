@@ -472,6 +472,18 @@ test('the stop hook fills every briefed handoff file of an orchestrator\'s brief
   assert.match(sent.stderr, /Write no file at that path, which may lie outside the dispatch folder: end your turn with the machine handoff as your last message, and say in it that the brief's handoff path was rejected and why/u);
   assert.doesNotMatch(sent.stderr, /Write your machine handoff to that path/u, 'the brief`s path is never the hook`s write instruction');
   assert.equal((await stop('placeholder', `Implement slice S3.\nHandoff file: ${placeholder}`, true)).status, 0, 'the second stop ends');
+  // A report that claims the rejected path gets no "write it now" for it.
+  const outside = '/tmp/outside/S3-backend-developer.json';
+  const transcriptOut = path.join(base, 'agent-claims.jsonl');
+  writeFileSync(transcriptOut, JSON.stringify({ type: 'user', timestamp: new Date().toISOString(), message: { role: 'user', content: `Implement slice S3.\nHandoff file: ${outside}` } }));
+  const claims = await hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'claims', agent_type: 'aidrian:backend-developer', agent_transcript_path: transcriptOut, last_assistant_message: `Handoff written to ${outside}.`, stop_hook_active: false });
+  assert.equal(claims.status, 2);
+  assert.doesNotMatch(claims.stderr, /If you meant to write it, write it now/u, claims.stderr);
+  // Two markers on one line, each opening a sentence: both are read.
+  const [first, second] = ['S5a', 'S5b'].map((slice) => path.join(dispatch, `feat-eng-7-sync-${slice}-backend-developer.json`));
+  const both = await stop('both', `Implement S5. Handoff file: ${first}. Then S5b. Handoff file: x${second}`);
+  assert.equal(both.status, 2, 'the second marker on the line is read, and its relative path reported');
+  assert.ok(both.stderr.includes(`x${second}`), both.stderr);
   // A relative path an earlier run left is still a mistake to report; one this run wrote is not.
   const relative = path.join(dir, 'handoff-backend-developer.json');
   writeFileSync(relative, '{}');
@@ -482,6 +494,10 @@ test('the stop hook fills every briefed handoff file of an orchestrator\'s brief
   writeFileSync(relative, '{"fresh":true}');
   const fresh = await hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'fresh', agent_type: 'aidrian:backend-developer', agent_transcript_path: transcript, last_assistant_message: 'done', stop_hook_active: false });
   assert.equal(fresh.status, 0, 'a file the agent wrote in this run is no mistake');
+  // With no start time in the transcript, a file there could be an earlier run's: still reported.
+  const untimed = path.join(base, 'agent-untimed.jsonl');
+  writeFileSync(untimed, JSON.stringify({ type: 'user', message: { role: 'user', content: 'Implement slice S4.\nHandoff file: handoff-backend-developer.json' } }));
+  assert.equal((await hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'untimed', agent_type: 'aidrian:backend-developer', agent_transcript_path: untimed, last_assistant_message: 'done', stop_hook_active: false })).status, 2);
 });
 
 // A state folder whose path holds a space: a backticked marker path is read whole, and the run's file is written.

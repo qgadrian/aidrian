@@ -158,7 +158,10 @@ export async function handle(input) {
   }
   const reasons = [];
   if (forDelivery) {
-    const { missing, unwritten = [] } = delivery;
+    const { unwritten = [] } = delivery;
+    // A path the brief's rejected marker names is never one to write, though the report claims it.
+    const refused = new Set((checked.rejected ?? []).map(({ value }) => value));
+    const missing = delivery.missing.filter((file) => !refused.has(file));
     recordSignal(project, deliverySignal({ agentType: agent.agent_type, agentId, session: agent.session_id, missing: undelivered(delivery) }), { config });
     if (missing.length) {
       reasons.push(

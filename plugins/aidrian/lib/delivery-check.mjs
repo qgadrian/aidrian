@@ -106,7 +106,9 @@ export function briefHandoffs(input, project) {
   // the name, as in `fix-code-reviewer-S1-backend-developer.json`, does not make the file this agent's.
   const word = new RegExp(`(?:^|[-_.])${escapeRegExp(agent)}(?:[-_.]\\w+)?\\.json$`, 'u');
   // A CRLF brief's line keeps its `\r` after the split: it is dropped before the marker is matched.
-  const marked = brief.split('\n').map((line) => HANDOFF_MARKER.exec(line.replace(/\r$/u, ''))).filter(Boolean).map(markedPath);
+  // A line is cut before each marker that opens a sentence in it, so two markers on one line are both read.
+  const marked = brief.split('\n').flatMap((line) => line.replace(/\r$/u, '').split(SENTENCE_MARKER))
+    .map((piece) => HANDOFF_MARKER.exec(piece)).filter(Boolean).map(markedPath);
   const problemOf = (file) => {
     if (!file) return 'names no path';
     return wholePath.test(file) ? null : `is not an absolute \`.json\` path in \`${folder}/\``;
@@ -116,17 +118,21 @@ export function briefHandoffs(input, project) {
   const since = handoffSince(input);
   // A rejected path the agent wrote in this run, a regular file changed since it began (handedIn), is no mistake to
   // report; an earlier run's file, a link, or a folder there still is.
+  // With no start time to hold it to, any file there could be an earlier run's, so the mistake is reported.
   const rejected = [...new Set(marked)]
     .map((value) => ({ value, problem: problemOf(value) }))
-    .filter(({ value, problem }) => problem && !(value && handedIn(path.resolve(cwd, value), since)));
+    .filter(({ value, problem }) => problem && !(value && since !== null && handedIn(path.resolve(cwd, value), since)));
   return { owed: [...new Set(own)].filter((file) => !handedIn(file, since)), rejected };
 }
 
 // A brief line that names the run's handoff file, in any case: `Handoff file: <path>`, `**Handoff file:** <path>`, or
 // `**Handoff file**: <path>`, opening the line after an optional list marker, or opening a sentence later in it, as in
-// `Under 4 KB. Handoff file: <path>`. Inside a sentence, as in `Read the earlier handoff file: <path>`, it names a file
-// to read, never one owed. Its match holds the rest of the line, as `value`.
-const HANDOFF_MARKER = /(?:^\s*(?:[-*]\s+)?|[.!?;]\s+)(?:handoff file:|\*\*handoff file:\*\*|\*\*handoff file\*\*:)(?<value>.*)$/iu;
+// `Under 4 KB. Handoff file: <path>`: SENTENCE_MARKER cuts the line there first. Inside a sentence, as in
+// `Read the earlier handoff file: <path>`, it names a file to read, never one owed. Its match holds the rest of the
+// piece, as `value`.
+const MARKER_WORDS = String.raw`(?:handoff file:|\*\*handoff file:\*\*|\*\*handoff file\*\*:)`;
+const HANDOFF_MARKER = new RegExp(String.raw`^\s*(?:[-*]\s+)?${MARKER_WORDS}(?<value>.*)$`, 'iu');
+const SENTENCE_MARKER = new RegExp(String.raw`(?<=[.!?;])\s+(?=${MARKER_WORDS})`, 'iu');
 
 // The path a marker line names: all inside the backticks that open its value, spaces included, else its first word
 // without trailing punctuation. Any prose after it is not read.

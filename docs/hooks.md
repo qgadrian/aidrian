@@ -1670,13 +1670,14 @@ A brief names the run's own handoff file with a `Handoff file:` marker, such as
 `Handoff file: <state>/dispatch/<branch>-signoff-product-manager.json`, or `**Handoff file:**` or `**Handoff file**:`,
 in any case, with LF or CRLF line ends. The marker opens a line, after an optional list marker, or opens a sentence
 later in one, as in `Under 4 KB. Handoff file: <path>`. Inside a sentence, as in `Read the earlier handoff file: <path>`,
-it names a file to read, which is never owed.
+it names a file to read, which is never owed. A line may hold several markers, each opening a sentence.
 Each such marker names one file: everything inside the backticks that open its value, spaces included, else its first word,
 without the trailing `.`, `,`, `;`, `:`, or `)` that ends a sentence, as in `Handoff file: <path>.`.
 The whole value must be an absolute path in the state folder's `dispatch/` that ends in `.json`; prose after it is not read.
 A marker that names no path, or a path that is not one, such as `<state>/dispatch/...` left unexpanded or a relative
-path, cannot be filled by the hook. When this run wrote no regular file there either, the agent is sent back once, on
-the first stop of its turn, with the marker and the reason: it writes nothing at that path, which may lie outside the
+path, cannot be filled by the hook. Unless this run wrote a regular file there, by the transcript's start time, the agent
+is sent back once, on the first stop of its turn, with the marker and the reason, and with no "write it now" for that
+path even when its report claims it: it writes nothing at that path, which may lie outside the
 dispatch folder, and hands back its report as its last message, saying that the brief's path was rejected, so its
 dispatcher corrects its briefs.
 Only the files these markers name are owed, and a brief with no marker owes none: the agent still writes its own file,

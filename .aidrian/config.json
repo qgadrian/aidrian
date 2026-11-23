@@ -9,7 +9,7 @@
   },
   "github": {
     "extraRounds": "auto",
-    "maxReviewRounds": 5,
+    "maxReviewRounds": 10,
     "requiredChecks": [
       "Check (Node 22)",
       "Check (Node 24)",

@@ -318,6 +318,13 @@ export default {
   projectFolders: {},
   // No host file of a checkout is protected beyond what every host's are: its config is the user's, in CODEX_HOME.
   protectedPaths: [],
+  // Its login, auth.json in CODEX_HOME and in the default ~/.codex, which a confined session of another host never
+  // reads (lib/hosts/index.mjs credentialStores).
+  credentialStores: ({ env = {}, home }) => {
+    const user = typeof home === 'string' && path.isAbsolute(home) ? home : homedir();
+    const named = typeof env.CODEX_HOME === 'string' && path.isAbsolute(env.CODEX_HOME) ? [env.CODEX_HOME] : [];
+    return [...new Set([...named, path.join(user, '.codex')].map((each) => path.join(each, 'auth.json')))];
+  },
   // The instruction files and folder it loads from the folders between the project root and the folder a session
   // starts in, its own user folder, CODEX_HOME, and `globalNames`, the files there it loads as the user's own guidance
   // for every session: AGENTS.override.md, else AGENTS.md (developers.openai.com/codex/guides/agents-md). A project run

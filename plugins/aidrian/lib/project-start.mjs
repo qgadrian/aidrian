@@ -29,6 +29,7 @@ import path from 'node:path';
 import { ATTEMPT_KEEP, attemptOf, GIT_PLACEHOLDERS, KEPT_FOLDERS, systemReal } from './attempt-clone.mjs';
 import { isWithin, readSmallJson, resolvedPath } from './fs.mjs';
 import { gateGit } from './git.mjs';
+import { nestedPathspecs } from './hosts/index.mjs';
 import { claimedSource, forgeToken, gitCredentialVars, sessionToken, tokenDigest, tokenVars } from './project-token.mjs';
 import { loadConfig } from './config.mjs';
 import { findProject, stateRoot } from './project.mjs';
@@ -41,7 +42,7 @@ import { signoffFolders } from './review/signoff-store.mjs';
 import { archiveStops } from './stop-history.mjs';
 import { safely } from './session-start-gate.mjs';
 import { markFolders, readUnattendedMark } from './unattended-mark.mjs';
-import { WORK_FOLDERS } from './unattended-write.mjs';
+import { hostFileLinks, WORK_FOLDERS } from './unattended-write.mjs';
 
 // The folders of the state folder a confined session may write besides its attempt's: the plans, reviews, and dispatch
 // records an issue's work leaves, and its temporary files (unattended-write.mjs, which keeps the list).
@@ -485,6 +486,24 @@ export function placeHolders({ work, git, placeholders = [] }) {
   }
   return null;
 }
+
+// Why the fresh clone `work` may not start, from its git index, or null: an entry that is a link (mode 120000) at a path
+// some host loads from any depth (unattended-write.mjs hostFileLinks), listed by the hosts' nested pathspecs
+// (hosts/index.mjs nestedPathspecs), as a nested host folder leading to a plain folder. The sandbox denies a write by the
+// path it resolves to, so a program's write through such a link would land in that host's files unchecked; the write
+// guard alone would see it. Worded as placeHolders words a link at a root host file. One git call, which may print up to
+// INDEX_BUFFER bytes; a listing git cannot give refuses too.
+export function indexLinkProblem(work) {
+  const specs = nestedPathspecs();
+  if (specs.length === 0) return null;
+  const listed = gateGit(['ls-files', '--stage', '-z', '--', ...specs], work, { maxBuffer: INDEX_BUFFER });
+  if (listed.status !== 0) return 'git could not list the links of the attempt\'s clone, so whether one leads where a host loads its files cannot be told';
+  const [first] = hostFileLinks(listed.stdout);
+  if (!first) return null;
+  return `the attempt's clone holds ${first.join('/')}, a link, where a host loads its files from any depth, so a write there would land wherever it leads; replace the link with the folder or file, then start again`;
+}
+// The most output that listing may print.
+const INDEX_BUFFER = 64 * 1024 * 1024;
 
 // The first part of the path `relative` below the folder `top`, as a path from `top`, that is a link, read with lstat
 // part by part, or null; the parts below one that is not there yet are made as plain folders.

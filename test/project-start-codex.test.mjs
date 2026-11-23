@@ -466,6 +466,11 @@ test('start on Codex works in a fresh clone with exactly its granted folders, ho
   assert.equal(fx.git('-C', work, 'remote', 'get-url', 'origin').trim(), 'https://github.com/acme/widgets.git');
   assert.equal(resolvedPath(fx.git('-C', work, 'rev-parse', '--path-format=absolute', '--git-common-dir').trim()), git);
   assert.equal(statSync(drop).mode & 0o777, 0o700);
+  // Codex's confined start declares no placeholders, so its clone gets none, not even another host's.
+  for (const each of ['.opencode', 'opencode.json', 'opencode.jsonc', '.claude', '.mcp.json']) assert.equal(existsSync(path.join(work, each)), false, each);
+  assert.equal(codex.capabilities.projectStart.placeholders, undefined);
+  assert.doesNotMatch(existsSync(path.join(git, 'info', 'exclude')) ? readFileSync(path.join(git, 'info', 'exclude'), 'utf8') : '', /aidrian: the placeholders/u);
+  assert.equal(fx.git('-C', work, 'status', '--porcelain', '--untracked-files=all'), '');
   assert.equal(fx.git('worktree', 'list').trim().split('\n').length, 1, 'no worktree of the main checkout');
   const [, , start] = fx.rows();
   assert.deepEqual([start.event, start.outcome, start.child, start.drop], ['start', 'started', THREAD, path.join(fx.attempt(), 'drop')]);

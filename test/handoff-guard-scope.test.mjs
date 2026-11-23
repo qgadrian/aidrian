@@ -13,7 +13,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
-import { baseReader, continueStoreWriteDenial, mainCheckoutWriteDenial, projectRunWriteDenial, stateFolders } from '../plugins/aidrian/lib/handoff-guard.mjs';
+import { baseReader, continueStoreWriteDenial, hostSessionStartDenial, mainCheckoutWriteDenial, projectRunWriteDenial, stateFolders } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { activeRuns, appendToRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { ownAttemptFolder, projectRunActive } from '../plugins/aidrian/lib/project-run-guard.mjs';
@@ -120,6 +120,30 @@ test('a confined session writes its running attempt\'s folders in the runs folde
   for (const file of [path.join(runsFolder(fx.state), 'launch', 'ledger.jsonl'), path.join(attempt, 'other.txt'), path.join(attempts, 'ENG-1.2', 'work', 'x.txt'), path.join(runsFolder(fx.state), 'launch', 'logs', 'ENG-1.1.jsonl')]) {
     assert.match(ask(file)?.reason ?? '', /the folder of the project runs/u, file);
   }
+});
+
+// The session start guard as a subagent (`agent`) or a main session no Human attends (`unattended`) meets `command`.
+const startAsk = (command, { agent = 'agent-1', unattended = () => false } = {}) => hostSessionStartDenial(
+  bash(command, { session_id: OTHER, cwd: '/x', ...(agent ? { agent_id: agent } : {}) }), { names: { human: 'the Human' } }, { unattended },
+);
+const OPENCODE_STARTS = ['opencode', 'opencode run x', 'opencode serve', 'opencode mini', 'opencode ./src', 'opencode mcp frob', 'opencode service start',
+  'opencode auth list', 'opencode --standalone', '/opt/homebrew/bin/opencode run x', 'bash -c "opencode run x"', 'opencode $SUB',
+  // A command that talks to the background service, which OpenCode discovers or starts, and one that may restart it.
+  'opencode models', 'opencode session list', 'opencode mcp list', 'opencode upgrade',
+  // Through a package runner, by its packages' names.
+  'npx @opencode/cli run x', 'npx -y @opencode/cli@2.4.0 run x', 'pnpm dlx @opencode/cli run x', 'bunx opencode-ai serve', 'npx opencode-ai', 'npm exec opencode-ai run x'];
+
+test('a subagent, and a session the background route started, may not start an OpenCode session, and may run what starts none', () => {
+  for (const command of OPENCODE_STARTS) {
+    assert.match(startAsk(command)?.reason ?? '', /starts or resumes a session of OpenCode outside the handoff gate/u, command);
+    assert.match(startAsk(command, { agent: null, unattended: () => true })?.reason ?? '', /outside the handoff gate/u, `unattended: ${command}`);
+    assert.equal(startAsk(command, { agent: null }), null, `an attended main session may: ${command}`);
+  }
+  for (const command of ['opencode --version', 'opencode -h', 'opencode mcp add x', 'opencode service stop', 'opencode debug paths', 'echo opencode', 'npx @opencode/cli --version', 'npx prettier .', 'npx prettier --check .']) {
+    assert.equal(startAsk(command), null, command);
+  }
+  // Claude Code's package too.
+  assert.match(startAsk('npx @anthropic-ai/claude-code -p x')?.reason ?? '', /starts or resumes a session of Claude Code outside the handoff gate/u);
 });
 
 test('a live unattended mark that names the project is a run under way', (t) => {

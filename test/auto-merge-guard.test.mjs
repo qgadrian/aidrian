@@ -198,6 +198,13 @@ test("the OpenCode bridge and the plugin folder's package manifest are guarded, 
   }
 });
 
+test("OpenCode's folder and config files keep auto-merge off at any depth and in any case, and files that only share its name do not", () => {
+  const kept = ['.opencode/plugins/x.js', 'packages/web/.opencode/plugins/x.js', 'a/.OpenCode/x', 'opencode.jsonc', 'packages/web/opencode.json', 'a/OPENCODE.JSONC'];
+  for (const file of kept) assert.ok(guarded(file), file);
+  const free = ['docs/providers/opencode.md', 'test/opencode-adapter.test.mjs', 'src/opencode.json.ts', 'my-opencode.json', 'pkg/opencode/plugins/x.js'];
+  for (const file of free) assert.equal(guarded(file), false, file);
+});
+
 test("the Claude mod's folder is guarded everywhere, and the release script only in the plugin's own repository", () => {
   for (const file of ['plugins/aidrian-claude-mod/lib/snapshot-client.mjs', 'plugins/aidrian-claude-mod/.claude-plugin/plugin.json']) assert.ok(guarded(file), file);
   for (const file of ['plugins/aidrian-claude-mod-extra/x.mjs', 'scripts/version.mjs.bak', 'docs/scripts/version.mjs']) assert.equal(guarded(file), false, file);

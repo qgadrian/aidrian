@@ -144,7 +144,7 @@ test('a marked session is held from a folder outside its project, and in another
     cwd, encoding: 'utf8',
   });
   const refused = [
-    ['claude -p "go on"', /starts or resumes a Claude Code session outside the handoff gate/u],
+    ['claude -p "go on"', /starts or resumes a session of Claude Code outside the handoff gate/u],
     ['XDG_STATE_HOME=/tmp/elsewhere aidrian handoff continue b.md', /with XDG_STATE_HOME set or unset by the command itself/u],
     ['env -u XDG_STATE_HOME aidrian handoff continue b.md', /with XDG_STATE_HOME set or unset by the command itself/u],
     [`echo '{"handoff":{"background":"on"}}' > ${dir}/.aidrian.local.json`, /sets handoff\.background in \.aidrian\.local\.json/u],
@@ -196,7 +196,7 @@ test('while the gate starts a session, every session the host had not listed and
   });
   const refused = [
     [`echo '{"handoff":{"background":"on"}}' > ${dir}/.aidrian.local.json`, /sets handoff\.background in \.aidrian\.local\.json/u],
-    ['claude --bg "go on"', /starts or resumes a Claude Code session outside the handoff gate/u],
+    ['claude --bg "go on"', /starts or resumes a session of Claude Code outside the handoff gate/u],
     [`rm ${pending}`, /the unattended marks/u],
   ];
   for (const [command, reason] of refused) {

@@ -32,6 +32,7 @@ import { globLinksTo, globStarts, linkWalk } from './glob-links.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
 import { ARMING_FILE, madeWorktrees, openStore, SESSION_ID, startedFolders, startedInBackground, storePath } from './handoff-markers.mjs';
 import { DETECT_VARS, HOSTS, IDENTITY_VARS, mainCheckoutPaths, opaqueShellCommand } from './hosts/index.mjs';
+import { unwrapped } from './package-runner.mjs';
 import { defaultStateDir, findProject, projectCheckouts, stateDir, stateRoot } from './project.mjs';
 import { GIT_VARS } from './review/env.mjs';
 import { SIGNOFF_FOLDER, signoffFolders } from './review/signoff-store.mjs';
@@ -339,8 +340,9 @@ const programWord = (programs) => new RegExp(String.raw`(?<![\w.-])(?:${programs
 // to no chain floor, so the hooks would not know it as unattended, and it would start with whatever the command gives it.
 // Each host adapter declares its own command (`sessionStart`), and every host's counts whatever host runs the session.
 // A command a shell runs that the lexer cannot read, or a command in a shell it cannot read, counts when it names such a
-// program as a word. A known limit of the shared lexer, as in handoffContinueDenial: a program that runs its arguments
-// as a command, such as `xargs claude` or `npx`, and a command word built from a variable, are not read.
+// program as a word. A package runner, as `npx`, `pnpm dlx`, or `bunx`, is read as the program it runs, by a host's own
+// package name too (an adapter's `packages`). A known limit of the shared lexer, as in handoffContinueDenial: another
+// program that runs its arguments as a command, such as `xargs claude`, and a command word built from a variable, are not read.
 export function hostSessionStartDenial(input, { names: { human } }, { unattended = () => false } = {}) {
   const opaque = opaqueShellCommand(input);
   const command = opaque ?? (bashCall(input) ? input.tool_input?.command : null);
@@ -348,14 +350,18 @@ export function hostSessionStartDenial(input, { names: { human } }, { unattended
   const hosts = starters();
   // The host whose program `text`, which no lexer read, names as a word.
   const namedIn = (text) => hosts.find((each) => programWord(each.sessionStart.programs).test(text));
-  const read = ({ invocation, unread }) => (unread !== undefined ? namedIn(unread) : null)
-    ?? (invocation.dynamic ? null : hosts.find((each) => each.sessionStart.programs.includes(programName(invocation.program)) && each.sessionStart.starts(invocation.args)));
+  // Through a package runner, the program its package installs (package-runner.mjs), as `npx @anthropic-ai/claude-code -p` runs claude.
+  const starts = (invocation) => {
+    const { program, args } = unwrapped(programName(invocation.program), invocation.args, (token) => (token.dynamic ? null : token.text));
+    return hosts.find((each) => each.sessionStart.programs.includes(programName(program)) && each.sessionStart.starts(args));
+  };
+  const read = ({ invocation, unread }) => (unread !== undefined ? namedIn(unread) : null) ?? (invocation.dynamic ? null : starts(invocation));
   const host = opaque !== null ? opaqueTexts(opaque).map(namedIn).find(Boolean) : walkCommands(command, null).map(read).find(Boolean);
   const subagent = isSubagent(input);
   if (!host || (!subagent && !unattended())) return null;
   const who = subagent ? 'only the main session hands off, through `aidrian handoff continue`' : `a session starts another only through \`aidrian handoff continue\`, ${UNATTENDED}`;
-  const why = `it starts or resumes a ${host.name} session outside the handoff gate, which holds every session it starts to a chain floor, and ${who}`;
-  return { match: `starts a ${host.name} session`, reason: projectRuleReason(input, why, human, 'to start or resume that session') };
+  const why = `it starts or resumes a session of ${host.name} outside the handoff gate, which holds every session it starts to a chain floor, and ${who}`;
+  return { match: `starts a session of ${host.name}`, reason: projectRuleReason(input, why, human, 'to start or resume that session') };
 }
 
 // The `git remote` actions that point a remote at another repository, or move the ref of its default branch.

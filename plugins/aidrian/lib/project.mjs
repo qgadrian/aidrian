@@ -70,7 +70,7 @@ const GUARDED_LIB = [
   'delivery-check', 'dispatch-log', 'dispatch-rows', 'feedback-record', 'finding-disposition', 'foreground-dispatch', 'fs', 'gate-snapshot', 'git',
   'git-push', 'glob-links', 'handoff-continue', 'handoff-guard', 'handoff-markers', 'handoff-sections', 'hidden-text', 'hook-deny', 'hook-io', 'issue-forge-guard', 'issue-push-checkout',
   'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits', 'markdown-prose', 'markdown-sections', 'markdown-wrap',
-  'model-prices', 'names', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review', 'pr-checks', 'pr-diff', 'pr-product-feedback',
+  'model-prices', 'names', 'package-runner', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review', 'pr-checks', 'pr-diff', 'pr-product-feedback',
   'pr-resolve', 'project', 'project-confine', 'project-issue-text', 'project-limit', 'project-linger', 'project-preflight', 'project-recheck', 'project-registries', 'project-report',
   'project-result', 'project-run', 'project-run-cli', 'project-run-gate', 'project-run-guard', 'project-start', 'project-stops', 'project-token', 'project-trust', 'push-preflight',
   'remotes', 'review-gate', 'run-driver', 'session-folder', 'session-length', 'session-links', 'session-links-writer', 'session-origins',
@@ -83,12 +83,12 @@ const GUARDED_PLUGIN = String.raw`bin/|scripts/|hooks/|lib/(?:forges|rules|revie
 // any infix, such as AGENTS.override.md, which Codex reads first, or CLAUDE.local.md; and AGENT.md, QWEN.md, WARP.md,
 // CRUSH.md, and CONVENTIONS.md.
 const HOST_NAMES = String.raw`(?:AGENTS?|CLAUDE|GEMINI|QWEN|WARP|CRUSH|CONVENTIONS)(?:\.[^/]+)?\.md`;
-// The instruction files and folders AI hosts read by path: Cursor's, Cline's, and Windsurf's at any depth, since they
-// read nested ones; GitHub Copilot's at the repository root or the project root.
-const HOST_PATHS = String.raw`(?:^|/)(?:\.cursor|\.windsurf|\.clinerules)(?:/|$)|(?:^|/)(?:\.cursorrules|\.windsurfrules)$` +
+// The instruction files and folders AI hosts read by path: Cursor's, Cline's, Windsurf's, and OpenCode's at any depth,
+// since they read nested ones or may; GitHub Copilot's at the repository root or the project root.
+const HOST_PATHS = String.raw`(?:^|/)(?:\.cursor|\.windsurf|\.clinerules|\.opencode)(?:/|$)|(?:^|/)(?:\.cursorrules|\.windsurfrules)$` +
   String.raw`|^\.github/copilot-instructions\.md$|^\.github/instructions(?:/|$)`;
 export const GUARDED_PATHS = new RegExp(
-  String.raw`(?:^|/)(?:${HOST_NAMES}|SKILL\.md|CODEOWNERS|\.aidrian\.json|\.aidrian\.local\.json|\.banned-terms\.local)$` +
+  String.raw`(?:^|/)(?:${HOST_NAMES}|SKILL\.md|CODEOWNERS|opencode\.jsonc?|\.aidrian\.json|\.aidrian\.local\.json|\.banned-terms\.local)$` +
     `|${HOST_PATHS}` +
     String.raw`|^(?:\.claude|\.codex|\.aidrian|\.github/workflows|\.github/actions)(?:/|$)` +
     String.raw`|^(?:\.claude-plugin|\.agents/plugins)/marketplace\.json$` +

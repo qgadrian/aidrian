@@ -4,6 +4,9 @@
 // OpenCode's. This file maps that to the standard names, so the hook scripts read it as they read any host's.
 // The facts below come from OpenCode 2.4.0: the types of @opencode/plugin@2.4.0 and the embedded source of its binary.
 
+import { homedir } from 'node:os';
+import path from 'node:path';
+
 import { setUp } from './opencode-setup.mjs';
 import { patchEdit } from './patch.mjs';
 import { responseObjects } from './response.mjs';
@@ -17,6 +20,53 @@ const payloadMark = (input) => isObject(input?.opencode);
 // Its built-in shell tool is `shell`, and its file tools `edit`, `write`, and `patch` (embedded source of 2.4.0).
 const RAW_TOOLS = { Bash: 'shell', Edit: 'edit', Write: 'write' };
 const NATIVE_TOOLS = { Bash: 'shell' };
+
+// Whether the path whose parts from a confined clone's root are `segments` is a host file of OpenCode at any depth: a
+// `.opencode` folder and all it holds, or a config file, either of which can load plugins. Whether OpenCode reads a
+// nested one is not known yet, so it is held wherever it lies. Names are compared in lower case, as a disk that folds
+// case reads them.
+function nestedProtected(segments) {
+  const lower = segments.filter(Boolean).map((each) => each.toLowerCase());
+  const last = lower.at(-1);
+  return lower.includes('.opencode') || last === 'opencode.json' || last === 'opencode.jsonc';
+}
+
+// Its command line that starts, resumes, attaches to, or serves a session, which lib/handoff-guard.mjs
+// hostSessionStartDenial refuses a subagent and a session the background handoff route started. Read from the help of
+// an isolated OpenCode 2.4.0 on 2026-11-23, failing closed: each entry below is a word and its subcommand whose help
+// was read in full, says it starts no session, and takes no `--server` flag. A command that takes one talks to the
+// background service, which OpenCode "discovers or starts" (2.4.0's own text), and a started service serves sessions,
+// so every such command is a start: `models`, `stats`, `reload`, and the subcommands of `session`, `machine`, and
+// `auth`, `debug agents`, `config`, and `heap-dump`, and `mcp list`, `auth`, and `logout`, and `plugin list`, `check`,
+// and `update`. So are no argument, a directory, `run`, `mini`, `acp`, `serve`, `api`, `pair`, `service start` and
+// `restart`, `upgrade` and `update`, which may restart the service, `uninstall`, a word a later version adds, and
+// `auth export`, whose help was not read. A word that takes subcommands is never listed alone.
+const INFO = new Set(['-h', '--help', '-v', '--version', '--completions']);
+export const NO_SESSION = Object.freeze([
+  ['debug', 'paths'], ['mcp', 'add'], ['plugin', 'add'], ['plugin', 'remove'],
+  ['service', 'status'], ['service', 'stop'], ['service', 'get'], ['service', 'set'], ['service', 'unset'],
+].map((entry) => Object.freeze(entry)));
+
+// The folders of its own the user's account holds, under `env`'s XDG folders and their defaults below `home`, as the
+// 2.4.0 binary names them: `opencode` in the data folder, which holds auth.json and opencode.db, whose `credential`
+// table 2.4.0 imports auth.json into; in the state folder, which holds the background service's registration
+// (service.json, service-<channel>.json); and in the config folder and OPENCODE_CONFIG_DIR, which hold the service's
+// config, whose `service set env` values may be secrets, and opencode.json, which may hold a provider's key.
+function credentialStores({ env = {}, home }) {
+  const user = typeof home === 'string' && path.isAbsolute(home) ? home : homedir();
+  const named = (name) => (typeof env[name] === 'string' && path.isAbsolute(env[name]) ? [env[name]] : []);
+  const folders = [
+    ...named('XDG_DATA_HOME'), path.join(user, '.local', 'share'), ...named('XDG_STATE_HOME'), path.join(user, '.local', 'state'),
+    ...named('XDG_CONFIG_HOME'), path.join(user, '.config'),
+  ].map((each) => path.join(each, 'opencode'));
+  return [...new Set([...folders, ...named('OPENCODE_CONFIG_DIR')])];
+}
+const starts = (args) => {
+  const words = args.map((token) => (token.dynamic ? null : token.text));
+  if (words.length === 0 || words[0] === null) return true;
+  if (INFO.has(words[0])) return false;
+  return !NO_SESSION.some((entry) => entry.every((word, at) => words[at] === word));
+};
 
 export default {
   id: 'opencode',
@@ -71,7 +121,35 @@ export default {
     }
     return patchEdit(String(given.patchText ?? ''));
   },
+  sessionStart: { programs: ['opencode'], starts },
+  // The npm packages that install its program, which a package runner runs as `opencode` (lib/package-runner.mjs).
+  packages: { '@opencode/cli': 'opencode', 'opencode-ai': 'opencode' },
+  // The subcommands of its program that write its config, a credential, a pairing, the session store, or the program
+  // itself, and its global options that take the next word: the agent gate hook refuses them to a session no Human
+  // attends (lib/unattended-write.mjs). From the same reading of 2.4.0's help as NO_SESSION: the first twelve were listed
+  // before it; `machine add` and `remove` and `pair` write a pairing; `auth` stands whole, as its `export` help was not
+  // read; `session import` and `delete` write the store `opencode -c` resumes from; `uninstall`, `upgrade`, and `update`
+  // replace or remove the program; and `service stop` stops the service every OpenCode session on the machine uses.
+  configCommands: {
+    programs: ['opencode'],
+    subcommands: [
+      ['mcp', 'add'], ['mcp', 'auth'], ['mcp', 'logout'], ['auth', 'login'], ['auth', 'logout'], ['auth', 'import'], ['auth', 'switch'],
+      ['plugin', 'add'], ['plugin', 'remove'], ['plugin', 'update'], ['service', 'set'], ['service', 'unset'],
+      ['machine', 'add'], ['machine', 'remove'], ['pair'], ['auth'],
+      ['session', 'import'], ['session', 'delete'], ['uninstall'], ['upgrade'], ['update'], ['service', 'stop'],
+    ],
+    valueOptions: ['--server', '--log-level', '--completions', '--session', '-s', '--prompt'],
+  },
+  // Its logins and its service's state, which a confined session of another host never reads (lib/hosts/index.mjs).
+  credentialStores,
   projectFolders: {},
+  // The host files of a checkout a session no Human attends never writes, from its root: `.opencode/plugins/` loads code
+  // into the next session there, and either config file can name plugins (lib/unattended-write.mjs).
+  protectedPaths: ['.opencode', 'opencode.json', 'opencode.jsonc'],
+  nestedProtected,
+  // The same files at any depth, as globs from a clone's root in the `**` form git and the sandbox both read: a confined
+  // session's sandbox denies them, and the write guard lists the git index's links among them.
+  nestedGlobs: ['**/.opencode', '**/.opencode/**', '**/opencode.json', '**/opencode.jsonc'],
   mainCheckoutPaths: { folders: [], settings: [] },
   capabilities: {
     transcripts: false,

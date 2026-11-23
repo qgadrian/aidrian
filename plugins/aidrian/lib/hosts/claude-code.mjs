@@ -239,6 +239,8 @@ export default {
   ownTranscript,
   transcriptFolders: (home) => [path.join(home, '.claude', 'projects')],
   sessionStart: { programs: ['claude'], starts: startsSession },
+  // The npm package that installs its program, which a package runner runs as `claude` (lib/package-runner.mjs).
+  packages: { '@anthropic-ai/claude-code': 'claude' },
   // The subcommands of its program that write its own user or project config: MCP servers, settings, and plugins, and
   // its global options that take the next word. The agent gate hook refuses them to a session no Human attends
   // (lib/unattended-write.mjs).
@@ -400,15 +402,17 @@ export default {
       // `aidrian project confine`, which tries what the sandbox must refuse, and the start holds the session only once the
       // gate confirmed the verdict (`confined`). `confineReads` are the credential stores the proof tries to read.
       confineProof: true,
-      confineReads: ({ env, home }) => confineReads({ env, home }),
+      confineReads: ({ env, home, stores }) => confineReads({ env, home, stores }),
       // The allowedDomains the user's and the organization's settings add, which the proof's unlisted host stays outside.
       confineDomains: ({ env, home, platform }) => confineDomains({ env, home, platform }),
       // Whether the session's binding reaches this machine's loopback under projectRun.localBinding, so the proof runs no
       // localhost listener: macOS alone; Linux keeps the session in a network namespace of its own.
       confineLoopback: ({ platform, localBinding }) => loopbackReach({ platform, localBinding }),
       localBindingRisk,
-      start: ({ session, cwd, name, prompt, env, hold, identify, beacon, confined, git, grants, domains, main, mainGit, tokens, guarded, mcp, localBinding, home, platform, run, wait, runs, claimVars }) => startProject({
-        session, cwd, runs, name, prompt, env, hold, identify, beacon, confined, sandbox: { git, grants, domains, main, mainGit, tokens, guarded, localBinding }, mcp, home, platform, run, wait, effort: effort(env), efforts: MODEL_CHOICES.effort, claimVars,
+      // `hostFiles` are the other hosts' files the sandbox denies writing too, and `hostStores` their logins and service
+      // state, which it denies reading (claude-code-sandbox.mjs sandboxSettings).
+      start: ({ session, cwd, name, prompt, env, hold, identify, beacon, confined, git, grants, domains, main, mainGit, tokens, guarded, hostFiles, hostStores, mcp, localBinding, home, platform, run, wait, runs, claimVars }) => startProject({
+        session, cwd, runs, name, prompt, env, hold, identify, beacon, confined, sandbox: { git, grants, domains, main, mainGit, tokens, guarded, localBinding, hostFiles, hostStores }, mcp, home, platform, run, wait, effort: effort(env), efforts: MODEL_CHOICES.effort, claimVars,
       }),
       stop: ({ id, started, env, run }) => stopBackground({ id, started, env, run }),
       ended: ({ id, session, env, run }) => sessionFinished({ id, session, env, run }),

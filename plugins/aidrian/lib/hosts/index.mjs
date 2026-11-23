@@ -221,6 +221,16 @@ export function mainCheckoutPaths(hosts = HOSTS) {
 export const configCommands = (hosts = HOSTS) => hosts.map((host) => host.configCommands)
   .filter((each) => Array.isArray(each?.programs) && Array.isArray(each.subcommands));
 
+// The npm packages that install a host's program, as { package: program }, from each adapter's optional `packages`: a
+// package runner's call of one runs that program (package-runner.mjs), whatever the package's last part is named.
+export const packagePrograms = (hosts = HOSTS) => Object.fromEntries(hosts.flatMap((host) => Object.entries(host.packages ?? {})));
+
+// The files and folders where the hosts keep their own logins and the state of their services, for the user whose home
+// is `home` under `env`, which a confined session's sandbox never reads (an adapter's optional `credentialStores({ env,
+// home })`): their union, each an absolute path of plain text.
+export const credentialStores = ({ env = process.env, home } = {}, hosts = HOSTS) => [...new Set(hosts.flatMap((host) => host.credentialStores?.({ env, home }) ?? []))]
+  .filter((each) => typeof each === 'string' && path.isAbsolute(each) && !CONTROL.test(each));
+
 // The host files of a checkout no session no Human attends writes, from its root, as every host declares them
 // (`protectedPaths`): their union, so a session of one host cannot plant what another loads.
 export const protectedPaths = (hosts = HOSTS) => [...new Set(hosts.flatMap((host) => host.protectedPaths ?? []))];
@@ -228,6 +238,21 @@ export const protectedPaths = (hosts = HOSTS) => [...new Set(hosts.flatMap((host
 // Whether the path whose parts from a confined attempt's clone root are `segments` is a host file some host loads from
 // any depth (`nestedProtected`), which no session no Human attends writes there.
 export const nestedProtected = (segments, hosts = HOSTS) => hosts.some((host) => typeof host.nestedProtected === 'function' && host.nestedProtected(segments) === true);
+
+// The globs, from a confined clone's root, of the host files the hosts load from any depth (an adapter's optional
+// `nestedGlobs`): their union, in the `**` form git and a sandbox both read.
+export const nestedGlobs = (hosts = HOSTS) => [...new Set(hosts.flatMap((host) => host.nestedGlobs ?? []))];
+// The same globs as git pathspecs, in any case: git's glob magic matches a `**/` glob at the root too.
+export const nestedPathspecs = (hosts = HOSTS) => nestedGlobs(hosts).map((glob) => `:(glob,icase)${glob}`);
+
+// Whether a protected name is a file: one ending .json or .jsonc. Any other is a folder.
+export const protectedFile = (name) => /\.jsonc?$/u.test(name);
+
+// The placeholders of the root host files the hosts other than `host` protect: a folder, or a file holding `{}`. The
+// starting host's own protected paths are left out, not only its own placeholders, since it may leave one out on purpose.
+export const otherPlaceholders = (host, hosts = HOSTS) => protectedPaths(hosts)
+  .filter((each) => !(host?.protectedPaths ?? []).includes(each))
+  .map((each) => (protectedFile(each) ? { path: each, text: '{}\n' } : { path: each, folder: true }));
 
 // The handoff continue routes `host` can do, of CONTINUE_ROUTES in lib/config-schema.mjs; none for a host that names none.
 export const continueRoutes = (host) => host.capabilities.handoffContinue?.routes ?? [];

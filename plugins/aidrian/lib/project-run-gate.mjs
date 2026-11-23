@@ -52,7 +52,7 @@ import { forgeDomains, forgeFor, forgeTokenVars } from './forges/index.mjs';
 import { gateGit, knownPrefix } from './git.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
 import { claimBusy, dropClaim, readContainedBrief, readStarted, SESSION_ID } from './handoff-markers.mjs';
-import { detectHost, sessionIdentity } from './hosts/index.mjs';
+import { credentialStores, detectHost, nestedGlobs, otherPlaceholders, protectedPaths, sessionIdentity } from './hosts/index.mjs';
 import { branchPolicies, defaultBranch, soloOn } from './pr-auto-merge.mjs';
 import { chainEnded, lingerLine, lingerProblem, notStopped, settleLingering, stopChain } from './project-linger.mjs';
 import { checkedLimit, limitEndRows, limitRecorded, pausedTime, pauseOf, pauseRow, recordedPauseRuns } from './project-limit.mjs';
@@ -64,7 +64,7 @@ import { afterFailure, cleanText, CAPS, DROP_FILE, ingestDrops, openPullOf, RESU
 import { writeIssueFile } from './project-issue-text.mjs';
 import { appendToRun, attemptBranch, attemptBranches, attendedProblem, haltOf, issueBranch, planRun, readCapped, readRun, runFolder, runPlace, runsFolder, RUN_ID, SERIAL } from './project-run.mjs';
 import { custody, driverOf, endedIn, hostContinued, ISSUE_ATTEMPTS, latestStart, resultAuthorProblem, resumerProblem, runStore, spentAttempts, startRows, startsOf, timeOf, ATTEMPT_CEILING } from './project-run-guard.mjs';
-import { accessProblem, guardedFolders, haltAnswer, hostStartProblem, linkTripwire, placeHolders, prepareAttempt, runLog, runLogFile, stateWorkFolders, sweepAttempts, unverifiedNote, writeShellVars } from './project-start.mjs';
+import { accessProblem, guardedFolders, haltAnswer, hostStartProblem, indexLinkProblem, linkTripwire, placeHolders, prepareAttempt, runLog, runLogFile, stateWorkFolders, sweepAttempts, unverifiedNote, writeShellVars } from './project-start.mjs';
 import { ancestorProblem, namedFiles, pushProblem, repositoryProblem, trustProblem } from './project-trust.mjs';
 import { pushPreflight } from './push-preflight.mjs';
 import { signoffFolder, signoffFolders } from './review/signoff-store.mjs';
@@ -391,6 +391,16 @@ function startContext(given) {
   return { ...given, session, state, found, store, held, facade, policy, cap, refuse, noted, main };
 }
 
+// The placeholders of the attempt's clone `cap` makes for the starting host `host`: its own list, then each root host
+// file the other hosts protect (hosts/index.mjs otherPlaceholders) but a path that list already holds, so a sandbox that
+// denies only a path there at launch, as on Linux, holds the other hosts' files too. A host whose confined start declares
+// no list of its own, whose sandbox needs none, gets none at all.
+function clonePlaceholders(cap, host) {
+  if (!Array.isArray(cap.placeholders)) return [];
+  const own = new Set(cap.placeholders.map((each) => each.path));
+  return [...cap.placeholders, ...otherPlaceholders(host).filter((each) => !own.has(each.path))];
+}
+
 // Where the start runs, once the run's issues allow it: { orphans, attempt, tip, branch, cwd, grants, drop, log }, or
 // { answer } when the start ends here.
 function startPlace(context) {
@@ -449,7 +459,8 @@ const endedOnLimit = (found, key, attempt) => found.rows.some((row) => row.event
 // of the user's git config would make it, or to more than one URL, which the session's push guard never lets through.
 // A host that would refuse the push of a session the driver `session` starts in the clone halts too (pushPreflight, in
 // the driver's permission mode, which the session takes): the clone is the folder the start passes the host, judged
-// once, and a remote or folder it cannot read answers unknown and starts. Last, the host's placeholders go in (placeHolders).
+// once, and a remote or folder it cannot read answers unknown and starts. Last, the placeholders go in (placeHolders,
+// clonePlaceholders).
 function confinedRoom({ project, state, run, key, branch, fresh, reserved, resumed, attempt, tip, env, home, found, cap, policy, main, pushUrl, session, checked, facade }) {
   const folders = stateWorkFolders(state, { env, home });
   if (folders.problem) return { halt: folders.problem };
@@ -477,8 +488,11 @@ function confinedRoom({ project, state, run, key, branch, fresh, reserved, resum
   // The denial names a settings file a session no Human attends must never edit: only the Human widens push trust.
   const push = pushPreflight({ cwd: clone.work, env, session, git: (args, cwd) => gateGit(args, cwd, { env }) });
   if (push.answer === 'denied') return { halt: `no session started, since ${push.message}` };
-  const placed = placeHolders({ work: clone.work, git: clone.git, placeholders: Array.isArray(cap.placeholders) ? cap.placeholders : [] });
+  const placed = placeHolders({ work: clone.work, git: clone.git, placeholders: clonePlaceholders(cap, detectHost({ env })) });
   if (placed) return { problem: placed.problem };
+  // After the placeholders, which refuse a link at a root host file, a link at any depth is refused alike.
+  const linked = indexLinkProblem(clone.work);
+  if (linked) return { problem: linked };
   const common = gateGit(['rev-parse', '--path-format=absolute', '--git-common-dir'], main, { timeout: 30_000 });
   const mainGit = common.status === 0 ? resolvedPath(common.stdout.trim()) : null;
   // The package managers' caches, for the session's sandboxed commands alone: the host's SessionStart hook reads them
@@ -553,7 +567,7 @@ function launchStart(context, place) {
     // A session that reaches this machine's loopback would reach the listener too, so the proof probes none there.
     confine = prepareConfine({
       folder, run, key, attempt, work: cwd, git, drop, cache, domains: [...domains, ...(Array.isArray(added) ? added : [])], main, mainGit, env, home, loopback,
-      ...(context.listen ? { listen: context.listen } : {}), reads: safely(() => cap.confineReads?.({ env, home })) ?? [],
+      ...(context.listen ? { listen: context.listen } : {}), reads: safely(() => cap.confineReads?.({ env, home, stores: credentialStores({ env, home }) })) ?? [],
     });
     if (confine.problem) {
       safely(() => rmSync(folder, { recursive: true, force: true }));
@@ -597,6 +611,11 @@ function launchStart(context, place) {
           runs: runsFolder(state),
           // The sign-off store, which a merge no Human asks for reads as the Human's word: no confined session writes it.
           guarded: guardedStore({ env, home }),
+          // Every host's files, from the clone's root and at any depth, whose writes the host's sandbox denies too, so the
+          // session plants nothing another host would load there.
+          hostFiles: { paths: protectedPaths(), globs: nestedGlobs() },
+          // Every host's own logins and service state, which the session's sandbox does not read.
+          hostStores: credentialStores({ env, home }),
           mcp: context.policy.mcpServers, localBinding, home, platform: context.platform, beacon: (id) => readBeacon(id, { env, home, since }), confined,
         });
         // A failed proof halts the run whatever came of stopping its session (startLines).

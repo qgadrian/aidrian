@@ -26,7 +26,7 @@ import { foldCase, isWithin } from './fs.mjs';
 import { gitConfigFiles, gitFolders, repositoryCheckouts, runGit, underGit, withGitFacts } from './git.mjs';
 import { GLOB_WORD, globStarts, sameFile } from './glob-links.mjs';
 import { globReaches, modeTargets, sessionWorktrees, startedFolder, stateFolders } from './handoff-guard.mjs';
-import { fileEditOf, nestedProtected, opaqueShellCommand, protectedPaths, transcriptFolders } from './hosts/index.mjs';
+import { fileEditOf, nestedGlobs, nestedPathspecs, nestedProtected, opaqueShellCommand, protectedFile, protectedPaths, transcriptFolders } from './hosts/index.mjs';
 import { issueForgeDenial } from './issue-forge-guard.mjs';
 import { ownIssue } from './project-run-guard.mjs';
 import { canonical } from './rules/main-checkout.mjs';
@@ -321,10 +321,10 @@ function workflowRefused(refuse, top) {
 }
 
 // The host files of the checkout at `top` every host protects (hosts/index.mjs protectedPaths): the settings, skills,
-// agents, commands, hooks, scheduled work, and MCP servers a later session there loads. A `.json` name is a file; any
-// other is a folder, refused with all it holds.
+// agents, commands, hooks, scheduled work, and MCP servers a later session there loads. A `.json` or `.jsonc` name is a
+// file (hosts/index.mjs protectedFile), also met through a hard link to it; any other is a folder, refused with all it holds.
 function hostRefused(refuse, top) {
-  for (const each of protectedPaths()) refuse(path.join(top, each), 'a host file a later session in that checkout loads, such as its settings, skills, agents, hooks, or MCP servers', !each.endsWith('.json'));
+  for (const each of protectedPaths()) refuse(path.join(top, each), 'a host file a later session in that checkout loads, such as its settings, skills, agents, hooks, or MCP servers', !protectedFile(each));
 }
 
 // What a confined session never writes at any depth of its clone (hosts/index.mjs nestedProtected): a host file it
@@ -368,9 +368,9 @@ function nestedLinkHit(target, nested) {
   return null;
 }
 
-// The pathspecs of the index entries that can be a host file a host loads from any depth: a `.claude` entry, anything
-// below one, and a SKILL.md, in any case.
-const INDEX_LINKS = Object.freeze([':(glob,icase)**/.claude', ':(glob,icase)**/.claude/**', ':(glob,icase)**/SKILL.md']);
+// The pathspecs of the index entries that can be a host file a host loads from any depth, in any case: a `.claude`
+// entry, anything below one, and a SKILL.md, then each glob the other hosts declare (hosts/index.mjs nestedGlobs).
+const INDEX_LINKS = Object.freeze([':(glob,icase)**/.claude', ':(glob,icase)**/.claude/**', ':(glob,icase)**/SKILL.md', ...nestedPathspecs()]);
 // The most output that listing may print.
 const INDEX_BUFFER = 64 * 1024 * 1024;
 
@@ -386,12 +386,19 @@ function indexLinks(work) {
   }
   const listed = runGit(['ls-files', '--stage', '-z', '--', ...INDEX_LINKS], work, { ...gitBudget(), maxBuffer: INDEX_BUFFER });
   if (listed.status !== 0) return null;
+  return hostFileLinks(listed.stdout).map((parts) => ({ at: real(path.join(work, ...parts)), parts }));
+}
+
+// The parts of each link (mode 120000) of `listing`, the output of `git ls-files --stage -z`, whose path is a host file
+// some host loads from any depth (nestedProtected): read by the write guard here and by a confined start
+// (project-start.mjs indexLinkProblem), so both judge a clone's index links alike.
+export function hostFileLinks(listing) {
   const links = [];
-  for (const entry of listed.stdout.split('\0')) {
+  for (const entry of listing.split('\0')) {
     const tab = entry.indexOf('\t');
     if (tab < 0 || !entry.startsWith('120000 ')) continue;
     const parts = entry.slice(tab + 1).split('/');
-    if (nestedProtected(parts)) links.push({ at: real(path.join(work, ...parts)), parts });
+    if (nestedProtected(parts)) links.push(parts);
   }
   return links;
 }
@@ -430,14 +437,28 @@ function partPattern(part) {
 
 // Whether a glob, by its folder `prefix` and its later parts `rest`, may reach a NESTED entry of one of the clones
 // `nested`: it lies in one and a later part may name a `.claude` folder, a glob whose own text starts with a dot or is a
-// class or a brace, since a shell's `*` skips dot names, or its last part may name a SKILL.md.
+// class or a brace, since a shell's `*` skips dot names, or its last part may name a SKILL.md; or, by the names the
+// other hosts' nested globs spell out (NESTED_NAMES), a later part may name one of their folders, or its last part one
+// of their files, a dot name only by such a glob.
 function nestedGlob(prefix, rest, nested) {
   if (!nested.some(({ root }) => isWithin(root, prefix) || isWithin(prefix, root))) return false;
   if (nestedHit(prefix, nested)) return true;
-  const may = (part, name) => (GLOB_WORD.test(part) ? /^[.[{]/u.test(part) && partPattern(part).test(name) : part.toLowerCase() === name);
+  const may = (part, name) => (GLOB_WORD.test(part) ? (!name.startsWith('.') || /^[.[{]/u.test(part)) && partPattern(part).test(name) : part.toLowerCase() === name);
   const last = rest.at(-1) ?? '';
-  return rest.some((part) => may(part, '.claude')) || (GLOB_WORD.test(last) ? partPattern(last).test('skill.md') : last.toLowerCase() === 'skill.md');
+  if (rest.some((part) => may(part, '.claude') || NESTED_NAMES.folders.some((name) => may(part, name)))) return true;
+  return may(last, 'skill.md') || NESTED_NAMES.files.some((name) => may(last, name));
 }
+
+// The names, in lower case, the hosts' nested globs spell out (hosts/index.mjs nestedGlobs): `folders`, a plain part
+// another part follows, as `.x` in `**/.x/**`, and `files`, a glob's plain last part, as `x.json` in `**/x.json`.
+const NESTED_NAMES = (() => {
+  const plain = (part) => part !== '' && !GLOB_WORD.test(part);
+  const parts = nestedGlobs().map((glob) => glob.split('/').map((part) => part.toLowerCase()));
+  return Object.freeze({
+    folders: [...new Set(parts.flatMap((each) => each.slice(0, -1).filter(plain)))],
+    files: [...new Set(parts.map((each) => each.at(-1)).filter(plain))],
+  });
+})();
 
 // The places of a session a pending mark, or a mark that cannot be read, holds (unattendedPlaces): the shared git
 // config and hooks of the mark's main checkout and of the call's folder, and, as places among the home folder's dot

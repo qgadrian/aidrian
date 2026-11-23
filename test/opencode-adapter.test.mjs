@@ -5,13 +5,16 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { fileEditOf, HOSTS, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
-import opencode from '../plugins/aidrian/lib/hosts/opencode.mjs';
+import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
+import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
+import { nestedProtected as anyHostNested, credentialStores, fileEditOf, HOSTS, nestedGlobs, otherPlaceholders, packagePrograms, protectedFile, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
+import opencode, { NO_SESSION } from '../plugins/aidrian/lib/hosts/opencode.mjs';
+import { unwrapped } from '../plugins/aidrian/lib/package-runner.mjs';
 
 const MARK = { version: '2.4.0' };
 const SHELL = { hook_event_name: 'PostToolUse', opencode: MARK, session_id: 'ses_a', cwd: '/x', tool_name: 'shell', tool_input: { command: 'gh pr view 3' }, tool_use_id: 'call_1' };
@@ -126,10 +129,101 @@ test('its capabilities: no transcripts, no handoff route, a push it cannot judge
   assert.deepEqual(capabilities.trackerGuard.unguardedRoutes, [{ name: 'any MCP tool', reason: 'the bridge forwards no MCP tool call to a hook in this version' }]);
 });
 
-test('it declares none of what a later change brings: no check-run reader, session start, host files, or instructions', () => {
-  for (const field of ['shellRun', 'sessionStart', 'configCommands', 'protectedPaths', 'nestedProtected', 'nestedGlobs', 'instructionFiles', 'githubTools', 'opaqueShellTools']) {
-    assert.equal(opencode[field], undefined, field);
+test('it declares none of what a later change brings: no check-run reader, instructions, GitHub tools, or opaque shell', () => {
+  for (const field of ['shellRun', 'instructionFiles', 'githubTools', 'opaqueShellTools']) assert.equal(opencode[field], undefined, field);
+});
+
+// The command lexer's tokens of a command line's arguments; `null` stands for a word built at run time.
+const tokens = (...words) => words.map((word) => (word === null ? { text: '$X', dynamic: true } : { text: word, dynamic: false }));
+const { starts } = opencode.sessionStart;
+
+test('its host files: the folder and both config files at the root, and the same at any depth of a clone', () => {
+  assert.deepEqual(opencode.protectedPaths, ['.opencode', 'opencode.json', 'opencode.jsonc']);
+  assert.deepEqual(opencode.nestedGlobs, ['**/.opencode', '**/.opencode/**', '**/opencode.json', '**/opencode.jsonc']);
+  assert.deepEqual(nestedGlobs(), opencode.nestedGlobs, 'the union: Claude Code keeps its own globs where they are');
+  for (const each of ['pkg/.opencode/plugins/x.js', 'pkg/.OPENCODE/x', 'pkg/opencode.json', 'a/b/opencode.jsonc', 'pkg/.opencode', '.opencode', 'a//OpenCode.JSON']) {
+    assert.equal(opencode.nestedProtected(each.split('/')), true, each);
+    assert.equal(anyHostNested(each.split('/')), true, each);
   }
+  for (const each of ['pkg/opencode.md', 'pkg/src/opencode.json.ts', 'my-opencode.json', 'pkg/opencode/plugins/x.js', 'src/app.js', '']) {
+    assert.equal(opencode.nestedProtected(each.split('/')), false, each);
+  }
+});
+
+test('its session start: only the info flags and the words and subcommands whose help says they start none are not starts', () => {
+  assert.deepEqual(opencode.sessionStart.programs, ['opencode']);
+  for (const args of [[], [null], ['run', 'x'], ['serve'], ['mini'], ['acp'], ['api', 'GET', '/x'], ['./src'], ['frobnicate'], ['--standalone'], ['--log-level', 'debug', 'models'],
+    ['mcp'], ['session'], ['service'], ['service', 'start'], ['service', 'restart'], ['mcp', 'frob'], ['mcp', null], ['debug', 'nope'], ['auth', 'list'], ['pair']]) {
+    assert.equal(starts(tokens(...args)), true, args.join(' '));
+  }
+  // A command that takes --server talks to the background service, which OpenCode discovers or starts: a start.
+  for (const args of [['models'], ['stats'], ['reload'], ['debug', 'agents'], ['debug', 'config'], ['debug', 'heap-dump'], ['mcp', 'list'], ['mcp', 'auth'], ['mcp', 'logout'],
+    ['plugin', 'list'], ['plugin', 'check'], ['plugin', 'update'], ['session', 'list'], ['session', 'delete'], ['session', 'export'], ['session', 'import'],
+    ['machine', 'list'], ['machine', 'add'], ['machine', 'remove'], ['upgrade'], ['update'], ['uninstall']]) {
+    assert.equal(starts(tokens(...args)), true, args.join(' '));
+  }
+  for (const flag of ['-h', '--help', '-v', '--version', '--completions']) assert.equal(starts(tokens(flag)), false, flag);
+  assert.deepEqual(NO_SESSION.map((entry) => entry.join(' ')), ['debug paths', 'mcp add', 'plugin add', 'plugin remove', 'service status', 'service stop', 'service get', 'service set', 'service unset']);
+  for (const entry of NO_SESSION) assert.equal(starts(tokens(...entry, 'x')), false, entry.join(' '));
+});
+
+test('its packages run as its program, Claude Code\'s too, and a package runner of one is read as that program', () => {
+  assert.deepEqual(opencode.packages, { '@opencode/cli': 'opencode', 'opencode-ai': 'opencode' });
+  assert.deepEqual(packagePrograms(), { '@anthropic-ai/claude-code': 'claude', '@opencode/cli': 'opencode', 'opencode-ai': 'opencode' });
+  for (const [program, words, expected] of [
+    ['npx', ['@opencode/cli', 'run', 'x'], ['opencode', ['run', 'x']]], ['npx', ['-y', '@opencode/cli@2.4.0', 'auth', 'login'], ['opencode', ['auth', 'login']]],
+    ['pnpm', ['dlx', 'opencode-ai', 'plugin', 'add', 'x'], ['opencode', ['plugin', 'add', 'x']]], ['bunx', ['@anthropic-ai/claude-code', '-p', 'x'], ['claude', ['-p', 'x']]],
+    ['npx', ['@changesets/cli', 'publish'], ['changeset', ['publish']]], ['npx', ['prettier', '.'], ['prettier', ['.']]], ['opencode', ['run'], ['opencode', ['run']]],
+  ]) {
+    const read = unwrapped(program, words);
+    assert.deepEqual([read.program, read.args], expected, `${program} ${words.join(' ')}`);
+  }
+  assert.deepEqual(unwrapped('npx', [null, 'run'], (each) => each), { program: 'npx', args: [null, 'run'] }, 'a package built at run time stays the runner');
+});
+
+test('its logins and service state: OpenCode\'s data, state, and config folders, and Codex\'s auth.json, under the XDG folders and their defaults', () => {
+  const home = '/home/u';
+  const under = (...parts) => path.join(home, ...parts);
+  assert.deepEqual(opencode.credentialStores({ env: {}, home }), [under('.local/share/opencode'), under('.local/state/opencode'), under('.config/opencode')]);
+  const env = { XDG_DATA_HOME: '/x/data', XDG_STATE_HOME: '/x/state', XDG_CONFIG_HOME: '/x/config', OPENCODE_CONFIG_DIR: '/x/oc', CODEX_HOME: '/x/codex' };
+  assert.deepEqual(opencode.credentialStores({ env, home }), [
+    '/x/data/opencode', under('.local/share/opencode'), '/x/state/opencode', under('.local/state/opencode'), '/x/config/opencode', under('.config/opencode'), '/x/oc',
+  ]);
+  assert.deepEqual(opencode.credentialStores({ env: { XDG_DATA_HOME: 'relative' }, home })[0], under('.local/share/opencode'), 'a relative XDG folder is not read');
+  assert.deepEqual(codex.credentialStores({ env, home }), ['/x/codex/auth.json', under('.codex/auth.json')]);
+  assert.deepEqual(credentialStores({ env, home }), [...codex.credentialStores({ env, home }), ...opencode.credentialStores({ env, home })], 'the union, Claude Code declaring none of its own here');
+});
+
+test('its lists hold their shape: no entry of more than two words, and no lone word that is also a config command', () => {
+  const config = opencode.configCommands;
+  assert.deepEqual(config.programs, ['opencode']);
+  for (const entry of NO_SESSION) {
+    assert.ok(entry.length >= 1 && entry.length <= 2, entry.join(' '));
+    if (entry.length === 1) assert.ok(!config.subcommands.some((each) => each[0] === entry[0]), `${entry[0]} alone is also a config command`);
+  }
+  const first = [['mcp', 'add'], ['mcp', 'auth'], ['mcp', 'logout'], ['auth', 'login'], ['auth', 'logout'], ['auth', 'import'], ['auth', 'switch'], ['plugin', 'add'], ['plugin', 'remove'], ['plugin', 'update'], ['service', 'set'], ['service', 'unset']];
+  assert.deepEqual(config.subcommands.slice(0, first.length), first, 'the first draft\'s twelve, whatever the reading showed');
+  assert.deepEqual(config.subcommands.slice(first.length), [['machine', 'add'], ['machine', 'remove'], ['pair'], ['auth'], ['session', 'import'], ['session', 'delete'], ['uninstall'], ['upgrade'], ['update'], ['service', 'stop']],
+    'pairings, auth whole as auth export\'s help was not read, the session store, the program itself, and the shared service');
+  assert.deepEqual(config.valueOptions, ['--server', '--log-level', '--completions', '--session', '-s', '--prompt']);
+  assert.ok(!NO_SESSION.some((entry) => entry[0] === 'auth'), 'a word not read in full has no entry');
+});
+
+test('the other hosts\' placeholders: a folder, or a file holding {}, for each root host file the starting host does not protect', () => {
+  assert.deepEqual(otherPlaceholders(claudeCode), [{ path: '.opencode', folder: true }, { path: 'opencode.json', text: '{}\n' }, { path: 'opencode.jsonc', text: '{}\n' }]);
+  const one = { protectedPaths: ['x/skills', 'x.json'] };
+  const own = { protectedPaths: ['x.json'] };
+  assert.deepEqual(otherPlaceholders(own, [one, own]), [{ path: 'x/skills', folder: true }]);
+  const forOpenCode = otherPlaceholders(opencode);
+  for (const each of opencode.protectedPaths) assert.ok(!forOpenCode.some((placeholder) => placeholder.path === each), each);
+  assert.ok(forOpenCode.some((each) => each.path === '.claude/scheduled_tasks.json'), 'the residual the plan names for a second confined host');
+  assert.deepEqual(['.mcp.json', 'opencode.jsonc', 'x.JSON', '.opencode', '.claude/skills'].map(protectedFile), [true, true, false, false, false]);
+  // Shared code names no OpenCode file: the placeholders and the write guard read them from the adapters.
+  for (const file of ['project-run-gate.mjs', 'project-start.mjs', 'unattended-write.mjs', 'unattended-shell.mjs', 'package-runner.mjs', 'handoff-guard.mjs']) {
+    assert.doesNotMatch(readFileSync(path.join(import.meta.dirname, '../plugins/aidrian/lib', file), 'utf8'), /opencode/iu, file);
+  }
+  const guard = readFileSync(path.join(import.meta.dirname, '../plugins/aidrian/lib/unattended-write.mjs'), 'utf8');
+  assert.match(guard, /!protectedFile\(each\)/u, 'hostRefused types a name as otherPlaceholders does');
 });
 
 // Whether OpenCode is set up to run this plugin here, from its config files alone (capabilities.setUp): `aidrian check`

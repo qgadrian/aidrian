@@ -9,6 +9,7 @@ import { checkDeadline } from './deadline.mjs';
 import { forgeConfigCommands } from './forges/index.mjs';
 import { configForm } from './handoff-guard.mjs';
 import { configCommands } from './hosts/index.mjs';
+import { unwrapped } from './package-runner.mjs';
 import { WRITERS, written } from './rules/main-checkout/writers.mjs';
 import { readGit, walkCommands } from './shell-lex.mjs';
 
@@ -46,17 +47,6 @@ const PUBLISH_COMMANDS = Object.freeze([
 ]);
 // The launchctl subcommands that only read.
 const LAUNCHCTL_READS = new Set(['list', 'print', 'print-disabled', 'print-cache', 'getenv', 'version', 'help', 'blame', 'managerpid', 'manageruid', 'managername', 'error']);
-// The package runners that run another program, each program's forms { words, options }: `words`, the runner's own
-// words before the program, and `options`, its options that take the next word.
-const RUNNERS = Object.freeze({
-  npx: [{ words: [], options: ['-p', '--package', '-c', '--call'] }],
-  bunx: [{ words: [], options: ['-p', '--package'] }],
-  npm: [{ words: ['exec'], options: ['-p', '--package', '-c', '--call', '-w', '--workspace'] }, { words: ['x'], options: ['-p', '--package', '-c', '--call'] }],
-  pnpm: [{ words: ['dlx'], options: ['--package', '-C', '--dir'] }, { words: ['exec'], options: ['-C', '--dir', '--filter', '-F'] }],
-  yarn: [{ words: ['dlx'], options: ['-p', '--package'] }],
-});
-// A package whose program has another name than its last part, as `npx @changesets/cli publish` runs `changeset`.
-const PACKAGE_PROGRAMS = Object.freeze({ '@changesets/cli': 'changeset' });
 // The options of `git clone`, `git init`, and `git worktree` that take the next word.
 const CLONE_VALUES = ['-o', '--origin', '-b', '--branch', '-u', '--upload-pack', '--reference', '--reference-if-able', '--depth', '-c', '--config', '--template', '--separate-git-dir', '-j', '--jobs', '--filter', '--shallow-since', '--shallow-exclude', '--bundle-uri', '--ref-format', '--server-option'];
 const INIT_VALUES = ['--template', '--separate-git-dir', '-b', '--initial-branch', '--object-format', '--ref-format'];
@@ -170,19 +160,6 @@ function linksOf(program, args, folder, env, command) {
   });
 }
 
-// The program a call runs and its words, through a package runner (RUNNERS), as `npx codex login` runs codex.
-function unwrapped(program, words) {
-  const runner = (RUNNERS[program] ?? []).find((each) => each.words.every((word, i) => operands(words)[i] === word));
-  if (!runner) return { program, words };
-  const rest = [...words];
-  for (const word of runner.words) rest.splice(rest.indexOf(word), 1);
-  let at = 0;
-  while (at < rest.length && rest[at].startsWith('-')) at += runner.options.includes(rest[at]) ? 2 : 1;
-  if (at >= rest.length) return { program, words };
-  const spec = rest[at].replace(/(?<=.)@[^@/]*$/u, '');
-  return { program: PACKAGE_PROGRAMS[spec] ?? path.basename(spec), words: rest.slice(at + 1) };
-}
-
 // Whether the words of a call to `program` run one of the declared subcommands of `each`, { programs, subcommands,
 // valueOptions, reads, toolchain, workspace }: its words, past the global options that take a value, start with one, or
 // hold one of more than one word in a row, and start with none of its reads.
@@ -200,7 +177,8 @@ export function runsDeclared(each, program, words) {
 // a program (attempt-clone.mjs PROGRAM_KEYS) at any scope, the folders `git worktree add`, `git clone`, and `git init`
 // make, the forge CLI's and each host's own config subcommands, SHARED_COMMANDS, PUBLISH_COMMANDS, crontab, and launchctl.
 function programWrites(segment, invocation, folder) {
-  const { program, words } = unwrapped(invocation.program, plainWords(invocation.args));
+  // Through a package runner, the program its package installs (package-runner.mjs), as `npx codex login` runs codex.
+  const { program, args: words } = unwrapped(invocation.program, plainWords(invocation.args));
   const shown = [invocation.program, ...plainWords(invocation.args)].join(' ').slice(0, 120);
   if (program === 'git' && invocation.program === 'git') return gitWrites(readGit(segment), folder, shown);
   const refuse = (what) => [{ what, text: shown }];

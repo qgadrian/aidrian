@@ -633,12 +633,17 @@ test('await-review --request at the cap: bot rounds that do not shrink go to the
   ]);
 });
 
-// The raise waits on the configured reviewer, so a wait on another `--reviewer` prints none at its cap.
+// The raise and the check at the cap are the configured reviewer's: a wait on another `--reviewer` gets neither.
 test('await-review --request with another --reviewer prints no raise at its cap', async (t) => {
   const off = botProject(t, { github: { extraRounds: 'off', reviewer: 'configured-bot[bot]' } });
   const other = await off.run([[['a.js', 1, 'One']], [['b.js', 1, 'x']], []], { args: ['--reviewer', DEFAULT_REVIEWER] });
   assert.equal(other.code, 4);
   assert.deepEqual([other.out.question, other.out.raise], [undefined, undefined]);
+  // With extra rounds on, such a wait stays outside the check at the cap: its rounds are no configured reviewer's.
+  const on = botProject(t, { github: { reviewer: 'configured-bot[bot]' } });
+  const capped = await on.run([[['a.js', 1, 'One']], [['a.js', 50, 'Two']], [['b.js', 9, 'Three']]], { args: ['--reviewer', DEFAULT_REVIEWER] });
+  assert.deepEqual([capped.code, capped.out.status, capped.out.extension, capped.out.raise], [4, 'round_limit', undefined, undefined]);
+  assert.equal(readLocalState(on.project, 42), null, 'no decision is recorded for it');
 });
 
 test('aidrian report reviews counts each check at the cap once, by its last decision', () => {

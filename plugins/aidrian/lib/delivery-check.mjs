@@ -106,9 +106,8 @@ export function briefHandoffs(input, project) {
   // the name, as in `fix-code-reviewer-S1-backend-developer.json`, does not make the file this agent's.
   const word = new RegExp(`(?:^|[-_.])${escapeRegExp(agent)}(?:[-_.]\\w+)?\\.json$`, 'u');
   // A CRLF brief's line keeps its `\r` after the split: it is dropped before the marker is matched.
-  // A line is cut before each marker that opens a sentence in it, so two markers on one line are both read.
-  const marked = brief.split('\n').flatMap((line) => sentencePieces(line.replace(/\r$/u, '')))
-    .map((piece) => HANDOFF_MARKER.exec(piece)).filter(Boolean).map(markedPath);
+  // Every marker of each line, left to right: a backticked value is read whole before the next marker is looked for.
+  const marked = brief.split('\n').flatMap((line) => [...line.replace(/\r$/u, '').matchAll(HANDOFF_MARKER)]).map(markedPath);
   const problemOf = (file) => {
     if (!file) return 'names no path';
     return wholePath.test(file) ? null : `is not an absolute \`.json\` path in \`${folder}/\``;
@@ -125,36 +124,17 @@ export function briefHandoffs(input, project) {
   return { owed: [...new Set(own)].filter((file) => !handedIn(file, since)), rejected };
 }
 
-// A brief line that names the run's handoff file, in any case: `Handoff file: <path>`, `**Handoff file:** <path>`, or
+// A marker that names the run's handoff file, in any case: `Handoff file: <path>`, `**Handoff file:** <path>`, or
 // `**Handoff file**: <path>`, opening the line after an optional list marker, or opening a sentence later in it, as in
-// `Under 4 KB. Handoff file: <path>`: sentencePieces cuts the line there first. Inside a sentence, as in
-// `Read the earlier handoff file: <path>`, it names a file to read, never one owed. Its match holds the rest of the
-// piece, as `value`.
-const MARKER_WORDS = String.raw`(?:handoff file:|\*\*handoff file:\*\*|\*\*handoff file\*\*:)`;
-const HANDOFF_MARKER = new RegExp(String.raw`^\s*(?:[-*]\s+)?${MARKER_WORDS}(?<value>.*)$`, 'iu');
-const SENTENCE_MARKER = new RegExp(String.raw`(?<=[.!?;])\s+(?=${MARKER_WORDS})`, 'giu');
+// `Under 4 KB. Handoff file: <path>`. Inside a sentence, as in `Read the earlier handoff file: <path>`, it names a file
+// to read, never one owed. Its `value` is a backticked span, spaces included, or the word after it, so a marker inside
+// that span is part of the path, and one after it on the line is read next.
+const HANDOFF_MARKER = /(?:^\s*(?:[-*]\s+)?|(?<=[.!?;])\s+)(?:handoff file:|\*\*handoff file:\*\*|\*\*handoff file\*\*:)[ \t]*(?<value>`[^`]+`|\S*)/giu;
 
-// `line` cut before each marker that opens a sentence, except inside a complete backtick span: a backticked path or
-// example that holds one is one piece. A lone backtick opens no span.
-function sentencePieces(line) {
-  const spans = [...line.matchAll(/`[^`]*`/gu)].map((match) => [match.index, match.index + match[0].length]);
-  const cuts = [...line.matchAll(SENTENCE_MARKER)].filter(({ index }) => !spans.some(([from, to]) => index > from && index < to));
-  const pieces = [];
-  let from = 0;
-  for (const cut of cuts) {
-    pieces.push(line.slice(from, cut.index));
-    from = cut.index + cut[0].length;
-  }
-  return [...pieces, line.slice(from)];
-}
-
-
-// The path a marker line names: all inside the backticks that open its value, spaces included, else its first word
-// without trailing punctuation. Any prose after it is not read.
+// The path a marker names: all inside its backticks, else its word without trailing punctuation.
 function markedPath(match) {
-  const value = match.groups.value.trim();
-  const quoted = /^`([^`]+)`/u.exec(value);
-  return quoted ? quoted[1] : (value.split(/\s/u)[0] ?? '').replace(/[.,;:)]+$/u, '');
+  const { value } = match.groups;
+  return value.startsWith('`') && value.endsWith('`') && value.length > 1 ? value.slice(1, -1) : value.replace(/[.,;:)]+$/u, '');
 }
 
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');

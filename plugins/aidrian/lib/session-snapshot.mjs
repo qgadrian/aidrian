@@ -20,7 +20,7 @@ import { GIT_TIMEOUT_MS, killingGit, mainRoot } from './git.mjs';
 import { latestBrief, MARKER_CAP, readArmed, readFrom, readOwnFile, SESSION_ID } from './handoff-markers.mjs';
 import { HIDDEN } from './hidden-text.mjs';
 import { findProject } from './project.mjs';
-import { resumeTokens } from './resume-tokens.mjs';
+import { resumeTokens, samplesFolder } from './resume-tokens.mjs';
 import { cachedValue } from './session-cached-value.mjs';
 import { LINKS, LINKS_MAX_BYTES, linksOf, sessionLinks, ticketsOf } from './session-links.mjs';
 import { changesSummary, isChangeCache, LEDGER, LEDGER_MAX_BYTES, resolveSelection, sessionRefs, shownChanges } from './session-prs.mjs';
@@ -164,12 +164,13 @@ const needed = (value) => {
 const unconfirmed = ({ decisions, unlisted }) => [...decisions, ...unlisted].filter(({ status }) => status === 'unconfirmed').length;
 
 // The handoff numbers of the session, from its transcript through the usage cache, and the Stop hook's marker, at the
-// hook's own path, with the project's B (lib/resume-tokens.mjs resumeTokens), which `resume` shows, read from a state
-// folder outside every checkout that no other user can replace (ownState's rule). Under `mode: off` the hook never reminds, so the level is quiet and the numbers stay. The continuation
-// store is opened at the state folder's real path the context resolved, the same path the session folder was made under.
-function handoffSection({ config, folder, state, inside, loose }, links, session, transcript) {
+// hook's own path, with the project's B (lib/resume-tokens.mjs resumeTokens), which `resume` shows, read where the hooks
+// read it (samplesFolder). Under `mode: off` the hook never reminds, so the level is quiet and the numbers stay. The
+// continuation store is opened at the state folder's real path the context resolved, the same path the session folder was
+// made under.
+function handoffSection({ config, folder, state, checkouts }, links, session, transcript) {
   const usage = cachedSessionUsage({ transcript, cacheFile: path.join(needed(folder), 'usage.json') });
-  const resume = resumeTokens(config.session.handoff, inside || loose ? null : state);
+  const resume = resumeTokens(config.session.handoff, samplesFolder(state, checkouts));
   const handoff = { ...config.session.handoff, resumeTokens: resume.tokens };
   const status = handoffStatus(needed(usage), handoff, stopMarkerText(session));
   const { ratio, breakEven, nextRatio, context: tokens, ceiling } = status;

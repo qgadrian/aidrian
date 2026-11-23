@@ -10,7 +10,7 @@ import { backgroundPrompt, continuationContext } from '../plugins/aidrian/lib/ha
 import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import { findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import {
-  KEPT_SAMPLES, MIN_SAMPLES, readSamples, recordResume, RESUME_FILE, RESUME_TOKENS, resolvedHandoff, resumeState, resumeTokens, SAMPLE_DAYS,
+  KEPT_SAMPLES, MIN_SAMPLES, readSamples, recordResume, RESUME_FILE, RESUME_TOKENS, resolvedHandoff, resumeState, resumeTokens, SAMPLE_DAYS, samplesFolder,
 } from '../plugins/aidrian/lib/resume-tokens.mjs';
 import { handoffCost, handoffStatus, planApprovedContext, sessionUsage, stopReminder } from '../plugins/aidrian/lib/session-length.mjs';
 import { CONTINUATION_LEAD, resumeRead } from '../plugins/aidrian/lib/transcript.mjs';
@@ -24,14 +24,22 @@ const WORK = claudeCode.capabilities.workTools;
 const NOW = Date.UTC(2026, 10, 23, 12);
 const DAY = 24 * 60 * 60 * 1000;
 
-// One assistant request of `context` tokens, with the tool calls `tools` names, as Claude Code writes it.
+// One assistant request of `context` tokens, with the tool calls `tools` names, then each call's result, at the minute
+// `request` counts, as Claude Code writes them. A tool given as { name, error: true } fails.
 let request = 0;
+const RESULT_TIME = (minute) => Date.UTC(2026, 10, 20, 9, minute);
 const turn = (context, tools = []) => {
   request += 1;
-  const content = tools.map((tool, index) => ({ type: 'tool_use', id: `t${request}-${index}`, ...(typeof tool === 'string' ? { name: tool, input: {} } : tool) }));
+  const calls = tools.map((tool, index) => ({ type: 'tool_use', id: `t${request}-${index}`, input: {}, ...(typeof tool === 'string' ? { name: tool } : tool) }));
   const usage = { input_tokens: 2, cache_read_input_tokens: context - 502, cache_creation_input_tokens: 500, cache_creation: { ephemeral_1h_input_tokens: 500 }, output_tokens: 40 };
-  return JSON.stringify({ type: 'assistant', message: { id: `m${request}`, model: OPUS, usage, content } });
+  const content = calls.map(({ error, ...call }) => call);
+  const results = calls.map(({ id, error }) => JSON.stringify({
+    type: 'user', timestamp: new Date(RESULT_TIME(request)).toISOString(), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'done', ...(error && { is_error: true }) }] },
+  }));
+  return [JSON.stringify({ type: 'assistant', message: { id: `m${request}`, model: OPUS, usage, content } }), ...results].join('\n');
 };
+// What resumeRead gives for `text`: the tokens alone, or null.
+const tokensOf = (text) => resumeRead(text, WORK)?.tokens ?? null;
 const user = (content) => JSON.stringify({ type: 'user', message: { role: 'user', content } });
 const skillCall = (skill) => ({ name: 'Skill', input: { skill } });
 const startContext = (text) => JSON.stringify({ type: 'attachment', attachment: { type: 'hook_additional_context', content: ['Project knowledge: 1 bucket.', text] } });
@@ -39,13 +47,26 @@ const lines = (...each) => each.join('\n');
 
 test('a session that ran the session-continue skill read, before its first edit or dispatch, its context then less its first call`s', () => {
   const resumed = lines(user('resume'), turn(30_000, [skillCall('aidrian:session-continue')]), turn(50_000, ['Read']), turn(71_000, ['Bash', 'Edit']), turn(200_000, ['Agent']));
-  assert.equal(resumeRead(resumed, WORK), 41_000);
-  assert.equal(resumeRead(lines(user('go'), turn(30_000, [skillCall('session-continue')]), turn(60_000, ['Agent'])), WORK), 30_000, 'a dispatch ends it too, and a bare skill name counts');
+  assert.equal(tokensOf(resumed), 41_000);
+  assert.equal(tokensOf(lines(user('go'), turn(30_000, [skillCall('session-continue')]), turn(60_000, ['Agent']))), 30_000, 'a dispatch ends it too, and a bare skill name counts');
   const typed = user('<command-message>aidrian:session-continue</command-message>\n<command-name>/aidrian:session-continue</command-name>\n<command-args>tbl</command-args>');
-  assert.equal(resumeRead(lines(typed, turn(25_000), turn(52_000, ['Write'])), WORK), 27_000, 'a typed resume counts');
-  assert.equal(resumeRead(lines(user('fix it'), turn(30_000), turn(60_000, ['Edit'])), WORK), null, 'no resume: no sample');
-  assert.equal(resumeRead(lines(user('resume'), turn(30_000, [skillCall('aidrian:session-continue')]), turn(50_000, ['Read'])), WORK), null, 'no edit or dispatch yet');
-  assert.equal(resumeRead(lines(user('fix it'), turn(30_000, ['Edit']), turn(40_000, [skillCall('aidrian:session-continue')])), WORK), null, 'a resume after the first edit is none');
+  assert.equal(tokensOf(lines(typed, turn(25_000), turn(52_000, ['Write']))), 27_000, 'a typed resume counts');
+  assert.equal(tokensOf(lines(user('fix it'), turn(30_000), turn(60_000, ['Edit']))), null, 'no resume: no sample');
+  assert.equal(tokensOf(lines(user('resume'), turn(30_000, [skillCall('aidrian:session-continue')]), turn(50_000, ['Read']))), null, 'no edit or dispatch yet');
+  assert.equal(tokensOf(lines(user('fix it'), turn(30_000, ['Edit']), turn(40_000, [skillCall('aidrian:session-continue')]))), null, 'a resume after the first edit is none');
+  const read = resumeRead(resumed, WORK);
+  assert.equal(read.at, Date.parse(JSON.parse(resumed.split('\n').find((line) => line.includes(`"tool_use_id":"t`) && line.includes('-1"'))).timestamp), 'at the time of the edit`s result');
+});
+
+test('a call counts by its result: a failed resume skill is no resume, and a refused edit is not where work began', () => {
+  const failedSkill = lines(user('go'), turn(30_000, [{ ...skillCall('aidrian:session-continue'), error: true }]), turn(60_000, ['Edit']));
+  assert.equal(tokensOf(failedSkill), null, 'the skill failed, so the session never resumed');
+  const retried = lines(user('go'), turn(30_000, [{ ...skillCall('aidrian:session-continue'), error: true }]), turn(35_000, [skillCall('aidrian:session-continue')]), turn(60_000, ['Edit']));
+  assert.equal(tokensOf(retried), 30_000, 'a later run that worked counts');
+  const refused = lines(user('go'), turn(30_000, [skillCall('aidrian:session-continue')]), turn(50_000, [{ name: 'Edit', error: true }]), turn(65_000, ['Edit']));
+  assert.equal(tokensOf(refused), 35_000, 'the first edit that went through ends it');
+  const unanswered = lines(user('go'), turn(30_000, [skillCall('aidrian:session-continue')]), JSON.stringify({ type: 'assistant', message: { id: 'mx', model: OPUS, usage: { input_tokens: 50_000 }, content: [{ type: 'tool_use', id: 'open', name: 'Edit', input: {} }] } }));
+  assert.equal(tokensOf(unanswered), null, 'an edit with no result yet');
 });
 
 test('a continuation block counts as a resume in the first message of a background start and in a clear`s start context, never in a tool result', () => {
@@ -53,11 +74,13 @@ test('a continuation block counts as a resume in the first message of a backgrou
   const background = backgroundPrompt({ marker, kept: '/state/handoffs/.continue/continued-x.md', sha256: 'a'.repeat(64), maxChain: 3 });
   const clear = continuationContext({ marker, maxChain: 3, source: 'clear' });
   for (const text of [background, clear]) assert.ok(text.startsWith(CONTINUATION_LEAD), 'the lead the transcript reader looks for');
-  assert.equal(resumeRead(lines(user(background), turn(20_000, ['Bash']), turn(55_000, ['Agent'])), WORK), 35_000);
-  assert.equal(resumeRead(lines(user([{ type: 'text', text: background }]), turn(20_000), turn(45_000, ['Edit'])), WORK), 25_000, 'as text blocks');
-  assert.equal(resumeRead(lines(startContext(clear), user('go on'), turn(20_000), turn(64_000, ['Edit'])), WORK), 44_000);
+  assert.equal(tokensOf(lines(user(background), turn(20_000, ['Bash']), turn(55_000, ['Agent']))), 35_000);
+  assert.equal(tokensOf(lines(user([{ type: 'text', text: background }]), turn(20_000), turn(45_000, ['Edit']))), 25_000, 'as text blocks');
+  assert.equal(tokensOf(lines(startContext(clear), user('go on'), turn(20_000), turn(64_000, ['Edit']))), 44_000);
   const quoted = user([{ type: 'tool_result', tool_use_id: 'x', content: `grep found: ${CONTINUATION_LEAD} this session` }]);
-  assert.equal(resumeRead(lines(user('look'), turn(20_000, ['Bash']), quoted, turn(64_000, ['Edit'])), WORK), null, 'a command output that quotes the block');
+  assert.equal(tokensOf(lines(user('look'), turn(20_000, ['Bash']), quoted, turn(64_000, ['Edit']))), null, 'a command output that quotes the block');
+  assert.equal(tokensOf(lines(user('look'), turn(20_000), user(background), turn(64_000, ['Edit']))), null, 'a later message that quotes it');
+  assert.equal(tokensOf(lines(user('look'), turn(20_000), startContext(clear), turn(64_000, ['Edit']))), null, 'a later hook context that holds it');
 });
 
 // A state folder of its own, with `samples` in its resume file, each { tokens, ago } with `ago` in days before NOW.
@@ -101,18 +124,28 @@ test('a samples file that is a link, or a state folder other users may write, gi
   const hard = stateWith(t);
   linkSync(path.join(real, RESUME_FILE), path.join(hard, RESUME_FILE));
   assert.equal(resumeTokens({}, hard, NOW).source, 'default', 'a hard link');
-  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-resume-open-')));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  mkdirSync(path.join(dir, '.aidrian'));
+  const writable = stateWith(t, five);
+  chmodSync(path.join(writable, RESUME_FILE), 0o622);
+  assert.equal(resumeTokens({}, writable, NOW).source, 'default', 'a file other users may write');
+  const large = stateWith(t);
+  writeFileSync(path.join(large, RESUME_FILE), `${JSON.stringify({ samples: five.map(({ tokens }, index) => ({ session: `s-${index}`, tokens, at: NOW - DAY })) })}${' '.repeat(70 * 1024)}`);
+  assert.equal(resumeTokens({}, large, NOW).source, 'default', 'a file over 64 KiB');
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-resume-open-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'project');
+  mkdirSync(path.join(dir, '.aidrian'), { recursive: true });
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '../shared' } }));
-  const shared = path.join(path.dirname(dir), 'shared');
-  t.after(() => rmSync(shared, { recursive: true, force: true }));
-  mkdirSync(shared, { recursive: true });
+  const shared = path.join(root, 'shared');
+  mkdirSync(shared);
   const found = findProject(dir);
   const { config } = loadConfig(found);
-  assert.equal(resumeState(found, config), realpathSync(shared), 'a folder of this user alone');
+  assert.equal(resumeState(found, config), shared, 'a folder of this user alone');
   chmodSync(shared, 0o777);
   assert.equal(resumeState(found, config), null, 'one every user may write, with no sticky bit');
+  chmodSync(shared, 0o700);
+  assert.equal(samplesFolder(shared, [dir]), shared);
+  assert.equal(samplesFolder(path.join(dir, '.state'), [dir]), null, 'inside a checkout, where a branch could supply the file');
+  assert.equal(samplesFolder(shared, null), null, 'checkouts git could not list');
 });
 
 test('a session`s sample is recorded once, and the file keeps the newest 50', (t) => {
@@ -123,11 +156,29 @@ test('a session`s sample is recorded once, and the file keeps the newest 50', (t
   assert.equal(recordResume(state, 'sess-1', lines(resumed, turn(90_000, ['Edit'])), WORK, NOW + 1000), null, 'once');
   assert.equal(recordResume(state, 'sess-2', lines(user('fix'), turn(30_000), turn(70_000, ['Edit'])), WORK, NOW), null, 'no resume');
   assert.equal(recordResume(state, '../x', resumed, WORK, NOW), null, 'a session id that cannot name a file');
-  assert.deepEqual(readSamples(state, NOW), [{ session: 'sess-1', tokens: 40_000, at: NOW }]);
+  assert.deepEqual(readSamples(state, NOW), [{ session: 'sess-1', tokens: 40_000, at: resumeRead(resumed, WORK).at }], 'at the time of the edit it measured');
   for (let index = 0; index < KEPT_SAMPLES + 5; index += 1) recordResume(state, `many-${index}`, resumed, WORK, NOW + index);
   const kept = JSON.parse(readFileSync(path.join(state, RESUME_FILE), 'utf8')).samples;
   assert.equal(kept.length, KEPT_SAMPLES);
   assert.equal(kept.at(-1).session, `many-${KEPT_SAMPLES + 4}`, 'the newest kept, oldest dropped');
+  assert.ok(!kept.some(({ session }) => session === 'sess-1'), 'the first sample was pushed out');
+});
+
+test('a sample keeps the time of the call it measured, so a session read again after its sample left falls out at once', (t) => {
+  const state = stateWith(t);
+  const resumed = lines(user('resume'), turn(30_000, [skillCall('aidrian:session-continue')]), turn(70_000, ['Edit']));
+  const measured = resumeRead(resumed, WORK).at;
+  const now = measured + DAY;
+  assert.equal(recordResume(state, 'long-lived', resumed, WORK, now), 40_000);
+  assert.deepEqual(readSamples(state, now), [{ session: 'long-lived', tokens: 40_000, at: measured }]);
+  const newer = lines(user('resume'), turn(30_000, [skillCall('aidrian:session-continue')]), turn(70_000, ['Edit'])).replaceAll('2026-11-20', '2026-11-21');
+  for (let index = 0; index < KEPT_SAMPLES; index += 1) recordResume(state, `newer-${index}`, newer, WORK, now + index);
+  assert.ok(!readSamples(state, now).some(({ session }) => session === 'long-lived'), 'pushed out by 50 newer');
+  assert.equal(recordResume(state, 'long-lived', resumed, WORK, now + KEPT_SAMPLES), null, 'read again, it is older than all 50 kept');
+  assert.ok(!readSamples(state, now).some(({ session }) => session === 'long-lived'));
+  const expired = stateWith(t);
+  assert.equal(recordResume(expired, 'old', resumed, WORK, measured + (SAMPLE_DAYS + 1) * DAY), 40_000);
+  assert.deepEqual(readSamples(expired, measured + (SAMPLE_DAYS + 1) * DAY), [], 'kept past 30 days at its own time, so it never counts');
 });
 
 test('the cost model, the trigger, and the plan offer all price a fresh session with the B they are given', () => {

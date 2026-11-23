@@ -9,9 +9,9 @@ import { randomBytes } from 'node:crypto';
 import { renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { isObject, ownFolderSync, readOwnText, resolvedPath } from './fs.mjs';
-import { SESSION_ID } from './handoff-markers.mjs';
-import { stateDir } from './project.mjs';
+import { checkoutHolding, isObject, ownFolderSync, resolvedPath } from './fs.mjs';
+import { readOwnFile, SESSION_ID } from './handoff-markers.mjs';
+import { projectCheckouts, stateDir } from './project.mjs';
 import { stateHeld } from './session-folder.mjs';
 import { CONTINUATION_LEAD, resumeRead } from './transcript.mjs';
 
@@ -23,15 +23,20 @@ export const MIN_SAMPLES = 5;
 export const KEPT_SAMPLES = 50;
 export const SAMPLE_DAYS = 30;
 export const RESUME_FILE = 'resume-tokens.json';
+// The largest samples file read: 50 samples take about 5 KiB.
+const SAMPLES_CAP = 64 * 1024;
 const SAMPLE_WINDOW = SAMPLE_DAYS * 24 * 60 * 60 * 1000;
 
 const isSample = (value) => isObject(value) && typeof value.session === 'string' && SESSION_ID.test(value.session)
   && Number.isInteger(value.tokens) && value.tokens >= 0 && Number.isFinite(value.at);
 
 // The samples of the state folder `state` taken in the SAMPLE_DAYS before `now`, oldest first, at most KEPT_SAMPLES.
-// A file that is missing, a link, another user's, too large, or not this shape reads as none (fs.mjs readOwnText).
+// A file that is missing, a link, another user's, one its group or other users may write, over SAMPLES_CAP, or not this
+// shape reads as none.
 export function readSamples(state, now = Date.now()) {
-  const samples = parsed(readOwnText(path.join(state, RESUME_FILE)))?.samples;
+  const read = readOwnFile(path.join(state, RESUME_FILE), { cap: SAMPLES_CAP });
+  const held = read !== null && read.stat.nlink === 1 && (read.stat.mode & 0o022) === 0;
+  const samples = held ? parsed(read.text)?.samples : null;
   if (!Array.isArray(samples)) return [];
   return samples.filter((each) => isSample(each) && now - each.at >= 0 && now - each.at <= SAMPLE_WINDOW).slice(-KEPT_SAMPLES);
 }
@@ -62,13 +67,17 @@ export function resumeTokens(handoff, state, now = Date.now()) {
   return { tokens: RESUME_TOKENS, source: 'default', samples: samples.length };
 }
 
-// The real path of the state folder of `project` under `config` that the hooks keep the samples in, or null when it
-// cannot be named, or when it or a folder above it lets another user replace what lies below (lib/session-folder.mjs
-// stateHeld): no sample is then recorded, and B is the default.
+// The state folder `state`, a real path, when the samples may be kept there, else null: it lies inside none of the
+// repository's `checkouts`, which git listed, so no branch supplies the file, and it and every folder above it let no
+// other user replace what lies below (lib/session-folder.mjs stateHeld). The hooks ask through resumeState, and the
+// snapshot with the state folder and checkouts it already read. Null gives no samples, so B is the default.
+export const samplesFolder = (state, checkouts) => (state !== null && Array.isArray(checkouts)
+  && checkoutHolding(state, checkouts) === undefined && stateHeld(state) ? state : null);
+
+// samplesFolder for the state folder of `project` under `config`, or null when it cannot be named.
 export function resumeState(project, config) {
   try {
-    const state = resolvedPath(stateDir(project, { config }));
-    return state !== null && stateHeld(state) ? state : null;
+    return samplesFolder(resolvedPath(stateDir(project, { config })), projectCheckouts(project));
   } catch {
     return null;
   }
@@ -78,17 +87,21 @@ export function resumeState(project, config) {
 export const resolvedHandoff = (handoff, state, now = Date.now()) => ({ ...handoff, resumeTokens: resumeTokens(handoff, state, now).tokens });
 
 // Records the sample of the session `session` from its transcript `text`, once per session: the tokens recorded, or null
-// when the session shows no resume, has made no call of `workTools` yet, already has a sample, or the write failed.
+// when the session shows no resume, has made no call of `workTools` yet, already has a sample, has one too old to keep,
+// or the write failed.
 // A transcript that names neither the session-continue skill nor a continuation block is not parsed at all.
 export function recordResume(state, session, text, workTools, now = Date.now()) {
   if (typeof session !== 'string' || !SESSION_ID.test(session) || !workTools?.length) return null;
   if (!text.includes('session-continue') && !text.includes(CONTINUATION_LEAD)) return null;
   const samples = readSamples(state, now);
   if (samples.some((each) => each.session === session)) return null;
-  const tokens = resumeRead(text, workTools);
-  if (tokens === null) return null;
-  const next = [...samples, { session, tokens, at: now }].slice(-KEPT_SAMPLES);
-  return writeSamples(state, next) ? tokens : null;
+  const read = resumeRead(text, workTools);
+  if (read === null) return null;
+  // Kept at the time of the call it measured, so a session read again after its sample left the window, or was pushed
+  // out by newer ones, falls out again at once.
+  const sample = { session, tokens: read.tokens, at: Math.min(read.at ?? now, now) };
+  const next = [...samples, sample].sort((a, b) => a.at - b.at).slice(-KEPT_SAMPLES);
+  return next.includes(sample) && writeSamples(state, next) ? read.tokens : null;
 }
 
 // Writes the samples as a new temporary file, mode 0600, renamed over the file, in a state folder this user owns.

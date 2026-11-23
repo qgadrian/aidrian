@@ -713,13 +713,15 @@ export function firstPrompt(text) {
   return null;
 }
 
-// What a session resumed from a handoff brief read before it started working, in tokens: the context of the model call
-// that makes the first call of one of `workTools`, the host's file edits and dispatches, less the context of its first
-// model call. Null when no call of `workTools` was made yet, or when nothing before it shows a resume: a run of the
-// session-continue skill, a Skill call or a typed command, or a `Handoff continuation:` block, in the first message the
-// background route starts a session with or in the start context a clear's delivery adds (lib/handoff-continue.mjs
-// backgroundPrompt, continuationContext). It reads up to that call and no further, so a long transcript costs no more
-// than its start. lib/resume-tokens.mjs records it.
+// What a session resumed from a handoff brief read before it started working: { tokens, at }, `tokens` the context of the
+// model call that made the first call of one of `workTools`, the host's file edits and dispatches, that did not fail,
+// less the context of its first model call, and `at` the time of that call's result, null when the entry has none.
+// Null when no such call succeeded yet, or when no resume came before it: a session-continue skill run, a Skill call
+// that did not fail or a typed command, or a `Handoff continuation:` block before the first model call, in the first
+// message the background route starts a session with or in the start context a clear's delivery adds
+// (lib/handoff-continue.mjs backgroundPrompt, continuationContext). A call counts by its result, matched by id, so one a
+// hook or the permissions refused is not where work began. It reads up to that result and no further, so a long
+// transcript costs no more than its start. lib/resume-tokens.mjs records it.
 const RESUME_SKILL = 'session-continue';
 export const CONTINUATION_LEAD = 'Handoff continuation:';
 const usageContext = (usage) => (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
@@ -731,19 +733,30 @@ function continuationBlock(entry) {
   const content = entry.message?.content;
   return leadsContinuation(content) || (Array.isArray(content) && content.some((block) => block?.type === 'text' && leadsContinuation(block.text)));
 }
+const isResumeSkill = (block) => block.name === 'Skill' && typeof block.input?.skill === 'string' && baseName(block.input.skill.replace(/^\//u, '')) === RESUME_SKILL;
 export function resumeRead(text, workTools) {
   let first = null;
   let resumed = false;
+  // The pending calls by id: a resume Skill call as true, a work call as the context it read, or null when no resume
+  // came before it.
+  const pending = new Map();
   for (const line of text.split('\n')) {
     const entry = parseLine(line);
-    if (continuationBlock(entry) || typedSkills(entry).some((skill) => baseName(skill) === RESUME_SKILL)) resumed = true;
+    if ((first === null && continuationBlock(entry)) || typedSkills(entry).some((skill) => baseName(skill) === RESUME_SKILL)) resumed = true;
     const { usage, model, content } = entry?.message ?? {};
-    if (!usage || !model || model === '<synthetic>' || !Array.isArray(content)) continue;
-    first ??= usageContext(usage);
+    if (!Array.isArray(content)) continue;
+    const call = usage && model && model !== '<synthetic>';
+    if (call) first ??= usageContext(usage);
     for (const block of content) {
-      if (block?.type !== 'tool_use') continue;
-      if (block.name === 'Skill' && typeof block.input?.skill === 'string' && baseName(block.input.skill.replace(/^\//u, '')) === RESUME_SKILL) resumed = true;
-      else if (workTools.includes(block.name)) return resumed ? Math.max(usageContext(usage) - first, 0) : null;
+      if (call && block?.type === 'tool_use' && typeof block.id === 'string') {
+        if (isResumeSkill(block)) pending.set(block.id, true);
+        else if (workTools.includes(block.name)) pending.set(block.id, resumed ? Math.max(usageContext(usage) - first, 0) : null);
+      }
+      if (block?.type !== 'tool_result' || block.is_error === true || !pending.has(block.tool_use_id)) continue;
+      const settled = pending.get(block.tool_use_id);
+      if (settled === true) resumed = true;
+      else if (settled === null) return null;
+      else return { tokens: settled, at: Number.isFinite(Date.parse(entry.timestamp)) ? Date.parse(entry.timestamp) : null };
     }
   }
   return null;

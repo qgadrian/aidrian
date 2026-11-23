@@ -1150,17 +1150,22 @@ from there, so none disagrees with another:
 3. Else 44,000.
 
 A sample is one session that resumed from a brief: the context of its first model call that edits a file or
-dispatches an agent, less the context of its first model call, the way the 44,000 was measured. A session resumed
-from a brief when, before that call, it ran the `session-continue` skill, as a Skill call or a typed command, or
-started with a `Handoff continuation:` block: the first message of a background start, or the start context a clear's
-delivery adds. So typed resumes count too. The Stop hook records each session's sample once, at the first stop after
+dispatches an agent, less the context of its first model call, the way the 44,000 was measured. A call counts by its
+result: one a hook or the permissions refused, or that failed, is not where work began. A session resumed from a brief
+when, before that call, it ran the `session-continue` skill, as a Skill call that did not fail or a typed command, or
+started with a `Handoff continuation:` block before its first model call: the first message of a background start, or
+the start context a clear's delivery adds. So typed resumes count too, and a later message that quotes the block does
+not. The Stop hook records each session's sample once, at the first stop after
 that call, whatever `mode` says, read from the session's own transcript, which it already holds: a transcript that
 names neither the skill nor the block is not parsed, and the parse stops at the first such call. The samples live in
-`<state>/resume-tokens.json`, the newest 50, each with its session and time, written as a new file renamed over the old.
+`<state>/resume-tokens.json`, the newest 50 by the time of the call each measured, each with its session, written as a
+new file renamed over the old. So a long session read again after its sample left the 30 days, or the newest 50,
+falls out again at once.
 Two sessions that record at the same moment may keep one sample of the two.
-The file is read only when it is this user's own regular file, no link, in a state folder that it and every folder
-above let no other user replace ([Local state](project-folder.md#local-state)); the snapshot also reads none inside a
-checkout. Any other gives no samples, so `B` is the config value or 44,000.
+The file is read only when it is this user's own regular file, no link, that no other user may write, at most 64 KiB,
+in a state folder inside no checkout of the repository, so no branch supplies it, that it and every folder above let no
+other user replace ([Local state](project-folder.md#local-state)). The hooks and the snapshot hold it to the same rule,
+`samplesFolder`. Any other gives no samples, so `B` is the config value or 44,000.
 A read is one small file, so no stop and no snapshot scans transcripts. Like the reminder, the samples come from
 Claude Code transcripts only: the host adapter's `capabilities.workTools` names the edit and dispatch tools, and a
 host with no transcripts records none and uses the config value or 44,000.

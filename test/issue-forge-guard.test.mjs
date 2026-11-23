@@ -113,7 +113,7 @@ const write = (file) => ({ tool_name: 'Write', tool_input: { file_path: file, co
 
 test('an issue session pushes only its own branch to origin, and asks the forge for no release, workflow, or write outside its pull request', (t) => {
   const fx = issueFixture(t);
-  assert.deepEqual(ownIssue(fx.project, fx.config, fx.mark, { home: fx.home }), { key: 'ENG-1', branch: BRANCH, pushUrl: fx.dir });
+  assert.deepEqual(ownIssue(fx.project, fx.config, fx.mark, { home: fx.home }), { key: 'ENG-1', branch: BRANCH, pushUrl: fx.dir, slugShared: false, handoffShared: false });
   for (const command of REFUSED) {
     const denial = fx.ask(bash(command));
     assert.match(denial?.reason ?? '', /a project run's issue session never does that: only the Human does/u, command);
@@ -362,6 +362,22 @@ test('an issue session writes the findings file pr review names for it, and no o
   assert.equal(path.basename(path.dirname(findingsFile(fx.project, 3, 'agent:code-reviewer', 'o/r'))), 'review-3-o--r', 'any other session as before');
 });
 
+test('an issue session whose branch another issue of the run spells the same writes no body or handoff file named for it, and is told the key-named body', (t) => {
+  const issues = [{ key: 'ENG-1', branch: BRANCH, status: 'unstarted', priority: 1 }, { key: 'ENG-2', branch: 'feat-eng-1/export', status: 'unstarted', priority: 2 }];
+  const fx = issueFixture(t, { issues });
+  assert.match(fx.ask(write(path.join(fx.state, 'tmp', 'pr-body-feat-eng-1-export.md')))?.reason ?? '', /spells its branch feat\/eng-1-export alike, so write a body under the key, such as tmp\/eng-1-pr-body\.md/u);
+  assert.match(fx.ask(write(path.join(fx.state, 'dispatch', 'feat-eng-1-export-S1-explorer.json')))?.reason ?? '', /and none here, since another issue of the run spells its branch feat\/eng-1-export alike/u);
+  // A branch another's spelling only starts with, then `-`: a handoff name could be either's.
+  const prefix = issueFixture(t, { issues: [{ key: 'ENG-1', branch: BRANCH, status: 'unstarted' }, { key: 'ENG-2', branch: `${BRANCH}-v2`, status: 'unstarted' }] });
+  assert.match(prefix.ask(write(path.join(prefix.state, 'dispatch', 'feat-eng-1-export-v2-S1-explorer.json')))?.reason ?? '', /and none here/u);
+  assert.equal(prefix.ask(write(path.join(prefix.state, 'tmp', 'pr-body-feat-eng-1-export.md'))), null, 'a prefix leaves the body file its own');
+  // The other way round: the session of the longer branch, whose spelling starts with the shorter one's.
+  const longer = issueFixture(t, { issues: [{ key: 'ENG-1', branch: BRANCH, status: 'unstarted' }, { key: 'ENG-2', branch: 'feat/eng-1', status: 'unstarted' }] });
+  assert.match(longer.ask(write(path.join(longer.state, 'dispatch', 'feat-eng-1-export-S1-explorer.json')))?.reason ?? '', /and none here/u);
+  // The path that refusal names is one the session may write.
+  assert.equal(fx.ask(write(path.join(fx.state, 'tmp', 'eng-1-pr-body.md'))), null, 'a body named for the issue key stays its own');
+});
+
 test('an issue session whose start pinned no push URL pushes nothing', (t) => {
   const fx = issueFixture(t, { pushUrl: {} });
   assert.match(fx.ask(bash(EXACT))?.reason ?? '', /its issue's start recorded no URL its clone pushes to/u);
@@ -379,6 +395,9 @@ test('an issue session writes no workflow file, no handoff brief or snapshot, no
     [path.join(fx.state, 'plans', 'eng-12-implementation.md'), /not named for this session's issue ENG-1/u],
     [path.join(fx.state, 'plans', 'billing-plan.md'), /an issue session writes only plans\/eng-1-\.\.\. there/u],
     [path.join(fx.state, 'tmp', 'eng-2', 'log.txt'), /not named for this session's issue/u],
+    // The body file of another issue's branch, or one in plans, is not this session's.
+    [path.join(fx.state, 'tmp', 'pr-body-feat-eng-2-import.md'), /and the body files named for its branch, such as tmp\/pr-body-feat-eng-1-export\.md/u],
+    [path.join(fx.state, 'plans', 'pr-body-feat-eng-1-export.md'), /not named for this session's issue/u],
     [path.join(fx.state, 'dispatch', 'feat-eng-2-import-S1-explorer.json'), /a handoff file named for its own branch, feat-eng-1-export-<slice>-<agent>\.json/u],
   ];
   for (const [file, why] of refused) {
@@ -387,7 +406,8 @@ test('an issue session writes no workflow file, no handoff brief or snapshot, no
   }
   for (const file of [path.join(fx.work, 'src', 'x.js'), path.join(fx.work, '.github', 'ISSUE_TEMPLATE', 'bug.md'), path.join(fx.state, 'plans', 'eng-1-implementation.md'),
     path.join(fx.state, 'plans', 'ENG-1-implementation.md'), path.join(fx.state, 'tmp', 'eng-1', 'log.txt'), path.join(fx.state, 'tmp', 'eng-1.snapshot.json'),
-    path.join(fx.state, 'dispatch', 'feat-eng-1-export-S1-explorer.json'), path.join(fx.state, 'reviews', 'pr-3.json.tmp')]) {
+    path.join(fx.state, 'dispatch', 'feat-eng-1-export-S1-explorer.json'), path.join(fx.state, 'reviews', 'pr-3.json.tmp'),
+    path.join(fx.state, 'tmp', 'pr-body-feat-eng-1-export.md'), path.join(fx.state, 'tmp', 'comment-body-feat-eng-1-export.md')]) {
     assert.equal(fx.ask(write(file)), null, file);
   }
   // A session no issue names, as an attended session's background continuation, writes those state folders as before.

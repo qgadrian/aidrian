@@ -393,7 +393,7 @@ What each rule matches:
   [feedback record](config.md#product-feedback) lists, before and after its answer. A call with an `agent_id` is refused, whatever key
   it names. A main session passes only when the transcript holds an AskUserQuestion answer, given after the record was written,
   to a question naming `#<PR>`, not after a `/` or a word character, the item's id, and its title in double quotes, and no other item,
-  whose chosen option is that decision alone: `fix-now` also reads as "Fix now", and "Drop nothing, keep it open" is no drop.
+  whose chosen option is that decision alone: `fix-now` also reads as "Fix now", and "Drop nothing, keep it open" is no drop. A note goes in the option's description: "Fix now, in this pull request" as a label is refused, since a typed reply and a picked label read the same, and the refusal says so.
   A call whose folder or project it cannot read is refused only while this machine keeps product feedback: a `product-feedback/` folder
   in a project's state folder under the state root, or in the current project's state folder. That is a call after a `cd` it cannot
   follow, such as `cd "$D" &&`, `cd ~/x &&`, `(cd "$D"; …)`, `pushd "$D" &&`, or `env -C "$D"`; after a `cd` whose word the shell
@@ -1292,9 +1292,13 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     there could become a driver's prior ([handoff.md](handoff.md#the-check)), and no `quorum`, whose hard calls it
     parks for the Human (`aidrian quorum route` routes them to `human`); in `plans` and `tmp`, only an entry named for
     its own issue, the key itself or the key followed by `-` or `.` in any case, such as `plans/eng-1-implementation.md`
-    or `tmp/eng-1/`; and in `dispatch`, only a handoff file named for its own branch, each `/` a `-`, such as
+    or `tmp/eng-1/`, and in `tmp` also the body files the pr-write skill and the pull request body hook name for its own
+    branch, such as `tmp/pr-body-feat-eng-1-export.md`; and in `dispatch`, only a handoff file named for its own branch, each `/` a `-`, such as
     `feat-eng-1-export-S1-explorer.json`. Its issue and branch are the run snapshot's, read while the ledger names its
-    issue running (`lib/project-run-guard.mjs ownIssue`); with none, it writes none of them;
+    issue running (`lib/project-run-guard.mjs ownIssue`); with none, it writes none of them. When another issue of the
+    run has a branch, planned or attempted, spelled the same once each `/` is a `-` (as `feat/eng-1-export` and
+    `feat-eng-1/export`), or spelled the same and then `-` more, a body or handoff file named for the branch is neither
+    issue's: the refusal names a key-named body file, such as `tmp/eng-1-pr-body.md`, which `--body-file` takes;
   - the temporary folder, this process's `TMPDIR` and `/tmp`, but for a state folder inside it, as one under `/tmp`
     is, where only the state places above pass, and for any checkout of the repository inside it, which keeps the rules
     above: a checkout that is not the session's worktree stays outside, and the worktree's host files and `.git` entries

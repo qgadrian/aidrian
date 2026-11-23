@@ -7,7 +7,7 @@
 // A draft whose pull request is open, or whose state the forge cannot give, is kept. Drafts named for a branch, such
 // as `pr-body-<branch>.md`, are not a pull request's by number, and stay.
 
-import { readdirSync, rmSync } from 'node:fs';
+import { lstatSync, readdirSync, rmdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 
 import { forgeFor } from '../forges/index.mjs';
@@ -17,9 +17,10 @@ import { recordRepos } from './state.mjs';
 
 // A draft's name, with its pull request's number in the one group that matched.
 // A findings folder of another remote's repository names it, `<owner>--<name>`: GitHub owners hold no `--`.
-// An issue session's findings folder leads with its issue key (dispatch.mjs findingsFile). Accepted residual (pull
-// request #560): a draft goes by its name alone, as `review-<n>` does, so scratch an issue session named exactly
-// `<key>-review-<n>...` goes with it once that pull request ends.
+// An issue session's findings folder leads with its issue key (dispatch.mjs findingsFile). An issue session names its
+// own scratch for its key too, so such a folder loses only its findings files, and goes only once nothing else is left
+// (removeDraft).
+const ISSUE_LED = /^(?:[a-z][a-z0-9]{0,15}-)?[1-9][0-9]{0,8}-review-/u;
 const DRAFT = /^(?:(?:(?:[a-z][a-z0-9]{0,15}-)?[1-9][0-9]{0,8}-)?review-([1-9]\d{0,9})(?:-([\w.-]+?)--([\w.-]+))?|pr-([1-9]\d{0,9})-review\.md|product-feedback-([1-9]\d{0,9})(?:-items\.json|\.md))$/u;
 // The most pull requests one sweep reads the state of, lowest number first: each is one forge call.
 export const MAX_SWEPT = 50;
@@ -90,8 +91,7 @@ export function sweepDrafts(project, { forge = forgeFor(project.root), limit = M
     const gone = [];
     for (const file of files) {
       try {
-        rmSync(path.join(dir, file), { recursive: true, force: true });
-        gone.push(file);
+        if (removeDraft(path.join(dir, file), ISSUE_LED.test(file))) gone.push(file);
       } catch (error) {
         out.failed.push({ pr, file, error: error.message });
       }
@@ -99,4 +99,23 @@ export function sweepDrafts(project, { forge = forgeFor(project.root), limit = M
     if (gone.length) out.removed.push({ pr, ...tag, state: ENDED.get(state), files: gone });
   }
   return out;
+}
+
+// Removes the draft `file`: whole, or, for a folder an issue session's key leads (`led`), only the regular
+// `*.findings.json` files in it, and then the folder once it is empty. A led entry that is no folder, or a link, stays.
+// Returns whether the draft is gone.
+function removeDraft(file, led) {
+  if (!led) {
+    rmSync(file, { recursive: true, force: true });
+    return true;
+  }
+  const stat = lstatSync(file);
+  if (!stat.isDirectory()) return false;
+  for (const name of readdirSync(file)) {
+    const entry = path.join(file, name);
+    if (name.endsWith('.findings.json') && lstatSync(entry).isFile()) rmSync(entry, { force: true });
+  }
+  if (readdirSync(file).length) return false;
+  rmdirSync(file);
+  return true;
 }

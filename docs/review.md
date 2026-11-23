@@ -546,7 +546,10 @@ facts measured in the page: horizontal overflow, text cut off by its box, and co
   in the review summary's visual line and in the captures comment until a visual pass it was taken for has a result
   on that head (`visual.passes` on the record). From then on both say the visual passes reviewed this head without the
   capture, and drop the reason, which no longer asks for anything; an ingest note stays. The step that sees the result
-  edits the captures comment.
+  edits the captures comment. A capture that runs past its 15-minute limit says so, with the screen the adapter's last
+  progress line names; an adapter whose last line is no error line says so, with its exit status or signal and that
+  screen. Such a reason holds none of the adapter's own text: the screen is numbered from the capture's own list. Its whole error output is kept, readable by its owner only, as
+  `capture-stderr.log` in the head's capture folder, which each new attempt removes as it starts when it can; one it cannot remove is never written into.
 - **Ingested images**: `aidrian pr ingest` ([Ingesting images](#sign-off-by-the-human)) adds images taken
   elsewhere to the manifest's own `ingested` list, never to the tool's entries. Each key is
   `ingest-<file name>-<6 hex of its hash>`, so the same image under the same file name ingests again in place. The
@@ -787,7 +790,7 @@ A project adds its own in `review.reviewers`:
   characters, then the first 8 hex digits of the whole id's SHA-256, so two passes never share a file, in a folder
   keyed by the pull request's repository, `review-<PR>-<owner>--<name>`, so two repositories' pull requests of one number never do either ([Findings one by one](#findings-one-by-one)); in a project run's issue session the folder leads with the issue key, `<key>-review-<PR>-<owner>--<name>`, since that session writes in `tmp/` only what is named for its issue ([Agent gates](hooks.md#agent-gates)), and the agent's final JSON on stdin: either the bare verdicts array or the whole `{ findings, verdicts, contracts, cross_notes }`
   object. `--verdicts FILE` reads a file instead; `--findings-file` takes a file only.
-  `aidrian worktree cleanup execute` removes the findings folder, `review-<PR>-<owner>--<name>/` or an issue session's `<key>-review-<PR>-<owner>--<name>/`, by its name, once the pull request is merged or closed
+  `aidrian worktree cleanup execute` removes the findings folder `review-<PR>-<owner>--<name>/` once the pull request is merged or closed; from an issue session's `<key>-review-<PR>-<owner>--<name>/` it removes only the regular `*.findings.json` files, and the folder once it is empty, since that session names its own scratch for its key too
   ([Local state](project-folder.md#local-state)).
 
 **The security key.** A finding is a security finding when it is `critical` or `high`, when its reviewer set

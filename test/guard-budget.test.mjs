@@ -126,6 +126,8 @@ test('a guard past its time budget refuses a subagent\'s call and lets the main 
     const refused = run(subagent(dir, tool, 'echo x > src/app.js'), env);
     assert.equal(refused.status, 2, tool);
     assert.match(refused.stderr, /the guards could not finish reading this command in time, so it may change a file only the main session may change/u, tool);
+    assert.match(refused.stderr, /first retry this same call by itself, up to three times: a retry is the same tool, not another one\. Only when every retry is refused, stop/u,
+      `${tool}: a busy machine's refusal asks for a retry first`);
     assert.equal(run(main(subagent(dir, tool, 'echo x > src/app.js')), env).status, 0, `${tool}: the main session`);
   }
   // A call that writes nothing, which no guard refuses, runs: a loaded machine never stalls a subagent on its reads.

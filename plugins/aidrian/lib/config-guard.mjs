@@ -423,12 +423,17 @@ export function writesNothing(input) {
 // run (onlyMain): the guards it could not finish hold a run's driver from the run's stores, the marks, and the sign-off
 // store. A call that writes nothing (writesNothing), which no guard refuses, runs for every session, so a loaded machine
 // never stalls a session the guards hold on its reads; a shell call, such as a driver's `aidrian project wait`, is held.
+// The time the guards take depends on the machine's load, as when many sessions or a test suite run at once, so the same
+// call often passes a moment later: the refusal says to retry it, alone, before giving up. An agent that reads "do not
+// reach the same result with another tool" alone stops instead, as a fix agent with one small Edit did.
+const RETRY = ' A busy machine slows the guards, so first retry this same call by itself, up to three times: a retry is the same tool, not another one.'
+  + ' Only when every retry is refused, stop and report it.';
 export function deadlineDenial(input, { names: { human } }, { unattended = () => false, drove = () => false, issue = () => false, mark = null } = {}) {
   if (writesNothing(input)) return null;
   const who = onlyMain(input, { unattended, drove, issue });
   if (who === null) return null;
   const why = `the guards could not finish reading this command in time, so it may change a file ${who}`;
-  return { match: 'past the guards\' time budget', reason: projectRuleReason(input, why, human, 'that the command takes the guards longer than they have, or run it as shorter commands', { mark }) };
+  return { match: 'past the guards\' time budget', reason: `${projectRuleReason(input, why, human, 'that the command takes the guards longer than they have, or run it as shorter commands', { mark })}${RETRY}` };
 }
 
 // The texts a command in a shell the lexer cannot read is judged by: the command as given, and, when it differs, a copy

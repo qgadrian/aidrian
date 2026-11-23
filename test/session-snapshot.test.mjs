@@ -147,10 +147,10 @@ test('the JSON object and the line at each handoff level, with the Stop hook`s o
   assert.match(quietLine.stdout, /^\d\.\dx\n$/u);
   const [offer, offerLine] = at(cost, 3);
   assert.equal(offer.json.handoff.level, 'offer');
-  assert.equal(offerLine.stdout, `${offer.json.handoff.ratio.toFixed(1)}x · handoff pays back in ~${Math.round(offer.json.handoff.breakEven)} calls\n`);
+  assert.equal(offerLine.stdout, `${offer.json.handoff.ratio.toFixed(1)}x · handoff worth it if ${Math.floor(offer.json.handoff.breakEven) + 1}+ calls left\n`);
   const [due, dueLine] = at(cost, 4);
   assert.equal(due.json.handoff.level, 'due');
-  const dueWords = `${due.json.handoff.ratio.toFixed(1)}x · handoff due, pays back in ~${Math.round(due.json.handoff.breakEven)} calls\n`;
+  const dueWords = `${due.json.handoff.ratio.toFixed(1)}x · handoff worth it if ${Math.floor(due.json.handoff.breakEven) + 1}+ calls left\n`;
   assert.equal(dueLine.stdout, dueWords);
   assert.equal((await inHook(cost, transcript)).status, 2, 'the Stop hook reminds on this turn and writes its marker');
   const [reminded, remindedLine] = at(cost, 4);
@@ -166,6 +166,15 @@ test('the JSON object and the line at each handoff level, with the Stop hook`s o
   const fresh = cost.run(['--session', 'fresh-1', '--transcript', transcript]);
   assert.equal(fresh.json.handoff.ratio, 0);
   assert.equal(cost.run(['--session', 'fresh-1', '--transcript', transcript, '--line']).stdout, '\n', 'no model call yet: no handoff segment');
+});
+
+test('the line names the first whole call count above the break-even, so an exact break-even names the next call', () => {
+  const line = (breakEven, level = 'due') => snapshotLine({ handoff: { ratio: 2.3, breakEven, level } });
+  assert.equal(line(37.5), '2.3x · handoff worth it if 38+ calls left');
+  assert.equal(line(38), '2.3x · handoff worth it if 39+ calls left', 'at exactly the break-even a handoff saves nothing yet');
+  assert.equal(line(38.4), '2.3x · handoff worth it if 39+ calls left');
+  for (const level of ['offer', 'reminded']) assert.equal(line(38, level), '2.3x · handoff worth it if 39+ calls left', level);
+  assert.equal(line(null), '2.3x', 'no break-even: the ratio alone');
 });
 
 test('an armed continuation adds its chain to the line; the store is read and left as it was', (t) => {

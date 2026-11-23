@@ -1094,9 +1094,11 @@ waits: a named pipe, or any other entry that is no regular file, at the lesson i
 that section at once, as at a cache file or the ledger of the session's folder.
 
 **The line.** `--line` prints one line of plain text, its segments that hold something joined by ` · `, or an empty
-line: the handoff, once the session made a model call (`1.4x` at `quiet`, `1.8x · handoff pays back in ~24 calls` at `offer`,
-`2.3x · handoff due, pays back in ~24 calls` at `due` and `reminded`, `handoff now` at `ceiling`, and ` · armed 1/3`
-while a continuation is armed), then the pull requests, `PRs ✓2 ✗0 ⏳1 · #12, #34, #56`, when `prs` holds an entry (the counts, then the first five
+line: the handoff, once the session made a model call (`1.4x` at `quiet`; `1.8x · handoff worth it if 60+ calls left`
+at `offer`, `due`, and `reminded`, where the number is the first whole call count above the break-even, `N`, and the
+ratio stands alone without one,
+and only the mod's band tells `offer` from the other two, by color;
+`handoff now` at `ceiling`; and ` · armed 1/3` while a continuation is armed), then the pull requests, `PRs ✓2 ✗0 ⏳1 · #12, #34, #56`, when `prs` holds an entry (the counts, then the first five
 numbers, then `+N` for the rest and any with no number; `3 PRs · ✓2 ✗0 ⏳1` with no number to list; when the numbers
 come from more than one repository, each carries its repository's letter, `PRs ✓1 ✗1 ⏳0 · a#42, b#42`, `a` the first
 when their hosts and paths are sorted, and a pull request with no number takes none; the segment is at most 58

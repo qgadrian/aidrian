@@ -898,7 +898,7 @@ test('the ready checks hold`s edit times: one GraphQL call, naming a host only w
 
 test('the review trail gives each check run its workflow run, so a run a later one of the same workflow replaced is not judged', () => {
   const sha = 'b'.repeat(40);
-  const node = (run, conclusion) => ({ __typename: 'CheckRun', name: 'Conventional Commit title', status: 'COMPLETED', conclusion, checkSuite: { workflowRun: { databaseId: run, event: 'pull_request', workflow: { databaseId: 77 } } } });
+  const node = (run, conclusion, prs = 1) => ({ __typename: 'CheckRun', name: 'Conventional Commit title', status: 'COMPLETED', conclusion, checkSuite: { matchingPullRequests: { totalCount: prs }, workflowRun: { databaseId: run, event: 'pull_request', workflow: { databaseId: 77 } } } });
   const nodes = [node(901, 'CANCELLED'), node(902, 'SUCCESS'), { __typename: 'CheckRun', name: 'app', status: 'COMPLETED', conclusion: 'SUCCESS', checkSuite: { workflowRun: null } }];
   const answer = { data: { viewer: { login: 'adrian' }, repository: { defaultBranchRef: null, pullRequest: {
     headRefOid: sha, headRefName: 'x', baseRefName: 'main', title: 't', body: '', history: { totalCount: 0, nodes: [] }, isDraft: false, reviewDecision: null,
@@ -910,6 +910,11 @@ test('the review trail gives each check run its workflow run, so a run a later o
   assert.deepEqual(rows.map((row) => [row.run, row.workflowId, row.event]), [[901, 77, 'pull_request'], [902, 77, 'pull_request'], [null, null, null]]);
   assert.equal(computeVerdict(rows, { requiredChecks: ['Conventional Commit title'] }).verdict, 'ready', 'the cancelled run was replaced');
   assert.equal(computeVerdict(rows.slice().reverse().map((row) => (row.run === 902 ? { ...row, state: 'CANCELLED' } : row)), { requiredChecks: ['Conventional Commit title'] }).verdict, 'failing', 'a latest run that was cancelled still fails');
+  // A head two open pull requests share: the later run may be the other one's, so the cancelled run still counts.
+  const shared = { data: { ...answer.data, repository: { ...answer.data.repository, pullRequest: { ...answer.data.repository.pullRequest,
+    commits: { nodes: [{ commit: { oid: sha, statusCheckRollup: { contexts: { totalCount: 2, nodes: [node(901, 'CANCELLED', 2), node(902, 'SUCCESS', 2)] } } } }] } } } } };
+  const both = recorded(() => JSON.stringify(shared)).forge.reviewTrail('acme/notes', 7, { paths: { pointer: '.aidrian.json', config: '.aidrian/config.json', knowledge: '.aidrian/knowledge' } }).checks.rows;
+  assert.equal(computeVerdict(both, { requiredChecks: ['Conventional Commit title'] }).verdict, 'failing', 'no run is taken for replaced');
 });
 
 test('the review trail: one GraphQL call naming the host and the policy paths it is given, answered in the facade`s shape', () => {

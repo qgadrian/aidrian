@@ -477,7 +477,7 @@ const TRAIL_QUERY = `query($o: String!, $r: String!, $n: Int!, $pointer: String!
       latestReviews(first: ${TRAIL_PAGE}) { nodes { author { login } state } }
       history: commits(first: ${TRAIL_PAGE}) { totalCount nodes { commit { oid message } } }
       commits(last: 1) {
-        nodes { commit { oid statusCheckRollup { contexts(first: ${TRAIL_PAGE}) { totalCount nodes { __typename ... on CheckRun { name status conclusion checkSuite { workflowRun { databaseId event workflow { databaseId } } } } ... on StatusContext { context state } } } } } }
+        nodes { commit { oid statusCheckRollup { contexts(first: ${TRAIL_PAGE}) { totalCount nodes { __typename ... on CheckRun { name status conclusion checkSuite { matchingPullRequests(first: 2) { totalCount } workflowRun { databaseId event workflow { databaseId } } } } ... on StatusContext { context state } } } } } }
       }
       files(first: ${TRAIL_PAGE}) { totalCount nodes { path changeType } }
       reviews(last: ${TRAIL_PAGE}) { totalCount nodes { author { login __typename } authorAssociation state commit { oid } submittedAt } }
@@ -517,9 +517,11 @@ const branchFiles = (name, target, knowledge = false) => ({
 // A check run of an Actions workflow carries its run, its workflow file, and its event, as checkRow gives them, so
 // pr-checks.mjs currentRows leaves out a run that a later run of the same workflow replaced on the head, as when
 // `gh pr ready` starts a workflow again and the forge cancels the earlier run. Every row is of the trail's one repository.
+// A head another open pull request shares may carry that one's runs too, which no row tells apart: a run whose suite
+// does not match exactly one open pull request gives none of the three, so no row of it is ever taken for replaced.
 const checkOf = (node) => {
   if (node?.__typename === 'StatusContext') return { name: String(node.context ?? ''), state: String(node.state ?? '') };
-  const run = node?.checkSuite?.workflowRun;
+  const run = node?.checkSuite?.matchingPullRequests?.totalCount === 1 ? node.checkSuite.workflowRun : null;
   const id = (value) => (Number.isInteger(value) ? value : null);
   return {
     name: String(node?.name ?? ''), state: String((node?.status === 'COMPLETED' ? node.conclusion : node?.status) ?? ''),

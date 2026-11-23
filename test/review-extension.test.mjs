@@ -37,6 +37,22 @@ test('signals: converging is fewer open findings than the round before, and anyt
   assert.equal(signals({ rounds: [round(1, 'a', [])] }).converging, null, 'one round has no trend');
 });
 
+test('signals: a round counted without its findings is a floor, and decides converging only where the floor proves it', () => {
+  const floor = (n, head, open) => ({ round: n, head, open, findings: null, fix: null });
+  const two = [finding('x.js', 1, 'one'), finding('y.js', 9, 'two')];
+  // A bot answer counted as one, then two itemized findings: the bot round may have held three.
+  const afterFloor = signals({ rounds: [round(1, 'a', two), floor(2, 'b', 1), round(3, 'c', two)] });
+  assert.equal(afterFloor.converging, null);
+  assert.ok(afterFloor.unknown.includes('converging'));
+  assert.ok(!afterFloor.reasons.some((reason) => reason.startsWith('not converging')));
+  assert.equal(signals({ rounds: [floor(1, 'a', 3), round(2, 'b', two)] }).converging, true, 'two exact under a floor of three is fewer');
+  const atLeast = signals({ rounds: [round(1, 'a', two), floor(2, 'b', 2)] });
+  assert.equal(atLeast.converging, false, 'a floor at the previous exact count is not converging');
+  assert.match(atLeast.reasons[0], /^not converging: round 2 left 2 open findings, round 1 left 2$/u);
+  assert.equal(signals({ rounds: [round(1, 'a', two), floor(2, 'b', 1)] }).converging, null, 'a floor under an exact count cannot tell');
+  assert.equal(signals({ rounds: [floor(1, 'a', 2), floor(2, 'b', 1)] }).converging, null, 'two floors cannot tell');
+});
+
 test('signals: looping is a finding back at the same place, or under the same title, after a fix', () => {
   const place = signals({ rounds: [round(1, 'a', [finding('src/a.js', 10, 'null check missing'), finding('src/b.js', 1, 'other')]), round(2, 'b', [{ ...finding('src/a.js', 12, 'race on save'), id: 'R2-3' }])] });
   assert.deepEqual([place.looping, place.evidence.looping[0].match, place.evidence.looping[0].earlier_round, place.evidence.looping[0].id], [true, 'place', 1, 'R2-3']);

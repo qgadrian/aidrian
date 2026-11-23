@@ -91,8 +91,15 @@ export function signals({ rounds = [], originalFiles = null, originalAdded = nul
   const last = rounds.at(-1);
   const previous = rounds.at(-2);
 
+  // A round without itemized findings counts a pass by its count only, which is a floor: a bot answer with no line
+  // comments counts one, whatever it holds (stages.mjs recordBot). A floor decides only what it still proves: the
+  // last round at least the previous round's exact count is not converging, and an exact last round under the
+  // previous floor is converging. Anything else cannot tell.
   let converging = null;
-  if (last && previous && Number.isInteger(last.open) && Number.isInteger(previous.open)) {
+  const exact = (each) => Array.isArray(each.findings);
+  const counted = last && previous && Number.isInteger(last.open) && Number.isInteger(previous.open);
+  const decided = counted && (exact(last) && exact(previous) ? true : exact(previous) ? last.open >= previous.open : exact(last) && last.open < previous.open);
+  if (decided) {
     converging = last.open < previous.open;
     evidence.converging = { round: last.round, open: last.open, previous_round: previous.round, previous_open: previous.open };
     if (!converging) reasons.push(`not converging: round ${last.round} left ${plural(last.open, 'open finding')}, round ${previous.round} left ${previous.open}`);

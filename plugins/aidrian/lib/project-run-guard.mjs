@@ -182,6 +182,13 @@ export function ownIssue(project, config, mark, { base, home } = {}) {
 // A branch as the files named for it spell it (pr-body.mjs bodyFilePath, a dispatch handoff): each `/` a `-`, in lower case.
 export const branchSlug = (branch) => branch.replaceAll('/', '-').toLowerCase();
 
+// Whether the dispatch handoff file named `name` is the issue `issue`'s (ownIssue), so its session may write it, by hand
+// (lib/unattended-write.mjs) or through the subagent stop hook's delivery (lib/delivery-check.mjs): a `.json` file in
+// the dispatch folder itself, `<branch>-<slice>-<agent>.json` for its own branch, whose spelling no other issue of the
+// run shares (handoffShared). With no issue, none is.
+export const ownsHandoff = (issue, name) => Boolean(issue) && !issue.handoffShared && /^[^/]+\.json$/u.test(name)
+  && name.toLowerCase().startsWith(`${branchSlug(issue.branch)}-`);
+
 // How the branch `branch` of issue `key` shares its spelling (branchSlug) with another issue's branch, planned or
 // attempted, in the run `found`: `slugShared` when it is the same, so a body file named for it is neither issue's, and
 // `handoffShared` also when either spelling is the other's and then `-` more, since a handoff

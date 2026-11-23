@@ -13,6 +13,7 @@ import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
+import { unwrittenHandoffs } from '../plugins/aidrian/lib/delivery-check.mjs';
 import { issueForgeDenial } from '../plugins/aidrian/lib/issue-forge-guard.mjs';
 import { rawPaths, statusEntries } from '../plugins/aidrian/lib/issue-push-checkout.mjs';
 import { findingsFile, sessionIssue } from '../plugins/aidrian/lib/review/dispatch.mjs';
@@ -360,6 +361,23 @@ test('an issue session writes the findings file pr review names for it, and no r
     assert.match(fx.ask(write(path.join(fx.state, 'tmp', folder, path.basename(file))))?.reason ?? '', /not named for this session's issue ENG-1/u, folder);
   }
   assert.equal(path.basename(path.dirname(findingsFile(fx.project, 3, 'agent:code-reviewer', 'o/r'))), 'review-3-o--r', 'any other session as before');
+});
+
+test('the subagent stop delivery hands an issue session only its own unshared handoff, as the write guard does', (t) => {
+  const owed = (fx, name, session = SESSION) => {
+    const file = path.join(fx.state, 'dispatch', name);
+    const transcript = path.join(fx.root, `${session}-${name}.jsonl`);
+    writeFileSync(transcript, `${JSON.stringify({ type: 'user', message: { role: 'user', content: `Map the flow.\nHandoff file: ${file}` } })}\n`);
+    const input = { session_id: session, agent_type: 'aidrian:explorer', agent_transcript_path: transcript, last_assistant_message: 'Done.' };
+    return unwrittenHandoffs(input, fx.project, { env: fx.env, home: fx.home }).map((each) => path.basename(each));
+  };
+  const own = issueFixture(t);
+  assert.deepEqual(owed(own, 'feat-eng-1-export-S1-explorer.json'), ['feat-eng-1-export-S1-explorer.json'], 'its own branch, spelled by no other issue');
+  assert.deepEqual(owed(own, 'feat-eng-2-import-S1-explorer.json'), [], 'another issue\'s branch');
+  assert.deepEqual(owed(own, 'feat-eng-2-import-S1-explorer.json', DRIVER), ['feat-eng-2-import-S1-explorer.json'], 'a session that works no issue, as before');
+  const issues = [{ key: 'ENG-1', branch: BRANCH, status: 'unstarted', priority: 1 }, { key: 'ENG-2', branch: 'feat-eng-1/export', status: 'unstarted', priority: 2 }];
+  const shared = issueFixture(t, { issues });
+  assert.deepEqual(owed(shared, 'feat-eng-1-export-S1-explorer.json'), [], 'its branch, which another issue spells alike');
 });
 
 test('an issue session whose branch another issue of the run spells the same writes no body or handoff file named for it, and is told the key-named body', (t) => {

@@ -23,8 +23,11 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { checkoutRoots, repositoryCheckouts } from './git.mjs';
+import { loadConfig } from './config.mjs';
 import { stateDir } from './project.mjs';
+import { ownIssue, ownsHandoff } from './project-run-guard.mjs';
 import { firstPrompt, readText, filesTouched, lastHandback } from './transcript.mjs';
+import { issueHeld, readUnattendedMark } from './unattended-mark.mjs';
 
 const CLAIMED_PATHS = 20;
 // A path an agent's last message names: a .md or .json token with a `/`, not inside a URL or a template, and not after
@@ -40,10 +43,10 @@ const PLUGIN_FOLDER = path.resolve(import.meta.dirname, '..');
 // The paths a subagent's last message presents as delivered, those of them that exist nowhere, and the handoff files its
 // brief asks for that it has not written: { claims, missing, unwritten }.
 // `since` is when the subagent's transcript began, or null (handoffSince).
-export function checkDelivery(input, project) {
+export function checkDelivery(input, project, places = {}) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : project.root;
   const claims = claimedPaths(input.last_assistant_message);
-  const unwritten = unwrittenHandoffs(input, project);
+  const unwritten = unwrittenHandoffs(input, project, places);
   const since = handoffSince(input);
   if (!claims.length) return { claims, missing: [], unwritten, since };
   const missing = missingPaths(claims, cwd, { roots: () => deliveryRoots(project, cwd), touched: () => touchedFiles(input) });
@@ -81,7 +84,7 @@ function handedIn(file, since) {
 // the agent's own name, such as `feat-12-S1-code-reviewer.json` or `S1-code-reviewer-result.json` for
 // `aidrian:code-reviewer`. A path anywhere else in the brief, such as a handoff it tells the agent to read, is never owed.
 // No brief, no marker line, no agent name, or no state folder: none.
-export function unwrittenHandoffs(input, project) {
+export function unwrittenHandoffs(input, project, places = {}) {
   const agent = typeof input.agent_type === 'string' ? input.agent_type.split(':').pop() : '';
   const transcript = agent && typeof input.agent_transcript_path === 'string' ? readText(input.agent_transcript_path) : null;
   const brief = transcript ? firstPrompt(transcript) : null;
@@ -98,9 +101,29 @@ export function unwrittenHandoffs(input, project) {
   const word = new RegExp(`(?:^|[-_.])${escapeRegExp(agent)}(?:[-_.]\\w+)?\\.json$`, 'u');
   // A CRLF brief's line keeps its `\r` after the split: it is dropped before the marker is matched.
   const marked = brief.split('\n').map((line) => HANDOFF_MARKER.exec(line.replace(/\r$/u, ''))).filter(Boolean).map(markedPath);
-  const own = marked.filter((file) => wholePath.test(file) && word.test(path.basename(file)));
+  const owner = issueOwner(input, project, places);
+  const own = marked.filter((file) => wholePath.test(file) && word.test(path.basename(file)) && owner(path.basename(file)));
   const since = handoffSince(input);
   return [...new Set(own)].filter((file) => !handedIn(file, since));
+}
+
+// Which handoff file names the session `input.session_id` may be handed, as the write guard rules them: any, for a
+// session that works no project run's issue (unattended-mark.mjs issueHeld); else only those of its own issue's branch
+// that no other issue of the run spells alike (project-run-guard.mjs ownsHandoff), and none when its issue cannot be read.
+// So one issue's report never replaces another's handoff through the stop hook either.
+function issueOwner(input, project, { env = process.env, home } = {}) {
+  let mark;
+  try {
+    mark = readUnattendedMark(input.session_id, { env, ...(home ? { home } : {}) });
+  } catch {
+    mark = { root: null };
+  }
+  if (!issueHeld(mark)) return () => true;
+  let issue = null;
+  try {
+    issue = ownIssue(project, loadConfig(project).config, mark, home ? { home } : {});
+  } catch {}
+  return (name) => ownsHandoff(issue, name);
 }
 
 // A brief line that names the run's handoff file, in any case, after an optional list marker: `Handoff file: <path>`,

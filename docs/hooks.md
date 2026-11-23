@@ -1675,6 +1675,9 @@ Only the files these lines name are owed, and a brief with no such line owes non
 and the hook no longer searches the brief's prose for one, since a file named to read there could be taken for the output.
 Another file of the agent's role the brief names, such as the gate run's `<branch>-gate-product-manager.json` to read,
 is never written, whether it is there or not.
+In a project run's issue session, a file is owed only when the unattended write guard would let that session write it:
+one named for its own issue's branch that no other issue of the run spells alike, and none when its issue cannot be read.
+So one issue's report never replaces another issue's handoff.
 A file a marker line names must exist when the agent stops: an absolute path in the state folder's `dispatch/` whose file name ends with the agent's name,
 or with it and one more word, such as `<state>/dispatch/feat-12-S1-code-reviewer.json` or `S1-code-reviewer-result.json`
 for `code-reviewer`. A branch name that holds the agent's name does not make another agent's file its own. When one does not,

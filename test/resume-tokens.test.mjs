@@ -1,6 +1,6 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -10,7 +10,7 @@ import { backgroundPrompt, continuationContext } from '../plugins/aidrian/lib/ha
 import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import { findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import {
-  KEPT_SAMPLES, MIN_SAMPLES, readSamples, recordResume, RESUME_FILE, RESUME_TOKENS, resolvedHandoff, resumeTokens, SAMPLE_DAYS,
+  KEPT_SAMPLES, MIN_SAMPLES, readSamples, recordResume, RESUME_FILE, RESUME_TOKENS, resolvedHandoff, resumeState, resumeTokens, SAMPLE_DAYS,
 } from '../plugins/aidrian/lib/resume-tokens.mjs';
 import { handoffCost, handoffStatus, planApprovedContext, sessionUsage, stopReminder } from '../plugins/aidrian/lib/session-length.mjs';
 import { CONTINUATION_LEAD, resumeRead } from '../plugins/aidrian/lib/transcript.mjs';
@@ -87,6 +87,32 @@ test('the config value wins, then the median of 5 or more samples of the last 30
   writeFileSync(path.join(broken, RESUME_FILE), '{"samples": [{"session": "a", "tokens": -1, "at": 1}, "x"]');
   assert.equal(resumeTokens({}, broken, NOW).tokens, RESUME_TOKENS, 'a file that does not parse reads as none');
   assert.equal(resolvedHandoff({ mode: 'ask', costRatio: 2 }, five, NOW).resumeTokens, 80_000);
+});
+
+const POSIX = process.platform !== 'win32';
+
+test('a samples file that is a link, or a state folder other users may write, gives the default B', { skip: !POSIX }, (t) => {
+  const five = many(5, 90_000);
+  const real = stateWith(t, five);
+  assert.equal(resumeTokens({}, real, NOW).source, 'measured', 'the file as the hook writes it');
+  const linked = stateWith(t);
+  symlinkSync(path.join(real, RESUME_FILE), path.join(linked, RESUME_FILE));
+  assert.equal(resumeTokens({}, linked, NOW).source, 'default', 'a symlink');
+  const hard = stateWith(t);
+  linkSync(path.join(real, RESUME_FILE), path.join(hard, RESUME_FILE));
+  assert.equal(resumeTokens({}, hard, NOW).source, 'default', 'a hard link');
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-resume-open-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '../shared' } }));
+  const shared = path.join(path.dirname(dir), 'shared');
+  t.after(() => rmSync(shared, { recursive: true, force: true }));
+  mkdirSync(shared, { recursive: true });
+  const found = findProject(dir);
+  const { config } = loadConfig(found);
+  assert.equal(resumeState(found, config), realpathSync(shared), 'a folder of this user alone');
+  chmodSync(shared, 0o777);
+  assert.equal(resumeState(found, config), null, 'one every user may write, with no sticky bit');
 });
 
 test('a session`s sample is recorded once, and the file keeps the newest 50', (t) => {

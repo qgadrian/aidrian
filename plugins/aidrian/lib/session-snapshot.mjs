@@ -164,11 +164,12 @@ const needed = (value) => {
 const unconfirmed = ({ decisions, unlisted }) => [...decisions, ...unlisted].filter(({ status }) => status === 'unconfirmed').length;
 
 // The handoff numbers of the session, from its transcript through the usage cache, and the Stop hook's marker, at the
-// hook's own path, with the project's B (lib/resume-tokens.mjs resumeTokens), which `resume` shows. Under `mode: off` the hook never reminds, so the level is quiet and the numbers stay. The continuation
+// hook's own path, with the project's B (lib/resume-tokens.mjs resumeTokens), which `resume` shows, read from a state
+// folder outside every checkout that no other user can replace (ownState's rule). Under `mode: off` the hook never reminds, so the level is quiet and the numbers stay. The continuation
 // store is opened at the state folder's real path the context resolved, the same path the session folder was made under.
-function handoffSection({ config, folder, state }, links, session, transcript) {
+function handoffSection({ config, folder, state, inside, loose }, links, session, transcript) {
   const usage = cachedSessionUsage({ transcript, cacheFile: path.join(needed(folder), 'usage.json') });
-  const resume = resumeTokens(config.session.handoff, state);
+  const resume = resumeTokens(config.session.handoff, inside || loose ? null : state);
   const handoff = { ...config.session.handoff, resumeTokens: resume.tokens };
   const status = handoffStatus(needed(usage), handoff, stopMarkerText(session));
   const { ratio, breakEven, nextRatio, context: tokens, ceiling } = status;

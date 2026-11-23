@@ -9,9 +9,10 @@ import { randomBytes } from 'node:crypto';
 import { renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { isObject, ownFolderSync, readSmallJson } from './fs.mjs';
+import { isObject, ownFolderSync, readOwnText, resolvedPath } from './fs.mjs';
 import { SESSION_ID } from './handoff-markers.mjs';
 import { stateDir } from './project.mjs';
+import { stateHeld } from './session-folder.mjs';
 import { CONTINUATION_LEAD, resumeRead } from './transcript.mjs';
 
 // The value with too few samples: the median over one machine's Claude Code transcripts, 405 sessions that handed off and
@@ -28,12 +29,20 @@ const isSample = (value) => isObject(value) && typeof value.session === 'string'
   && Number.isInteger(value.tokens) && value.tokens >= 0 && Number.isFinite(value.at);
 
 // The samples of the state folder `state` taken in the SAMPLE_DAYS before `now`, oldest first, at most KEPT_SAMPLES.
-// A file that is missing, a link, too large, or not this shape reads as none.
+// A file that is missing, a link, another user's, too large, or not this shape reads as none (fs.mjs readOwnText).
 export function readSamples(state, now = Date.now()) {
-  const value = readSmallJson(path.join(state, RESUME_FILE));
-  const samples = Array.isArray(value?.samples) ? value.samples : [];
+  const samples = parsed(readOwnText(path.join(state, RESUME_FILE)))?.samples;
+  if (!Array.isArray(samples)) return [];
   return samples.filter((each) => isSample(each) && now - each.at >= 0 && now - each.at <= SAMPLE_WINDOW).slice(-KEPT_SAMPLES);
 }
+
+const parsed = (text) => {
+  try {
+    return text === null ? null : JSON.parse(text);
+  } catch {
+    return null;
+  }
+};
 
 const median = (values) => {
   const sorted = [...values].sort((a, b) => a - b);
@@ -53,11 +62,13 @@ export function resumeTokens(handoff, state, now = Date.now()) {
   return { tokens: RESUME_TOKENS, source: 'default', samples: samples.length };
 }
 
-// The state folder of `project` under `config` that the hooks keep the samples in, or null when it cannot be named: no
-// sample is then recorded, and B is the default.
+// The real path of the state folder of `project` under `config` that the hooks keep the samples in, or null when it
+// cannot be named, or when it or a folder above it lets another user replace what lies below (lib/session-folder.mjs
+// stateHeld): no sample is then recorded, and B is the default.
 export function resumeState(project, config) {
   try {
-    return stateDir(project, { config });
+    const state = resolvedPath(stateDir(project, { config }));
+    return state !== null && stateHeld(state) ? state : null;
   } catch {
     return null;
   }

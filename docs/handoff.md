@@ -1158,6 +1158,9 @@ that call, whatever `mode` says, read from the session's own transcript, which i
 names neither the skill nor the block is not parsed, and the parse stops at the first such call. The samples live in
 `<state>/resume-tokens.json`, the newest 50, each with its session and time, written as a new file renamed over the old.
 Two sessions that record at the same moment may keep one sample of the two.
+The file is read only when it is this user's own regular file, no link, in a state folder that it and every folder
+above let no other user replace ([Local state](project-folder.md#local-state)); the snapshot also reads none inside a
+checkout. Any other gives no samples, so `B` is the config value or 44,000.
 A read is one small file, so no stop and no snapshot scans transcripts. Like the reminder, the samples come from
 Claude Code transcripts only: the host adapter's `capabilities.workTools` names the edit and dispatch tools, and a
 host with no transcripts records none and uses the config value or 44,000.

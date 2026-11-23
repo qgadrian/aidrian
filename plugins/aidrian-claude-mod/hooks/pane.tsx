@@ -201,14 +201,17 @@ export function registerPane(on: On, options: PluginOptions) {
   // with no time of its own, the countdown can show less time than is left, never more. Accepted: it errs toward cold.
   on('turn.step', async function* ($, e, next) {
     if (e.agentId === undefined) {
+      // Best effort: a failed read or write here never holds the request or its response back.
       if (e.effort !== undefined) {
         const level = e.effort
-        await update($, effort, () => level)
+        await update($, effort, () => level).catch(() => undefined)
       }
 
-      const sentAt = await $.clock.now()
+      const sentAt = await $.clock.now().catch(() => null)
 
-      return yield* passResponse(next(e), () => update($, cacheAt, () => sentAt))
+      return yield* passResponse(next(e), async () => {
+        if (sentAt !== null) await update($, cacheAt, () => sentAt)
+      })
     }
 
     for await (const chunk of next(e)) {

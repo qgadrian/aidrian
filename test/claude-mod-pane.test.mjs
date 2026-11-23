@@ -69,6 +69,24 @@ test('a response restarts the cache countdown once, at its first piece of model 
   assert.equal((await passed([], null)).calls, 0);
 });
 
+test('a failed cache write never holds back the response or its result', async () => {
+  const usage = { input_tokens: 3, output_tokens: 1 };
+  const text = { kind: 'text', index: 0, text: 'hi' };
+  for (const chunks of [[text], []]) {
+    const stream = passResponse(responseOf(chunks, usage), async () => {
+      throw new Error('state write refused');
+    });
+    const seen = [];
+    let step = await stream.next();
+    while (!step.done) {
+      seen.push(step.value);
+      step = await stream.next();
+    }
+    assert.deepEqual(seen, chunks);
+    assert.deepEqual(step.value, { stopReason: 'end_turn', usage });
+  }
+});
+
 test('the checkout is the branch, or a linked worktree`s folder name, with a dot for changes', () => {
   assert.deepEqual(repoOf({ branch: 'main\n', gitDir: '/w/tiger/.git\n', status: '' }), { label: 'main', isWorktree: false, isDirty: false });
   assert.deepEqual(repoOf({ branch: 'feat/x', gitDir: '/w/tiger/.git/worktrees/feature\n', status: ' M a.js\n' }), { label: 'feature', isWorktree: true, isDirty: true });

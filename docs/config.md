@@ -2069,7 +2069,10 @@ The snapshot input is one JSON object, at most 1 MiB, read as a regular file and
   the same plan. The new run works on that branch from its first attempt: `next` names it, and the start's clone, its
   start row, the session's push, the merge guard, and `stop-action` all take it.
   A result that parks an issue records the commit the forge shows its branch at then, or null when it shows none;
-  a `pr_open` result records the head its pull request's check read, with no second read.
+  a `pr_open` result records the head its pull request's check read, with no second read. A `pr_open` result whose
+  pull request the forge shows merged by the time `wait` takes it in is checked as a `merged` one is, into the default
+  branch of the pinned repository after the attempt started, and then records the issue done, with `reported: "pr_open"`
+  in its results file; a merge that fails that check ends the attempt `bad_result`.
   A ledger written before heads were recorded has a latest result row with no `head` field at all: when that result
   named a pull request, `init` and its check read it through the forge and take its head commit, only when it is open,
   from that branch, in the pinned repository. That fallback trusts the pull request's head as the forge shows

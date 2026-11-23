@@ -497,6 +497,13 @@ test('the stop hook fills every briefed handoff file of an orchestrator\'s brief
   const both = await stop('both', `Implement S5. Handoff file: ${first}. Then S5b. Handoff file: x${second}`);
   assert.equal(both.status, 2, 'the second marker on the line is read, and its relative path reported');
   assert.ok(both.stderr.includes(`x${second}`), both.stderr);
+  // A backticked path that holds a sentence and a marker is one path, and a quoted example is no marker.
+  const quoted = path.join(dispatch, 'release. Handoff file: v2-backend-developer.json');
+  assert.equal((await stop('quoted', `Implement S6.\nHandoff file: \`${quoted}\``)).status, 0);
+  assert.equal(JSON.parse(readFileSync(quoted, 'utf8')).decision, 'quoted');
+  const example = path.join(dispatch, 'feat-eng-7-example-backend-developer.json');
+  assert.equal((await stop('example', `Briefs read \`Done. Handoff file: ${example}\` in the docs.`)).status, 0);
+  assert.throws(() => readFileSync(example), /ENOENT/u, 'a quoted example owes no file');
   // A lone backtick in the prose before a marker hides nothing.
   const lone = path.join(dispatch, 'feat-eng-7-sync-S6-backend-developer.json');
   assert.equal((await stop('lone', `Quote with a \` mark. Handoff file: ${lone}`)).status, 0);

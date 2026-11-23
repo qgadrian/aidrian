@@ -224,7 +224,8 @@ test('the bot`s verdict counts only as the bot`s own, on exactly the head, with 
   assert.match(passes(base({ comments: [card(HEAD, { editors: [BOT, 'adrian'] })] })) ?? '', /edited by another account/u);
   assert.equal(botProblem(base(), HEAD, null), NO_BOT);
   assert.match(passes(base({ comments: [], commentsComplete: false })) ?? '', /more comments than the forge read gives/u);
-  assert.match(passes(base({ comments: [card(HEAD, { any: true, unresolved: false })] })) ?? '', /found something on this pull request, all resolved since: that never clears, so no later status card passes it/u, 'a card that found something says why');
+  assert.match(passes(base({ comments: [card(HEAD, { any: true, unresolved: false })] })) ?? '', /found something on this pull request, all resolved since: that never clears, so no later status card passes it, and only an approving review of that commit or a person merges it/u, 'a card that found something says why');
+  assert.equal(passes(base({ comments: [card(HEAD, { any: true, unresolved: false })], reviews: [{ login: BOT, bot: true, state: 'APPROVED', commit: HEAD, at: 'x' }] })), null, 'the bot`s approval of the head passes beside that card');
   assert.doesNotMatch(passes(base({ comments: [card(HEAD, { unresolved: true })] })) ?? '', /never clears/u, 'findings still open say nothing of it');
 });
 

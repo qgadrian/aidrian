@@ -88,8 +88,8 @@ or `aidrian pr await-review` prints, a `"status"` that one of them prints follow
 One that sends its output to a file (`> r.json`) prints none, so it counts by its recorded tool result instead: one with no
 error, or one that starts `Exit code 9` (`human_required`) or `Exit code 11` (`extension_ask`), as the
 [review-loop check](hooks.md#review-loop-check) reads it.
-A call the host moved to the background records its launch as a result with no error, so it counts whatever the review's own
-exit turns out to be.
+A redirected review call the host moved to the background records its launch as a result with no error, so it counts whatever
+the review's own exit turns out to be.
 An exit code cannot tell: it is the whole line's, so `aidrian pr review 12; test -f x` can fail after a review ran,
 and `false && aidrian pr review 12` fails with none. The command's own text, which a refusal quotes, is never read as its output.
 A call with no result, as in a session cut off mid-call, counts nowhere.

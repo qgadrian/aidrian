@@ -142,10 +142,36 @@ test('a created row comes only from a line whose one printing command is gh pr c
   const link = `${URL_OF('acme/widgets', 9)}\n`;
   assert.deepEqual(await rows(`gh pr create --fill && echo ${URL_OF('acme/widgets', 9)}`, { stdout: link }), [], 'an echoed link of an allowed repository');
   assert.deepEqual(await rows(`echo ${URL_OF('acme/widgets', 9)}; gh pr create --fill`, { stdout: link }), [], 'a command before it');
+  assert.deepEqual(await rows(`git -C ${OWN} status; gh pr create --fill`, { stdout: link }), [], 'a command before it that may print a link');
   assert.deepEqual(await rows('gh pr create --fill | tee log', { stdout: link }), [], 'a pipe');
   assert.deepEqual(await rows(`gh pr create --body "$(echo ${URL_OF('acme/widgets', 9)} >&2)" --fill`, { stdout: link }), [], 'a substitution that prints');
   assert.deepEqual(await rows('X=1; gh pr create --fill', { stdout: link }), [created('acme/widgets', 9)], 'a bare assignment');
   assert.deepEqual(await rows(`cd ${OWN} && GH_REPO=acme/widgets gh pr create --body "$(cat <<'EOF'\nWhy\nEOF\n)" --fill`, { stdout: link }), [created('acme/widgets', 9)], 'a cd and a heredoc body');
+});
+
+test('a leading cd that ; or a newline ends counts as one && ends when it cannot fail, and the row names the folder it entered', async () => {
+  const link = `${URL_OF('acme/other', 599)}\n`;
+  for (const lead of [`cd ${OTHER}; `, `cd ${OTHER}\n`, `cd ${OTHER};\n`, `cd ${OTHER} # the other checkout\n`]) {
+    assert.deepEqual(await rows(`${lead}gh pr create --draft --repo acme/other --fill`, { stdout: link }), [created('acme/other', 599, OTHER)], JSON.stringify(lead));
+    assert.deepEqual(await rows(`${lead}gh pr create --fill`, { stdout: link }), [created('acme/other', 599, OTHER)], `${JSON.stringify(lead)}, the remotes of the folder it entered`);
+  }
+  // A cd that fails under `;` leaves the create in the folder the line started in: no row names a folder it never ran in.
+  const gone = path.join(ROOT, 'gone');
+  assert.deepEqual(await rows(`cd ${gone}; gh pr create --repo acme/widgets --fill`, { stdout: `${URL_OF('acme/widgets', 7)}\n` }), [], 'a folder that is not there');
+  const shut = path.join(ROOT, 'shut');
+  mkdirSync(shut, { recursive: true });
+  chmodSync(shut, 0o600);
+  try {
+    if (process.getuid?.() !== 0) assert.deepEqual(await rows(`cd ${shut}; gh pr create --repo acme/widgets --fill`, { stdout: `${URL_OF('acme/widgets', 7)}\n` }), [], 'a folder it may not search');
+  } finally {
+    chmodSync(shut, 0o700);
+  }
+  assert.deepEqual(await rows(`cd ${OTHER}; echo ${URL_OF('acme/other', 9)}; gh pr create --fill`, { stdout: link }), [], 'a command after the cd that may print');
+  // A cd that can fail on a part of its segment other than its folder, or that runs outside this shell.
+  for (const lead of [`cd ${OTHER} <${gone}; `, `cd ${gone}/../other; `, `f() { cd ${OTHER}; }; `, `coproc cd ${OTHER}; `,
+    `cd ${OTHER} 999999999<<EOF; `, `cd ${OTHER}\r; `, `cd ${OTHER}\u00a0; `]) {
+    assert.deepEqual(await rows(`${lead}gh pr create --repo acme/widgets --fill`, { stdout: `${URL_OF('acme/widgets', 7)}\n` }), [], lead);
+  }
 });
 
 test('in a fork checkout, gh pr create printing the parent`s URL records the parent', async () => {
@@ -201,6 +227,9 @@ test('a push records the folder it ran in: git -C, then a cd before it on the li
   sh(dir, 'git push -q origin HEAD');
   assert.deepEqual(await rows(`git -C ${dir} push`), [pushed('acme/notes', 'feat/folder', dir)]);
   assert.deepEqual(await rows(`cd ${dir} && npm test && git push`), [pushed('acme/notes', 'feat/folder', dir)]);
+  assert.deepEqual(await rows(`cd ${dir}; git push -q -u origin feat/folder`), [pushed('acme/notes', 'feat/folder', dir)], 'a leading cd that ; ends');
+  assert.deepEqual(await rows(`cd ${dir}\ngit push`), [pushed('acme/notes', 'feat/folder', dir)], 'a leading cd that a newline ends');
+  assert.deepEqual(await rows(`# push it\n\ncd ${dir}; git push`), [pushed('acme/notes', 'feat/folder', dir)], 'after a comment and a blank line');
   assert.deepEqual(await rows('git push', { cwd: dir }), [pushed('acme/notes', 'feat/folder', dir)]);
   assert.deepEqual(await rows('git -C "$W" push', { cwd: dir }), []);
   assert.deepEqual(await rows('cd "$W" && git push', { cwd: dir }), []);
@@ -414,7 +443,10 @@ test('the folder of a call comes from an absolute cd, git -C, or env -C, and the
   assert.deepEqual(await rows('cd sub && gh pr create --fill', { stdout: `${URL_OF('acme/widgets', 12)}\n` }), [], 'a relative cd');
   assert.deepEqual(await rows(`cd ${OTHER} && gh pr view 3`), [touched('acme/other', { number: 3 }, OTHER)]);
   assert.deepEqual(await rows(`gh pr view 3 && cd ${OTHER}`), [], 'the payload folder may be the one the line ended in');
-  assert.deepEqual(await rows(`cd ${OTHER}; gh pr view 3`), [], 'a cd that is no leading cd with &&');
+  assert.deepEqual(await rows(`cd ${OTHER}; gh pr view 3`), [touched('acme/other', { number: 3 }, OTHER)], 'a leading cd that ; ends, to a folder it can enter');
+  assert.deepEqual(await rows(`cd ${OTHER}\ngh pr view 3`), [touched('acme/other', { number: 3 }, OTHER)], 'a leading cd that a newline ends');
+  assert.deepEqual(await rows(`cd ${OTHER} & gh pr view 3`), [], 'a cd run in the background');
+  assert.deepEqual(await rows(`cd ${path.join(ROOT, 'gone')}; gh pr view 3`), [], 'a cd that failed, so the call ran in the old folder');
   assert.deepEqual(await rows('gh pr view 3'), [touched('acme/widgets', { number: 3 })]);
   assert.deepEqual(await rows(`env -C ${OTHER} gh pr view 3`), [touched('acme/other', { number: 3 }, OTHER)]);
   assert.deepEqual(await rows("bash -c 'cd sub && gh pr view 3'"), [], 'a relative cd in a shell the line runs');

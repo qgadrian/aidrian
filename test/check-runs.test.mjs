@@ -701,6 +701,9 @@ test('aidrian test changed finds the changed test files and the ones that name a
   assert.deepEqual(touchedTests(dir, ['lib/b.mjs']), ['test/b.test.mjs', 'test/fixtures/a.json', 'test/fixtures/notes.md'], 'a configured command decides what it runs');
   assert.deepEqual(touchedTests(dir, ['test/fixtures/a.json']), ['test/fixtures/a.json'], 'a configured command gets a changed fixture alone, as before');
   assert.deepEqual(touchedTests(dir, ['test/fixtures/gone.json']), ['test/reads.test.mjs'], 'a removed fixture it cannot get selects the tests that name it');
+  rmSync(path.join(dir, 'test/fixtures/a.json'));
+  assert.deepEqual(touchedTests(dir, ['test/fixtures/a.json']), ['test/b.test.mjs'], 'a tracked fixture deleted in the working tree selects the tests that name it');
+  writeFileSync(path.join(dir, 'test/fixtures/a.json'), '{"file": "lib/b.mjs"}\n');
   assert.deepEqual(touchedTests(dir, ['mod/test/fixtures/conf.json']), ['test/reads.test.mjs'], 'a nested package\'s fixture selects the root tests that name it');
   assert.deepEqual(nodeOnly(['test/fixtures/sample.test.jsx']), ['test/jsx.test.mjs'], 'a .jsx fixture named like a test selects the test that names it');
   assert.deepEqual(nodeOnly(['lib/b.mjs']), ['test/b.test.mjs'], 'a fixture or Markdown file is no test module');

@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -49,7 +49,7 @@ function repo(t, { config = configText(), local = null, below = '' } = {}) {
 }
 
 // The gh seam: the pull request, its base and default branch, the config each commits, its comments, and the writes.
-function fakeGh({ view = {}, pull = {}, files = { [MAIN_FILE]: configText() }, comments = [], single = {}, singleFails = false, user = 'adrian', failWrite = false, noId = false } = {}) {
+function fakeGh({ view = {}, pull = {}, files = { [MAIN_FILE]: configText() }, comments = [], single = {}, singleFails = false, user = 'adrian', failWrite = false, noId = false, onWrite = () => {} } = {}) {
   const calls = [];
   const writes = [];
   const gh = (args) => {
@@ -60,6 +60,7 @@ function fakeGh({ view = {}, pull = {}, files = { [MAIN_FILE]: configText() }, c
     const route = args[3] ?? '';
     if (args[0] === 'api' && args.includes('--method')) {
       if (failWrite) throw Object.assign(new Error('gh failed'), { stderr: 'gh: HTTP 500\n' });
+      onWrite();
       const body = args.find((each) => each.startsWith('body=')).slice('body='.length);
       writes.push({ method: args[args.indexOf('--method') + 1], route, body });
       return JSON.stringify(noId ? {} : { id: route.endsWith('/comments') ? 901 : Number(route.split('/').at(-1)) });
@@ -164,16 +165,16 @@ test('record in a moved state folder notes that folder under the state root, for
   recorded(t, r, []);
   assert.ok(heldFolders(stateRoot()).includes(r.state), `${r.state} is noted`);
   const notes = path.join(stateRoot(), 'feedback-folders');
-  // A note already there is only read: post's record update after the forge writes no note, so a read-only folder passes.
-  chmodSync(notes, 0o500);
-  const kept = run(t, r, ['post', '7', '--body-file', bodyAt(r, 'Plain words.')]);
-  chmodSync(notes, 0o700);
+  t.after(() => rmSync(notes, { recursive: true, force: true }));
+  // post notes before the forge and not again after: a notes folder that breaks while the comment is out still records it.
+  const broken = () => {
+    rmSync(notes, { recursive: true, force: true });
+    writeFileSync(notes, '');
+  };
+  const kept = run(t, r, ['post', '7', '--body-file', bodyAt(r, 'Plain words.')], { onWrite: broken });
   assert.equal(kept.code, 0, kept.err.join('\n'));
-  assert.equal(recordOf(r).comment_id === null, false, 'the comment id is recorded');
-  // A note that cannot be written stops post before the forge, so no comment goes out with the record unchanged.
-  rmSync(notes, { recursive: true, force: true });
-  writeFileSync(notes, '');
-  t.after(() => rmSync(notes, { force: true }));
+  assert.equal(recordOf(r).comment_id, 901, 'the comment id is recorded');
+  // Now the notes folder cannot be written: post stops before the forge, so no comment goes out with the record unchanged.
   const blocked = run(t, r, ['post', '7', '--body-file', bodyAt(r, 'Plain words.')]);
   assert.equal(blocked.code, 3);
   assert.deepEqual(blocked.writes, []);

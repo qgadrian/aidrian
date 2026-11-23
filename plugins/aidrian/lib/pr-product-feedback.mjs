@@ -78,24 +78,25 @@ function tableProblem({ kind }, { decision, by, reason }) {
   return decision === 'fix-now' || human ? null : `this item is a defect, which takes fix-now from a session; ${decision} ${ask}`;
 }
 
-// Every file written here is a record or diff at recordPath's depth; a moved state folder is noted under the state root first.
-function writeAtomic(file, text) {
-  noteFeedbackFolder(stateOfFeedbackFile(file), stateRoot());
+// Every file written here is a record or diff at recordPath's depth; a moved state folder is noted under the state root
+// first, unless the caller `noted` it already, as post does before its forge call.
+function writeAtomic(file, text, { noted = false } = {}) {
+  if (!noted) noteFeedbackFolder(stateOfFeedbackFile(file), stateRoot());
   mkdirSync(path.dirname(file), { recursive: true });
   const temporary = `${file}.${process.pid}.tmp`;
   writeFileSync(temporary, text);
   renameSync(temporary, file);
 }
-const writeRecord = (file, record) => writeAtomic(file, `${JSON.stringify(record, null, 2)}\n`);
+const writeRecord = (file, record, options) => writeAtomic(file, `${JSON.stringify(record, null, 2)}\n`, options);
 
 // Reads, changes, and writes the record under its lock. Throws when it cannot be read or is not this pull request's.
-function updateRecord(file, pr, change) {
+function updateRecord(file, pr, change, options) {
   mkdirSync(path.dirname(file), { recursive: true });
   return withLocks([file], () => {
     const record = readRecord(file, pr);
     if (!record) throw new Error(notRun(pr.number));
     change(record);
-    writeRecord(file, record);
+    writeRecord(file, record, options);
     return record;
   });
 }
@@ -623,7 +624,7 @@ function post({ argv: [value], values, project, forge, remotes, env, access }) {
   if (!Number.isSafeInteger(written?.id)) throw new Error('gh gave no comment id for the post, and the record is unchanged');
   updateRecord(file, pr, (current) => {
     current.comment_id = written.id;
-  });
+  }, { noted: true });
   console.log(`${target === null ? 'posted' : 'edited'} the product feedback comment on #${pr.number}`);
   return 0;
 }

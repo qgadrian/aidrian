@@ -255,13 +255,15 @@ test('the check fails a brief whose first next step runs a skill only a person c
     '1. Run /autopilot on the plan.',
     '1. Run the `autopilot` skill on the plan,\n   then report.',
     '1. Run the `autopilot`\n   skill on the plan.',
+    '1. Type /aidrian:autopilot on the plan.',
+    '1. Run the checks and tell the Human to type /aidrian:autopilot.',
+    '1. Load the plan.\n\n   Run /aidrian:autopilot on it.',
   ]) assert.match(at(step) ?? '', /^Next steps: step 1 runs `autopilot`, which only a person can start/u, step);
   for (const step of [
     '1. Run the `plan-implement` skill on /state/plans/autopilot.md.',
     '1. Read the `project-autopilot` skill\'s SKILL.md at its absolute path.',
     '1. Open /repo/skills/autopilot/SKILL.md.',
     '1. Read /autopilot.md, then run the checks.',
-    '1. Run the checks and tell the Human to type /aidrian:autopilot.',
     '1. Run the checks.\n\nThe Human may later run /aidrian:autopilot.',
   ]) assert.equal(at(step), null, `${step}: a later step, a path, or reading a skill is no start`);
 

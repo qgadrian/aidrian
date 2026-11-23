@@ -241,8 +241,8 @@ export function manualSkills(folder = SKILLS) {
   }));
 }
 
-// The text of the brief's first Next steps item: its numbered line and the lines under it, up to the next item, a blank
-// line, or the next section, outside code fences. '' without one.
+// The text of the brief's first Next steps item: its numbered line and the lines under it, an indented paragraph after
+// a blank line included, up to the next item, unindented prose, or the next section, outside code fences. '' without one.
 function firstNextStep(text) {
   const lines = [];
   let inSection = false;
@@ -253,8 +253,8 @@ function firstNextStep(text) {
       inSection = /^next steps(?![\p{L}\p{N}])/iu.test(title);
     } else if (inSection) {
       const item = /^\d+[.)][ \t]+\S/u.test(line);
-      // The next item or a blank line ends it: prose after the list is no part of step 1.
-      if (lines.length && (item || line.trim() === '')) break;
+      // The next item ends it, and so does prose after a blank line that is not indented under the item.
+      if (lines.length && (item || (lines.at(-1).trim() === '' && line.trim() !== '' && !/^\s/u.test(line)))) break;
       if (item || lines.length) lines.push(line);
     }
   }
@@ -266,11 +266,11 @@ function firstNextStep(text) {
 // would stop at once with no work done. null when the step runs none. `skills` is manualSkills's set.
 export function manualSkillProblem(text, skills = manualSkills()) {
   const step = firstNextStep(text);
-  // A slash name ends at a space or sentence punctuation, never a file's extension, as in `/autopilot.md`; a skill
-  // named for a person to type, as in "Adrian types `/aidrian:autopilot`", is the Human's start, not the session's.
-  const typed = (match) => /\btyp(?:e|es|ing)\W*$/iu.test(step.slice(Math.max(0, match.index - 24), match.index));
+  // A slash name ends at a space or sentence punctuation, never a file's extension, as in `/autopilot.md`. Any mention
+  // counts, one for a person to type included: who is meant to act is prose no check reads, so step 1 names none, and
+  // a person's part goes in a later step.
   const named = [
-    ...[...step.matchAll(/(?<![\w./-])\/(?:aidrian:)?([a-z0-9][a-z0-9-]*)(?![\w/-]|\.\w)/gu)].filter((match) => !typed(match)).map((match) => match[1]),
+    ...[...step.matchAll(/(?<![\w./-])\/(?:aidrian:)?([a-z0-9][a-z0-9-]*)(?![\w/-]|\.\w)/gu)].map((match) => match[1]),
     ...[...step.matchAll(/`(?:aidrian:)?([a-z0-9][a-z0-9-]*)`\s+skill(?!['’])\b/gu)].map((match) => match[1]),
   ];
   const manual = [...new Set(named.filter((name) => skills.has(name)))];
@@ -278,7 +278,8 @@ export function manualSkillProblem(text, skills = manualSkills()) {
   const list = manual.map((name) => `\`${name}\``).join(', ');
   return `Next steps: step 1 runs ${list}, which only a person can start (\`disable-model-invocation: true\`): ` +
     'the Skill tool of a continued session refuses it, so the continuation would stop with no work done. ' +
-    'Write step 1 as work a session can start, or leave the brief to the Human, who resumes it by typing the skill';
+    'Write step 1 as work a session can start, naming no such skill, and put a step for the Human later; or leave the ' +
+    'brief to the Human, who resumes it by typing the skill';
 }
 
 // { exitCode: 0 clean, 1 findings, 2 an unreadable prior, or a prior that is the brief itself; lines }. `limit` 0 skips

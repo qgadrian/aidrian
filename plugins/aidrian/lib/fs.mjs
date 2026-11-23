@@ -184,6 +184,16 @@ export function isEntry(file) {
   }
 }
 
+// Whether something is at `file`; a path that cannot be checked counts as there.
+export function exists(file) {
+  try {
+    lstatSync(file);
+    return true;
+  } catch (error) {
+    return error.code !== 'ENOENT' && error.code !== 'ENOTDIR';
+  }
+}
+
 // Blocks this thread for `ms` milliseconds, at least 0: a pause between reads in code that runs synchronously, such as a
 // lock's poll, a host listing's retry, or a project run's wait.
 export const pauseSync = (ms) => {

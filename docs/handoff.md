@@ -446,15 +446,28 @@ the handoff goes on by the clear route with what to change, and nothing is kept,
    It reads the host's listing for the new session's full id for about 5 seconds; when the listing lags, it files the
    floor under the short id the start printed, and every session id that starts with it reads that floor. Under the
    same id it files the session's unattended mark, `$XDG_STATE_HOME/aidrian/unattended/<id>.json`, which names the
-   project's main checkout, so the hooks know the session wherever its calls run (Limits, below). Once the Human
-   types into the session, the agent gate hook files `attended.<id>.json` beside the marks on the session's next main
-   tool call, and the session is attended from then on: its mark reads as none, and its chain floor, kept for the
-   count, no longer holds it. The session's own host adapter's `humanPrompt` says which entries of the session's own
-   transcript are prompts the Human typed after the start; a peer session's message, a scheduled prompt, the start
-   prompt, and a transcript the session could write itself never count
+   project's main checkout, so the hooks know the session wherever its calls run (Limits, below). A session with
+   several marks, under its full id and a short one or in both mark folders, is held by the most restrictive. The scan
+   ranks a mark by the sandbox proof the agent gate hook holds it to, read by the same function the hook reads
+   (`lib/unattended-mark.mjs proofStateOf`): a failed proof, then an owed one, an issue mark with no proof state whose
+   attempt has a proof plan included, then a passed one, whose plan still hides its denied stores from the file tools.
+   Among the marks of one attempt, as when only one copy was updated, the latest verdict counts alone: a failed proof,
+   then a passed one, then one owed, then one owed only by the plan; across attempts, the order above holds.
+   Then come a mark that cannot be read, a proof state with no main checkout included, a project run's issue, and a plain mark.
+   A mark that holds no proof of its own leaves the hook one more hold, by the call's folder: a call inside an attempt's
+   clone with a proof plan owes that proof. That hold depends on each call, so no rank of the marks can stand for it,
+   and a stronger mark the scan picks, such as a passed one, replaces it, even for a call in another attempt's clone.
+   Once the Human types into the session, the agent gate hook files `attended.<id>.json` beside each plain mark that
+   holds it, in each mark folder, on the session's next main tool call, and the session is attended from then on: its
+   mark reads as none, and its chain floor, kept for the count, no longer holds it. Once that record is in each of those
+   folders, the hook neither reads the transcript again nor rewrites the record. The session's own host adapter's
+   `humanPrompt` says which entries of the session's own transcript are prompts the Human typed after the start; a peer
+   session's message, a scheduled prompt, the start prompt, and a transcript the session could write itself never count
    ([Claude Code](providers/claude-code.md#prompts-the-human-typed)). A mark that names a project run's issue, one that
-   tracks a sandbox proof, a pending hold, and a mark that cannot be read stay, whoever types. A host whose adapter has
-   no `humanPrompt` keeps the mark for the session's life (`lib/unattended-mark.mjs liftAttended`, `isAttended`).
+   tracks a sandbox proof, and a mark that cannot be read stay, whoever types; so does a pending hold, one that cannot be
+   read included, which also holds a session already attended, and keeps one from being recorded attended while it
+   lasts, a hold filed while the hook reads the transcript included. A host whose adapter has no `humanPrompt` keeps the mark for the session's life
+   (`lib/unattended-mark.mjs liftAttended`, `isAttended`).
    A start that surely made nothing, one whose host command never ran or refused the start in a way the host adapter
    knows, such as an untrusted folder, while the listing shows no new session, falls back to the clear route. A start
    whose outcome is unknown, such as one that exited non-zero for any other reason, timed out, was stopped by a signal,

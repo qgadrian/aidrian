@@ -215,9 +215,10 @@ feedback and a skill's text are meta entries; and the prompt the background star
 know never counts. The adapter's `ownTranscript` vouches for the transcript: the session's own, `<session id>.jsonl` in a folder of
 `.claude/projects` under the account's home folder (the user's entry, not `$HOME`), which the write guard refuses an
 unattended session, reached through no link. One the host keeps elsewhere, as under another `HOME` or
-`CLAUDE_CONFIG_DIR`, never counts, since a session could write its own proof there. The agent gate hook reads the last
-256 KB of it, from the regular file the checked path names when it is opened, on each main-session call while the session holds a plain unattended mark, and on
-such an entry records the session attended ([The background route](../handoff.md#the-background-route)). Claude Code
+`CLAUDE_CONFIG_DIR`, never counts, since a session could write its own proof there.
+The agent gate hook reads the last 256 KB of it, from the regular file the checked path names when it is opened,
+on each main-session call while the session holds a plain unattended mark and is not yet recorded attended beside each one,
+and on such an entry records the session attended ([The background route](../handoff.md#the-background-route)). Claude Code
 runs a call's hooks in parallel, so another hook can still read the session as unattended on that first call.
 
 ## Handoff continuation

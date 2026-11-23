@@ -1153,14 +1153,15 @@ A sample is one session that resumed from a brief: the context of its first mode
 dispatches an agent, less the context of its first model call, the way the 44,000 was measured. A call counts by its
 result: one a hook or the permissions refused, or that failed, is not where work began. A session resumed from a brief
 when, before that call, it ran the `session-continue` skill, as a Skill call that did not fail or a typed command, or
-started with a `Handoff continuation:` block before its first model call: the first message of a background start, or
-the start context a clear's delivery adds. So typed resumes count too, and a later message that quotes the block does
-not. The Stop hook records each session's sample once, at the first stop after
-that call, whatever `mode` says, read from the session's own transcript, which it already holds: a transcript that
-names neither the skill nor the block is not parsed, and the parse stops at the first such call. The samples live in
-`<state>/resume-tokens.json`, the newest 50 by the time of the call each measured, each with its session, written as a
-new file renamed over the old. So a long session read again after its sample left the 30 days, or the newest 50,
-falls out again at once.
+started with a `Handoff continuation:` block before its first model call, in its first prompt, which is the first
+message of a background start, or in context a SessionStart hook added, which a clear's delivery writes. So typed
+resumes count too, and a later prompt, or another hook's context, that quotes the block does not.
+The Stop hook records each session's sample once, at the first stop after that call, whatever `mode` says, read from
+the session's own transcript, which it already holds: a transcript that names neither the skill nor the block is not
+parsed, and the parse stops at the first such call. The samples live in `<state>/resume-tokens.json`, the newest 50 by
+the time of the call each measured, each with its session, written as a new file renamed over the old. So a long
+session read again after its sample left the 30 days, or the newest 50, falls out again at once, and a call with no
+time, or one already past 30 days, is not kept.
 Two sessions that record at the same moment may keep one sample of the two.
 The file is read only when it is this user's own regular file, no link, that no other user may write, at most 64 KiB,
 in a state folder inside no checkout of the repository, so no branch supplies it, that it and every folder above let no

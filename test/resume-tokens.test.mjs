@@ -1,6 +1,6 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -21,13 +21,14 @@ const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-
 const PLAN_HOOK = path.join(path.dirname(HOOK), 'hook-plan-exit.mjs');
 const OPUS = 'claude-opus-5-5';
 const WORK = claudeCode.capabilities.workTools;
-const NOW = Date.UTC(2026, 10, 23, 12);
 const DAY = 24 * 60 * 60 * 1000;
+// The tests' clock: the run's own time, so a sample the Stop hook reads with the wall clock is never out of its window.
+const NOW = Date.now();
 
-// One assistant request of `context` tokens, with the tool calls `tools` names, then each call's result, at the minute
-// `request` counts, as Claude Code writes them. A tool given as { name, error: true } fails.
+// One assistant request of `context` tokens, with the tool calls `tools` names, then each call's result, two days before
+// NOW and a minute later for each request, as Claude Code writes them. A tool given as { name, error: true } fails.
 let request = 0;
-const RESULT_TIME = (minute) => Date.UTC(2026, 10, 20, 9, minute);
+const RESULT_TIME = (minute) => NOW - 2 * DAY + minute * 60_000;
 const turn = (context, tools = []) => {
   request += 1;
   const calls = tools.map((tool, index) => ({ type: 'tool_use', id: `t${request}-${index}`, input: {}, ...(typeof tool === 'string' ? { name: tool } : tool) }));
@@ -42,7 +43,8 @@ const turn = (context, tools = []) => {
 const tokensOf = (text) => resumeRead(text, WORK)?.tokens ?? null;
 const user = (content) => JSON.stringify({ type: 'user', message: { role: 'user', content } });
 const skillCall = (skill) => ({ name: 'Skill', input: { skill } });
-const startContext = (text) => JSON.stringify({ type: 'attachment', attachment: { type: 'hook_additional_context', content: ['Project knowledge: 1 bucket.', text] } });
+const hookContext = (text, hookEvent) => JSON.stringify({ type: 'attachment', attachment: { type: 'hook_additional_context', hookEvent, content: ['Project knowledge: 1 bucket.', text] } });
+const startContext = (text) => hookContext(text, 'SessionStart');
 const lines = (...each) => each.join('\n');
 
 test('a session that ran the session-continue skill read, before its first edit or dispatch, its context then less its first call`s', () => {
@@ -81,6 +83,10 @@ test('a continuation block counts as a resume in the first message of a backgrou
   assert.equal(tokensOf(lines(user('look'), turn(20_000, ['Bash']), quoted, turn(64_000, ['Edit']))), null, 'a command output that quotes the block');
   assert.equal(tokensOf(lines(user('look'), turn(20_000), user(background), turn(64_000, ['Edit']))), null, 'a later message that quotes it');
   assert.equal(tokensOf(lines(user('look'), turn(20_000), startContext(clear), turn(64_000, ['Edit']))), null, 'a later hook context that holds it');
+  assert.equal(tokensOf(lines(user('look'), user(background), turn(20_000), turn(64_000, ['Edit']))), null, 'a second prompt before any model call');
+  assert.equal(tokensOf(lines(user('look'), hookContext(clear, 'UserPromptSubmit'), turn(20_000), turn(64_000, ['Edit']))), null, 'a prompt hook`s context');
+  const caveat = JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: '<local-command-caveat>run directly</local-command-caveat>' } });
+  assert.equal(tokensOf(lines(caveat, user(background), turn(20_000), turn(55_000, ['Edit']))), 35_000, 'the host`s own entry is no prompt');
 });
 
 // A state folder of its own, with `samples` in its resume file, each { tokens, ago } with `ago` in days before NOW.
@@ -171,14 +177,19 @@ test('a sample keeps the time of the call it measured, so a session read again a
   const now = measured + DAY;
   assert.equal(recordResume(state, 'long-lived', resumed, WORK, now), 40_000);
   assert.deepEqual(readSamples(state, now), [{ session: 'long-lived', tokens: 40_000, at: measured }]);
-  const newer = lines(user('resume'), turn(30_000, [skillCall('aidrian:session-continue')]), turn(70_000, ['Edit'])).replaceAll('2026-11-20', '2026-11-21');
-  for (let index = 0; index < KEPT_SAMPLES; index += 1) recordResume(state, `newer-${index}`, newer, WORK, now + index);
-  assert.ok(!readSamples(state, now).some(({ session }) => session === 'long-lived'), 'pushed out by 50 newer');
-  assert.equal(recordResume(state, 'long-lived', resumed, WORK, now + KEPT_SAMPLES), null, 'read again, it is older than all 50 kept');
-  assert.ok(!readSamples(state, now).some(({ session }) => session === 'long-lived'));
+  // Built later, so each of its calls is a minute later than the long-lived session's.
+  const newer = lines(user('resume'), turn(30_000, [skillCall('aidrian:session-continue')]), turn(70_000, ['Edit']));
+  for (let index = 0; index < KEPT_SAMPLES; index += 1) recordResume(state, `newer-${index}`, newer, WORK, now + DAY + index);
+  const later = now + 2 * DAY;
+  assert.ok(!readSamples(state, later).some(({ session }) => session === 'long-lived'), 'pushed out by 50 newer');
+  assert.equal(recordResume(state, 'long-lived', resumed, WORK, later), null, 'read again, it is older than all 50 kept');
+  assert.ok(!readSamples(state, later).some(({ session }) => session === 'long-lived'));
   const expired = stateWith(t);
-  assert.equal(recordResume(expired, 'old', resumed, WORK, measured + (SAMPLE_DAYS + 1) * DAY), 40_000);
-  assert.deepEqual(readSamples(expired, measured + (SAMPLE_DAYS + 1) * DAY), [], 'kept past 30 days at its own time, so it never counts');
+  assert.equal(recordResume(expired, 'old', resumed, WORK, measured + (SAMPLE_DAYS + 1) * DAY), null, 'a call already past 30 days is not kept');
+  assert.equal(existsSync(path.join(expired, RESUME_FILE)), false, 'and nothing is written');
+  const untimed = lines(user('resume'), turn(30_000, [skillCall('aidrian:session-continue')]), turn(70_000, ['Edit'])).replace(/"timestamp":"[^"]*",/gu, '');
+  assert.equal(resumeRead(untimed, WORK).at, null);
+  assert.equal(recordResume(expired, 'untimed', untimed, WORK, NOW), null, 'a call with no time is not kept');
 });
 
 test('the cost model, the trigger, and the plan offer all price a fresh session with the B they are given', () => {

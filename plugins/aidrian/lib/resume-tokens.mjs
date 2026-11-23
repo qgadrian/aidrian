@@ -87,8 +87,8 @@ export function resumeState(project, config) {
 export const resolvedHandoff = (handoff, state, now = Date.now()) => ({ ...handoff, resumeTokens: resumeTokens(handoff, state, now).tokens });
 
 // Records the sample of the session `session` from its transcript `text`, once per session: the tokens recorded, or null
-// when the session shows no resume, has made no call of `workTools` yet, already has a sample, has one too old to keep,
-// or the write failed.
+// when the session shows no resume, has made no call of `workTools` yet, already has a sample, measured a call with no
+// time or one too old to keep, or the write failed.
 // A transcript that names neither the session-continue skill nor a continuation block is not parsed at all.
 export function recordResume(state, session, text, workTools, now = Date.now()) {
   if (typeof session !== 'string' || !SESSION_ID.test(session) || !workTools?.length) return null;
@@ -96,10 +96,10 @@ export function recordResume(state, session, text, workTools, now = Date.now()) 
   const samples = readSamples(state, now);
   if (samples.some((each) => each.session === session)) return null;
   const read = resumeRead(text, workTools);
-  if (read === null) return null;
   // Kept at the time of the call it measured, so a session read again after its sample left the window, or was pushed
-  // out by newer ones, falls out again at once.
-  const sample = { session, tokens: read.tokens, at: Math.min(read.at ?? now, now) };
+  // out by newer ones, falls out again at once; a call with no time, or one already out of the window, is not kept.
+  if (read === null || read.at === null || now - read.at > SAMPLE_WINDOW) return null;
+  const sample = { session, tokens: read.tokens, at: read.at };
   const next = [...samples, sample].sort((a, b) => a.at - b.at).slice(-KEPT_SAMPLES);
   return next.includes(sample) && writeSamples(state, next) ? read.tokens : null;
 }

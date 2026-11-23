@@ -718,20 +718,24 @@ export function firstPrompt(text) {
 // less the context of its first model call, and `at` the time of that call's result, null when the entry has none.
 // Null when no such call succeeded yet, or when no resume came before it: a session-continue skill run, a Skill call
 // that did not fail or a typed command, or a `Handoff continuation:` block before the first model call, in the first
-// message the background route starts a session with or in the start context a clear's delivery adds
-// (lib/handoff-continue.mjs backgroundPrompt, continuationContext). A call counts by its result, matched by id, so one a
+// prompt, the message the background route starts a session with, or in the context a SessionStart hook added, which
+// a clear's delivery writes (lib/handoff-continue.mjs backgroundPrompt, continuationContext). A call counts by its result, matched by id, so one a
 // hook or the permissions refused is not where work began. It reads up to that result and no further, so a long
 // transcript costs no more than its start. lib/resume-tokens.mjs records it.
 const RESUME_SKILL = 'session-continue';
 export const CONTINUATION_LEAD = 'Handoff continuation:';
 const usageContext = (usage) => (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
 const leadsContinuation = (text) => typeof text === 'string' && text.split('\n').some((line) => line.startsWith(CONTINUATION_LEAD));
-// Whether `entry` holds a continuation block: a user entry's own text, not a tool result, or a hook's added context.
-function continuationBlock(entry) {
-  if (entry?.type === 'attachment') return entry.attachment?.type === 'hook_additional_context' && [entry.attachment.content].flat().some(leadsContinuation);
-  if (entry?.type !== 'user') return false;
+// The context a SessionStart hook added, as Claude Code writes it, or null.
+const startContext = (entry) => (entry?.type === 'attachment' && entry.attachment?.type === 'hook_additional_context'
+  && entry.attachment.hookEvent === 'SessionStart' ? [entry.attachment.content].flat() : null);
+// A prompt's own text, never a tool result or the host's own entry (isMeta), or null.
+function promptText(entry) {
+  if (entry?.type !== 'user' || entry.isMeta === true) return null;
   const content = entry.message?.content;
-  return leadsContinuation(content) || (Array.isArray(content) && content.some((block) => block?.type === 'text' && leadsContinuation(block.text)));
+  if (typeof content === 'string') return content;
+  const texts = Array.isArray(content) ? content.filter((block) => block?.type === 'text' && typeof block.text === 'string') : [];
+  return texts.length ? texts.map((block) => block.text).join('\n') : null;
 }
 const isResumeSkill = (block) => block.name === 'Skill' && typeof block.input?.skill === 'string' && baseName(block.input.skill.replace(/^\//u, '')) === RESUME_SKILL;
 export function resumeRead(text, workTools) {
@@ -740,9 +744,13 @@ export function resumeRead(text, workTools) {
   // The pending calls by id: a resume Skill call as true, a work call as the context it read, or null when no resume
   // came before it.
   const pending = new Map();
+  let prompted = false;
   for (const line of text.split('\n')) {
     const entry = parseLine(line);
-    if ((first === null && continuationBlock(entry)) || typedSkills(entry).some((skill) => baseName(skill) === RESUME_SKILL)) resumed = true;
+    const prompt = promptText(entry);
+    const opening = first === null && ((prompt !== null && !prompted) || startContext(entry) !== null);
+    if ((opening && [prompt, ...(startContext(entry) ?? [])].some(leadsContinuation)) || typedSkills(entry).some((skill) => baseName(skill) === RESUME_SKILL)) resumed = true;
+    prompted ||= prompt !== null;
     const { usage, model, content } = entry?.message ?? {};
     if (!Array.isArray(content)) continue;
     const call = usage && model && model !== '<synthetic>';

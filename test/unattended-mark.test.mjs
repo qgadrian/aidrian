@@ -640,6 +640,19 @@ test('a proof owed only by its attempt\'s plan yields to the state another mark 
   assert.equal(confineDenial(call, { mark: read(session) }), null, 'an ordinary call runs');
 });
 
+test('a passed proof supersedes an owed copy of the same attempt\'s mark', (t) => {
+  const { ownMarks, marks, write, read } = markSetup(t);
+  const work = path.join(folder(t, 'aidrian-run-state-'), 'runs', 'r1', 'attempts', 'ENG-1.1', 'work');
+  mkdirSync(work, { recursive: true });
+  writeFileSync(path.join(path.dirname(work), 'confine-plan.json'), JSON.stringify({ unreadable: [] }));
+  const session = 'feed0020-0000-4000-8000-000000000020';
+  write(marks, `${session}.json`, { cwd: work, project: 'r1', issue: 'ENG-1', confine: true });
+  write(ownMarks, `${session}.json`, { cwd: work, project: 'r1', issue: 'ENG-1', confine: 'passed' });
+  assert.equal(read(session)?.confine, 'passed');
+  const call = { session_id: session, cwd: folder(t, 'aidrian-outside-'), tool_name: 'Bash', tool_input: { command: 'ls' } };
+  assert.equal(confineDenial(call, { mark: read(session) }), null, 'an ordinary call runs');
+});
+
 test('a hold filed while the transcript is read keeps the session from being recorded attended', (t) => {
   const { env, home, root, marks, write } = markSetup(t);
   const transcript = path.join(folder(t, 'aidrian-transcript-'), 'typed.jsonl');

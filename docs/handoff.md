@@ -451,8 +451,8 @@ the handoff goes on by the clear route with what to change, and nothing is kept,
    ranks a mark by the sandbox proof the agent gate hook holds it to, read by the same function the hook reads
    (`lib/unattended-mark.mjs proofStateOf`): a failed proof, then an owed one, an issue mark with no proof state whose
    attempt has a proof plan included, then a passed one, whose plan still hides its denied stores from the file tools.
-   A proof owed only by its attempt's plan yields to the state another mark records for that same attempt, as when one
-   copy of the mark was updated once the start confirmed the proof; it still outranks a passed proof of another attempt.
+   Among the marks of one attempt, as when only one copy was updated, the latest verdict counts alone: a failed proof,
+   then a passed one, then one owed, then one owed only by the plan; across attempts, the order above holds.
    Then come a mark that cannot be read, a proof state with no main checkout included, a project run's issue, and a plain mark.
    A mark that holds no proof of its own leaves the hook one more hold, by the call's folder: a call inside an attempt's
    clone with a proof plan owes that proof. That hold depends on each call, so no rank of the marks can stand for it,

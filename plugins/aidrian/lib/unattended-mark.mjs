@@ -28,7 +28,7 @@
 // it started waits on it (lib/hosts/codex-exec.mjs). It lapses with the pending mark, at PENDING_AGE.
 
 import { randomBytes } from 'node:crypto';
-import { chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import path from 'node:path';
 
@@ -43,7 +43,9 @@ const SHORT = /^([0-9A-Za-z][0-9A-Za-z-]{3,63})\.json$/u;
 const MARK = /^[\w-]{1,128}\.json$/u;
 // A pending mark, named for the session that ran the gate; the dot keeps it apart from a mark under a short id.
 const PENDING = /^pending\.[\w-]{1,128}\.json$/u;
-const TEMPORARY = /^\.(?:pending\.|beacon\.|driver\.)?[\w-]{1,128}\.json\.\d+\.[0-9a-f]{12}\.tmp$/u;
+const TEMPORARY = /^\.(?:pending\.|beacon\.|driver\.|attended\.)?[\w-]{1,128}\.json\.\d+\.[0-9a-f]{12}\.tmp$/u;
+// A session's attended record (liftAttended), swept with the marks it lifts.
+const ATTENDED_FILE = /^attended\.[\w-]{1,128}\.json$/u;
 // The beacon of a session a pending mark holds, which the agent gate hook files on its first call (noteBeacon).
 const BEACON = /^beacon\.[\w-]{1,128}\.json$/u;
 const DAY = 24 * 60 * 60 * 1000;
@@ -212,6 +214,7 @@ export function readUnattendedMark(session, { env = process.env, home, now = Dat
   if (typeof session !== 'string' || !SESSION_ID.test(session)) return null;
   const uid = processUid();
   let unchecked = false;
+  let plain = null;
   const pending = [];
   for (const folder of markFolders({ env, home })) {
     let names;
@@ -227,12 +230,119 @@ export function readUnattendedMark(session, { env = process.env, home, now = Dat
     for (const name of ours) {
       const found = readMark(path.join(folder, name), uid, now);
       if (found === 'unchecked') unchecked = true;
+      // A plain mark waits for the whole scan, so a stronger one later still holds; the Human's presence lifts a plain one.
+      else if (found && plainMark(found)) plain ??= found;
       else if (found) return found;
     }
     pending.push(...names.filter((name) => PENDING.test(name)).map((name) => path.join(folder, name)));
   }
   if (unchecked) return { root: null };
+  if (plain) return isAttended(session, { env, home, now }) ? null : plain;
   return pendingHold(pending, session, uid, now);
+}
+
+// The most of a transcript's end liftAttended reads: the gate asks on every tool call, so a prompt the Human typed since
+// the last call is near the end.
+export const PROMPT_TAIL = 256 * 1024;
+// The record that the Human has typed into a session, `attended.<session>.json` in markFolder: the dot keeps it apart
+// from a mark under a short id, and the marks folder is one no unattended session writes (lib/unattended-write.mjs).
+const ATTENDED = (session) => `attended.${session}.json`;
+
+// Whether `mark` (readUnattendedMark's own mark of a session) is a plain background mark the Human's presence lifts: no
+// project run's issue, no sandbox proof it tracks, and a main checkout it could read.
+const plainMark = (mark) => mark.root !== null && mark.project === undefined && mark.issue === undefined && mark.confine === undefined;
+
+// Whether the Human has typed into `session` (liftAttended): its attended record, of this user, within MARK_AGE, is in
+// one of markFolders. readUnattendedMark then reads its plain mark as none, and a background floor no longer holds it
+// (handoff-guard.mjs startedUnattended, handoff-continue.mjs). Never throws.
+export function isAttended(session, { env = process.env, home, now = Date.now() } = {}) {
+  if (typeof session !== 'string' || !SESSION_ID.test(session)) return false;
+  const uid = processUid();
+  return markFolders({ env, home }).some((folder) => {
+    try {
+      const stat = lstatSync(path.join(folder, ATTENDED(session)));
+      return stat.isFile() && (!Number.isInteger(uid) || stat.uid === uid) && now - Math.floor(stat.mtimeMs) <= MARK_AGE;
+    } catch {
+      return false;
+    }
+  });
+}
+
+// Records that the Human has typed into `session`, a background continuation, so it is attended from then on
+// (docs/handoff.md#the-background-route). `file` is the real path of the session's own transcript, where the session
+// cannot write, and `isHuman(entry)` says whether an entry is a prompt the Human typed after the start, both from the
+// session's host adapter (hosts/index.mjs humanPrompts); a peer's message, a scheduled prompt, and the start prompt
+// never are. Only a session whose every mark is plain is lifted: a project run's issue mark, a mark that tracks a
+// sandbox proof, a mark it cannot read, and a pending hold stay, whoever types. The record goes beside the plain mark
+// that holds it, after a sweep of that folder. It reads at most PROMPT_TAIL bytes of the transcript's end, from the
+// regular file the path names when it opens it. Returns whether it recorded the session attended; never throws.
+export function liftAttended(session, file, { env = process.env, home, now = Date.now(), isHuman = () => false, still = () => true } = {}) {
+  try {
+    if (typeof session !== 'string' || !SESSION_ID.test(session) || typeof file !== 'string' || !path.isAbsolute(file)) return false;
+    const holds = ownHolds(session, { env, home, now });
+    if (holds === null || !holds.length || !holds.every(({ mark }) => plainMark(mark))) return false;
+    if (!tailEntries(file).some((entry) => isHuman(entry)) || !still()) return false;
+    const { folder } = holds[0];
+    if (!trustedFolder(folder)) return false;
+    sweepMarks(folder, now);
+    return writeMark(folder, ATTENDED(session), { at: now }) !== null;
+  } catch {
+    return false;
+  }
+}
+
+// Whether `folder` is a marks folder a lift may write and sweep: a real folder, no link, of this user, as ownFolder holds.
+function trustedFolder(folder) {
+  const stat = lstatSync(folder);
+  const uid = processUid();
+  return stat.isDirectory() && (!Number.isInteger(uid) || stat.uid === uid);
+}
+
+// Every mark of `session`'s own that holds, under its full id or a short one, in each of markFolders, as
+// [{ mark, folder }], or null when one cannot be read.
+function ownHolds(session, { env, home, now }) {
+  const uid = processUid();
+  const holds = [];
+  for (const folder of markFolders({ env, home })) {
+    let names;
+    try {
+      names = readdirSync(folder);
+    } catch (error) {
+      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') continue;
+      return null;
+    }
+    for (const name of names.filter((each) => each === `${session}.json` || (SHORT.exec(each)?.[1] !== undefined && session.startsWith(SHORT.exec(each)[1])))) {
+      const mark = readMark(path.join(folder, name), uid, now);
+      if (mark === 'unchecked') return null;
+      if (mark) holds.push({ mark, folder });
+    }
+  }
+  return holds;
+}
+
+// The entries of the last PROMPT_TAIL bytes of the regular JSONL file `file`, the cut first line left out: the file the
+// descriptor opened must be the one the path names now, so a swap between the check and the read reads nothing.
+function tailEntries(file) {
+  const fd = openSync(file, NO_FOLLOW);
+  try {
+    const stat = fstatSync(fd);
+    const named = lstatSync(file);
+    if (!stat.isFile() || stat.dev !== named.dev || stat.ino !== named.ino) return [];
+    const length = Math.min(stat.size, PROMPT_TAIL);
+    const buffer = Buffer.alloc(length);
+    readSync(fd, buffer, 0, length, stat.size - length);
+    const lines = buffer.toString('utf8').split('\n');
+    if (length < stat.size) lines.shift();
+    return lines.flatMap((line) => {
+      try {
+        return line.trim() ? [JSON.parse(line)] : [];
+      } catch {
+        return [];
+      }
+    });
+  } finally {
+    closeSync(fd);
+  }
 }
 
 // Whether the mark `mark` (readUnattendedMark) holds a project run's issue session: it names an issue, as a tag of a
@@ -390,7 +500,7 @@ function sweepMarks(folder, now) {
   } catch {
     return;
   }
-  const ages = [[MARK, MARK_AGE], [PENDING, PENDING_AGE], [BEACON, PENDING_AGE], [TEMPORARY, DAY]];
+  const ages = [[MARK, MARK_AGE], [ATTENDED_FILE, MARK_AGE], [PENDING, PENDING_AGE], [BEACON, PENDING_AGE], [TEMPORARY, DAY]];
   for (const name of names) {
     const age = ages.find(([pattern]) => pattern.test(name))?.[1];
     if (age === undefined) continue;

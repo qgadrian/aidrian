@@ -40,7 +40,7 @@ import { SESSION_FILES } from './session-folder.mjs';
 import { ORIGIN_FOLDER, originFolders, readOrigins } from './session-origins.mjs';
 import { aidrianArgs, changedVariables, changesVariable, readGit, walkCommands } from './shell-lex.mjs';
 import { TERMINAL_FOLDER, terminalFolders } from './terminal-replace.mjs';
-import { issueHeld, MARK_FOLDER, markFolders, marksNaming } from './unattended-mark.mjs';
+import { isAttended, issueHeld, MARK_FOLDER, markFolders, marksNaming } from './unattended-mark.mjs';
 
 const isSubagent = (input) => typeof input.agent_id === 'string' && input.agent_id !== '';
 // How a denial names who may do what it refuses, for a subagent and for a session no Human attends.
@@ -66,6 +66,8 @@ const heldAs = (unattended, other) => (unattended() ? UNATTENDED : other);
 // lib/unattended-mark.mjs keeps the mark that finds such a session outside its project.
 export function startedUnattended(project, config, session, { home, base } = {}) {
   if (typeof session !== 'string' || !SESSION_ID.test(session)) return false;
+  // A session the Human has typed into is attended from then on, its floor kept for the chain count (liftAttended).
+  if (isAttended(session, home ? { home } : {})) return false;
   const found = (state) => {
     try {
       // The project's own checkouts, not projectCheckouts as projectStore uses for a writer: that is null when git

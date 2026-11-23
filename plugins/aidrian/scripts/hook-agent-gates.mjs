@@ -57,11 +57,12 @@ import { GUARD_BUDGET_MS, guardBudget, PastDeadline, withinDeadline } from '../l
 import { readGateSnapshot } from '../lib/gate-snapshot.mjs';
 import { baseReader, continueStoreWriteDenial, handoffContinueDenial, handoffEnvDenial, hostSessionStartDenial, mainCheckoutWriteDenial, prEnvDenial, projectRunWriteDenial, remoteChangeDenial, sessionFoldersWriteDenial, startedUnattended, stateFolders, stateFoldersWriteDenial } from '../lib/handoff-guard.mjs';
 import { block, HookExit, isMain, runHook } from '../lib/hook-io.mjs';
+import { humanPrompts } from '../lib/hosts/index.mjs';
 import { findProject, openProject } from '../lib/project.mjs';
 import { confineDenial, sandboxEscapeDenial } from '../lib/confine-guard.mjs';
 import { drivesRun, ownAttemptFolder, projectCommandDenial, projectRunActive } from '../lib/project-run-guard.mjs';
 import { canonical } from '../lib/rules/main-checkout.mjs';
-import { issueHeld, noteBeacon, readDriverMark, readUnattendedMark } from '../lib/unattended-mark.mjs';
+import { issueHeld, liftAttended, noteBeacon, readDriverMark, readUnattendedMark } from '../lib/unattended-mark.mjs';
 import { unattendedPlaces, unattendedWriteDenial } from '../lib/unattended-write.mjs';
 
 // The deadline of the running call, in performance.now() milliseconds: its start plus the budget.
@@ -93,6 +94,14 @@ async function gate(input) {
   const planted = cloneConfigProblem(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (planted) await block(input, 'config-guard', projectRuleReason(input, planted, DEFAULTS.names.human, 'that the attempt clone\'s git config must be checked'), { match: 'attempt clone git config' });
   const snapshot = typeof input.agent_id === 'string' && input.agent_id !== '' ? readGateSnapshot(input) : null;
+  // A background continuation the Human has typed into is attended from then on: its own mark goes before it is read.
+  if (typeof input.agent_id !== 'string' || input.agent_id === '') {
+    let prompts = null;
+    try {
+      prompts = humanPrompts(input);
+    } catch {}
+    if (prompts) liftAttended(input.session_id, prompts.file, { isHuman: prompts.isHuman, still: prompts.still });
+  }
   // Read before any guard, wherever the call runs: a session the background route started stays held outside its project.
   const mark = readUnattendedMark(input.session_id);
   // A session a gate's pending mark holds, or one that works an issue of a project run, files its beacon on its first

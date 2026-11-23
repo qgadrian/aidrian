@@ -3,7 +3,7 @@
 // docs/providers/adding-a-host.md lists the fields; docs/providers/claude-code.md says what was checked on this host.
 
 import { lstatSync, realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import path from 'node:path';
 
 import { attachLine, findLine, findSessions, nameMatcher, sessionEnded, sessionFinished, startBackground, startFolder, startProject, stopBackground, stopLine, stopOwnBackground } from './claude-code-background.mjs';
@@ -88,6 +88,33 @@ const OPAQUE_SHELL_TOOLS = Object.freeze(['PowerShell']);
 // if it carries all three. docs/providers/claude-code.md#answers-the-human-gave.
 const humanAnswer = (entry) => entry !== null && typeof entry === 'object' && entry.isSidechain === false && entry.isMeta !== true &&
   entry.isCompactSummary !== true && entry.entrypoint === 'cli' && entry.permissionDecision?.source === 'user_temporary';
+
+// Whether a transcript entry is a prompt the Human typed into the session after its start (lib/unattended-mark.mjs
+// liftAttended): a main-session user entry from the CLI whose `origin` and `turnOrigin` are "human", at prompt 2 or
+// later. Claude Code marks a peer session's message `origin.kind: "peer"`, a hook's or the host's own text `isMeta`, and
+// the prompt a background session starts with is prompt 1, which the start wrote, not a person at the terminal.
+// docs/providers/claude-code.md#prompts-the-human-typed.
+const humanPrompt = (entry) => entry !== null && typeof entry === 'object' && entry.type === 'user' && entry.isSidechain === false &&
+  entry.isMeta !== true && entry.isCompactSummary !== true && entry.entrypoint === 'cli' && entry.origin?.kind === 'human' &&
+  entry.turnOrigin === 'human' && Number.isInteger(entry.turnPosition?.promptIndex) && entry.turnPosition.promptIndex >= 2;
+
+// The real path of `file` when it is the transcript of `session` the host keeps where an unattended session cannot
+// write: `<session>.jsonl` in a folder of `.claude/projects` under the account's home folder, the one the write guard
+// protects (lib/unattended-write.mjs, userInfo), reached through no link. Null otherwise: a transcript under another
+// HOME, or under CLAUDE_CONFIG_DIR, could be the session's own writing. The write guard refuses that folder to every
+// unattended session whatever its places, and the home dot folders above it, so no ancestor can be swapped either.
+function ownTranscript(file, { session, home } = {}) {
+  try {
+    if (typeof session !== 'string' || typeof file !== 'string' || !path.isAbsolute(file)) return null;
+    home ??= userInfo().homedir;
+    const root = path.join(realpathSync(home), '.claude', 'projects');
+    const real = realpathSync(file);
+    const fits = realpathSync(root) === root && real === path.resolve(file) && path.basename(real) === `${session}.jsonl` && path.dirname(path.dirname(real)) === root;
+    return fits ? real : null;
+  } catch {
+    return null;
+  }
+}
 
 // Its command line that starts or resumes a session, which lib/handoff-guard.mjs hostSessionStartDenial refuses a
 // subagent and a session the background handoff route started, so no session starts outside the handoff gate.
@@ -208,6 +235,9 @@ export default {
   },
   opaqueShellTools: OPAQUE_SHELL_TOOLS,
   humanAnswer,
+  humanPrompt,
+  ownTranscript,
+  transcriptFolders: (home) => [path.join(home, '.claude', 'projects')],
   sessionStart: { programs: ['claude'], starts: startsSession },
   // The subcommands of its program that write its own user or project config: MCP servers, settings, and plugins, and
   // its global options that take the next word. The agent gate hook refuses them to a session no Human attends

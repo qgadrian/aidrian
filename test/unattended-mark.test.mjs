@@ -7,17 +7,20 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
+import { unattendedHere } from '../plugins/aidrian/lib/handoff-continue.mjs';
 import { startedUnattended } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { noteFrom, openStore, storePath } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { defaultStateDir, findProject, projectCheckouts, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { GIT_VARS } from '../plugins/aidrian/lib/review/env.mjs';
-import { dropPending, MARK_AGE, markFolder, markPending, markUnattended, PENDING_AGE, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
+import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
+import { humanPrompts } from '../plugins/aidrian/lib/hosts/index.mjs';
+import { dropPending, isAttended, liftAttended, MARK_AGE, markFolder, markPending, markUnattended, PENDING_AGE, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { TEST_HOME } from './fixtures/test-home.mjs';
 import { hookCall } from './hook-call.mjs';
 
@@ -365,4 +368,132 @@ test('every test call that reads the unattended marks or the user\'s own chain f
     });
   }
   assert.deepEqual(missing, [], 'pass `home`, such as TEST_HOME from test/fixtures/test-home.mjs');
+});
+
+test('a background session the Human types into is attended from then on; a peer, the start prompt, a foreign transcript, and an issue session are not', async (t) => {
+  const dir = project(t);
+  const session = 'feed0009-0000-4000-8000-000000000009';
+  const projects = path.join(TEST_HOME, '.claude', 'projects', '-x');
+  mkdirSync(projects, { recursive: true });
+  const transcript = path.join(projects, `${session}.jsonl`);
+  t.after(() => rmSync(transcript, { force: true }));
+  const entry = (more) => ({ type: 'user', isSidechain: false, entrypoint: 'cli', message: { role: 'user', content: 'x' }, ...more });
+  const start = entry({ origin: { kind: 'human' }, turnOrigin: 'human', turnPosition: { promptIndex: 1, turnIndex: 1 } });
+  const peer = entry({ isMeta: true, origin: { kind: 'peer', from: 'uds:/tmp/x.sock' }, turnOrigin: 'peer', turnPosition: { promptIndex: 2, turnIndex: 3 } });
+  const typed = entry({ origin: { kind: 'human' }, turnOrigin: 'human', turnPosition: { promptIndex: 3, turnIndex: 4 } });
+  const lines = (file, ...entries) => writeFileSync(file, `${entries.map((each) => JSON.stringify(each)).join('\n')}\n`);
+  // As the agent gate hook asks: the adapter vouches for the session's own transcript, then for each entry of it.
+  const lift = (id, file) => {
+    const real = claudeCode.ownTranscript(file, { session: id, home: TEST_HOME });
+    return real !== null && liftAttended(id, real, { home: TEST_HOME, isHuman: claudeCode.humanPrompt });
+  };
+  const read = (id) => readUnattendedMark(id, { home: TEST_HOME });
+  assert.ok(markUnattended(session, { root: dir }));
+  // A real background start also files a chain floor, which holds the session in its project on its own.
+  const found = findProject(dir);
+  const { config } = loadConfig(found);
+  const home = folder(t, 'aidrian-home-');
+  const state = defaultStateDir(found, { config, home });
+  floor(state, dir, session);
+  const store = openStore(state, { checkouts: [dir], maxChain: 3 });
+  assert.equal(startedUnattended(found, config, session, { home }), true, 'the floor holds before the Human types');
+  for (const [what, entries] of [['the start prompt', [start]], ['a peer message', [start, peer]], ['a meta entry marked human', [start, { ...typed, isMeta: true }]], ['a subagent\'s', [start, { ...typed, isSidechain: true }]]]) {
+    lines(transcript, ...entries);
+    assert.equal(lift(session, transcript), false, what);
+    assert.ok(read(session), what);
+  }
+  // A transcript outside the host's own folder, which a session could write, proves nothing; nor one named for another session.
+  const elsewhere = path.join(folder(t, 'aidrian-transcript-'), `${session}.jsonl`);
+  lines(elsewhere, start, typed);
+  assert.equal(lift(session, elsewhere), false, 'a foreign transcript');
+  const other = path.join(projects, 'feed000b-0000-4000-8000-00000000000b.jsonl');
+  t.after(() => rmSync(other, { force: true }));
+  lines(other, start, typed);
+  assert.equal(lift(session, other), false, 'another session\'s transcript');
+  // A projects folder that is a link may lead anywhere a session writes.
+  const linkedHome = folder(t, 'aidrian-linked-home-');
+  const target = folder(t, 'aidrian-linked-target-');
+  mkdirSync(path.join(linkedHome, '.claude'), { recursive: true });
+  symlinkSync(target, path.join(linkedHome, '.claude', 'projects'));
+  mkdirSync(path.join(target, '-z'));
+  const linked = path.join(linkedHome, '.claude', 'projects', '-z', `${session}.jsonl`);
+  lines(linked, start, typed);
+  assert.equal(claudeCode.ownTranscript(linked, { session, home: linkedHome }), null, 'a linked projects folder');
+  // A project run's issue session stays held whoever types.
+  const issue = 'feed000a-0000-4000-8000-00000000000a';
+  assert.ok(markUnattended(issue, { root: dir, tags: { project: 'r1', issue: 'ENG-1' } }));
+  const issueTranscript = path.join(projects, `${issue}.jsonl`);
+  t.after(() => rmSync(issueTranscript, { force: true }));
+  lines(issueTranscript, start, typed);
+  assert.equal(lift(issue, issueTranscript), false, 'an issue session');
+  assert.ok(read(issue));
+  // A session with a stronger mark beside its plain one is never lifted, on the first lift too.
+  const both = 'feed000d-0000-4000-8000-00000000000d';
+  assert.ok(markUnattended(both, { root: dir }));
+  const short = path.join(markFolder(), `${both.slice(0, 8)}.json`);
+  writeFileSync(short, JSON.stringify({ root: dir, project: 'r1', issue: 'ENG-1', at: Date.now() }));
+  t.after(() => rmSync(short, { force: true }));
+  const bothTranscript = path.join(projects, `${both}.jsonl`);
+  t.after(() => rmSync(bothTranscript, { force: true }));
+  lines(bothTranscript, start, typed);
+  assert.equal(read(both)?.issue, 'ENG-1', 'the read gives the stronger hold, whatever the scan order');
+  assert.equal(lift(both, bothTranscript), false, 'a stronger hold beside a plain one');
+  assert.equal(isAttended(both, { home: TEST_HOME }), false);
+  // The Human typed: the session is attended, its mark read as none and its background floor no longer holding it.
+  lines(transcript, start, peer, typed);
+  assert.equal(lift(session, transcript), true);
+  assert.equal(read(session), null);
+  assert.equal(isAttended(session, { home: TEST_HOME }), true);
+  assert.equal(isAttended(issue, { home: TEST_HOME }), false);
+  assert.equal(startedUnattended(found, config, session, { home }), false, 'the floor no longer holds it in its project');
+  assert.equal(unattendedHere(session, { store, env: process.env, home, now: Date.now() }), false, 'nor the continuation and its Stop hook');
+  // A mark filed under a short id, as when the host's listing lags, and one in the user's own folder, are lifted where they are.
+  const shortSession = 'feed000e-0000-4000-8000-00000000000e';
+  const shortMark = path.join(markFolder(), `${shortSession.slice(0, 8)}.json`);
+  writeFileSync(shortMark, JSON.stringify({ root: dir, at: Date.now() }));
+  t.after(() => rmSync(shortMark, { force: true }));
+  const ownSession = 'feed000f-0000-4000-8000-00000000000f';
+  const ownMarks = path.join(home, '.local/state/aidrian/unattended');
+  mkdirSync(ownMarks, { recursive: true, mode: 0o700 });
+  writeFileSync(path.join(ownMarks, `${ownSession}.json`), JSON.stringify({ root: dir, at: Date.now() }));
+  for (const id of [shortSession, ownSession]) {
+    const file = path.join(projects, `${id}.jsonl`);
+    t.after(() => rmSync(file, { force: true }));
+    lines(file, start, typed);
+    assert.ok(readUnattendedMark(id, { home }), `${id} is held`);
+    const real = claudeCode.ownTranscript(file, { session: id, home: TEST_HOME });
+    assert.equal(liftAttended(id, real, { home, isHuman: claudeCode.humanPrompt }), true, id);
+    assert.equal(readUnattendedMark(id, { home }), null, `${id} is attended`);
+  }
+  // An issue mark filed beside the lifted plain one later still holds: attendance lifts only the plain hold.
+  const later = path.join(markFolder(), `${session.slice(0, 8)}.json`);
+  writeFileSync(later, JSON.stringify({ root: dir, project: 'r1', issue: 'ENG-1', at: Date.now() }));
+  t.after(() => rmSync(later, { force: true }));
+  assert.equal(read(session)?.issue, 'ENG-1', 'a stronger hold later in the scan');
+});
+
+test('the agent gate hook never lifts a session from a transcript outside the account home, nor on a subagent\'s call', async (t) => {
+  const dir = project(t);
+  const session = 'feed000c-0000-4000-8000-00000000000c';
+  const projects = path.join(TEST_HOME, '.claude', 'projects', '-y');
+  mkdirSync(projects, { recursive: true });
+  const transcript = path.join(projects, `${session}.jsonl`);
+  t.after(() => rmSync(transcript, { force: true }));
+  const typed = { type: 'user', isSidechain: false, entrypoint: 'cli', origin: { kind: 'human' }, turnOrigin: 'human', turnPosition: { promptIndex: 2, turnIndex: 2 }, message: { role: 'user', content: 'go' } };
+  writeFileSync(transcript, `${JSON.stringify(typed)}\n`);
+  assert.ok(markUnattended(session, { root: dir }));
+  // The hook runs in this process: a HOME pointed elsewhere moves no trust, since the adapter reads the account's home.
+  const saved = { HOME: process.env.HOME, CLAUDECODE: process.env.CLAUDECODE };
+  Object.assign(process.env, { HOME: TEST_HOME, CLAUDECODE: '1' });
+  t.after(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  const run = (input) => hookCall(HOOK, { input: JSON.stringify({ session_id: session, cwd: dir, transcript_path: transcript, tool_name: 'Bash', tool_input: { command: 'true' }, ...input }), cwd: dir, encoding: 'utf8' });
+  assert.equal((await run({ agent_id: 'a5f0c1', agent_type: 'aidrian:explorer' })).status, 0);
+  assert.equal((await run({})).status, 0);
+  assert.ok(readUnattendedMark(session, { home: TEST_HOME }), 'still held');
+  assert.equal(humanPrompts({ session_id: session, transcript_path: transcript }), null, 'no transcript of the account home');
 });

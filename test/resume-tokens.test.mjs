@@ -192,7 +192,9 @@ test('a sample keeps the time of the call it measured, so a session read again a
   const untimed = lines(user('resume'), turn(30_000, [skillCall('aidrian:session-continue')]), turn(70_000, ['Edit'])).replace(/"timestamp":"[^"]*",/gu, '');
   assert.equal(resumeRead(untimed, WORK).at, null);
   assert.equal(recordResume(expired, 'untimed', untimed, WORK, NOW), null, 'a call with no time is not kept');
-  const full = stateWith(t, many(KEPT_SAMPLES, 50_000));
+  // Three days old, so all 50 are inside the window read a day before the edit.
+  const full = stateWith(t, many(KEPT_SAMPLES, 50_000, 3));
+  assert.equal(readSamples(full, measured - DAY).length, KEPT_SAMPLES);
   const before = readFileSync(path.join(full, RESUME_FILE), 'utf8');
   assert.equal(recordResume(full, 'ahead', resumed, WORK, measured - DAY), null, 'a call after now is not kept');
   assert.equal(readFileSync(path.join(full, RESUME_FILE), 'utf8'), before, 'and a full file stays as it was');

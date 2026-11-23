@@ -29,7 +29,7 @@ import { parseArgs } from 'node:util';
 
 import { decisionProblem, readTriage, recordDecision, reportName, sidecarName, sidecarProblems, today } from './audits.mjs';
 import { commandConfig, DEFAULTS, loadConfig, stateDirProblem, strictConfigFromText } from './config.mjs';
-import { AUDIT_KEY, cleanTitle, decisionFields, decisionOf, heldFor, itemState, openDecisions, KINDS, noteFeedbackFolder, PERSONA, PRODUCT_MANAGER, readRecord, RECORD_VERSION, recordPath } from './feedback-record.mjs';
+import { AUDIT_KEY, cleanTitle, decisionFields, decisionOf, heldFor, itemState, openDecisions, KINDS, noteFeedbackFolder, PERSONA, PRODUCT_MANAGER, readRecord, RECORD_VERSION, recordPath, stateOfFeedbackFile } from './feedback-record.mjs';
 import { forgeFor } from './forges/index.mjs';
 import { isDirectory, isFile, isObject, isWithin } from './fs.mjs';
 import { runGit } from './git.mjs';
@@ -78,10 +78,9 @@ function tableProblem({ kind }, { decision, by, reason }) {
   return decision === 'fix-now' || human ? null : `this item is a defect, which takes fix-now from a session; ${decision} ${ask}`;
 }
 
-// Every file written here lies in `<state>/product-feedback/`; a moved state folder is noted under the state root first.
+// Every file written here is a record or diff at recordPath's depth; a moved state folder is noted under the state root first.
 function writeAtomic(file, text) {
-  const at = file.split(path.sep).lastIndexOf('product-feedback');
-  if (at > 0) noteFeedbackFolder(file.split(path.sep).slice(0, at).join(path.sep), stateRoot());
+  noteFeedbackFolder(stateOfFeedbackFile(file), stateRoot());
   mkdirSync(path.dirname(file), { recursive: true });
   const temporary = `${file}.${process.pid}.tmp`;
   writeFileSync(temporary, text);
@@ -611,6 +610,8 @@ function post({ argv: [value], values, project, forge, remotes, env, access }) {
   const marker = feedbackMarker(pr);
   const comment = `${marker}\n${neutralized(body)}`;
   const target = ownComment({ forge, pr, record: found, marker });
+  // Before the forge: a note that cannot be written fails here, not after the comment is out and the record unchanged.
+  noteFeedbackFolder(state, stateRoot());
   let written;
   try {
     written = target === null

@@ -163,6 +163,14 @@ test('record in a moved state folder notes that folder under the state root, for
   const r = repo(t);
   recorded(t, r, []);
   assert.ok(heldFolders(stateRoot()).includes(r.state), `${r.state} is noted`);
+  // A note that cannot be written stops post before the forge, so no comment goes out with the record unchanged.
+  const notes = path.join(stateRoot(), 'feedback-folders');
+  rmSync(notes, { recursive: true, force: true });
+  writeFileSync(notes, '');
+  t.after(() => rmSync(notes, { force: true }));
+  const blocked = run(t, r, ['post', '7', '--body-file', bodyAt(r, 'Plain words.')]);
+  assert.equal(blocked.code, 3);
+  assert.deepEqual(blocked.writes, []);
 });
 
 test('status owes not run, unanswered, and not re-checked with exit 2; the JSON lists ids and each command', (t) => {

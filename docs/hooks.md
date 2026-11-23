@@ -396,7 +396,8 @@ What each rule matches:
   whose chosen option is that decision alone: `fix-now` also reads as "Fix now", and "Drop nothing, keep it open" is no drop. A note goes in the option's description: "Fix now, in this pull request" as a label is refused, since a typed reply and a picked label read the same, and the refusal says so.
   A call whose folder or project it cannot read is refused only while this machine keeps product feedback: a `product-feedback/` folder
   in a project's state folder under the state root, in a state folder that config.json `state.dir` moved, which every feedback write
-  notes in the state root's `feedback-folders/` first, or in the current project's state folder. A moved folder whose feedback was
+  and `post` notes in the state root's `feedback-folders/` first (a note that cannot be written stops the command before anything
+  else), or in the current project's state folder. A moved folder whose feedback was
   written before that note existed is seen once its next write notes it. That is a call after a `cd` it cannot
   follow, such as `cd "$D" &&`, `cd ~/x &&`, `(cd "$D"; …)`, `pushd "$D" &&`, or `env -C "$D"`; after a `cd` whose word the shell
   expands, such as `cd ../proj[B] &&`, or a `cd` or `pushd` with two operands, as zsh's `cd old new`; in a folder, or with a

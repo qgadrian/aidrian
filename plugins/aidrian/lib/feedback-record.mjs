@@ -3,7 +3,7 @@
 // imports neither gh nor the knowledge loader. docs/config.md#product-feedback describes the record.
 
 import { createHash } from 'node:crypto';
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { allowedDecisions, FINAL, held } from './audits.mjs';
@@ -92,14 +92,22 @@ export function recordPath(state, repo, number) {
 // project a call runs in, so a record kept in a moved state folder still holds such a call (heldFolders).
 const FOLDERS = 'feedback-folders';
 
-// Notes `state` under the state root `root` before a record or diff is written there. A folder under `<root>/projects/`
-// needs no note: the rules list those. A note that cannot be written throws, so the record is not written either.
+// Notes `state` under the state root `root` before a record or diff is written there, or a comment posted from it. A
+// direct child of `<root>/projects/` needs no note: the rules list those. The note is the path alone, written to a
+// temporary file and renamed over, so a reader sees a whole note or none. One that cannot be written throws, so nothing
+// after it runs.
 export function noteFeedbackFolder(state, root) {
-  if (isWithin(path.join(root, 'projects'), state)) return;
+  if (path.dirname(state) === path.join(root, 'projects')) return;
   const folder = path.join(root, FOLDERS);
   mkdirSync(folder, { recursive: true });
-  writeFileSync(path.join(folder, createHash('sha256').update(state).digest('hex').slice(0, 32)), `${state}\n`);
+  const note = path.join(folder, createHash('sha256').update(state).digest('hex').slice(0, 32));
+  const temporary = `${note}.${process.pid}.tmp`;
+  writeFileSync(temporary, state);
+  renameSync(temporary, note);
 }
+
+// The state folder of a file a feedback write makes: `<state>/product-feedback/<owner>/<name>/pr-<n>/<file>` (recordPath).
+export const stateOfFeedbackFile = (file) => path.resolve(file, '../../../../..');
 
 // The noted state folders under `root`, as written. A note that cannot be read is left out; the caller checks each folder.
 export function heldFolders(root) {
@@ -108,9 +116,9 @@ export function heldFolders(root) {
   try {
     names = readdirSync(folder);
   } catch {}
-  return names.flatMap((name) => {
+  return names.filter((name) => !name.endsWith('.tmp')).flatMap((name) => {
     try {
-      const state = readFileSync(path.join(folder, name), 'utf8').trim();
+      const state = readFileSync(path.join(folder, name), 'utf8');
       return path.isAbsolute(state) ? [state] : [];
     } catch {
       return [];

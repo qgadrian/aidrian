@@ -44,11 +44,15 @@ export function changedFiles(root, base, git = runGit) {
   return diffed && untracked ? [...new Set([...diffed, ...untracked])].sort() : null;
 }
 
-// The words a test names a changed file by, none for a test file itself: a code file by its name, and by its name with no
-// extension, as an import often writes it (`./check-runs`); `index.*` by its folder and name; a fixture in a test folder by
-// its path and its name, as a test joins it to its folder; any other file by its path.
-export function needlesOf(file, isTest = (name) => TEST_FILE.test(name)) {
-  if (isTest(file)) return [];
+// A file named as a test, which no other test imports. A module in a test folder named otherwise, such as a helper, is
+// one tests import, so its users are searched for too.
+const NAMED_TEST = /\.(?:test|spec)\.[^/]+$|_test\.[^/]+$/u;
+
+// The words a test names a changed file by, none for a file named as a test: a code file by its name, and by its name with
+// no extension, as an import often writes it (`./check-runs`); `index.*` by its folder and name; a fixture in a test folder
+// by its path and its name, as a test joins it to its folder; any other file by its path.
+export function needlesOf(file) {
+  if (NAMED_TEST.test(file)) return [];
   if (!CODE_FILE.test(file)) return TEST_FILE.test(file) ? [...new Set([file, path.posix.basename(file)])] : [file];
   const name = path.posix.basename(file);
   const stem = name.replace(/\.[^.]+$/u, '');
@@ -67,7 +71,7 @@ export function touchedTests(root, files, git = runGit, { nodeOnly = false } = {
   const isTest = (file) => TEST_FILE.test(file) && (!nodeOnly || NODE_MODULE.test(file));
   const ours = (file) => isTest(file) && !packages.some((folder) => file.startsWith(folder));
   const own = files.filter((file) => ours(file) && exists.has(file));
-  const needles = [...new Set(files.flatMap((file) => needlesOf(file, isTest)))];
+  const needles = [...new Set(files.flatMap(needlesOf))];
   // Go tests a package from the same folder, and names no file: every `_test.go` beside a changed `.go` file.
   const goFolders = new Set(files.filter((file) => file.endsWith('.go') && !file.endsWith('_test.go')).map((file) => path.posix.dirname(file)));
   const beside = nodeOnly ? [] : listed.filter((file) => file.endsWith('_test.go') && goFolders.has(path.posix.dirname(file)));

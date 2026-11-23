@@ -676,6 +676,8 @@ test('aidrian test changed finds the changed test files and the ones that name a
       'test/fixtures/a.json': '{"file": "lib/b.mjs"}\n',
       'test/fixtures/notes.md': 'see lib/b.mjs\n',
       'test/math.mjs': 'export {};\n',
+      'test/fixtures/frozen-clock.mjs': 'export {};\n',
+      'test/clock.test.mjs': "import './fixtures/frozen-clock.mjs';\n",
     },
   });
   git('push', '-q', 'origin', 'feat/x');
@@ -684,6 +686,7 @@ test('aidrian test changed finds the changed test files and the ones that name a
   assert.deepEqual(needlesOf('lib/hosts/index.mjs'), ['hosts/index.mjs', 'hosts/index']);
   assert.deepEqual(needlesOf('docs/hooks.md'), ['docs/hooks.md']);
   assert.deepEqual(needlesOf('test/a.test.mjs'), []);
+  assert.deepEqual(needlesOf('test/fixtures/frozen-clock.mjs'), ['frozen-clock.mjs', 'frozen-clock'], 'a helper in a test folder is searched for by its users');
   writeFileSync(path.join(dir, 'lib/a.mjs'), 'export const a = 2;\n');
   writeFileSync(path.join(dir, 'test/c.test.mjs'), 'new\n');
   assert.deepEqual(touchedTests(dir, ['lib/a.mjs', 'test/c.test.mjs']), ['test/a.test.mjs', 'test/c.test.mjs'], 'a nested package\'s tests are its own runner\'s');
@@ -697,6 +700,7 @@ test('aidrian test changed finds the changed test files and the ones that name a
   assert.deepEqual(nodeOnly(['test/math.mjs']), ['test/math.mjs'], 'any module in a test folder is a node test');
   assert.deepEqual(nodeOnly(['test/fixtures/notes.md']), ['test/b.test.mjs'], 'a fixture joined to its folder by name');
   assert.deepEqual(nodeOnly(['lib/a.mjs']), ['test/a.test.mjs'], 'a nested package\'s .tsx test stays out');
+  assert.deepEqual(nodeOnly(['test/fixtures/frozen-clock.mjs']), ['test/clock.test.mjs', 'test/fixtures/frozen-clock.mjs'], 'a changed helper selects the tests that import it');
   assert.deepEqual([nodeOnly(['pkg/sum.go']), nodeOnly(['pkg/sum_test.go'])], [[], []], 'Go tests are a configured command\'s');
   assert.equal(testCommand(dir, {}), 'npm test --');
   assert.equal(testCommand(dir, { changedCommand: 'node --test' }), 'node --test');

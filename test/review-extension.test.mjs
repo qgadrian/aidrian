@@ -438,7 +438,7 @@ function botProject(t, config = {}, { visibility = 'PRIVATE' } = {}) {
   const edit = (id, body) => (issue.find((comment) => comment.id === id).body = body);
   let head = 'zzz';
   // `failRead`: the read of the bot's reviews, counted from 1 in this run, that fails as GitHub would.
-  const run = (comments, { reviews = comments.length, at = 'zzz', failRead = null } = {}) => {
+  const run = (comments, { reviews = comments.length, at = 'zzz', failRead = null, args = [] } = {}) => {
     head = at;
     let reviewReads = 0;
     const list = Array.from({ length: reviews }, (_, i) => ({ id: i + 1, user: { login: DEFAULT_REVIEWER }, submitted_at: T(i + 1), commit_id: `c${i}`, state: 'COMMENTED' }));
@@ -467,7 +467,7 @@ function botProject(t, config = {}, { visibility = 'PRIVATE' } = {}) {
       reactions: () => [],
     };
     let t0 = Date.parse(T(30));
-    return runAwaitReview(['42', '--request', '--timeout-sec', '0'], loadConfig(project).config, project, { forge, now: () => t0, sleep: async (s) => { t0 += s * 1000; } }).then((code) => ({ code, out: JSON.parse(log.mock.calls.at(-1).arguments[0]), requests, reviewReads }));
+    return runAwaitReview(['42', '--request', '--timeout-sec', '0', ...args], loadConfig(project).config, project, { forge, now: () => t0, sleep: async (s) => { t0 += s * 1000; } }).then((code) => ({ code, out: JSON.parse(log.mock.calls.at(-1).arguments[0]), requests, reviewReads }));
   };
   // `aidrian pr extend` as the CLI runs it, with the review step's forge over the same comments.
   const extend = (args) => runExtend(['42', ...args], project, loadConfig(project).config, {
@@ -631,6 +631,14 @@ test('await-review --request at the cap: bot rounds that do not shrink go to the
     'Approve one more round (--max-rounds 4)',
     'AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr await-review 42 --request --max-rounds 4 --repo acme/notes',
   ]);
+});
+
+// The raise waits on the configured reviewer, so a wait on another `--reviewer` prints none at its cap.
+test('await-review --request with another --reviewer prints no raise at its cap', async (t) => {
+  const off = botProject(t, { github: { extraRounds: 'off', reviewer: 'configured-bot[bot]' } });
+  const other = await off.run([[['a.js', 1, 'One']], [['b.js', 1, 'x']], []], { args: ['--reviewer', DEFAULT_REVIEWER] });
+  assert.equal(other.code, 4);
+  assert.deepEqual([other.out.question, other.out.raise], [undefined, undefined]);
 });
 
 test('aidrian report reviews counts each check at the cap once, by its last decision', () => {

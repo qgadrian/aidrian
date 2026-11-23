@@ -1135,8 +1135,8 @@ At the cap that stands, `round_limit` carries a `question`, `options`, and `rais
 question names `<owner>/<name>#<PR>` and `--max-rounds <N>`, its first option starts with "Approve", and `raise` is
 `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N>`, with `--with-bot` when the step ran the bot
 (`aidrian pr await-review <PR> --request` for the bot's rounds alone, `"off"` included), ending in
-`--repo <owner>/<name>`, the repository the question names. A `--reviewer` the wait ran with is not carried: the raise
-waits on the configured reviewer. `<N>` allows exactly one more round of the cap that stopped, the bot's when
+`--repo <owner>/<name>`, the repository the question names. A wait on a `--reviewer` other than the configured one prints
+no raise, since its rounds are that reviewer's and the `review-rounds` rule approves no `--reviewer`. `<N>` allows exactly one more round of the cap that stopped, the bot's when
 its cap stopped `aidrian pr review --with-bot`. The session asks that question word for word, and on the first option runs `raise`: the `review-rounds` rule
 reads that one answer as the grant, so no second question follows, and a second round needs a new answer.
 At the cap that stands, `stop` or the ceiling, the merge guard asks the Human to ship with the findings filed or to

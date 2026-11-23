@@ -45,12 +45,13 @@ const PLUGIN_FOLDER = path.resolve(import.meta.dirname, '..');
 // `since` is when the subagent's transcript began, or null (handoffSince).
 export function checkDelivery(input, project, places = {}) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : project.root;
-  const claims = claimedPaths(input.last_assistant_message);
   const { owed: unwritten, refused } = briefHandoffs(input, project, places);
+  // A handoff the session may not write (issueOwner) is no file the agent owes, nor one it delivered: a claim of it
+  // neither sends the agent back nor reads as a delivered file on the stop row.
+  const claims = uncovered(input, claimedPaths(input.last_assistant_message), refused);
   const since = handoffSince(input);
   if (!claims.length) return { claims, missing: [], unwritten, since };
-  // A handoff the session may not write (issueOwner) is no file the agent owes, so a claim of it sends nothing back.
-  const missing = uncovered(input, missingPaths(claims, cwd, { roots: () => deliveryRoots(project, cwd), touched: () => touchedFiles(input) }), refused);
+  const missing = missingPaths(claims, cwd, { roots: () => deliveryRoots(project, cwd), touched: () => touchedFiles(input) });
   return { claims, missing, unwritten, since };
 }
 

@@ -384,7 +384,7 @@ test('the subagent stop delivery hands an issue session only its own unshared ha
   writeFileSync(transcript, `${JSON.stringify({ type: 'user', message: { role: 'user', content: `Map the flow.\nHandoff file: ${other}` } })}\n`);
   const input = { session_id: SESSION, cwd: own.dir, agent_type: 'aidrian:explorer', agent_transcript_path: transcript, last_assistant_message: `Done.\nHandoff: ${other}` };
   const checked = checkDelivery(input, own.project, { env: own.env, home: own.home });
-  assert.deepEqual([checked.unwritten, checked.missing], [[], []], 'neither owed nor missing');
+  assert.deepEqual([checked.unwritten, checked.missing, checked.claims], [[], [], []], 'neither owed, missing, nor claimed as delivered');
   // A dispatch folder that is a link leads elsewhere: no handoff is owed through it, even the session's own.
   const away = path.join(own.root, 'away');
   mkdirSync(away);

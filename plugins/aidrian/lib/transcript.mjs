@@ -161,11 +161,14 @@ export function filesRead(text, keep = () => true) {
     for (const block of content) {
       if (block?.type !== 'tool_use') continue;
       if (block.name === 'Read' && typeof block.input?.file_path === 'string') read.add(block.input.file_path);
-      if (block.name === 'Bash' && typeof block.input?.command === 'string') for (const file of shellReads(block.input.command)) read.add(file);
+      if (block.name === SHELL_TOOL && typeof block.input?.command === 'string') for (const file of shellReads(block.input.command)) read.add(file);
     }
   }
   return [...read];
 }
+
+// Claude Code's shell tool, whose commands the readers here walk.
+const SHELL_TOOL = 'Bash';
 
 // The programs whose operands are files they print, whole or in part.
 const FILE_READERS = new Set(['cat', 'head', 'tail', 'sed', 'awk', 'less', 'more', 'bat', 'nl']);
@@ -466,7 +469,7 @@ function actionOf(block) {
     const loop = baseName(skill) === LOOP_SKILL;
     return { skill, review: REVIEW_SKILLS.has(baseName(skill)), loop, loopPull: loop ? argsPull(block.input.args) : null, draft: false, edit: false, reviews: [], edits: [], gates: [], merges: [] };
   }
-  if (block.name !== 'Bash' || typeof block.input?.command !== 'string') return null;
+  if (block.name !== SHELL_TOOL || typeof block.input?.command !== 'string') return null;
   const reviews = matching(block.input.command, runsReview).map(aidrianTarget);
   const draft = runs(block.input.command, createsDraft);
   const edits = matching(block.input.command, editsPr).map(editTarget);

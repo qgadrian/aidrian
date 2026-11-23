@@ -2289,16 +2289,16 @@ The answer is one section of the issue's description in the tracker: an ATX head
 through the line before the next heading of the same or a higher level.
 Write it so it stands alone, naming the question and the chosen path in full: a reference to text outside it, such as
 an option's number or "as above", settles nothing.
-It holds no HTML comment, `<details>` block, or `+++` collapsible, which the tracker's view hides, and sits inside none
-anywhere in the description.
-The run keeps a description's first 20,000 characters: a section that runs to that cut is void, so end it with a
-heading before the cut.
+A description that holds markup the tracker's view hides anywhere, fenced or not, voids every grant on the issue:
+any `<!--`, any `<details` in any case, or a line that is `+++` or starts with `+++ `.
+The run keeps a description's first 20,000 characters, and a description cut off there voids every grant on the issue,
+wherever the section sits: keep a pinned issue's description under the cap.
 
 `aidrian project decision ISSUE --heading TEXT` prints that section, then the entry to add, from the attended session's
 recorded tracker read of the issue, the bytes `init` keeps.
 It runs only from an attended main session and writes nothing.
-It exits 1 when the session recorded no read of the issue, no single section has that heading, the section runs to the
-cut, or it hides text or sits in hidden text.
+It exits 1 when the session recorded no read of the issue, the description was cut off or holds hidden markup, or no
+single section has that heading.
 The hash is the sha256 of the section's UTF-8, its heading line included, with CRLF read as LF, each line's trailing
 blanks dropped, and blank lines at both ends dropped.
 The team merges the entry to the default branch; a working copy, a local ref alone, or a branch an issue session

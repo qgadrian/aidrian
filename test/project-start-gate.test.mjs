@@ -23,7 +23,7 @@ import { appendToRun, issueBranch, readRun, runsFolder } from '../plugins/aidria
 import { forgeFor } from '../plugins/aidrian/lib/forges/index.mjs';
 import { attemptFolder, runLogFile, setUnsigned, signingProblem, sweepAttempts, UNSIGNED } from '../plugins/aidrian/lib/project-start.mjs';
 import { markUnattended, PENDING_AGE, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
-import { DECIDED, decidedEntry, decidedFixture, DRIVER, fakeClaude, ORIGIN, OTHER, runFixture, STARTED, testGlobalConfig } from './project-start-fixture.mjs';
+import { decidedEntry, decidedFixture, DRIVER, fakeClaude, ORIGIN, OTHER, runFixture, STARTED, testGlobalConfig } from './project-start-fixture.mjs';
 
 const SKILL = path.resolve(import.meta.dirname, '../plugins/aidrian/skills/autopilot/SKILL.md');
 const at = (ms) => new Date(ms).toISOString();
@@ -180,15 +180,13 @@ test('a recorded decision whose section changed, or an issue with none, gets no 
   assert.equal(started.args.at(-1), projectPrompt({ run: 'launch', key: 'ENG-1', attempt: 1, branch: 'feat/eng-1-export', clone: work(plain), confine: true, note: started.args.at(-1).split('\n').at(-1) }));
 });
 
-test('a start voids a recorded decision whose section runs to where the cap cut the kept description off', (t) => {
-  const cut = decidedFixture(t, { cut: true, entry: decidedEntry(DECIDED.description, 'Notes') });
+test('a start voids a recorded decision on a kept description its cap cut off, though a heading ends the section before the cut', (t) => {
+  const cut = decidedFixture(t, { cut: true });
   const start = cut.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(start.exitCode, 0, start.err.join('\n'));
-  assert.equal(start.out.at(-1), 'note recorded-decision: ENG-1 void: the kept description was cut off before the section ends');
+  assert.equal(start.out.at(-1), 'note recorded-decision: ENG-1 void: the kept description was cut off at its 20,000-character cap');
   assert.equal(existsSync(decisionFile(cut)), false);
-  // A section a later heading ends before the cut stands.
-  const ended = decidedFixture(t, { cut: true });
-  assert.equal(ended.cmd(['start', 'launch', 'ENG-1']).out.at(-1), 'recorded-decision: ENG-1 stands');
+  assert.doesNotMatch(cut.claude.starts()[0].args.at(-1), /a decision the Human recorded/u);
 });
 
 test('the team policy keeps a recorded decision only where the local ref and the forge pin it alike', (t) => {

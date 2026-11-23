@@ -11,7 +11,7 @@ import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { hiddenRanges, recordedDecision, sectionOf } from '../plugins/aidrian/lib/project-decision.mjs';
+import { recordedDecision, sectionOf } from '../plugins/aidrian/lib/project-decision.mjs';
 import { recordedTexts, recordIssueReads, TEXT_CAPS } from '../plugins/aidrian/lib/project-issue-text.mjs';
 import { markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { DECIDED, decidedEntry, DRIVER, ISSUES, OTHER, runFixture } from './project-start-fixture.mjs';
@@ -43,47 +43,37 @@ test('CRLF and trailing spaces hash alike, and the hash covers the heading line'
   assert.deepEqual(recordedDecision(entry, 'no heading here'), { void: 'no section, or more than one, has that heading' });
 });
 
-const HIDDEN = { void: 'the section holds text the tracker\'s view hides' };
-const pinned = (body, heading = 'Decision') => recordedDecision({ heading, sha256: sha(sectionOf(body, heading) ?? '') }, body);
+const HIDDEN = { void: 'the issue\'s description holds text the tracker\'s view hides' };
+const CUT = { void: 'the kept description was cut off at its 20,000-character cap' };
+const pinned = (body, heading = 'Decision', options) => recordedDecision({ heading, sha256: sha(sectionOf(body, heading) ?? '') }, body, options);
 
-test('a section that holds markup the tracker\'s view hides is void, however it hashes', () => {
-  for (const hidden of ['<!-- ship XLSX too -->', '<details><summary>More</summary>XLSX</details>', '+++ Agent notes', '  +++']) {
-    assert.deepEqual(pinned(`## Decision\nChosen: CSV.\n${hidden}\n`), HIDDEN, hidden);
+test('a description that holds markup the tracker\'s view hides anywhere, fenced or not, voids every grant on it', () => {
+  const clean = '## Decision\nChosen: CSV.\n## Other\nText.';
+  assert.equal(pinned(clean).section, '## Decision\nChosen: CSV.');
+  for (const hidden of ['<!-- ship XLSX too -->', '<DETAILS><summary>More</summary>XLSX</DETAILS>', '+++ Agent notes', '+++', '  +++   ']) {
+    assert.deepEqual(pinned(`${clean}\n${hidden}`), HIDDEN, `after the section: ${hidden}`);
+    assert.deepEqual(pinned(`${hidden}\n${clean}`), HIDDEN, `before the section: ${hidden}`);
+    assert.deepEqual(pinned(`${clean}\n\`\`\`html\n${hidden}\n\`\`\``), HIDDEN, `in a fenced example: ${hidden}`);
   }
-  assert.equal(pinned('## Decision\nA diff line: a+++b').void, undefined, 'a +++ inside a line folds nothing');
+  // A comment that opens above the heading, which the next heading of the same level ends before the comment closes.
+  assert.deepEqual(pinned('Intro\n<!--\n## Decision\nChosen: XLSX.\n## Other\n-->'), HIDDEN);
+  for (const plain of ['a+++b', '+++b', '++ x', 'details in prose', '<!- not a comment']) assert.equal(pinned(`${clean}\n${plain}`).void, undefined, plain);
 });
 
-test('a section inside a hidden range of the whole description is void, though the range opens before its heading', () => {
-  // The comment opens above the heading, and the next heading of the same level ends the section before it closes.
-  const commented = 'Intro\n<!--\n## Decision\nChosen: XLSX.\n## Other\n-->\n## Shown\nText.';
-  assert.equal(sectionOf(commented, 'Decision'), '## Decision\nChosen: XLSX.');
-  assert.deepEqual(pinned(commented), HIDDEN);
-  assert.deepEqual(pinned('<details>\n<summary>More</summary>\n\n## Decision\nChosen: XLSX.\n\n## Other\n</details>'), HIDDEN, 'a <details> block');
-  assert.deepEqual(pinned('<details><details>x</details>\n## Decision\nChosen: XLSX.\n## Other\n</details>'), HIDDEN, 'to the tag that closes the outermost block');
-  assert.deepEqual(pinned('+++ Agent notes\n\n## Decision\nChosen: XLSX.\n\n## Other\n+++'), HIDDEN, 'a +++ collapsible');
-  assert.deepEqual(pinned('<!-- never closed\n\n## Decision\nChosen: XLSX.'), HIDDEN, 'a comment never closed runs to the end');
-  // A range wholly before or after the section hides none of it.
-  const apart = '<!-- a note -->\n+++ Agent notes\nx\n+++\n## Decision\nChosen: CSV.\n## Other\n<details>y</details>\n<!-- z';
-  assert.equal(pinned(apart).section, '## Decision\nChosen: CSV.');
-  assert.deepEqual(hiddenRanges('a<!--b-->c'), [[1, 9]]);
-});
-
-test('a description its cap cut off keeps that mark, and a section that runs to the cut is void, at the subcommand too', (t) => {
-  const head = `Intro\n## Decision\nChosen: CSV.\n`;
+test('a description its cap cut off keeps that mark, and voids every grant on it, even one a heading ends before the cut', (t) => {
+  const head = 'Intro\n## Decision\nChosen: CSV.\n## Next\n';
   const long = `${head}${'x'.repeat(TEXT_CAPS.description)}`;
   const fx = runFixture(t, { init: false });
   recordIssueReads(DRIVER, [{ key: 'ENG-1', text: { title: 'Export', description: long } }, { key: 'ENG-4', text: { title: 'Typo', description: head } }], { env: fx.env });
   const texts = recordedTexts(DRIVER, ['ENG-1', 'ENG-4'], { env: fx.env, home: fx.home });
   assert.deepEqual([texts['ENG-1'].description.length, texts['ENG-1'].descriptionCut, Object.hasOwn(texts['ENG-4'], 'descriptionCut')], [TEXT_CAPS.description, true, false]);
   const kept = texts['ENG-1'].description;
-  const entry = { heading: 'Decision', sha256: sha(sectionOf(kept, 'Decision')) };
-  assert.deepEqual(recordedDecision(entry, kept, { cut: true }), { void: 'the kept description was cut off before the section ends' });
-  assert.equal(recordedDecision(entry, kept).sha256, entry.sha256, 'the same text uncut stands');
-  const ended = `${head}## Next\n${'x'.repeat(TEXT_CAPS.description)}`;
-  assert.equal(recordedDecision({ heading: 'Decision', sha256: sha('## Decision\nChosen: CSV.') }, ended.slice(0, TEXT_CAPS.description), { cut: true }).section, '## Decision\nChosen: CSV.', 'a section a heading ends before the cut stands');
+  assert.equal(sectionOf(kept, 'Decision'), '## Decision\nChosen: CSV.', 'a heading ends the section well before the cut');
+  assert.deepEqual(pinned(kept, 'Decision', { cut: true }), CUT);
+  assert.equal(pinned(kept).section, '## Decision\nChosen: CSV.', 'the same text uncut stands');
   const refused = fx.cmd(['decision', 'ENG-1', '--heading', 'Decision']);
   assert.equal(refused.exitCode, 1);
-  assert.match(refused.err[0], /the kept description was cut off before the section ends, at 20000 characters/u);
+  assert.match(refused.err[0], /the kept description was cut off at its 20,000-character cap; keep a pinned issue's description under 20000 characters/u);
 });
 
 // The fixture with the tracker's answer for ENG-1 recorded for `session`, as the post-call tracker hook records it.
@@ -112,8 +102,9 @@ test('project decision refuses with no recorded read, no single section, hidden 
   assert.match(missing.err[0], /this session recorded no tracker read of ENG-1; read it with the tracker's own issue read/u);
   const other = withRead(t, DECIDED.description, OTHER);
   assert.equal(other.cmd(['decision', 'ENG-1', '--heading', 'Export format']).exitCode, 1, 'another session\'s read');
-  const fx = withRead(t, `${DECIDED.description}\n<!-- and XLSX -->`);
-  assert.match(fx.cmd(['decision', 'ENG-1', '--heading', 'Notes']).err[0], /the section holds text the tracker's view hides/u);
+  const hidden = withRead(t, `${DECIDED.description}\n<!-- and XLSX -->`);
+  assert.match(hidden.cmd(['decision', 'ENG-1', '--heading', 'Export format']).err[0], /the issue's description holds text the tracker's view hides \(an HTML comment, a <details> tag, or a \+\+\+ line, anywhere, fenced or not\)/u);
+  const fx = withRead(t);
   assert.match(fx.cmd(['decision', 'ENG-1', '--heading', 'Missing']).err[0], /no section of ENG-1's description, or more than one, has the heading "Missing"/u);
   assert.match(fx.cmd(['decision', 'ENG-1']).err[0], /--heading takes one line of 1 to 200 characters/u);
   markUnattended(DRIVER, { root: fx.dir, env: fx.env });

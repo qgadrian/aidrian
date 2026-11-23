@@ -29,30 +29,28 @@ export const DECISION_SCOPE = 'It is the Human\'s answer to the decision it name
 
 // An ATX heading of any level: its hashes, then a space, a tab, or the line's end.
 const ATX = /^ {0,3}(#{1,6})(?:[ \t]+(.*))?$/u;
-// The markup a tracker's view of the description hides or folds away: an HTML comment, a <details> block's tags, and a
-// `+++` collapsible's lines.
-const COMMENT = /<!--[\s\S]*?(?:-->|(?![\s\S]))/gu;
-const DETAILS_TAG = /<(\/?)details/giu;
-const COLLAPSIBLE = /^[ \t]*\+\+\+.*$/gmu;
+// Markup a tracker's view of the description hides or folds away, anywhere in it, fenced or not: an HTML comment's
+// opening, a <details> tag, or a `+++` collapsible's line.
+const HIDDEN_MARKUP = /<!--|<details|^[ \t]*\+\+\+(?:[ \t]|$)/imu;
 
 // Why a section is void or cannot be pinned, as recordedDecision and `aidrian project decision` say it.
 const WHY = Object.freeze({
   none: 'no section, or more than one, has that heading',
-  cut: 'the kept description was cut off before the section ends',
-  hidden: 'the section holds text the tracker\'s view hides',
+  cut: 'the kept description was cut off at its 20,000-character cap',
+  hidden: 'the issue\'s description holds text the tracker\'s view hides',
 });
 
 const digest = (text) => createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex');
+// `description` with CRLF read as LF and each line's end trimmed.
+const normalized = (description) => description.replace(/\r\n/gu, '\n').split('\n').map((line) => line.trimEnd());
 
 // The one section of `description` whose ATX heading, outside code fences, has the title `heading` once trimmed: the
 // heading line through the line before the next heading of the same or a higher level, CRLF read as LF, each line's end
-// trimmed, and blank lines at both ends dropped. { text, section, from, to, toEnd }: `text` the whole description so
-// normalized, `from` and `to` the section's offsets in it, and `toEnd` whether no later heading ends it. Null when no
-// heading has that title, or more than one does.
-function sectionIn(description, heading) {
+// trimmed, and blank lines at both ends dropped. Null when no heading has that title, or more than one does.
+export function sectionOf(description, heading) {
   if (typeof description !== 'string' || typeof heading !== 'string' || heading.trim() === '') return null;
   const wanted = heading.trim();
-  const lines = description.replace(/\r\n/gu, '\n').split('\n').map((line) => line.trimEnd());
+  const lines = normalized(description);
   const fenced = fencedIn(lines);
   const headings = lines.map((line, at) => {
     const found = fenced[at] ? null : ATX.exec(line);
@@ -62,50 +60,22 @@ function sectionIn(description, heading) {
   if (starts.length !== 1) return null;
   const [start] = starts;
   const next = headings.findIndex((found, at) => at > start && found !== null && found.level <= headings[start].level);
-  const kept = lines.slice(start, next === -1 ? lines.length : next);
-  while (kept.length && kept.at(-1) === '') kept.pop();
-  const section = kept.join('\n');
-  const from = lines.slice(0, start).reduce((offset, line) => offset + line.length + 1, 0);
-  return { text: lines.join('\n'), section, from, to: from + section.length, toEnd: next === -1 };
+  const section = lines.slice(start, next === -1 ? lines.length : next);
+  while (section.length && section.at(-1) === '') section.pop();
+  return section.join('\n');
 }
 
-// sectionOf's section alone, or null.
-export const sectionOf = (description, heading) => sectionIn(description, heading)?.section ?? null;
+// Whether `description` holds markup the tracker's view hides anywhere, fenced or not (HIDDEN_MARKUP).
+export const hidesText = (description) => HIDDEN_MARKUP.test(normalized(description).join('\n'));
 
-// The ranges of `text` a tracker's view hides, as [from, to) offsets: each HTML comment, to its close or the text's end;
-// each outermost <details> block, from its first tag to the tag that closes it, or the text's end; and each `+++`
-// collapsible, from its opening line through the next `+++` line, or the text's end.
-export function hiddenRanges(text) {
-  const ranges = [...text.matchAll(COMMENT)].map((found) => [found.index, found.index + found[0].length]);
-  let depth = 0;
-  let open = 0;
-  for (const tag of text.matchAll(DETAILS_TAG)) {
-    if (tag[1] === '') {
-      if (depth === 0) open = tag.index;
-      depth += 1;
-    } else if (depth > 0) {
-      depth -= 1;
-      if (depth === 0) ranges.push([open, tag.index + tag[0].length + 1]);
-    }
-  }
-  if (depth > 0) ranges.push([open, text.length]);
-  const marks = [...text.matchAll(COLLAPSIBLE)];
-  for (let at = 0; at < marks.length; at += 2) {
-    const close = marks[at + 1];
-    ranges.push([marks[at].index, close ? close.index + close[0].length : text.length]);
-  }
-  return ranges;
-}
-
-// The section of `description` under `heading` that may be pinned: { section }, or { why } when no single section has
-// that heading, the description was cut off at its cap (`cut`, project-issue-text.mjs) with the section running to its
-// end, or the section overlaps a range of the whole description the tracker's view hides (hiddenRanges).
+// The section of `description` under `heading` that may be pinned: { section }, or { why } when the cap cut the
+// description off (`cut`, project-issue-text.mjs), it holds hidden markup anywhere (hidesText), or no single section has
+// that heading. Each voids every grant on the issue, wherever the section sits.
 function pinnable(description, heading, cut) {
-  const found = sectionIn(description, heading);
-  if (!found) return { why: WHY.none };
-  if (cut && found.toEnd) return { why: WHY.cut };
-  if (hiddenRanges(found.text).some(([from, to]) => from < found.to && to > found.from)) return { why: WHY.hidden };
-  return { section: found.section };
+  if (cut) return { why: WHY.cut };
+  if (hidesText(description)) return { why: WHY.hidden };
+  const section = sectionOf(description, heading);
+  return section === null ? { why: WHY.none } : { section };
 }
 
 // The entry `entry` ({ heading, sha256 }) checked against `text`, the issue's kept description, which `cut` says its cap
@@ -164,8 +134,8 @@ export function decisionCommand({ project, config, key, heading, env = process.e
   if (!text) return refuse(`this session recorded no tracker read of ${key}; read it with the tracker's own issue read, then run this again`);
   const checked = pinnable(text.description, title, text.descriptionCut === true);
   if (checked.why === WHY.none) return refuse(`no section of ${key}'s description, or more than one, has the heading ${JSON.stringify(title)}`);
-  if (checked.why === WHY.cut) return refuse(`${WHY.cut}, at ${TEXT_CAPS.description} characters: end the section with a heading before the cap, or move it nearer the top`);
-  if (checked.why === WHY.hidden) return refuse(`${WHY.hidden} (an HTML comment, a <details> block, or a +++ collapsible, in it or around it); write it as plain text, then read the issue again`);
+  if (checked.why === WHY.cut) return refuse(`${WHY.cut}; keep a pinned issue's description under ${TEXT_CAPS.description} characters, then read the issue again`);
+  if (checked.why === WHY.hidden) return refuse(`${WHY.hidden} (an HTML comment, a <details> tag, or a +++ line, anywhere, fenced or not); write it as plain text, then read the issue again`);
   const { section } = checked;
   const fence = fenceFor(section);
   return {

@@ -218,22 +218,24 @@ function tagsOf(value) {
 export function readUnattendedMark(session, { env = process.env, home, now = Date.now() } = {}) {
   if (typeof session !== 'string' || !SESSION_ID.test(session)) return null;
   const { holds, pending, unchecked } = scanMarks(session, { env, home, now });
-  const marks = [...(unchecked ? [{ root: null }] : []), ...latestVerdicts(holds.map(({ mark }) => mark))];
-  const held = marks.reduce((most, mark) => (most === null || restriction(mark) > restriction(most) ? mark : most), null);
+  // Each mark's proof is read once, so a plan that appears during the scan cannot make one mark count two ways.
+  const read = holds.map(({ mark }) => ({ mark, proof: proofStateOf(mark) }));
+  const marks = [...(unchecked ? [{ mark: { root: null }, proof: null }] : []), ...latestVerdicts(read)];
+  const held = marks.reduce((most, each) => (most === null || restriction(each) > restriction(most) ? each : most), null)?.mark ?? null;
   if (held && !(plainMark(held) && isAttended(session, { env, home, now }))) return held;
   return pendingHold(pending, session, processUid(), now);
 }
 
-// The marks `marks` with, among those of one attempt, only the ones of its latest verdict, as a start records them in
-// turn: a failed proof, then a passed one, then one owed, then one owed only by the attempt's plan. Marks of no attempt
-// stay; across attempts, restriction ranks them.
+// The marks `read`, [{ mark, proof }] with each mark's proofStateOf, with, among those of one attempt, only the ones of
+// its latest verdict, as a start records them in turn: a failed proof, then a passed one, then one owed, then one owed
+// only by the attempt's plan. Marks of no attempt stay; across attempts, restriction ranks them.
 const VERDICT = new Map([['failed', 4], ['passed', 3], [true, 2]]);
-function latestVerdicts(marks) {
-  const verdict = (mark) => (mark.confine === undefined ? 1 : VERDICT.get(proofStateOf(mark).state));
-  const attempt = (mark) => proofStateOf(mark)?.attempt?.folder;
+function latestVerdicts(read) {
+  const verdict = ({ mark, proof }) => (mark.confine === undefined ? 1 : VERDICT.get(proof.state));
+  const attempt = ({ proof }) => proof?.attempt?.folder;
   const latest = new Map();
-  for (const mark of marks.filter(attempt)) latest.set(attempt(mark), Math.max(latest.get(attempt(mark)) ?? 0, verdict(mark)));
-  return marks.filter((mark) => !attempt(mark) || verdict(mark) === latest.get(attempt(mark)));
+  for (const each of read.filter(attempt)) latest.set(attempt(each), Math.max(latest.get(attempt(each)) ?? 0, verdict(each)));
+  return read.filter((each) => !attempt(each) || verdict(each) === latest.get(attempt(each)));
 }
 
 // How much a mark of a session's own refuses, so the scan gives the most: by the proof the agent gate hook holds it to
@@ -241,8 +243,7 @@ function latestVerdicts(marks) {
 // its denied stores from every file-tool read; then a mark it cannot read, then an issue's, then a plain one.
 // What holds a mark that holds no proof of its own, a call's folder in an attempt's clone, cannot be ranked here.
 const PROOF_RANK = new Map([['failed', 5], [true, 4], ['passed', 3]]);
-function restriction(mark) {
-  const proof = proofStateOf(mark);
+function restriction({ mark, proof }) {
   if (proof) return PROOF_RANK.get(proof.state);
   if (mark.root === null) return 2;
   return plainMark(mark) ? 0 : 1;

@@ -9,11 +9,11 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { unwrittenHandoffs } from '../plugins/aidrian/lib/delivery-check.mjs';
+import { checkDelivery, unwrittenHandoffs } from '../plugins/aidrian/lib/delivery-check.mjs';
 import { issueForgeDenial } from '../plugins/aidrian/lib/issue-forge-guard.mjs';
 import { rawPaths, statusEntries } from '../plugins/aidrian/lib/issue-push-checkout.mjs';
 import { findingsFile, sessionIssue } from '../plugins/aidrian/lib/review/dispatch.mjs';
@@ -378,6 +378,19 @@ test('the subagent stop delivery hands an issue session only its own unshared ha
   const issues = [{ key: 'ENG-1', branch: BRANCH, status: 'unstarted', priority: 1 }, { key: 'ENG-2', branch: 'feat-eng-1/export', status: 'unstarted', priority: 2 }];
   const shared = issueFixture(t, { issues });
   assert.deepEqual(owed(shared, 'feat-eng-1-export-S1-explorer.json'), [], 'its branch, which another issue spells alike');
+  // A report that names the refused file on a delivery line sends nothing back for it.
+  const other = path.join(own.state, 'dispatch', 'feat-eng-2-import-S1-explorer.json');
+  const transcript = path.join(own.root, 'claimed.jsonl');
+  writeFileSync(transcript, `${JSON.stringify({ type: 'user', message: { role: 'user', content: `Map the flow.\nHandoff file: ${other}` } })}\n`);
+  const input = { session_id: SESSION, cwd: own.dir, agent_type: 'aidrian:explorer', agent_transcript_path: transcript, last_assistant_message: `Done.\nHandoff: ${other}` };
+  const checked = checkDelivery(input, own.project, { env: own.env, home: own.home });
+  assert.deepEqual([checked.unwritten, checked.missing], [[], []], 'neither owed nor missing');
+  // A dispatch folder that is a link leads elsewhere: no handoff is owed through it, even the session's own.
+  const away = path.join(own.root, 'away');
+  mkdirSync(away);
+  rmSync(path.join(own.state, 'dispatch'), { recursive: true, force: true });
+  symlinkSync(away, path.join(own.state, 'dispatch'));
+  assert.deepEqual(owed(own, 'feat-eng-1-export-S1-explorer.json'), [], 'its own branch, through a linked folder');
 });
 
 test('an issue session whose branch another issue of the run spells the same writes no body or handoff file named for it, and is told the key-named body', (t) => {

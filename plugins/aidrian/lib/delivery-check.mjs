@@ -18,7 +18,7 @@
 // docs/hooks.md#delivery-check.
 
 import { randomBytes } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
@@ -46,10 +46,11 @@ const PLUGIN_FOLDER = path.resolve(import.meta.dirname, '..');
 export function checkDelivery(input, project, places = {}) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : project.root;
   const claims = claimedPaths(input.last_assistant_message);
-  const unwritten = unwrittenHandoffs(input, project, places);
+  const { owed: unwritten, refused } = briefHandoffs(input, project, places);
   const since = handoffSince(input);
   if (!claims.length) return { claims, missing: [], unwritten, since };
-  const missing = missingPaths(claims, cwd, { roots: () => deliveryRoots(project, cwd), touched: () => touchedFiles(input) });
+  // A handoff the session may not write (issueOwner) is no file the agent owes, so a claim of it sends nothing back.
+  const missing = uncovered(input, missingPaths(claims, cwd, { roots: () => deliveryRoots(project, cwd), touched: () => touchedFiles(input) }), refused);
   return { claims, missing, unwritten, since };
 }
 
@@ -85,15 +86,21 @@ function handedIn(file, since) {
 // `aidrian:code-reviewer`. A path anywhere else in the brief, such as a handoff it tells the agent to read, is never owed.
 // No brief, no marker line, no agent name, or no state folder: none.
 export function unwrittenHandoffs(input, project, places = {}) {
+  return briefHandoffs(input, project, places).owed;
+}
+
+// The handoff files the brief names for the agent, as unwrittenHandoffs reads them: { owed, refused }, `refused` those
+// the session may not be handed (issueOwner), which are never owed.
+function briefHandoffs(input, project, places) {
   const agent = typeof input.agent_type === 'string' ? input.agent_type.split(':').pop() : '';
   const transcript = agent && typeof input.agent_transcript_path === 'string' ? readText(input.agent_transcript_path) : null;
   const brief = transcript ? firstPrompt(transcript) : null;
-  if (!brief) return [];
+  if (!brief) return { owed: [], refused: [] };
   let folder;
   try {
     folder = path.join(stateDir(project), 'dispatch');
   } catch {
-    return [];
+    return { owed: [], refused: [] };
   }
   const wholePath = new RegExp(`^${escapeRegExp(folder)}/[^/]+\\.json$`, 'u');
   // The agent's name as the file name's last word, or the one before a last word such as `result`: a branch that holds
@@ -101,17 +108,19 @@ export function unwrittenHandoffs(input, project, places = {}) {
   const word = new RegExp(`(?:^|[-_.])${escapeRegExp(agent)}(?:[-_.]\\w+)?\\.json$`, 'u');
   // A CRLF brief's line keeps its `\r` after the split: it is dropped before the marker is matched.
   const marked = brief.split('\n').map((line) => HANDOFF_MARKER.exec(line.replace(/\r$/u, ''))).filter(Boolean).map(markedPath);
-  const owner = issueOwner(input, project, places);
-  const own = marked.filter((file) => wholePath.test(file) && word.test(path.basename(file)) && owner(path.basename(file)));
+  const owner = issueOwner(input, project, folder, places);
+  const agents = [...new Set(marked.filter((file) => wholePath.test(file) && word.test(path.basename(file))))];
   const since = handoffSince(input);
-  return [...new Set(own)].filter((file) => !handedIn(file, since));
+  const refused = agents.filter((file) => !owner(path.basename(file)));
+  return { owed: agents.filter((file) => !refused.includes(file) && !handedIn(file, since)), refused };
 }
 
 // Which handoff file names the session `input.session_id` may be handed, as the write guard rules them: any, for a
 // session that works no project run's issue (unattended-mark.mjs issueHeld); else only those of its own issue's branch
-// that no other issue of the run spells alike (project-run-guard.mjs ownsHandoff), and none when its issue cannot be read.
+// that no other issue of the run spells alike (project-run-guard.mjs ownsHandoff), and none when its issue cannot be read
+// or the dispatch folder `folder` is a link, which the guard grants no write through either.
 // So one issue's report never replaces another's handoff through the stop hook either.
-function issueOwner(input, project, { env = process.env, home } = {}) {
+function issueOwner(input, project, folder, { env = process.env, home } = {}) {
   let mark;
   try {
     mark = readUnattendedMark(input.session_id, { env, ...(home ? { home } : {}) });
@@ -119,11 +128,22 @@ function issueOwner(input, project, { env = process.env, home } = {}) {
     mark = { root: null };
   }
   if (!issueHeld(mark)) return () => true;
+  if (linkedFolder(folder)) return () => false;
   let issue = null;
   try {
     issue = ownIssue(project, loadConfig(project).config, mark, home ? { home } : {});
   } catch {}
   return (name) => ownsHandoff(issue, name);
+}
+
+// Whether the folder `folder` is not itself where its spelling leads, as when it is a link: its parent's own path, links
+// resolved, and its name, differ from it with links resolved. A folder that cannot be read yet is none.
+function linkedFolder(folder) {
+  try {
+    return realpathSync(folder) !== path.join(realpathSync(path.dirname(folder)), path.basename(folder));
+  } catch {
+    return false;
+  }
 }
 
 // A brief line that names the run's handoff file, in any case, after an optional list marker: `Handoff file: <path>`,

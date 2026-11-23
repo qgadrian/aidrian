@@ -385,6 +385,9 @@ test('the subagent stop delivery hands an issue session only its own unshared ha
   const input = { session_id: SESSION, cwd: own.dir, agent_type: 'aidrian:explorer', agent_transcript_path: transcript, last_assistant_message: `Done.\nHandoff: ${other}` };
   const checked = checkDelivery(input, own.project, { env: own.env, home: own.home });
   assert.deepEqual([checked.unwritten, checked.missing, checked.claims], [[], [], []], 'neither owed, missing, nor claimed as delivered');
+  // Named from the state folder, it is the refused file too.
+  const stateRelative = checkDelivery({ ...input, last_assistant_message: `Done.\nHandoff: dispatch/${path.basename(other)}` }, own.project, { env: own.env, home: own.home });
+  assert.deepEqual([stateRelative.claims, stateRelative.missing], [[], []], 'a claim relative to the state folder');
   // A file of the same name elsewhere, such as the checkout's own `dispatch/`, is still a claim of its own.
   mkdirSync(path.join(own.dir, 'dispatch'), { recursive: true });
   writeFileSync(path.join(own.dir, 'dispatch', path.basename(other)), '{}');

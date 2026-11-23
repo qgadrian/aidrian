@@ -48,8 +48,14 @@ export function checkDelivery(input, project, places = {}) {
   const { owed: unwritten, refused } = briefHandoffs(input, project, places);
   // A handoff the session may not write (issueOwner) is no file the agent owes, nor one it delivered: a claim of it
   // neither sends the agent back nor reads as a delivered file on the stop row.
-  // A claim is of a refused handoff only when it resolves to that very file, so another file of the same name stays.
-  const claims = claimedPaths(input.last_assistant_message).filter((claim) => !refused.includes(resolveClaim(cwd, claim)));
+  // A claim is of a refused handoff when it resolves to that very file, from the hook's folder or a root a claim is read
+  // from (deliveryRoots), and to no other file there that exists: another file of the same name stays a claim.
+  const bases = refused.length ? [cwd, ...deliveryRoots(project, cwd)] : [];
+  const refusedClaim = (claim) => {
+    const places = bases.map((base) => resolveClaim(base, claim));
+    return places.some((place) => refused.includes(place)) && !places.some((place) => !refused.includes(place) && existsSync(place));
+  };
+  const claims = claimedPaths(input.last_assistant_message).filter((claim) => !refusedClaim(claim));
   const since = handoffSince(input);
   if (!claims.length) return { claims, missing: [], unwritten, since };
   const missing = missingPaths(claims, cwd, { roots: () => deliveryRoots(project, cwd), touched: () => touchedFiles(input) });

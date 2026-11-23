@@ -147,7 +147,7 @@ JSON. Save this as `~/.claude/aidrian-statusline.mjs`:
 ```js
 // The aidrian session line for Claude Code's status line: node ~/.claude/aidrian-statusline.mjs
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
@@ -157,15 +157,21 @@ try {
   const config = process.env.CLAUDE_CONFIG_DIR || path.join(homedir(), '.claude');
   const installed = JSON.parse(readFileSync(path.join(config, 'plugins/installed_plugins.json'), 'utf8'));
   const entries = installed.plugins['aidrian@aidrian-harness'] ?? [];
-  // The install for this folder: of the entries that hold it and the user one, the newest version, as Claude Code runs.
-  const holds = (entry) => entry.scope === 'user'
-    || (entry.projectPath && (cwd === entry.projectPath || cwd.startsWith(`${entry.projectPath}/`)));
+  // The install for this folder: of the local and project entries whose real folder holds it, and the user entry, the
+  // newest version, as Claude Code runs it. Two entries of one version run the same cli, so a tie needs no order.
+  const real = (folder) => { try { return realpathSync(folder); } catch { return null; } };
+  const here = real(cwd);
+  const holds = (entry) => entry.scope === 'user' || (['local', 'project'].includes(entry.scope)
+    && real(entry.projectPath) !== null && (here === real(entry.projectPath) || here?.startsWith(`${real(entry.projectPath)}/`)));
   const version = (entry) => String(entry.version ?? path.basename(entry.installPath)).split('.').map(Number);
-  const newer = (a, b) => version(b).map((part, index) => part - (version(a)[index] ?? 0)).find((diff) => diff) ?? 0;
-  // A tie goes to local, then project, the deeper folder first, then user, as the mod breaks it.
-  const rank = (entry) => ['local', 'project', 'user'].indexOf(entry.scope);
-  const deeper = (a, b) => (b.projectPath?.length ?? 0) - (a.projectPath?.length ?? 0);
-  const entry = entries.filter(holds).sort((a, b) => newer(a, b) || rank(a) - rank(b) || deeper(a, b))[0];
+  const newer = (a, b) => {
+    const [x, y] = [version(a), version(b)];
+    for (let index = 0; index < Math.max(x.length, y.length); index += 1) {
+      if ((x[index] ?? -1) !== (y[index] ?? -1)) return (y[index] ?? -1) - (x[index] ?? -1);
+    }
+    return 0;
+  };
+  const entry = entries.filter(holds).sort(newer)[0];
   const args = [path.join(entry.installPath, 'lib/cli.mjs'), 'session', 'snapshot', '--line'];
   if (typeof input.session_id === 'string') args.push(`--session=${input.session_id}`);
   if (typeof input.transcript_path === 'string') args.push(`--transcript=${input.transcript_path}`);
@@ -190,7 +196,8 @@ And point the status line at it in `~/.claude/settings.json`:
 
 - **Finding the command.** The script runs `aidrian session snapshot` as the `aidrian` command does, by `node` on the
   plugin's `lib/cli.mjs`. It takes the install path Claude Code records in `installed_plugins.json`: of the entries
-  whose folder holds the session's folder and the user entry, the newest version, a tie broken as the mod breaks it. So it needs no
+  whose real folder holds the session's folder and the user entry, the newest version, as the mod picks it. Two
+  entries of one version run the same cli, so unlike the mod it breaks no tie. So it needs no
   `aidrian` on the status line's PATH: the plugin's `bin/` is on the PATH of Claude Code's Bash tool, which the status
   line need not share.
 - **PATH.** The status line's PATH must hold `node`, `git`, and `gh`: the snapshot runs `git` and `gh` by name from

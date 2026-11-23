@@ -2290,7 +2290,7 @@ through the line before the next heading of the same or a higher level.
 Write it so it stands alone, naming the question and the chosen path in full: a reference to text outside it, such as
 an option's number or "as above", settles nothing.
 A description that holds markup the tracker's view hides anywhere, fenced or not, voids every grant on the issue:
-any `<!--`, any `<details` in any case, or a line that is `+++` or starts with `+++ `.
+any `<!--`, any `<details` in any case, or a `+++` line: `+++` after optional spaces or tabs, alone or followed by a space or a tab.
 The run keeps a description's first 20,000 characters, and a description cut off there voids every grant on the issue,
 wherever the section sits: keep a pinned issue's description under the cap.
 

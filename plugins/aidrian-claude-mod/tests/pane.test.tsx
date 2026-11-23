@@ -321,6 +321,23 @@ describe('aidrian-mod surfaces', () => {
     expect(await desktop.find({ type: 'Text', text: /Opus 5\.5/ })).toBeUndefined()
   })
 
+  test('draws each subagent`s row in the agent list on the terminal, and leaves a hidden row to the engine', async ($, on) => {
+    engineDraws(on)
+    const agent = {
+      id: 'a1', description: 'Review', type: 'aidrian:code-reviewer', status: 'running', kind: 'local_agent',
+      taskStatus: 'running', label: 'Review the diff', startTime: 0, cwd: '/project', name: 'reviewer',
+      model: 'claude-opus-5-5', effort: 'xhigh', contextWindowSize: 200_000, tokenCount: 96_000, tokenSamples: [],
+      hasRow: true, rowIds: ['a1'], columns: 82,
+    }
+    const row = (surface: 'terminal' | 'desktop', props: Record<string, unknown> = {}, requestId = 'a1') =>
+      $.ui.mount({ plugin: 'aidrian-mod', component: 'AgentRow', requestId, surface, props: { ...agent, ...props } as never, viewport: { columns: 86, rows: 40 } })
+
+    const texts = (await (await row('terminal')).findAll({ type: 'Text' })).map(found => found.text)
+    expect(texts.join('')).toContain('reviewer [aidrian:code-reviewer]  48% (96k) · 🪐 Opus 5.5 xhigh')
+    expect(await (await row('desktop')).find({ type: 'Text', text: /^engine$/ })).toBeDefined()
+    expect(await (await row('terminal', { id: 'a2', rowIds: ['a1', 'a2'], isHidden: true }, 'a2')).find({ type: 'Text', text: /^engine$/ })).toBeDefined()
+  })
+
   test('draws nothing of its own in the desktop pane', async ($, on) => {
     on('session.model', () => ({ value: 'claude-opus-5-5' }))
     engineDraws(on)

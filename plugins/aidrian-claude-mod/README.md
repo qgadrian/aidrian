@@ -26,6 +26,8 @@ It needs the `aidrian` plugin installed and enabled for the folder, and draws on
   repository's letter beside the repository, one row per ticket with its title, state, and link, and one row per
   subagent.
   `/aidrian-mod hide` closes it. When the snapshot cannot be read, the pane says why.
+- The agent list: each subagent's row shows its name, agent type, context use, model, and effort, in place of a
+  `subagentStatusLine` script, which Claude Code deprecates in favor of mods.
 - Notifications, in an interactive terminal session only: a long turn done, a turn stopped on an API error, an
   approval or a question waiting, Claude Code's other notifications, a failed Bash command, a compaction, and the rate
   limits at 85% and 90%. Desktop notifications are skipped while the terminal app is in front.
@@ -38,7 +40,7 @@ claude plugin install aidrian-mod@aidrian-harness
 ```
 
 A status line that runs the aidrian status line fallback shows the same data as the band: remove that `statusLine`
-from `~/.claude/settings.json`. Any other status line can stay.
+from `~/.claude/settings.json`. Any other status line can stay. A `subagentStatusLine` can go: the mod draws those rows.
 
 ## Settings
 

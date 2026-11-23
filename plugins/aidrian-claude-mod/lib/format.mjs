@@ -48,12 +48,13 @@ export const FORGES = Object.freeze({
 const NO_FORGE = Object.freeze({ change: 'change', one: 'change', many: 'changes', isLink: () => false });
 const forgeOf = (row) => (typeof row.forge === 'string' && Object.hasOwn(FORGES, row.forge) ? FORGES[row.forge] : NO_FORGE);
 
-// What each handoff level shows, as the snapshot's line words it: the ratio, then the handoff's state.
+// What each handoff level shows, as the snapshot's line words it: the ratio, then, with a break-even, the fewest whole
+// calls the work left must take for a handoff to be worth it: the first above the break-even. Offer, due, and reminded share their words; COLORS tells offer apart.
 const LEVEL_WORDS = Object.freeze({
   quiet: (ratio) => ratio,
-  offer: (ratio, pays) => (pays ? `${ratio} · handoff ${pays}` : ratio),
-  due: (ratio, pays) => `${ratio} · handoff due${pays ? `, ${pays}` : ''}`,
-  reminded: (ratio, pays) => LEVEL_WORDS.due(ratio, pays),
+  offer: (ratio, worth) => (worth ? `${ratio} · handoff ${worth}` : ratio),
+  due: (ratio, worth) => LEVEL_WORDS.offer(ratio, worth),
+  reminded: (ratio, worth) => LEVEL_WORDS.offer(ratio, worth),
   ceiling: () => 'handoff now',
 });
 
@@ -63,8 +64,8 @@ export function handoffParts(handoff) {
   if (!isObject(handoff) || !isNumber(handoff.ratio) || handoff.ratio <= 0) return [];
   const { level } = handoff;
   if (typeof level !== 'string' || !Object.hasOwn(LEVEL_WORDS, level)) return [];
-  const pays = isNumber(handoff.breakEven) ? `pays back in ~${Math.round(handoff.breakEven)} calls` : '';
-  const parts = [part(LEVEL_WORDS[level](`${handoff.ratio.toFixed(1)}x`, pays), COLORS[level])];
+  const worth = isNumber(handoff.breakEven) ? `worth it if ${Math.floor(handoff.breakEven) + 1}+ calls left` : '';
+  const parts = [part(LEVEL_WORDS[level](`${handoff.ratio.toFixed(1)}x`, worth), COLORS[level])];
   if (handoff.continueArmed === true && isCount(handoff.chain)) parts.push(part(SEPARATOR, COLORS.muted), part(armedWords(handoff), COLORS.armed));
   return parts;
 }

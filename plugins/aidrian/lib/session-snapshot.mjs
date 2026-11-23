@@ -20,6 +20,7 @@ import { GIT_TIMEOUT_MS, killingGit, mainRoot } from './git.mjs';
 import { latestBrief, MARKER_CAP, readArmed, readFrom, readOwnFile, SESSION_ID } from './handoff-markers.mjs';
 import { HIDDEN } from './hidden-text.mjs';
 import { findProject } from './project.mjs';
+import { resumeTokens, samplesFolder } from './resume-tokens.mjs';
 import { cachedValue } from './session-cached-value.mjs';
 import { LINKS, LINKS_MAX_BYTES, linksOf, sessionLinks, ticketsOf } from './session-links.mjs';
 import { changesSummary, isChangeCache, LEDGER, LEDGER_MAX_BYTES, resolveSelection, sessionRefs, shownChanges } from './session-prs.mjs';
@@ -163,15 +164,18 @@ const needed = (value) => {
 const unconfirmed = ({ decisions, unlisted }) => [...decisions, ...unlisted].filter(({ status }) => status === 'unconfirmed').length;
 
 // The handoff numbers of the session, from its transcript through the usage cache, and the Stop hook's marker, at the
-// hook's own path. Under `mode: off` the hook never reminds, so the level is quiet and the numbers stay. The continuation
-// store is opened at the state folder's real path the context resolved, the same path the session folder was made under.
-function handoffSection({ config, folder }, links, session, transcript) {
+// hook's own path, with the project's B (lib/resume-tokens.mjs resumeTokens), which `resume` shows, read where the hooks
+// read it (samplesFolder). Under `mode: off` the hook never reminds, so the level is quiet and the numbers stay. The
+// continuation store is opened at the state folder's real path the context resolved, the same path the session folder was
+// made under.
+function handoffSection({ config, folder, state, checkouts }, links, session, transcript) {
   const usage = cachedSessionUsage({ transcript, cacheFile: path.join(needed(folder), 'usage.json') });
-  const { handoff } = config.session;
+  const resume = resumeTokens(config.session.handoff, samplesFolder(state, checkouts));
+  const handoff = { ...config.session.handoff, resumeTokens: resume.tokens };
   const status = handoffStatus(needed(usage), handoff, stopMarkerText(session));
   const { ratio, breakEven, nextRatio, context: tokens, ceiling } = status;
   return {
-    ratio, breakEven, level: handoff.mode === 'off' ? 'quiet' : status.level, nextRatio, context: tokens, ceiling,
+    ratio, breakEven, level: handoff.mode === 'off' ? 'quiet' : status.level, nextRatio, context: tokens, ceiling, resume,
     ...continuationOf(links, session, handoff.maxChain),
   };
 }
@@ -272,14 +276,15 @@ function forgeBudget(ms) {
   };
 }
 
-// What each handoff level shows: the ratio, then the handoff's state, with the break-even when there is one.
+// What each handoff level shows: the ratio, then, with a break-even, the fewest whole calls the work left must take
+// for a handoff to be worth it: the first above the break-even. Offer, due, and reminded share their words; the mod's color tells offer from the other two.
 const LEVEL_WORDS = {
   quiet: (ratio) => ratio,
-  offer: (ratio, pays) => (pays ? `${ratio} · handoff ${pays}` : ratio),
-  due: (ratio, pays) => `${ratio} · handoff due${pays ? `, ${pays}` : ''}`,
+  offer: (ratio, worth) => (worth ? `${ratio} · handoff ${worth}` : ratio),
   ceiling: () => 'handoff now',
 };
-LEVEL_WORDS.reminded = LEVEL_WORDS.due;
+LEVEL_WORDS.due = LEVEL_WORDS.offer;
+LEVEL_WORDS.reminded = LEVEL_WORDS.offer;
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -287,9 +292,9 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 export function snapshotLine({ handoff, prs, lessons: inbox, decisions, worktrees, audits }) {
   const segments = [];
   if (handoff?.ratio > 0) {
-    const pays = handoff.breakEven === null ? '' : `pays back in ~${Math.round(handoff.breakEven)} calls`;
+    const worth = handoff.breakEven === null ? '' : `worth it if ${Math.floor(handoff.breakEven) + 1}+ calls left`;
     const armed = handoff.continueArmed ? ` · armed ${handoff.chain}/${handoff.maxChain}` : '';
-    segments.push(`${LEVEL_WORDS[handoff.level](`${handoff.ratio.toFixed(1)}x`, pays)}${armed}`);
+    segments.push(`${LEVEL_WORDS[handoff.level](`${handoff.ratio.toFixed(1)}x`, worth)}${armed}`);
   }
   if (Array.isArray(prs) && prs.length) segments.push(changesSummary(prs));
   const harness = [

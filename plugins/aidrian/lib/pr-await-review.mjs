@@ -276,7 +276,8 @@ export const latestBotSignal = ({ reviews, reviewComments, issueComments = [], r
   ].filter(Boolean).sort((a, b) => ms(b.at) - ms(a.at))[0] ?? null;
   if (!newest) return null;
   if (newest.kind === 'review') {
-    const lineComments = reviewComments.filter((c) => c.pull_request_review_id === review.id).length;
+    // Top-level inline comments only, as the bot history counts them (review/extension.mjs botRounds): a reply is no finding.
+    const lineComments = reviewComments.filter((c) => c.pull_request_review_id === review.id && !c.in_reply_to_id).length;
     return { kind: 'review', at: review.submitted_at, review_id: review.id, commit_id: review.commit_id, state: review.state, line_comments: lineComments };
   }
   const kind = isQuotaNotice(comment.body) ? 'quota_exhausted' : 'comment';

@@ -172,6 +172,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 │   ├── merged-heads-cache.json  the merged pull requests' head commits, and when the forge was last asked
 │   └── <cache>.<window>.lock  held for a moment while a snapshot records its forge attempt
 ├── tmp/                  pull request bodies and review comments that skills draft, and review findings files
+├── resume-tokens.json    the tokens each session resumed from a brief read before its first edit or dispatch (handoff.md#resume-tokens)
 ├── dispatch-log.jsonl    the dispatch log
 └── dispatch-log.1.jsonl  its rotated part, once the log reaches config.json telemetry.maxMb
 ```

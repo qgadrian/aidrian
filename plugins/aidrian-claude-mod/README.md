@@ -7,7 +7,7 @@ It needs the `aidrian` plugin installed and enabled for the folder, and draws on
 ─────────────────────────────────────────────────────────────── [-]
 🪐 Opus 5.5 xhigh · ctx 48% ━━━━──── · ♨️ cache 5m · 5h 26% ↻3h09m · 7d 15%
    ⧉  feature-band · ABC-12 In Progress · ◐ 2 agents
-   2.3x · handoff due, pays back in ~24 calls · armed 1/3 · 📥 1 P1 · 🧹 1 worktree
+   2.3x · handoff worth it if 38+ calls left · armed 1/3 · 📥 1 P1 · 🧹 1 worktree
    PRs ✓5 ✗1 ⏳1 · #4012, #4019, #4023, #4031, #4036, +2
 ```
 

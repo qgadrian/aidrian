@@ -1958,6 +1958,9 @@ Two hooks weigh what continuing the main session costs against a fresh session s
   nothing is typed, and still counts a Human who is not watching. A background route this machine or the base branch
   has not turned on is worded as the clear route the gate falls back to, read only on a stop that fires.
   With `none`, or a route the host does not list, the text is as above.
+- Both price a fresh session with this project's resume tokens, and the Stop hook records a sample for each session
+  that resumed from a brief, once, at its first stop after its first edit or dispatch, in any `mode`
+  ([Resume tokens](handoff.md#resume-tokens)).
 
 Both read Claude Code transcripts only: a transcript with no Claude Code usage, a subagent, or a payload without
 `stop_hook_active` does nothing.

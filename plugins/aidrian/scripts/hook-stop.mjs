@@ -26,7 +26,9 @@
 //   in `ask` mode, or climbs one step in `auto` (lib/session-length.mjs nextRatio), and the ceiling once the context
 //   doubles. It reads Claude Code transcripts only. Its text follows the continue route the session's host can do
 //   (lib/session-length.mjs continuation): with `clear` or `background` the agent ends the turn after the brief, and on
-//   the background route in `auto` mode a Human who is not watching is no reason to skip the handoff. The marker's path
+//   the background route in `auto` mode a Human who is not watching is no reason to skip the handoff. The cost model's
+//   B is the project's (lib/resume-tokens.mjs resolvedHandoff), and a stop of a session that resumed from a brief records
+//   that session's sample once, whatever the mode (recordResume). The marker's path
 //   is stopMarkerPath's, which `aidrian session snapshot` reads too; it is read no-follow, capped, and only when this user
 //   owns it (fs.mjs readOwnText), and written, only in a counts folder this user owns (ownFolderSync), as a new temporary
 //   file, mode 0600, renamed over it, so no write follows a symlink there.
@@ -53,6 +55,7 @@ import { deny, isMain, runHook } from '../lib/hook-io.mjs';
 import { detectHost } from '../lib/hosts/index.mjs';
 import { findProject } from '../lib/project.mjs';
 import { resultHoldReason } from '../lib/project-run-guard.mjs';
+import { recordResume, resolvedHandoff, resumeState } from '../lib/resume-tokens.mjs';
 import { continuation, stopMarkerPath, stopReminder } from '../lib/session-length.mjs';
 import { ANNOUNCE_LEAD, announcedWork, QUESTION_TOOL } from '../lib/stop-announce.mjs';
 import { HAND_BACK_LEAD, handBack, MERGE_HAND_BACK_LEAD, mergeHandBack } from '../lib/stop-handback.mjs';
@@ -91,9 +94,12 @@ export async function handle(input) {
   const marker = stopMarkerPath(input.session_id);
   if (marker === null) return;
   if (await endsTerminal(host, project, config, input.session_id)) return;
-  if (!settled) return;
-  const { handoff } = session;
-  if (handoff.mode === 'off' || !text) return;
+  if (!settled || !text) return;
+  const state = resumeState(project, config);
+  const workTools = host.capabilities.transcripts === false ? null : host.capabilities.workTools;
+  if (state && workTools) recordResume(state, input.session_id, text, workTools);
+  if (session.handoff.mode === 'off') return;
+  const handoff = resolvedHandoff(session.handoff, state);
   const earlier = readOwnText(marker, MARKER_CAP);
   // The route is read only on a stop that fires: on the background route it asks git for the base branch's config.
   if (!stopReminder(text, handoff, earlier)) return;

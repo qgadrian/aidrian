@@ -10,10 +10,12 @@ import { SESSION_ID } from './handoff-markers.mjs';
 import { continueRoutes } from './hosts/index.mjs';
 import { CACHE_READ_MULT, CACHE_WRITE_1H_MULT, CACHE_WRITE_5M_MULT, priceFor } from './model-prices.mjs';
 import { hookCountsFolder } from './project.mjs';
+import { RESUME_TOKENS } from './resume-tokens.mjs';
 import { aggregateUsage } from './transcript.mjs';
 
-// B: the tokens a fresh session reads to resume from a brief, the measured median before its first edit or dispatch.
-export const RESUME_TOKENS = 44_000;
+// B, the tokens a fresh session reads to resume from a brief, is per project: lib/resume-tokens.mjs resolvedHandoff sets
+// `handoff.resumeTokens`, and RESUME_TOKENS is the value when nothing set it.
+export { RESUME_TOKENS };
 // H: the calls the long session spends writing the brief, from the measured quartiles.
 export const BRIEF_CALLS = 8;
 // The brief's output, in tokens, and what an output token costs in input tokens.
@@ -96,10 +98,11 @@ export const sessionUsage = (text) => foldedUsage(foldUsage(newUsageFold(), text
 // The cost of continuing against handing off, in input tokens of the last call's model: { ratio, breakEven }.
 // `ratio` is r = C / (W + B), what each call here costs against one in a fresh session; 0 with no calls.
 // `breakEven` is N, about how many calls the work left must take before a handoff pays back, or null when C ≤ W + B.
-// `briefCalls` is H; 0 leaves out the calls that write the brief.
-export function handoffCost({ calls, first, last, model, oneHourCache }, { briefCalls = BRIEF_CALLS } = {}) {
+// `briefCalls` is H; 0 leaves out the calls that write the brief. `resumeTokens` is B, RESUME_TOKENS when null or unset,
+// as in a `session.handoff` no resolvedHandoff resolved.
+export function handoffCost({ calls, first, last, model, oneHourCache }, { briefCalls = BRIEF_CALLS, resumeTokens = null } = {}) {
   if (!calls) return { ratio: 0, breakEven: null };
-  const fresh = first + RESUME_TOKENS;
+  const fresh = first + (resumeTokens ?? RESUME_TOKENS);
   const ratio = last / fresh;
   if (last <= fresh) return { ratio, breakEven: null };
   const read = priceFor(model)?.cacheRead ?? CACHE_READ_MULT;
@@ -174,8 +177,8 @@ function offerReached(handoff, usage, cost) {
 }
 
 // The one trigger decision the Stop hook and any reader share, from sessionUsage's `usage`, config.json
-// `session.handoff`, and the marker's text or null: { ratio, breakEven, level, nextRatio, context, ceiling, byCost,
-// byTokens, counts }. `counts` is the marker after the compaction reset: a compaction since the marker resets both
+// `session.handoff` as resolvedHandoff gives it, with the project's B in `resumeTokens`, and the marker's text or null:
+// { ratio, breakEven, level, nextRatio, context, ceiling, byCost, byTokens, counts }. `counts` is the marker after the compaction reset: a compaction since the marker resets both
 // triggers. `byCost` and `byTokens` say whether each trigger fires on its own; `nextRatio` is the ratio the cost trigger
 // fires at, `ceiling` the context the token one fires at, or null when it is off. It reads `mode` only for the step of
 // nextRatio, as the Stop hook does, so `off` is the caller's to honour. `level` names the first that holds of:
@@ -186,7 +189,7 @@ function offerReached(handoff, usage, cost) {
 export function handoffStatus(usage, handoff, markerText) {
   let counts = readMarker(markerText, usage.compactions, handoff.costRatio);
   if (usage.compactions > counts.compactions) counts = { lastRatio: 0, tokens: 0, compactions: usage.compactions };
-  const cost = handoffCost(usage);
+  const cost = handoffCost(usage, { resumeTokens: handoff.resumeTokens });
   const next = nextRatio(handoff.costRatio, counts.lastRatio, handoff.mode);
   const ceiling = handoff.maxTokens > 0 ? tokenCeiling(handoff.maxTokens, counts.tokens) : null;
   const byCost = cost.breakEven !== null && cost.ratio >= next;
@@ -285,7 +288,7 @@ export function handoffReason(mode, { cost = null, tokens = null, next, route = 
 // the session the gate starts, never here.
 export function planApprovedContext(handoff, usage, { route = 'none', how = null } = {}) {
   if (handoff.mode === 'off' || !usage.calls) return null;
-  const cost = handoffCost(usage);
+  const cost = handoffCost(usage, { resumeTokens: handoff.resumeTokens });
   const { byCost, byTokens } = offerReached(handoff, usage, cost);
   if (!byCost && !byTokens) return null;
   const found = [byTokens && `this session already carries ${kTokens(usage.last)}`, byCost && costLine(cost)].filter(Boolean).join(', and ');

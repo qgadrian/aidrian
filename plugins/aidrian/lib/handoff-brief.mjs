@@ -247,7 +247,8 @@ function nextSteps(text) {
   const lines = [];
   let inSection = false;
   for (const line of unfencedLines(String(text ?? ''))) {
-    const title = headingOf(line);
+    // An indented heading sits inside a list item of the section, and ends nothing.
+    const title = /^\s/u.test(line) ? null : headingOf(line);
     if (title !== null) inSection = /^next steps(?![\p{L}\p{N}])/iu.test(title);
     else if (inSection) lines.push(line);
   }

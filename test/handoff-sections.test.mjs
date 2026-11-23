@@ -258,6 +258,7 @@ test('the check fails a brief whose next steps run a skill only a person can sta
     '1. Run the checks.\n2. Run /aidrian:autopilot after them.',
     '1. Run the checks and tell the Human to type /aidrian:autopilot.',
     '1. Load the plan.\n\n   Run /aidrian:autopilot on it.',
+    '1. Load the plan.\n\n   ## Details\n   Run /aidrian:autopilot on it.',
   ]) assert.match(at(steps) ?? '', /^Next steps: they run `autopilot`, which only a person can start/u, steps);
   for (const steps of [
     '1. Run the `plan-implement` skill on /state/plans/autopilot.md.',

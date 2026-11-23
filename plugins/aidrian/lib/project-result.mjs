@@ -224,7 +224,7 @@ function droppedPullProblem({ forge, repository, result, branch, since, verified
   if (view.isCrossRepository !== false || view.headRefName !== branch) return `pull request #${result.pr} is not from the issue's branch ${branch}`;
   if (result.status === 'merged') return mergeProblem({ forge, repository, pr: result.pr, branch, since });
   // A closed pull request still parks the issue (project-stops.mjs), but no later run goes on from its branch.
-  if (view.state !== 'OPEN') {
+  if (view.state === 'CLOSED') {
     verified.head = null;
     return null;
   }

@@ -433,17 +433,17 @@ function startPlace(context) {
   if (room.problem) return refuse(room.problem, orphans);
   const log = runLog(state, run, key, capped.attempt);
   if (log.problem) return refuse(log.problem, orphans);
-  return { orphans, attempt: capped.attempt, tip: base.tip, branch, ...room, log: log.file, afterLimit: endedOnLimit(current, key, capped.attempt - 1), resumed };
+  return { orphans, attempt: capped.attempt, tip: base.tip, branch, ...room, log: log.file, afterLimit: endedOnLimit(current, key, capped.attempt - 1) };
 }
 
 // Whether attempt `attempt` of issue `key` ended on a usage or rate limit, as the run `found` records it.
 const endedOnLimit = (found, key, attempt) => found.rows.some((row) => row.event === 'ended' && row.key === key && row.attempt === attempt && row.reason === 'limit');
 
 // The attempt's fresh clone, checked, and the folders it may write: { folder, cwd, git, grants, drop, cache, vars, main,
-// mainGit, issueFile, pushUrl, branch, superseded }, `pushUrl` the URL its origin pushes to, which the start row pins for
-// the session's push (lib/issue-push-checkout.mjs), `branch` the one checked out, and `superseded` the branch it left
-// (prepareAttempt) with `pr`, its pull request when the forge shows it open from that branch's head (openPullOf), or
-// null, or
+// mainGit, issueFile, pushUrl, branch, superseded, resumed }, `pushUrl` the URL its origin pushes to, which the start row
+// pins for the session's push (lib/issue-push-checkout.mjs), `branch` the one checked out, `superseded` the branch it
+// left (prepareAttempt) with `pr`, its pull request when the forge shows it open from that branch's head (openPullOf), or
+// null, and `resumed` the earlier run's entry only when the attempt goes on on its branch as the forge has it, or
 // { halt } or { problem }. A clone the host says would run a command outside its sandbox (`cloneProblem`) halts, and so
 // does one whose origin pushes to another URL than `pushUrl`, the one the host's access check read, as a pushInsteadOf
 // of the user's git config would make it, or to more than one URL, which the session's push guard never lets through.
@@ -495,7 +495,9 @@ function confinedRoom({ project, state, run, key, branch, fresh, reserved, resum
   // The issue's text the driver kept at init, for the session to read instead of the tracker (lib/project-issue-text.mjs).
   const issueFile = issueFileFor(state, run, key, clone.folder);
   if (issueFile?.problem) return { problem: issueFile.problem };
-  return { folder: clone.folder, cwd: clone.work, git: clone.git, grants: [clone.git, clone.drop, clone.cache, ...folders.folders], drop: clone.drop, cache: clone.cache, vars, main: resolvedPath(main) ?? main, mainGit, issueFile: issueFile?.file ?? null, pushUrl: url || null, claim, branch: clone.branch, superseded: supersededOf(clone.superseded, { found, key, facade, resumed }) };
+  return { folder: clone.folder, cwd: clone.work, git: clone.git, grants: [clone.git, clone.drop, clone.cache, ...folders.folders], drop: clone.drop, cache: clone.cache, vars, main: resolvedPath(main) ?? main, mainGit, issueFile: issueFile?.file ?? null, pushUrl: url || null, claim, branch: clone.branch, superseded: supersededOf(clone.superseded, { found, key, facade, resumed }),
+    // The earlier run's work goes on only on its branch as the forge has it: a branch deleted since starts afresh.
+    resumed: clone.onForge ? resumed : null };
 }
 
 // What the start says of the branch `left` an attempt left (prepareAttempt): { branch, sha, count, files, pr, base, url },

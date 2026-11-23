@@ -256,8 +256,9 @@ export function stateWorkFolders(state, { env, home }) {
 // issue's branch takes (`reserved`) is { problem }. The first attempt of an issue an earlier run parked, with `resumed`
 // the commit that run recorded its branch at (project-run.mjs resumedIssues), is taken as a later one, but only on a
 // branch whose head on the forge is that commit or one after it, the work that run's sessions pushed; any other head is
-// { problem }, as a first attempt's branch on the forge is. A null `resumed` is a plain first attempt. `env` is the
-// environment of its network calls.
+// { problem }, as a first attempt's branch on the forge is; a branch the forge no longer has is cut from the tip, as a
+// first attempt's. A null `resumed` is a plain first attempt. `onForge` says whether the attempt goes on on the issue's
+// branch as the forge has it. `env` is the environment of its network calls.
 export function prepareAttempt({ project, state, run, key, attempt, branch, fresh, reserved = new Set(), resumed = null, tip, env }) {
   const folder = attemptFolder(state, run, key, attempt);
   const [work, gitFolder, drop, cache] = ['work', 'git', 'drop', 'cache'].map((name) => path.join(folder, name));
@@ -336,7 +337,8 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, fres
   const signing = signingProblem(work, env);
   if (signing) return { halt: gone(`the attempt's clone ${work} is not started: ${signing}`).problem };
   const plain = plainFolderProblem(drop) ?? plainFolderProblem(cache);
-  return plain ? gone(plain) : { folder, work, git: gitFolder, drop, cache, branch: used, superseded };
+  // `onForge`: the attempt goes on on the issue's branch the forge has, not one cut fresh, nor one the forge lacks.
+  return plain ? gone(plain) : { folder, work, git: gitFolder, drop, cache, branch: used, superseded, onForge: later && listed.status === 0 && superseded === null };
 }
 
 // The signing keys each attempt's clone turns off, in its own config and nowhere else, so the user's global and system

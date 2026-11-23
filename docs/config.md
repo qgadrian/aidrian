@@ -2060,14 +2060,17 @@ The snapshot input is one JSON object, at most 1 MiB, read as a regular file and
   is this one. That run moved it to started and parked it, as on a pull request left open, so the issue is the run's own
   work; `init` records it in `snapshot.json` as `resumed`, with that run, the pull request its latest result named, and
   the `head` that result recorded, prints a `resumed:` line, and `next`, `start`, and the gate read the same plan.
-  A result that parks an issue records the commit the forge shows its branch at then, or null when it shows none.
+  A result that parks an issue records the commit the forge shows its branch at then, or null when it shows none;
+  a `pr_open` result records the head its pull request's check read, with no second read.
   A ledger written before heads were recorded has a latest result row with no `head` field at all: when that result
   named a pull request, `init` and its check read it through the forge and take its head commit, only when it is open,
   from the snapshot's branch, in the pinned repository. That fallback trusts the pull request's head as the forge shows
   it now, not a commit the run recorded; a row with a `head` field, null included, never falls back.
   A resumed issue's first attempt goes on from its branch on the forge only when the branch holds that head, at it or
   after it; a branch at any other history is refused, and with no head, such as a run that parked before any push, the
-  attempt is a plain first attempt, which refuses a branch the forge has already.
+  attempt is a plain first attempt, which refuses a branch the forge has already. A branch the forge no longer has is
+  cut from the base tip, as a first attempt's, and only an attempt that goes on on the branch the forge has is told the
+  earlier run's work and pull request are its own.
   A driver's input never gives `resumed`. Any other `started` issue is someone's work outside the run and stays blocked.
 - `priority` is 1, the most urgent, to 4, or 0 for none, which comes last.
 - `outside` lists the status of each blocker outside the project. A blocker that is not `completed`, or not listed, blocks.

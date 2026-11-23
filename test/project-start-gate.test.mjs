@@ -888,6 +888,16 @@ test('a parked issue of a ledger from before heads were recorded resumes from it
   assert.equal(recorded.fx.run().snapshot.resumed[0].head, recorded.head);
 });
 
+test('a resumed issue whose branch the forge no longer has is cut fresh from the base tip, and its task claims no earlier work', (t) => {
+  const { fx } = parkedEarlier(t, { 'src/export.js': 'export const csv = true;\n' });
+  execFileSync('git', ['-C', fx.bare, 'update-ref', '-d', 'refs/heads/feat/eng-1-export'], { stdio: 'pipe' });
+  const started = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(started.exitCode, 0, started.err.join('\n'));
+  assert.equal(started.out.find((line) => line.startsWith('branch: ')), 'branch: feat/eng-1-export');
+  assert.equal(fx.git('-C', work(fx), 'rev-parse', 'HEAD').trim(), fx.git('rev-parse', 'refs/remotes/origin/main').trim(), 'cut from the base tip');
+  assert.doesNotMatch(fx.claude.starts()[0].args.at(-1), /An earlier run of this project|open no second one/u);
+});
+
 test('a resumed issue whose earlier run recorded no head starts as a first attempt does: a branch on the forge is refused', (t) => {
   const { fx } = parkedEarlier(t, { 'src/export.js': 'export const csv = true;\n' }, { recorded: false });
   assert.deepEqual(fx.run().snapshot.resumed, [{ key: 'ENG-1', run: 'first', pr: 12, head: null }], 'init resumes it all the same');

@@ -209,7 +209,8 @@ export function openPullOf({ forge, repository, pr, branch, head }) {
 // `repository`, from the issue's `branch`; an open one's head must be the branch's head on the forge, and a merged one
 // must pass mergeProblem. A forge that answers it has no such pull request (forges/index.mjs changeNotFound) has
 // answered: that is final, never a retry.
-function droppedPullProblem({ forge, repository, result, branch, since }) {
+// An open one's head, once checked, goes in `verified.head`, the commit the result row records (dropRows).
+function droppedPullProblem({ forge, repository, result, branch, since, verified = {} }) {
   if (!['merged', 'pr_open'].includes(result.status)) return null;
   if (!Number.isInteger(result.pr)) return 'the result names no pull request';
   const named = `${repository.owner}/${repository.name}`;
@@ -228,7 +229,9 @@ function droppedPullProblem({ forge, repository, result, branch, since }) {
   } catch {
     return { retry: true };
   }
-  return typeof view.headRefOid === 'string' && view.headRefOid === head ? null : `pull request #${result.pr}'s head is not the head of ${branch} on the forge`;
+  if (typeof view.headRefOid !== 'string' || view.headRefOid !== head) return `pull request #${result.pr}'s head is not the head of ${branch} on the forge`;
+  verified.head = head;
+  return null;
 }
 
 // The commit the forge shows the branch `branch` of the pinned `repository` at, or null when it names none or cannot answer.
@@ -260,9 +263,10 @@ export function openPullHead({ forge, repository, pr, branch }) {
 }
 
 // What the drop of the running issue `key`'s latest start holds: { rows, line } to record, or null while there is none,
-// or the forge cannot answer. A result that parks the issue records `head`, the commit the forge shows its branch at
-// then, or null when it shows none: the work this run leaves there, which a later run that resumes the issue checks the branch
-// against (project-run.mjs resumedIssues, project-start.mjs prepareAttempt).
+// or the forge cannot answer. A result that parks the issue records `head`: for pr_open, the head its pull request's
+// check found the branch at; else the commit the forge shows the branch at then, or null when it shows none. It is the
+// work this run leaves there, which a later run that resumes the issue checks the branch against (project-run.mjs
+// resumedIssues, project-start.mjs prepareAttempt).
 function dropRows({ run, key, start, spent, branch, forge, repository, now }) {
   const read = readDrop(start.drop);
   if (read.missing) return null;
@@ -273,12 +277,14 @@ function dropRows({ run, key, start, spent, branch, forge, repository, now }) {
   if (value?.run !== run || value?.key !== key || value?.attempt !== start.attempt) return bad('the drop\'s result names another run, issue, or attempt');
   const checked = validateResult(value);
   if (!checked.result) return bad(checked.problems[0]);
-  const pull = droppedPullProblem({ forge, repository, result: checked.result, branch, since: Date.parse(start.at) });
+  const verified = {};
+  const pull = droppedPullProblem({ forge, repository, result: checked.result, branch, since: Date.parse(start.at), verified });
   if (pull?.retry) return null;
   if (pull) return bad(pull);
   const { result } = checked;
   const next = afterResult(key, start.attempt, result.status, spent);
-  const head = next.state === 'parked' ? { head: forgeHead({ forge, repository, branch }) } : {};
+  // The head the pull request's check read, when one did, never a second read that could differ or fail.
+  const head = next.state === 'parked' ? { head: verified.head ?? forgeHead({ forge, repository, branch }) } : {};
   return {
     rows: [{
       event: 'result', key, attempt: start.attempt, session: start.child, via: 'drop', status: result.status, pr: result.pr, verified: result.status === 'merged', ...head,

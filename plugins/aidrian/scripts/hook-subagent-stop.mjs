@@ -21,7 +21,7 @@
 // each send-back past the first, and a count that cannot be stored ends the stop, so no host can loop on it; a payload
 // without `stop_hook_active` (another host) is never sent back (sendsBack). The row's `sent_back` records the decision.
 // A `Handoff file:` marker the hook cannot fill, such as one whose path is not absolute, sends the subagent back once,
-// on the first stop of its turn, to write the file itself and say so in its report, so its dispatcher sees the mistake.
+// on the first stop of its turn, to hand back its report with the mistake named, and never to write that path itself.
 // The evidence check: a final report that says a test command passed, with no run of it on the session's check-run
 // record that passed (lib/check-runs.mjs), is sent back once, on the first stop of its turn, to quote a run a tool
 // returned or call the run "not finished". A report once claimed a full suite passed after its runs were stopped.
@@ -63,12 +63,13 @@ const handoffReason = (files) =>
   'if the path belongs to another agent, say so.';
 
 // What the subagent is told when its brief's `Handoff file:` markers name a file the hook cannot fill, each `rejected`
-// as { value, problem } (lib/delivery-check.mjs briefHandoffs): told once, so its report carries the mistake back.
+// as { value, problem } (lib/delivery-check.mjs briefHandoffs): told once, so its report carries the mistake back. It is
+// never told to write the rejected path: the brief's text would become the hook's write instruction to any folder.
 const rejectedReason = (rejected) =>
   `Your brief's \`Handoff file:\` marker ${rejected.map(({ value, problem }) => (value ? `\`${value}\` ${problem}` : problem)).join('; ')}, ` +
-  'so this hook cannot write your handoff there for you. ' +
-  'Write your machine handoff to that path yourself if you can, end your turn with the handoff as your last message, ' +
-  'and say in it that the brief\'s handoff path was rejected and why, so your dispatcher corrects its briefs.';
+  'so this hook cannot write your handoff there for you. Write no file at that path, which may lie outside the dispatch ' +
+  'folder: end your turn with the machine handoff as your last message, and say in it that the brief\'s handoff path ' +
+  'was rejected and why, so your dispatcher corrects its briefs.';
 
 // When the subagent's run started, in milliseconds: its transcript's first timestamp, or null when it cannot be read.
 function startedAt(input) {

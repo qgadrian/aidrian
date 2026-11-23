@@ -1675,9 +1675,10 @@ Each such marker names one file: everything inside the backticks that open its v
 without the trailing `.`, `,`, `;`, `:`, or `)` that ends a sentence, as in `Handoff file: <path>.`.
 The whole value must be an absolute path in the state folder's `dispatch/` that ends in `.json`; prose after it is not read.
 A marker that names no path, or a path that is not one, such as `<state>/dispatch/...` left unexpanded or a relative
-path, cannot be filled by the hook. When no file is there either, the agent is sent back once, on the first stop of its
-turn, with the marker and the reason, to write the file itself if it can and to say in its report that the brief's path
-was rejected, so its dispatcher corrects its briefs.
+path, cannot be filled by the hook. When this run wrote no regular file there either, the agent is sent back once, on
+the first stop of its turn, with the marker and the reason: it writes nothing at that path, which may lie outside the
+dispatch folder, and hands back its report as its last message, saying that the brief's path was rejected, so its
+dispatcher corrects its briefs.
 Only the files these markers name are owed, and a brief with no marker owes none: the agent still writes its own file,
 and the hook no longer searches the brief's prose for one, since a file named to read there could be taken for the output.
 Another file of the agent's role the brief names, such as the gate run's `<branch>-gate-product-manager.json` to read,

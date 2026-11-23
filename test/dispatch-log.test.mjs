@@ -469,10 +469,19 @@ test('the stop hook fills every briefed handoff file of an orchestrator\'s brief
   const sent = await stop('placeholder', `Implement slice S3.\nHandoff file: ${placeholder}`);
   assert.equal(sent.status, 2);
   assert.ok(sent.stderr.startsWith(`Your brief's \`Handoff file:\` marker \`${placeholder}\` is not an absolute`), sent.stderr);
-  assert.match(sent.stderr, /say in it that the brief's handoff path was rejected and why/u);
+  assert.match(sent.stderr, /Write no file at that path, which may lie outside the dispatch folder: end your turn with the machine handoff as your last message, and say in it that the brief's handoff path was rejected and why/u);
+  assert.doesNotMatch(sent.stderr, /Write your machine handoff to that path/u, 'the brief`s path is never the hook`s write instruction');
   assert.equal((await stop('placeholder', `Implement slice S3.\nHandoff file: ${placeholder}`, true)).status, 0, 'the second stop ends');
-  writeFileSync(path.join(dir, 'handoff-backend-developer.json'), '{}');
-  assert.equal((await stop('relative', 'Implement slice S4.\nHandoff file: handoff-backend-developer.json')).status, 0, 'a file the agent wrote is no mistake');
+  // A relative path an earlier run left is still a mistake to report; one this run wrote is not.
+  const relative = path.join(dir, 'handoff-backend-developer.json');
+  writeFileSync(relative, '{}');
+  await sleep(30);
+  assert.equal((await stop('stale', 'Implement slice S4.\nHandoff file: handoff-backend-developer.json')).status, 2, 'an earlier run`s file');
+  const transcript = path.join(base, 'agent-fresh.jsonl');
+  writeFileSync(transcript, JSON.stringify({ type: 'user', timestamp: new Date(Date.now() - 1000).toISOString(), message: { role: 'user', content: 'Implement slice S4.\nHandoff file: handoff-backend-developer.json' } }));
+  writeFileSync(relative, '{"fresh":true}');
+  const fresh = await hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'fresh', agent_type: 'aidrian:backend-developer', agent_transcript_path: transcript, last_assistant_message: 'done', stop_hook_active: false });
+  assert.equal(fresh.status, 0, 'a file the agent wrote in this run is no mistake');
 });
 
 // A state folder whose path holds a space: a backticked marker path is read whole, and the run's file is written.

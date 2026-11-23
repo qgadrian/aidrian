@@ -86,7 +86,7 @@ export function unwrittenHandoffs(input, project) {
 }
 
 // The `Handoff file:` markers of a subagent's brief: `owed`, unwrittenHandoffs's files, and `rejected`, each marker the
-// hook cannot fill whose path is not there either, as { value, problem }: one that names no path, or a path that is not
+// hook cannot fill whose path this run did not write either, as { value, problem }: one that names no path, or a path that is not
 // an absolute `.json` path in the state folder's `dispatch/`. A rejected marker is a brief's mistake, such as a `<state>`
 // left unexpanded, and is reported, never skipped in silence. A dispatch file named for another agent is no mistake to
 // report: it may be that agent's handoff, for this one to read.
@@ -113,10 +113,12 @@ export function briefHandoffs(input, project) {
   };
   const own = marked.filter((file) => wholePath.test(file) && word.test(path.basename(file)));
   const cwd = typeof input.cwd === 'string' ? input.cwd : project.root;
+  const since = handoffSince(input);
+  // A rejected path the agent wrote in this run, a regular file changed since it began (handedIn), is no mistake to
+  // report; an earlier run's file, a link, or a folder there still is.
   const rejected = [...new Set(marked)]
     .map((value) => ({ value, problem: problemOf(value) }))
-    .filter(({ value, problem }) => problem && !(value && existsSync(path.resolve(cwd, value))));
-  const since = handoffSince(input);
+    .filter(({ value, problem }) => problem && !(value && handedIn(path.resolve(cwd, value), since)));
   return { owed: [...new Set(own)].filter((file) => !handedIn(file, since)), rejected };
 }
 

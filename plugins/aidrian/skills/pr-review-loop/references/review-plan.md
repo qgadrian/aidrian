@@ -69,9 +69,9 @@ crosses them.
 
 - `findings_merged[]` (split reviews): each mistake once, with the passes that reported it in `sources`.
 - `open[]`: passes with findings still open: `findings` lists them for a local model; the bot's are on the pull request.
-  A bot entry with `holds_finding` answered with a clean receipt, but its status card of the head still holds one of
-  its earlier findings: read the bot's threads, resolved and outdated ones too, fix the one whose fix did not hold, and
-  push. Resolving a thread clears nothing; the bot's review of the next head does, once the finding is fixed.
+  A bot entry with `holds_finding`: the bot's status card of the head still holds a finding of its own. Read the bot's
+  current answer and its existing threads, resolved and outdated ones too, fix what still stands, and push. Resolving a
+  thread clears nothing; the bot's review of the next head does, once the finding is fixed.
 - `flows[]`: flows not signed off: `violated` invariants are findings to fix; `unverified` need a verdict with evidence.
   A `disputed` invariant has a `violated` verdict and another reviewer's `holds` or `not_affected` with evidence.
   When the fix is wrong, settle it through the entry's `settle` route below, else ask the Human which side is right,

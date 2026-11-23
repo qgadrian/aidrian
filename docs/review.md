@@ -897,10 +897,15 @@ card, when there is one, decides over the receipt: the two flags are the bot's l
 at the reviewed commit, and a receipt speaks only of that run's new findings, so the bot can post one on a head whose
 card still holds an earlier finding. A receipt beside a completed card of its commit with either flag not false is no
 pass: the signal carries `holds_finding: true`, the bot's pass keeps one open finding, and `fix_required` marks that
-`open[]` entry `holds_finding`, since the work is the bot's earlier threads, not the receipt. Only the bot's own later
-run clears the card, once the finding is fixed; resolving a thread does not. With no such card, as when it was last
-updated before the receipt, names another commit, or is still running, the receipt decides as before. A comment that
-only quotes the phrase is not a receipt. The 👍 is never an answer: it names no commit, and the receipt it follows may name the head before a push,
+`open[]` entry `holds_finding`: the work is in the bot's answer and its threads that still stand. Only the bot's own
+later run clears the card, once the finding is fixed; resolving a thread does not. `aidrian pr await-review <n>
+--request` asks about a head whose answer holds a finding once more, under the same cap, and marks that request
+(`held=<sha>`), so it never asks about that head again; the step's own requests never do. A receipt while the card
+still runs a code review, one named for that commit or last updated at or after the request, is no answer yet: the
+signal carries `card_pending: true`, and the wait goes on until the card completes or the wait times out, with
+`retry_recommended`. With no such card, as when it was last updated before the receipt and is completed, names another
+commit, or carries no state, the receipt decides as before. A comment that only quotes the phrase is not a receipt.
+The 👍 is never an answer: it names no commit, and the receipt it follows may name the head before a push,
 may predate the request, or may be one the read missed. A receipt answers the head when its 10-hex short commit is a
 prefix of it; a commit that shares that prefix reads as covered too, so this is no proof, and merge trust reads no
 receipt. A comment the status card vouches for answers the card's full commit, compared whole with the head; a card

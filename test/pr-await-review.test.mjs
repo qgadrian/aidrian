@@ -1358,9 +1358,82 @@ test('latestBotSignal: a clean receipt beside a card of its commit that still ho
   assert.deepEqual([passed.clean, passed.holds_finding, passed.commit_id], [true, undefined, head], 'both flags false');
   const alone = signal(receipt);
   assert.deepEqual([alone.clean, alone.holds_finding, alone.commit_id], [true, undefined, head.slice(0, 10)], 'a receipt with no card, as before');
-  // A card that does not vouch for the receipt leaves the receipt to speak, as before: one last updated before it, one
-  // of another commit, and one not yet completed.
+  // A completed card that does not vouch for the receipt leaves the receipt to speak, as before: one last updated before
+  // it, and one of another commit. A card still running is the next test's.
   assert.equal(signal(card(true, true, { updated_at: T(6) }), receipt).clean, true, 'a card last updated before the receipt');
   assert.equal(signal({ ...card(true), body: STATE_CARD_BODY('0123456789abcdef0123456789abcdef01234567', true) }, receipt).clean, true, 'a card of another commit');
-  assert.equal(signal({ ...card(true), body: STATE_CARD_BODY(head, true).replace('"status":"completed"', '"status":"in_progress"') }, receipt).clean, true, 'a card still running');
+});
+
+// The status card while its code review runs: the bot edits it to running when it starts, posts its receipt, and edits
+// the card to completed seconds later, so a read between the two sees the receipt beside a running card.
+const RUNNING_STATE_CARD = (sha) => STATE_CARD_BODY(sha, false).replace('"status":"completed"', '"status":"in_progress"');
+
+test('latestBotSignal: a clean receipt while the card still runs a review is no answer yet; a receipt with no card is', () => {
+  const head = '3871361bfb9f6e701a03438b1e300b0e921b909b';
+  const other = '0123456789abcdef0123456789abcdef01234567';
+  const base = { reviews: [], reviewComments: [], reactions: [], reviewer: DEFAULT_REVIEWER, since: T(5) };
+  const receipt = { id: 1, user: BOT, created_at: T(7), body: RECEIPT_BODY(head) };
+  const running = (sha, updated) => ({ id: 2, user: BOT, created_at: T(1), updated_at: T(updated), body: RUNNING_STATE_CARD(sha) });
+  const signal = (...issueComments) => latestBotSignal({ ...base, issueComments });
+  const named = signal(running(head, 6), receipt);
+  assert.deepEqual([named.clean, named.card_pending, named.holds_finding], [undefined, true, undefined], 'running for the receipt`s commit');
+  assert.equal(signal(running(head, 3), receipt).card_pending, true, 'named for the commit, last updated before the trigger');
+  assert.equal(signal(running(other, 6), receipt).card_pending, true, 'running since the trigger, for another commit');
+  const old = signal(running(other, 3), receipt);
+  assert.deepEqual([old.clean, old.card_pending], [true, undefined], 'running for another commit since before the trigger');
+  const alone = signal(receipt);
+  assert.deepEqual([alone.clean, alone.card_pending], [true, undefined], 'no card at all: as before');
+  assert.equal(signal({ ...running(head, 6), body: RUNNING_CARD_BODY }, receipt).clean, true, 'a card with no machine state says nothing');
+  // Only a clean receipt waits: a comment that names findings is open work at once.
+  const finding = { ...receipt, body: `Codex Review: one finding.\n\n**Reviewed commit:** \`${head.slice(0, 10)}\`` };
+  assert.deepEqual([signal(running(head, 6), finding).clean, signal(running(head, 6), finding).card_pending], [undefined, undefined]);
+});
+
+test('awaitReview: a receipt beside a running card waits for the card, and reads it once it completes', async () => {
+  const head = '3871361bfb9f6e701a03438b1e300b0e921b909b';
+  const trigger = { id: 1, user: { login: 'adrian' }, created_at: T(5), body: `${REQUEST_COMMENT}\n\n<!-- pr-await-review: head=${head} -->` };
+  const receipt = { id: 3, user: BOT, created_at: T(7), body: RECEIPT_BODY(head) };
+  const running = { id: 2, user: BOT, created_at: T(1), updated_at: T(6), body: RUNNING_STATE_CARD(head) };
+  const done = (flag) => ({ ...running, updated_at: T(11), body: STATE_CARD_BODY(head, flag) });
+  const run = async (frames, timeoutSec = 120) => {
+    const forge = fakeForge(frames.map((issueComments) => ({ head, headCommittedAt: T(4), issueComments })));
+    const c = clock();
+    const sleep = async (sec) => { await c.sleep(sec); forge.advance(); };
+    return awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec, intervalSec: 60 }, { forge, git: { pushedHead: () => null, behind: () => false }, now: c.now, sleep });
+  };
+  const held = await run([[trigger, running, receipt], [trigger, done(true), receipt]]);
+  assert.deepEqual([held.status, held.signal.clean, held.signal.holds_finding], ['received', undefined, true], 'the card completed holding a finding');
+  const passed = await run([[trigger, running, receipt], [trigger, done(false), receipt]]);
+  assert.deepEqual([passed.status, passed.signal.clean], ['received', true], 'the card completed with both flags false');
+  const waiting = await run([[trigger, running, receipt]], 60);
+  assert.deepEqual([waiting.status, waiting.signal.card_pending, waiting.retry_recommended], ['timed_out', true, true], 'the card never completed');
+  const alone = await run([[trigger, receipt]], 0);
+  assert.deepEqual([alone.status, alone.signal.clean], ['already_present', true], 'a receipt with no card: as before');
+});
+
+test('awaitReview --request: an answer that holds a finding asks about the head once more, under the cap, and never again', async () => {
+  const head = '3871361bfb9f6e701a03438b1e300b0e921b909b';
+  const trigger = { id: 1, user: { login: 'adrian' }, created_at: T(5), body: `${REQUEST_COMMENT}\n\n<!-- pr-await-review: head=${head} -->` };
+  const receipt = (m) => ({ id: 10 + m, user: BOT, created_at: T(m), body: RECEIPT_BODY(head) });
+  const card = (m) => ({ id: 2, user: BOT, created_at: T(1), updated_at: T(m), body: STATE_CARD_BODY(head, true) });
+  const run = (issueComments, extra = {}, reviews = []) => {
+    const forge = fakeForge([{ head, headCommittedAt: T(4), issueComments, reviews }]);
+    return awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 0, intervalSec: 60, ...extra }, { forge, git: { pushedHead: () => null, behind: () => false }, ...clock() })
+      .then((r) => ({ r, posts: forge.posts }));
+  };
+  const asked = await run([trigger, receipt(7), card(8)]);
+  assert.deepEqual([asked.r.requested, asked.r.requested_head, asked.posts.length], [true, head, 1], 'one request for the held head');
+  assert.match(asked.posts[0].fields.body, new RegExp(`held=${head}`, 'u'));
+  assert.match(asked.posts[0].fields.body, new RegExp(`head=${head}`, 'u'));
+  // The bot answers the request the same way: the held request is on record, so nothing is posted again.
+  const again = { id: 4, user: { login: 'adrian' }, created_at: T(9), body: asked.posts[0].fields.body };
+  const answered = await run([trigger, receipt(7), again, receipt(11), card(12)]);
+  assert.deepEqual([answered.r.status, answered.r.requested, answered.posts.length, answered.r.signal.holds_finding], ['already_present', false, 0, true]);
+  // At the cap the held answer stands as it is: no request and no round_limit.
+  const older = { id: 5, user: BOT, submitted_at: T(2), commit_id: '0123456789abcdef0123456789abcdef01234567', state: 'COMMENTED' };
+  const capped = await run([trigger, receipt(7), card(8)], { maxRounds: 1 }, [older]);
+  assert.deepEqual([capped.r.status, capped.r.requested, capped.posts.length, capped.r.signal.holds_finding], ['already_present', false, 0, true]);
+  // Without --request nothing is posted.
+  const quiet = await run([trigger, receipt(7), card(8)], { request: false });
+  assert.deepEqual([quiet.r.status, quiet.posts.length], ['already_present', 0]);
 });

@@ -82,12 +82,22 @@ export const codexRounds = (reviews, reviewer) => (reviews ?? []).filter((r) => 
 // The pattern accepts short hex so fixtures stay readable; this command always writes the full SHA.
 export const TRIGGER_HEAD_PATTERN = /<!--\s*pr-await-review:\s*head=([0-9a-f]{3,40})\s*-->/i;
 export const triggerHeadSha = (body) => (typeof body === 'string' ? body.match(TRIGGER_HEAD_PATTERN)?.[1] ?? null : null);
-export const requestCommentBody = (headSha, maxRounds = DEFAULTS.maxRounds, reviewMarker = null) => {
+export const requestCommentBody = (headSha, maxRounds = DEFAULTS.maxRounds, reviewMarker = null, held = false) => {
   const request = REQUEST_TEXT;
   const marked = headSha ? `${request}\n\n<!-- pr-await-review: head=${headSha} -->` : request;
   const rounds = maxRounds > DEFAULTS.maxRounds ? `${marked}\n<!-- pr-await-review: max-rounds=${maxRounds} -->` : marked;
-  return reviewMarker ? `${rounds}\n${reviewMarker}` : rounds;
+  const asked = held && headSha ? `${rounds}\n<!-- pr-await-review: held=${headSha} -->` : rounds;
+  return reviewMarker ? `${asked}\n${reviewMarker}` : asked;
 };
+
+// The mark of a request that asked the bot again about a head whose answer left its status card holding a finding. A
+// head is asked again so once, by --request alone: a request that carries the mark for it is never repeated.
+const HELD_PATTERN = /<!--\s*pr-await-review:\s*held=([0-9a-f]{7,40})\s*-->/giu;
+export const heldAsked = (issueComments, headSha) => Boolean(headSha) && (issueComments ?? []).some((c) => {
+  const body = typeof c?.body === 'string' ? c.body : '';
+  if (!body.trimStart().toLowerCase().startsWith(REQUEST_COMMENT)) return false;
+  return [...body.matchAll(HELD_PATTERN)].some((m) => sameCommit(m[1], headSha));
+});
 
 // The bot's out-of-credits reply: an ordinary comment, by the same author, that names the condition.
 export const QUOTA_NOTICE_PATTERN = /codex usage limits?/i;
@@ -116,17 +126,31 @@ export const isCleanReceipt = (body) => {
 // names its commit in fewer than 40 hex. The card vouches for `comment` only when it was last updated at or after
 // `since` and no earlier than that comment: a card left from an earlier round, or one that has not caught up with the
 // comment, says nothing of it. Its full SHA, not the comment's short one, is what the head is checked against.
+const newestCard = (issueComments, reviewer) => issueComments
+  .filter((c) => c.user?.login === reviewer && isReviewSummaryCard(c.body))
+  .sort((a, b) => ms(b.updated_at ?? b.created_at) - ms(a.updated_at ?? a.created_at))[0];
+const FULL_SHA = /^[0-9a-f]{40}$/iu;
 const vouchingReview = (issueComments, reviewer, commit, comment, since) => {
   if (!commit) return null;
-  const card = issueComments
-    .filter((c) => c.user?.login === reviewer && isReviewSummaryCard(c.body))
-    .sort((a, b) => ms(b.updated_at ?? b.created_at) - ms(a.updated_at ?? a.created_at))[0];
+  const card = newestCard(issueComments, reviewer);
   const updated = ms(card?.updated_at ?? card?.created_at);
   if (!Number.isFinite(updated) || (since && !(updated >= ms(since))) || !(updated >= ms(comment?.created_at))) return null;
   const review = cardState(card?.body)?.code_review;
   const vouches = review?.status === 'completed' && typeof review.commit_sha === 'string'
-    && /^[0-9a-f]{40}$/iu.test(review.commit_sha) && sameCommit(review.commit_sha, commit);
+    && FULL_SHA.test(review.commit_sha) && sameCommit(review.commit_sha, commit);
   return vouches ? review : null;
+};
+
+// Whether the reviewer's newest status card says a code review is still running that a receipt of `commit` may yet be
+// judged by: a review not yet completed, named for that full commit or last updated at or after the trigger `since`.
+// The card's completed edit lands after the receipt, so until it does, a receipt is no answer: the card may still say
+// a finding stands. A card with no code review state says nothing either way.
+const cardRunning = (issueComments, reviewer, commit, since) => {
+  const card = newestCard(issueComments, reviewer);
+  const review = cardState(card?.body)?.code_review;
+  if (typeof review?.status !== 'string' || review.status === 'completed') return false;
+  const named = typeof review.commit_sha === 'string' && FULL_SHA.test(review.commit_sha) && Boolean(commit) && sameCommit(review.commit_sha, commit);
+  return named || (Boolean(since) && ms(card.updated_at ?? card.created_at) >= ms(since));
 };
 
 // Whether a card's code review still holds a finding of the bot's own at its commit: either flag not false. The two
@@ -270,12 +294,16 @@ export const latestBotSignal = ({ reviews, reviewComments, issueComments = [], r
   // `clean`: the status card that vouches for the comment's commit says its review completed with both flags false, or,
   // with no such card, the comment is the clean receipt. `holds_finding`: that card still holds a finding of the bot's
   // own, so a receipt beside it is open review work (the bot's earlier threads still stand), never a pass.
+  // `card_pending`: a clean receipt with no vouching card while the card still runs a review is not yet an answer, so
+  // the wait goes on (`answers`) until the card completes or the wait times out.
   const card = kind === 'comment' ? vouchingReview(issueComments, reviewer, commit, comment, since) : null;
   const holds = card !== null && holdsFinding(card);
-  const clean = kind === 'comment' && !holds && (card !== null || isCleanReceipt(comment.body));
+  const receipt = kind === 'comment' && card === null && isCleanReceipt(comment.body);
+  const pending = receipt && cardRunning(issueComments, reviewer, commit, since);
+  const clean = kind === 'comment' && !holds && !pending && (card !== null || receipt);
   return {
     kind, at: comment.created_at, review_id: null, commit_id: card?.commit_sha ?? commit, state: null, line_comments: 0, comment_id: comment.id ?? null,
-    ...(clean ? { clean: true } : {}), ...(holds ? { holds_finding: true } : {}),
+    ...(clean ? { clean: true } : {}), ...(holds ? { holds_finding: true } : {}), ...(pending ? { card_pending: true } : {}),
   };
 };
 
@@ -408,16 +436,20 @@ export const awaitReview = async (opts, { forge = awaitForge(), git = localGit()
     const ack = acknowledgement({ reactions: s.reactions, issueComments: s.issueComments, reviewer: opts.reviewer, since });
     // 👀 on a trigger for this head: the bot is mid-review, and a second request only costs another run.
     if (opts.request && !signal && acknowledgedForHead(ack, head, s.headCommittedAt, sinceHead)) return null;
-    if (opts.request && (!signal || stale) && requestedForHead !== head) {
+    // An answer for this head that left the bot's card holding a finding: --request asks about the head once more, under
+    // the same cap (at the cap the answer stands as it is), and the request's mark keeps it from being asked again.
+    const held = opts.request && !stale && signal?.holds_finding === true && !heldAsked(s.issueComments, head);
+    if (opts.keepRecordedCap) maxRounds = Math.max(maxRounds, recordedMaxRounds(s.issueComments) ?? 0);
+    const reask = held && codexRounds(s.reviews, opts.reviewer) < maxRounds;
+    if (opts.request && (!signal || stale || reask) && requestedForHead !== head) {
       // Accepted residual: a push while a request is in flight at limit - 1 posts one more, so a pull request can end
       // at limit + 1 reviews; the bot exposes no per-trigger completion to reserve against.
-      if (opts.keepRecordedCap) maxRounds = Math.max(maxRounds, recordedMaxRounds(s.issueComments) ?? 0);
       if (codexRounds(s.reviews, opts.reviewer) >= maxRounds) return 'round_limit';
       // A request past `grantFloor` uses an extra round, granted on the signals of `validHead`: for any other head, post
       // nothing and hand back `head_moved`, so the caller reads the signals on this head first (lib/review/extension.mjs).
       if (opts.validHead && Number.isInteger(opts.grantFloor) && codexRounds(s.reviews, opts.reviewer) >= opts.grantFloor && !sameCommit(head ?? '', opts.validHead)) return 'head_moved';
       const beforePost = flooredInstant(now());
-      const posted = forge.postComment(repo, n, requestCommentBody(head, maxRounds, review.marker ?? null));
+      const posted = forge.postComment(repo, n, requestCommentBody(head, maxRounds, review.marker ?? null, reask));
       requested = true;
       requestedForHead = head;
       since = postedTriggerInstant(posted) ?? beforePost;
@@ -426,8 +458,10 @@ export const awaitReview = async (opts, { forge = awaitForge(), git = localGit()
       stale = false;
     }
     if (signal?.kind === 'quota_exhausted' && !stale) return 'blocked_quota';
-    return Boolean(signal) && !stale ? 'covered' : null;
+    return answers() ? 'covered' : null;
   };
+  // Whether the signal answers the head: fresh, and no receipt whose status card is still running.
+  const answers = () => Boolean(signal) && !stale && signal.card_pending !== true;
   const result = (status) => {
     const ack = acknowledgement({ reactions: s.reactions, issueComments: s.issueComments, reviewer: opts.reviewer, since });
     return {
@@ -447,7 +481,7 @@ export const awaitReview = async (opts, { forge = awaitForge(), git = localGit()
       acknowledged_at: ack?.at ?? null,
       // A timeout after the bot acknowledged this head ran past a budget that cannot grow: one re-run without --request
       // is worth its wait. A timeout with nothing acknowledged, or acknowledged for another head, is not.
-      ...(status === 'timed_out' ? { retry_recommended: acknowledgedForHead(ack, head, s.headCommittedAt, sinceHead) && !(Boolean(signal) && !stale) } : {}),
+      ...(status === 'timed_out' ? { retry_recommended: (acknowledgedForHead(ack, head, s.headCommittedAt, sinceHead) && !answers()) || signal?.card_pending === true } : {}),
       // The review round, for `aidrian pr disposition --round`.
       codex_rounds: codexRounds(s.reviews, opts.reviewer),
       ...(status === 'round_limit' ? { max_rounds: maxRounds } : {}),

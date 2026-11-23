@@ -215,13 +215,21 @@ test('p7: with no record of the number, a draft naming no repository waits for e
   mkdirSync(path.join(tmp, 'review-12-review-34-o--r'), { recursive: true });
   mkdirSync(path.join(tmp, 'eng-4-review-9'), { recursive: true });
   writeFileSync(path.join(tmp, 'pr-12-review.md'), 'x');
-  const states = { [own]: 'OPEN', 'c7/d': 'MERGED', default: 'MERGED' };
+  const states = { [own]: 'OPEN', 'c7/d': 'MERGED', 'review-34-o/r': 'MERGED', default: 'MERGED' };
   const forge = { change: (_ref, _fields, options = {}) => ({ state: states[options.repo ?? 'default'] }) };
   const swept = sweepDrafts(c.project, { forge, dir: tmp, limit: 1 });
   assert.deepEqual([swept.removed, swept.kept], [[], [{ pr: 12, reason: 'open' }]], 'the origin`s #12 is still open, though the forge`s default merged, and read within a limit of 1');
   states[own] = 'CLOSED';
   assert.deepEqual(sweepDrafts(c.project, { forge, dir: tmp }).removed.map((row) => row.files), [['@eng-1-review-12', 'pr-12-review.md', 'review-12']], 'an issue session\'s findings folder too, never its other scratch');
   assert.deepEqual([existsSync(path.join(tmp, '@eng-1-review-12')), existsSync(path.join(tmp, 'eng-2-review-12', 'agent-y-0011aabb.findings.json')), existsSync(path.join(tmp, 'eng-3-review-12')), existsSync(path.join(tmp, 'eng-4-review-9')), existsSync(path.join(tmp, 'review-12-notes')), existsSync(path.join(tmp, 'review-12-review-34-o--r'))], [false, true, true, true, true, true]);
+});
+
+test('p7: an issue session`s findings folder for an owner named like a review folder still goes with its pull request', (t) => {
+  const c = checkout(t, [['origin', `https://github.com/${unique('own')}/b.git`]]);
+  const tmp = path.join(c.dir, 'drafts');
+  mkdirSync(path.join(tmp, '@eng-1-review-12-review-34-o--r'), { recursive: true });
+  const forge = { change: (_ref, _fields, options = {}) => ({ state: options.repo === 'review-34-o/r' ? 'CLOSED' : 'OPEN' }) };
+  assert.deepEqual(sweepDrafts(c.project, { forge, dir: tmp }).removed.map((row) => [row.repo, row.files]), [['review-34-o/r', ['@eng-1-review-12-review-34-o--r']]]);
 });
 
 test('p8: a review record survives origin renamed to upstream and a new origin, so the merge stays refused', (t) => {

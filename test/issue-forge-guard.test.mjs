@@ -79,7 +79,8 @@ const PASSED = [
 // A run `launch` whose issue ENG-1 runs in a confined attempt clone, and SESSION marked as that issue's session.
 function issueFixture(t, options = {}) {
   const fx = runFixture(t, options);
-  const attempt = path.join(runsFolder(fx.state), 'launch', 'attempts', 'ENG-1.1');
+  const key = options.key ?? 'ENG-1';
+  const attempt = path.join(runsFolder(fx.state), 'launch', 'attempts', `${key}.1`);
   const work = path.join(attempt, 'work');
   for (const part of ['drop', 'cache']) mkdirSync(path.join(attempt, part), { recursive: true });
   execFileSync('git', ['clone', '-q', '--separate-git-dir', path.join(attempt, 'git'), fx.dir, work], { stdio: 'pipe' });
@@ -88,10 +89,10 @@ function issueFixture(t, options = {}) {
   mkdirSync(temp);
   const at = new Date().toISOString();
   appendToRun(fx.state, 'launch', () => ({ rows: [
-    { event: 'start', key: 'ENG-1', attempt: 1, session: DRIVER, name: 'launch · ENG-1 · 1', cwd: work, branch: BRANCH, drop: path.join(attempt, 'drop'), ...(options.pushUrl === undefined ? { pushUrl: fx.dir } : options.pushUrl), at, outcome: 'started', id: 'pid-1-0000000000000000', child: SESSION },
-    { event: 'issue', key: 'ENG-1', state: 'running', at },
+    { event: 'start', key, attempt: 1, session: DRIVER, name: `launch · ${key} · 1`, cwd: work, branch: BRANCH, drop: path.join(attempt, 'drop'), ...(options.pushUrl === undefined ? { pushUrl: fx.dir } : options.pushUrl), at, outcome: 'started', id: 'pid-1-0000000000000000', child: SESSION },
+    { event: 'issue', key, state: 'running', at },
   ] }));
-  assert.ok(markUnattended(SESSION, { root: fx.dir, cwd: work, env: fx.env, tags: { project: 'launch', issue: 'ENG-1' } }));
+  assert.ok(markUnattended(SESSION, { root: fx.dir, cwd: work, env: fx.env, tags: { project: 'launch', issue: key } }));
   const mark = readUnattendedMark(SESSION, { env: fx.env, home: fx.home });
   // The guard as the agent gate hook asks it, in process, for SESSION's call in `cwd`.
   const ask = (input, { held = mark, cwd = work } = {}) => unattendedWriteDenial({ session_id: SESSION, cwd, ...input }, fx.config, {
@@ -348,16 +349,16 @@ test('an issue session pushes only from its own clone\'s repository, to the URL 
   assert.match(fx.ask(bash(EXACT))?.reason ?? '', /one of the 2 URLs origin pushes to, and origin pushes only to/u, 'a second push URL');
 });
 
-test('an issue session writes the findings file pr review names for it, and no review folder its issue key does not lead', (t) => {
+test('an issue session writes the findings file pr review names for it, and no review folder another issue key leads', (t) => {
   const fx = issueFixture(t);
   const env = { ...fx.env, CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: SESSION };
   assert.equal(sessionIssue(env), 'ENG-1');
   assert.equal(sessionIssue({ ...env, CLAUDE_CODE_SESSION_ID: DRIVER }), null, 'a session no issue mark names');
   const file = findingsFile(fx.project, 3, 'agent:code-reviewer', 'o/r', sessionIssue(env));
-  assert.equal(path.relative(fx.state, path.dirname(file)), path.join('tmp', 'eng-1-review-3-o--r'));
+  assert.equal(path.relative(fx.state, path.dirname(file)), path.join('tmp', '@eng-1-review-3-o--r'));
   assert.equal(fx.ask(write(file)), null);
   assert.equal(fx.ask(bash(`printf x > '${file}'`)), null, 'shell');
-  for (const folder of ['review-3-o--r', 'eng-2-review-4-o--r']) {
+  for (const folder of ['review-3-o--r', '@eng-2-review-4-o--r', '@eng-12-review-3-o--r', '@eng-1-x-review-3', 'x@eng-1-review-3']) {
     assert.match(fx.ask(write(path.join(fx.state, 'tmp', folder, path.basename(file))))?.reason ?? '', /not named for this session's issue ENG-1/u, folder);
   }
   assert.equal(path.basename(path.dirname(findingsFile(fx.project, 3, 'agent:code-reviewer', 'o/r'))), 'review-3-o--r', 'any other session as before');
@@ -399,6 +400,18 @@ test('the subagent stop delivery hands an issue session only its own unshared ha
   rmSync(path.join(own.state, 'dispatch'), { recursive: true, force: true });
   symlinkSync(away, path.join(own.state, 'dispatch'));
   assert.deepEqual(owed(own, 'feat-eng-1-export-S1-explorer.json'), [], 'its own branch, through a linked folder');
+});
+
+test('an issue session whose key reads like a draft name writes no draft cleanup would remove, but its own findings folder', (t) => {
+  for (const key of ['REVIEW-12', 'PR-12']) {
+    const fx = issueFixture(t, { key, issues: [{ key, branch: BRANCH, status: 'unstarted', priority: 1 }] });
+    const tmp = path.join(fx.state, 'tmp');
+    for (const name of ['review-12', 'review-12-o--r', 'review-12-review-34o--r', 'pr-12-review.md', `@eng-1-review-12`]) {
+      assert.match(fx.ask(write(path.join(tmp, name, 'x.json')))?.reason ?? '', new RegExp(`not named for this session's issue ${key}`, 'u'), `${key}: ${name}`);
+    }
+    assert.equal(fx.ask(write(path.join(tmp, `@${key.toLowerCase()}-review-12-o--r`, 'x.findings.json'))), null, `${key}: its own findings folder`);
+    assert.equal(fx.ask(write(path.join(tmp, `${key.toLowerCase()}-notes.md`))), null, `${key}: its other scratch`);
+  }
 });
 
 test('an issue session whose branch another issue of the run spells the same writes no body or handoff file named for it, and is told the key-named body', (t) => {

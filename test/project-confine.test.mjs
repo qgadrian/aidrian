@@ -24,7 +24,7 @@ import { HOOK_COUNTS_AGE, sweepHookCounts } from '../plugins/aidrian/lib/lesson-
 import { sessionLengthMarker } from '../plugins/aidrian/lib/session-length.mjs';
 import { refusalMarker } from '../plugins/aidrian/lib/tracker-guard.mjs';
 import claudeCode, { READ_TOOLS } from '../plugins/aidrian/lib/hosts/claude-code.mjs';
-import { accessProblem, confineDomains, managedPlists, managedSettings } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
+import { accessProblem, BROWSER_PROFILES, confineDomains, confineReads, CREDENTIAL_PATHS, managedPlists, managedSettings } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
 import { writeHandoff } from '../plugins/aidrian/lib/project-token.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { fileReadOf } from '../plugins/aidrian/lib/hosts/index.mjs';
@@ -190,6 +190,32 @@ test('on Linux the host masks a hidden store with an empty one: a read that open
   mkdirSync(none);
   writeFileSync(path.join(empty.home, '.netrc'), '');
   assert.deepEqual(plan(empty, { reads: [none, path.join(empty.home, '.netrc')] }).plan.reads, []);
+});
+
+test('at the read cap, the proof keeps the stores it checked before the browser profiles were added, and takes those only below it', (t) => {
+  // Every store populated: the plan's 17 reads are the first credential stores, with no browser profile among them.
+  const full = attempt(t);
+  const populate = (home, names) => {
+    for (const name of names) {
+      const file = path.join(home, name);
+      if (existsSync(file)) continue;
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, 'x');
+    }
+  };
+  populate(full.home, [...CREDENTIAL_PATHS, ...BROWSER_PROFILES]);
+  const all = confineReads({ env: full.env, home: full.home });
+  const kept = plan(full, { reads: all }).plan.reads.map((each) => each.path);
+  assert.equal(kept.length, 17);
+  assert.deepEqual(kept, all.filter((each) => existsSync(each)).slice(0, 17));
+  const browsers = new Set(BROWSER_PROFILES.map((each) => path.join(full.home, each)));
+  assert.ok(kept.every((each) => !browsers.has(each)), 'no browser profile pushes out an earlier store');
+  // A home with few stores: the browser profiles fill the plan after them.
+  const few = attempt(t);
+  populate(few.home, ['Library/Application Support/Arc', '.config/mozilla']);
+  const some = plan(few, { reads: confineReads({ env: few.env, home: few.home }) }).plan.reads.map((each) => each.path);
+  assert.deepEqual(some.slice(-2), [path.join(few.home, 'Library/Application Support/Arc'), path.join(few.home, '.config/mozilla')]);
+  assert.ok(some.includes(few.secret) && some.indexOf(few.secret) < some.length - 2, 'the earlier stores come first');
 });
 
 test('the main checkout is fingerprinted by an entry other than its git folder, which the sandbox opens again', (t) => {

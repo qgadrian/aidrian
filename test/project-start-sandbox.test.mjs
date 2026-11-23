@@ -19,7 +19,7 @@ import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { forgeDomains, forgeTokenVars } from '../plugins/aidrian/lib/forges/index.mjs';
 import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import { BEACON_WAIT, IDENTIFY_CAP, startBackground, startProject } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
-import { accessProblem, cloneProblem, configFolder, CREDENTIAL_PATHS, limitContinueProblem, mcpConfig, nestedProtected, npmGlobalConfigs, PLACEHOLDERS, PROTECTED_PATHS, sandboxSettings, secretVars, userSettingsProblem, writeEnvFile } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
+import { accessProblem, BROWSER_PROFILES, cloneProblem, configFolder, confineReads, CREDENTIAL_PATHS, limitContinueProblem, mcpConfig, nestedProtected, npmGlobalConfigs, PLACEHOLDERS, PROTECTED_PATHS, sandboxSettings, secretVars, userSettingsProblem, writeEnvFile } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
 import { nestedProtected as anyHostNested, protectedPaths } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { GIT_PLACEHOLDERS } from '../plugins/aidrian/lib/attempt-clone.mjs';
 import { runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
@@ -93,7 +93,7 @@ test('the sandbox settings are pinned whole: the sandbox on and required, writes
     work: '/s/w', git: '/s/g', grants: ['/s/g', '/s/d', '/st/plans'], domains: ['github.com', 'api.github.com'], temp: ['/private/tmp', '/s/d'], home,
     config: '/cfg', platform: 'linux', main: '/m', mainGit: '/m/.git', secrets: ['NPM_TOKEN', 'AWS_SECRET_ACCESS_KEY'], stores: ['/usr/local/etc/npmrc'],
   });
-  const stores = [...CREDENTIAL_PATHS.map((each) => path.join(home, each)), '/cfg/.credentials.json', '/cfg/ide', '/cfg/.claude.json', '/cfg/.claude-trust-stage', '/cfg/session-env', '/usr/local/etc/npmrc'];
+  const stores = [...CREDENTIAL_PATHS.map((each) => path.join(home, each)), '/cfg/.credentials.json', '/cfg/ide', '/cfg/.claude.json', '/cfg/.claude-trust-stage', '/cfg/session-env', '/usr/local/etc/npmrc', ...BROWSER_PROFILES.map((each) => path.join(home, each))];
   const unread = [...stores, '/m'];
   const nested = ['/s/w/**/.claude', ...['skills', 'agents', 'commands', 'hooks', 'workflows', 'scheduled_tasks.json'].flatMap((name) => [`/s/w/**/.claude/${name}`, `/s/w/**/.claude/${name}/**`])];
   assert.deepEqual(settings, {
@@ -149,16 +149,19 @@ test('the sandbox settings are pinned whole: the sandbox on and required, writes
     '.yarnrc.yml', '.yarnrc', '.config/npm/npmrc', '.bunfig.toml', '.local/share/gem/credentials', '.bundle/config',
     '.config/pnpm/rc', 'Library/Preferences/pnpm/rc', '.config/pip/pip.conf', '.pip/pip.conf', 'Library/Application Support/pip/pip.conf',
     '.config/pypoetry/auth.toml', 'Library/Application Support/pypoetry/auth.toml', '.local/share/uv/credentials',
-    'Library/Application Support/Chromium', 'Library/Application Support/Arc', 'Library/Application Support/Vivaldi',
-    'Library/Application Support/com.operasoftware.Opera', '.config/microsoft-edge', '.config/BraveSoftware', '.config/vivaldi',
-    '.config/opera', 'snap/chromium', 'snap/firefox', '.var/app/com.google.Chrome', '.var/app/org.chromium.Chromium',
-    '.var/app/org.mozilla.firefox',
   ]);
   // Each browser's profile folder, Chrome for Testing and headless Chrome under Google's included, is unreadable.
-  for (const each of ['Library/Application Support/Google/Chrome for Testing', 'Library/Application Support/Google/Chrome-headless', 'Library/Application Support/Chromium', 'Library/Application Support/Arc']) {
+  const denied = sandboxSettings({ work: '/w', git: '/g', grants: ['/g'], domains: ['github.com'], temp: [], home, platform: 'linux' }).sandbox.filesystem.denyRead;
+  for (const each of ['Library/Application Support/Google/Chrome for Testing', 'Library/Application Support/Google/Chrome-headless', 'Library/Application Support/Chromium', 'Library/Application Support/Arc', '.config/google-chrome-for-testing', '.config/mozilla', 'snap/vivaldi']) {
     const file = path.join(home, each);
-    assert.ok(CREDENTIAL_PATHS.some((store) => file === path.join(home, store) || file.startsWith(`${path.join(home, store)}/`)), each);
+    assert.ok(denied.some((store) => file === store || file.startsWith(`${store}/`)), each);
   }
+  // The sandbox proof reads only the first stores it finds (project-confine.mjs READ_CAP), so the browser profiles come
+  // after every other store, the host's own and npm's global config among them, and never push one out of the proof.
+  const reads = confineReads({ env: { CLAUDE_CONFIG_DIR: '/cfg', npm_config_globalconfig: '/etc/npmrc' }, home });
+  const browsers = BROWSER_PROFILES.map((each) => path.join(home, each));
+  assert.deepEqual(reads.slice(-browsers.length), browsers);
+  for (const each of ['/cfg/session-env', '/etc/npmrc', path.join(home, '.ssh')]) assert.ok(reads.indexOf(each) < reads.length - browsers.length, each);
   assert.ok(!CREDENTIAL_PATHS.includes('.config/gh'), 'the forge CLI\'s login stays readable');
   // Each registry token store is unreadable to a sandboxed command and to Read.
   for (const each of ['.yarnrc.yml', '.config/npm/npmrc', '.bunfig.toml', '.local/share/gem/credentials', '.npmrc', '.pypirc', '.cargo/credentials.toml', '.gem/credentials', '.bundle/config', '.config/pypoetry/auth.toml', '.local/share/uv/credentials']) {

@@ -511,11 +511,14 @@ No `sandbox.excludedCommands` is passed. Three conditions hold on top of the san
   command line, which any process of the user can read in the process list.
 - **The user's credentials are unreadable**, by a sandboxed command and by Read: `~/.ssh`, `~/.gnupg`, `~/.aws`,
   `~/.netrc`, `~/.docker`, `~/.kube`, `~/.config/gcloud`, `~/.azure`, `~/.oci`, `~/Library/Keychains`,
-  `~/.password-store`, `~/.config/op`, `~/.1password`, every browser's profiles: the Google (Chrome, Chrome for
-  Testing, and headless Chrome), Firefox, Brave, Edge, Chromium, Arc, Vivaldi, and Opera folders of
-  `~/Library/Application Support`, `~/.mozilla`, `~/.config/google-chrome`, `~/.config/chromium`,
-  `~/.config/microsoft-edge`, `~/.config/BraveSoftware`, `~/.config/vivaldi`, `~/.config/opera`, the snap folders
-  `~/snap/chromium` and `~/snap/firefox`, and the flatpak folders of Chrome, Chromium, and Firefox under `~/.var/app`,
+  `~/.password-store`, `~/.config/op`, `~/.1password`, every browser's default profiles: the Google (Chrome in each
+  channel, Chrome for Testing, and headless Chrome), Firefox, Brave, Edge, Chromium, Arc, Vivaldi, and Opera folders
+  of `~/Library/Application Support`, `~/.mozilla`, `~/.config/mozilla`, `~/.config/google-chrome` and its beta,
+  unstable, and for-testing siblings, `~/.config/chromium`, `~/.config/microsoft-edge` and its beta and dev siblings,
+  `~/.config/BraveSoftware`, `~/.config/vivaldi` and `~/.config/vivaldi-snapshot`, `~/.config/opera`, the snap
+  folders of Chromium, Firefox, Vivaldi, and Brave under `~/snap`, and the flatpak folders of Chrome, Chromium, and
+  Firefox under `~/.var/app` (a profile moved elsewhere, through `XDG_CONFIG_HOME` or `--user-data-dir`, stays
+  readable; the sandbox proof tries the browser folders after every other store),
   `~/.git-credentials`, `~/.npmrc`, `~/.pypirc`, `~/.cargo/credentials.toml` and `~/.cargo/credentials`,
   `~/.gem/credentials`, `~/.vault-token`, `~/.config/hub`, the host's own `~/.claude.json`,
   `~/.claude/.credentials.json`, `~/.claude/ide`, and its `~/.claude/session-env` tree, which holds every session's

@@ -7,10 +7,10 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { auditNudge, readTriage, recordDecision, today } from '../plugins/aidrian/lib/audits.mjs';
-import { itemState } from '../plugins/aidrian/lib/feedback-record.mjs';
+import { heldFolders, itemState } from '../plugins/aidrian/lib/feedback-record.mjs';
 import { createGithubForge } from '../plugins/aidrian/lib/forges/github.mjs';
 import { accessTerms, deriveKind, neutralized, refusalContext, refusedKind, runProductFeedback } from '../plugins/aidrian/lib/pr-product-feedback.mjs';
-import { configPathIn, projectAt, strictConfigPathIn } from '../plugins/aidrian/lib/project.mjs';
+import { configPathIn, projectAt, stateRoot, strictConfigPathIn } from '../plugins/aidrian/lib/project.mjs';
 import { check } from '../plugins/aidrian/lib/rules/product-feedback-answer.mjs';
 
 const AIDRIAN = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
@@ -49,7 +49,7 @@ function repo(t, { config = configText(), local = null, below = '' } = {}) {
 }
 
 // The gh seam: the pull request, its base and default branch, the config each commits, its comments, and the writes.
-function fakeGh({ view = {}, pull = {}, files = { [MAIN_FILE]: configText() }, comments = [], single = {}, singleFails = false, user = 'adrian', failWrite = false, noId = false } = {}) {
+function fakeGh({ view = {}, pull = {}, files = { [MAIN_FILE]: configText() }, comments = [], single = {}, singleFails = false, user = 'adrian', failWrite = false, noId = false, onWrite = () => {} } = {}) {
   const calls = [];
   const writes = [];
   const gh = (args) => {
@@ -60,6 +60,7 @@ function fakeGh({ view = {}, pull = {}, files = { [MAIN_FILE]: configText() }, c
     const route = args[3] ?? '';
     if (args[0] === 'api' && args.includes('--method')) {
       if (failWrite) throw Object.assign(new Error('gh failed'), { stderr: 'gh: HTTP 500\n' });
+      onWrite();
       const body = args.find((each) => each.startsWith('body=')).slice('body='.length);
       writes.push({ method: args[args.indexOf('--method') + 1], route, body });
       return JSON.stringify(noId ? {} : { id: route.endsWith('/comments') ? 901 : Number(route.split('/').at(-1)) });
@@ -157,6 +158,30 @@ test('status is clear with each reason, and exit 0', (t) => {
   recorded(t, r, []);
   assert.equal(clear(), 'nothing_open');
   assert.equal(clear({ files: { [MAIN_FILE]: configText({ auto: true }) } }), 'no_file_lists', 'auto with neither list reads as clear');
+});
+
+test('record in a moved state folder notes that folder under the state root, for the rules that cannot read a call\'s project', (t) => {
+  const r = repo(t);
+  recorded(t, r, [finding('F1', 'The save button hides')]);
+  assert.ok(heldFolders(stateRoot()).includes(r.state), `${r.state} is noted`);
+  const notes = path.join(stateRoot(), 'feedback-folders');
+  // A record made before notes existed is noted by the next writing command, a persona answer included.
+  rmSync(notes, { recursive: true, force: true });
+  assert.equal(run(t, r, ['answer', '7', 'PF1', 'fix-now']).code, 0);
+  assert.ok(heldFolders(stateRoot()).includes(r.state), 'answer notes the folder');
+  t.after(() => rmSync(notes, { recursive: true, force: true }));
+  // post notes before the forge and not again after: a notes folder that breaks while the comment is out still records it.
+  const broken = () => {
+    rmSync(notes, { recursive: true, force: true });
+    writeFileSync(notes, '');
+  };
+  const kept = run(t, r, ['post', '7', '--body-file', bodyAt(r, 'Plain words.')], { onWrite: broken });
+  assert.equal(kept.code, 0, kept.err.join('\n'));
+  assert.equal(recordOf(r).comment_id, 901, 'the comment id is recorded');
+  // Now the notes folder cannot be written: post stops before the forge, so no comment goes out with the record unchanged.
+  const blocked = run(t, r, ['post', '7', '--body-file', bodyAt(r, 'Plain words.')]);
+  assert.equal(blocked.code, 3);
+  assert.deepEqual(blocked.writes, []);
 });
 
 test('status owes not run, unanswered, and not re-checked with exit 2; the JSON lists ids and each command', (t) => {

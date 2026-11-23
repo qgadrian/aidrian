@@ -29,7 +29,7 @@ import { parseArgs } from 'node:util';
 
 import { decisionProblem, readTriage, recordDecision, reportName, sidecarName, sidecarProblems, today } from './audits.mjs';
 import { commandConfig, DEFAULTS, loadConfig, stateDirProblem, strictConfigFromText } from './config.mjs';
-import { AUDIT_KEY, cleanTitle, decisionFields, decisionOf, heldFor, itemState, openDecisions, KINDS, PERSONA, PRODUCT_MANAGER, readRecord, RECORD_VERSION, recordPath } from './feedback-record.mjs';
+import { AUDIT_KEY, cleanTitle, decisionFields, decisionOf, heldFor, itemState, openDecisions, KINDS, noteFeedbackFolder, PERSONA, PRODUCT_MANAGER, readRecord, RECORD_VERSION, recordPath } from './feedback-record.mjs';
 import { forgeFor } from './forges/index.mjs';
 import { isDirectory, isFile, isObject, isWithin } from './fs.mjs';
 import { runGit } from './git.mjs';
@@ -40,7 +40,7 @@ import { branchConfig, defaultBranch, ghError, notFound, readView, VIEW_FIELDS }
 import { checkoutRemotes } from './pr-checks.mjs';
 import { pullRequestDiff } from './pr-diff.mjs';
 import { changedFilesMatch, fromOutside, parseTarget, projectFolder } from './pr-resolve.mjs';
-import { committedConfigFile, repoRoot, stateDir, strictConfigPathIn } from './project.mjs';
+import { committedConfigFile, repoRoot, stateDir, stateRoot, strictConfigPathIn } from './project.mjs';
 import { FEEDBACK_NO_LIST } from './review/config.mjs';
 import { decodedCopy, neutralized, refusedKind } from './review/publish.mjs';
 
@@ -76,6 +76,14 @@ function tableProblem({ kind }, { decision, by, reason }) {
     return human ? null : `a minor item takes defer with a reason from a session; ${decision} ${ask}`;
   }
   return decision === 'fix-now' || human ? null : `this item is a defect, which takes fix-now from a session; ${decision} ${ask}`;
+}
+
+// The state folder of a command that writes feedback (record, answer, recheck, post, diff), noted under the state root
+// before the command writes anything or calls the forge, when config.json `state.dir` moved it (noteFeedbackFolder).
+function writingState(project) {
+  const state = stateDir(project, { config: commandConfig(project, { exitCode: 3 }) });
+  noteFeedbackFolder(state, stateRoot());
+  return state;
 }
 
 function writeAtomic(file, text) {
@@ -423,7 +431,7 @@ function record({ argv: [value], values, project, forge, remotes, now }) {
   const pr = pullRequest(value, { forge, remotes }, `${VIEW_FIELDS},isCrossRepository`);
   if (!noneFound && !ran) throw new Error(notRun(pr.number));
   const limited = readLimited(forge, pr);
-  const state = stateDir(project, { config: commandConfig(project, { exitCode: 3 }) });
+  const state = writingState(project);
   const audits = path.join(state, 'audits');
   const sidecar = values.report ? loadSidecar(audits, values.report, pr) : null;
   const file = recordPath(state, pr.repo, pr.number);
@@ -468,7 +476,7 @@ function openProblem(item, decision, entry) {
 // `adopted_at`, by a millisecond when the clock reads the same or earlier.
 function answer({ argv: [value, id, decision], values, project, forge, remotes, now }) {
   const pr = pullRequest(value, { forge, remotes });
-  const state = stateDir(project, { config: commandConfig(project, { exitCode: 3 }) });
+  const state = writingState(project);
   const audits = path.join(state, 'audits');
   const file = recordPath(state, pr.repo, pr.number);
   const item = findItem(readRecord(file, pr), id, pr);
@@ -495,7 +503,7 @@ function answer({ argv: [value, id, decision], values, project, forge, remotes, 
 function recheck({ argv: [value, id, word], values, project, forge, remotes }) {
   if (!RECHECKS.includes(word)) throw new Error(`a re-check is ${RECHECKS.join(' or ')}`);
   const pr = pullRequest(value, { forge, remotes });
-  const state = stateDir(project, { config: commandConfig(project, { exitCode: 3 }) });
+  const state = writingState(project);
   const file = recordPath(state, pr.repo, pr.number);
   const found = findItem(readRecord(file, pr), id, pr);
   const triage = found.source === PERSONA ? readTriage(path.join(state, 'audits')) : null;
@@ -598,7 +606,7 @@ export const feedbackMarker = (pr) => `<!-- aidrian-product-feedback: pr=${pr.nu
 function post({ argv: [value], values, project, forge, remotes, env, access }) {
   if (!values['body-file']) throw new Error(USAGE);
   const pr = pullRequest(value, { forge, remotes });
-  const state = stateDir(project, { config: commandConfig(project, { exitCode: 3 }) });
+  const state = writingState(project);
   const file = recordPath(state, pr.repo, pr.number);
   const found = readRecord(file, pr);
   if (!found) throw new Error(notRun(pr.number));
@@ -657,7 +665,7 @@ function items({ argv: [value], values, project, forge, remotes }) {
 // line on stderr says so.
 function diff({ argv: [value], project, forge, remotes }) {
   const pr = pullRequest(value, { forge, remotes });
-  const state = stateDir(project, { config: commandConfig(project, { exitCode: 3 }) });
+  const state = writingState(project);
   const file = path.join(path.dirname(recordPath(state, pr.repo, pr.number)), 'diff.patch');
   if (!isWithin(path.join(state, 'product-feedback'), file)) throw new Error(`the diff of ${pr.repo}#${pr.number} would leave the state folder`);
   const { text, local } = pullRequestDiff({ forge, pr, root: project.root });

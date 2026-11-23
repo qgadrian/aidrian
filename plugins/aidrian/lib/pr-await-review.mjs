@@ -50,7 +50,9 @@ import { sessionIdentity } from './hosts/index.mjs';
 import { repoFlag } from './remotes.mjs';
 import { cardState, isReviewSummaryCard, REVIEW_SUMMARY_CARD_MARKER } from './review/bot-card.mjs';
 import { holdToBase } from './review/in-force.mjs';
-import { REQUEST_COMMENT, REQUEST_INSTRUCTIONS, REQUEST_TEXT } from './review/request-text.mjs';
+import { RECEIPT_MARKER, REQUEST_COMMENT, REQUEST_INSTRUCTIONS, REQUEST_TEXT } from './review/request-text.mjs';
+
+export { RECEIPT_MARKER };
 
 export const DEFAULT_REVIEWER = CONFIG_DEFAULTS.github.reviewer;
 // The statuses that carry the bot's answer for the head: one that arrived during the wait, or one already there.
@@ -100,7 +102,6 @@ export { cardState, isReviewSummaryCard, REVIEW_SUMMARY_CARD_MARKER };
 // its words anywhere: it opens with the receipt marker, the text after it opens with "Codex Review: Didn't find any
 // major issues", and it names the reviewed commit. A comment that only quotes the phrase, such as a finding about a
 // screen that shows it, is never clean.
-export const RECEIPT_MARKER = '<!-- codex-review-receipt:v1 -->';
 const isReceipt = (body) => typeof body === 'string' && body.trimStart().startsWith(RECEIPT_MARKER);
 const CLEAN_RECEIPT_LEAD = /^Codex Review: Didn['’]t find any major issues\b/u;
 export const isCleanReceipt = (body) => {

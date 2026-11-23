@@ -325,6 +325,13 @@ test('turnActions names the pull request of each draft and review where the tran
   assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr review --timeout-sec 60 --repo acme/notes 41 > r.json', ''),
     bash('r2', 'aidrian pr await-review --pr 42 --interval-sec 5 > r.json', '')),
   [{ kind: 'review', pr: 41 }, { kind: 'review', pr: 42 }], 'an option`s value is not the pull request');
+  // A call run in the background has its launch as its result: it settles no review sent to a file, and no merge.
+  const launched = (id, command) => [turn.call(id, 'Bash', { command, run_in_background: true }),
+    JSON.stringify({ type: 'user', toolUseResult: { backgroundTaskId: 'b7k2' }, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'Command running in background with ID: b7k2. Output is being written to: /t/b7k2.output', is_error: false }] } })];
+  assert.deepEqual(actions(turn.human('go'), draftOpened('d1', 40), launched('r1', 'aidrian pr review 40 > r.json'), launched('m1', 'gh pr merge 40 --squash')),
+    [{ kind: 'draft', pr: 40 }], 'a review and a merge launched in the background');
+  assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr review 40 > r.json', 'Command running in background with ID: b7k2.')), [],
+    'the host`s launch line alone, with no structured result, marks it too');
   // A merge that ran is listed, so the review-loop check drops a merged pull request (stop-review-loop.mjs).
   assert.deepEqual(actions(turn.human('go'), draftOpened('d1', 40), bash('m1', 'gh pr merge 40 --squash', '✓ Squashed and merged pull request acme/notes#40 (fix: a)')),
     [{ kind: 'draft', pr: 40 }, { kind: 'merge', pr: 40 }], 'a draft, then its merge');

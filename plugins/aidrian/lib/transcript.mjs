@@ -592,7 +592,11 @@ function settleCalls(entry, calls) {
     // run, and a send-back then is right.
     // SHORTCUT: the exit is the whole line's, so a review the line skipped counts when the line ends with no error, as in
     // `false && aidrian pr review 12 > f; true`, and one a later failing command follows does not. Such lines are rare.
-    const filed = call.filed.length && (block.is_error !== true || HUMAN_EXITS.has(exitOf(output))) ? call.filed : [];
+    // A call the host runs in the background, asked for or moved there at its timeout, has the launch as its result, no
+    // error whatever the command does after it: it settles no review sent to a file and no merge, as nothing shows how it
+    // ended. The structured result's `backgroundTaskId` marks it, as launchedTaskIds reads it, or the host's launch line.
+    const backgrounded = idOf(entry.toolUseResult?.backgroundTaskId) !== null || BACKGROUND_LINE.test(output);
+    const filed = call.filed.length && !backgrounded && (block.is_error !== true || HUMAN_EXITS.has(exitOf(output))) ? call.filed : [];
     call.reviewed ||= call.review && (call.skill ? call.ran : printed.length > 0 || filed.length > 0);
     if (call.loop && call.skill && call.ran) call.looped = [call.loopPull];
     else if (call.loop && (printed.length || filed.length)) {
@@ -602,7 +606,7 @@ function settleCalls(entry, calls) {
     // SHORTCUT: a call whose result is no error counts each merge command in it as run, even one a shell expression
     // skipped, as in `false && gh pr merge 12 || true`. It can only clear a refusal, never raise one, and such a line
     // is contrived; reading which command ran would need its own output, which gh prints only on a terminal.
-    if (call.merges.length && block.is_error !== true) call.merged = mergedPulls(call.merges, output);
+    if (call.merges.length && block.is_error !== true && !backgrounded) call.merged = mergedPulls(call.merges, output);
     settled.push(call);
   }
   return settled;

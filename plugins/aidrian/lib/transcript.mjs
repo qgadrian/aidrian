@@ -713,6 +713,42 @@ export function firstPrompt(text) {
   return null;
 }
 
+// What a session resumed from a handoff brief read before it started working, in tokens: the context of the model call
+// that makes the first call of one of `workTools`, the host's file edits and dispatches, less the context of its first
+// model call. Null when no call of `workTools` was made yet, or when nothing before it shows a resume: a run of the
+// session-continue skill, a Skill call or a typed command, or a `Handoff continuation:` block, in the first message the
+// background route starts a session with or in the start context a clear's delivery adds (lib/handoff-continue.mjs
+// backgroundPrompt, continuationContext). It reads up to that call and no further, so a long transcript costs no more
+// than its start. lib/resume-tokens.mjs records it.
+const RESUME_SKILL = 'session-continue';
+export const CONTINUATION_LEAD = 'Handoff continuation:';
+const usageContext = (usage) => (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
+const leadsContinuation = (text) => typeof text === 'string' && text.split('\n').some((line) => line.startsWith(CONTINUATION_LEAD));
+// Whether `entry` holds a continuation block: a user entry's own text, not a tool result, or a hook's added context.
+function continuationBlock(entry) {
+  if (entry?.type === 'attachment') return entry.attachment?.type === 'hook_additional_context' && [entry.attachment.content].flat().some(leadsContinuation);
+  if (entry?.type !== 'user') return false;
+  const content = entry.message?.content;
+  return leadsContinuation(content) || (Array.isArray(content) && content.some((block) => block?.type === 'text' && leadsContinuation(block.text)));
+}
+export function resumeRead(text, workTools) {
+  let first = null;
+  let resumed = false;
+  for (const line of text.split('\n')) {
+    const entry = parseLine(line);
+    if (continuationBlock(entry) || typedSkills(entry).some((skill) => baseName(skill) === RESUME_SKILL)) resumed = true;
+    const { usage, model, content } = entry?.message ?? {};
+    if (!usage || !model || model === '<synthetic>' || !Array.isArray(content)) continue;
+    first ??= usageContext(usage);
+    for (const block of content) {
+      if (block?.type !== 'tool_use') continue;
+      if (block.name === 'Skill' && typeof block.input?.skill === 'string' && baseName(block.input.skill.replace(/^\//u, '')) === RESUME_SKILL) resumed = true;
+      else if (workTools.includes(block.name)) return resumed ? Math.max(usageContext(usage) - first, 0) : null;
+    }
+  }
+  return null;
+}
+
 // The message of the transcript's last handback call when no assistant text follows it, else null: the report a subagent
 // delivered through the host's handback tool, which ends its run, so its last message may hold no text of the report.
 // Claude Code names the tool SubagentHandback; a host whose transcript this module does not read has none.

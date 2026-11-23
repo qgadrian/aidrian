@@ -62,7 +62,7 @@ In a group such as `github`, set only the keys you change; the others keep their
   "terms": { "file": null },
   "knowledge": { "budgets": { "alwaysBytes": 16384, "taggedDocBytes": 24576, "untaggedDocBytes": null, "enforce": "warn", "baseline": {} }, "defaults": { "codeStyle": true } },
   "skills": { "descriptionChars": 160, "listingBytes": 9216 },
-  "session": { "handoff": { "mode": "ask", "costRatio": 2, "maxTokens": 0, "continue": "none", "maxChain": 3 } },
+  "session": { "handoff": { "mode": "ask", "costRatio": 2, "maxTokens": 0, "continue": "none", "maxChain": 3, "resumeTokens": null } },
   "lessons": { "auto": true, "maxOpen": 20, "maxAgeDays": 14 },
   "models": { "claude": { "agents": {} }, "codex": { "agents": {} } },
   "names": { "human": "the Human", "ai": null },
@@ -199,6 +199,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `session.handoff.maxTokens` | An optional ceiling on the main session's context, in tokens, that fires the reminder on its own and doubles after each firing; `0`, the default, is off. |
 | `session.handoff.continue` | How the session goes on after its handoff: `"none"`, `"clear"`, `"compact"`, or `"background"`. The default follows `mode`: `"background"` with `mode: "auto"`, else `"none"`; a value set here wins. A route the host cannot do falls back to `"none"`; which routes each host does is its adapter's `capabilities.handoffContinue` ([Adding a host](providers/adding-a-host.md)). `"background"` is read from the base branch, never a worktree's copy, and each machine turns it on too, with `"handoff": { "background": "on" }` in `.aidrian.local.json`; without both it falls back to `"clear"` where the host has it: [The background route](handoff.md#the-background-route). |
 | `session.handoff.maxChain` | How many handoffs in a row a session may continue before a person looks, a whole number above 0, or `"unlimited"`; `3` by default. On the background route it is the base branch's, and at most 5 for any number. `"unlimited"` lifts that cap, and then the progress check stops a chain: two background hops in a row with no change to the tree of the brief's branch and no new Done item fall back to the clear route ([The progress check](handoff.md#the-progress-check)); a chain floor still records at most 10,000 continuations, and a hop past that arms nothing: a person resumes the brief. `aidrian check` fails any other value. |
+| `session.handoff.resumeTokens` | The tokens a fresh session reads to resume from a brief, `B` of the [cost model](handoff.md#the-cost-model), a whole number above 0. When set it wins; `null`, the default, uses this project's measured median once 5 sessions resumed from a brief in the last 30 days, else 44,000 ([Resume tokens](handoff.md#resume-tokens)). `aidrian check` fails any other value. |
 | `lessons.auto` | `false` turns off the [automatic lessons](lessons.md#automatic-lessons) the hooks and `aidrian pr await-review` record. |
 | `lessons.maxOpen` | The open [lessons](lessons.md) past which the session-start line asks for triage; `0` turns this limit off. |
 | `lessons.maxAgeDays` | The age, in days, of the oldest open lesson past which the session-start line asks for triage; `0` turns this limit off. |
@@ -1076,6 +1077,7 @@ A project that adopts the `session.handoff` group (`mode`, `costRatio`, `maxToke
 release that ships it: an older plugin reads only a string `session.handoff` and rejects the group.
 `session.handoff.continue` and `session.handoff.maxChain` came in a later release, so a project that sets either
 sets `requires.aidrian` to that release: an older plugin rejects them as unknown keys.
+`session.handoff.resumeTokens` came later still, and a project that sets it does the same.
 Since the release with the [background route](handoff.md#the-background-route), an existing `mode: "auto"` config
 with no `continue` hands off fully automatically: the brief, then a new session started in the background, with
 nothing typed, on a host that runs that route, once the base branch has that config and the machine sets

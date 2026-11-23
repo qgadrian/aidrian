@@ -850,7 +850,7 @@ aidrian session snapshot [--session ID] [--transcript PATH] [--ticket-prefixes A
 | Key | What it holds |
 | --- | --- |
 | `session` | `{ id, transcript, cwd }`: the id when it passes `SESSION_ID`, else null, and the two paths. |
-| `handoff` | `{ ratio, breakEven, level, nextRatio, context, ceiling, chain, maxChain, continueArmed, lastBrief }`, below. |
+| `handoff` | `{ ratio, breakEven, level, nextRatio, context, ceiling, resume, chain, maxChain, continueArmed, lastBrief }`, below. |
 | `prs` | The pull requests the session's [ledger](hooks.md#session-ledger) names, then those of the sessions a handoff came from ([Across a handoff](#across-a-handoff)): the forge's entries, then the unsupported ones, each `{ forge, host, repo, number, title, url, isDraft, state, mergeable, reviewDecision, unresolvedThreads, checks, inherited }`, below. `inherited` is a boolean: true for an entry of an earlier session. Null, and in `errors`, when the session has no folder, as for a state folder inside a checkout, or not the user's own. |
 | `lessons` | `{ open, byTier: { P1, P2, P3 } }`: the open [lessons](lessons.md) of the project's inbox; null, and in `errors`, when the state folder is inside a checkout, or is not the user's own. |
 | `worktrees` | `{ owned, mergedNotCleaned }`, and `stale: true` when the merged count is a cached value past its minute. |
@@ -907,6 +907,8 @@ The hooks that write or deliver a continuation marker, and the gate, hold the co
 the repository, and keep no marker there when git cannot list them. The agent gates' unattended check is the exception:
 it looks for a background chain floor in any store outside the project's own checkouts, even when git cannot list the
 rest, since a floor it finds only adds refusals.
+`resume` is the `B` the numbers use, `{ tokens, source, samples }`: `source` is `config`, `measured`, or `default`,
+and `samples` counts the samples read, null under `config` ([Resume tokens](#resume-tokens)).
 `chain` and `continueArmed` come from the [continuation store](#continue)'s read-only readers: whether the session
 armed a continuation, its chain, or else the [chain floor](#the-chain) the session was started with. `maxChain` comes
 from config: it is the working copy's `session.handoff.maxChain`. A background start is held to the base branch's
@@ -1115,7 +1117,7 @@ All costs are in input tokens of the model of the session's last main-session ca
 | --- | --- |
 | `C` | The context of the last main-session call: input, cache read, and cache write together. |
 | `W` | The context of the first main-session call: the system prompt, tools, and project instructions a fresh session reads too. |
-| `B` | What a fresh session reads to resume, 44,000 tokens. |
+| `B` | What a fresh session reads to resume, this project's own ([Resume tokens](#resume-tokens)); 44,000 tokens until it is measured. |
 | `H` | The calls the long session spends writing the brief, 8. |
 | `m` | The model's cache-read multiple of its input price, from `priceFor` in `lib/model-prices.mjs`; 0.1 when the model sets none or is unknown. |
 | `k` | The cache-write multiple: 2 when the session writes 1-hour cache, else 1.25 for 5-minute cache. |
@@ -1137,11 +1139,35 @@ Output tokens and subagent calls cost the same either way, so the model leaves t
 - `H`: a median of 9 main-session calls from the `session-handoff` skill call to the end of the session,
   quartiles 7 and 47; the top quartile kept working after the brief.
 
+### Resume tokens
+
+`B` is per project, since a project whose resumed sessions read large docs costs more to resume.
+`resumeTokens` in `lib/resume-tokens.mjs` picks it, and the Stop hook, the plan offer, and the snapshot all take it
+from there, so none disagrees with another:
+
+1. `session.handoff.resumeTokens` in config.json, when set: a whole number above 0.
+2. Else the median of this project's samples, once there are 5 or more from the last 30 days.
+3. Else 44,000.
+
+A sample is one session that resumed from a brief: the context of its first model call that edits a file or
+dispatches an agent, less the context of its first model call, the way the 44,000 was measured. A session resumed
+from a brief when, before that call, it ran the `session-continue` skill, as a Skill call or a typed command, or
+started with a `Handoff continuation:` block: the first message of a background start, or the start context a clear's
+delivery adds. So typed resumes count too. The Stop hook records each session's sample once, at the first stop after
+that call, whatever `mode` says, read from the session's own transcript, which it already holds: a transcript that
+names neither the skill nor the block is not parsed, and the parse stops at the first such call. The samples live in
+`<state>/resume-tokens.json`, the newest 50, each with its session and time, written as a new file renamed over the old.
+Two sessions that record at the same moment may keep one sample of the two.
+A read is one small file, so no stop and no snapshot scans transcripts. Like the reminder, the samples come from
+Claude Code transcripts only: the host adapter's `capabilities.workTools` names the edit and dispatch tools, and a
+host with no transcripts records none and uses the config value or 44,000.
+`aidrian session snapshot --json` shows the value in use as `handoff.resume`.
+
 ## Config
 
 ```json
 "session": {
-  "handoff": { "mode": "ask", "costRatio": 2, "maxTokens": 0, "continue": "none", "maxChain": 3 }
+  "handoff": { "mode": "ask", "costRatio": 2, "maxTokens": 0, "continue": "none", "maxChain": 3, "resumeTokens": null }
 }
 ```
 
@@ -1152,6 +1178,7 @@ Output tokens and subagent calls cost the same either way, so the model leaves t
 | `session.handoff.maxTokens` | A ceiling on the context, in tokens, that fires on its own and doubles; `0`, the default, is off. |
 | `session.handoff.continue` | How the session goes on after its handoff: `"none"`, `"clear"`, `"compact"`, or `"background"`. The default follows `mode`: `"background"` with `mode: "auto"`, else `"none"`; a value set here wins. A route the host cannot do falls back to `"none"`; which routes each host does is its adapter's `capabilities.handoffContinue` ([Adding a host](providers/adding-a-host.md)). |
 | `session.handoff.maxChain` | How many handoffs in a row a session may continue before a person looks, a whole number above 0, or `"unlimited"`; `3` by default. `"unlimited"` leaves the background route's [progress check](#the-progress-check), and the 10,000 continuations a chain floor records, to stop a chain. |
+| `session.handoff.resumeTokens` | `B` of the cost model, a whole number above 0, which wins over the measured value; `null`, the default, measures it ([Resume tokens](#resume-tokens)). |
 
 Most projects set only `mode`. A config written before these settings became a group still loads, with an error from
 `aidrian check` and every `aidrian` command:

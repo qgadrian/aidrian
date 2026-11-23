@@ -20,6 +20,7 @@ import { GIT_TIMEOUT_MS, killingGit, mainRoot } from './git.mjs';
 import { latestBrief, MARKER_CAP, readArmed, readFrom, readOwnFile, SESSION_ID } from './handoff-markers.mjs';
 import { HIDDEN } from './hidden-text.mjs';
 import { findProject } from './project.mjs';
+import { resumeTokens } from './resume-tokens.mjs';
 import { cachedValue } from './session-cached-value.mjs';
 import { LINKS, LINKS_MAX_BYTES, linksOf, sessionLinks, ticketsOf } from './session-links.mjs';
 import { changesSummary, isChangeCache, LEDGER, LEDGER_MAX_BYTES, resolveSelection, sessionRefs, shownChanges } from './session-prs.mjs';
@@ -163,15 +164,16 @@ const needed = (value) => {
 const unconfirmed = ({ decisions, unlisted }) => [...decisions, ...unlisted].filter(({ status }) => status === 'unconfirmed').length;
 
 // The handoff numbers of the session, from its transcript through the usage cache, and the Stop hook's marker, at the
-// hook's own path. Under `mode: off` the hook never reminds, so the level is quiet and the numbers stay. The continuation
+// hook's own path, with the project's B (lib/resume-tokens.mjs resumeTokens), which `resume` shows. Under `mode: off` the hook never reminds, so the level is quiet and the numbers stay. The continuation
 // store is opened at the state folder's real path the context resolved, the same path the session folder was made under.
-function handoffSection({ config, folder }, links, session, transcript) {
+function handoffSection({ config, folder, state }, links, session, transcript) {
   const usage = cachedSessionUsage({ transcript, cacheFile: path.join(needed(folder), 'usage.json') });
-  const { handoff } = config.session;
+  const resume = resumeTokens(config.session.handoff, state);
+  const handoff = { ...config.session.handoff, resumeTokens: resume.tokens };
   const status = handoffStatus(needed(usage), handoff, stopMarkerText(session));
   const { ratio, breakEven, nextRatio, context: tokens, ceiling } = status;
   return {
-    ratio, breakEven, level: handoff.mode === 'off' ? 'quiet' : status.level, nextRatio, context: tokens, ceiling,
+    ratio, breakEven, level: handoff.mode === 'off' ? 'quiet' : status.level, nextRatio, context: tokens, ceiling, resume,
     ...continuationOf(links, session, handoff.maxChain),
   };
 }

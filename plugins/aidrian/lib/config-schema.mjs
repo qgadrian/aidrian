@@ -99,7 +99,7 @@ export const SCHEMA = {
   terms: { file: 'textOrNull' },
   knowledge: { budgets: { alwaysBytes: 'positive', taggedDocBytes: 'positive', untaggedDocBytes: 'positiveOrNull', enforce: 'budgetEnforce', baseline: 'docBytes' }, defaults: { codeStyle: 'boolean' } },
   skills: { descriptionChars: 'positive', listingBytes: 'positive' },
-  session: { handoff: { mode: 'handoffMode', costRatio: 'costRatio', maxTokens: 'zeroOrMore', continue: 'continueRoute', maxChain: 'positiveOrUnlimited' } },
+  session: { handoff: { mode: 'handoffMode', costRatio: 'costRatio', maxTokens: 'zeroOrMore', continue: 'continueRoute', maxChain: 'positiveOrUnlimited', resumeTokens: 'positiveOrNull' } },
   lessons: { auto: 'boolean', maxOpen: 'zeroOrMore', maxAgeDays: 'zeroOrMore' },
   models: 'models',
   names: { human: 'text', ai: 'textOrNull' },

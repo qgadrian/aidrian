@@ -32,9 +32,11 @@ export const sameBot = (login, reviewer) => botName(login) !== null && botName(l
 // Why the review bot's verdict on the forge does not pass `head`, or null when it does. `trail` is the forge's
 // reviewTrail of the pull request; `reviewer` the default branch's `github.reviewer`, read from the forge. A review or a
 // comment counts only when its author is a bot account of that name. Passed: an approving review of exactly `head`, or
-// the bot's status card, whose every edit the bot made, saying its code review of exactly `head` completed and found
-// nothing at all: `has_any_findings` false, since the user can mark the bot's findings resolved, which clears
-// `has_unresolved_findings`; and no review of `head` by the bot in any other state. A clean receipt or a 👍 never
+// the bot's status card, whose every edit the bot made, saying its code review of exactly `head` completed with
+// `has_any_findings` and `has_unresolved_findings` both false; and no review of `head` by the bot in any other state.
+// The two flags are the bot's ledger of its findings that still stand at that commit, equal on every card seen: the bot
+// clears both itself on a later run once its findings are fixed, and neither a receipt nor a resolved thread clears
+// them. A card that names `head` with a flag not false says so in the refusal. A clean receipt or a 👍 never
 // counts: the receipt names a 10-hex short commit, which a commit ground to share it matches, and the forge gives no
 // push time that would bind it to the head; the 👍 names no commit, and lands seconds after the receipt, so after a
 // push it answers the head before it.
@@ -49,15 +51,14 @@ export function botProblem(trail, head, reviewer) {
   const cards = (trail.comments ?? []).filter((comment) => comment.bot && sameBot(comment.login, reviewer) && isReviewSummaryCard(comment.body));
   const whole = cards.filter((card) => card.editsComplete === true);
   const own = whole.filter((card) => (card.editors ?? []).every((login) => sameBot(login, reviewer)));
-  const passes = own.some((card) => {
-    const review = cardState(card.body)?.code_review;
-    return review?.status === 'completed' && review.has_any_findings === false && review.has_unresolved_findings === false
-      && typeof review.commit_sha === 'string' && review.commit_sha.toLowerCase() === head.toLowerCase();
-  });
-  if (passes) return null;
+  const completedOnHead = own.map((card) => cardState(card.body)?.code_review).filter((review) => review?.status === 'completed'
+    && typeof review.commit_sha === 'string' && review.commit_sha.toLowerCase() === head.toLowerCase());
+  const holds = (review) => review.has_any_findings !== false || review.has_unresolved_findings !== false;
+  if (completedOnHead.some((review) => !holds(review))) return null;
   let why = '';
   if (whole.length > own.length) why = ', and its status card was edited by another account';
   else if (cards.length > whole.length) why = ', and the forge gave only part of its status card\'s edit history, so who edited it cannot be told';
+  else if (completedOnHead.length) why = ', and its status card of that commit says its review finished with a finding of its own still unresolved there: a later review by the bot clears that once the finding is fixed; a receipt or a resolved thread does not';
   else if (!cards.length && trail.commentsComplete === false) why = ', and the pull request has more comments than the forge read gives, so its status card may be past them';
   return `${reviewer} has not passed head ${sha7} on the forge: no approving review of that commit, and no status card of its own that says its review of that commit finished and found nothing${why}`;
 }

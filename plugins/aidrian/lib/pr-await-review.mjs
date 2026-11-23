@@ -112,23 +112,42 @@ export const isCleanReceipt = (body) => {
 };
 
 
-// The full commit the reviewer's newest status card says its code review of `commit` completed on with no unresolved
-// finding, or null, as it is for a card that names its commit in fewer than 40 hex. The card vouches for `comment` only
-// when it was last updated at or after `since` and no earlier than that comment: a card left from an earlier round, or
-// one that has not caught up with the comment, says nothing of it. Its full SHA, not the comment's short one, is what
-// the head is checked against.
-const cardCommit = (issueComments, reviewer, commit, comment, since) => {
+// The completed code review the reviewer's newest status card records for `commit`, or null, as it is for a card that
+// names its commit in fewer than 40 hex. The card vouches for `comment` only when it was last updated at or after
+// `since` and no earlier than that comment: a card left from an earlier round, or one that has not caught up with the
+// comment, says nothing of it. Its full SHA, not the comment's short one, is what the head is checked against.
+const newestCard = (issueComments, reviewer) => issueComments
+  .filter((c) => c.user?.login === reviewer && isReviewSummaryCard(c.body))
+  .sort((a, b) => ms(b.updated_at ?? b.created_at) - ms(a.updated_at ?? a.created_at))[0];
+const FULL_SHA = /^[0-9a-f]{40}$/iu;
+const vouchingReview = (issueComments, reviewer, commit, comment, since) => {
   if (!commit) return null;
-  const card = issueComments
-    .filter((c) => c.user?.login === reviewer && isReviewSummaryCard(c.body))
-    .sort((a, b) => ms(b.updated_at ?? b.created_at) - ms(a.updated_at ?? a.created_at))[0];
+  const card = newestCard(issueComments, reviewer);
   const updated = ms(card?.updated_at ?? card?.created_at);
   if (!Number.isFinite(updated) || (since && !(updated >= ms(since))) || !(updated >= ms(comment?.created_at))) return null;
   const review = cardState(card?.body)?.code_review;
-  const clean = review?.status === 'completed' && review.has_unresolved_findings === false && typeof review.commit_sha === 'string'
-    && /^[0-9a-f]{40}$/iu.test(review.commit_sha) && sameCommit(review.commit_sha, commit);
-  return clean ? review.commit_sha : null;
+  const vouches = review?.status === 'completed' && typeof review.commit_sha === 'string'
+    && FULL_SHA.test(review.commit_sha) && sameCommit(review.commit_sha, commit);
+  return vouches ? review : null;
 };
+
+// Whether the reviewer's newest status card says a code review is still running that a receipt of `commit` may yet be
+// judged by: a review not yet completed, named for that full commit or last updated at or after the trigger `since`.
+// The card's completed edit lands after the receipt, so until it does, a receipt is no answer: the card may still say
+// a finding stands. A card with no code review state says nothing either way.
+const cardRunning = (issueComments, reviewer, commit, since) => {
+  const card = newestCard(issueComments, reviewer);
+  const review = cardState(card?.body)?.code_review;
+  if (typeof review?.status !== 'string' || review.status === 'completed') return false;
+  const named = typeof review.commit_sha === 'string' && FULL_SHA.test(review.commit_sha) && Boolean(commit) && sameCommit(review.commit_sha, commit);
+  return named || (Boolean(since) && ms(card.updated_at ?? card.created_at) >= ms(since));
+};
+
+// Whether a card's code review still holds a finding of the bot's own at its commit: either flag not false. The two
+// flags are the bot's ledger of its findings that still stand there (equal on every card seen), and only a later run of
+// the bot clears them, once the finding is fixed. A clean receipt speaks of that run's new findings alone, so beside such
+// a card it is no pass; merge trust reads the same flags (review/merge-trust.mjs botProblem).
+const holdsFinding = (review) => review.has_any_findings !== false || review.has_unresolved_findings !== false;
 
 // Process exit code for a terminal status.
 export const exitCodeFor = (status) => {
@@ -262,10 +281,20 @@ export const latestBotSignal = ({ reviews, reviewComments, issueComments = [], r
   }
   const kind = isQuotaNotice(comment.body) ? 'quota_exhausted' : 'comment';
   const commit = reviewedCommit(comment.body);
-  // `clean`: the comment is the clean receipt, or the status card says the review of its commit left nothing open.
-  const full = kind === 'comment' ? cardCommit(issueComments, reviewer, commit, comment, since) : null;
-  const clean = kind === 'comment' && (isCleanReceipt(comment.body) || full !== null);
-  return { kind, at: comment.created_at, review_id: null, commit_id: full ?? commit, state: null, line_comments: 0, comment_id: comment.id ?? null, ...(clean ? { clean: true } : {}) };
+  // `clean`: the status card that vouches for the comment's commit says its review completed with both flags false, or,
+  // with no such card, the comment is the clean receipt. `holds_finding`: that card still holds a finding of the bot's
+  // own, so a receipt beside it is open review work (the bot's earlier threads still stand), never a pass.
+  // `card_pending`: a clean receipt with no vouching card while the card still runs a review is not yet an answer, so
+  // the wait goes on (`answers`) until the card completes or the wait times out.
+  const card = kind === 'comment' ? vouchingReview(issueComments, reviewer, commit, comment, since) : null;
+  const holds = card !== null && holdsFinding(card);
+  const receipt = kind === 'comment' && card === null && isCleanReceipt(comment.body);
+  const pending = receipt && cardRunning(issueComments, reviewer, commit, since);
+  const clean = kind === 'comment' && !holds && !pending && (card !== null || receipt);
+  return {
+    kind, at: comment.created_at, review_id: null, commit_id: card?.commit_sha ?? commit, state: null, line_comments: 0, comment_id: comment.id ?? null,
+    ...(clean ? { clean: true } : {}), ...(holds ? { holds_finding: true } : {}), ...(pending ? { card_pending: true } : {}),
+  };
 };
 
 // The bot's acknowledgement at or after `since`, as { at, headSha } or null: started, not finished. `headSha` is the
@@ -415,8 +444,10 @@ export const awaitReview = async (opts, { forge = awaitForge(), git = localGit()
       stale = false;
     }
     if (signal?.kind === 'quota_exhausted' && !stale) return 'blocked_quota';
-    return Boolean(signal) && !stale ? 'covered' : null;
+    return answers() ? 'covered' : null;
   };
+  // Whether the signal answers the head: fresh, and no receipt whose status card is still running.
+  const answers = () => Boolean(signal) && !stale && signal.card_pending !== true;
   const result = (status) => {
     const ack = acknowledgement({ reactions: s.reactions, issueComments: s.issueComments, reviewer: opts.reviewer, since });
     return {
@@ -436,7 +467,7 @@ export const awaitReview = async (opts, { forge = awaitForge(), git = localGit()
       acknowledged_at: ack?.at ?? null,
       // A timeout after the bot acknowledged this head ran past a budget that cannot grow: one re-run without --request
       // is worth its wait. A timeout with nothing acknowledged, or acknowledged for another head, is not.
-      ...(status === 'timed_out' ? { retry_recommended: acknowledgedForHead(ack, head, s.headCommittedAt, sinceHead) && !(Boolean(signal) && !stale) } : {}),
+      ...(status === 'timed_out' ? { retry_recommended: (acknowledgedForHead(ack, head, s.headCommittedAt, sinceHead) && !answers()) || signal?.card_pending === true } : {}),
       // The review round, for `aidrian pr disposition --round`.
       codex_rounds: codexRounds(s.reviews, opts.reviewer),
       ...(status === 'round_limit' ? { max_rounds: maxRounds } : {}),

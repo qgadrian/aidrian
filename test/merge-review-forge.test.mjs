@@ -207,7 +207,7 @@ test('the bot`s verdict counts only as the bot`s own, on exactly the head, with 
     ['a card of another commit', base({ comments: [card(OLD)] })],
     ['a card of a short SHA', base({ comments: [card(HEAD.slice(0, 10))] })],
     ['a card with findings left', base({ comments: [card(HEAD, { unresolved: true })] })],
-    ['a card whose findings the user marked resolved', base({ comments: [card(HEAD, { any: true, unresolved: false })] })],
+    ['a card whose ledger still names a finding', base({ comments: [card(HEAD, { any: true, unresolved: false })] })],
     ['a card the user edited', base({ comments: [card(HEAD, { editors: [BOT, 'adrian'] })] })],
     ['a card with an edit from a deleted account', base({ comments: [card(HEAD, { editors: [null] })] })],
     ['a card a user posted under the bot`s name', base({ comments: [card(HEAD, { bot: false })] })],
@@ -224,6 +224,25 @@ test('the bot`s verdict counts only as the bot`s own, on exactly the head, with 
   assert.match(passes(base({ comments: [card(HEAD, { editors: [BOT, 'adrian'] })] })) ?? '', /edited by another account/u);
   assert.equal(botProblem(base(), HEAD, null), NO_BOT);
   assert.match(passes(base({ comments: [], commentsComplete: false })) ?? '', /more comments than the forge read gives/u);
+});
+
+test('a card of the head that still holds a finding of the bot`s own is refused by name, beside a clean receipt; one with both flags false passes', () => {
+  const reviewer = `${BOT}[bot]`;
+  const passes = (over) => botProblem(trailOf('{}', over), HEAD, reviewer);
+  const held = /its status card of that commit says its review finished with a finding of its own still unresolved there: a later review by the bot clears that once the finding is fixed; a receipt or a resolved thread does not$/u;
+  // The pull request this was learned on: the bot's card on the head kept its earlier finding, and the bot then posted a
+  // clean receipt of the head, which speaks only of that run's new findings.
+  assert.match(passes({ comments: [card(HEAD, { any: true, unresolved: true }), receipt()] }) ?? '', held, 'the card holds a finding beside a receipt of the head');
+  assert.match(passes({ comments: [card(HEAD, { any: true, unresolved: false })] }) ?? '', held, 'one flag not false is enough');
+  assert.match(passes({ comments: [card(HEAD, { any: false, unresolved: true })] }) ?? '', held);
+  // The bot's own whole card of the head with both flags false passes, whatever it said of an older commit.
+  assert.equal(passes({ comments: [card(HEAD), receipt()], reviews: [{ login: BOT, bot: true, state: 'COMMENTED', commit: OLD, at: 'x' }] }), null, 'a review with findings of an older commit');
+  // The other reasons keep their own words.
+  const old = passes({ comments: [card(OLD, { unresolved: true })] }) ?? '';
+  assert.match(old, /found nothing$/u, 'a card of another commit names no held finding');
+  const edited = passes({ comments: [card(HEAD, { unresolved: true, editors: [BOT, 'adrian'] })] }) ?? '';
+  assert.match(edited, /edited by another account$/u, 'an edited card keeps its reason');
+  assert.doesNotMatch(edited, /still unresolved/u);
 });
 
 test('neither the bot`s clean receipt nor its 👍 passes a head, for auto-merge and the merge guard alike', (t) => {

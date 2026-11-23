@@ -300,6 +300,18 @@ test('turnActions names the pull request of each draft and review where the tran
     [{ kind: 'review', pr: 40 }], 'an edit of the pull request the turn reviewed is the loop`s own');
   assert.deepEqual(actions(turn.human('go'), loop('k1'), write('p1'), bash('e1', 'gh pr edit 41 --body-file b.md', 'https://github.com/acme/notes/pull/41')),
     [{ kind: 'review', pr: null }], 'a loop of no known pull request may be of any');
+  // A review that sends its JSON to a file prints none: it counts by the pull request it was given, error or not.
+  assert.deepEqual(actions(turn.human('go'), draftOpened('d1', 40), bash('r1', 'aidrian pr review 40 --with-bot > /s/tmp/pr40-r1.json', '')),
+    [{ kind: 'draft', pr: 40 }, { kind: 'review', pr: 40 }], 'a review written to a file');
+  assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr review 40 >> r.json', 'Exit code 10', true), bash('r2', 'aidrian pr review 41 &> r.json', '')),
+    [{ kind: 'review', pr: 40 }, { kind: 'review', pr: 41 }], 'a round that stopped at extension_check, and both streams to a file');
+  assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr review 40 2> err.log', 'Exit code 1', true), bash('r2', 'aidrian pr review 40 >&2', '')),
+    [], 'only standard error to a file, or standard output to another descriptor, is no review');
+  assert.deepEqual(actions(turn.human('go'), bash('r1', 'echo x > f; aidrian pr review 40', 'Exit code 1', true)), [],
+    'a redirect of another command in the line');
+  // A merge that ran is listed, so the review-loop check drops a merged pull request (stop-review-loop.mjs).
+  assert.deepEqual(actions(turn.human('go'), draftOpened('d1', 40), bash('m1', 'gh pr merge 40 --squash', '✓ Squashed and merged pull request acme/notes#40 (fix: a)')),
+    [{ kind: 'draft', pr: 40 }, { kind: 'merge', pr: 40 }], 'a draft, then its merge');
 });
 
 test('sessionActions still counts a pr-review run as a review run, as the health report reads it', () => {

@@ -15,17 +15,19 @@ export const REVIEW_LOOP_LEAD = 'This turn opened or updated a draft pull reques
 // Why the agent is sent back, or null. `actions` is turnActions' result, or null with no transcript to read; `reviewLoop`
 // is config.json `github.reviewLoop`; `human` the name config.json `names` gives (docs/config.md#names). Null unless the
 // loop is "auto", no background task still runs, and a draft action of the turn has no review action of its pull request
-// after it. A draft and a review are of the same pull request when both name it, or either names none (`pr` null or
+// after it, nor a merge of it: a merged pull request owes no review. A merge action's `pr` is 0 for a `gh pr merge` that
+// names none (the current branch's), read as none here. A draft and a review are of the same pull request when both name it, or either names none (`pr` null or
 // missing): a false send-back costs more than a missed one. The loop's own update after its review, as when it copies
 // residuals into the body through pr-write before it marks the draft ready, is no draft action (transcript.mjs
 // turnActions), so a draft after a review is a new pull request, or an update of another. The reason names every draft
 // still owed, once each, by its number, or as one with no number shown, so its one send-back in the turn asks for each.
-const pullOf = (action) => (Number.isSafeInteger(action?.pr) ? action.pr : null);
+const pullOf = (action) => (Number.isSafeInteger(action?.pr) && action.pr > 0 ? action.pr : null);
+const SETTLES = new Set(['review', 'merge']);
 const samePull = (a, b) => a === null || b === null || a === b;
 export function reviewLoopOwed(input, actions, { reviewLoop, human = 'the Human' } = {}) {
   if (reviewLoop !== 'auto' || !Array.isArray(actions) || backgroundRunning(input)) return null;
   const owed = actions.filter((action, at) => action?.kind === 'draft'
-    && !actions.slice(at + 1).some((later) => later?.kind === 'review' && samePull(pullOf(later), pullOf(action))));
+    && !actions.slice(at + 1).some((later) => SETTLES.has(later?.kind) && samePull(pullOf(later), pullOf(action))));
   if (!owed.length) return null;
   const numbers = [...new Set(owed.map(pullOf).filter((pr) => pr !== null))].map((pr) => `#${pr}`);
   const unnumbered = owed.filter((action) => pullOf(action) === null).length;

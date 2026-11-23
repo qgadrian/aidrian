@@ -282,6 +282,13 @@ function runsReview({ invocation }) {
   return words?.[0]?.text === 'pr' && ['review', 'await-review'].includes(words[1]?.text);
 }
 
+// Whether a walked command sends its standard output to a file, as `aidrian pr review 12 > r.json` does: a `>`, `>>`,
+// `>|`, `&>`, or `&>>` redirection with no descriptor or descriptor 1, not a duplication such as `>&2`. Such a review
+// prints no JSON into the transcript, so its call is read by the pull request it was given (settleCalls).
+const STDOUT_TO_FILE = new Set(['>', '>>', '>|', '&>', '&>>']);
+const writesStdout = ({ segment }) => segment.some((token, at) => token.operator && STDOUT_TO_FILE.has(token.text)
+  && (token.fd === undefined || token.fd === '1') && Boolean(segment[at + 1]) && !segment[at + 1].fdDup);
+
 // Whether a walked command runs the auto-merge gate, `aidrian pr auto-merge`, by any path to aidrian.
 function runsGate({ invocation }) {
   const words = aidrianArgs(invocation);
@@ -467,10 +474,11 @@ function actionOf(block) {
   if (block.name === 'Skill' && typeof block.input?.skill === 'string') {
     const skill = block.input.skill.replace(/^\//u, '');
     const loop = baseName(skill) === LOOP_SKILL;
-    return { skill, review: REVIEW_SKILLS.has(baseName(skill)), loop, loopPull: loop ? argsPull(block.input.args) : null, draft: false, edit: false, reviews: [], edits: [], gates: [], merges: [] };
+    return { skill, review: REVIEW_SKILLS.has(baseName(skill)), loop, loopPull: loop ? argsPull(block.input.args) : null, draft: false, edit: false, reviews: [], filed: [], edits: [], gates: [], merges: [] };
   }
   if (block.name !== SHELL_TOOL || typeof block.input?.command !== 'string') return null;
   const reviews = matching(block.input.command, runsReview).map(aidrianTarget);
+  const filed = matching(block.input.command, (walked) => runsReview(walked) && writesStdout(walked)).map(aidrianTarget);
   const draft = runs(block.input.command, createsDraft);
   const edits = matching(block.input.command, editsPr).map(editTarget);
   const gates = matching(block.input.command, runsGate).map(aidrianTarget);
@@ -478,7 +486,7 @@ function actionOf(block) {
   const review = reviews.length > 0;
   const edit = edits.length > 0;
   return review || draft || edit || gates.length || merges.length
-    ? { skill: null, review, loop: review, loopPull: null, draft, edit, reviews, edits, gates, merges, command: block.input.command }
+    ? { skill: null, review, loop: review, loopPull: null, draft, edit, reviews, filed, edits, gates, merges, command: block.input.command }
     : null;
 }
 
@@ -491,6 +499,7 @@ function actionOf(block) {
 // - `review_runs` counts the review skills run, as `skills` reads them, and the Bash calls that run `aidrian pr review`
 //   or `aidrian pr await-review` whose result holds that command's JSON output, error or not: the exit is the whole
 //   line's, so `aidrian pr review 12; test -f x` can fail after a review ran and `false && aidrian pr review 12` with none.
+//   A call that sends a review command's output to a file (`> r.json`) counts once its result settles, as it prints none.
 // A call a forked subagent's transcript repeats counts once, by its id. Names and counts only: no command or output
 // leaves this function.
 export function sessionActions(texts) {
@@ -536,7 +545,7 @@ const typedSkills = (entry) => typedRuns(entry).map(({ skill }) => skill);
 // Reads one entry's tool calls and results into `calls`, as sessionActions counts them: a call actionOf counts is added
 // under its id, once, and a result settles the call of its id. `ran` is a result that is no error, `opened` a draft
 // create's such result that names a pull request URL, and `reviewed` a review skill that ran or a review command whose
-// result printed its JSON. `pull` is the pull request a draft create or edit that ran names: an edit's target, else the
+// result printed its JSON or sent it to a file. `pull` is the pull request a draft create or edit that ran names: an edit's target, else the
 // one URL its output names; null when that is none or several. `looped` are the pull requests a review the review-loop
 // check counts reviewed, null for one unknown: a pr-review-loop run's argument, or the `pr` of each object a review
 // command printed, else its target. `verdicts` are what a gate call printed (callVerdicts). `merged` are the pull
@@ -563,9 +572,14 @@ function settleCalls(entry, calls) {
       call.pull = named.length && named.length === call.edits.length ? onePull(named) : onePull(urlPulls(output));
     }
     const printed = call.skill ? [] : printedReviews(output, call.command);
-    call.reviewed ||= call.review && (call.skill ? call.ran : printed.length > 0);
+    call.reviewed ||= call.review && (call.skill ? call.ran : printed.length > 0 || call.filed.length > 0);
     if (call.loop && call.skill && call.ran) call.looped = [call.loopPull];
     else if (call.loop && printed.length) call.looped = loopedPulls(printed, call.reviews);
+    // A review that wrote its JSON to a file printed none: it counts by the pull request it was given once its result
+    // settles, error or not, since a round that stops at extension_check exits 10 with its JSON in the file.
+    // SHORTCUT: a review command a shell expression skipped, as in `false && aidrian pr review 12 > f`, counts too. It
+    // can only skip a send-back, which costs less than a false one, and such a line is contrived.
+    else if (call.loop && call.filed.length) call.looped = [onePull(call.filed)];
     if (call.gates.length) call.verdicts = callVerdicts(gateVerdicts(withoutCommand(output, call.command)), call.gates);
     // SHORTCUT: a call whose result is no error counts each merge command in it as run, even one a shell expression
     // skipped, as in `false && gh pr merge 12 || true`. It can only clear a refusal, never raise one, and such a line
@@ -641,7 +655,8 @@ export const SENT_BACK = 'Stop hook feedback:';
 // copies residuals into the body, even when the turn started at the loop on an earlier turn's pull request. A draft
 // create after a review still counts, and so does an edit of another pull request. A review is a pr-review-loop run, a
 // Skill call that ran or a typed command, of the pull request its first argument names, or an `aidrian pr review` or
-// `aidrian pr await-review` call that printed its JSON, of each pull request it printed, else the one it was given;
+// `aidrian pr await-review` call that printed its JSON, of each pull request it printed, else the one it was given, or
+// one that wrote its JSON to a file (`> r.json`), of the one it was given;
 // a pr-review run is none. A review and a draft are of the same pull request when they name it, or either names none.
 // A call counts only by its result, as in sessionActions. A gate is one verdict an `aidrian pr auto-merge` call printed
 // (settleCalls): a call that printed none, such as an error exit, is none. A merge is a pull request a `gh pr merge`

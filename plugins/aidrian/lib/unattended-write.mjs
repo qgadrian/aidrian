@@ -28,6 +28,7 @@ import { GLOB_WORD, globStarts, sameFile } from './glob-links.mjs';
 import { globReaches, modeTargets, sessionWorktrees, startedFolder, stateFolders } from './handoff-guard.mjs';
 import { fileEditOf, nestedProtected, opaqueShellCommand, protectedPaths, transcriptFolders } from './hosts/index.mjs';
 import { issueForgeDenial } from './issue-forge-guard.mjs';
+import { isDraftName } from './review/drafts.mjs';
 import { ownIssue } from './project-run-guard.mjs';
 import { canonical } from './rules/main-checkout.mjs';
 import { issueHeld } from './unattended-mark.mjs';
@@ -82,6 +83,10 @@ const issueNamed = (issue) => (target, folder) => {
   const [first = ''] = path.relative(folder, target).split(path.sep);
   const name = first.toLowerCase();
   const key = issue.key.toLowerCase();
+  // In tmp, a name a review or a skill drafts for a pull request (review/drafts.mjs isDraftName) is no scratch of the
+  // session's, though an issue key such as REVIEW-12 or PR-12 may lead it; of those it writes only the findings folder
+  // `aidrian pr review` names for its issue, `@<key>-review-<N>...` (review/dispatch.mjs findingsFile).
+  if (path.basename(folder) === 'tmp' && isDraftName(name)) return name.startsWith(`@${key}-review-`);
   if (name === key || name.startsWith(`${key}-`) || name.startsWith(`${key}.`)) return true;
   // In tmp, the body file the pr-write skill and the pull request body hook name for its own branch (pr-body.mjs
   // bodyFilePath), each `/` a `-`, unless another issue's branch is spelled the same (ownIssue slugShared).

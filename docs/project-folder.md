@@ -229,7 +229,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
   write in `sessions/` ([Agent gates](hooks.md#agent-gates)).
 - `aidrian worktree cleanup execute`, without `--only`, removes from `tmp/` the drafts named for a pull request's number
   once the forge reads that pull request as merged or closed: `review-<n>-<owner>--<name>/`, the findings files of
-  `aidrian pr review` (`review-<n>/` from before they were keyed by repository, and `<key>-review-<n>-...` in an issue
+  `aidrian pr review` (`review-<n>/` from before they were keyed by repository, and `@<key>-review-<n>-...` in an issue
   session, led by its issue key), `pr-<n>-review.md`, and
   `product-feedback-<n>.md` with `product-feedback-<n>-items.json`. A findings folder keyed by its repository goes when
   that repository's pull request has ended. A draft that names no repository may be any repository's pull request of its

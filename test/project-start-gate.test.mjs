@@ -16,7 +16,7 @@ import { ownIssue, runDriver } from '../plugins/aidrian/lib/project-run-guard.mj
 
 import { CLAIM_AGE, claimStart, MARKER_CAP, noteStarted, readFrom, readStarted } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
-import { CEILINGS, ISSUE_ATTEMPTS, PROJECT_PARALLEL, PROJECT_STARTS, PROJECT_STARTS_PER_DAY, projectPrompt, reviewedProblem, teamPolicy } from '../plugins/aidrian/lib/project-run-gate.mjs';
+import { CEILINGS, ISSUE_ATTEMPTS, PROJECT_PARALLEL, PROJECT_STARTS, PROJECT_STARTS_PER_DAY, policyFilesAt, projectPrompt, reviewedProblem, teamPolicy } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { pushCheckoutProblem } from '../plugins/aidrian/lib/issue-push-checkout.mjs';
 import { recordHumanSignoff } from '../plugins/aidrian/lib/review/merge-trust.mjs';
 import { DROP_FILE } from '../plugins/aidrian/lib/project-result.mjs';
@@ -546,6 +546,56 @@ test('a branch that makes a host path a submodule parks the issue', (t) => {
   });
   parkedAs(started.fx, started, 'the branch makes .claude a submodule');
   assert.equal(execFileSync('git', ['-C', started.fx.bare, 'ls-tree', 'refs/heads/feat/eng-1-export', '.claude'], { encoding: 'utf8' }).split(' ')[0], '160000', 'the branch holds a gitlink there');
+});
+
+// The default branch turns includeGuardedPaths off after the start read the policy and before it pinned the base.
+test('a policy the pinned base tip sets otherwise than the start read before it retries the start, and writes nothing', (t) => {
+  const fx = runFixture(t, { config: { github: { autoMerge: { includeGuardedPaths: true } } } });
+  const main = path.join(fx.root, 'main-moves');
+  execFileSync('git', ['clone', '-q', fx.bare, main], { stdio: 'pipe' });
+  const config = { ...fx.committed, github: { ...fx.committed.github, autoMerge: { includeGuardedPaths: false } } };
+  const tip = pushFiles(fx, main, { '.aidrian/config.json': `${JSON.stringify(config)}\n` }, 'main');
+  const rows = fx.rows().length;
+  const retried = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(retried.exitCode, 75, retried.err.join('\n'));
+  assert.ok(retried.out.includes(`retry: the default branch moved during the start: the pinned base tip ${tip.slice(0, 7)} sets github.autoMerge.includeGuardedPaths otherwise than the policy the start read before it; start again`), retried.out.join('\n'));
+  assert.equal(fx.rows().length, rows, 'no row');
+  assert.equal(existsSync(path.dirname(work(fx))), false, 'no clone');
+  assert.deepEqual(fx.claude.starts(), []);
+});
+
+// A host file the branch turns into a folder whose one entry is a gitlink: no folder of files, and no file either.
+test('a host file the branch turns into a folder that holds only a submodule parks the issue', (t) => {
+  const gitAt = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: 'pipe' });
+  const started = secondStart(t, {
+    files: { 'CLAUDE.md': '# base rules\n' },
+    edit: (scratch) => {
+      gitAt(scratch, 'rm', '-q', '--cached', 'CLAUDE.md');
+      rmSync(path.join(scratch, 'CLAUDE.md'));
+      mkdirSync(path.join(scratch, 'CLAUDE.md', 'sub'), { recursive: true });
+      gitAt(scratch, 'update-index', '--add', '--cacheinfo', `160000,${gitAt(scratch, 'rev-parse', 'HEAD').trim()},CLAUDE.md/sub`);
+    },
+  });
+  parkedAs(started.fx, started, 'the branch makes CLAUDE.md/sub a submodule');
+});
+
+// A project folder below the repository's top: a pointer file the tip has, whose object git cannot read, is no answer.
+test('policyFilesAt reads a nested project\'s pointer from the whole tree, and refuses one git cannot read', (t) => {
+  const top = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-policy-')));
+  t.after(() => rmSync(top, { recursive: true, force: true }));
+  const app = path.join(top, 'app');
+  mkdirSync(path.join(app, 'harness'), { recursive: true });
+  writeFileSync(path.join(app, '.aidrian.json'), '{"dir":"harness"}\n');
+  writeFileSync(path.join(app, 'harness', 'config.json'), '{"version":1}\n');
+  const git = (...args) => execFileSync('git', ['-C', top, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8', stdio: 'pipe' });
+  git('init', '-q', '-b', 'main');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'nested');
+  const tip = git('rev-parse', 'HEAD').trim();
+  assert.deepEqual(policyFilesAt(app, tip, 'app/'), { files: ['app/.aidrian.json', 'app/harness/config.json'], config: 'app/harness/config.json' });
+  const blob = git('rev-parse', `${tip}:app/.aidrian.json`).trim();
+  rmSync(path.join(top, '.git', 'objects', blob.slice(0, 2), blob.slice(2)));
+  assert.deepEqual(policyFilesAt(app, tip, 'app/'), { problem: `git cannot read app/.aidrian.json at the base tip ${tip.slice(0, 7)}, so where its policy lives cannot be told` });
 });
 
 // The review bot's status card, as the forge's reviewTrail gives a comment: by the bot, every edit the bot's.
@@ -1227,6 +1277,33 @@ test('a parked issue whose result recorded no head resumes from the head the ear
   const launched = fx.cmd(['init', 'launch', '--file', input('launch', [{ ...ISSUE_ONE, status: 'started' }])]);
   assert.equal(launched.exitCode, 0, launched.err.join('\n'));
   assert.deepEqual(fx.run().snapshot.resumed, [{ key: 'ENG-1', run: 'first', pr: null, head, branch: ISSUE_ONE.branch }]);
+});
+
+// One rule decides the head a later run resumes from, as a later attempt's: the latest in the earlier run's rows.
+test('a later run resumes from the earlier run\'s latest recorded head, a start\'s after a result\'s', (t) => {
+  const fx = runFixture(t, { init: false });
+  const input = (name, issues) => {
+    const file = path.join(fx.dir, `${name}.input`);
+    writeFileSync(file, JSON.stringify({ issues, teams: ['ENG'] }));
+    return file;
+  };
+  assert.equal(fx.cmd(['init', 'first', '--file', input('first', [ISSUE_ONE])]).exitCode, 0);
+  const scratch = path.join(fx.root, 'scratch');
+  execFileSync('git', ['clone', '-q', fx.bare, scratch], { stdio: 'pipe' });
+  const earlier = pushFiles(fx, scratch, { 'src/export.js': 'export const csv = true;\n' });
+  const later = pushFiles(fx, scratch, { 'src/export.js': 'export const csv = false;\n' });
+  const now = at(Date.now());
+  const start = { event: 'start', key: 'ENG-1', branch: ISSUE_ONE.branch, outcome: 'started', at: now };
+  appendToRun(fx.state, 'first', () => ({ rows: [
+    { ...start, attempt: 1, head: earlier },
+    { event: 'result', key: 'ENG-1', attempt: 1, status: 'failed', pr: 12, head: earlier, at: now },
+    { event: 'issue', key: 'ENG-1', state: 'open', at: now },
+    { ...start, attempt: 2, head: later },
+    { event: 'issue', key: 'ENG-1', state: 'parked', decision: 'attempts', at: now },
+  ] }));
+  const launched = fx.cmd(['init', 'launch', '--file', input('launch', [{ ...ISSUE_ONE, status: 'started' }])]);
+  assert.equal(launched.exitCode, 0, launched.err.join('\n'));
+  assert.deepEqual(fx.run().snapshot.resumed, [{ key: 'ENG-1', run: 'first', pr: 12, head: later, branch: ISSUE_ONE.branch }]);
 });
 
 test('a resumed issue whose branch the forge no longer has is cut fresh from the base tip, and its task claims no earlier work', (t) => {

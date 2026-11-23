@@ -49,7 +49,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { baseBranchTip, machineSwitch } from './config.mjs';
+import { baseBranchTip, configFromText, machineSwitch } from './config.mjs';
 import { DEFAULTS } from './config-defaults.mjs';
 import { pauseSync, resolvedPath } from './fs.mjs';
 import { changeNotFound, forgeDomains, forgeFor, forgeTokenVars } from './forges/index.mjs';
@@ -444,6 +444,9 @@ function startPlace(context) {
   const policyRead = policyFilesAt(project.root, base.tip, prefix);
   if (policyRead.problem) return refuse(policyRead.problem, orphans);
   const policyFiles = policyRead.files;
+  // The default branch may have moved between the policy read and the pin: the pinned commit's own config decides.
+  const moved = pinnedPolicyProblem(project.root, base.tip, policyRead.config, policy);
+  if (moved) return { answer: noted(retryAnswer('start', moved, orphans)) };
   const reviewed = (head, changed) => reviewedProblem({ project, repository: found.init.repository, facade, policy, policyFiles, main: base.main, branch, pr, head, changed, env });
   // The host files and the policy files the base tip names, which no attempt loads from a branch no review passed.
   const guards = (file) => isGuarded(file) || isPolicyPath(file, policyFiles);
@@ -511,22 +514,48 @@ function parkUnreconciled({ state, run, key, session, held, policy, park, pr, or
   return { exitCode: 0, out: [...orphans, `parked ${key} unreconciled: the branch ${park.branch} on the forge is not the work this run's ledger records (${park.why}), so nothing was started, cut, or reset; ${kept}; a person reconciles them`], err: [] };
 }
 
+// The text of `file`, from the top of the repository, at the commit `tip`, read in `root`: { text }, null for a file
+// the commit lacks, or { failed } when git cannot read one the commit has. The tree is listed whole (`--full-tree`), so
+// a project folder below the repository's top reads the same path.
+function textAt(root, tip, file) {
+  const shown = gateGit(['cat-file', '-p', `${tip}:${file}`], root, { timeout: 30_000 });
+  if (shown.status === 0) return { text: shown.stdout };
+  const known = gateGit(['ls-tree', '-z', '--full-tree', '--name-only', tip, '--', file], root, { timeout: 30_000 });
+  return known.status !== 0 || known.stdout !== '' ? { failed: file } : null;
+}
+
 // The policy files of the commit `tip`, the pinned base the overlay copies from, as pr-auto-merge.mjs branchPolicies
 // resolves a branch's: the pointer file and the config.json it locates (project.mjs configPathIn), each from the top of
-// the repository with the project folder `prefix`. { files } or { problem }: a read git fails, other than a file the
-// commit lacks, is no answer.
+// the repository with the project folder `prefix`. { files, config }, `config` that config.json's path, or { problem }:
+// a read git fails, other than a file the commit lacks, is no answer.
 export function policyFilesAt(root, tip, prefix) {
   let failed = null;
   const read = (name) => {
-    const shown = gateGit(['cat-file', '-p', `${tip}:${prefix}${name}`], root, { timeout: 30_000 });
-    if (shown.status === 0) return shown.stdout;
-    const known = gateGit(['ls-tree', '-z', '--name-only', tip, '--', `${prefix}${name}`], root, { timeout: 30_000 });
-    if (known.status !== 0 || known.stdout !== '') failed ??= `${prefix}${name}`;
-    return null;
+    const got = textAt(root, tip, `${prefix}${name}`);
+    if (got?.failed) failed ??= got.failed;
+    return got?.text ?? null;
   };
   const config = configPathIn(read);
   if (failed) return { problem: `git cannot read ${failed} at the base tip ${tip.slice(0, 7)}, so where its policy lives cannot be told` };
-  return { files: [trailPaths(prefix).pointer, `${prefix}${config}`] };
+  return { files: [trailPaths(prefix).pointer, `${prefix}${config}`], config: `${prefix}${config}` };
+}
+
+// Why the policy the start read before it pinned the base (`policy`, teamPolicy) is not the pinned commit `tip`'s, or
+// null: projectRun.allow, github.reviewer, and github.autoMerge.includeGuardedPaths, read from `config`, the config.json
+// policyFilesAt located there, as the forge's read parses one (config.mjs configFromText). Any difference is the default
+// branch moving during the start: a retry, with nothing written.
+function pinnedPolicyProblem(root, tip, config, policy) {
+  const got = textAt(root, tip, config);
+  if (got?.failed) return `git cannot read ${got.failed} at the base tip ${tip.slice(0, 7)}, so the start cannot check its policy there`;
+  const pinned = configFromText(got?.text ?? null, config);
+  const reviewer = typeof pinned.github?.reviewer === 'string' && pinned.github.reviewer !== '' ? pinned.github.reviewer : null;
+  const differs = [
+    pinned.projectRun?.allow !== true && 'projectRun.allow',
+    reviewer !== policy.reviewer && 'github.reviewer',
+    (pinned.github?.autoMerge?.includeGuardedPaths === true) !== policy.includeGuardedPaths && 'github.autoMerge.includeGuardedPaths',
+  ].filter(Boolean);
+  if (!differs.length) return null;
+  return `the default branch moved during the start: the pinned base tip ${tip.slice(0, 7)} sets ${differs.join(', ')} otherwise than the policy the start read before it; start again`;
 }
 
 // Whether attempt `attempt` of issue `key` ended on a usage or rate limit, as the run `found` records it.

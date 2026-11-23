@@ -389,7 +389,8 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, reco
 // commits' trees alone: { why }, which parks the issue, { problem }, or null. A path the base keeps as a link would
 // need a link the clone's host may follow to the branch's own files, and a path, or a folder on its path, that is a
 // file on one side and a folder on the other would need a folder or a file removed whole. A path, or a folder on its
-// path, that is a submodule (a gitlink) on either side is neither, and no overlay is made over one. A link the branch
+// path, that is a submodule (a gitlink) on either side is neither, and no overlay is made over one, nor over a path
+// that holds one. A link the branch
 // makes is left to the link check on disk, after the checkout, which names it.
 function overlayShapeProblem(work, tip, overlay) {
   const [head, base] = [commitFiles(work, overlay.sha), commitFiles(work, tip)];
@@ -400,6 +401,9 @@ function overlayShapeProblem(work, tip, overlay) {
   const [headFolders, baseFolders] = [folderSet(head), folderSet(base)];
   const submodules = [...commitGitlinks(work, overlay.sha), ...commitGitlinks(work, tip)];
   for (const file of overlay.files) {
+    // A submodule below the path, as a host file the branch turns into a folder that holds only a gitlink.
+    const below = submodules.find((link) => link.startsWith(`${file}/`));
+    if (below) return { why: `the branch makes ${namedFiles([below])} a submodule` };
     const parts = file.split('/');
     for (let count = 1; count <= parts.length; count += 1) {
       const part = parts.slice(0, count).join('/');

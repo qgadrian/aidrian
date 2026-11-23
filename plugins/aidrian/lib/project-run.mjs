@@ -578,12 +578,12 @@ function resumedOf(value, issues) {
 // earlier version of the start gate cut one (attemptBranch). That run started it in
 // the tracker and parked it, as on a pull request left open or a decision, so the issue is the run's own work, not
 // someone's outside it. `pr` is the pull request that run's latest result of the issue named, or null; `head` the commit
-// that result recorded the branch at (project-result.mjs dropRows), else the head that run's last effective start row
-// recorded (recordedHead), or null, which binds the branch on the forge to that
-// run's work: the start goes on from it only at or after that commit (project-start.mjs prepareAttempt). A result row
-// with no `head` field at all, written before results recorded one, that named a pull request, takes the head
-// `pullHead({ pr, branch, repository })` gives, the forge's open pull request from that branch (project-result.mjs
-// openPullHead), or null; a row with the field never falls back. A run whose latest `issue` row of the issue parked it
+// that run recorded last, of a result (project-result.mjs dropRows) or of a start that ran (recordedHead), or null,
+// which binds the branch on the forge to that
+// run's work: the start goes on from it only at or after that commit (project-start.mjs prepareAttempt). A run none of
+// whose start and result rows of the issue has a `head` field, written before heads were recorded, takes the head
+// `pullHead({ pr, branch, repository })` gives for the pull request its latest result named, the forge's open pull
+// request from that branch (project-result.mjs openPullHead), or null; a run with such a field never falls back. A run whose latest `issue` row of the issue parked it
 // `unreconciled`, as a start does when the branch on the forge is not the work its ledger records (project-run-gate.mjs
 // parkUnreconciled), gives the branch, head, and pull request that row names, so a run that parked a resumed issue
 // without starting it hides no earlier record. A run that cannot be read is left out, and each run is read in turn,
@@ -629,9 +629,9 @@ export function resumedIssues(state, snapshot, { except, repository, pullHead = 
         from: found.snapshot.issues.find((each) => each.key === issue.key)?.branch ?? null,
         cut: found.rows.some((row) => row.event === 'start' && row.key === issue.key && row.outcome !== 'void' && row.branch === issueBranch(found, issue.key)),
         pr: found.rows.findLast((row) => row.event === 'result' && row.key === issue.key && Number.isInteger(row.pr) && row.pr > 0)?.pr ?? null,
-        // The result's head, else the head that run's last effective start recorded.
-        head: typeof result?.head === 'string' && SHA.test(result.head) ? result.head : recordedHeads(found, issue.key, { results: false }).at(-1)?.head ?? null,
-        legacy: isObject(result) && !Object.hasOwn(result, 'head') && Number.isInteger(result.pr) && result.pr > 0 ? result.pr : null,
+        head: recordedHead(found, issue.key),
+        // A run whose start and result rows of the issue carry no head at all, from before heads were recorded.
+        legacy: !headed(found, issue.key) && isObject(result) && Number.isInteger(result.pr) && result.pr > 0 ? result.pr : null,
       });
     }
   }
@@ -655,18 +655,18 @@ function effectiveStarts(found, key) {
   return [...latest.values()].filter(({ row }) => row.outcome !== 'void');
 }
 
-// The heads of issue `key`'s branch the run `found` recorded, as [{ head, at }] in row order: each effective start's
-// `head`, the forge's branch as that attempt found it or the tip it cut it from, and, with `results`, each result's.
-function recordedHeads(found, key, { results = true } = {}) {
+// The commit issue `key`'s branch was last recorded at in the run `found`, the one rule for a later attempt
+// (project-start.mjs prepareAttempt) and a later run (resumedIssues): the latest head, in row order, of its effective
+// start rows, the forge's branch as that attempt found it or the tip it cut it from, and of its results, or null.
+export function recordedHead(found, key) {
   const starts = effectiveStarts(found, key).map(({ row, at }) => ({ head: row.head, at }));
-  const parked = results ? found.rows.flatMap((row, at) => (row.event === 'result' && row.key === key ? [{ head: row.head, at }] : [])) : [];
-  return [...starts, ...parked].filter(({ head }) => typeof head === 'string' && SHA.test(head)).sort((a, b) => a.at - b.at);
+  const results = found.rows.flatMap((row, at) => (row.event === 'result' && row.key === key ? [{ head: row.head, at }] : []));
+  return [...starts, ...results].filter(({ head }) => typeof head === 'string' && SHA.test(head)).sort((a, b) => a.at - b.at).at(-1)?.head ?? null;
 }
 
-// The commit issue `key`'s branch was last recorded at in the run `found`: the latest head of its effective start rows
-// or its results (recordedHeads), or null. A later attempt goes on only on a branch that holds it
-// (project-start.mjs prepareAttempt).
-export const recordedHead = (found, key) => recordedHeads(found, key).at(-1)?.head ?? null;
+// Whether any start or result row of issue `key` in the run `found` has a `head` field, as rows have since heads were
+// recorded: a run with one never falls back to the legacy pull-request lookup (resumedIssues).
+const headed = (found, key) => found.rows.some((row) => row.key === key && ['start', 'result'].includes(row.event) && Object.hasOwn(row, 'head'));
 
 // Whether the repositories `one` and `other`, as runs pin them, are one, compared in any case.
 const sameRepository = (one, other) => ['host', 'owner', 'name'].every((part) => String(one?.[part]).toLowerCase() === String(other?.[part]).toLowerCase());

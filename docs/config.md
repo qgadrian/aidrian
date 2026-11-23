@@ -1973,17 +1973,21 @@ the review bot, github.reviewer on the default branch, passed exactly that head 
 the harness-config flow on that head, or the default branch sets `github.autoMerge.includeGuardedPaths` and no policy
 file changed; otherwise its clone holds the base branch's copies, git leaves them out of its commits, and a push that
 changes one is refused.
+Those reads come from the pinned base tip: when its own config sets projectRun.allow, github.reviewer, or
+`github.autoMerge.includeGuardedPaths` otherwise than the policy the start read before it pinned the tip, the default
+branch moved during the start, and `start` exits 75 with nothing written.
 The start row records that head as `overlay`, and `<attempt>/base-copies.txt` lists the files, cleaned and fenced as
 data from the branch.
 The branch's own changes stay in its commits for the pull request's review.
 Each start row records the commit the branch was at as `head`, and every later attempt goes on only on a branch that
 holds the last head recorded, of a start that ran or a result: a start given back (`void`) records none.
-A later run resumes from the earlier run's result head, else from the head of that run's last start that ran.
+A later run resumes from the same latest head of the earlier run's rows; only a run whose rows carry no head at all
+falls back to its pull request's head.
 A branch the run's ledger cannot account for parks the issue as unreconciled, with the branch and pull request untouched:
 a first attempt whose branch the forge has already, and a recorded head the forge's branch does not hold.
 So does a base copy that cannot be made safely: a branch that makes a host file, or a folder on its path, a link, a host
 file the base keeps as a link, which an overlay never makes, a host file or a folder on its path that the branch turns
-between a file and a folder, a host file or a folder on its path that is a submodule on either side, and a base copy
+between a file and a folder, a host file or a folder on its path that is, or holds, a submodule on either side, and a base copy
 the branch's committed ignore rules keep stageable (`git check-ignore`).
 Every park row names the recorded head.
 `start` exits 0 with `parked <key> unreconciled: ...`, writes no start row, and a later run resumes the issue from that

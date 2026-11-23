@@ -168,7 +168,8 @@ test('a leading cd that ; or a newline ends counts as one && ends when it cannot
   }
   assert.deepEqual(await rows(`cd ${OTHER}; echo ${URL_OF('acme/other', 9)}; gh pr create --fill`, { stdout: link }), [], 'a command after the cd that may print');
   // A cd that can fail on a part of its segment other than its folder, or that runs outside this shell.
-  for (const lead of [`cd ${OTHER} <${gone}; `, `cd ${gone}/../other; `, `f() { cd ${OTHER}; }; `, `coproc cd ${OTHER}; `]) {
+  for (const lead of [`cd ${OTHER} <${gone}; `, `cd ${gone}/../other; `, `f() { cd ${OTHER}; }; `, `coproc cd ${OTHER}; `,
+    `cd ${OTHER} 999999999<<EOF; `, `cd ${OTHER}\r; `]) {
     assert.deepEqual(await rows(`${lead}gh pr create --repo acme/widgets --fill`, { stdout: `${URL_OF('acme/widgets', 7)}\n` }), [], lead);
   }
 });

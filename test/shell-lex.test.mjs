@@ -311,7 +311,8 @@ test('walkCommands follows a leading cd that ; or a newline ends only when the e
   // Only a plain `cd <absolute folder>` runs in this shell and can fail on nothing but its folder.
   for (const line of ['f() { cd /x; }; gh pr view', '{ cd /x; }; gh pr view', 'coproc cd /x; gh pr view', 'pushd -n /x; gh pr view',
     'pushd /x; gh pr view', 'cd -P /x; gh pr view', 'cd /x </missing; gh pr view', 'cd /x 2>/dev/null; gh pr view', 'cd /missing/../x; gh pr view',
-    'cd /x/./; gh pr view', 'CDPATH=/ cd /x; gh pr view', 'cd "$X"; gh pr view', 'if cd /x; then gh pr view; fi']) {
+    'cd /x/./; gh pr view', 'CDPATH=/ cd /x; gh pr view', 'cd "$X"; gh pr view', 'if cd /x; then gh pr view; fi',
+    'cd /x 999999999<<EOF; gh pr view\nbody\nEOF\n', 'cd /x\r; gh pr view', "cd '/x)'; gh pr view", 'cd "/x"; gh pr view']) {
     assert.equal(ghFolder(line, { enters }), null, line);
   }
   asked.length = 0;

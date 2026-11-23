@@ -1992,7 +1992,8 @@ The call's folder holds under either reading of the payload's `cwd`, the folder 
 ended in, which no host documents for a Bash call ([Claude Code](providers/claude-code.md)): it is the absolute folder
 a leading `cd <folder> &&`, `git -C`, or `env -C` names, as `lib/shell-lex.mjs` reads it, or a leading `cd <folder>` that
 `;` or a newline ends, as in `cd <folder>; gh pr create` or `cd <folder>; git push`, when that segment is the plain
-`cd` and one absolute folder written with no `.` or `..` part, with no option, redirection, or wrapper, and that folder
+`cd` and one unquoted absolute folder of plain characters, written with no `.` or `..` part, with no option,
+redirection, heredoc, or wrapper, on a line with no carriage return, and that folder
 is a directory the hook may search just after the call, so the `cd` cannot have failed: after a failed one the
 commands ran in the folder the line started in, which no row then names; the payload's `cwd` only on a
 line where no command, a nested one included, runs `cd`, `pushd`, or `popd`, plain or through `builtin`, and nothing

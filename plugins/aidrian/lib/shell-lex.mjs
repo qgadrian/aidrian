@@ -911,7 +911,10 @@ export function walkCommands(command, cwd, { enters = null } = {}) {
         const ended = enters !== null && index === 0 && (separators[0] === ';' || separators[0] === '\n');
         const leading = index === 0 && (separators[0] === '&&' || ended) && !segment[0]?.text.startsWith('(') && !invocation.uncertain && !invocation.viaCommand;
         here = leading ? folderAfter(start, invocation) : null;
-        if (ended && !(plainCd(segment) && enters(here))) here = null;
+        if (ended) {
+          const folder = plainCd(line, spans[0]);
+          if (folder === null || !enters(folder)) here = null;
+        }
         const movesThisShell = !closes && !invocation.negated && !invocation.uncertain && !invocation.viaCommand && !runsInOwnProcess(segment) && !['||', '|', '|&'].includes(after);
         chain = movesThisShell ? folderAfter(chain, invocation) : null;
         moved = true;
@@ -968,13 +971,15 @@ function runsInOwnProcess(segment) {
 // expands, more than one operand (zsh's `cd old new` replaces old with new), or a relative name under its own `CDPATH=`.
 // It is the physical folder, as the kernel resolves a file's `..` from it: `cd link && cat ../f` reads beside the link's
 // target. A folder that does not exist is returned as written; a rule that needs it to exist checks.
-// Whether a segment is `cd <folder>` and nothing else, its folder absolute and written as path.normalize writes it: with
-// no wrapper, option, redirection, or `.` or `..` part, so a `cd` that `enters` finds the folder of cannot have failed
-// on another part of its own segment, and it runs in this shell, never in a function body or a coprocess.
-function plainCd(segment) {
-  if (segment.length !== 2 || segment[0].text !== 'cd' || segment[0].dynamic) return false;
-  const [, to] = segment;
-  return !to.dynamic && !to.expands && !to.operator && path.isAbsolute(to.text) && path.normalize(to.text) === to.text;
+// The folder of a first segment written exactly as `cd <folder>`, its `span` of `line`: one unquoted word of plain
+// characters (PLAIN_WORD), absolute and as path.normalize writes it, with no wrapper, option, redirection, heredoc, or
+// `.` or `..` part, on a line with no carriage return, which the lexer drops and the shell keeps in a word. So a `cd`
+// that `enters` finds that folder of, as written, cannot have failed on another part of its own segment, and it runs in
+// this shell, never in a function body or a coprocess. Null for any other segment.
+function plainCd(line, [from, to]) {
+  if (line.includes('\r')) return null;
+  const word = /^[ \t]*cd[ \t]+([^ \t]+)[ \t]*$/u.exec(line.slice(from, to))?.[1];
+  return word && PLAIN_WORD.test(word) && path.isAbsolute(word) && path.normalize(word) === word ? word : null;
 }
 
 function folderAfter(here, { program, args, environment = [] }) {

@@ -184,6 +184,16 @@ test('merged is kept only when the forge shows the pull request merged from the 
     const kept = JSON.parse(readFileSync(path.join(runFolder(fx.state, 'launch'), 'results', 'ENG-1.json'), 'utf8'));
     assert.deepEqual([kept.status, kept.reported], ['merged', 'pr_open']);
   }
+  // One that merges between the first read, which shows it open, and the park is taken as merged too.
+  const racing = started(t);
+  const head = 'b'.repeat(40);
+  let reads = 0;
+  racing.forge.change = () => {
+    reads += 1;
+    return reads === 1 ? merged({ state: 'OPEN', mergedAt: null, headRefOid: head }) : merged({ headRefOid: head });
+  };
+  racing.forge.branchHead = () => head;
+  assert.deepEqual(racing.recorded({ status: 'pr_open', pr: 12, stop: 'review' }).out, ['result ENG-1 merged -> done']);
   const failing = started(t);
   assert.deepEqual(failing.recorded({ status: 'merged', pr: 12 }).out, ['ended ENG-1 bad_result -> open']);
   assert.equal(failing.rows().find((row) => row.event === 'ended').why, 'the forge has no pull request #12 in github.com/acme/widgets');

@@ -225,11 +225,12 @@ function droppedPullProblem({ forge, repository, result, branch, since, verified
   if (repoName(view?.url) !== named.toLowerCase() || hostOf(view.url)?.toLowerCase() !== repository.host.toLowerCase()) return `pull request #${result.pr} is not in ${repository.host}/${named}`;
   if (view.isCrossRepository !== false || view.headRefName !== branch) return `pull request #${result.pr} is not from the issue's branch ${branch}`;
   if (result.status === 'merged') return mergeProblem({ forge, repository, pr: result.pr, branch, since });
-  if (view.state === 'MERGED') {
+  const merged = () => {
     const problem = mergeProblem({ forge, repository, pr: result.pr, branch, since });
     if (!problem) verified.merged = true;
     return problem;
-  }
+  };
+  if (view.state === 'MERGED') return merged();
   // A closed pull request still parks the issue (project-stops.mjs), but no later run goes on from its branch.
   if (view.state === 'CLOSED') {
     verified.head = null;
@@ -242,6 +243,15 @@ function droppedPullProblem({ forge, repository, result, branch, since, verified
     return { retry: true };
   }
   if (typeof view.headRefOid !== 'string' || view.headRefOid !== head) return `pull request #${result.pr}'s head is not the head of ${branch} on the forge`;
+  // Read the state once more before the issue parks: a pull request that merged since the first read is taken as merged.
+  // A merge after this read still parks the issue as pr-open.
+  let again = null;
+  try {
+    again = forge.change(String(result.pr), 'state', { repo: `${repository.host}/${named}` });
+  } catch {
+    // The first read's answer stands.
+  }
+  if (again?.state === 'MERGED') return merged();
   verified.head = head;
   return null;
 }

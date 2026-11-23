@@ -185,10 +185,12 @@ try {
     return holds(folder) ? [{ entry, rank, depth: folder.length }] : [];
   });
   ranked.sort((a, b) => newer(a, b) || a.rank - b.rank || b.depth - a.depth);
-  // The chosen install's cli, a regular file at an absolute path, or a blank line: like the mod, no older install.
-  const install = ranked[0]?.entry.installPath;
-  const cli = typeof install === 'string' && path.isAbsolute(install) ? path.join(install, 'lib/cli.mjs') : null;
-  if (cli === null || !statSync(cli, { throwIfNoEntry: false })?.isFile()) throw new Error('no aidrian cli');
+  // The chosen install's cli, a regular file whose real path is below the plugin cache's aidrian folder, or a blank
+  // line: like the mod, it tries no older install.
+  const cache = real(path.join(config, 'plugins/cache/aidrian-harness/aidrian'));
+  const cli = real(path.join(String(ranked[0]?.entry.installPath), 'lib/cli.mjs'));
+  const isCached = cache !== null && cli !== null && cli.startsWith(`${cache}/`);
+  if (!isCached || !statSync(cli).isFile()) throw new Error('no aidrian cli');
   const args = [cli, 'session', 'snapshot', '--line'];
   if (typeof input.session_id === 'string') args.push(`--session=${input.session_id}`);
   if (typeof input.transcript_path === 'string') args.push(`--transcript=${input.transcript_path}`);
@@ -215,8 +217,8 @@ And point the status line at it in `~/.claude/settings.json`:
   plugin's `lib/cli.mjs`. It takes the install path Claude Code records in `installed_plugins.json`, chosen as the
   mod chooses it: of the entries whose real folder holds the session's folder and the first user entry, the newest
   version, a version that is not numbers last, and a tie to local, then project, the deeper folder first, then user.
-  When that install's `lib/cli.mjs` is not a regular file at an absolute path, it prints a blank line and tries no
-  older one. Unlike the mod, it checks no link or cache folder: it is a sample to adapt.
+  When that install's `lib/cli.mjs` is not a regular file whose real path lies below the plugin cache's `aidrian`
+  folder, it prints a blank line and tries no older one. It is a sample to adapt: the mod makes more checks.
   It needs no `aidrian` on the status line's PATH: the plugin's `bin/` is on the PATH of Claude Code's Bash tool, which the status
   line need not share.
 - **PATH.** The status line's PATH must hold `node`, `git`, and `gh`: the snapshot runs `git` and `gh` by name from

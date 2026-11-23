@@ -73,4 +73,8 @@ test('the documented script breaks a tie as the mod does, and refuses a cli it c
   mkdirSync(path.join(project, 'relative/lib'), { recursive: true });
   writeFileSync(path.join(project, 'relative/lib/cli.mjs'), "process.stdout.write('ran the relative cli');");
   assert.equal(run([{ ...fallback, installPath: 'relative', version: '2.0.0' }, fallback], project), '', 'a relative install path is refused');
+  assert.equal(run([{ ...fallback, installPath: path.join(project, 'relative'), version: '2.0.0' }, fallback], project), '', 'an install outside the plugin cache is refused');
+  const linked = path.join(path.dirname(one), 'linked');
+  symlinkSync(path.join(project, 'relative'), linked);
+  assert.equal(run([{ ...fallback, installPath: linked, version: '2.0.0' }, fallback], project), '', 'and so is a link in the cache that leads out of it');
 });

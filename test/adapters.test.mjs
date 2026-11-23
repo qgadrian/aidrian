@@ -38,11 +38,12 @@ const script = (event, name) => HOOKS[event].find((group) => group.hooks.some(({
 const fires = (matcher, name) => matcher === '*' || new RegExp(`^(?:${matcher})$`, 'u').test(name);
 
 // The routes a bridge host's plugin runs, the ROUTES its plugins/aidrian/<id>/routes.mjs exports: each { on, event, tool,
-// standard, script, timeoutMs }. None while that file is absent; null for a host that reads hooks.json as it is.
+// standard, script, timeoutMs }. Null for a host that reads hooks.json as it is, and for a bridge host with no such file,
+// which routeTableProblems fails.
 async function bridgeRoutes(host) {
   if (host.delivery !== 'bridge') return null;
   const file = path.join(ROOT, 'plugins/aidrian', host.id, 'routes.mjs');
-  return existsSync(file) ? (await import(pathToFileURL(file).href)).ROUTES : [];
+  return existsSync(file) ? (await import(pathToFileURL(file).href)).ROUTES : null;
 }
 const ROUTES = new Map(await Promise.all([...HOSTS, fakeHost].map(async (host) => [host.id, await bridgeRoutes(host)])));
 
@@ -54,6 +55,14 @@ function hookEntry(event, name) {
   const runs = ({ command }) => command.includes(`/scripts/${name}"`);
   const group = HOOKS[event]?.find((each) => each.hooks.some(runs));
   return group ? { group, entry: group.hooks.find(runs) } : null;
+}
+
+// What a bridge host's route table lacks: the routes.mjs file, a ROUTES list, or a row in it. A bridge that routes no
+// hook runs nothing on its host, so it is no delivery.
+function routeTableProblems(routes) {
+  if (routes === null || routes === undefined) return ['it has no routes.mjs, or the file exports no ROUTES'];
+  if (!Array.isArray(routes)) return ['its ROUTES is not a list'];
+  return routes.length > 0 ? [] : ['its ROUTES is empty'];
 }
 
 // What a bridge's routes break of hooks.json: each route's script is listed under its event, that entry's matcher fires
@@ -238,10 +247,18 @@ for (const host of [...HOSTS, fakeHost].filter((each) => each.delivery === 'hook
 for (const host of HOSTS.filter((each) => each.delivery === 'bridge')) {
   test(`host ${host.id}'s bridge routes each hook as hooks.json lists it`, () => {
     const routes = ROUTES.get(host.id);
-    assert.ok(Array.isArray(routes), 'ROUTES is a list, empty while the bridge routes no hook');
+    assert.deepEqual(routeTableProblems(routes), []);
     assert.deepEqual(routeProblems(host, routes), []);
   });
 }
+
+test('a bridge host with no routes.mjs, or with an empty ROUTES, fails the route table check', () => {
+  assert.deepEqual(routeTableProblems(null), ['it has no routes.mjs, or the file exports no ROUTES']);
+  assert.deepEqual(routeTableProblems(undefined), ['it has no routes.mjs, or the file exports no ROUTES']);
+  assert.deepEqual(routeTableProblems({}), ['its ROUTES is not a list']);
+  assert.deepEqual(routeTableProblems([]), ['its ROUTES is empty']);
+  assert.deepEqual(routeTableProblems(ROUTES.get('opencode')), []);
+});
 
 test('a bridge route that leaves hooks.json is told apart: its event, matcher, timeout, and tool name are each checked', () => {
   const opencode = HOSTS.find((host) => host.id === 'opencode');
@@ -262,6 +279,7 @@ test('which hooks a host delivers: every one on a hooks-json host, and on a brid
   const opencode = HOSTS.find((host) => host.id === 'opencode');
   const named = ROUTES.get('opencode').map((route) => route.script);
   assert.equal(delivers(opencode, 'hook-tracker-pre.mjs'), named.includes('hook-tracker-pre.mjs'));
+  assert.equal(delivers(opencode, 'hook-bash-post.mjs'), true, 'the session ledger runs on OpenCode');
   assert.equal(delivers(opencode, 'hook-nothing.mjs'), false);
 });
 

@@ -24,7 +24,7 @@ import { findProject } from '../project.mjs';
 import { givenRepo, namesChange, originRepo, remoteRepos, repoName } from '../remotes.mjs';
 import { droveRun } from '../run-driver.mjs';
 import { readUnattendedMark } from '../unattended-mark.mjs';
-import { textDenial } from './product-feedback-answer.mjs';
+import { textDenial, unreadable } from './product-feedback-answer.mjs';
 import { readTranscript, transcriptAnswers } from './review-extend.mjs';
 
 // What every in-session ask route says, as a clause and as a sentence: a Human away from the session, such as on a
@@ -206,10 +206,11 @@ export function check(command, { cwd = process.cwd(), input = {}, unattendedMark
     const words = named ?? (built ? invocation.args : null);
     if (!words) continue;
     judged.add(entry);
-    // A subcommand the shell builds at run time cannot be read, so it may be a sign-off: for aidrian, or a built
-    // program whose text names it. Only the first two words decide, so `pr product-feedback "$x"` is no sign-off.
+    // A subcommand the shell builds or expands at run time cannot be read, so it may be a sign-off: a first word for
+    // aidrian or a built program whose text names it, and a second after `pr` for any, as the product-feedback rule's
+    // readCall reads them. Only the first two words decide, so `pr product-feedback "$x"` is no sign-off.
     const sure = named || /aidrian/iu.test(invocation.program);
-    if (sure && (words[0]?.dynamic || (words[0]?.text === 'pr' && words[1]?.dynamic))) {
+    if ((sure && unreadable(words[0])) || (words[0]?.text === 'pr' && unreadable(words[1]))) {
       const denied = refuse();
       if (denied) return denied;
       continue;

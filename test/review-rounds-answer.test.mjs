@@ -400,15 +400,15 @@ test('the Human`s answer to a round_limit question approves its raise, for exact
     missOf(ask.raise.replace(`--max-rounds ${next}`, `--max-rounds ${next + 1}`), context);
     missOf(ask.raise, setup(t, [{ [ask.question]: ask.options[1] }]));
   }
-  // With several remotes, the raise names the repository, and the same answer approves it.
-  const several = raiseAsk({ pr: 12, repo: 'o/r', repoArg: ' --repo o/r', source: 'plan', round: 3 });
+  // The raise always names the repository, so with several remotes the same answer approves it.
+  const several = raiseAsk({ pr: 12, repo: 'o/r', source: 'plan', round: 3 });
   assert.match(several.raise, / --repo o\/r$/u);
   const context = setup(t, [{ [several.question]: several.options[0] }]);
   execFileSync('git', ['remote', 'add', 'upstream', 'https://github.com/up/r.git'], { cwd: context.cwd });
   assert.equal(check(several.raise, context), null);
   // A step that ran the bot raises with it, past the bot's rounds when its cap stopped the step.
   const withBot = raiseAsk({ pr: 12, repo: 'o/r', source: 'plan', round: 3, withBot: true });
-  assert.equal(withBot.raise, 'AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --with-bot --max-rounds 4');
+  assert.equal(withBot.raise, 'AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --with-bot --max-rounds 4 --repo o/r');
   assert.equal(check(withBot.raise, setup(t, [{ [withBot.question]: withBot.options[0] }])), null);
   assert.deepEqual(raiseAsk({ pr: 12, repo: null, source: 'plan', round: 3 }), {}, 'no repository, no question the rule could read');
 });

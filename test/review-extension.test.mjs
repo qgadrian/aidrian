@@ -118,7 +118,7 @@ test('atCap: off, and the ceiling, stop without reading the history; a grant cou
     'AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 7 --max-rounds 4 --repo o/r',
   ], 'four rounds ran, one of them granted: --max-rounds 4 plus that grant allows a fifth');
   const off = atCap({ state, source: 'bot', round: 3, head: 'h', policy: { mode: 'off', max: 2 }, history: unread, pr: 7, repo: 'o/r' });
-  assert.equal(off.raise, 'AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr await-review 7 --request --max-rounds 4');
+  assert.equal(off.raise, 'AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr await-review 7 --request --max-rounds 4 --repo o/r');
 });
 
 test('atCap: the judge`s verdict and the Human`s answer move one entry, and only a waiting one', () => {
@@ -629,7 +629,7 @@ test('await-review --request at the cap: bot rounds that do not shrink go to the
   assert.deepEqual([plain.out.question, plain.out.options[0], plain.out.raise], [
     'Pull request acme/notes#42 reached its review-round cap. Allow one more review round, with --max-rounds 4?',
     'Approve one more round (--max-rounds 4)',
-    'AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr await-review 42 --request --max-rounds 4',
+    'AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr await-review 42 --request --max-rounds 4 --repo acme/notes',
   ]);
 });
 

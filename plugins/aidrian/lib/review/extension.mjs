@@ -272,11 +272,11 @@ export const askOptions = (round) => [`Approve round ${round}`, 'Deny'];
 // What a `round_limit` carries for the Human, so the one question at the cap is the one the review-rounds rule
 // (lib/rules/github/review-rounds.mjs) reads as the grant: `question` names `<owner>/<name>#<PR>` and `--max-rounds <N>`,
 // the first of `options` starts with "Approve", and `raise` is the one command that answer approves, ending in
-// `repoArg` where the checkout's remotes name several repositories. `<N>` allows one more round: the cap is the
+// `--repo <owner>/<name>` always, so it acts on the repository the question names, whatever the checkout's remotes. `<N>` allows one more round: the cap is the
 // --max-rounds baseline plus the rounds `granted`, so it is `round + 1 - granted`. A second round needs a new answer.
 // `source` "bot" raises `aidrian pr await-review --request`, else `aidrian pr review`, with `--with-bot` when the step
 // ran the bot (`withBot`). Nothing without the repository: the rule needs it named.
-export function raiseAsk({ pr, repo, repoArg = '', source, round, granted = 0, withBot = false }) {
+export function raiseAsk({ pr, repo, source, round, granted = 0, withBot = false }) {
   if (!repo || !Number.isInteger(pr) || !Number.isInteger(round)) return {};
   const next = Math.max(1, round + 1 - granted);
   const bot = withBot ? ' --with-bot' : '';
@@ -284,7 +284,7 @@ export function raiseAsk({ pr, repo, repoArg = '', source, round, granted = 0, w
   return {
     question: `Pull request ${repo}#${pr} reached its review-round cap. Allow one more review round, with --max-rounds ${next}?`,
     options: [`Approve one more round (--max-rounds ${next})`, 'Stop at the cap'],
-    raise: `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 ${step} --max-rounds ${next}${repoArg}`,
+    raise: `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 ${step} --max-rounds ${next} --repo ${repo}`,
   };
 }
 
@@ -373,7 +373,7 @@ export function revalidate({ state, source, round, head, history, log = () => {}
 // `log(row)` gets each new decision. `raise` overrides what the `round_limit` question is computed from (raiseAsk): the
 // rounds of the cap that stopped, when that is not `round`, and `withBot`.
 export function atCap({ state, source, round, head, policy, history: readHistory, lastReviewed = null, pr, repo = null, repoArg = '', goal = null, command, log = () => {}, now = () => new Date().toISOString(), raise = {} }) {
-  if (policy.mode === 'off') return { status: 'round_limit', extension: { status: 'off', mode: 'off' }, ...raiseAsk({ pr, repo, repoArg, source, round, ...raise }) };
+  if (policy.mode === 'off') return { status: 'round_limit', extension: { status: 'off', mode: 'off' }, ...raiseAsk({ pr, repo, source, round, ...raise }) };
   let cached = null;
   const history = () => (cached ??= readHistory());
   const granted = grantedRounds(state, source, policy);
@@ -449,7 +449,7 @@ export function atCap({ state, source, round, head, policy, history: readHistory
     };
   }
   // The cap stands on a head no round reviewed: said in the result, and in the summary comment's Extra rounds list.
-  return { status: 'round_limit', extension: summary, ...(sameCommit(entry.unreviewed?.head, head) ? { unreviewed_head: true } : {}), ...raiseAsk({ pr, repo, repoArg, source, round, granted, ...raise }) };
+  return { status: 'round_limit', extension: summary, ...(sameCommit(entry.unreviewed?.head, head) ? { unreviewed_head: true } : {}), ...raiseAsk({ pr, repo, source, round, granted, ...raise }) };
 }
 
 // The entry that waits for `status` ("judging" or "asking"): the latest one.

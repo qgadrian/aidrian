@@ -660,7 +660,7 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
     else if (moved) await saveRecord(record, { project, config, forge, base, status: result.status });
     else if (result.status === 'round_limit' && base && policy.mode === 'off') {
       const { raiseAsk } = await import('./review/extension.mjs');
-      result = { ...result, extension: { status: 'off', mode: 'off' }, ...raiseAsk({ pr: Number(base.n), repo: base.repo, repoArg: repoFlag(project, base.repo), source: 'bot', round: result.codex_rounds }) };
+      result = { ...result, extension: { status: 'off', mode: 'off' }, ...raiseAsk({ pr: Number(base.n), repo: base.repo, source: 'bot', round: result.codex_rounds }) };
     }
     if (result.status === 'review_required') console.error(result.reason);
     // The bot review the Human asked for (`aidrian pr request`): sent once this run posted it, and answered once the

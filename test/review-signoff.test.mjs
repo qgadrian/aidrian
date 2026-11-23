@@ -311,6 +311,8 @@ test('a sign-off whose program or line the shell builds at run time is denied, a
     'C="aidrian pr signoff 9 --last"; eval "$C"',
     `python3 -c "os.system('aidrian pr signoff 9 --last')"`,
     "alias s='aidrian pr signoff'; s 9 --last",
+    '$TOOL pr "$SUB" 9 --last',
+    'aidrian pr {signoff,review} 9',
     'x=aidrian; $x pr signoff 9 --flow ui --head abc1234',
     'npx aidrian pr signoff 9 --flow ui --head abc1234',
     'npx aidrian pr signoff 9 --last --check',

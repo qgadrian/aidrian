@@ -141,7 +141,7 @@ test('the sandbox settings are pinned whole: the sandbox on and required, writes
     'a git folder outside the main checkout is not denied, so nothing is opened again');
   assert.deepEqual(CREDENTIAL_PATHS, [
     '.ssh', '.gnupg', '.aws', '.netrc', '.docker', '.kube', '.config/gcloud', '.azure', '.oci', 'Library/Keychains', '.password-store',
-    '.config/op', '.1password', 'Library/Application Support/Google/Chrome', 'Library/Application Support/Firefox',
+    '.config/op', '.1password', 'Library/Application Support/Google', 'Library/Application Support/Firefox',
     'Library/Application Support/BraveSoftware', 'Library/Application Support/Microsoft Edge', '.mozilla', '.config/google-chrome',
     '.config/chromium', '.git-credentials', '.npmrc', '.pypirc', '.cargo/credentials.toml', '.cargo/credentials', '.gem/credentials',
     '.vault-token', '.config/hub', '.claude.json', '.claude-trust-stage', '.claude/.credentials.json', '.claude/ide', '.local/share/keyrings',
@@ -149,7 +149,16 @@ test('the sandbox settings are pinned whole: the sandbox on and required, writes
     '.yarnrc.yml', '.yarnrc', '.config/npm/npmrc', '.bunfig.toml', '.local/share/gem/credentials', '.bundle/config',
     '.config/pnpm/rc', 'Library/Preferences/pnpm/rc', '.config/pip/pip.conf', '.pip/pip.conf', 'Library/Application Support/pip/pip.conf',
     '.config/pypoetry/auth.toml', 'Library/Application Support/pypoetry/auth.toml', '.local/share/uv/credentials',
+    'Library/Application Support/Chromium', 'Library/Application Support/Arc', 'Library/Application Support/Vivaldi',
+    'Library/Application Support/com.operasoftware.Opera', '.config/microsoft-edge', '.config/BraveSoftware', '.config/vivaldi',
+    '.config/opera', 'snap/chromium', 'snap/firefox', '.var/app/com.google.Chrome', '.var/app/org.chromium.Chromium',
+    '.var/app/org.mozilla.firefox',
   ]);
+  // Each browser's profile folder, Chrome for Testing and headless Chrome under Google's included, is unreadable.
+  for (const each of ['Library/Application Support/Google/Chrome for Testing', 'Library/Application Support/Google/Chrome-headless', 'Library/Application Support/Chromium', 'Library/Application Support/Arc']) {
+    const file = path.join(home, each);
+    assert.ok(CREDENTIAL_PATHS.some((store) => file === path.join(home, store) || file.startsWith(`${path.join(home, store)}/`)), each);
+  }
   assert.ok(!CREDENTIAL_PATHS.includes('.config/gh'), 'the forge CLI\'s login stays readable');
   // Each registry token store is unreadable to a sandboxed command and to Read.
   for (const each of ['.yarnrc.yml', '.config/npm/npmrc', '.bunfig.toml', '.local/share/gem/credentials', '.npmrc', '.pypirc', '.cargo/credentials.toml', '.gem/credentials', '.bundle/config', '.config/pypoetry/auth.toml', '.local/share/uv/credentials']) {

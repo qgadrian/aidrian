@@ -62,7 +62,7 @@ const nestedGlobs = (work) => [
 // session pushes and opens pull requests through it.
 export const CREDENTIAL_PATHS = Object.freeze([
   '.ssh', '.gnupg', '.aws', '.netrc', '.docker', '.kube', '.config/gcloud', '.azure', '.oci', 'Library/Keychains', '.password-store',
-  '.config/op', '.1password', 'Library/Application Support/Google/Chrome', 'Library/Application Support/Firefox',
+  '.config/op', '.1password', 'Library/Application Support/Google', 'Library/Application Support/Firefox',
   'Library/Application Support/BraveSoftware', 'Library/Application Support/Microsoft Edge', '.mozilla', '.config/google-chrome',
   '.config/chromium', '.git-credentials', '.npmrc', '.pypirc', '.cargo/credentials.toml', '.cargo/credentials', '.gem/credentials',
   '.vault-token', '.config/hub', '.claude.json', '.claude-trust-stage', '.claude/.credentials.json', '.claude/ide', '.local/share/keyrings',
@@ -73,6 +73,13 @@ export const CREDENTIAL_PATHS = Object.freeze([
   '.yarnrc.yml', '.yarnrc', '.config/npm/npmrc', '.bunfig.toml', '.local/share/gem/credentials', '.bundle/config',
   '.config/pnpm/rc', 'Library/Preferences/pnpm/rc', '.config/pip/pip.conf', '.pip/pip.conf', 'Library/Application Support/pip/pip.conf',
   '.config/pypoetry/auth.toml', 'Library/Application Support/pypoetry/auth.toml', '.local/share/uv/credentials',
+  // Every other browser's profiles, whose local storage and IndexedDB hold session tokens unencrypted: Google's whole
+  // folder above, so Chrome for Testing and headless Chrome beside Chrome; Chromium, Arc, Vivaldi, and Opera on macOS;
+  // Edge, Brave, Vivaldi, and Opera on Linux, and the snap and flatpak installs of Chrome, Chromium, and Firefox.
+  'Library/Application Support/Chromium', 'Library/Application Support/Arc', 'Library/Application Support/Vivaldi',
+  'Library/Application Support/com.operasoftware.Opera', '.config/microsoft-edge', '.config/BraveSoftware', '.config/vivaldi',
+  '.config/opera', 'snap/chromium', 'snap/firefox', '.var/app/com.google.Chrome', '.var/app/org.chromium.Chromium',
+  '.var/app/org.mozilla.firefox',
 ]);
 
 // The host's own credential files in its user config folder, wherever CLAUDE_CONFIG_DIR moves it, and its `session-env`

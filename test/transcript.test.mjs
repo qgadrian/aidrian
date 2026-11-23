@@ -12,7 +12,7 @@ import { priceFor } from '../plugins/aidrian/lib/model-prices.mjs';
 import { EXIT } from '../plugins/aidrian/lib/review/run.mjs';
 import { pathsProblem } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import {
-  aggregateUsage, estimateCostUsd, filesRead, gateVerdicts, partOf, REVIEW_OUTPUT_STATUSES, SENT_BACK, sessionActions, subagentTranscripts, sumTokens, launchedTaskIds, turnActions,
+  aggregateUsage, estimateCostUsd, filesRead, gateVerdicts, partOf, HUMAN_EXITS, REVIEW_OUTPUT_STATUSES, SENT_BACK, sessionActions, subagentTranscripts, sumTokens, launchedTaskIds, turnActions,
 } from '../plugins/aidrian/lib/transcript.mjs';
 
 // One transcript line: an assistant message with usage, as Claude Code writes it.
@@ -211,6 +211,8 @@ test('the statuses a review run is read by are every status aidrian pr review an
   for (const status of ['dispatch', 'blocked_quota', 'unsatisfied', 'stuck']) assert.ok(written.has(status), `the scan finds ${status} where aidrian pr review writes it`);
   const printed = new Set([...Object.keys(EXIT), ...written, ...statuses(wait, 'result'), ...exitCodes]);
   assert.deepEqual([...REVIEW_OUTPUT_STATUSES].sort(), [...printed].sort());
+  // A review sent to a file that stopped on the Human's question counts: its exits are those of these two statuses.
+  assert.deepEqual([...HUMAN_EXITS].sort(), [EXIT.human_required, EXIT.extension_ask].sort());
 
   // The real output of one of them reads as a run.
   const output = JSON.stringify(await awaitReview({ pr: '40', reviewer: null }, { git: {} }), null, 2);
@@ -306,6 +308,8 @@ test('turnActions names the pull request of each draft and review where the tran
     [{ kind: 'draft', pr: 40 }, { kind: 'review', pr: 40 }], 'a review written to a file');
   assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr review 40 >> r.json', 'Exit code 10', true), bash('r2', 'aidrian pr review 41 &> r.json', '')),
     [{ kind: 'review', pr: 41 }], 'a round that stopped at extension_check owes its next step; both streams to a file count');
+  assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr review 40 > r.json', 'Exit code 9', true), bash('r2', 'aidrian pr review 41 > r.json', 'Exit code 11', true)),
+    [{ kind: 'review', pr: 40 }, { kind: 'review', pr: 41 }], 'a round that waits on the Human, human_required or extension_ask, counts');
   assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr await-review 40 --pr 41 --pr 42 > r.json', '')),
     [{ kind: 'review', pr: 42 }], 'the last --pr wins over a word before it, as the command reads it');
   assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr review 40 2> err.log', 'Exit code 1', true), bash('r2', 'aidrian pr review 40 >&2', '')),

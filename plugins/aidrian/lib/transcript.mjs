@@ -587,11 +587,12 @@ function settleCalls(entry, calls) {
     }
     const printed = call.skill ? [] : printedReviews(output, call.command);
     // A review that sends its JSON to a file (`> r.json`) prints none, so it counts only when the call ended with no
-    // error: a nonzero exit, a review step that stopped (extension_check exits 10, review_required 5) or a shell that
-    // could not open the file, leaves the turn a step to run, and a send-back then is right.
+    // error, or with an exit that waits on the Human (HUMAN_EXITS). Any other nonzero exit, a review step that stopped
+    // (extension_check exits 10, review_required 5) or a shell that could not open the file, leaves the turn a step to
+    // run, and a send-back then is right.
     // SHORTCUT: the exit is the whole line's, so a review the line skipped counts when the line ends with no error, as in
     // `false && aidrian pr review 12 > f; true`, and one a later failing command follows does not. Such lines are rare.
-    const filed = call.filed.length && block.is_error !== true ? call.filed : [];
+    const filed = call.filed.length && (block.is_error !== true || HUMAN_EXITS.has(exitOf(output))) ? call.filed : [];
     call.reviewed ||= call.review && (call.skill ? call.ran : printed.length > 0 || filed.length > 0);
     if (call.loop && call.skill && call.ran) call.looped = [call.loopPull];
     else if (call.loop && (printed.length || filed.length)) {
@@ -606,6 +607,15 @@ function settleCalls(entry, calls) {
   }
   return settled;
 }
+
+// The exits of a review that stopped on a question only the Human answers: human_required (9) and extension_ask (11)
+// in review/run.mjs EXIT, which test/transcript.test.mjs checks them against. exitOf reads the `Exit code <n>` line
+// Claude Code starts a failed Bash result with, or null.
+export const HUMAN_EXITS = new Set([9, 11]);
+const exitOf = (output) => {
+  const code = /^Exit code (\d+)/u.exec(output);
+  return code ? Number(code[1]) : null;
+};
 
 // The pull requests a review call reviewed: those its printed objects name, else the one its commands were given, else
 // one unknown (null).

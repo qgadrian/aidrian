@@ -1832,8 +1832,9 @@ hand-back check on the report ([Send-backs per turn](#send-backs-per-turn)).
 - A review is a `pr-review-loop` Skill call that ran, or such a typed slash command, or an `aidrian pr review` or
   `aidrian pr await-review` call whose result printed its JSON, or that sent its output to a file (`> r.json`).
   A call that sends it to a file prints no JSON, so it counts, of each pull request it was given, only when the call
-  ended with no error. A nonzero exit, a round stopped at `extension_check` (10) or a file the shell could not open,
-  leaves the turn a step to run, so a send-back is right; the exit is the whole call's. A `pr-review` run is none: it is the integration
+  ended with no error, or stopped on a question only the Human answers (`human_required` 9, `extension_ask` 11).
+  Any other nonzero exit, a round stopped at `extension_check` (10) or a file the shell could not open, leaves the
+  turn a step to run, so a send-back is right; the exit is the whole call's. A `pr-review` run is none: it is the integration
   review `issue-implement` runs after the draft, and the loop still follows it. The health report still counts it.
 - Each draft and review is of the pull request the transcript shows: a create's printed URL, an edit's target or its
   printed URL, the loop's first argument, and the `pr` each review command printed, else the one it was given, as its

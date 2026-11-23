@@ -241,8 +241,8 @@ export function manualSkills(folder = SKILLS) {
   }));
 }
 
-// The text of the brief's first Next steps item: its numbered line and the lines under it, up to the next item or
-// section, outside code fences. '' without one.
+// The text of the brief's first Next steps item: its numbered line and the lines under it, up to the next item, a blank
+// line, or the next section, outside code fences. '' without one.
 function firstNextStep(text) {
   const lines = [];
   let inSection = false;
@@ -253,8 +253,9 @@ function firstNextStep(text) {
       inSection = /^next steps(?![\p{L}\p{N}])/iu.test(title);
     } else if (inSection) {
       const item = /^\d+[.)][ \t]+\S/u.test(line);
-      if (item && lines.length) break;
-      if (item || (lines.length && line.trim() !== '')) lines.push(line);
+      // The next item or a blank line ends it: prose after the list is no part of step 1.
+      if (lines.length && (item || line.trim() === '')) break;
+      if (item || lines.length) lines.push(line);
     }
   }
   return lines.join('\n');
@@ -265,9 +266,12 @@ function firstNextStep(text) {
 // would stop at once with no work done. null when the step runs none. `skills` is manualSkills's set.
 export function manualSkillProblem(text, skills = manualSkills()) {
   const step = firstNextStep(text);
+  // A slash name ends at a space or sentence punctuation, never a file's extension, as in `/autopilot.md`; a skill
+  // named for a person to type, as in "Adrian types `/aidrian:autopilot`", is the Human's start, not the session's.
+  const typed = (match) => /\btyp(?:e|es|ing)\W*$/iu.test(step.slice(Math.max(0, match.index - 24), match.index));
   const named = [
-    ...[...step.matchAll(/(?<![\w./-])\/(?:aidrian:)?([a-z0-9][a-z0-9-]*)(?![\w/-])/gu)].map((match) => match[1]),
-    ...[...step.matchAll(/`(?:aidrian:)?([a-z0-9][a-z0-9-]*)`[ \t]+skill(?!['’])\b/gu)].map((match) => match[1]),
+    ...[...step.matchAll(/(?<![\w./-])\/(?:aidrian:)?([a-z0-9][a-z0-9-]*)(?![\w/-]|\.\w)/gu)].filter((match) => !typed(match)).map((match) => match[1]),
+    ...[...step.matchAll(/`(?:aidrian:)?([a-z0-9][a-z0-9-]*)`\s+skill(?!['’])\b/gu)].map((match) => match[1]),
   ];
   const manual = [...new Set(named.filter((name) => skills.has(name)))];
   if (!manual.length) return null;

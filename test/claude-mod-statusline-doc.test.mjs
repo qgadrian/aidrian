@@ -77,4 +77,11 @@ test('the documented script breaks a tie as the mod does, and refuses a cli it c
   const linked = path.join(path.dirname(one), 'linked');
   symlinkSync(path.join(project, 'relative'), linked);
   assert.equal(run([{ ...fallback, installPath: linked, version: '2.0.0' }, fallback], project), '', 'and so is a link in the cache that leads out of it');
+  const outsider = path.join(project, 'outside-link');
+  symlinkSync(one, outsider);
+  assert.equal(run([{ ...fallback, installPath: outsider, version: '2.0.0' }, fallback], project), 'cli one', 'a link from outside that leads into the cache is that cached install');
+  const swapped = install('swapped');
+  rmSync(path.join(swapped, 'lib/cli.mjs'));
+  symlinkSync(path.join(two, 'lib/cli.mjs'), path.join(swapped, 'lib/cli.mjs'));
+  assert.equal(run([{ ...fallback, installPath: swapped, version: '2.0.0' }, fallback], project), '', 'a cli that links to another release is refused');
 });

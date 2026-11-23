@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { recordPass } from '../plugins/aidrian/lib/review/run.mjs';
-import { readLocalState } from '../plugins/aidrian/lib/review/state.mjs';
+import { readLocalState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { capProblem } from '../plugins/aidrian/lib/review/waiver.mjs';
 import { clean, found, repo } from './review-run-fixture.mjs';
 
@@ -106,7 +106,8 @@ test('a pass attested on a head with other file coverage gives the round back wh
 });
 
 // Round 2 of 2 stops at the cap on a medium finding of the engine's pass, a cause a waiver can pass. A pass attested
-// count-only on the next head is that head's cause, never round 2's.
+// count-only on the next head is that head's cause, never round 2's, and a later head nothing reviewed inherits
+// neither, from this record or from one an older step wrote.
 test('past the cap, a count-only result attested on a new head is its own cap cause, which no waiver passes', async (t) => {
   const r = booking(t, { maxReviewRounds: 2, extraRounds: 'off' });
   const medium = { file: 'src/booking/a.js', line: 1, title: 'off by one', body: 'x', severity: 'medium' };
@@ -119,11 +120,17 @@ test('past the cap, a count-only result attested on a new head is its own cap ca
   attestClean(r, pass, second);
   const capped = await r.step({ exec: clean });
   assert.deepEqual([capped.status, capped.round, capped.cap?.reviewed, capProblem(readLocalState(r.project, 7), second)], ['round_limit', 2, second, null], 'round 2 stops on a waivable cause');
+  const waivable = readLocalState(r.project, 7).rounds.at(-1).cap;
   const third = push(r, 2);
   attest(r, pass, third);
   const past = await r.step({ exec: clean });
   assert.deepEqual([past.status, past.round, past.cap?.reviewed, past.cap?.itemized, past.cap?.counted], ['round_limit', 2, third, false, 1], 'the cause is the new head\'s count-only result');
   assert.ok(capProblem(readLocalState(r.project, 7), third), 'a counted finding is never waived');
+  const state = readLocalState(r.project, 7);
+  assert.equal(state.rounds.at(-1).cap.head, third, 'the cause of the head past the cap replaces round 2\'s');
+  // A record an older step wrote kept that cause on the outcome alone, and round 2's waivable one on the round.
+  state.rounds.at(-1).cap = waivable;
+  writeLocalState(r.project, state, { repo: 'o/r' });
   const fourth = push(r, 3);
   const unreviewed = await r.step({ exec: clean });
   assert.deepEqual([unreviewed.status, unreviewed.cap?.head, unreviewed.cap?.unsigned], ['round_limit', fourth, null], 'round 2\'s waivable cause is gone');

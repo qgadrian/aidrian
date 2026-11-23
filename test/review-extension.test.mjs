@@ -37,8 +37,8 @@ test('signals: converging is fewer open findings than the round before, and anyt
   assert.equal(signals({ rounds: [round(1, 'a', [])] }).converging, null, 'one round has no trend');
 });
 
-test('signals: a round counted without its findings is a floor, and decides converging only where the floor proves it', () => {
-  const floor = (n, head, open) => ({ round: n, head, open, findings: null, fix: null });
+test('signals: a round whose count is a floor decides converging only where the floor proves it', () => {
+  const floor = (n, head, open) => ({ round: n, head, open, floor: true, findings: null, fix: null });
   const two = [finding('x.js', 1, 'one'), finding('y.js', 9, 'two')];
   // A bot answer counted as one, then two itemized findings: the bot round may have held three.
   const afterFloor = signals({ rounds: [round(1, 'a', two), floor(2, 'b', 1), round(3, 'c', two)] });

@@ -508,7 +508,7 @@ export async function prepareStep(s) {
   // reviewed is sized from that same head: the last round's `reviewed_fix`, kept non-enumerable so the signals and the
   // judge's history carry only the first-head `fix`.
   const planHistory = () => {
-    const read = buildHistory({ root, rounds: state.rounds.map((round, i) => ({ round: i + 1, head: round.quiet?.[0]?.from ?? round.head, open: round.open ?? null, findings: round.findings ?? null })), baseTip, head, review });
+    const read = buildHistory({ root, rounds: state.rounds.map((round, i) => ({ round: i + 1, head: round.quiet?.[0]?.from ?? round.head, open: round.open ?? null, findings: round.findings ?? null, ...(round.floor === true ? { floor: true } : {}) })), baseTip, head, review });
     const rounds = read.rounds.map((round, i) => ({ ...round, head: state.rounds[i].head }));
     const last = state.rounds.at(-1);
     if (last?.quiet?.length && !sameCommit(last.head, head)) {

@@ -81,7 +81,7 @@ const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
 // Each signal is true, false, or null when the history cannot tell. `reasons` lists every red flag; any red flag sends
 // the judge's extend to the Human. A history from which no signal can be read is a red flag too: nothing in it shows
 // the review converging.
-// `rounds`: [{ round, head, open, findings: [{ title, file, line }] | null, fix: { added, code_added, removed, files } | null }],
+// `rounds`: [{ round, head, open, floor?, findings: [{ title, file, line }] | null, fix: { added, code_added, removed, files } | null }],
 // where `fix` is the change from that round's head to the next round's, or to the current head for the last, and
 // `code_added` the lines of `added` outside prose files. Bloat counts `code_added` when it is there.
 export function signals({ rounds = [], originalFiles = null, originalAdded = null, originalCodeAdded = null } = {}) {
@@ -91,12 +91,12 @@ export function signals({ rounds = [], originalFiles = null, originalAdded = nul
   const last = rounds.at(-1);
   const previous = rounds.at(-2);
 
-  // A round without itemized findings counts a pass by its count only, which is a floor: a bot answer with no line
-  // comments counts one, whatever it holds (stages.mjs recordBot). A floor decides only what it still proves: the
-  // last round at least the previous round's exact count is not converging, and an exact last round under the
-  // previous floor is converging. Anything else cannot tell.
+  // A round marked `floor` holds a count that is a floor: a bot answer with no inline comment counts one, whatever it
+  // holds (stages.mjs recordBot). A floor decides only what it still proves: the last round at least the previous
+  // round's exact count is not converging, and an exact last round under the previous floor is converging. Anything
+  // else cannot tell.
   let converging = null;
-  const exact = (each) => Array.isArray(each.findings);
+  const exact = (each) => each.floor !== true;
   const counted = last && previous && Number.isInteger(last.open) && Number.isInteger(previous.open);
   const decided = counted && (exact(last) && exact(previous) ? true : exact(previous) ? last.open >= previous.open : exact(last) && last.open < previous.open);
   if (decided) {

@@ -412,7 +412,7 @@ export function postedCopy(state, post = {}) {
 // The record's own key names, which carry no data: the checks read only the keys that do, such as a pass id, a flow,
 // or a commit, and every value.
 const FIXED_KEYS = new Set([
-  'version', 'revision', 'pr', 'repo', 'updatedAt', 'idCounter', 'floored', 'rounds', 'head', 'at', 'final', 'quiet', 'from', 'open',
+  'version', 'revision', 'pr', 'repo', 'updatedAt', 'idCounter', 'floored', 'rounds', 'head', 'at', 'final', 'quiet', 'from', 'open', 'floor',
   'findings', 'passes', 'reviewer', 'seconds', 'files', 'bot', 'kind', 'review_id', 'list', 'ruled', 'carried', 'verdicts', 'flow',
   'invariant', 'verdict', 'evidence', 'reason', 'contracts', 'cross_notes', 'dropped', 'signoffs', 'by', 'overrides', 'overrulings',
   'acceptances', 'outside', 'approvals', 'login', 'url', 'failures', 'outcome', 'status', 'depth', 'carried_from', 'carried_base',
@@ -717,6 +717,7 @@ function allowlisted(state, post, counter) {
       seconds: int,
       findings: int,
       open: int,
+      floor: bool,
       files: (value) => (value === null ? null : paths_(head)(value)),
       bot: (value) => object(value, { kind: word(), review_id: check((each) => each === null || isInt(each)) }),
       list: (value) => (value === null ? null : findings(head)(value)),
@@ -741,6 +742,7 @@ function allowlisted(state, post, counter) {
       final: bool,
       quiet: list((each) => object(each, { from: sha, at: date })),
       open: int,
+      floor: bool,
       findings: (value) => (value === null ? null : findings(round?.head)(value)),
     })),
     passes: keyed(pass, name(names.passes)),

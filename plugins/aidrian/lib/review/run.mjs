@@ -129,6 +129,9 @@ function noteFindings({ state, head }, extra) {
   const merged = dedupe(itemized.map((each) => [each.pass, each.findings.filter(blocks)]));
   const counted = passes.filter((each) => !Array.isArray(each.findings)).reduce((total, each) => total + (each.open ?? 0), 0);
   round.open = merged.length + counted + violated.length;
+  // A pass whose count is a floor makes the round's count one too (stages.mjs recordBot).
+  if (passes.some((each) => each.floor === true)) round.floor = true;
+  else delete round.floor;
   round.findings = itemized.length === passes.length
     ? [...merged.map((each) => ({
       ...(isFindingId(each.id) ? { id: each.id, mint: each.mint, ...(Array.isArray(each.aliases) && each.aliases.length ? { aliases: each.aliases } : {}) } : {}),

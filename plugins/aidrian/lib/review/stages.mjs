@@ -118,7 +118,9 @@ export async function runStages(s) {
     const clean = bot.signal?.kind === 'thumbs_up' || (bot.signal?.kind === 'comment' && bot.signal.clean === true);
     const open = clean ? 0 : Math.max(1, bot.signal?.line_comments ?? 0);
     const holds = !clean && bot.signal?.holds_finding === true;
-    state.passes[pass.id] = { head, reviewer: pass.reviewer, findings: open, open, bot: { kind: bot.signal?.kind ?? null, review_id: bot.signal?.review_id ?? null, ...(holds ? { holds_finding: true } : {}) } };
+    // With no inline comment to count, the one open finding is a floor: the answer may hold more (extension.mjs signals).
+    const floor = !clean && !(bot.signal?.line_comments >= 1);
+    state.passes[pass.id] = { head, reviewer: pass.reviewer, findings: open, open, ...(floor ? { floor: true } : {}), bot: { kind: bot.signal?.kind ?? null, review_id: bot.signal?.review_id ?? null, ...(holds ? { holds_finding: true } : {}) } };
     recorded = true;
   };
   // A request a wait posted, from either call, is on record for the head it asked about (`requested_head`), never
@@ -271,7 +273,7 @@ export async function runStages(s) {
       // A fix needs a new head, and in the last round there is none left: that is the cap, with the work named.
       return (lastRound ? capReached : (extra) => finish('fix_required', extra))({
         stage: stage.name,
-        open: open.map(([pass, result]) => ({ pass: pass.id, reviewer: pass.reviewer, head: result.head, open: result.open, findings: result.list ?? null, ...(result.bot?.holds_finding ? { holds_finding: true } : {}), ...(result.dropped?.length ? { dropped: result.dropped } : {}) })),
+        open: open.map(([pass, result]) => ({ pass: pass.id, reviewer: pass.reviewer, head: result.head, open: result.open, findings: result.list ?? null, ...(result.floor === true ? { floor: true } : {}), ...(result.bot?.holds_finding ? { holds_finding: true } : {}), ...(result.dropped?.length ? { dropped: result.dropped } : {}) })),
         // One entry per mistake when slices and the cross pass report the same one.
         ...(stage.passes.some((pass) => pass.role) ? { findings_merged: dedupe(open.map(([pass, result]) => [pass.id, result.list ?? []])) } : {}),
         flows: unsigned.map(([flow, status]) => ({

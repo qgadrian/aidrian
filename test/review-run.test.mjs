@@ -592,6 +592,12 @@ test('the review bot as the engine: a thumbs-up passes, a review with comments i
   const off = () => ({ ok: false, reason: 'the codex CLI is not installed' });
   const comments = await r.step({ codex: off, awaitBot: async () => ({ status: 'received', signal: { kind: 'review', line_comments: 2 } }) });
   assert.deepEqual([comments.status, comments.open[0].open], ['fix_required', 2]);
+  assert.equal(readLocalState(r.project, 7).rounds.at(-1).floor, undefined, 'two inline comments are a count');
+  r.write('src/app.js', 'b2\n');
+  r.commit();
+  const bare = await r.step({ codex: off, awaitBot: async () => ({ status: 'received', signal: { kind: 'review', line_comments: 0 } }) });
+  assert.deepEqual([bare.status, bare.open[0].open, bare.open[0].floor], ['fix_required', 1, true]);
+  assert.equal(readLocalState(r.project, 7).rounds.at(-1).floor, true, 'an answer with no inline comment holds at least one');
   r.write('src/app.js', 'c\n');
   r.commit();
   assert.equal((await r.step({ codex: off, awaitBot: async () => ({ status: 'received', signal: { kind: 'thumbs_up' } }) })).status, 'received');

@@ -168,7 +168,8 @@ export function cleanOutput(raw) {
     }
     // A `security` value that is not a boolean counts as true: the flag only ever withholds more.
     // A returned `id` is kept apart, as `returned_id`, for recordFindings to check: it never becomes the finding's id
-    // unchecked. An empty one is a new finding's, and any value but a string is read as no id, noted.
+    // unchecked. An empty one is a new finding's, and any value but a string breaks the schema: read as no id, noted.
+    // A string recordFindings refuses is noted only when it reads like an id (findings.mjs idLike).
     if (finding.id !== undefined && typeof finding.id !== 'string') dropped.push(`findings[${i}].id is not a string: read as no id`);
     const returned = typeof finding.id === 'string' && finding.id !== '' ? { returned_id: finding.id } : {};
     const kept = { file: finding.file, line: finding.line, title, ...(typeof finding.body === 'string' ? { body: finding.body } : {}), severity: finding.severity, ...(flagged(finding.security) ? { security: true } : {}), ...returned };

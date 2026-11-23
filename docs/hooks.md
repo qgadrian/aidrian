@@ -1574,9 +1574,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   a call of a subagent, of a main session the background handoff route started, or of a main session a project run's
   driver mark holds, its run's first driver included, is refused, as the guards could not finish reading the command
   in time, and an attended main session's runs, as the guards allow it anyway.
-  The time depends on the machine's load, so that refusal asks the agent to retry the same call by itself, up to three
-  times, before it stops and reports it: an agent that read only "do not reach the same result with another tool"
-  stopped at one small Edit instead. A call that is no shell and has no
+  The time depends on the machine's load, so that refusal gives one ordered recovery: retry the same call by itself, up
+  to three times, then run a shell call as shorter commands, and only then stop and report it to the Human.
+  An agent that read "tell the Human" first stopped at one small Edit instead. A call that is no shell and has no
   write target, such as a Read, a search, or an MCP tool's call, runs past it for every session, since every guard
   reads a shell command or the files a call writes. The walk checks it at each entry it tests, so a folder of many long names cannot hold
   the hook past it, and a glob part rejects at once a name with fewer characters than it must match, or one whose end it

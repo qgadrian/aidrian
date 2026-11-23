@@ -424,16 +424,18 @@ export function writesNothing(input) {
 // store. A call that writes nothing (writesNothing), which no guard refuses, runs for every session, so a loaded machine
 // never stalls a session the guards hold on its reads; a shell call, such as a driver's `aidrian project wait`, is held.
 // The time the guards take depends on the machine's load, as when many sessions or a test suite run at once, so the same
-// call often passes a moment later: the refusal says to retry it, alone, before giving up. An agent that reads "do not
-// reach the same result with another tool" alone stops instead, as a fix agent with one small Edit did.
-const RETRY = ' A busy machine slows the guards, so first retry this same call by itself, up to three times: a retry is the same tool, not another one.'
-  + ' Only when every retry is refused, stop and report it.';
+// call often passes a moment later: the refusal gives one ordered recovery, a retry of the call alone first, then shorter
+// commands, then the report. An agent that read "tell the Human" first stopped at once, as a fix agent with one small
+// Edit did.
+const RETRY = 'only after these steps, in order: a busy machine slows the guards, so 1) retry this same call by itself,'
+  + ' up to three times (a retry is the same tool, not another one); 2) if a shell call is still refused, run it as shorter commands;'
+  + ' 3) only when those are refused too, stop and report that the command takes the guards longer than they have';
 export function deadlineDenial(input, { names: { human } }, { unattended = () => false, drove = () => false, issue = () => false, mark = null } = {}) {
   if (writesNothing(input)) return null;
   const who = onlyMain(input, { unattended, drove, issue });
   if (who === null) return null;
   const why = `the guards could not finish reading this command in time, so it may change a file ${who}`;
-  return { match: 'past the guards\' time budget', reason: `${projectRuleReason(input, why, human, 'that the command takes the guards longer than they have, or run it as shorter commands', { mark })}${RETRY}` };
+  return { match: 'past the guards\' time budget', reason: projectRuleReason(input, why, human, RETRY, { mark }) };
 }
 
 // The texts a command in a shell the lexer cannot read is judged by: the command as given, and, when it differs, a copy

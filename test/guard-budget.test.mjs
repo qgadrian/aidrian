@@ -126,7 +126,8 @@ test('a guard past its time budget refuses a subagent\'s call and lets the main 
     const refused = run(subagent(dir, tool, 'echo x > src/app.js'), env);
     assert.equal(refused.status, 2, tool);
     assert.match(refused.stderr, /the guards could not finish reading this command in time, so it may change a file only the main session may change/u, tool);
-    assert.match(refused.stderr, /first retry this same call by itself, up to three times: a retry is the same tool, not another one\. Only when every retry is refused, stop/u,
+    // One ordered recovery, with the Human told only at its end: a retry of the same call, shorter commands, the report.
+    assert.match(refused.stderr, /tell the Human only after these steps, in order: a busy machine slows the guards, so 1\) retry this same call by itself, up to three times \(a retry is the same tool, not another one\); 2\) .*shorter commands; 3\) only when those are refused too, stop and report that the command takes the guards longer than they have\.$/mu,
       `${tool}: a busy machine's refusal asks for a retry first`);
     assert.equal(run(main(subagent(dir, tool, 'echo x > src/app.js')), env).status, 0, `${tool}: the main session`);
   }

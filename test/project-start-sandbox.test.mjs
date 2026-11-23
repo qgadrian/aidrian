@@ -141,9 +141,7 @@ test('the sandbox settings are pinned whole: the sandbox on and required, writes
     'a git folder outside the main checkout is not denied, so nothing is opened again');
   assert.deepEqual(CREDENTIAL_PATHS, [
     '.ssh', '.gnupg', '.aws', '.netrc', '.docker', '.kube', '.config/gcloud', '.azure', '.oci', 'Library/Keychains', '.password-store',
-    '.config/op', '.1password', 'Library/Application Support/Google', 'Library/Application Support/Firefox',
-    'Library/Application Support/BraveSoftware', 'Library/Application Support/Microsoft Edge', '.mozilla', '.config/google-chrome',
-    '.config/chromium', '.git-credentials', '.npmrc', '.pypirc', '.cargo/credentials.toml', '.cargo/credentials', '.gem/credentials',
+    '.config/op', '.1password', '.git-credentials', '.npmrc', '.pypirc', '.cargo/credentials.toml', '.cargo/credentials', '.gem/credentials',
     '.vault-token', '.config/hub', '.claude.json', '.claude-trust-stage', '.claude/.credentials.json', '.claude/ide', '.local/share/keyrings',
     '.bash_history', '.zsh_history', '.local/share/fish',
     '.yarnrc.yml', '.yarnrc', '.config/npm/npmrc', '.bunfig.toml', '.local/share/gem/credentials', '.bundle/config',
@@ -152,16 +150,18 @@ test('the sandbox settings are pinned whole: the sandbox on and required, writes
   ]);
   // Each browser's profile folder, Chrome for Testing and headless Chrome under Google's included, is unreadable.
   const denied = sandboxSettings({ work: '/w', git: '/g', grants: ['/g'], domains: ['github.com'], temp: [], home, platform: 'linux' }).sandbox.filesystem.denyRead;
-  for (const each of ['Library/Application Support/Google/Chrome for Testing', 'Library/Application Support/Google/Chrome-headless', 'Library/Application Support/Chromium', 'Library/Application Support/Arc', '.config/google-chrome-for-testing', '.config/mozilla', 'snap/vivaldi']) {
+  for (const each of ['Library/Application Support/Google/Chrome for Testing', 'Library/Application Support/Google/Chrome-headless', 'Library/Application Support/Chromium', 'Library/Application Support/Arc', '.config/google-chrome-for-testing', '.config/google-chrome-canary', '.config/mozilla', 'snap/vivaldi', 'Library/Application Support/Microsoft Edge Dev', 'Library/Application Support/Vivaldi Snapshot', '.var/app/com.vivaldi.Vivaldi']) {
     const file = path.join(home, each);
     assert.ok(denied.some((store) => file === store || file.startsWith(`${store}/`)), each);
   }
   // The sandbox proof reads only the first stores it finds (project-confine.mjs READ_CAP), so the browser profiles come
-  // after every other store, the host's own and npm's global config among them, and never push one out of the proof.
+  // after every other store, the host's own and npm's global config among them, and never push one out of the proof;
+  // within them, the ones denied before the list grew come first.
   const reads = confineReads({ env: { CLAUDE_CONFIG_DIR: '/cfg', npm_config_globalconfig: '/etc/npmrc' }, home });
   const browsers = BROWSER_PROFILES.map((each) => path.join(home, each));
   assert.deepEqual(reads.slice(-browsers.length), browsers);
   for (const each of ['/cfg/session-env', '/etc/npmrc', path.join(home, '.ssh')]) assert.ok(reads.indexOf(each) < reads.length - browsers.length, each);
+  assert.deepEqual(BROWSER_PROFILES.slice(0, 7), ['Library/Application Support/Google/Chrome', 'Library/Application Support/Firefox', 'Library/Application Support/BraveSoftware', 'Library/Application Support/Microsoft Edge', '.mozilla', '.config/google-chrome', '.config/chromium']);
   assert.ok(!CREDENTIAL_PATHS.includes('.config/gh'), 'the forge CLI\'s login stays readable');
   // Each registry token store is unreadable to a sandboxed command and to Read.
   for (const each of ['.yarnrc.yml', '.config/npm/npmrc', '.bunfig.toml', '.local/share/gem/credentials', '.npmrc', '.pypirc', '.cargo/credentials.toml', '.gem/credentials', '.bundle/config', '.config/pypoetry/auth.toml', '.local/share/uv/credentials']) {

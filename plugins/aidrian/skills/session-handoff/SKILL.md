@@ -51,6 +51,7 @@ machine's and the base branch's switches; without them the gate falls back, and 
    - long lines, and a missing advice line;
    - each required section that is missing or empty: Objective, Current state with its `Worktree:` and `Branch:`
      values, Still running, Next steps with a numbered item, and Open risks and questions;
+   - a first next step that runs a skill only a person can start, such as `autopilot`;
    - a header with no `Supersedes:` value, or one that names a brief no prior was found for: rerun with `--prior`;
    - the identifiers from the superseded brief's Decisions locked, Gotchas, Next steps, Key paths, and Open risks and
      questions that the new one no longer names: carry each, name a done step under Done with its command or commit,

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { adviceProblem, carriedItems, checkBrief, snapshotPath, takeSnapshot } from '../plugins/aidrian/lib/handoff-brief.mjs';
+import { adviceProblem, carriedItems, checkBrief, manualSkillProblem, manualSkills, snapshotPath, takeSnapshot } from '../plugins/aidrian/lib/handoff-brief.mjs';
 import { namesBrief, sectionProblems, supersedesOf } from '../plugins/aidrian/lib/handoff-sections.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
@@ -242,4 +242,27 @@ test('aidrian handoff check: a named superseded brief with nothing to compare ex
   assert.equal(alone.status, 1);
   assert.match(alone.stderr, /`--prior <that brief>`/u);
   assert.equal(run('--prior', older).status, 0);
+});
+
+// A background continuation whose first step was `/aidrian:autopilot` stopped at once: the Skill tool refuses a skill
+// with `disable-model-invocation: true`. The check fails such a brief before any continuation starts.
+test('the check fails a brief whose first next step runs a skill only a person can start', (t) => {
+  const skills = manualSkills();
+  assert.ok(skills.has('autopilot') && !skills.has('plan-implement'), 'the plugin\'s manual-only skills, read from their frontmatter');
+  const at = (step) => manualSkillProblem(brief({ next: `## Next steps (ordered)\n${step}\n2. Run /aidrian:autopilot later.\n` }));
+  for (const step of [
+    '1. Load the `knowledge` skill, then run `/aidrian:autopilot /state/plans/x.md`.',
+    '1. Run /autopilot on the plan.',
+    '1. Run the `autopilot` skill on the plan,\n   then report.',
+  ]) assert.match(at(step) ?? '', /^Next steps: step 1 runs `autopilot`, which only a person can start/u, step);
+  for (const step of [
+    '1. Run the `plan-implement` skill on /state/plans/autopilot.md.',
+    '1. Read the `project-autopilot` skill\'s SKILL.md at its absolute path.',
+    '1. Open /repo/skills/autopilot/SKILL.md.',
+  ]) assert.equal(at(step), null, `${step}: a later step, a path, or reading a skill is no start`);
+
+  const file = write(tempDir(t), 'b.md', brief({ next: '## Next steps (ordered)\n1. Run `/aidrian:autopilot <plan>`.\n' }));
+  const checked = checkBrief(file, undefined, 0);
+  assert.equal(checked.exitCode, 1);
+  assert.ok(checked.lines.some((line) => line.startsWith('Next steps: step 1 runs `autopilot`')), checked.lines.join('\n'));
 });

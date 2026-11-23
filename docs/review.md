@@ -1102,6 +1102,9 @@ It applies to `aidrian pr review` and to `aidrian pr await-review --request`, wh
    the judge as evidence, in `extension.red_flags`, and an extra round over it always needs the Human, under `"auto"`
    too:
    - **converging**: the last round left fewer open findings than the round before. Equal or more is a red flag.
+     A review-bot answer with no inline comment counts one open finding, a floor, since it may hold more.
+     A floor decides only what it proves: a floor at least the previous exact count is a red flag,
+     an exact count under the previous floor converges, and anything else leaves the signal unknown.
    - **looping**: a finding comes back after a fix, in the same file within 3 lines, or under the same title (its words of
      four letters or more, without markup, in any order).
    - **drifting**: a finding after round 1 sits in a file the pull request did not change at its first round.

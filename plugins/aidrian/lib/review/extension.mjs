@@ -87,7 +87,7 @@ const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
 // Each signal is true, false, or null when the history cannot tell. `reasons` lists every red flag; any red flag sends
 // the judge's extend to the Human. A history from which no signal can be read is a red flag too: nothing in it shows
 // the review converging.
-// `rounds`: [{ round, head, open, findings: [{ title, file, line }] | null, fix: { added, code_added, removed, files } | null }],
+// `rounds`: [{ round, head, open, floor?, findings: [{ title, file, line }] | null, fix: { added, code_added, removed, files } | null }],
 // where `fix` is the change from that round's head to the next round's, or to the current head for the last, and
 // `code_added` the lines of `added` outside prose files. Bloat counts `code_added` when it is there.
 export function signals({ rounds = [], originalFiles = null, originalAdded = null, originalCodeAdded = null } = {}) {
@@ -97,8 +97,15 @@ export function signals({ rounds = [], originalFiles = null, originalAdded = nul
   const last = rounds.at(-1);
   const previous = rounds.at(-2);
 
+  // A round marked `floor` holds a count that is a floor: a bot answer with no inline comment counts one, whatever it
+  // holds (stages.mjs recordBot). A floor decides only what it still proves: the last round at least the previous
+  // round's exact count is not converging, and an exact last round under the previous floor is converging. Anything
+  // else cannot tell.
   let converging = null;
-  if (last && previous && Number.isInteger(last.open) && Number.isInteger(previous.open)) {
+  const exact = (each) => each.floor !== true;
+  const counted = last && previous && Number.isInteger(last.open) && Number.isInteger(previous.open);
+  const decided = counted && (exact(last) && exact(previous) ? true : exact(previous) ? last.open >= previous.open : exact(last) && last.open < previous.open);
+  if (decided) {
     converging = last.open < previous.open;
     evidence.converging = { round: last.round, open: last.open, previous_round: previous.round, previous_open: previous.open };
     if (!converging) reasons.push(`not converging: round ${last.round} left ${plural(last.open, 'open finding')}, round ${previous.round} left ${previous.open}`);
@@ -247,7 +254,7 @@ export function ownDelta(before, after) {
 }
 
 // The review bot's rounds as a history: one round per bot review, oldest first, its findings the review's top-level
-// inline comments.
+// inline comments, or a floor of one when a review that does not approve has none.
 export function botRounds(reviews, reviewComments, reviewer) {
   return (reviews ?? [])
     .filter((review) => review?.user?.login === reviewer)
@@ -256,6 +263,9 @@ export function botRounds(reviews, reviewComments, reviewer) {
       const findings = (reviewComments ?? [])
         .filter((comment) => comment.pull_request_review_id === review.id && !comment.in_reply_to_id)
         .map((comment) => ({ title: findingTitle(comment.body), file: comment.path ?? null, line: Number.isInteger(comment.line) ? comment.line : Number.isInteger(comment.original_line) ? comment.original_line : null }));
+      // A review with no inline comment that does not approve holds its findings in its body: at least one, a floor
+      // (stages.mjs recordBot), with no list to read for loops or drift. An approval with none is an exact zero.
+      if (!findings.length && review.state !== 'APPROVED') return { round: index + 1, head: review.commit_id ?? null, open: 1, floor: true, findings: null };
       return { round: index + 1, head: review.commit_id ?? null, open: findings.length, findings };
     });
 }

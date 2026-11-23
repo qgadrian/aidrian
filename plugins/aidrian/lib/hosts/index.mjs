@@ -6,9 +6,12 @@ import path from 'node:path';
 
 import claudeCode from './claude-code.mjs';
 import codex from './codex.mjs';
+import opencode from './opencode.mjs';
 
-// Detection order: Codex first, because a Codex started from a Claude Code shell inherits that shell's variables.
-export const HOSTS = Object.freeze([codex, claudeCode]);
+// Detection order (detectHost): Codex first, because a Codex started from a Claude Code shell inherits that shell's
+// variables; OpenCode last, because its environment rule is the weakest: any process started from an OpenCode shell
+// inherits OPENCODE=1 and OPENCODE_SESSION_ID, so that rule answers only when no other host's whole detection does.
+export const HOSTS = Object.freeze([codex, claudeCode, opencode]);
 
 // A process no adapter claims. Never reported as one of the hosts: its name says it is unknown, and its AI has no brand.
 // Payloads and responses pass through every adapter, so a host detection cannot fail open on what a known host sends.
@@ -40,9 +43,15 @@ export const UNKNOWN_HOST = Object.freeze({
   capabilities: Object.freeze({ pushPermission: () => ({ answer: 'unknown' }) }),
 });
 
-// The host of this process, from its environment and, in a hook, its payload.
+// The host of this process, from its environment and, in a hook, its payload, in two passes. First, the host whose mark
+// the payload carries (an adapter's optional `payloadMark`), in HOSTS order, before any environment is read: a hook's
+// payload is written by its host alone, so a hook a bridge runs is that host's whatever variables its process
+// inherited. Then each host's whole `detect`, in HOSTS order. A host that declares no mark, as a test's own host does,
+// is read by its `detect` alone.
 export const detectHost = ({ env = process.env, input = {} } = {}, hosts = HOSTS) =>
-  hosts.find((host) => host.detect({ env, input })) ?? UNKNOWN_HOST;
+  hosts.find((host) => host.payloadMark?.(input) === true)
+  ?? hosts.find((host) => host.detect({ env, input }))
+  ?? UNKNOWN_HOST;
 
 // The session and agent a command runs under, from its environment, each null when the host does not tell.
 export function sessionIdentity(env = process.env) {

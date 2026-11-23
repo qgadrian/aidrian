@@ -393,7 +393,7 @@ test('creating a session folder sweeps the folders untouched for 30 days', { ski
 });
 
 test('each host`s recorded payload records the created pull request through its adapter', async () => {
-  for (const host of ['claude-code', 'codex']) {
+  for (const host of ['claude-code', 'codex', 'opencode']) {
     const fixture = JSON.parse(readFileSync(path.join(ROOT_DIR, 'test/fixtures/hosts', host, 'bash-post.json'), 'utf8'));
     assert.equal(typeof fixture.live, 'boolean');
     if (!fixture.live) assert.match(fixture.provenance, /^NOT LIVE/u);

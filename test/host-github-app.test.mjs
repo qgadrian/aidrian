@@ -63,6 +63,33 @@ test('the merge guard holds a merge through the connector, on its own fields', (
   assert.equal(hook(dir, RECORDED.merge, { repository_full_name: 'other/notes' }).status, 0, 'its repository is read');
 });
 
+// A Codex started from an OpenCode shell inherits OPENCODE=1 and OPENCODE_SESSION_ID: its hook is still Codex's, so the
+// connector's name is still mapped and the merge still judged (lib/hosts/index.mjs detectHost).
+test('the merge guard holds a merge through the connector under an inherited OpenCode environment', (t) => {
+  const dir = repo(t);
+  owed(dir);
+  const plain = hook(dir, RECORDED.merge);
+  const inherited = hook(dir, RECORDED.merge, {}, { OPENCODE: '1', OPENCODE_SESSION_ID: 'ses_df7be4557ffeQDs22tHr3NYxUx' });
+  assert.equal(inherited.status, 2, inherited.stderr);
+  assert.match(inherited.stderr, /pull request #5 at abcdef1/u);
+  assert.deepEqual([inherited.status, inherited.stderr], [plain.status, plain.stderr]);
+});
+
+// The same merge with Codex's turn_id gone and no Codex variable left, only OpenCode's: no adapter claims the payload,
+// so the unknown host maps the connector's name through every adapter, and the merge is still judged.
+test('the merge guard holds a connector merge that lost its turn_id, under OpenCode variables alone', (t) => {
+  const dir = repo(t);
+  owed(dir);
+  const { turn_id: _turn, ...unmarked } = RECORDED.pre;
+  const ran = spawnSync(process.execPath, [path.join(ROOT, 'plugins/aidrian/scripts/hook-mcp-github.mjs')], {
+    input: JSON.stringify({ ...unmarked, cwd: dir, tool_name: RECORDED.merge.tool_name, tool_input: RECORDED.merge.tool_input }),
+    encoding: 'utf8',
+    env: { ...process.env, AIDRIAN_TELEMETRY: '0', OPENCODE: '1', OPENCODE_SESSION_ID: 'ses_df7be4557ffeQDs22tHr3NYxUx' },
+  });
+  assert.equal(ran.status, 2, ran.stderr);
+  assert.match(ran.stderr, /pull request #5 at abcdef1/u);
+});
+
 test('the name the model sees is held as well, in case Codex sends that one', (t) => {
   const dir = repo(t);
   owed(dir);

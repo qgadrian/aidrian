@@ -235,6 +235,20 @@ test('check passes a tracker that lists both spellings of a server for reads and
   assert.deepEqual([status, stderr], [0, '']);
 });
 
+// The project's own OpenCode config sets OpenCode up for it, whichever host's shell runs the check
+// (lib/hosts/opencode-setup.mjs), so the check warns of the tracker writes no hook reaches there.
+test('check warns of OpenCode\'s unguarded tracker route once the project\'s OpenCode config names this plugin', async (t) => {
+  const dir = exampleRepo(t);
+  const tracker = { enabled: true, provider: 'linear', workspace: { expect: 'https://linear.app/acme' }, team: { key: 'NOTES', values: ['Notes'] } };
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, tracker }));
+  assert.deepEqual(await run(['check'], dir).then(({ status, stderr }) => [status, stderr]), [0, ''], 'no OpenCode config');
+  writeFileSync(path.join(dir, 'opencode.json'), JSON.stringify({ plugins: ['github:acme/aidrian#main::path:plugins/aidrian'] }));
+  const { status, stderr } = await run(['check'], dir);
+  assert.equal(status, 0, stderr);
+  assert.match(stderr, /^warning: tracker\.enabled: on OpenCode, a write through any MCP tool passes unchecked: the bridge forwards no MCP tool call to a hook in this version$/mu);
+  assert.match(stderr, /^warning: tracker\.enabled: nobody has verified the guard on OpenCode/mu);
+});
+
 test('state prints the state folder, with or without a project folder', async (t) => {
   const dir = exampleRepo(t);
   // As a process, so the state command stays tested through bin/aidrian's own entry.

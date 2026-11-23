@@ -9,6 +9,8 @@ export default {
     any: ['linear', 'linear-server'],
     'claude-code': ['plugin_linear_linear', 'claude_ai_Linear'],
     codex: ['codex_apps_linear'],
+    // No Linear connection on OpenCode has been looked at, and the bridge forwards no MCP tool call there yet.
+    opencode: [],
   },
   readTool: 'get_workspace',
   // `prepare_*` counts: those tools are the step before file bytes reach the workspace. `mark_notification` stays out,

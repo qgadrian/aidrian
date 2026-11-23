@@ -104,7 +104,7 @@ export const commands = {
       const markers = errors.length ? [] : scanDecisions(project).problems.map((each) => `${place(each)}: ${each.problem}`);
       // Only with no errors too: a `review.visual` with an error reads as unset, and its error already says what to fix.
       const screens = errors.length ? [] : [...unseenScreenWarnings(project, config, () => trackedFiles(project)), ...allWidthsWarnings(config)];
-      const decisions = [...decisionWarnings(config), ...quorumProductWarnings(project, config), ...untrackedDocs(project, config), ...markers, ...trackerWarnings(config.tracker), ...screens];
+      const decisions = [...decisionWarnings(config), ...quorumProductWarnings(project, config), ...untrackedDocs(project, config), ...markers, ...trackerWarnings(config.tracker, { root: project.root }), ...screens];
       const shown = [...budgets.warnings, ...warnings, ...tags.warnings, ...decisions].map((warning) => `warning: ${warning}`);
       if (shown.length || tags.notes.length) console.error([...shown, ...tags.notes.map((note) => `note: ${note}`)].join('\n'));
       if (errors.length) {

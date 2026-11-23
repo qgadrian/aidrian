@@ -46,6 +46,8 @@ if (!process.env.AIDRIAN_TEST_STATE) {
   process.env.XDG_STATE_HOME = state;
   // Which host this machine has installed changes no answer either: `aidrian check` reads Codex's config (lib/hosts/codex.mjs).
   process.env.CODEX_HOME = path.join(state, 'codex');
+  // And OpenCode's global config, which says whether OpenCode is set up to run this plugin (lib/hosts/opencode-setup.mjs).
+  process.env.OPENCODE_CONFIG_DIR = path.join(state, 'opencode');
   process.env.TMPDIR = temp;
   const bin = path.join(state, 'bin');
   mkdirSync(bin);

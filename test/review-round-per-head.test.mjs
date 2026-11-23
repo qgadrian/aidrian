@@ -121,7 +121,14 @@ test('past the cap, a count-only result attested on a new head is its own cap ca
   const capped = await r.step({ exec: clean });
   assert.deepEqual([capped.status, capped.round, capped.cap?.reviewed, capProblem(readLocalState(r.project, 7), second)], ['round_limit', 2, second, null], 'round 2 stops on a waivable cause');
   const waivable = readLocalState(r.project, 7).rounds.at(-1).cap;
-  const third = push(r, 2);
+  // A push no pass reviewed inherits round 2's cause, on every step on that head.
+  const unreviewedFix = push(r, 2);
+  for (const call of ['first', 'retry']) {
+    const inherited = await r.step({ exec: clean });
+    const kept = readLocalState(r.project, 7);
+    assert.deepEqual([inherited.status, inherited.cap?.head, inherited.cap?.reviewed, capProblem(kept, unreviewedFix), kept.rounds.at(-1).cap], ['round_limit', unreviewedFix, second, null, waivable], `${call} step on the unreviewed head`);
+  }
+  const third = push(r, 3);
   attest(r, pass, third);
   const past = await r.step({ exec: clean });
   assert.deepEqual([past.status, past.round, past.cap?.reviewed, past.cap?.itemized, past.cap?.counted], ['round_limit', 2, third, false, 1], 'the cause is the new head\'s count-only result');
@@ -131,7 +138,7 @@ test('past the cap, a count-only result attested on a new head is its own cap ca
   // A record an older step wrote kept that cause on the outcome alone, and round 2's waivable one on the round.
   state.rounds.at(-1).cap = waivable;
   writeLocalState(r.project, state, { repo: 'o/r' });
-  const fourth = push(r, 3);
+  const fourth = push(r, 4);
   const unreviewed = await r.step({ exec: clean });
   assert.deepEqual([unreviewed.status, unreviewed.cap?.head, unreviewed.cap?.unsigned], ['round_limit', fourth, null], 'round 2\'s waivable cause is gone');
   assert.ok(capProblem(readLocalState(r.project, 7), fourth), 'a head nothing reviewed is never waived');

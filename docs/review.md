@@ -898,9 +898,9 @@ at the reviewed commit, and a receipt speaks only of that run's new findings, so
 card still holds an earlier finding. A receipt beside a completed card of its commit with either flag not false is no
 pass: the signal carries `holds_finding: true`, the bot's pass keeps one open finding, and `fix_required` marks that
 `open[]` entry `holds_finding`: the work is in the bot's answer and its threads that still stand. Only the bot's own
-later run clears the card, once the finding is fixed; resolving a thread does not. `aidrian pr await-review <n>
---request` asks about a head whose answer holds a finding once more, under the same cap, and marks that request
-(`held=<sha>`), so it never asks about that head again; the step's own requests never do. A receipt while the card
+later run clears the card, once the finding is fixed; resolving a thread does not. Such an answer is that head's
+answer: the wait ends `already_present` or `received` with `holds_finding`, and nothing, `--request` included, asks the
+bot about that head again. The loop fixes the finding and pushes, and the new head gets its request as usual. A receipt while the card
 still runs a code review, one named for that commit or last updated at or after the request, is no answer yet: the
 signal carries `card_pending: true`, and the wait goes on until the card completes or the wait times out, with
 `retry_recommended`. With no such card, as when it was last updated before the receipt and is completed, names another

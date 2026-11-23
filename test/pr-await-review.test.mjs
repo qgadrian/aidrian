@@ -1411,29 +1411,13 @@ test('awaitReview: a receipt beside a running card waits for the card, and reads
   assert.deepEqual([alone.status, alone.signal.clean], ['already_present', true], 'a receipt with no card: as before');
 });
 
-test('awaitReview --request: an answer that holds a finding asks about the head once more, under the cap, and never again', async () => {
+test('awaitReview --request: an answer for the head that holds a finding is that head`s answer, and nothing more is posted for it', async () => {
   const head = '3871361bfb9f6e701a03438b1e300b0e921b909b';
   const trigger = { id: 1, user: { login: 'adrian' }, created_at: T(5), body: `${REQUEST_COMMENT}\n\n<!-- pr-await-review: head=${head} -->` };
-  const receipt = (m) => ({ id: 10 + m, user: BOT, created_at: T(m), body: RECEIPT_BODY(head) });
-  const card = (m) => ({ id: 2, user: BOT, created_at: T(1), updated_at: T(m), body: STATE_CARD_BODY(head, true) });
-  const run = (issueComments, extra = {}, reviews = []) => {
-    const forge = fakeForge([{ head, headCommittedAt: T(4), issueComments, reviews }]);
-    return awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 0, intervalSec: 60, ...extra }, { forge, git: { pushedHead: () => null, behind: () => false }, ...clock() })
-      .then((r) => ({ r, posts: forge.posts }));
-  };
-  const asked = await run([trigger, receipt(7), card(8)]);
-  assert.deepEqual([asked.r.requested, asked.r.requested_head, asked.posts.length], [true, head, 1], 'one request for the held head');
-  assert.match(asked.posts[0].fields.body, new RegExp(`held=${head}`, 'u'));
-  assert.match(asked.posts[0].fields.body, new RegExp(`head=${head}`, 'u'));
-  // The bot answers the request the same way: the held request is on record, so nothing is posted again.
-  const again = { id: 4, user: { login: 'adrian' }, created_at: T(9), body: asked.posts[0].fields.body };
-  const answered = await run([trigger, receipt(7), again, receipt(11), card(12)]);
-  assert.deepEqual([answered.r.status, answered.r.requested, answered.posts.length, answered.r.signal.holds_finding], ['already_present', false, 0, true]);
-  // At the cap the held answer stands as it is: no request and no round_limit.
-  const older = { id: 5, user: BOT, submitted_at: T(2), commit_id: '0123456789abcdef0123456789abcdef01234567', state: 'COMMENTED' };
-  const capped = await run([trigger, receipt(7), card(8)], { maxRounds: 1 }, [older]);
-  assert.deepEqual([capped.r.status, capped.r.requested, capped.posts.length, capped.r.signal.holds_finding], ['already_present', false, 0, true]);
-  // Without --request nothing is posted.
-  const quiet = await run([trigger, receipt(7), card(8)], { request: false });
-  assert.deepEqual([quiet.r.status, quiet.posts.length], ['already_present', 0]);
+  const answer = [trigger, { id: 3, user: BOT, created_at: T(7), body: RECEIPT_BODY(head) }, { id: 2, user: BOT, created_at: T(1), updated_at: T(8), body: STATE_CARD_BODY(head, true) }];
+  for (const request of [true, false]) {
+    const forge = fakeForge([{ head, headCommittedAt: T(4), issueComments: answer }]);
+    const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request, timeoutSec: 0, intervalSec: 60 }, { forge, git: { pushedHead: () => null, behind: () => false }, ...clock() });
+    assert.deepEqual([r.status, r.requested, forge.posts.length, r.signal.clean, r.signal.holds_finding], ['already_present', false, 0, undefined, true], `request: ${request}`);
+  }
 });

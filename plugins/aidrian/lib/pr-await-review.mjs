@@ -82,22 +82,12 @@ export const codexRounds = (reviews, reviewer) => (reviews ?? []).filter((r) => 
 // The pattern accepts short hex so fixtures stay readable; this command always writes the full SHA.
 export const TRIGGER_HEAD_PATTERN = /<!--\s*pr-await-review:\s*head=([0-9a-f]{3,40})\s*-->/i;
 export const triggerHeadSha = (body) => (typeof body === 'string' ? body.match(TRIGGER_HEAD_PATTERN)?.[1] ?? null : null);
-export const requestCommentBody = (headSha, maxRounds = DEFAULTS.maxRounds, reviewMarker = null, held = false) => {
+export const requestCommentBody = (headSha, maxRounds = DEFAULTS.maxRounds, reviewMarker = null) => {
   const request = REQUEST_TEXT;
   const marked = headSha ? `${request}\n\n<!-- pr-await-review: head=${headSha} -->` : request;
   const rounds = maxRounds > DEFAULTS.maxRounds ? `${marked}\n<!-- pr-await-review: max-rounds=${maxRounds} -->` : marked;
-  const asked = held && headSha ? `${rounds}\n<!-- pr-await-review: held=${headSha} -->` : rounds;
-  return reviewMarker ? `${asked}\n${reviewMarker}` : asked;
+  return reviewMarker ? `${rounds}\n${reviewMarker}` : rounds;
 };
-
-// The mark of a request that asked the bot again about a head whose answer left its status card holding a finding. A
-// head is asked again so once, by --request alone: a request that carries the mark for it is never repeated.
-const HELD_PATTERN = /<!--\s*pr-await-review:\s*held=([0-9a-f]{7,40})\s*-->/giu;
-export const heldAsked = (issueComments, headSha) => Boolean(headSha) && (issueComments ?? []).some((c) => {
-  const body = typeof c?.body === 'string' ? c.body : '';
-  if (!body.trimStart().toLowerCase().startsWith(REQUEST_COMMENT)) return false;
-  return [...body.matchAll(HELD_PATTERN)].some((m) => sameCommit(m[1], headSha));
-});
 
 // The bot's out-of-credits reply: an ordinary comment, by the same author, that names the condition.
 export const QUOTA_NOTICE_PATTERN = /codex usage limits?/i;
@@ -436,20 +426,16 @@ export const awaitReview = async (opts, { forge = awaitForge(), git = localGit()
     const ack = acknowledgement({ reactions: s.reactions, issueComments: s.issueComments, reviewer: opts.reviewer, since });
     // 👀 on a trigger for this head: the bot is mid-review, and a second request only costs another run.
     if (opts.request && !signal && acknowledgedForHead(ack, head, s.headCommittedAt, sinceHead)) return null;
-    // An answer for this head that left the bot's card holding a finding: --request asks about the head once more, under
-    // the same cap (at the cap the answer stands as it is), and the request's mark keeps it from being asked again.
-    const held = opts.request && !stale && signal?.holds_finding === true && !heldAsked(s.issueComments, head);
-    if (opts.keepRecordedCap) maxRounds = Math.max(maxRounds, recordedMaxRounds(s.issueComments) ?? 0);
-    const reask = held && codexRounds(s.reviews, opts.reviewer) < maxRounds;
-    if (opts.request && (!signal || stale || reask) && requestedForHead !== head) {
+    if (opts.request && (!signal || stale) && requestedForHead !== head) {
       // Accepted residual: a push while a request is in flight at limit - 1 posts one more, so a pull request can end
       // at limit + 1 reviews; the bot exposes no per-trigger completion to reserve against.
+      if (opts.keepRecordedCap) maxRounds = Math.max(maxRounds, recordedMaxRounds(s.issueComments) ?? 0);
       if (codexRounds(s.reviews, opts.reviewer) >= maxRounds) return 'round_limit';
       // A request past `grantFloor` uses an extra round, granted on the signals of `validHead`: for any other head, post
       // nothing and hand back `head_moved`, so the caller reads the signals on this head first (lib/review/extension.mjs).
       if (opts.validHead && Number.isInteger(opts.grantFloor) && codexRounds(s.reviews, opts.reviewer) >= opts.grantFloor && !sameCommit(head ?? '', opts.validHead)) return 'head_moved';
       const beforePost = flooredInstant(now());
-      const posted = forge.postComment(repo, n, requestCommentBody(head, maxRounds, review.marker ?? null, reask));
+      const posted = forge.postComment(repo, n, requestCommentBody(head, maxRounds, review.marker ?? null));
       requested = true;
       requestedForHead = head;
       since = postedTriggerInstant(posted) ?? beforePost;

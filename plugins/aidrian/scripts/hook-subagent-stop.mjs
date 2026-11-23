@@ -20,6 +20,8 @@
 // The stop the cap lets end with a task still running is recorded as a lesson for the plugin. The count is stored before
 // each send-back past the first, and a count that cannot be stored ends the stop, so no host can loop on it; a payload
 // without `stop_hook_active` (another host) is never sent back (sendsBack). The row's `sent_back` records the decision.
+// A `Handoff file:` marker the hook cannot fill, such as one whose path is not absolute, sends the subagent back once,
+// on the first stop of its turn, to hand back its report with the mistake named, and never to write that path itself.
 // The evidence check: a final report that says a test command passed, with no run of it on the session's check-run
 // record that passed (lib/check-runs.mjs), is sent back once, on the first stop of its turn, to quote a run a tool
 // returned or call the run "not finished". A report once claimed a full suite passed after its runs were stopped.
@@ -30,7 +32,7 @@ import { CHILD_SEND_BACKS, childSendBacks, forgetChildSendBacks, storeChildSendB
 import { loadConfig } from '../lib/config.mjs';
 import { appendEvent } from '../lib/dispatch-log.mjs';
 import { blockingChildren, checkDelivery, runningChildren, sendsBack, stopAgent, stopRow, undelivered, wakingChildren } from '../lib/dispatch-rows.mjs';
-import { deliverHandoffs, finalReport } from '../lib/delivery-check.mjs';
+import { deliverHandoffs, finalReport, resolveClaim } from '../lib/delivery-check.mjs';
 import { claimProblem, passClaims, readCheckRuns, unsupportedClaims } from '../lib/check-runs.mjs';
 import { deny, isMain, runHook } from '../lib/hook-io.mjs';
 import { deliverySignal, idleChildrenSignal, recordSignal } from '../lib/lesson-signals.mjs';
@@ -59,6 +61,15 @@ const handoffReason = (files) =>
   'a handback can reach another session than the one that dispatched you, or none once it has ended. ' +
   'An agent with neither a file tool nor a shell ends its turn with the handoff as its last message, and this hook writes it there; ' +
   'if the path belongs to another agent, say so.';
+
+// What the subagent is told when its brief's `Handoff file:` markers name a file the hook cannot fill, each `rejected`
+// as { value, problem } (lib/delivery-check.mjs briefHandoffs): told once, so its report carries the mistake back. It is
+// never told to write the rejected path: the brief's text would become the hook's write instruction to any folder.
+const rejectedReason = (rejected) =>
+  `Your brief's \`Handoff file:\` marker ${rejected.map(({ value, problem }) => (value ? `\`${value}\` ${problem}` : problem)).join('; ')}, ` +
+  'so this hook cannot write your handoff there for you. Write no file at that path, which may lie outside the dispatch ' +
+  'folder: end your turn with the machine handoff as your last message, and say in it that the brief\'s handoff path ' +
+  'was rejected and why, so your dispatcher corrects its briefs.';
 
 // When the subagent's run started, in milliseconds: its transcript's first timestamp, or null when it cannot be read.
 function startedAt(input) {
@@ -128,12 +139,14 @@ export async function handle(input) {
     // A record or report it cannot read sends nothing back.
   }
   const forEvidence = unsupported.length > 0;
-  if (!forChildren && !forDelivery && !forEvidence) {
+  // A marker the hook cannot fill is told once, on the first stop of a turn.
+  const forMarker = (checked.rejected ?? []).length > 0 && input.stop_hook_active === false;
+  if (!forChildren && !forDelivery && !forEvidence && !forMarker) {
     delivery = deliverHandoffs(input, checked, { running });
     forDelivery = undelivered(delivery).length > 0 && sendsBack(input, delivery);
   }
   if (config.telemetry.enabled) {
-    appendEvent(project, config, stopRow(input, project, { delivery, children: tasks, sentBack: forChildren || forDelivery || forEvidence, docReads: config.telemetry.docReads }));
+    appendEvent(project, config, stopRow(input, project, { delivery, children: tasks, sentBack: forChildren || forDelivery || forEvidence || forMarker, docReads: config.telemetry.docReads }));
   }
   const agent = stopAgent(input);
   // The lesson's evidence names the agent's dispatch log row, which only telemetry writes.
@@ -145,7 +158,11 @@ export async function handle(input) {
   }
   const reasons = [];
   if (forDelivery) {
-    const { missing, unwritten = [] } = delivery;
+    const { unwritten = [] } = delivery;
+    // A path the brief's rejected marker names is never one to write, though the report claims it.
+    const cwd = typeof input.cwd === 'string' ? input.cwd : project.root;
+    const refused = new Set((checked.rejected ?? []).map(({ value }) => resolveClaim(cwd, value)));
+    const missing = delivery.missing.filter((file) => !refused.has(resolveClaim(cwd, file)));
     recordSignal(project, deliverySignal({ agentType: agent.agent_type, agentId, session: agent.session_id, missing: undelivered(delivery) }), { config });
     if (missing.length) {
       reasons.push(
@@ -155,6 +172,7 @@ export async function handle(input) {
     }
     if (unwritten.length) reasons.push(handoffReason(unwritten));
   }
+  if (forMarker) reasons.push(rejectedReason(checked.rejected));
   if (forChildren) reasons.push(childrenReason(children, made + 1));
   if (forEvidence) {
     reasons.push(`${claimProblem(unsupported, unsupported[0].runs, { where: 'Your report' })} ` +

@@ -2,7 +2,7 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { closeSync, constants, cpSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync, writeSync } from 'node:fs';
-import { hostname, tmpdir } from 'node:os';
+import { homedir, hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
@@ -408,6 +408,7 @@ test('the stop hook writes only the handoff file its own run was briefed with, n
     ['m2', (out) => `- **Handoff file:** \`${out}\`, then read ${input}.`],
     ['m3', (out) => `* **Handoff file**: ${out}. Inputs: ${input}`],
     ['m4', (out) => `handoff file: ${out}\nRead ${input}.`],
+    ['m8', (out) => `Output: one JSON object. Under 4 KB. Handoff file: ${out} (return the JSON; the main session saves it).`],
   ];
   for (const [id, line] of forms) {
     for (const [end, suffix] of [['\n', ''], ['\r\n', '-crlf']]) {
@@ -418,18 +419,129 @@ test('the stop hook writes only the handoff file its own run was briefed with, n
     }
   }
   assert.throws(() => readFileSync(input), /ENOENT/u, 'a path in the prose after the marker is never written');
+  // A marker inside a sentence names a file to read: an earlier run's file of the role is kept.
+  await sleep(30);
+  assert.equal((await run('m9', `Rule again. Read the earlier handoff file: ${gate} first.`, 'm9')).status, 0);
+  assert.equal(read(gate), 'gate', 'a mid-sentence marker owes no file');
+  // A marker the hook cannot fill is a brief's mistake: the agent is sent back once to say so, and nothing is written.
   const relative = file('copy-relative');
-  assert.equal((await run('m5', `Handoff file: x${relative}`, 'm5')).status, 0);
+  const m5 = await run('m5', `Handoff file: x${relative}`, 'm5');
+  assert.equal(m5.status, 2);
+  assert.ok(m5.stderr.includes(`marker \`x${relative}\` is not an absolute \`.json\` path in \`${dispatch}/\``), m5.stderr);
   assert.throws(() => readFileSync(relative), /ENOENT/u, 'a marked path must be absolute, in the dispatch folder');
   // A marker with no valid path still marks the brief: the one file of the role its prose names is an input, kept.
   await sleep(30);
-  assert.equal((await run('m6', `Handoff file:\nRead the gate at ${gate}.`, 'm6')).status, 0);
-  assert.equal((await run('m6-crlf', `Handoff file:\r\nRead the gate at ${gate}.\r\n`, 'm6')).status, 0);
+  for (const [id, brief] of [['m6', `Handoff file:\nRead the gate at ${gate}.`], ['m6-crlf', `Handoff file:\r\nRead the gate at ${gate}.\r\n`]]) {
+    const sent = await run(id, brief, 'm6');
+    assert.equal(sent.status, 2, id);
+    assert.match(sent.stderr, /marker names no path, so this hook cannot write your handoff there/u, id);
+  }
   assert.equal(read(gate), 'gate');
   // A backticked value is one path: a `.json` inside it does not end it early.
   const short = file('copy-short');
   assert.equal((await run('m7', `Handoff file: \`${short} copy.json\``, 'm7')).status, 0);
   assert.throws(() => readFileSync(short), /ENOENT/u, 'the shorter file is never written');
+});
+
+// An orchestrator's brief, as a background continuation sends it: the marker mid-line after other instructions, or on
+// its own line. Each briefed file exists once the agent stops, written by the hook from its report. A brief whose
+// marker the hook cannot fill, such as one with `<state>` left unexpanded, sends the agent back once, with the reason, and
+// its second stop ends; a marker whose relative path the agent wrote is no mistake.
+test('the stop hook fills every briefed handoff file of an orchestrator\'s briefs, and reports a marker it cannot fill', async (t) => {
+  const { base, dir, state, hook } = project(t);
+  const dispatch = path.join(state(), 'dispatch');
+  const stop = (id, brief, active = false) => {
+    const transcript = path.join(base, `agent-${id}.jsonl`);
+    writeFileSync(transcript, JSON.stringify({ type: 'user', timestamp: new Date().toISOString(), message: { role: 'user', content: brief } }));
+    return hook('hook-subagent-stop.mjs', {
+      cwd: dir, agent_id: id, agent_type: 'aidrian:backend-developer', agent_transcript_path: transcript, last_assistant_message: JSON.stringify({ status: 'done', decision: id }), stop_hook_active: active,
+    });
+  };
+  for (const [id, line] of [
+    ['own-line', (out) => `Implement slice S2 in the worktree.\nHandoff file: ${out}\nThen send a short summary.`],
+    ['mid-line', (out) => `Output: one JSON object as final message. Under 4 KB. Handoff file: ${out} (return the JSON; the main session saves it).`],
+  ]) {
+    const out = path.join(dispatch, `feat-eng-7-sync-S2-${id}-backend-developer.json`);
+    assert.equal((await stop(id, line(out))).status, 0, id);
+    assert.equal(JSON.parse(readFileSync(out, 'utf8')).decision, id, id);
+  }
+  const placeholder = '<state>/dispatch/feat-eng-7-sync-S3-backend-developer.json';
+  const sent = await stop('placeholder', `Implement slice S3.\nHandoff file: ${placeholder}`);
+  assert.equal(sent.status, 2);
+  assert.ok(sent.stderr.startsWith(`Your brief's \`Handoff file:\` marker \`${placeholder}\` is not an absolute`), sent.stderr);
+  assert.match(sent.stderr, /Write no file at that path, which may lie outside the dispatch folder: end your turn with the machine handoff as your last message, and say in it that the brief's handoff path was rejected and why/u);
+  assert.doesNotMatch(sent.stderr, /Write your machine handoff to that path/u, 'the brief`s path is never the hook`s write instruction');
+  assert.equal((await stop('placeholder', `Implement slice S3.\nHandoff file: ${placeholder}`, true)).status, 0, 'the second stop ends');
+  // A report that claims the rejected path gets no "write it now" for it.
+  const outside = '/tmp/outside/S3-backend-developer.json';
+  const transcriptOut = path.join(base, 'agent-claims.jsonl');
+  writeFileSync(transcriptOut, JSON.stringify({ type: 'user', timestamp: new Date().toISOString(), message: { role: 'user', content: `Implement slice S3.\nHandoff file: ${outside}` } }));
+  const claims = await hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'claims', agent_type: 'aidrian:backend-developer', agent_transcript_path: transcriptOut, last_assistant_message: `Handoff written to ${outside}.`, stop_hook_active: false });
+  assert.equal(claims.status, 2);
+  assert.doesNotMatch(claims.stderr, /If you meant to write it, write it now/u, claims.stderr);
+  // Nor when the report spells the same path another way.
+  const spelled = path.join(base, 'agent-spelled.jsonl');
+  writeFileSync(spelled, JSON.stringify({ type: 'user', timestamp: new Date().toISOString(), message: { role: 'user', content: 'Implement slice S3.\nHandoff file: ./reports/S3-backend-developer.json' } }));
+  const respelled = await hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'spelled', agent_type: 'aidrian:backend-developer', agent_transcript_path: spelled, last_assistant_message: 'Handoff written to reports/S3-backend-developer.json.', stop_hook_active: false });
+  assert.equal(respelled.status, 2);
+  assert.doesNotMatch(respelled.stderr, /If you meant to write it, write it now/u, respelled.stderr);
+  // A home-relative claim of a rejected path under the home folder, too.
+  const home = path.join(homedir(), '.aidrian-test-missing', 'S3-backend-developer.json');
+  const homeBrief = path.join(base, 'agent-home.jsonl');
+  writeFileSync(homeBrief, JSON.stringify({ type: 'user', timestamp: new Date().toISOString(), message: { role: 'user', content: `Implement slice S3.\nHandoff file: ${home}` } }));
+  const tilde = await hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'tilde', agent_type: 'aidrian:backend-developer', agent_transcript_path: homeBrief, last_assistant_message: 'Handoff written to ~/.aidrian-test-missing/S3-backend-developer.json.', stop_hook_active: false });
+  assert.equal(tilde.status, 2);
+  assert.doesNotMatch(tilde.stderr, /If you meant to write it, write it now/u, tilde.stderr);
+  // Two markers on one line, each opening a sentence: both are read.
+  const [first, second] = ['S5a', 'S5b'].map((slice) => path.join(dispatch, `feat-eng-7-sync-${slice}-backend-developer.json`));
+  const both = await stop('both', `Implement S5. Handoff file: ${first}. Then S5b. Handoff file: x${second}`);
+  assert.equal(both.status, 2, 'the second marker on the line is read, and its relative path reported');
+  assert.ok(both.stderr.includes(`x${second}`), both.stderr);
+  // SHORTCUT residual: after a first marker's backticked path, a second marker on the line is left unread.
+  const [third, fourth] = ['S7a', 'S7b'].map((slice) => path.join(dispatch, `feat-eng-7-sync-${slice}-backend-developer.json`));
+  assert.equal((await stop('quoted-first', `Implement S7. Handoff file: \`${third}\`. Then S7b. Handoff file: ${fourth}`)).status, 0);
+  assert.equal(JSON.parse(readFileSync(third, 'utf8')).decision, 'quoted-first');
+  assert.throws(() => readFileSync(fourth), /ENOENT/u);
+  // A Unicode line separator after the path hides nothing.
+  const separated = path.join(dispatch, 'feat-eng-7-sep-backend-developer.json');
+  assert.equal((await stop('sep', `Handoff file: ${separated}\u2028more text`)).status, 0);
+  assert.equal(JSON.parse(readFileSync(separated, 'utf8')).decision, 'sep');
+  // A backticked path that holds a sentence and a marker is one path.
+  const quoted = path.join(dispatch, 'release. Handoff file: v2-backend-developer.json');
+  assert.equal((await stop('quoted', `Implement S6.\nHandoff file: \`${quoted}\``)).status, 0);
+  assert.equal(JSON.parse(readFileSync(quoted, 'utf8')).decision, 'quoted');
+  // After a backtick on the line, a later marker may be inline code the brief quotes: only a line-opening one counts.
+  const example = path.join(dispatch, 'feat-eng-7-example-backend-developer.json');
+  for (const [id, brief] of [
+    ['example', `Briefs read \`Done. Handoff file: ${example}\` in the docs.`],
+    ['example-dot', `Briefs read \`Done. Handoff file: ${example}. \` in the docs.`],
+    ['example-double', `Briefs read \`\`Done. Handoff file: ${example}\`\` in the docs.`],
+  ]) {
+    assert.equal((await stop(id, brief)).status, 0, id);
+    assert.throws(() => readFileSync(example), /ENOENT/u, `${id}: a quoted example owes no file`);
+  }
+  // A non-breaking space after a sentence's end still opens a marker, and an unquoted path keeps its backticks.
+  const nbsp = path.join(dispatch, 'feat-eng-7-nbsp-backend-developer.json');
+  assert.equal((await stop('nbsp', `Done.\u00a0Handoff file: ${nbsp}`)).status, 0);
+  assert.equal(JSON.parse(readFileSync(nbsp, 'utf8')).decision, 'nbsp');
+  // SHORTCUT residual: after a stray backtick, a mid-line marker is left unread, as every mid-line marker was before.
+  const lone = path.join(dispatch, 'feat-eng-7-sync-S6-backend-developer.json');
+  assert.equal((await stop('lone', `Quote with a \` mark. Handoff file: ${lone}`)).status, 0);
+  assert.throws(() => readFileSync(lone), /ENOENT/u);
+  // A relative path an earlier run left is still a mistake to report; one this run wrote is not.
+  const relative = path.join(dir, 'handoff-backend-developer.json');
+  writeFileSync(relative, '{}');
+  await sleep(30);
+  assert.equal((await stop('stale', 'Implement slice S4.\nHandoff file: handoff-backend-developer.json')).status, 2, 'an earlier run`s file');
+  const transcript = path.join(base, 'agent-fresh.jsonl');
+  writeFileSync(transcript, JSON.stringify({ type: 'user', timestamp: new Date(Date.now() - 1000).toISOString(), message: { role: 'user', content: 'Implement slice S4.\nHandoff file: handoff-backend-developer.json' } }));
+  writeFileSync(relative, '{"fresh":true}');
+  const fresh = await hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'fresh', agent_type: 'aidrian:backend-developer', agent_transcript_path: transcript, last_assistant_message: 'done', stop_hook_active: false });
+  assert.equal(fresh.status, 0, 'a file the agent wrote in this run is no mistake');
+  // With no start time in the transcript, a file there could be an earlier run's: still reported.
+  const untimed = path.join(base, 'agent-untimed.jsonl');
+  writeFileSync(untimed, JSON.stringify({ type: 'user', message: { role: 'user', content: 'Implement slice S4.\nHandoff file: handoff-backend-developer.json' } }));
+  assert.equal((await hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'untimed', agent_type: 'aidrian:backend-developer', agent_transcript_path: untimed, last_assistant_message: 'done', stop_hook_active: false })).status, 2);
 });
 
 // A state folder whose path holds a space: a backticked marker path is read whole, and the run's file is written.
@@ -486,6 +598,22 @@ test('telemetry.enabled false: the hooks write no rows, and the delivery check s
   assert.equal((await hook('hook-session-end.mjs', { session_id: 's1', cwd: dir, transcript_path: transcript })).status, 0);
   assert.equal((await hook('session-row.mjs', { session_id: 's1', cwd: dir, transcript_path: transcript })).status, 0, 'the worker checks too');
   assert.deepEqual(log(), []);
+});
+
+// A subagent that reads its docs with a shell command, as most implementers and designers do, has them on its stop row:
+// through a variable, from a folder a `cd` moved to, or relative to one the row cannot know.
+test('a stop row counts the knowledge docs a subagent printed with cat, sed, or head', async (t) => {
+  const { base, dir, logged, hook } = project(t);
+  const agent = path.join(base, 'agent-sh.jsonl');
+  const bash = (id, command) => JSON.stringify({ type: 'assistant', message: { id, model: 'claude-sonnet-5-5', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'tool_use', name: 'Bash', input: { command } }] } });
+  writeFileSync(agent, [
+    bash('b1', `W=${base}/wt; cat $W/docs/knowledge/engineering/testing.md`),
+    bash('b2', `cd ${dir} && sed -n 1,40p docs/knowledge/product/product-rules.md`),
+    bash('b3', 'cd "$W"; head -20 docs/knowledge/product/sharing.md; grep -n x docs/knowledge/product/other.md'),
+  ].join('\n'));
+  assert.equal((await hook('hook-subagent-stop.mjs', { session_id: 's1', cwd: dir, agent_id: 'sh', agent_type: 'aidrian:designer', agent_transcript_path: agent, last_assistant_message: 'Done.', stop_hook_active: false })).status, 0);
+  const [row] = await logged(1);
+  assert.deepEqual(row.docs_read.map((doc) => doc.path).sort(), ['docs/knowledge/engineering/testing.md', 'docs/knowledge/product/product-rules.md', 'docs/knowledge/product/sharing.md']);
 });
 
 test('telemetry.docReads false: stop and session rows record docs_read null, and the rest as before', async (t) => {

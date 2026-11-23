@@ -554,8 +554,16 @@ test('launchedTaskIds takes ids from the structured result of the calls that lau
 
 test('filesRead lists each Read file_path once; subagentTranscripts finds a session`s subagent files', (t) => {
   const read = (file) => usageLine(file, 'claude-opus-5-5', {}, { content: [{ type: 'tool_use', name: 'Read', input: { file_path: file } }] });
-  const other = usageLine('x', 'claude-opus-5-5', {}, { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'cat /a.md' } }] });
-  assert.deepEqual(filesRead([read('/r/a.md'), other, read('/r/b.md'), read('/r/a.md')].join('\n')), ['/r/a.md', '/r/b.md']);
+  const bash = (id, command) => usageLine(id, 'claude-opus-5-5', {}, { content: [{ type: 'tool_use', name: 'Bash', input: { command } }] });
+  const other = bash('x', 'grep -n x /g.md; wc -l /w.md');
+  assert.deepEqual(filesRead([read('/r/a.md'), other, read('/r/b.md'), read('/r/a.md')].join('\n')), ['/r/a.md', '/r/b.md'], 'a program that only searches or counts reads no doc');
+  // A doc printed by a shell command counts as read: agents read docs with cat or sed as often as with Read.
+  const shell = [
+    bash('s1', 'W=/wt; cat $W/docs/a.md; sed -n 1,80p "$W/docs/b.md"'),
+    bash('s2', 'cd /r && head -50 docs/{c,d}.md | tail -5 && cat src/x.ts'),
+    bash('s3', 'cd $W; awk 1 ./docs/e.md'),
+  ].join('\n');
+  assert.deepEqual(filesRead(shell), ['$W/docs/a.md', '$W/docs/b.md', '/r/docs/c.md', '/r/docs/d.md', 'docs/e.md']);
   assert.deepEqual(filesRead([read('/r/a.md'), read('/r/b.md')].join('\n'), (key) => key !== '/r/a.md'), ['/r/b.md'], 'only the requests `keep` takes');
 
   const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-transcript-'));

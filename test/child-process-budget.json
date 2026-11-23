@@ -9,7 +9,7 @@
     "cli.test.mjs": 8350,
     "config-guard.test.mjs": 7400,
     "config.test.mjs": 800,
-    "dispatch-log.test.mjs": 750,
+    "dispatch-log.test.mjs": 1200,
     "handoff-continue-background.test.mjs": 5400,
     "hook-bash-post.test.mjs": 1650,
     "hook-bash-pr-target.test.mjs": 1450,

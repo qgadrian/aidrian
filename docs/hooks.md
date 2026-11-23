@@ -1668,19 +1668,30 @@ doc in another project. An absolute or `~/` path is checked as written.
 A path shortened with `...` or `…`, such as `.../review/x.json`, cannot be checked, so it is never sent back.
 
 The check also reads the subagent's brief, the first prompt of its transcript.
-A brief names the run's own handoff file on a line that starts with `Handoff file:`, such as
+A brief names the run's own handoff file with a `Handoff file:` marker, such as
 `Handoff file: <state>/dispatch/<branch>-signoff-product-manager.json`, or `**Handoff file:**` or `**Handoff file**:`,
-in any case, after an optional list marker, with LF or CRLF line ends.
-Each such line names one file: everything inside the backticks that open its value, spaces included, else its first word.
+in any case, with LF or CRLF line ends. The marker opens a line, after an optional list marker, or opens a sentence
+later in one, as in `Under 4 KB. Handoff file: <path>`. Inside a sentence, as in `Read the earlier handoff file: <path>`,
+it names a file to read, which is never owed. A line may hold several markers, each opening a sentence. A mid-line
+marker counts only with no backtick before it on the line, so one in inline code, an example the brief quotes, is not
+read; a marker after a stray backtick is not read either, the residual of that rule.
+Each such marker names one file: everything inside the backticks that open its value, spaces included, else its first word,
+without the trailing `.`, `,`, `;`, `:`, or `)` that ends a sentence, as in `Handoff file: <path>.`.
 The whole value must be an absolute path in the state folder's `dispatch/` that ends in `.json`; prose after it is not read.
-Only the files these lines name are owed, and a brief with no such line owes none: the agent still writes its own file,
+A marker that names no path, or a path that is not one, such as `<state>/dispatch/...` left unexpanded or a relative
+path, cannot be filled by the hook. Unless this run wrote a regular file there, by the transcript's start time, the agent
+is sent back once, on the first stop of its turn, with the marker and the reason, and with no "write it now" for that
+path even when its report claims it: it writes nothing at that path, which may lie outside the
+dispatch folder, and hands back its report as its last message, saying that the brief's path was rejected, so its
+dispatcher corrects its briefs.
+Only the files these markers name are owed, and a brief with no marker owes none: the agent still writes its own file,
 and the hook no longer searches the brief's prose for one, since a file named to read there could be taken for the output.
 Another file of the agent's role the brief names, such as the gate run's `<branch>-gate-product-manager.json` to read,
 is never written, whether it is there or not.
 In a project run's issue session, a file is owed only when the unattended write guard would let that session write it:
 one named for its own issue's branch that no other issue of the run spells alike, and none when its issue cannot be read.
 So one issue's report never replaces another issue's handoff.
-A file a marker line names must exist when the agent stops: an absolute path in the state folder's `dispatch/` whose file name ends with the agent's name,
+A file a marker names must exist when the agent stops: an absolute path in the state folder's `dispatch/` whose file name ends with the agent's name,
 or with it and one more word, such as `<state>/dispatch/feat-12-S1-code-reviewer.json` or `S1-code-reviewer-result.json`
 for `code-reviewer`. A branch name that holds the agent's name does not make another agent's file its own. When one does not,
 the hook writes the agent's final report there: the message of its last handback call (Claude Code's `SubagentHandback`)

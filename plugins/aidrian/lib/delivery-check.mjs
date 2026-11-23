@@ -128,20 +128,19 @@ export function briefHandoffs(input, project) {
 // `**Handoff file:** <path>`, or `**Handoff file**: <path>`. Its match holds the rest of the line, as `value`.
 const MARKER_WORDS = String.raw`(?:handoff file:|\*\*handoff file:\*\*|\*\*handoff file\*\*:)`;
 const HANDOFF_MARKER = new RegExp(String.raw`^\s*(?:[-*]\s+)?${MARKER_WORDS}(?<value>[\s\S]*)$`, 'iu');
-// A marker with its backticked value, whose backticks open no inline code for a later marker on the line.
-const QUOTED_VALUE = new RegExp(`${MARKER_WORDS}\\s*\`[^\`]*\``, 'giu');
 // A marker that opens a sentence later in a line, as in `Under 4 KB. Handoff file: <path> (...)`.
 const SENTENCE_MARKER = new RegExp(String.raw`[.!?;]\s+(?=${MARKER_WORDS})`, 'giu');
 
 // The pieces of a line a marker may open: the line itself, and the rest of it from each marker that opens a later
-// sentence with no backtick before it on the line but a marker's own backticked value. Inside a sentence, as in `Read the earlier handoff file: <path>`,
+// sentence with no backtick before it on the line. Inside a sentence, as in `Read the earlier handoff file: <path>`,
 // a marker names a file to read, never one owed. After a backtick, a marker may sit in inline code, an example the
 // brief quotes, so only a line-opening one counts there, as before markers were read mid-line.
-// SHORTCUT: a marker after a stray backtick is left unread too, a backticked path that holds `. Handoff file:` reads
-// a second, rejected marker, and a line-opening marker inside a code span that crosses lines is read, as it always was. Telling code from prose took a Markdown reader each review round found a new case for;
-// one would replace this rule if such briefs appear.
+// SHORTCUT: a marker after a stray backtick, or after an earlier marker's backticked path, is left unread too; a
+// backticked path that holds `. Handoff file:` reads a second, rejected marker; and a line-opening marker inside a code
+// span that crosses lines is read, as it always was. Telling code from prose took a Markdown reader, and each review
+// round found a new case for one; a reader would replace this rule if such briefs appear.
 function markerPieces(line) {
-  const later = [...line.matchAll(SENTENCE_MARKER)].filter((match) => !line.slice(0, match.index).replace(QUOTED_VALUE, '').includes('`'));
+  const later = [...line.matchAll(SENTENCE_MARKER)].filter((match) => !line.slice(0, match.index).includes('`'));
   return [line, ...later.map((match) => line.slice(match.index + match[0].length))];
 }
 

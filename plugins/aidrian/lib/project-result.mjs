@@ -223,7 +223,11 @@ function droppedPullProblem({ forge, repository, result, branch, since, verified
   if (repoName(view?.url) !== named.toLowerCase() || hostOf(view.url)?.toLowerCase() !== repository.host.toLowerCase()) return `pull request #${result.pr} is not in ${repository.host}/${named}`;
   if (view.isCrossRepository !== false || view.headRefName !== branch) return `pull request #${result.pr} is not from the issue's branch ${branch}`;
   if (result.status === 'merged') return mergeProblem({ forge, repository, pr: result.pr, branch, since });
-  if (view.state !== 'OPEN') return `pull request #${result.pr} is not open`;
+  // A closed pull request still parks the issue (project-stops.mjs), but no later run goes on from its branch.
+  if (view.state !== 'OPEN') {
+    verified.head = null;
+    return null;
+  }
   let head;
   try {
     head = forge.branchHead(named, branch, { host: repository.host });
@@ -285,7 +289,7 @@ function dropRows({ run, key, start, spent, branch, forge, repository, now }) {
   const { result } = checked;
   const next = afterResult(key, start.attempt, result.status, spent);
   // The head the pull request's check read, when one did, never a second read that could differ or fail.
-  const head = next.state === 'parked' ? { head: verified.head ?? forgeHead({ forge, repository, branch }) } : {};
+  const head = next.state === 'parked' ? { head: Object.hasOwn(verified, 'head') ? verified.head : forgeHead({ forge, repository, branch }) } : {};
   return {
     rows: [{
       event: 'result', key, attempt: start.attempt, session: start.child, via: 'drop', status: result.status, pr: result.pr, verified: result.status === 'merged', ...head,

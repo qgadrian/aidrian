@@ -13,6 +13,7 @@ import path from 'node:path';
 import test, { after } from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
+import { unattendedHere } from '../plugins/aidrian/lib/handoff-continue.mjs';
 import { startedUnattended } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { noteFrom, openStore, storePath } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { defaultStateDir, findProject, projectCheckouts, stateDir } from '../plugins/aidrian/lib/project.mjs';
@@ -388,6 +389,14 @@ test('a background session the Human types into is attended from then on; a peer
   };
   const read = (id) => readUnattendedMark(id, { home: TEST_HOME });
   assert.ok(markUnattended(session, { root: dir }));
+  // A real background start also files a chain floor, which holds the session in its project on its own.
+  const found = findProject(dir);
+  const { config } = loadConfig(found);
+  const home = folder(t, 'aidrian-home-');
+  const state = defaultStateDir(found, { config, home });
+  floor(state, dir, session);
+  const store = openStore(state, { checkouts: [dir], maxChain: 3 });
+  assert.equal(startedUnattended(found, config, session, { home }), true, 'the floor holds before the Human types');
   for (const [what, entries] of [['the start prompt', [start]], ['a peer message', [start, peer]], ['a meta entry marked human', [start, { ...typed, isMeta: true }]], ['a subagent\'s', [start, { ...typed, isSidechain: true }]]]) {
     lines(transcript, ...entries);
     assert.equal(lift(session, transcript), false, what);
@@ -436,6 +445,26 @@ test('a background session the Human types into is attended from then on; a peer
   assert.equal(read(session), null);
   assert.equal(isAttended(session, { home: TEST_HOME }), true);
   assert.equal(isAttended(issue, { home: TEST_HOME }), false);
+  assert.equal(startedUnattended(found, config, session, { home }), false, 'the floor no longer holds it in its project');
+  assert.equal(unattendedHere(session, { store, env: process.env, home, now: Date.now() }), false, 'nor the continuation and its Stop hook');
+  // A mark filed under a short id, as when the host's listing lags, and one in the user's own folder, are lifted where they are.
+  const shortSession = 'feed000e-0000-4000-8000-00000000000e';
+  const shortMark = path.join(markFolder(), `${shortSession.slice(0, 8)}.json`);
+  writeFileSync(shortMark, JSON.stringify({ root: dir, at: Date.now() }));
+  t.after(() => rmSync(shortMark, { force: true }));
+  const ownSession = 'feed000f-0000-4000-8000-00000000000f';
+  const ownMarks = path.join(home, '.local/state/aidrian/unattended');
+  mkdirSync(ownMarks, { recursive: true, mode: 0o700 });
+  writeFileSync(path.join(ownMarks, `${ownSession}.json`), JSON.stringify({ root: dir, at: Date.now() }));
+  for (const id of [shortSession, ownSession]) {
+    const file = path.join(projects, `${id}.jsonl`);
+    t.after(() => rmSync(file, { force: true }));
+    lines(file, start, typed);
+    assert.ok(readUnattendedMark(id, { home }), `${id} is held`);
+    const real = claudeCode.ownTranscript(file, { session: id, home: TEST_HOME });
+    assert.equal(liftAttended(id, real, { home, isHuman: claudeCode.humanPrompt }), true, id);
+    assert.equal(readUnattendedMark(id, { home }), null, `${id} is attended`);
+  }
   // An issue mark filed beside the lifted plain one later still holds: attendance lifts only the plain hold.
   const later = path.join(markFolder(), `${session.slice(0, 8)}.json`);
   writeFileSync(later, JSON.stringify({ root: dir, project: 'r1', issue: 'ENG-1', at: Date.now() }));

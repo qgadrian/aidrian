@@ -6,18 +6,19 @@
 // `.go` file. A nested package's tests are left out, since its own runner runs them. With no `testing.changedCommand`, the
 // files go to `node --test`, so a test file must also be a module node loads with no flag (NODE_MODULE); any other file
 // in a test folder, such as a fixture, is an input, and its tests are the ones that name it. A configured command gets
-// every changed file in a test folder that is on disk, outside a nested package, as it is, with no search for its users. With nothing to run it prints the
+// every changed file in a test folder that is a file on disk, outside a nested package, as it is, with no search for its users. With nothing to run it prints the
 // node runner's zero summary, so its row shows no test passed, and supports no claim.
 // The command is config.json `testing.changedCommand`, else `npm test --` when package.json has a test script, with the
 // files after it; its exit status is the command's.
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { CODE_FILE, TEST_FILE } from './check-runs.mjs';
 import { commandConfig } from './config.mjs';
+import { isFile } from './fs.mjs';
 import { currentRoot, runGit } from './git.mjs';
 import { findProject } from './project.mjs';
 import { remoteCopy } from './rules/push-first.mjs';
@@ -71,8 +72,8 @@ export function touchedTests(root, files, git = runGit, { nodeOnly = false } = {
   const packages = listed.filter((file) => file.includes('/') && path.posix.basename(file) === 'package.json').map((file) => `${path.posix.dirname(file)}/`);
   const isTest = (file) => TEST_FILE.test(file) && (!nodeOnly || NODE_MODULE.test(file));
   const ours = (file) => isTest(file) && !packages.some((folder) => file.startsWith(folder));
-  // On disk too: git still lists a tracked file deleted in the working tree until the deletion is staged.
-  const own = files.filter((file) => ours(file) && exists.has(file) && existsSync(path.join(root, file)));
+  // A file on disk too: git still lists a tracked file deleted, or replaced by a folder, until that is staged.
+  const own = files.filter((file) => ours(file) && exists.has(file) && isFile(path.join(root, file)));
   // No search for the users of a file the active runner gets as a test: under a configured command any file of `own`, as it
   // is; under `nodeOnly`, one of them named as a test. A helper `nodeOnly` runs, or a file left out of `own`, is searched for.
   const runs = new Set(own.filter((file) => !nodeOnly || NAMED_TEST.test(file)));

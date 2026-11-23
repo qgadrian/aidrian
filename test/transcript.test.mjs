@@ -12,7 +12,7 @@ import { priceFor } from '../plugins/aidrian/lib/model-prices.mjs';
 import { EXIT } from '../plugins/aidrian/lib/review/run.mjs';
 import { pathsProblem } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import {
-  aggregateUsage, estimateCostUsd, filesRead, gateVerdicts, partOf, REVIEW_EXITS, REVIEW_OUTPUT_STATUSES, SENT_BACK, sessionActions, subagentTranscripts, sumTokens, launchedTaskIds, turnActions,
+  aggregateUsage, estimateCostUsd, filesRead, gateVerdicts, partOf, REVIEW_OUTPUT_STATUSES, SENT_BACK, sessionActions, subagentTranscripts, sumTokens, launchedTaskIds, turnActions,
 } from '../plugins/aidrian/lib/transcript.mjs';
 
 // One transcript line: an assistant message with usage, as Claude Code writes it.
@@ -211,8 +211,6 @@ test('the statuses a review run is read by are every status aidrian pr review an
   for (const status of ['dispatch', 'blocked_quota', 'unsatisfied', 'stuck']) assert.ok(written.has(status), `the scan finds ${status} where aidrian pr review writes it`);
   const printed = new Set([...Object.keys(EXIT), ...written, ...statuses(wait, 'result'), ...exitCodes]);
   assert.deepEqual([...REVIEW_OUTPUT_STATUSES].sort(), [...printed].sort());
-  // A review sent to a file is read by its exit: every nonzero exit a review status sets, and no other.
-  assert.deepEqual([...REVIEW_EXITS].sort((a, b) => a - b), [...new Set(Object.values(EXIT).filter((code) => code !== 0))].sort((a, b) => a - b));
 
   // The real output of one of them reads as a run.
   const output = JSON.stringify(await awaitReview({ pr: '40', reviewer: null }, { git: {} }), null, 2);
@@ -302,11 +300,14 @@ test('turnActions names the pull request of each draft and review where the tran
     [{ kind: 'review', pr: 40 }], 'an edit of the pull request the turn reviewed is the loop`s own');
   assert.deepEqual(actions(turn.human('go'), loop('k1'), write('p1'), bash('e1', 'gh pr edit 41 --body-file b.md', 'https://github.com/acme/notes/pull/41')),
     [{ kind: 'review', pr: null }], 'a loop of no known pull request may be of any');
-  // A review that sends its JSON to a file prints none: it counts by the pull request it was given, error or not.
+  // A review that sends its JSON to a file prints none: it counts by the pull request it was given, when the call ended
+  // with no error.
   assert.deepEqual(actions(turn.human('go'), draftOpened('d1', 40), bash('r1', 'aidrian pr review 40 --with-bot > /s/tmp/pr40-r1.json', '')),
     [{ kind: 'draft', pr: 40 }, { kind: 'review', pr: 40 }], 'a review written to a file');
   assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr review 40 >> r.json', 'Exit code 10', true), bash('r2', 'aidrian pr review 41 &> r.json', '')),
-    [{ kind: 'review', pr: 40 }, { kind: 'review', pr: 41 }], 'a round that stopped at extension_check, and both streams to a file');
+    [{ kind: 'review', pr: 41 }], 'a round that stopped at extension_check owes its next step; both streams to a file count');
+  assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr await-review 40 --pr 41 --pr 42 > r.json', '')),
+    [{ kind: 'review', pr: 42 }], 'the last --pr wins over a word before it, as the command reads it');
   assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr review 40 2> err.log', 'Exit code 1', true), bash('r2', 'aidrian pr review 40 >&2', '')),
     [], 'only standard error to a file, or standard output to another descriptor, is no review');
   assert.deepEqual(actions(turn.human('go'), bash('r1', 'echo x > f; aidrian pr review 40', 'Exit code 1', true)), [],

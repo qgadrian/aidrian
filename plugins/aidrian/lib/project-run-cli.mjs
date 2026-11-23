@@ -38,6 +38,7 @@ import { sweepIssueReads } from './project-issue-text.mjs';
 import { lingeringStarts } from './project-linger.mjs';
 import { LOCKED } from './jsonl.mjs';
 import { preflightCommand, recheckLines, snapshotCheck } from './project-preflight.mjs';
+import { openPullHead } from './project-result.mjs';
 import { recordedCommand, reportCommand } from './project-report.mjs';
 import { runConfine } from './project-confine.mjs';
 import { haltOf, initRun, nextLines, planRun, readRun, runPlace, writeSummary } from './project-run.mjs';
@@ -122,7 +123,9 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
     if (values.project !== undefined && !sameMainCheckout(project, projectAt(cwd))) {
       return refused('init', '--project names a project outside the main checkout of the current folder; run init from that project');
     }
-    return initRun({ project, config, run, file: path.resolve(cwd, values.file), session: sessionIdentity(env).session, env, home });
+    // An old ledger's parked issue that recorded no head resumes from its open pull request's (project-run.mjs resumedIssues).
+    const pullHead = ({ pr, branch, repository }) => openPullHead({ forge: forge ?? forgeFor(project.root), repository, pr, branch });
+    return initRun({ project, config, run, file: path.resolve(cwd, values.file), session: sessionIdentity(env).session, env, home, pullHead });
   }
   if (action === 'preflight') return preflightCommand({ project, config, run: run ?? null, env, home, ...(forge ? { forge } : {}), ...(platform ? { platform } : {}), ...(exec ? { exec } : {}) });
   if (action === 'report') return reportCommand({ project, config, run, json: values.json === true, env, home });

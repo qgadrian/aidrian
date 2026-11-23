@@ -86,6 +86,50 @@ test('the stop hook spells the drop file as the result module does', () => {
   assert.equal(GUARD_DROP_FILE, DROP_FILE);
 });
 
+test('a result that parks the issue records the head the forge shows its branch at, which a later run resumes from; one that opens it again records none', (t) => {
+  const head = 'b'.repeat(40);
+  const parked = started(t);
+  const own = parked.forge.branchHead;
+  parked.forge.branchHead = (repo, branch, options) => (branch === 'feat/eng-1-export' ? head : own(repo, branch, options));
+  assert.deepEqual(parked.recorded({ status: 'blocked', stop: 'no access' }).out, ['result ENG-1 blocked -> parked blocked']);
+  assert.equal(parked.rows().find((row) => row.event === 'result').head, head);
+  // A forge that shows no such branch, or cannot answer, records no head, and the result is taken in all the same.
+  const unpushed = started(t);
+  unpushed.forge.branchHead = () => {
+    throw new Error('gh: HTTP 502');
+  };
+  assert.deepEqual(unpushed.recorded({ status: 'blocked', stop: 'no access' }).out, ['result ENG-1 blocked -> parked blocked']);
+  assert.equal(unpushed.rows().find((row) => row.event === 'result').head, null, 'a null head: no later run falls back to a pull request');
+  // An open pull request's result records the head its check read: a second read that differs, or fails, changes nothing.
+  for (const later of [() => 'c'.repeat(40), () => {
+    throw new Error('gh: HTTP 502');
+  }]) {
+    const open = started(t);
+    const own = open.forge.change;
+    open.forge.change = (ref, fields, options) => (ref === '12' ? { state: 'OPEN', headRefName: 'feat/eng-1-export', headRefOid: head, url: 'https://github.com/acme/widgets/pull/12', isCrossRepository: false } : own(ref, fields, options));
+    let reads = 0;
+    open.forge.branchHead = (repo, branch, options) => {
+      if (branch !== 'feat/eng-1-export') return null;
+      reads += 1;
+      return reads === 1 ? head : later();
+    };
+    assert.deepEqual(open.recorded({ status: 'pr_open', pr: 12, stop: 'review' }).out, ['result ENG-1 pr_open -> parked pr-open']);
+    assert.equal(open.rows().find((row) => row.event === 'result').head, head);
+    assert.equal(reads, 1, 'the branch is read once');
+  }
+  // A closed pull request still parks the issue as pr-open, but keeps no head, so no later run goes on from its branch.
+  const closed = started(t);
+  const theirs = closed.forge.change;
+  closed.forge.change = (ref, fields, options) => (ref === '12' ? { state: 'CLOSED', headRefName: 'feat/eng-1-export', headRefOid: head, url: 'https://github.com/acme/widgets/pull/12', isCrossRepository: false } : theirs(ref, fields, options));
+  closed.forge.branchHead = () => head;
+  assert.deepEqual(closed.recorded({ status: 'pr_open', pr: 12, stop: 'review' }).out, ['result ENG-1 pr_open -> parked pr-open']);
+  assert.equal(closed.rows().find((row) => row.event === 'result').head, null);
+  const failed = started(t);
+  failed.forge.branchHead = () => head;
+  assert.deepEqual(failed.recorded({ status: 'failed', pr: null, stop: 'flaky' }).out, ['result ENG-1 failed -> open']);
+  assert.equal(Object.hasOwn(failed.rows().find((row) => row.event === 'result'), 'head'), false);
+});
+
 test('a continuation of the issue\'s session records the result; a session of the chain whose mark names another issue does not', (t) => {
   const fx = started(t);
   const brief = path.join(fx.state, 'handoffs', '2026-11-17-eng-1.md');

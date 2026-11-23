@@ -253,8 +253,13 @@ export function stateWorkFolders(state, { env, home }) {
 // branch as it is and checks out the branch `fresh` from the tip instead, since no session no Human attends starts on
 // instructions no review saw (trustProblem): `branch` is the one checked out, and `superseded` names the one left,
 // { branch, sha, files }, else null. A head the tip already holds goes on from the tip, and a `fresh` name another
-// issue's branch takes (`reserved`) is { problem }. `env` is the environment of its network calls.
-export function prepareAttempt({ project, state, run, key, attempt, branch, fresh, reserved = new Set(), tip, env }) {
+// issue's branch takes (`reserved`) is { problem }. The first attempt of an issue an earlier run parked, with `resumed`
+// the commit that run recorded its branch at (project-run.mjs resumedIssues), is taken as a later one, but only on a
+// branch whose head on the forge is that commit or one after it, the work that run's sessions pushed; any other head is
+// { problem }, as a first attempt's branch on the forge is; a branch the forge no longer has is cut from the tip, as a
+// first attempt's. A null `resumed` is a plain first attempt. `onForge` says whether the attempt goes on on the issue's
+// branch as the forge has it. `env` is the environment of its network calls.
+export function prepareAttempt({ project, state, run, key, attempt, branch, fresh, reserved = new Set(), resumed = null, tip, env }) {
   const folder = attemptFolder(state, run, key, attempt);
   const [work, gitFolder, drop, cache] = ['work', 'git', 'drop', 'cache'].map((name) => path.join(folder, name));
   const main = project.checkouts.at(-1);
@@ -293,14 +298,20 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, fres
   let used = branch;
   let superseded = null;
   const listed = git(['ls-remote', '--exit-code', '--heads', 'origin', `refs/heads/${branch}`]);
-  // A first attempt cuts the branch fresh from the base tip: one the forge has already is someone else's work.
-  if (attempt === 1 && listed.status === 0) return gone(`the branch ${branch} is on the forge already, and a first attempt cuts it fresh from the base tip; delete it on the forge, or name the issue another branch, then start again`);
-  if (attempt === 1 && listed.status !== 2) return failed('ls-remote', listed);
-  if (attempt > 1) {
+  // A first attempt cuts the branch fresh from the base tip: one the forge has already is someone else's work, unless an
+  // earlier run parked the issue on it at a commit the branch still holds.
+  const own = attempt === 1 && typeof resumed === 'string' ? resumed : null;
+  const later = attempt > 1 || own !== null;
+  if (!later && listed.status === 0) return gone(`the branch ${branch} is on the forge already, and a first attempt cuts it fresh from the base tip; delete it on the forge, or name the issue another branch, then start again`);
+  if (!later && listed.status !== 2) return failed('ls-remote', listed);
+  if (later) {
     if (listed.status === 0) {
       const fetched = git(['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`]);
       if (fetched.status !== 0) return failed('fetch', fetched);
       from = `refs/remotes/origin/${branch}`;
+      // The earlier run's commit, or one after it: exit 1 is another history, and 128 a commit the fetch did not bring.
+      const ours = own ? git(['merge-base', '--is-ancestor', own, from]) : null;
+      if (ours && ours.status !== 0) return gone(`the branch ${branch} is on the forge at a head that does not hold ${own}, the commit an earlier run of this project recorded it at when it parked the issue, so it is not that run's work; delete it on the forge, or name the issue another branch, then start again`);
       const changed = git(['diff', '--name-only', '--no-renames', '-z', tip, from, '--']);
       if (changed.status !== 0) return failed('diff', changed);
       const guarded = changed.stdout.split('\0').filter((file) => file !== '' && isGuarded(file));
@@ -326,7 +337,8 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, fres
   const signing = signingProblem(work, env);
   if (signing) return { halt: gone(`the attempt's clone ${work} is not started: ${signing}`).problem };
   const plain = plainFolderProblem(drop) ?? plainFolderProblem(cache);
-  return plain ? gone(plain) : { folder, work, git: gitFolder, drop, cache, branch: used, superseded };
+  // `onForge`: the attempt goes on on the issue's branch the forge has, not one cut fresh, nor one the forge lacks.
+  return plain ? gone(plain) : { folder, work, git: gitFolder, drop, cache, branch: used, superseded, onForge: later && listed.status === 0 && superseded === null };
 }
 
 // The signing keys each attempt's clone turns off, in its own config and nowhere else, so the user's global and system

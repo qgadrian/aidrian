@@ -36,7 +36,7 @@ only after its answer, so the pull request stays a draft until the bot is clean.
   except that entries with `ingested: true` (images taken outside the tool, with a `source` and no facts) are opened
   and may be cited as `capture:<key>` too.
 - `record`: the command that records the pass, `aidrian pr attest <PR> --pass <id> --head <sha> --reviewer <who>
-  --findings-file <state>/tmp/review-<PR>/<pass>-<hash>.findings.json`, with `--verdicts <file.json>` when the pass judges flows. The step names that file
+  --findings-file <the file the step's record names>`, with `--verdicts <file.json>` when the pass judges flows. The step names that file
   under the state folder, outside every checkout, so the findings' text is never committed. The agent is read-only
   and writes no file: it returns each finding, with its axes and state, in the `findings` array of its final JSON.
   This session writes that array, as it is, to the file `record` names, then pipes the agent's final JSON to `record`,
@@ -69,6 +69,9 @@ crosses them.
 
 - `findings_merged[]` (split reviews): each mistake once, with the passes that reported it in `sources`.
 - `open[]`: passes with findings still open: `findings` lists them for a local model; the bot's are on the pull request.
+  A bot entry with `holds_finding`: the bot's status card of the head still holds a finding of its own. Read the bot's
+  current answer and its existing threads, resolved and outdated ones too, fix what still stands, and push. Resolving a
+  thread clears nothing; the bot's review of the next head does, once the finding is fixed.
 - `flows[]`: flows not signed off: `violated` invariants are findings to fix; `unverified` need a verdict with evidence.
   A `disputed` invariant has a `violated` verdict and another reviewer's `holds` or `not_affected` with evidence.
   When the fix is wrong, settle it through the entry's `settle` route below, else ask the Human which side is right,

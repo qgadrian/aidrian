@@ -18,7 +18,7 @@ import { baseReader } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { SETUP_DOC, SETUP_SECTIONS, setupDocUrl } from '../plugins/aidrian/lib/project-preflight.mjs';
 import { pluginRepository } from '../plugins/aidrian/lib/config-version.mjs';
 import { owedReports, reportBody, reportCalls, reportPolicy, runWriter, startedWrites } from '../plugins/aidrian/lib/project-report.mjs';
-import { readRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
+import { appendToRun, readRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { commitProblem } from '../plugins/aidrian/lib/project-start.mjs';
 import { bodyHash } from '../plugins/aidrian/lib/tracker-guard.mjs';
 import linear from '../plugins/aidrian/lib/trackers/linear.mjs';
@@ -941,6 +941,35 @@ test('init --check prints the order and blockers and writes no run; init comes l
   assert.match(fx.cmd(['preflight']).out.find((line) => line.startsWith('blocker run')) ?? '', /the run launch is still active/u);
   assert.ok(fx.cmd(['preflight', 'launch']).out.includes('ok run'), 'the run it checks for');
   assert.match(fx.cmd(['preflight', 'a', 'b']).err.at(-1), /project preflight takes at most one run id/u);
+});
+
+test('init --check counts a started issue an earlier run parked on the same branch as startable, and no other started issue', (t) => {
+  const fx = runFixture(t, { init: false, ...READY });
+  const input = (issues) => {
+    const file = path.join(fx.dir, `s${Math.random().toString(36).slice(2)}.input`);
+    writeFileSync(file, JSON.stringify({ issues, teams: ['ENG'] }));
+    return file;
+  };
+  const first = fx.cmd(['init', 'first', '--file', input([{ key: 'ENG-1', branch: 'feat/eng-1-export', status: 'unstarted' }, { key: 'ENG-2', branch: 'feat/eng-2-import', status: 'unstarted' }])]);
+  assert.equal(first.exitCode, 0, first.err.join('\n'));
+  const at = new Date().toISOString();
+  appendToRun(fx.state, 'first', () => ({ rows: ['ENG-1', 'ENG-2'].map((key) => ({ event: 'issue', key, state: 'parked', decision: 'pr-open', at })) }));
+  const check = (issues) => fx.cmd(['init', 'second', '--file', input(issues), '--check']);
+  const resumed = check([{ key: 'ENG-1', branch: 'feat/eng-1-export', status: 'started' }]);
+  assert.equal(resumed.exitCode, 0, resumed.out.join('\n'));
+  assert.ok(resumed.out.includes('resumed: 1 started issue an earlier run parked on the same branch, which this run starts again: ENG-1'), resumed.out.join('\n'));
+  assert.ok(resumed.out.includes('next ENG-1 feat/eng-1-export'), resumed.out.join('\n'));
+  // ENG-2 on another branch than the one the earlier run parked, and ENG-3, which no run parked: both stay blockers.
+  const held = check([{ key: 'ENG-2', branch: 'feat/eng-2-renamed', status: 'started' }, { key: 'ENG-3', branch: 'feat/eng-3-share', status: 'started' }]);
+  assert.equal(held.exitCode, 1);
+  assert.deepEqual(held.out.filter((line) => line.startsWith('blocker ')), ['blocker snapshot: ENG-2 is started in the tracker, which a run does not start from', 'blocker snapshot: ENG-3 is started in the tracker, which a run does not start from']);
+  assert.equal(held.out.some((line) => line.startsWith('resumed:')), false);
+  assert.equal(existsSync(runFolder(fx.state, 'second')), false, 'no run written');
+  // The same state folder once origin names another repository: the earlier run's work is not this one's.
+  fx.git('remote', 'set-url', 'origin', 'https://github.com/acme/gadgets.git');
+  const moved = check([{ key: 'ENG-1', branch: 'feat/eng-1-export', status: 'started' }]);
+  assert.equal(moved.exitCode, 1, moved.out.join('\n'));
+  assert.ok(moved.out.includes('blocker snapshot: ENG-1 is started in the tracker, which a run does not start from'), moved.out.join('\n'));
 });
 
 test('end refuses while an issue runs, naming it, and passes once none does', (t) => {

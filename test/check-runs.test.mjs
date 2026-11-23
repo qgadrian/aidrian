@@ -666,13 +666,19 @@ test('aidrian test changed finds the changed test files and the ones that name a
       'lib/b.mjs': 'export const b = 1;\n',
       'lib/widget.ts': 'export const w = 1;\n',
       'test/a.test.mjs': "import '../lib/a.mjs';\n",
-      'test/b.test.mjs': "import '../lib/b.mjs';\n",
+      'test/b.test.mjs': "import '../lib/b.mjs';\nconst fixture = 'test/fixtures/a.json';\njoin(FIXTURES, 'notes.md');\n",
       'test/widget.test.ts': "import { w } from '../lib/widget';\n",
       'pkg/sum.go': 'package pkg\n',
       'pkg/sum_test.go': 'package pkg\n',
       'other/x_test.go': 'package other\n',
       'mod/package.json': '{}',
       'mod/tests/a.test.tsx': "import '../../lib/a.mjs';\n",
+      'test/fixtures/a.json': '{"file": "lib/b.mjs"}\n',
+      'test/fixtures/notes.md': 'see lib/b.mjs\n',
+      'test/math.mjs': 'export {};\n',
+      'test/fixtures/frozen-clock.mjs': 'export {};\n',
+      'test/clock.test.mjs': "import './fixtures/frozen-clock.mjs';\nread('fixtures/expected.test.json');\n",
+      'test/fixtures/expected.test.json': '{}\n',
     },
   });
   git('push', '-q', 'origin', 'feat/x');
@@ -681,11 +687,23 @@ test('aidrian test changed finds the changed test files and the ones that name a
   assert.deepEqual(needlesOf('lib/hosts/index.mjs'), ['hosts/index.mjs', 'hosts/index']);
   assert.deepEqual(needlesOf('docs/hooks.md'), ['docs/hooks.md']);
   assert.deepEqual(needlesOf('test/a.test.mjs'), []);
+  assert.deepEqual(needlesOf('test/fixtures/frozen-clock.mjs'), ['frozen-clock.mjs', 'frozen-clock'], 'a helper in a test folder is searched for by its users');
   writeFileSync(path.join(dir, 'lib/a.mjs'), 'export const a = 2;\n');
   writeFileSync(path.join(dir, 'test/c.test.mjs'), 'new\n');
   assert.deepEqual(touchedTests(dir, ['lib/a.mjs', 'test/c.test.mjs']), ['test/a.test.mjs', 'test/c.test.mjs'], 'a nested package\'s tests are its own runner\'s');
   assert.deepEqual(touchedTests(dir, ['lib/widget.ts']), ['test/widget.test.ts'], 'an import with no extension');
   assert.deepEqual(touchedTests(dir, ['pkg/sum.go']), ['pkg/sum_test.go'], 'Go tests beside the changed file');
+  const nodeOnly = (files) => touchedTests(dir, files, undefined, { nodeOnly: true });
+  assert.deepEqual(touchedTests(dir, ['lib/b.mjs']), ['test/b.test.mjs', 'test/fixtures/a.json', 'test/fixtures/notes.md'], 'a configured command decides what it runs');
+  assert.deepEqual(nodeOnly(['lib/b.mjs']), ['test/b.test.mjs'], 'a fixture or Markdown file is no test module');
+  assert.deepEqual(nodeOnly(['test/fixtures/a.json']), ['test/b.test.mjs'], 'a changed fixture selects the tests that name it');
+  assert.deepEqual(nodeOnly(['lib/widget.ts']), [], 'a .ts test needs a configured command');
+  assert.deepEqual(nodeOnly(['test/math.mjs']), ['test/math.mjs'], 'any module in a test folder is a node test');
+  assert.deepEqual(nodeOnly(['test/fixtures/notes.md']), ['test/b.test.mjs'], 'a fixture joined to its folder by name');
+  assert.deepEqual(nodeOnly(['lib/a.mjs']), ['test/a.test.mjs'], 'a nested package\'s .tsx test stays out');
+  assert.deepEqual(nodeOnly(['test/fixtures/frozen-clock.mjs']), ['test/clock.test.mjs', 'test/fixtures/frozen-clock.mjs'], 'a changed helper selects the tests that import it');
+  assert.deepEqual(nodeOnly(['test/fixtures/expected.test.json']), ['test/clock.test.mjs'], 'a fixture named like a test selects the tests that read it');
+  assert.deepEqual([nodeOnly(['pkg/sum.go']), nodeOnly(['pkg/sum_test.go'])], [[], []], 'Go tests are a configured command\'s');
   assert.equal(testCommand(dir, {}), 'npm test --');
   assert.equal(testCommand(dir, { changedCommand: 'node --test' }), 'node --test');
   const listed = spawnSync(process.execPath, [CLI, 'test', 'changed', '--list'], { cwd: dir, env: ENV, encoding: 'utf8' });

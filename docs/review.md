@@ -334,7 +334,7 @@ This machine keeps one review record a repository and pull request number, in th
 `pr-<N>-review-<owner>--<name>.json`, keyed by the repository's own `<owner>/<name>` whichever remote is origin, so one
 checkout reviews `a/b#12` and `c/d#12` apart, and a record never changes file when the remotes change, as when
 `gh repo fork` renames origin to upstream. The attest record (`pr-<N>-<owner>--<name>.json`) and a dispatch's findings
-folder (`tmp/review-<N>-<owner>--<name>/`) are keyed the same way. Every reader gets its own repository's record or
+folder (`tmp/review-<N>-<owner>--<name>/`, led by the issue key in an issue session) are keyed the same way. Every reader gets its own repository's record or
 none: a bot request, `aidrian pr extend` and its rule, `aidrian pr waive`, `aidrian pr delegate` and its rule, the quota-fallback rule, a sign-off, an
 attest, the review step's notes of a held finding or an error, and the merge guard read only that one, and start fresh,
 or refuse, when there is none. A record under the old name `pr-<N>-review.json`, written before the key, is read for the
@@ -783,14 +783,14 @@ A project adds its own in `review.reviewers`:
   the base code runs with this machine's packages. A reviewer the pull request adds runs once it is merged.
   `codex-local` reads the checkout at the head.
 - `agent`: the command cannot start an agent, so it returns `dispatch` and the skill runs it and records the result with
-  `aidrian pr attest <PR> --pass <id> --head <sha> --reviewer <who> --findings-file <state>/tmp/review-<PR>/<pass>-<hash>.findings.json --verdicts -`, its
+  `aidrian pr attest <PR> --pass <id> --head <sha> --reviewer <who> --findings-file <the file the step's record names> --verdicts -`, its
   findings one by one in the file, which the dispatching session writes from the `findings` array of the agent's final
   JSON (the agent writes no file), and which the step names under the state folder, outside every checkout, so their text is
   never committed: the pass id with every character but a letter, digit, `.`, `_`, or `-` as `-`, its first 100
   characters, then the first 8 hex digits of the whole id's SHA-256, so two passes never share a file, in a folder
-  keyed by the pull request's repository, `review-<PR>-<owner>--<name>`, so two repositories' pull requests of one number never do either ([Findings one by one](#findings-one-by-one)), and the agent's final JSON on stdin: either the bare verdicts array or the whole `{ findings, verdicts, contracts, cross_notes }`
+  keyed by the pull request's repository, `review-<PR>-<owner>--<name>`, so two repositories' pull requests of one number never do either ([Findings one by one](#findings-one-by-one)); in a project run's issue session the folder leads with the issue key, `<key>-review-<PR>-<owner>--<name>`, since that session writes in `tmp/` only what is named for its issue ([Agent gates](hooks.md#agent-gates)), and the agent's final JSON on stdin: either the bare verdicts array or the whole `{ findings, verdicts, contracts, cross_notes }`
   object. `--verdicts FILE` reads a file instead; `--findings-file` takes a file only.
-  `aidrian worktree cleanup execute` removes the `review-<PR>/` folder once the pull request is merged or closed
+  `aidrian worktree cleanup execute` removes the findings folder `review-<PR>-<owner>--<name>/` once the pull request is merged or closed; from an issue session's `<key>-review-<PR>-<owner>--<name>/` it removes only the regular files named as above, `<pass>-<hash>.findings.json`, and the folder once it is empty, since that session names its own scratch for its key too
   ([Local state](project-folder.md#local-state)).
 
 **The security key.** A finding is a security finding when it is `critical` or `high`, when its reviewer set
@@ -891,9 +891,21 @@ the bot has answered, so a pull request is marked ready only on the bot's clean 
 posts its receipt comment, then adds a 👍 to the pull request about 4 seconds later. A clean answer leaves the bot's
 pass with no open finding: the receipt, matched on its layout (the `codex-review-receipt:v1` marker first, then text
 that opens with "Codex Review: Didn't find any major issues", and the reviewed commit), or a comment for a commit whose
-code review the bot's status card records as completed with no unresolved findings, where the card was last updated
-in this round, at or after the request, and no earlier than the comment. A comment that only quotes the phrase is not
-a receipt. The 👍 is never an answer: it names no commit, and the receipt it follows may name the head before a push,
+code review the bot's status card records as completed with `has_any_findings` and `has_unresolved_findings` both
+false, where the card was last updated in this round, at or after the request, and no earlier than the comment. That
+card, when there is one, decides over the receipt: the two flags are the bot's ledger of its findings that still stand
+at the reviewed commit, and a receipt speaks only of that run's new findings, so the bot can post one on a head whose
+card still holds an earlier finding. A receipt beside a completed card of its commit with either flag not false is no
+pass: the signal carries `holds_finding: true`, the bot's pass keeps one open finding, and `fix_required` marks that
+`open[]` entry `holds_finding`: the work is in the bot's answer and its threads that still stand. Only the bot's own
+later run clears the card, once the finding is fixed; resolving a thread does not. Such an answer is that head's
+answer: the wait ends `already_present` or `received` with `holds_finding`, and nothing, `--request` included, asks the
+bot about that head again. The loop fixes the finding and pushes, and the new head gets its request as usual. A receipt while the card
+still runs a code review, one named for that commit or last updated at or after the request, is no answer yet: the
+signal carries `card_pending: true`, and the wait goes on until the card completes or the wait times out, with
+`retry_recommended`. With no such card, as when it was last updated before the receipt and is completed, names another
+commit, or carries no state, the receipt decides as before. A comment that only quotes the phrase is not a receipt.
+The 👍 is never an answer: it names no commit, and the receipt it follows may name the head before a push,
 may predate the request, or may be one the read missed. A receipt answers the head when its 10-hex short commit is a
 prefix of it; a commit that shares that prefix reads as covered too, so this is no proof, and merge trust reads no
 receipt. A comment the status card vouches for answers the card's full commit, compared whole with the head; a card
@@ -1431,10 +1443,13 @@ for both: the waiver's read serves merge trust.
 
 1. **The review bot's verdict, on the forge.** The default branch's `github.reviewer`, read from GitHub, a bot account,
    passed exactly the merge's head: an approving review of that commit, or its own status card saying its code review of
-   that full commit completed and found nothing (`has_any_findings` false, since marking the bot's threads resolved
-   clears `has_unresolved_findings`), with every edit of the card the bot's, its last editor and anyone who deleted an
-   edit from its history included. A review of that commit by the bot in any other state, a dismissed one included,
-   keeps it off. A clean receipt or a 👍 never counts. The receipt names a 10-hex short commit, which a commit ground to
+   that full commit completed and found nothing (`has_any_findings` and `has_unresolved_findings` both false), with
+   every edit of the card the bot's, its last editor and anyone who deleted an edit from its history included. The two
+   flags are the bot's ledger of its findings that still stand at that commit, equal on every card seen: the bot clears
+   both itself on a later run once its findings are fixed, and neither a receipt nor a resolved thread clears them, so a
+   card of the head with either flag not false is refused with that reason. A pull request the bot commented on merges
+   unattended once the bot's card of the head reads both flags false. A review of that commit by the bot in any other
+   state, a dismissed one included, keeps it off. A clean receipt or a 👍 never counts. The receipt names a 10-hex short commit, which a commit ground to
    share it matches (about 2^40 hashes), and the forge gives no push time of a fast-forward push that would bind it to
    the head: GraphQL's `Commit.pushedDate` is always null and a pull request's commits carry no date. The 👍 names no
    commit, and lands seconds after the receipt, so after a push it answers the head before it. A pull request the bot

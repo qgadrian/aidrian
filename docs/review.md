@@ -1438,7 +1438,9 @@ for both: the waiver's read serves merge trust.
    share it matches (about 2^40 hashes), and the forge gives no push time of a fast-forward push that would bind it to
    the head: GraphQL's `Commit.pushedDate` is always null and a pull request's commits carry no date. The 👍 names no
    commit, and lands seconds after the receipt, so after a push it answers the head before it. A pull request the bot
-   passed only with a receipt is the Human's to merge. The check holds whatever the record's outcome: a `none_needed`
+   passed only with a receipt is the Human's to merge. `aidrian pr await-review` says so in its result's `merge_note`
+   when the bot's clean answer on the head is one this check does not count, and asks the bot nothing more: once the bot
+   has found something on a pull request, its card keeps `has_any_findings` true, so a new request cannot change it. The check holds whatever the record's outcome: a `none_needed`
    pull request merges unattended only once the bot is requested on it, with `aidrian pr await-review <PR> --request`,
    and has passed. With no bot set, the check is off with no route: a session no Human attends merges nothing, and the
    refusal says to set `github.reviewer` on the default branch, or that the Human merges. One GraphQL call reads it, the

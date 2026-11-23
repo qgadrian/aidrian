@@ -61,7 +61,7 @@ Up to config.json `github.maxReviewRounds` rounds, or the number the Human set a
 
    | Exit | State | In this run |
    | --- | --- | --- |
-   | 0 | `received` or `already_present` | the loop triages it with the other comments |
+   | 0 | `received` or `already_present` | the loop triages it with the other comments; a `merge_note` means a person merges it |
    | 0 | `no_reviewer` | no bot: config.json `github.reviewer` is `null` or `"none"`. Ask no more; the `pr-review` skill runs every round |
    | 2 | `timed_out` | after the loop's single retry, record `timed_out`; the `pr-review` skill runs this round |
    | 3 | `blocked_quota` | ask the bot no more in this run; the `pr-review` skill runs this round and each later one |

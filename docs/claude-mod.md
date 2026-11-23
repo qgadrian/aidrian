@@ -147,7 +147,7 @@ JSON. Save this as `~/.claude/aidrian-statusline.mjs`:
 ```js
 // The aidrian session line for Claude Code's status line: node ~/.claude/aidrian-statusline.mjs
 import { spawnSync } from 'node:child_process';
-import { readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
@@ -158,12 +158,17 @@ try {
   const installed = JSON.parse(readFileSync(path.join(config, 'plugins/installed_plugins.json'), 'utf8'));
   const entries = installed.plugins['aidrian@aidrian-harness'] ?? [];
   // The install for this folder: of the local and project entries whose real folder holds it, and the user entry, the
-  // newest version, as Claude Code runs it. Two entries of one version run the same cli, so a tie needs no order.
+  // newest version whose cli is there, as Claude Code runs it. Two entries of one version run the same cli, so a tie
+  // needs no order.
   const real = (folder) => { try { return realpathSync(folder); } catch { return null; } };
   const here = real(cwd);
   const holds = (entry) => entry.scope === 'user' || (['local', 'project'].includes(entry.scope)
     && real(entry.projectPath) !== null && (here === real(entry.projectPath) || here?.startsWith(`${real(entry.projectPath)}/`)));
-  const version = (entry) => String(entry.version ?? path.basename(entry.installPath)).split('.').map(Number);
+  const version = (entry) => {
+    const text = String(entry.version ?? path.basename(String(entry.installPath)));
+    return /^\d+(\.\d+)*$/u.test(text) ? text.split('.').map(Number) : [];
+  };
+  const runs = (entry) => existsSync(path.join(String(entry.installPath), 'lib/cli.mjs'));
   const newer = (a, b) => {
     const [x, y] = [version(a), version(b)];
     for (let index = 0; index < Math.max(x.length, y.length); index += 1) {
@@ -171,7 +176,7 @@ try {
     }
     return 0;
   };
-  const entry = entries.filter(holds).sort(newer)[0];
+  const entry = entries.filter((one) => holds(one) && runs(one)).sort(newer)[0];
   const args = [path.join(entry.installPath, 'lib/cli.mjs'), 'session', 'snapshot', '--line'];
   if (typeof input.session_id === 'string') args.push(`--session=${input.session_id}`);
   if (typeof input.transcript_path === 'string') args.push(`--transcript=${input.transcript_path}`);
@@ -196,9 +201,10 @@ And point the status line at it in `~/.claude/settings.json`:
 
 - **Finding the command.** The script runs `aidrian session snapshot` as the `aidrian` command does, by `node` on the
   plugin's `lib/cli.mjs`. It takes the install path Claude Code records in `installed_plugins.json`: of the entries
-  whose real folder holds the session's folder and the user entry, the newest version, as the mod picks it. Two
-  entries of one version run the same cli, so unlike the mod it breaks no tie. So it needs no
-  `aidrian` on the status line's PATH: the plugin's `bin/` is on the PATH of Claude Code's Bash tool, which the status
+  whose real folder holds the session's folder and the user entry, the newest version whose `lib/cli.mjs` is there,
+  as the mod picks it; a version that is not numbers ranks last. Two entries of one version run the same cli, so
+  unlike the mod it breaks no tie, and it checks no link or cache folder as the mod does: it is a sample to adapt.
+  It needs no `aidrian` on the status line's PATH: the plugin's `bin/` is on the PATH of Claude Code's Bash tool, which the status
   line need not share.
 - **PATH.** The status line's PATH must hold `node`, `git`, and `gh`: the snapshot runs `git` and `gh` by name from
   the PATH it finds. Unlike the mod, which runs programs only from PATH folders outside the session's folder, it

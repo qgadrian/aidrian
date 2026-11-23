@@ -38,5 +38,7 @@ test('the documented status line script runs the newest install that holds the f
   assert.equal(run([user, local], project, base), 'cli 1.2.3', 'whatever the file order');
   const fresh = { ...local, installPath: newer, version: '1.2.3' };
   assert.equal(run([fresh, { ...user, installPath: older, version: '1.2' }], link, base), 'cli 1.2.3', 'a folder reached through a link still holds');
+  assert.equal(run([{ ...fresh, version: 'unknown', installPath: older }, user], project, base), 'cli 1.2.3', 'a version that is not numbers ranks last');
+  assert.equal(run([{ ...user, installPath: path.join(base, 'gone') }, local], project, base), 'cli 1.2', 'an install whose cli is gone is skipped');
   assert.equal(run([{ ...fresh, scope: 'other' }, { ...user, installPath: older, version: '1.2' }], project, base), 'cli 1.2', 'an unknown scope holds nothing');
 });

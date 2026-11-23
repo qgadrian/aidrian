@@ -110,6 +110,15 @@ test('atCap: off, and the ceiling, stop without reading the history; a grant cou
   assert.equal(grantedRounds(state, 'plan', { mode: 'auto', max: 0 }), 0, 'the ceiling clamps');
   const ceiling = atCap({ state, source: 'plan', round: 4, head: 'h', policy: { mode: 'auto', max: 1 }, history: unread, pr: 7 });
   assert.deepEqual([ceiling.status, ceiling.extension.by], ['round_limit', 'ceiling']);
+  // With the repository known, a round_limit carries the one question the review-rounds rule reads as the grant.
+  const named = atCap({ state, source: 'plan', round: 4, head: 'h', policy: { mode: 'auto', max: 1 }, history: unread, pr: 7, repo: 'o/r', repoArg: ' --repo o/r' });
+  assert.deepEqual([named.question, named.options[0], named.raise], [
+    'Pull request o/r#7 reached its review-round cap. Allow one more review round, with --max-rounds 4?',
+    'Approve one more round (--max-rounds 4)',
+    'AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 7 --max-rounds 4 --repo o/r',
+  ], 'four rounds ran, one of them granted: --max-rounds 4 plus that grant allows a fifth');
+  const off = atCap({ state, source: 'bot', round: 3, head: 'h', policy: { mode: 'off', max: 2 }, history: unread, pr: 7, repo: 'o/r' });
+  assert.equal(off.raise, 'AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr await-review 7 --request --max-rounds 4');
 });
 
 test('atCap: the judge`s verdict and the Human`s answer move one entry, and only a waiting one', () => {
@@ -367,7 +376,12 @@ test('the review-extend rule says why the transcript`s answers do not approve th
   g.write(g.answer('Grant one more round to #57 and #58?', 'Approve'));
   assert.match(deny(), /no question answered since the judge's verdict names #12/u);
   g.write(g.answer('Grant one more round to #12?', 'Approve'));
-  assert.match(deny(), /the questions naming #12 do not name "round 3"/u);
+  assert.match(deny(), /neither the questions naming #12 nor the options the Human chose name "round 3"/u);
+  // A question reworded in plain words still approves when the chosen option names the round.
+  g.write(g.answer('Grant a third review round on #12?', 'Approve round 3'));
+  assert.equal(g.run('aidrian pr extend 12 --human approve'), null, 'the chosen option names the round');
+  g.write(g.answer('Grant a third review round on #12?', 'Approve round 30'));
+  assert.match(deny(), /nor the options the Human chose name "round 3"/u);
   g.write(g.answer(QUESTION, 'Deny'));
   assert.match(deny(), /the Human picked "Deny"/u);
   assert.equal(mismatch([{ question: QUESTION, answer: 'Approve round 3', at: null }], { pr: 12, round: 3 }), null);
@@ -540,18 +554,25 @@ test('a held summary comment: aidrian pr extend and await-review fail on a machi
   assert.equal(stateFromComment(bot.issue[0].body, 42).extensions[0].status, 'asking');
 });
 
-test('await-review at the cap: a push after the judge`s verdict sends the check back to the judge, and a stale approval is refused', async (t) => {
+// The fix of the last round is often pushed while the Human's answer is still to come: with no new red flag, the
+// question keeps waiting on the new head, and the Human's approval records with no second judge run.
+test('await-review at the cap: a push with no new red flag keeps the Human`s question waiting, and a stale approval is refused', async (t) => {
   const bot = botProject(t);
   await bot.run(converging);
   await bot.extend(['--verdict', 'extend', '--reason', 'valid']);
   assert.equal((await bot.run(converging)).out.status, 'extension_ask');
+  bot.move('b1b1b1b1');
+  await assert.rejects(bot.extend(['--human', 'approve']), /the pull request is at b1b1b1b now: run the review step again, which reads the signals on the new head and, with no new red flag, keeps a question to the Human waiting/u);
   const moved = await bot.run(converging, { at: 'b1b1b1b1' });
-  assert.deepEqual([moved.out.status, moved.out.extension.status], ['extension_check', 'judging'], 'the judge has not seen b1b1b1b1');
-  assert.match(moved.out.dispatch[0].record, /--head b1b1b1b1$/u);
-  await bot.extend(['--verdict', 'extend', '--reason', 'still valid', '--head', 'b1b1b1b1']);
+  assert.deepEqual([moved.out.status, moved.out.extension.status, moved.out.extension.judge?.verdict], ['extension_ask', 'asking', 'extend'], 'the judge`s extend stands on b1b1b1b1');
   bot.move('c2c2c2c2');
   await assert.rejects(bot.extend(['--human', 'approve']), /the check was for b1b1b1b, and the pull request is at c2c2c2c now/u);
   assert.equal(await bot.extend(['--human', 'deny']), 0, 'a deny needs no head');
+  const again = botProject(t);
+  await again.run(converging);
+  await again.extend(['--verdict', 'extend', '--reason', 'valid']);
+  assert.equal((await again.run(converging, { at: 'd3d3d3d3' })).out.status, 'extension_ask');
+  assert.equal(await again.extend(['--human', 'approve']), 0, 'the approval records after the fix was pushed, with no second judge run');
 });
 
 test('await-review --request at the cap: a head the bot has not reviewed reaches the judge as such, and a stop says so', async (t) => {

@@ -269,6 +269,24 @@ export const askQuestion = (pr, round, unreviewed = null, flags = [], repo = nul
 };
 export const askOptions = (round) => [`Approve round ${round}`, 'Deny'];
 
+// What a `round_limit` carries for the Human, so the one question at the cap is the one the review-rounds rule
+// (lib/rules/github/review-rounds.mjs) reads as the grant: `question` names `<owner>/<name>#<PR>` and `--max-rounds <N>`,
+// the first of `options` starts with "Approve", and `raise` is the one command that answer approves, ending in
+// `repoArg` where the checkout's remotes name several repositories. `<N>` allows one more round: the cap is the
+// --max-rounds baseline plus the rounds `granted`, so it is `round + 1 - granted`. A second round needs a new answer.
+// `source` "bot" raises `aidrian pr await-review --request`, else `aidrian pr review`, which takes `--with-bot` before
+// `--max-rounds` when the step ran the bot. Nothing without the repository: the rule needs it named.
+export function raiseAsk({ pr, repo, repoArg = '', source, round, granted = 0 }) {
+  if (!repo || !Number.isInteger(pr) || !Number.isInteger(round)) return {};
+  const next = Math.max(1, round + 1 - granted);
+  const step = source === 'bot' ? `aidrian pr await-review ${pr} --request` : `aidrian pr review ${pr}`;
+  return {
+    question: `Pull request ${repo}#${pr} reached its review-round cap. Allow one more review round, with --max-rounds ${next}?`,
+    options: [`Approve one more round (--max-rounds ${next})`, 'Stop at the cap'],
+    raise: `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 ${step} --max-rounds ${next}${repoArg}`,
+  };
+}
+
 const JUDGE_BRIEF =
   'Read-only. Decide whether this pull request earns one more review round past its cap. Read `extension.history` (each ' +
   "round's open findings, their files and lines, and each fix's size), `extension.files`, the goal in `extension.goal`, " +
@@ -314,8 +332,10 @@ const PENDING = new Set(['judging', 'asking', 'granted']);
 
 // A pending decision whose head is not `head` any more is re-read on the new head: a push after the judge's verdict
 // can grow the fixes past the bloat limit, and the verdict and any approval were for the head before. A new red flag
-// sends it back to the judge, a grant included, and so does a check waiting for the Human: the judge has not seen
-// the push. A grant with no new red flag stands, as one round for the fix it was given for. Returns the entry, or null.
+// sends it back to the judge, a grant or a check waiting for the Human included. With no new red flag, a grant stands,
+// as one round for the fix it was given for, and so does a check waiting for the Human, on the new head: the push is
+// most often the very fix the extra round would review, and the Human's answer, given or still to come, records with
+// no second judge run. Returns the entry, or null.
 export function revalidate({ state, source, round, head, history, log = () => {}, now = () => new Date().toISOString() }) {
   const entry = (state?.extensions ?? []).find((each) => each.source === source && each.round === round && PENDING.has(each.status));
   if (!entry || !head || sameCommit(entry.head, head)) return entry ?? null;
@@ -334,11 +354,11 @@ export function revalidate({ state, source, round, head, history, log = () => {}
   const known = new Set((entry.red_flags ?? []).map(flagName));
   const fresh = sig.reasons.filter((reason) => !known.has(flagName(reason)));
   entry.red_flags = sig.reasons;
-  if (fresh.length || entry.status === 'asking') {
+  if (fresh.length) {
     if (entry.judge) entry.stale_judge = entry.judge;
     delete entry.judge;
     delete entry.human;
-    decide('judging', null, fresh.length ? [...fresh, `read again on ${String(head).slice(0, 7)}, pushed after the decision on ${String(before).slice(0, 7)}`] : []);
+    decide('judging', null, [...fresh, `read again on ${String(head).slice(0, 7)}, pushed after the decision on ${String(before).slice(0, 7)}`]);
   }
   return entry;
 }
@@ -351,7 +371,7 @@ export function revalidate({ state, source, round, head, history, log = () => {}
 // no signals, the ceiling or one made on an earlier head, asks it whether the head now is one no round reviewed.
 // `log(row)` gets each new decision.
 export function atCap({ state, source, round, head, policy, history: readHistory, lastReviewed = null, pr, repo = null, repoArg = '', goal = null, command, log = () => {}, now = () => new Date().toISOString() }) {
-  if (policy.mode === 'off') return { status: 'round_limit', extension: { status: 'off', mode: 'off' } };
+  if (policy.mode === 'off') return { status: 'round_limit', extension: { status: 'off', mode: 'off' }, ...raiseAsk({ pr, repo, repoArg, source, round }) };
   let cached = null;
   const history = () => (cached ??= readHistory());
   const granted = grantedRounds(state, source, policy);
@@ -427,7 +447,7 @@ export function atCap({ state, source, round, head, policy, history: readHistory
     };
   }
   // The cap stands on a head no round reviewed: said in the result, and in the summary comment's Extra rounds list.
-  return { status: 'round_limit', extension: summary, ...(sameCommit(entry.unreviewed?.head, head) ? { unreviewed_head: true } : {}) };
+  return { status: 'round_limit', extension: summary, ...(sameCommit(entry.unreviewed?.head, head) ? { unreviewed_head: true } : {}), ...raiseAsk({ pr, repo, repoArg, source, round, granted }) };
 }
 
 // The entry that waits for `status` ("judging" or "asking"): the latest one.
@@ -436,7 +456,7 @@ export const waiting = (state, status) => (state?.extensions ?? []).filter((entr
 // A decision is for the head its signals were read on: refused when the pull request has moved since.
 function sameHead(entry, current) {
   if (current !== undefined && current !== null && !sameCommit(current, entry.head)) {
-    throw new Error(`the check was for ${String(entry.head).slice(0, 7)}, and the pull request is at ${String(current).slice(0, 7)} now: run the review step again, which reads the signals on the new head`);
+    throw new Error(`the check was for ${String(entry.head).slice(0, 7)}, and the pull request is at ${String(current).slice(0, 7)} now: run the review step again, which reads the signals on the new head and, with no new red flag, keeps a question to the Human waiting, so the same answer then records here`);
   }
 }
 

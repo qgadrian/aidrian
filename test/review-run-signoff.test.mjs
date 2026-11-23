@@ -373,7 +373,7 @@ const bloat = (r) => {
   return r.commit('a large fix');
 };
 
-test('extra rounds: a push after the judge`s extend is read again; a new red flag goes back to the judge, and a stale approval is refused', async (t) => {
+test('extra rounds: a push after the judge`s extend is read again; a new red flag goes back to the judge, none keeps the question, and a stale approval is refused', async (t) => {
   const { r, capped } = await toTheCap(t, {});
   await extend(t, r, ['--verdict', 'extend', '--reason', 'valid', '--head', capped.head]);
   assert.equal((await r.step({ exec: clean })).status, 'extension_ask');
@@ -388,8 +388,9 @@ test('extra rounds: a push after the judge`s extend is read again; a new red fla
   clean2.r.write('src/booking/a.js', '3\n');
   const small = clean2.r.commit('a small fix');
   const back = await clean2.r.step({ exec: clean });
-  assert.deepEqual([back.status, back.extension.status], ['extension_check', 'judging'], 'the judge has not seen the push');
-  assert.match(back.dispatch[0].record, new RegExp(`--head ${small}$`, 'u'));
+  assert.deepEqual([back.status, back.extension.status], ['extension_ask', 'asking'], 'a push with no new red flag keeps the question waiting');
+  const approved = await extend(t, clean2.r, ['--human', 'approve']);
+  assert.deepEqual([approved.code, approved.out.extension.status, approved.out.extension.head], [0, 'granted', small], 'the approval records on the pushed head with no second judge run');
 });
 
 // A quiet push moves a round to a new head. The checks at the cap still measure the round from the head it first

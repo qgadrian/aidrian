@@ -3,8 +3,8 @@
 // `github.extraRounds: "ask"` (lib/review/extension.mjs). The rule lets it run only when this session's transcript holds
 // the Human's answer to the question `extension_ask` printed: an AskUserQuestion answer, given after the judge's
 // verdict, to a question naming the pull request with the repository the call acts on (`<owner>/<name>#<PR>`;
-// `#<PR>` alone in a checkout with no remote) and the round it grants (`round <N>`), whose chosen option starts with
-// "Approve". That repository is the call's `--repo`, one of this checkout's remotes, else the one repository the remotes
+// `#<PR>` alone in a checkout with no remote), whose chosen option starts with "Approve", where the question or that
+// option names the round it grants (`round <N>`). That repository is the call's `--repo`, one of this checkout's remotes, else the one repository the remotes
 // name; a checkout whose remotes name several needs the `--repo` (review-signoff.mjs callRepo), and the record read is
 // that repository's. The host writes that answer to the transcript, a file in the agent's own account, so an agent
 // with a shell could forge one there: a residual this rule accepts.
@@ -182,8 +182,8 @@ function humanText(entry) {
 export const approved = (answers, query) => mismatch(answers, query) === null;
 
 // Why `answers` hold no approval of round `round` of pull request `pr` given at or after `since`, or null when they do.
-// It names the nearest miss: no answer, none after the verdict, none naming the pull request, none naming the round,
-// or the label the Human picked. With `repo`, the question names `<repo>#<PR>`, the repository the call acts on; with
+// It names the nearest miss: no answer, none after the verdict, none naming the pull request, none whose question or
+// chosen option names the round, or the label the Human picked. With `repo`, the question names `<repo>#<PR>`, the repository the call acts on; with
 // none, in a checkout with no remote, `#<PR>`.
 export function mismatch(answers, { pr, round, since = null, repo = null }) {
   const plain = new RegExp(`#${pr}(?!\\d)`, 'u');
@@ -195,8 +195,10 @@ export function mismatch(answers, { pr, round, since = null, repo = null }) {
   if (!after.length) return `no AskUserQuestion answer came after the judge's verdict at ${since}`;
   const onPr = after.filter((each) => names.test(each.question));
   if (!onPr.length) return `no question answered since the judge's verdict names ${named}`;
-  const onRound = onPr.filter((each) => grants.test(each.question));
-  if (!onRound.length) return `the questions naming ${named} do not name "round ${round}"`;
+  // The round may be named by the question or by the option the Human chose, as "Approve round 4" under a question
+  // reworded to "Grant a fourth review round?".
+  const onRound = onPr.filter((each) => grants.test(each.question) || grants.test(each.answer));
+  if (!onRound.length) return `neither the questions naming ${named} nor the options the Human chose name "round ${round}"`;
   if (onRound.some((each) => /^\s*approve\b/iu.test(each.answer))) return null;
   return `the Human picked "${onRound.at(-1).answer}", not the option that starts with "Approve"`;
 }

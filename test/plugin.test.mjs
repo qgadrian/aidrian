@@ -1948,3 +1948,13 @@ test('the Claude mod ignores the types Claude Code writes when it loads it', () 
   const ignored = spawnSync('git', ['check-ignore', '-q', 'plugins/aidrian-claude-mod/.claude-plugin/types/claude-code/index.d.ts'], { cwd: ROOT });
   assert.equal(ignored.status, 0);
 });
+
+// The Human answered the round-limit question once, and the hook asked again in another shape: the skill now asks the
+// one question the step prints, which the review-rounds rule reads as the grant.
+test('pr-review-loop asks the round_limit question word for word, and runs its raise on "Approve"', () => {
+  const skill = readFileSync(path.join(PLUGIN, 'skills/pr-review-loop/SKILL.md'), 'utf8');
+  assert.match(skill, /^\| `extension_check`, `extension_ask`, `blocked_quota`, `round_limit` \| run the judge, or ask the Human `question`, as `references\/review-plan\.md` says \|$/mu);
+  const plan = readFileSync(path.join(PLUGIN, 'skills/pr-review-loop/references/review-plan.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(plan, /With `question` and `options`, report the open findings, then ask the Human that question with AskUserQuestion, the options word for word/);
+  assert.match(plan, /On "Approve", run `raise` exactly as printed, as one plain command/);
+});

@@ -138,6 +138,9 @@ test('a subagent may still read those files and write anything else, and the mai
       "node -e \"const r = require('./.aidrian/config.json'); console.log(r['github'].autoMerge)\"",
       "node -e \"const r = JSON.parse(require('fs').readFileSync('.aidrian/config.json', 'utf8')); console.log(JSON.stringify(r.agents, null, 2))\"",
       "python3 -c \"import json; r = json.load(open('.aidrian/config.json')); print(r['agents'])\"",
+      // The same reads over several lines.
+      "node - <<'EOF'\nconst r =\n  require('./.aidrian/config.json');\nconsole.log(r.agents)\nEOF",
+      "python3 - <<'EOF'\nimport json\nr = json.load(\n  open('.aidrian/config.json'))\nprint(r['agents'])\nEOF",
     ].map((command) => ['Bash', { command }]),
   ];
   for (const [tool, toolInput] of allowed) assert.equal(verdict(dir, subagent(dir, tool, toolInput)), null, `${tool} ${JSON.stringify(toolInput)}`);
@@ -198,6 +201,9 @@ test('a write to an unknown folder, or code an interpreter runs, is judged by th
     ["python3 -c \"open = lambda p: __import__('os').remove(p); open('.aidrian/config.json').read()\"", '.aidrian/config.json'],
     ["node -e \"const fs = { readFileSync: require('fs').unlinkSync }; fs.readFileSync('.aidrian/config.json')\"", '.aidrian/config.json'],
     ["python3 -c \"open('.aidrian/config.json', 'w').read()\"", '.aidrian/config.json'],
+    // A write after a read on the next line, or inside brackets over several lines.
+    ["node - <<'EOF'\nconst r = require('./x.json')\nrequire('fs').unlinkSync('.aidrian/config.json')\nEOF", '.aidrian/config.json'],
+    ["python3 - <<'EOF'\nprint(\n  open('.aidrian/config.json', 'w'))\nEOF", '.aidrian/config.json'],
     // A binding that would turn a later read into another call.
     ["node -e \"const readFileSync = require('child_process').execSync; readFileSync('rm .aidrian/config.json')\"", '.aidrian/config.json'],
     ["node -e \"var JSON = require('./x.json'); console.log(JSON.parse(require('fs').readFileSync('.aidrian/config.json')))\"", '.aidrian/config.json'],

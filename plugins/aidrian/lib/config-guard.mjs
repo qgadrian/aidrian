@@ -617,8 +617,31 @@ function interpretedCode(command) {
 
 // Whether every statement of `code`, split at `;` and line ends, is one `reads` matches.
 function onlyReads(code, reads) {
-  const statements = code.split(/[;\n]/u).map((each) => each.trim()).filter(Boolean);
+  const statements = statementsOf(code).map((each) => each.replace(/\s+/gu, ' ').trim()).filter(Boolean);
   return statements.length > 0 && statements.every((each) => reads.test(each));
+}
+
+// `code` split at each `;` and line end outside quotes and brackets, except a line end right after `=`, so a read
+// written over several lines, as `const r =\n  require(p)` or `json.load(\n  open(p))`, is one statement.
+function statementsOf(code) {
+  const statements = [];
+  let current = '';
+  let quote = null;
+  let depth = 0;
+  for (const char of code) {
+    if (quote) {
+      if (char === quote) quote = null;
+    } else if (char === "'" || char === '"') quote = char;
+    else if ('([{'.includes(char)) depth += 1;
+    else if (')]}'.includes(char)) depth = Math.max(0, depth - 1);
+    else if (depth === 0 && (char === ';' || (char === '\n' && !current.trimEnd().endsWith('=')))) {
+      statements.push(current);
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+  return [...statements, current];
 }
 
 function blocked(input, file, verb, human) {

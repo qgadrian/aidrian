@@ -249,8 +249,8 @@ function droppedPullProblem({ forge, repository, result, branch, since, verified
   let again;
   try {
     again = forge.change(String(result.pr), 'state', { repo: `${repository.host}/${named}` });
-  } catch {
-    return { retry: true };
+  } catch (error) {
+    return changeNotFound(error) ? `the forge has no pull request #${result.pr} in ${repository.host}/${named}` : { retry: true };
   }
   if (again?.state === 'MERGED') return merged();
   verified.head = again?.state === 'CLOSED' ? null : head;

@@ -214,6 +214,17 @@ test('merged is kept only when the forge shows the pull request merged from the 
   flaky.forge.branchHead = () => head;
   assert.deepEqual(flaky.recorded({ status: 'pr_open', pr: 12, stop: 'review' }).out, ['running ENG-1']);
   assert.equal(flaky.rows().filter((row) => row.event === 'result').length, 0, 'read again on a later wait');
+  // A second read the forge answers with no such pull request ends the attempt at once, as the first read's would.
+  const gone = started(t);
+  const fixture = gone.forge.change;
+  let asked = 0;
+  gone.forge.change = (ref, fields, options) => {
+    asked += 1;
+    return asked === 1 ? merged({ state: 'OPEN', mergedAt: null, headRefOid: head }) : fixture(ref, fields, options);
+  };
+  gone.forge.branchHead = () => head;
+  assert.deepEqual(gone.recorded({ status: 'pr_open', pr: 12, stop: 'review' }).out, ['ended ENG-1 bad_result -> open']);
+  assert.equal(gone.rows().find((row) => row.event === 'ended').why, 'the forge has no pull request #12 in github.com/acme/widgets');
   const failing = started(t);
   assert.deepEqual(failing.recorded({ status: 'merged', pr: 12 }).out, ['ended ENG-1 bad_result -> open']);
   assert.equal(failing.rows().find((row) => row.event === 'ended').why, 'the forge has no pull request #12 in github.com/acme/widgets');

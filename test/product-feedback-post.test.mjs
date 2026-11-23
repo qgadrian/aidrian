@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
 
-import { heldFolders, noteFeedbackFolder, recordPath, stateOfFeedbackFile } from '../plugins/aidrian/lib/feedback-record.mjs';
+import { heldFolders, noteFeedbackFolder } from '../plugins/aidrian/lib/feedback-record.mjs';
 import { check } from '../plugins/aidrian/lib/rules/product-feedback-post.mjs';
 
 process.env.XDG_STATE_HOME = mkdtempSync(path.join(tmpdir(), 'aidrian-state-'));
@@ -127,11 +127,7 @@ test('a call whose project it cannot read is held when the only feedback is in a
   assert.equal(heldFolders(root).length, 1);
   noteFeedbackFolder(path.join(root, 'projects/team/custom'), root);
   noteFeedbackFolder(path.join(held.dir, 'spaced '), root);
-  assert.deepEqual(new Set(heldFolders(root)), new Set([path.join(held.dir, 'state'), path.join(root, 'projects/team/custom'), path.join(held.dir, 'spaced ')]));
-  // A record's state folder is read from its fixed depth, whatever its owner or name is called.
-  assert.equal(stateOfFeedbackFile(recordPath('/s', 'acme/product-feedback', 7)), '/s');
-  assert.equal(stateOfFeedbackFile(path.join(path.dirname(recordPath('/s', 'product-feedback/x', 7)), 'diff.patch')), '/s');
-});
+  assert.deepEqual(new Set(heldFolders(root)), new Set([path.join(held.dir, 'state'), path.join(root, 'projects/team/custom'), path.join(held.dir, 'spaced ')]));});
 
 test('a member\'s pull request posts with no answer, a subagent included, and a project with no feedback sees nothing', (t) => {
   const member = project(t, { limited: false });

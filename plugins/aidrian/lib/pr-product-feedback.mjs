@@ -29,7 +29,7 @@ import { parseArgs } from 'node:util';
 
 import { decisionProblem, readTriage, recordDecision, reportName, sidecarName, sidecarProblems, today } from './audits.mjs';
 import { commandConfig, DEFAULTS, loadConfig, stateDirProblem, strictConfigFromText } from './config.mjs';
-import { AUDIT_KEY, cleanTitle, decisionFields, decisionOf, heldFor, itemState, openDecisions, KINDS, noteFeedbackFolder, PERSONA, PRODUCT_MANAGER, readRecord, RECORD_VERSION, recordPath, stateOfFeedbackFile } from './feedback-record.mjs';
+import { AUDIT_KEY, cleanTitle, decisionFields, decisionOf, heldFor, itemState, openDecisions, KINDS, noteFeedbackFolder, PERSONA, PRODUCT_MANAGER, readRecord, RECORD_VERSION, recordPath } from './feedback-record.mjs';
 import { forgeFor } from './forges/index.mjs';
 import { isDirectory, isFile, isObject, isWithin } from './fs.mjs';
 import { runGit } from './git.mjs';
@@ -78,25 +78,30 @@ function tableProblem({ kind }, { decision, by, reason }) {
   return decision === 'fix-now' || human ? null : `this item is a defect, which takes fix-now from a session; ${decision} ${ask}`;
 }
 
-// Every file written here is a record or diff at recordPath's depth; a moved state folder is noted under the state root
-// first, unless the caller `noted` it already, as post does before its forge call.
-function writeAtomic(file, text, { noted = false } = {}) {
-  if (!noted) noteFeedbackFolder(stateOfFeedbackFile(file), stateRoot());
+// The state folder of a command that writes feedback (record, answer, recheck, post, diff), noted under the state root
+// before the command writes anything or calls the forge, when config.json `state.dir` moved it (noteFeedbackFolder).
+function writingState(project) {
+  const state = stateDir(project, { config: commandConfig(project, { exitCode: 3 }) });
+  noteFeedbackFolder(state, stateRoot());
+  return state;
+}
+
+function writeAtomic(file, text) {
   mkdirSync(path.dirname(file), { recursive: true });
   const temporary = `${file}.${process.pid}.tmp`;
   writeFileSync(temporary, text);
   renameSync(temporary, file);
 }
-const writeRecord = (file, record, options) => writeAtomic(file, `${JSON.stringify(record, null, 2)}\n`, options);
+const writeRecord = (file, record) => writeAtomic(file, `${JSON.stringify(record, null, 2)}\n`);
 
 // Reads, changes, and writes the record under its lock. Throws when it cannot be read or is not this pull request's.
-function updateRecord(file, pr, change, options) {
+function updateRecord(file, pr, change) {
   mkdirSync(path.dirname(file), { recursive: true });
   return withLocks([file], () => {
     const record = readRecord(file, pr);
     if (!record) throw new Error(notRun(pr.number));
     change(record);
-    writeRecord(file, record, options);
+    writeRecord(file, record);
     return record;
   });
 }
@@ -426,7 +431,7 @@ function record({ argv: [value], values, project, forge, remotes, now }) {
   const pr = pullRequest(value, { forge, remotes }, `${VIEW_FIELDS},isCrossRepository`);
   if (!noneFound && !ran) throw new Error(notRun(pr.number));
   const limited = readLimited(forge, pr);
-  const state = stateDir(project, { config: commandConfig(project, { exitCode: 3 }) });
+  const state = writingState(project);
   const audits = path.join(state, 'audits');
   const sidecar = values.report ? loadSidecar(audits, values.report, pr) : null;
   const file = recordPath(state, pr.repo, pr.number);
@@ -471,7 +476,7 @@ function openProblem(item, decision, entry) {
 // `adopted_at`, by a millisecond when the clock reads the same or earlier.
 function answer({ argv: [value, id, decision], values, project, forge, remotes, now }) {
   const pr = pullRequest(value, { forge, remotes });
-  const state = stateDir(project, { config: commandConfig(project, { exitCode: 3 }) });
+  const state = writingState(project);
   const audits = path.join(state, 'audits');
   const file = recordPath(state, pr.repo, pr.number);
   const item = findItem(readRecord(file, pr), id, pr);
@@ -498,7 +503,7 @@ function answer({ argv: [value, id, decision], values, project, forge, remotes, 
 function recheck({ argv: [value, id, word], values, project, forge, remotes }) {
   if (!RECHECKS.includes(word)) throw new Error(`a re-check is ${RECHECKS.join(' or ')}`);
   const pr = pullRequest(value, { forge, remotes });
-  const state = stateDir(project, { config: commandConfig(project, { exitCode: 3 }) });
+  const state = writingState(project);
   const file = recordPath(state, pr.repo, pr.number);
   const found = findItem(readRecord(file, pr), id, pr);
   const triage = found.source === PERSONA ? readTriage(path.join(state, 'audits')) : null;
@@ -601,7 +606,7 @@ export const feedbackMarker = (pr) => `<!-- aidrian-product-feedback: pr=${pr.nu
 function post({ argv: [value], values, project, forge, remotes, env, access }) {
   if (!values['body-file']) throw new Error(USAGE);
   const pr = pullRequest(value, { forge, remotes });
-  const state = stateDir(project, { config: commandConfig(project, { exitCode: 3 }) });
+  const state = writingState(project);
   const file = recordPath(state, pr.repo, pr.number);
   const found = readRecord(file, pr);
   if (!found) throw new Error(notRun(pr.number));
@@ -611,8 +616,6 @@ function post({ argv: [value], values, project, forge, remotes, env, access }) {
   const marker = feedbackMarker(pr);
   const comment = `${marker}\n${neutralized(body)}`;
   const target = ownComment({ forge, pr, record: found, marker });
-  // Before the forge: a note that cannot be written fails here, not after the comment is out and the record unchanged.
-  noteFeedbackFolder(state, stateRoot());
   let written;
   try {
     written = target === null
@@ -624,7 +627,7 @@ function post({ argv: [value], values, project, forge, remotes, env, access }) {
   if (!Number.isSafeInteger(written?.id)) throw new Error('gh gave no comment id for the post, and the record is unchanged');
   updateRecord(file, pr, (current) => {
     current.comment_id = written.id;
-  }, { noted: true });
+  });
   console.log(`${target === null ? 'posted' : 'edited'} the product feedback comment on #${pr.number}`);
   return 0;
 }
@@ -662,7 +665,7 @@ function items({ argv: [value], values, project, forge, remotes }) {
 // line on stderr says so.
 function diff({ argv: [value], project, forge, remotes }) {
   const pr = pullRequest(value, { forge, remotes });
-  const state = stateDir(project, { config: commandConfig(project, { exitCode: 3 }) });
+  const state = writingState(project);
   const file = path.join(path.dirname(recordPath(state, pr.repo, pr.number)), 'diff.patch');
   if (!isWithin(path.join(state, 'product-feedback'), file)) throw new Error(`the diff of ${pr.repo}#${pr.number} would leave the state folder`);
   const { text, local } = pullRequestDiff({ forge, pr, root: project.root });

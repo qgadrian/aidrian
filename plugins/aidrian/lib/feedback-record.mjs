@@ -110,9 +110,6 @@ export function noteFeedbackFolder(state, root) {
   renameSync(temporary, note);
 }
 
-// The state folder of a file a feedback write makes: `<state>/product-feedback/<owner>/<name>/pr-<n>/<file>` (recordPath).
-export const stateOfFeedbackFile = (file) => path.resolve(file, '../../../../..');
-
 // The noted state folders under `root`, as written. A note that cannot be read is left out; the caller checks each folder.
 export function heldFolders(root) {
   const folder = path.join(root, FOLDERS);

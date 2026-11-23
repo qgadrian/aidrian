@@ -162,9 +162,13 @@ test('status is clear with each reason, and exit 0', (t) => {
 
 test('record in a moved state folder notes that folder under the state root, for the rules that cannot read a call\'s project', (t) => {
   const r = repo(t);
-  recorded(t, r, []);
+  recorded(t, r, [finding('F1', 'The save button hides')]);
   assert.ok(heldFolders(stateRoot()).includes(r.state), `${r.state} is noted`);
   const notes = path.join(stateRoot(), 'feedback-folders');
+  // A record made before notes existed is noted by the next writing command, a persona answer included.
+  rmSync(notes, { recursive: true, force: true });
+  assert.equal(run(t, r, ['answer', '7', 'PF1', 'fix-now']).code, 0);
+  assert.ok(heldFolders(stateRoot()).includes(r.state), 'answer notes the folder');
   t.after(() => rmSync(notes, { recursive: true, force: true }));
   // post notes before the forge and not again after: a notes folder that breaks while the comment is out still records it.
   const broken = () => {

@@ -1439,7 +1439,7 @@ for both: the waiver's read serves merge trust.
    the head: GraphQL's `Commit.pushedDate` is always null and a pull request's commits carry no date. The 👍 names no
    commit, and lands seconds after the receipt, so after a push it answers the head before it. A pull request the bot
    passed only with a receipt is the Human's to merge. Once the bot found something on a pull request, its card keeps
-   `has_any_findings` true, so no later card passes the head: when its card of the head has nothing left unresolved, the refusal says so, and only the bot's approving review of
+   `has_any_findings` true, so no later card passes the head: when that flag is the one thing keeping the bot's card of the head from passing, the refusal says so, and only the bot's approving review of
    the head or a person merges it. The check holds whatever the record's outcome: a `none_needed`
    pull request merges unattended only once the bot is requested on it, with `aidrian pr await-review <PR> --request`,
    and has passed. With no bot set, the check is off with no route: a session no Human attends merges nothing, and the

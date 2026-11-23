@@ -334,7 +334,7 @@ This machine keeps one review record a repository and pull request number, in th
 `pr-<N>-review-<owner>--<name>.json`, keyed by the repository's own `<owner>/<name>` whichever remote is origin, so one
 checkout reviews `a/b#12` and `c/d#12` apart, and a record never changes file when the remotes change, as when
 `gh repo fork` renames origin to upstream. The attest record (`pr-<N>-<owner>--<name>.json`) and a dispatch's findings
-folder (`tmp/review-<N>-<owner>--<name>/`, ending in `@<key>` in an issue session) are keyed the same way. Every reader gets its own repository's record or
+folder (`tmp/review-<N>-<owner>--<name>/`, led by `@<key>-` in an issue session) are keyed the same way. Every reader gets its own repository's record or
 none: a bot request, `aidrian pr extend` and its rule, `aidrian pr waive`, `aidrian pr delegate` and its rule, the quota-fallback rule, a sign-off, an
 attest, the review step's notes of a held finding or an error, and the merge guard read only that one, and start fresh,
 or refuse, when there is none. A record under the old name `pr-<N>-review.json`, written before the key, is read for the
@@ -790,12 +790,12 @@ A project adds its own in `review.reviewers`:
   characters, then the first 8 hex digits of the whole id's SHA-256, so two passes never share a file, in a folder
   keyed by the pull request's repository, `review-<PR>-<owner>--<name>`,
   so two repositories' pull requests of one number never do either ([Findings one by one](#findings-one-by-one));
-  in a project run's issue session the folder ends with the issue key, `review-<PR>-<owner>--<name>@<key>`,
+  in a project run's issue session the folder leads with `@` and the issue key, `@<key>-review-<PR>-<owner>--<name>`,
   since that session writes in `tmp/` only what is named for its issue ([Agent gates](hooks.md#agent-gates)),
   and the agent's final JSON on stdin: either the bare verdicts array or the whole `{ findings, verdicts, contracts, cross_notes }`
   object. `--verdicts FILE` reads a file instead; `--findings-file` takes a file only.
   `aidrian worktree cleanup execute` removes the findings folder once the pull request is merged or closed, whole.
-  An issue session names its own scratch `<key>-...`, which never shares the findings folder's name, so cleanup never removes it.
+  No issue key starts with `@`, so no issue session's own scratch shares the findings folder's name, and cleanup never removes it.
   ([Local state](project-folder.md#local-state)).
 
 **The security key.** A finding is a security finding when it is `critical` or `high`, when its reviewer set

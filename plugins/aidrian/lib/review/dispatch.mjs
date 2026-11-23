@@ -301,11 +301,11 @@ export const FILE_PREFIX = 100;
 // The folder is one a repository and number (state.mjs repoKey), `review-<N>-<owner>--<name>`, whichever remote is
 // origin, so two repositories' pull requests of one number never share a pass's findings file; `review-<N>` with none.
 // A project run's issue session (`issue`, sessionIssue) writes in `tmp/` only what is named for its issue
-// (unattended-write.mjs issueWork), so its folder ends with the issue key after an `@`: `review-<N>-<owner>--<name>@<key>`.
-// Its own scratch is named `<key>-...` and never shares that name, so cleanup removes the folder whole (drafts.mjs).
+// (unattended-write.mjs issueWork), so its folder leads with `@` and the issue key: `@<key>-review-<N>-<owner>--<name>`.
+// No issue key starts with `@`, so no session's scratch shares that name, and cleanup removes the folder whole (drafts.mjs).
 export function findingsFile(project, n, passId, repo = null, issue = null) {
-  const tail = typeof issue === 'string' && ISSUE_TAG.test(issue) ? `@${issue.toLowerCase()}` : '';
-  const dir = path.join(stateDir(project), 'tmp', `review-${n}${repoKey(repo)}${tail}`);
+  const lead = typeof issue === 'string' && ISSUE_TAG.test(issue) ? `@${issue.toLowerCase()}-` : '';
+  const dir = path.join(stateDir(project), 'tmp', `${lead}review-${n}${repoKey(repo)}`);
   try {
     mkdirSync(dir, { recursive: true });
   } catch {}

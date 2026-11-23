@@ -228,10 +228,12 @@ test('p7: an issue session`s findings folder for an owner named like a review fo
   const c = checkout(t, [['origin', `https://github.com/${unique('own')}/b.git`]]);
   const tmp = path.join(c.dir, 'drafts');
   mkdirSync(path.join(tmp, '@eng-1-review-12-review-34-o--r'), { recursive: true });
-  // A plain draft whose owner only starts like the old shape, `review-34o`, is no old issue folder.
+  // Any plain name led by `review-<n>-review-` may be a REVIEW-12 issue's scratch, as cleanup once read it: it stays.
   mkdirSync(path.join(tmp, 'review-12-review-34o--r'), { recursive: true });
+  writeFileSync(path.join(tmp, 'review-12-review-34o--r', 'notes.md'), 'x');
   const forge = { change: (_ref, _fields, options = {}) => ({ state: ['review-34-o/r', 'review-34o/r'].includes(options.repo) ? 'CLOSED' : 'OPEN' }) };
-  assert.deepEqual(sweepDrafts(c.project, { forge, dir: tmp }).removed.map((row) => [row.repo, row.files]), [['review-34-o/r', ['@eng-1-review-12-review-34-o--r']], ['review-34o/r', ['review-12-review-34o--r']]]);
+  assert.deepEqual(sweepDrafts(c.project, { forge, dir: tmp }).removed.map((row) => [row.repo, row.files]), [['review-34-o/r', ['@eng-1-review-12-review-34-o--r']]]);
+  assert.ok(existsSync(path.join(tmp, 'review-12-review-34o--r', 'notes.md')));
 });
 
 test('p8: a review record survives origin renamed to upstream and a new origin, so the merge stays refused', (t) => {

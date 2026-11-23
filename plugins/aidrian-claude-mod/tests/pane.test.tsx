@@ -465,6 +465,87 @@ describe('aidrian-mod cache', () => {
     expect(await drawing.find({ type: 'Text', text: /❄️/ })).toBeDefined()
     expect(await left(/^cold$/)).toBe('suggestion')
   })
+
+  // Stands for the model: a step that answers with usage, or, while hasResponse is off, a request that got no response.
+  // With a held response, the step streams one piece of text and stays open until the test lets it end.
+  const modelAnswers = (on: On) => {
+    const model: { hasResponse: boolean; held: Promise<void> | null } = { hasResponse: true, held: null }
+    on('turn.step', async function* ($, e) {
+      const { hasResponse, held } = model
+
+      if (held !== null) {
+        yield { kind: 'text', index: 0, text: 'Reading the files' } as never
+        await held
+      }
+
+      return {
+        turnId: e.turnId,
+        index: e.index,
+        answer: '',
+        toolUses: [],
+        stopReason: hasResponse ? 'tool_use' : null,
+        usage: hasResponse ? { input_tokens: 3, output_tokens: 1, model: 'claude-opus-5-5' } : null,
+      } as never
+    })
+
+    return model
+  }
+
+  const step = async ($: Engine, index: number, agentId?: string) => {
+    const stream = $.turn.step({ turnId: 't1', index, model: 'claude-opus-5-5', messageCount: index + 1, ...(agentId ? { agentId } : {}) })
+    for await (const _chunk of stream) {
+      // Drained: the result settles once the stream is read to its end.
+    }
+
+    return stream.result
+  }
+
+  test('each main-chain request of a long first turn keeps the cache warm before the turn ends', TEN_MINUTES, async ($, on) => {
+    modelAnswers(on)
+    const clock = await startIn($, on, world({}))
+
+    await step($, 0)
+    expect(await (await cacheText($)).left(/^10m$/)).toBe('claude')
+
+    await clock.advance(9 * MINUTE)
+    await step($, 1)
+    expect(await (await cacheText($)).left(/^10m$/)).toBe('claude')
+  })
+
+  test("a subagent's request and a request with no response refresh nothing", TEN_MINUTES, async ($, on) => {
+    const model = modelAnswers(on)
+    const clock = await startIn($, on, world({}))
+    await step($, 0)
+
+    await clock.advance(4 * MINUTE)
+    await step($, 0, 'agent-1')
+    expect(await (await cacheText($)).left(/^6m$/)).toBe('claude')
+
+    model.hasResponse = false
+    await step($, 1)
+    expect(await (await cacheText($)).left(/^6m$/)).toBe('claude')
+  })
+
+  test('a long response restarts the countdown at its first piece, before it ends', TEN_MINUTES, async ($, on) => {
+    const model = modelAnswers(on)
+    const clock = await startIn($, on, world({}))
+    await step($, 0)
+    await clock.advance(4 * MINUTE)
+
+    let release = () => {}
+    model.held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const stream = $.turn.step({ turnId: 't1', index: 1, model: 'claude-opus-5-5', messageCount: 2 })
+    await stream.next()
+    expect(await (await cacheText($)).left(/^10m$/)).toBe('claude')
+
+    release()
+    for await (const _chunk of stream) {
+      // Drained, so the step ends.
+    }
+    expect(await (await cacheText($)).left(/^10m$/)).toBe('claude')
+  })
 })
 
 describe('aidrian-mod cache lifetime from the transcript', () => {

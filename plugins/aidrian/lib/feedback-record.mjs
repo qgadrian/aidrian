@@ -99,8 +99,12 @@ const FOLDERS = 'feedback-folders';
 export function noteFeedbackFolder(state, root) {
   if (path.dirname(state) === path.join(root, 'projects')) return;
   const folder = path.join(root, FOLDERS);
-  mkdirSync(folder, { recursive: true });
   const note = path.join(folder, createHash('sha256').update(state).digest('hex').slice(0, 32));
+  // A note already there is kept, so a write after post's forge call only reads.
+  try {
+    if (readFileSync(note, 'utf8') === state) return;
+  } catch {}
+  mkdirSync(folder, { recursive: true });
   const temporary = `${note}.${process.pid}.tmp`;
   writeFileSync(temporary, state);
   renameSync(temporary, note);

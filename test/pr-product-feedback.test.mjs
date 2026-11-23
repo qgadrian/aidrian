@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -163,8 +163,14 @@ test('record in a moved state folder notes that folder under the state root, for
   const r = repo(t);
   recorded(t, r, []);
   assert.ok(heldFolders(stateRoot()).includes(r.state), `${r.state} is noted`);
-  // A note that cannot be written stops post before the forge, so no comment goes out with the record unchanged.
   const notes = path.join(stateRoot(), 'feedback-folders');
+  // A note already there is only read: post's record update after the forge writes no note, so a read-only folder passes.
+  chmodSync(notes, 0o500);
+  const kept = run(t, r, ['post', '7', '--body-file', bodyAt(r, 'Plain words.')]);
+  chmodSync(notes, 0o700);
+  assert.equal(kept.code, 0, kept.err.join('\n'));
+  assert.equal(recordOf(r).comment_id === null, false, 'the comment id is recorded');
+  // A note that cannot be written stops post before the forge, so no comment goes out with the record unchanged.
   rmSync(notes, { recursive: true, force: true });
   writeFileSync(notes, '');
   t.after(() => rmSync(notes, { force: true }));

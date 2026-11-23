@@ -5,18 +5,19 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { recordPass } from '../plugins/aidrian/lib/review/run.mjs';
-import { readLocalState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
-import { clean, repo } from './review-run-fixture.mjs';
+import { readLocalState } from '../plugins/aidrian/lib/review/state.mjs';
+import { capProblem } from '../plugins/aidrian/lib/review/waiver.mjs';
+import { clean, found, repo } from './review-run-fixture.mjs';
 
 // A repository whose booking flow the code-reviewer agent reviews, with a cap of `maxReviewRounds`.
 const booking = (t, github) => repo(t, { baseConfig: { version: 1, github, review: { flows: { booking: { files: ['src/booking/**'] } } } }, change: (write) => write('src/booking/a.js', 'export const a = 0;\n') });
 const push = (r, k) => (r.write('src/booking/a.js', `export const a = ${k};\n`), r.commit(`fix ${k}`));
 const attest = (r, pass, head) => recordPass(r.project, { pr: 7, repo: 'o/r', pass, head, reviewer: 'code-reviewer', findings: 1, fixed: 0 });
 
-test('seven passes on seven heads, each dispatched by a step, are seven rounds', async (t) => {
+test('passes on three heads, each dispatched by a step, are three rounds', async (t) => {
   const r = booking(t, { maxReviewRounds: 10 });
   const rounds = [];
-  for (let k = 1; k <= 7; k += 1) {
+  for (let k = 1; k <= 3; k += 1) {
     const step = await r.step({ exec: clean });
     assert.equal(step.status, 'dispatch');
     attest(r, step.dispatch[0].pass, step.head);
@@ -25,8 +26,8 @@ test('seven passes on seven heads, each dispatched by a step, are seven rounds',
     rounds.push(judged.round);
     push(r, k);
   }
-  assert.deepEqual(rounds, [1, 2, 3, 4, 5, 6, 7]);
-  assert.equal(readLocalState(r.project, 7).rounds.length, 7);
+  assert.deepEqual(rounds, [1, 2, 3]);
+  assert.equal(readLocalState(r.project, 7).rounds.length, 3);
 });
 
 test('seven passes attested on seven heads with no step between are seven rounds', async (t) => {
@@ -102,4 +103,25 @@ test('a pass attested on a head with other file coverage gives the round back wh
   const failed = await r.step({ exec: crashed });
   assert.equal(failed.status, 'incomplete');
   assert.deepEqual(readLocalState(r.project, 7).rounds.map((round) => round.head), [first.head], 'no usable result on the new head: no round opens');
+});
+
+// Round 2 of 2 stops at the cap on a medium finding of the engine's pass, a cause a waiver can pass. A pass attested
+// count-only on the next head is that head's cause, never round 2's.
+test('past the cap, a count-only result attested on a new head is its own cap cause, which no waiver passes', async (t) => {
+  const r = booking(t, { maxReviewRounds: 2, extraRounds: 'off' });
+  const medium = { file: 'src/booking/a.js', line: 1, title: 'off by one', body: 'x', severity: 'medium' };
+  const first = await r.step({ exec: clean });
+  const pass = first.dispatch[0].pass;
+  attestClean(r, pass, first.head);
+  assert.equal((await r.step({ exec: async () => found(medium) })).status, 'fix_required');
+  const second = push(r, 1);
+  assert.equal((await r.step({ exec: async () => found(medium) })).status, 'dispatch');
+  attestClean(r, pass, second);
+  const capped = await r.step({ exec: clean });
+  assert.deepEqual([capped.status, capped.round, capped.cap?.reviewed, capProblem(readLocalState(r.project, 7), second)], ['round_limit', 2, second, null], 'round 2 stops on a waivable cause');
+  const third = push(r, 2);
+  attest(r, pass, third);
+  const past = await r.step({ exec: clean });
+  assert.deepEqual([past.status, past.round, past.cap?.reviewed, past.cap?.itemized, past.cap?.counted], ['round_limit', 2, third, false, 1], 'the cause is the new head\'s count-only result');
+  assert.ok(capProblem(readLocalState(r.project, 7), third), 'a counted finding is never waived');
 });

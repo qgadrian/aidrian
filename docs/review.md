@@ -1448,7 +1448,9 @@ shows, such as a waiver's reason, has `<!--` and `-->` escaped, so no text can c
   stage, whether each is listed, the flows left unsigned, deleted flow tests, failing flow checks, passes that never
   reviewed the head, the bot's own round limit, and the flows the Human signs off with no sign-off kept. Its flows are
   every flow of the plan not all held, whichever stage answers for it. The cause of a reviewed head is kept on its
-  round too (`rounds[].cap`), which a later cap on a head no round reviewed reads. The posted copy keeps no `cap`,
+  round too (`rounds[].cap`), which a later cap on a head no round reviewed reads.
+  A head past the cap that holds a result a pass uses, as one `aidrian pr attest` recorded there, is judged by its own results instead.
+  The posted copy keeps no `cap`,
   on the outcome or a round, and no waiver's `judge_id` and `session`. Each binds to one head and
   one kind. The summary comment shows them under **Merge guard waivers**, each marked an audit entry, not proof; the
   posted copy keeps no `judge_id` or `session`.

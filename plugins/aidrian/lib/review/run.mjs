@@ -47,7 +47,7 @@ import { runExec } from './reviewers.mjs';
 import { where } from './settled.mjs';
 import { atCap } from './extension.mjs';
 import { settleCaptures } from './dispatch.mjs';
-import { answerPending, emptyState, mergeIndex, mergePending, noteOutcome, prunePasses, readLocalState, stateFromComment, summaryBody, summaryComment, writeSummary, writeLocalState } from './state.mjs';
+import { answerPending, emptyState, mergeIndex, mergePending, noteOutcome, prunePasses, readLocalState, sameCommit, stateFromComment, summaryBody, summaryComment, writeSummary, writeLocalState } from './state.mjs';
 import * as quota from './quota.mjs';
 import { ghImage } from './visual.mjs';
 import { prepareStep } from './step.mjs';
@@ -151,8 +151,9 @@ const CAUSE_ITEMS = 50;
 // a result for it, each with its pass's stage and reviewer, `unrun` the passes of this machine with none, `waiting` the
 // remote passes with none, and `flows`
 // every flow of the plan whose invariants are not all held, whichever stage answers for it (evidence.mjs flowStatus).
-// That whole cause is kept on the round too (`round.cap`). When the last round reviewed another head (a fix pushed that
-// no round reviewed), the cause is that round's kept one, its flows as `unsigned`; a round with none kept gives
+// That whole cause is kept on the round too (`round.cap`). A head past the cap with a result a pass uses, as one
+// `aidrian pr attest` recorded there, is judged the same way, by its own results. When the last round reviewed another
+// head and no pass has a result for `head` (a fix pushed that no round reviewed), the cause is that round's kept one, its flows as `unsigned`; a round with none kept gives
 // `unsigned: null`, which refuses. `counted` is the open count, `itemized` whether every one of them is listed;
 // `tests_removed` and `checks_failing` this step's evidence stops and flow tests deleted with no sign-off on `head`;
 // `bot` that the review bot's own round limit stopped it; `human` the flows the Human signs off with no sign-off kept
@@ -163,7 +164,11 @@ function capCause(s, extra) {
   const tests = [...new Set([...(extra.tests_removed ?? []), ...removedTests.filter((each) => state.signoffs?.[each.flow]?.head !== head)].map((each) => each.flow))];
   const human = plan.flows.filter((flow) => flow.signoff === 'human' && state.signoffs?.[flow.id]?.head !== head && !keptSignoffs?.has(flow.id)).map((flow) => flow.id);
   const bot = extra.bot !== undefined;
-  if (round?.head !== head) {
+  const passes = plan.stages.flatMap((stage) => stage.passes.map((pass) => ({ pass, stage: stage.name })));
+  // A head that holds a result the step uses, as one `aidrian pr attest` recorded past the cap, is judged by its own
+  // results, never by the kept cause of a round on another head.
+  const onHead = round?.head === head || passes.some(({ pass }) => sameCommit(resultFor(pass)?.head, head));
+  if (!onHead) {
     const kept = isObject(round?.cap) && round.cap.head === round.head ? round.cap : null;
     if (!kept) return { head, reviewed: round?.head ?? null, items: [], counted: null, itemized: false, unrun: [], unsigned: null, flows: [], tests_removed: tests, checks_failing: 0, bot, human };
     return {
@@ -171,7 +176,6 @@ function capCause(s, extra) {
       tests_removed: [...new Set([...(kept.tests_removed ?? []), ...tests])], bot: kept.bot === true || bot, human: [...new Set([...(kept.human ?? []), ...human])],
     };
   }
-  const passes = plan.stages.flatMap((stage) => stage.passes.map((pass) => ({ pass, stage: stage.name })));
   const securityPass = (id) => state.planNote?.passes?.[id]?.security === true || state.dispatched?.[id]?.security === true;
   const item = (finding, pass, stage, reviewer) => ({
     ...(isFindingId(finding?.id) ? { id: finding.id } : {}), severity: typeof finding?.severity === 'string' ? finding.severity : null,
@@ -194,8 +198,8 @@ function capCause(s, extra) {
     bot,
     human,
   };
-  // A later cap on a head no round reviewed reads this round's whole cause.
-  round.cap = cause;
+  // A later cap on a head no round reviewed reads this round's whole cause; a head past the cap has no round of its own.
+  if (round?.head === head) round.cap = cause;
   return cause;
 }
 

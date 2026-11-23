@@ -36,7 +36,7 @@ only after its answer, so the pull request stays a draft until the bot is clean.
   except that entries with `ingested: true` (images taken outside the tool, with a `source` and no facts) are opened
   and may be cited as `capture:<key>` too.
 - `record`: the command that records the pass, `aidrian pr attest <PR> --pass <id> --head <sha> --reviewer <who>
-  --findings-file <state>/tmp/review-<PR>/<pass>-<hash>.findings.json`, with `--verdicts <file.json>` when the pass judges flows. The step names that file
+  --findings-file <the file the step's record names>`, with `--verdicts <file.json>` when the pass judges flows. The step names that file
   under the state folder, outside every checkout, so the findings' text is never committed. The agent is read-only
   and writes no file: it returns each finding, with its axes and state, in the `findings` array of its final JSON.
   This session writes that array, as it is, to the file `record` names, then pipes the agent's final JSON to `record`,

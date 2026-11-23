@@ -35,7 +35,7 @@ that did not write the change is on record for the pull request. The record is w
 
 - `aidrian pr attest <PR> --head <sha> --reviewer <who> --findings <n> --fixed <n> [--note <text>]` writes the record to the
   state folder (shared by every worktree) and prints a marker comment. `aidrian pr attest <PR> --check` reads it.
-  An agent pass `aidrian pr review` dispatches records with `--pass <id> --findings-file <state>/tmp/review-<PR>/<pass>-<hash>.findings.json` instead, one finding at a
+  An agent pass `aidrian pr review` dispatches records with `--pass <id> --findings-file <the file the step's record names>` instead, one finding at a
   time, so the disposition table decides what blocks; the counts form stays accepted.
 - The marker `<!-- aidrian-review: pr=<n> repo=<owner/name> head=<sha> ... -->` in the request comment also passes,
   so a new session or a cloud container, whose local record is gone, need not review again.

@@ -896,7 +896,7 @@ aidrian pr attest <PR> --check     # exit 0 recorded, 3 not
 ```
 
 Inside `aidrian pr review`, the full-diff agent pass it dispatches, recorded with
-`aidrian pr attest <PR> --pass agent:<name> --head <sha> --reviewer <who> --findings-file <state>/tmp/review-<PR>/<pass>-<hash>.findings.json` (an agent pass
+`aidrian pr attest <PR> --pass agent:<name> --head <sha> --reviewer <who> --findings-file <the file the step's record names>` (an agent pass
 records its findings one by one; the counts form above stays accepted), is that record too, so the bot request needs no second
 attest; so is an agent pass its flows merged into, `agent:<name>:<flows>`, when it read the whole diff. A pass over a
 flow's or a slice's files alone, the cross pass, and an engine pass do not count.

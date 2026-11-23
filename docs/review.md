@@ -334,7 +334,7 @@ This machine keeps one review record a repository and pull request number, in th
 `pr-<N>-review-<owner>--<name>.json`, keyed by the repository's own `<owner>/<name>` whichever remote is origin, so one
 checkout reviews `a/b#12` and `c/d#12` apart, and a record never changes file when the remotes change, as when
 `gh repo fork` renames origin to upstream. The attest record (`pr-<N>-<owner>--<name>.json`) and a dispatch's findings
-folder (`tmp/review-<N>-<owner>--<name>/`) are keyed the same way. Every reader gets its own repository's record or
+folder (`tmp/review-<N>-<owner>--<name>/`, led by the issue key in an issue session) are keyed the same way. Every reader gets its own repository's record or
 none: a bot request, `aidrian pr extend` and its rule, `aidrian pr waive`, `aidrian pr delegate` and its rule, the quota-fallback rule, a sign-off, an
 attest, the review step's notes of a held finding or an error, and the merge guard read only that one, and start fresh,
 or refuse, when there is none. A record under the old name `pr-<N>-review.json`, written before the key, is read for the
@@ -783,14 +783,14 @@ A project adds its own in `review.reviewers`:
   the base code runs with this machine's packages. A reviewer the pull request adds runs once it is merged.
   `codex-local` reads the checkout at the head.
 - `agent`: the command cannot start an agent, so it returns `dispatch` and the skill runs it and records the result with
-  `aidrian pr attest <PR> --pass <id> --head <sha> --reviewer <who> --findings-file <state>/tmp/review-<PR>/<pass>-<hash>.findings.json --verdicts -`, its
+  `aidrian pr attest <PR> --pass <id> --head <sha> --reviewer <who> --findings-file <the file the step's record names> --verdicts -`, its
   findings one by one in the file, which the dispatching session writes from the `findings` array of the agent's final
   JSON (the agent writes no file), and which the step names under the state folder, outside every checkout, so their text is
   never committed: the pass id with every character but a letter, digit, `.`, `_`, or `-` as `-`, its first 100
   characters, then the first 8 hex digits of the whole id's SHA-256, so two passes never share a file, in a folder
-  keyed by the pull request's repository, `review-<PR>-<owner>--<name>`, so two repositories' pull requests of one number never do either ([Findings one by one](#findings-one-by-one)), and the agent's final JSON on stdin: either the bare verdicts array or the whole `{ findings, verdicts, contracts, cross_notes }`
+  keyed by the pull request's repository, `review-<PR>-<owner>--<name>`, so two repositories' pull requests of one number never do either ([Findings one by one](#findings-one-by-one)); in a project run's issue session the folder leads with the issue key, `<key>-review-<PR>-<owner>--<name>`, since that session writes in `tmp/` only what is named for its issue ([Agent gates](hooks.md#agent-gates)), and the agent's final JSON on stdin: either the bare verdicts array or the whole `{ findings, verdicts, contracts, cross_notes }`
   object. `--verdicts FILE` reads a file instead; `--findings-file` takes a file only.
-  `aidrian worktree cleanup execute` removes the `review-<PR>/` folder once the pull request is merged or closed
+  `aidrian worktree cleanup execute` removes the findings folder `review-<PR>-<owner>--<name>/` once the pull request is merged or closed; from an issue session's `<key>-review-<PR>-<owner>--<name>/` it removes only the regular files named as above, `<pass>-<hash>.findings.json`, and the folder once it is empty, since that session names its own scratch for its key too
   ([Local state](project-folder.md#local-state)).
 
 **The security key.** A finding is a security finding when it is `critical` or `high`, when its reviewer set

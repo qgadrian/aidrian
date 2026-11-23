@@ -53,9 +53,9 @@ test('displayText removes the same characters as the snapshot`s and cuts at the 
 test('the handoff segment at each level, in its color, with the line`s words', () => {
   const cases = [
     [{ level: 'quiet', ratio: 1.4 }, '1.4x', COLORS.quiet, 'subtle'],
-    [{ level: 'offer', ratio: 1.8, breakEven: 23.6 }, '1.8x · handoff pays back in ~24 calls', COLORS.offer, 'warning'],
-    [{ level: 'due', ratio: 2.3, breakEven: 24 }, '2.3x · handoff due, pays back in ~24 calls', COLORS.due, 'claude'],
-    [{ level: 'reminded', ratio: 2.3, breakEven: 24 }, '2.3x · handoff due, pays back in ~24 calls', COLORS.reminded, 'claude'],
+    [{ level: 'offer', ratio: 1.8, breakEven: 59.6 }, '1.8x · handoff worth it if 60+ calls left', COLORS.offer, 'warning'],
+    [{ level: 'due', ratio: 2.3, breakEven: 38 }, '2.3x · handoff worth it if 38+ calls left', COLORS.due, 'claude'],
+    [{ level: 'reminded', ratio: 2.3, breakEven: 38 }, '2.3x · handoff worth it if 38+ calls left', COLORS.reminded, 'claude'],
     [{ level: 'ceiling', ratio: 3 }, 'handoff now', COLORS.ceiling, 'error'],
   ];
   for (const [fields, words, color, key] of cases) {
@@ -64,7 +64,11 @@ test('the handoff segment at each level, in its color, with the line`s words', (
     assert.equal(color, key);
     assert.equal(plainText(bandSegments(snap({ handoff: handoff(fields) }))), snapshotLine(snap({ handoff: handoff(fields) })), fields.level);
   }
-  assert.deepEqual(handoffParts(handoff({ level: 'offer', ratio: 1.8 })), [{ text: '1.8x', color: COLORS.offer }], 'no break-even: no pays-back part');
+  for (const level of ['offer', 'due', 'reminded']) {
+    const fields = { level, ratio: 1.8, breakEven: null };
+    assert.deepEqual(handoffParts(handoff(fields)), [{ text: '1.8x', color: COLORS[level] }], `${level} with no break-even: the ratio alone`);
+    assert.equal(plainText(bandSegments(snap({ handoff: handoff(fields) }))), snapshotLine(snap({ handoff: handoff(fields) })), level);
+  }
 });
 
 test('an armed continuation adds its part to the level`s segment, in cyan, and replaces none', () => {

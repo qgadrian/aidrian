@@ -272,14 +272,15 @@ function forgeBudget(ms) {
   };
 }
 
-// What each handoff level shows: the ratio, then the handoff's state, with the break-even when there is one.
+// What each handoff level shows: the ratio, then, with a break-even, how many calls the work left must take for a
+// handoff to be worth it. Offer, due, and reminded share their words; the level's color tells them apart.
 const LEVEL_WORDS = {
   quiet: (ratio) => ratio,
-  offer: (ratio, pays) => (pays ? `${ratio} · handoff ${pays}` : ratio),
-  due: (ratio, pays) => `${ratio} · handoff due${pays ? `, ${pays}` : ''}`,
+  offer: (ratio, worth) => (worth ? `${ratio} · handoff ${worth}` : ratio),
   ceiling: () => 'handoff now',
 };
-LEVEL_WORDS.reminded = LEVEL_WORDS.due;
+LEVEL_WORDS.due = LEVEL_WORDS.offer;
+LEVEL_WORDS.reminded = LEVEL_WORDS.offer;
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -287,9 +288,9 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 export function snapshotLine({ handoff, prs, lessons: inbox, decisions, worktrees, audits }) {
   const segments = [];
   if (handoff?.ratio > 0) {
-    const pays = handoff.breakEven === null ? '' : `pays back in ~${Math.round(handoff.breakEven)} calls`;
+    const worth = handoff.breakEven === null ? '' : `worth it if ${Math.round(handoff.breakEven)}+ calls left`;
     const armed = handoff.continueArmed ? ` · armed ${handoff.chain}/${handoff.maxChain}` : '';
-    segments.push(`${LEVEL_WORDS[handoff.level](`${handoff.ratio.toFixed(1)}x`, pays)}${armed}`);
+    segments.push(`${LEVEL_WORDS[handoff.level](`${handoff.ratio.toFixed(1)}x`, worth)}${armed}`);
   }
   if (Array.isArray(prs) && prs.length) segments.push(changesSummary(prs));
   const harness = [

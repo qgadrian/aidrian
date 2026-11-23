@@ -147,10 +147,10 @@ test('the JSON object and the line at each handoff level, with the Stop hook`s o
   assert.match(quietLine.stdout, /^\d\.\dx\n$/u);
   const [offer, offerLine] = at(cost, 3);
   assert.equal(offer.json.handoff.level, 'offer');
-  assert.equal(offerLine.stdout, `${offer.json.handoff.ratio.toFixed(1)}x · handoff pays back in ~${Math.round(offer.json.handoff.breakEven)} calls\n`);
+  assert.equal(offerLine.stdout, `${offer.json.handoff.ratio.toFixed(1)}x · handoff worth it if ${Math.round(offer.json.handoff.breakEven)}+ calls left\n`);
   const [due, dueLine] = at(cost, 4);
   assert.equal(due.json.handoff.level, 'due');
-  const dueWords = `${due.json.handoff.ratio.toFixed(1)}x · handoff due, pays back in ~${Math.round(due.json.handoff.breakEven)} calls\n`;
+  const dueWords = `${due.json.handoff.ratio.toFixed(1)}x · handoff worth it if ${Math.round(due.json.handoff.breakEven)}+ calls left\n`;
   assert.equal(dueLine.stdout, dueWords);
   assert.equal((await inHook(cost, transcript)).status, 2, 'the Stop hook reminds on this turn and writes its marker');
   const [reminded, remindedLine] = at(cost, 4);

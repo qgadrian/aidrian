@@ -891,9 +891,16 @@ the bot has answered, so a pull request is marked ready only on the bot's clean 
 posts its receipt comment, then adds a 👍 to the pull request about 4 seconds later. A clean answer leaves the bot's
 pass with no open finding: the receipt, matched on its layout (the `codex-review-receipt:v1` marker first, then text
 that opens with "Codex Review: Didn't find any major issues", and the reviewed commit), or a comment for a commit whose
-code review the bot's status card records as completed with no unresolved findings, where the card was last updated
-in this round, at or after the request, and no earlier than the comment. A comment that only quotes the phrase is not
-a receipt. The 👍 is never an answer: it names no commit, and the receipt it follows may name the head before a push,
+code review the bot's status card records as completed with `has_any_findings` and `has_unresolved_findings` both
+false, where the card was last updated in this round, at or after the request, and no earlier than the comment. That
+card, when there is one, decides over the receipt: the two flags are the bot's ledger of its findings that still stand
+at the reviewed commit, and a receipt speaks only of that run's new findings, so the bot can post one on a head whose
+card still holds an earlier finding. A receipt beside a completed card of its commit with either flag not false is no
+pass: the signal carries `holds_finding: true`, the bot's pass keeps one open finding, and `fix_required` marks that
+`open[]` entry `holds_finding`, since the work is the bot's earlier threads, not the receipt. Only the bot's own later
+run clears the card, once the finding is fixed; resolving a thread does not. With no such card, as when it was last
+updated before the receipt, names another commit, or is still running, the receipt decides as before. A comment that
+only quotes the phrase is not a receipt. The 👍 is never an answer: it names no commit, and the receipt it follows may name the head before a push,
 may predate the request, or may be one the read missed. A receipt answers the head when its 10-hex short commit is a
 prefix of it; a commit that shares that prefix reads as covered too, so this is no proof, and merge trust reads no
 receipt. A comment the status card vouches for answers the card's full commit, compared whole with the head; a card
@@ -1431,10 +1438,13 @@ for both: the waiver's read serves merge trust.
 
 1. **The review bot's verdict, on the forge.** The default branch's `github.reviewer`, read from GitHub, a bot account,
    passed exactly the merge's head: an approving review of that commit, or its own status card saying its code review of
-   that full commit completed and found nothing (`has_any_findings` false, since marking the bot's threads resolved
-   clears `has_unresolved_findings`), with every edit of the card the bot's, its last editor and anyone who deleted an
-   edit from its history included. A review of that commit by the bot in any other state, a dismissed one included,
-   keeps it off. A clean receipt or a 👍 never counts. The receipt names a 10-hex short commit, which a commit ground to
+   that full commit completed and found nothing (`has_any_findings` and `has_unresolved_findings` both false), with
+   every edit of the card the bot's, its last editor and anyone who deleted an edit from its history included. The two
+   flags are the bot's ledger of its findings that still stand at that commit, equal on every card seen: the bot clears
+   both itself on a later run once its findings are fixed, and neither a receipt nor a resolved thread clears them, so a
+   card of the head with either flag not false is refused with that reason. A pull request the bot commented on merges
+   unattended once the bot's card of the head reads both flags false. A review of that commit by the bot in any other
+   state, a dismissed one included, keeps it off. A clean receipt or a 👍 never counts. The receipt names a 10-hex short commit, which a commit ground to
    share it matches (about 2^40 hashes), and the forge gives no push time of a fast-forward push that would bind it to
    the head: GraphQL's `Commit.pushedDate` is always null and a pull request's commits carry no date. The 👍 names no
    commit, and lands seconds after the receipt, so after a push it answers the head before it. A pull request the bot

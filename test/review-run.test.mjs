@@ -615,6 +615,24 @@ test('the review bot`s clean comment on a draft records no open finding, and the
   assert.deepEqual([bot.open, bot.findings, bot.bot.kind], [0, 0, 'comment']);
 });
 
+test('the review bot`s clean receipt beside its status card of the head that still holds a finding is open work, never a pass', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'b\n') });
+  const off = () => ({ ok: false, reason: 'the codex CLI is not installed' });
+  const { latestBotSignal, DEFAULT_REVIEWER } = await import('../plugins/aidrian/lib/pr-await-review.mjs');
+  const user = { login: DEFAULT_REVIEWER };
+  const card = (head, flag) => ({ id: 2, user, created_at: '2026-11-12T12:01:00Z', updated_at: '2026-11-12T12:31:00Z', body: `<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1 {"code_review":{"commit_sha":"${head}","has_any_findings":${flag},"has_unresolved_findings":${flag},"status":"completed"}} -->` });
+  const answer = (flag) => async ({ head }) => ({ status: 'received', head_sha: head, signal: latestBotSignal({
+    reviews: [], reviewComments: [], reactions: [], reviewer: DEFAULT_REVIEWER, since: '2026-11-12T12:00:00Z',
+    issueComments: [card(head, flag), { id: 1, user, created_at: '2026-11-12T12:30:19Z', body: `<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues. Breezy!\n\n**Reviewed commit:** \`${head.slice(0, 10)}\`` }],
+  }) });
+  const held = await r.step({ codex: off, awaitBot: answer(true) });
+  assert.deepEqual([held.status, held.open[0].open, held.open[0].holds_finding], ['fix_required', 1, true]);
+  r.write('src/app.js', 'c\n');
+  r.commit();
+  const cleared = await r.step({ codex: off, awaitBot: answer(false) });
+  assert.equal(cleared.status, 'received', 'the bot cleared its card on a later run');
+});
+
 test('an independent reviewer`s violated verdict blocks the flow even with no findings', async (t) => {
   const r = repo(t, { baseConfig: { version: 1, review: { flows: { booking: { files: ['src/booking/**'] } } } }, change: (write) => write('src/booking/a.js', '1\n') });
   const first = await r.step({ exec: clean });

@@ -497,6 +497,15 @@ test('the stop hook fills every briefed handoff file of an orchestrator\'s brief
   const both = await stop('both', `Implement S5. Handoff file: ${first}. Then S5b. Handoff file: x${second}`);
   assert.equal(both.status, 2, 'the second marker on the line is read, and its relative path reported');
   assert.ok(both.stderr.includes(`x${second}`), both.stderr);
+  // A first marker's backticked path opens no inline code for the second on the line.
+  const [third, fourth] = ['S7a', 'S7b'].map((slice) => path.join(dispatch, `feat-eng-7-sync-${slice}-backend-developer.json`));
+  const quotedFirst = await stop('quoted-first', `Implement S7. Handoff file: \`${third}\`. Then S7b. Handoff file: x${fourth}`);
+  assert.equal(quotedFirst.status, 2, 'the second marker after a backticked first path is read');
+  assert.ok(quotedFirst.stderr.includes(`x${fourth}`), quotedFirst.stderr);
+  // A Unicode line separator after the path hides nothing.
+  const separated = path.join(dispatch, 'feat-eng-7-sep-backend-developer.json');
+  assert.equal((await stop('sep', `Handoff file: ${separated}\u2028more text`)).status, 0);
+  assert.equal(JSON.parse(readFileSync(separated, 'utf8')).decision, 'sep');
   // A backticked path that holds a sentence and a marker is one path.
   const quoted = path.join(dispatch, 'release. Handoff file: v2-backend-developer.json');
   assert.equal((await stop('quoted', `Implement S6.\nHandoff file: \`${quoted}\``)).status, 0);

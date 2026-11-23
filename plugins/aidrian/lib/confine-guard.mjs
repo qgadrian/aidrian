@@ -4,18 +4,18 @@
 // docs/providers/claude-code.md#the-sandbox-proof.
 
 import { randomBytes } from 'node:crypto';
-import { lstatSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { attemptOf, systemReal } from './attempt-clone.mjs';
 import { bashCall } from './config-guard.mjs';
-import { readSmallJson } from './fs.mjs';
+import { exists, readSmallJson } from './fs.mjs';
 import { fileReadOf } from './hosts/index.mjs';
-import { CONFINE_STATES } from './unattended-mark.mjs';
+import { CONFINE_PLAN, proofStateOf } from './unattended-mark.mjs';
 
-// The plan the start writes in the attempt's folder, the verdict the proof writes in the drop folder, and the lock that
-// lets the proof run once a start.
-export const CONFINE_PLAN = 'confine-plan.json';
+// The plan the start writes in the attempt's folder (kept in unattended-mark.mjs, whose scan ranks a mark by its proof),
+// the verdict the proof writes in the drop folder, and the lock that lets the proof run once a start.
+export { CONFINE_PLAN, exists };
 export const CONFINE_VERDICT = 'confine.json';
 export const CONFINE_LOCK = 'confine.lock';
 // The shell environment the start writes in the attempt's folder: project-start.mjs's SHELL_VARS, which imports modules
@@ -28,15 +28,6 @@ export const VERDICT_CAP = 1024 * 1024;
 const real = systemReal;
 // Whether `file` is `folder` or under it, the file system's root included.
 export const within = (folder, file) => file === folder || file.startsWith(folder.endsWith(path.sep) ? folder : `${folder}${path.sep}`);
-// Whether something is at `file`; a path that cannot be checked counts as there.
-export const exists = (file) => {
-  try {
-    lstatSync(file);
-    return true;
-  } catch (error) {
-    return error.code !== 'ENOENT' && error.code !== 'ENOTDIR';
-  }
-};
 
 // Writes `value` as JSON to `file` through a temporary file beside it: null, or why it could not.
 export function writeJson(file, value) {
@@ -76,18 +67,10 @@ function cloneHold(input) {
 
 // What holds the session of `input`, by its unattended mark `mark`, to its sandbox proof: { attempt, state } with
 // `state` the mark's confine state (true while owed), or null when no proof holds it. A readable mark of the session's
-// own holds by its confine state, a state that cannot be read counting as failed, or, with none, through a plan beside
-// its clone. With no readable mark of its own (none, one that cannot be read, or any pending mark, whichever start filed
-// it), any call whose folder lies in an attempt's clone with a proof plan owes the proof.
-function proofHold(input, mark) {
-  const own = mark !== null && typeof mark === 'object' && !mark.pending && typeof mark.root === 'string';
-  if (own) {
-    const attempt = typeof mark.cwd === 'string' ? attemptOf(mark.cwd) : null;
-    if (mark.confine !== undefined) return { attempt, state: CONFINE_STATES.includes(mark.confine) ? mark.confine : 'failed' };
-    if (mark.issue && attempt && exists(path.join(attempt.folder, CONFINE_PLAN))) return { attempt, state: true };
-  }
-  return cloneHold(input);
-}
+// own holds by its proof (unattended-mark.mjs proofStateOf, which the mark scan ranks by too). With none (no mark, one
+// that cannot be read, any pending mark, whichever start filed it, or one that holds no proof), any call whose folder
+// lies in an attempt's clone with a proof plan owes the proof.
+const proofHold = (input, mark) => proofStateOf(mark) ?? cloneHold(input);
 
 // The program words `aidrian project confine` may run under: `aidrian` on PATH, or this plugin's own command by its path.
 const BIN = path.resolve(import.meta.dirname, '../bin/aidrian');

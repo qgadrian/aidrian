@@ -32,7 +32,8 @@ import { chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openS
 import { userInfo } from 'node:os';
 import path from 'node:path';
 
-import { isObject } from './fs.mjs';
+import { attemptOf } from './attempt-clone.mjs';
+import { exists, isObject } from './fs.mjs';
 import { SESSION_ID } from './handoff-markers.mjs';
 import { stateRoot } from './project.mjs';
 
@@ -63,6 +64,8 @@ export const RUN_TAG = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 export const ISSUE_TAG = /^(?:[A-Z][A-Z0-9]{0,15}-)?[1-9][0-9]{0,8}$/u;
 // The states a mark's `confine` tag takes (lib/project-confine.mjs): owed, passed, or failed.
 export const CONFINE_STATES = Object.freeze([true, 'passed', 'failed']);
+// The proof plan a project run's start writes in an attempt's folder (lib/project-confine.mjs).
+export const CONFINE_PLAN = 'confine-plan.json';
 const NO_FOLLOW = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 
 const processUid = () => (typeof process.getuid === 'function' ? process.getuid() : null);
@@ -221,16 +224,28 @@ export function readUnattendedMark(session, { env = process.env, home, now = Dat
   return pendingHold(pending, session, processUid(), now);
 }
 
-// How much a mark of a session's own refuses, so the scan gives the most, as the agent gate hook enforces it
-// (confine-guard.mjs proofHold, which reads a proof state only beside a root): a failed sandbox proof, which runs
-// nothing, then an owed one, then a passed one, whose plan still hides its denied stores from every file-tool read,
-// then a mark it cannot read, a proof state with no root included, then an issue's, then a plain one.
+// How much a mark of a session's own refuses, so the scan gives the most: by the proof the agent gate hook holds it to
+// (proofStateOf), a failed sandbox proof, which runs nothing, then an owed one, then a passed one, whose plan still hides
+// its denied stores from every file-tool read; then a mark it cannot read, then an issue's, then a plain one.
+// What holds a mark that holds no proof of its own, a call's folder in an attempt's clone, cannot be ranked here.
+const PROOF_RANK = new Map([['failed', 5], [true, 4], ['passed', 3]]);
 function restriction(mark) {
+  const proof = proofStateOf(mark);
+  if (proof) return PROOF_RANK.get(proof.state);
   if (mark.root === null) return 2;
-  if (mark.confine === 'failed') return 5;
-  if (mark.confine === true) return 4;
-  if (mark.confine === 'passed') return 3;
   return plainMark(mark) ? 0 : 1;
+}
+
+// The sandbox proof the session's own mark `mark` (readUnattendedMark) holds it to, as the agent gate hook reads it
+// (confine-guard.mjs proofHold): { attempt, state }, where `attempt` is the attempt of the folder the mark started the
+// session in, or null, and `state` its confine state, true while owed, a state of a wrong shape counting as failed.
+// An issue mark with no state owes the proof when the start wrote a proof plan beside its attempt's clone. Null when the
+// mark holds no proof: none, a pending one, one with no readable main checkout, or a plain or proof-less one.
+export function proofStateOf(mark) {
+  if (!isObject(mark) || mark.pending || typeof mark.root !== 'string') return null;
+  const attempt = typeof mark.cwd === 'string' ? attemptOf(mark.cwd) : null;
+  if (mark.confine !== undefined) return { attempt, state: CONFINE_STATES.includes(mark.confine) ? mark.confine : 'failed' };
+  return mark.issue && attempt && exists(path.join(attempt.folder, CONFINE_PLAN)) ? { attempt, state: true } : null;
 }
 
 // Every mark of `session`'s own that holds, under its full id or a short one, in each of markFolders, as `holds`,

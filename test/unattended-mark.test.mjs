@@ -612,6 +612,20 @@ test('the scan gives the mark the agent gate hook enforces: a proof state counts
   }
 });
 
+test('an issue mark with no proof state owes the proof its attempt\'s plan names, above a passed mark of another attempt', (t) => {
+  const { ownMarks, marks, write, read } = markSetup(t);
+  const attempts = path.join(folder(t, 'aidrian-run-state-'), 'runs', 'r1', 'attempts');
+  const [owing, passed] = ['ENG-1.1', 'ENG-1.2'].map((each) => path.join(attempts, each, 'work'));
+  for (const work of [owing, passed]) mkdirSync(work, { recursive: true });
+  writeFileSync(path.join(path.dirname(owing), 'confine-plan.json'), JSON.stringify({ unreadable: [] }));
+  const session = 'feed001e-0000-4000-8000-00000000001e';
+  write(marks, `${session}.json`, { cwd: passed, project: 'r1', issue: 'ENG-1', confine: 'passed' });
+  write(ownMarks, `${session}.json`, { cwd: owing, project: 'r1', issue: 'ENG-1' });
+  assert.equal(read(session)?.cwd, owing, 'the mark whose attempt owes its proof');
+  const call = { session_id: session, cwd: folder(t, 'aidrian-outside-'), tool_name: 'Bash', tool_input: { command: 'ls' } };
+  assert.equal(confineDenial(call, { mark: read(session) })?.match, 'sandbox proof owed');
+});
+
 test('a hold filed while the transcript is read keeps the session from being recorded attended', (t) => {
   const { env, home, root, marks, write } = markSetup(t);
   const transcript = path.join(folder(t, 'aidrian-transcript-'), 'typed.jsonl');

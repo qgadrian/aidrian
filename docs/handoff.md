@@ -447,10 +447,14 @@ the handoff goes on by the clear route with what to change, and nothing is kept,
    floor under the short id the start printed, and every session id that starts with it reads that floor. Under the
    same id it files the session's unattended mark, `$XDG_STATE_HOME/aidrian/unattended/<id>.json`, which names the
    project's main checkout, so the hooks know the session wherever its calls run (Limits, below). A session with
-   several marks, under its full id and a short one or in both mark folders, is held by the most restrictive, as the
-   agent gate hook enforces it: a failed sandbox proof, then an owed one, then a passed one, whose plan still hides its
-   denied stores from the file tools, then a mark that cannot be read, a proof state with no main checkout included,
-   then a project run's issue, then a plain mark.
+   several marks, under its full id and a short one or in both mark folders, is held by the most restrictive. The scan
+   ranks a mark by the sandbox proof the agent gate hook holds it to, read by the same function the hook reads
+   (`lib/unattended-mark.mjs proofStateOf`): a failed proof, then an owed one, an issue mark with no proof state whose
+   attempt has a proof plan included, then a passed one, whose plan still hides its denied stores from the file tools.
+   Then come a mark that cannot be read, a proof state with no main checkout included, a project run's issue, and a plain mark.
+   A mark that holds no proof of its own leaves the hook one more hold, by the call's folder: a call inside an attempt's
+   clone with a proof plan owes that proof. That hold depends on each call, so no rank of the marks can stand for it,
+   and a stronger mark the scan picks, such as a passed one, replaces it, even for a call in another attempt's clone.
    Once the Human types into the session, the agent gate hook files `attended.<id>.json` beside each plain mark that
    holds it, in each mark folder, on the session's next main tool call, and the session is attended from then on: its
    mark reads as none, and its chain floor, kept for the count, no longer holds it. Once that record is in each of those

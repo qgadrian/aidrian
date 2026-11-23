@@ -477,7 +477,7 @@ const TRAIL_QUERY = `query($o: String!, $r: String!, $n: Int!, $pointer: String!
       latestReviews(first: ${TRAIL_PAGE}) { nodes { author { login } state } }
       history: commits(first: ${TRAIL_PAGE}) { totalCount nodes { commit { oid message } } }
       commits(last: 1) {
-        nodes { commit { oid statusCheckRollup { contexts(first: ${TRAIL_PAGE}) { totalCount nodes { __typename ... on CheckRun { name status conclusion } ... on StatusContext { context state } } } } } }
+        nodes { commit { oid statusCheckRollup { contexts(first: ${TRAIL_PAGE}) { totalCount nodes { __typename ... on CheckRun { name status conclusion checkSuite { workflowRun { databaseId event workflow { databaseId } } } } ... on StatusContext { context state } } } } } }
       }
       files(first: ${TRAIL_PAGE}) { totalCount nodes { path changeType } }
       reviews(last: ${TRAIL_PAGE}) { totalCount nodes { author { login __typename } authorAssociation state commit { oid } submittedAt } }
@@ -514,9 +514,18 @@ const branchFiles = (name, target, knowledge = false) => ({
 });
 // One check of the head as `forge.checks` rows give it: { name, state }, a check run's conclusion once it completed,
 // else its status, and a status context's state.
-const checkOf = (node) => (node?.__typename === 'StatusContext'
-  ? { name: String(node.context ?? ''), state: String(node.state ?? '') }
-  : { name: String(node?.name ?? ''), state: String((node?.status === 'COMPLETED' ? node.conclusion : node?.status) ?? '') });
+// A check run of an Actions workflow carries its run, its workflow file, and its event, as checkRow gives them, so
+// pr-checks.mjs currentRows leaves out a run that a later run of the same workflow replaced on the head, as when
+// `gh pr ready` starts a workflow again and the forge cancels the earlier run. Every row is of the trail's one repository.
+const checkOf = (node) => {
+  if (node?.__typename === 'StatusContext') return { name: String(node.context ?? ''), state: String(node.state ?? '') };
+  const run = node?.checkSuite?.workflowRun;
+  const id = (value) => (Number.isInteger(value) ? value : null);
+  return {
+    name: String(node?.name ?? ''), state: String((node?.status === 'COMPLETED' ? node.conclusion : node?.status) ?? ''),
+    run: id(run?.databaseId), workflowId: id(run?.workflow?.databaseId), event: typeof run?.event === 'string' && run.event !== '' ? run.event : null,
+  };
+};
 
 // How long an upload of images may take: a pull request's captures go up in one call.
 export const UPLOAD_TIMEOUT_MS = 10 * 60_000;

@@ -548,20 +548,53 @@ test('a branch that makes a host path a submodule parks the issue', (t) => {
   assert.equal(execFileSync('git', ['-C', started.fx.bare, 'ls-tree', 'refs/heads/feat/eng-1-export', '.claude'], { encoding: 'utf8' }).split(' ')[0], '160000', 'the branch holds a gitlink there');
 });
 
-// The default branch turns includeGuardedPaths off after the start read the policy and before it pinned the base.
-test('a policy the pinned base tip sets otherwise than the start read before it retries the start, and writes nothing', (t) => {
-  const fx = runFixture(t, { config: { github: { autoMerge: { includeGuardedPaths: true } } } });
+// The MCP servers the launch hands the session, by name, from its --mcp-config argument.
+const launchedServers = (fx, index = 0) => {
+  const args = fx.claude.starts()[index].args;
+  return Object.keys(JSON.parse(args[args.indexOf('--mcp-config') + 1]).mcpServers).sort();
+};
+const ISSUES_SERVER = { type: 'http', url: 'https://mcp.example.com/mcp' };
+// Moves the default branch on the forge to a commit whose config.json is `config`: the new tip.
+const moveMain = (fx, config) => {
   const main = path.join(fx.root, 'main-moves');
   execFileSync('git', ['clone', '-q', fx.bare, main], { stdio: 'pipe' });
-  const config = { ...fx.committed, github: { ...fx.committed.github, autoMerge: { includeGuardedPaths: false } } };
-  const tip = pushFiles(fx, main, { '.aidrian/config.json': `${JSON.stringify(config)}\n` }, 'main');
-  const rows = fx.rows().length;
-  const retried = fx.cmd(['start', 'launch', 'ENG-1']);
-  assert.equal(retried.exitCode, 75, retried.err.join('\n'));
-  assert.ok(retried.out.includes(`retry: the default branch moved during the start: the pinned base tip ${tip.slice(0, 7)} sets github.autoMerge.includeGuardedPaths otherwise than the policy the start read before it; start again`), retried.out.join('\n'));
-  assert.equal(fx.rows().length, rows, 'no row');
-  assert.equal(existsSync(path.dirname(work(fx))), false, 'no clone');
-  assert.deepEqual(fx.claude.starts(), []);
+  return pushFiles(fx, main, { '.aidrian/config.json': `${JSON.stringify(config)}\n` }, 'main');
+};
+
+// The start reads the team's policy once more after the pin: the pinned commit bounds every value the launch uses.
+test('the launch takes its policy from the read after the pin: a server the default branch revokes before it is not handed over', (t) => {
+  const fx = runFixture(t, { projectRun: { allow: true, unverifiedHosts: true, mcpServers: { issues: ISSUES_SERVER } } });
+  moveMain(fx, { ...fx.committed, projectRun: { allow: true, unverifiedHosts: true } });
+  const started = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(started.exitCode, 0, started.err.join('\n'));
+  assert.deepEqual(launchedServers(fx), [], 'the pinned commit defines no server, so none is handed over');
+});
+
+test('a local base ref older than the forge, which both name alike once pinned, starts with no retry and the pinned values', (t) => {
+  const team = { allow: true, unverifiedHosts: true, mcpServers: { issues: ISSUES_SERVER } };
+  const fx = runFixture(t, { forgeConfig: { version: 1, projectRun: team, github: { autoMerge: { includeGuardedPaths: true } } } });
+  moveMain(fx, { ...fx.committed, projectRun: team, github: { ...fx.committed.github, autoMerge: { includeGuardedPaths: true } } });
+  const started = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(started.exitCode, 0, started.err.join('\n'));
+  assert.deepEqual(launchedServers(fx), ['issues'], 'the server both reads define once the base is pinned');
+});
+
+// The base tip keeps a gitlink in a host folder the branch, cut before it, does not have.
+test('a host path the base keeps as a submodule parks the issue, named as the base\'s', (t) => {
+  const fx = runFixture(t, { files: { '.claude/settings.json': '{"permissions":{}}\n' } });
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  reopen(fx, 1, 12);
+  const head = branchWith(fx, (scratch) => writeFileSync(path.join(scratch, '.claude/settings.json'), '{"permissions":{"allow":[]}}\n'));
+  const main = path.join(fx.root, 'main-moves');
+  execFileSync('git', ['clone', '-q', fx.bare, main], { stdio: 'pipe' });
+  fx.git('-C', main, 'update-index', '--add', '--cacheinfo', `160000,${fx.git('-C', main, 'rev-parse', 'HEAD').trim()},.claude/sub`);
+  fx.git('-C', main, 'commit', '-q', '-m', 'a submodule');
+  fx.git('-C', main, 'push', '-q', fx.bare, 'HEAD:refs/heads/main');
+  const second = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(second.exitCode, 0, second.err.join('\n'));
+  assert.ok(second.out.includes(parkLine('the base keeps .claude/sub as a submodule')), second.out.join('\n'));
+  assert.equal(execFileSync('git', ['-C', fx.bare, 'rev-parse', 'refs/heads/feat/eng-1-export'], { encoding: 'utf8' }).trim(), head, 'the branch is as it was');
+  assert.equal(existsSync(path.dirname(work(fx, 'ENG-1', 2))), false, 'no clone is left');
 });
 
 // A host file the branch turns into a folder whose one entry is a gitlink: no folder of files, and no file either.
@@ -592,7 +625,7 @@ test('policyFilesAt reads a nested project\'s pointer from the whole tree, and r
   git('add', '-A');
   git('commit', '-q', '-m', 'nested');
   const tip = git('rev-parse', 'HEAD').trim();
-  assert.deepEqual(policyFilesAt(app, tip, 'app/'), { files: ['app/.aidrian.json', 'app/harness/config.json'], config: 'app/harness/config.json' });
+  assert.deepEqual(policyFilesAt(app, tip, 'app/'), { files: ['app/.aidrian.json', 'app/harness/config.json'] });
   const blob = git('rev-parse', `${tip}:app/.aidrian.json`).trim();
   rmSync(path.join(top, '.git', 'objects', blob.slice(0, 2), blob.slice(2)));
   assert.deepEqual(policyFilesAt(app, tip, 'app/'), { problem: `git cannot read app/.aidrian.json at the base tip ${tip.slice(0, 7)}, so where its policy lives cannot be told` });

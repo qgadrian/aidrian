@@ -399,15 +399,23 @@ function overlayShapeProblem(work, tip, overlay) {
   if (linked) return { why: `the base keeps ${namedFiles([linked])} as a link, which an overlay cannot verify` };
   const kind = (files, folders, part) => (files.get(part)?.mode === '120000' ? 'link' : files.has(part) ? 'file' : folders.has(part) ? 'folder' : null);
   const [headFolders, baseFolders] = [folderSet(head), folderSet(base)];
-  const submodules = [...commitGitlinks(work, overlay.sha), ...commitGitlinks(work, tip)];
+  // The side that holds the gitlink names it: the branch's head, then the base tip.
+  const [headLinks, baseLinks] = [[...commitGitlinks(work, overlay.sha)], [...commitGitlinks(work, tip)]];
+  const submodule = (match) => {
+    const made = headLinks.find(match);
+    if (made) return { why: `the branch makes ${namedFiles([made])} a submodule` };
+    const kept = baseLinks.find(match);
+    return kept ? { why: `the base keeps ${namedFiles([kept])} as a submodule` } : null;
+  };
   for (const file of overlay.files) {
-    // A submodule below the path, as a host file the branch turns into a folder that holds only a gitlink.
-    const below = submodules.find((link) => link.startsWith(`${file}/`));
-    if (below) return { why: `the branch makes ${namedFiles([below])} a submodule` };
+    // A submodule below the path, as a host file turned into a folder that holds only a gitlink.
+    const below = submodule((link) => link.startsWith(`${file}/`));
+    if (below) return below;
     const parts = file.split('/');
     for (let count = 1; count <= parts.length; count += 1) {
       const part = parts.slice(0, count).join('/');
-      if (submodules.includes(part)) return { why: `the branch makes ${namedFiles([part])} a submodule` };
+      const at = submodule((link) => link === part);
+      if (at) return at;
       const [was, is] = [kind(base, baseFolders, part), kind(head, headFolders, part)];
       if (was && is && was !== 'link' && is !== 'link' && was !== is) return { why: `the branch turns ${namedFiles([part])} between a file and a folder` };
     }

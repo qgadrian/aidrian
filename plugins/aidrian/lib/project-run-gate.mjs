@@ -49,7 +49,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { baseBranchTip, configFromText, machineSwitch } from './config.mjs';
+import { baseBranchTip, machineSwitch } from './config.mjs';
 import { DEFAULTS } from './config-defaults.mjs';
 import { pauseSync, resolvedPath } from './fs.mjs';
 import { changeNotFound, forgeDomains, forgeFor, forgeTokenVars } from './forges/index.mjs';
@@ -406,7 +406,8 @@ function startContext(given) {
 // Where the start runs, once the run's issues allow it: { orphans, attempt, tip, branch, cwd, grants, drop, log }, or
 // { answer } when the start ends here, as for an issue it parks unreconciled (parkUnreconciled).
 function startPlace(context) {
-  const { project, run, key, env, home, state, store, session, facade, policy, cap, refuse, noted, spawn, main, found } = context;
+  // `prePin`: the team's policy as the start read it before the base is pinned, for whether to start at all.
+  const { project, run, key, env, home, state, store, session, facade, policy: prePin, cap, refuse, noted, spawn, main, found } = context;
   const orphans = settleOrphans({ state, run, store, cap, env, spawn, now: context.now });
   // A session that runs on after its issue settled holds every start back until the host lists it ended, or `wait`
   // stops it: a wait, not a refusal (project-linger.mjs).
@@ -415,12 +416,12 @@ function startPlace(context) {
   if (current.problem) return refuse(current.problem, orphans);
   const lingers = lingerProblem(current);
   if (lingers) return { answer: noted(retryAnswer('start', lingers, orphans)) };
-  const capped = capProblem({ found: current, key, policy, today: startsToday(state, context.now) });
+  const capped = capProblem({ found: current, key, policy: prePin, today: startsToday(state, context.now) });
   if (capped.problem) return refuse(capped.problem, orphans);
   const early = heldProblem({ store, session, cap, env, spawn, state, run });
   if (early) return refuse(early, orphans);
   const access = accessProblem({
-    cap, forge: facade, repository: found.init.repository, env, home, guarded: guardedFolders({ main, state, env, home }), main, platform: context.platform, allowed: policy.outsideSandbox, localBinding: policy.localBinding,
+    cap, forge: facade, repository: found.init.repository, env, home, guarded: guardedFolders({ main, state, env, home }), main, platform: context.platform, allowed: prePin.outsideSandbox, localBinding: prePin.localBinding,
     keychain: project.localForgeTokenKeychain, ...(context.exec ? { exec: context.exec } : {}),
   });
   // A token read the forge could not answer, with none refused, may pass when tried again.
@@ -431,6 +432,12 @@ function startPlace(context) {
   // Only now the fetch: a start the checks above refuse fetches nothing.
   const base = forgeBase(project, found.init.repository, facade, env);
   if (base.problem) return refuse(base.problem, orphans);
+  // The policy the start goes on under, read once more now the base tip is pinned and the local base ref names it, so
+  // its local half is the pinned commit: every value from here on, the launch's included, comes from this one answer.
+  // A change on the forge after this read is an accepted residual.
+  const policy = teamPolicy(project, found.init.repository, facade);
+  if (policy.transient) return { answer: noted(retryAnswer('start', policy.problem, orphans)) };
+  if (policy.problem) return refuse(policy.problem, orphans);
   // The branch the issue's latest start worked on, which every attempt goes on on.
   const branch = issueBranch(current, key);
   // A started issue an earlier run parked (project-run.mjs resumedIssues): its branch on the forge is that run's work,
@@ -444,22 +451,19 @@ function startPlace(context) {
   const policyRead = policyFilesAt(project.root, base.tip, prefix);
   if (policyRead.problem) return refuse(policyRead.problem, orphans);
   const policyFiles = policyRead.files;
-  // The default branch may have moved between the policy read and the pin: the pinned commit's own config decides.
-  const moved = pinnedPolicyProblem(project.root, base.tip, policyRead.config, policy);
-  if (moved) return { answer: noted(retryAnswer('start', moved, orphans)) };
   const reviewed = (head, changed) => reviewedProblem({ project, repository: found.init.repository, facade, policy, policyFiles, main: base.main, branch, pr, head, changed, env });
   // The host files and the policy files the base tip names, which no attempt loads from a branch no review passed.
   const guards = (file) => isGuarded(file) || isPolicyPath(file, policyFiles);
   const recorded = recordedHead(current, key) ?? resumed?.head ?? null;
-  const where = { ...context, found: current, attempt: capped.attempt, tip: base.tip, branch, resumed, recorded, reviewed, guards, policyFiles, pushUrl: access?.pushUrl, checked: access?.token?.id ? access.token : null };
+  const where = { ...context, policy, found: current, attempt: capped.attempt, tip: base.tip, branch, resumed, recorded, reviewed, guards, policyFiles, pushUrl: access?.pushUrl, checked: access?.token?.id ? access.token : null };
   const room = confinedRoom(where);
   if (room.halt) return { answer: noted(haltAnswer(room.halt, { lines: orphans })) };
   if (room.retry) return { answer: noted(retryAnswer('start', room.retry, orphans)) };
-  if (room.park) return { answer: noted(parkUnreconciled({ ...context, key, park: room.park, pr, orphans })) };
+  if (room.park) return { answer: noted(parkUnreconciled({ ...context, policy, key, park: room.park, pr, orphans })) };
   if (room.problem) return refuse(room.problem, orphans);
   const log = runLog(state, run, key, capped.attempt);
   if (log.problem) return refuse(log.problem, orphans);
-  return { orphans, attempt: capped.attempt, tip: base.tip, branch, ...room, log: log.file, afterLimit: room.onForge === true && endedOnLimit(current, key, capped.attempt - 1) };
+  return { orphans, attempt: capped.attempt, tip: base.tip, branch, ...room, policy, log: log.file, afterLimit: room.onForge === true && endedOnLimit(current, key, capped.attempt - 1) };
 }
 
 // Why the attempt's session may not load the host files its branch's head `head` changes from the base tip, so its
@@ -526,8 +530,8 @@ function textAt(root, tip, file) {
 
 // The policy files of the commit `tip`, the pinned base the overlay copies from, as pr-auto-merge.mjs branchPolicies
 // resolves a branch's: the pointer file and the config.json it locates (project.mjs configPathIn), each from the top of
-// the repository with the project folder `prefix`. { files, config }, `config` that config.json's path, or { problem }:
-// a read git fails, other than a file the commit lacks, is no answer.
+// the repository with the project folder `prefix`. { files } or { problem }: a read git fails, other than a file the
+// commit lacks, is no answer.
 export function policyFilesAt(root, tip, prefix) {
   let failed = null;
   const read = (name) => {
@@ -537,25 +541,7 @@ export function policyFilesAt(root, tip, prefix) {
   };
   const config = configPathIn(read);
   if (failed) return { problem: `git cannot read ${failed} at the base tip ${tip.slice(0, 7)}, so where its policy lives cannot be told` };
-  return { files: [trailPaths(prefix).pointer, `${prefix}${config}`], config: `${prefix}${config}` };
-}
-
-// Why the policy the start read before it pinned the base (`policy`, teamPolicy) is not the pinned commit `tip`'s, or
-// null: projectRun.allow, github.reviewer, and github.autoMerge.includeGuardedPaths, read from `config`, the config.json
-// policyFilesAt located there, as the forge's read parses one (config.mjs configFromText). Any difference is the default
-// branch moving during the start: a retry, with nothing written.
-function pinnedPolicyProblem(root, tip, config, policy) {
-  const got = textAt(root, tip, config);
-  if (got?.failed) return `git cannot read ${got.failed} at the base tip ${tip.slice(0, 7)}, so the start cannot check its policy there`;
-  const pinned = configFromText(got?.text ?? null, config);
-  const reviewer = typeof pinned.github?.reviewer === 'string' && pinned.github.reviewer !== '' ? pinned.github.reviewer : null;
-  const differs = [
-    pinned.projectRun?.allow !== true && 'projectRun.allow',
-    reviewer !== policy.reviewer && 'github.reviewer',
-    (pinned.github?.autoMerge?.includeGuardedPaths === true) !== policy.includeGuardedPaths && 'github.autoMerge.includeGuardedPaths',
-  ].filter(Boolean);
-  if (!differs.length) return null;
-  return `the default branch moved during the start: the pinned base tip ${tip.slice(0, 7)} sets ${differs.join(', ')} otherwise than the policy the start read before it; start again`;
+  return { files: [trailPaths(prefix).pointer, `${prefix}${config}`] };
 }
 
 // Whether attempt `attempt` of issue `key` ended on a usage or rate limit, as the run `found` records it.
@@ -688,13 +674,14 @@ function issueFileFor(state, run, key, folder) {
 // start holds the session only once `confined` confirms the proof, which files it in the session's mark.
 function launchStart(context, place) {
   const { run, key, env, home, session, store, cap, spawn, wait, state, held, noted } = context;
-  const { folder, attempt, branch, cwd, git, grants, drop, cache, vars, log, main, mainGit, afterLimit, issueFile, pushUrl, claim, head, overlay, baseCopies, policyFiles, resumed } = place;
-  const localBinding = context.policy.localBinding === true;
+  // `policy`: the one the start read once the base was pinned (startPlace), which the launch takes every value from.
+  const { folder, attempt, branch, cwd, git, grants, drop, cache, vars, log, main, mainGit, afterLimit, issueFile, pushUrl, claim, head, overlay, baseCopies, policyFiles, resumed, policy } = place;
+  const localBinding = policy.localBinding === true;
   // Whether the team's switch reaches this machine's loopback on this host and platform, as the host declares it: one
   // that keeps its commands off the loopback all the same, as Claude Code on Linux, keeps the proof's listener.
   const loopback = localBinding && safely(() => cap.confineLoopback?.({ env, home, platform: context.platform, localBinding })) === true;
   // The forge's hosts, and the registries the team lists (projectRun.registries).
-  const domains = [...forgeDomains(context.found.init.repository), ...registryHosts(context.policy.registries)];
+  const domains = [...forgeDomains(context.found.init.repository), ...registryHosts(policy.registries)];
   const proving = cap.confineProof === true;
   let confine = null;
   if (proving) {
@@ -735,7 +722,7 @@ function launchStart(context, place) {
   // head the attempt started from on the base branch's copies of its host files, with the policy files the pinned base
   // tip names (`policyFiles`, policyFilesAt), both for the push guard.
   const overlaid = overlay ? { overlay, policyFiles: (policyFiles ?? []).filter((each) => typeof each === 'string').slice(0, 20) } : {};
-  const base = { event: 'start', key, attempt, session, name, cwd, branch, issueHours: context.policy.issueHours, ...(drop ? { drop } : {}), ...(pushUrl ? { pushUrl } : {}), ...(head ? { head } : {}), ...overlaid };
+  const base = { event: 'start', key, attempt, session, name, cwd, branch, issueHours: policy.issueHours, ...(drop ? { drop } : {}), ...(pushUrl ? { pushUrl } : {}), ...(head ? { head } : {}), ...overlaid };
   let proof = null;
   // Why the write-ahead row was refused under the ledger's lock, when the order or the cap moved since the start read it.
   const ahead = {};
@@ -751,7 +738,7 @@ function launchStart(context, place) {
           runs: runsFolder(state),
           // The sign-off store, which a merge no Human asks for reads as the Human's word: no confined session writes it.
           guarded: guardedStore({ env, home }),
-          mcp: context.policy.mcpServers, localBinding, home, platform: context.platform, beacon: (id) => readBeacon(id, { env, home, since }), confined,
+          mcp: policy.mcpServers, localBinding, home, platform: context.platform, beacon: (id) => readBeacon(id, { env, home, since }), confined,
         });
         // A failed proof halts the run whatever came of stopping its session (startLines).
         if (started?.proof) proof = started.problem;
@@ -759,7 +746,7 @@ function launchStart(context, place) {
       },
       stop: (id) => cap.stop({ id, env, run: spawn }),
       ended: (earlier) => earlierEnded({ cap, store, earlier, env, spawn, state, run }),
-      intent: () => writeAhead({ state, run, base, held, session, now: Date.now(), found: context.found, env, parallel: parallelOf(context.policy), refused: ahead }),
+      intent: () => writeAhead({ state, run, base, held, session, now: Date.now(), found: context.found, env, parallel: parallelOf(policy), refused: ahead }),
       store,
       root: context.main,
       floor: { slug: `project-${run}`, chain: 0, brief: null, route: 'background' },

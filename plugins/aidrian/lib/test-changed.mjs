@@ -44,9 +44,10 @@ export function changedFiles(root, base, git = runGit) {
   return diffed && untracked ? [...new Set([...diffed, ...untracked])].sort() : null;
 }
 
-// A file named as a test, which no other test imports. A module in a test folder named otherwise, such as a helper, is
-// one tests import, so its users are searched for too.
-const NAMED_TEST = /\.(?:test|spec)\.[^/]+$|_test\.[^/]+$/u;
+// A script named as a test, which no other test imports. A module in a test folder named otherwise, such as a helper, is
+// one tests import, and a fixture named like a test, such as `expected.test.json`, one tests read: their users are
+// searched for too.
+const NAMED_TEST = /(?:\.(?:test|spec)|_test)\.[cm]?[jt]sx?$/u;
 
 // The words a test names a changed file by, none for a file named as a test: a code file by its name, and by its name with
 // no extension, as an import often writes it (`./check-runs`); `index.*` by its folder and name; a fixture in a test folder

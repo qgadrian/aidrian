@@ -677,7 +677,8 @@ test('aidrian test changed finds the changed test files and the ones that name a
       'test/fixtures/notes.md': 'see lib/b.mjs\n',
       'test/math.mjs': 'export {};\n',
       'test/fixtures/frozen-clock.mjs': 'export {};\n',
-      'test/clock.test.mjs': "import './fixtures/frozen-clock.mjs';\n",
+      'test/clock.test.mjs': "import './fixtures/frozen-clock.mjs';\nread('fixtures/expected.test.json');\n",
+      'test/fixtures/expected.test.json': '{}\n',
     },
   });
   git('push', '-q', 'origin', 'feat/x');
@@ -701,6 +702,7 @@ test('aidrian test changed finds the changed test files and the ones that name a
   assert.deepEqual(nodeOnly(['test/fixtures/notes.md']), ['test/b.test.mjs'], 'a fixture joined to its folder by name');
   assert.deepEqual(nodeOnly(['lib/a.mjs']), ['test/a.test.mjs'], 'a nested package\'s .tsx test stays out');
   assert.deepEqual(nodeOnly(['test/fixtures/frozen-clock.mjs']), ['test/clock.test.mjs', 'test/fixtures/frozen-clock.mjs'], 'a changed helper selects the tests that import it');
+  assert.deepEqual(nodeOnly(['test/fixtures/expected.test.json']), ['test/clock.test.mjs'], 'a fixture named like a test selects the tests that read it');
   assert.deepEqual([nodeOnly(['pkg/sum.go']), nodeOnly(['pkg/sum_test.go'])], [[], []], 'Go tests are a configured command\'s');
   assert.equal(testCommand(dir, {}), 'npm test --');
   assert.equal(testCommand(dir, { changedCommand: 'node --test' }), 'node --test');

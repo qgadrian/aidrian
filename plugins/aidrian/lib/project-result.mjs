@@ -243,16 +243,17 @@ function droppedPullProblem({ forge, repository, result, branch, since, verified
     return { retry: true };
   }
   if (typeof view.headRefOid !== 'string' || view.headRefOid !== head) return `pull request #${result.pr}'s head is not the head of ${branch} on the forge`;
-  // Read the state once more before the issue parks: a pull request that merged since the first read is taken as merged.
-  // A merge after this read still parks the issue as pr-open.
-  let again = null;
+  // Read the state once more before the issue parks: a pull request that merged since the first read is taken as merged,
+  // one that closed keeps no head, as above, and a forge that cannot answer now is read again later. A merge after this
+  // read still parks the issue as pr-open.
+  let again;
   try {
     again = forge.change(String(result.pr), 'state', { repo: `${repository.host}/${named}` });
   } catch {
-    // The first read's answer stands.
+    return { retry: true };
   }
   if (again?.state === 'MERGED') return merged();
-  verified.head = head;
+  verified.head = again?.state === 'CLOSED' ? null : head;
   return null;
 }
 

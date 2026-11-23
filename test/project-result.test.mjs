@@ -194,6 +194,26 @@ test('merged is kept only when the forge shows the pull request merged from the 
   };
   racing.forge.branchHead = () => head;
   assert.deepEqual(racing.recorded({ status: 'pr_open', pr: 12, stop: 'review' }).out, ['result ENG-1 merged -> done']);
+  // One that closes in that moment parks with no head, and a second read that fails takes nothing in yet.
+  const closing = started(t);
+  let seen = 0;
+  closing.forge.change = () => {
+    seen += 1;
+    return merged(seen === 1 ? { state: 'OPEN', mergedAt: null, headRefOid: head } : { state: 'CLOSED', mergedAt: null, headRefOid: head });
+  };
+  closing.forge.branchHead = () => head;
+  assert.deepEqual(closing.recorded({ status: 'pr_open', pr: 12, stop: 'review' }).out, ['result ENG-1 pr_open -> parked pr-open']);
+  assert.equal(closing.rows().find((row) => row.event === 'result').head, null);
+  const flaky = started(t);
+  let tries = 0;
+  flaky.forge.change = () => {
+    tries += 1;
+    if (tries === 1) return merged({ state: 'OPEN', mergedAt: null, headRefOid: head });
+    throw new Error('gh: HTTP 502');
+  };
+  flaky.forge.branchHead = () => head;
+  assert.deepEqual(flaky.recorded({ status: 'pr_open', pr: 12, stop: 'review' }).out, ['running ENG-1']);
+  assert.equal(flaky.rows().filter((row) => row.event === 'result').length, 0, 'read again on a later wait');
   const failing = started(t);
   assert.deepEqual(failing.recorded({ status: 'merged', pr: 12 }).out, ['ended ENG-1 bad_result -> open']);
   assert.equal(failing.rows().find((row) => row.event === 'ended').why, 'the forge has no pull request #12 in github.com/acme/widgets');

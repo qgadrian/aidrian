@@ -2,7 +2,7 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { closeSync, constants, cpSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync, writeSync } from 'node:fs';
-import { hostname, tmpdir } from 'node:os';
+import { homedir, hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
@@ -485,15 +485,22 @@ test('the stop hook fills every briefed handoff file of an orchestrator\'s brief
   const respelled = await hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'spelled', agent_type: 'aidrian:backend-developer', agent_transcript_path: spelled, last_assistant_message: 'Handoff written to reports/S3-backend-developer.json.', stop_hook_active: false });
   assert.equal(respelled.status, 2);
   assert.doesNotMatch(respelled.stderr, /If you meant to write it, write it now/u, respelled.stderr);
+  // A home-relative claim of a rejected path under the home folder, too.
+  const home = path.join(homedir(), '.aidrian-test-missing', 'S3-backend-developer.json');
+  const homeBrief = path.join(base, 'agent-home.jsonl');
+  writeFileSync(homeBrief, JSON.stringify({ type: 'user', timestamp: new Date().toISOString(), message: { role: 'user', content: `Implement slice S3.\nHandoff file: ${home}` } }));
+  const tilde = await hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'tilde', agent_type: 'aidrian:backend-developer', agent_transcript_path: homeBrief, last_assistant_message: 'Handoff written to ~/.aidrian-test-missing/S3-backend-developer.json.', stop_hook_active: false });
+  assert.equal(tilde.status, 2);
+  assert.doesNotMatch(tilde.stderr, /If you meant to write it, write it now/u, tilde.stderr);
   // Two markers on one line, each opening a sentence: both are read.
   const [first, second] = ['S5a', 'S5b'].map((slice) => path.join(dispatch, `feat-eng-7-sync-${slice}-backend-developer.json`));
   const both = await stop('both', `Implement S5. Handoff file: ${first}. Then S5b. Handoff file: x${second}`);
   assert.equal(both.status, 2, 'the second marker on the line is read, and its relative path reported');
   assert.ok(both.stderr.includes(`x${second}`), both.stderr);
-  // A backticked path that holds a sentence and a marker is still one path.
-  const quoted = path.join(dispatch, 'release. Handoff file: v2-backend-developer.json');
-  assert.equal((await stop('quoted', `Implement S6.\nHandoff file: \`${quoted}\``)).status, 0);
-  assert.equal(JSON.parse(readFileSync(quoted, 'utf8')).decision, 'quoted');
+  // A lone backtick in the prose before a marker hides nothing.
+  const lone = path.join(dispatch, 'feat-eng-7-sync-S6-backend-developer.json');
+  assert.equal((await stop('lone', `Quote with a \` mark. Handoff file: ${lone}`)).status, 0);
+  assert.equal(JSON.parse(readFileSync(lone, 'utf8')).decision, 'lone');
   // A relative path an earlier run left is still a mistake to report; one this run wrote is not.
   const relative = path.join(dir, 'handoff-backend-developer.json');
   writeFileSync(relative, '{}');

@@ -28,13 +28,11 @@
 // What the report quotes from another source, such as a pull request body or another agent's claim, is not its own.
 // config.json `telemetry.enabled: false` drops the row, never the checks or the lessons.
 
-import path from 'node:path';
-
 import { CHILD_SEND_BACKS, childSendBacks, forgetChildSendBacks, storeChildSendBacks } from '../lib/child-send-backs.mjs';
 import { loadConfig } from '../lib/config.mjs';
 import { appendEvent } from '../lib/dispatch-log.mjs';
 import { blockingChildren, checkDelivery, runningChildren, sendsBack, stopAgent, stopRow, undelivered, wakingChildren } from '../lib/dispatch-rows.mjs';
-import { deliverHandoffs, finalReport } from '../lib/delivery-check.mjs';
+import { deliverHandoffs, finalReport, resolveClaim } from '../lib/delivery-check.mjs';
 import { claimProblem, passClaims, readCheckRuns, unsupportedClaims } from '../lib/check-runs.mjs';
 import { deny, isMain, runHook } from '../lib/hook-io.mjs';
 import { deliverySignal, idleChildrenSignal, recordSignal } from '../lib/lesson-signals.mjs';
@@ -163,8 +161,8 @@ export async function handle(input) {
     const { unwritten = [] } = delivery;
     // A path the brief's rejected marker names is never one to write, though the report claims it.
     const cwd = typeof input.cwd === 'string' ? input.cwd : project.root;
-    const refused = new Set((checked.rejected ?? []).map(({ value }) => path.resolve(cwd, value)));
-    const missing = delivery.missing.filter((file) => !refused.has(path.resolve(cwd, file)));
+    const refused = new Set((checked.rejected ?? []).map(({ value }) => resolveClaim(cwd, value)));
+    const missing = delivery.missing.filter((file) => !refused.has(resolveClaim(cwd, file)));
     recordSignal(project, deliverySignal({ agentType: agent.agent_type, agentId, session: agent.session_id, missing: undelivered(delivery) }), { config });
     if (missing.length) {
       reasons.push(

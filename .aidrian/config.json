@@ -9,7 +9,7 @@
   },
   "github": {
     "extraRounds": "auto",
-    "maxReviewRounds": 5,
+    "maxReviewRounds": 10,
     "requiredChecks": [
       "Check (Node 22)",
       "Check (Node 24)",
@@ -19,7 +19,7 @@
     "autoMerge": { "allow": true, "strategy": "squash", "deleteBranch": true, "includeGuardedPaths": true }
   },
   "review": { "engine": "codex-local", "record": "local" },
-  "session": { "handoff": { "mode": "auto" } },
+  "session": { "handoff": { "mode": "auto", "maxChain": "unlimited" } },
   "testing": {
     "fullSuite": ["npm run check", "npm test", "npm run test", "node scripts/run-tests.mjs"],
     "pushFirstMinutes": 5

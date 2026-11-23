@@ -40,6 +40,8 @@ const MAX_ORIGIN = 300;
 const NOTE_PART = 80;
 const URL_RE = /^https?:\/\/[^\s/]+(?:\/\S*)?$/u;
 const CAPTURE_MS = 15 * 60_000;
+// The capture adapter's error output of the last attempt on a head, kept beside its manifest (failureReason).
+const STDERR_LOG = 'capture-stderr.log';
 // The most uploaded hashes the review record keeps; the oldest go first.
 const MAX_UPLOADED = 600;
 
@@ -250,6 +252,35 @@ function urlFrom(text, what) {
   return line.replace(/\/+$/u, '');
 }
 
+// The adapter's progress line before each screen (visual-web.mjs), `capturing <i> of <n>: <key>`.
+const PROGRESS = /^capturing \d+ of \d+: (\S+)$/u;
+
+// Why the capture adapter's run `run` failed, over the capture jobs `jobs` in order. The reason may be posted, so it is
+// built from `jobs` and the exit only: past the time limit, where Playwright's own SIGTERM handler can turn the stop
+// into a plain exit 1, and when the last line is a progress line, the screen is the job the last progress line's key
+// names, numbered from `jobs`. Only a last line that is no progress line is kept, as before this rule. The whole error
+// output is kept, owner-only, as capture-stderr.log in `dir`, which the reason names by file name only.
+function failureReason(run, jobs, dir) {
+  const lines = String(run.stderr ?? '').split('\n').map((line) => line.trim()).filter(Boolean);
+  const keys = jobs.map((job) => job.key);
+  const index = keys.indexOf(lines.map((line) => PROGRESS.exec(line)?.[1]).filter((key) => keys.includes(key)).at(-1));
+  const at = index >= 0 ? ` at screen ${index + 1} of ${jobs.length}, ${jobs[index].key}` : '';
+  const last = lines.at(-1);
+  const stopped = run.signal ? `killed by ${run.signal}` : run.error ? 'the capture could not run' : `exit ${run.status}`;
+  const why = run.error?.code === 'ETIMEDOUT'
+    ? `the capture ran past its ${CAPTURE_MS / 60_000}-minute limit and was stopped${at}`
+    : last && !PROGRESS.test(last) ? last : `${stopped} with no error line${at}`;
+  if (!lines.length) return why;
+  try {
+    mkdirSync(dir, { recursive: true });
+    // A new file only, made owner-only: a log an earlier attempt left, which could not be removed, takes nothing.
+    writeFileSync(path.join(dir, STDERR_LOG), String(run.stderr), { mode: 0o600, flag: 'wx' });
+    return `${why} (its error output: ${STDERR_LOG} in this head's capture folder)`;
+  } catch {
+    return why;
+  }
+}
+
 // Captures this head's matrix and writes its manifest; a captured manifest already there for the head is returned as
 // is, so the capture runs once per head. Every write keeps the images ingested for the head (withIngested), and an
 // ingest-only manifest is captured over, never taken for a capture. `withBase(use)` runs `use(hook)` in a checkout of the base, where `hook(command,
@@ -260,6 +291,10 @@ export async function captureVisual({ project, pr, head, visual, entries, baseUr
   const known = readManifest(project, pr, head);
   if (known?.status === 'captured') return known;
   const dir = captureDir(project, pr, head);
+  // Each attempt starts with no error output of an earlier one; a log that cannot go stays, and is no reason to stop.
+  try {
+    rmSync(path.join(dir, STDERR_LOG), { force: true });
+  } catch {}
   mkdirSync(dir, { recursive: true });
   const carried = ingestedOf(known);
   const write = (fresh) => {
@@ -341,8 +376,8 @@ export async function captureVisual({ project, pr, head, visual, entries, baseUr
       cwd: project.root, env, input: JSON.stringify({ outDir: dir, entries: jobs, storageStates: prepared.storageStates }), encoding: 'utf8', timeout: CAPTURE_MS, maxBuffer: 64 * 1024 * 1024,
     });
     const reason = String(run.stderr ?? '').trim().split('\n').at(-1) ?? '';
-    if (run.status === 3) return write({ ...base, status: 'unavailable', reason, entries: [] });
-    if (run.status !== 0) return write({ ...base, status: 'failed', reason: reason || (run.signal ? `killed by ${run.signal}` : `exit ${run.status}`), entries: [] });
+    if (run.status === 3 && !run.error) return write({ ...base, status: 'unavailable', reason, entries: [] });
+    if (run.status !== 0 || run.error) return write({ ...base, status: 'failed', reason: failureReason(run, jobs, dir), entries: [] });
     const results = new Map((JSON.parse(run.stdout).results ?? []).map((result) => [result.key, result]));
     const captured = entries.map((entry) => {
       if (missingBase.has(entry.key)) return { ...entry, error: missingBase.get(entry.key) };

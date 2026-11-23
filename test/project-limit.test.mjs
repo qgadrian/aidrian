@@ -225,7 +225,9 @@ test('a running session the host continues keeps running through the pause, whic
   const second = fx.latest();
   assert.deepEqual([second.attempt, second.branch], [2, 'feat/eng-1-export'], 'the same issue and branch');
   assert.notEqual(second.cwd, fx.start.cwd, 'in a fresh clone');
-  assert.match(fx.claude.starts().at(-1).args.at(-1), /Attempt 1 stopped when the host met a usage or rate limit: the branch feat\/eng-1-export on the forge holds the work it pushed/u);
+  // Attempt 1 pushed nothing, so the forge has no branch to go on from: the retry is cut from the base tip, and its
+  // task claims no pushed work.
+  assert.doesNotMatch(fx.claude.starts().at(-1).args.at(-1), /usage or rate limit/u, 'no branch on the forge holds pushed work');
   assert.doesNotMatch(fx.claude.starts()[0].args.at(-1), /usage or rate limit/u, 'a first attempt says nothing of a limit');
 });
 

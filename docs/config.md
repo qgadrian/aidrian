@@ -184,7 +184,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `terms.file` | The [terms file](#terms) of banned terms and their replacements, relative to the project root; `null` turns the rule off. |
 | `docs.wrapLimit` | The longest line, in characters, allowed in a Markdown file an agent writes; `0` turns the check off. |
 | `testing.fullSuite` | The commands that run the whole test suite, as written: [Testing](#testing). |
-| `testing.changedCommand` | The command `aidrian test changed` gives the touched test files; `null`, the default, is `npm test --` when package.json has a test script: [Testing](#testing). |
+| `testing.changedCommand` | The command `aidrian test changed` gives the touched test files; `null`, the default, is `npm test --` when package.json has a test script, given only the `.js`, `.mjs`, and `.cjs` test files: [Testing](#testing). |
 | `testing.pushFirstMinutes` | How old a commit the branch's remote copy lacks may be before a full suite is refused; `0`, the default, turns the refusal off: [Testing](#testing). |
 | `knowledge.budgets.alwaysBytes` | The bytes all `always` knowledge docs may add up to: [Knowledge budgets](#knowledge-budgets). |
 | `knowledge.budgets.taggedDocBytes` | The bytes one tagged knowledge doc may have: [Knowledge budgets](#knowledge-budgets). |
@@ -896,7 +896,7 @@ aidrian pr attest <PR> --check     # exit 0 recorded, 3 not
 ```
 
 Inside `aidrian pr review`, the full-diff agent pass it dispatches, recorded with
-`aidrian pr attest <PR> --pass agent:<name> --head <sha> --reviewer <who> --findings-file <state>/tmp/review-<PR>/<pass>-<hash>.findings.json` (an agent pass
+`aidrian pr attest <PR> --pass agent:<name> --head <sha> --reviewer <who> --findings-file <the file the step's record names>` (an agent pass
 records its findings one by one; the counts form above stays accepted), is that record too, so the bot request needs no second
 attest; so is an agent pass its flows merged into, `agent:<name>:<flows>`, when it read the whole diff. A pass over a
 flow's or a slice's files alone, the cross pass, and an engine pass do not count.
@@ -1960,7 +1960,8 @@ attempt's clone pushes to, read before its session starts, and a clone that push
 `remote.origin.pushurl` in the user's git config makes it, halts the start; the issue session's one push goes only there
 ([hooks.md](hooks.md#agent-gates)). A host that would refuse that push in the driver session's permission mode, which the session
 takes, halts the start too, before the host starts anything ([the push preflight](handoff.md#the-push-preflight)). Every start is confined to a fresh
-clone under its host's sandbox, and a host that is not halts the start. A later attempt goes on from its issue's branch
+clone under its host's sandbox, and a host that is not halts the start. A later attempt, and the first attempt of an
+issue `resumed` from an earlier run at a head the branch still holds, goes on from its issue's branch
 as the forge holds it, the branch of its latest start that ran a session. When that head differs from the base tip in a
 host config or instruction file, it goes on from the tip on the same branch if the tip already holds the head, and
 otherwise, such as when the branch changed a knowledge index a docs issue registered its doc in, or only the base
@@ -1971,7 +1972,8 @@ branch is reused. The session's task and the start's stderr give only a count of
 cleaned to one line, go to `logs/<KEY>.<attempt>.left.txt` in the run's folder, beside the run log a host may truncate;
 when that file cannot be written, the start still goes on, and its stderr says the names could not be written.
 The task names the old branch's pull request by its link, which the forge adapter takes only as the canonical link of
-the pinned repository's pull request with the number the result named, and only when the forge shows it
+the pinned repository's pull request with the number the result named (for a `resumed` issue with no result in this run, the one
+the earlier run's result named), and only when the forge shows it
 open in the pinned repository, into the default branch, from the old branch at the head the attempt fetched, and the
 session closes it by that link, once the new pull request is open, with the comment `superseded by #<new>`, only if
 `gh pr view` still shows the same;
@@ -2052,7 +2054,24 @@ The snapshot input is one JSON object, at most 1 MiB, read as a regular file and
   points to), does not start with the name of a remote, and has no part that is a HEAD name, such as `HEAD` or `FETCH_HEAD`.
   No part is 40 or 64 hex digits, as a commit id is.
 - `status` is a status type: `triage`, `backlog`, `unstarted`, `started`, `completed`, or `canceled`.
-  A run starts only a `backlog` or `unstarted` issue.
+  A run starts only a `backlog` or `unstarted` issue, and a `started` one that an earlier run of the project parked
+  on the branch the snapshot names: in the runs folder, among the runs that pinned the same repository, the one with the
+  latest `init` among those that record the issue records it parked, and the branch its latest start that ran worked on
+  is this one. That run moved it to started and parked it, as on a pull request left open, so the issue is the run's own
+  work; `init` records it in `snapshot.json` as `resumed`, with that run, the pull request its latest result named, and
+  the `head` that result recorded, prints a `resumed:` line, and `next`, `start`, and the gate read the same plan.
+  A result that parks an issue records the commit the forge shows its branch at then, or null when it shows none;
+  a `pr_open` result records the head its pull request's check read, with no second read.
+  A ledger written before heads were recorded has a latest result row with no `head` field at all: when that result
+  named a pull request, `init` and its check read it through the forge and take its head commit, only when it is open,
+  from the snapshot's branch, in the pinned repository. That fallback trusts the pull request's head as the forge shows
+  it now, not a commit the run recorded; a row with a `head` field, null included, never falls back.
+  A resumed issue's first attempt goes on from its branch on the forge only when the branch holds that head, at it or
+  after it; a branch at any other history is refused, and with no head, such as a run that parked before any push, the
+  attempt is a plain first attempt, which refuses a branch the forge has already. A branch the forge no longer has is
+  cut from the base tip, as a first attempt's, and only an attempt that goes on on the branch the forge has is told the
+  earlier run's work and pull request are its own.
+  A driver's input never gives `resumed`. Any other `started` issue is someone's work outside the run and stays blocked.
 - `priority` is 1, the most urgent, to 4, or 0 for none, which comes last.
 - `outside` lists the status of each blocker outside the project. A blocker that is not `completed`, or not listed, blocks.
 - `teams`, optional, lists every team key of the tracker workspace, at most 500, each a capital letter then capitals or
@@ -2143,7 +2162,7 @@ from any branch, and a `note triggers` line for other services that act on a pus
 preview deploys and ChatOps bots. It prints `ok NAME`, `blocker NAME: WHY`, `note NAME: WHAT`,
 or `ask NAME: WHAT` for a read the forge or tracker lacks, such as the decision label's existence, and exits 1 on any
 blocker. `init RUN --file PATH --check` checks the input as `init` would, prints its blockers
-(problems, cycles, issues started outside the run, and, when `projectRun.mcpServers` holds no tracker server, each issue
+(problems, cycles, issues started outside the run, a `resumed:` line for the started issues an earlier run parked, and, when `projectRun.mcpServers` holds no tracker server, each issue
 to start with no text) and the `next` lines, and writes no run. An issue's text never comes from a file a session
 writes: after each call of a tracker's issue read (Linear's `get_issue` and `list_issues`), whatever `tracker.enabled`
 says, in a project whose base branch's config.json sets `projectRun.allow`, the post-call tracker hook records each

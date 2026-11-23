@@ -1241,9 +1241,9 @@ test('raising --max-rounds past the config cap needs the Human override, whateve
 });
 
 // The bot's answers on a draft, as it posted them on a pull request: the clean receipt, and the status card whose
-// machine state says the code review of the head left nothing unresolved.
+// machine state says the code review of the head left nothing unresolved. Its two flags were equal on every card seen.
 const RECEIPT_BODY = (sha) => `<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues. Breezy!\n\n**Reviewed commit:** \`${sha.slice(0, 10)}\`\n\n<details> <summary>About Codex in GitHub</summary>\n</details>`;
-const STATE_CARD_BODY = (sha, unresolved) => `<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1 {"code_review":{"commit_sha":"${sha}","has_any_findings":true,"has_unresolved_findings":${unresolved},"status":"completed"},"security_review":{"commit_sha":null,"has_any_findings":null,"has_unresolved_findings":null,"status":null}} -->\n\n<details>\n<summary><strong>Codex Review Summary</strong>: Completed</summary>\n</details>`;
+const STATE_CARD_BODY = (sha, unresolved, any = unresolved) => `<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1 {"code_review":{"commit_sha":"${sha}","has_any_findings":${any},"has_unresolved_findings":${unresolved},"status":"completed"},"security_review":{"commit_sha":null,"has_any_findings":null,"has_unresolved_findings":null,"status":null}} -->\n\n<details>\n<summary><strong>Codex Review Summary</strong>: Completed</summary>\n</details>`;
 
 test('latestBotSignal: a draft`s clean receipt, or a card with nothing unresolved on its commit, is a clean comment; other comments are not', () => {
   const head = '3871361bfb9f6e701a03438b1e300b0e921b909b';
@@ -1271,6 +1271,8 @@ test('latestBotSignal: a draft`s clean receipt, or a card with nothing unresolve
   assert.equal(latestBotSignal({ ...base, issueComments: [at(STATE_CARD_BODY(head, false), 6, 2), at(other)] }).clean, undefined, 'a card last updated before the comment it would vouch for');
   assert.equal(latestBotSignal({ ...base, issueComments: [card(false, 4), at(other)] }).clean, undefined, 'a card last updated before the round`s trigger');
   assert.equal(latestBotSignal({ ...base, issueComments: [card(true), at(other)] }).clean, undefined, 'unresolved findings on the card');
+  assert.equal(latestBotSignal({ ...base, issueComments: [card(true), at(other)] }).holds_finding, true);
+  assert.equal(latestBotSignal({ ...base, issueComments: [card(false), at(other)] }).holds_finding, undefined);
   assert.equal(latestBotSignal({ ...base, issueComments: [card(false, 8, '0123456789abcdef0123456789abcdef01234567'), at(other)] }).clean, undefined, 'the card is for another commit');
   assert.equal(latestBotSignal({ ...base, issueComments: [at('Codex Review: two findings below.')] }).clean, undefined, 'a comment that names findings');
   assert.equal(latestBotSignal({ ...base, issueComments: [at(STATE_CARD_BODY(head, false), 6, 2), at(QUOTA_BODY)] }).kind, 'quota_exhausted');
@@ -1338,4 +1340,84 @@ test('latestBotSignal: the status card`s full commit, not the comment`s short on
   // A card that names its commit in fewer than 40 hex is no evidence of which commit it reviewed.
   const abbreviated = latestBotSignal({ ...base, issueComments: [card(short), comment] });
   assert.deepEqual([abbreviated.clean, abbreviated.commit_id], [undefined, short]);
+});
+
+// The pull request this was learned on: the bot's status card on the head still held its earlier finding, and the bot
+// then posted a clean receipt of the head, which speaks only of that run's new findings.
+test('latestBotSignal: a clean receipt beside a card of its commit that still holds a finding is open work, never clean', () => {
+  const head = '3871361bfb9f6e701a03438b1e300b0e921b909b';
+  const base = { reviews: [], reviewComments: [], reactions: [], reviewer: DEFAULT_REVIEWER, since: T(5) };
+  const receipt = { id: 1, user: BOT, created_at: T(7), body: RECEIPT_BODY(head) };
+  const card = (unresolved, any = unresolved, over = {}) => ({ id: 2, user: BOT, created_at: T(6), updated_at: T(8), body: STATE_CARD_BODY(head, unresolved, any), ...over });
+  const signal = (...issueComments) => latestBotSignal({ ...base, issueComments });
+  const held = signal(card(true), receipt);
+  assert.deepEqual([held.kind, held.clean, held.holds_finding, held.commit_id], ['comment', undefined, true, head], 'both flags true');
+  assert.deepEqual([signal(card(false, true), receipt).clean, signal(card(false, true), receipt).holds_finding], [undefined, true], 'has_any_findings alone');
+  assert.deepEqual([signal(card(true, false), receipt).clean, signal(card(true, false), receipt).holds_finding], [undefined, true], 'has_unresolved_findings alone');
+  const passed = signal(card(false), receipt);
+  assert.deepEqual([passed.clean, passed.holds_finding, passed.commit_id], [true, undefined, head], 'both flags false');
+  const alone = signal(receipt);
+  assert.deepEqual([alone.clean, alone.holds_finding, alone.commit_id], [true, undefined, head.slice(0, 10)], 'a receipt with no card, as before');
+  // A completed card that does not vouch for the receipt leaves the receipt to speak, as before: one last updated before
+  // it, and one of another commit. A card still running is the next test's.
+  assert.equal(signal(card(true, true, { updated_at: T(6) }), receipt).clean, true, 'a card last updated before the receipt');
+  assert.equal(signal({ ...card(true), body: STATE_CARD_BODY('0123456789abcdef0123456789abcdef01234567', true) }, receipt).clean, true, 'a card of another commit');
+});
+
+// The status card while its code review runs: the bot edits it to running when it starts, posts its receipt, and edits
+// the card to completed seconds later, so a read between the two sees the receipt beside a running card.
+const RUNNING_STATE_CARD = (sha) => STATE_CARD_BODY(sha, false).replace('"status":"completed"', '"status":"in_progress"');
+
+test('latestBotSignal: a clean receipt while the card still runs a review is no answer yet; a receipt with no card is', () => {
+  const head = '3871361bfb9f6e701a03438b1e300b0e921b909b';
+  const other = '0123456789abcdef0123456789abcdef01234567';
+  const base = { reviews: [], reviewComments: [], reactions: [], reviewer: DEFAULT_REVIEWER, since: T(5) };
+  const receipt = { id: 1, user: BOT, created_at: T(7), body: RECEIPT_BODY(head) };
+  const running = (sha, updated) => ({ id: 2, user: BOT, created_at: T(1), updated_at: T(updated), body: RUNNING_STATE_CARD(sha) });
+  const signal = (...issueComments) => latestBotSignal({ ...base, issueComments });
+  const named = signal(running(head, 6), receipt);
+  assert.deepEqual([named.clean, named.card_pending, named.holds_finding], [undefined, true, undefined], 'running for the receipt`s commit');
+  assert.equal(signal(running(head, 3), receipt).card_pending, true, 'named for the commit, last updated before the trigger');
+  assert.equal(signal(running(other, 6), receipt).card_pending, true, 'running since the trigger, for another commit');
+  const old = signal(running(other, 3), receipt);
+  assert.deepEqual([old.clean, old.card_pending], [true, undefined], 'running for another commit since before the trigger');
+  const alone = signal(receipt);
+  assert.deepEqual([alone.clean, alone.card_pending], [true, undefined], 'no card at all: as before');
+  assert.equal(signal({ ...running(head, 6), body: RUNNING_CARD_BODY }, receipt).clean, true, 'a card with no machine state says nothing');
+  // Only a clean receipt waits: a comment that names findings is open work at once.
+  const finding = { ...receipt, body: `Codex Review: one finding.\n\n**Reviewed commit:** \`${head.slice(0, 10)}\`` };
+  assert.deepEqual([signal(running(head, 6), finding).clean, signal(running(head, 6), finding).card_pending], [undefined, undefined]);
+});
+
+test('awaitReview: a receipt beside a running card waits for the card, and reads it once it completes', async () => {
+  const head = '3871361bfb9f6e701a03438b1e300b0e921b909b';
+  const trigger = { id: 1, user: { login: 'adrian' }, created_at: T(5), body: `${REQUEST_COMMENT}\n\n<!-- pr-await-review: head=${head} -->` };
+  const receipt = { id: 3, user: BOT, created_at: T(7), body: RECEIPT_BODY(head) };
+  const running = { id: 2, user: BOT, created_at: T(1), updated_at: T(6), body: RUNNING_STATE_CARD(head) };
+  const done = (flag) => ({ ...running, updated_at: T(11), body: STATE_CARD_BODY(head, flag) });
+  const run = async (frames, timeoutSec = 120) => {
+    const forge = fakeForge(frames.map((issueComments) => ({ head, headCommittedAt: T(4), issueComments })));
+    const c = clock();
+    const sleep = async (sec) => { await c.sleep(sec); forge.advance(); };
+    return awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec, intervalSec: 60 }, { forge, git: { pushedHead: () => null, behind: () => false }, now: c.now, sleep });
+  };
+  const held = await run([[trigger, running, receipt], [trigger, done(true), receipt]]);
+  assert.deepEqual([held.status, held.signal.clean, held.signal.holds_finding], ['received', undefined, true], 'the card completed holding a finding');
+  const passed = await run([[trigger, running, receipt], [trigger, done(false), receipt]]);
+  assert.deepEqual([passed.status, passed.signal.clean], ['received', true], 'the card completed with both flags false');
+  const waiting = await run([[trigger, running, receipt]], 60);
+  assert.deepEqual([waiting.status, waiting.signal.card_pending, waiting.retry_recommended], ['timed_out', true, true], 'the card never completed');
+  const alone = await run([[trigger, receipt]], 0);
+  assert.deepEqual([alone.status, alone.signal.clean], ['already_present', true], 'a receipt with no card: as before');
+});
+
+test('awaitReview --request: an answer for the head that holds a finding is that head`s answer, and nothing more is posted for it', async () => {
+  const head = '3871361bfb9f6e701a03438b1e300b0e921b909b';
+  const trigger = { id: 1, user: { login: 'adrian' }, created_at: T(5), body: `${REQUEST_COMMENT}\n\n<!-- pr-await-review: head=${head} -->` };
+  const answer = [trigger, { id: 3, user: BOT, created_at: T(7), body: RECEIPT_BODY(head) }, { id: 2, user: BOT, created_at: T(1), updated_at: T(8), body: STATE_CARD_BODY(head, true) }];
+  for (const request of [true, false]) {
+    const forge = fakeForge([{ head, headCommittedAt: T(4), issueComments: answer }]);
+    const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request, timeoutSec: 0, intervalSec: 60 }, { forge, git: { pushedHead: () => null, behind: () => false }, ...clock() });
+    assert.deepEqual([r.status, r.requested, forge.posts.length, r.signal.clean, r.signal.holds_finding], ['already_present', false, 0, undefined, true], `request: ${request}`);
+  }
 });

@@ -11,7 +11,7 @@ import path from 'node:path';
 
 import { cleanText, maskSecrets } from './clean-text.mjs';
 import { changeNotFound } from './forges/index.mjs';
-import { appendToRun, issueBranch, runFolder } from './project-run.mjs';
+import { appendToRun, issueBranch, runFolder, SHA } from './project-run.mjs';
 import { ISSUE_ATTEMPTS, latestStart, spentAttempts } from './project-run-guard.mjs';
 import { defaultBranch } from './pr-auto-merge.mjs';
 import { hostOf, repoName } from './remotes.mjs';
@@ -209,7 +209,8 @@ export function openPullOf({ forge, repository, pr, branch, head }) {
 // `repository`, from the issue's `branch`; an open one's head must be the branch's head on the forge, and a merged one
 // must pass mergeProblem. A forge that answers it has no such pull request (forges/index.mjs changeNotFound) has
 // answered: that is final, never a retry.
-function droppedPullProblem({ forge, repository, result, branch, since }) {
+// An open one's head, once checked, goes in `verified.head`, the commit the result row records (dropRows).
+function droppedPullProblem({ forge, repository, result, branch, since, verified = {} }) {
   if (!['merged', 'pr_open'].includes(result.status)) return null;
   if (!Number.isInteger(result.pr)) return 'the result names no pull request';
   const named = `${repository.owner}/${repository.name}`;
@@ -222,17 +223,55 @@ function droppedPullProblem({ forge, repository, result, branch, since }) {
   if (repoName(view?.url) !== named.toLowerCase() || hostOf(view.url)?.toLowerCase() !== repository.host.toLowerCase()) return `pull request #${result.pr} is not in ${repository.host}/${named}`;
   if (view.isCrossRepository !== false || view.headRefName !== branch) return `pull request #${result.pr} is not from the issue's branch ${branch}`;
   if (result.status === 'merged') return mergeProblem({ forge, repository, pr: result.pr, branch, since });
+  // A closed pull request still parks the issue (project-stops.mjs), but no later run goes on from its branch.
+  if (view.state === 'CLOSED') {
+    verified.head = null;
+    return null;
+  }
   let head;
   try {
     head = forge.branchHead(named, branch, { host: repository.host });
   } catch {
     return { retry: true };
   }
-  return typeof view.headRefOid === 'string' && view.headRefOid === head ? null : `pull request #${result.pr}'s head is not the head of ${branch} on the forge`;
+  if (typeof view.headRefOid !== 'string' || view.headRefOid !== head) return `pull request #${result.pr}'s head is not the head of ${branch} on the forge`;
+  verified.head = head;
+  return null;
+}
+
+// The commit the forge shows the branch `branch` of the pinned `repository` at, or null when it names none or cannot answer.
+function forgeHead({ forge, repository, branch }) {
+  try {
+    const sha = forge.branchHead(`${repository.owner}/${repository.name}`, branch, { host: repository.host });
+    return typeof sha === 'string' && SHA.test(sha) ? sha : null;
+  } catch {
+    return null;
+  }
+}
+
+// The head commit of pull request `pr` when the forge shows it open, in the pinned `repository`, from its own `branch`,
+// else null, as when it is closed, from another branch, or the forge cannot answer: the head a run resumes an issue from
+// when the earlier run that parked it ran before result rows recorded one (project-run.mjs resumedIssues). It trusts the
+// pull request's head as the forge shows it now.
+export function openPullHead({ forge, repository, pr, branch }) {
+  if (!Number.isInteger(pr) || pr < 1) return null;
+  const named = `${repository.owner}/${repository.name}`;
+  let view;
+  try {
+    view = forge.change(String(pr), 'state,headRefName,headRefOid,url,isCrossRepository', { repo: `${repository.host}/${named}` });
+  } catch {
+    return null;
+  }
+  const inRepository = repoName(view?.url) === named.toLowerCase() && hostOf(view.url)?.toLowerCase() === repository.host.toLowerCase();
+  const ok = inRepository && view.state === 'OPEN' && view.isCrossRepository === false && view.headRefName === branch && typeof view.headRefOid === 'string' && SHA.test(view.headRefOid);
+  return ok ? view.headRefOid : null;
 }
 
 // What the drop of the running issue `key`'s latest start holds: { rows, line } to record, or null while there is none,
-// or the forge cannot answer.
+// or the forge cannot answer. A result that parks the issue records `head`: for pr_open, the head its pull request's
+// check found the branch at; else the commit the forge shows the branch at then, or null when it shows none. It is the
+// work this run leaves there, which a later run that resumes the issue checks the branch against (project-run.mjs
+// resumedIssues, project-start.mjs prepareAttempt).
 function dropRows({ run, key, start, spent, branch, forge, repository, now }) {
   const read = readDrop(start.drop);
   if (read.missing) return null;
@@ -243,14 +282,17 @@ function dropRows({ run, key, start, spent, branch, forge, repository, now }) {
   if (value?.run !== run || value?.key !== key || value?.attempt !== start.attempt) return bad('the drop\'s result names another run, issue, or attempt');
   const checked = validateResult(value);
   if (!checked.result) return bad(checked.problems[0]);
-  const pull = droppedPullProblem({ forge, repository, result: checked.result, branch, since: Date.parse(start.at) });
+  const verified = {};
+  const pull = droppedPullProblem({ forge, repository, result: checked.result, branch, since: Date.parse(start.at), verified });
   if (pull?.retry) return null;
   if (pull) return bad(pull);
   const { result } = checked;
   const next = afterResult(key, start.attempt, result.status, spent);
+  // The head the pull request's check read, when one did, never a second read that could differ or fail.
+  const head = next.state === 'parked' ? { head: Object.hasOwn(verified, 'head') ? verified.head : forgeHead({ forge, repository, branch }) } : {};
   return {
     rows: [{
-      event: 'result', key, attempt: start.attempt, session: start.child, via: 'drop', status: result.status, pr: result.pr, verified: result.status === 'merged',
+      event: 'result', key, attempt: start.attempt, session: start.child, via: 'drop', status: result.status, pr: result.pr, verified: result.status === 'merged', ...head,
       ...(result.status === 'environment' ? { halt: haltCause({ key, attempt: start.attempt, stop: result.stop }) } : {}), at,
     }, { ...next, at }],
     line: `${result.status} -> ${next.state}${next.decision ? ` ${next.decision}` : ''}`,

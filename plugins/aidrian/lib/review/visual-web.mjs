@@ -88,7 +88,9 @@ async function main() {
   }
   const results = [];
   try {
-    for (const entry of input.entries) {
+    for (const [index, entry] of input.entries.entries()) {
+      // A progress line: when the run is stopped, the last one names the screen it was on (visual.mjs failureReason).
+      process.stderr.write(`capturing ${index + 1} of ${input.entries.length}: ${entry.key}\n`);
       const context = await browser.newContext({
         viewport: { width: entry.width, height: HEIGHT },
         deviceScaleFactor: 1,

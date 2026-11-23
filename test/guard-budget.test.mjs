@@ -126,8 +126,15 @@ test('a guard past its time budget refuses a subagent\'s call and lets the main 
     const refused = run(subagent(dir, tool, 'echo x > src/app.js'), env);
     assert.equal(refused.status, 2, tool);
     assert.match(refused.stderr, /the guards could not finish reading this command in time, so it may change a file only the main session may change/u, tool);
+    // One ordered recovery, with the Human told only at its end: a retry of the same call, shorter commands, the report.
+    assert.match(refused.stderr, /tell the Human only after these steps, in order: a busy machine slows the guards, so 1\) retry this same call by itself, up to three times \(a retry is the same tool, not another one\); 2\) if a shell call is still refused and splitting it keeps what it does, run it as shorter commands; 3\) when those are refused too, or the call is no shell call or cannot be split, stop and report that the command takes the guards longer than they have\.$/mu,
+      `${tool}: a busy machine's refusal asks for a retry first`);
     assert.equal(run(main(subagent(dir, tool, 'echo x > src/app.js')), env).status, 0, `${tool}: the main session`);
   }
+  // An Edit has nothing to split: its refusal names the report as the step after the retries.
+  const edit = run({ ...subagent(dir, 'Edit', ''), tool_input: { file_path: path.join(dir, 'src', 'app.js'), old_string: 'a', new_string: 'b' } }, env);
+  assert.equal(edit.status, 2, edit.stderr);
+  assert.match(edit.stderr, /1\) retry this same call by itself.*3\) when those are refused too, or the call is no shell call or cannot be split, stop and report/u);
   // A call that writes nothing, which no guard refuses, runs: a loaded machine never stalls a subagent on its reads.
   const read = run({ ...subagent(dir, 'Read', ''), tool_input: { file_path: path.join(dir, 'src', 'app.js') } }, env);
   assert.equal(read.status, 0, read.stderr);

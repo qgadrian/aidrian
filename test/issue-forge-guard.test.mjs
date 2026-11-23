@@ -347,7 +347,7 @@ test('an issue session pushes only from its own clone\'s repository, to the URL 
   assert.match(fx.ask(bash(EXACT))?.reason ?? '', /one of the 2 URLs origin pushes to, and origin pushes only to/u, 'a second push URL');
 });
 
-test('an issue session writes the findings file pr review names for it, and no other pull request\'s review folder', (t) => {
+test('an issue session writes the findings file pr review names for it, and no review folder its issue key does not lead', (t) => {
   const fx = issueFixture(t);
   const env = { ...fx.env, CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: SESSION };
   assert.equal(sessionIssue(env), 'ENG-1');

@@ -21,6 +21,8 @@ import { recordRepos } from './state.mjs';
 // own scratch for its key too, so such a folder loses only its findings files, and goes only once nothing else is left
 // (removeDraft).
 const ISSUE_LED = /^(?:[a-z][a-z0-9]{0,15}-)?[1-9][0-9]{0,8}-review-/u;
+// A findings file as dispatch.mjs findingsFile names it: the pass id's characters, then 8 hex digits of its SHA-256.
+const FINDINGS = /^[\w.-]{1,100}-[0-9a-f]{8}\.findings\.json$/u;
 const DRAFT = /^(?:(?:(?:[a-z][a-z0-9]{0,15}-)?[1-9][0-9]{0,8}-)?review-([1-9]\d{0,9})(?:-([\w.-]+?)--([\w.-]+))?|pr-([1-9]\d{0,9})-review\.md|product-feedback-([1-9]\d{0,9})(?:-items\.json|\.md))$/u;
 // The most pull requests one sweep reads the state of, lowest number first: each is one forge call.
 export const MAX_SWEPT = 50;
@@ -41,6 +43,9 @@ export function draftsByPr(dir) {
   for (const name of names.sort()) {
     const match = DRAFT.exec(name);
     if (!match) continue;
+    // A led folder holding no findings file is an issue session's own scratch, with nothing to clean: it takes no
+    // forge lookup, so a sweep's limit is never spent on it.
+    if (ISSUE_LED.test(name) && !ledFindings(path.join(dir, name)).length) continue;
     const pr = Number(match[1] ?? match[4] ?? match[5]);
     const repo = match[2] ? `${match[2]}/${match[3]}`.toLowerCase() : null;
     const key = repo ? `${pr}@${repo}` : String(pr);
@@ -101,20 +106,27 @@ export function sweepDrafts(project, { forge = forgeFor(project.root), limit = M
   return out;
 }
 
-// Removes the draft `file`: whole, or, for a folder an issue session's key leads (`led`), only the regular
-// `*.findings.json` files in it, and then the folder once it is empty. A led entry that is no folder, or a link, stays.
-// Returns whether the draft is gone.
+// The findings files in the led folder `dir`, as findingsFile names them, that are regular files; none when `dir` is
+// no folder, or a link.
+function ledFindings(dir) {
+  try {
+    if (!lstatSync(dir).isDirectory()) return [];
+    return readdirSync(dir).filter((name) => FINDINGS.test(name) && lstatSync(path.join(dir, name)).isFile());
+  } catch {
+    return [];
+  }
+}
+
+// Removes the draft `file`: whole, or, for a folder an issue session's key leads (`led`), only its findings files
+// (ledFindings), and then the folder once it is empty. Returns whether the draft is gone.
 function removeDraft(file, led) {
   if (!led) {
     rmSync(file, { recursive: true, force: true });
     return true;
   }
-  const stat = lstatSync(file);
-  if (!stat.isDirectory()) return false;
-  for (const name of readdirSync(file)) {
-    const entry = path.join(file, name);
-    if (name.endsWith('.findings.json') && lstatSync(entry).isFile()) rmSync(entry, { force: true });
-  }
+  const names = ledFindings(file);
+  if (!names.length) return false;
+  for (const name of names) rmSync(path.join(file, name), { force: true });
   if (readdirSync(file).length) return false;
   rmdirSync(file);
   return true;

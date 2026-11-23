@@ -790,7 +790,7 @@ A project adds its own in `review.reviewers`:
   characters, then the first 8 hex digits of the whole id's SHA-256, so two passes never share a file, in a folder
   keyed by the pull request's repository, `review-<PR>-<owner>--<name>`, so two repositories' pull requests of one number never do either ([Findings one by one](#findings-one-by-one)); in a project run's issue session the folder leads with the issue key, `<key>-review-<PR>-<owner>--<name>`, since that session writes in `tmp/` only what is named for its issue ([Agent gates](hooks.md#agent-gates)), and the agent's final JSON on stdin: either the bare verdicts array or the whole `{ findings, verdicts, contracts, cross_notes }`
   object. `--verdicts FILE` reads a file instead; `--findings-file` takes a file only.
-  `aidrian worktree cleanup execute` removes the findings folder `review-<PR>-<owner>--<name>/` once the pull request is merged or closed; from an issue session's `<key>-review-<PR>-<owner>--<name>/` it removes only the regular `*.findings.json` files, and the folder once it is empty, since that session names its own scratch for its key too
+  `aidrian worktree cleanup execute` removes the findings folder `review-<PR>-<owner>--<name>/` once the pull request is merged or closed; from an issue session's `<key>-review-<PR>-<owner>--<name>/` it removes only the regular files named as above, `<pass>-<hash>.findings.json`, and the folder once it is empty, since that session names its own scratch for its key too
   ([Local state](project-folder.md#local-state)).
 
 **The security key.** A finding is a security finding when it is `critical` or `high`, when its reviewer set

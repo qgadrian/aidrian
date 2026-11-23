@@ -208,14 +208,17 @@ test('p7: with no record of the number, a draft naming no repository waits for e
   writeFileSync(path.join(tmp, 'eng-2-review-12', 'notes.md'), 'x');
   writeFileSync(path.join(tmp, 'eng-2-review-12', 'agent-y-0011aabb.findings.json'), '[]');
   writeFileSync(path.join(tmp, 'eng-3-review-12'), 'x');
+  // A name only ending like a findings file is scratch, and a folder of only scratch takes no forge lookup.
+  mkdirSync(path.join(tmp, 'eng-4-review-9'), { recursive: true });
+  writeFileSync(path.join(tmp, 'eng-4-review-9', 'notes.findings.json'), '[]');
   writeFileSync(path.join(tmp, 'pr-12-review.md'), 'x');
   const states = { [own]: 'OPEN', 'c7/d': 'MERGED', default: 'MERGED' };
   const forge = { change: (_ref, _fields, options = {}) => ({ state: states[options.repo ?? 'default'] }) };
-  const swept = sweepDrafts(c.project, { forge, dir: tmp });
-  assert.deepEqual([swept.removed, swept.kept], [[], [{ pr: 12, reason: 'open' }]], 'the origin`s #12 is still open, though the forge`s default merged');
+  const swept = sweepDrafts(c.project, { forge, dir: tmp, limit: 1 });
+  assert.deepEqual([swept.removed, swept.kept], [[], [{ pr: 12, reason: 'open' }]], 'the origin`s #12 is still open, though the forge`s default merged, and read within a limit of 1');
   states[own] = 'CLOSED';
   assert.deepEqual(sweepDrafts(c.project, { forge, dir: tmp }).removed.map((row) => row.files), [['eng-1-review-12', 'pr-12-review.md', 'review-12']], 'an issue session\'s findings folder too, never its other scratch');
-  assert.deepEqual([existsSync(path.join(tmp, 'eng-2-review-12', 'notes.md')), existsSync(path.join(tmp, 'eng-2-review-12', 'sub.findings.json')), existsSync(path.join(tmp, 'eng-2-review-12', 'agent-y-0011aabb.findings.json')), existsSync(path.join(tmp, 'eng-3-review-12'))], [true, true, false, true]);
+  assert.deepEqual([existsSync(path.join(tmp, 'eng-2-review-12', 'notes.md')), existsSync(path.join(tmp, 'eng-2-review-12', 'sub.findings.json')), existsSync(path.join(tmp, 'eng-2-review-12', 'agent-y-0011aabb.findings.json')), existsSync(path.join(tmp, 'eng-3-review-12')), existsSync(path.join(tmp, 'eng-4-review-9', 'notes.findings.json'))], [true, true, false, true, true]);
 });
 
 test('p8: a review record survives origin renamed to upstream and a new origin, so the merge stays refused', (t) => {

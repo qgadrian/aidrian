@@ -1961,7 +1961,7 @@ attempt's clone pushes to, read before its session starts, and a clone that push
 ([hooks.md](hooks.md#agent-gates)). A host that would refuse that push in the driver session's permission mode, which the session
 takes, halts the start too, before the host starts anything ([the push preflight](handoff.md#the-push-preflight)). Every start is confined to a fresh
 clone under its host's sandbox, and a host that is not halts the start. A later attempt, and the first attempt of an
-issue `resumed` from an earlier run, goes on from its issue's branch
+issue `resumed` from an earlier run at a head the branch still holds, goes on from its issue's branch
 as the forge holds it, the branch of its latest start that ran a session. When that head differs from the base tip in a
 host config or instruction file, it goes on from the tip on the same branch if the tip already holds the head, and
 otherwise, such as when the branch changed a knowledge index a docs issue registered its doc in, or only the base
@@ -2055,12 +2055,20 @@ The snapshot input is one JSON object, at most 1 MiB, read as a regular file and
   No part is 40 or 64 hex digits, as a commit id is.
 - `status` is a status type: `triage`, `backlog`, `unstarted`, `started`, `completed`, or `canceled`.
   A run starts only a `backlog` or `unstarted` issue, and a `started` one that an earlier run of the project parked
-  on the branch the snapshot names: in the runs folder, the run with the latest `init` among those that record the issue
-  records it parked, and the branch its latest start that ran worked on is this one. That run moved it to started and
-  parked it, as on a pull request left open, so the issue is the run's own work; `init` records it in `snapshot.json`
-  as `resumed`, with that run and the pull request its latest result named, prints a `resumed:` line, and `next`,
-  `start`, and the gate read the same plan. A driver's input never gives `resumed`. Any other `started` issue is
-  someone's work outside the run and stays blocked.
+  on the branch the snapshot names: in the runs folder, among the runs that pinned the same repository, the one with the
+  latest `init` among those that record the issue records it parked, and the branch its latest start that ran worked on
+  is this one. That run moved it to started and parked it, as on a pull request left open, so the issue is the run's own
+  work; `init` records it in `snapshot.json` as `resumed`, with that run, the pull request its latest result named, and
+  the `head` that result recorded, prints a `resumed:` line, and `next`, `start`, and the gate read the same plan.
+  A result that parks an issue records the commit the forge shows its branch at then, or null when it shows none.
+  A ledger written before heads were recorded has a latest result row with no `head` field at all: when that result
+  named a pull request, `init` and its check read it through the forge and take its head commit, only when it is open,
+  from the snapshot's branch, in the pinned repository. That fallback trusts the pull request's head as the forge shows
+  it now, not a commit the run recorded; a row with a `head` field, null included, never falls back.
+  A resumed issue's first attempt goes on from its branch on the forge only when the branch holds that head, at it or
+  after it; a branch at any other history is refused, and with no head, such as a run that parked before any push, the
+  attempt is a plain first attempt, which refuses a branch the forge has already.
+  A driver's input never gives `resumed`. Any other `started` issue is someone's work outside the run and stays blocked.
 - `priority` is 1, the most urgent, to 4, or 0 for none, which comes last.
 - `outside` lists the status of each blocker outside the project. A blocker that is not `completed`, or not listed, blocks.
 - `teams`, optional, lists every team key of the tracker workspace, at most 500, each a capital letter then capitals or

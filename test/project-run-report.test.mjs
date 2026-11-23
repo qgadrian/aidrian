@@ -965,6 +965,11 @@ test('init --check counts a started issue an earlier run parked on the same bran
   assert.deepEqual(held.out.filter((line) => line.startsWith('blocker ')), ['blocker snapshot: ENG-2 is started in the tracker, which a run does not start from', 'blocker snapshot: ENG-3 is started in the tracker, which a run does not start from']);
   assert.equal(held.out.some((line) => line.startsWith('resumed:')), false);
   assert.equal(existsSync(runFolder(fx.state, 'second')), false, 'no run written');
+  // The same state folder once origin names another repository: the earlier run's work is not this one's.
+  fx.git('remote', 'set-url', 'origin', 'https://github.com/acme/gadgets.git');
+  const moved = check([{ key: 'ENG-1', branch: 'feat/eng-1-export', status: 'started' }]);
+  assert.equal(moved.exitCode, 1, moved.out.join('\n'));
+  assert.ok(moved.out.includes('blocker snapshot: ENG-1 is started in the tracker, which a run does not start from'), moved.out.join('\n'));
 });
 
 test('end refuses while an issue runs, naming it, and passes once none does', (t) => {

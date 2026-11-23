@@ -367,8 +367,11 @@ skipped. To run it again, once the decision is made:
    project has one active run at a time.
 
 The tracker shows such an issue as started, since the old run started it, and the new run starts it all the same when
-the old run parked it on the branch the snapshot names: `init` prints a `resumed:` line for it, and its first attempt goes
-on from that branch as the forge holds it, its open pull request its own ([Project run](config.md#project-run)).
+the old run parked it on the branch the snapshot names, in the same repository: `init` prints a `resumed:` line for it,
+and its first attempt goes on from that branch as the forge holds it, its open pull request its own, when the branch
+still holds the commit the old run recorded at the park, or, for an old run from before commits were recorded, the head
+of the open pull request its result named ([Project run](config.md#project-run)). An old run that parked before any
+push gives a plain first attempt.
 Any other started issue is a blocker. A first attempt of any other issue cuts its branch fresh from the base tip, so one
 whose branch is already on the forge refuses to start: close its pull request and delete the branch, or give the issue
 another branch in the snapshot.

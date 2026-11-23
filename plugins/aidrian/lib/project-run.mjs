@@ -70,6 +70,8 @@ export const TEAM_KEY = /^[A-Z][A-Z0-9]{0,15}$/u;
 export const MAX_TEAMS = 500;
 // Opens without following a final symlink and without waiting on a FIFO, whose fstat then shows it is no regular file.
 const NO_FOLLOW = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+// A full commit id, as git and the forge name one.
+export const SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 // A timestamp as Date#toISOString writes it.
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 
@@ -378,8 +380,9 @@ const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 // a state folder runPlace refuses, a project whose origin names no forge repository, a run that exists already, and any
 // other run still active. Each issue's text is the tracker's own answer the session's reads recorded
 // (project-issue-text.mjs recordedTexts), never a file a session wrote. Throws jsonl.mjs's LOCKED when another process
-// holds the runs lock. `home` is for a test.
-export function initRun({ project, config, run, file, session, input = {}, env = process.env, home, now = Date.now() }) {
+// holds the runs lock. `pullHead` reads an old ledger's pull request head (resumedIssues), none by default. `home` is for
+// a test.
+export function initRun({ project, config, run, file, session, input = {}, env = process.env, home, now = Date.now(), pullHead }) {
   // Recorded issue reads past their age go first, on every host, whatever init then answers.
   sweepIssueReads({ env, now });
   if (typeof run !== 'string' || !RUN_ID.test(run)) return refuse(`the run id ${quote(run)} is not lower-case letters, digits, and dashes, up to 64, starting with a letter or digit`);
@@ -393,6 +396,11 @@ export function initRun({ project, config, run, file, session, input = {}, env =
   const repository = pinnedRepository(project);
   if (!repository) return refuse('the origin remote names no forge repository, so the run cannot pin one');
   const texts = recordedTexts(session, read.snapshot.issues.map((issue) => issue.key), { env, ...(home ? { home } : {}) });
+  // A started issue an earlier run parked starts again in this one, from its branch: the run records which, so `next`,
+  // `start`, and the gate read one plan. Read before the runs lock, since an old ledger's pull request is read through
+  // the forge; the runs it reads are no longer active, which the lock then checks.
+  const resumed = resumedIssues(state, read.snapshot, { except: run, repository, ...(pullHead ? { pullHead } : {}) });
+  const snapshot = resumed.length ? { ...read.snapshot, resumed } : read.snapshot;
 
   mkdirSync(runsFolder(state), { recursive: true, mode: 0o700 });
   return withLocks([runsLock(state)], () => {
@@ -400,10 +408,6 @@ export function initRun({ project, config, run, file, session, input = {}, env =
     const active = activeRuns(state, { except: run });
     if (active.length && active[0].run === null) return refuse(`the folder of the project runs, ${runsFolder(state)}, cannot be read, so whether a run is still active cannot be told`);
     if (active.length) return refuse(`the run ${active[0].run} is still active in ${runFolder(state, active[0].run)}; finish it, or remove its folder, before another starts`);
-    // A started issue an earlier run parked starts again in this one, from its branch: the run records which, so `next`,
-    // `start`, and the gate read one plan.
-    const resumed = resumedIssues(state, read.snapshot, { except: run });
-    const snapshot = resumed.length ? { ...read.snapshot, resumed } : read.snapshot;
     // `main`: the run's main checkout, by its real path, which an attempt clone of a confined host stands for
     // (lib/attempt-clone.mjs): its machine switches and decisions are read there.
     const main = resolvedPath(project.checkouts.at(-1)) ?? project.checkouts.at(-1);
@@ -513,8 +517,8 @@ export function readRun(state, run) {
 }
 
 // The `resumed` list of a snapshot.json init wrote (resumedIssues), checked against its `issues`: a copy, [] when it has
-// none, or null when it is not such a list: each entry { key, run, pr } names a started issue of `issues` once, a run id,
-// and a pull request number or null.
+// none, or null when it is not such a list: each entry { key, run, pr, head } names a started issue of `issues` once, a
+// run id, a pull request number or null, and a commit id or null.
 function resumedOf(value, issues) {
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.length > issues.length) return null;
@@ -524,36 +528,61 @@ function resumedOf(value, issues) {
     const pr = each?.pr;
     if (!isObject(each) || !started.has(each.key) || seen.has(each.key) || typeof each.run !== 'string' || !RUN_ID.test(each.run)) return null;
     if (pr !== null && !(Number.isInteger(pr) && pr > 0)) return null;
+    if (each.head !== null && !(typeof each.head === 'string' && SHA.test(each.head))) return null;
     seen.add(each.key);
   }
-  return value.map(({ key, run, pr }) => ({ key, run, pr }));
+  return value.map(({ key, run, pr, head }) => ({ key, run, pr, head }));
 }
 
-// The started issues of `snapshot` a new run may start all the same, as [{ key, run, pr }]: each one whose latest record
-// in the runs of `state` other than `except`, the run with the latest init among those whose ledger has a row of it,
-// is parked, on the branch the snapshot names (issueBranch). That run started it in the tracker and parked it, as on a
-// pull request left open or a decision, so its branch and pull request are the run's own work, not someone's outside it.
-// `pr` is the pull request that run's latest result of the issue named, or null. A run that cannot be read is left out.
-export function resumedIssues(state, snapshot, { except } = {}) {
+// The started issues of `snapshot` a new run may start all the same, as [{ key, run, pr, head }]: each one whose latest
+// record in the runs of `state` other than `except` that pinned `repository` too, the run with the latest init among
+// those whose ledger has a row of it, is parked, on the branch the snapshot names (issueBranch). That run started it in
+// the tracker and parked it, as on a pull request left open or a decision, so the issue is the run's own work, not
+// someone's outside it. `pr` is the pull request that run's latest result of the issue named, or null; `head` the commit
+// that result recorded the branch at (project-result.mjs dropRows), or null, which binds the branch on the forge to that
+// run's work: the start goes on from it only at or after that commit (project-start.mjs prepareAttempt). A result row
+// with no `head` field at all, written before results recorded one, that named a pull request, takes the head
+// `pullHead({ pr, branch, repository })` gives, the forge's open pull request from that branch (project-result.mjs
+// openPullHead), or null; a row with the field never falls back. A run that cannot be read is left out, and each run is
+// read in turn, keeping only the latest candidate of each issue.
+export function resumedIssues(state, snapshot, { except, repository, pullHead = () => null } = {}) {
   const started = snapshot.issues.filter((issue) => issue.status === 'started');
-  if (!started.length) return [];
+  if (!started.length || !repository) return [];
   let names;
   try {
     names = readdirSync(runsFolder(state));
   } catch {
     return [];
   }
-  const runs = names.filter((name) => RUN_ID.test(name) && name !== except).map((name) => readRun(state, name)).filter((found) => !found.problem)
-    .sort((a, b) => Date.parse(a.init.at) - Date.parse(b.init.at));
-  const resumed = [];
-  for (const issue of started) {
-    const last = runs.findLast((found) => found.states.has(issue.key));
-    if (last?.states.get(issue.key).state !== 'parked' || issueBranch(last, issue.key) !== issue.branch) continue;
-    const pr = last.rows.findLast((row) => row.event === 'result' && row.key === issue.key && Number.isInteger(row.pr) && row.pr > 0)?.pr ?? null;
-    resumed.push({ key: issue.key, run: last.init.run, pr });
+  const latest = new Map();
+  for (const name of names.filter((each) => RUN_ID.test(each) && each !== except)) {
+    const found = readRun(state, name);
+    if (found.problem || !sameRepository(found.init.repository, repository)) continue;
+    const at = Date.parse(found.init.at);
+    for (const issue of started) {
+      if (!found.states.has(issue.key) || (latest.get(issue.key)?.at ?? -Infinity) >= at) continue;
+      const result = found.rows.findLast((row) => row.event === 'result' && row.key === issue.key);
+      latest.set(issue.key, {
+        at,
+        run: name,
+        parked: found.states.get(issue.key).state === 'parked',
+        branch: issueBranch(found, issue.key),
+        pr: found.rows.findLast((row) => row.event === 'result' && row.key === issue.key && Number.isInteger(row.pr) && row.pr > 0)?.pr ?? null,
+        head: typeof result?.head === 'string' && SHA.test(result.head) ? result.head : null,
+        legacy: isObject(result) && !Object.hasOwn(result, 'head') && Number.isInteger(result.pr) && result.pr > 0 ? result.pr : null,
+      });
+    }
   }
-  return resumed;
+  return started.filter((issue) => latest.get(issue.key)?.parked && latest.get(issue.key).branch === issue.branch)
+    .map((issue) => {
+      const { run, pr, head, legacy } = latest.get(issue.key);
+      const read = legacy === null ? head : pullHead({ pr: legacy, branch: issue.branch, repository });
+      return { key: issue.key, run, pr, head: typeof read === 'string' && SHA.test(read) ? read : null };
+    });
 }
+
+// Whether the repositories `one` and `other`, as runs pin them, are one, compared in any case.
+const sameRepository = (one, other) => ['host', 'owner', 'name'].every((part) => String(one?.[part]).toLowerCase() === String(other?.[part]).toLowerCase());
 
 // Whether `row` is the init row initRun writes for `run`.
 const isInit = (row, run) => isObject(row) && row.event === 'init' && row.run === run

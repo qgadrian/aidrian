@@ -36,6 +36,7 @@ import { branchPolicies } from './pr-auto-merge.mjs';
 import { mayFollowTeamDefault } from './project.mjs';
 import { recordedTexts } from './project-issue-text.mjs';
 import { activeRuns, nextLines, pinnedRepository, planRun, readRun, readSnapshotInput, refNames, resumedIssues, resumedLine, runPlace, runsFolder, teamsNote } from './project-run.mjs';
+import { openPullHead } from './project-result.mjs';
 import { runParallel, teamPolicy } from './project-run-gate.mjs';
 import { accessProblem, commitProblem, guardedFolders, hostStartProblem, PROBE_BRANCH } from './project-start.mjs';
 import { ancestorProblem, pushProblem, repositoryProblem } from './project-trust.mjs';
@@ -422,8 +423,10 @@ export function snapshotCheck({ project, config, file, session = null, env = pro
   if (!read.snapshot) return { exitCode: 1, out: read.problems.slice(0, 50).map((problem) => `blocker snapshot: ${problem}`), err: ['aidrian project init --check: fix the snapshot input, then check it again'] };
   const kept = { texts: recordedTexts(session, read.snapshot.issues.map((issue) => issue.key), { env, ...(home ? { home } : {}) }) };
   const place = runPlace(project, config, { env, home });
-  const resumed = place.state ? resumedIssues(place.state, read.snapshot) : [];
-  const plan = planRun(resumed.length ? { ...read.snapshot, resumed } : read.snapshot, new Map(), { maxParallel: runParallel(project, pinnedRepository(project), forge ?? forgeFor(project.root)) });
+  const facade = forge ?? forgeFor(project.root);
+  const pullHead = ({ pr, branch, repository }) => openPullHead({ forge: facade, repository, pr, branch });
+  const resumed = place.state ? resumedIssues(place.state, read.snapshot, { repository: pinnedRepository(project), pullHead }) : [];
+  const plan = planRun(resumed.length ? { ...read.snapshot, resumed } : read.snapshot, new Map(), { maxParallel: runParallel(project, pinnedRepository(project), facade) });
   const blockers = plan.blocked.filter(({ reason }) => reason === 'cycle' || reason === 'status')
     .map(({ key, reason, on }) => `blocker snapshot: ${key} is ${reason === 'cycle' ? `in a cycle of blockers, ${on.join(', ')}, so it never starts` : `${on[0]} in the tracker, which a run does not start from`}`);
   if (!trackerReachable(baseBranchTip(project.root) ? baseBranchConfig(project, 'projectRun') : {})) {

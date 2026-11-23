@@ -193,14 +193,14 @@ function machineProblem(project, policy) {
 // On a host that proves each start's sandbox (`confine`), its first step is the exact `aidrian project confine`.
 // An attempt that left the issue's earlier branch for a fresh one (`superseded`, confinedRoom) says so, and has the session
 // close that branch's open pull request once its own is open, only when the forge showed it open from that branch.
-// The first attempt of an issue an earlier run parked (`resumed`, project-run.mjs resumedIssues) says the branch and its
-// pull request are the issue's own, from that run.
+// The first attempt of an issue an earlier run parked at a recorded head (`resumed`, project-run.mjs resumedIssues) says
+// the branch and its pull request are the issue's own, from that run.
 export function projectPrompt({ run, key, attempt, branch, clone, skill = SKILL, note = null, afterLimit = false, issueFile = null, superseded = null, confine = false, resumed = null }) {
   return [
     `Project run ${run}, issue ${key}, attempt ${attempt}: this session works one issue of a project run, started in the background by the run's driver session, with no Human attending.`,
     ...(confine ? [`Before anything else, as this session's first tool call, run exactly \`aidrian project confine ${run} ${key}\` with the Bash tool, alone: it proves this session's sandbox holds, and every other call is refused until the start has confirmed it, a few seconds after it passes.`] : []),
     ...(superseded ? [supersededLine(superseded, branch)] : []),
-    ...(resumed && attempt === 1 && !superseded ? [`An earlier run of this project, ${resumed.run}, started this issue and parked it: the branch ${branch} on the forge holds the work it pushed, and an open pull request from that branch is this issue's own; go on from there, and open no second one.`] : []),
+    ...(resumed?.head && attempt === 1 && !superseded ? [`An earlier run of this project, ${resumed.run}, started this issue and parked it: the branch ${branch} on the forge holds the work it pushed, and an open pull request from that branch is this issue's own; go on from there, and open no second one.`] : []),
     ...(afterLimit && !superseded ? [`Attempt ${attempt - 1} stopped when the host met a usage or rate limit: the branch ${branch} on the forge holds the work it pushed, and a pull request from that branch is this issue's own; go on from there.`] : []),
     `Read the autopilot skill at ${skill} and follow it on the task ${key}, in the attempt's clone ${clone} on the branch ${branch}, which this session starts in.`,
     `Merge only through the pr-auto-merge skill, when \`aidrian pr auto-merge <number>\` exits 0. Push only with a full refspec, in a call of its own once the commit is made: \`git push origin HEAD:refs/heads/${branch}\`.`,
@@ -424,7 +424,8 @@ function startPlace(context) {
   const fresh = `${current.snapshot.issues.find((issue) => issue.key === key).branch}-a${capped.attempt}`;
   // Every branch another issue of the run names or recorded, which a fresh one may never take.
   const reserved = new Set(current.snapshot.issues.filter((issue) => issue.key !== key).flatMap((issue) => [issue.branch, ...attemptBranches(current, issue.key)]));
-  // A started issue an earlier run parked (project-run.mjs resumedIssues): its branch on the forge is that run's work.
+  // A started issue an earlier run parked (project-run.mjs resumedIssues): its branch on the forge is that run's work,
+  // from the head that run recorded.
   const resumed = current.snapshot.resumed?.find((each) => each.key === key) ?? null;
   const where = { ...context, found: current, attempt: capped.attempt, tip: base.tip, branch, fresh, reserved, resumed, pushUrl: access?.pushUrl, checked: access?.token?.id ? access.token : null };
   const room = confinedRoom(where);
@@ -452,7 +453,7 @@ const endedOnLimit = (found, key, attempt) => found.rows.some((row) => row.event
 function confinedRoom({ project, state, run, key, branch, fresh, reserved, resumed, attempt, tip, env, home, found, cap, policy, main, pushUrl, session, checked, facade }) {
   const folders = stateWorkFolders(state, { env, home });
   if (folders.problem) return { halt: folders.problem };
-  const clone = prepareAttempt({ project, state, run, key, attempt, branch, fresh, reserved, resumed: resumed !== null, tip, env });
+  const clone = prepareAttempt({ project, state, run, key, attempt, branch, fresh, reserved, resumed: resumed?.head ?? null, tip, env });
   if (clone.halt) return { halt: clone.halt };
   if (clone.problem) return { problem: clone.problem };
   const trust = trustProblem(clone.work, tip) ?? ancestorProblem(clone.work, { project, tip, env }) ?? pushProblem(clone.work, found.init.repository);

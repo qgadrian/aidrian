@@ -83,8 +83,13 @@ A draft create and a review run are read from the commands a Bash call runs, as 
 a continued line, `&&`, and a command substitution count, and an `echo`, a heredoc body, or a quoted pattern that names one does not.
 A tool call counts only by its result, matched by its id, because a hook or the permissions can refuse a call after it is written.
 A Skill call and a draft create whose result is an error count nowhere: a hook's refusal, a permission denial, or the user's rejection.
-A review command counts only when its result holds the JSON object `aidrian pr review` or `aidrian pr await-review` prints,
-a `"status"` that one of them prints followed by `"pr"`, whether the result is an error or not.
+A review command whose output stays in the result counts only when its result holds the JSON object `aidrian pr review`
+or `aidrian pr await-review` prints, a `"status"` that one of them prints followed by `"pr"`, whether the result is an error or not.
+One that sends its output to a file (`> r.json`) prints none, so it counts by its recorded tool result instead: one with no
+error, or one that starts `Exit code 9` (`human_required`) or `Exit code 11` (`extension_ask`), as the
+[review-loop check](hooks.md#review-loop-check) reads it.
+A redirected review call the host runs in the background, asked for or moved there at its timeout, has its launch as its
+result, which shows nothing of how it ended, so it counts as no review run.
 An exit code cannot tell: it is the whole line's, so `aidrian pr review 12; test -f x` can fail after a review ran,
 and `false && aidrian pr review 12` fails with none. The command's own text, which a refusal quotes, is never read as its output.
 A call with no result, as in a session cut off mid-call, counts nowhere.

@@ -1830,12 +1830,21 @@ hand-back check on the report ([Send-backs per turn](#send-backs-per-turn)).
   request from an earlier turn. A draft create after a review is a new pull request and counts, and so does an update
   of another pull request.
 - A review is a `pr-review-loop` Skill call that ran, or such a typed slash command, or an `aidrian pr review` or
-  `aidrian pr await-review` call whose result printed its JSON. A `pr-review` run is none: it is the integration
+  `aidrian pr await-review` call whose result printed its JSON, or that sent its output to a file (`> r.json`).
+  A call that sends it to a file prints no JSON, so it counts, of each pull request it was given, only when the call
+  ended with no error, or stopped on a question only the Human answers (`human_required` 9, `extension_ask` 11).
+  Any other nonzero exit, a round stopped at `extension_check` (10) or a file the shell could not open, leaves the
+  turn a step to run, so a send-back is right; the exit is the whole call's.
+  A call run in the background has only its launch as its result,
+  so it settles neither a review sent to a file nor a merge. A `pr-review` run is none: it is the integration
   review `issue-implement` runs after the draft, and the loop still follows it. The health report still counts it.
 - Each draft and review is of the pull request the transcript shows: a create's printed URL, an edit's target or its
-  printed URL, the loop's first argument, and the `pr` each review command printed, else the one it was given.
+  printed URL, the loop's first argument, and the `pr` each review command printed, else the one it was given, as its
+  last `--pr` or its first word that is no option or an option's value.
   A draft is owed when no review of its pull request follows it in the turn: a review before it, or of another pull
-  request, leaves it unreviewed. A draft or a review whose pull request the transcript does not show matches any, since
+  request, leaves it unreviewed. A `gh pr merge` of its pull request that ran after it settles it too: a merged pull
+  request owes no review, and a merge that names none (the current branch's) settles any.
+  A draft or a review whose pull request the transcript does not show matches any, since
   a false send-back costs more than a missed one: a loop run with no argument counts for every draft before it.
   The one send-back names each draft still owed, by its number, or as a draft with no number shown.
 - `"ask"` turns it off, and the transcript is then not parsed for it. A background task still running holds it, as it

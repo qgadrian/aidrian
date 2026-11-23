@@ -630,7 +630,9 @@ function statementsOf(code) {
   let quote = null;
   let depth = 0;
   // A line that starts with an accessor, as `.agents`, continues the one before it.
-  for (const char of code.replace(/\n\s*(?=\.)/gu, ' ')) {
+  // Each run of white space is read once, and what follows it decides, so the scan stays linear.
+  const joined = code.replace(/\n\s*/gu, (run, at, text) => (text[at + run.length] === '.' ? ' ' : run));
+  for (const char of joined) {
     if (quote) {
       if (char === quote) quote = null;
     } else if (char === "'" || char === '"') quote = char;

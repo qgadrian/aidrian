@@ -151,6 +151,14 @@ test('a subagent may still read those files and write anything else, and the mai
   assert.equal(verdict(dir, { ...main, agent_type: 'aidrian:explorer' }), null, 'a session started with --agent is the main session');
 });
 
+test('interpreter code with a long run of blank lines is judged in linear time', async (t) => {
+  const { dir } = project(t);
+  const command = `node -e "console.log(1)${'\n'.repeat(40000)}x"`;
+  const started = performance.now();
+  verdict(dir, subagent(dir, 'Bash', { command }));
+  assert.ok(performance.now() - started < 1000, `took ${Math.round(performance.now() - started)} ms`);
+});
+
 test('a write to an unknown folder, or code an interpreter runs, is judged by the names it holds', async (t) => {
   const { dir } = project(t);
   const reasonOf = (command) => verdict(dir, subagent(dir, 'Bash', { command }));

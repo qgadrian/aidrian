@@ -632,18 +632,22 @@ function statementsOf(code) {
   // A line that starts with an accessor, as `.agents`, continues the one before it.
   // Each run of white space is read once, and what follows it decides, so the scan stays linear.
   const joined = code.replace(/\n\s*/gu, (run, at, text) => (text[at + run.length] === '.' ? ' ' : run));
+  // `last` is the last character of `current` that is not white space, kept as the loop goes, so no line end rescans it.
+  let last = '';
   for (const char of joined) {
     if (quote) {
       if (char === quote) quote = null;
     } else if (char === "'" || char === '"') quote = char;
     else if ('([{'.includes(char)) depth += 1;
     else if (')]}'.includes(char)) depth = Math.max(0, depth - 1);
-    else if (depth === 0 && (char === ';' || (char === '\n' && !current.trimEnd().endsWith('=')))) {
+    else if (depth === 0 && (char === ';' || (char === '\n' && last !== '='))) {
       statements.push(current);
       current = '';
+      last = '';
       continue;
     }
     current += char;
+    if (!/\s/u.test(char)) last = char;
   }
   return [...statements, current];
 }

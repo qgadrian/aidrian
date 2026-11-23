@@ -1039,6 +1039,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   counts as a write to each of the files its code or its other words name, whatever the code calls.
   Only code that is nothing but reads runs: in Python `json.load(open(p))` and `open(p).read()`,
   in Node `require(p)`, `readFileSync(p)`, and `JSON.parse(readFileSync(p))`, each printed or not, with `p` a quoted path.
+  A read may be bound to a name, as in `const r = require(p)` or `r = json.load(open(p))`, and that name printed by keys only, as `r.status`.
+  The name may not be one a read calls, such as `readFileSync`, `JSON`, or `open`.
   perl and ruby have none. Read, `cat`, and `jq` still read the files, as the block says.
 - A write to a folder that holds one of the files, such as `rm -rf .aidrian`, counts; one to the project root, such as `cp notes.md .`, does not.
   A glob counts when it may match one of the files, and so does a bracket class, such as `conf[i]g.json`, which the shell expands.

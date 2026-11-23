@@ -34,11 +34,20 @@ const PYTHON_READ = String.raw`(?:json\.load\(\s*OPEN\s*\)|OPEN\.read\(\s*\))(?:
   .replaceAll('OPEN', String.raw`open\(\s*${TEXT}(?:\s*,\s*(?:'[rbt]+'|"[rbt]+"))?\s*\)`);
 const NODE_FILE = String.raw`(?:(?:require\(\s*${FS}\s*\)|fs)\s*\.\s*)?readFileSync\(\s*${TEXT}(?:\s*,\s*${TEXT})?\s*\)`;
 const NODE_READ = String.raw`(?:require\(\s*${TEXT}\s*\)|JSON\.parse\(\s*${NODE_FILE}\s*\)|${NODE_FILE})(?:\s*\.\s*[A-Za-z_$][\w$]*|\s*\[\s*(?:${TEXT}|\d+)\s*\])*`;
+// A read may also be bound to a name, as in `r = json.load(open(p))` or `const r = require(p)`, and a name followed by
+// keys only, such as `r['agents']` or `r.agents`, printed: neither calls anything. A bound name is never one a read
+// calls, such as `readFileSync` or `open`, so a binding cannot turn a later read into another call.
+const PYTHON_BOUND = String.raw`(?!(?:open|json|print)\b)[A-Za-z_]\w*`;
+const NODE_BOUND = String.raw`(?!(?:fs|require|readFileSync|JSON|console)(?![\w$]))[A-Za-z_$][\w$]*`;
+const PYTHON_NAME = String.raw`[A-Za-z_]\w*(?:\s*\[\s*(?:${TEXT}|\d+)\s*\])*`;
+const NODE_NAME = String.raw`[A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*|\s*\[\s*(?:${TEXT}|\d+)\s*\])*`;
+const PYTHON_VALUE = String.raw`(?:${PYTHON_READ}|${PYTHON_NAME})`;
+const NODE_VALUE = String.raw`(?:${NODE_READ}|${NODE_NAME})`;
 // The code of each interpreter (shell-lex.mjs INTERPRETERS) that only reads, by its name; perl and ruby have none, as
 // ruby's `open('|rm x')` runs a command.
 const READS = {
-  python: new RegExp(String.raw`^(?:import\s+json|print\(\s*(?:json\.dumps\(\s*${PYTHON_READ}(?:\s*,\s*indent\s*=\s*\d+)?\s*\)|${PYTHON_READ})\s*\)|${PYTHON_READ})$`, 'u'),
-  node: new RegExp(String.raw`^(?:(?:const|let|var)\s+(?:fs|\{\s*readFileSync\s*\})\s*=\s*require\(\s*${FS}\s*\)|console\.log\(\s*(?:JSON\.stringify\(\s*${NODE_READ}(?:\s*,\s*(?:null|\d+))*\s*\)|${NODE_READ})\s*\)|${NODE_READ})$`, 'u'),
+  python: new RegExp(String.raw`^(?:import\s+json|${PYTHON_BOUND}\s*=\s*${PYTHON_READ}|print\(\s*(?:json\.dumps\(\s*${PYTHON_VALUE}(?:\s*,\s*indent\s*=\s*\d+)?\s*\)|${PYTHON_VALUE})\s*\)|${PYTHON_READ})$`, 'u'),
+  node: new RegExp(String.raw`^(?:(?:const|let|var)\s+(?:fs|\{\s*readFileSync\s*\})\s*=\s*require\(\s*${FS}\s*\)|(?:const|let|var)\s+${NODE_BOUND}\s*=\s*${NODE_READ}|console\.log\(\s*(?:JSON\.stringify\(\s*${NODE_VALUE}(?:\s*,\s*(?:null|\d+))*\s*\)|${NODE_VALUE})\s*\)|${NODE_READ})$`, 'u'),
 };
 
 // Why the subagent call in `input`, a PreToolUse payload, may not run because it changes one of `project`'s config files,

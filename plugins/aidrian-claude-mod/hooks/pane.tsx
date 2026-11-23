@@ -195,9 +195,10 @@ export function registerPane(on: On, options: PluginOptions) {
   }).catch(($, e, next) => next(e))
 
   // Each main-chain request reads and refreshes the prompt cache, so the countdown starts again at the request, not at
-  // the turn's end: a long turn keeps the cache warm. The response's first chunk, or its usage when it streamed none,
-  // says the request reached the model, so a long response restarts the countdown before it ends. A subagent's
-  // request is its own chain's and refreshes none.
+  // the turn's end: a long turn keeps the cache warm. The response's first piece of model output, or its usage when it
+  // streamed none, says the request reached the model, so a long response restarts the countdown before it ends; an
+  // opaque `engine` chunk, such as a retry marker, says nothing. A subagent's request is its own chain's and refreshes
+  // none.
   on('turn.step', async function* ($, e, next) {
     if (e.agentId === undefined) {
       if (e.effort !== undefined) {
@@ -210,7 +211,7 @@ export function registerPane(on: On, options: PluginOptions) {
       let isRefreshed = false
 
       for await (const chunk of stream) {
-        if (!isRefreshed) {
+        if (!isRefreshed && chunk.kind !== 'engine') {
           isRefreshed = true
           await update($, cacheAt, () => sentAt)
         }

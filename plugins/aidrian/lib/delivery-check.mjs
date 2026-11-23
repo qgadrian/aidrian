@@ -107,7 +107,10 @@ export function briefHandoffs(input, project) {
   const word = new RegExp(`(?:^|[-_.])${escapeRegExp(agent)}(?:[-_.]\\w+)?\\.json$`, 'u');
   // A CRLF brief's line keeps its `\r` after the split: it is dropped before the marker is matched.
   // Every marker of each line, left to right: a backticked value is read whole before the next marker is looked for.
-  const marked = brief.split('\n').flatMap((line) => [...line.replace(/\r$/u, '').matchAll(HANDOFF_MARKER)]).map(markedPath);
+  const marked = brief.split('\n').flatMap((raw) => {
+    const line = raw.replace(/\r$/u, '');
+    return [...line.matchAll(HANDOFF_MARKER)].filter((match) => !quotedMarker(line, match));
+  }).map(markedPath);
   const problemOf = (file) => {
     if (!file) return 'names no path';
     return wholePath.test(file) ? null : `is not an absolute \`.json\` path in \`${folder}/\``;
@@ -129,7 +132,14 @@ export function briefHandoffs(input, project) {
 // `Under 4 KB. Handoff file: <path>`. Inside a sentence, as in `Read the earlier handoff file: <path>`, it names a file
 // to read, never one owed. Its `value` is a backticked span, spaces included, or the word after it, so a marker inside
 // that span is part of the path, and one after it on the line is read next.
-const HANDOFF_MARKER = /(?:^\s*(?:[-*]\s+)?|(?<=[.!?;])\s+)(?:handoff file:|\*\*handoff file:\*\*|\*\*handoff file\*\*:)[ \t]*(?<value>`[^`]+`|\S*)/giu;
+const HANDOFF_MARKER = /(?:^\s*(?:[-*]\s+)?|(?<=[.!?;])\s+)(?:handoff file:|\*\*handoff file:\*\*|\*\*handoff file\*\*:)\s*(?<value>`[^`]+`|[^\s`]*)/giu;
+
+// Whether a marker sits inside inline code, as an example the brief quotes: an odd number of backticks before it on the
+// line, and one still after its value to close that span. With none after, the backtick before it is a stray one.
+function quotedMarker(line, match) {
+  const before = line.slice(0, match.index).split('`').length - 1;
+  return before % 2 === 1 && line.slice(match.index + match[0].length).includes('`');
+}
 
 // The path a marker names: all inside its backticks, else its word without trailing punctuation.
 function markedPath(match) {

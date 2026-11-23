@@ -501,10 +501,16 @@ test('the stop hook fills every briefed handoff file of an orchestrator\'s brief
   const quoted = path.join(dispatch, 'release. Handoff file: v2-backend-developer.json');
   assert.equal((await stop('quoted', `Implement S6.\nHandoff file: \`${quoted}\``)).status, 0);
   assert.equal(JSON.parse(readFileSync(quoted, 'utf8')).decision, 'quoted');
-  // A quoted example is never written: its word ends in the closing backtick, so it is no path in the dispatch folder.
+  // A marker inside inline code is an example: never written, never reported.
   const example = path.join(dispatch, 'feat-eng-7-example-backend-developer.json');
-  await stop('example', `Briefs read \`Done. Handoff file: ${example}\` in the docs.`);
-  assert.throws(() => readFileSync(example), /ENOENT/u, 'a quoted example owes no file');
+  for (const [id, brief] of [['example', `Briefs read \`Done. Handoff file: ${example}\` in the docs.`], ['example-dot', `Briefs read \`Done. Handoff file: ${example}. \` in the docs.`]]) {
+    assert.equal((await stop(id, brief)).status, 0, id);
+    assert.throws(() => readFileSync(example), /ENOENT/u, `${id}: a quoted example owes no file`);
+  }
+  // A non-breaking space after the marker still reads the path.
+  const nbsp = path.join(dispatch, 'feat-eng-7-nbsp-backend-developer.json');
+  assert.equal((await stop('nbsp', `Handoff file:\u00a0${nbsp}`)).status, 0);
+  assert.equal(JSON.parse(readFileSync(nbsp, 'utf8')).decision, 'nbsp');
   // A stray backtick before a backticked marker path hides nothing.
   const spaced = path.join(dispatch, 'my report-backend-developer.json');
   assert.equal((await stop('spaced', `Quote with a \` mark. Handoff file: \`${spaced}\``)).status, 0);

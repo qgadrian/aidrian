@@ -187,7 +187,7 @@ const changesDirectory = (lines) => lines.some((line) => lexCommand(line).some((
 // A shell file read into this shell may set any variable.
 const SOURCES = new Set(['source', '.']);
 
-// Whether a `cd` to `folder` cannot fail: it is a directory this process may search, read just after the call. So a
+// Whether a plain `cd` to `folder` (shell-lex.mjs plainCd) cannot fail: it is a directory this process may search, read just after the call. So a
 // leading `cd <folder>` that `;` or a newline ends moved the call, as one `&&` ends does; after one that failed, the
 // commands ran in the old folder, which this reads as no directory to enter, and the call records nothing.
 const enters = (folder) => {

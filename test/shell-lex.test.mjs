@@ -308,6 +308,12 @@ test('walkCommands follows a leading cd that ; or a newline ends only when the e
   assert.equal(ghFolder('cd /x || gh pr view', { enters }), null, 'after ||');
   assert.equal(ghFolder('x; cd /x; gh pr view', { enters }), null, 'no leading cd');
   assert.equal(ghFolder('cd /x; cd /x; gh pr view', { enters }), null, 'a second cd');
+  // Only a plain `cd <absolute folder>` runs in this shell and can fail on nothing but its folder.
+  for (const line of ['f() { cd /x; }; gh pr view', '{ cd /x; }; gh pr view', 'coproc cd /x; gh pr view', 'pushd -n /x; gh pr view',
+    'pushd /x; gh pr view', 'cd -P /x; gh pr view', 'cd /x </missing; gh pr view', 'cd /x 2>/dev/null; gh pr view', 'cd /missing/../x; gh pr view',
+    'cd /x/./; gh pr view', 'CDPATH=/ cd /x; gh pr view', 'cd "$X"; gh pr view', 'if cd /x; then gh pr view; fi']) {
+    assert.equal(ghFolder(line, { enters }), null, line);
+  }
   asked.length = 0;
   assert.equal(ghFolder('cd /y && gh pr view', { enters }), '/y', 'one && ends needs no predicate: the command runs only once it worked');
   assert.deepEqual(asked, []);

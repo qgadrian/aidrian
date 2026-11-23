@@ -860,8 +860,9 @@ const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
 // or null when it cannot be known; `line` is the command line it was read from; `inputs` the heredoc bodies and
 // here-string words fed to its input; `heredocs` its heredocs alone, as { body, expands, fd? }. A leading `cd <dir> &&` moves the folder; any other directory change (in a subshell, a pipe,
 // after `;` or `||`, a second one) leaves it unknown for the commands after it. With `enters`, a predicate on a folder,
-// a leading `cd <dir>` that `;` or a newline ends moves it too, when `enters` says a `cd` to that folder cannot fail, since
-// after a failed one the commands run in the old folder: a reader of display data, never a guard, passes it.
+// a leading `cd <dir>` that `;` or a newline ends moves it too, when it is a plain `cd <absolute folder>` (plainCd) and
+// `enters` says a `cd` to that folder cannot fail, since after a failed one the commands run in the old folder: a
+// reader of display data, never a guard, passes it.
 // A wrapper's own directory (`env -C`)
 // and git's `-C` apply to their command only. Directory changes themselves are left out.
 // `chained` is the folder the command runs in whenever it runs at all, for a rule that asks which project a command
@@ -907,10 +908,10 @@ export function walkCommands(command, cwd, { enters = null } = {}) {
       for (const body of substitutions.slice(ends[index - 1] ?? 0, ends[index])) nested(body, here, chain);
       const closes = holds(')');
       if (CHANGES_DIRECTORY.has(invocation.program)) {
-        const joined = separators[0] === '&&' || (enters !== null && (separators[0] === ';' || separators[0] === '\n'));
-        const leading = index === 0 && joined && !segment[0]?.text.startsWith('(') && !invocation.uncertain && !invocation.viaCommand;
+        const ended = enters !== null && index === 0 && (separators[0] === ';' || separators[0] === '\n');
+        const leading = index === 0 && (separators[0] === '&&' || ended) && !segment[0]?.text.startsWith('(') && !invocation.uncertain && !invocation.viaCommand;
         here = leading ? folderAfter(start, invocation) : null;
-        if (here !== null && separators[0] !== '&&' && !enters(here)) here = null;
+        if (ended && !(plainCd(segment) && enters(here))) here = null;
         const movesThisShell = !closes && !invocation.negated && !invocation.uncertain && !invocation.viaCommand && !runsInOwnProcess(segment) && !['||', '|', '|&'].includes(after);
         chain = movesThisShell ? folderAfter(chain, invocation) : null;
         moved = true;
@@ -967,6 +968,15 @@ function runsInOwnProcess(segment) {
 // expands, more than one operand (zsh's `cd old new` replaces old with new), or a relative name under its own `CDPATH=`.
 // It is the physical folder, as the kernel resolves a file's `..` from it: `cd link && cat ../f` reads beside the link's
 // target. A folder that does not exist is returned as written; a rule that needs it to exist checks.
+// Whether a segment is `cd <folder>` and nothing else, its folder absolute and written as path.normalize writes it: with
+// no wrapper, option, redirection, or `.` or `..` part, so a `cd` that `enters` finds the folder of cannot have failed
+// on another part of its own segment, and it runs in this shell, never in a function body or a coprocess.
+function plainCd(segment) {
+  if (segment.length !== 2 || segment[0].text !== 'cd' || segment[0].dynamic) return false;
+  const [, to] = segment;
+  return !to.dynamic && !to.expands && !to.operator && path.isAbsolute(to.text) && path.normalize(to.text) === to.text;
+}
+
 function folderAfter(here, { program, args, environment = [] }) {
   if (program === 'popd') return null;
   const operands = args.filter((token) => !token || token.dynamic || !token.text.startsWith('-'));

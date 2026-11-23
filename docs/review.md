@@ -1567,7 +1567,8 @@ A pass's list still holds each of its findings in full; a re-recorded list and a
   same pass's input listed, and that entry is still open. Any other value is read as no id, kept off the record, and,
   when it reads like an id, as ` r1-2` or `R1-2x`, named in the pass's `dropped` notes by the finding's own id, never by the value.
   A label of the reviewer's own, such as `missing-qualifier`, gets no note. The finding is kept either way.
-  An exec reviewer's `id` that is not a string at all, as `7`, breaks its schema, and its intake notes that as `findings[<i>].id is not a string`. A finding with
+  An exec reviewer's `id` that is not a string at all, as `7`, breaks its schema.
+  Its intake notes that as `findings[<i>].id is not a string`. A finding with
   no valid id takes the id of an entry its input listed with the same title and file, then of an open entry listed to
   no pass whose pass left the plan, and the first pass to claim such an entry keeps it.
 - *Omission.* An entry any pass of the head's plan lists in its result for the head is held. Any other open entry

@@ -6,7 +6,7 @@
 // `.go` file. A nested package's tests are left out, since its own runner runs them. With no `testing.changedCommand`, the
 // files go to `node --test`, so a test file must also be a module node loads with no flag (NODE_MODULE); any other file
 // in a test folder, such as a fixture, is an input, and its tests are the ones that name it. A configured command gets
-// every changed file in a test folder as it is, with no search for its users. With nothing to run it prints the
+// every changed file in a test folder that exists outside a nested package as it is, with no search for its users. With nothing to run it prints the
 // node runner's zero summary, so its row shows no test passed, and supports no claim.
 // The command is config.json `testing.changedCommand`, else `npm test --` when package.json has a test script, with the
 // files after it; its exit status is the command's.
@@ -50,13 +50,10 @@ export function changedFiles(root, base, git = runGit) {
 // load, one tests read: under the default runner their users are searched for too.
 const NAMED_TEST = /(?:\.(?:test|spec)|_test)\.[cm]?[jt]sx?$/u;
 
-// The words a test names a changed file by, none for a file the active runner runs as a test: with `nodeOnly` (the default
-// `npm test --`), a NODE_MODULE named as a test; with a configured command, any file the folder rule names, since that
-// command gets it as it is. Otherwise a code file by its name, and by its name with no extension, as an import often writes
-// it (`./check-runs`); `index.*` by its folder and name; a fixture in a test folder by its path and its name, as a test
-// joins it to its folder; any other file by its path.
-export function needlesOf(file, { nodeOnly = false } = {}) {
-  if (nodeOnly ? NAMED_TEST.test(file) && NODE_MODULE.test(file) : TEST_FILE.test(file)) return [];
+// The words a test names a changed file by: a code file by its name, and by its name with no extension, as an import often
+// writes it (`./check-runs`); `index.*` by its folder and name; a fixture in a test folder by its path and its name, as a
+// test joins it to its folder; any other file by its path. touchedTests searches none for a file the runner runs itself.
+export function needlesOf(file) {
   if (!CODE_FILE.test(file)) return TEST_FILE.test(file) ? [...new Set([file, path.posix.basename(file)])] : [file];
   const name = path.posix.basename(file);
   const stem = name.replace(/\.[^.]+$/u, '');
@@ -75,7 +72,10 @@ export function touchedTests(root, files, git = runGit, { nodeOnly = false } = {
   const isTest = (file) => TEST_FILE.test(file) && (!nodeOnly || NODE_MODULE.test(file));
   const ours = (file) => isTest(file) && !packages.some((folder) => file.startsWith(folder));
   const own = files.filter((file) => ours(file) && exists.has(file));
-  const needles = [...new Set(files.flatMap((file) => needlesOf(file, { nodeOnly })))];
+  // No search for the users of a file the active runner gets as a test: under a configured command any file of `own`, as it
+  // is; under `nodeOnly`, one of them named as a test. A helper `nodeOnly` runs, or a file left out of `own`, is searched for.
+  const runs = new Set(own.filter((file) => !nodeOnly || NAMED_TEST.test(file)));
+  const needles = [...new Set(files.filter((file) => !runs.has(file)).flatMap(needlesOf))];
   // Go tests a package from the same folder, and names no file: every `_test.go` beside a changed `.go` file.
   const goFolders = new Set(files.filter((file) => file.endsWith('.go') && !file.endsWith('_test.go')).map((file) => path.posix.dirname(file)));
   const beside = nodeOnly ? [] : listed.filter((file) => file.endsWith('_test.go') && goFolders.has(path.posix.dirname(file)));

@@ -680,6 +680,8 @@ test('aidrian test changed finds the changed test files and the ones that name a
       'test/clock.test.mjs': "import './fixtures/frozen-clock.mjs';\nread('fixtures/expected.test.json');\n",
       'test/fixtures/expected.test.json': '{}\n',
       'test/fixtures/sample.test.jsx': 'export default 1;\n',
+      'mod/test/fixtures/conf.json': '{}\n',
+      'test/reads.test.mjs': "read('test/fixtures/gone.json');\nread('mod/test/fixtures/conf.json');\n",
       'test/jsx.test.mjs': "read('fixtures/sample.test.jsx');\n",
     },
   });
@@ -688,11 +690,8 @@ test('aidrian test changed finds the changed test files and the ones that name a
   assert.deepEqual(needlesOf('lib/a.mjs'), ['a.mjs'], 'a stem too short to search');
   assert.deepEqual(needlesOf('lib/hosts/index.mjs'), ['hosts/index.mjs', 'hosts/index']);
   assert.deepEqual(needlesOf('docs/hooks.md'), ['docs/hooks.md']);
-  assert.deepEqual(needlesOf('test/a.test.mjs'), []);
-  assert.deepEqual(needlesOf('test/fixtures/frozen-clock.mjs', { nodeOnly: true }), ['frozen-clock.mjs', 'frozen-clock'], 'a helper in a test folder is searched for by its users');
-  assert.deepEqual(needlesOf('test/fixtures/frozen-clock.mjs'), [], 'a configured command gets any file the folder rule names, as it is');
-  assert.deepEqual(needlesOf('test/a.test.mjs', { nodeOnly: true }), []);
-  assert.deepEqual(needlesOf('test/fixtures/sample.test.jsx', { nodeOnly: true }), ['sample.test.jsx', 'sample.test'], 'a test-named file node does not load is an input');
+  assert.deepEqual(needlesOf('test/fixtures/frozen-clock.mjs'), ['frozen-clock.mjs', 'frozen-clock'], 'a helper in a test folder by its name');
+  assert.deepEqual(needlesOf('test/fixtures/sample.test.jsx'), ['sample.test.jsx', 'sample.test']);
   writeFileSync(path.join(dir, 'lib/a.mjs'), 'export const a = 2;\n');
   writeFileSync(path.join(dir, 'test/c.test.mjs'), 'new\n');
   assert.deepEqual(touchedTests(dir, ['lib/a.mjs', 'test/c.test.mjs']), ['test/a.test.mjs', 'test/c.test.mjs'], 'a nested package\'s tests are its own runner\'s');
@@ -701,6 +700,8 @@ test('aidrian test changed finds the changed test files and the ones that name a
   const nodeOnly = (files) => touchedTests(dir, files, undefined, { nodeOnly: true });
   assert.deepEqual(touchedTests(dir, ['lib/b.mjs']), ['test/b.test.mjs', 'test/fixtures/a.json', 'test/fixtures/notes.md'], 'a configured command decides what it runs');
   assert.deepEqual(touchedTests(dir, ['test/fixtures/a.json']), ['test/fixtures/a.json'], 'a configured command gets a changed fixture alone, as before');
+  assert.deepEqual(touchedTests(dir, ['test/fixtures/gone.json']), ['test/reads.test.mjs'], 'a removed fixture it cannot get selects the tests that name it');
+  assert.deepEqual(touchedTests(dir, ['mod/test/fixtures/conf.json']), ['test/reads.test.mjs'], 'a nested package\'s fixture selects the root tests that name it');
   assert.deepEqual(nodeOnly(['test/fixtures/sample.test.jsx']), ['test/jsx.test.mjs'], 'a .jsx fixture named like a test selects the test that names it');
   assert.deepEqual(nodeOnly(['lib/b.mjs']), ['test/b.test.mjs'], 'a fixture or Markdown file is no test module');
   assert.deepEqual(nodeOnly(['test/fixtures/a.json']), ['test/b.test.mjs'], 'a changed fixture selects the tests that name it');

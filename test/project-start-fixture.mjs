@@ -11,6 +11,7 @@
 // with `git -C`; no test sets GIT_DIR.
 
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -24,7 +25,9 @@ import { CONFINE_PLAN, CONFINE_VERDICT } from '../plugins/aidrian/lib/project-co
 import { writeHandoff } from '../plugins/aidrian/lib/project-token.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { projectCommand } from '../plugins/aidrian/lib/project-run-cli.mjs';
-import { appendToRun, initRun, readRun } from '../plugins/aidrian/lib/project-run.mjs';
+import { sectionOf } from '../plugins/aidrian/lib/project-decision.mjs';
+import { writeIssueTexts } from '../plugins/aidrian/lib/project-issue-text.mjs';
+import { appendToRun, initRun, readRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
 
 export const DRIVER = 'abcd1234-0000-4000-8000-00000000d001';
 export const OTHER = 'abcd1234-0000-4000-8000-00000000e001';
@@ -276,4 +279,31 @@ export function runFixture(t, { projectRun = { allow: true, unverifiedHosts: tru
   const run = () => readRun(state, 'launch');
   const rows = () => run().rows;
   return { root, dir, state, worktrees, home, bin, bare, env, as, git, project, config, forge, claude, store, cmd, run, rows, committed };
+}
+
+// A decision the Human recorded on ENG-1: the issue's description in the tracker, whose section under DECIDED.heading
+// names the question and the chosen path in full, and `entry`, what projectRun.recordedDecisions pins it by.
+export const DECIDED = Object.freeze({
+  heading: 'Export format',
+  description: [
+    'Rows as CSV.',
+    '',
+    '## Export format',
+    '',
+    'Question: ship the export as CSV or as XLSX? Chosen: CSV with a header row; XLSX waits for a later issue.',
+    '',
+    '## Notes',
+    '',
+    'The XLSX library is under review.',
+  ].join('\n'),
+});
+export const decidedEntry = (description = DECIDED.description, heading = DECIDED.heading) =>
+  ({ heading, sha256: createHash('sha256').update(sectionOf(description, heading)).digest('hex') });
+
+// runFixture with ENG-1's recorded decision pinned by `entry` on the base branch, both reads alike, and `description`
+// as the run kept ENG-1's text at init, marked cut off at its cap when `cut`.
+export function decidedFixture(t, { entry = decidedEntry(), description = DECIDED.description, cut = false, projectRun = { allow: true, unverifiedHosts: true }, ...options } = {}) {
+  const fx = runFixture(t, { ...options, projectRun: { ...projectRun, recordedDecisions: { 'ENG-1': entry } } });
+  writeIssueTexts(runFolder(fx.state, 'launch'), { 'ENG-1': { title: 'Export', description, criteria: '', labels: [], ...(cut ? { descriptionCut: true } : {}) } });
+  return fx;
 }

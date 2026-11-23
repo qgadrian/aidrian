@@ -500,7 +500,7 @@ test('summary.md holds each issue\'s status, the parked decisions, and the skipp
 });
 
 test('projectRun: its keys and defaults, as docs/config.md shows them', () => {
-  assert.deepEqual(DEFAULTS.projectRun, { allow: false, maxParallel: 1, maxStarts: 300, issueHours: 6, blockedStatus: null, decisionLabel: 'needs-decision', unverifiedHosts: false, workflowSecretsAccepted: false, forgeProtectionAccepted: false, outsideSandbox: [], mcpServers: {}, nonTrackerServers: [], registries: [], localBinding: false });
+  assert.deepEqual(DEFAULTS.projectRun, { allow: false, maxParallel: 1, maxStarts: 300, issueHours: 6, blockedStatus: null, decisionLabel: 'needs-decision', unverifiedHosts: false, workflowSecretsAccepted: false, forgeProtectionAccepted: false, outsideSandbox: [], mcpServers: {}, nonTrackerServers: [], registries: [], localBinding: false, recordedDecisions: {} });
   assert.deepEqual(Object.keys(SCHEMA.projectRun), Object.keys(DEFAULTS.projectRun));
   const doc = readFileSync(path.join(ROOT, 'docs/config.md'), 'utf8');
   const example = JSON.parse(doc.match(/## Keys[\s\S]*?```json\n([\s\S]*?)```/u)[1]);
@@ -522,6 +522,19 @@ test('projectRun: a project sets any key within its bounds, and a value past one
   assert.deepEqual([over.config.projectRun.maxParallel, over.config.projectRun.maxStarts, over.config.projectRun.issueHours], [1, 300, 6]);
   const under = loadConfig(project({ maxParallel: 0, maxStarts: 0, issueHours: 0 }));
   assert.equal(under.errors.length, 3);
+});
+
+test('projectRun.recordedDecisions takes issue keys, each to a one-line heading and a lowercase sha256, and refuses anything else', (t) => {
+  const project = (recordedDecisions) => setup(t, { config: { version: 1, projectRun: { recordedDecisions } } }).project;
+  const entry = { heading: 'Export format', sha256: 'a'.repeat(64) };
+  const good = loadConfig(project({ 'ENG-1': entry, 12: entry }));
+  assert.deepEqual([good.errors, good.config.projectRun.recordedDecisions], [[], { 'ENG-1': entry, 12: entry }]);
+  for (const bad of [{ 'eng-1': entry }, { 'ENG-0': entry }, { 'ENG-1': { ...entry, sha256: 'A'.repeat(64) } }, { 'ENG-1': { ...entry, sha256: 'a'.repeat(63) } },
+    { 'ENG-1': { ...entry, heading: 'two\nlines' } }, { 'ENG-1': { ...entry, heading: 'x'.repeat(201) } }, { 'ENG-1': { ...entry, heading: ' ' } }, { 'ENG-1': { ...entry, option: 2 } }, { 'ENG-1': { heading: 'Export format' } }, []]) {
+    const read = loadConfig(project(bad));
+    assert.match(read.errors.join('\n'), /"projectRun\.recordedDecisions" must be an object of issue keys, each to \{ "heading": <one line of 1 to 200 characters>, "sha256": <64 lowercase hex characters> \}/u, JSON.stringify(bad));
+    assert.deepEqual(read.config.projectRun.recordedDecisions, {}, 'the default stands');
+  }
 });
 
 test('readCapped reads what the stat gave of a file another process appends to meanwhile, and refuses one that grew past its cap', (t) => {

@@ -859,7 +859,10 @@ const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
 // here-string feeds a shell. Each is { segment, invocation, folder, line, inputs, heredocs, unread? }: `folder` is the folder it runs in, from `cwd`,
 // or null when it cannot be known; `line` is the command line it was read from; `inputs` the heredoc bodies and
 // here-string words fed to its input; `heredocs` its heredocs alone, as { body, expands, fd? }. A leading `cd <dir> &&` moves the folder; any other directory change (in a subshell, a pipe,
-// after `;` or `||`, a second one) leaves it unknown for the commands after it. A wrapper's own directory (`env -C`)
+// after `;` or `||`, a second one) leaves it unknown for the commands after it. With `enters`, a predicate on a folder,
+// a leading `cd <dir>` that `;` or a newline ends moves it too, when `enters` says a `cd` to that folder cannot fail, since
+// after a failed one the commands run in the old folder: a reader of display data, never a guard, passes it.
+// A wrapper's own directory (`env -C`)
 // and git's `-C` apply to their command only. Directory changes themselves are left out.
 // `chained` is the folder the command runs in whenever it runs at all, for a rule that asks which project a command
 // answers to. It follows a `cd` only when every link from that `cd` to the command is `&&` in the same shell, as in
@@ -870,7 +873,7 @@ const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
 // `unread` is the text of the commands a shell or `eval` runs that the walk could not read as command lines: what a pipe
 // feeds a shell (`echo 'git push' | bash`) with the shell itself, a shell's script or unreadable options, or a body
 // nested past SUBSTITUTION_DEPTH_LIMIT. A rule that must not miss a command fails closed on it when it names one.
-export function walkCommands(command, cwd) {
+export function walkCommands(command, cwd, { enters = null } = {}) {
   const out = [];
   const walk = (line, start, depth, chainStart = start) => {
     const { segments, separators, substitutions, ends, heredocs, spans } = lexSegments(line);
@@ -904,8 +907,10 @@ export function walkCommands(command, cwd) {
       for (const body of substitutions.slice(ends[index - 1] ?? 0, ends[index])) nested(body, here, chain);
       const closes = holds(')');
       if (CHANGES_DIRECTORY.has(invocation.program)) {
-        const leading = index === 0 && separators[0] === '&&' && !segment[0]?.text.startsWith('(') && !invocation.uncertain && !invocation.viaCommand;
+        const joined = separators[0] === '&&' || (enters !== null && (separators[0] === ';' || separators[0] === '\n'));
+        const leading = index === 0 && joined && !segment[0]?.text.startsWith('(') && !invocation.uncertain && !invocation.viaCommand;
         here = leading ? folderAfter(start, invocation) : null;
+        if (here !== null && separators[0] !== '&&' && !enters(here)) here = null;
         const movesThisShell = !closes && !invocation.negated && !invocation.uncertain && !invocation.viaCommand && !runsInOwnProcess(segment) && !['||', '|', '|&'].includes(after);
         chain = movesThisShell ? folderAfter(chain, invocation) : null;
         moved = true;

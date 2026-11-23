@@ -10,7 +10,7 @@
 // readLedger, then sessionRefs, then resolveSelection through the adapter's one batched read, cached, and shownChanges.
 // It holds both the writer and the reader of the one ledger, so the hook's forge-seam test reads a single file.
 
-import { lstatSync } from 'node:fs';
+import { accessSync, constants, lstatSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { remoteIdentity } from './forges/index.mjs';
@@ -187,11 +187,24 @@ const changesDirectory = (lines) => lines.some((line) => lexCommand(line).some((
 // A shell file read into this shell may set any variable.
 const SOURCES = new Set(['source', '.']);
 
+// Whether a `cd` to `folder` cannot fail: it is a directory this process may search, read just after the call. So a
+// leading `cd <folder>` that `;` or a newline ends moved the call, as one `&&` ends does; after one that failed, the
+// commands ran in the old folder, which this reads as no directory to enter, and the call records nothing.
+const enters = (folder) => {
+  try {
+    accessSync(folder, constants.X_OK);
+    return statSync(folder).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
 // The folder each command of `command` runs in, in walk order, under either reading of a payload's `cwd`, the folder the
-// line started in or the one it ended in: the folder an absolute leading `cd`, `git -C`, or `env -C` names; the payload's
-// `cwd` only when no command on the line changes directory and nothing else moves this one; else null.
+// line started in or the one it ended in: the folder an absolute leading `cd`, `git -C`, or `env -C` names, the `cd`
+// ended by `&&`, or by `;` or a newline when it cannot fail (enters); the payload's `cwd` only when no command on the
+// line changes directory and nothing else moves this one; else null.
 export function knownFolders(command, cwd, fromCwd) {
-  const named = walkCommands(command, null);
+  const named = walkCommands(command, null, { enters });
   const moved = changesDirectory([...new Set([command, ...fromCwd.map((entry) => entry.line)])].flatMap(commandLines));
   return named.map((entry, at) => {
     if (entry.folder !== null) return entry.folder;

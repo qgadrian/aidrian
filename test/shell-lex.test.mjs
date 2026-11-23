@@ -292,6 +292,27 @@ test('readInvocation marks an invocation it reached past a word the shell may no
   assert.deepEqual([entry.folder, entry.chained], ['/x', '/x'], 'an unmarked cd is followed');
 });
 
+test('walkCommands follows a leading cd that ; or a newline ends only when the enters predicate says it cannot fail', () => {
+  const ghFolder = (line, options) => walkCommands(line, '/w', options).find(({ invocation }) => invocation.program === 'gh')?.folder;
+  const asked = [];
+  const enters = (folder) => {
+    asked.push(folder);
+    return folder === '/x';
+  };
+  for (const line of ['cd /x; gh pr view', 'cd /x\ngh pr view']) {
+    assert.equal(ghFolder(line), null, `${JSON.stringify(line)}: no predicate, as every guard walks it`);
+    assert.equal(ghFolder(line, { enters }), '/x', JSON.stringify(line));
+  }
+  assert.equal(ghFolder('cd /y; gh pr view', { enters }), null, 'a cd the predicate says may fail');
+  assert.equal(ghFolder('cd /x & gh pr view', { enters }), null, 'a cd run in the background moves no folder');
+  assert.equal(ghFolder('cd /x || gh pr view', { enters }), null, 'after ||');
+  assert.equal(ghFolder('x; cd /x; gh pr view', { enters }), null, 'no leading cd');
+  assert.equal(ghFolder('cd /x; cd /x; gh pr view', { enters }), null, 'a second cd');
+  asked.length = 0;
+  assert.equal(ghFolder('cd /y && gh pr view', { enters }), '/y', 'one && ends needs no predicate: the command runs only once it worked');
+  assert.deepEqual(asked, []);
+});
+
 test('readInvocation reports an invocation reached through command, which in zsh runs no builtin, without marking it', () => {
   const read = (line, program) => lexCommand(line).map((segment) => readInvocation(segment)).find((each) => each.program === program);
   // zsh's `command` runs only an external program: `command cd /w` runs a `cd` script, and the shell stays where it was.

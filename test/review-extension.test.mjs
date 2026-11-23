@@ -110,6 +110,75 @@ test('atCap: off, and the ceiling, stop without reading the history; a grant cou
   assert.equal(grantedRounds(state, 'plan', { mode: 'auto', max: 0 }), 0, 'the ceiling clamps');
   const ceiling = atCap({ state, source: 'plan', round: 4, head: 'h', policy: { mode: 'auto', max: 1 }, history: unread, pr: 7 });
   assert.deepEqual([ceiling.status, ceiling.extension.by], ['round_limit', 'ceiling']);
+  // With the repository known, a round_limit carries the one question the review-rounds rule reads as the grant.
+  const named = atCap({ state, source: 'plan', round: 4, head: 'h', policy: { mode: 'auto', max: 1 }, history: unread, pr: 7, repo: 'o/r', repoArg: ' --repo o/r' });
+  assert.deepEqual([named.question, named.options[0], named.raise], [
+    'Pull request o/r#7 reached its review-round cap. Allow one more review round, with --max-rounds 4?',
+    'Approve one more round (--max-rounds 4)',
+    'AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 7 --max-rounds 4 --repo o/r',
+  ], 'four rounds ran, one of them granted: --max-rounds 4 plus that grant allows a fifth');
+  const off = atCap({ state, source: 'bot', round: 3, head: 'h', policy: { mode: 'off', max: 2 }, history: unread, pr: 7, repo: 'o/r' });
+  assert.equal(off.raise, 'AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr await-review 7 --request --max-rounds 4 --repo o/r');
+});
+
+// A bot decision is for the reviewer whose history it read. A checkout configured for bot B never takes bot A's
+// question or grant, and a configured bot never inherits one an override, or an older version, recorded with no reviewer:
+// the cap is checked afresh for it.
+test('atCap, revalidate, and grantedRounds take a bot decision only for its own reviewer', () => {
+  const state = emptyState(7, 'o/r');
+  const asked = { source: 'bot', round: 3, head: 'h', reviewer: 'a-bot[bot]', status: 'asking', by: 'judge', reasons: ['valid'], judge: { verdict: 'extend', reason: 'valid', head: 'h', at: '2026-11-01T10:00:00.000Z' } };
+  state.extensions = [asked, { source: 'bot', round: 2, head: 'g', reviewer: 'a-bot[bot]', status: 'granted', by: 'judge', reasons: [] }];
+  const policy = { mode: 'auto', max: 2 };
+  assert.equal(grantedRounds(state, 'bot', policy, 'a-bot[bot]'), 1);
+  assert.equal(grantedRounds(state, 'bot', policy, 'b-bot[bot]'), 0, 'bot B counts no grant of bot A');
+  const b = atCap({ state, source: 'bot', round: 3, head: 'h', policy: { mode: 'ask', max: 2 }, history: passing, pr: 7, reviewer: 'b-bot[bot]' });
+  assert.equal(b.status, 'extension_check', 'bot B reaches its own check, not bot A`s question');
+  assert.deepEqual(state.extensions.map((entry) => [entry.reviewer, entry.round, entry.status]), [['a-bot[bot]', 3, 'asking'], ['a-bot[bot]', 2, 'granted'], ['b-bot[bot]', 3, 'judging']]);
+  assert.equal(revalidate({ state, source: 'bot', round: 3, head: 'moved', history: passing, reviewer: 'c-bot[bot]' }), null, 'no entry of bot C to revalidate');
+  assert.equal(asked.head, 'h', 'bot A`s decision stays on its head');
+
+  // An entry with no reviewer, as an override or an older version wrote it, is no configured bot's.
+  const inherited = emptyState(7, 'o/r');
+  inherited.extensions = [{ source: 'bot', round: 3, head: 'h', status: 'granted', by: 'human', reasons: [], human: { answer: 'approve' } }];
+  assert.equal(grantedRounds(inherited, 'bot', { mode: 'ask', max: 2 }, DEFAULT_REVIEWER), 0);
+  const fresh = atCap({ state: inherited, source: 'bot', round: 3, head: 'h', policy: { mode: 'ask', max: 2 }, history: passing, pr: 7, reviewer: DEFAULT_REVIEWER });
+  assert.equal(fresh.status, 'extension_check', 'a fresh check for the configured bot');
+  // The plan's entries name no reviewer, and keep matching as before.
+  const plan = emptyState(7, 'o/r');
+  plan.extensions = [{ source: 'plan', round: 3, status: 'granted', by: 'judge' }];
+  assert.equal(grantedRounds(plan, 'plan', { mode: 'auto', max: 2 }), 1);
+});
+
+// The reviewer a bot check read rides in the summary comment's record, which another machine continues from on a
+// private pull request; on a public one the record is published sanitized, the login kept. Two bots' checks waiting at
+// once take a verdict or an answer only through the `--check` their commands name.
+test('the published record keeps a bot check`s reviewer, and two bots` waiting checks refuse a verdict', () => {
+  const state = emptyState(42, 'o/r');
+  state.extensions = [
+    { source: 'bot', round: 3, head: 'a'.repeat(40), reviewer: 'a-bot[bot]', status: 'judging', by: null, reasons: [] },
+    { source: 'bot', round: 3, head: 'a'.repeat(40), reviewer: 'b bot; rm', status: 'stopped', by: 'judge', reasons: [] },
+  ];
+  for (const [where, post] of [['private', OPEN], ['public', { ...OPEN, reading: { visibility: 'PUBLIC', inside: true } }]]) {
+    const read = stateFromComment(summaryBody(state, null, 'extension_check', post), 42);
+    assert.equal(read.extensions[0].reviewer, 'a-bot[bot]', `${where}: the login is kept`);
+    if (where === 'public') assert.equal(read.extensions[1].reviewer, undefined, 'public: anything but a login is dropped');
+  }
+  state.extensions.push({ source: 'bot', round: 3, head: 'a'.repeat(40), reviewer: 'c-bot[bot]', status: 'judging', by: null, reasons: [] });
+  assert.throws(() => recordVerdict(state, { verdict: 'extend', reason: 'r' }), /checks bot:a-bot\[bot\] and bot:c-bot\[bot\] both wait for a verdict: name the one with --check <id>/u);
+  // Each check's command names it, so each verdict lands on its own check, the other left waiting.
+  const a = recordVerdict(state, { verdict: 'stop', reason: 'r', check: 'bot:a-bot[bot]' });
+  assert.deepEqual([a.reviewer, a.status], ['a-bot[bot]', 'stopped']);
+  assert.equal(state.extensions[2].status, 'judging', 'bot C still waits');
+  assert.equal(recordVerdict(state, { verdict: 'extend', reason: 'r' }).reviewer, 'c-bot[bot]', 'one left waiting needs no --check');
+  assert.throws(() => recordVerdict(state, { verdict: 'extend', reason: 'r', check: 'bot:a-bot[bot]' }), /no extension check waits for a verdict/u, 'a delayed verdict for a settled check lands on no other');
+  // The judge's record command and the Human's names the check, quoted for any shell.
+  const fresh = emptyState(42, 'o/r');
+  const check = atCap({ state: fresh, source: 'bot', round: 3, head: 'h', policy: { mode: 'ask', max: 2 }, history: passing, pr: 42, reviewer: 'a-bot[bot]' });
+  assert.match(check.dispatch[0].record, / --head h --check 'bot:a-bot\[bot\]'$/u);
+  assert.deepEqual(parseExtend(['42', '--human', 'approve', '--check', 'bot:a-bot[bot]']).check, 'bot:a-bot[bot]');
+  // A quote in a configured reviewer stays inside the one argument.
+  const quoted = atCap({ state: emptyState(42, 'o/r'), source: 'bot', round: 3, head: 'h', policy: { mode: 'ask', max: 2 }, history: passing, pr: 42, reviewer: "o'bot" });
+  assert.match(quoted.dispatch[0].record, / --check 'bot:o'\\''bot'$/u);
 });
 
 test('atCap: the judge`s verdict and the Human`s answer move one entry, and only a waiting one', () => {
@@ -192,8 +261,8 @@ test('the summary: a fix head a plan round reviewed since is not listed as unrev
 });
 
 test('aidrian pr extend: its arguments are checked before anything is recorded', () => {
-  assert.deepEqual(parseExtend(['#12', '--verdict', 'extend', '--reason', ' a.js:3 is real ', '--head', 'abc1234']), { pr: 12, verdict: 'extend', reason: 'a.js:3 is real', head: 'abc1234', human: null, repo: null });
-  assert.deepEqual(parseExtend(['12', '--human', 'deny']), { pr: 12, verdict: null, reason: null, head: null, human: 'deny', repo: null });
+  assert.deepEqual(parseExtend(['#12', '--verdict', 'extend', '--reason', ' a.js:3 is real ', '--head', 'abc1234']), { pr: 12, verdict: 'extend', reason: 'a.js:3 is real', head: 'abc1234', human: null, repo: null, check: null });
+  assert.deepEqual(parseExtend(['12', '--human', 'deny']), { pr: 12, verdict: null, reason: null, head: null, human: 'deny', repo: null, check: null });
   assert.equal(parseExtend(['12', '--human', 'deny', '--repo', 'Up/Notes']).repo, 'up/notes');
   for (const [args, error] of [
     [[], /needs a pull request number/u],
@@ -367,7 +436,17 @@ test('the review-extend rule says why the transcript`s answers do not approve th
   g.write(g.answer('Grant one more round to #57 and #58?', 'Approve'));
   assert.match(deny(), /no question answered since the judge's verdict names #12/u);
   g.write(g.answer('Grant one more round to #12?', 'Approve'));
-  assert.match(deny(), /the questions naming #12 do not name "round 3"/u);
+  assert.match(deny(), /neither the questions naming #12 nor the options the Human chose name "round 3"/u);
+  // A question reworded in plain words still approves when the chosen option names the round.
+  g.write(g.answer('Grant a third review round on #12?', 'Approve round 3'));
+  assert.equal(g.run('aidrian pr extend 12 --human approve'), null, 'the chosen option names the round');
+  g.write(g.answer('Grant a third review round on #12?', 'Approve round 30'));
+  assert.match(deny(), /nor the options the Human chose name "round 3"/u);
+  // When both name a round, they must name the same one.
+  g.write(g.answer(QUESTION, 'Approve round 4'));
+  assert.match(deny(), /nor the options the Human chose name "round 3"/u, 'the option names another round than the question');
+  g.write(g.answer('Grant round 4 on #12?', 'Approve round 3'));
+  assert.match(deny(), /nor the options the Human chose name "round 3"/u, 'the question names another round than the option');
   g.write(g.answer(QUESTION, 'Deny'));
   assert.match(deny(), /the Human picked "Deny"/u);
   assert.equal(mismatch([{ question: QUESTION, answer: 'Approve round 3', at: null }], { pr: 12, round: 3 }), null);
@@ -419,7 +498,7 @@ function botProject(t, config = {}, { visibility = 'PRIVATE' } = {}) {
   const edit = (id, body) => (issue.find((comment) => comment.id === id).body = body);
   let head = 'zzz';
   // `failRead`: the read of the bot's reviews, counted from 1 in this run, that fails as GitHub would.
-  const run = (comments, { reviews = comments.length, at = 'zzz', failRead = null } = {}) => {
+  const run = (comments, { reviews = comments.length, at = 'zzz', failRead = null, args = [] } = {}) => {
     head = at;
     let reviewReads = 0;
     const list = Array.from({ length: reviews }, (_, i) => ({ id: i + 1, user: { login: DEFAULT_REVIEWER }, submitted_at: T(i + 1), commit_id: `c${i}`, state: 'COMMENTED' }));
@@ -448,7 +527,7 @@ function botProject(t, config = {}, { visibility = 'PRIVATE' } = {}) {
       reactions: () => [],
     };
     let t0 = Date.parse(T(30));
-    return runAwaitReview(['42', '--request', '--timeout-sec', '0'], loadConfig(project).config, project, { forge, now: () => t0, sleep: async (s) => { t0 += s * 1000; } }).then((code) => ({ code, out: JSON.parse(log.mock.calls.at(-1).arguments[0]), requests, reviewReads }));
+    return runAwaitReview(['42', '--request', '--timeout-sec', '0', ...args], loadConfig(project).config, project, { forge, now: () => t0, sleep: async (s) => { t0 += s * 1000; } }).then((code) => ({ code, out: JSON.parse(log.mock.calls.at(-1).arguments[0]), requests, reviewReads }));
   };
   // `aidrian pr extend` as the CLI runs it, with the review step's forge over the same comments.
   const extend = (args) => runExtend(['42', ...args], project, loadConfig(project).config, {
@@ -540,18 +619,25 @@ test('a held summary comment: aidrian pr extend and await-review fail on a machi
   assert.equal(stateFromComment(bot.issue[0].body, 42).extensions[0].status, 'asking');
 });
 
-test('await-review at the cap: a push after the judge`s verdict sends the check back to the judge, and a stale approval is refused', async (t) => {
+// The fix of the last round is often pushed while the Human's answer is still to come: with no new red flag, the
+// question keeps waiting on the new head, and the Human's approval records with no second judge run.
+test('await-review at the cap: a push with no new red flag keeps the Human`s question waiting, and a stale approval is refused', async (t) => {
   const bot = botProject(t);
   await bot.run(converging);
   await bot.extend(['--verdict', 'extend', '--reason', 'valid']);
   assert.equal((await bot.run(converging)).out.status, 'extension_ask');
+  bot.move('b1b1b1b1');
+  await assert.rejects(bot.extend(['--human', 'approve']), /the pull request is at b1b1b1b now: run the review step again, which reads the signals on the new head and, with no new red flag, keeps a question to the Human waiting/u);
   const moved = await bot.run(converging, { at: 'b1b1b1b1' });
-  assert.deepEqual([moved.out.status, moved.out.extension.status], ['extension_check', 'judging'], 'the judge has not seen b1b1b1b1');
-  assert.match(moved.out.dispatch[0].record, /--head b1b1b1b1$/u);
-  await bot.extend(['--verdict', 'extend', '--reason', 'still valid', '--head', 'b1b1b1b1']);
+  assert.deepEqual([moved.out.status, moved.out.extension.status, moved.out.extension.judge?.verdict], ['extension_ask', 'asking', 'extend'], 'the judge`s extend stands on b1b1b1b1');
   bot.move('c2c2c2c2');
   await assert.rejects(bot.extend(['--human', 'approve']), /the check was for b1b1b1b, and the pull request is at c2c2c2c now/u);
   assert.equal(await bot.extend(['--human', 'deny']), 0, 'a deny needs no head');
+  const again = botProject(t);
+  await again.run(converging);
+  await again.extend(['--verdict', 'extend', '--reason', 'valid']);
+  assert.equal((await again.run(converging, { at: 'd3d3d3d3' })).out.status, 'extension_ask');
+  assert.equal(await again.extend(['--human', 'approve']), 0, 'the approval records after the fix was pushed, with no second judge run');
 });
 
 test('await-review --request at the cap: a head the bot has not reviewed reaches the judge as such, and a stop says so', async (t) => {
@@ -599,6 +685,25 @@ test('await-review --request at the cap: bot rounds that do not shrink go to the
   const off = botProject(t, { github: { extraRounds: 'off' } });
   const plain = await off.run([[['a.js', 1, 'One']], [['b.js', 1, 'x']], []]);
   assert.deepEqual([plain.code, plain.out.extension], [4, { status: 'off', mode: 'off' }]);
+  // The bot's own cap with extra rounds off still carries the one question that grants a round, from the CLI path.
+  assert.deepEqual([plain.out.question, plain.out.options[0], plain.out.raise], [
+    'Pull request acme/notes#42 reached its review-round cap. Allow one more review round, with --max-rounds 4?',
+    'Approve one more round (--max-rounds 4)',
+    'AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr await-review 42 --request --max-rounds 4 --repo acme/notes',
+  ]);
+});
+
+// The raise and the check at the cap are the configured reviewer's: a wait on another `--reviewer` gets neither.
+test('await-review --request with another --reviewer prints no raise at its cap', async (t) => {
+  const off = botProject(t, { github: { extraRounds: 'off', reviewer: 'configured-bot[bot]' } });
+  const other = await off.run([[['a.js', 1, 'One']], [['b.js', 1, 'x']], []], { args: ['--reviewer', DEFAULT_REVIEWER] });
+  assert.equal(other.code, 4);
+  assert.deepEqual([other.out.question, other.out.raise], [undefined, undefined]);
+  // With extra rounds on, such a wait stays outside the check at the cap: its rounds are no configured reviewer's.
+  const on = botProject(t, { github: { reviewer: 'configured-bot[bot]' } });
+  const capped = await on.run([[['a.js', 1, 'One']], [['a.js', 50, 'Two']], [['b.js', 9, 'Three']]], { args: ['--reviewer', DEFAULT_REVIEWER] });
+  assert.deepEqual([capped.code, capped.out.status, capped.out.extension, capped.out.raise], [4, 'round_limit', undefined, undefined]);
+  assert.equal(readLocalState(on.project, 42), null, 'no decision is recorded for it');
 });
 
 test('aidrian report reviews counts each check at the cap once, by its last decision', () => {

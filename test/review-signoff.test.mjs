@@ -7,7 +7,10 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { repoName } from '../plugins/aidrian/lib/remotes.mjs';
-import { check, REASON } from '../plugins/aidrian/lib/rules/review-signoff.mjs';
+import { check, REASON, SUBAGENT_REASON } from '../plugins/aidrian/lib/rules/review-signoff.mjs';
+
+// A deny of the sign-off: REASON, and after it the miss, when the session holds answers to go by.
+const denies = (got, why = '') => assert.ok(typeof got === 'string' && got.startsWith(REASON), `${why}: ${got}`);
 
 function project(t) {
   const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-signoff-')));
@@ -34,7 +37,7 @@ test('an agent cannot sign off a flow, however it runs aidrian', (t) => {
     'node plugins/aidrian/lib/cli.mjs pr signoff 9 --last',
     'node "$CLAUDE_PLUGIN_ROOT/bin/aidrian" pr signoff 9 --last',
     'echo $(aidrian pr signoff 9 --last)',
-  ]) assert.equal(check(command, { cwd }), REASON, command);
+  ]) denies(check(command, { cwd }), command);
   for (const command of ['aidrian pr review 9', 'aidrian pr attest 9 --check', 'echo "aidrian pr signoff 9"', 'grep signoff docs/review.md', 'node other.mjs pr signoff']) {
     assert.equal(check(command, { cwd }), null, command);
   }
@@ -56,7 +59,7 @@ test('a sign-off inside a shell wrapper is denied', (t) => {
     'eval "aidrian pr signoff 9 --last"',
     "bash <<'EOF'\naidrian pr signoff 9 --last\nEOF",
     'echo "aidrian pr signoff 9 --last" | bash',
-  ]) assert.equal(check(command, { cwd }), REASON, command);
+  ]) denies(check(command, { cwd }), command);
   for (const command of ['bash -c "aidrian pr review 9"', 'eval "echo pr signoff"', 'echo "pr signoff" | grep signoff', "cat <<'EOF'\naidrian pr signoff 9\nEOF"]) {
     assert.equal(check(command, { cwd }), null, command);
   }
@@ -68,7 +71,7 @@ test('a sign-off in a case arm whose pattern is a glob or a variable, or behind 
     'case $x in *) aidrian pr signoff 5 --last ;; esac', 'case $x in "$y") aidrian pr signoff 5 --last ;; esac', 'case $x in ?) aidrian pr signoff 5 ;; esac',
     'builtin command aidrian pr signoff 5 --last', 'builtin exec aidrian pr signoff 5 --last', 'builtin eval "aidrian pr signoff 5 --last"',
     'case $x in a ) aidrian pr signoff 5 --last ;; esac', 'f () { aidrian pr signoff 5 --last; }; f',
-  ]) assert.equal(check(command, { cwd }), REASON, command);
+  ]) denies(check(command, { cwd }), command);
   assert.equal(check('case $x in *) aidrian pr review 5 ;; esac', { cwd }), null, 'another command');
 });
 
@@ -88,7 +91,7 @@ test('an agent may dry-run a sign-off with --check, and every other sign-off is 
     'aidrian pr signoff 9 --flow x --head abc1234 --check && aidrian pr signoff 9 --flow x --head abc1234',
     'echo "aidrian pr signoff 9 --check" | bash',
     'aidrian pr signoff 9 --last --check && aidrian pr signoff 9 --last',
-  ]) assert.equal(check(command, { cwd }), REASON, command);
+  ]) denies(check(command, { cwd }), command);
 });
 
 test("the rule's message names the short form and still hands the command over", () => {
@@ -113,7 +116,7 @@ test('a --check the shell builds at run time is no dry run, and a subcommand it 
     'a=(pr signoff 9 --last); aidrian "${a[@]}"',
     'aidrian() { command aidrian "${@/--check/}"; }; aidrian pr signoff 9 --last --check',
     'aidrian pr "$sub" 9 --last',
-  ]) assert.equal(check(command, { cwd }), REASON, command);
+  ]) denies(check(command, { cwd }), command);
   for (const command of ['aidrian pr review $PR', 'aidrian pr signoff 9 --last --check', 'aidrian pr signoff "$PR" --last --check', 'aidrian check']) {
     assert.equal(check(command, { cwd }), null, command);
   }
@@ -150,7 +153,7 @@ test('the Human`s answer naming the pull request, head, and invariant lets exact
     ['another repository', `${accept} --repo other/repo`],
     ['the short form', 'aidrian pr signoff 9 --last'],
     ['a stage', `aidrian pr signoff 9 --stage local --head ${HEAD}`],
-  ]) assert.equal(check(command, { cwd, input }), REASON, why);
+  ]) denies(check(command, { cwd, input }), why);
 });
 
 test('only an Approve answer counts, the latest wins, and a flow-wide answer covers --accept alone', (t) => {
@@ -158,13 +161,13 @@ test('only an Approve answer counts, the latest wins, and a flow-wide answer cov
   const accept = `aidrian pr signoff 9 --flow ui --accept fit --evidence https://x/y --reason ok --head ${HEAD}`;
   const overrule = `aidrian pr signoff 9 --flow ui --overrule fit --reason ok --head ${HEAD}`;
   const q = 'o/r#9 at abc1234: ui/fit?';
-  assert.equal(check(accept, { cwd, input: transcript(t, [{ [q]: 'Keep it open' }]) }), REASON);
-  assert.equal(check(accept, { cwd, input: transcript(t, [{ [q]: 'Approve' }, { [`${q} again`]: 'Deny' }]) }), REASON);
+  denies(check(accept, { cwd, input: transcript(t, [{ [q]: 'Keep it open' }]) }));
+  denies(check(accept, { cwd, input: transcript(t, [{ [q]: 'Approve' }, { [`${q} again`]: 'Deny' }]) }));
   const wide = transcript(t, [{ 'o/r#9 at abc1234: every point of ui/*?': 'Approve' }]);
   assert.equal(check(accept, { cwd, input: wide }), null);
-  assert.equal(check(overrule, { cwd, input: wide }), REASON, 'a ruling names its invariant');
+  denies(check(overrule, { cwd, input: wide }), 'a ruling names its invariant');
   assert.equal(check(`aidrian pr signoff 9 --flow ui --head ${HEAD}`, { cwd, input: transcript(t, [{ 'o/r#9 at abc1234: ui/signoff?': 'Approve' }]) }), null);
-  assert.equal(check(accept, { cwd, input: { transcript_path: '/no/such/file' } }), REASON, 'no transcript, so the Human`s own shell');
+  denies(check(accept, { cwd, input: { transcript_path: '/no/such/file' } }), 'no transcript, so the Human`s own shell');
 });
 
 test('a stage sign-off runs on an answer naming that stage, and --last still needs the long form', (t) => {
@@ -172,15 +175,15 @@ test('a stage sign-off runs on an answer naming that stage, and --last still nee
   const stage = `aidrian pr signoff 9 --stage independent --head ${HEAD}`;
   const input = transcript(t, [{ 'o/r#9 at abc1234: stage:independent/signoff?': 'Approve' }]);
   assert.equal(check(stage, { cwd, input }), null);
-  assert.equal(check(stage.replace('independent', 'local'), { cwd, input }), REASON);
-  assert.equal(check('aidrian pr signoff 9 --last', { cwd, input }), REASON);
+  denies(check(stage.replace('independent', 'local'), { cwd, input }));
+  denies(check('aidrian pr signoff 9 --last', { cwd, input }));
 });
 
 test('an answer naming another repository`s pull request approves nothing here', (t) => {
   const cwd = project(t);
   const command = `aidrian pr signoff 9 --flow ui --accept fit --evidence https://x/y --reason ok --head ${HEAD}`;
   for (const question of ['fork/r#9 at abc1234: ui/fit?', '#9 at abc1234: ui/fit?', 'xo/r#9 at abc1234: ui/fit?']) {
-    assert.equal(check(command, { cwd, input: transcript(t, [{ [question]: 'Approve' }]) }), REASON, question);
+    denies(check(command, { cwd, input: transcript(t, [{ [question]: 'Approve' }]) }), question);
   }
 });
 
@@ -189,9 +192,9 @@ test('an approved command aimed elsewhere, or a checkout with several remotes, g
   const command = `aidrian pr signoff 9 --flow ui --accept fit --evidence https://x/y --reason ok --head ${HEAD}`;
   const input = transcript(t, [{ 'o/r#9 at abc1234: ui/fit?': 'Approve' }]);
   assert.equal(check(command, { cwd, input }), null);
-  for (const aimed of [`cd /other && ${command}`, `env -C /other ${command}`, `GH_REPO=x/y ${command}`, `${command}; true`]) assert.equal(check(aimed, { cwd, input }), REASON, aimed);
+  for (const aimed of [`cd /other && ${command}`, `env -C /other ${command}`, `GH_REPO=x/y ${command}`, `${command}; true`]) denies(check(aimed, { cwd, input }), aimed);
   execFileSync('git', ['remote', 'add', 'upstream', 'https://github.com/up/r.git'], { cwd });
-  assert.equal(check(command, { cwd, input }), REASON, 'the forge default may be the parent');
+  denies(check(command, { cwd, input }), 'the forge default may be the parent');
 });
 
 // #251: the checkout had remotes origin, origin-https, and a third of one repository, and a fourth of another.
@@ -209,10 +212,10 @@ test('in a checkout with several remotes, an answer counts on the sign-off whose
   const input = transcript(t, [{ 'Accept the fit check on o/r#9 at abc1234? (ui/fit)': 'Approve (Recommended)' }]);
   assert.equal(check(`${accept} --repo o/r`, { cwd, input }), null, 'the repository the answer names, one of the remotes');
   assert.equal(check(`aidrian pr signoff 9 --repo O/R --flow ui --accept fit --evidence https://x/y --reason ok --head ${HEAD}`, { cwd, input }), null, 'anywhere among the flags, in any letter case');
-  assert.equal(check(accept, { cwd, input }), REASON, 'no --repo: the forge default may be either repository');
-  assert.equal(check(`${accept} --repo qg/voila`, { cwd, input }), REASON, 'the other remote`s repository, which the answer does not name');
+  denies(check(accept, { cwd, input }), 'no --repo: the forge default may be either repository');
+  denies(check(`${accept} --repo qg/voila`, { cwd, input }), 'the other remote`s repository, which the answer does not name');
   const other = transcript(t, [{ 'Accept the fit check on qg/voila#9 at abc1234? (ui/fit)': 'Approve' }]);
-  assert.equal(check(`${accept} --repo o/r`, { cwd, input: other }), REASON, 'an answer naming the other repository approves nothing on this one');
+  denies(check(`${accept} --repo o/r`, { cwd, input: other }), 'an answer naming the other repository approves nothing on this one');
   for (const [why, command] of [
     ['a repository no remote names', `${accept} --repo x/y`],
     ['a repeated --repo', `${accept} --repo o/r --repo o/r`],
@@ -226,9 +229,9 @@ test('in a checkout with several remotes, an answer counts on the sign-off whose
     ['env -C', `env -C /other ${accept} --repo o/r`],
     ['an environment prefix', `GH_REPO=qg/voila ${accept} --repo o/r`],
     ['the short form', 'aidrian pr signoff 9 --last --repo o/r'],
-  ]) assert.equal(check(command, { cwd, input }), REASON, why);
+  ]) denies(check(command, { cwd, input }), why);
   const xy = transcript(t, [{ 'Accept the fit check on x/y#9 at abc1234? (ui/fit)': 'Approve' }]);
-  assert.equal(check(`${accept} --repo x/y`, { cwd, input: xy }), REASON, 'an answer naming a repository no remote names approves nothing');
+  denies(check(`${accept} --repo x/y`, { cwd, input: xy }), 'an answer naming a repository no remote names approves nothing');
 });
 
 test('in a checkout with several remotes, the overrule, the flow, and the stage sign-off take --repo alike', (t) => {
@@ -238,15 +241,15 @@ test('in a checkout with several remotes, the overrule, the flow, and the stage 
   assert.equal(check(`aidrian pr signoff 9 --flow ui --head ${HEAD} --repo o/r`, { cwd, input: transcript(t, [{ 'o/r#9 at abc1234: ui/signoff?': 'Approve' }]) }), null);
   const stage = transcript(t, [{ 'o/r#9 at abc1234: stage:independent/signoff?': 'Approve' }]);
   assert.equal(check(`aidrian pr signoff 9 --stage independent --head ${HEAD} --repo o/r`, { cwd, input: stage }), null);
-  assert.equal(check(`aidrian pr signoff 9 --stage independent --head ${HEAD}`, { cwd, input: stage }), REASON);
-  assert.equal(check(`aidrian pr signoff 9 --stage independent --head ${HEAD} --repo o/r`, { cwd, input: transcript(t, [{ 'o/r#9 at abc1234: stage:independent/signoff?': 'Deny' }]) }), REASON, 'only an Approve answer counts');
+  denies(check(`aidrian pr signoff 9 --stage independent --head ${HEAD}`, { cwd, input: stage }));
+  denies(check(`aidrian pr signoff 9 --stage independent --head ${HEAD} --repo o/r`, { cwd, input: transcript(t, [{ 'o/r#9 at abc1234: stage:independent/signoff?': 'Deny' }]) }), 'only an Approve answer counts');
 });
 
 test('in a checkout with one remote, a --repo must name it', (t) => {
   const cwd = project(t);
   const accept = `aidrian pr signoff 9 --flow ui --accept fit --evidence https://x/y --reason ok --head ${HEAD}`;
   assert.equal(check(`${accept} --repo o/r`, { cwd, input: transcript(t, [{ 'o/r#9 at abc1234: ui/fit?': 'Approve' }]) }), null);
-  assert.equal(check(`${accept} --repo fork/r`, { cwd, input: transcript(t, [{ 'fork/r#9 at abc1234: ui/fit?': 'Approve' }]) }), REASON, 'a repository that is no remote');
+  denies(check(`${accept} --repo fork/r`, { cwd, input: transcript(t, [{ 'fork/r#9 at abc1234: ui/fit?': 'Approve' }]) }), 'a repository that is no remote');
 });
 
 test('the deny names the --repo route for several remotes, a plain command from the checkout, and the notification', () => {
@@ -262,9 +265,72 @@ test('a --repo of `.` or `..` segments names no repository, even beside a remote
   execFileSync('git', ['remote', 'remove', 'origin'], { cwd });
   execFileSync('git', ['remote', 'add', 'origin', '/tmp/a/../x'], { cwd });
   const command = `aidrian pr signoff 9 --flow ui --head ${HEAD} --repo ../x`;
-  assert.equal(check(command, { cwd, input: transcript(t, [{ '../x#9 at abc1234: ui/signoff?': 'Approve' }]) }), REASON);
+  denies(check(command, { cwd, input: transcript(t, [{ '../x#9 at abc1234: ui/signoff?': 'Approve' }]) }));
   for (const repo of ['./x', 'o/..', 'o/.']) {
-    assert.equal(check(`aidrian pr signoff 9 --flow ui --head ${HEAD} --repo ${repo}`, { cwd, input: transcript(t, [{ [`${repo}#9 at abc1234: ui/signoff?`]: 'Approve' }]) }), REASON, repo);
+    denies(check(`aidrian pr signoff 9 --flow ui --head ${HEAD} --repo ${repo}`, { cwd, input: transcript(t, [{ [`${repo}#9 at abc1234: ui/signoff?`]: 'Approve' }]) }), repo);
   }
   assert.deepEqual(['../x', '/tmp/a/../x', 'o/.', './x'].map(repoName), [null, null, null, null]);
+});
+
+// Sessions retried a denied sign-off three times in a minute: the deny named no miss. It names the one thing wrong now.
+test('a deny after the Human answered names the nearest miss', (t) => {
+  const cwd = project(t);
+  const accept = `aidrian pr signoff 9 --flow ui --accept fit --evidence https://x/y --reason ok --head ${HEAD}`;
+  const miss = (command, answers) => {
+    const got = check(command, { cwd, input: transcript(t, answers) }) ?? '';
+    assert.ok(got.startsWith(`${REASON} This call: `), got);
+    return got.slice(REASON.length);
+  };
+  const good = [{ 'o/r#9 at abc1234: ui/fit?': 'Approve' }];
+  assert.match(miss(accept.replace('https://x/y', '"$U"'), good), /`\$U` is a word the shell builds at run time/u);
+  assert.match(miss(accept, [{ 'o/r#9 at abc1234: ui / fit?': 'Approve' }]), /names `ui\/fit`, written as one word with no space around the `\/`/u);
+  assert.match(miss(accept, [{ 'o/r#9: ui/fit?': 'Approve' }]), /names the head `abc1234`/u);
+  assert.match(miss(accept, [{ 'o/r#8 at abc1234: ui/fit?': 'Approve' }]), /no question answered names `o\/r#9`/u);
+  assert.match(miss(accept, [{ 'o/r#9 at abc1234: ui/fit?': 'Not yet' }]), /the Human picked "Not yet"/u);
+  execFileSync('git', ['remote', 'add', 'upstream', 'https://github.com/up/r.git'], { cwd });
+  assert.match(miss(accept, good), /remotes name more than one repository: end the command with `--repo <owner>\/<name>`/u);
+});
+
+// A subagent has no answer route: it is told to hand the question to its dispatcher, rather than retry.
+test('a subagent`s sign-off is refused with the needs_input route, every shape alike', (t) => {
+  const cwd = project(t);
+  for (const command of ['aidrian pr signoff 9 --flow ui --head abc1234', 'aidrian pr signoff 9 --last', 'aidrian "$@"', 'xargs aidrian pr signoff 9 --last']) {
+    assert.equal(check(command, { cwd, input: { agent_id: 'a1' } }), SUBAGENT_REASON, command);
+  }
+  assert.match(SUBAGENT_REASON, /return `status: needs_input` to your dispatcher, with `next_owner: the Human`, the sign-off question/u);
+});
+
+// The shapes the product-feedback rule already denies for its own command, read by its readCall and textDenial.
+test('a sign-off whose program or line the shell builds at run time is denied, and the dry run and plain text still run', (t) => {
+  const cwd = project(t);
+  for (const command of [
+    'x=aidrian; $x pr signoff 9 --last',
+    '"$(command -v aidrian)" pr signoff 9 --last',
+    'xargs aidrian pr signoff 9 --last',
+    'npx aidrian pr signoff 9 --last',
+    'C="aidrian pr signoff 9 --last"; eval "$C"',
+    `python3 -c "os.system('aidrian pr signoff 9 --last')"`,
+    "alias s='aidrian pr signoff'; s 9 --last",
+    '$TOOL pr "$SUB" 9 --last',
+    'aidrian pr {signoff,review} 9',
+    'x=aidrian; $x pr signoff 9 --flow ui --head abc1234',
+    'npx aidrian pr signoff 9 --flow ui --head abc1234',
+    'npx aidrian pr signoff 9 --last --check',
+    `python3 -c "os.system('aidrian pr signoff 9 --last'); print('--check')"`,
+  ]) assert.equal(check(command, { cwd }), REASON, command);
+  // Outside a project, a subagent and a session no Human attends are refused the text shapes too.
+  const bare = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-signoff-bare-')));
+  t.after(() => rmSync(bare, { recursive: true, force: true }));
+  assert.equal(check('xargs aidrian pr signoff 9 --last', { cwd: bare, input: { session_id: 's1' }, unattendedMark: () => ({ root: null }), drives: () => false }) !== null, true);
+  assert.equal(check('xargs aidrian pr signoff 9 --last', { cwd: bare, input: {}, unattendedMark: () => null, drives: () => false }), null, 'an attended session outside a project');
+  for (const command of [
+    'aidrian pr signoff 9 --last --check',
+    'aidrian pr review $PR',
+    'echo "aidrian pr signoff 9 --last"',
+    'git commit -m "docs: aidrian pr signoff 9 --last is the Human\'s"',
+    'grep -rn "aidrian pr signoff" docs',
+    'node other.mjs pr signoff',
+    'x=aidrian; $x pr review 9',
+    'aidrian pr product-feedback "$ACTION" 9',
+  ]) assert.equal(check(command, { cwd }), null, command);
 });

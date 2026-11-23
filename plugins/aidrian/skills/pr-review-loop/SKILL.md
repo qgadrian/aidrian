@@ -37,8 +37,8 @@ Act on `status`, then run it again, until it stops:
 | `received`, `none_needed` | copy `residuals` to the body's Accepted residuals; step 2 for comments people or the bot left, then step 7 |
 | `received` with `replies.unanswered` | run it once more; report what is left |
 | `replies.waiting` | run nothing for it; report each thread as waiting on its `login`'s machine |
-| `extension_check`, `extension_ask`, `blocked_quota` | run the judge, or ask the Human `question`, as `references/review-plan.md` says |
-| `human_required`, `stuck`, `too_large`, `unsatisfied`, `round_limit` | stop: report it and ask the Human |
+| `extension_check`, `extension_ask`, `blocked_quota`, `round_limit` | run the judge, or ask the Human `question`, as `references/review-plan.md` says |
+| `human_required`, `stuck`, `too_large`, `unsatisfied` | stop: report it and ask the Human |
 
 With `--await-codex`, run `aidrian pr review <n> --with-bot`: the bot reviews each head alongside local passes and CI, awaited last.
 

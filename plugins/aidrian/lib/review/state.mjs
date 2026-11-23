@@ -646,6 +646,11 @@ const ENDING = [[whole(STATE_BR), true], [whole(STATE), false]];
 // The record a summary comment carries, or null: the newer of the record markers on the lines that end it, each a line
 // of its own, compressed or plain. An older release's write keeps this release's compressed marker and appends its own
 // plain one, so the body can end with both. A marker anywhere else, such as one quoted in free text, is not read.
+// A check at the cap's identity, which `aidrian pr extend --check` names: its source, and for a bot's, the reviewer
+// whose rounds it read, as `plan` or `bot:chatgpt-codex-connector[bot]`. A bot check an earlier version wrote, with no
+// reviewer, is `bot`.
+export const checkId = (entry) => (entry.reviewer ? `${entry.source}:${entry.reviewer}` : entry.source);
+
 export function stateFromComment(body, pr) {
   if (typeof body !== 'string') return null;
   let found = null;

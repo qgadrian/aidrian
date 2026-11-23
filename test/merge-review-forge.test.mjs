@@ -22,7 +22,7 @@ import { recordSignoff } from '../plugins/aidrian/lib/review/run.mjs';
 import { emptyState, readLocalState, RECORD_LIST_CAP, recordFile, recordNames, recordProblem, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { check, checkMcp, endpointOf, MERGE_MUTATIONS } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 import { markDriver, markFolder, markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
-import { check as signoffCheck, UNATTENDED_REASON } from '../plugins/aidrian/lib/rules/review-signoff.mjs';
+import { check as signoffCheck, SUBAGENT_REASON, UNATTENDED_REASON } from '../plugins/aidrian/lib/rules/review-signoff.mjs';
 import { DRIVER, ISSUES, OTHER, recordIssue, runFixture, STARTED } from './project-start-fixture.mjs';
 
 import { hookCall } from './hook-call.mjs';
@@ -483,7 +483,7 @@ test('`aidrian pr signoff` is refused to a subagent and a session no Human atten
   const r = repo(t);
   const command = `aidrian pr signoff 7 --flow payments --head ${HEAD}`;
   const free = () => false;
-  assert.equal(signoffCheck(command, { cwd: r.dir, input: { agent_id: 'a1' }, unattendedMark: () => null, drives: free }), UNATTENDED_REASON);
+  assert.equal(signoffCheck(command, { cwd: r.dir, input: { agent_id: 'a1' }, unattendedMark: () => null, drives: free }), SUBAGENT_REASON, 'a subagent is told to return the question');
   assert.equal(signoffCheck(command, { cwd: r.dir, input: { session_id: 's1' }, unattendedMark: () => ({ root: r.dir }), drives: free }), UNATTENDED_REASON);
   assert.equal(signoffCheck('aidrian pr signoff 7 --last', { cwd: r.dir, input: {}, unattendedMark: () => ({ root: null }), drives: free }), UNATTENDED_REASON);
   assert.equal(signoffCheck(command, { cwd: r.dir, input: { session_id: 's1' }, unattendedMark: () => null, drives: () => true }), UNATTENDED_REASON, 'a run`s driver');

@@ -1164,6 +1164,7 @@ test('aidrian pr prints its usage for an unknown action, and await-review report
     '       aidrian pr ingest PR --head SHA --source TEXT [--repo OWNER/NAME] [--check] FILE...',
     '       aidrian pr extend PR',
     '               (--verdict extend|stop --reason TEXT [--head SHA] | --human approve|deny)',
+    '               [--check ID]',
     '       aidrian pr waive PR --verdict waive|refuse --reason TEXT [--head SHA] [--judge AGENT_ID]',
     '       aidrian pr waive PR --gate [--json]',
     '       aidrian pr delegate PR --issue N|OWNER/NAME#N|URL [--head SHA] [--repo OWNER/NAME]',

@@ -1125,7 +1125,7 @@ It applies to `aidrian pr review` and to `aidrian pr await-review --request`, wh
    flag as real or a false alarm. It records its word:
 
    ```sh
-   aidrian pr extend <PR> --verdict extend|stop --reason "<evidence>" [--head <sha>]
+   aidrian pr extend <PR> --verdict extend|stop --reason "<evidence>" [--head <sha>] [--check <id>]
    ```
 
 4. **Grant.** `stop` is `round_limit`. `extend` grants the round under `"auto"` when no red flag stands. Under
@@ -1133,9 +1133,19 @@ It applies to `aidrian pr review` and to `aidrian pr await-review --request`, wh
    and the session records the answer. The question names the red flags, by name only:
 
    ```sh
-   aidrian pr extend <PR> --human approve|deny
+   aidrian pr extend <PR> --human approve|deny [--check <id>]
    ```
 
+At the cap that stands, `round_limit` carries a `question`, `options`, and `raise` when the repository is known: the
+question names `<owner>/<name>#<PR>` and `--max-rounds <N>`, its first option starts with "Approve", and `raise` is
+`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N>`, with `--with-bot` when the step ran the bot
+(`aidrian pr await-review <PR> --request` for the bot's rounds alone, `"off"` included), ending in
+`--repo <owner>/<name>`, the repository the question names. A wait on a `--reviewer` other than the configured one prints
+no raise and runs no check at the cap: its rounds are that reviewer's, and the reruns the check prints name no
+`--reviewer`, nor does the `review-rounds` rule approve one. The raise runs
+from a checkout whose remotes name the repository, as the `review-rounds` rule requires. `<N>` allows exactly one more round of the cap that stopped, the bot's when
+its cap stopped `aidrian pr review --with-bot`. The session asks that question word for word, and on the first option runs `raise`: the `review-rounds` rule
+reads that one answer as the grant, so no second question follows, and a second round needs a new answer.
 At the cap that stands, `stop` or the ceiling, the merge guard asks the Human to ship with the findings filed or to
 grant more rounds. When every open finding is low and the Human answers in their own words that the session decides,
 the session records that answer with the follow-up issue, `aidrian pr delegate`, and merges naming the head:
@@ -1156,6 +1166,15 @@ record's rounds or the bot's last review, and says the same. `"off"` reads nothi
 `aidrian pr review` round reviews that head, the line goes away; a bot round's line stays until the next check at the
 bot's cap.
 
+A bot's check, its question, and its grant are for the reviewer whose rounds it read: each bot entry names that
+reviewer, and another reviewer, such as the one a checkout with another `github.reviewer` waits on, never takes it, counts
+it, or reads it again on a new head. An entry with no reviewer, which an earlier version or an override wrote, belongs to
+none, so the cap is checked afresh. The plan's entries name none. The summary comment's record keeps the reviewer. Before another machine records a verdict or an answer on a private pull request's check, the review step runs on that machine first: the `review-extend` rule reads only the local record, and refuses until it holds the check. A public one's record restarts there, as every check does.
+Each check has an id, `plan` or `bot:<reviewer>` (`bot` for an entry with no reviewer), and the record commands the
+step prints name it with `--check '<id>'`, so a verdict or an answer lands on the check that asked for it, and a delayed
+one for a check already settled lands on no other. With no `--check`, `aidrian pr extend` refuses while two checks wait,
+and the `review-extend` rule reads the Human's answer against the check the call names.
+
 A grant is exactly one round: the cap rises by one, and the next cap runs the check again. It adds to the cap in
 force, the base branch's or an explicit `--max-rounds`, in both commands; a `--max-rounds` above the base branch's cap
 still needs `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`, grant or not.
@@ -1163,9 +1182,11 @@ still needs `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`, grant or not.
 Every open decision is bound to the head its signals were read on: a check waiting for the judge or the Human, and a
 grant whose round has not opened yet. When the pull request moves, the next step reads the signals again on the new
 head. A new red flag sends it back to the judge, a grant or a Human's approval included, so a push after the verdict
-cannot carry a bloated fix into the extra round unseen. Without one, a check waiting for the Human goes back to the
-judge, who has not seen the push, and a grant stands. `aidrian pr extend --human approve` and `--verdict` are refused once the pull request's head is not the one the
-check was for. A bot request on an extra round goes out only for the head its grant was read on: when the
+cannot carry a bloated fix into the extra round unseen. Without one, a grant stands, and so does a check waiting for
+the Human, on the new head: the push is most often the last round's fix, the very change the extra round would review,
+so the Human's answer, given before or after it, records with no second judge run. `aidrian pr extend --human approve`
+and `--verdict` are refused once the pull request's head is not the one the check was for; that refusal says to run
+the review step again, which moves a check with no new red flag to the new head, and then the same answer records. A bot request on an extra round goes out only for the head its grant was read on: when the
 pull request moves between the reads, or during the wait, the command reads the grant again on the head it would ask
 about, and posts nothing when a red flag sends the grant back to the judge. A bot request records the raised cap in its comment, as a Human's `--max-rounds` does, but a later
 run counts that record only under `AIDRIAN_ALLOW_EXTRA_ROUNDS=1` with no `--max-rounds`: otherwise the cap is its
@@ -1178,8 +1199,9 @@ in [the record](#the-record), listed under **Extra rounds** in the summary comme
 **Trust.** The `review-extend` rule ([hooks.md](hooks.md#bash-rules)) lets an agent's `--human approve` run only when
 the session's transcript holds the Human's answer to an AskUserQuestion that names the pull request with its
 repository (`<owner>/<name>#<PR>`, as the question the review step prints does; `#<PR>` alone in a checkout with no
-remote) and the round it grants (`round <N>`), given after the judge's verdict, with the option that starts with
-"Approve". The repository is the call's `--repo`, one of this checkout's remotes, else the one repository the remotes
+remote), given after the judge's verdict, with the option that starts with "Approve", where the question or that
+chosen option names the round it grants (`round <N>`): a question reworded as "Grant a fourth review round?" counts
+when the option picked is "Approve round 4". When both name a round, they name the same one. The repository is the call's `--repo`, one of this checkout's remotes, else the one repository the remotes
 name; a checkout whose remotes name more than one needs `--repo`, which the review step prints on the extend commands
 there. `aidrian pr extend` itself acts on that one repository: `--repo`, else the one the forge names for the pull
 request, as the review step does, else origin; it reads the head, the record, and the summary comment there, so in a

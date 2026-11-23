@@ -1670,8 +1670,9 @@ A brief names the run's own handoff file with a `Handoff file:` marker, such as
 `Handoff file: <state>/dispatch/<branch>-signoff-product-manager.json`, or `**Handoff file:**` or `**Handoff file**:`,
 in any case, with LF or CRLF line ends. The marker opens a line, after an optional list marker, or opens a sentence
 later in one, as in `Under 4 KB. Handoff file: <path>`. Inside a sentence, as in `Read the earlier handoff file: <path>`,
-it names a file to read, which is never owed. A line may hold several markers, each opening a sentence. A marker inside
-inline code, an example the brief quotes, is not read: one with an odd number of backticks before it and one more after its value.
+it names a file to read, which is never owed. A line may hold several markers, each opening a sentence. A mid-line
+marker counts only with no backtick before it on the line, so one in inline code, an example the brief quotes, is not
+read; a marker after a stray backtick is not read either, the residual of that rule.
 Each such marker names one file: everything inside the backticks that open its value, spaces included, else its first word,
 without the trailing `.`, `,`, `;`, `:`, or `)` that ends a sentence, as in `Handoff file: <path>.`.
 The whole value must be an absolute path in the state folder's `dispatch/` that ends in `.json`; prose after it is not read.

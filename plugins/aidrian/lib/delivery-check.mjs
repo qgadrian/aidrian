@@ -106,11 +106,8 @@ export function briefHandoffs(input, project) {
   // the name, as in `fix-code-reviewer-S1-backend-developer.json`, does not make the file this agent's.
   const word = new RegExp(`(?:^|[-_.])${escapeRegExp(agent)}(?:[-_.]\\w+)?\\.json$`, 'u');
   // A CRLF brief's line keeps its `\r` after the split: it is dropped before the marker is matched.
-  // Every marker of each line, left to right: a backticked value is read whole before the next marker is looked for.
-  const marked = brief.split('\n').flatMap((raw) => {
-    const line = raw.replace(/\r$/u, '');
-    return [...line.matchAll(HANDOFF_MARKER)].filter((match) => !quotedMarker(line, match));
-  }).map(markedPath);
+  const marked = brief.split('\n').flatMap((line) => markerPieces(line.replace(/\r$/u, '')))
+    .map((piece) => HANDOFF_MARKER.exec(piece)).filter(Boolean).map(markedPath);
   const problemOf = (file) => {
     if (!file) return 'names no path';
     return wholePath.test(file) ? null : `is not an absolute \`.json\` path in \`${folder}/\``;
@@ -127,24 +124,31 @@ export function briefHandoffs(input, project) {
   return { owed: [...new Set(own)].filter((file) => !handedIn(file, since)), rejected };
 }
 
-// A marker that names the run's handoff file, in any case: `Handoff file: <path>`, `**Handoff file:** <path>`, or
-// `**Handoff file**: <path>`, opening the line after an optional list marker, or opening a sentence later in it, as in
-// `Under 4 KB. Handoff file: <path>`. Inside a sentence, as in `Read the earlier handoff file: <path>`, it names a file
-// to read, never one owed. Its `value` is a backticked span, spaces included, or the word after it, so a marker inside
-// that span is part of the path, and one after it on the line is read next.
-const HANDOFF_MARKER = /(?:^\s*(?:[-*]\s+)?|(?<=[.!?;])\s+)(?:handoff file:|\*\*handoff file:\*\*|\*\*handoff file\*\*:)\s*(?<value>`[^`]+`|[^\s`]*)/giu;
+// A brief line that names the run's handoff file, in any case, after an optional list marker: `Handoff file: <path>`,
+// `**Handoff file:** <path>`, or `**Handoff file**: <path>`. Its match holds the rest of the line, as `value`.
+const MARKER_WORDS = String.raw`(?:handoff file:|\*\*handoff file:\*\*|\*\*handoff file\*\*:)`;
+const HANDOFF_MARKER = new RegExp(String.raw`^\s*(?:[-*]\s+)?${MARKER_WORDS}(?<value>.*)$`, 'iu');
+// A marker that opens a sentence later in a line, as in `Under 4 KB. Handoff file: <path> (...)`.
+const SENTENCE_MARKER = new RegExp(String.raw`[.!?;]\s+(?=${MARKER_WORDS})`, 'giu');
 
-// Whether a marker sits inside inline code, as an example the brief quotes: an odd number of backticks before it on the
-// line, and one still after its value to close that span. With none after, the backtick before it is a stray one.
-function quotedMarker(line, match) {
-  const before = line.slice(0, match.index).split('`').length - 1;
-  return before % 2 === 1 && line.slice(match.index + match[0].length).includes('`');
+// The pieces of a line a marker may open: the line itself, and the rest of it from each marker that opens a later
+// sentence with no backtick before it on the line. Inside a sentence, as in `Read the earlier handoff file: <path>`,
+// a marker names a file to read, never one owed. After a backtick, a marker may sit in inline code, an example the
+// brief quotes, so only a line-opening one counts there, as before markers were read mid-line.
+// SHORTCUT: a marker after a stray backtick is left unread too, and a backticked path that holds `. Handoff file:` reads
+// a second, rejected marker. Telling code from prose took a Markdown reader each review round found a new case for;
+// one would replace this rule if such briefs appear.
+function markerPieces(line) {
+  const later = [...line.matchAll(SENTENCE_MARKER)].filter((match) => !line.slice(0, match.index).includes('`'));
+  return [line, ...later.map((match) => line.slice(match.index + match[0].length))];
 }
 
-// The path a marker names: all inside its backticks, else its word without trailing punctuation.
+// The path a marker line names: all inside the backticks that open its value, spaces included, else its first word
+// without trailing punctuation. Any prose after it is not read.
 function markedPath(match) {
-  const { value } = match.groups;
-  return value.startsWith('`') && value.endsWith('`') && value.length > 1 ? value.slice(1, -1) : value.replace(/[.,;:)]+$/u, '');
+  const value = match.groups.value.trim();
+  const quoted = /^`([^`]+)`/u.exec(value);
+  return quoted ? quoted[1] : (value.split(/\s/u)[0] ?? '').replace(/[.,;:)]+$/u, '');
 }
 
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');

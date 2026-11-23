@@ -128,7 +128,7 @@ test('start refuses a run the base branch has not switched on, by its local ref 
 test('the team policy is the lowest of the local ref, the forge, and the ceilings', (t) => {
   const fx = runFixture(t, { projectRun: { allow: true, maxStarts: 900, issueHours: 24 }, forgeConfig: { version: 1, projectRun: { allow: true, maxStarts: 50, issueHours: 30 } } });
   const policy = teamPolicy(fx.project, { host: 'github.com', owner: 'acme', name: 'widgets' }, fx.forge);
-  assert.deepEqual(policy, { maxParallel: 1, maxStarts: 50, issueHours: 6, solo: false, unverifiedHosts: false, workflowSecretsAccepted: false, forgeProtectionAccepted: false, outsideSandbox: [], mcpServers: {}, registries: [], localBinding: false, reviewer: 'chatgpt-codex-connector[bot]', includeGuardedPaths: false, policyFiles: ['.aidrian.json', '.aidrian/config.json'] }, 'issueHours 30 fails its check on the forge and reads as the default 6, the lowest of 24, 6, and the ceiling');
+  assert.deepEqual(policy, { maxParallel: 1, maxStarts: 50, issueHours: 6, solo: false, unverifiedHosts: false, workflowSecretsAccepted: false, forgeProtectionAccepted: false, outsideSandbox: [], mcpServers: {}, registries: [], localBinding: false, reviewer: 'chatgpt-codex-connector[bot]', includeGuardedPaths: false }, 'issueHours 30 fails its check on the forge and reads as the default 6, the lowest of 24, 6, and the ceiling');
   const ceiling = runFixture(t, { projectRun: { allow: true, maxStarts: 1000 }, forgeConfig: { version: 1, projectRun: { allow: true, maxStarts: 1000 } } });
   assert.equal(teamPolicy(ceiling.project, { host: 'github.com', owner: 'acme', name: 'widgets' }, ceiling.forge).maxStarts, 1000);
 });
@@ -492,28 +492,60 @@ test('every attempt holds the branch to the head the run recorded: another histo
   parkedAs(fx, { head: orphan, second }, `its head ${orphan.slice(0, 7)} does not hold ${tip.slice(0, 7)}, the commit this project's runs recorded it at`);
 });
 
-// A config.json the pointer file relocates is a policy file wherever it lies: the merge gate reads the policy from it.
-test('a config the pointer file relocates is held as a host file: the branch\'s change to it gets the base copy', (t) => {
-  const started = secondStart(t, {
-    files: { 'harness/config.json': '{"version":1}\n' },
-    before: (fx) => {
-      const served = fx.forge.contents;
-      const file = (text) => ({ type: 'file', encoding: 'base64', content: Buffer.from(text).toString('base64') });
-      fx.forge.contents = (repo, name, ref, options) => {
-        if (name === '.aidrian.json') return file('{"dir":"harness"}');
-        return served(repo, name === 'harness/config.json' ? '.aidrian/config.json' : name, ref, options);
-      };
-    },
-    edit: (scratch) => writeFileSync(path.join(scratch, 'harness/config.json'), '{"version":1,"projectRun":{"allow":true}}\n'),
-  });
-  const { fx, head, second } = started;
+// The pinned base tip is the one source of where the policy lives: the default branch on the forge, read by name before
+// the base is fetched, still names the default folder, while the tip the overlay copies from relocates the config.
+test('the policy files come from the pinned base tip: a config it relocates is held as a host file, whatever the forge read by name gave', (t) => {
+  const fx = runFixture(t);
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  reopen(fx, 1, 12);
+  // The default branch moves: its pointer file relocates the config to cfg/.
+  const main = path.join(fx.root, 'main-moves');
+  execFileSync('git', ['clone', '-q', fx.bare, main], { stdio: 'pipe' });
+  pushFiles(fx, main, { '.aidrian.json': '{"dir":"cfg"}\n', 'cfg/config.json': `${JSON.stringify(fx.committed)}\n` }, 'main');
+  const head = branchWith(fx, (scratch) => writeFileSync(path.join(scratch, 'cfg/config.json'), '{"version":1}\n'));
+  const second = fx.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(second.exitCode, 0, second.err.join('\n'));
   const clone = work(fx, 'ENG-1', 2);
-  assert.equal(readFileSync(path.join(clone, 'harness/config.json'), 'utf8'), '{"version":1}\n', 'the base copy');
+  assert.equal(readFileSync(path.join(clone, 'cfg/config.json'), 'utf8'), `${JSON.stringify(fx.committed)}\n`, 'the base copy');
   const row = fx.rows().findLast((each) => each.event === 'start');
   assert.equal(row.overlay, head);
-  assert.ok(row.policyFiles.includes('harness/config.json'), JSON.stringify(row.policyFiles));
-  assert.ok(ownIssue(fx.project, fx.config, { project: 'launch', issue: 'ENG-1' }, { home: fx.home }).policyFiles.includes('harness/config.json'));
+  assert.deepEqual(row.policyFiles, ['.aidrian.json', 'cfg/config.json'], 'the pinned tip\'s list, not the forge read\'s');
+  assert.deepEqual(ownIssue(fx.project, fx.config, { project: 'launch', issue: 'ENG-1' }, { home: fx.home }).policyFiles, ['.aidrian.json', 'cfg/config.json']);
+});
+
+// A write-ahead start row whose launch then failed, given back by its `void` row, recorded no branch head.
+test('a start given back records no head: the next attempt holds the branch to the head of the last start that ran', (t) => {
+  const fx = runFixture(t);
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  reopen(fx, 1, 12);
+  const head = branchWith(fx, (scratch) => writeFileSync(path.join(scratch, 'src.js'), 'export const csv = true;\n'));
+  const started = fx.rows().findLast((row) => row.event === 'start');
+  const { id, child, ...ahead } = started;
+  const now = at(Date.now());
+  appendToRun(fx.state, 'launch', () => ({ rows: [
+    { ...ahead, attempt: 2, head: 'f'.repeat(40), outcome: 'uncertain', pending: true, at: now },
+    { ...ahead, attempt: 2, head: 'f'.repeat(40), outcome: 'void', at: now },
+  ] }));
+  const second = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(second.exitCode, 0, second.err.join('\n'));
+  assert.ok(second.out.includes(`started ENG-1 attempt 2 session ${STARTED[1].id}`), second.out.join('\n'));
+  assert.equal(fx.git('-C', work(fx, 'ENG-1', 2), 'rev-parse', 'HEAD').trim(), head);
+});
+
+// A submodule entry is neither a file nor a folder an overlay can write over.
+test('a branch that makes a host path a submodule parks the issue', (t) => {
+  const gitAt = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: 'pipe' });
+  const started = secondStart(t, {
+    files: { '.claude/settings.json': '{"permissions":{}}\n' },
+    edit: (scratch) => {
+      gitAt(scratch, 'rm', '-r', '-q', '--cached', '.claude');
+      rmSync(path.join(scratch, '.claude'), { recursive: true });
+      mkdirSync(path.join(scratch, '.claude'));
+      gitAt(scratch, 'update-index', '--add', '--cacheinfo', `160000,${gitAt(scratch, 'rev-parse', 'HEAD').trim()},.claude`);
+    },
+  });
+  parkedAs(started.fx, started, 'the branch makes .claude a submodule');
+  assert.equal(execFileSync('git', ['-C', started.fx.bare, 'ls-tree', 'refs/heads/feat/eng-1-export', '.claude'], { encoding: 'utf8' }).split(' ')[0], '160000', 'the branch holds a gitlink there');
 });
 
 // The review bot's status card, as the forge's reviewTrail gives a comment: by the bot, every edit the bot's.
@@ -569,7 +601,7 @@ test('reviewedProblem holds the branch\'s own host files to the merge bar', (t) 
   const parent = 'b'.repeat(40);
   const repository = { host: 'github.com', owner: 'acme', name: 'widgets' };
   const ask = (trail, { pr = 12, includeGuardedPaths = false, changed = ['.aidrian/knowledge/docs.json'], reviewer = BOT, policyFiles = [] } = {}) => reviewedProblem({
-    project: fx.project, repository, facade: { reviewTrail: () => trail }, policy: { reviewer, includeGuardedPaths, policyFiles }, main: 'main', branch: 'feat/eng-1-export', pr, head, changed, env: fx.env,
+    project: fx.project, repository, facade: { reviewTrail: () => trail }, policy: { reviewer, includeGuardedPaths }, policyFiles, main: 'main', branch: 'feat/eng-1-export', pr, head, changed, env: fx.env,
   });
   const unsigned = /flow harness-config needs the Human's sign-off on head aaaaaaa/u;
   assert.match(ask(trailOf(head)), unsigned, 'the bot alone is not enough');
@@ -1168,6 +1200,33 @@ test('a parked issue on the attempt branch its earlier run cut goes on on that b
   assert.ok(prompt.includes(`git push origin HEAD:refs/heads/${branch}`), prompt);
   assert.equal(fx.rows().findLast((row) => row.event === 'start').branch, branch);
   assert.equal(ownIssue(fx.project, fx.config, { project: 'launch', issue: 'ENG-1' }, { home: fx.home })?.branch, branch, 'the one branch the session may push');
+});
+
+// An earlier run that parked an issue with no head in its result: the head its last start that ran recorded binds the
+// branch, and a start that run gave back records none.
+test('a parked issue whose result recorded no head resumes from the head the earlier run\'s last start that ran recorded', (t) => {
+  const fx = runFixture(t, { init: false });
+  const input = (name, issues) => {
+    const file = path.join(fx.dir, `${name}.input`);
+    writeFileSync(file, JSON.stringify({ issues, teams: ['ENG'] }));
+    return file;
+  };
+  assert.equal(fx.cmd(['init', 'first', '--file', input('first', [ISSUE_ONE])]).exitCode, 0);
+  const scratch = path.join(fx.root, 'scratch');
+  execFileSync('git', ['clone', '-q', fx.bare, scratch], { stdio: 'pipe' });
+  const head = pushFiles(fx, scratch, { 'src/export.js': 'export const csv = true;\n' });
+  const now = at(Date.now());
+  const start = { event: 'start', key: 'ENG-1', branch: ISSUE_ONE.branch, at: now };
+  appendToRun(fx.state, 'first', () => ({ rows: [
+    { ...start, attempt: 1, head, outcome: 'started' },
+    { ...start, attempt: 2, head: 'f'.repeat(40), outcome: 'uncertain', pending: true },
+    { ...start, attempt: 2, head: 'f'.repeat(40), outcome: 'void' },
+    { event: 'result', key: 'ENG-1', attempt: 1, status: 'blocked', pr: null, head: null, at: now },
+    { event: 'issue', key: 'ENG-1', state: 'parked', decision: 'blocked', at: now },
+  ] }));
+  const launched = fx.cmd(['init', 'launch', '--file', input('launch', [{ ...ISSUE_ONE, status: 'started' }])]);
+  assert.equal(launched.exitCode, 0, launched.err.join('\n'));
+  assert.deepEqual(fx.run().snapshot.resumed, [{ key: 'ENG-1', run: 'first', pr: null, head, branch: ISSUE_ONE.branch }]);
 });
 
 test('a resumed issue whose branch the forge no longer has is cut fresh from the base tip, and its task claims no earlier work', (t) => {

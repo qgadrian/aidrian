@@ -1454,7 +1454,7 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     `pushUrl` pinned, read from the clone before its session started (a start that recorded none pushes nothing),
     so a second `remote.origin.pushurl` refuses the push; when that start row names an `overlay`, the branch head whose
     clone took the base branch's copies of the host files it changed, its commits change no host config or instruction
-    file (`GUARDED_PATHS`), nor a policy file the row's `policyFiles` names, as a relocated `config.json`, from that head
+    file (`GUARDED_PATHS`), nor a policy file the row's `policyFiles` names, the pinned base tip's, from that head
     (`git diff --name-only --no-renames --no-relative -z <overlay> HEAD`), or it is
     refused with "it pushes commits that change <count> host config or instruction files, and this attempt runs on the
     base branch's copies of them, so it may change none", and a diff git cannot give refuses it too; its

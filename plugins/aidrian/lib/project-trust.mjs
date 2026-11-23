@@ -164,10 +164,12 @@ function treeEntries(body, hash) {
 
 // The files of the commit `commit`, every blob and link of its tree by path, as a Map of path to { mode, id }, read and
 // verified through readObjects; null when an object cannot be read or does not hash to its id. Kept per commit id, which
-// names its tree for good.
+// names its tree for good. A submodule's entry (a gitlink) is no file: commitGitlinks lists those.
 const trees = new Map();
+const gitlinks = new Map();
 export function commitFiles(root, commit) {
   if (trees.has(commit)) return trees.get(commit);
+  const links = new Set();
   const hash = hashOf(commit);
   const head = readObjects(root, [commit])?.get(commit);
   const { tree } = head?.type === 'commit' ? commitOf(head.body) : {};
@@ -184,13 +186,21 @@ export function commitFiles(root, commit) {
       for (const entry of treeEntries(object.body, hash)) {
         const file = `${prefix}${entry.name}`;
         if (entry.mode === '40000') next.push({ id: entry.id, prefix: `${file}/` });
-        else if (entry.mode !== '160000') files.set(file, { mode: entry.mode, id: entry.id });
+        else if (entry.mode === '160000') links.add(file);
+        else files.set(file, { mode: entry.mode, id: entry.id });
       }
     }
     level = next;
   }
   trees.set(commit, files);
+  gitlinks.set(commit, links);
   return files;
+}
+
+// The submodule entries (gitlinks) of the commit `commit`'s tree, as a Set of paths, read as commitFiles reads the tree,
+// or null when it cannot be read.
+export function commitGitlinks(root, commit) {
+  return commitFiles(root, commit) ? gitlinks.get(commit) : null;
 }
 
 // Whether the commit `head` lies on the first-parent chain of `tip`, within LAG_CAP commits, each read and verified

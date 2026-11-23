@@ -37,7 +37,7 @@ import { findProject, stateRoot } from './project.mjs';
 import { NPM_CONFIGS, SHELL_VAR_NAMES, varsProblem } from './project-registries.mjs';
 import { DROP_FILE, plainFolderProblem } from './project-result.mjs';
 import { pinnedRepository, runFolder, runsFolder } from './project-run.mjs';
-import { commitFiles, isGuarded, namedFiles, overlayGuarded } from './project-trust.mjs';
+import { commitFiles, commitGitlinks, isGuarded, namedFiles, overlayGuarded } from './project-trust.mjs';
 import { latestStart, ownAttemptFolder, startRows } from './project-run-guard.mjs';
 import { signoffFolders } from './review/signoff-store.mjs';
 import { archiveStops } from './stop-history.mjs';
@@ -388,8 +388,9 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, reco
 // Why the base tip's copies cannot be written safely over `overlay.files` in the clone `work`, read from the two
 // commits' trees alone: { why }, which parks the issue, { problem }, or null. A path the base keeps as a link would
 // need a link the clone's host may follow to the branch's own files, and a path, or a folder on its path, that is a
-// file on one side and a folder on the other would need a folder or a file removed whole. A link the branch makes is
-// left to the link check on disk, after the checkout, which names it.
+// file on one side and a folder on the other would need a folder or a file removed whole. A path, or a folder on its
+// path, that is a submodule (a gitlink) on either side is neither, and no overlay is made over one. A link the branch
+// makes is left to the link check on disk, after the checkout, which names it.
 function overlayShapeProblem(work, tip, overlay) {
   const [head, base] = [commitFiles(work, overlay.sha), commitFiles(work, tip)];
   if (!head || !base) return { problem: 'git cannot read the files of the branch\'s head and the base tip' };
@@ -397,10 +398,12 @@ function overlayShapeProblem(work, tip, overlay) {
   if (linked) return { why: `the base keeps ${namedFiles([linked])} as a link, which an overlay cannot verify` };
   const kind = (files, folders, part) => (files.get(part)?.mode === '120000' ? 'link' : files.has(part) ? 'file' : folders.has(part) ? 'folder' : null);
   const [headFolders, baseFolders] = [folderSet(head), folderSet(base)];
+  const submodules = [...commitGitlinks(work, overlay.sha), ...commitGitlinks(work, tip)];
   for (const file of overlay.files) {
     const parts = file.split('/');
     for (let count = 1; count <= parts.length; count += 1) {
       const part = parts.slice(0, count).join('/');
+      if (submodules.includes(part)) return { why: `the branch makes ${namedFiles([part])} a submodule` };
       const [was, is] = [kind(base, baseFolders, part), kind(head, headFolders, part)];
       if (was && is && was !== 'link' && is !== 'link' && was !== is) return { why: `the branch turns ${namedFiles([part])} between a file and a folder` };
     }

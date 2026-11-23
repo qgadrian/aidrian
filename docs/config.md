@@ -1966,8 +1966,9 @@ clone under its host's sandbox, and a host that is not halts the start.
 A run never discards or rebuilds existing work unless a person asks.
 A later attempt goes on on the issue's branch, as does the first attempt of an issue `resumed` from an earlier run at a
 head the branch still holds.
-When that branch's head changes a host config or instruction file, or a policy file the merge gate reads, such as a
-`config.json` that `.aidrian.json` relocates, the session loads the branch's own copies only when
+When that branch's head changes a host config or instruction file, or a policy file, the pointer file and the
+`config.json` it locates as the pinned base tip commits them (the one list the whole start uses, and the start row
+keeps as `policyFiles`), the session loads the branch's own copies only when
 the review bot, github.reviewer on the default branch, passed exactly that head on the forge, and the Human signed off
 the harness-config flow on that head, or the default branch sets `github.autoMerge.includeGuardedPaths` and no policy
 file changed; otherwise its clone holds the base branch's copies, git leaves them out of its commits, and a push that
@@ -1976,12 +1977,14 @@ The start row records that head as `overlay`, and `<attempt>/base-copies.txt` li
 data from the branch.
 The branch's own changes stay in its commits for the pull request's review.
 Each start row records the commit the branch was at as `head`, and every later attempt goes on only on a branch that
-holds it.
+holds the last head recorded, of a start that ran or a result: a start given back (`void`) records none.
+A later run resumes from the earlier run's result head, else from the head of that run's last start that ran.
 A branch the run's ledger cannot account for parks the issue as unreconciled, with the branch and pull request untouched:
 a first attempt whose branch the forge has already, and a recorded head the forge's branch does not hold.
 So does a base copy that cannot be made safely: a branch that makes a host file, or a folder on its path, a link, a host
 file the base keeps as a link, which an overlay never makes, a host file or a folder on its path that the branch turns
-between a file and a folder, and a base copy the branch's committed ignore rules keep stageable (`git check-ignore`).
+between a file and a folder, a host file or a folder on its path that is a submodule on either side, and a base copy
+the branch's committed ignore rules keep stageable (`git check-ignore`).
 Every park row names the recorded head.
 `start` exits 0 with `parked <key> unreconciled: ...`, writes no start row, and a later run resumes the issue from that
 park row.

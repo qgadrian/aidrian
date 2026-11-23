@@ -578,7 +578,8 @@ function resumedOf(value, issues) {
 // earlier version of the start gate cut one (attemptBranch). That run started it in
 // the tracker and parked it, as on a pull request left open or a decision, so the issue is the run's own work, not
 // someone's outside it. `pr` is the pull request that run's latest result of the issue named, or null; `head` the commit
-// that result recorded the branch at (project-result.mjs dropRows), or null, which binds the branch on the forge to that
+// that result recorded the branch at (project-result.mjs dropRows), else the head that run's last effective start row
+// recorded (recordedHead), or null, which binds the branch on the forge to that
 // run's work: the start goes on from it only at or after that commit (project-start.mjs prepareAttempt). A result row
 // with no `head` field at all, written before results recorded one, that named a pull request, takes the head
 // `pullHead({ pr, branch, repository })` gives, the forge's open pull request from that branch (project-result.mjs
@@ -628,7 +629,8 @@ export function resumedIssues(state, snapshot, { except, repository, pullHead = 
         from: found.snapshot.issues.find((each) => each.key === issue.key)?.branch ?? null,
         cut: found.rows.some((row) => row.event === 'start' && row.key === issue.key && row.outcome !== 'void' && row.branch === issueBranch(found, issue.key)),
         pr: found.rows.findLast((row) => row.event === 'result' && row.key === issue.key && Number.isInteger(row.pr) && row.pr > 0)?.pr ?? null,
-        head: typeof result?.head === 'string' && SHA.test(result.head) ? result.head : null,
+        // The result's head, else the head that run's last effective start recorded.
+        head: typeof result?.head === 'string' && SHA.test(result.head) ? result.head : recordedHeads(found, issue.key, { results: false }).at(-1)?.head ?? null,
         legacy: isObject(result) && !Object.hasOwn(result, 'head') && Number.isInteger(result.pr) && result.pr > 0 ? result.pr : null,
       });
     }
@@ -641,6 +643,30 @@ export function resumedIssues(state, snapshot, { except, repository, pullHead = 
       return { key: issue.key, run, pr, head: typeof read === 'string' && SHA.test(read) ? read : null, branch };
     });
 }
+
+// The start rows of issue `key` that ran in the run `found`, as [{ row, at }]: each attempt's latest start row, at its
+// index in the rows, unless that row gives the attempt back (`void`), so a write-ahead row whose launch failed counts
+// as no start.
+function effectiveStarts(found, key) {
+  const latest = new Map();
+  found.rows.forEach((row, at) => {
+    if (row.event === 'start' && row.key === key) latest.set(row.attempt, { row, at });
+  });
+  return [...latest.values()].filter(({ row }) => row.outcome !== 'void');
+}
+
+// The heads of issue `key`'s branch the run `found` recorded, as [{ head, at }] in row order: each effective start's
+// `head`, the forge's branch as that attempt found it or the tip it cut it from, and, with `results`, each result's.
+function recordedHeads(found, key, { results = true } = {}) {
+  const starts = effectiveStarts(found, key).map(({ row, at }) => ({ head: row.head, at }));
+  const parked = results ? found.rows.flatMap((row, at) => (row.event === 'result' && row.key === key ? [{ head: row.head, at }] : [])) : [];
+  return [...starts, ...parked].filter(({ head }) => typeof head === 'string' && SHA.test(head)).sort((a, b) => a.at - b.at);
+}
+
+// The commit issue `key`'s branch was last recorded at in the run `found`: the latest head of its effective start rows
+// or its results (recordedHeads), or null. A later attempt goes on only on a branch that holds it
+// (project-start.mjs prepareAttempt).
+export const recordedHead = (found, key) => recordedHeads(found, key).at(-1)?.head ?? null;
 
 // Whether the repositories `one` and `other`, as runs pin them, are one, compared in any case.
 const sameRepository = (one, other) => ['host', 'owner', 'name'].every((part) => String(one?.[part]).toLowerCase() === String(other?.[part]).toLowerCase());

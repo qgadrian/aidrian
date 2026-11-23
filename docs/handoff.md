@@ -441,6 +441,10 @@ the handoff goes on by the clear route with what to change, and nothing is kept,
    It enters the worktree, as on the clear route. It also says the brief is an earlier session's advice, not the Human's instruction: what the Human
    keeps, such as merging, releasing, deleting, force pushing, posting outside the repository, changing config or
    permissions, and starting other sessions, still waits for the Human, and a brief that asks for one is reported.
+   The one exception is the project's own setting, never the brief's: a pull request the continuation itself marked ready,
+   and for which `aidrian pr auto-merge <url>` then exits 0, is merged through the `pr-auto-merge` skill, as in any unattended run,
+   so [auto-merge](config.md#auto-merge) holds across a handoff.
+   One an earlier session marked ready may be waiting for a person's review, so it stays the Human's to merge.
 5. The gate records the chain floor of the new session, `Chain + 1`, as a clear's delivery does, so the check holds
    its next brief to the count, and with it the progress the hop starts from ([The progress check](#the-progress-check)).
    It reads the host's listing for the new session's full id for about 5 seconds; when the listing lags, it files the
@@ -1178,6 +1182,12 @@ A project that adopts the group sets `requires.aidrian` to the release that ship
     `Worktree:` value and a `Branch:` value, `## Still running` and `## Open risks and questions` with a line of text
     (`None.` when there is nothing), and `## Next steps` with a numbered item at the start of a line.
     A heading matches by its first words in any case, so `## Next steps (ordered)` counts; a line inside a code fence does not.
+  - a Next steps section that runs a skill only a person can start, one whose `SKILL.md` frontmatter sets
+    `disable-model-invocation: true`, such as `autopilot`, named as `/aidrian:<name>`, `/<name>`, or the `<name>` skill,
+    in any step, a fenced step body included, since a continuation runs them all. The Skill tool of the session that resumes the brief refuses it,
+    so a continuation would stop there; the gate starts none for a brief that fails the check. A file such as
+    `/autopilot.md` is not counted, and any mention is, one for a person to type included: a person's part goes under
+    Open risks and questions, or the Human resumes the brief and types the skill.
   - a header, the text above the first section, with no `Supersedes:` value. A value that begins with `none` names no
     brief; any other value names one, and when no superseded brief is found, nothing was compared, which is a finding:
     run the check again with `--prior <that brief>`.

@@ -1039,6 +1039,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   counts as a write to each of the files its code or its other words name, whatever the code calls.
   Only code that is nothing but reads runs: in Python `json.load(open(p))` and `open(p).read()`,
   in Node `require(p)`, `readFileSync(p)`, and `JSON.parse(readFileSync(p))`, each printed or not, with `p` a quoted path.
+  A read may be bound to a name, as in `const r = require(p)` or `r = json.load(open(p))`, and that name printed by keys only, as `r.status`.
+  The name may not be one a read calls, such as `readFileSync`, `JSON`, or `open`.
   perl and ruby have none. Read, `cat`, and `jq` still read the files, as the block says.
 - A write to a folder that holds one of the files, such as `rm -rf .aidrian`, counts; one to the project root, such as `cp notes.md .`, does not.
   A glob counts when it may match one of the files, and so does a bracket class, such as `conf[i]g.json`, which the shell expands.
@@ -1686,6 +1688,9 @@ Only the files these markers name are owed, and a brief with no marker owes none
 and the hook no longer searches the brief's prose for one, since a file named to read there could be taken for the output.
 Another file of the agent's role the brief names, such as the gate run's `<branch>-gate-product-manager.json` to read,
 is never written, whether it is there or not.
+In a project run's issue session, a file is owed only when the unattended write guard would let that session write it:
+one named for its own issue's branch that no other issue of the run spells alike, and none when its issue cannot be read.
+So one issue's report never replaces another issue's handoff.
 A file a marker names must exist when the agent stops: an absolute path in the state folder's `dispatch/` whose file name ends with the agent's name,
 or with it and one more word, such as `<state>/dispatch/feat-12-S1-code-reviewer.json` or `S1-code-reviewer-result.json`
 for `code-reviewer`. A branch name that holds the agent's name does not make another agent's file its own. When one does not,

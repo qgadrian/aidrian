@@ -118,6 +118,16 @@ test('a session no Human attends may not write git config or hooks, the user\'s 
   assert.ok(fx.ask(bash(`rm -f ${fx.home}/.z*`)));
 });
 
+test('a session no Human attends may run interpreter code that only reads a file in a home dot folder, but not code that writes one', (t) => {
+  const fx = fixture(t);
+  const file = path.join(fx.home, '.local', 'state', 'aidrian', 'projects', 'p', 'tmp', 'review-7-r2-plan.json');
+  for (const code of [`require("${file}")`, `const r=require("${file}"); console.log(r.status)`, `const r = require("${file}"); console.log(JSON.stringify(r.open, null, 2))`]) {
+    assert.equal(fx.ask(bash(`node -e '${code}'`)), null, code);
+  }
+  assert.match(fx.ask(bash(`node -e 'require("fs").writeFileSync("${file}", "")'`))?.reason ?? '', /a dot file or folder of the user's home folder/u);
+  assert.match(fx.ask(bash(`node -e 'const r=require("${file}"); require("fs").writeFileSync("${file}", "")'`))?.reason ?? '', /a dot file or folder of the user's home folder/u);
+});
+
 test('a file tool`s `~` path is the home folder, as the host resolves it: a write to ~/.zshrc or ~/.gitconfig is refused', (t) => {
   const fx = fixture(t);
   const saved = process.env.HOME;

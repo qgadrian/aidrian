@@ -18,13 +18,16 @@
 // docs/hooks.md#delivery-check.
 
 import { randomBytes } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { checkoutRoots, repositoryCheckouts } from './git.mjs';
+import { loadConfig } from './config.mjs';
 import { stateDir } from './project.mjs';
+import { ownIssue, ownsHandoff } from './project-run-guard.mjs';
 import { firstPrompt, readText, filesTouched, lastHandback } from './transcript.mjs';
+import { issueHeld, readUnattendedMark } from './unattended-mark.mjs';
 
 const CLAIMED_PATHS = 20;
 // A path an agent's last message names: a .md or .json token with a `/`, not inside a URL or a template, and not after
@@ -40,13 +43,19 @@ const PLUGIN_FOLDER = path.resolve(import.meta.dirname, '..');
 // The paths a subagent's last message presents as delivered, those of them that exist nowhere, the handoff files its
 // brief asks for that it has not written, and its brief's markers the hook cannot fill: { claims, missing, unwritten, rejected }.
 // `since` is when the subagent's transcript began, or null (handoffSince).
-export function checkDelivery(input, project) {
+export function checkDelivery(input, project, places = {}) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : project.root;
+  const { owed: unwritten, refused, rejected } = briefHandoffs(input, project, places);
+  // A handoff the session may not write (issueOwner) is no file the agent owes, nor one it delivered: a claim of it
+  // neither sends the agent back nor reads as a delivered file on the stop row.
   const claims = claimedPaths(input.last_assistant_message);
-  const { owed: unwritten, rejected } = briefHandoffs(input, project);
   const since = handoffSince(input);
   if (!claims.length) return { claims, missing: [], unwritten, rejected, since };
-  const missing = missingPaths(claims, cwd, { roots: () => deliveryRoots(project, cwd), touched: () => touchedFiles(input) });
+  // A claim that exists nowhere but resolves, from the hook's folder or a root a claim is read from (deliveryRoots), to
+  // a handoff the session may not write is no file the agent owes: it sends nothing back.
+  const bases = refused.length ? [cwd, ...deliveryRoots(project, cwd)] : [];
+  const refusedClaim = (claim) => bases.some((base) => refused.includes(resolveClaim(base, claim)));
+  const missing = missingPaths(claims, cwd, { roots: () => deliveryRoots(project, cwd), touched: () => touchedFiles(input) }).filter((claim) => !refusedClaim(claim));
   return { claims, missing, unwritten, rejected, since };
 }
 
@@ -81,25 +90,26 @@ function handedIn(file, since) {
 // the agent's own name, such as `feat-12-S1-code-reviewer.json` or `S1-code-reviewer-result.json` for
 // `aidrian:code-reviewer`. A path anywhere else in the brief, such as a handoff it tells the agent to read, is never owed.
 // No brief, no marker, no agent name, or no state folder: none.
-export function unwrittenHandoffs(input, project) {
-  return briefHandoffs(input, project).owed;
+export function unwrittenHandoffs(input, project, places = {}) {
+  return briefHandoffs(input, project, places).owed;
 }
 
-// The `Handoff file:` markers of a subagent's brief: `owed`, unwrittenHandoffs's files, and `rejected`, each marker the
-// hook cannot fill whose path this run did not write either, as { value, problem }: one that names no path, or a path that is not
-// an absolute `.json` path in the state folder's `dispatch/`. A rejected marker is a brief's mistake, such as a `<state>`
-// left unexpanded, and is reported, never skipped in silence. A dispatch file named for another agent is no mistake to
-// report: it may be that agent's handoff, for this one to read.
-export function briefHandoffs(input, project) {
+// The `Handoff file:` markers of a subagent's brief: `owed`, unwrittenHandoffs's files; `refused`, those the session may
+// not be handed (issueOwner), which are never owed; and `rejected`, each marker the hook cannot fill whose path this run
+// did not write either, as { value, problem }: one that names no path, or a path that is not an absolute `.json` path in
+// the state folder's `dispatch/`. A rejected marker is a brief's mistake, such as a `<state>` left unexpanded, and is
+// reported, never skipped in silence. A dispatch file named for another agent is no mistake to report: it may be that
+// agent's handoff, for this one to read.
+export function briefHandoffs(input, project, places = {}) {
   const agent = typeof input.agent_type === 'string' ? input.agent_type.split(':').pop() : '';
   const transcript = agent && typeof input.agent_transcript_path === 'string' ? readText(input.agent_transcript_path) : null;
   const brief = transcript ? firstPrompt(transcript) : null;
-  if (!brief) return { owed: [], rejected: [] };
+  if (!brief) return { owed: [], refused: [], rejected: [] };
   let folder;
   try {
     folder = path.join(stateDir(project), 'dispatch');
   } catch {
-    return { owed: [], rejected: [] };
+    return { owed: [], refused: [], rejected: [] };
   }
   const wholePath = new RegExp(`^${escapeRegExp(folder)}/[^/]+\\.json$`, 'u');
   // The agent's name as the file name's last word, or the one before a last word such as `result`: a branch that holds
@@ -112,16 +122,49 @@ export function briefHandoffs(input, project) {
     if (!file) return 'names no path';
     return wholePath.test(file) ? null : `is not an absolute \`.json\` path in \`${folder}/\``;
   };
-  const own = marked.filter((file) => wholePath.test(file) && word.test(path.basename(file)));
+  const owner = issueOwner(input, project, folder, places);
+  const agents = [...new Set(marked.filter((file) => wholePath.test(file) && word.test(path.basename(file))))];
   const cwd = typeof input.cwd === 'string' ? input.cwd : project.root;
   const since = handoffSince(input);
+  const refused = agents.filter((file) => !owner(path.basename(file)));
   // A rejected path the agent wrote in this run, a regular file changed since it began (handedIn), is no mistake to
-  // report; an earlier run's file, a link, or a folder there still is.
-  // With no start time to hold it to, any file there could be an earlier run's, so the mistake is reported.
+  // report; an earlier run's file, a link, or a folder there still is. With no start time to hold it to, any file there
+  // could be an earlier run's, so the mistake is reported.
   const rejected = [...new Set(marked)]
     .map((value) => ({ value, problem: problemOf(value) }))
     .filter(({ value, problem }) => problem && !(value && since !== null && handedIn(path.resolve(cwd, value), since)));
-  return { owed: [...new Set(own)].filter((file) => !handedIn(file, since)), rejected };
+  return { owed: agents.filter((file) => !refused.includes(file) && !handedIn(file, since)), refused, rejected };
+}
+
+// Which handoff file names the session `input.session_id` may be handed, as the write guard rules them: any, for a
+// session that works no project run's issue (unattended-mark.mjs issueHeld); else only those of its own issue's branch
+// that no other issue of the run spells alike (project-run-guard.mjs ownsHandoff), and none when its issue cannot be read
+// or the dispatch folder `folder` is a link, which the guard grants no write through either.
+// So one issue's report never replaces another's handoff through the stop hook either.
+function issueOwner(input, project, folder, { env = process.env, home } = {}) {
+  let mark;
+  try {
+    mark = readUnattendedMark(input.session_id, { env, ...(home ? { home } : {}) });
+  } catch {
+    mark = { root: null };
+  }
+  if (!issueHeld(mark)) return () => true;
+  if (linkedFolder(folder)) return () => false;
+  let issue = null;
+  try {
+    issue = ownIssue(project, loadConfig(project).config, mark, home ? { home } : {});
+  } catch {}
+  return (name) => ownsHandoff(issue, name);
+}
+
+// Whether the folder `folder` is not itself where its spelling leads, as when it is a link: its parent's own path, links
+// resolved, and its name, differ from it with links resolved. A folder that cannot be read yet is none.
+function linkedFolder(folder) {
+  try {
+    return realpathSync(folder) !== path.join(realpathSync(path.dirname(folder)), path.basename(folder));
+  } catch {
+    return false;
+  }
 }
 
 // A brief line that names the run's handoff file, in any case, after an optional list marker: `Handoff file: <path>`,

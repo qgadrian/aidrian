@@ -639,6 +639,16 @@ test('await-review --request with another --reviewer prints no raise at its cap'
   const other = await off.run([[['a.js', 1, 'One']], [['b.js', 1, 'x']], []], { args: ['--reviewer', DEFAULT_REVIEWER] });
   assert.equal(other.code, 4);
   assert.deepEqual([other.out.question, other.out.raise], [undefined, undefined]);
+  // With extra rounds on, the check reruns on that reviewer, and so does the step `aidrian pr extend` prints.
+  const on = botProject(t, { github: { reviewer: 'configured-bot[bot]' } });
+  const rounds = [[['a.js', 1, 'One']], [['a.js', 50, 'Two']], [['b.js', 9, 'Three']]];
+  const reviewer = new RegExp(`--request --reviewer ${DEFAULT_REVIEWER.replace(/[[\]]/gu, '\\$&')}`, 'u');
+  assert.equal((await on.run(rounds, { args: ['--reviewer', DEFAULT_REVIEWER] })).out.status, 'extension_check');
+  await on.extend(['--verdict', 'extend', '--reason', 'valid']);
+  const ask = await on.run(rounds, { args: ['--reviewer', DEFAULT_REVIEWER] });
+  assert.equal(ask.out.status, 'extension_ask');
+  assert.match(ask.out.then, reviewer);
+  assert.equal(readLocalState(on.project, 42).extensions[0].reviewer_arg, ` --reviewer ${DEFAULT_REVIEWER}`, 'the record keeps it for the rerun aidrian pr extend prints');
 });
 
 test('aidrian report reviews counts each check at the cap once, by its last decision', () => {

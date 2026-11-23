@@ -372,7 +372,7 @@ export function revalidate({ state, source, round, head, history, log = () => {}
 // no signals, the ceiling or one made on an earlier head, asks it whether the head now is one no round reviewed.
 // `log(row)` gets each new decision. `raise` overrides what the `round_limit` question is computed from (raiseAsk): the
 // rounds of the cap that stopped, when that is not `round`, and `withBot`.
-export function atCap({ state, source, round, head, policy, history: readHistory, lastReviewed = null, pr, repo = null, repoArg = '', goal = null, command, log = () => {}, now = () => new Date().toISOString(), raise = {} }) {
+export function atCap({ state, source, round, head, policy, history: readHistory, lastReviewed = null, pr, repo = null, repoArg = '', goal = null, command, log = () => {}, now = () => new Date().toISOString(), raise = {}, reviewerArg = '' }) {
   if (policy.mode === 'off') return { status: 'round_limit', extension: { status: 'off', mode: 'off' }, ...raiseAsk({ pr, repo, source, round, ...raise }) };
   let cached = null;
   const history = () => (cached ??= readHistory());
@@ -384,8 +384,10 @@ export function atCap({ state, source, round, head, policy, history: readHistory
     log(rowOf(entry));
   };
   if (entry) revalidate({ state, source, round, head, history, log, now });
+  // The reviewer a bot check waits on, when not the configured one, for the rerun `aidrian pr extend` prints.
+  if (entry && reviewerArg) entry.reviewer_arg = reviewerArg;
   else {
-    entry = { source, round, head, at: now(), mode: policy.mode, max: policy.max, granted_before: granted, status: 'new', by: null, reasons: [] };
+    entry = { source, round, head, at: now(), mode: policy.mode, max: policy.max, granted_before: granted, status: 'new', by: null, reasons: [], ...(reviewerArg ? { reviewer_arg: reviewerArg } : {}) };
     state.extensions.push(entry);
     if (granted >= policy.max) decide('stopped', 'ceiling', [`${plural(granted, 'extra round')} granted already, and github.maxExtraRounds is ${policy.max}`]);
   }
@@ -520,7 +522,8 @@ export function parseExtend(args) {
 
 // What to run after a recorded decision.
 function nextStep(entry, pr, repo, repoArg = '') {
-  const again = entry.source === 'bot' ? `aidrian pr await-review ${pr} --request${repoArg}` : `aidrian pr review ${pr}${repoArg}`;
+  const reviewer = typeof entry.reviewer_arg === 'string' && /^ --reviewer [\w.[\]-]+$/u.test(entry.reviewer_arg) ? entry.reviewer_arg : '';
+  const again = entry.source === 'bot' ? `aidrian pr await-review ${pr} --request${reviewer}${repoArg}` : `aidrian pr review ${pr}${repoArg}`;
   if (entry.status === 'granted') return `round ${entry.round + 1} is granted: run ${again}`;
   if (entry.status === 'asking') return `ask the Human "${askQuestion(pr, entry.round + 1, entry.unreviewed, entry.red_flags, repo)}" with the options ${askOptions(entry.round + 1).map((each) => `"${each}"`).join(' and ')}, then record the answer: aidrian pr extend ${pr} --human approve|deny${repoArg}`;
   return 'the cap stands: report round_limit and the findings left open';

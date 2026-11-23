@@ -229,6 +229,45 @@ test('init resumes a parked issue on the attempt branch its earlier run cut from
   assert.equal(readRun(state, 'third').snapshot.resumed, undefined);
 });
 
+test('an attempt branch resumes only when cut from the snapshot\'s branch the earlier run named too, past the branch cap as the gate cuts it, and never onto another issue\'s branch', (t) => {
+  const { state, input, init } = setup(t);
+  const at = new Date().toISOString();
+  // A run whose start of `key` at attempt 2 worked on `branch`, then parked it; its snapshot named `named`.
+  const parked = (run, key, named, branch) => {
+    assert.equal(init(run, input({ issues: [{ key, branch: named, status: 'unstarted' }] }, `${run}.json`)).exitCode, 0);
+    appendToRun(state, run, () => ({ rows: [
+      { event: 'start', key, attempt: 2, branch, outcome: 'started', at },
+      { event: 'issue', key, state: 'parked', decision: 'pr-open', at },
+    ] }));
+  };
+  // ENG-1's earlier snapshot named the -a2 branch itself: the run cut nothing from the branch the new snapshot names.
+  parked('named', 'ENG-1', 'feat/eng-1-export-a2', 'feat/eng-1-export-a2');
+  // ENG-2's snapshot branch is BRANCH_CAP long, and the gate cut its -a2 past it.
+  const long = `feat/${'x'.repeat(115)}`;
+  parked('long', 'ENG-2', long, `${long}-a2`);
+  const result = init('second', input({ issues: [
+    { key: 'ENG-1', branch: 'feat/eng-1-export', status: 'started' },
+    { key: 'ENG-2', branch: long, status: 'started' },
+  ] }, 'second.json'));
+  assert.equal(result.exitCode, 0, result.err.join('\n'));
+  const found = readRun(state, 'second');
+  assert.equal(found.problem, undefined, 'a 123-character attempt branch passes the run\'s own checks');
+  assert.deepEqual(found.snapshot.resumed.map(({ key, branch }) => [key, branch]), [['ENG-2', `${long}-a2`]]);
+  assert.deepEqual(planRun(found.snapshot, found.states).blocked, [{ key: 'ENG-1', reason: 'status', on: ['started'] }]);
+  appendToRun(state, 'second', () => ({ rows: [{ event: 'issue', key: 'ENG-2', state: 'done', at }] }));
+  // ENG-3 resumes on feat/eng-3-share-a2, which ENG-4 names: two sessions would push to one ref, so init refuses.
+  parked('third', 'ENG-3', 'feat/eng-3-share', 'feat/eng-3-share-a2');
+  const clash = init('fourth', input({ issues: [
+    { key: 'ENG-3', branch: 'feat/eng-3-share', status: 'started' },
+    { key: 'ENG-4', branch: 'feat/eng-3-share-a2', status: 'unstarted' },
+  ] }, 'fourth.json'));
+  assert.deepEqual([clash.exitCode, clash.err], [1, [
+    'aidrian project init: the snapshot input has problems; fix them and run init again',
+    '  ENG-3 resumes on the branch feat/eng-3-share-a2, an earlier run\'s attempt branch, which ENG-4 names too; give one of them another branch',
+  ]]);
+  assert.equal(existsSync(runFolder(state, 'fourth')), false);
+});
+
 test('init holds the runs lock while it checks and makes the run: a live foreign lock makes it throw, and no run is made', (t) => {
   const { state, input, init } = setup(t);
   mkdirSync(runsFolder(state), { recursive: true });

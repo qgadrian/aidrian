@@ -35,7 +35,7 @@ import { isQuotaNotice } from './pr-await-review.mjs';
 import { branchPolicies } from './pr-auto-merge.mjs';
 import { mayFollowTeamDefault } from './project.mjs';
 import { recordedTexts } from './project-issue-text.mjs';
-import { activeRuns, nextLines, pinnedRepository, planRun, readRun, readSnapshotInput, refNames, resumedIssues, resumedLine, runPlace, runsFolder, teamsNote } from './project-run.mjs';
+import { activeRuns, nextLines, pinnedRepository, planRun, readRun, readSnapshotInput, refNames, resumedIssues, resumedLine, resumedProblems, runPlace, runsFolder, teamsNote } from './project-run.mjs';
 import { openPullHead } from './project-result.mjs';
 import { runParallel, teamPolicy } from './project-run-gate.mjs';
 import { accessProblem, commitProblem, guardedFolders, hostStartProblem, PROBE_BRANCH } from './project-start.mjs';
@@ -427,8 +427,8 @@ export function snapshotCheck({ project, config, file, session = null, env = pro
   const pullHead = ({ pr, branch, repository }) => openPullHead({ forge: facade, repository, pr, branch });
   const resumed = place.state ? resumedIssues(place.state, read.snapshot, { repository: pinnedRepository(project), pullHead }) : [];
   const plan = planRun(resumed.length ? { ...read.snapshot, resumed } : read.snapshot, new Map(), { maxParallel: runParallel(project, pinnedRepository(project), facade) });
-  const blockers = plan.blocked.filter(({ reason }) => reason === 'cycle' || reason === 'status')
-    .map(({ key, reason, on }) => `blocker snapshot: ${key} is ${reason === 'cycle' ? `in a cycle of blockers, ${on.join(', ')}, so it never starts` : `${on[0]} in the tracker, which a run does not start from`}`);
+  const blockers = [...resumedProblems(read.snapshot, resumed).map((problem) => `blocker snapshot: ${problem}`), ...plan.blocked.filter(({ reason }) => reason === 'cycle' || reason === 'status')
+    .map(({ key, reason, on }) => `blocker snapshot: ${key} is ${reason === 'cycle' ? `in a cycle of blockers, ${on.join(', ')}, so it never starts` : `${on[0]} in the tracker, which a run does not start from`}`)];
   if (!trackerReachable(baseBranchTip(project.root) ? baseBranchConfig(project, 'projectRun') : {})) {
     const startable = new Set(plan.order);
     blockers.push(...read.snapshot.issues.filter((issue) => startable.has(issue.key) && !plan.done.includes(issue.key) && !kept.texts[issue.key])

@@ -965,6 +965,10 @@ test('init --check counts a started issue an earlier run parked on the same bran
   const attempt = check([{ key: 'ENG-4', branch: 'fix/eng-4-typo', status: 'started' }]);
   assert.equal(attempt.exitCode, 0, attempt.out.join('\n'));
   assert.ok(attempt.out.includes('next ENG-4 fix/eng-4-typo-a2'), attempt.out.join('\n'));
+  // Another issue that names that attempt branch is a blocker: both sessions would push to one ref.
+  const clash = check([{ key: 'ENG-4', branch: 'fix/eng-4-typo', status: 'started' }, { key: 'ENG-5', branch: 'fix/eng-4-typo-a2', status: 'unstarted' }]);
+  assert.equal(clash.exitCode, 1);
+  assert.ok(clash.out.includes('blocker snapshot: ENG-4 resumes on the branch fix/eng-4-typo-a2, an earlier run\'s attempt branch, which ENG-5 names too; give one of them another branch'), clash.out.join('\n'));
   const resumed = check([{ key: 'ENG-1', branch: 'feat/eng-1-export', status: 'started' }]);
   assert.equal(resumed.exitCode, 0, resumed.out.join('\n'));
   assert.ok(resumed.out.includes('resumed: 1 started issue an earlier run parked on its branch, which this run starts again: ENG-1'), resumed.out.join('\n'));

@@ -2058,7 +2058,11 @@ The snapshot input is one JSON object, at most 1 MiB, read as a regular file and
   on the branch the snapshot names or on an attempt branch it cut from it: in the runs folder, among the runs that pinned
   the same repository, the one with the latest `init` among those that record the issue records it parked, and the
   branch its latest start that ran worked on is the snapshot's, or the snapshot's with `-a<n>` added, as an attempt that
-  left the snapshot's branch cuts it, which a start row of that run names. Any other branch keeps the issue blocked.
+  left the snapshot's branch cuts it, which a start row of that run names, when that run's own snapshot named the same
+  branch for the issue. Such a branch may run past the 120-character cap by its suffix, as the start gate cuts it.
+  Any other branch keeps the issue blocked. A resumed branch that another issue of the snapshot names, or resumes on,
+  compared in any case, is a snapshot problem: `init` refuses it and `init --check` prints a `blocker snapshot` line,
+  since both sessions would be let push to that one ref.
   That run moved it to started and parked it, as on a pull request left open, so the issue is the run's own
   work; `init` records it in `snapshot.json` as `resumed`, with that run, the pull request its latest result named,
   the `head` that result recorded, and that `branch`, prints a `resumed:` line, and `next`, `start`, and the gate read

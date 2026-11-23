@@ -400,6 +400,8 @@ export function initRun({ project, config, run, file, session, input = {}, env =
   // `start`, and the gate read one plan. Read before the runs lock, since an old ledger's pull request is read through
   // the forge; the runs it reads are no longer active, which the lock then checks.
   const resumed = resumedIssues(state, read.snapshot, { except: run, repository, ...(pullHead ? { pullHead } : {}) });
+  const clash = resumedProblems(read.snapshot, resumed);
+  if (clash.length) return { exitCode: 1, out: [], err: ['aidrian project init: the snapshot input has problems; fix them and run init again', ...clash.slice(0, 20).map((problem) => `  ${problem}`)] };
   const snapshot = resumed.length ? { ...read.snapshot, resumed } : read.snapshot;
 
   mkdirSync(runsFolder(state), { recursive: true, mode: 0o700 });
@@ -516,9 +518,36 @@ export function readRun(state, run) {
   return { init, snapshot: checked.snapshot, states, rows: rows.slice(1) };
 }
 
-// Whether `branch` is `base`, an issue's snapshot branch, or an attempt branch a run cut from it, `base` and `-a<n>`
-// (project-run-gate.mjs startPlace).
-const ownBranch = (branch, base) => typeof branch === 'string' && (branch === base || (branch.startsWith(`${base}-a`) && /^[1-9][0-9]{0,3}$/u.test(branch.slice(base.length + 2))));
+// The branch attempt `attempt` of an issue cuts fresh from the base tip when it leaves the issue's branch `base`, the
+// snapshot's (project-run-gate.mjs startPlace, project-start.mjs prepareAttempt).
+export const attemptBranch = (base, attempt) => `${base}-a${attempt}`;
+
+// Whether `branch` is `base`, an issue's snapshot branch, or an attempt branch a run cut from it by attemptBranch, the
+// one rule the start gate cuts by: `base` passed the snapshot's checks (branchProblem), and the start gate checks no
+// name it cuts against BRANCH_CAP, so neither does this.
+const ownBranch = (branch, base) => {
+  if (typeof branch !== 'string' || typeof base !== 'string') return false;
+  if (branch === base) return true;
+  const attempt = branch.startsWith(`${base}-a`) ? branch.slice(base.length + 2) : '';
+  return /^[1-9][0-9]{0,3}$/u.test(attempt) && branch === attemptBranch(base, Number(attempt));
+};
+
+// Why the resumed branches `resumed` (resumedIssues) cannot run beside the issues of `snapshot`, as lines, or none: a
+// branch one issue resumes on that another issue names or resumes on too, compared in any case, since two sessions would
+// each be let push to that one ref.
+export function resumedProblems(snapshot, resumed) {
+  const named = new Map(snapshot.issues.map((issue) => [issue.branch.toLowerCase(), issue.key]));
+  const taken = new Map();
+  const problems = [];
+  for (const { key, branch } of resumed) {
+    const folded = branch.toLowerCase();
+    const other = named.get(folded);
+    if (other !== undefined && other !== key) problems.push(`${key} resumes on the branch ${branch}, an earlier run's attempt branch, which ${other} names too; give one of them another branch`);
+    if (taken.has(folded)) problems.push(`${key} resumes on the branch ${branch}, which ${taken.get(folded)} resumes on too`);
+    taken.set(folded, key);
+  }
+  return problems;
+}
 
 // The `resumed` list of a snapshot.json init wrote (resumedIssues), checked against its `issues`: a copy, [] when it has
 // none, or null when it is not such a list: each entry { key, run, pr, head, branch } names a started issue of `issues`
@@ -534,10 +563,11 @@ function resumedOf(value, issues) {
     if (!isObject(each) || !started.has(each.key) || seen.has(each.key) || typeof each.run !== 'string' || !RUN_ID.test(each.run)) return null;
     if (pr !== null && !(Number.isInteger(pr) && pr > 0)) return null;
     if (each.head !== null && !(typeof each.head === 'string' && SHA.test(each.head))) return null;
-    if (each.branch !== undefined && (!ownBranch(each.branch, started.get(each.key)) || branchProblem(each.branch))) return null;
+    if (each.branch !== undefined && !ownBranch(each.branch, started.get(each.key))) return null;
     seen.add(each.key);
   }
-  return value.map(({ key, run, pr, head, branch }) => ({ key, run, pr, head, branch: branch ?? started.get(key) }));
+  const kept = value.map(({ key, run, pr, head, branch }) => ({ key, run, pr, head, branch: branch ?? started.get(key) }));
+  return resumedProblems({ issues }, kept).length ? null : kept;
 }
 
 // The started issues of `snapshot` a new run may start all the same, as [{ key, run, pr, head, branch }]: each one whose
@@ -575,6 +605,8 @@ export function resumedIssues(state, snapshot, { except, repository, pullHead = 
         run: name,
         parked: found.states.get(issue.key).state === 'parked',
         branch: issueBranch(found, issue.key),
+        // The branch that run's own snapshot named for the issue, which an attempt branch it cut must be cut from.
+        from: found.snapshot.issues.find((each) => each.key === issue.key)?.branch ?? null,
         cut: found.rows.some((row) => row.event === 'start' && row.key === issue.key && row.outcome !== 'void' && row.branch === issueBranch(found, issue.key)),
         pr: found.rows.findLast((row) => row.event === 'result' && row.key === issue.key && Number.isInteger(row.pr) && row.pr > 0)?.pr ?? null,
         head: typeof result?.head === 'string' && SHA.test(result.head) ? result.head : null,
@@ -582,7 +614,7 @@ export function resumedIssues(state, snapshot, { except, repository, pullHead = 
       });
     }
   }
-  const worked = ({ parked, branch, cut }, issue) => parked && (branch === issue.branch || (cut && ownBranch(branch, issue.branch) && !branchProblem(branch)));
+  const worked = ({ parked, branch, from, cut }, issue) => parked && (branch === issue.branch || (cut && from === issue.branch && ownBranch(branch, issue.branch)));
   return started.filter((issue) => latest.has(issue.key) && worked(latest.get(issue.key), issue))
     .map((issue) => {
       const { run, pr, head, legacy, branch } = latest.get(issue.key);

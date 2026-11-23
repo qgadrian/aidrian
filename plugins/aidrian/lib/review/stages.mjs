@@ -115,7 +115,9 @@ export async function runStages(s) {
   // `holds_finding`: a receipt beside the bot's status card that still holds one of its findings at this head, kept on
   // the record so `fix_required` says the open work is the bot's earlier threads, not this answer.
   const recordBot = (pass, bot) => {
-    const clean = bot.signal?.kind === 'thumbs_up' || (bot.signal?.kind === 'comment' && bot.signal.clean === true);
+    // An approving review with no inline comment is clean too, as the bot history reads it (extension.mjs botRounds).
+    const approves = bot.signal?.kind === 'review' && bot.signal.state === 'APPROVED' && !(bot.signal.line_comments >= 1);
+    const clean = bot.signal?.kind === 'thumbs_up' || (bot.signal?.kind === 'comment' && bot.signal.clean === true) || approves;
     const open = clean ? 0 : Math.max(1, bot.signal?.line_comments ?? 0);
     const holds = !clean && bot.signal?.holds_finding === true;
     // With no inline comment to count, the one open finding is a floor: the answer may hold more (extension.mjs signals).

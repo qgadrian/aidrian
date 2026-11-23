@@ -621,14 +621,16 @@ function onlyReads(code, reads) {
   return statements.length > 0 && statements.every((each) => reads.test(each));
 }
 
-// `code` split at each `;` and line end outside quotes and brackets, except a line end right after `=`, so a read
-// written over several lines, as `const r =\n  require(p)` or `json.load(\n  open(p))`, is one statement.
+// `code` split at each `;` and line end outside quotes and brackets, except a line end right after `=` or before a line
+// that starts with `.`, so a read written over several lines, as `const r =\n  require(p)\n  .agents` or
+// `json.load(\n  open(p))`, is one statement.
 function statementsOf(code) {
   const statements = [];
   let current = '';
   let quote = null;
   let depth = 0;
-  for (const char of code) {
+  // A line that starts with an accessor, as `.agents`, continues the one before it.
+  for (const char of code.replace(/\n\s*(?=\.)/gu, ' ')) {
     if (quote) {
       if (char === quote) quote = null;
     } else if (char === "'" || char === '"') quote = char;

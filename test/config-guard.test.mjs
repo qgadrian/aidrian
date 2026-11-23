@@ -140,6 +140,7 @@ test('a subagent may still read those files and write anything else, and the mai
       "python3 -c \"import json; r = json.load(open('.aidrian/config.json')); print(r['agents'])\"",
       // The same reads over several lines.
       "node - <<'EOF'\nconst r =\n  require('./.aidrian/config.json');\nconsole.log(r.agents)\nEOF",
+      "node - <<'EOF'\nconst r = require('./.aidrian/config.json')\n  .agents\nconsole.log(r)\nEOF",
       "python3 - <<'EOF'\nimport json\nr = json.load(\n  open('.aidrian/config.json'))\nprint(r['agents'])\nEOF",
     ].map((command) => ['Bash', { command }]),
   ];

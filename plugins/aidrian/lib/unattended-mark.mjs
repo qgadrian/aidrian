@@ -218,7 +218,11 @@ function tagsOf(value) {
 export function readUnattendedMark(session, { env = process.env, home, now = Date.now() } = {}) {
   if (typeof session !== 'string' || !SESSION_ID.test(session)) return null;
   const { holds, pending, unchecked } = scanMarks(session, { env, home, now });
-  const marks = [...(unchecked ? [{ root: null }] : []), ...holds.map(({ mark }) => mark)];
+  const found = holds.map(({ mark }) => mark);
+  // A proof owed only by its attempt's plan yields to the state another mark records for that attempt.
+  const recorded = new Set(found.filter((mark) => mark.confine !== undefined).map((mark) => proofStateOf(mark)?.attempt?.folder).filter(Boolean));
+  const inferred = (mark) => mark.confine === undefined && recorded.has(proofStateOf(mark)?.attempt?.folder);
+  const marks = [...(unchecked ? [{ root: null }] : []), ...found.filter((mark) => !inferred(mark))];
   const held = marks.reduce((most, mark) => (most === null || restriction(mark) > restriction(most) ? mark : most), null);
   if (held && !(plainMark(held) && isAttended(session, { env, home, now }))) return held;
   return pendingHold(pending, session, processUid(), now);

@@ -138,13 +138,10 @@ export function check(command, { cwd = process.cwd(), input = {}, env = process.
     return project === UNKNOWN || (Boolean(project) && heldRecords(project).length > 0);
   };
   const entries = walkCommands(command, cwd);
-  // The folder a post call itself runs in whenever it runs: a `cd <folder> &&` right before it counts after a heredoc or
-  // a `;` too (shell-lex walkCommands `chained`). A command that runs an `eval`, `source`, `.`, or `builtin` may change
-  // the folder where the walk cannot see it, so no folder is known there. A post whose folder is unknown in a command
-  // that changes folder is judged as in a project the rule cannot read: it fails closed, and the post runs on its own.
-  const blind = entries.some(({ invocation }) => ['eval', 'source', '.', 'builtin'].includes(invocation.program));
-  const moves = blind || entries.some(({ invocation }) => invocation.program === 'cd' || Boolean(invocation.chdir));
-  const postFolder = (entry) => (blind ? null : entry.folder ?? entry.chained ?? null);
+  // The folder a post call itself runs in: the walk's, else a `cd <folder> &&` right before it, which counts after a
+  // heredoc or a `;` too (shell-lex walkCommands `chained`). A folder an `eval` or `source` changes is not seen: the rule
+  // guards cooperating agents, not a sandbox (docs/hooks.md).
+  const postFolder = (entry) => entry.folder ?? entry.chained ?? null;
   const posts = new Map(entries.map((entry) => [entry, entry.unread === undefined ? readPost(entry.invocation) : null]));
   const writes = (self) => entries.some((other) => other !== self && other.unread === undefined && writesUnseen(readCall(other.invocation)));
   const judged = new Set();
@@ -160,7 +157,6 @@ export function check(command, { cwd = process.cwd(), input = {}, env = process.
     // A post beside a call that may write its record after this check: the record on disk says nothing yet.
     if (call.type === 'post' && writes(entry)) return subagent ? SUBAGENT : CHAINED;
     const where = postFolder(entry);
-    if (where === null && moves) return UNKNOWN_PROJECT;
     const project = projectIn(where);
     if (!project) continue;
     if (project === UNKNOWN) return UNKNOWN_PROJECT;

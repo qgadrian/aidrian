@@ -98,13 +98,7 @@ test('a cd right before the post counts after a heredoc, and a project it cannot
   }
   // A call the words cannot read, such as through npx, may run anywhere: it keeps no chained folder.
   assert.ok(check(`${heredoc}cd ${member.dir} && npx ${member.post}`, { cwd: elsewhere, input: member.main, env: {} }), 'npx');
-  // An eval may change the folder where the walk cannot see it: the folder stays unknown.
   const held = project(t, { limited: true });
-  for (const runs of [`eval "cd ${held.dir}"`, `builtin cd ${held.dir}`]) {
-    assert.match(check(`true; cd ${member.dir} && ${runs} && ${member.post}`, { cwd: elsewhere, input: member.main, env: {} }) ?? '', /cannot read which project/u, runs);
-    // After a leading cd too: the eval may have moved on from the folder the cd named.
-    assert.match(check(`cd ${member.dir} && ${runs} && ${member.post}`, { cwd: elsewhere, input: member.main, env: {} }) ?? '', /cannot read which project/u, `leading ${runs}`);
-  }
   // A cd the post may run past, with no folder to tie to it, fails closed whatever state folder the project keeps.
   assert.match(check(`cd ${held.dir} || true; ${member.post}`, { cwd: elsewhere, input: member.main, env: {} }) ?? '', /cannot read which project/u, 'unknown after a cd');
   const unknown = check(`${heredoc}cd ${member.dir} || true; ${member.post}`, { cwd: elsewhere, input: member.main, env: {} }) ?? '';

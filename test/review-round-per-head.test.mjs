@@ -124,4 +124,8 @@ test('past the cap, a count-only result attested on a new head is its own cap ca
   const past = await r.step({ exec: clean });
   assert.deepEqual([past.status, past.round, past.cap?.reviewed, past.cap?.itemized, past.cap?.counted], ['round_limit', 2, third, false, 1], 'the cause is the new head\'s count-only result');
   assert.ok(capProblem(readLocalState(r.project, 7), third), 'a counted finding is never waived');
+  const fourth = push(r, 3);
+  const unreviewed = await r.step({ exec: clean });
+  assert.deepEqual([unreviewed.status, unreviewed.cap?.head, unreviewed.cap?.unsigned], ['round_limit', fourth, null], 'round 2\'s waivable cause is gone');
+  assert.ok(capProblem(readLocalState(r.project, 7), fourth), 'a head nothing reviewed is never waived');
 });

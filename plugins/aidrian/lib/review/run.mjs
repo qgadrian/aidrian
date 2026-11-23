@@ -152,9 +152,10 @@ const CAUSE_ITEMS = 50;
 // remote passes with none, and `flows`
 // every flow of the plan whose invariants are not all held, whichever stage answers for it (evidence.mjs flowStatus).
 // That whole cause is kept on the round too (`round.cap`). A head past the cap with a result a pass uses, as one
-// `aidrian pr attest` recorded there, is judged the same way, by its own results. When the last round reviewed another
-// head and no pass has a result for `head` (a fix pushed that no round reviewed), the cause is that round's kept one, its flows as `unsigned`; a round with none kept gives
-// `unsigned: null`, which refuses. `counted` is the open count, `itemized` whether every one of them is listed;
+// `aidrian pr attest` recorded there, is judged the same way, by its own results, and its cause replaces the last
+// round's. When the last round reviewed another head and no pass has a result for `head` (a fix pushed that no round
+// reviewed), the cause is that round's kept one, its flows as `unsigned`; a round with none kept, or with the cause of
+// a head past the cap, gives `unsigned: null`, which refuses until a round reviews a head. `counted` is the open count, `itemized` whether every one of them is listed;
 // `tests_removed` and `checks_failing` this step's evidence stops and flow tests deleted with no sign-off on `head`;
 // `bot` that the review bot's own round limit stopped it; `human` the flows the Human signs off with no sign-off kept
 // on `head`.
@@ -198,8 +199,9 @@ function capCause(s, extra) {
     bot,
     human,
   };
-  // A later cap on a head no round reviewed reads this round's whole cause; a head past the cap has no round of its own.
-  if (round?.head === head) round.cap = cause;
+  // A later cap on a head no round reviewed reads this round's whole cause. The cause of a head past the cap replaces
+  // it, its head not the round's, so a later head no pass reviewed has no cause to inherit: it refuses.
+  if (round) round.cap = cause;
   return cause;
 }
 

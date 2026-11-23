@@ -1450,6 +1450,7 @@ shows, such as a waiver's reason, has `<!--` and `-->` escaped, so no text can c
   every flow of the plan not all held, whichever stage answers for it. The cause of a reviewed head is kept on its
   round too (`rounds[].cap`), which a later cap on a head no round reviewed reads.
   A head past the cap that holds a result a pass uses, as one `aidrian pr attest` recorded there, is judged by its own results instead.
+  Its cause replaces the round's, so a later head no pass reviewed inherits no cause, and a waiver refuses it until a round reviews a head.
   The posted copy keeps no `cap`,
   on the outcome or a round, and no waiver's `judge_id` and `session`. Each binds to one head and
   one kind. The summary comment shows them under **Merge guard waivers**, each marked an audit entry, not proof; the

@@ -176,6 +176,9 @@ test('the published record keeps a bot check`s reviewer, and two bots` waiting c
   const check = atCap({ state: fresh, source: 'bot', round: 3, head: 'h', policy: { mode: 'ask', max: 2 }, history: passing, pr: 42, reviewer: 'a-bot[bot]' });
   assert.match(check.dispatch[0].record, / --head h --check 'bot:a-bot\[bot\]'$/u);
   assert.deepEqual(parseExtend(['42', '--human', 'approve', '--check', 'bot:a-bot[bot]']).check, 'bot:a-bot[bot]');
+  // A quote in a configured reviewer stays inside the one argument.
+  const quoted = atCap({ state: emptyState(42, 'o/r'), source: 'bot', round: 3, head: 'h', policy: { mode: 'ask', max: 2 }, history: passing, pr: 42, reviewer: "o'bot" });
+  assert.match(quoted.dispatch[0].record, / --check 'bot:o'\\''bot'$/u);
 });
 
 test('atCap: the judge`s verdict and the Human`s answer move one entry, and only a waiting one', () => {

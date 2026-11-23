@@ -1164,7 +1164,7 @@ bot's cap.
 A bot's check, its question, and its grant are for the reviewer whose rounds it read: each bot entry names that
 reviewer, and another reviewer, such as the one a checkout with another `github.reviewer` waits on, never takes it, counts
 it, or reads it again on a new head. An entry with no reviewer, which an earlier version or an override wrote, belongs to
-none, so the cap is checked afresh. The plan's entries name none. The summary comment's record keeps the reviewer, so another machine continues a private pull request's check; a public one's record restarts there, as every check does.
+none, so the cap is checked afresh. The plan's entries name none. The summary comment's record keeps the reviewer. Before another machine records a verdict or an answer on a private pull request's check, the review step runs on that machine first: the `review-extend` rule reads only the local record, and refuses until it holds the check. A public one's record restarts there, as every check does.
 Each check has an id, `plan` or `bot:<reviewer>` (`bot` for an entry with no reviewer), and the record commands the
 step prints name it with `--check '<id>'`, so a verdict or an answer lands on the check that asked for it, and a delayed
 one for a check already settled lands on no other. With no `--check`, `aidrian pr extend` refuses while two checks wait,

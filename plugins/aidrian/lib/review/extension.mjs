@@ -24,7 +24,7 @@ import { givenRepo, repoFlag } from '../remotes.mjs';
 import { changedFiles, diffLines, mergeBase, resolve } from './diff.mjs';
 import { holdToBase } from './in-force.mjs';
 import { classify } from './plan.mjs';
-import { postContext, readReading } from './dispatch.mjs';
+import { postContext, readReading, shellQuote } from './dispatch.mjs';
 // One reading of a red flag, a full reason or the bare name a posted copy keeps (publish.mjs flagName).
 import { flagName } from './publish.mjs';
 import { isFindingId, twinMatch } from './findings.mjs';
@@ -460,8 +460,9 @@ export function atCap({ state, source, round, head, policy, history: readHistory
   return { status: 'round_limit', extension: summary, ...(sameCommit(entry.unreviewed?.head, head) ? { unreviewed_head: true } : {}), ...raiseAsk({ pr, repo, source, round, granted, ...raise }) };
 }
 
-// ` --check '<id>'`, quoted for any shell: a login's brackets are a glob unquoted.
-const checkArg = (entry) => ` --check '${checkId(entry)}'`;
+// ` --check '<id>'`, quoted for any shell: a login's brackets are a glob unquoted, and a quote in a configured reviewer
+// stays inside the one argument.
+const checkArg = (entry) => ` --check ${shellQuote(checkId(entry))}`;
 
 // The entry that waits for `status` ("judging" or "asking"): the latest one, of the check `check` names when given.
 // With none named, checks of two sources or reviewers that wait at once are refused: a verdict or an answer meant for one

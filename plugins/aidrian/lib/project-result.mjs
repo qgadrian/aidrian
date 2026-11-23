@@ -209,7 +209,9 @@ export function openPullOf({ forge, repository, pr, branch, head }) {
 // `repository`, from the issue's `branch`; an open one's head must be the branch's head on the forge, and a merged one
 // must pass mergeProblem. A forge that answers it has no such pull request (forges/index.mjs changeNotFound) has
 // answered: that is final, never a retry.
-// An open one's head, once checked, goes in `verified.head`, the commit the result row records (dropRows).
+// An open one's head, once checked, goes in `verified.head`, the commit the result row records (dropRows). A pr_open
+// result whose pull request the forge shows merged by now is checked as a merged one is, and passing sets
+// `verified.merged`: the work landed before the driver took the result in.
 function droppedPullProblem({ forge, repository, result, branch, since, verified = {} }) {
   if (!['merged', 'pr_open'].includes(result.status)) return null;
   if (!Number.isInteger(result.pr)) return 'the result names no pull request';
@@ -223,6 +225,11 @@ function droppedPullProblem({ forge, repository, result, branch, since, verified
   if (repoName(view?.url) !== named.toLowerCase() || hostOf(view.url)?.toLowerCase() !== repository.host.toLowerCase()) return `pull request #${result.pr} is not in ${repository.host}/${named}`;
   if (view.isCrossRepository !== false || view.headRefName !== branch) return `pull request #${result.pr} is not from the issue's branch ${branch}`;
   if (result.status === 'merged') return mergeProblem({ forge, repository, pr: result.pr, branch, since });
+  if (view.state === 'MERGED') {
+    const problem = mergeProblem({ forge, repository, pr: result.pr, branch, since });
+    if (!problem) verified.merged = true;
+    return problem;
+  }
   // A closed pull request still parks the issue (project-stops.mjs), but no later run goes on from its branch.
   if (view.state === 'CLOSED') {
     verified.head = null;
@@ -286,7 +293,8 @@ function dropRows({ run, key, start, spent, branch, forge, repository, now }) {
   const pull = droppedPullProblem({ forge, repository, result: checked.result, branch, since: Date.parse(start.at), verified });
   if (pull?.retry) return null;
   if (pull) return bad(pull);
-  const { result } = checked;
+  // A pr_open result whose pull request merged in the meantime is taken as merged, with the status the session reported.
+  const result = verified.merged ? { ...checked.result, status: 'merged', reported: checked.result.status } : checked.result;
   const next = afterResult(key, start.attempt, result.status, spent);
   // The head the pull request's check read, when one did, never a second read that could differ or fail.
   const head = next.state === 'parked' ? { head: Object.hasOwn(verified, 'head') ? verified.head : forgeHead({ forge, repository, branch }) } : {};

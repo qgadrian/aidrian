@@ -166,6 +166,24 @@ test('merged is kept only when the forge shows the pull request merged from the 
     if (why) assert.equal(fx.rows().find((row) => row.event === 'ended').why, why, JSON.stringify(view));
     else assert.equal(JSON.parse(readFileSync(path.join(runFolder(fx.state, 'launch'), 'results', 'ENG-1.json'), 'utf8')).status, 'merged');
   }
+  // A pr_open result whose pull request merged before the driver took it in is checked as merged is: the issue is done,
+  // and the branch, which a merge may have deleted, is never read. One merged elsewhere, or before the attempt, is refused.
+  for (const [view, line, why] of [cases[0], cases[3], cases[6]]) {
+    const fx = started(t);
+    fx.forge.change = () => view;
+    fx.forge.branchHead = () => {
+      throw new Error('gh: HTTP 404: Branch not found');
+    };
+    assert.deepEqual(fx.recorded({ status: 'pr_open', pr: 12, stop: 'review' }).out, [line], JSON.stringify(view));
+    if (why) {
+      assert.equal(fx.rows().find((row) => row.event === 'ended').why, why, JSON.stringify(view));
+      continue;
+    }
+    const result = fx.rows().find((row) => row.event === 'result');
+    assert.deepEqual([result.status, result.verified, Object.hasOwn(result, 'head')], ['merged', true, false]);
+    const kept = JSON.parse(readFileSync(path.join(runFolder(fx.state, 'launch'), 'results', 'ENG-1.json'), 'utf8'));
+    assert.deepEqual([kept.status, kept.reported], ['merged', 'pr_open']);
+  }
   const failing = started(t);
   assert.deepEqual(failing.recorded({ status: 'merged', pr: 12 }).out, ['ended ENG-1 bad_result -> open']);
   assert.equal(failing.rows().find((row) => row.event === 'ended').why, 'the forge has no pull request #12 in github.com/acme/widgets');

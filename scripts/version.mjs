@@ -58,6 +58,7 @@ export const PLUGINS = [
     files: [
       ['plugins/aidrian/.claude-plugin/plugin.json', [['version']]],
       ['plugins/aidrian/plugin.json', [['version']]],
+      ['plugins/aidrian/package.json', [['version']]],
       ['package.json', [['version']]],
       ['package-lock.json', [['version'], ['packages', '', 'version']]],
     ],
@@ -184,11 +185,12 @@ export function agreementProblem(locations) {
     : `the version is not the same everywhere; set every place to one version (main's, when you resolve a merge):${list}`;
 }
 
-// The one version a plugin's files agree on; throws, naming the plugin, when they do not.
-function agreedVersion(root, plugin) {
+// The one version a plugin's files agree on; throws, naming the plugin, when they do not. With `kept`, only the files it
+// keeps count.
+function agreedVersion(root, plugin, kept = () => true) {
   let locations;
   try {
-    locations = versionLocations(root, plugin);
+    locations = locationsOf(versionFiles(readWorkingTree(root), plugin).filter(({ file }) => kept(file)));
   } catch (error) {
     throw new Error(`${plugin.name}: ${error.message}`);
   }
@@ -226,7 +228,8 @@ const lines = (text) => text.split('\n').filter(Boolean);
 
 // Whether this branch left a plugin's version alone: { skip } when there is no main to compare with, { problem } when
 // the working tree holds a version other than the merge base's in any place, { ok } otherwise. A plugin with no version
-// file at the merge base is new on the branch, and its version is no change. Main may have released a higher version
+// file at the merge base is new on the branch, and its version is no change; so is a version file new on the branch, such
+// as a manifest a host gains, which the agreement check holds to the others. Main may have released a higher version
 // since the merge base; the branch takes it when it merges main, and need not before.
 export function branchCheck(root = ROOT, plugin = AIDRIAN) {
   if (gitLine(root, 'rev-parse', '--verify', '--quiet', `${MAIN}^{commit}`) === null) return { skip: `no ${MAIN} to compare with` };
@@ -239,7 +242,7 @@ export function branchCheck(root = ROOT, plugin = AIDRIAN) {
   };
   if (plugin.files.every(([file]) => atBase(file) === null)) return { ok: `the plugin is new on this branch, with no version file at its merge base with ${MAIN}` };
   const before = new Map(locationsOf(versionFiles(atBase, plugin)).map(({ where, version }) => [where, version]));
-  const now = versionLocations(root, plugin);
+  const now = locationsOf(versionFiles(readWorkingTree(root), plugin).filter(({ file }) => atBase(file) !== null));
   const changed = [
     ...now.filter(({ where, version }) => before.get(where) !== version)
       .map(({ where, version }) => `\n  ${where}: ${JSON.stringify(before.get(where))} -> ${JSON.stringify(version)}`),
@@ -314,15 +317,20 @@ function firstRelease(root, plugin, current) {
 }
 
 // What releasing one plugin means, computed without writing: a result, { refused }, or { none }. Throws on a failure.
+// The current version is the one the files that existed at the latest tag agree on: a version file a pull request added
+// may hold the version of the branch's last merge of main when main released since, and setVersion raises it with the
+// others. --check still holds a branch's new file to the others.
 function planRelease(root, plugin, level) {
-  const current = agreedVersion(root, plugin);
-  if (!hasTag(root, plugin)) return firstRelease(root, plugin, current);
+  if (!hasTag(root, plugin)) return firstRelease(root, plugin, agreedVersion(root, plugin));
   const tag = gitLine(root, 'describe', '--tags', '--abbrev=0', '--match', tagPattern(plugin), 'HEAD');
-  const want = `${plugin.prefix}${current}`;
   if (!tag) {
+    const current = agreedVersion(root, plugin);
+    const want = `${plugin.prefix}${current}`;
     throw new Error(`${plugin.name}: a ${tagPattern(plugin)} tag exists, but none is reachable from HEAD, so there is nothing to`
       + ` count commits from. Tag the commit that set ${current} once, then push the tag: git tag ${want} <commit> && git push origin ${want}`);
   }
+  const current = agreedVersion(root, plugin, (file) => gitLine(root, 'cat-file', '-e', `${tag}:${file}`) !== null);
+  const want = `${plugin.prefix}${current}`;
   if (tag !== want) {
     throw new Error(`${plugin.name}: the latest tag reachable from HEAD is ${tag}, but the files hold ${current}. Tag the commit`
       + ` that set ${current} as ${want} and push the tag, so the release counts commits from it.`);

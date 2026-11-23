@@ -41,7 +41,8 @@ function binEntries(scripts = Object.fromEntries(readdirSync(path.join(ROOT, PLU
   });
 }
 
-const ENTRIES = [...binEntries(), `${PLUGIN}/lib/pr.mjs`, `${PLUGIN}/lib/pr-auto-merge.mjs`, `${PLUGIN}/lib/review/run.mjs`, HOOKS, ...hookScripts()];
+// The OpenCode bridge's server entry is the hooks.json of a host that reads none: OpenCode loads it, and it runs the hooks.
+const ENTRIES = [...binEntries(), `${PLUGIN}/opencode/server.mjs`, `${PLUGIN}/lib/pr.mjs`, `${PLUGIN}/lib/pr-auto-merge.mjs`, `${PLUGIN}/lib/review/run.mjs`, HOOKS, ...hookScripts()];
 
 // What a module loads by a literal relative path: static imports and re-exports, side-effect and literal dynamic
 // imports, and the files it reads or spawns next to itself, such as a JSON table, the manifest, or a worker script.
@@ -54,6 +55,8 @@ const LOADERS = /\bimport\s*\(|import\.meta\.(?:dirname|filename|url|resolve)|cr
 // line that `line` matches, so a second load on an excused line fails. An entry nothing uses fails, so the list never
 // keeps a stale reason.
 const EXCEPTIONS = [
+  { file: 'opencode/bridge.mjs', loader: 'import.meta.url', line: /^const \{ spawn = nodeSpawn, env = process\.env, scripts = fileURLToPath\(new URL\('\.\.\/scripts', import\.meta\.url\)\),$/u, reason: 'the scripts folder it runs each ROUTES script from, which GUARDED_PATHS covers whole' },
+  { file: 'opencode/bridge.mjs', loader: 'import.meta.url', line: /^bin = fileURLToPath\(new URL\('\.\.\/bin', import\.meta\.url\)\), node = nodeOf\(env\) \} = seams \?\? \{\};$/u, reason: 'the bin folder it puts on each shell\'s PATH, which GUARDED_PATHS covers whole' },
   { file: 'lib/cli.mjs', loader: 'import(', line: /^const \{ commands \} = await import\(COMMANDS\[command\]\);$/u, reason: 'command dispatch: the gate runs as `aidrian pr`, and lib/pr.mjs is an entry of the walk' },
   { file: 'lib/cli.mjs', loader: 'import(', line: /^const \{ usage: args, about \} = \(await import\(file\)\)\.commands\[name\];$/u, reason: 'help text: reads each command module only for its usage line' },
   { file: 'lib/config.mjs', loader: 'import.meta.dirname', line: /^const root = path\.resolve\(import\.meta\.dirname, '\.\.'\);$/u, reason: 'the plugin folder, named in a version message' },
@@ -134,7 +137,7 @@ const guarded = (file) => /decides CI's verdict or auto-merge/u.test(pathsProble
 test('every plugin file the gate, its command, its review, and the hooks load keeps auto-merge off', () => {
   const { files, used } = closure(ENTRIES);
   // The walk reaches deep, so a broken walk cannot pass by reaching nothing.
-  for (const file of ['lib/cli.mjs', 'lib/knowledge-cli.mjs', 'lib/review/state.mjs', 'lib/hosts/index.mjs', 'lib/finding-disposition.json', 'lib/usage.mjs', 'lib/hook-io.mjs', 'lib/transcript.mjs', 'scripts/hook-bash.mjs', 'scripts/session-row.mjs']) {
+  for (const file of ['lib/cli.mjs', 'lib/knowledge-cli.mjs', 'lib/review/state.mjs', 'lib/hosts/index.mjs', 'lib/finding-disposition.json', 'lib/usage.mjs', 'lib/hook-io.mjs', 'lib/transcript.mjs', 'scripts/hook-bash.mjs', 'scripts/session-row.mjs', 'opencode/server.mjs', 'opencode/bridge.mjs', 'opencode/routes.mjs']) {
     assert.ok(files.includes(`${PLUGIN}/${file}`), `the walk reaches ${file}`);
   }
   const open = files.filter((file) => file.startsWith(`${PLUGIN}/`) && !guarded(file));
@@ -185,6 +188,13 @@ test('the guard still lets through what the gate never loads', () => {
 test('the reviewers, the hooks, and the manifests are guarded', () => {
   for (const file of [`${PLUGIN}/agents/security-engineer.md`, `${PLUGIN}/codex/agents/aidrian-security-engineer.toml`, `${PLUGIN}/agents-src/review/security-engineer.md`, `${PLUGIN}/providers/claude.json`, `${PLUGIN}/agent-addons/explorer.codex.md`, `${PLUGIN}/scripts/session-row.mjs`, '.claude-plugin/marketplace.json', '.agents/plugins/marketplace.json', `${PLUGIN}/plugin.json`, `${PLUGIN}/.claude-plugin/plugin.json`, `${PLUGIN}/codex/install-agents.mjs`, `${PLUGIN}/skills/pr-merge-when-green/references/project-setup.md`, `${PLUGIN}/skills/pr-merge-when-green/references/after-merge.md`, `${PLUGIN}/skills/knowledge/references/handoff.md`]) {
     assert.ok(guarded(file), file);
+  }
+});
+
+test("the OpenCode bridge and the plugin folder's package manifest are guarded, and an eval fixture's manifest is not", () => {
+  for (const file of [`${PLUGIN}/opencode/bridge.mjs`, `${PLUGIN}/opencode/server.mjs`, `${PLUGIN}/opencode/routes.mjs`, `${PLUGIN}/package.json`]) assert.ok(guarded(file), file);
+  for (const file of [`${PLUGIN}/evals/harness-setup-onboard/fixture/package.json`, `${PLUGIN}/evals/harness-setup-rerun/fixture/package.json`, 'examples/consumer/package.json', 'package.json']) {
+    assert.equal(guarded(file), false, file);
   }
 });
 

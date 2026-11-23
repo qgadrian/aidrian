@@ -458,6 +458,26 @@ test('server.mjs`s default export is { id: aidrian, setup }', () => {
   assert.equal(server.setup, setup);
 });
 
+// The plugin folder is the package OpenCode installs by Git specifier: private, so no npm publish can happen, its version
+// aidrian's own, and exports naming the server entry. No type (it would change how Node reads the eval fixtures' .js),
+// no files (the package holds what the other hosts install), and no bin, dependencies, or install scripts.
+test('the plugin folder`s package.json is private, aidrian`s version, and exports the server entry, with no other field', async () => {
+  const manifest = JSON.parse(readFileSync(path.join(PLUGIN, 'package.json'), 'utf8'));
+  assert.deepEqual(Object.keys(manifest), ['name', 'version', 'private', 'description', 'license', 'exports']);
+  assert.equal(manifest.name, 'aidrian');
+  assert.equal(manifest.private, true);
+  assert.equal(manifest.version, JSON.parse(readFileSync(path.join(PLUGIN, 'plugin.json'), 'utf8')).version);
+  assert.match(manifest.description, /OpenCode 2\.0 and later/u);
+  assert.equal(manifest.license, 'Apache-2.0');
+  assert.deepEqual(Object.keys(manifest.exports), ['.']);
+  const entry = path.join(PLUGIN, manifest.exports['.']);
+  assert.ok(existsSync(entry), entry);
+  const loaded = (await import(entry)).default;
+  assert.deepEqual(Object.keys(loaded), ['id', 'setup']);
+  assert.equal(loaded.id, 'aidrian');
+  assert.equal(typeof loaded.setup, 'function');
+});
+
 // End to end, with the real spawn and this Node: a project checkout whose origin is on GitHub, as test/hook-bash-post.test.mjs makes one.
 const STATE = path.join(ROOT, 'state');
 const HOOK_ENV = { PATH: process.env.PATH, HOME: ROOT, XDG_STATE_HOME: STATE, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };

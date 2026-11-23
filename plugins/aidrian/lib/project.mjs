@@ -55,7 +55,8 @@ const defaultRead = () => undefined;
 // lib/knowledge-cli.mjs), `aidrian pr` (lib/pr.mjs), the gate, the review that writes its record, every hook that
 // hooks.json runs, and every module and data file those load (test/auto-merge-guard.test.mjs walks them and fails on a
 // load it cannot follow); the agents that review, as generated and as sources; the skills with every reference and step
-// file they tell a session to read; the Codex install; and the plugin manifests. The modules behind the other `aidrian`
+// file they tell a session to read; the Codex install; the OpenCode bridge (opencode/) and the package manifest that
+// names it (package.json, at the plugin folder's top only); and the plugin manifests. The modules behind the other `aidrian`
 // subcommands, such as check.mjs, lint.mjs, worktree.mjs, and report-*.mjs, are not guarded, except project-run.mjs,
 // project-run-cli.mjs, project-run-gate.mjs, project-run-guard.mjs, project-recheck.mjs, and project-stops.mjs: they decide
 // which session may start a project run, which issue it starts, which session records its result, when a halt lifts,
@@ -77,7 +78,7 @@ const GUARDED_LIB = [
   'terminal-replace', 'terms', 'test-changed', 'tracker-check', 'tracker-guard', 'transcript', 'unattended-mark', 'unattended-shell',
   'unattended-write', 'usage', 'worktree',
 ].join('|');
-const GUARDED_PLUGIN = String.raw`bin/|scripts/|hooks/|lib/(?:forges|rules|review|hosts|trackers)/|lib/(?:${GUARDED_LIB})\.(?:mjs|json)$|agents/|codex/|agents-src/|providers/|agent-addons/|skills/|(?:\.claude-plugin/)?plugin\.json$`;
+const GUARDED_PLUGIN = String.raw`bin/|scripts/|hooks/|lib/(?:forges|rules|review|hosts|trackers)/|lib/(?:${GUARDED_LIB})\.(?:mjs|json)$|agents/|codex/|agents-src/|providers/|agent-addons/|skills/|opencode/|package\.json$|(?:\.claude-plugin/)?plugin\.json$`;
 // The instruction files AI hosts read by name, at any depth and in any case: AGENTS.md, CLAUDE.md, and GEMINI.md, with
 // any infix, such as AGENTS.override.md, which Codex reads first, or CLAUDE.local.md; and AGENT.md, QWEN.md, WARP.md,
 // CRUSH.md, and CONVENTIONS.md.

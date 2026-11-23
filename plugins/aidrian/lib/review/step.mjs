@@ -199,12 +199,6 @@ export async function prepareStep(s) {
     return { status: 'incomplete', pr: n, repo, head, reason, retry_recommended: false };
   }
   let state = record.state;
-  // The cause of a head past the cap that an older step judged by that head's own results (`reviewed` is its head) and
-  // kept on the outcome alone moves to the last round before this step replaces the outcome, so a later head inherits
-  // none of the round's own (run.mjs capCause). A cause the head inherited from the round stays where it is.
-  const lastRound = state.rounds.at(-1);
-  const lastCause = isObject(state.outcome?.cap) ? state.outcome.cap : null;
-  if (lastRound && typeof lastCause?.head === 'string' && sameCommit(lastCause.reviewed, lastCause.head) && !sameCommit(lastCause.head, lastRound.head)) lastRound.cap = lastCause;
   // The record is floored before any id is minted: `aidrian pr attest` mints only into a floored record. Where the
   // record is posted, the floor is the highest id among the members' markers (R4); a read of them that failed before
   // the record's first id floors nothing, so neither this step nor attest mints one.

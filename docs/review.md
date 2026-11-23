@@ -1242,6 +1242,7 @@ check. Among them, on exactly that head:
 - the open findings of this machine's own reviewers, the local and independent stages, are the whole cause of the cap,
   each listed, each of `medium` severity or lower, and none a security finding, of a security pass, or of the
   `security-engineer`;
+- a review round stopped on the head: a cause judged past the cap by attested results alone (`past_cap`) is never waived;
 - no sign-off of the Human's is owed on the head;
 - the review bot passed exactly the head on the forge: a verdict never stands in for it;
 - the host confirms the judge's dispatch in the dispatch log, which Codex cannot, and no judge has ruled on the head yet;
@@ -1450,7 +1451,8 @@ shows, such as a waiver's reason, has `<!--` and `-->` escaped, so no text can c
   every flow of the plan not all held, whichever stage answers for it. The cause of a reviewed head is kept on its
   round too (`rounds[].cap`), which a later cap on a head no round reviewed reads.
   A head past the cap that holds a result a pass uses, as one `aidrian pr attest` recorded there, is judged by its own results instead.
-  Its cause replaces the round's, so a later head no pass reviewed inherits no cause, and a waiver refuses it until a round reviews a head.
+  That cause is `past_cap`: the step stopped before the flows' checks, so no waiver passes it until a review round, the Human's extra round, runs.
+  It replaces the round's, so a later head no pass reviewed inherits no cause, and a waiver refuses that head too.
   The posted copy keeps no `cap`,
   on the outcome or a round, and no waiver's `judge_id` and `session`. Each binds to one head and
   one kind. The summary comment shows them under **Merge guard waivers**, each marked an audit entry, not proof; the

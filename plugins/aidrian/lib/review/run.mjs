@@ -153,7 +153,7 @@ const CAUSE_ITEMS = 50;
 // every flow of the plan whose invariants are not all held, whichever stage answers for it (evidence.mjs flowStatus).
 // That whole cause is kept on the round too (`round.cap`). A head past the cap with a result a pass uses, as one
 // `aidrian pr attest` recorded there, is judged the same way, by its own results, and its cause replaces the last
-// round's. When the last round reviewed another head and no pass has a result for `head` (a fix pushed that no round
+// round's; it is `past_cap`, with `unsigned: null`, since the step read no evidence beyond the reviewers there. When the last round reviewed another head and no pass has a result for `head` (a fix pushed that no round
 // reviewed), the cause is that round's kept one, its flows as `unsigned`; a round with none kept, or with the cause of
 // a head past the cap, gives `unsigned: null`, which refuses until a round reviews a head. `counted` is the open count, `itemized` whether every one of them is listed;
 // `tests_removed` and `checks_failing` this step's evidence stops and flow tests deleted with no sign-off on `head`;
@@ -167,8 +167,10 @@ function capCause(s, extra) {
   const bot = extra.bot !== undefined;
   const passes = plan.stages.flatMap((stage) => stage.passes.map((pass) => ({ pass, stage: stage.name })));
   // A head that holds a result the step uses, as one `aidrian pr attest` recorded past the cap, is judged by its own
-  // results, never by the kept cause of a round on another head.
-  const onHead = round?.head === head || passes.some(({ pass }) => sameCommit(resultFor(pass)?.head, head));
+  // results, never by the kept cause of a round on another head. Past the cap the step stops before the evidence
+  // beyond the reviewers, such as the flows' checks, is read, so that cause is `past_cap`, which no waiver passes.
+  const pastCap = round?.head !== head;
+  const onHead = !pastCap || passes.some(({ pass }) => sameCommit(resultFor(pass)?.head, head));
   if (!onHead) {
     const kept = isObject(round?.cap) && round.cap.head === round.head ? round.cap : null;
     if (!kept) return { head, reviewed: round?.head ?? null, items: [], counted: null, itemized: false, unrun: [], unsigned: null, flows: [], tests_removed: tests, checks_failing: 0, bot, human };
@@ -191,7 +193,8 @@ function capCause(s, extra) {
     unrun: passes.filter(({ pass }) => map[pass.reviewer]?.kind !== 'remote' && !resultFor(pass)).map(({ pass }) => pass.id),
     // The remote passes with no result on `head` yet, such as the review bot asked early and awaited last.
     waiting: passes.filter(({ pass }) => map[pass.reviewer]?.kind === 'remote' && !resultFor(pass)).map(({ pass }) => pass.id),
-    unsigned: [],
+    unsigned: pastCap ? null : [],
+    ...(pastCap ? { past_cap: true } : {}),
     // Every flow whose invariants are not all held, not only the flows of the stage the cap was judged at.
     flows: [...new Set([...(extra.flows ?? []).map((flow) => flow.flow), ...plan.flows.filter((flow) => typeof flowStatus !== 'function' || !flowStatus(flow).signed).map((flow) => flow.id)])],
     tests_removed: tests,

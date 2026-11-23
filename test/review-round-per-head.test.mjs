@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { recordPass } from '../plugins/aidrian/lib/review/run.mjs';
-import { readLocalState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
+import { readLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { capProblem } from '../plugins/aidrian/lib/review/waiver.mjs';
 import { clean, found, repo } from './review-run-fixture.mjs';
 
@@ -106,8 +106,8 @@ test('a pass attested on a head with other file coverage gives the round back wh
 });
 
 // Round 2 of 2 stops at the cap on a medium finding of the engine's pass, a cause a waiver can pass. A pass attested
-// count-only on the next head is that head's cause, never round 2's, and a later head nothing reviewed inherits
-// neither, from this record or from one an older step wrote.
+// count-only on the next head is that head's own cause, past the cap, and a later head nothing reviewed inherits
+// neither.
 test('past the cap, a count-only result attested on a new head is its own cap cause, which no waiver passes', async (t) => {
   const r = booking(t, { maxReviewRounds: 2, extraRounds: 'off' });
   const medium = { file: 'src/booking/a.js', line: 1, title: 'off by one', body: 'x', severity: 'medium' };
@@ -132,14 +132,29 @@ test('past the cap, a count-only result attested on a new head is its own cap ca
   attest(r, pass, third);
   const past = await r.step({ exec: clean });
   assert.deepEqual([past.status, past.round, past.cap?.reviewed, past.cap?.itemized, past.cap?.counted], ['round_limit', 2, third, false, 1], 'the cause is the new head\'s count-only result');
-  assert.ok(capProblem(readLocalState(r.project, 7), third), 'a counted finding is never waived');
-  const state = readLocalState(r.project, 7);
-  assert.equal(state.rounds.at(-1).cap.head, third, 'the cause of the head past the cap replaces round 2\'s');
-  // A record an older step wrote kept that cause on the outcome alone, and round 2's waivable one on the round.
-  state.rounds.at(-1).cap = waivable;
-  writeLocalState(r.project, state, { repo: 'o/r' });
+  assert.deepEqual([past.cap?.past_cap, past.cap?.unsigned], [true, null]);
+  assert.match(capProblem(readLocalState(r.project, 7), third), /past the cap judged this head by attested results alone/u);
+  assert.equal(readLocalState(r.project, 7).rounds.at(-1).cap.head, third, 'the cause of the head past the cap replaces round 2\'s');
   const fourth = push(r, 4);
   const unreviewed = await r.step({ exec: clean });
   assert.deepEqual([unreviewed.status, unreviewed.cap?.head, unreviewed.cap?.unsigned], ['round_limit', fourth, null], 'round 2\'s waivable cause is gone');
   assert.ok(capProblem(readLocalState(r.project, 7), fourth), 'a head nothing reviewed is never waived');
+});
+
+// The review bot's case: the cap stops round 1 of 1 on a failing check of the flow. Past the cap the step reads no
+// check, so a head whose every pass is attested clean, its invariant held, is still never waived.
+test('past the cap, a head attested clean with a failing flow check is never waived', async (t) => {
+  const flows = { booking: { files: ['src/booking/**'], checks: ['booking-test'] } };
+  const r = repo(t, { baseConfig: { version: 1, github: { maxReviewRounds: 1, extraRounds: 'off' }, review: { engine: 'self', flows } }, change: (write) => write('src/booking/a.js', 'export const a = 0;\n') });
+  r.forge.checkRuns = () => [{ name: 'booking-test', status: 'completed', conclusion: 'failure' }];
+  const first = await r.step({ exec: clean });
+  const passes = first.dispatch.map((each) => each.pass);
+  for (const pass of passes) attestClean(r, pass, first.head);
+  const capped = await r.step({ exec: clean });
+  assert.deepEqual([capped.status, capped.cap?.checks_failing], ['round_limit', 1]);
+  const next = push(r, 1);
+  for (const pass of passes) attestClean(r, pass, next);
+  const past = await r.step({ exec: clean });
+  assert.deepEqual([past.status, past.cap?.head, past.cap?.past_cap], ['round_limit', next, true]);
+  assert.match(capProblem(readLocalState(r.project, 7), next), /past the cap judged this head by attested results alone/u);
 });

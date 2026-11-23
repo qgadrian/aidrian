@@ -103,7 +103,8 @@ test('latestBotSignal: review beats older thumbs-up, counts its line comments, i
     { id: 2, user: BOT, submitted_at: T(8), commit_id: 'bbb', state: 'COMMENTED' },
     { id: 3, user: { login: 'someone' }, submitted_at: T(9), commit_id: 'bbb', state: 'COMMENTED' },
   ];
-  const reviewComments = [{ pull_request_review_id: 2 }, { pull_request_review_id: 2 }, { pull_request_review_id: 3 }];
+  // A reply in a thread is no finding: only the review's top-level comments count.
+  const reviewComments = [{ pull_request_review_id: 2 }, { pull_request_review_id: 2 }, { pull_request_review_id: 2, in_reply_to_id: 9 }, { pull_request_review_id: 3 }];
   const reactions = [{ user: BOT, content: '+1', created_at: T(7) }];
   const s = latestBotSignal({ reviews, reviewComments, reactions, reviewer: DEFAULT_REVIEWER, since: T(5) });
   assert.deepEqual(s, { kind: 'review', at: T(8), review_id: 2, commit_id: 'bbb', state: 'COMMENTED', line_comments: 2 });

@@ -601,6 +601,7 @@ test('the review bot as the engine: a thumbs-up passes, a review with comments i
   r.write('src/app.js', 'c\n');
   r.commit();
   const approval = await r.step({ codex: off, awaitBot: async () => ({ status: 'received', signal: { kind: 'review', state: 'APPROVED', line_comments: 0 } }) });
+  // latestBotSignal counts no thread reply (test/pr-await-review.test.mjs), so an approval with only replies reads as this one.
   assert.equal(approval.status, 'received', 'an approval with no inline comment is clean, as the bot history reads it');
   assert.ok(Object.values(readLocalState(r.project, 7).passes).some((pass) => pass.bot && pass.open === 0 && pass.floor === undefined));
 });

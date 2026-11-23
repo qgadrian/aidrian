@@ -62,7 +62,7 @@ import { ATTEMPT_ENV, cacheVars, registryHosts } from './project-registries.mjs'
 import { CLAIM_VAR, newClaim, writeClaim } from './project-token.mjs';
 import { afterFailure, cleanText, CAPS, DROP_FILE, ingestDrops, openPullOf, RESULT_CAP, validateResult, writeDrop } from './project-result.mjs';
 import { writeIssueFile } from './project-issue-text.mjs';
-import { appendToRun, attemptBranches, attendedProblem, haltOf, issueBranch, planRun, readCapped, readRun, runFolder, runPlace, runsFolder, RUN_ID, SERIAL } from './project-run.mjs';
+import { appendToRun, attemptBranch, attemptBranches, attendedProblem, haltOf, issueBranch, planRun, readCapped, readRun, runFolder, runPlace, runsFolder, RUN_ID, SERIAL } from './project-run.mjs';
 import { custody, driverOf, endedIn, hostContinued, ISSUE_ATTEMPTS, latestStart, resultAuthorProblem, resumerProblem, runStore, spentAttempts, startRows, startsOf, timeOf, ATTEMPT_CEILING } from './project-run-guard.mjs';
 import { accessProblem, guardedFolders, haltAnswer, hostStartProblem, linkTripwire, placeHolders, prepareAttempt, runLog, runLogFile, stateWorkFolders, sweepAttempts, unverifiedNote, writeShellVars } from './project-start.mjs';
 import { ancestorProblem, namedFiles, pushProblem, repositoryProblem, trustProblem } from './project-trust.mjs';
@@ -421,7 +421,7 @@ function startPlace(context) {
   if (base.problem) return refuse(base.problem, orphans);
   // The branch the issue's latest start worked on, and the fresh one this attempt cuts from the tip if it leaves that.
   const branch = issueBranch(current, key);
-  const fresh = `${current.snapshot.issues.find((issue) => issue.key === key).branch}-a${capped.attempt}`;
+  const fresh = attemptBranch(current.snapshot.issues.find((issue) => issue.key === key).branch, capped.attempt);
   // Every branch another issue of the run names or recorded, which a fresh one may never take.
   const reserved = new Set(current.snapshot.issues.filter((issue) => issue.key !== key).flatMap((issue) => [issue.branch, ...attemptBranches(current, issue.key)]));
   // A started issue an earlier run parked (project-run.mjs resumedIssues): its branch on the forge is that run's work,

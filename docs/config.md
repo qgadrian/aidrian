@@ -2055,16 +2055,24 @@ The snapshot input is one JSON object, at most 1 MiB, read as a regular file and
   No part is 40 or 64 hex digits, as a commit id is.
 - `status` is a status type: `triage`, `backlog`, `unstarted`, `started`, `completed`, or `canceled`.
   A run starts only a `backlog` or `unstarted` issue, and a `started` one that an earlier run of the project parked
-  on the branch the snapshot names: in the runs folder, among the runs that pinned the same repository, the one with the
-  latest `init` among those that record the issue records it parked, and the branch its latest start that ran worked on
-  is this one. That run moved it to started and parked it, as on a pull request left open, so the issue is the run's own
-  work; `init` records it in `snapshot.json` as `resumed`, with that run, the pull request its latest result named, and
-  the `head` that result recorded, prints a `resumed:` line, and `next`, `start`, and the gate read the same plan.
+  on the branch the snapshot names or on an attempt branch it cut from it: in the runs folder, among the runs that pinned
+  the same repository, the one with the latest `init` among those that record the issue records it parked, and the
+  branch its latest start that ran worked on is the snapshot's, or the snapshot's with `-a<n>` added, as an attempt that
+  left the snapshot's branch cuts it, which a start row of that run names, when that run's own snapshot named the same
+  branch for the issue. Such a branch may run past the 120-character cap by its suffix, as the start gate cuts it.
+  Any other branch keeps the issue blocked. A resumed branch that another issue of the snapshot names, or resumes on,
+  compared in any case, is a snapshot problem: `init` refuses it and `init --check` prints a `blocker snapshot` line,
+  since both sessions would be let push to that one ref.
+  That run moved it to started and parked it, as on a pull request left open, so the issue is the run's own
+  work; `init` records it in `snapshot.json` as `resumed`, with that run, the pull request its latest result named,
+  the `head` that result recorded, and that `branch`, prints a `resumed:` line, and `next`, `start`, and the gate read
+  the same plan. The new run works on that branch from its first attempt: `next` names it, and the start's clone, its
+  start row, the session's push, the merge guard, and `stop-action` all take it.
   A result that parks an issue records the commit the forge shows its branch at then, or null when it shows none;
   a `pr_open` result records the head its pull request's check read, with no second read.
   A ledger written before heads were recorded has a latest result row with no `head` field at all: when that result
   named a pull request, `init` and its check read it through the forge and take its head commit, only when it is open,
-  from the snapshot's branch, in the pinned repository. That fallback trusts the pull request's head as the forge shows
+  from that branch, in the pinned repository. That fallback trusts the pull request's head as the forge shows
   it now, not a commit the run recorded; a row with a `head` field, null included, never falls back.
   A resumed issue's first attempt goes on from its branch on the forge only when the branch holds that head, at it or
   after it; a branch at any other history is refused, and with no head, such as a run that parked before any push, the

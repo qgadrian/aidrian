@@ -805,7 +805,8 @@ const ISSUE_ONE = { key: 'ENG-1', branch: 'feat/eng-1-export', status: 'unstarte
 // recording the branch's head then unless `recorded` is false, as a ledger written before results recorded one, then
 // the run `launch`, whose snapshot holds ENG-1 as started, as the tracker now shows it, with the forge showing pull
 // request `pr` as `view(head)` when given: the branch's head, and the scratch clone that pushed it.
-const parkedEarlier = (t, files, { recorded = true, pr = 12, view } = {}) => {
+// With `branch` an attempt branch, the earlier run's second attempt cut it and pushed there.
+const parkedEarlier = (t, files, { recorded = true, pr = 12, view, branch = ISSUE_ONE.branch } = {}) => {
   const fx = runFixture(t, { init: false });
   const input = (name, issues) => {
     const file = path.join(fx.dir, `${name}.input`);
@@ -815,9 +816,10 @@ const parkedEarlier = (t, files, { recorded = true, pr = 12, view } = {}) => {
   assert.equal(fx.cmd(['init', 'first', '--file', input('first', [ISSUE_ONE])]).exitCode, 0);
   const scratch = path.join(fx.root, 'scratch');
   execFileSync('git', ['clone', '-q', fx.bare, scratch], { stdio: 'pipe' });
-  const head = pushFiles(fx, scratch, files);
+  const head = pushFiles(fx, scratch, files, branch);
   const now = at(Date.now());
   appendToRun(fx.state, 'first', () => ({ rows: [
+    ...(branch === ISSUE_ONE.branch ? [] : [{ event: 'start', key: 'ENG-1', attempt: 2, branch, outcome: 'started', at: now }]),
     { event: 'result', key: 'ENG-1', attempt: 1, status: pr ? 'pr_open' : 'blocked', pr, ...(recorded ? { head } : {}), at: now },
     { event: 'issue', key: 'ENG-1', state: 'parked', decision: pr ? 'pr-open' : 'blocked', at: now },
   ] }));
@@ -868,7 +870,7 @@ test('a resumed issue whose branch on the forge no longer holds the head the ear
 test('a parked issue of a ledger from before heads were recorded resumes from its open pull request\'s head on the same branch, and from no other', (t) => {
   const open = (head) => ({ state: 'OPEN', headRefName: 'feat/eng-1-export', headRefOid: head, url: 'https://github.com/acme/widgets/pull/12', isCrossRepository: false });
   const { fx, head } = parkedEarlier(t, { 'src/export.js': 'export const csv = true;\n' }, { recorded: false, view: open });
-  assert.deepEqual(fx.run().snapshot.resumed, [{ key: 'ENG-1', run: 'first', pr: 12, head }]);
+  assert.deepEqual(fx.run().snapshot.resumed, [{ key: 'ENG-1', run: 'first', pr: 12, head, branch: 'feat/eng-1-export' }]);
   const started = fx.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(started.exitCode, 0, started.err.join('\n'));
   assert.equal(fx.git('-C', work(fx), 'rev-parse', 'HEAD').trim(), head, 'the branch as the forge has it');
@@ -883,9 +885,28 @@ test('a parked issue of a ledger from before heads were recorded resumes from it
     const other = parkedEarlier(t, { 'src/export.js': 'export const csv = true;\n' }, { recorded: false, ...options });
     assert.equal(other.fx.run().snapshot.resumed[0].head, null, JSON.stringify(options.view(other.head)));
   }
+  // On an attempt branch the earlier run cut, the pull request must be from that branch.
+  const attempt = parkedEarlier(t, { 'src/export.js': 'export const csv = true;\n' }, { recorded: false, branch: 'feat/eng-1-export-a2', view: (sha) => ({ ...open(sha), headRefName: 'feat/eng-1-export-a2' }) });
+  assert.equal(attempt.fx.run().snapshot.resumed[0].head, attempt.head);
   // A row with a `head` field never falls back, though the forge shows the pull request open from the branch.
   const recorded = parkedEarlier(t, { 'src/export.js': 'export const csv = true;\n' }, { view: (sha) => ({ ...open(sha), headRefOid: 'c'.repeat(40) }) });
   assert.equal(recorded.fx.run().snapshot.resumed[0].head, recorded.head);
+});
+
+test('a parked issue on the attempt branch its earlier run cut goes on on that branch in the new run, from its recorded head, and pushes there', (t) => {
+  const branch = 'feat/eng-1-export-a2';
+  const { fx, head } = parkedEarlier(t, { 'src/export.js': 'export const csv = true;\n' }, { branch });
+  assert.deepEqual(fx.run().snapshot.resumed, [{ key: 'ENG-1', run: 'first', pr: 12, head, branch }]);
+  assert.ok(fx.cmd(['next', 'launch']).out.includes(`next ENG-1 ${branch}`));
+  const started = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(started.exitCode, 0, started.err.join('\n'));
+  assert.equal(started.out.find((line) => line.startsWith('branch: ')), `branch: ${branch}`);
+  assert.equal(fx.git('-C', work(fx), 'rev-parse', 'HEAD').trim(), head, 'the attempt branch as the forge has it');
+  const prompt = fx.claude.starts()[0].args.at(-1);
+  assert.ok(prompt.includes(`the branch ${branch} on the forge holds the work it pushed`), prompt);
+  assert.ok(prompt.includes(`git push origin HEAD:refs/heads/${branch}`), prompt);
+  assert.equal(fx.rows().findLast((row) => row.event === 'start').branch, branch);
+  assert.equal(ownIssue(fx.project, fx.config, { project: 'launch', issue: 'ENG-1' }, { home: fx.home })?.branch, branch, 'the one branch the session may push');
 });
 
 test('a resumed issue whose branch the forge no longer has is cut fresh from the base tip, and its task claims no earlier work', (t) => {
@@ -900,7 +921,7 @@ test('a resumed issue whose branch the forge no longer has is cut fresh from the
 
 test('a resumed issue whose earlier run recorded no head starts as a first attempt does: a branch on the forge is refused', (t) => {
   const { fx } = parkedEarlier(t, { 'src/export.js': 'export const csv = true;\n' }, { recorded: false });
-  assert.deepEqual(fx.run().snapshot.resumed, [{ key: 'ENG-1', run: 'first', pr: 12, head: null }], 'init resumes it all the same');
+  assert.deepEqual(fx.run().snapshot.resumed, [{ key: 'ENG-1', run: 'first', pr: 12, head: null, branch: 'feat/eng-1-export' }], 'init resumes it all the same');
   const refused = fx.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(refused.exitCode, 1);
   assert.match(refused.err[0], /the branch feat\/eng-1-export is on the forge already, and a first attempt cuts it fresh from the base tip/u);

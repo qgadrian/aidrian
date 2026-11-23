@@ -84,7 +84,8 @@ export function touchedTests(root, files, git = runGit, { nodeOnly = false } = {
   const named = needles.length
     ? lines(git(['grep', '--no-recurse-submodules', '--untracked', '-l', '-F', ...needles.flatMap((needle) => ['-e', needle]), '--'], root)) ?? []
     : [];
-  return [...new Set([...own, ...beside, ...named.filter(ours)])].sort();
+  // Only files on disk reach the runner, whatever selected them: git lists a stale entry until its removal is staged.
+  return [...new Set([...own, ...beside, ...named.filter(ours)])].filter((file) => isFile(path.join(root, file))).sort();
 }
 
 // The command that runs test files, or null: the configured one, else `npm test --` for a package.json test script.

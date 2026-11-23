@@ -697,6 +697,10 @@ test('aidrian test changed finds the changed test files and the ones that name a
   assert.deepEqual(touchedTests(dir, ['lib/a.mjs', 'test/c.test.mjs']), ['test/a.test.mjs', 'test/c.test.mjs'], 'a nested package\'s tests are its own runner\'s');
   assert.deepEqual(touchedTests(dir, ['lib/widget.ts']), ['test/widget.test.ts'], 'an import with no extension');
   assert.deepEqual(touchedTests(dir, ['pkg/sum.go']), ['pkg/sum_test.go'], 'Go tests beside the changed file');
+  const goTest = readFileSync(path.join(dir, 'pkg/sum_test.go'), 'utf8');
+  rmSync(path.join(dir, 'pkg/sum_test.go'));
+  assert.deepEqual(touchedTests(dir, ['pkg/sum.go']), [], 'a Go test deleted in the working tree is not handed on');
+  writeFileSync(path.join(dir, 'pkg/sum_test.go'), goTest);
   const nodeOnly = (files) => touchedTests(dir, files, undefined, { nodeOnly: true });
   assert.deepEqual(touchedTests(dir, ['lib/b.mjs']), ['test/b.test.mjs', 'test/fixtures/a.json', 'test/fixtures/notes.md'], 'a configured command decides what it runs');
   assert.deepEqual(touchedTests(dir, ['test/fixtures/a.json']), ['test/fixtures/a.json'], 'a configured command gets a changed fixture alone, as before');

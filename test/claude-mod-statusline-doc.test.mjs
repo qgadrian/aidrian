@@ -39,6 +39,17 @@ test('the documented status line script runs the newest install that holds the f
   const fresh = { ...local, installPath: newer, version: '1.2.3' };
   assert.equal(run([fresh, { ...user, installPath: older, version: '1.2' }], link, base), 'cli 1.2.3', 'a folder reached through a link still holds');
   assert.equal(run([{ ...fresh, version: 'unknown', installPath: older }, user], project, base), 'cli 1.2.3', 'a version that is not numbers ranks last');
-  assert.equal(run([{ ...user, installPath: path.join(base, 'gone') }, local], project, base), 'cli 1.2', 'an install whose cli is gone is skipped');
+  assert.equal(run([{ ...user, installPath: path.join(base, 'gone') }, local], project, base), '', 'the chosen install`s cli is gone: a blank line, as the mod refuses it');
+  mkdirSync(path.join(base, 'dir/lib/cli.mjs'), { recursive: true });
+  assert.equal(run([{ ...user, installPath: path.join(base, 'dir') }, local], project, base), '', 'a folder at lib/cli.mjs is no cli');
+  assert.equal(run([{ ...user, installPath: 'relative/1.2.3' }, local], project, base), '', 'a relative install path is refused');
+  const twin = install('1.2.3-twin');
+  const nested = path.join(project, 'app');
+  mkdirSync(nested);
+  const same = (scope, projectPath, installPath) => ({ scope, projectPath, installPath, version: '1.2.3' });
+  assert.equal(run([same('user', undefined, newer), same('local', project, twin)], project, base), 'cli 1.2.3-twin', 'a tie goes to local over user');
+  assert.equal(run([same('project', project, newer), same('local', project, twin)], project, base), 'cli 1.2.3-twin', 'and to local over project');
+  assert.equal(run([same('local', nested, twin), same('local', project, newer)], nested, base), 'cli 1.2.3-twin', 'and to the deeper folder');
+  assert.equal(run([same('local', '/', twin), same('user', undefined, newer)], project, base), 'cli 1.2.3-twin', 'a root folder holds every folder');
   assert.equal(run([{ ...fresh, scope: 'other' }, { ...user, installPath: older, version: '1.2' }], project, base), 'cli 1.2', 'an unknown scope holds nothing');
 });

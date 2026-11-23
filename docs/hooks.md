@@ -1991,8 +1991,8 @@ push records it.
 The call's folder holds under either reading of the payload's `cwd`, the folder the line started in or the one it
 ended in, which no host documents for a Bash call ([Claude Code](providers/claude-code.md)): it is the absolute folder
 a leading `cd <folder> &&`, `git -C`, or `env -C` names, as `lib/shell-lex.mjs` reads it, or a leading `cd <folder>` that
-`;` or a newline ends, as in `cd <folder>; gh pr create` or `cd <folder>; git push`, when the line's own text opens
-with spaces or tabs, `cd`, and one unquoted absolute folder of plain characters with no `.` or `..` part, then `;`, or a
+`;` or a newline ends, as in `cd <folder>; gh pr create` or `cd <folder>; git push`, when the line's own text opens,
+after any blank or comment lines, with spaces or tabs, `cd`, and one unquoted absolute folder of plain characters with no `.` or `..` part, then `;`, or a
 newline after an optional comment, so no option, redirection, heredoc, wrapper, or other character stands in it, and that folder
 is a directory the hook may search just after the call, so the `cd` cannot have failed: after a failed one the
 commands ran in the folder the line started in, which no row then names; the payload's `cwd` only on a

@@ -229,6 +229,7 @@ test('a push records the folder it ran in: git -C, then a cd before it on the li
   assert.deepEqual(await rows(`cd ${dir} && npm test && git push`), [pushed('acme/notes', 'feat/folder', dir)]);
   assert.deepEqual(await rows(`cd ${dir}; git push -q -u origin feat/folder`), [pushed('acme/notes', 'feat/folder', dir)], 'a leading cd that ; ends');
   assert.deepEqual(await rows(`cd ${dir}\ngit push`), [pushed('acme/notes', 'feat/folder', dir)], 'a leading cd that a newline ends');
+  assert.deepEqual(await rows(`# push it\n\ncd ${dir}; git push`), [pushed('acme/notes', 'feat/folder', dir)], 'after a comment and a blank line');
   assert.deepEqual(await rows('git push', { cwd: dir }), [pushed('acme/notes', 'feat/folder', dir)]);
   assert.deepEqual(await rows('git -C "$W" push', { cwd: dir }), []);
   assert.deepEqual(await rows('cd "$W" && git push', { cwd: dir }), []);

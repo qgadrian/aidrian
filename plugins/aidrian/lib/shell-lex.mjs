@@ -966,12 +966,12 @@ function runsInOwnProcess(segment) {
 }
 
 // The folder of a line that opens with `cd <folder>` and then `;` or a newline, read off the line's own text, never the
-// lexer's tokens: spaces or tabs only, `cd`, one unquoted word of plain characters (PLAIN_WORD), absolute and as
+// lexer's tokens: after any blank or comment lines, spaces or tabs only, `cd`, one unquoted word of plain characters (PLAIN_WORD), absolute and as
 // path.normalize writes it, so no `.` or `..` part, then `;`, or a newline after an optional comment. Any other character
 // before that end, such as an option, a redirection, a heredoc, a carriage return, or a no-break space, which the shell
 // keeps in a word, gives null. So a `cd` that `enters` finds that folder of cannot have failed on another part of its
 // own segment, and it runs in this shell, never in a function body or a coprocess.
-const PLAIN_CD = /^[ \t]*cd[ \t]+([A-Za-z0-9_@%+=:,./-]+)(?:[ \t]*;|(?:[ \t]+#[^\n]*)?[ \t]*\n)/u;
+const PLAIN_CD = /^(?:[ \t]*(?:#[^\n]*)?\n)*[ \t]*cd[ \t]+([A-Za-z0-9_@%+=:,./-]+)(?:[ \t]*;|(?:[ \t]+#[^\n]*)?[ \t]*\n)/u;
 function plainCd(line) {
   const word = PLAIN_CD.exec(line)?.[1];
   return word && path.isAbsolute(word) && path.normalize(word) === word ? word : null;

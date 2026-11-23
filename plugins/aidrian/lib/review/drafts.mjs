@@ -18,8 +18,10 @@ import { recordRepos } from './state.mjs';
 // A draft's name, with its pull request's number in the one group that matched.
 // A findings folder of another remote's repository names it, `<owner>--<name>`: GitHub owners hold no `--`.
 // An issue session's findings folder leads with `@` and its issue key (dispatch.mjs findingsFile). No issue key starts
-// with `@`, so no session's own scratch matches, and the folder goes whole, as the plain one does.
-const DRAFT = /^(?:(?:@(?:[a-z][a-z0-9]{0,15}-)?[1-9][0-9]{0,8}-)?review-([1-9]\d{0,9})(?:-([\w.-]+?)--([\w.-]+))?|pr-([1-9]\d{0,9})-review\.md|product-feedback-([1-9]\d{0,9})(?:-items\.json|\.md))$/u;
+// with `@`, so no session's own scratch matches, and the folder goes whole, as the plain one does. An owner that starts
+// `review-<digit>` is read as no draft, so the folder an issue such as REVIEW-12 named before, `review-12-review-34-...`,
+// is never taken for #12's: such an owner's drafts stay.
+const DRAFT = /^(?:(?:@(?:[a-z][a-z0-9]{0,15}-)?[1-9][0-9]{0,8}-)?review-([1-9]\d{0,9})(?:-(?!review-[1-9])([\w.-]+?)--([\w.-]+))?|pr-([1-9]\d{0,9})-review\.md|product-feedback-([1-9]\d{0,9})(?:-items\.json|\.md))$/u;
 // Whether `name` is a draft's, which a sweep removes whole once its pull request ends (unattended-write.mjs issueNamed).
 export const isDraftName = (name) => DRAFT.test(name);
 // The most pull requests one sweep reads the state of, lowest number first: each is one forge call.

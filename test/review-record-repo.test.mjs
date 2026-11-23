@@ -211,6 +211,8 @@ test('p7: with no record of the number, a draft naming no repository waits for e
   writeFileSync(path.join(tmp, 'eng-3-review-12'), 'x');
   // An issue key that reads like the findings stem: its scratch `review-12-...` is no draft either.
   mkdirSync(path.join(tmp, 'review-12-notes'), { recursive: true });
+  // That issue's findings folder as it was named before, led by its key: never read as #12's of a repository.
+  mkdirSync(path.join(tmp, 'review-12-review-34-o--r'), { recursive: true });
   mkdirSync(path.join(tmp, 'eng-4-review-9'), { recursive: true });
   writeFileSync(path.join(tmp, 'pr-12-review.md'), 'x');
   const states = { [own]: 'OPEN', 'c7/d': 'MERGED', default: 'MERGED' };
@@ -219,7 +221,7 @@ test('p7: with no record of the number, a draft naming no repository waits for e
   assert.deepEqual([swept.removed, swept.kept], [[], [{ pr: 12, reason: 'open' }]], 'the origin`s #12 is still open, though the forge`s default merged, and read within a limit of 1');
   states[own] = 'CLOSED';
   assert.deepEqual(sweepDrafts(c.project, { forge, dir: tmp }).removed.map((row) => row.files), [['@eng-1-review-12', 'pr-12-review.md', 'review-12']], 'an issue session\'s findings folder too, never its other scratch');
-  assert.deepEqual([existsSync(path.join(tmp, '@eng-1-review-12')), existsSync(path.join(tmp, 'eng-2-review-12', 'agent-y-0011aabb.findings.json')), existsSync(path.join(tmp, 'eng-3-review-12')), existsSync(path.join(tmp, 'eng-4-review-9')), existsSync(path.join(tmp, 'review-12-notes'))], [false, true, true, true, true]);
+  assert.deepEqual([existsSync(path.join(tmp, '@eng-1-review-12')), existsSync(path.join(tmp, 'eng-2-review-12', 'agent-y-0011aabb.findings.json')), existsSync(path.join(tmp, 'eng-3-review-12')), existsSync(path.join(tmp, 'eng-4-review-9')), existsSync(path.join(tmp, 'review-12-notes')), existsSync(path.join(tmp, 'review-12-review-34-o--r'))], [false, true, true, true, true, true]);
 });
 
 test('p8: a review record survives origin renamed to upstream and a new origin, so the merge stays refused', (t) => {

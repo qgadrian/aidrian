@@ -905,8 +905,10 @@ test('the review trail gives each check run its workflow run, so a run a later o
     author: { login: 'adrian' }, baseRef: null, latestReviews: { nodes: [] }, files: { totalCount: 0, nodes: [] }, reviews: { totalCount: 0, nodes: [] }, comments: { totalCount: 0, nodes: [] },
     commits: { nodes: [{ commit: { oid: sha, statusCheckRollup: { contexts: { totalCount: 3, nodes } } } }] },
   } } } };
-  const { forge } = recorded(() => JSON.stringify(answer));
+  const { forge, args } = recorded(() => JSON.stringify(answer));
   const { rows } = forge.reviewTrail('acme/notes', 7, { paths: { pointer: '.aidrian.json', config: '.aidrian/config.json', knowledge: '.aidrian/knowledge' } }).checks;
+  const query = args()[0].find((arg) => String(arg).startsWith('query='));
+  assert.match(query, /\.\.\. on CheckRun \{ name status conclusion checkSuite \{ matchingPullRequests\(first: 2\) \{ totalCount nodes \{ number \} \} workflowRun \{ databaseId event workflow \{ databaseId \} \} \} \}/u, 'the query asks for what each row needs');
   assert.deepEqual(rows.map((row) => [row.run, row.workflowId, row.event]), [[901, 77, 'pull_request'], [902, 77, 'pull_request'], [null, null, null]]);
   assert.equal(computeVerdict(rows, { requiredChecks: ['Conventional Commit title'] }).verdict, 'ready', 'the cancelled run was replaced');
   assert.equal(computeVerdict(rows.slice().reverse().map((row) => (row.run === 902 ? { ...row, state: 'CANCELLED' } : row)), { requiredChecks: ['Conventional Commit title'] }).verdict, 'failing', 'a latest run that was cancelled still fails');

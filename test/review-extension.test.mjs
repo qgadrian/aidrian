@@ -149,8 +149,9 @@ test('atCap, revalidate, and grantedRounds take a bot decision only for its own 
   assert.equal(grantedRounds(plan, 'plan', { mode: 'auto', max: 2 }), 1);
 });
 
-// The reviewer a bot check read rides in the summary comment's record, so another machine matches it too; two bots'
-// checks waiting at once take no verdict or answer, which names no reviewer.
+// The reviewer a bot check read rides in the summary comment's record, which another machine continues from on a
+// private pull request; on a public one the record is published sanitized, the login kept. Two bots' checks waiting at
+// once take a verdict or an answer only through the `--check` their commands name.
 test('the published record keeps a bot check`s reviewer, and two bots` waiting checks refuse a verdict', () => {
   const state = emptyState(42, 'o/r');
   state.extensions = [

@@ -1178,13 +1178,12 @@ A project that adopts the group sets `requires.aidrian` to the release that ship
     `Worktree:` value and a `Branch:` value, `## Still running` and `## Open risks and questions` with a line of text
     (`None.` when there is nothing), and `## Next steps` with a numbered item at the start of a line.
     A heading matches by its first words in any case, so `## Next steps (ordered)` counts; a line inside a code fence does not.
-  - a first Next steps item that runs a skill only a person can start, one whose `SKILL.md` frontmatter sets
-    `disable-model-invocation: true`, such as `autopilot`, named as `/aidrian:<name>`, `/<name>`, or the `<name>` skill.
-    The step ends at the next item or at unindented prose after a blank line; a file such as `/autopilot.md` is not
-    counted. Any mention counts, one for a person to type included: a person's part goes in a later step.
-    The Skill tool of the session that resumes the brief refuses it, so a continuation would stop at once with no work
-    done; the gate starts none for a brief that fails the check. Step 1 names work a session can start, or the Human
-    resumes the brief and types the skill.
+  - a Next steps section that runs a skill only a person can start, one whose `SKILL.md` frontmatter sets
+    `disable-model-invocation: true`, such as `autopilot`, named as `/aidrian:<name>`, `/<name>`, or the `<name>` skill,
+    in any step, since a continuation runs them all. The Skill tool of the session that resumes the brief refuses it,
+    so a continuation would stop there; the gate starts none for a brief that fails the check. A file such as
+    `/autopilot.md` is not counted, and any mention is, one for a person to type included: a person's part goes under
+    Open risks and questions, or the Human resumes the brief and types the skill.
   - a header, the text above the first section, with no `Supersedes:` value. A value that begins with `none` names no
     brief; any other value names one, and when no superseded brief is found, nothing was compared, which is a finding:
     run the check again with `--prior <that brief>`.

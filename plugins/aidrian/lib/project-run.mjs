@@ -566,8 +566,8 @@ function resumedOf(value, issues) {
     if (each.branch !== undefined && !ownBranch(each.branch, started.get(each.key))) return null;
     seen.add(each.key);
   }
-  const kept = value.map(({ key, run, pr, head, branch }) => ({ key, run, pr, head, branch: branch ?? started.get(key) }));
-  return resumedProblems({ issues }, kept).length ? null : kept;
+  // A branch clash is init's to refuse (resumedProblems); a run already written stays readable, so it can still end.
+  return value.map(({ key, run, pr, head, branch }) => ({ key, run, pr, head, branch: branch ?? started.get(key) }));
 }
 
 // The started issues of `snapshot` a new run may start all the same, as [{ key, run, pr, head, branch }]: each one whose

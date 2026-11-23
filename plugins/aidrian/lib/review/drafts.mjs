@@ -43,9 +43,10 @@ export function draftsByPr(dir) {
   for (const name of names.sort()) {
     const match = DRAFT.exec(name);
     if (!match) continue;
-    // A led folder holding no findings file is an issue session's own scratch, with nothing to clean: it takes no
-    // forge lookup, so a sweep's limit is never spent on it.
-    if (ISSUE_LED.test(name) && !ledFindings(path.join(dir, name)).length) continue;
+    // A led folder holding no findings file, and not empty, is an issue session's own scratch, with nothing to clean:
+    // it takes no forge lookup, so a sweep's limit is never spent on it. One that cannot be read is kept for removal,
+    // whose error the sweep reports.
+    if (ISSUE_LED.test(name) && nothingLed(path.join(dir, name))) continue;
     const pr = Number(match[1] ?? match[4] ?? match[5]);
     const repo = match[2] ? `${match[2]}/${match[3]}`.toLowerCase() : null;
     const key = repo ? `${pr}@${repo}` : String(pr);
@@ -106,16 +107,36 @@ export function sweepDrafts(project, { forge = forgeFor(project.root), limit = M
   return out;
 }
 
-// The findings files in the led folder `dir`, as findingsFile names them, that are regular files; none when `dir` is
-// no folder, or a link.
+// The findings files in the led folder `dir`, as findingsFile names them, that are regular files, or null when there is
+// nothing to clean: `dir` is no folder, a link, or holds other files only. An empty folder, as a dispatch that wrote
+// nothing leaves, gives []. A file that vanishes while it is read is skipped.
 function ledFindings(dir) {
+  let names;
   try {
-    if (!lstatSync(dir).isDirectory()) return [];
-    return readdirSync(dir).filter((name) => FINDINGS.test(name) && lstatSync(path.join(dir, name)).isFile());
+    if (!lstatSync(dir).isDirectory()) return null;
+    names = readdirSync(dir);
   } catch {
-    return [];
+    return null;
   }
+  const found = names.filter((name) => {
+    if (!FINDINGS.test(name)) return false;
+    try {
+      return lstatSync(path.join(dir, name)).isFile();
+    } catch (error) {
+      if (error.code === 'ENOENT') return false;
+      throw error;
+    }
+  });
+  return found.length || !names.length ? found : null;
 }
+
+const nothingLed = (dir) => {
+  try {
+    return ledFindings(dir) === null;
+  } catch {
+    return false;
+  }
+};
 
 // Removes the draft `file`: whole, or, for a folder an issue session's key leads (`led`), only its findings files
 // (ledFindings), and then the folder once it is empty. Returns whether the draft is gone.
@@ -125,7 +146,7 @@ function removeDraft(file, led) {
     return true;
   }
   const names = ledFindings(file);
-  if (!names.length) return false;
+  if (names === null) return false;
   for (const name of names) rmSync(path.join(file, name), { force: true });
   if (readdirSync(file).length) return false;
   rmdirSync(file);

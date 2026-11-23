@@ -115,6 +115,11 @@ export const knowledgeIn = (configFile) => `${path.posix.dirname(configFile)}/kn
 // paths it read on each branch (pr-auto-merge.mjs branchPolicies). Not configurable.
 export const POLICY_PATHS = /(?:^|\/)(?:\.aidrian\/config\.json|\.aidrian\.json|\.aidrian\.local\.json|\.aidrian)$/iu;
 
+// Whether `file`, from the top of the repository, is a policy file: a POLICY_PATHS name, or one of `policyFiles`, the
+// paths pr-auto-merge.mjs branchPolicies read the gate's policy from, as a config.json a pointer file relocates, in any
+// case, as the auto-merge gate matches them.
+export const isPolicyPath = (file, policyFiles = []) => POLICY_PATHS.test(file) || policyFiles.some((each) => typeof each === 'string' && each.toLowerCase() === file.toLowerCase());
+
 // The project at or above `start`: the nearest folder that has `.aidrian.json` or `.aidrian/config.json`. Null when none.
 // In a git checkout the search stops at its top folder, so a worktree whose branch has no project folder has no project,
 // even inside a main checkout that has one. Outside git it goes on to the file-system root.

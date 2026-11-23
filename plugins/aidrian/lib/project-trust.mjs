@@ -10,7 +10,7 @@
 //     when no review passed the branch's own (lib/project-start.mjs prepareAttempt).
 
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { cleanText } from './clean-text.mjs';
@@ -302,13 +302,16 @@ export function trustProblem(dir, tip, overlaid = []) {
 // Writes the base tip's copy of each of `paths`, host files (isGuarded) a branch changed, over the checkout `dir`: the
 // tip's blob, read and hash-checked through commitFiles and readObjects, as a file or a link by its mode, and a path the
 // tip lacks removed. A path is removed only when lstat shows a regular file there, and written only where nothing is,
-// with `wx` for a file. The caller has checked that no part of any path is a link (lib/project-start.mjs linkedPart), so
-// nothing is written or removed through one; a folder or a link at a path refuses. Never through git checkout. Null, or
-// why it could not.
+// with `wx`. It never makes a link: a host that followed one would load whatever it leads to, which no hash check holds,
+// so a path the tip keeps as a link refuses, as the caller has already parked it (lib/project-start.mjs). The caller
+// has checked that no part of any path is a link (linkedPart), so nothing is written or removed through one; a folder
+// or a link at a path refuses. Never through git checkout. Null, or why it could not.
 export function overlayGuarded(dir, tip, paths) {
   const files = commitFiles(dir, tip);
   if (!files) return 'git cannot read the base tip\'s files';
   const kept = paths.filter((file) => files.has(file));
+  const linked = kept.find((file) => files.get(file).mode === '120000');
+  if (linked) return `the base tip keeps ${namedFiles([linked])} as a link, which an overlay never makes`;
   const objects = readObjects(dir, [...new Set(kept.map((file) => files.get(file).id))]);
   if (!objects) return 'git cannot read the base tip\'s copies of the host files';
   try {
@@ -324,8 +327,7 @@ export function overlayGuarded(dir, tip, paths) {
       if (blob?.type !== 'blob') return `git cannot read the base tip's copy of ${namedFiles([file])}`;
       const full = path.join(dir, file);
       mkdirSync(path.dirname(full), { recursive: true });
-      if (mode === '120000') symlinkSync(blob.body, full);
-      else writeFileSync(full, blob.body, { flag: 'wx', mode: mode === '100755' ? 0o755 : 0o644 });
+      writeFileSync(full, blob.body, { flag: 'wx', mode: mode === '100755' ? 0o755 : 0o644 });
     }
   } catch (error) {
     return `the base tip's copies of the host files could not be written in the clone (${error.code ?? 'no code'})`;

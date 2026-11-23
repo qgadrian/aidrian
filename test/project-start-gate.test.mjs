@@ -77,7 +77,7 @@ test('the driver starts the issue next lists in a fresh clone cut from the base 
   // The row pins the URL the clone's origin pushes to, which the issue session's one push must go to.
   const pushUrl = fx.git('-C', clone, 'remote', 'get-url', '--push', 'origin').trim();
   assert.ok(pushUrl.length > 0, 'the clone pushes somewhere');
-  const row = { event: 'start', key: 'ENG-1', attempt: 1, session: DRIVER, name, cwd: clone, branch: 'feat/eng-1-export', issueHours: 6, drop: path.join(path.dirname(clone), 'drop'), pushUrl, at: null };
+  const row = { event: 'start', key: 'ENG-1', attempt: 1, session: DRIVER, name, cwd: clone, branch: 'feat/eng-1-export', issueHours: 6, drop: path.join(path.dirname(clone), 'drop'), pushUrl, head: fx.git('rev-parse', 'refs/remotes/origin/main').trim(), at: null };
   assert.deepEqual({ ...ahead, at: null }, { ...row, outcome: 'uncertain', pending: true });
   assert.deepEqual([issue.event, issue.key, issue.state], ['issue', 'ENG-1', 'running']);
   assert.deepEqual({ ...start, at: null }, { ...row, outcome: 'started', id: STARTED[0].id, child: session });
@@ -128,7 +128,7 @@ test('start refuses a run the base branch has not switched on, by its local ref 
 test('the team policy is the lowest of the local ref, the forge, and the ceilings', (t) => {
   const fx = runFixture(t, { projectRun: { allow: true, maxStarts: 900, issueHours: 24 }, forgeConfig: { version: 1, projectRun: { allow: true, maxStarts: 50, issueHours: 30 } } });
   const policy = teamPolicy(fx.project, { host: 'github.com', owner: 'acme', name: 'widgets' }, fx.forge);
-  assert.deepEqual(policy, { maxParallel: 1, maxStarts: 50, issueHours: 6, solo: false, unverifiedHosts: false, workflowSecretsAccepted: false, forgeProtectionAccepted: false, outsideSandbox: [], mcpServers: {}, registries: [], localBinding: false, reviewer: 'chatgpt-codex-connector[bot]', includeGuardedPaths: false }, 'issueHours 30 fails its check on the forge and reads as the default 6, the lowest of 24, 6, and the ceiling');
+  assert.deepEqual(policy, { maxParallel: 1, maxStarts: 50, issueHours: 6, solo: false, unverifiedHosts: false, workflowSecretsAccepted: false, forgeProtectionAccepted: false, outsideSandbox: [], mcpServers: {}, registries: [], localBinding: false, reviewer: 'chatgpt-codex-connector[bot]', includeGuardedPaths: false, policyFiles: ['.aidrian.json', '.aidrian/config.json'] }, 'issueHours 30 fails its check on the forge and reads as the default 6, the lowest of 24, 6, and the ceiling');
   const ceiling = runFixture(t, { projectRun: { allow: true, maxStarts: 1000 }, forgeConfig: { version: 1, projectRun: { allow: true, maxStarts: 1000 } } });
   assert.equal(teamPolicy(ceiling.project, { host: 'github.com', owner: 'acme', name: 'widgets' }, ceiling.forge).maxStarts, 1000);
 });
@@ -293,7 +293,7 @@ test('a later attempt goes on on the issue branch: as the forge has it, and over
   // Everything after the start reads the issue's branch and the head the base copies went over.
   const row = fx.rows().findLast((each) => each.event === 'start');
   assert.deepEqual([row.branch, row.overlay], ['feat/eng-1-export', head]);
-  assert.deepEqual(ownIssue(fx.project, fx.config, { project: 'launch', issue: 'ENG-1' }, { home: fx.home }), { key: 'ENG-1', branch: 'feat/eng-1-export', pushUrl: row.pushUrl, overlay: head, slugShared: false, handoffShared: false });
+  assert.deepEqual(ownIssue(fx.project, fx.config, { project: 'launch', issue: 'ENG-1' }, { home: fx.home }), { key: 'ENG-1', branch: 'feat/eng-1-export', pushUrl: row.pushUrl, overlay: head, policyFiles: ['.aidrian.json', '.aidrian/config.json'], slugShared: false, handoffShared: false });
   // No attempt asked the forge for, or made, any other branch.
   assert.deepEqual(execFileSync('git', ['-C', fx.bare, 'for-each-ref', '--format=%(refname)', 'refs/heads/'], { encoding: 'utf8' }).trim().split('\n'), ['refs/heads/feat/eng-1-export', 'refs/heads/main']);
   assert.ok(fx.forge.calls.every(([, ...args]) => !JSON.stringify(args).includes('-a3')));
@@ -406,9 +406,114 @@ test('a branch that makes a host file, or a folder that holds one, a link out of
     assert.equal(existsSync(path.dirname(work(fx, 'ENG-1', 2))), false, `${name}: no clone is left`);
     assert.equal(fx.claude.starts().length, 1, name);
     assert.equal(fx.rows().filter((row) => row.event === 'start').length, 2, `${name}: no start row`);
-    assert.deepEqual({ ...fx.rows().at(-1), at: null }, { event: 'issue', key: 'ENG-1', state: 'parked', decision: 'unreconciled', branch: 'feat/eng-1-export', head: null, pr: 12, at: null }, name);
+    assert.deepEqual({ ...fx.rows().at(-1), at: null }, { event: 'issue', key: 'ENG-1', state: 'parked', decision: 'unreconciled', branch: 'feat/eng-1-export', head: fx.git('rev-parse', 'refs/remotes/origin/main').trim(), pr: 12, at: null }, `${name}: the head the first attempt recorded`);
     assert.equal(execFileSync('git', ['-C', fx.bare, 'rev-parse', 'refs/heads/feat/eng-1-export'], { encoding: 'utf8' }).trim(), head, `${name}: the branch is as it was`);
   }
+});
+
+// Starts ENG-1 once in a fixture whose base commits `files` (and `links`), opens it again with pull request #12, makes
+// its branch on the forge with `edit(scratch)`, and starts it again: { fx, head, second }.
+const secondStart = (t, { files = {}, links = {}, edit, before = () => {} }) => {
+  const fx = runFixture(t, { files, links });
+  before(fx);
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  reopen(fx, 1, 12);
+  const head = branchWith(fx, edit);
+  return { fx, head, second: fx.cmd(['start', 'launch', 'ENG-1']) };
+};
+// The park line of a start that parks ENG-1 on its branch for `why`, with pull request #12.
+const parkLine = (why) => `parked ENG-1 unreconciled: the branch feat/eng-1-export on the forge is not the work this run's ledger records (${why}), so nothing was started, cut, or reset; the branch and pull request #12 are as they were; a person reconciles them`;
+// That the start parked ENG-1 as `why` says, kept the branch at `head`, wrote no clone and no start row, and named the
+// head the first attempt recorded, the base tip it cut the branch from.
+const parkedAs = (fx, { head, second }, why) => {
+  assert.equal(second.exitCode, 0, second.err.join('\n'));
+  assert.ok(second.out.includes(parkLine(why)), second.out.join('\n'));
+  assert.equal(existsSync(path.dirname(work(fx, 'ENG-1', 2))), false, 'no clone is left');
+  assert.equal(fx.rows().filter((row) => row.event === 'start').length, 2, 'no start row');
+  const tip = fx.git('rev-parse', 'refs/remotes/origin/main').trim();
+  assert.deepEqual({ ...fx.rows().at(-1), at: null }, { event: 'issue', key: 'ENG-1', state: 'parked', decision: 'unreconciled', branch: 'feat/eng-1-export', head: tip, pr: 12, at: null });
+  assert.equal(execFileSync('git', ['-C', fx.bare, 'rev-parse', 'refs/heads/feat/eng-1-export'], { encoding: 'utf8' }).trim(), head, 'the branch is as it was');
+};
+
+test('a host file the base keeps as a link parks the issue: an overlay never makes a link', (t) => {
+  const started = secondStart(t, {
+    files: { 'AGENTS.md': '# base rules\n' }, links: { 'CLAUDE.md': 'AGENTS.md' },
+    edit: (scratch) => {
+      rmSync(path.join(scratch, 'CLAUDE.md'));
+      writeFileSync(path.join(scratch, 'CLAUDE.md'), '# branch rules\n');
+    },
+  });
+  parkedAs(started.fx, started, 'the base keeps CLAUDE.md as a link, which an overlay cannot verify');
+});
+
+test('a host file the branch turns into a folder, or a folder into a file, parks the issue', (t) => {
+  const folder = secondStart(t, {
+    files: { '.claude/settings.json': '{"permissions":{}}\n' },
+    edit: (scratch) => {
+      rmSync(path.join(scratch, '.claude'), { recursive: true });
+      writeFileSync(path.join(scratch, '.claude'), 'a file\n');
+    },
+  });
+  parkedAs(folder.fx, folder, 'the branch turns .claude between a file and a folder');
+  const file = secondStart(t, {
+    files: { 'CLAUDE.md': '# base rules\n' },
+    edit: (scratch) => {
+      rmSync(path.join(scratch, 'CLAUDE.md'));
+      mkdirSync(path.join(scratch, 'CLAUDE.md'));
+      writeFileSync(path.join(scratch, 'CLAUDE.md', 'notes.txt'), 'a folder\n');
+    },
+  });
+  parkedAs(file.fx, file, 'the branch turns CLAUDE.md between a file and a folder');
+});
+
+test('a base copy the branch\'s committed ignore rules keep stageable parks the issue', (t) => {
+  const started = secondStart(t, {
+    files: { '.claude/skills/x/SKILL.md': 'base skill\n' },
+    edit: (scratch) => {
+      rmSync(path.join(scratch, '.claude'), { recursive: true });
+      appendFileSync(path.join(scratch, '.gitignore'), '!/.claude/skills/x/SKILL.md\n');
+    },
+  });
+  parkedAs(started.fx, started, 'the branch\'s ignore rules keep .claude/skills/x/SKILL.md stageable');
+});
+
+test('every attempt holds the branch to the head the run recorded: another history on the forge parks the issue with that head', (t) => {
+  const fx = runFixture(t);
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  const tip = fx.git('rev-parse', 'refs/remotes/origin/main').trim();
+  assert.equal(fx.rows().findLast((row) => row.event === 'start').head, tip, 'the first attempt records the tip it cut from');
+  reopen(fx, 1, 12);
+  // Someone else's history, which holds nothing of the base tip the first attempt cut the branch from.
+  const scratch = path.join(fx.root, 'scratch');
+  execFileSync('git', ['clone', '-q', fx.bare, scratch], { stdio: 'pipe' });
+  const orphan = fx.git('-C', scratch, 'commit-tree', '-m', 'another history', `${tip}^{tree}`).trim();
+  fx.git('-C', scratch, 'push', '-q', '--force', fx.bare, `${orphan}:refs/heads/feat/eng-1-export`);
+  const second = fx.cmd(['start', 'launch', 'ENG-1']);
+  parkedAs(fx, { head: orphan, second }, `its head ${orphan.slice(0, 7)} does not hold ${tip.slice(0, 7)}, the commit this project's runs recorded it at`);
+});
+
+// A config.json the pointer file relocates is a policy file wherever it lies: the merge gate reads the policy from it.
+test('a config the pointer file relocates is held as a host file: the branch\'s change to it gets the base copy', (t) => {
+  const started = secondStart(t, {
+    files: { 'harness/config.json': '{"version":1}\n' },
+    before: (fx) => {
+      const served = fx.forge.contents;
+      const file = (text) => ({ type: 'file', encoding: 'base64', content: Buffer.from(text).toString('base64') });
+      fx.forge.contents = (repo, name, ref, options) => {
+        if (name === '.aidrian.json') return file('{"dir":"harness"}');
+        return served(repo, name === 'harness/config.json' ? '.aidrian/config.json' : name, ref, options);
+      };
+    },
+    edit: (scratch) => writeFileSync(path.join(scratch, 'harness/config.json'), '{"version":1,"projectRun":{"allow":true}}\n'),
+  });
+  const { fx, head, second } = started;
+  assert.equal(second.exitCode, 0, second.err.join('\n'));
+  const clone = work(fx, 'ENG-1', 2);
+  assert.equal(readFileSync(path.join(clone, 'harness/config.json'), 'utf8'), '{"version":1}\n', 'the base copy');
+  const row = fx.rows().findLast((each) => each.event === 'start');
+  assert.equal(row.overlay, head);
+  assert.ok(row.policyFiles.includes('harness/config.json'), JSON.stringify(row.policyFiles));
+  assert.ok(ownIssue(fx.project, fx.config, { project: 'launch', issue: 'ENG-1' }, { home: fx.home }).policyFiles.includes('harness/config.json'));
 });
 
 // The review bot's status card, as the forge's reviewTrail gives a comment: by the bot, every edit the bot's.
@@ -463,8 +568,8 @@ test('reviewedProblem holds the branch\'s own host files to the merge bar', (t) 
   const head = 'a'.repeat(40);
   const parent = 'b'.repeat(40);
   const repository = { host: 'github.com', owner: 'acme', name: 'widgets' };
-  const ask = (trail, { pr = 12, includeGuardedPaths = false, changed = ['.aidrian/knowledge/docs.json'], reviewer = BOT } = {}) => reviewedProblem({
-    project: fx.project, repository, facade: { reviewTrail: () => trail }, policy: { reviewer, includeGuardedPaths }, main: 'main', branch: 'feat/eng-1-export', pr, head, changed, env: fx.env,
+  const ask = (trail, { pr = 12, includeGuardedPaths = false, changed = ['.aidrian/knowledge/docs.json'], reviewer = BOT, policyFiles = [] } = {}) => reviewedProblem({
+    project: fx.project, repository, facade: { reviewTrail: () => trail }, policy: { reviewer, includeGuardedPaths, policyFiles }, main: 'main', branch: 'feat/eng-1-export', pr, head, changed, env: fx.env,
   });
   const unsigned = /flow harness-config needs the Human's sign-off on head aaaaaaa/u;
   assert.match(ask(trailOf(head)), unsigned, 'the bot alone is not enough');
@@ -479,6 +584,8 @@ test('reviewedProblem holds the branch\'s own host files to the merge bar', (t) 
   // The bot alone passes under includeGuardedPaths, unless a policy file changed.
   assert.equal(ask(trailOf(head), { includeGuardedPaths: true }), null);
   assert.match(ask(trailOf(head), { includeGuardedPaths: true, changed: ['.aidrian/config.json', 'CLAUDE.md'] }), unsigned, 'a policy file needs the Human');
+  assert.match(ask(trailOf(head), { includeGuardedPaths: true, changed: ['harness/config.json'], policyFiles: ['.aidrian.json', 'harness/config.json'] }), unsigned, 'a config the pointer file relocates is a policy file');
+  assert.equal(ask(trailOf(head), { includeGuardedPaths: true, changed: ['harness/config.json'] }), null, 'one the policy was not read from is not');
   // The Human's sign-off on exactly the head, read from the sign-off store.
   recordHumanSignoff({ repo: 'acme/widgets', pr: 12, flow: 'harness-config', head: parent, by: 'Adrian', env: fx.env });
   assert.match(ask(trailOf(head), { changed: ['.aidrian/config.json'] }), unsigned, 'a sign-off on another head');
@@ -1006,7 +1113,7 @@ test('a resumed issue whose branch on the forge no longer holds the head the ear
   const refs = forgeRefs(fx);
   const parked = fx.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(parked.exitCode, 0, parked.err.join('\n'));
-  assert.equal(parked.out.at(-1), `parked ENG-1 unreconciled: the branch ${branch} on the forge is not the work this run's ledger records (its head ${theirs.slice(0, 7)} does not hold ${head.slice(0, 7)}, the commit an earlier run of this project recorded it at when it parked the issue), so nothing was started, cut, or reset; the branch and pull request #12 are as they were; a person reconciles them`);
+  assert.equal(parked.out.at(-1), `parked ENG-1 unreconciled: the branch ${branch} on the forge is not the work this run's ledger records (its head ${theirs.slice(0, 7)} does not hold ${head.slice(0, 7)}, the commit this project's runs recorded it at), so nothing was started, cut, or reset; the branch and pull request #12 are as they were; a person reconciles them`);
   assert.deepEqual(fx.claude.starts(), []);
   assert.deepEqual(fx.rows().filter((row) => row.event !== 'init').map((row) => ({ ...row, at: null })), [{ event: 'issue', key: 'ENG-1', state: 'parked', decision: 'unreconciled', branch, head, pr: 12, at: null }], 'no start row');
   assert.equal(existsSync(path.dirname(work(fx))), false, 'no clone is left');

@@ -10,7 +10,7 @@
 import { checkDeadline, remainingMs } from './deadline.mjs';
 import { forgeWorkflowFolders } from './forges/index.mjs';
 import { runGit } from './git.mjs';
-import { GUARDED_PATHS } from './project.mjs';
+import { GUARDED_PATHS, isPolicyPath } from './project.mjs';
 
 // The refs a push's commits are compared with, the first that git resolves: origin's default branch, as config-committed.mjs
 // originDefaultTip names it, origin/HEAD, then the plugin's default branch name.
@@ -45,14 +45,15 @@ function ownCloneProblem(folder, root, pushUrl, fold) {
   return `it pushes to ${elsewhere.slice(0, 120) || 'no URL'}${pushes.length > 1 ? `, one of the ${pushes.length} URLs origin pushes to` : ''}, and origin pushes only to ${pushUrl.slice(0, 120)}, the URL its issue's start pinned`;
 }
 
-// Why the commits a push from `folder` carries change a host config or instruction file (GUARDED_PATHS) from `overlay`,
-// the branch head its attempt started from on the base branch's copies of them (lib/project-start.mjs prepareAttempt),
-// or null, as for an attempt with none. A git call that fails refuses the push.
-function overlayProblem(folder, overlay) {
+// Why the commits a push from `folder` carries change a host config or instruction file (GUARDED_PATHS), or a policy
+// file (isPolicyPath, with `policyFiles`, the ones the gate resolved at the start), from `overlay`, the branch head its
+// attempt started from on the base branch's copies of them (lib/project-start.mjs prepareAttempt), or null, as for an
+// attempt with none. A git call that fails refuses the push.
+function overlayProblem(folder, overlay, policyFiles) {
   if (!overlay) return null;
   const diff = budgeted(['diff', '--name-only', '--no-renames', '--no-relative', '-z', overlay, 'HEAD', '--'], folder);
   if (diff.status !== 0) return `it pushes, and ${SLOW} which files its commits change from ${overlay.slice(0, 7)}, the head its attempt started from on the base branch's copies of the host config and instruction files`;
-  const count = diff.stdout.split('\0').filter((file) => file !== '' && GUARDED_PATHS.test(file)).length;
+  const count = diff.stdout.split('\0').filter((file) => file !== '' && (GUARDED_PATHS.test(file) || isPolicyPath(file, policyFiles))).length;
   if (!count) return null;
   return `it pushes commits that change ${count} host config or instruction ${count === 1 ? 'file' : 'files'}, and this attempt runs on the base branch's copies of them, so it may change none; take those changes out of the commits, or record the result parked when the issue needs them`;
 }
@@ -135,8 +136,8 @@ const shellWord = (file) => (/^[\w./@%+=:,-]+$/u.test(file) ? file : `'${file.re
 
 // Why the exact push from `folder` may not run, or null (see the header). `root` is the session's root that holds it
 // ({ root, common }), `pushUrl` the URL its issue's start pinned, `overlay` the head that start recorded its base copies
-// over, or null, and `fold(path)` gives a path as `root` holds them.
-export function pushCheckoutProblem(folder, { root, pushUrl, fold, overlay = null }) {
+// over, or null, with `policyFiles`, and `fold(path)` gives a path as `root` holds them.
+export function pushCheckoutProblem(folder, { root, pushUrl, fold, overlay = null, policyFiles = [] }) {
   const paths = workflowPaths();
-  return ownCloneProblem(folder, root, pushUrl, fold) ?? overlayProblem(folder, overlay) ?? committedProblem(folder, paths) ?? uncommittedProblem(folder, paths);
+  return ownCloneProblem(folder, root, pushUrl, fold) ?? overlayProblem(folder, overlay, policyFiles) ?? committedProblem(folder, paths) ?? uncommittedProblem(folder, paths);
 }

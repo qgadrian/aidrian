@@ -634,7 +634,8 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   sign-off where [Project run](config.md#project-run) asks for one; otherwise its clone holds the base branch's copies,
   git leaves them out of its commits, and a push that changes one is refused.
   The branch's own changes stay in its commits for the pull request's review.
-  A branch the run's ledger cannot account for parks the issue as unreconciled, with the branch and pull request untouched.
+  A branch the run's ledger cannot account for, or base copies that cannot be made safely, park the issue as
+  unreconciled, with the branch and pull request untouched ([Project run](config.md#project-run) lists each case).
   To start an issue over, a person deletes its branch on the forge; closing the pull request alone does not.
   The session works in its attempt's clone, which loads no host file of the main
   checkout, and on Claude Code its sandbox also denies reads there, so the main checkout's own host files, such as a

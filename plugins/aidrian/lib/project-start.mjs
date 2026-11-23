@@ -245,28 +245,33 @@ export function stateWorkFolders(state, { env, home }) {
 }
 
 // The fresh clone of attempt `attempt` of issue `key` for a confined host: { folder, work, git, drop, cache, branch,
-// onForge, reviewed, overlay }, or { problem }, { halt }, { retry }, or { park }, each of which leaves no attempt folder.
+// onForge, head, reviewed, overlay }, or { problem }, { halt }, { retry }, or { park }, each of which leaves no attempt
+// folder. `head` is the commit the forge's branch was at, or the tip it was cut from, which the start row records.
 // `cache` is the owner-only folder its package managers' caches go to (project-registries.mjs cacheVars), which holds
 // only npm's empty config files (NPM_CONFIGS) at first; it and `drop` each hold a read-only keep file (attempt-clone.mjs
 // ATTEMPT_KEEP). Any folder the attempt had is removed first. The clone borrows the main checkout's objects read-only,
 // takes origin's URL from the main checkout, which pushProblem checked, and checks out `branch`: from the base tip `tip`
 // on the first attempt, or on a later one from the head the forge has, fetched and named by its commit. Its own config
 // turns signing off (UNSIGNED); a clone whose commits would still sign (signingProblem) is { halt }.
-// A later attempt whose head differs from the tip in a host config or instruction file (project-trust.mjs isGuarded),
-// and that the tip does not already hold, asks `reviewed(head, changed)`, `changed` every path the head changes from
-// the tip: null keeps the branch's own files (`reviewed` is the head, which trustProblem compares the clone with); a
-// reason gives the clone the tip's copies of those files instead (`overlay`: { sha, files, why }), which git is told
-// to skip (skip-worktree) or, for one the branch deleted, to ignore (info/exclude), so no commit of the session takes
-// them in; and a throw is { retry }. A link anywhere on such a path, which a write would follow, parks the issue.
-// A head the tip already holds goes on from the tip. The first attempt of an issue an earlier run parked, with
-// `resumed` the commit that run recorded its branch at (project-run.mjs resumedIssues), is taken as a later one, but
-// only on a branch whose head on the forge is that commit or one after it, the work that run's sessions pushed. The
-// branch is never left, reset, or cut over: a first attempt whose branch the forge has already, with no head recorded,
-// and a recorded head the forge's branch does not hold, are { park: { branch, head, why } }, `head` the recorded one or
-// null. A branch the forge no longer has is cut from the tip under the same name, as a first attempt's: deleting it is
-// how a person asks for the issue to start over. A null `resumed` is a plain first attempt. `onForge` says whether the
-// attempt goes on on the issue's branch as the forge has it. `env` is the environment of its network calls.
-export function prepareAttempt({ project, state, run, key, attempt, branch, resumed = null, tip, reviewed = () => 'no review was asked', env }) {
+// A later attempt whose head differs from the tip in a file `guards` takes, the host config and instruction files
+// (project-trust.mjs isGuarded) and the policy files the gate resolved, and that the tip does not already hold, asks
+// `reviewed(head, changed)`, `changed` every path the head changes from the tip: null keeps the branch's own files
+// (`reviewed` is the head, which trustProblem compares the clone with); a reason gives the clone the tip's copies of
+// those files instead (`overlay`: { sha, files, why }), which git is told to skip (skip-worktree) or, for one the branch
+// deleted, to ignore (info/exclude), so no commit of the session takes them in; and a throw is { retry }. An overlay
+// that cannot be made safely parks the issue: a link anywhere on such a path, which a write would follow, a path the
+// base keeps as a link, a path or a folder on its path that is a file on one side and a folder on the other
+// (overlayShapeProblem), and a base copy a committed ignore rule keeps stageable (baseCopyMarks).
+// A head the tip already holds goes on from the tip. `recorded` is the commit the issue's branch was last recorded at:
+// the head its latest start in this run found, or the one an earlier run that parked it recorded (project-run.mjs
+// resumedIssues), which makes a first attempt a later one. Every attempt with one goes on only on a branch whose head on
+// the forge is that commit or one after it, the work the run's sessions pushed. The branch is never left, reset, or cut
+// over: a first attempt whose branch the forge has already, with no head recorded, and a recorded head the forge's
+// branch does not hold, are { park: { branch, head, why } }, `head` the recorded one or null, as every park names it.
+// A branch the forge no longer has is cut from the tip under the same name, as a first attempt's: deleting it is how a
+// person asks for the issue to start over. `onForge` says whether the attempt goes on on the issue's branch as the forge
+// has it. `env` is the environment of its network calls.
+export function prepareAttempt({ project, state, run, key, attempt, branch, recorded = null, tip, reviewed = () => 'no review was asked', guards = isGuarded, env }) {
   const folder = attemptFolder(state, run, key, attempt);
   const [work, gitFolder, drop, cache] = ['work', 'git', 'drop', 'cache'].map((name) => path.join(folder, name));
   const main = project.checkouts.at(-1);
@@ -307,12 +312,14 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, resu
   const unsigned = setUnsigned(work, env);
   if (unsigned) return failed('config', unsigned);
   let from = tip;
+  // The commit the forge's branch is at, which the start row records for the next attempt's check.
+  let onHead = null;
   let passed = null;
   let overlay = null;
   const listed = git(['ls-remote', '--exit-code', '--heads', 'origin', `refs/heads/${branch}`]);
   // A first attempt cuts the branch from the base tip: one the forge has already is work this run's ledger does not
   // account for, unless an earlier run parked the issue on it at a commit the branch still holds.
-  const own = attempt === 1 && typeof resumed === 'string' ? resumed : null;
+  const own = typeof recorded === 'string' ? recorded : null;
   const later = attempt > 1 || own !== null;
   if (!later && listed.status === 0) return park(null, `the forge has ${branch}, and the ledger records no head of it`);
   if (!later && listed.status !== 2) return failed('ls-remote', listed);
@@ -324,13 +331,14 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, resu
       const head = git(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}^{commit}`]);
       if (head.status !== 0) return failed('rev-parse', head);
       from = head.stdout.trim();
-      // The earlier run's commit, or one after it: exit 1 is another history, and 128 a commit the fetch did not bring.
+      onHead = from;
+      // The recorded commit, or one after it: exit 1 is another history, and 128 a commit the fetch did not bring.
       const ours = own ? git(['merge-base', '--is-ancestor', own, from]) : null;
-      if (ours && ours.status !== 0) return park(own, `its head ${from.slice(0, 7)} does not hold ${own.slice(0, 7)}, the commit an earlier run of this project recorded it at when it parked the issue`);
+      if (ours && ours.status !== 0) return park(own, `its head ${from.slice(0, 7)} does not hold ${own.slice(0, 7)}, the commit this project's runs recorded it at`);
       const changed = git(['diff', '--name-only', '--no-renames', '-z', tip, from, '--']);
       if (changed.status !== 0) return failed('diff', changed);
       const paths = changed.stdout.split('\0').filter((file) => file !== '');
-      const guarded = paths.filter(isGuarded);
+      const guarded = paths.filter(guards);
       // A head the tip already holds changed nothing itself: the branch goes on from the tip, and its push fast-forwards.
       const holds = guarded.length ? git(['merge-base', '--is-ancestor', from, tip]) : null;
       if (holds && holds.status !== 0 && holds.status !== 1) return failed('merge-base', holds);
@@ -344,7 +352,12 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, resu
           return { retry: `whether a review passed ${branch} at ${from.slice(0, 7)} cannot be read now (${String(error?.message ?? error).split('\n')[0].slice(0, 200)}); start again` };
         }
         if (why === null) passed = from;
-        else overlay = { sha: from, files: guarded, why };
+        else {
+          overlay = { sha: from, files: guarded, why };
+          const unsafe = overlayShapeProblem(work, tip, overlay);
+          if (unsafe?.problem) return gone(unsafe.problem);
+          if (unsafe) return park(own, unsafe.why);
+        }
       }
     } else if (listed.status !== 2) return failed('ls-remote', listed);
   }
@@ -352,57 +365,91 @@ export function prepareAttempt({ project, state, run, key, attempt, branch, resu
   if (checkout.status !== 0) return failed('checkout', checkout);
   if (overlay) {
     // Never a write through a link: a link anywhere on a path, leaf included, parks the issue before anything is written.
-    // A path below a file the branch put where the base keeps a folder holds no link: overlayGuarded removes that file.
-    const linkOf = (file) => {
-      try {
-        return linkedPart(work, file);
-      } catch (error) {
-        if (error.code === 'ENOTDIR') return null;
-        throw error;
-      }
-    };
     let linked = null;
     try {
-      linked = overlay.files.map(linkOf).find(Boolean) ?? null;
+      linked = overlay.files.map((file) => linkedPart(work, file)).find(Boolean) ?? null;
     } catch (error) {
       return gone(`the attempt's clone could not be read (${error.code ?? 'no code'})`);
     }
     if (linked) return park(own, `the branch makes ${namedFiles([linked])} a link where the base keeps a host file`);
-    const marked = overlayGuarded(work, tip, overlay.files) ?? baseCopyMarks({ work, gitFolder, tip, overlay, git });
-    if (marked) return gone(`the base branch's copies of the host files could not be put in the attempt's clone: ${marked}`);
+    const written = overlayGuarded(work, tip, overlay.files);
+    const marked = written ? { problem: written } : baseCopyMarks({ work, gitFolder, tip, overlay, git });
+    if (marked?.problem) return gone(`the base branch's copies of the host files could not be put in the attempt's clone: ${marked.problem}`);
+    if (marked?.stageable) return park(own, `the branch's ignore rules keep ${namedFiles([marked.stageable])} stageable`);
   }
   // The same check as the preflight's probe: a clone whose commits would still sign halts before any session starts.
   const signing = signingProblem(work, env);
   if (signing) return { halt: gone(`the attempt's clone ${work} is not started: ${signing}`).problem };
   const plain = plainFolderProblem(drop) ?? plainFolderProblem(cache);
   // `onForge`: the attempt goes on on the issue's branch the forge has, not one the forge lacks.
-  return plain ? gone(plain) : { folder, work, git: gitFolder, drop, cache, branch, onForge: later && listed.status === 0, reviewed: passed, overlay };
+  return plain ? gone(plain) : { folder, work, git: gitFolder, drop, cache, branch, onForge: later && listed.status === 0, head: onHead ?? tip, reviewed: passed, overlay };
+}
+
+// Why the base tip's copies cannot be written safely over `overlay.files` in the clone `work`, read from the two
+// commits' trees alone: { why }, which parks the issue, { problem }, or null. A path the base keeps as a link would
+// need a link the clone's host may follow to the branch's own files, and a path, or a folder on its path, that is a
+// file on one side and a folder on the other would need a folder or a file removed whole. A link the branch makes is
+// left to the link check on disk, after the checkout, which names it.
+function overlayShapeProblem(work, tip, overlay) {
+  const [head, base] = [commitFiles(work, overlay.sha), commitFiles(work, tip)];
+  if (!head || !base) return { problem: 'git cannot read the files of the branch\'s head and the base tip' };
+  const linked = overlay.files.find((file) => base.get(file)?.mode === '120000');
+  if (linked) return { why: `the base keeps ${namedFiles([linked])} as a link, which an overlay cannot verify` };
+  const kind = (files, folders, part) => (files.get(part)?.mode === '120000' ? 'link' : files.has(part) ? 'file' : folders.has(part) ? 'folder' : null);
+  const [headFolders, baseFolders] = [folderSet(head), folderSet(base)];
+  for (const file of overlay.files) {
+    const parts = file.split('/');
+    for (let count = 1; count <= parts.length; count += 1) {
+      const part = parts.slice(0, count).join('/');
+      const [was, is] = [kind(base, baseFolders, part), kind(head, headFolders, part)];
+      if (was && is && was !== 'link' && is !== 'link' && was !== is) return { why: `the branch turns ${namedFiles([part])} between a file and a folder` };
+    }
+  }
+  return null;
+}
+
+// Every folder that holds a file of `files` (commitFiles), by its path.
+function folderSet(files) {
+  const folders = new Set();
+  for (const file of files.keys()) {
+    const parts = file.split('/');
+    for (let count = 1; count < parts.length; count += 1) folders.add(parts.slice(0, count).join('/'));
+  }
+  return folders;
 }
 
 // Tells git to leave the base copies overlayGuarded wrote in the clone `work`, whose git folder is `gitFolder`, out of
 // every commit: skip-worktree on each overlaid path the index holds (the branch's head has it), and an info/exclude
-// line for each the branch deleted, so `git add -A` stages none of them. Null, or why it could not.
+// line for each the branch deleted, so `git add -A` stages none of them, and git asked again that it ignores each:
+// a committed ignore rule that negates one wins over info/exclude. Null, { stageable }, the first such path git would
+// still stage, or { problem }.
 function baseCopyMarks({ work, gitFolder, tip, overlay, git }) {
   const [head, base] = [commitFiles(work, overlay.sha), commitFiles(work, tip)];
-  if (!head || !base) return 'git cannot read the files of the branch\'s head and the base tip';
+  if (!head || !base) return { problem: 'git cannot read the files of the branch\'s head and the base tip' };
+  const said = (result) => String(result.stderr ?? '').trim().split('\n').at(-1) || `exit ${result.status}`;
   const indexed = overlay.files.filter((file) => head.has(file));
   if (indexed.length) {
     const skip = git(['update-index', '--skip-worktree', '-z', '--stdin'], work, { input: `${indexed.join('\0')}\0` });
-    if (skip.status !== 0) return `git cannot mark them skip-worktree (${String(skip.stderr ?? '').trim().split('\n').at(-1) || `exit ${skip.status}`})`;
+    if (skip.status !== 0) return { problem: `git cannot mark them skip-worktree (${said(skip)})` };
   }
   const deleted = overlay.files.filter((file) => !head.has(file) && base.has(file));
   if (!deleted.length) return null;
   // An ignore line cannot spell a name with a line break, so such a name refuses the start.
-  if (deleted.some((file) => /[\r\n]/u.test(file))) return 'a host file the branch deleted has a line break in its name';
+  if (deleted.some((file) => /[\r\n]/u.test(file))) return { problem: 'a host file the branch deleted has a line break in its name' };
   // Each pattern from the root, its glob characters and trailing spaces escaped, so it names that one path.
   const lines = deleted.map((file) => `/${file.replace(/[\\*?[]/gu, '\\$&').replace(/ +$/u, (spaces) => spaces.replaceAll(' ', '\\ '))}`);
   try {
     mkdirSync(path.join(gitFolder, 'info'), { recursive: true, mode: 0o700 });
     appendFileSync(path.join(gitFolder, 'info', 'exclude'), `\n# aidrian: the base branch's copies of host files the branch deleted\n${lines.join('\n')}\n`);
   } catch (error) {
-    return `their ignore lines could not be written (${error.code ?? 'no code'})`;
+    return { problem: `their ignore lines could not be written (${error.code ?? 'no code'})` };
   }
-  return null;
+  // Exit 0 lists the ignored ones, 1 none; any other answer is no answer.
+  const checked = git(['check-ignore', '-z', '--stdin'], work, { input: `${deleted.join('\0')}\0` });
+  if (checked.status !== 0 && checked.status !== 1) return { problem: `git cannot say whether it ignores them (${said(checked)})` };
+  const ignored = new Set(checked.stdout.split('\0').filter(Boolean));
+  const stageable = deleted.find((file) => !ignored.has(file));
+  return stageable ? { stageable } : null;
 }
 
 // The signing keys each attempt's clone turns off, in its own config and nowhere else, so the user's global and system

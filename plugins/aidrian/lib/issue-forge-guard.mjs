@@ -261,7 +261,7 @@ function pushProblem(git, { moved, issue, folder, roots, fold, beside, sets = []
   if (beside) return `it pushes in a call that also runs \`${spelled(beside)}\`, which may change the commits the push carries after the guard read them; an issue session pushes in a call of its own: commit first, then run \`git push origin ${exact}\` alone`;
   const root = typeof folder === 'string' ? roots().find((each) => isWithin(each.root, fold(folder))) : undefined;
   if (!root) return 'it pushes from a folder that is not its own clone or worktree, whose origin may be any repository';
-  return pushCheckoutProblem(folder, { root, pushUrl: own.pushUrl ?? null, fold, overlay: own.overlay ?? null });
+  return pushCheckoutProblem(folder, { root, pushUrl: own.pushUrl ?? null, fold, overlay: own.overlay ?? null, policyFiles: own.policyFiles ?? [] });
 }
 
 // What a forge CLI call asks that the session never asks (entryProblem): a refused subcommand, or a raw API write.

@@ -54,7 +54,7 @@ import { DEFAULTS } from './config-defaults.mjs';
 import { pauseSync, resolvedPath } from './fs.mjs';
 import { changeNotFound, forgeDomains, forgeFor, forgeTokenVars } from './forges/index.mjs';
 import { gateGit, knownPrefix } from './git.mjs';
-import { POLICY_PATHS, trailPaths } from './project.mjs';
+import { isPolicyPath, trailPaths } from './project.mjs';
 import { botProblem, NO_BOT, readHumanSignoffs, signoffProblem } from './review/merge-trust.mjs';
 import { HARNESS_FLOW } from './review/plan.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
@@ -72,7 +72,7 @@ import { fenceFor, writeIssueFile } from './project-issue-text.mjs';
 import { appendToRun, attendedProblem, haltOf, issueBranch, planRun, readCapped, readRun, runFolder, runPlace, runsFolder, RUN_ID, SERIAL } from './project-run.mjs';
 import { custody, driverOf, endedIn, hostContinued, ISSUE_ATTEMPTS, latestStart, resultAuthorProblem, resumerProblem, runStore, spentAttempts, startRows, startsOf, timeOf, ATTEMPT_CEILING } from './project-run-guard.mjs';
 import { accessProblem, guardedFolders, haltAnswer, hostStartProblem, linkTripwire, placeHolders, prepareAttempt, runLog, runLogFile, stateWorkFolders, sweepAttempts, unverifiedNote, writeShellVars } from './project-start.mjs';
-import { ancestorProblem, pushProblem, repositoryProblem, trustProblem } from './project-trust.mjs';
+import { ancestorProblem, isGuarded, pushProblem, repositoryProblem, trustProblem } from './project-trust.mjs';
 import { pushPreflight } from './push-preflight.mjs';
 import { signoffFolder, signoffFolders } from './review/signoff-store.mjs';
 import { recordsStart } from './run-driver.mjs';
@@ -145,10 +145,11 @@ function guardedStore({ env, home }) {
 // The team's projectRun for `project`, as the base branch commits it: through this checkout's git, which only refuses,
 // and through the forge at the repository init pinned, `repository`. { maxParallel, maxStarts, issueHours, solo,
 // unverifiedHosts, workflowSecretsAccepted, forgeProtectionAccepted, outsideSandbox, mcpServers, registries, localBinding,
-// reviewer, includeGuardedPaths } with each number the lowest of the two reads and its
+// reviewer, includeGuardedPaths, policyFiles } with each number the lowest of the two reads and its
 // CEILINGS value, each switch true only when both reads set it, outsideSandbox and registries the names both reads
 // list, and mcpServers the servers both reads define alike, `reviewer` the forge's github.reviewer when both reads name
-// the same, else null, and `includeGuardedPaths` github.autoMerge.includeGuardedPaths as a switch, or { problem }: with
+// the same, else null, `includeGuardedPaths` github.autoMerge.includeGuardedPaths as a switch, and `policyFiles` the
+// paths the forge read the policy from (pr-auto-merge.mjs branchPolicies), as the merge gate resolves them, or { problem }: with
 // `transient` when the forge could not answer now, and with issueHours when it answered and withdrew projectRun.allow.
 // A forge read that fails refuses.
 export function teamPolicy(project, repository, forge) {
@@ -177,6 +178,7 @@ export function teamPolicy(project, repository, forge) {
     localBinding: local.config.projectRun.localBinding === true && policies.policy.projectRun.localBinding === true,
     reviewer: sameReviewer(local.config.github?.reviewer, policies.policy.github?.reviewer),
     includeGuardedPaths: local.config.github?.autoMerge?.includeGuardedPaths === true && policies.policy.github?.autoMerge?.includeGuardedPaths === true,
+    policyFiles: policies.policyFiles,
   };
 }
 
@@ -439,7 +441,10 @@ function startPlace(context) {
   // The issue's pull request: the one its latest result named, in this run or else in the earlier run that parked it.
   const pr = current.rows.findLast((row) => row.event === 'result' && row.key === key && Number.isInteger(row.pr))?.pr ?? resumed?.pr ?? null;
   const reviewed = (head, changed) => reviewedProblem({ project, repository: found.init.repository, facade, policy, main: base.main, branch, pr, head, changed, env });
-  const where = { ...context, found: current, attempt: capped.attempt, tip: base.tip, branch, resumed, reviewed, pushUrl: access?.pushUrl, checked: access?.token?.id ? access.token : null };
+  // The host files and the policy files the gate resolved, which no attempt loads from a branch no review passed.
+  const guards = (file) => isGuarded(file) || isPolicyPath(file, policy.policyFiles);
+  const recorded = recordedHead(current, key) ?? resumed?.head ?? null;
+  const where = { ...context, found: current, attempt: capped.attempt, tip: base.tip, branch, resumed, recorded, reviewed, guards, pushUrl: access?.pushUrl, checked: access?.token?.id ? access.token : null };
   const room = confinedRoom(where);
   if (room.halt) return { answer: noted(haltAnswer(room.halt, { lines: orphans })) };
   if (room.retry) return { answer: noted(retryAnswer('start', room.retry, orphans)) };
@@ -455,7 +460,8 @@ function startPlace(context) {
 // as both reads of the default branch name it) passed exactly `head` on the forge, on the issue's pull request `pr`,
 // from `branch` into the default branch `main` (merge-trust.mjs botProblem), and the Human signed off the harness-config
 // flow on exactly that head in the sign-off store (signoffProblem). The bot alone is enough when the default branch sets
-// github.autoMerge.includeGuardedPaths and no path of `changed` is a policy file (POLICY_PATHS). The run's own review
+// github.autoMerge.includeGuardedPaths and no path of `changed` is a policy file (isPolicyPath, with the paths the
+// policy was read from, `policy.policyFiles`). The run's own review
 // record does not count: every confined session may write it. One review trail read: a pull request the forge has no
 // record of is a reason, since the number is a session's word, and any other failure throws, the start's retry.
 export function reviewedProblem({ project, repository, facade, policy, main, branch, pr, head, changed, env }) {
@@ -475,7 +481,7 @@ export function reviewedProblem({ project, repository, facade, policy, main, bra
   if (trail.base !== main) return `pull request #${pr} is not into ${main}`;
   const bot = botProblem(trail, head, policy.reviewer);
   if (bot) return bot;
-  if (policy.includeGuardedPaths && !changed.some((file) => POLICY_PATHS.test(file))) return null;
+  if (policy.includeGuardedPaths && !changed.some((file) => isPolicyPath(file, policy.policyFiles))) return null;
   return signoffProblem({ flows: new Set([HARNESS_FLOW]), signoffs: readHumanSignoffs({ repo, pr, env }), head });
 }
 
@@ -501,6 +507,11 @@ function parkUnreconciled({ state, run, key, session, held, policy, park, pr, or
   return { exitCode: 0, out: [...orphans, `parked ${key} unreconciled: the branch ${park.branch} on the forge is not the work this run's ledger records (${park.why}), so nothing was started, cut, or reset; ${kept}; a person reconciles them`], err: [] };
 }
 
+// The commit issue `key`'s branch was last recorded at in the run `found`: the head the latest of its start rows that
+// ran (`head`, the forge's branch as that attempt found it) or results (`head`, as it parked) names, or null.
+const recordedHead = (found, key) => found.rows.filter((row) => row.key === key && ((row.event === 'start' && row.outcome !== 'void') || row.event === 'result')
+  && typeof row.head === 'string' && /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/u.test(row.head)).at(-1)?.head ?? null;
+
 // Whether attempt `attempt` of issue `key` ended on a usage or rate limit, as the run `found` records it.
 const endedOnLimit = (found, key, attempt) => found.rows.some((row) => row.event === 'ended' && row.key === key && row.attempt === attempt && row.reason === 'limit');
 
@@ -517,10 +528,10 @@ const endedOnLimit = (found, key, attempt) => found.rows.some((row) => row.event
 // A host that would refuse the push of a session the driver `session` starts in the clone halts too (pushPreflight, in
 // the driver's permission mode, which the session takes): the clone is the folder the start passes the host, judged
 // once, and a remote or folder it cannot read answers unknown and starts. Last, the host's placeholders go in (placeHolders).
-function confinedRoom({ project, state, run, key, branch, resumed, reviewed, attempt, tip, env, home, found, cap, policy, main, pushUrl, session, checked }) {
+function confinedRoom({ project, state, run, key, branch, resumed, recorded, reviewed, guards, attempt, tip, env, home, found, cap, policy, main, pushUrl, session, checked }) {
   const folders = stateWorkFolders(state, { env, home });
   if (folders.problem) return { halt: folders.problem };
-  const clone = prepareAttempt({ project, state, run, key, attempt, branch, resumed: resumed?.head ?? null, tip, reviewed, env });
+  const clone = prepareAttempt({ project, state, run, key, attempt, branch, recorded, tip, reviewed, guards, env });
   if (clone.halt) return { halt: clone.halt };
   if (clone.retry) return { retry: clone.retry };
   if (clone.park) return { park: clone.park };
@@ -567,7 +578,7 @@ function confinedRoom({ project, state, run, key, branch, resumed, reviewed, att
   const baseCopies = clone.overlay ? writeBaseCopies(clone.folder, clone.overlay.files) : null;
   if (baseCopies?.problem) return { problem: baseCopies.problem };
   return { folder: clone.folder, cwd: clone.work, git: clone.git, grants: [clone.git, clone.drop, clone.cache, ...folders.folders], drop: clone.drop, cache: clone.cache, vars, main: resolvedPath(main) ?? main, mainGit, issueFile: issueFile?.file ?? null, pushUrl: url || null, claim, branch: clone.branch,
-    overlay: clone.overlay?.sha ?? null, baseCopies: baseCopies?.file ?? null,
+    head: clone.head, overlay: clone.overlay?.sha ?? null, baseCopies: baseCopies?.file ?? null, policyFiles: policy.policyFiles,
     // The earlier run's work goes on only on its branch as the forge has it: a branch deleted since starts afresh.
     resumed: clone.onForge ? resumed : null, onForge: clone.onForge };
 }
@@ -631,7 +642,7 @@ function issueFileFor(state, run, key, folder) {
 // start holds the session only once `confined` confirms the proof, which files it in the session's mark.
 function launchStart(context, place) {
   const { run, key, env, home, session, store, cap, spawn, wait, state, held, noted } = context;
-  const { folder, attempt, branch, cwd, git, grants, drop, cache, vars, log, main, mainGit, afterLimit, issueFile, pushUrl, claim, overlay, baseCopies, resumed } = place;
+  const { folder, attempt, branch, cwd, git, grants, drop, cache, vars, log, main, mainGit, afterLimit, issueFile, pushUrl, claim, head, overlay, baseCopies, policyFiles, resumed } = place;
   const localBinding = context.policy.localBinding === true;
   // Whether the team's switch reaches this machine's loopback on this host and platform, as the host declares it: one
   // that keeps its commands off the loopback all the same, as Claude Code on Linux, keeps the proof's listener.
@@ -674,8 +685,11 @@ function launchStart(context, place) {
   const name = sessionName(run, key, attempt);
   const prompt = projectPrompt({ run, key, attempt, branch, clone: cwd, afterLimit, issueFile, baseCopies, resumed, confine: proving, note: safely(() => cap.sessionNote?.({ work: cwd, branch })) });
   // The hours the team confirmed for this start, which a wait the forge cannot answer holds the session to (settlePolicy).
-  // `overlay`: the branch head the attempt started from on the base branch's copies of its host files (the push guard).
-  const base = { event: 'start', key, attempt, session, name, cwd, branch, issueHours: context.policy.issueHours, ...(drop ? { drop } : {}), ...(pushUrl ? { pushUrl } : {}), ...(overlay ? { overlay } : {}) };
+  // `head`: the commit the branch was at, which the next attempt's branch must hold (recordedHead). `overlay`: the branch
+  // head the attempt started from on the base branch's copies of its host files, with the policy files the gate
+  // resolved (`policyFiles`), both for the push guard.
+  const overlaid = overlay ? { overlay, policyFiles: (policyFiles ?? []).filter((each) => typeof each === 'string').slice(0, 20) } : {};
+  const base = { event: 'start', key, attempt, session, name, cwd, branch, issueHours: context.policy.issueHours, ...(drop ? { drop } : {}), ...(pushUrl ? { pushUrl } : {}), ...(head ? { head } : {}), ...overlaid };
   let proof = null;
   // Why the write-ahead row was refused under the ledger's lock, when the order or the cap moved since the start read it.
   const ahead = {};

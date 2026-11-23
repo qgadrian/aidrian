@@ -302,11 +302,21 @@ const prNumber = (text) => {
   return named ? Number(named[1] ?? named[2]) : null;
 };
 
-// The pull request an `aidrian pr <subcommand>` command was given, its first word after the subcommand that is no flag;
-// null when it names none or one this cannot read, such as a dynamic word.
+// The pull request an `aidrian pr <subcommand>` command was given: the value of its `--pr`, else its first word after the
+// subcommand that is neither a flag nor the value of one; null when it names none or one this cannot read, such as a
+// dynamic word. VALUE_OPTIONS are the options `aidrian pr review` (review/run.mjs) and `aidrian pr await-review`
+// (pr-await-review.mjs parseArgs) read a value for, so `--timeout-sec 60 41` names 41.
+const VALUE_OPTIONS = new Set(['--repo', '--reviewer', '--timeout-sec', '--interval-sec', '--max-rounds', '--head', '--quota-fallback']);
 function aidrianTarget({ invocation }) {
-  const word = aidrianArgs(invocation).slice(2).find((token) => token.dynamic || !token.text.startsWith('-'));
-  return word && !word.dynamic ? prNumber(word.text) : null;
+  const words = aidrianArgs(invocation).slice(2);
+  for (let at = 0; at < words.length; at += 1) {
+    const token = words[at];
+    if (token.dynamic) return null;
+    if (token.text === '--pr') return words[at + 1] && !words[at + 1].dynamic ? prNumber(words[at + 1].text) : null;
+    if (VALUE_OPTIONS.has(token.text)) at += 1;
+    else if (!token.text.startsWith('-')) return prNumber(token.text);
+  }
+  return null;
 }
 
 // The pull request a `gh pr merge` command that merges names: its number, or 0 for one it names none of (the current
@@ -572,14 +582,12 @@ function settleCalls(entry, calls) {
       call.pull = named.length && named.length === call.edits.length ? onePull(named) : onePull(urlPulls(output));
     }
     const printed = call.skill ? [] : printedReviews(output, call.command);
-    call.reviewed ||= call.review && (call.skill ? call.ran : printed.length > 0 || call.filed.length > 0);
+    const filed = call.filed.length && reviewExited(block.is_error === true, output) ? call.filed : [];
+    call.reviewed ||= call.review && (call.skill ? call.ran : printed.length > 0 || filed.length > 0);
     if (call.loop && call.skill && call.ran) call.looped = [call.loopPull];
-    else if (call.loop && printed.length) call.looped = loopedPulls(printed, call.reviews);
-    // A review that wrote its JSON to a file printed none: it counts by the pull request it was given once its result
-    // settles, error or not, since a round that stops at extension_check exits 10 with its JSON in the file.
-    // SHORTCUT: a review command a shell expression skipped, as in `false && aidrian pr review 12 > f`, counts too. It
-    // can only skip a send-back, which costs less than a false one, and such a line is contrived.
-    else if (call.loop && call.filed.length) call.looped = [onePull(call.filed)];
+    else if (call.loop && (printed.length || filed.length)) {
+      call.looped = [...new Set([...(printed.length ? loopedPulls(printed, call.reviews) : []), ...filed])];
+    }
     if (call.gates.length) call.verdicts = callVerdicts(gateVerdicts(withoutCommand(output, call.command)), call.gates);
     // SHORTCUT: a call whose result is no error counts each merge command in it as run, even one a shell expression
     // skipped, as in `false && gh pr merge 12 || true`. It can only clear a refusal, never raise one, and such a line
@@ -588,6 +596,20 @@ function settleCalls(entry, calls) {
     settled.push(call);
   }
   return settled;
+}
+
+// Whether a call whose review sends its JSON to a file (`> r.json`) ended as a review does: with no error, or with an
+// exit code a review status sets (review/run.mjs EXIT), as a round that stops at extension_check exits 10. A shell that
+// cannot open the file, or a command that refuses its arguments, exits 1, which no status sets.
+// SHORTCUT: a review the line skipped still counts when the line ends with no error, as in `false && aidrian pr review
+// 12 > f; true`. It can only skip a send-back, which costs less than a false one, and such a line is contrived.
+// test/transcript.test.mjs checks REVIEW_EXITS against EXIT, so the two stay in step.
+export const REVIEW_EXITS = new Set([2, 3, 4, 6, 7, 8, 9, 10, 11]);
+const EXIT_LINE = /^Exit code (\d+)/u;
+function reviewExited(isError, output) {
+  if (!isError) return true;
+  const code = EXIT_LINE.exec(output);
+  return Boolean(code) && REVIEW_EXITS.has(Number(code[1]));
 }
 
 // The pull requests a review call reviewed: those its printed objects name, else the one its commands were given, else

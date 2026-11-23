@@ -1831,11 +1831,13 @@ hand-back check on the report ([Send-backs per turn](#send-backs-per-turn)).
   of another pull request.
 - A review is a `pr-review-loop` Skill call that ran, or such a typed slash command, or an `aidrian pr review` or
   `aidrian pr await-review` call whose result printed its JSON, or that sent its output to a file (`> r.json`).
-  A call that sends it to a file prints no JSON, so it counts once its result is in, error or not, of the pull request
-  it was given: a round that stops at `extension_check` exits 10. A `pr-review` run is none: it is the integration
+  A call that sends it to a file prints no JSON, so it counts by its exit, of each pull request it was given: no error,
+  or an exit a review status sets, as a round that stops at `extension_check` exits 10.
+  An exit 1, as when the shell cannot open the file, is none. A `pr-review` run is none: it is the integration
   review `issue-implement` runs after the draft, and the loop still follows it. The health report still counts it.
 - Each draft and review is of the pull request the transcript shows: a create's printed URL, an edit's target or its
-  printed URL, the loop's first argument, and the `pr` each review command printed, else the one it was given.
+  printed URL, the loop's first argument, and the `pr` each review command printed, else the one it was given, as its
+  `--pr` or its first word that is no option or an option's value.
   A draft is owed when no review of its pull request follows it in the turn: a review before it, or of another pull
   request, leaves it unreviewed. A `gh pr merge` of its pull request that ran after it settles it too: a merged pull
   request owes no review, and a merge that names none (the current branch's) settles any.

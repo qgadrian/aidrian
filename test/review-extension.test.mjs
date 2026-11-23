@@ -121,6 +121,34 @@ test('atCap: off, and the ceiling, stop without reading the history; a grant cou
   assert.equal(off.raise, 'AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr await-review 7 --request --max-rounds 4 --repo o/r');
 });
 
+// A bot decision is for the reviewer whose history it read. A checkout configured for bot B never takes bot A's
+// question or grant, and a configured bot never inherits one an override, or an older version, recorded with no reviewer:
+// the cap is checked afresh for it.
+test('atCap, revalidate, and grantedRounds take a bot decision only for its own reviewer', () => {
+  const state = emptyState(7, 'o/r');
+  const asked = { source: 'bot', round: 3, head: 'h', reviewer: 'a-bot[bot]', status: 'asking', by: 'judge', reasons: ['valid'], judge: { verdict: 'extend', reason: 'valid', head: 'h', at: '2026-11-01T10:00:00.000Z' } };
+  state.extensions = [asked, { source: 'bot', round: 2, head: 'g', reviewer: 'a-bot[bot]', status: 'granted', by: 'judge', reasons: [] }];
+  const policy = { mode: 'auto', max: 2 };
+  assert.equal(grantedRounds(state, 'bot', policy, 'a-bot[bot]'), 1);
+  assert.equal(grantedRounds(state, 'bot', policy, 'b-bot[bot]'), 0, 'bot B counts no grant of bot A');
+  const b = atCap({ state, source: 'bot', round: 3, head: 'h', policy: { mode: 'ask', max: 2 }, history: passing, pr: 7, reviewer: 'b-bot[bot]' });
+  assert.equal(b.status, 'extension_check', 'bot B reaches its own check, not bot A`s question');
+  assert.deepEqual(state.extensions.map((entry) => [entry.reviewer, entry.round, entry.status]), [['a-bot[bot]', 3, 'asking'], ['a-bot[bot]', 2, 'granted'], ['b-bot[bot]', 3, 'judging']]);
+  assert.equal(revalidate({ state, source: 'bot', round: 3, head: 'moved', history: passing, reviewer: 'c-bot[bot]' }), null, 'no entry of bot C to revalidate');
+  assert.equal(asked.head, 'h', 'bot A`s decision stays on its head');
+
+  // An entry with no reviewer, as an override or an older version wrote it, is no configured bot's.
+  const inherited = emptyState(7, 'o/r');
+  inherited.extensions = [{ source: 'bot', round: 3, head: 'h', status: 'granted', by: 'human', reasons: [], human: { answer: 'approve' } }];
+  assert.equal(grantedRounds(inherited, 'bot', { mode: 'ask', max: 2 }, DEFAULT_REVIEWER), 0);
+  const fresh = atCap({ state: inherited, source: 'bot', round: 3, head: 'h', policy: { mode: 'ask', max: 2 }, history: passing, pr: 7, reviewer: DEFAULT_REVIEWER });
+  assert.equal(fresh.status, 'extension_check', 'a fresh check for the configured bot');
+  // The plan's entries name no reviewer, and keep matching as before.
+  const plan = emptyState(7, 'o/r');
+  plan.extensions = [{ source: 'plan', round: 3, status: 'granted', by: 'judge' }];
+  assert.equal(grantedRounds(plan, 'plan', { mode: 'auto', max: 2 }), 1);
+});
+
 test('atCap: the judge`s verdict and the Human`s answer move one entry, and only a waiting one', () => {
   const state = emptyState(7, 'o/r');
   const rows = [];

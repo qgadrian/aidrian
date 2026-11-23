@@ -1161,6 +1161,11 @@ record's rounds or the bot's last review, and says the same. `"off"` reads nothi
 `aidrian pr review` round reviews that head, the line goes away; a bot round's line stays until the next check at the
 bot's cap.
 
+A bot's check, its question, and its grant are for the reviewer whose rounds it read: each bot entry names that
+reviewer, and another reviewer, such as the one a checkout with another `github.reviewer` waits on, never takes it, counts
+it, or reads it again on a new head. An entry with no reviewer, which an earlier version or an override wrote, belongs to
+none, so the cap is checked afresh. The plan's entries name none.
+
 A grant is exactly one round: the cap rises by one, and the next cap runs the check again. It adds to the cap in
 force, the base branch's or an explicit `--max-rounds`, in both commands; a `--max-rounds` above the base branch's cap
 still needs `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`, grant or not.

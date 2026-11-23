@@ -566,7 +566,7 @@ async function botAtCap(result, { project, config, forge, base, record, policy, 
   const extension = await import('./review/extension.mjs');
   const n = Number(base.n);
   const decision = extension.atCap({
-    state: record.state, source: 'bot', round: result.codex_rounds, head: result.head_sha, policy, pr: n, repo: base.repo, repoArg: repoFlag(project, base.repo),
+    state: record.state, source: 'bot', round: result.codex_rounds, head: result.head_sha, policy, pr: n, repo: base.repo, repoArg: repoFlag(project, base.repo), reviewer: result.reviewer ?? null,
     goal: { title: base.pr?.title ?? null, body: base.pr?.body ?? null },
     command: `aidrian pr await-review ${n} --request${repoFlag(project, base.repo)}`,
     history: botHistory(extension, { project, config, forge, base, reviewer: result.reviewer, head: result.head_sha }),
@@ -589,13 +589,13 @@ async function botAtCap(result, { project, config, forge, base, record, policy, 
 // moved past the head it was made on: read again on the new head before the cap counts it. Returns whether it changed.
 async function botRevalidate({ project, config, forge, base, record, reviewer, env, head }) {
   const extension = await import('./review/extension.mjs');
-  const open = (record.state.extensions ?? []).filter((entry) => entry.source === 'bot' && ['judging', 'asking', 'granted'].includes(entry.status));
+  const open = (record.state.extensions ?? []).filter((entry) => entry.source === 'bot' && extension.sameReviewer(entry, reviewer) && ['judging', 'asking', 'granted'].includes(entry.status));
   if (!head || !open.some((entry) => entry.head !== head)) return false;
   const round = codexRounds(forge.reviews(base.repo, base.n) ?? [], reviewer);
   const entry = open.find((each) => each.round === round);
   if (!entry || entry.head === head) return false;
   extension.revalidate({
-    state: record.state, source: 'bot', round, head,
+    state: record.state, source: 'bot', round, head, reviewer,
     history: botHistory(extension, { project, config, forge, base, reviewer, head }),
     log: extension.extensionLogger(project, config, { pr: Number(base.n), repo: base.repo, env }),
   });
@@ -631,7 +631,7 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
     let moved = false;
     const allowFor = async (head) => {
       if (record && (await botRevalidate({ project, config, forge, base, record, reviewer: opts.reviewer, env, head }))) moved = true;
-      const granted = grantedRounds(record?.state, 'bot', policy);
+      const granted = grantedRounds(record?.state, 'bot', policy, opts.reviewer);
       // A request past grantFloor uses a grant, and only for the head the grant was read on.
       ({ maxRounds: opts.maxRounds, grantFloor: opts.grantFloor } = roundCap({ baseline, granted }));
       opts.validHead = granted > 0 ? head : null;

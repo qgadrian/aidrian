@@ -47,13 +47,17 @@ const MAX_BODY = 4000;
 
 export const policyOf = (github) => ({ mode: github?.extraRounds ?? 'ask', max: github?.maxExtraRounds ?? 2 });
 
-const entriesOf = (state, source) => (state.extensions ?? []).filter((entry) => entry.source === source);
+// The entries of `source`, and for the bot's rounds those of `reviewer` alone: a bot decision is for the reviewer whose
+// history it read, so another bot never takes its check, its question, or its grant. A bot entry with no reviewer, one an
+// older version or an override wrote, belongs to none, and the cap is checked afresh. A plan entry names no reviewer.
+export const sameReviewer = (entry, reviewer = null) => (entry.reviewer ?? null) === (reviewer ?? null);
+const entriesOf = (state, source, reviewer = null) => (state.extensions ?? []).filter((entry) => entry.source === source && sameReviewer(entry, reviewer));
 
 // The extra rounds the base branch's policy lets count: each granted entry, once its mode allows it ("auto" takes the
 // judge's word, "ask" needs the Human's approval), up to the ceiling. "off" counts none.
-export function grantedRounds(state, source, policy) {
+export function grantedRounds(state, source, policy, reviewer = null) {
   if (!state || policy.mode === 'off') return 0;
-  const granted = entriesOf(state, source).filter((entry) => entry.status === 'granted' && (policy.mode === 'auto' || entry.human?.answer === 'approve'));
+  const granted = entriesOf(state, source, reviewer).filter((entry) => entry.status === 'granted' && (policy.mode === 'auto' || entry.human?.answer === 'approve'));
   return Math.min(granted.length, policy.max);
 }
 
@@ -337,8 +341,8 @@ const PENDING = new Set(['judging', 'asking', 'granted']);
 // as one round for the fix it was given for, and so does a check waiting for the Human, on the new head: the push is
 // most often the very fix the extra round would review, and the Human's answer, given or still to come, records with
 // no second judge run. Returns the entry, or null.
-export function revalidate({ state, source, round, head, history, log = () => {}, now = () => new Date().toISOString() }) {
-  const entry = (state?.extensions ?? []).find((each) => each.source === source && each.round === round && PENDING.has(each.status));
+export function revalidate({ state, source, round, head, history, reviewer = null, log = () => {}, now = () => new Date().toISOString() }) {
+  const entry = (state?.extensions ?? []).find((each) => each.source === source && each.round === round && sameReviewer(each, reviewer) && PENDING.has(each.status));
   if (!entry || !head || sameCommit(entry.head, head)) return entry ?? null;
   const read = history();
   const sig = signals(read);
@@ -370,22 +374,23 @@ export function revalidate({ state, source, round, head, history, log = () => {}
 // `history` is a function, called only when the signals need reading. `lastReviewed`, when given, is a function that
 // returns the head of the last round without git work: the record's rounds, or the bot's last review; a stop that reads
 // no signals, the ceiling or one made on an earlier head, asks it whether the head now is one no round reviewed.
-// `log(row)` gets each new decision. `raise` overrides what the `round_limit` question is computed from (raiseAsk): the
+// `log(row)` gets each new decision. `reviewer` is the bot whose rounds the check reads, for the bot's cap; null for the
+// plan's. `raise` overrides what the `round_limit` question is computed from (raiseAsk): the
 // rounds of the cap that stopped, when that is not `round`, and `withBot`.
-export function atCap({ state, source, round, head, policy, history: readHistory, lastReviewed = null, pr, repo = null, repoArg = '', goal = null, command, log = () => {}, now = () => new Date().toISOString(), raise = {} }) {
+export function atCap({ state, source, round, head, policy, history: readHistory, lastReviewed = null, pr, repo = null, repoArg = '', goal = null, command, log = () => {}, now = () => new Date().toISOString(), raise = {}, reviewer = null }) {
   if (policy.mode === 'off') return { status: 'round_limit', extension: { status: 'off', mode: 'off' }, ...raiseAsk({ pr, repo, source, round, ...raise }) };
   let cached = null;
   const history = () => (cached ??= readHistory());
-  const granted = grantedRounds(state, source, policy);
+  const granted = grantedRounds(state, source, policy, reviewer);
   state.extensions ??= [];
-  let entry = state.extensions.find((each) => each.source === source && each.round === round);
+  let entry = state.extensions.find((each) => each.source === source && each.round === round && sameReviewer(each, reviewer));
   const decide = (status, by, reasons = []) => {
     Object.assign(entry, { status, by, reasons, decided_at: now() });
     log(rowOf(entry));
   };
-  if (entry) revalidate({ state, source, round, head, history, log, now });
+  if (entry) revalidate({ state, source, round, head, history, reviewer, log, now });
   else {
-    entry = { source, round, head, at: now(), mode: policy.mode, max: policy.max, granted_before: granted, status: 'new', by: null, reasons: [] };
+    entry = { source, round, head, ...(reviewer ? { reviewer } : {}), at: now(), mode: policy.mode, max: policy.max, granted_before: granted, status: 'new', by: null, reasons: [] };
     state.extensions.push(entry);
     if (granted >= policy.max) decide('stopped', 'ceiling', [`${plural(granted, 'extra round')} granted already, and github.maxExtraRounds is ${policy.max}`]);
   }

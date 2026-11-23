@@ -101,7 +101,6 @@ export { cardState, isReviewSummaryCard, REVIEW_SUMMARY_CARD_MARKER };
 // major issues", and it names the reviewed commit. A comment that only quotes the phrase, such as a finding about a
 // screen that shows it, is never clean.
 export const RECEIPT_MARKER = '<!-- codex-review-receipt:v1 -->';
-export const RECEIPT_ONLY_NOTE = 'The review bot passed this head only with its receipt, or with a status card that says it found something on this pull request earlier. Merge trust counts neither, and a new request changes nothing: a person merges this pull request (docs/review.md, Merge trust).';
 const isReceipt = (body) => typeof body === 'string' && body.trimStart().startsWith(RECEIPT_MARKER);
 const CLEAN_RECEIPT_LEAD = /^Codex Review: Didn['’]t find any major issues\b/u;
 export const isCleanReceipt = (body) => {
@@ -113,12 +112,12 @@ export const isCleanReceipt = (body) => {
 };
 
 
-// The `code_review` of the reviewer's newest status card when it says its review of `commit` completed with no
-// unresolved finding, or null, as it is for a card that names its commit in fewer than 40 hex. The card vouches for
-// `comment` only when it was last updated at or after `since` and no earlier than that comment: a card left from an
-// earlier round, or one that has not caught up with the comment, says nothing of it. Its full SHA, not the comment's
-// short one, is what the head is checked against.
-const cardReview = (issueComments, reviewer, commit, comment, since) => {
+// The full commit the reviewer's newest status card says its code review of `commit` completed on with no unresolved
+// finding, or null, as it is for a card that names its commit in fewer than 40 hex. The card vouches for `comment` only
+// when it was last updated at or after `since` and no earlier than that comment: a card left from an earlier round, or
+// one that has not caught up with the comment, says nothing of it. Its full SHA, not the comment's short one, is what
+// the head is checked against.
+const cardCommit = (issueComments, reviewer, commit, comment, since) => {
   if (!commit) return null;
   const card = issueComments
     .filter((c) => c.user?.login === reviewer && isReviewSummaryCard(c.body))
@@ -128,7 +127,7 @@ const cardReview = (issueComments, reviewer, commit, comment, since) => {
   const review = cardState(card?.body)?.code_review;
   const clean = review?.status === 'completed' && review.has_unresolved_findings === false && typeof review.commit_sha === 'string'
     && /^[0-9a-f]{40}$/iu.test(review.commit_sha) && sameCommit(review.commit_sha, commit);
-  return clean ? review : null;
+  return clean ? review.commit_sha : null;
 };
 
 // Process exit code for a terminal status.
@@ -259,18 +258,14 @@ export const latestBotSignal = ({ reviews, reviewComments, issueComments = [], r
   if (!newest) return null;
   if (newest.kind === 'review') {
     const lineComments = reviewComments.filter((c) => c.pull_request_review_id === review.id).length;
-    return { kind: 'review', at: review.submitted_at, review_id: review.id, commit_id: review.commit_id, state: review.state, line_comments: lineComments, counted: review.state === 'APPROVED' };
+    return { kind: 'review', at: review.submitted_at, review_id: review.id, commit_id: review.commit_id, state: review.state, line_comments: lineComments };
   }
   const kind = isQuotaNotice(comment.body) ? 'quota_exhausted' : 'comment';
   const commit = reviewedCommit(comment.body);
   // `clean`: the comment is the clean receipt, or the status card says the review of its commit left nothing open.
-  const card = kind === 'comment' ? cardReview(issueComments, reviewer, commit, comment, since) : null;
-  const full = card?.commit_sha ?? null;
+  const full = kind === 'comment' ? cardCommit(issueComments, reviewer, commit, comment, since) : null;
   const clean = kind === 'comment' && (isCleanReceipt(comment.body) || full !== null);
-  // `counted`: what merge trust counts as the bot passing that commit (review/merge-trust.mjs botProblem): a card that
-  // also says the bot found nothing on the pull request at all. A clean receipt alone never counts.
-  const counted = card !== null && card.has_any_findings === false;
-  return { kind, at: comment.created_at, review_id: null, commit_id: full ?? commit, state: null, line_comments: 0, comment_id: comment.id ?? null, counted, ...(clean ? { clean: true } : {}) };
+  return { kind, at: comment.created_at, review_id: null, commit_id: full ?? commit, state: null, line_comments: 0, comment_id: comment.id ?? null, ...(clean ? { clean: true } : {}) };
 };
 
 // The bot's acknowledgement at or after `since`, as { at, headSha } or null: started, not finished. `headSha` is the
@@ -447,9 +442,6 @@ export const awaitReview = async (opts, { forge = awaitForge(), git = localGit()
       ...(status === 'round_limit' ? { max_rounds: maxRounds } : {}),
       signal,
       stale,
-      // A clean answer merge trust does not count: no new request changes it, since the bot's card keeps saying it
-      // found something on the pull request once it has, so a person merges it (docs/review.md, Merge trust).
-      ...(ANSWERED.has(status) && signal?.clean && !signal.counted ? { merge_note: RECEIPT_ONLY_NOTE } : {}),
       waited_sec: Math.round((now() - started) / 1000),
     };
   };

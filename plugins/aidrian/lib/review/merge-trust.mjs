@@ -38,6 +38,9 @@ export const sameBot = (login, reviewer) => botName(login) !== null && botName(l
 // counts: the receipt names a 10-hex short commit, which a commit ground to share it matches, and the forge gives no
 // push time that would bind it to the head; the 👍 names no commit, and lands seconds after the receipt, so after a
 // push it answers the head before it.
+const foundEarlier = (review, head) => review?.status === 'completed' && review.has_any_findings === true && review.has_unresolved_findings === false
+  && typeof review.commit_sha === 'string' && review.commit_sha.toLowerCase() === head.toLowerCase();
+
 export function botProblem(trail, head, reviewer) {
   const sha7 = head.slice(0, 7);
   if (typeof reviewer !== 'string' || reviewer === '') return NO_BOT;
@@ -59,6 +62,9 @@ export function botProblem(trail, head, reviewer) {
   if (whole.length > own.length) why = ', and its status card was edited by another account';
   else if (cards.length > whole.length) why = ', and the forge gave only part of its status card\'s edit history, so who edited it cannot be told';
   else if (!cards.length && trail.commentsComplete === false) why = ', and the pull request has more comments than the forge read gives, so its status card may be past them';
+  // The card keeps `has_any_findings` true once the bot found something on the pull request, so no new review of the
+  // head clears it, and `aidrian pr await-review --request` cannot change it (#566).
+  else if (own.some((card) => foundEarlier(cardState(card.body)?.code_review, head))) why = ', and its status card of that commit says it found something on this pull request in an earlier round, which no new review clears: a person merges it';
   return `${reviewer} has not passed head ${sha7} on the forge: no approving review of that commit, and no status card of its own that says its review of that commit finished and found nothing${why}`;
 }
 

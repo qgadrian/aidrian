@@ -224,6 +224,8 @@ test('the bot`s verdict counts only as the bot`s own, on exactly the head, with 
   assert.match(passes(base({ comments: [card(HEAD, { editors: [BOT, 'adrian'] })] })) ?? '', /edited by another account/u);
   assert.equal(botProblem(base(), HEAD, null), NO_BOT);
   assert.match(passes(base({ comments: [], commentsComplete: false })) ?? '', /more comments than the forge read gives/u);
+  assert.match(passes(base({ comments: [card(HEAD, { any: true, unresolved: false })] })) ?? '', /found something on this pull request in an earlier round, which no new review clears: a person merges it/u, 'a card that found something earlier says why');
+  assert.doesNotMatch(passes(base({ comments: [card(HEAD, { unresolved: true })] })) ?? '', /earlier round/u, 'findings still open say nothing of an earlier round');
 });
 
 test('neither the bot`s clean receipt nor its 👍 passes a head, for auto-merge and the merge guard alike', (t) => {

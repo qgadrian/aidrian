@@ -35,7 +35,6 @@ import {
   latestTriggerHead,
   reviewedCommit,
   isCleanReceipt,
-  RECEIPT_ONLY_NOTE,
   cardState,
 } from '../plugins/aidrian/lib/pr-await-review.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
@@ -107,7 +106,7 @@ test('latestBotSignal: review beats older thumbs-up, counts its line comments, i
   const reviewComments = [{ pull_request_review_id: 2 }, { pull_request_review_id: 2 }, { pull_request_review_id: 3 }];
   const reactions = [{ user: BOT, content: '+1', created_at: T(7) }];
   const s = latestBotSignal({ reviews, reviewComments, reactions, reviewer: DEFAULT_REVIEWER, since: T(5) });
-  assert.deepEqual(s, { kind: 'review', at: T(8), review_id: 2, commit_id: 'bbb', state: 'COMMENTED', line_comments: 2, counted: false });
+  assert.deepEqual(s, { kind: 'review', at: T(8), review_id: 2, commit_id: 'bbb', state: 'COMMENTED', line_comments: 2 });
   assert.equal(latestBotSignal({ reviews, reviewComments, reactions, reviewer: DEFAULT_REVIEWER, since: T(10) }), null);
 });
 
@@ -118,7 +117,7 @@ test('latestBotSignal: a bot-authored issue comment is a completed signal (draft
   const botComment = { id: 77, user: BOT, created_at: T(6), body: '### Summary …' };
   const ourRequest = { id: 76, user: { login: 'someone' }, created_at: T(5), body: '@codex review' };
   const s = latestBotSignal({ ...base, issueComments: [ourRequest, botComment], since: T(5) });
-  assert.deepEqual(s, { kind: 'comment', at: T(6), review_id: null, commit_id: null, state: null, line_comments: 0, comment_id: 77, counted: false });
+  assert.deepEqual(s, { kind: 'comment', at: T(6), review_id: null, commit_id: null, state: null, line_comments: 0, comment_id: 77 });
   // The requester's own comment is not a bot signal.
   assert.equal(latestBotSignal({ ...base, issueComments: [ourRequest], since: T(4) }), null);
   // A formal review newer than the comment still wins.
@@ -1244,7 +1243,7 @@ test('raising --max-rounds past the config cap needs the Human override, whateve
 // The bot's answers on a draft, as it posted them on a pull request: the clean receipt, and the status card whose
 // machine state says the code review of the head left nothing unresolved.
 const RECEIPT_BODY = (sha) => `<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues. Breezy!\n\n**Reviewed commit:** \`${sha.slice(0, 10)}\`\n\n<details> <summary>About Codex in GitHub</summary>\n</details>`;
-const STATE_CARD_BODY = (sha, unresolved, any = true) => `<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1 {"code_review":{"commit_sha":"${sha}","has_any_findings":${any},"has_unresolved_findings":${unresolved},"status":"completed"},"security_review":{"commit_sha":null,"has_any_findings":null,"has_unresolved_findings":null,"status":null}} -->\n\n<details>\n<summary><strong>Codex Review Summary</strong>: Completed</summary>\n</details>`;
+const STATE_CARD_BODY = (sha, unresolved) => `<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1 {"code_review":{"commit_sha":"${sha}","has_any_findings":true,"has_unresolved_findings":${unresolved},"status":"completed"},"security_review":{"commit_sha":null,"has_any_findings":null,"has_unresolved_findings":null,"status":null}} -->\n\n<details>\n<summary><strong>Codex Review Summary</strong>: Completed</summary>\n</details>`;
 
 test('latestBotSignal: a draft`s clean receipt, or a card with nothing unresolved on its commit, is a clean comment; other comments are not', () => {
   const head = '3871361bfb9f6e701a03438b1e300b0e921b909b';
@@ -1276,23 +1275,6 @@ test('latestBotSignal: a draft`s clean receipt, or a card with nothing unresolve
   assert.equal(latestBotSignal({ ...base, issueComments: [at('Codex Review: two findings below.')] }).clean, undefined, 'a comment that names findings');
   assert.equal(latestBotSignal({ ...base, issueComments: [at(STATE_CARD_BODY(head, false), 6, 2), at(QUOTA_BODY)] }).kind, 'quota_exhausted');
   assert.equal(latestBotSignal({ ...base, issueComments: [at(STATE_CARD_BODY(head, false), 6, 2), at(QUOTA_BODY)] }).clean, undefined, 'the quota notice is never clean');
-});
-
-test('awaitReview --request: a clean answer merge trust does not count says a person merges, and asks nothing more', async () => {
-  const head = '3871361bfb9f6e701a03438b1e300b0e921b909b';
-  const trigger = { id: 1, user: { login: 'someone' }, body: requestCommentBody(head), created_at: T(5), reactions: { eyes: 1 } };
-  const receipt = { id: 3, user: BOT, created_at: T(7), body: RECEIPT_BODY(head) };
-  const card = (any) => ({ id: 2, user: BOT, created_at: T(6), updated_at: T(8), body: STATE_CARD_BODY(head, false, any) });
-  const run = (issueComments) => {
-    const forge = fakeForge([{ issueComments }], { head, headCommittedAt: T(3) });
-    return awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 60, intervalSec: 60 }, { forge, ...clock() }).then((r) => ({ r, posts: forge.posts.length }));
-  };
-  for (const [comments, why] of [[[trigger, receipt], 'a receipt alone'], [[trigger, card(true), receipt], 'a card that found something earlier']]) {
-    const { r, posts } = await run(comments);
-    assert.deepEqual([r.status, r.signal.clean, r.signal.counted, r.merge_note, posts], ['already_present', true, false, RECEIPT_ONLY_NOTE, 0], why);
-  }
-  const { r } = await run([trigger, card(false), receipt]);
-  assert.deepEqual([r.status, r.signal.counted, r.merge_note, r.signal.commit_id], ['already_present', true, undefined, head], 'a card that found nothing at all counts');
 });
 
 // The bot's clean receipt as it posts one on every clean pass: its footer quotes the trigger, and its 👍 follows a few

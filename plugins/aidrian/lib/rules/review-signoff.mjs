@@ -24,6 +24,7 @@ import { findProject } from '../project.mjs';
 import { givenRepo, namesChange, originRepo, remoteRepos, repoName } from '../remotes.mjs';
 import { droveRun } from '../run-driver.mjs';
 import { readUnattendedMark } from '../unattended-mark.mjs';
+import { readCall, textDenial } from './product-feedback-answer.mjs';
 import { readTranscript, transcriptAnswers } from './review-extend.mjs';
 
 // What every in-session ask route says, as a clause and as a sentence: a Human away from the session, such as on a
@@ -112,31 +113,64 @@ export const severalRemotes = (project) => new Set(remoteRepos(project)).size > 
 export { namesChange };
 
 // Whether `answers` hold the Human's approval of the sign-off `words`. The latest answer naming it decides.
-export function answered(words, answers, repo) {
-  if (!repo || words.some((word) => word.dynamic)) return false;
+export const answered = (words, answers, repo) => signoffMiss(words, answers, { repo }) === null;
+
+// Why `answers` hold no approval of the sign-off `words` in the repository `target` names (approvalTarget), or null when
+// they do: the nearest miss, so the session fixes the one thing wrong instead of retrying the same call.
+// A deny once named none, and sessions retried three times in a minute, after a `$U` in the command, a question that
+// wrote `flow / invariant` with spaces, or a checkout with several remotes and no `--repo`.
+export function signoffMiss(words, answers, target) {
+  if (target.miss) return TARGET_MISS[target.miss] ?? 'the repository the command acts on cannot be told';
+  const { repo } = target;
+  const built = words.find((word) => word.dynamic);
+  if (built) return `\`${built.text}\` is a word the shell builds at run time: write every word out`;
   const flags = {};
   for (let i = 3; i < words.length; i += 1) {
     const flag = words[i].text;
-    if (!flag.startsWith('--') || Object.hasOwn(flags, flag)) return false;
+    if (!flag.startsWith('--') || Object.hasOwn(flags, flag)) return `\`${flag}\` is not one flag of the long form, each flag once`;
     flags[flag] = words[(i += 1)]?.text;
   }
   const pr = words[2]?.text?.replace('#', '');
   const [flow, stage, head] = [flags['--flow'], flags['--stage'], flags['--head']];
-  if (!/^\d+$/u.test(pr ?? '') || Boolean(flow) === Boolean(stage) || !/^[0-9a-f]{7,}$/iu.test(head ?? '') || Object.hasOwn(flags, '--last')) return false;
-  // A `--repo` must name the repository the answer is matched against: approvalTarget read it from this same command.
-  if (Object.hasOwn(flags, '--repo') && repoName(flags['--repo']) !== repo) return false;
+  if (Object.hasOwn(flags, '--last')) return '`--last` gets no answer route: run the long form the review step printed';
+  if (!/^\d+$/u.test(pr ?? '') || Boolean(flow) === Boolean(stage) || !/^[0-9a-f]{7,}$/iu.test(head ?? '')) return 'the long form needs the pull request number, one `--flow` or `--stage`, and `--head <sha>`';
+  if (Object.hasOwn(flags, '--repo') && repoName(flags['--repo']) !== repo) return `its \`--repo\` is not ${repo}`;
   const invariant = flags['--accept'] ?? flags['--overrule'];
   const tokens = [stage ? `stage:${stage}/signoff` : `${flow}/${invariant ?? 'signoff'}`, ...(flags['--accept'] ? [`${flow}/*`] : [])];
   const namesToken = (question) => tokens.some((token) => {
     const at = question.indexOf(token);
     return at !== -1 && !/[\w-]/u.test(question[at + token.length] ?? '') && !/[\w-]/u.test(question[at - 1] ?? '');
   });
-  const matching = answers.filter(({ question }) => namesChange(question, repo, pr) && question.includes(head.slice(0, 7)) && namesToken(question));
-  return /^\s*approve\b/iu.test(matching.at(-1)?.answer ?? '');
+  if (!answers.length) return 'the session holds no AskUserQuestion answer';
+  const named = `${repo}#${pr}`;
+  const onPr = answers.filter(({ question }) => namesChange(question, repo, pr));
+  if (!onPr.length) return `no question answered names \`${named}\``;
+  const onHead = onPr.filter(({ question }) => question.includes(head.slice(0, 7)));
+  if (!onHead.length) return `no question naming ${named} names the head \`${head.slice(0, 7)}\``;
+  const matching = onHead.filter(({ question }) => namesToken(question));
+  if (!matching.length) return `no question naming ${named} at ${head.slice(0, 7)} names \`${tokens[0]}\`, written as one word with no space around the \`/\``;
+  const last = matching.at(-1).answer;
+  return /^\s*approve\b/iu.test(last) ? null : `the Human picked "${last}", not the option that starts with "Approve"`;
 }
 
-// The deny for a sign-off asked by a subagent, or by a session no Human attends: neither may write the sign-off store
-// (lib/review/merge-trust.mjs), which a merge no Human asks for reads as the Human's word, so no answer opens it.
+const TARGET_MISS = {
+  remotes: 'this checkout\'s remotes name more than one repository: end the command with `--repo <owner>/<name>`, the one the question names',
+  plain: 'it is not one plain command: no shell variable, `cd`, `env -C`, or chain',
+  repo: 'its `--repo` must name, written out, one of this checkout\'s remotes',
+  origin: 'this checkout has no origin to tell the repository by: end the command with `--repo <owner>/<name>`',
+};
+
+// The deny for a sign-off whose answers miss: REASON, then the miss, when the session holds answers to go by.
+const missReason = (miss) => `${REASON} This call: ${miss}.`;
+
+// What a subagent is told: it has no answer route, and its dispatcher, the main session, has. It returns the question
+// rather than retrying a call no answer can open.
+export const SUBAGENT_REASON =
+  'Blocked: `aidrian pr signoff` is the Human\'s sign-off, and a subagent never records it, whatever an answer says. ' +
+  'Stop and return `status: needs_input` to your dispatcher, with `next_owner: the Human`, the sign-off question in plain words that names ' +
+  '`<owner>/<name>#<PR>`, the short head, and `<flow>/<invariant>`, `<flow>/*`, `<flow>/signoff`, or `stage:<name>/signoff`, ' +
+  'options whose recommended one starts with "Approve", and the long-form command the review step printed: the main session asks it and runs the command.';
+
 export const UNATTENDED_REASON =
   'Blocked: `aidrian pr signoff` is the Human\'s sign-off, and it writes the sign-off store, which a merge no Human asks for reads as the Human\'s word, ' +
   'so only a main session the Human attends runs it: never a subagent, a session no Human attends, or a project run\'s driver, whatever an answer says. ' +
@@ -152,31 +186,50 @@ export function check(command, { cwd = process.cwd(), input = {}, unattendedMark
   const driver = drives ?? (() => droveRun(input?.session_id));
   // Who may not record a sign-off wherever the call runs, read before the project, so a folder that is none, such as a
   // git folder of its own, makes no hole: a subagent, a session no Human attends, and a run's driver.
+  const subagent = typeof input?.agent_id === 'string' && input.agent_id !== '';
   let held;
-  const barred = () => (held ??= (typeof input?.agent_id === 'string' && input.agent_id !== '') || Boolean(unattendedMark()) || driver());
-  for (const { invocation, unread } of walkCommands(command, null)) {
+  const barred = () => (held ??= subagent ? SUBAGENT_REASON : unattendedMark() || driver() ? UNATTENDED_REASON : null);
+  const refuse = () => barred() ?? (project ? REASON : null);
+  const entries = walkCommands(command, null);
+  const judged = new Set();
+  for (const entry of entries) {
+    const { invocation, unread } = entry;
     if (unread !== undefined && /\bpr\s+signoff\b/u.test(unread)) {
-      if (barred()) return UNATTENDED_REASON;
-      if (project) return REASON;
+      const denied = refuse();
+      if (denied) return denied;
       continue;
     }
-    const words = aidrianArgs(invocation);
+    // A program the shell builds at run time, as `$x` or `"$(command -v aidrian)"`, may be aidrian: its words are read
+    // as aidrian's (product-feedback-answer.mjs readCall reads them so).
+    const read = readCall(invocation);
+    const words = aidrianArgs(invocation) ?? (read || dynamicProgram(invocation) ? invocation.args : null);
     if (!words) continue;
+    judged.add(entry);
+    const built = !aidrianArgs(invocation);
     // A subcommand the shell builds at run time cannot be read, so it may be a sign-off.
-    if (words[0]?.dynamic || (words[0]?.text === 'pr' && words[1]?.dynamic)) {
-      if (barred()) return UNATTENDED_REASON;
-      if (project) return REASON;
+    if (read?.type === 'unreadable' || (!built && (words[0]?.dynamic || (words[0]?.text === 'pr' && words[1]?.dynamic)))) {
+      const denied = refuse();
+      if (denied) return denied;
       continue;
     }
-    // `--check` records nothing (lib/review-gate.mjs runSignoff), and the command takes no value that starts with `--`,
-    // so a plain word `--check` is always the dry run: an agent may try a command before it hands it to the Human. A
-    // dynamic word is not: `printf …`--check may expand to a value that swallows it, or to nothing.
     if (words[0]?.text === 'pr' && words[1]?.text === 'signoff' && !words.some((word) => !word.dynamic && word.text === '--check')) {
-      if (barred()) return UNATTENDED_REASON;
+      if (barred()) return barred();
       if (!project) continue;
+      if (built) return REASON;
       const answers = transcriptAnswers(readTranscript(input?.transcript_path));
-      if (!answers.length || !answered(words, answers, approvalRepo(project, command, cwd))) return REASON;
+      if (!answers.length) return REASON;
+      const miss = signoffMiss(words, answers, approvalTarget(project, command, cwd));
+      if (miss) return missReason(miss);
     }
   }
-  return null;
+  // The shapes the word pass cannot read but the text names: xargs, parallel, npx, an interpreter, a variable or an
+  // alias whose words hold the call (product-feedback-answer.mjs textDenial).
+  if (!project && !subagent) return null;
+  return textDenial(entries, judged, true, namesSignoff) ? refuse() : null;
 }
+
+// Whether one command's words name a sign-off call: aidrian, then `pr signoff`.
+const namesSignoff = (text) => /\baidrian\b[\s\S]*\bpr\s+signoff\b/u.test(text) && !/(?:^|\s)--check(?:\s|$)/u.test(text);
+
+// Whether a walked command's program is a word the shell builds at run time.
+const dynamicProgram = ({ program, args }) => /[$`]/u.test(program) || (program === '' && args.length > 0);

@@ -319,7 +319,14 @@ What each rule matches:
   so a session can try a command before it hands it to the Human. A pipe into a shell that names a sign-off stays
   blocked, `--check` or not, since the rule cannot read it. Only a plain `--check` counts: one the shell builds at run
   time, such as `` `printf …`--check ``, is no dry run. An `aidrian` whose subcommand the shell builds at run time,
-  such as `aidrian "$@"`, is denied too. The rule's message stops the session; at `human_required` naming one flow,
+  such as `aidrian "$@"`, is denied too, and so is a program the shell builds (`$x pr signoff`,
+  `"$(command -v aidrian)" pr signoff`) and a call only text names: `xargs`, `parallel`, `npx`, an interpreter's code,
+  or a variable or alias whose words hold `aidrian … pr signoff`, as the product-feedback rule reads its own (its
+  `readCall` and `textDenial`). A command that only handles text, such as `echo`, `grep`, or `git commit -m`, still runs.
+  When the session holds answers and none approves the call, the deny names the nearest miss: a word the shell builds,
+  no question naming `<owner>/<name>#<PR>`, the head, or the `<flow>/<invariant>` written as one word, an answer that
+  is not "Approve", or a checkout whose remotes need `--repo`. A subagent is told to return `status: needs_input` with
+  the sign-off question and the command for its dispatcher, which has the answer route. The rule's message stops the session; at `human_required` naming one flow,
   once `--last --check` exits 0, it hands the Human the short form, `aidrian pr signoff <PR> --last`, short enough to
   type from a phone, which refuses any other stop. A long form runs on the Human's AskUserQuestion answer naming
   `<owner>/<name>#<PR>` of the repository it acts on ([review.md](review.md#answering-in-the-session)): its `--repo`,

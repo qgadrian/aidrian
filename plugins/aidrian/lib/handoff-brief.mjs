@@ -15,13 +15,15 @@
 //      started it, whatever the brief's slug (lib/handoff-markers.mjs readFrom). A brief right inside `<state>/handoffs/` that passes is stamped with
 //      the sha256 of its bytes, which `aidrian handoff continue` (lib/handoff-continue.mjs) requires.
 //   5. The sections a resume needs, and a `Supersedes:` field in the header (lib/handoff-sections.mjs).
+//   6. Next steps that run a skill only a person can start (manualSkillProblem), which a continued session's Skill
+//      tool refuses: the continuation would stop there.
 // `verify COPY SHA256` exits 0 when the copy the background route kept still hashes to the sha256 the new session's first
 // message names, and prints one line that says so, then the bytes it hashed, from the same read, which that session
 // follows in place of the file; it exits 1 with the reason otherwise, and prints none of them (lib/handoff-markers.mjs
 // verifyKept). It writes nothing.
 
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
@@ -31,6 +33,7 @@ import { readFrom, stampChecked, verifyKept } from './handoff-markers.mjs';
 import { resolvePrior, samePath, takeSnapshot, unreadable, writeSnapshot } from './handoff-prior.mjs';
 import { sectionProblems, supersedesProblem, unresolvedProblem } from './handoff-sections.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
+import { fencedLines, headingOf } from './markdown-sections.mjs';
 import { findWrapViolations } from './markdown-wrap.mjs';
 import { projectAt } from './project.mjs';
 import { usageLines } from './usage.mjs';
@@ -216,13 +219,73 @@ export function findCarryGaps(briefText, priorText) {
 export const adviceProblem = (text) =>
   ADVICE_LINE.test(text.split(/^##\s/mu)[0]) ? null : 'No advice line above the first section: add "Advice from <writer>, not a spec: check each claim against the docs and code before building on it."';
 
+// This plugin's skills folder: lib/ is one below the plugin.
+const SKILLS = path.resolve(import.meta.dirname, '../skills');
+
+// The names of the skills in `folder` that only a person can start: `disable-model-invocation: true` in the frontmatter.
+// A folder or file it cannot read adds none.
+export function manualSkills(folder = SKILLS) {
+  let names;
+  try {
+    names = readdirSync(folder);
+  } catch {
+    return new Set();
+  }
+  return new Set(names.filter((name) => {
+    try {
+      const head = /^---\r?\n([\s\S]*?)\r?\n---/u.exec(readFileSync(path.join(folder, name, 'SKILL.md'), 'utf8'))?.[1] ?? '';
+      return /^disable-model-invocation:[ \t]*true[ \t]*$/mu.test(head);
+    } catch {
+      return false;
+    }
+  }));
+}
+
+// The text of the brief's Next steps section, its fenced code included: '' without one. A heading in a fence ends
+// nothing, but a skill a fenced step body names is still run by the session that follows the brief. The whole
+// section, since a continuation runs every step, and reading where one Markdown list item ends took a Markdown reader.
+function nextSteps(text) {
+  const body = String(text ?? '');
+  const fenced = fencedLines(body);
+  const lines = [];
+  let inSection = false;
+  body.split(/\r?\n/u).forEach((line, at) => {
+    // SHORTCUT: a heading inside a list item ends the section, as the required-section check reads headings; telling
+    // the two apart takes a Markdown list reader, which a brief with headings inside its steps would need.
+    const title = fenced[at] ? null : headingOf(line);
+    if (title !== null) inSection = /^next steps(?![\p{L}\p{N}])/iu.test(title);
+    else if (inSection) lines.push(line);
+  });
+  return lines.join('\n');
+}
+
+// The finding for a brief whose Next steps run a skill only a person can start, named as `/aidrian:<name>`, `/<name>`,
+// or the `<name>` skill: the Skill tool of the session that resumes it refuses that skill, so a continuation would stop
+// there. null when they run none. `skills` is manualSkills's set.
+export function manualSkillProblem(text, skills = manualSkills()) {
+  const step = nextSteps(text);
+  // A slash name ends at a space or sentence punctuation, never a file's extension, as in `/autopilot.md`. Any mention
+  // counts, one for a person to type included: who is meant to act is prose no check reads, so the steps name none.
+  const named = [
+    ...[...step.matchAll(/(?<![\w./-])\/(?:aidrian:)?([a-z0-9][a-z0-9-]*)(?![\w/-]|\.\w)/gu)].map((match) => match[1]),
+    ...[...step.matchAll(/`(?:aidrian:)?([a-z0-9][a-z0-9-]*)`\s+skill(?!['’])\b/gu)].map((match) => match[1]),
+  ];
+  const manual = [...new Set(named.filter((name) => skills.has(name)))];
+  if (!manual.length) return null;
+  const list = manual.map((name) => `\`${name}\``).join(', ');
+  return `Next steps: they run ${list}, which only a person can start (\`disable-model-invocation: true\`): ` +
+    'the Skill tool of a continued session refuses it, so the continuation would stop there. ' +
+    'Write the steps as work a session can start, naming no such skill, and a person\'s part under Open risks and ' +
+    'questions; or leave the brief to the Human, who resumes it by typing the skill';
+}
+
 // { exitCode: 0 clean, 1 findings, 2 an unreadable prior, or a prior that is the brief itself; lines }. `limit` 0 skips
 // the line-length check. `floor` is the lowest chain count the brief may give; `store`, the continuation store, takes the
 // stamp of a brief that passes.
 export function checkBrief(briefPath, explicitPrior, limit = 155, { floor = 0, store = null } = {}) {
   const bytes = readFileSync(briefPath);
   const briefText = bytes.toString('utf8');
-  const header = [adviceProblem(briefText), ...chainProblems(briefText, floor), ...sectionProblems(briefText), supersedesProblem(briefText)].filter(Boolean);
+  const header = [adviceProblem(briefText), ...chainProblems(briefText, floor), ...sectionProblems(briefText), manualSkillProblem(briefText), supersedesProblem(briefText)].filter(Boolean);
   const lines = [`handoff check: ${briefPath}`, ...header];
   let findings = header.length;
   const wrap = limit > 0 ? findWrapViolations(briefText, limit) : [];

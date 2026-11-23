@@ -194,10 +194,23 @@ export function registerPane(on: On, options: PluginOptions) {
     return spawned
   }).catch(($, e, next) => next(e))
 
+  // Each main-chain request reads and refreshes the prompt cache, so the countdown starts again at the request, not at
+  // the turn's end: a long turn keeps the cache warm. A subagent's request is its own chain's and refreshes none.
   on('turn.step', async function* ($, e, next) {
-    if (e.agentId === undefined && e.effort !== undefined) {
-      const level = e.effort
-      await update($, effort, () => level)
+    if (e.agentId === undefined) {
+      if (e.effort !== undefined) {
+        const level = e.effort
+        await update($, effort, () => level)
+      }
+
+      const sentAt = await $.clock.now()
+      const response = yield* next(e)
+
+      if (response.usage !== null) {
+        await update($, cacheAt, () => sentAt)
+      }
+
+      return response
     }
 
     for await (const chunk of next(e)) {

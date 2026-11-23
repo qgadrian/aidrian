@@ -8,7 +8,8 @@ OpenCode 1.x is not supported. The install command is also in the [README](../..
 ## Install
 
 The plugin installs as a package from this repository, by a Git specifier whose `::path:` selector names the plugin
-folder. The package is that whole folder, so `scripts/`, `lib/`, `bin/`, and `hooks/hooks.json` arrive with the bridge.
+folder. The package is the folder's tracked files, so `scripts/`, `lib/`, `bin/`, and `hooks/hooks.json` arrive with
+the bridge; on 2.4.0 the install left out the folder's `.gitignore` files, which nothing on OpenCode reads.
 There is no npm package: `plugins/aidrian/package.json` is private, so never install by the bare name `aidrian`,
 which names whatever a registry holds under it. It needs OpenCode 2.0 or later; 1.x is not supported.
 
@@ -19,13 +20,21 @@ owner. Following main, as the other two hosts do; `plugin add` writes the global
 opencode plugin add 'github:<owner>/aidrian#main::path:plugins/aidrian'
 ```
 
+On OpenCode 2.4.0, `plugin add` wrote the specifier as it was given, a string in `plugins` of `opencode.json` in the
+global config folder: `{ "plugins": ["github:<owner>/aidrian#<ref>::path:plugins/aidrian"] }`. It installed the
+package under OpenCode's cache folder, pinned in a lock file to the commit the ref named, with `bin/` executable.
+
 Pinned to a release, with that release's tag in place of `main`:
 
 ```sh
 opencode plugin add 'github:<owner>/aidrian#vX.Y.Z::path:plugins/aidrian'
 ```
 
-For a team, in the project's `opencode.jsonc`, so every session in that project loads it:
+A release tag installs only from the first release whose `plugins/aidrian/` holds `package.json`: on 2.4.0, the tag
+`v0.85.4`, older than that file, failed with `Could not read package.json` and left the configuration unchanged.
+
+For a team, in the project's `opencode.jsonc`, so every session in that project loads it, the same entry `plugin add`
+writes:
 
 ```jsonc
 { "plugins": ["github:<owner>/aidrian#main::path:plugins/aidrian"] }
@@ -45,8 +54,21 @@ To turn it off for one project while the global configuration names it, add `"-a
 - A tag entry, such as `#vX.Y.Z`, or a full commit stays where it is. To move it, change the tag in the entry.
 - A `#main` entry runs ahead of releases: a pull request lands on main before the release commit that names its
   version, so such an install can hold code no version names yet.
-- A `semver:` range is not documented: whether OpenCode honors one against this repository's tags has not been checked.
-- Whether `opencode plugin update` keeps a Git entry has not been checked.
+- A `semver:` range is not documented. On 2.4.0, `#semver:^0.85.0::path:plugins/aidrian` was resolved and cloned,
+  then failed with `Could not read package.json`, as no release tag held the package yet, so whether it installs the
+  newest matching release has not been checked.
+- `opencode plugin update` keeps the Git entry, and moves a branch entry's install to the branch's newest commit,
+  when it asks a server whose plugins have loaded.
+  On 2.4.0, against an isolated `opencode serve --port 0` after a `models` call loaded the plugins, with the
+  install's lock set back one commit: `plugin check --server <url>` printed `aidrian 8420a18 (update available)`
+  and changed nothing; `plugin update --server <url>` installed the branch's
+  head in a new folder of OpenCode's cache, after which `plugin list --server <url>` showed `b9b0f0a`, and the entry
+  in `opencode.json` was byte for byte the same. Its own output said `No plugin updates available` even so, so read
+  `plugin list` after it, not its output. Against the background service, which runs the same server, it was not
+  run.
+- With `--standalone`, `plugin update` and `plugin check` change nothing: they ask a private server before any plugin
+  has loaded, so they print `No plugin updates available` and `No package plugins found`, and given the entry as a
+  target, both fail with `Plugin is not configured`.
 
 ## Running aidrian
 
@@ -58,8 +80,11 @@ To turn it off for one project while the global configuration names it, add `"-a
   `export PATH="/absolute/path/to/aidrian-harness/plugins/aidrian/bin:$PATH"`.
 - The hook scripts need Node 22, and OpenCode's own binary is Bun. Server plugins run in OpenCode's background
   service, unless a command passes `--standalone`, so Node 22 must be on that service's `PATH`, or `AIDRIAN_NODE` in its
-  environment must name a Node 22 binary by an absolute path; a relative `AIDRIAN_NODE` is ignored. For example, in the
-  form the help of `opencode service set` gives on 2.4.0:
+  environment must name a Node 22 binary by an absolute path; a relative `AIDRIAN_NODE` is ignored. By the 2.4.0
+  source, `opencode run` with no service running uses a private server instead, as `--standalone` does, while
+  `models`, `reload`, `session list`, `session delete`, and `api` start the service; `stats` and the `service`
+  subcommands were not traced. A service a command starts inherits that command's whole environment.
+  For example, in the form the help of `opencode service set` gives on 2.4.0:
 
   ```sh
   opencode service set env AIDRIAN_NODE /absolute/path/to/node
@@ -68,6 +93,28 @@ To turn it off for one project while the global configuration names it, add `"-a
 
 - Restart the service after changing either, so it runs with the new value: a bridge that found no Node stops running
   hooks for the life of its process ([Troubleshooting](#troubleshooting)).
+- A `--standalone` command of OpenCode 2.4.0 does not load a project's `.env` into the private server its plugins run
+  in: a dummy variable in a `.env` at the start folder and at its parent reached no plugin. Whether the background
+  service loads one has not been checked.
+
+### How OpenCode's server listens
+
+Checked on OpenCode 2.4.0 on 2026-11-23, in an isolated home:
+
+- The private server a `--standalone` command starts, `opencode serve --stdio --port 0`, listened on one TCP port of
+  `127.0.0.1`, chosen by the system, and on no socket file (`lsof` on its process).
+- Its API needs a password, a new one each start by the 2.4.0 source: `/api/info`, `/api/session`, `/api/config`,
+  and `/api/plugin` answered `401` to a request with no credential and to one with a wrong one. Each other path
+  tried, such as `/` and `/session`, answered `200` with the same 9,401-byte HTML page, the web interface's.
+- `opencode serve --port 0`, with the password in `OPENCODE_PASSWORD`, listened the same way, on `127.0.0.1`, and
+  answered `/api/info` with `401` without the password and `200` with it. Its HTML page held neither the password
+  nor any word like password, token, secret, or authorization; the one match for "credential" was the attribute
+  `crossorigin="use-credentials"` of its manifest link. The scripts the page loads were not read.
+- The background service was not started, since it takes a fixed port that the user's own service held. The 2.4.0
+  source gives it `127.0.0.1:49374` on the release channel, unless `service set` changes the host or port, and the
+  same password rule: a password from `service set`, or a new one each start, written to `service.json` in
+  OpenCode's state folder, which its commands read to find and reach it. A request to that port with no credential
+  has not been checked. What that password guards is in [Limits](#limits).
 
 ## Hooks
 
@@ -117,7 +164,8 @@ path or another machine's `name:path`, records nothing, since the folder it name
 
 ## Session ids
 
-- Every command OpenCode's shell tool runs has `OPENCODE=1` and `OPENCODE_SESSION_ID`, the calling session's id. The
+- By the 2.4.0 source, every command OpenCode's shell tool runs has `OPENCODE=1` and `OPENCODE_SESSION_ID`, the
+  calling session's id; no live shell call has shown it. The
   adapter reads that variable as a command's session, so `aidrian session snapshot` in an OpenCode shell finds its
   session's pull requests.
 - The bridge files a subagent's rows under the root session: it follows each session's `parentID` up to the root, at
@@ -153,23 +201,32 @@ Set it as `AIDRIAN_NODE` is set: `opencode service set env AIDRIAN_OPENCODE_TRAC
 - `run` with `0` and no row: the folder holds no project with `.aidrian/`, or the command made no pull request call
   the [session ledger](../hooks.md#session-ledger) records.
 
-What OpenCode 2.4.0 showed with the plugin folder loaded by a path entry, as `test/hosts.test.mjs` loads it, with
-`--standalone` on every call but the last:
+What OpenCode 2.4.0 showed with the plugin folder loaded by a path entry, as `test/hosts.test.mjs` loads it, and by
+the Git entry `plugin add` wrote, with `--standalone` on every call but those that name `--server`:
 
 - The loader takes the package's server entry, `opencode/server.mjs`, whose default export is
-  `{ id: 'aidrian', setup }`.
-- `opencode models --standalone` loads plugins, and its trace holds the `setup` line.
+  `{ id: 'aidrian', setup }`. From the Git install, OpenCode's log names that entry inside the installed package.
+- `opencode models --standalone` loads plugins, and its trace holds the `setup` line, written owner-only.
+- The plugin context names OpenCode's version as `app.version`, `2.4.0`, which the bridge sends in its `opencode`
+  mark.
 - `opencode plugin list --standalone` prints `No plugins found` whatever is installed: it asks its private server
   before any plugin has loaded. Against a server whose plugins have loaded, `plugin list --server <url>` names a
   path entry as `aidrian  local  <path>`.
-- The commands that wait for plugins, such as `models`, wait at most 5 seconds and then go on without them, so on a
-  loaded machine the first start may end before `setup` runs.
+- The commands that wait for plugins, such as `models`, wait 5 seconds and then go on without them: with a probe
+  plugin whose setup took 12 seconds, `models` printed its list at 5.2 seconds and ended at 8.2, once its private
+  server stopped. The bridge, loaded after the probe, wrote no `setup` line in that command, so another plugin with a
+  slow setup can keep it from running, as a loaded machine can on the first start.
+- A server plugin's `console.error` goes to the private server's standard error, which a command shows only with
+  `--print-logs` or `OPENCODE_PRINT_LOGS=1`; its `console.log` is shown nowhere, and neither reaches OpenCode's log
+  file. Where the background service sends them has not been checked.
 
 ## Rules for the other hosts' sessions
 
-These rules hold Claude Code and Codex sessions, the hosts whose hooks run the guards: a session no Human attends on
-either may not plant what an OpenCode session would load, nor run OpenCode to start a session or change its config.
-They hold no session that runs on OpenCode, where no guard runs ([Limits](#limits)).
+These rules hold Claude Code and Codex sessions, the hosts whose hooks run the guards. A session no Human attends on
+either is refused a write of OpenCode's host files in the places below, and the OpenCode commands below; a subagent
+and a session the background handoff route started are also refused a start of an OpenCode session. They do not
+cover every place an OpenCode session loads from ([Limits](#limits)), and they hold no session that runs on OpenCode,
+where no guard runs.
 
 **Host files at a checkout's root.** `.opencode`, a folder refused with all it holds, and `opencode.json` and
 `opencode.jsonc`, files, also met through a hard link: `.opencode/plugins/` loads code into the next OpenCode session
@@ -178,8 +235,17 @@ Human attends in its own worktree, each checkout nested in it, and its attempt's
 ([Agent gates](../hooks.md#agent-gates)). A protected name ending `.json` or `.jsonc` is a file; any other is a folder.
 
 **At any depth of a confined clone.** Any path with a `.opencode` part, and any `opencode.json` or `opencode.jsonc`,
-in any case, by a file tool, the shell, a link's target, or a glob that may reach one. Whether OpenCode loads a nested
-`.opencode` folder or config file has not been checked, so they are held wherever they lie.
+in any case, by a file tool, the shell, a link's target, or a glob that may reach one. OpenCode 2.4.0 loads the
+`.opencode` folder and the `opencode.json` of the folder a session starts in and of each folder above it, and none
+below it: a probe plugin in `pkg/.opencode/plugins/` and one that `pkg/opencode.json` names ran when a command started
+in `pkg`, not when it started at the project root, and the root's two ran from both. So a nested one loads into every
+session that starts at or below its folder, and in a confined clone they are held wherever they lie. Its plugin
+folders, `plugin/` and `plugins/`, load a `.js` or `.ts` file, or a folder; a `.mjs` file there is not loaded.
+
+What OpenCode 2.4.0's log and source show of that walk: it goes up to `/`, with no stop at a git repository's root
+(a command started in a checkout watched the folders above the checkout too); and in each folder it reads `.claude`
+and `.agents` as well as `.opencode` (the log shows it watching `skills` inside them). What `.claude` and `.agents`
+feed into a session has not been checked.
 
 **Auto-merge.** A pull request that changes `.opencode`, `opencode.json`, or `opencode.jsonc` at any depth keeps
 auto-merge off, as do the plugin's own `opencode/` and `package.json` ([Auto-merge](../config.md#auto-merge)).
@@ -235,8 +301,8 @@ layer that holds, within the limit above.
 - No unattended mark and no rule holds an OpenCode session, so `aidrian pr auto-merge` run there reads the session as
   one a Human attends, and `gh pr merge` runs unchecked.
 - The rules on OpenCode's files and commands (`.opencode`, `opencode.json`, `opencode.jsonc`, and `opencode`'s own
-  subcommands) hold Claude Code and Codex sessions, which may not plant what OpenCode loads, and hold no session that
-  runs on OpenCode.
+  subcommands) hold Claude Code and Codex sessions no Human attends, in the places
+  [above](#rules-for-the-other-hosts-sessions) names, and hold no session that runs on OpenCode.
 - No start lines, compaction checklist, line-length feedback, or stop checks: each must reach the model, and the
   bridge gives no hook a way to.
 - No check-run record: the adapter declares no `shellRun`, and the one reader of that record, the subagent stop's
@@ -254,9 +320,23 @@ layer that holds, within the limit above.
   hide a config file `OPENCODE_CONFIG` names.
 - Codex's own sandbox takes no list of credential stores, so a confined Codex session reads OpenCode's folders and
   Codex's own `auth.json` ([Codex residuals](codex.md#project-start)).
-- Not checked on a live OpenCode: the Git install and the entry `plugin add` writes, a `semver:` range, what
-  `plugin update` does to a Git entry, whether the shell hook's environment holds `PATH`, whether a subagent's session
-  carries `parentID`, the `edit` tool's path field, where a server plugin's console output goes, whether the plugin
-  context gives a version, whether OpenCode loads nested host files, and how its background service listens.
+- OpenCode reads the `.opencode` folder and `opencode.json` of every folder above a session's start folder, so a
+  session started in a worktree below a main checkout loads that checkout's, and one started below the home folder
+  reads the home folder's `.opencode` whatever `HOME` says: on 2.4.0 a command started inside an isolated home below
+  the real one listed the real `~/.opencode` among its config sources. The host-file rules above name a checkout's
+  root and the checkouts nested in it, not the folders above it; today the write guard still refuses a session no
+  Human attends a write in a folder above its checkout, as anywhere outside its own places, except in the temporary
+  folders, `TMPDIR` and `/tmp`, and the other places the [write rule](../hooks.md#agent-gates) lists.
+- By the 2.4.0 source, the background service's API runs sessions and shell commands as the user, and only the
+  password in OpenCode's `service.json`, in its state folder, guards it.
+  So any process that can read that folder and reach the loopback address can drive OpenCode as the user.
+  Claude Code's confined sandbox denies that read; Codex's sandbox does not ([Codex residuals](codex.md#project-start)).
+- Not checked on a live OpenCode, since no model turn ran: a shell call's payload, and with it the Verified column's
+  fixture only; whether the shell hook's environment holds `PATH`; whether a shell command gets
+  `OPENCODE_SESSION_ID`; whether a subagent's session carries `parentID`; the `edit` tool's path field; and that the
+  Git-installed bridge runs `scripts/` from inside the installed package, which only a `run` line would show. Also
+  not checked: a `semver:` range against a release that holds the package, what `plugin update` does against the
+  background service itself, where that service sends a plugin's console output, whether it loads a project's
+  `.env`, and whether it answers a request with no credential.
 - Follow-ups: the guard routes, each with its own recorded live payload; phase 2, a handoff and transcript reader; and
   phase 3, a mod for OpenCode's terminal interface.

@@ -4,7 +4,7 @@ The adapter covers the differences behind the hook contract: how a host names it
 It does not get the plugin into a host: how a host's hooks are delivered, installed, and put on its PATH is separate work, which depends on the host.
 So a host that reads `hooks.json` as it is, as Claude Code and Codex do, is close to one adapter file.
 A host that does not needs that delivery built first: OpenCode's bridge is the one built so far, with one route and no
-live run ([OpenCode](opencode.md)).
+live shell call recorded ([OpenCode](opencode.md)).
 
 Shared code calls `lib/hosts/index.mjs`, `lib/trackers/index.mjs`, and `lib/forges/index.mjs`, and never reads a host's variables or names a host's own tools.
 `test/adapters.test.mjs` iterates the host and tracker registries, so an adapter added to one is checked by that alone,

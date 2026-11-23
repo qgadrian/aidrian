@@ -319,6 +319,10 @@ Codex residuals, each open until the live checks hold:
   config folders: Codex has no read denial the start can pass, unlike Claude Code's `denyRead`, so the hosts'
   `credentialStores` reach no Codex sandbox. The publish commands the agent gate hook refuses, as on Claude Code, keep a session from
   publishing with a token it read; a script that does stays the accepted residual.
+- By the 2.4.0 source, among those folders is OpenCode's state folder, whose `service.json` holds the password of
+  OpenCode's background service, and that password alone guards the service's API, which runs sessions and shell
+  commands as the user. So a sandboxed command that reads it and reaches the loopback address can drive OpenCode
+  outside the sandbox, which Claude Code's `denyRead` of that folder prevents ([OpenCode limits](opencode.md#limits)).
 - The keep files of `drop` and `cache` are not denied here: a session may remove either folder and put a link in its
   place, which the agent gate hook then refuses to write through.
 

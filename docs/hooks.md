@@ -1109,6 +1109,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   issue's session may run the confine command (`lib/project-run-guard.mjs`), and one its pending mark starts only from a folder that resolves inside its clone. A session with no proof in its mark
   and no plan beside its clone, as Codex's, is not held so. And a session an unattended mark holds never runs a call
   that asks the host to run it outside its sandbox (`sandbox_escape`, Claude Code's `dangerouslyDisableSandbox`).
+- `aidrian project decision`, which prints the entry that pins a [decision the Human recorded](config.md#recorded-decisions),
+  is held as `init` and `resume` are (`attendedProblem`, by `lib/project-run-guard.mjs`): a subagent, a session the
+  background handoff route started, and an issue session of a project run never run it, and the command checks the same.
 - With or without gates or a project, a subagent, and a main session the background handoff route started, may not
   write in the unattended marks' folder, nor change the mode or owner of it or of the state root, by a path, a glob
   that may reach it, a link already on disk, or, where the folder is unknown, a part named `unattended`. The same holds

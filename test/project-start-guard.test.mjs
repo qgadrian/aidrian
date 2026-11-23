@@ -81,6 +81,17 @@ test('init through the hook is held to attendedProblem with the hook\'s own payl
   assert.match(ask(DRIVER).reason, /another session's handoff gate is starting a background session/u);
 });
 
+test('project decision through the hook is held to attendedProblem, as init: an unattended session and a subagent may not run it', (t) => {
+  const fx = runFixture(t);
+  const ask = (session, more = {}) => projectCommandDenial(bash('aidrian project decision ENG-1 --heading "Export format"', { session_id: session, cwd: fx.dir, ...more }), fx.config, { home: fx.home });
+  assert.equal(ask(DRIVER), null, 'the attended main session');
+  markUnattended(OTHER, { root: fx.dir, env: fx.env });
+  assert.match(ask(OTHER).reason, /`aidrian project decision` pins a decision the Human recorded, from an attended session only, and the background handoff route started this session/u);
+  assert.match(ask(DRIVER, { agent_id: 'agent-7' }).reason, /a subagent runs only `aidrian project next`/u);
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  assert.match(ask(STARTED[0].session)?.reason ?? '', /from an attended session only/u, 'the issue session the run started');
+});
+
 test('a dynamic subcommand word after project is refused to every session', (t) => {
   const fx = runFixture(t);
   for (const command of ['aidrian project "$(echo init)" launch --file x.json', 'A=init; aidrian project $A launch --file x.json', 'aidrian project `echo start` launch ENG-1']) {

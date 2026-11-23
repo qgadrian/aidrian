@@ -34,6 +34,7 @@ import { continueRoutes, detectHost } from './hosts/index.mjs';
 import { isQuotaNotice } from './pr-await-review.mjs';
 import { branchPolicies } from './pr-auto-merge.mjs';
 import { mayFollowTeamDefault } from './project.mjs';
+import { recordedDecision } from './project-decision.mjs';
 import { recordedTexts } from './project-issue-text.mjs';
 import { activeRuns, nextLines, pinnedRepository, planRun, readRun, readSnapshotInput, refNames, resumedIssues, resumedLine, resumedProblems, runPlace, runsFolder, teamsNote } from './project-run.mjs';
 import { openPullHead } from './project-result.mjs';
@@ -417,7 +418,9 @@ function secretsLine({ facade, named, repository, policy, check, asks }) {
 // the tracker through, a `blocker texts` line for each issue to start whose text no tracker read of `session` recorded
 // (project-issue-text.mjs recordedTexts); then `next` lines as `aidrian project next` prints them for turn 1, with the
 // maxParallel it reads (project-run-gate.mjs runParallel, through `forge` at the repository init would pin), and a
-// `note teams` line when the snapshot names no team of the workspace (project-run.mjs teamsNote). Exit 1 on any blocker.
+// `note teams` line when the snapshot names no team of the workspace (project-run.mjs teamsNote). For each issue to
+// start that the base branch's projectRun.recordedDecisions names, a `recorded-decision` line (decisionChecks). Exit 1 on
+// any blocker.
 export function snapshotCheck({ project, config, file, session = null, env = process.env, home, forge = null }) {
   const read = readSnapshotInput(file, refNames(project, config));
   if (!read.snapshot) return { exitCode: 1, out: read.problems.slice(0, 50).map((problem) => `blocker snapshot: ${problem}`), err: ['aidrian project init --check: fix the snapshot input, then check it again'] };
@@ -429,14 +432,42 @@ export function snapshotCheck({ project, config, file, session = null, env = pro
   const plan = planRun(resumed.length ? { ...read.snapshot, resumed } : read.snapshot, new Map(), { maxParallel: runParallel(project, pinnedRepository(project), facade) });
   const blockers = [...resumedProblems(read.snapshot, resumed).map((problem) => `blocker snapshot: ${problem}`), ...plan.blocked.filter(({ reason }) => reason === 'cycle' || reason === 'status')
     .map(({ key, reason, on }) => `blocker snapshot: ${key} is ${reason === 'cycle' ? `in a cycle of blockers, ${on.join(', ')}, so it never starts` : `${on[0]} in the tracker, which a run does not start from`}`)];
-  if (!trackerReachable(baseBranchTip(project.root) ? baseBranchConfig(project, 'projectRun') : {})) {
-    const startable = new Set(plan.order);
-    blockers.push(...read.snapshot.issues.filter((issue) => startable.has(issue.key) && !plan.done.includes(issue.key) && !kept.texts[issue.key])
+  const base = baseBranchTip(project.root) ? baseBranchConfig(project, 'projectRun') : {};
+  const startable = new Set(plan.order.filter((key) => !plan.done.includes(key)));
+  const decisions = decisionChecks(base, startable, kept.texts);
+  blockers.push(...decisions.blockers);
+  if (!trackerReachable(base)) {
+    blockers.push(...read.snapshot.issues.filter((issue) => startable.has(issue.key) && !kept.texts[issue.key])
       .map((issue) => `blocker texts: ${issue.key} has no text, and projectRun.mcpServers holds no tracker server its session could read it through; read it in this session with the tracker's own issue read, whose answer the run records`));
   }
   const teams = teamsNote(read.snapshot);
-  const out = [`ok snapshot ${read.snapshot.issues.length} issues, ${Object.keys(kept.texts).length} with text`, ...(resumed.length ? [resumedLine(resumed)] : []), ...blockers, ...nextLines(plan), ...(teams ? [`note teams: ${teams}`] : [])];
+  const out = [`ok snapshot ${read.snapshot.issues.length} issues, ${Object.keys(kept.texts).length} with text`, ...(resumed.length ? [resumedLine(resumed)] : []), ...blockers, ...decisions.notes, ...nextLines(plan), ...(teams ? [`note teams: ${teams}`] : [])];
   return blockers.length ? { exitCode: 1, out, err: ['aidrian project init --check: clear each blocker, then check again'] } : { exitCode: 0, out, err: [] };
+}
+
+// The lines of the decisions the Human recorded on the issues of `startable`, as the base branch's config `base`
+// (baseBranchConfig) pins them in projectRun.recordedDecisions, checked against `texts`, the descriptions this session's
+// tracker reads recorded (project-decision.mjs recordedDecision): { blockers, notes }. An issue with no description
+// recorded is a blocker, since the grant would be void at every start; any other void is a note, and the run goes on
+// without the grant; one that stands is a note naming its heading, and, with projectRun.forgeProtectionAccepted set, a
+// note says the grant is as strong as the hooks that keep a session's script from pushing one to the default branch.
+// The start applies the policy both reads define alike (project-run-gate.mjs teamPolicy).
+function decisionChecks(base, startable, texts) {
+  const entries = base.config?.projectRun?.recordedDecisions ?? {};
+  const granted = Object.keys(entries).filter((key) => startable.has(key)).sort();
+  const blockers = [];
+  const notes = [];
+  for (const key of granted) {
+    const description = texts[key]?.description ?? '';
+    const checked = recordedDecision(entries[key], description);
+    if (description.trim() === '') blockers.push(`blocker recorded-decision: ${key} has a recorded decision in projectRun.recordedDecisions and this session recorded no description of it; read it in this session with the tracker's own issue read`);
+    else if (checked.void) notes.push(`note recorded-decision: ${key} void: ${checked.void}`);
+    else notes.push(`note recorded-decision: ${key} stands: ${entries[key].heading}`);
+  }
+  if (granted.length && base.config.projectRun.forgeProtectionAccepted === true) {
+    notes.push('note recorded-decision: the team accepts no forge protection (projectRun.forgeProtectionAccepted), so a grant is as strong as the hooks that keep a script an issue session runs from pushing one to the default branch');
+  }
+  return { blockers, notes };
 }
 
 // Whether the base branch's config, as `base` (baseBranchConfig) reads it, lists in projectRun.mcpServers a server of its

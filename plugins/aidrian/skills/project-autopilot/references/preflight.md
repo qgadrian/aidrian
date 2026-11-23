@@ -84,6 +84,11 @@ started outside the run, a `blocker texts:` line for each issue whose text no re
 many as `projectRun.maxParallel` starts at once, and a
 `note teams` line when the snapshot names no `teams`: read the team list again and add them before init.
 
+For each issue to start that `projectRun.recordedDecisions` names, a decision the Human recorded before the run, it
+prints a `recorded-decision` line. On `blocker recorded-decision`, read that issue in this session with the tracker's
+own full issue read, Linear's `get_issue`, and check again. Tell the Human each `note recorded-decision: <key> void`
+line: that issue's session runs without the recorded answer, and parks on that decision as before.
+
 ## 4. Tell the Human
 
 One message, with every blocker of steps 2 and 3, each with its fix.

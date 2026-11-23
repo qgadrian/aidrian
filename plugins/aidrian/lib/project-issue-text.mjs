@@ -235,7 +235,7 @@ export function writeIssueTexts(runFolder, texts) {
 }
 
 // The fence that holds `body`: one tilde longer than its longest run of tildes, and at least four.
-const fenceFor = (body) => '~'.repeat(Math.max(4, ...[...body.matchAll(/~+/gu)].map((run) => run[0].length + 1)));
+export const fenceFor = (body) => '~'.repeat(Math.max(4, ...[...body.matchAll(/~+/gu)].map((run) => run[0].length + 1)));
 
 // The text of issue.md for issue `key` from `text`: a heading that names it untrusted, then the issue's fields in one
 // fence no field can close.

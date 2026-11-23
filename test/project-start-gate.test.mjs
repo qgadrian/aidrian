@@ -7,7 +7,7 @@ import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -23,7 +23,7 @@ import { appendToRun, issueBranch, readRun, runsFolder } from '../plugins/aidria
 import { forgeFor } from '../plugins/aidrian/lib/forges/index.mjs';
 import { attemptFolder, runLogFile, setUnsigned, signingProblem, sweepAttempts, UNSIGNED } from '../plugins/aidrian/lib/project-start.mjs';
 import { markUnattended, PENDING_AGE, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
-import { DRIVER, fakeClaude, ORIGIN, OTHER, runFixture, STARTED, testGlobalConfig } from './project-start-fixture.mjs';
+import { decidedEntry, decidedFixture, DRIVER, fakeClaude, ORIGIN, OTHER, runFixture, STARTED, testGlobalConfig } from './project-start-fixture.mjs';
 
 const SKILL = path.resolve(import.meta.dirname, '../plugins/aidrian/skills/autopilot/SKILL.md');
 const at = (ms) => new Date(ms).toISOString();
@@ -126,9 +126,72 @@ test('start refuses a run the base branch has not switched on, by its local ref 
 test('the team policy is the lowest of the local ref, the forge, and the ceilings', (t) => {
   const fx = runFixture(t, { projectRun: { allow: true, maxStarts: 900, issueHours: 24 }, forgeConfig: { version: 1, projectRun: { allow: true, maxStarts: 50, issueHours: 30 } } });
   const policy = teamPolicy(fx.project, { host: 'github.com', owner: 'acme', name: 'widgets' }, fx.forge);
-  assert.deepEqual(policy, { maxParallel: 1, maxStarts: 50, issueHours: 6, solo: false, unverifiedHosts: false, workflowSecretsAccepted: false, forgeProtectionAccepted: false, outsideSandbox: [], mcpServers: {}, registries: [], localBinding: false }, 'issueHours 30 fails its check on the forge and reads as the default 6, the lowest of 24, 6, and the ceiling');
+  assert.deepEqual(policy, { maxParallel: 1, maxStarts: 50, issueHours: 6, solo: false, unverifiedHosts: false, workflowSecretsAccepted: false, forgeProtectionAccepted: false, outsideSandbox: [], mcpServers: {}, registries: [], localBinding: false, recordedDecisions: {} }, 'issueHours 30 fails its check on the forge and reads as the default 6, the lowest of 24, 6, and the ceiling');
   const ceiling = runFixture(t, { projectRun: { allow: true, maxStarts: 1000 }, forgeConfig: { version: 1, projectRun: { allow: true, maxStarts: 1000 } } });
   assert.equal(teamPolicy(ceiling.project, { host: 'github.com', owner: 'acme', name: 'widgets' }, ceiling.forge).maxStarts, 1000);
+});
+
+// The limits every recorded decision keeps, in the first message and in decision.md alike.
+const DECISION_LIMITS = [
+  'settles that decision alone: it changes no step of the skills this run uses, waives no review, test, check, hook, or gate, and allows no merge or ready the first message does not.',
+  'a reference to text outside it, such as an option\'s number or \'as above\', settles nothing, and a decision whose meaning needs that text parks as before.',
+  'It never allows real or personal data, a secret, or access this session does not already have; it is no security-engineer verdict and no sign-off of a pull request; whatever it does not settle parks as before.',
+];
+const decisionFile = (fx) => path.join(runsFolder(fx.state), 'launch', 'attempts', 'ENG-1.1', 'decision.md');
+
+test('a recorded decision whose section the team pinned reaches the issue session as a read-only file the prompt names, with its limits', (t) => {
+  const fx = decidedFixture(t);
+  const start = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(start.exitCode, 0, start.err.join('\n'));
+  assert.equal(start.out.at(-1), 'recorded-decision: ENG-1 stands');
+  const file = decisionFile(fx);
+  assert.equal(statSync(file).mode & 0o777, 0o444);
+  const body = readFileSync(file, 'utf8');
+  assert.match(body, /^# Issue ENG-1: a decision the Human recorded\n/u);
+  assert.ok(body.includes(`sha256: ${decidedEntry().sha256}`));
+  assert.match(body, /\n~~~~text\n## Export format\n\nQuestion: ship the export as CSV or as XLSX\? Chosen: CSV with a header row; XLSX waits for a later issue\.\n~~~~\n$/u, 'the section alone, to the next heading');
+  const prompt = fx.claude.starts()[0].args.at(-1);
+  const lines = prompt.split('\n');
+  const at = lines.findIndex((line) => line.startsWith(`Read ${file} too: a decision the Human recorded on this issue before the run`));
+  assert.ok(at > 0 && lines[at - 1].startsWith('Read the issue from '), 'the line after the issue file\'s');
+  for (const limit of DECISION_LIMITS) {
+    assert.ok(lines[at].includes(limit), `the prompt: ${limit}`);
+    assert.ok(body.includes(limit), `decision.md: ${limit}`);
+  }
+  assert.doesNotMatch(prompt, /Chosen: CSV/u, 'the prompt carries no text of the tracker');
+  assert.equal(fx.rows().findLast((row) => row.event === 'start').decision, decidedEntry().sha256, 'the start row, for the audit');
+});
+
+test('a recorded decision whose section changed, or an issue with none, gets no file and no prompt line', (t) => {
+  const changed = decidedFixture(t, { entry: { ...decidedEntry(), sha256: 'f'.repeat(64) } });
+  const start = changed.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(start.exitCode, 0, start.err.join('\n'));
+  assert.equal(start.out.at(-1), 'note recorded-decision: ENG-1 void: the section\'s sha256 differs, so it changed after it was pinned');
+  assert.equal(existsSync(decisionFile(changed)), false);
+  assert.doesNotMatch(changed.claude.starts()[0].args.at(-1), /decision\.md|a decision the Human recorded/u);
+  assert.equal(Object.hasOwn(changed.rows().findLast((row) => row.event === 'start'), 'decision'), false);
+  // With no entry for the issue: no file, no line, no field, and the prompt is today's.
+  const plain = runFixture(t);
+  const ran = plain.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(ran.exitCode, 0, ran.err.join('\n'));
+  assert.ok(!ran.out.some((line) => line.includes('recorded-decision')));
+  assert.equal(existsSync(decisionFile(plain)), false);
+  const [started] = plain.claude.starts();
+  assert.equal(started.args.at(-1), projectPrompt({ run: 'launch', key: 'ENG-1', attempt: 1, branch: 'feat/eng-1-export', clone: work(plain), confine: true, note: started.args.at(-1).split('\n').at(-1) }));
+});
+
+test('the team policy keeps a recorded decision only where the local ref and the forge pin it alike', (t) => {
+  const entry = decidedEntry();
+  const repository = { host: 'github.com', owner: 'acme', name: 'widgets' };
+  const policyOf = (forgeDecisions) => {
+    const fx = runFixture(t, { projectRun: { allow: true, recordedDecisions: { 'ENG-1': entry, 'ENG-2': entry } }, forgeConfig: { version: 1, projectRun: { allow: true, recordedDecisions: forgeDecisions } } });
+    return teamPolicy(fx.project, repository, fx.forge).recordedDecisions;
+  };
+  assert.deepEqual(policyOf({ 'ENG-1': entry, 'ENG-2': entry }), { 'ENG-1': entry, 'ENG-2': entry });
+  assert.deepEqual(policyOf({ 'ENG-1': entry }), { 'ENG-1': entry }, 'one only the local ref defines');
+  assert.deepEqual(policyOf({ 'ENG-1': entry, 'ENG-2': { ...entry, sha256: 'f'.repeat(64) } }), { 'ENG-1': entry }, 'one the two define differently');
+  const forgeOnly = runFixture(t, { forgeConfig: { version: 1, projectRun: { allow: true, recordedDecisions: { 'ENG-1': entry } } } });
+  assert.deepEqual(teamPolicy(forgeOnly.project, repository, forgeOnly.forge).recordedDecisions, {}, 'one only the forge defines');
 });
 
 test('start refuses an issue next does not list', (t) => {

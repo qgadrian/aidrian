@@ -1133,9 +1133,10 @@ It applies to `aidrian pr review` and to `aidrian pr await-review --request`, wh
 
 At the cap that stands, `round_limit` carries a `question`, `options`, and `raise` when the repository is known: the
 question names `<owner>/<name>#<PR>` and `--max-rounds <N>`, its first option starts with "Approve", and `raise` is
-`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N>` (`aidrian pr await-review <PR> --request` for the
-bot's rounds), ending in `--repo <owner>/<name>` in a checkout whose remotes name several. `<N>` allows exactly one more
-round. The session asks that question word for word, and on the first option runs `raise`: the `review-rounds` rule
+`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N>`, with `--with-bot` when the step ran the bot
+(`aidrian pr await-review <PR> --request` for the bot's rounds alone, `"off"` included), ending in `--repo <owner>/<name>`
+in a checkout whose remotes name several. `<N>` allows exactly one more round of the cap that stopped, the bot's when
+its cap stopped `aidrian pr review --with-bot`. The session asks that question word for word, and on the first option runs `raise`: the `review-rounds` rule
 reads that one answer as the grant, so no second question follows, and a second round needs a new answer.
 At the cap that stands, `stop` or the ceiling, the merge guard asks the Human to ship with the findings filed or to
 grant more rounds. When every open finding is low and the Human answers in their own words that the session decides,
@@ -1183,7 +1184,7 @@ the session's transcript holds the Human's answer to an AskUserQuestion that nam
 repository (`<owner>/<name>#<PR>`, as the question the review step prints does; `#<PR>` alone in a checkout with no
 remote), given after the judge's verdict, with the option that starts with "Approve", where the question or that
 chosen option names the round it grants (`round <N>`): a question reworded as "Grant a fourth review round?" counts
-when the option picked is "Approve round 4". The repository is the call's `--repo`, one of this checkout's remotes, else the one repository the remotes
+when the option picked is "Approve round 4". When both name a round, they name the same one. The repository is the call's `--repo`, one of this checkout's remotes, else the one repository the remotes
 name; a checkout whose remotes name more than one needs `--repo`, which the review step prints on the extend commands
 there. `aidrian pr extend` itself acts on that one repository: `--repo`, else the one the forge names for the pull
 request, as the review step does, else origin; it reads the head, the record, and the summary comment there, so in a

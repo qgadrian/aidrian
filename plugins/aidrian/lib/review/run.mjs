@@ -200,11 +200,14 @@ function capCause(s, extra) {
 // (lib/review/extension.mjs), which may return extension_check or extension_ask instead. A round_limit carries the cap's
 // cause (capCause) to the outcome.
 function capReached(s, extra) {
-  const { state, head, policy, n, repo, info, planHistory, extensionLog, repoArg = '' } = s;
+  const { state, head, policy, n, repo, info, planHistory, extensionLog, repoArg = '', opts } = s;
   noteFindings(s, extra);
   const cause = capCause(s, extra);
+  // The bot's cap may be what stopped the step: the question then raises past the bot's rounds, with the bot.
+  const botRounds = Number.isInteger(extra?.bot?.codex_rounds) ? extra.bot.codex_rounds : null;
   const decision = atCap({
     state, source: 'plan', round: state.rounds.length, head, policy, pr: n, repo, repoArg, goal: { title: info.title ?? null, body: info.body ?? null },
+    raise: { withBot: Boolean(opts?.withBot), ...(botRounds === null ? {} : { round: botRounds }) },
     command: `aidrian pr review ${n}${repoArg}`,
     history: planHistory,
     lastReviewed: () => state.rounds.at(-1)?.head ?? null,

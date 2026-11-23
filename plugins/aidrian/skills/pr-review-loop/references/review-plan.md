@@ -156,8 +156,8 @@ Never cite an engine post, a finding's, the review summary, or the product feedb
   never stops it alone: it goes to the judge. With `unreviewed_head: true`, the head is a fix no round reviewed: say so when reporting
   the stop, so the Human does not merge it as reviewed. With `question` and `options`, report the open findings, then ask
   the Human that question with AskUserQuestion, the options word for word, the "Approve" one first: it is the one
-  question at the cap. On "Approve", run `raise` exactly as printed, as one plain command, with `--with-bot` before
-  `--max-rounds` when the step runs the bot; it allows one more round, and the next cap asks again. On the other option, stop. A session the Human told to merge, and then left, and a run
+  question at the cap. On "Approve", run `raise` exactly as printed, as one plain command: it allows one more round,
+  and the next cap asks again. On the other option, stop. A session the Human told to merge, and then left, and a run
   under `autopilot`, read § At the cap: a judge's waiver before reporting the stop. When the Human answers the merge
   guard's question by leaving the decision to the session, read § At the cap: the Human leaves it to the session.
 

@@ -406,5 +406,9 @@ test('the Human`s answer to a round_limit question approves its raise, for exact
   const context = setup(t, [{ [several.question]: several.options[0] }]);
   execFileSync('git', ['remote', 'add', 'upstream', 'https://github.com/up/r.git'], { cwd: context.cwd });
   assert.equal(check(several.raise, context), null);
+  // A step that ran the bot raises with it, past the bot's rounds when its cap stopped the step.
+  const withBot = raiseAsk({ pr: 12, repo: 'o/r', source: 'plan', round: 3, withBot: true });
+  assert.equal(withBot.raise, 'AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --with-bot --max-rounds 4');
+  assert.equal(check(withBot.raise, setup(t, [{ [withBot.question]: withBot.options[0] }])), null);
   assert.deepEqual(raiseAsk({ pr: 12, repo: null, source: 'plan', round: 3 }), {}, 'no repository, no question the rule could read');
 });

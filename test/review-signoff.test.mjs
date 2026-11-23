@@ -313,7 +313,14 @@ test('a sign-off whose program or line the shell builds at run time is denied, a
     "alias s='aidrian pr signoff'; s 9 --last",
     'x=aidrian; $x pr signoff 9 --flow ui --head abc1234',
     'npx aidrian pr signoff 9 --flow ui --head abc1234',
+    'npx aidrian pr signoff 9 --last --check',
+    `python3 -c "os.system('aidrian pr signoff 9 --last'); print('--check')"`,
   ]) assert.equal(check(command, { cwd }), REASON, command);
+  // Outside a project, a subagent and a session no Human attends are refused the text shapes too.
+  const bare = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-signoff-bare-')));
+  t.after(() => rmSync(bare, { recursive: true, force: true }));
+  assert.equal(check('xargs aidrian pr signoff 9 --last', { cwd: bare, input: { session_id: 's1' }, unattendedMark: () => ({ root: null }), drives: () => false }) !== null, true);
+  assert.equal(check('xargs aidrian pr signoff 9 --last', { cwd: bare, input: {}, unattendedMark: () => null, drives: () => false }), null, 'an attended session outside a project');
   for (const command of [
     'aidrian pr signoff 9 --last --check',
     'aidrian pr review $PR',
@@ -322,5 +329,6 @@ test('a sign-off whose program or line the shell builds at run time is denied, a
     'grep -rn "aidrian pr signoff" docs',
     'node other.mjs pr signoff',
     'x=aidrian; $x pr review 9',
+    'aidrian pr product-feedback "$ACTION" 9',
   ]) assert.equal(check(command, { cwd }), null, command);
 });

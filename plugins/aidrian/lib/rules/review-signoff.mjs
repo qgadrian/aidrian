@@ -24,7 +24,7 @@ import { findProject } from '../project.mjs';
 import { givenRepo, namesChange, originRepo, remoteRepos, repoName } from '../remotes.mjs';
 import { droveRun } from '../run-driver.mjs';
 import { readUnattendedMark } from '../unattended-mark.mjs';
-import { readCall, textDenial } from './product-feedback-answer.mjs';
+import { textDenial } from './product-feedback-answer.mjs';
 import { readTranscript, transcriptAnswers } from './review-extend.mjs';
 
 // What every in-session ask route says, as a clause and as a sentence: a Human away from the session, such as on a
@@ -200,14 +200,16 @@ export function check(command, { cwd = process.cwd(), input = {}, unattendedMark
       continue;
     }
     // A program the shell builds at run time, as `$x` or `"$(command -v aidrian)"`, may be aidrian: its words are read
-    // as aidrian's (product-feedback-answer.mjs readCall reads them so).
-    const read = readCall(invocation);
-    const words = aidrianArgs(invocation) ?? (read || dynamicProgram(invocation) ? invocation.args : null);
+    // as aidrian's, as the product-feedback rule's readCall reads them.
+    const named = aidrianArgs(invocation);
+    const built = !named && dynamicProgram(invocation);
+    const words = named ?? (built ? invocation.args : null);
     if (!words) continue;
     judged.add(entry);
-    const built = !aidrianArgs(invocation);
-    // A subcommand the shell builds at run time cannot be read, so it may be a sign-off.
-    if (read?.type === 'unreadable' || (!built && (words[0]?.dynamic || (words[0]?.text === 'pr' && words[1]?.dynamic)))) {
+    // A subcommand the shell builds at run time cannot be read, so it may be a sign-off: for aidrian, or a built
+    // program whose text names it. Only the first two words decide, so `pr product-feedback "$x"` is no sign-off.
+    const sure = named || /aidrian/iu.test(invocation.program);
+    if (sure && (words[0]?.dynamic || (words[0]?.text === 'pr' && words[1]?.dynamic))) {
       const denied = refuse();
       if (denied) return denied;
       continue;
@@ -223,13 +225,13 @@ export function check(command, { cwd = process.cwd(), input = {}, unattendedMark
     }
   }
   // The shapes the word pass cannot read but the text names: xargs, parallel, npx, an interpreter, a variable or an
-  // alias whose words hold the call (product-feedback-answer.mjs textDenial).
-  if (!project && !subagent) return null;
+  // alias whose words hold the call (product-feedback-answer.mjs textDenial). No `--check` there is a dry run: only a
+  // sign-off the word pass read can be one. Who may never sign off is refused wherever the command runs (refuse).
   return textDenial(entries, judged, true, namesSignoff) ? refuse() : null;
 }
 
 // Whether one command's words name a sign-off call: aidrian, then `pr signoff`.
-const namesSignoff = (text) => /\baidrian\b[\s\S]*\bpr\s+signoff\b/u.test(text) && !/(?:^|\s)--check(?:\s|$)/u.test(text);
+const namesSignoff = (text) => /\baidrian\b[\s\S]*\bpr\s+signoff\b/u.test(text);
 
 // Whether a walked command's program is a word the shell builds at run time.
 const dynamicProgram = ({ program, args }) => /[$`]/u.test(program) || (program === '' && args.length > 0);

@@ -382,6 +382,11 @@ test('the review-extend rule says why the transcript`s answers do not approve th
   assert.equal(g.run('aidrian pr extend 12 --human approve'), null, 'the chosen option names the round');
   g.write(g.answer('Grant a third review round on #12?', 'Approve round 30'));
   assert.match(deny(), /nor the options the Human chose name "round 3"/u);
+  // When both name a round, they must name the same one.
+  g.write(g.answer(QUESTION, 'Approve round 4'));
+  assert.match(deny(), /nor the options the Human chose name "round 3"/u, 'the option names another round than the question');
+  g.write(g.answer('Grant round 4 on #12?', 'Approve round 3'));
+  assert.match(deny(), /nor the options the Human chose name "round 3"/u, 'the question names another round than the option');
   g.write(g.answer(QUESTION, 'Deny'));
   assert.match(deny(), /the Human picked "Deny"/u);
   assert.equal(mismatch([{ question: QUESTION, answer: 'Approve round 3', at: null }], { pr: 12, round: 3 }), null);
@@ -620,6 +625,12 @@ test('await-review --request at the cap: bot rounds that do not shrink go to the
   const off = botProject(t, { github: { extraRounds: 'off' } });
   const plain = await off.run([[['a.js', 1, 'One']], [['b.js', 1, 'x']], []]);
   assert.deepEqual([plain.code, plain.out.extension], [4, { status: 'off', mode: 'off' }]);
+  // The bot's own cap with extra rounds off still carries the one question that grants a round, from the CLI path.
+  assert.deepEqual([plain.out.question, plain.out.options[0], plain.out.raise], [
+    'Pull request acme/notes#42 reached its review-round cap. Allow one more review round, with --max-rounds 4?',
+    'Approve one more round (--max-rounds 4)',
+    'AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr await-review 42 --request --max-rounds 4',
+  ]);
 });
 
 test('aidrian report reviews counts each check at the cap once, by its last decision', () => {

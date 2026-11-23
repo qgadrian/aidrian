@@ -322,7 +322,8 @@ What each rule matches:
   such as `aidrian "$@"`, is denied too, and so is a program the shell builds (`$x pr signoff`,
   `"$(command -v aidrian)" pr signoff`) and a call only text names: `xargs`, `parallel`, `npx`, an interpreter's code,
   or a variable or alias whose words hold `aidrian … pr signoff`, as the product-feedback rule reads its own (its
-  `readCall` and `textDenial`). A command that only handles text, such as `echo`, `grep`, or `git commit -m`, still runs.
+  `textDenial`). A `--check` in such text is no dry run. A command that only handles text, such as `echo`, `grep`, or
+  `git commit -m`, still runs. A subagent and a session no Human attends are refused these shapes outside a project too.
   When the session holds answers and none approves the call, the deny names the nearest miss: a word the shell builds,
   no question naming `<owner>/<name>#<PR>`, the head, or the `<flow>/<invariant>` written as one word, an answer that
   is not "Approve", or a checkout whose remotes need `--repo`. A subagent is told to return `status: needs_input` with

@@ -196,8 +196,10 @@ export function mismatch(answers, { pr, round, since = null, repo = null }) {
   const onPr = after.filter((each) => names.test(each.question));
   if (!onPr.length) return `no question answered since the judge's verdict names ${named}`;
   // The round may be named by the question or by the option the Human chose, as "Approve round 4" under a question
-  // reworded to "Grant a fourth review round?".
-  const onRound = onPr.filter((each) => grants.test(each.question) || grants.test(each.answer));
+  // reworded to "Grant a fourth review round?". When both name one, they must name the same.
+  const rounds = (text) => [...text.matchAll(/\bround (\d+)(?!\d)/giu)].map((match) => Number(match[1]));
+  const agrees = (text) => rounds(text).every((each) => each === round);
+  const onRound = onPr.filter((each) => (grants.test(each.question) || grants.test(each.answer)) && agrees(each.question) && agrees(each.answer));
   if (!onRound.length) return `neither the questions naming ${named} nor the options the Human chose name "round ${round}"`;
   if (onRound.some((each) => /^\s*approve\b/iu.test(each.answer))) return null;
   return `the Human picked "${onRound.at(-1).answer}", not the option that starts with "Approve"`;

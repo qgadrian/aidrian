@@ -462,16 +462,18 @@ const H2 = '2'.repeat(40);
 const onTop = (seen, to) => ({ from: seen ?? 'f'.repeat(40), to });
 const CODEX = (id = 'engine:codex-local', files = null) => ({ id, reviewer: 'codex-local', stage: 'independent', files });
 
-test('a returned id counts only when it is exactly R<digits>-<digits>, its pass`s input listed it, and it is still open; any other value is no id, named in dropped by the finding`s own id', () => {
+test('a returned id counts only when it is exactly R<digits>-<digits>, its pass`s input listed it, and it is still open; any other value is no id, named in dropped by the finding`s own id when it reads like an id', () => {
   const state = recordWith();
   const first = recordFindings(state, 'engine:codex-local', { head: H1, list: [exec({ title: 'Null check missing' }), exec({ title: 'Second', line: 9 })] }, { mint: true, paths: places(), plan: [CODEX()], stage: 'independent', range: onTop });
   const [a, b] = first.list.map((each) => each.id);
   assert.deepEqual(listedTo(state, [CODEX()], 'engine:codex-local'), [a, b], 'both open entries are listed to their pass');
   const SECRET = 'SENTINEL title';
-  const refused = [' ' + a, `${a}x`, a.toLowerCase(), 7, { id: a }, 'R9-99', b];
+  const refused = [' ' + a, `${a}x`, a.toLowerCase(), 'R9-99', b];
+  // A value that reads like no id is the reviewer's own label for a new finding: minted, with no note.
+  const labels = [7, { id: a }, 'trigger-sentence-missing-invoker-qualifier'];
   const again = recordFindings(state, 'engine:codex-local', {
     head: H2,
-    list: [exec({ title: 'Reworded entirely', line: 5, returned_id: a }), ...refused.map((value, i) => exec({ title: `${SECRET} ${i}`, line: 10 + i, returned_id: value }))],
+    list: [exec({ title: 'Reworded entirely', line: 5, returned_id: a }), ...refused.map((value, i) => exec({ title: `${SECRET} ${i}`, line: 10 + i, returned_id: value })), ...labels.map((value, i) => exec({ title: `Label ${i}`, line: 30 + i, returned_id: value }))],
   }, { mint: true, paths: places(), listed: [a], plan: [CODEX()], stage: 'independent', range: onTop });
   assert.equal(again.list[0].id, a, 'a reworded repeat that returns its listed, open id keeps it');
   assert.equal(again.list[0].mint, first.list[0].mint);
@@ -481,6 +483,7 @@ test('a returned id counts only when it is exactly R<digits>-<digits>, its pass`
     assert.equal(note, `${again.list[i + 1].id}: its returned id is not an open finding its input listed, so it was read as no id`);
     assert.ok(!note.includes(SECRET) && !note.includes('R9-99'), 'the note names the finding by its own id, never by the value or its title');
   }
+  assert.ok(again.list.slice(1 + refused.length).every((each) => /^R\d+-\d+$/u.test(each.id ?? '')), 'each label\'s finding is minted');
   assert.ok(again.list.every((each) => !('returned_id' in each)), 'a returned id is never stored');
   // B is listed to the pass and left out: closed once the stage has its results, then final.
   recordFindings(state, null, null, { plan: [CODEX()], head: H2, complete: new Set(['independent']), range: onTop });

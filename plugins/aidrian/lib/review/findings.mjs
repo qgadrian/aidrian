@@ -152,6 +152,9 @@ const MINT = /^[0-9a-f]{8}$/u;
 const MAX_ROUND = 999;
 export const MAX_COUNTER = 999_999;
 export const isFindingId = (value) => typeof value === 'string' && FINDING_ID.test(value);
+// A returned value a reviewer meant as a finding's id, as `R1-2`, ` r1-2`, or `R1-2x`: one refused is worth a note.
+// Any other, such as a label of its own like `missing-qualifier`, names a new finding, which is minted with no note.
+const idLike = (value) => typeof value === 'string' && /^\s*R\d+-\d+/iu.test(value);
 export const isMint = (value) => typeof value === 'string' && MINT.test(value);
 // The longest file path a finding keeps.
 export const MAX_PATH = 300;
@@ -415,7 +418,8 @@ function closeOmitted(state, plan, { head, complete, range }) {
 //   - keeps its id when the record already holds that finding, its id and mint mark together (a stored entry, such as an
 //     ended waiver the step copies). Else a finding that is no ruling takes the id it returned (`returned_id`) when that
 //     is exactly R<digits>-<digits>, one of `listed`, the ids the pass's input listed, and still open in the index (R4);
-//     any other returned value is read as no id and named in the result's `dropped` notes, never by its value. Else it
+//     any other returned value is read as no id, and named in the result's `dropped` notes, never by its value, when it
+//     reads like a finding's id (idLike); a label of the reviewer's own, such as `missing-qualifier`, gets none. Else it
 //     takes the id of an entry `listed` holds with its title and file, then of a finding of the pass's prior result with
 //     its title and file whose id is neither closed nor listed to another pass, then, with `plan`, of an open entry listed
 //     to no pass whose pass left the plan, so the first pass to claim it keeps it. Each id once. Else it takes a new id
@@ -512,7 +516,7 @@ function recordResult(state, passId, result, { mint = false, securityPass = fals
     const marked = flagged(security) || match?.security === true || securitySeverity(finding.severity) || securityPass;
     const out = { ...(identity ?? {}), ...finding, ...(marked ? { security: true } : {}) };
     const name = identity?.id ?? 'a finding with no id';
-    if (asked && !named) dropped.push(`${name}: its returned id is not an open finding its input listed, so it was read as no id`);
+    if (asked && !named && idLike(returned)) dropped.push(`${name}: its returned id is not an open finding its input listed, so it was read as no id`);
     if (checked) return out;
     const file = typeof out.file === 'string' && out.file.length <= MAX_PATH && out.file.trim() !== '' && paths?.tracked(out.file) === true ? out.file : null;
     if (out.file !== undefined && out.file !== null && file === null) dropped.push(`${name}: its file was not recorded`);

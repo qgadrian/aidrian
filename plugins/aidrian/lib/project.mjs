@@ -89,7 +89,8 @@ const HOST_PATHS = String.raw`(?:^|/)(?:\.cursor|\.windsurf|\.clinerules)(?:/|$)
 export const GUARDED_PATHS = new RegExp(
   String.raw`(?:^|/)(?:${HOST_NAMES}|SKILL\.md|CODEOWNERS|\.aidrian\.json|\.aidrian\.local\.json|\.banned-terms\.local)$` +
     `|${HOST_PATHS}` +
-    String.raw`|^(?:\.claude|\.codex|\.aidrian|\.github/workflows|\.github/actions)(?:/|$)` +
+    // A `.claude` folder at any depth, which Claude Code reads in a nested project too; the others at the root.
+    String.raw`|(?:^|/)\.claude(?:/|$)|^(?:\.codex|\.aidrian|\.github/workflows|\.github/actions)(?:/|$)` +
     String.raw`|^(?:\.claude-plugin|\.agents/plugins)/marketplace\.json$` +
     `|^plugins/aidrian/(?:${GUARDED_PLUGIN})` +
     String.raw`|^plugins/aidrian-claude-mod/`,

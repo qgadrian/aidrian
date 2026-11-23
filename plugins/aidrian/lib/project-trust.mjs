@@ -6,9 +6,11 @@
 //     refs, grafts, or a config key of REFUSED_KEYS in a scope git reads for the folder.
 //   - trustProblem, ancestorProblem: the host files a session in an attempt's clone would load, the clone's own and those
 //     in a folder above it. The main checkout's own host files refuse no start: the clone loads none of them.
+//   - overlayGuarded: the base tip's copies of the host files a branch changed, written over them in an attempt's clone
+//     when no review passed the branch's own (lib/project-start.mjs prepareAttempt).
 
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { cleanText } from './clean-text.mjs';
@@ -207,15 +209,17 @@ function onFirstParents(root, tip, head) {
 // The first path `wanted(path)` takes, in the checkout `root`, whose bytes on disk differ from its blob in the commit
 // `tip`, as { path }: a file the tip has that is missing, changed, or of another kind, or a tracked file the tip lacks.
 // Read from the disk itself, never through the index, so a file git is told to skip, or a filter rewrites, still counts;
-// the tip's files are read through commitFiles, verified by their hashes. { problem } when they cannot be read; null
-// when every one matches.
-export function rawMismatch(root, tip, wanted) {
+// the tip's files are read through commitFiles, verified by their hashes. A tracked path of `overlaid`, the paths
+// overlayGuarded wrote from the tip, that the tip lacks passes only when it is absent on disk. { problem } when they
+// cannot be read; null when every one matches.
+export function rawMismatch(root, tip, wanted, overlaid = []) {
   const files = commitFiles(root, tip);
   const tracked = listed(root, ['ls-files', '--full-name']);
   if (!files || !tracked) return { problem: 'git cannot list the base tip\'s files and the tracked ones' };
   const blobs = [...files].filter(([file]) => wanted(file));
   const known = new Set(blobs.map(([file]) => file));
-  for (const file of tracked.filter(wanted)) if (!known.has(file)) return { path: file };
+  const skipped = new Set(overlaid);
+  for (const file of tracked.filter(wanted)) if (!known.has(file) && !(skipped.has(file) && absent(path.join(root, file)))) return { path: file };
   for (const [file, { mode, id }] of blobs) {
     const full = path.join(root, file);
     let bytes;
@@ -259,22 +263,73 @@ export function namedFiles(files) {
 // listed with its trailing slash counting as itself.
 export const isGuarded = (file) => GUARDED_PATHS.test(file) || GUARDED_PATHS.test(file.replace(/\/$/u, ''));
 
+// Whether nothing is at `file`, read without following a link.
+function absent(file) {
+  try {
+    lstatSync(file);
+    return false;
+  } catch (error) {
+    return error.code === 'ENOENT';
+  }
+}
+
 // Why the worktree `dir` may not start a session no Human attends, or null: a host config or instruction file
 // (isGuarded) differs from the commit `tip`, or one is there untracked or git-ignored. Ignored folders are listed
-// whole, so a dependency folder is one entry, and a guarded folder such as `.claude/` counts as itself.
-export function trustProblem(dir, tip) {
+// whole, so a dependency folder is one entry, and a guarded folder such as `.claude/` counts as itself. The paths of
+// `overlaid`, which overlayGuarded wrote from the tip and git is told to skip (skip-worktree) or ignore (info/exclude),
+// are left out of git's lists, which read the index or the ignore rules there, and held to the tip's bytes on disk
+// alone (rawMismatch); an ignored folder that holds one is listed file by file instead.
+export function trustProblem(dir, tip, overlaid = []) {
+  const skipped = new Set(overlaid);
   const changed = listed(dir, ['diff', '--name-only', '--no-renames', tip, '--']);
   const untracked = listed(dir, ['ls-files', '--others', '--exclude-standard']);
   const ignored = listed(dir, ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory']);
   if (!changed || !untracked || !ignored) return 'git cannot list the worktree\'s changed, untracked, and ignored files';
-  const differ = changed.filter(isGuarded);
+  const differ = changed.filter((file) => isGuarded(file) && !skipped.has(file));
   // The index may be told to skip a file (assume-unchanged, skip-worktree) or a filter may rewrite it: the bytes on disk decide.
-  const raw = rawMismatch(dir, tip, isGuarded);
+  const raw = rawMismatch(dir, tip, isGuarded, overlaid);
   if (raw?.problem) return raw.problem;
   if (raw) differ.push(raw.path);
   if (differ.length) return `its host config or instruction files differ from the base tip: ${namedFiles([...new Set(differ)])}`;
-  const local = [...untracked, ...ignored].filter(isGuarded);
+  // A folder entry that holds an overlaid path, listed again file by file; one git cannot list again stays whole.
+  const holds = (entry) => entry.endsWith('/') && overlaid.some((file) => file.startsWith(entry));
+  const ignoredFiles = ignored.flatMap((entry) => (holds(entry) ? listed(dir, ['ls-files', '--others', '--ignored', '--exclude-standard', '--', `:(top,literal)${entry}`]) ?? [entry] : [entry]));
+  const local = [...untracked, ...ignoredFiles].filter((file) => isGuarded(file) && !skipped.has(file));
   if (local.length) return `it holds host config or instruction files git does not track, which no review saw: ${namedFiles(local)}`;
+  return null;
+}
+
+// Writes the base tip's copy of each of `paths`, host files (isGuarded) a branch changed, over the checkout `dir`: the
+// tip's blob, read and hash-checked through commitFiles and readObjects, as a file or a link by its mode, and a path the
+// tip lacks removed. A path is removed only when lstat shows a regular file there, and written only where nothing is,
+// with `wx` for a file. The caller has checked that no part of any path is a link (lib/project-start.mjs linkedPart), so
+// nothing is written or removed through one; a folder or a link at a path refuses. Never through git checkout. Null, or
+// why it could not.
+export function overlayGuarded(dir, tip, paths) {
+  const files = commitFiles(dir, tip);
+  if (!files) return 'git cannot read the base tip\'s files';
+  const kept = paths.filter((file) => files.has(file));
+  const objects = readObjects(dir, [...new Set(kept.map((file) => files.get(file).id))]);
+  if (!objects) return 'git cannot read the base tip\'s copies of the host files';
+  try {
+    for (const file of paths) {
+      const full = path.join(dir, file);
+      if (absent(full)) continue;
+      if (!lstatSync(full).isFile()) return `the clone holds something other than a file at ${namedFiles([file])}`;
+      unlinkSync(full);
+    }
+    for (const file of kept) {
+      const { mode, id } = files.get(file);
+      const blob = objects.get(id);
+      if (blob?.type !== 'blob') return `git cannot read the base tip's copy of ${namedFiles([file])}`;
+      const full = path.join(dir, file);
+      mkdirSync(path.dirname(full), { recursive: true });
+      if (mode === '120000') symlinkSync(blob.body, full);
+      else writeFileSync(full, blob.body, { flag: 'wx', mode: mode === '100755' ? 0o755 : 0o644 });
+    }
+  } catch (error) {
+    return `the base tip's copies of the host files could not be written in the clone (${error.code ?? 'no code'})`;
+  }
   return null;
 }
 

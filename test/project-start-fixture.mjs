@@ -99,7 +99,8 @@ const gitIn = (dir) => (...args) => execFileSync('git', ['-c', 'user.name=t', '-
 // `.aidrian/config.json` (`config`, as text), no `.aidrian.json`, the pull requests in `views`, by number, the push
 // permission `push()` gives, and the forge CLI's login token `token()` gives, a fine-grained one by default; a `token`
 // that throws is a CLI with no login. The push probe with a token, as the start checks the issue session's, answers what
-// `tokenPush(token)` gives: true, false (the forge's 403), or a throw. `calls` records each call.
+// `tokenPush(token)` gives: true, false (the forge's 403), or a throw. `trails` holds each pull request's review trail by
+// number, a value or a function that gives one or throws; one it lacks is the forge's 404. `calls` records each call.
 export const FIXTURE_TOKEN = 'github_pat_FIXTURE0123456789';
 export function fakeForge(config, head, views = {}, { push = () => true, token = () => FIXTURE_TOKEN, tokenPush = () => true } = {}) {
   const calls = [];
@@ -136,6 +137,13 @@ export function fakeForge(config, head, views = {}, { push = () => true, token =
       const view = views[ref];
       if (!view) throw missing();
       return typeof view === 'function' ? view() : view;
+    },
+    trails: {},
+    reviewTrail: (repo, n, options) => {
+      calls.push(['reviewTrail', repo, n, options]);
+      const trail = forge.trails[n];
+      if (!trail) throw missing();
+      return typeof trail === 'function' ? trail() : trail;
     },
   };
   return forge;

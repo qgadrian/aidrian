@@ -1452,7 +1452,11 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     holds the checkout: the folder's `git rev-parse --git-common-dir` is its worktree's or attempt clone's own, not a
     repository cloned inside it; origin pushes to one URL (`git remote get-url --push --all origin`), the one the start row's
     `pushUrl` pinned, read from the clone before its session started (a start that recorded none pushes nothing),
-    so a second `remote.origin.pushurl` refuses the push; its
+    so a second `remote.origin.pushurl` refuses the push; when that start row names an `overlay`, the branch head whose
+    clone took the base branch's copies of the host files it changed, its commits change no host config or instruction
+    file (`GUARDED_PATHS`) from that head (`git diff --name-only --no-renames --no-relative -z <overlay> HEAD`), or it is
+    refused with "it pushes commits that change <count> host config or instruction files, and this attempt runs on the
+    base branch's copies of them, so it may change none", and a diff git cannot give refuses it too; its
     commits change no file of the forge's workflow folders (`forgeWorkflowFolders`), nor a folder that holds them, as a
     `.github` made a link, from their merge base with origin's default branch (`refs/remotes/origin/HEAD`, else
     `origin/main`), however the file got there, as by `git apply --cached`, `patch`, `tar -x`, `unzip`, or `git am`,

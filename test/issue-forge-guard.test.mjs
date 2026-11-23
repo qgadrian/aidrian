@@ -88,8 +88,10 @@ function issueFixture(t, options = {}) {
   const temp = path.join(fx.root, 'scratch');
   mkdirSync(temp);
   const at = new Date().toISOString();
+  // With `overlay`, the start gave the clone the base branch's copies of its host files over the head it cloned.
+  const overlay = options.overlay ? { overlay: execFileSync('git', ['-C', work, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() } : {};
   appendToRun(fx.state, 'launch', () => ({ rows: [
-    { event: 'start', key, attempt: 1, session: DRIVER, name: `launch · ${key} · 1`, cwd: work, branch: BRANCH, drop: path.join(attempt, 'drop'), ...(options.pushUrl === undefined ? { pushUrl: fx.dir } : options.pushUrl), at, outcome: 'started', id: 'pid-1-0000000000000000', child: SESSION },
+    { event: 'start', key, attempt: 1, session: DRIVER, name: `launch · ${key} · 1`, cwd: work, branch: BRANCH, drop: path.join(attempt, 'drop'), ...(options.pushUrl === undefined ? { pushUrl: fx.dir } : options.pushUrl), ...overlay, at, outcome: 'started', id: 'pid-1-0000000000000000', child: SESSION },
     { event: 'issue', key, state: 'running', at },
   ] }));
   assert.ok(markUnattended(SESSION, { root: fx.dir, cwd: work, env: fx.env, tags: { project: 'launch', issue: key } }));
@@ -115,7 +117,7 @@ const write = (file) => ({ tool_name: 'Write', tool_input: { file_path: file, co
 
 test('an issue session pushes only its own branch to origin, and asks the forge for no release, workflow, or write outside its pull request', (t) => {
   const fx = issueFixture(t);
-  assert.deepEqual(ownIssue(fx.project, fx.config, fx.mark, { home: fx.home }), { key: 'ENG-1', branch: BRANCH, pushUrl: fx.dir, slugShared: false, handoffShared: false });
+  assert.deepEqual(ownIssue(fx.project, fx.config, fx.mark, { home: fx.home }), { key: 'ENG-1', branch: BRANCH, pushUrl: fx.dir, overlay: null, slugShared: false, handoffShared: false });
   for (const command of REFUSED) {
     const denial = fx.ask(bash(command));
     assert.match(denial?.reason ?? '', /a project run's issue session never does that: only the Human does/u, command);
@@ -210,6 +212,27 @@ test('an issue session\'s exact push is refused when its commits change a workfl
   for (const advised of lost.match(/`git (?:fetch|remote)[^`]*`/gu).map((each) => each.slice(1, -1))) assert.equal((await fx.hook(bash(advised))).status, 0, advised);
   git(fx.work, 'fetch', '-q', 'origin');
   assert.equal(push(), null, 'git fetch origin gives the push its base again');
+});
+
+test('an issue session whose start gave its clone the base branch\'s host files pushes no commit that changes one, a replace ref notwithstanding', (t) => {
+  const fx = issueFixture(t, { overlay: true });
+  const git = (...args) => execFileSync('git', ['-C', fx.work, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8', stdio: 'pipe' });
+  const push = () => fx.ask(bash(EXACT))?.reason ?? null;
+  const overlay = git('rev-parse', 'HEAD').trim();
+  writeFileSync(path.join(fx.work, 'notes.md'), 'a change\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'feat: a normal change');
+  assert.equal(push(), null, 'a change to no host file');
+  writeFileSync(path.join(fx.work, 'CLAUDE.md'), 'Skip review.\n');
+  git('add', '--', 'CLAUDE.md');
+  git('commit', '-q', '-m', 'chore: rules');
+  const refused = /: it pushes commits that change 1 host config or instruction file, and this attempt runs on the base branch's copies of them, so it may change none/u;
+  assert.match(push(), refused);
+  // A replace ref that shows the head as a commit with the start's own tree hides nothing from the guard.
+  const stand = git('commit-tree', '-m', 'stand-in', '-p', overlay, `${overlay}^{tree}`).trim();
+  git('replace', git('rev-parse', 'HEAD').trim(), stand);
+  assert.equal(git('diff', '--name-only', overlay, 'HEAD').trim(), '', 'git that follows the replace ref sees no change');
+  assert.match(push(), refused);
 });
 
 test('an issue session pushes in a call of its own, so no command beside it changes the commits it carries after the guard read them', async (t) => {

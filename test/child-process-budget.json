@@ -35,6 +35,7 @@
     "project-start-sandbox.test.mjs": 5850,
     "project-stops.test.mjs": 5200,
     "project-token.test.mjs": 1600,
+    "project-trust.test.mjs": 500,
     "quorum-provisional.test.mjs": 3500,
     "quorum-route.test.mjs": 3850,
     "ready-hold.test.mjs": 3400,

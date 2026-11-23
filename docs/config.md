@@ -1962,27 +1962,25 @@ attempt's clone pushes to, read before its session starts, and a clone that push
 `remote.origin.pushurl` in the user's git config makes it, halts the start; the issue session's one push goes only there
 ([hooks.md](hooks.md#agent-gates)). A host that would refuse that push in the driver session's permission mode, which the session
 takes, halts the start too, before the host starts anything ([the push preflight](handoff.md#the-push-preflight)). Every start is confined to a fresh
-clone under its host's sandbox, and a host that is not halts the start. A later attempt, and the first attempt of an
-issue `resumed` from an earlier run at a head the branch still holds, goes on from its issue's branch
-as the forge holds it, the branch of its latest start that ran a session. When that head differs from the base tip in a
-host config or instruction file, it goes on from the tip on the same branch if the tip already holds the head, and
-otherwise, such as when the branch changed a knowledge index a docs issue registered its doc in, or only the base
-changed such a file after the branch diverged (an accepted residual: going on would need the tip merged in), it leaves the branch as it is and cuts a fresh one from the base tip, the snapshot's branch with
-`-a<attempt>` added, which its start row records. Everything after the start uses that branch: the session's push, its
-result, and `stop-action`; the merge guard holds a pull request from any branch an attempt recorded. Nothing of the old
-branch is reused. The session's task and the start's stderr give only a count of those files; the first few names,
-cleaned to one line, go to `logs/<KEY>.<attempt>.left.txt` in the run's folder, beside the run log a host may truncate;
-when that file cannot be written, the start still goes on, and its stderr says the names could not be written.
-The task names the old branch's pull request by its link, which the forge adapter takes only as the canonical link of
-the pinned repository's pull request with the number the result named (for a `resumed` issue with no result in this run, the one
-the earlier run's result named), and only when the forge shows it
-open in the pinned repository, into the default branch, from the old branch at the head the attempt fetched, and the
-session closes it by that link, once the new pull request is open, with the comment `superseded by #<new>`, only if
-`gh pr view` still shows the same;
-reopening undoes it, and no branch is deleted. With no such pull request, it closes nothing: a pull request an attempt
-opened but never named in a result stays open beside the new one, an accepted residual, since the merge guard still
-holds it to the issue and nothing merges it. A fresh branch already on the forge, or one another issue of the run names
-or recorded, refuses the start. Each attempt's clone commits unsigned: the
+clone under its host's sandbox, and a host that is not halts the start.
+A run never discards or rebuilds existing work unless a person asks.
+A later attempt goes on on the issue's branch, as does the first attempt of an issue `resumed` from an earlier run at a
+head the branch still holds.
+When that branch's head changes a host config or instruction file, the session loads the branch's own copies only when
+the review bot, github.reviewer on the default branch, passed exactly that head on the forge, and the Human signed off
+the harness-config flow on that head, or the default branch sets `github.autoMerge.includeGuardedPaths` and no policy
+file changed; otherwise its clone holds the base branch's copies, git leaves them out of its commits, and a push that
+changes one is refused.
+The start row records that head as `overlay`, and `<attempt>/base-copies.txt` lists the files, cleaned and fenced as
+data from the branch.
+The branch's own changes stay in its commits for the pull request's review.
+A branch the run's ledger cannot account for parks the issue as unreconciled, with the branch and pull request untouched:
+a first attempt whose branch the forge has already, a recorded head the forge's branch does not hold, and a branch that
+makes a host file, or a folder on its path, a link.
+`start` exits 0 with `parked <key> unreconciled: ...`, writes no start row, and a later run resumes the issue from that
+park row.
+To start an issue over, a person deletes its branch on the forge; closing the pull request alone does not.
+Each attempt's clone commits unsigned: the
 start sets `commit.gpgsign` and `tag.gpgsign` to `false` in the clone's own git config, on every attempt, and never in
 the user's global or system config. The sandbox hides the signing keys (`~/.gnupg` and `~/.ssh`), so a commit the
 user's config signs would fail once the work is done and park the issue with its change staged; the forge asks no
@@ -2059,9 +2057,12 @@ The snapshot input is one JSON object, at most 1 MiB, read as a regular file and
   A run starts only a `backlog` or `unstarted` issue, and a `started` one that an earlier run of the project parked
   on the branch the snapshot names or on an attempt branch it cut from it: in the runs folder, among the runs that pinned
   the same repository, the one with the latest `init` among those that record the issue records it parked, and the
-  branch its latest start that ran worked on is the snapshot's, or the snapshot's with `-a<n>` added, as an attempt that
-  left the snapshot's branch cuts it, which a start row of that run names, when that run's own snapshot named the same
-  branch for the issue. Such a branch may run past the 120-character cap by its suffix, as the start gate cuts it.
+  branch its latest start that ran worked on is the snapshot's, or the snapshot's with `-a<n>` added, as an earlier
+  version of the start gate cut it when an attempt left the snapshot's branch, which a start row of that run names, when
+  that run's own snapshot named the same branch for the issue. Such a branch may run past the 120-character cap by its
+  suffix, as that start gate cut it.
+  A run whose latest row of the issue parked it `unreconciled` gives the branch, head, and pull request that row names,
+  so a run that parked a resumed issue without starting it hides no earlier record.
   Any other branch keeps the issue blocked. A resumed branch that another issue of the snapshot names, or resumes on,
   compared in any case, is a snapshot problem: `init` refuses it and `init --check` prints a `blocker snapshot` line,
   since both sessions would be let push to that one ref.

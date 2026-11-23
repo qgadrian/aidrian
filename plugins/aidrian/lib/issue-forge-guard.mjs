@@ -11,7 +11,8 @@
 //     that only read (BESIDE_OPTIONS), and text filters (BESIDE_PROGRAMS), so no command of the call changes the commits
 //     it carries after the guard read them. git then
 //     holds the checkout (issue-push-checkout.mjs): its own clone or worktree, not a repository nested in it, with origin
-//     pushing to the URL its issue's start pinned, and commits that change none of the forge's workflow files
+//     pushing to the URL its issue's start pinned, commits that change no host config or instruction file when that
+//     start gave its clone the base branch's copies of them, and commits that change none of the forge's workflow files
 //     (forges/index.mjs forgeWorkflowFolders) from where they leave origin's default branch, however the session made
 //     them, as a `git apply`, `patch`, or `tar -x` puts such a file in a commit past the file-write guard, and no
 //     uncommitted change to one.
@@ -260,7 +261,7 @@ function pushProblem(git, { moved, issue, folder, roots, fold, beside, sets = []
   if (beside) return `it pushes in a call that also runs \`${spelled(beside)}\`, which may change the commits the push carries after the guard read them; an issue session pushes in a call of its own: commit first, then run \`git push origin ${exact}\` alone`;
   const root = typeof folder === 'string' ? roots().find((each) => isWithin(each.root, fold(folder))) : undefined;
   if (!root) return 'it pushes from a folder that is not its own clone or worktree, whose origin may be any repository';
-  return pushCheckoutProblem(folder, { root, pushUrl: own.pushUrl ?? null, fold });
+  return pushCheckoutProblem(folder, { root, pushUrl: own.pushUrl ?? null, fold, overlay: own.overlay ?? null });
 }
 
 // What a forge CLI call asks that the session never asks (entryProblem): a refused subcommand, or a raw API write.

@@ -1,6 +1,8 @@
 // What git says of the checkout a project run's issue session makes its one exact push from (lib/issue-forge-guard.mjs
 // pushProblem), once the words have passed: that it is the session's own clone or worktree, not a repository nested in
-// it; that origin pushes to the URL the issue's start pinned; that its commits change none of the forge's workflow files
+// it; that origin pushes to the URL the issue's start pinned; that, when that start gave its clone the base branch's
+// copies of the host files (its `overlay`), its commits change no host config or instruction file from the head it
+// started from; that its commits change none of the forge's workflow files
 // from where they leave origin's default branch; and that it holds no uncommitted change to one, which a command run
 // beside the push, or after the guard read it, could commit into the push. Every git call runs within the guards' budget,
 // and one that fails, or does not answer in time, refuses the push.
@@ -8,6 +10,7 @@
 import { checkDeadline, remainingMs } from './deadline.mjs';
 import { forgeWorkflowFolders } from './forges/index.mjs';
 import { runGit } from './git.mjs';
+import { GUARDED_PATHS } from './project.mjs';
 
 // The refs a push's commits are compared with, the first that git resolves: origin's default branch, as config-committed.mjs
 // originDefaultTip names it, origin/HEAD, then the plugin's default branch name.
@@ -40,6 +43,18 @@ function ownCloneProblem(folder, root, pushUrl, fold) {
   if (pushes.length === 1 && pushes[0] === pushUrl) return null;
   const elsewhere = pushes.find((each) => each !== pushUrl) ?? pushes.join(', ');
   return `it pushes to ${elsewhere.slice(0, 120) || 'no URL'}${pushes.length > 1 ? `, one of the ${pushes.length} URLs origin pushes to` : ''}, and origin pushes only to ${pushUrl.slice(0, 120)}, the URL its issue's start pinned`;
+}
+
+// Why the commits a push from `folder` carries change a host config or instruction file (GUARDED_PATHS) from `overlay`,
+// the branch head its attempt started from on the base branch's copies of them (lib/project-start.mjs prepareAttempt),
+// or null, as for an attempt with none. A git call that fails refuses the push.
+function overlayProblem(folder, overlay) {
+  if (!overlay) return null;
+  const diff = budgeted(['diff', '--name-only', '--no-renames', '--no-relative', '-z', overlay, 'HEAD', '--'], folder);
+  if (diff.status !== 0) return `it pushes, and ${SLOW} which files its commits change from ${overlay.slice(0, 7)}, the head its attempt started from on the base branch's copies of the host config and instruction files`;
+  const count = diff.stdout.split('\0').filter((file) => file !== '' && GUARDED_PATHS.test(file)).length;
+  if (!count) return null;
+  return `it pushes commits that change ${count} host config or instruction ${count === 1 ? 'file' : 'files'}, and this attempt runs on the base branch's copies of them, so it may change none; take those changes out of the commits, or record the result parked when the issue needs them`;
 }
 
 // The forge's workflow folders and every folder that holds one, as `:(top,literal)` pathspecs: a holding folder, as
@@ -119,8 +134,9 @@ export function statusEntries(text) {
 const shellWord = (file) => (/^[\w./@%+=:,-]+$/u.test(file) ? file : `'${file.replaceAll("'", "'\\''")}'`);
 
 // Why the exact push from `folder` may not run, or null (see the header). `root` is the session's root that holds it
-// ({ root, common }), `pushUrl` the URL its issue's start pinned, and `fold(path)` gives a path as `root` holds them.
-export function pushCheckoutProblem(folder, { root, pushUrl, fold }) {
+// ({ root, common }), `pushUrl` the URL its issue's start pinned, `overlay` the head that start recorded its base copies
+// over, or null, and `fold(path)` gives a path as `root` holds them.
+export function pushCheckoutProblem(folder, { root, pushUrl, fold, overlay = null }) {
   const paths = workflowPaths();
-  return ownCloneProblem(folder, root, pushUrl, fold) ?? committedProblem(folder, paths) ?? uncommittedProblem(folder, paths);
+  return ownCloneProblem(folder, root, pushUrl, fold) ?? overlayProblem(folder, overlay) ?? committedProblem(folder, paths) ?? uncommittedProblem(folder, paths);
 }

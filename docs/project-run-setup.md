@@ -372,6 +372,7 @@ repository: `init` prints a `resumed:` line for it, and its first attempt goes o
 still holds the commit the old run recorded at the park, or, for an old run from before commits were recorded, the head
 of the open pull request its result named ([Project run](config.md#project-run)). An old run that parked before any
 push gives a plain first attempt.
-Any other started issue is a blocker. A first attempt of any other issue cuts its branch fresh from the base tip, so one
-whose branch is already on the forge refuses to start: close its pull request and delete the branch, or give the issue
-another branch in the snapshot.
+Any other started issue is a blocker.
+A first attempt of any other issue cuts its branch from the base tip, so one whose branch is already on the forge parks
+as unreconciled at its start, with the branch and its pull request left as they are.
+To start it over, delete the branch on the forge, or give the issue another branch in the snapshot.

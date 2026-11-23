@@ -117,6 +117,13 @@ test('a result that parks the issue records the head the forge shows its branch 
     assert.equal(open.rows().find((row) => row.event === 'result').head, head);
     assert.equal(reads, 1, 'the branch is read once');
   }
+  // A closed pull request at the branch tip is no open one: the result is refused, and no head is kept for a later run.
+  const closed = started(t);
+  const theirs = closed.forge.change;
+  closed.forge.change = (ref, fields, options) => (ref === '12' ? { state: 'CLOSED', headRefName: 'feat/eng-1-export', headRefOid: head, url: 'https://github.com/acme/widgets/pull/12', isCrossRepository: false } : theirs(ref, fields, options));
+  closed.forge.branchHead = () => head;
+  assert.deepEqual(closed.recorded({ status: 'pr_open', pr: 12, stop: 'review' }).out, ['ended ENG-1 bad_result -> open']);
+  assert.equal(closed.rows().some((row) => row.event === 'result' && row.head === head), false);
   const failed = started(t);
   failed.forge.branchHead = () => head;
   assert.deepEqual(failed.recorded({ status: 'failed', pr: null, stop: 'flaky' }).out, ['result ENG-1 failed -> open']);

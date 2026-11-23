@@ -223,6 +223,7 @@ function droppedPullProblem({ forge, repository, result, branch, since, verified
   if (repoName(view?.url) !== named.toLowerCase() || hostOf(view.url)?.toLowerCase() !== repository.host.toLowerCase()) return `pull request #${result.pr} is not in ${repository.host}/${named}`;
   if (view.isCrossRepository !== false || view.headRefName !== branch) return `pull request #${result.pr} is not from the issue's branch ${branch}`;
   if (result.status === 'merged') return mergeProblem({ forge, repository, pr: result.pr, branch, since });
+  if (view.state !== 'OPEN') return `pull request #${result.pr} is not open`;
   let head;
   try {
     head = forge.branchHead(named, branch, { host: repository.host });

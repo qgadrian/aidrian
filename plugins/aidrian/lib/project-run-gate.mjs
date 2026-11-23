@@ -433,7 +433,7 @@ function startPlace(context) {
   if (room.problem) return refuse(room.problem, orphans);
   const log = runLog(state, run, key, capped.attempt);
   if (log.problem) return refuse(log.problem, orphans);
-  return { orphans, attempt: capped.attempt, tip: base.tip, branch, ...room, log: log.file, afterLimit: endedOnLimit(current, key, capped.attempt - 1) };
+  return { orphans, attempt: capped.attempt, tip: base.tip, branch, ...room, log: log.file, afterLimit: room.onForge === true && endedOnLimit(current, key, capped.attempt - 1) };
 }
 
 // Whether attempt `attempt` of issue `key` ended on a usage or rate limit, as the run `found` records it.
@@ -497,7 +497,7 @@ function confinedRoom({ project, state, run, key, branch, fresh, reserved, resum
   if (issueFile?.problem) return { problem: issueFile.problem };
   return { folder: clone.folder, cwd: clone.work, git: clone.git, grants: [clone.git, clone.drop, clone.cache, ...folders.folders], drop: clone.drop, cache: clone.cache, vars, main: resolvedPath(main) ?? main, mainGit, issueFile: issueFile?.file ?? null, pushUrl: url || null, claim, branch: clone.branch, superseded: supersededOf(clone.superseded, { found, key, facade, resumed }),
     // The earlier run's work goes on only on its branch as the forge has it: a branch deleted since starts afresh.
-    resumed: clone.onForge ? resumed : null };
+    resumed: clone.onForge ? resumed : null, onForge: clone.onForge };
 }
 
 // What the start says of the branch `left` an attempt left (prepareAttempt): { branch, sha, count, files, pr, base, url },

@@ -197,6 +197,8 @@ export function registerPane(on: On, options: PluginOptions) {
   // Each main-chain request reads and refreshes the prompt cache, so the countdown starts again at the request, not at
   // the turn's end: a long turn keeps the cache warm, and a long response restarts it before it ends (passResponse).
   // A subagent's request is its own chain's and refreshes none.
+  // SHORTCUT: the send time is the step's first attempt. After a retry, which streams only as an opaque engine chunk
+  // with no time of its own, the countdown can show less time than is left, never more. Accepted: it errs toward cold.
   on('turn.step', async function* ($, e, next) {
     if (e.agentId === undefined) {
       if (e.effort !== undefined) {

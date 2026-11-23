@@ -84,6 +84,8 @@ test('a continuation block counts as a resume in the first message of a backgrou
   assert.equal(tokensOf(lines(user('look'), turn(20_000), user(background), turn(64_000, ['Edit']))), null, 'a later message that quotes it');
   assert.equal(tokensOf(lines(user('look'), turn(20_000), startContext(clear), turn(64_000, ['Edit']))), null, 'a later hook context that holds it');
   assert.equal(tokensOf(lines(user('look'), user(background), turn(20_000), turn(64_000, ['Edit']))), null, 'a second prompt before any model call');
+  const image = user([{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' } }]);
+  assert.equal(tokensOf(lines(image, user(background), turn(20_000), turn(64_000, ['Edit']))), null, 'after a prompt that is an image alone');
   assert.equal(tokensOf(lines(user('look'), hookContext(clear, 'UserPromptSubmit'), turn(20_000), turn(64_000, ['Edit']))), null, 'a prompt hook`s context');
   const caveat = JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: '<local-command-caveat>run directly</local-command-caveat>' } });
   assert.equal(tokensOf(lines(caveat, user(background), turn(20_000), turn(55_000, ['Edit']))), 35_000, 'the host`s own entry is no prompt');
@@ -190,6 +192,10 @@ test('a sample keeps the time of the call it measured, so a session read again a
   const untimed = lines(user('resume'), turn(30_000, [skillCall('aidrian:session-continue')]), turn(70_000, ['Edit'])).replace(/"timestamp":"[^"]*",/gu, '');
   assert.equal(resumeRead(untimed, WORK).at, null);
   assert.equal(recordResume(expired, 'untimed', untimed, WORK, NOW), null, 'a call with no time is not kept');
+  const full = stateWith(t, many(KEPT_SAMPLES, 50_000));
+  const before = readFileSync(path.join(full, RESUME_FILE), 'utf8');
+  assert.equal(recordResume(full, 'ahead', resumed, WORK, measured - DAY), null, 'a call after now is not kept');
+  assert.equal(readFileSync(path.join(full, RESUME_FILE), 'utf8'), before, 'and a full file stays as it was');
 });
 
 test('the cost model, the trigger, and the plan offer all price a fresh session with the B they are given', () => {

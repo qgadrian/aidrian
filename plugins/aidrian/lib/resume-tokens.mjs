@@ -97,8 +97,9 @@ export function recordResume(state, session, text, workTools, now = Date.now()) 
   if (samples.some((each) => each.session === session)) return null;
   const read = resumeRead(text, workTools);
   // Kept at the time of the call it measured, so a session read again after its sample left the window, or was pushed
-  // out by newer ones, falls out again at once; a call with no time, or one already out of the window, is not kept.
-  if (read === null || read.at === null || now - read.at > SAMPLE_WINDOW) return null;
+  // out by newer ones, falls out again at once; a call with no time, or one outside the window readSamples reads, past or
+// future, is not kept.
+  if (read === null || read.at === null || now - read.at < 0 || now - read.at > SAMPLE_WINDOW) return null;
   const sample = { session, tokens: read.tokens, at: read.at };
   const next = [...samples, sample].sort((a, b) => a.at - b.at).slice(-KEPT_SAMPLES);
   return next.includes(sample) && writeSamples(state, next) ? read.tokens : null;

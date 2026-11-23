@@ -729,13 +729,13 @@ const leadsContinuation = (text) => typeof text === 'string' && text.split('\n')
 // The context a SessionStart hook added, as Claude Code writes it, or null.
 const startContext = (entry) => (entry?.type === 'attachment' && entry.attachment?.type === 'hook_additional_context'
   && entry.attachment.hookEvent === 'SessionStart' ? [entry.attachment.content].flat() : null);
-// A prompt's own text, never a tool result or the host's own entry (isMeta), or null.
+// A prompt's own text, '' for a prompt with none, such as an image alone, or null for an entry that is no prompt: a tool
+// result, or the host's own entry (isMeta).
 function promptText(entry) {
-  if (entry?.type !== 'user' || entry.isMeta === true) return null;
-  const content = entry.message?.content;
+  const content = entry?.message?.content;
+  if (entry?.type !== 'user' || entry.isMeta === true || !isPrompt(content)) return null;
   if (typeof content === 'string') return content;
-  const texts = Array.isArray(content) ? content.filter((block) => block?.type === 'text' && typeof block.text === 'string') : [];
-  return texts.length ? texts.map((block) => block.text).join('\n') : null;
+  return content.filter((block) => block?.type === 'text' && typeof block.text === 'string').map((block) => block.text).join('\n');
 }
 const isResumeSkill = (block) => block.name === 'Skill' && typeof block.input?.skill === 'string' && baseName(block.input.skill.replace(/^\//u, '')) === RESUME_SKILL;
 export function resumeRead(text, workTools) {

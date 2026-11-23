@@ -29,7 +29,7 @@ import { globReaches, modeTargets, sessionWorktrees, startedFolder, stateFolders
 import { fileEditOf, nestedProtected, opaqueShellCommand, protectedPaths, transcriptFolders } from './hosts/index.mjs';
 import { issueForgeDenial } from './issue-forge-guard.mjs';
 import { isDraftName } from './review/drafts.mjs';
-import { ownIssue } from './project-run-guard.mjs';
+import { ownIssue, ownsHandoff } from './project-run-guard.mjs';
 import { canonical } from './rules/main-checkout.mjs';
 import { issueHeld } from './unattended-mark.mjs';
 import { shellWrites } from './unattended-shell.mjs';
@@ -97,8 +97,7 @@ const issueNamed = (issue) => (target, folder) => {
 // Whether `target`, inside the dispatch folder `folder`, is a handoff file named for the branch of the issue `issue`
 // ({ branch }): `<branch>-<slice>-<agent>.json`, each `/` of the branch a `-`.
 const issueHandoff = (issue) => (target, folder) => {
-  const name = path.relative(folder, target);
-  return Boolean(issue) && !issue.handoffShared && HANDOFF.test(name) && name.toLowerCase().startsWith(`${issue.branch.replaceAll('/', '-').toLowerCase()}-`);
+  return ownsHandoff(issue, path.relative(folder, target));
 };
 const absolute = (each) => typeof each === 'string' && path.isAbsolute(each);
 // The time a git call may take: what the guards' budget leaves, or git's own default outside one.

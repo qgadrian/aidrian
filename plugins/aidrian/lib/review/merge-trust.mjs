@@ -62,9 +62,9 @@ export function botProblem(trail, head, reviewer) {
   if (whole.length > own.length) why = ', and its status card was edited by another account';
   else if (cards.length > whole.length) why = ', and the forge gave only part of its status card\'s edit history, so who edited it cannot be told';
   else if (!cards.length && trail.commentsComplete === false) why = ', and the pull request has more comments than the forge read gives, so its status card may be past them';
-  // The card keeps `has_any_findings` true once the bot found something on the pull request, so no new review of the
-  // head clears it, and `aidrian pr await-review --request` cannot change it (#566).
-  else if (own.some((card) => foundEarlier(cardState(card.body)?.code_review, head))) why = ', and its status card of that commit says it found something on this pull request in an earlier round, which no new review clears: a person merges it';
+  // The card keeps `has_any_findings` true once the bot found something on the pull request, so no later card passes
+  // the head, and `aidrian pr await-review --request` cannot change it (#566).
+  else if (own.some((card) => foundEarlier(cardState(card.body)?.code_review, head))) why = ', and its status card of that commit says it found something on this pull request, all resolved since: that never clears, so no later status card passes it, and only an approving review of that commit or a person merges it';
   return `${reviewer} has not passed head ${sha7} on the forge: no approving review of that commit, and no status card of its own that says its review of that commit finished and found nothing${why}`;
 }
 

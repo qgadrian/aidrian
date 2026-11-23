@@ -347,16 +347,16 @@ test('an issue session pushes only from its own clone\'s repository, to the URL 
   assert.match(fx.ask(bash(EXACT))?.reason ?? '', /one of the 2 URLs origin pushes to, and origin pushes only to/u, 'a second push URL');
 });
 
-test('an issue session writes the findings file pr review names for it, and no review folder its issue key does not lead', (t) => {
+test('an issue session writes the findings file pr review names for it, and no review folder another issue key ends', (t) => {
   const fx = issueFixture(t);
   const env = { ...fx.env, CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: SESSION };
   assert.equal(sessionIssue(env), 'ENG-1');
   assert.equal(sessionIssue({ ...env, CLAUDE_CODE_SESSION_ID: DRIVER }), null, 'a session no issue mark names');
   const file = findingsFile(fx.project, 3, 'agent:code-reviewer', 'o/r', sessionIssue(env));
-  assert.equal(path.relative(fx.state, path.dirname(file)), path.join('tmp', 'eng-1-review-3-o--r'));
+  assert.equal(path.relative(fx.state, path.dirname(file)), path.join('tmp', 'review-3-o--r@eng-1'));
   assert.equal(fx.ask(write(file)), null);
   assert.equal(fx.ask(bash(`printf x > '${file}'`)), null, 'shell');
-  for (const folder of ['review-3-o--r', 'eng-2-review-4-o--r']) {
+  for (const folder of ['review-3-o--r', 'review-4-o--r@eng-2', 'review-3-o--r@eng-12', 'x-review-3@eng-1']) {
     assert.match(fx.ask(write(path.join(fx.state, 'tmp', folder, path.basename(file))))?.reason ?? '', /not named for this session's issue ENG-1/u, folder);
   }
   assert.equal(path.basename(path.dirname(findingsFile(fx.project, 3, 'agent:code-reviewer', 'o/r'))), 'review-3-o--r', 'any other session as before');

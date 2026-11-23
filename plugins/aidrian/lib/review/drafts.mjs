@@ -1,13 +1,13 @@
 // The drafts a pull request leaves in the state folder's `tmp/` (docs/project-folder.md#local-state), and their removal
 // once the pull request is merged or closed. A draft is named for its pull request's number: the findings files each
 // agent pass of `aidrian pr review` writes, in `review-<n>/`, or `review-<n>-<owner>--<name>/` for a pull request of
-// another remote's repository, either led by the issue key in an issue session (dispatch.mjs findingsFile), and the files skills draft for
+// another remote's repository, either ending in `@<key>` in an issue session (dispatch.mjs findingsFile), and the files skills draft for
 // one pull request, `pr-<n>-review.md` and `product-feedback-<n>.md` with its `product-feedback-<n>-items.json`.
 // They hold full finding text, from security passes too, and nothing reads them once the pull request has closed.
 // A draft whose pull request is open, or whose state the forge cannot give, is kept. Drafts named for a branch, such
 // as `pr-body-<branch>.md`, are not a pull request's by number, and stay.
 
-import { lstatSync, readdirSync, rmdirSync, rmSync } from 'node:fs';
+import { readdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 
 import { forgeFor } from '../forges/index.mjs';
@@ -17,13 +17,9 @@ import { recordRepos } from './state.mjs';
 
 // A draft's name, with its pull request's number in the one group that matched.
 // A findings folder of another remote's repository names it, `<owner>--<name>`: GitHub owners hold no `--`.
-// An issue session's findings folder leads with its issue key (dispatch.mjs findingsFile). An issue session names its
-// own scratch for its key too, so such a folder loses only its findings files, and goes only once nothing else is left
-// (removeDraft).
-const ISSUE_LED = /^(?:[a-z][a-z0-9]{0,15}-)?[1-9][0-9]{0,8}-review-/u;
-// A findings file as dispatch.mjs findingsFile names it: the pass id's characters, then 8 hex digits of its SHA-256.
-const FINDINGS = /^[\w.-]{1,100}-[0-9a-f]{8}\.findings\.json$/u;
-const DRAFT = /^(?:(?:(?:[a-z][a-z0-9]{0,15}-)?[1-9][0-9]{0,8}-)?review-([1-9]\d{0,9})(?:-([\w.-]+?)--([\w.-]+))?|pr-([1-9]\d{0,9})-review\.md|product-feedback-([1-9]\d{0,9})(?:-items\.json|\.md))$/u;
+// An issue session's findings folder ends with `@` and its issue key (dispatch.mjs findingsFile). The session names its
+// own scratch `<key>-...`, which never matches, so the folder goes whole, as the plain one does.
+const DRAFT = /^(?:review-([1-9]\d{0,9})(?:-([\w.-]+?)--([\w.-]+))?(?:@(?:[a-z][a-z0-9]{0,15}-)?[1-9][0-9]{0,8})?|pr-([1-9]\d{0,9})-review\.md|product-feedback-([1-9]\d{0,9})(?:-items\.json|\.md))$/u;
 // The most pull requests one sweep reads the state of, lowest number first: each is one forge call.
 export const MAX_SWEPT = 50;
 // The forge's states of a pull request no draft is kept for.
@@ -43,10 +39,6 @@ export function draftsByPr(dir) {
   for (const name of names.sort()) {
     const match = DRAFT.exec(name);
     if (!match) continue;
-    // A led folder holding no findings file, and not empty, is an issue session's own scratch, with nothing to clean:
-    // it takes no forge lookup, so a sweep's limit is never spent on it. One that cannot be read is kept for removal,
-    // whose error the sweep reports.
-    if (ISSUE_LED.test(name) && nothingLed(path.join(dir, name))) continue;
     const pr = Number(match[1] ?? match[4] ?? match[5]);
     const repo = match[2] ? `${match[2]}/${match[3]}`.toLowerCase() : null;
     const key = repo ? `${pr}@${repo}` : String(pr);
@@ -97,7 +89,8 @@ export function sweepDrafts(project, { forge = forgeFor(project.root), limit = M
     const gone = [];
     for (const file of files) {
       try {
-        if (removeDraft(path.join(dir, file), ISSUE_LED.test(file))) gone.push(file);
+        rmSync(path.join(dir, file), { recursive: true, force: true });
+        gone.push(file);
       } catch (error) {
         out.failed.push({ pr, file, error: error.message });
       }
@@ -107,48 +100,3 @@ export function sweepDrafts(project, { forge = forgeFor(project.root), limit = M
   return out;
 }
 
-// The findings files in the led folder `dir`, as findingsFile names them, that are regular files, or null when there is
-// nothing to clean: `dir` is no folder, a link, or holds other files only. An empty folder, as a dispatch that wrote
-// nothing leaves, gives []. A file that vanishes while it is read is skipped.
-function ledFindings(dir) {
-  let names;
-  try {
-    if (!lstatSync(dir).isDirectory()) return null;
-    names = readdirSync(dir);
-  } catch {
-    return null;
-  }
-  const found = names.filter((name) => {
-    if (!FINDINGS.test(name)) return false;
-    try {
-      return lstatSync(path.join(dir, name)).isFile();
-    } catch (error) {
-      if (error.code === 'ENOENT') return false;
-      throw error;
-    }
-  });
-  return found.length || !names.length ? found : null;
-}
-
-const nothingLed = (dir) => {
-  try {
-    return ledFindings(dir) === null;
-  } catch {
-    return false;
-  }
-};
-
-// Removes the draft `file`: whole, or, for a folder an issue session's key leads (`led`), only its findings files
-// (ledFindings), and then the folder once it is empty. Returns whether the draft is gone.
-function removeDraft(file, led) {
-  if (!led) {
-    rmSync(file, { recursive: true, force: true });
-    return true;
-  }
-  const names = ledFindings(file);
-  if (names === null) return false;
-  for (const name of names) rmSync(path.join(file, name), { force: true });
-  if (readdirSync(file).length) return false;
-  rmdirSync(file);
-  return true;
-}

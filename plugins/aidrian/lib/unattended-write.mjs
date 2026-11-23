@@ -45,6 +45,8 @@ const HAND_FOLDERS = Object.freeze(['plans', 'tmp', 'handoffs', 'quorum']);
 // entries named for its own issue (issueNamed): it asks for no handoff, so it writes no brief a driver's check would
 // resolve as its prior, and runs no quorum, whose ledger a later session reuses (lib/quorum/route.mjs).
 const ISSUE_FOLDERS = Object.freeze(['plans', 'tmp']);
+// An issue session's findings folder in tmp, `review-<N>[-<owner>--<name>]@<key>` (review/dispatch.mjs findingsFile).
+const FINDINGS_FOLDER = /^review-[1-9]\d{0,9}(?:-[\w.-]+?--[\w.-]+)?@[\w-]+$/u;
 // The shell startup files in the home folder, and in ZDOTDIR for zsh, which every later shell of the user runs.
 const STARTUP = Object.freeze(['.profile', '.login', '.logout', '.bashrc', '.bash_profile', '.bash_login', '.bash_logout', '.kshrc', '.cshrc', '.tcshrc', '.inputrc']);
 const ZSH_STARTUP = Object.freeze(['.zshrc', '.zshenv', '.zprofile', '.zlogin', '.zlogout']);
@@ -83,6 +85,9 @@ const issueNamed = (issue) => (target, folder) => {
   const name = first.toLowerCase();
   const key = issue.key.toLowerCase();
   if (name === key || name.startsWith(`${key}-`) || name.startsWith(`${key}.`)) return true;
+  // In tmp, the findings folder `aidrian pr review` names for its issue (review/dispatch.mjs findingsFile), which
+  // cleanup removes whole, so it is never named like the session's other scratch.
+  if (path.basename(folder) === 'tmp' && FINDINGS_FOLDER.test(name) && name.endsWith(`@${key}`)) return true;
   // In tmp, the body file the pr-write skill and the pull request body hook name for its own branch (pr-body.mjs
   // bodyFilePath), each `/` a `-`, unless another issue's branch is spelled the same (ownIssue slugShared).
   if (issue.slugShared) return false;

@@ -7,7 +7,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
@@ -496,4 +496,92 @@ test('the agent gate hook never lifts a session from a transcript outside the ac
   assert.equal((await run({})).status, 0);
   assert.ok(readUnattendedMark(session, { home: TEST_HOME }), 'still held');
   assert.equal(humanPrompts({ session_id: session, transcript_path: transcript }), null, 'no transcript of the account home');
+});
+
+// Two mark folders, the environment's and the account's own, a mark writer, and a transcript the Human typed into.
+function markSetup(t) {
+  const env = { ...process.env, XDG_STATE_HOME: folder(t, 'aidrian-marks-') };
+  const home = folder(t, 'aidrian-home-');
+  const root = folder(t, 'aidrian-root-');
+  const ownMarks = path.join(home, '.local/state/aidrian/unattended');
+  mkdirSync(ownMarks, { recursive: true, mode: 0o700 });
+  mkdirSync(markFolder(env), { recursive: true, mode: 0o700 });
+  const write = (where, name, value) => writeFileSync(path.join(where, name), typeof value === 'string' ? value : JSON.stringify({ root, at: Date.now(), ...value }));
+  const entry = (promptIndex) => ({ type: 'user', isSidechain: false, entrypoint: 'cli', message: { role: 'user', content: 'x' }, origin: { kind: 'human' }, turnOrigin: 'human', turnPosition: { promptIndex, turnIndex: promptIndex } });
+  const transcript = path.join(folder(t, 'aidrian-transcript-'), 'typed.jsonl');
+  writeFileSync(transcript, `${JSON.stringify(entry(1))}\n${JSON.stringify(entry(2))}\n`);
+  const lift = (session, file = transcript) => liftAttended(session, file, { env, home, isHuman: claudeCode.humanPrompt });
+  const read = (session, options = {}) => readUnattendedMark(session, { env, home, ...options });
+  return { env, home, root, ownMarks, marks: markFolder(env), write, lift, read };
+}
+
+test('the mark scan reads every matching mark and gives the most restrictive, whichever folder comes first', (t) => {
+  const { ownMarks, marks, write, read } = markSetup(t);
+  // An issue mark with no proof state in the first folder, one whose proof is owed in the second.
+  const owed = 'feed0010-0000-4000-8000-000000000010';
+  write(marks, `${owed}.json`, { project: 'r1', issue: 'ENG-1' });
+  write(ownMarks, `${owed}.json`, { project: 'r1', issue: 'ENG-1', confine: true });
+  assert.equal(read(owed)?.confine, true, 'an owed proof is not masked by an issue mark with none');
+  // A mark that cannot be read in the first folder, one whose proof failed in the second.
+  const failed = 'feed0011-0000-4000-8000-000000000011';
+  write(marks, `${failed}.json`, 'not json');
+  write(ownMarks, `${failed}.json`, { project: 'r1', issue: 'ENG-1', confine: 'failed' });
+  assert.equal(read(failed)?.confine, 'failed', 'a failed proof is not masked by a mark that cannot be read');
+  // A plain mark first and an issue mark second still give the issue.
+  const issue = 'feed0012-0000-4000-8000-000000000012';
+  write(marks, `${issue}.json`, {});
+  write(ownMarks, `${issue}.json`, { project: 'r1', issue: 'ENG-1' });
+  assert.equal(read(issue)?.issue, 'ENG-1');
+});
+
+test('a session plain-marked in both folders is recorded attended in each, so a reader of either folder alone sees it', (t) => {
+  const { home, ownMarks, marks, write, lift, read } = markSetup(t);
+  const session = 'feed0013-0000-4000-8000-000000000013';
+  write(marks, `${session}.json`, {});
+  write(ownMarks, `${session}.json`, {});
+  assert.equal(lift(session), true);
+  assert.deepEqual([marks, ownMarks].map((where) => readdirSync(where).includes(`attended.${session}.json`)), [true, true]);
+  // A caller whose environment moves no state root reads only the account's own folder.
+  assert.equal(read(session, { env: { ...process.env, XDG_STATE_HOME: path.join(home, '.local/state') } }), null);
+  assert.equal(read(session), null);
+});
+
+test('an attended session is still held by a pending hold, an unreadable one too, and a pending hold keeps a session from being lifted', (t) => {
+  const { env, root, marks, write, lift, read } = markSetup(t);
+  const session = 'feed0014-0000-4000-8000-000000000014';
+  write(marks, `${session}.json`, {});
+  assert.equal(lift(session), true);
+  assert.equal(read(session), null, 'attended');
+  const gate = 'feed0015-0000-4000-8000-000000000015';
+  const pending = markPending(gate, { cwd: root, root, env });
+  assert.ok(pending);
+  assert.deepEqual(read(session), { root, cwd: root, pending: true }, 'a pending hold with no listing holds the attended session');
+  // While the pending hold is there, a session the Human types into is not lifted.
+  const typed = 'feed0016-0000-4000-8000-000000000016';
+  write(marks, `${typed}.json`, {});
+  assert.equal(lift(typed), false, 'a readable pending hold');
+  writeFileSync(pending, 'not json');
+  assert.deepEqual(read(session), { root: null, pending: true }, 'an unreadable pending hold holds the attended session');
+  assert.equal(lift(typed), false, 'an unreadable pending hold');
+  assert.ok(dropPending(pending));
+  assert.equal(read(session), null);
+  assert.equal(lift(typed), true, 'once the pending hold is gone');
+  // The gate's own session is not held by its own pending mark, attended or not.
+  write(marks, `${gate}.json`, {});
+  assert.equal(lift(gate), true);
+  assert.ok(markPending(gate, { cwd: root, root, env }));
+  assert.equal(read(gate), null);
+});
+
+test('an attended session is not lifted again: its record is neither rewritten nor its transcript read', (t) => {
+  const { marks, write, lift } = markSetup(t);
+  const session = 'feed0017-0000-4000-8000-000000000017';
+  write(marks, `${session}.json`, {});
+  assert.equal(lift(session), true);
+  const record = path.join(marks, `attended.${session}.json`);
+  const earlier = Math.floor((Date.now() - 24 * 60 * 60 * 1000) / 1000);
+  utimesSync(record, earlier, earlier);
+  assert.equal(lift(session), true, 'still attended');
+  assert.equal(Math.floor(statSync(record).mtimeMs / 1000), earlier, 'the record was not rewritten');
+  assert.equal(lift(session, path.join(marks, 'no-such.jsonl')), true, 'no transcript is read');
 });

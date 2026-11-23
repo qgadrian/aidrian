@@ -207,38 +207,53 @@ function tagsOf(value) {
 // that can be read, and `cwd` the folder it started the session in, when the mark names one; null when no mark holds.
 // A mark that carries a project run's tags adds `project` and `issue`; one whose tags have a wrong shape adds
 // `issue: null` and `project: null`, so a reader that refuses any session with an issue refuses it. It reads each of
-// markFolders the session's own mark and every mark under a short id it starts with. A mark of another user, or one past MARK_AGE, does not hold; an entry or a folder it cannot check does.
-// With no mark of its own, a pending mark holds the session, wherever its call runs, as { root, cwd, pending: true }, with
-// `cwd` the folder the gate starts the new session in, unless it ran the gate or the host listed it before the start.
+// markFolders the session's own mark and every mark under a short id it starts with, and gives the most restrictive
+// (restriction): a mark of another user, or one past MARK_AGE, does not hold; an entry or a folder it cannot check holds
+// as { root: null }. With no mark of its own, or with only plain ones the Human's presence lifted (isAttended), a pending
+// mark holds the session, wherever its call runs, as { root, cwd, pending: true }, with `cwd` the folder the gate starts
+// the new session in, unless it ran the gate or the host listed it before the start.
 export function readUnattendedMark(session, { env = process.env, home, now = Date.now() } = {}) {
   if (typeof session !== 'string' || !SESSION_ID.test(session)) return null;
+  const { holds, pending, unchecked } = scanMarks(session, { env, home, now });
+  const marks = [...(unchecked ? [{ root: null }] : []), ...holds.map(({ mark }) => mark)];
+  const held = marks.reduce((most, mark) => (most === null || restriction(mark) > restriction(most) ? mark : most), null);
+  if (held && !(plainMark(held) && isAttended(session, { env, home, now }))) return held;
+  return pendingHold(pending, session, processUid(), now);
+}
+
+// How much a mark of a session's own refuses, so the scan gives the most: a failed sandbox proof, which runs nothing,
+// then an owed one, then a mark it cannot read, then an issue's, then a plain one.
+function restriction(mark) {
+  if (mark.confine === 'failed') return 4;
+  if (mark.confine === true) return 3;
+  if (mark.root === null) return 2;
+  return plainMark(mark) ? 0 : 1;
+}
+
+// Every mark of `session`'s own that holds, under its full id or a short one, in each of markFolders, as `holds`,
+// [{ mark, folder }]; the pending marks of those folders, as `pending`; and `unchecked`, whether an entry or a folder
+// could not be checked.
+function scanMarks(session, { env, home, now }) {
   const uid = processUid();
-  let unchecked = false;
-  let plain = null;
+  const holds = [];
   const pending = [];
+  let unchecked = false;
   for (const folder of markFolders({ env, home })) {
     let names;
     try {
       names = readdirSync(folder);
     } catch (error) {
-      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') continue;
-      unchecked = true;
+      if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') unchecked = true;
       continue;
     }
-    const own = `${session}.json`;
-    const ours = names.filter((name) => name === own || (SHORT.exec(name)?.[1] !== undefined && session.startsWith(SHORT.exec(name)[1])));
-    for (const name of ours) {
-      const found = readMark(path.join(folder, name), uid, now);
-      if (found === 'unchecked') unchecked = true;
-      // A plain mark waits for the whole scan, so a stronger one later still holds; the Human's presence lifts a plain one.
-      else if (found && plainMark(found)) plain ??= found;
-      else if (found) return found;
+    for (const name of names.filter((each) => each === `${session}.json` || (SHORT.exec(each)?.[1] !== undefined && session.startsWith(SHORT.exec(each)[1])))) {
+      const mark = readMark(path.join(folder, name), uid, now);
+      if (mark === 'unchecked') unchecked = true;
+      else if (mark) holds.push({ mark, folder });
     }
     pending.push(...names.filter((name) => PENDING.test(name)).map((name) => path.join(folder, name)));
   }
-  if (unchecked) return { root: null };
-  if (plain) return isAttended(session, { env, home, now }) ? null : plain;
-  return pendingHold(pending, session, uid, now);
+  return { holds, pending, unchecked };
 }
 
 // The most of a transcript's end liftAttended reads: the gate asks on every tool call, so a prompt the Human typed since
@@ -257,15 +272,18 @@ const plainMark = (mark) => mark.root !== null && mark.project === undefined && 
 // (handoff-guard.mjs startedUnattended, handoff-continue.mjs). Never throws.
 export function isAttended(session, { env = process.env, home, now = Date.now() } = {}) {
   if (typeof session !== 'string' || !SESSION_ID.test(session)) return false;
+  return markFolders({ env, home }).some((folder) => attendedIn(folder, session, now));
+}
+
+// Whether the attended record of `session`, of this user, within MARK_AGE, is in `folder`.
+function attendedIn(folder, session, now) {
   const uid = processUid();
-  return markFolders({ env, home }).some((folder) => {
-    try {
-      const stat = lstatSync(path.join(folder, ATTENDED(session)));
-      return stat.isFile() && (!Number.isInteger(uid) || stat.uid === uid) && now - Math.floor(stat.mtimeMs) <= MARK_AGE;
-    } catch {
-      return false;
-    }
-  });
+  try {
+    const stat = lstatSync(path.join(folder, ATTENDED(session)));
+    return stat.isFile() && (!Number.isInteger(uid) || stat.uid === uid) && now - Math.floor(stat.mtimeMs) <= MARK_AGE;
+  } catch {
+    return false;
+  }
 }
 
 // Records that the Human has typed into `session`, a background continuation, so it is attended from then on
@@ -273,19 +291,25 @@ export function isAttended(session, { env = process.env, home, now = Date.now() 
 // cannot write, and `isHuman(entry)` says whether an entry is a prompt the Human typed after the start, both from the
 // session's host adapter (hosts/index.mjs humanPrompts); a peer's message, a scheduled prompt, and the start prompt
 // never are. Only a session whose every mark is plain is lifted: a project run's issue mark, a mark that tracks a
-// sandbox proof, a mark it cannot read, and a pending hold stay, whoever types. The record goes beside the plain mark
-// that holds it, after a sweep of that folder. It reads at most PROMPT_TAIL bytes of the transcript's end, from the
-// regular file the path names when it opens it. Returns whether it recorded the session attended; never throws.
+// sandbox proof, a mark it cannot read, and a pending hold that holds it, one it cannot read included, stay, whoever
+// types. The record goes beside each plain mark that holds it, so a reader of either folder sees it, after a sweep of
+// that folder. A session already recorded in each of those folders is attended as it is: neither its transcript is read
+// nor its record written again. Otherwise it reads at most PROMPT_TAIL bytes of the transcript's end, from the regular
+// file the path names when it opens it. Returns whether the session is recorded attended; never throws.
 export function liftAttended(session, file, { env = process.env, home, now = Date.now(), isHuman = () => false, still = () => true } = {}) {
   try {
     if (typeof session !== 'string' || !SESSION_ID.test(session) || typeof file !== 'string' || !path.isAbsolute(file)) return false;
-    const holds = ownHolds(session, { env, home, now });
-    if (holds === null || !holds.length || !holds.every(({ mark }) => plainMark(mark))) return false;
+    const { holds, pending, unchecked } = scanMarks(session, { env, home, now });
+    if (unchecked || !holds.length || !holds.every(({ mark }) => plainMark(mark)) || pendingHold(pending, session, processUid(), now)) return false;
+    const missing = [...new Set(holds.map(({ folder }) => folder))].filter((folder) => !attendedIn(folder, session, now));
+    if (!missing.length) return true;
     if (!tailEntries(file).some((entry) => isHuman(entry)) || !still()) return false;
-    const { folder } = holds[0];
-    if (!trustedFolder(folder)) return false;
-    sweepMarks(folder, now);
-    return writeMark(folder, ATTENDED(session), { at: now }) !== null;
+    for (const folder of missing) {
+      if (!trustedFolder(folder)) return false;
+      sweepMarks(folder, now);
+      if (writeMark(folder, ATTENDED(session), { at: now }) === null) return false;
+    }
+    return true;
   } catch {
     return false;
   }
@@ -296,28 +320,6 @@ function trustedFolder(folder) {
   const stat = lstatSync(folder);
   const uid = processUid();
   return stat.isDirectory() && (!Number.isInteger(uid) || stat.uid === uid);
-}
-
-// Every mark of `session`'s own that holds, under its full id or a short one, in each of markFolders, as
-// [{ mark, folder }], or null when one cannot be read.
-function ownHolds(session, { env, home, now }) {
-  const uid = processUid();
-  const holds = [];
-  for (const folder of markFolders({ env, home })) {
-    let names;
-    try {
-      names = readdirSync(folder);
-    } catch (error) {
-      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') continue;
-      return null;
-    }
-    for (const name of names.filter((each) => each === `${session}.json` || (SHORT.exec(each)?.[1] !== undefined && session.startsWith(SHORT.exec(each)[1])))) {
-      const mark = readMark(path.join(folder, name), uid, now);
-      if (mark === 'unchecked') return null;
-      if (mark) holds.push({ mark, folder });
-    }
-  }
-  return holds;
 }
 
 // The entries of the last PROMPT_TAIL bytes of the regular JSONL file `file`, the cut first line left out: the file the

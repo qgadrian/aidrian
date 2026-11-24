@@ -132,6 +132,8 @@ export default {
   // before it; `machine add` and `remove` and `pair` write a pairing; `auth` stands whole, as its `export` help was not
   // read; `session import` and `delete` write the store `opencode -c` resumes from; `uninstall`, `upgrade`, and `update`
   // replace or remove the program; and `service stop` stops the service every OpenCode session on the machine uses.
+  // `auth` whole does not shadow the four `auth` entries: a lone word matches only as the first word, and an entry of two
+  // anywhere in the call, as past the value of an option this list does not name (unattended-shell.mjs runsDeclared).
   configCommands: {
     programs: ['opencode'],
     subcommands: [

@@ -399,6 +399,9 @@ test('a program that writes its own config is refused to a session no Human atte
     ['opencode auth login', /the host's own config/u],
     ['opencode auth export', /the host's own config/u],
     ['opencode auth list', /the host's own config/u],
+    // Past the value of an option the list does not name, by the two-word entries `auth` alone does not shadow.
+    ['opencode --dir /x auth login', /the host's own config/u],
+    ['opencode -m x auth switch', /the host's own config/u],
     ['opencode pair --remote', /the host's own config/u],
     ['opencode machine add m', /the host's own config/u],
     ['opencode machine remove m', /the host's own config/u],

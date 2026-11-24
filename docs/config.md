@@ -2176,18 +2176,21 @@ The snapshot input is one JSON object, at most 1 MiB, read as a regular file and
   the `head` that result recorded, and that `branch`, prints a `resumed:` line, and `next`, `start`, and the gate read
   the same plan. The new run works on that branch from its first attempt: `next` names it, and the start's clone, its
   start row, the session's push, the merge guard, and `stop-action` all take it.
-  A parked issue whose latest result in that run is `pr_open`, whose pull request the forge shows merged now, as after
-  a person merged it once that run ended, is never resumed: `init` and its check give it the check `wait` gives a merged
-  `pr_open` result, into the default branch of the pinned repository after that attempt started. When it passes, the
+  A parked issue whose latest result in that run names a pull request, `pr_open` or `parked` (on a decision, say),
+  whose pull request the forge shows merged now, as after a person merged it once that run ended, is never resumed:
+  `init` and its check give it the check `wait` gives a merged `pr_open` result, into the default branch of the pinned
+  repository after that attempt started. When it passes, the
   issue counts as done for the plan, so its dependents may start, `init` prints `landed: <n> started issues whose pull
-  request an earlier run left open merged since, which this run records done: <issue> (#<n>)`, and writes a `landed` row
+  request an earlier run named merged since, which this run records done: <issue> (#<n>)`, and writes a `landed` row
   and the issue done after its init row. That owes the report a merge owes, the done status, which also takes the
   decision label the earlier run's report set off (Linear `removeLabels`), as that report's `recorded` row names it; a
   ledger from before those rows named a label takes none off, since the team's label may have changed since. The
   driver's first `report` makes that write, within its tracker guard. A run that ends before that report is recorded
   leaves the issue started in the tracker: the next run's `init` takes it in as landed again, with no second forge
-  read, while its snapshot names the same branch. When the check fails, or the forge cannot answer, the issue is a `blocker snapshot` line
-  naming why, and `init` refuses.
+  read, while its snapshot names the same branch. When the check fails, or the forge cannot answer, a `pr_open` issue
+  is a `blocker snapshot` line naming why, and `init` refuses.
+  A `parked` one resumes instead, as before: nothing tied the pull request its result names to the issue's branch, so
+  only a merge that passes the check takes it in.
   A result that parks an issue records the commit the forge shows its branch at then, or null when it shows none;
   a `pr_open` result records the head its pull request's check read, with no second read. A `pr_open` result whose
   pull request the forge shows merged by the time `wait` takes it in is checked as a `merged` one is, into the default
@@ -2293,7 +2296,7 @@ from any branch, and a `note triggers` line for other services that act on a pus
 preview deploys and ChatOps bots. It prints `ok NAME`, `blocker NAME: WHY`, `note NAME: WHAT`,
 or `ask NAME: WHAT` for a read the forge or tracker lacks, such as the decision label's existence, and exits 1 on any
 blocker. `init RUN --file PATH --check` checks the input as `init` would, prints its blockers
-(problems, cycles, issues started outside the run, a `resumed:` line for the started issues an earlier run parked, a `landed:` line for those whose open pull request merged since, and, when `projectRun.mcpServers` holds no tracker server, each issue
+(problems, cycles, issues started outside the run, a `resumed:` line for the started issues an earlier run parked, a `landed:` line for those whose pull request merged since, and, when `projectRun.mcpServers` holds no tracker server, each issue
 that may still start with no text, never a canceled or skipped one) and the `next` lines, and writes no run. An issue's text never comes from a file a session
 writes: after each call of a tracker's issue read (Linear's `get_issue` and `list_issues`), whatever `tracker.enabled`
 says, in a project whose base branch's config.json sets `projectRun.allow`, the post-call tracker hook records each

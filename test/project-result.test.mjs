@@ -15,7 +15,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { noteStarted } from '../plugins/aidrian/lib/handoff-markers.mjs';
-import { cleanText, RESULT_CAP, validateResult } from '../plugins/aidrian/lib/project-run-gate.mjs';
+import { cleanText, RESULT_CAP, validateResult, WAIT_MARGIN } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { DROP_FILE } from '../plugins/aidrian/lib/project-result.mjs';
 import { stderrTail } from '../plugins/aidrian/lib/review/base-worktree.mjs';
 import { appendRowsAtOnce } from '../plugins/aidrian/lib/jsonl.mjs';
@@ -348,6 +348,43 @@ test('a chain whose second session cannot be stopped is named by that session, o
   assert.deepEqual(settled.cmd(['wait', 'launch', '--max-wait', '0']).out, ['result ENG-1 failed -> open', 'lingering ENG-1 attempt 1']);
   const past = Date.now() + LINGER_GRACE + 60_000;
   assert.deepEqual(settled.cmd(['wait', 'launch', '--max-wait', '0'], { now: past, spawn: failing(settled) }).out, [`lingered ENG-1 attempt 1: a session of it, ${NEXT.id}, ran on after its issue settled and could not be stopped; \`claude stop ${NEXT.id}\` stops it`, 'lingering ENG-1 attempt 1']);
+});
+
+test('wait holds --max-wait as a hard bound under slow reads, and still returns at once on a settle', (t) => {
+  const fx = started(t);
+  // A clock that moves only when the wait pauses or the host's listing answers, which takes 20 seconds a call.
+  const start = Date.now();
+  let clock = start;
+  const slow = (...args) => {
+    clock += 20_000;
+    return fx.claude.run(...args);
+  };
+  // Each read's cost: the time from the end of the last pause, or the start, to the next pause.
+  const pauses = [];
+  const reads = [];
+  let resumed = start;
+  const pause = (ms) => {
+    pauses.push(ms);
+    reads.push(clock - resumed);
+    clock += ms;
+    resumed = clock;
+  };
+  const waited = fx.cmd(['wait', 'launch', '--max-wait', '150'], { now: start, clock: () => clock, spawn: slow, pause });
+  assert.deepEqual(waited.out, ['running ENG-1']);
+  assert.ok(clock - start <= 150_000, `it returned within its budget, at ${(clock - start) / 1000} s`);
+  assert.ok(pauses.length > 1, 'it read more than once');
+  // It returned, with no read after its last pause, only once the slowest read and the margin no longer fit.
+  const slowest = Math.max(...reads);
+  assert.ok(slowest >= 20_000, `the reads were slow: ${reads}`);
+  assert.equal(clock, resumed, 'no read after the last pause');
+  assert.ok(clock - start >= 150_000 - slowest - WAIT_MARGIN, `it used its budget, at ${(clock - start) / 1000} s, reads of ${reads}`);
+  // A wait that sees the issue settle returns after its first read, as before.
+  fx.result({ status: 'failed', stop: 'x' });
+  const from = clock;
+  pauses.length = 0;
+  const settled = fx.cmd(['wait', 'launch', '--max-wait', '150'], { now: from, clock: () => clock, spawn: slow, pause });
+  assert.deepEqual(settled.out.filter((line) => !line.startsWith('lingering ')), ['result ENG-1 failed -> open']);
+  assert.deepEqual(pauses, [], 'no pause: it returned on its first read');
 });
 
 test('wait returns as soon as a result arrives while it waits', (t) => {

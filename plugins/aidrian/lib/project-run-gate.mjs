@@ -106,6 +106,8 @@ export const RETRY_EXIT = 75;
 const retryAnswer = (command, why, lines = []) => ({ exitCode: RETRY_EXIT, out: [`retry: ${why}`, ...lines], err: [`aidrian project ${command}: ${why}`] });
 export const WAIT_CEILING = 540;
 const WAIT_STEP = 30_000;
+// What `wait` keeps free before its deadline beyond the slowest read it took, in ms, so a read it starts ends in time.
+export const WAIT_MARGIN = 2_000;
 const DAY = 24 * 60 * 60 * 1000;
 const HOUR = 60 * 60 * 1000;
 const SKILL = path.join(import.meta.dirname, '../skills/autopilot/SKILL.md');
@@ -1037,6 +1039,8 @@ function startLines({ result, state, run, key, attempt, session, base, proof, pr
 // branch while the run's sessions run, or one the forge cannot answer now, through an outage or a rate limit, refuses no
 // wait: it settles under settlePolicy, with a first `note policy:` line for a refusal or `note outage:` for a read the
 // forge cannot answer now, so the driver's halt wait still stops overdue sessions, takes in results, and reaches `idle`. Only `start` exits 75 on a read the forge cannot answer now.
+// `--max-wait` bounds its own run time: after the first read, which always runs, a read starts only when the slowest
+// read so far and WAIT_MARGIN fit in the time left, else it returns the last read's lines, `running KEY` among them.
 // `pause` is a test's stand-in for the wait between reads.
 export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = process.env, home, now = Date.now(), forge = null, spawn, pause = pauseSync, clock = Date.now }) {
   const refuse = (why) => ({ exitCode: 1, out: [], err: [`aidrian project wait: ${why}`] });
@@ -1063,8 +1067,13 @@ export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = pr
   const offset = now - clock();
   const time = () => clock() + offset;
   const until = now + Math.min(Math.max(0, maxWait), WAIT_CEILING) * 1000;
+  // The slowest read so far, in ms, and the answer of the last read, which a read that would not fit returns.
+  let slowest = 0;
+  let last = null;
   for (let pass = 0; ; pass += 1) {
-    const at = pass === 0 ? now : time();
+    const began = time();
+    if (last && until - began < slowest + WAIT_MARGIN) return last;
+    const at = pass === 0 ? now : began;
     const { lines, lingering } = waitPass({ state, run, store, cap, env, home, spawn, policy, forge: facade, now: at });
     const found = readRun(state, run);
     if (found.problem) return refuse(found.problem);
@@ -1075,13 +1084,14 @@ export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = pr
     const running = planRun(found.snapshot, found.states, { maxParallel: SERIAL }).running;
     const paused = pauseOf(found, time());
     const busy = running.length > 0 || lingering.length > 0;
+    slowest = Math.max(slowest, time() - began);
+    last = { exitCode: 0, out: [...note, ...lines, ...running.map((key) => `running ${key}`), ...lingering.map(lingerLine), ...(paused ? [`paused until ${paused.until}`] : []), ...(busy ? [] : ['idle'])], err: [] };
     // An idle run waits out its pause with the driver, up to the deadline, and returns once the pause is over; a session
     // that runs on after its issue settled is waited on as an issue that runs is.
-    if (lines.length || (!busy && !paused) || time() >= until) {
-      return { exitCode: 0, out: [...note, ...lines, ...running.map((key) => `running ${key}`), ...lingering.map(lingerLine), ...(paused ? [`paused until ${paused.until}`] : []), ...(busy ? [] : ['idle'])], err: [] };
-    }
+    if (lines.length || (!busy && !paused) || time() >= until) return last;
     const pauseLeft = paused && !busy ? Date.parse(paused.until) - time() : WAIT_STEP;
-    pause(Math.max(0, Math.min(WAIT_STEP, pauseLeft, until - time())));
+    // The last pause ends where the next read, as slow as the slowest, still ends by the deadline.
+    pause(Math.max(0, Math.min(WAIT_STEP, pauseLeft, until - time() - slowest - WAIT_MARGIN)));
   }
 }
 

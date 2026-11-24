@@ -2090,6 +2090,9 @@ key that git fails, naming git's error. The clone takes no template (`--template
 result over in its attempt's `drop` folder, and `wait` records it as a `result` row with `via: "drop"`, or ends the
 attempt `bad_result`, as it does at once for a pull request the forge says it does not have; a result the forge cannot
 confirm yet waits for the next `wait`, until `issueHours`, when its sessions are stopped and it ends `bad_result`.
+`wait --max-wait S` holds S as a bound on its own run time, reads included, not only on the time it pauses between them.
+After its first read, which always runs, it starts a read only when the slowest read so far and 2 seconds still fit in the time left.
+Otherwise it prints the last read's lines, such as `running ISSUE`, and the driver runs it again.
 The Stop hook holds the result: when the newest session of a running issue's chain ends a turn before it handed its
 result over, it is sent back once, before any other Stop check, to run `aidrian project result`, or to go on with the
 work (`lib/project-run-guard.mjs resultHoldReason`, run by `scripts/hook-stop.mjs`); a session that handed the work on,

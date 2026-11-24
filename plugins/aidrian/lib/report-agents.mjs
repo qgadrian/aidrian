@@ -1,6 +1,7 @@
 // The default view of `aidrian report`: per agent type, its dispatches, runs, cost, delivery, and doc reads from the
 // dispatch log, then the blocks by the plugin's own rules. docs/dispatch-log.md describes the view.
 
+import { BUDGET_CAUSES } from './deadline.mjs';
 import { docsRead, sendBackStates } from './dispatch-log.mjs';
 import { endedSessions, latestRows as latest } from './jsonl.mjs';
 import { REPEATED_DENIALS } from './lesson-signals.mjs';
@@ -78,7 +79,8 @@ export function summarize(rows, { sinceMs = 0 } = {}) {
 // The `hook_deny` rows since `sinceMs`: { count, sessions, by_rule }, the rules with the most blocks first. Per rule:
 // `count`, `agents` and `reasons` as [name, count] pairs, most first, at most three reasons, and `repeated_runs`, the agent
 // runs it blocked REPEATED_DENIALS times or more for the same reason, which is when a block becomes an automatic lesson
-// (lesson-signals.mjs noteDenial). A run is the row's session and `agent_id`, or the main thread for none; a row written
+// (lesson-signals.mjs noteDenial), leaving out a time budget's refusal (deadline.mjs BUDGET_CAUSES), which files none
+// and still counts in `count` and `reasons`. A run is the row's session and `agent_id`, or the main thread for none; a row written
 // before `agent_id` counts as its session's main thread.
 export function summarizeDenies(rows, { sinceMs = 0 } = {}) {
   const denies = rows.filter((row) => row.event === 'hook_deny' && Date.parse(row.ts) >= sinceMs);
@@ -92,7 +94,7 @@ export function summarizeDenies(rows, { sinceMs = 0 } = {}) {
     // An accepted residual, which affects only the report's wording: a run is grouped by the row's display reason, cut to
     // 120 characters (dispatch-rows.mjs REASON_CHARS), while the lesson counts the full cause, so causes that share that
     // prefix can read here as an automatic lesson that never fired; and a legacy row with no agent_id counts with the main thread.
-    if (row.session_id) add(entry.runs, JSON.stringify([row.session_id, row.agent_id ?? 'main', row.reason ?? '']));
+    if (row.session_id && !BUDGET_CAUSES.has(row.reason)) add(entry.runs, JSON.stringify([row.session_id, row.agent_id ?? 'main', row.reason ?? '']));
     if (row.reason) add(entry.reasons, row.reason);
     rules.set(rule, entry);
   }

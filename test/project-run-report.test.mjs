@@ -13,13 +13,18 @@ import test from 'node:test';
 
 import { slugOf } from '../plugins/aidrian/lib/audits.mjs';
 import { cleanText, textProblem } from '../plugins/aidrian/lib/clean-text.mjs';
+import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
+import { RUN_RULE_PAST_BUDGET } from '../plugins/aidrian/lib/deadline.mjs';
+import { logPath } from '../plugins/aidrian/lib/dispatch-log.mjs';
 import { createGithubForge } from '../plugins/aidrian/lib/forges/github.mjs';
 import { baseReader } from '../plugins/aidrian/lib/handoff-guard.mjs';
+import { inboxPath, lessons, pluginInboxPath } from '../plugins/aidrian/lib/lesson-inbox.mjs';
 import { SETUP_DOC, SETUP_SECTIONS, setupDocUrl } from '../plugins/aidrian/lib/project-preflight.mjs';
 import { pluginRepository } from '../plugins/aidrian/lib/config-version.mjs';
 import { owedReports, reportBody, reportCalls, reportPolicy, runWriter, startedWrites } from '../plugins/aidrian/lib/project-report.mjs';
 import { appendToRun, planRun, readRun, runFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { commitProblem } from '../plugins/aidrian/lib/project-start.mjs';
+import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { bodyHash } from '../plugins/aidrian/lib/tracker-guard.mjs';
 import linear from '../plugins/aidrian/lib/trackers/linear.mjs';
 import { markDriver, markPending, markUnattended, readDriverMark, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
@@ -283,6 +288,16 @@ test('past the guards\' time budget, the hook refuses a run\'s sessions every ca
     assert.equal((await hook(fx, session, 'mcp__linear__get_issue', { id: 'ENG-1' }, fx.dir, late)).status, 0, `${session}: a read by its name`);
   }
   assert.equal((await hook(fx, OTHER, 'mcp__linear__save_comment', { issueId: 'ENG-2', body: 'x' }, fx.dir, late)).status, 0, 'an attended session');
+  // The issue's session refused a third time for the same cause: each refusal is logged by it, and the machine's load
+  // files no lesson (lesson-signals.mjs noteDenial).
+  for (let n = 0; n < 2; n += 1) assert.equal((await hook(fx, CHILD, 'mcp__linear__save_comment', { issueId: 'ENG-1', body: 'progress' }, fx.dir, late)).status, 2);
+  const found = findProject(fx.dir);
+  const { config } = loadConfig(found);
+  const denies = readFileSync(logPath(found, config), 'utf8').trim().split('\n').map((line) => JSON.parse(line))
+    .filter((row) => row.event === 'hook_deny' && row.session_id === CHILD);
+  assert.deepEqual(denies.map((row) => [row.rule, row.reason]), Array(3).fill(['tracker-guard', RUN_RULE_PAST_BUDGET]));
+  const filed = [...lessons(inboxPath(found, config)), ...lessons(pluginInboxPath(fx.env))].filter((lesson) => String(lesson.key).startsWith('hook-deny:'));
+  assert.deepEqual(filed, [], 'a time budget\'s refusal files no lesson');
 });
 
 test('the hook holds the driver to the exact writes the report owes, from any folder', async (t) => {

@@ -11,7 +11,9 @@ import { gateDenial } from '../plugins/aidrian/lib/agent-gates.mjs';
 import { callBudget } from '../plugins/aidrian/scripts/hook-agent-gates.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { configWriteDenial, WRITE_TARGETS } from '../plugins/aidrian/lib/config-guard.mjs';
-import { GUARD_BUDGET_MS, HELD_BUDGET_MS } from '../plugins/aidrian/lib/deadline.mjs';
+import { GUARD_BUDGET_MS, GUARDS_PAST_BUDGET, HELD_BUDGET_MS } from '../plugins/aidrian/lib/deadline.mjs';
+import { logPath } from '../plugins/aidrian/lib/dispatch-log.mjs';
+import { inboxPath, lessons, pluginInboxPath } from '../plugins/aidrian/lib/lesson-inbox.mjs';
 import { foldCase, globParts } from '../plugins/aidrian/lib/fs.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { isolate } from '../plugins/aidrian/lib/review/env.mjs';
@@ -166,8 +168,10 @@ test(`a subagent's Bash call that writes more than ${WRITE_TARGETS} targets is r
 test('a guard past its time budget refuses a subagent\'s call and lets the main session\'s run', (t) => {
   const dir = project(t);
   const env = { ...process.env, AIDRIAN_GUARD_BUDGET_MS: '0' };
+  // One agent run, refused three times for the same cause below.
+  const held = (input) => ({ ...input, session_id: 'loaded' });
   for (const tool of ['Bash', 'PowerShell']) {
-    const refused = run(subagent(dir, tool, 'echo x > src/app.js'), env);
+    const refused = run(held(subagent(dir, tool, 'echo x > src/app.js')), env);
     assert.equal(refused.status, 2, tool);
     assert.match(refused.stderr, /the guards could not finish reading this command in time, so it may change a file only the main session may change/u, tool);
     // One ordered recovery, with the Human told only at its end: a retry of the same call, shorter commands, the report.
@@ -176,9 +180,17 @@ test('a guard past its time budget refuses a subagent\'s call and lets the main 
     assert.equal(run(main(subagent(dir, tool, 'echo x > src/app.js')), env).status, 0, `${tool}: the main session`);
   }
   // An Edit has nothing to split: its refusal names the report as the step after the retries.
-  const edit = run({ ...subagent(dir, 'Edit', ''), tool_input: { file_path: path.join(dir, 'src', 'app.js'), old_string: 'a', new_string: 'b' } }, env);
+  const edit = run(held({ ...subagent(dir, 'Edit', ''), tool_input: { file_path: path.join(dir, 'src', 'app.js'), old_string: 'a', new_string: 'b' } }), env);
   assert.equal(edit.status, 2, edit.stderr);
   assert.match(edit.stderr, /1\) retry this same call by itself.*3\) when those are refused too, or the call is no shell call or cannot be split, stop and report/u);
+  // The three refusals are logged by their cause, and the machine's load files no lesson (lesson-signals.mjs noteDenial).
+  const found = findProject(dir);
+  const { config } = loadConfig(found);
+  const denies = readFileSync(logPath(found, config), 'utf8').trim().split('\n').map((line) => JSON.parse(line))
+    .filter((row) => row.event === 'hook_deny' && row.session_id === 'loaded');
+  assert.deepEqual(denies.map((row) => [row.rule, row.reason]), Array(3).fill(['config-guard', GUARDS_PAST_BUDGET]));
+  const filed = [...lessons(inboxPath(found, config)), ...lessons(pluginInboxPath())].filter((lesson) => String(lesson.key).startsWith('hook-deny:'));
+  assert.deepEqual(filed, [], 'a time budget\'s refusal files no lesson');
   // A call that writes nothing, which no guard refuses, runs: a loaded machine never stalls a subagent on its reads.
   const read = run({ ...subagent(dir, 'Read', ''), tool_input: { file_path: path.join(dir, 'src', 'app.js') } }, env);
   assert.equal(read.status, 0, read.stderr);

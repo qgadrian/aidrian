@@ -593,7 +593,8 @@ Neither record waits on a lock, so a block stays well inside the host's 5-second
   `"telemetry": { "hookDenies": false }` turns the row off. `aidrian report` lists the rows by rule and agent.
 - A count toward an [automatic lesson](lessons.md#automatic-lessons): when one rule blocks the same agent run a third time
   for the same cause, the rule's own words for what it matched, an agent that keeps trying was not shown the allowed way.
-  The count does not depend on telemetry.
+  The count does not depend on telemetry. A refusal because the guards or the project run rule ran out of their
+  [time budget](#agent-gates) never counts: it is the machine's load, and its message already gives the retry steps.
 
 The rules are named in the rows and lessons as `git-hook-bypass`, `git-amend`, `dependency-link`, `process-kill` (both the kill and the listing rule),
 `shell-init-install`, `grep-exit-chain`, `pr-body`, `public-text`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`,

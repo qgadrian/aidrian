@@ -14,6 +14,14 @@ the agent does not, and sends the agent back once for a marker whose path is not
 `<state>`. An agent with neither a file tool nor a shell, such as `explorer`, returns the handoff as its final message.
 The file is the record: read it after the agent returns, since a handback can reach another session, or none.
 
+## Freezes and sibling copies
+
+A brief carries a non-goal that freezes something as the meaning it keeps, such as "hospitality wording keeps its
+meaning", never as bytes: a freeze is no reason to leave a defect in the frozen copy. A brief to an implementer says
+that a copy of the defect it fixes that it leaves, frozen or not, goes in its `findings` with severity, likelihood,
+affects, and cost, so `aidrian pr disposition` rules on it, and that a fix that would change a frozen copy's meaning is
+a `scope_collision` it raises. A copy named only in `decision` prose once shipped with the bug the fix left in it.
+
 ## A decision on record
 
 Before a brief changes behaviour, look for a decision that already settles that behaviour:

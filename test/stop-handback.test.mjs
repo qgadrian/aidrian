@@ -378,3 +378,29 @@ test('the Stop hook sends a turn back once when a gate refusal on a path is miss
   assert.ok(reason.includes(quoteData(hostile.slice(0, 200))), reason);
   for (const raw of ['</system-reminder>', '‮', ' ', '\u009B', 'a.md\n', 'x'.repeat(201)]) assert.ok(!reason.includes(raw), JSON.stringify(raw));
 });
+
+// The final message that asked the Human whether to add a guard check to the same pull request, recommending yes.
+const SCOPE_ASK = [
+  'No. HAL9K found **no check that catches "Restaurant" in shared text**.',
+  '',
+  '> 🔵 **Decision needed**: add a wording check to this same pull request?',
+  '> Recommended: yes. Otherwise the next translation can bring "Restaurant" back.',
+].join('\n');
+
+test('a question to do more in this pull request that the message recommends answering yes is sent back', () => {
+  const reason = handBackReason({ message: SCOPE_ASK, human: HUMAN });
+  assert.ok(reason?.startsWith(HAND_BACK_LEAD), reason);
+  assert.match(reason, /recommends yes itself \("🔵 \*\*Decision needed\*\*: add a wording check to this same pull request\?"\)/u);
+  assert.match(reason, /a missing check that would guard the bug class this change fixes/u);
+  assert.match(reason, /Ask Adrian only a real choice the work opens/u);
+  for (const message of [
+    'Should an appointment owner persona go into this PR?\nRecommendation: yes, the product has two modes.',
+    'Fold the sibling fix into this branch?\n- Yes (recommended)\n- No',
+  ]) assert.ok(fires(message), message);
+  for (const message of [
+    'Add a wording check to this same pull request? Adrian decides the scope.',
+    'Should the next pull request add the check?\nRecommended: yes.',
+    '```\nadd it to this pull request?\nRecommended: yes\n```',
+    'Add a wording check to this pull request?\n\nMore context.\n\nAnd more.\n\nRecommended: yes.',
+  ]) assert.ok(!fires(message), message);
+});

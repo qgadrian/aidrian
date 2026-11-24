@@ -53,6 +53,9 @@ const ZSH_STARTUP = Object.freeze(['.zshrc', '.zshenv', '.zprofile', '.zlogin', 
 // repository's git config or hooks.
 const REFUSED_NAME = new RegExp(String.raw`(?<![\w.-])(?:${[...STARTUP, ...ZSH_STARTUP, '.gitconfig'].map((name) => name.replace('.', '\\.')).join('|')}|\.git/(?:config|hooks)|\.config/git|git/config)(?![\w.-])`, 'iu');
 // A text that names a dot entry of the home folder.
+// A home dot entry no other entry names, such as a host's own job folder: an agent told its scratch folder is there
+// writes it again, so its refusal names the places scratch work goes instead (sayer scratch).
+const HOME_DOT_ENTRY = 'a dot file or folder of the user\'s home folder';
 const HOME_DOT = /(?:^|[^\w$])(?:~|\$HOME\b|\$\{HOME\})\/\./u;
 // A path in a text, such as code an interpreter runs: absolute, or from the home folder.
 const PATH_IN_TEXT = /(?<![\w.$-])(?:~(?=\/|$)|\/)[^\s'"`;|&()<>,=]*/gu;
@@ -577,7 +580,7 @@ function placeOf(target, spelled, places, { holds = true } = {}) {
   const holder = [...places.specific, ...places.reviews, places.worktree, ...(places.made ?? [])].find((dir) => dir && isWithin(dir, target));
   if (holder) return gitEntry(holder, target, spelled) ?? passes();
   const below = isWithin(places.home, target) ? path.relative(places.home, target).split(path.sep)[0] : '';
-  if (below.startsWith('.')) return { refused: { what: 'a dot file or folder of the user\'s home folder', spelled } };
+  if (below.startsWith('.')) return { refused: { what: HOME_DOT_ENTRY, spelled, scratch: true } };
   if (places.limited) return passes();
   // Accepted residual: a checkout here only keeps the temporary folder from passing a path inside it; it is no refused
   // entry, so a removal of a temporary folder above it, such as `rm -rf /tmp/work` over a sibling worktree in it, passes.
@@ -742,24 +745,30 @@ function sayer(input, human, opaque, mark) {
   const verb = opaque ? 'may change' : 'writes';
   let suffix = '';
   let list = 'its own worktree or its attempt\'s folders, a task worktree `aidrian worktree new` made in it, the state folders it writes by hand (plans, tmp, handoffs, quorum, a review manifest or capture, and a persona audit\'s report, sidecar, or screenshots), and the temporary folder';
+  let scratch = '';
   const deny = (match, why) => ({ match, reason: projectRuleReason(input, `${why}${suffix}`, human, 'to make that change, or where the work should go instead', { mark }) });
+  const refusedWhy = (entry, shown) => `it ${verb} ${shown}, ${entry.what}, which a session no Human attends never changes; only ${human} does${entry.scratch ? scratch : ''}`;
   return {
     verb,
     hold(found) {
+      // The folders a scratch file may go in, by their paths: the temporary folders, then each state folder's tmp.
+      const folders = [...found.temp, ...found.specific.filter((dir) => path.basename(dir) === 'tmp')];
+      if (folders.length > 0) scratch = `; write scratch files in ${folders.join(' or ')} instead`;
       if (found.pending) suffix = '; a project start is in progress, and until the gate files the new session\'s own mark, every session it did not list before the start is held this way';
       else if (found.limited) suffix = '; its unattended mark cannot be read, so it is held this way';
       if (found.limited) list = 'anywhere but the entries refused wherever they lie';
       else if (found.issueHeld) list = 'its own worktree or its attempt\'s folders but the forge\'s workflow files, the files of the plans and tmp state folders named for its own issue, a dispatch handoff named for its own branch, a review manifest or capture, and the temporary folder';
     },
     unknown: () => deny('unattended write with no known places', `it ${verb} a file, and the places this session may write cannot be told: its unattended mark names no main checkout or project that can be read, and no Human attends this session, so it writes nothing until they can`),
-    refused: (entry, shown) => deny(`unattended write to ${entry.what}`, `it ${verb} ${shown}, ${entry.what}, which a session no Human attends never changes; only ${human} does`),
+    refused: (entry, shown) => deny(`unattended write to ${entry.what}`, refusedWhy(entry, shown)),
     outside: (shown) => deny('unattended write outside its places', `it ${verb} ${shown}, outside the places a session no Human attends may write: ${list}`),
     meets(met, shown) {
-      if (met?.refused) return deny(`unattended write to ${met.refused.what}`, `it ${verb} ${shown}, ${met.refused.what}, which a session no Human attends never changes; only ${human} does`);
+      if (met?.refused) return deny(`unattended write to ${met.refused.what}`, refusedWhy(met.refused, shown));
       if (met?.outside) return deny('unattended write outside its places', `it ${verb} ${shown}, outside the places a session no Human attends may write: ${list}`);
       return null;
     },
     deny,
+    scratch: () => scratch,
   };
 }
 
@@ -819,7 +828,7 @@ function dynamicDenial(shell, found, say, texts) {
 // a target from mktemp names none of them, and passes.
 function builtDenial(text, target, found, say) {
   if (found.limited) return null;
-  const deny = (what) => say.deny('unattended write to a path built at run time', `it ${say.verb} \`${target.slice(0, 80)}\`, a path built at run time, in a command that names ${what}, and no Human attends this session; write to a literal path instead`);
+  const deny = (what) => say.deny('unattended write to a path built at run time', `it ${say.verb} \`${target.slice(0, 80)}\`, a path built at run time, in a command that names ${what}, and no Human attends this session; write to a literal path instead${say.scratch()}`);
   for (const [word] of text.matchAll(PATH_IN_TEXT)) {
     const spelled = word.startsWith('~') ? path.join(found.home, word.slice(1)) : word;
     const met = placed(spelled, found, { holds: false });

@@ -78,3 +78,17 @@ test('the block names the project\'s own names', () => {
   assert.equal(r.status, 2);
   assert.match(r.stderr, /the owner may see only the dialog, so name both sides: call the human "the owner" and yourself "the agent"/);
 });
+
+// The AI asked whether to add a missing guard check to the pull request that fixed the bug class it guards, and
+// recommended yes itself; the Human answered that it should not have to ask. A real choice, with no yes recommended, passes.
+test('a question about doing more in this pull request that recommends yes is blocked; one that recommends nothing passes', () => {
+  const recommended = [{ label: 'Yes (Recommended)', description: 'Add the wording check.' }, { label: 'No', description: 'Leave it.' }];
+  for (const question of ['Should the Human see a wording check added to this same pull request?', 'Fold the sibling fix into this PR?']) {
+    const r = ask(question, { options: recommended });
+    assert.equal(r.status, 2, question);
+    assert.match(r.stderr, /^Blocked: this is a question for the Human that asks whether to do more in the change at hand, and recommends yes itself/u);
+    assert.match(r.stderr, /a defect to fix, not a question/u);
+  }
+  assert.equal(ask('Add a wording check to this pull request?').status, 0, 'no yes recommended');
+  assert.equal(ask('Which wording should the check allow?', { options: recommended }).status, 0, 'not about the change at hand');
+});

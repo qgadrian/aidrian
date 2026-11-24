@@ -23,7 +23,7 @@ the tracker write guard, and the question names check also record each block: se
 | After a Bash command | The [session ledger](#session-ledger): a row for each pull request the command created, pushed a branch of, or acted on; and the [check-run record](#check-runs): a row for each test run the command finished | Claude Code (verified by the hook test on a recorded result); Codex by payload fixture only ([not live](#session-ledger)) | no |
 | Before a file edit | The [main-checkout rule](#main-checkout), when the project turns it on, then the [review-disposition rule](#review-dispositions), then the [terms rule](#terms) | Claude Code, Codex; the review-disposition rule judges no `apply_patch` | yes |
 | Before `EnterWorktree` | In a subagent, a block: the tool would move the whole session into the worktree. In the main session, a block of entering an existing worktree (`path`): outside the repository's `.claude/worktrees/`, such as an `aidrian worktree new` worktree, the host asks the Human before that move whatever the permission rules say, and a session works in a linked worktree by absolute path instead | Claude Code | yes |
-| Before `AskUserQuestion` | A block when a question or option says "I", "me", "my", "you", or "your" (or a form of them, such as "I'm" or "yourself") outside code and quotes: [Names](config.md#names) | Claude Code | yes |
+| Before `AskUserQuestion` | A block when a question or option says "I", "me", "my", "you", or "your" (or a form of them, such as "I'm" or "yourself") outside code and quotes: [Names](config.md#names); and a block when a question asks whether to do more in the change at hand and an option recommends yes, as the [hand-back check](#hand-back-check) reads one | Claude Code | yes |
 | Before a GitHub MCP comment | The [review gate](config.md#review-gate), when the project turns it on, and the review-round rule | Claude Code, Codex (its [GitHub connector is not live](providers/codex.md#github-through-the-app-connector)) | yes |
 | Before a GitHub MCP merge | The [merge guard](#merge-guard) | Claude Code, Codex (its [GitHub connector is not live](providers/codex.md#github-through-the-app-connector)) | yes |
 | Before a GitHub MCP call that marks a draft ready | The [ready hold](#ready-hold), in a project that runs product feedback, then the [ready checks hold](#ready-checks) | Claude Code, Codex ([not live](#where-the-ready-hold-is-verified)) | yes |
@@ -559,7 +559,7 @@ Neither record waits on a lock, so a block stays well inside the host's 5-second
 The rules are named in the rows and lessons as `git-hook-bypass`, `git-amend`, `dependency-link`, `process-kill` (both the kill and the listing rule),
 `shell-init-install`, `grep-exit-chain`, `pr-body`, `public-text`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`,
 `decisions-set`, `project-init`, `review-extend`, `review-delegate`, `review-fallback`, `merge-review` (the Bash rule and the MCP hook), `main-checkout`, `review-disposition`, `terms`, `agent-gates`,
-`config-guard`, `tracker-guard`, and `ask-names`.
+`config-guard`, `tracker-guard`, `ask-names`, and `ask-scope`.
 The hooks load the recorder only when they block, so a call they let run costs no more than before.
 When the recorder fails, the call is still blocked.
 One refusal is not recorded when it happens: the tracker write guard's [first refusal](config.md#how-a-write-is-judged) of a write with no read yet,
@@ -1191,7 +1191,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   which arms a continuation of the main session: its shell carries the main session's id, so the command cannot tell it
   from the main session. It reads the command wherever it runs in the line, as the [decision answer rule](#bash-rules) does,
   and refuses a command word built from a variable or a substitution, as in `$AIDRIAN handoff continue x.md`,
-  when its later plain words read `handoff`, then `continue`.
+  when its later plain words read `handoff`, then `continue`. A shell that runs a script it cannot read, as in
+  `bash run.sh handoff continue x.md`, is refused on those two whole words; a word that joins them with a hyphen, a dot,
+  or a slash, such as the test file name `handoff-continue-hooks`, is one argument and passes.
 - With or without gates, a subagent may not write in the continuation store, `<state>/handoffs/.continue/`, nor
   change the mode or owner of the store, a file in it, its handoffs folder, or the state folder, by a
   literal path to it, in any letter case on a disk that folds case, through a glob that may reach it, or after a `cd`
@@ -1358,6 +1360,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   `pkg/.claude` (git lists only the index entries named `.claude`, below one, or `SKILL.md`, and a clone whose links git cannot list then refuses); for a project run's issue session, the forge's workflow folders of its worktree and its attempt's clone, which the forge adapter names (`forgeWorkflowFolders`: `.github/workflows` and `.github/actions` on GitHub), since the forge runs their files with the repository's secrets on a push of any branch, before any review, so an issue that needs such a change is parked for the Human; and any other dot file or folder of the home folder, such as a host's user-level
   settings and instruction files, unless it lies in the session's own worktree, a state folder above, or its attempt
   folders. A repository under a dot folder, such as `~/.dotfiles`, still writes itself when it is the session's worktree.
+  The refusal of such a dot entry names where scratch files go instead, by their paths: the temporary folders, then
+  each state folder's `tmp/`. A host's own job folder under its dot folder is one, and an agent told only that the Human
+  alone may write there tried the same write three times in a run.
   A write through a hard link to a refused file counts as one to it, and a link a command makes (`ln`, `ln -s`,
   `cp -s`, `cp -l`) is judged by the path it points at: it is refused when that path is refused or outside the places.
   - A target built from a variable is read with `$HOME`, `${HOME}`, `$XDG_CONFIG_HOME`, `$ZDOTDIR`, and `$TMPDIR`
@@ -1368,7 +1373,7 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     path and passes on its names. For a session its own mark holds, such a target first has the whole command judged
     once: a literal path anywhere in it that meets a refused entry, a startup file or a git config by its name, a dot
     entry of the home folder, a git folder git names, or a `.git` word refuses it as a write to a path built at run
-    time, and the refusal says to write to a literal path instead. So `d=~/.ssh; echo x > "$d/k"` and
+    time, and the refusal says to write to a literal path instead, naming the scratch folders as above. So `d=~/.ssh; echo x > "$d/k"` and
     `p=.git/hooks; cp x "$p/pre-commit"` refuse, and a loop over plain words or a target from `mktemp` passes.
   - `mkdir` of the `reviews` or `dispatch` folder itself, with no `-m` or `--mode` and no other write of it in the call,
     passes: the review commands and a subagent's handoff write there, and the folder may not be there yet. A folder
@@ -1733,7 +1738,8 @@ still sends the agent back for a shell. On Claude Code a background shell's end 
 each wake it ([Background agents](providers/claude-code.md#background-agents)), so the file waits for the stop after the
 wake, even past the check's cap. The file is then neither a send-back reason, an occurrence of the lesson, nor `missing`
 on the row, which says `delivered: pending` and leaves it out of `paths`, even when the report names it on a delivery line; another path the report names still counts. Such stops
-once made most of the lesson's occurrences, though the next stop wrote the file. A stop let end with only tasks that
+once made most of the lesson's occurrences, though the next stop wrote the file. The lesson's note tells the two causes
+apart: a path the report presented as written, and a handoff file the brief named that the agent left with no report to write. A stop let end with only tasks that
 nothing wakes the agent for, such as any task on a host that declares no wake, may be its last, so the hook writes the
 file then. A shell that never ends, such as a dev server, never wakes the agent either, and its file waits for a stop
 with that shell stopped. It writes the file only on a stop it lets end: a stop sent back, as for another missing path, has a report the agent will correct, and the file holds
@@ -1936,6 +1942,14 @@ do it, and how critical it is. It sends a turn back at most once ([Send-backs pe
 - A fenced code block, read as the pull request body rule reads one (`lib/markdown-sections.mjs`), is skipped:
   a Markdown example the message quotes is not work handed back, and a code block inside an item does not end its list.
 - An item counts as rated when it holds one of blocking, blocker, critical, high, medium, or low, in any case.
+
+With no such item, the same check sends back once a question for the Human about doing more in the change at hand,
+one that names this pull request, the same one, or this branch, whose own recommendation, on its line or in the three
+lines after it, is yes: "Recommended: yes", "Recommendation: yes", or "Yes (recommended)". The AI once asked whether to
+add a missing check to the pull request that fixed the bug class the check guards, and the Human answered that it should
+not have to ask. A gap the work finds in its own scope is a defect to fix there, through its owner; the Human is asked
+only a real choice the work opens, such as a product behavior or a cost the scope did not plan. The question tool's hook
+refuses the same question asked there, as the rule `ask-scope`, when an option recommends yes.
 
 The announce, review-loop, and merge hand-back checks run first; a stop any of them sends back is checked here at the
 stop that ends its continuation, unless this check sent the turn back already.

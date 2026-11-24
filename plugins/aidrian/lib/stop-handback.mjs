@@ -6,6 +6,11 @@
 // Only a labelled list counts, and an item counts as rated when it holds one of RATINGS, so a report that names its
 // blocks the way the rule asks passes as written. Pure: the hook passes in the message and the names.
 //
+// The same check sends back a question for the Human about doing more in the change at hand, "this pull request", that
+// the message itself recommends answering yes (scopeAsk): the AI asked whether to add a missing guard check while it
+// fixed the bug class the check guards, and the Human answered that it should not have to ask. The question tool's hook
+// (scripts/hook-ask.mjs) refuses the same question asked there.
+//
 // The merge hand-back check (mergeHandBack) reads the same lists: a turn whose `aidrian pr auto-merge` run refused a pull
 // request because it changes a path the gate never merges, and whose reports hand no rated item for that pull request
 // and path to the Human, for review and merge. docs/hooks.md#merge-hand-back-check describes it.
@@ -186,12 +191,48 @@ function handsOver(item, pr, file) {
   return [cut, JSON.stringify(cut).slice(1, -1), quoteData(cut).slice(1, -1)].some((form) => item.includes(form));
 }
 
+// A question about the change at hand: one that names this pull request, this same one, or this branch.
+export const SAME_CHANGE = /\b(?:this|the same|this same)\s+(?:pull request|PR|branch)\b/iu;
+// An answer of yes the text recommends: "Recommended: yes", "Recommendation: yes", or "Yes (recommended)".
+export const RECOMMENDS_YES = /\brecommend(?:ed|s|ation)?\b\W{0,3}(?:\w+\W+){0,2}?yes\b|\byes\b[^\n]{0,15}\brecommended\b/iu;
+// How many lines after the question its recommendation may sit, as in a quoted "Decision needed" block.
+const RECOMMENDATION_LINES = 3;
+
+// The first question of `message` that asks to do more in the change at hand and recommends yes, cut to 80 characters,
+// or null. Fenced code is dropped, as handBackLists drops it.
+export function scopeAsk(message) {
+  if (typeof message !== 'string') return null;
+  const all = message.split('\n');
+  const fenced = fencedIn(all);
+  const lines = all.filter((_, at) => !fenced[at]);
+  for (let at = 0; at < lines.length; at += 1) {
+    const line = lines[at];
+    if (!line.includes('?') || !SAME_CHANGE.test(line)) continue;
+    if (!RECOMMENDS_YES.test(lines.slice(at, at + 1 + RECOMMENDATION_LINES).join('\n'))) continue;
+    const question = line.replace(/^[>\s*_#-]+/u, '').trim();
+    return question.length > 80 ? `${question.slice(0, 77)}...` : question;
+  }
+  return null;
+}
+
+// What the agent is told for a question scopeAsk found, `quoted`, after `lead`: do the work, and ask only a real choice;
+// `next` is what it does then.
+export const scopeAskReason = (lead, quoted, human, next = 'Then end the turn again.') =>
+  `${lead}a question for ${human} that asks whether to do more in the change at hand, and recommends yes itself ("${quoted}"). ` +
+  'A gap the work finds in its own scope is a defect to fix, not a question, such as a missing check that would guard ' +
+  'the bug class this change fixes, or another copy of the defect it fixes: do it in this pull request, through its owner, ' +
+  `and report it done. Ask ${human} only a real choice the work opens, such as a product behavior or a cost the scope did not plan, ` +
+  `and say which choice it is. ${next}`;
+
 // Why the agent is sent back, or null. `message` is the final assistant message; `human` the name config.json
 // `names.human` gives (docs/config.md#names).
 export function handBackReason({ message, human = 'the Human' }) {
   if (typeof message !== 'string' || !message.trim()) return null;
   const unrated = handBackLists(message, humanNames(human)).flatMap(({ label, items }) => items.filter((item) => !RATINGS.test(item)).map((item) => ({ label, item })));
-  if (!unrated.length) return null;
+  if (!unrated.length) {
+    const asked = scopeAsk(message);
+    return asked === null ? null : scopeAskReason(HAND_BACK_LEAD, asked, human);
+  }
   const [{ label, item }] = unrated;
   const quoted = item.length > 80 ? `${item.slice(0, 77)}...` : item;
   return `${HAND_BACK_LEAD}${unrated.length === 1 ? 'an item' : `${unrated.length} items`} under "${label}" ` +

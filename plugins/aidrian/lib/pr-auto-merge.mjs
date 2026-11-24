@@ -55,8 +55,8 @@
 //   then closes, only for a session no Human attends whose unattended mark names a project run's issue
 //      (closing-words.mjs runClosingContext): the pull request's title, body, and every commit message, read through the
 //      forge at exactly the head, name no issue but that one after a closing word, and the title no other key of a team
-//      the run knows; and the issues the forge links to close at the merge, by hand in the sidebar included, read in the
-//      review trail, are that one alone and all of them (closingProblem). A mark it cannot read names no issue, so any
+//      the run knows; and the issues the forge links to close at the merge, by hand in the sidebar included, are that
+//      one alone and all of them. The title, the body, and those issues come from one review trail (closingProblem). A mark it cannot read names no issue, so any
 //      counts. Computed from the final review verdict, after every check before it.
 //   8. trust, only for a session no Human attends (its unattended mark): the record is this machine's word, which a
 //      project run's confined session can write, so the merge also rests on what no such session writes
@@ -877,40 +877,15 @@ export function gateVerdict(argv, project, { forge = forgeFor(project.root), ses
 // --- The closing words of a project run's issue session (reason `closes`, lib/closing-words.mjs) ---
 
 // Why the title, body, or a commit of the pull request `pr` ({ repo, host, number, head }) would close, or its title link,
-// an issue other than the run's own, by `context` { own, prefixes } (closing-words.mjs runClosingContext), or null. Read
-// through the forge: the pull request, at exactly `head`, then its commits, which must be all of them: GitHub lists at
-// most 250. Then the issues the forge itself links to close at the merge, a sidebar link included, from the review
-// trail `readTrail` gives (closing-words.mjs forgeClosingProblem), as the merge guard reads them. Throws, naming the
-// read, when gh fails or the head moved during the read: the caller exits 3, and the stop's command waits for a
-// settled head rather than refuse on a race.
+// an issue other than the run's own, by `context` { own, prefixes } (closing-words.mjs runClosingContext), or null. The
+// title, the body, and the issues the forge itself links to close at the merge, a sidebar link included
+// (closing-words.mjs forgeClosingProblem), come from one snapshot: the review trail `readTrail` gives, read once a
+// command and the same one a judge's verdict and merge trust read, as the merge guard judges them. The commits come from
+// the forge's list for the pull request at exactly `head`, which must be all of them: GitHub lists at most 250, and a
+// commit's message is fixed by its SHA. Throws, naming the read, when gh fails or the head moved during the read: the
+// caller exits 3, and the stop's command waits for a settled head rather than refuse on a race.
 export function closingProblem(forge, pr, context, readTrail) {
   const { repo, host, number, head } = pr;
-  let pull;
-  let commits;
-  try {
-    pull = forge.pull(repo, number, { host });
-  } catch (error) {
-    throw new Error(`could not read the title and body of #${number} with gh (${ghError(error)})`);
-  }
-  if (pull?.head?.sha !== head) throw new Error(`the head of #${number} moved from ${head.slice(0, 7)} to ${String(pull?.head?.sha ?? 'none').slice(0, 7)} while the gate read its title and body`);
-  if (typeof pull.title !== 'string' || (pull.body !== null && typeof pull.body !== 'string') || !Number.isInteger(pull.commits)) return `gh returned no title, body, or commit count for #${number}`;
-  try {
-    commits = forge.changeCommits(repo, number, { host });
-  } catch (error) {
-    throw new Error(`could not read the commits of #${number} with gh (${ghError(error)})`);
-  }
-  if (!Array.isArray(commits) || commits.length !== pull.commits) return `gh listed ${Array.isArray(commits) ? commits.length : 'none'} of its ${pull.commits} commits, and GitHub lists at most 250, so a closing word may hide in one it did not list`;
-  const texts = [{ where: 'its title', text: pull.title, title: true }, { where: 'its body', text: pull.body ?? '' }];
-  for (const commit of commits) {
-    const message = commit?.commit?.message;
-    if (typeof message !== 'string') return `gh returned a commit of #${number} with no message`;
-    texts.push({ where: `commit ${String(commit.sha ?? '').slice(0, 7) || 'with no SHA'}`, text: message });
-  }
-  const said = closingTextsProblem(texts, context, pr);
-  if (said) return said;
-  // SHORTCUT: the text above and the closing links below come from two reads tied only by the head SHA, so a title or
-  // body edit, or a sidebar link, landing between them goes unseen here. Accepted as contrived: the merge guard judges
-  // the text and the links from one review trail at merge time (merge-review.mjs mergeClosesProblem).
   let trail;
   try {
     trail = readTrail();
@@ -918,9 +893,31 @@ export function closingProblem(forge, pr, context, readTrail) {
     throw new Error(`could not read the review trail of #${number} with gh (${ghError(error)})`);
   }
   if (typeof trail?.head !== 'string' || trail.head.toLowerCase() !== head.toLowerCase()) {
-    throw new Error(`the head of #${number} moved from ${head.slice(0, 7)} to ${String(trail?.head ?? 'none').slice(0, 7)} while the gate read the issues it closes`);
+    throw new Error(`the head of #${number} moved from ${head.slice(0, 7)} to ${String(trail?.head ?? 'none').slice(0, 7)} while the gate read its title, body, and the issues it closes`);
   }
-  return forgeClosingProblem(trail, context, pr);
+  if (typeof trail.title !== 'string' || (trail.body !== null && typeof trail.body !== 'string')) return `the forge gave no title or body for #${number}`;
+  let pull;
+  let commits;
+  try {
+    pull = forge.pull(repo, number, { host });
+  } catch (error) {
+    throw new Error(`could not read the commit count of #${number} with gh (${ghError(error)})`);
+  }
+  if (pull?.head?.sha !== head) throw new Error(`the head of #${number} moved from ${head.slice(0, 7)} to ${String(pull?.head?.sha ?? 'none').slice(0, 7)} while the gate read its commits`);
+  if (!Number.isInteger(pull.commits)) return `gh returned no commit count for #${number}`;
+  try {
+    commits = forge.changeCommits(repo, number, { host });
+  } catch (error) {
+    throw new Error(`could not read the commits of #${number} with gh (${ghError(error)})`);
+  }
+  if (!Array.isArray(commits) || commits.length !== pull.commits) return `gh listed ${Array.isArray(commits) ? commits.length : 'none'} of its ${pull.commits} commits, and GitHub lists at most 250, so a closing word may hide in one it did not list`;
+  const texts = [{ where: 'its title', text: trail.title, title: true }, { where: 'its body', text: trail.body ?? '' }];
+  for (const commit of commits) {
+    const message = commit?.commit?.message;
+    if (typeof message !== 'string') return `gh returned a commit of #${number} with no message`;
+    texts.push({ where: `commit ${String(commit.sha ?? '').slice(0, 7) || 'with no SHA'}`, text: message });
+  }
+  return closingTextsProblem(texts, context, pr) ?? forgeClosingProblem(trail, context, pr);
 }
 
 // The class of the decision the missing sign-offs of `flows` are for the Human (`aidrian project stop-action` names it):

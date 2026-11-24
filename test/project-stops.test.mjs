@@ -471,8 +471,10 @@ test('through the real auto-merge gate: a child whose body closes another run is
     conversationComments: () => [],
     reviews: () => [],
     reviewComments: () => [],
-    pull: () => ({ head: { sha: HEAD }, title: 'feat(export): add CSV export', body: gate.body, commits: 1 }),
+    pull: () => ({ head: { sha: HEAD }, title: 'feat(export): add CSV export', body: '', commits: 1 }),
     changeCommits: () => [{ sha: HEAD, commit: { message: 'feat: export' } }],
+    // The review trail, the one snapshot the gate judges the title, body, and closing links from.
+    reviewTrail: () => ({ head: HEAD, title: 'feat(export): add CSV export', body: gate.body, closingIssues: [], closingIssuesComplete: true }),
   };
   const act = () => fx.cmd(['stop-action', 'launch', 'ENG-1'], { session: CHILD, forge });
   assert.match(act().out[0], /^park ENG-1 #12 at aaaaaaa: auto-merge is off \(closes\): its body says "Fixes ENG-2"/u);

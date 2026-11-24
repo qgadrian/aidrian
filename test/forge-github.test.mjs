@@ -1,6 +1,6 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -168,6 +168,11 @@ test('docs/providers/adding-a-host.md names every method a forge adapter impleme
   const section = doc.slice(doc.indexOf('## Adding a forge'));
   assert.ok(section.startsWith('## Adding a forge'));
   assert.deepEqual(FACADE.filter((name) => !new RegExp('`' + name + '[`(]', 'u').test(section)), []);
+  // Every place the file table names, past the adapter's own `<id>` files, is a file in the repository.
+  const table = section.slice(0, section.indexOf('\n\n', section.indexOf('| File |')));
+  const named = [...table.matchAll(/^\| `([^`]+)` \|/gmu)].map((row) => row[1]).filter((file) => !file.includes('<'));
+  assert.ok(named.includes('plugins/aidrian-claude-mod/lib/format.mjs'), 'the Claude mod\'s forge table is listed');
+  assert.deepEqual(named.filter((file) => !existsSync(new URL(`../${file}`, import.meta.url))), []);
 });
 
 test('authToken: gh auth token for the host, trimmed, which reads gh`s login wherever gh keeps it, and throws with none', () => {

@@ -359,6 +359,16 @@ test('a tool event group with no matcher fails the route build, naming its event
   }
 });
 
+test('a matcher with a lookaround or a backreference fails the route build, as Codex\'s Rust regex rejects it', (t) => {
+  for (const matcher of ['^Bash(?=$)', 'Bash(?!x)', '(?<=mcp__)x', '(?<!a)Bash', '(a)\\1', '(?<n>a)\\k<n>']) {
+    assert.throws(() => routeMatcher(matcher), /holds a lookaround or a backreference, which Codex's Rust regex, that reads hooks\.json too, rejects/, matcher);
+    const file = scratchHooks(t, { PreToolUse: [{ matcher, hooks: [hook(NODE('hook-x'))] }] });
+    assert.throws(() => renderRoutes(file), /PreToolUse: matcher .* holds a lookaround or a backreference/, matcher);
+  }
+  assert.equal(routeMatcher('(?<n>mcp)__.*'), '(?<n>mcp)__.*', 'a named group is no lookbehind');
+  assert.equal(routeMatcher('(?:Bash)$'), '(?:Bash)$');
+});
+
 test('a matcher with a comma or whitespace fails the route build, as a host may read it as a list of names', (t) => {
   for (const matcher of ['Edit, Write', 'Edit,Write', 'Edit Write', 'Edit|Write ', 'Edit\t|Write', 'mcp__.{1,3}']) {
     assert.throws(() => routeMatcher(matcher), /holds a comma or whitespace, which a host may read as a list; separate names with "\|"/, matcher);

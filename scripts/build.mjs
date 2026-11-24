@@ -320,6 +320,10 @@ const TOOL_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 
 // regular expression that may match anywhere in the name (code.claude.com/docs/en/hooks, Matcher patterns).
 const NAME_LIST = /^[A-Za-z0-9_|-]+$/u;
 
+// Syntax JavaScript takes and Rust's regex crate, which compiles each hooks.json matcher on Codex, does not: lookahead,
+// lookbehind, and backreferences. Codex skips a matcher it cannot compile, so its hook would never run there.
+const RUST_UNSUPPORTED = /\(\?<?[=!]|\\[1-9]|\\k</u;
+
 // A hooks.json matcher as a route matches it, which route-select.mjs tests unanchored with the u flag, so the route fires
 // where Claude Code fires the hook: null for a group with none, "*" for any tool, a list of names as the anchored
 // ^(?:A|B)$, since none of its characters means anything else in a pattern, and any other matcher as its own source,
@@ -331,6 +335,9 @@ export function routeMatcher(matcher) {
   if (typeof matcher !== 'string' || matcher === '') throw new Error(`matcher ${JSON.stringify(matcher)} is not a pattern; use "*" for every tool`);
   if (/[\s,]/u.test(matcher)) throw new Error(`matcher ${JSON.stringify(matcher)} holds a comma or whitespace, which a host may read as a list; separate names with "|"`);
   if (NAME_LIST.test(matcher)) return `^(?:${matcher})$`;
+  if (RUST_UNSUPPORTED.test(matcher)) {
+    throw new Error(`matcher ${JSON.stringify(matcher)} holds a lookaround or a backreference, which Codex's Rust regex, that reads hooks.json too, rejects`);
+  }
   new RegExp(matcher, 'u');
   return matcher;
 }

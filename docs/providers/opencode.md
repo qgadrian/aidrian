@@ -133,7 +133,8 @@ Claude Code runs matching hooks. A matcher fires as Claude Code reads it: a list
 those names alone, and any other pattern, such as `mcp__.*`, on a match anywhere in the name.
 The build accepts only part of what Claude Code does. A matcher is `"*"`, a list of names made of letters, digits,
 `_`, and `-`, separated by `|`, or a regular expression with no comma and no whitespace. So a pattern holds no `{1,3}`
-quantifier; write the repeats out or use a character class. An empty matcher fails the build, and so does a group with
+quantifier; write the repeats out or use a character class. A pattern holds no lookaround and no backreference,
+which Codex's Rust regex rejects. An empty matcher fails the build, and so does a group with
 no matcher on a tool event, such as `PreToolUse` or `PostToolUse`. Such a group says `"*"` to mean every tool.
 The leaf names `shell` as `Bash`, keeps `edit`, `write`, and `patch` as they are, which no `PostToolUse` matcher names, and reads no other tool, an MCP tool's included: such a call runs nothing and is
 counted unguarded ([Troubleshooting](#troubleshooting)). So this version runs one hook: after a `shell` call that

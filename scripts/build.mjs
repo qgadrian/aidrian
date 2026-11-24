@@ -312,13 +312,19 @@ export function compareGenerated(provider, expected = renderAgents(provider), di
 // The one hooks.json command form a bridge can run without a shell: node on a script in scripts/, then literal flags.
 const HOOK_COMMAND = /^node "\$CLAUDE_PLUGIN_ROOT\/scripts\/([a-z0-9-]+\.mjs)"((?: --[a-z][a-z0-9-]*)*)$/;
 
+// The events whose matcher is tested on a tool name. Claude Code runs a group of one of these with no matcher on every
+// tool, which a null route matcher would never fire on, so such a group must say "*".
+const TOOL_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest']);
+
 // A hooks.json matcher as a route matches it: null for a group with none, "*" for any tool, otherwise the anchored
 // full-match source, compiled with the u flag: the full match test/adapters.test.mjs `fires` applies. A matcher that
 // does not compile on its own throws, so an unbalanced one such as 'Edit)|(.*' cannot turn into a match-all once wrapped.
+// One with a comma or whitespace throws too: Claude Code reads "Edit, Write" as a list of names, and this as one pattern.
 export function routeMatcher(matcher) {
   if (matcher === undefined || matcher === null) return null;
   if (matcher === '*') return '*';
-  if (typeof matcher !== 'string' || matcher === '') throw new Error(`matcher ${JSON.stringify(matcher)} is not a pattern; use "*" or leave it out`);
+  if (typeof matcher !== 'string' || matcher === '') throw new Error(`matcher ${JSON.stringify(matcher)} is not a pattern; use "*" for every tool`);
+  if (/[\s,]/u.test(matcher)) throw new Error(`matcher ${JSON.stringify(matcher)} holds a comma or whitespace, which a host may read as a list; separate names with "|"`);
   new RegExp(matcher, 'u');
   const source = `^(?:${matcher})$`;
   new RegExp(source, 'u');
@@ -335,6 +341,9 @@ export function renderRoutes(hooksFile = HOOKS_FILE) {
     if (!Array.isArray(groups)) throw new Error(`${where}: ${event} must be a list of hook groups`);
     return groups.flatMap((group) => {
       if (!isPlainObject(group) || !Array.isArray(group.hooks)) throw new Error(`${where}: ${event}: a group needs a "hooks" list`);
+      if (TOOL_EVENTS.has(event) && (group.matcher === undefined || group.matcher === null)) {
+        throw new Error(`${where}: ${event}: a group with no matcher runs on every tool on Claude Code and on none on OpenCode; say "*" to mean every tool`);
+      }
       let matcher;
       try {
         matcher = routeMatcher(group.matcher);

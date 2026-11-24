@@ -130,8 +130,12 @@ to `execute.after`, and no other in this version, so no guard runs and no route 
 On each call the bridge reads the tool's standard name from `plugins/aidrian/lib/hosts/opencode-names.mjs`, the one
 table the adapter reads too, and runs every route of that event whose matcher fires on the name, in parallel, as
 Claude Code runs matching hooks. A matcher fires as Claude Code reads it: a list of names, such as `Edit|Write`, on
-those names alone, and any other pattern, such as `mcp__.*`, on a match anywhere in the name. The leaf names `shell` as `Bash`, keeps `edit`, `write`, and `patch` as they are,
-which no `PostToolUse` matcher names, and reads no other tool, an MCP tool's included: such a call runs nothing and is
+those names alone, and any other pattern, such as `mcp__.*`, on a match anywhere in the name.
+The build accepts only part of what Claude Code does. A matcher is `"*"`, a list of names made of letters, digits,
+`_`, and `-`, separated by `|`, or a regular expression with no comma and no whitespace. So a pattern holds no `{1,3}`
+quantifier; write the repeats out or use a character class. An empty matcher fails the build, and so does a group with
+no matcher on a tool event, such as `PreToolUse` or `PostToolUse`. Such a group says `"*"` to mean every tool.
+The leaf names `shell` as `Bash`, keeps `edit`, `write`, and `patch` as they are, which no `PostToolUse` matcher names, and reads no other tool, an MCP tool's included: such a call runs nothing and is
 counted unguarded ([Troubleshooting](#troubleshooting)). So this version runs one hook: after a `shell` call that
 completed, `scripts/hook-bash-post.mjs`, as `hooks.json` runs it after a Bash call, stopped at its 5 s timeout.
 

@@ -352,6 +352,9 @@ The residuals, each with its reason:
   `cp -R pkg <tmp>/x`, `mv pkg <tmp>/z`, `cp -R pkg/. dest`, `rsync -a pkg/ dest/`, `tar -x`, or `git clone`, or one
   that names its sources by a glob, is judged by its destination alone, in a temporary folder and at a worktree's root,
   with the reach of a program's own write.
+- An rsync destination spelled `host:path` is judged by its path part only when the call names its remote shell, by
+  `-e`, `--rsh`, or an `RSYNC_RSH=` it sets itself; one exported in an earlier step or inherited, a shim on `PATH` in
+  place of `ssh`, or an `ssh` that reaches this machine writes there unjudged, with the reach of a program's own write.
 - A move into a folder the same command line makes first, by a name with no closing slash, as
   `mkdir <tmp>/a && mv pkg/.opencode <tmp>/a`, is judged as a rename, since the folder is read from the disk when the call
   is checked.

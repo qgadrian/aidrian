@@ -57,7 +57,7 @@ export function bashWrites(command, cwd, { followCd = false, shells = false, res
       const { program, args, chdir } = invocation;
       // A wrapper's directory change moves the command's own paths, never the shell's redirections above.
       const own = chdir === null ? place : within(place, chdir);
-      if (WRITERS.has(program)) for (const token of written(program, args)) targets.push({ token, place: own });
+      if (WRITERS.has(program)) for (const token of written(program, args, WRITERS.get(program), invocation)) targets.push({ token, place: own });
       else if (program === 'git') targets.push(...gitWritten(segment, own, restores));
       const inner = shells && depth < SUBSTITUTION_DEPTH_LIMIT ? inlineShellCommand(invocation) : null;
       if (inner !== null) visit(inner, own, depth + 1);

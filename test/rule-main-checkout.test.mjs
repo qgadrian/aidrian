@@ -209,7 +209,7 @@ test('bashTargets finds the certain write targets, resolved against cwd, and not
   assert.deepEqual(at('git rm --pathspec-from-file list.txt'), [], 'paths read from a file are not certain');
   assert.deepEqual(at('rsync -a /tmp/x/ src/'), ['src']);
   assert.deepEqual(at('rsync -a --remove-source-files src/a.ts src/b.ts /tmp/out/'), ['src/a.ts', 'src/b.ts', '../tmp/out', '../tmp/out/a.ts', '../tmp/out/b.ts']);
-  assert.deepEqual(at('rsync -av -e ssh --remove-sou src/a.ts host:/srv/'), ['src/a.ts'], 'a remote operand is not a local write');
+  assert.deepEqual(at('rsync -av --remove-sou src/a.ts host:/srv/'), ['src/a.ts'], 'a remote operand is not a local write');
   assert.deepEqual(at('rsync -a src/ user@host:/srv/'), []);
   assert.deepEqual(at('rsync --partial --remove-source-files src/a.ts /tmp/out'), ['src/a.ts', '../tmp/out', '../tmp/out/a.ts'], 'a switch never swallows an operand');
   assert.deepEqual(at('rm -rf src'), ['src']);
@@ -217,7 +217,7 @@ test('bashTargets finds the certain write targets, resolved against cwd, and not
   assert.deepEqual(at('mkdir -p -m 755 src/new'), ['src/new']);
   assert.deepEqual(at('mkdir -pm 755 src/new'), ['src/new'], 'a cluster that ends in a value option takes the next word');
   assert.deepEqual(at('touch -cd yesterday src/a.ts'), ['src/a.ts']);
-  assert.deepEqual(at('rsync -ae ssh --remove-source-files src/a.ts host:/srv/'), ['src/a.ts']);
+  assert.deepEqual(at('rsync -ae ssh --remove-source-files src/a.ts host:/srv/'), ['src/a.ts', '../srv', '../srv/a.ts'], 'under a named remote shell, a single-colon destination is judged by its path part');
   assert.deepEqual(at("cat > /tmp/out.md <<'EOF'\nrm -rf src\nEOF\ngit status"), ['../tmp/out.md'], 'a heredoc body is data');
   assert.deepEqual(at('sudo rm src/a.ts'), ['src/a.ts']);
   assert.deepEqual(at('env -C src rm ../package.json'), ['package.json'], 'a wrapper`s directory moves its operands');
@@ -346,6 +346,15 @@ test('a copy, move, or link into a folder names the file it makes there: by the 
   assert.deepEqual(at('cp --parents .claude/settings.json d'), ['d', 'd/.claude/settings.json'], 'cp --parents, whose destination is a folder');
   assert.deepEqual(at('cp --pa ./src/./a d/'), ['d', 'd/src/a'], 'cp keeps no /./ marker');
   assert.deepEqual(at('rsync -a a host:/x/'), [], 'a remote destination');
+  // A remote shell the call names may be a shim that runs the other side here: a single-colon destination is then
+  // judged by its path part, with its joined names, as a remote-spelled source is.
+  assert.deepEqual(at('rsync -a -e ./sh notes.md x:/repo/.claude/settings.json'), ['.claude/settings.json', '.claude/settings.json/notes.md'], '-e');
+  assert.deepEqual(at('rsync -aR -e ./sh .claude/settings.json x:/repo/'), ['', '.claude/settings.json'], '-e under -R');
+  for (const command of ['rsync -a --rsh ./sh a x:/repo/d/', 'rsync -a --rsh=./sh a x:/repo/d/', 'RSYNC_RSH=./sh rsync -a a x:/repo/d/', 'env RSYNC_RSH=./sh rsync -a a user@x:/repo/d/']) {
+    assert.deepEqual(at(command), ['d', 'd/a'], command);
+  }
+  assert.deepEqual(at('rsync -a -e ./sh a x:'), ['', 'a'], 'an empty path part: the folder the other side starts in');
+  assert.deepEqual(at('rsync -a -e ./sh a x::module/d/'), [], 'a daemon module is no path of the remote shell');
   // As today: no folder by the text, and none on the disk.
   assert.deepEqual(at('cp a b'), ['b']);
   assert.deepEqual(at('mv a.txt b.txt'), ['a.txt', 'b.txt']);

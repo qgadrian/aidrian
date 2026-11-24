@@ -69,6 +69,15 @@ const CHANGES_FOLDER = new Map([['perl', ['-x']], ['ruby', ['-C', '-x']]]);
 const COPIERS = new Set(['cp', 'ln', 'install']);
 // An rsync operand naming another host: `host:path`, `user@host:path`, `host::module`, or `rsync://host/module`.
 const REMOTE = /^[^/]*:/u;
+// A single-colon remote operand, `host:path` or `user@host:path`: a remote shell starts the other side, never a daemon.
+const SHELL_REMOTE = /^[^/:]*:(?!:)/u;
+// Whether an rsync call names its remote shell: `-e`, `--rsh`, or `--rsh=`, or an RSYNC_RSH the call itself sets,
+// as a prefix assignment or `env` does (shell-lex.mjs readInvocation `environment`). Such a shell may be a shim that
+// runs the other side here, so a single-colon destination's path part is a local one.
+const namesRemoteShell = (flags, environment) => flags.some((flag) => flag === '-e' || isLongOption(flag, '--rsh', '--rsh'))
+  || environment.some((change) => change.name === 'RSYNC_RSH' && change.value !== null);
+// The path part of a remote operand, `.` when it names none, as `host:` lands in the folder the other side starts in.
+const remotePart = (token) => ({ ...token, text: token.text.slice(token.text.indexOf(':') + 1) || '.' });
 
 // A write target as the shell reads a leading `~`: `~` and `~/x` are in the home folder, not in the shell's folder.
 // `~user` stays as written, and so does a token marked `literal`, cut from inside a word or built by this rule: the shell
@@ -78,8 +87,9 @@ export const expandHome = (token) => (isHomeWord(token) ? path.join(homedir(), t
 
 // The operands a writer writes: all of them, every path of mv, the destination of cp and rsync (and rsync's sources
 // under --remove-source-files), and the files of sed -i, never its script; for cp, ln, install, mv, and rsync, also the
-// name each makes inside a destination folder (joinedNames).
-export function written(program, args, valueFlags = WRITERS.get(program)) {
+// name each makes inside a destination folder (joinedNames). `environment` is the call's own changes to its
+// environment (shell-lex.mjs readInvocation), which rsync's remote shell is read from.
+export function written(program, args, valueFlags = WRITERS.get(program), { environment = [] } = {}) {
   const flags = [];
   const operands = [];
   let folder = null;
@@ -125,7 +135,10 @@ export function written(program, args, valueFlags = WRITERS.get(program)) {
     const removesSources = flags.some((flag) => isLongOption(flag, '--remove-source-files', '--remov') || isLongOption(flag, '--remove-sent-files', '--remov'));
     // -R keeps the source's relative path, and the last of it and --no-R wins.
     const relative = flags.findLastIndex((flag) => flag === '-R' || isLongOption(flag, '--relative', '--rel')) > flags.findLastIndex((flag) => flag === '--no-R' || isLongOption(flag, '--no-relative', '--no-rel'));
-    return [...(removesSources ? operands : operands.slice(-1)).filter((token) => !REMOTE.test(token.text)), ...syncJoined(operands, relative)];
+    // Under a named remote shell, a single-colon destination is judged by its path part, as a local one.
+    const into = operands.at(-1);
+    const synced = namesRemoteShell(flags, environment) && SHELL_REMOTE.test(into.text) ? [...operands.slice(0, -1), remotePart(into)] : operands;
+    return [...(removesSources ? synced : synced.slice(-1)).filter((token) => !REMOTE.test(token.text)), ...syncJoined(synced, relative)];
   }
   if (SCRIPT_OPTIONS.has(program)) {
     // perl -i and ruby -i edit their files in place; without -i they only read them, and -c only checks syntax.
@@ -166,7 +179,8 @@ function copyJoined(program, operands, directory, parents) {
 // The names rsync makes inside its destination (joinedNames). Each is certain: rsync never renames a folder source, so
 // `rsync -a pkg/dir new` makes new/dir whether or not new is there. The price is a rare extra refusal of a file synced
 // to a new name, as `rsync -a pkg/x.md new.md` also names new.md/x.md. A source spelled remote lands by its path part,
-// `host:/x/y` as `<into>/y`, since an `-e` shim can make it local; a remote destination makes no local name.
+// `host:/x/y` as `<into>/y`, since an `-e` shim can make it local; a remote destination makes no local name, unless
+// the call names a remote shell, when written() hands it here by its path part.
 // Without -R a source with a closing slash copies its contents, the stated residual below; with -R it makes its kept
 // path, which GNU rsync starts after a `/./` marker and openrsync does not, so a marked source names both.
 function syncJoined(operands, relative) {

@@ -101,7 +101,7 @@ export function shellWrites(command, cwd, env) {
     if (WRITERS.has(program)) {
       const mode = program === 'mkdir' && setsMode(args);
       const dirs = folder === null ? [] : [folder];
-      for (const token of written(program, args)) {
+      for (const token of written(program, args, WRITERS.get(program), invocation)) {
         // An uncertain joined name (writers.mjs joinedNames) stays only when its destination, expanded, is a folder.
         const unsure = token.joined?.certain === false ? token.joined.into : null;
         const into = unsure && expand(unsure.text, env, unsure.dynamic ? command : '');

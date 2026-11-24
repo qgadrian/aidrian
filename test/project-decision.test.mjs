@@ -13,7 +13,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { decisionCommand, recordedDecision, sectionOf, shellQuoted } from '../plugins/aidrian/lib/project-decision.mjs';
-import { decisionChecks } from '../plugins/aidrian/lib/project-preflight.mjs';
+import { decisionChecks, snapshotCheck } from '../plugins/aidrian/lib/project-preflight.mjs';
 import { guardedStore } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { lexCommand } from '../plugins/aidrian/lib/shell-lex.mjs';
 import { recordHumanSignoff, signoffFolder } from '../plugins/aidrian/lib/review/signoff-store.mjs';
@@ -244,6 +244,16 @@ test('init --check names each recorded decision of an issue to start: a blocker 
   assert.deepEqual(check(DECIDED.description), ['note recorded-decision: ENG-1 stands: Export format'], 'an issue the plan does not start gets no line');
   assert.deepEqual(check(DECIDED.description.replace('CSV with', 'XLSX with')), ['note recorded-decision: ENG-1 void: the section\'s sha256 differs, so it changed after it was pinned']);
   assert.deepEqual(check(''), ['blocker recorded-decision: ENG-1 has a recorded decision in this machine\'s recorded-decision store and this session recorded no description of it; read it in this session with the tracker\'s own issue read']);
+  // A state folder init refuses, here a runs folder that is a symlink, is a snapshot blocker of its own, and then no
+  // recorded decision is named as standing: the check calls snapshotCheck in this process, as the command does.
+  assert.equal(recordIssueReads(DRIVER, [{ key: 'ENG-1', text: { title: 'Export', description: DECIDED.description, criteria: '', labels: [] } }], { env: fx.env }), 1);
+  const elsewhere = path.join(fx.root, 'elsewhere-runs');
+  mkdirSync(elsewhere, { mode: 0o700 });
+  symlinkSync(elsewhere, path.join(fx.state, 'runs'));
+  const refused = snapshotCheck({ project: fx.project, config: fx.config, file, session: DRIVER, env: fx.env, home: fx.home, forge: fx.forge });
+  assert.equal(refused.exitCode, 1);
+  assert.ok(refused.out.some((line) => /^blocker snapshot: the folder .*runs is a symlink, so no project run is kept there$/u.test(line)), refused.out.join('\n'));
+  assert.ok(!refused.out.some((line) => line.includes('recorded-decision')), 'no stands line while init would refuse the state folder');
 });
 
 test('init --check reads the store only where the team switch is on on the local ref and the forge alike', (t) => {

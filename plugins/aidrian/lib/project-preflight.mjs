@@ -421,7 +421,8 @@ function secretsLine({ facade, named, repository, policy, check, asks }) {
 // maxParallel it reads (as project-run-gate.mjs runParallel reads it, through `forge` at the repository init would pin), and a
 // `note teams` line when the snapshot names no team of the workspace (project-run.mjs teamsNote). For each issue that may
 // still start whose decision this machine's recorded-decision store holds, while the team's policy turns the store on as
-// start reads it, a `recorded-decision` line (decisionChecks).
+// start reads it, a `recorded-decision` line (decisionChecks), none while the state folder fails runPlace, which is a
+// `blocker snapshot` line of its own, as init refuses it.
 // Exit 1 on any blocker.
 export function snapshotCheck({ project, config, file, session = null, env = process.env, home, forge = null }) {
   const read = readSnapshotInput(file, refNames(project, config));
@@ -442,7 +443,10 @@ export function snapshotCheck({ project, config, file, session = null, env = pro
   const startable = new Set(plan.order.filter((key) => !plan.done.includes(key)));
   // The issues that may still start: ready now, or once their blockers are done; never a canceled or skipped one.
   const mayStart = new Set([...plan.ready, ...plan.blocked.filter(({ reason }) => reason === 'waiting').map(({ key }) => key)]);
-  const decisions = decisionChecks({ policy, base, mayStart, texts: kept.texts, project, env });
+  // A state folder init would refuse is a blocker of its own, whatever else passes, and then no recorded decision is
+  // named as standing: the run that would read it cannot be made there.
+  if (place.problem) blockers.push(`blocker snapshot: ${place.problem}`);
+  const decisions = place.problem ? { blockers: [], notes: [] } : decisionChecks({ policy, base, mayStart, texts: kept.texts, project, env });
   blockers.push(...decisions.blockers);
   if (!trackerReachable(base)) {
     blockers.push(...read.snapshot.issues.filter((issue) => startable.has(issue.key) && !kept.texts[issue.key])

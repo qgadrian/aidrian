@@ -15,7 +15,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { noteStarted } from '../plugins/aidrian/lib/handoff-markers.mjs';
-import { cleanText, RESULT_CAP, validateResult, WAIT_MARGIN } from '../plugins/aidrian/lib/project-run-gate.mjs';
+import { cleanText, RESULT_CAP, validateResult, WAIT_MARGIN, waitRun } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { DROP_FILE } from '../plugins/aidrian/lib/project-result.mjs';
 import { stderrTail } from '../plugins/aidrian/lib/review/base-worktree.mjs';
 import { appendRowsAtOnce } from '../plugins/aidrian/lib/jsonl.mjs';
@@ -387,12 +387,30 @@ test('wait holds --max-wait as best effort under slow reads: it starts no read t
   assert.deepEqual(pauses, [], 'no pause: it returned on its first read');
 });
 
-test('wait counts its setup against --max-wait: a slow policy read leaves no room for a second read', (t) => {
+test('wait counts its setup against --max-wait: the command\'s own, a slow policy read, and a start given in the past', (t) => {
   const fx = started(t);
-  // The forge's policy read, before the first read, takes 130 seconds; each call to the host's listing takes 20.
+  // Each call to the host's listing takes 20 seconds; with 130 seconds of setup counted, a 150-second wait has room for
+  // its first read only.
   const start = Date.now();
   let clock = start;
   const order = [];
+  const slow = (...args) => {
+    clock += 20_000;
+    order.push('listing');
+    return fx.claude.run(...args);
+  };
+  const pauses = [];
+  const pause = (ms) => {
+    pauses.push(ms);
+    clock += ms;
+  };
+  // The command's setup before waitRun takes 130 seconds: every clock read inside waitRun is that much later than one
+  // outside it, such as the command's own at its start.
+  const late = () => clock + (/\bat waitRun \(/u.test(new Error().stack) ? 130_000 : 0);
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '150'], { now: start, clock: late, spawn: slow, pause }).out, ['running ENG-1']);
+  assert.deepEqual(pauses, [], 'no pause and no second read: the 130 s before waitRun count');
+  // The forge's policy read, waitRun's own setup before its first read, takes 130 seconds.
+  order.length = 0;
   const forge = {
     ...fx.forge,
     contents: (...args) => {
@@ -401,16 +419,13 @@ test('wait counts its setup against --max-wait: a slow policy read leaves no roo
       return fx.forge.contents(...args);
     },
   };
-  const slow = (...args) => {
-    clock += 20_000;
-    order.push('listing');
-    return fx.claude.run(...args);
-  };
-  const pauses = [];
-  const waited = fx.cmd(['wait', 'launch', '--max-wait', '150'], { now: start, clock: () => clock, spawn: slow, forge, pause: (ms) => pauses.push(ms) });
-  assert.deepEqual(waited.out, ['running ENG-1']);
+  assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '150'], { now: clock, clock: () => clock, spawn: slow, forge, pause }).out, ['running ENG-1']);
   assert.equal(order[0], 'policy', 'the policy read is the setup, before any listing');
-  assert.deepEqual(pauses, [], 'no pause and no second read: the 130 s of setup and a 20 s read leave none');
+  assert.deepEqual(pauses, [], 'no pause and no second read: the 130 s of the policy read count');
+  // waitRun called with a start in the past counts from it.
+  const given = { project: fx.project, config: fx.config, run: 'launch', maxWait: 150, env: fx.as(DRIVER), home: fx.home, forge: fx.forge, spawn: slow, pause, clock: () => clock };
+  assert.deepEqual(waitRun({ ...given, now: clock, started: clock - 130_000 }).out, ['running ENG-1']);
+  assert.deepEqual(pauses, [], 'a start in the past leaves no room for a second read');
 });
 
 test('wait returns as soon as a result arrives while it waits', (t) => {

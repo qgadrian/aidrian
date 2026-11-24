@@ -121,17 +121,32 @@ Checked on OpenCode 2.4.0 on 2026-11-23, in an isolated home:
 
 ## Hooks
 
-OpenCode reads no `hooks.json`. The bridge, `plugins/aidrian/opencode/bridge.mjs`, registers one callback for each row
-of `ROUTES` in `plugins/aidrian/opencode/routes.mjs`, and a hook runs on OpenCode only once a row names it
-([Adding a host](adding-a-host.md#delivery-comes-first)). This version has one row: after a `shell` call that
-completed, it runs `scripts/hook-bash-post.mjs` as `hooks.json` runs it after a Bash call, stopped at its 5 s timeout.
-The callback sends the script the standard hook payload on stdin, with a top-level `opencode` object that marks it as
+OpenCode reads no `hooks.json`. `npm run build` writes every hook of it, in its order, to
+`plugins/aidrian/opencode/routes.generated.json`, and the bridge, `plugins/aidrian/opencode/bridge.mjs`, reads that
+list, through `plugins/aidrian/opencode/route-select.mjs`, when OpenCode loads it
+([Adding a host](adding-a-host.md#delivery-comes-first)). `EVENTS` in
+`plugins/aidrian/opencode/routes.mjs` maps each standard event the bridge runs to OpenCode's tool hook: `PostToolUse`
+to `execute.after`, and no other in this version, so no guard runs and no route blocks a call.
+On each call the bridge reads the tool's standard name from `plugins/aidrian/lib/hosts/opencode-names.mjs`, the one
+table the adapter reads too, and runs every route of that event whose matcher fires on the name, in parallel, as
+Claude Code runs matching hooks. The leaf names `shell` as `Bash`, keeps `edit`, `write`, and `patch` as they are,
+which no `PostToolUse` matcher names, and reads no other tool, an MCP tool's included: such a call runs nothing and is
+counted unguarded ([Troubleshooting](#troubleshooting)). So this version runs one hook: after a `shell` call that
+completed, `scripts/hook-bash-post.mjs`, as `hooks.json` runs it after a Bash call, stopped at its 5 s timeout.
+
+Each selected script gets the standard hook payload on stdin, with a top-level `opencode` object that marks it as
 OpenCode's, and the adapter, `plugins/aidrian/lib/hosts/opencode.mjs`, maps the rest. A call that errored or was
-stopped sends nothing, as Claude Code runs `PostToolUse` only after a call that succeeded. No route blocks a call,
-none changes a call's result, and a hook that cannot run leaves the call as it would be without the plugin.
+stopped sends nothing, as Claude Code runs `PostToolUse` only after a call that succeeded. The session reads happen
+once a call, before any script starts, within the longest selected route's timeout; each script then has its own
+route's timeout from its start, and is killed when it ends. The program is Node, its arguments the script's path and
+the route's literal flags, with no shell. No route changes a call's result, and a hook that cannot run leaves the call
+as it would be without the plugin.
 
 `test/opencode-bridge.test.mjs` fails when `hooks.json` names a script this table lacks, and when its yes rows differ
-from the scripts of `ROUTES`. Fixture only means the hook ran in tests on
+from the scripts the bridge can run, the generated routes of `EVENTS` whose matcher fires on a name the leaf returns.
+Its conformance test runs each OpenCode call the tests hold a payload of through the bridge, and checks that the
+scripts it ran are those `hooks.json` fires on the name the adapter reads from the payload. Fixture only means the
+hook ran in tests on
 `test/fixtures/hosts/opencode/bash-post.json`, built from the types of `@opencode/plugin@2.4.0` and the source
 embedded in the OpenCode 2.4.0 binary; no live OpenCode has sent that payload.
 
@@ -157,6 +172,19 @@ embedded in the OpenCode 2.4.0 binary; no live OpenCode has sent that payload.
 | `hook-subagent-stop.mjs` | no | - | No agent of this plugin runs on OpenCode, and the checks must reach the model |
 | `hook-session-end.mjs` | no | - | The session row reads transcripts, and OpenCode's are not read |
 
+### Standard tools with no OpenCode equivalent
+
+The standard tools `hooks.json` matchers name that OpenCode has no tool for, or none this plugin reads yet, each with
+its reason. OpenCode's file tools and MCP tools, which reach no hook in this version, are under Hooks.
+`test/opencode-bridge.test.mjs` holds each name to a `hooks.json` matcher and to no name the leaf returns, and fails
+when a plain tool name of a matcher is none the leaf maps, no other host's own name, and not on this list.
+
+- `EnterWorktree`: OpenCode has no such tool.
+- `ExitPlanMode`: OpenCode has no such tool.
+- `NotebookEdit`: OpenCode has no such tool.
+- `Agent|Task`: an OpenCode subagent call waits for this plugin's agents on OpenCode, a later pull request.
+- `AskUserQuestion`: no question hook is part of this version, and OpenCode's own question tool has not been read.
+
 The ledger hook writes the ledger and the worktree links on OpenCode. It writes no
 [check-run record](../hooks.md#check-runs), since the adapter declares no `shellRun`. It reads a created pull
 request's link from the call's output, which the adapter's `shellOutput` takes from the shell result's `output.output`.
@@ -171,20 +199,21 @@ Each field a script of `hooks.json` reads from its payload, itself or through th
 takes it from on OpenCode. By the types of `@opencode/plugin@2.4.1`, a tool event carries `tool`, `sessionID`, `agent`,
 `messageID`, `id`, and `codemode`, `info` when OpenCode has the tool's, and the tool's `input`; after a call, also
 `status`, and `result` when the call completed. The idle hook, `experimental.idle`, carries `sessionID` and
-`background` alone. Today the bridge sends only the shell route's fields; a source marked later is built by a later
+`background` alone. Today the bridge sends only the `PostToolUse` fields; a source marked later is built by a later
 pull request. None means no OpenCode hook or session read gives the field, and the checks that need it are in
 [Limits](#limits).
 
 | Field | Read by | OpenCode source |
 | --- | --- | --- |
 | `hook_event_name` | OpenCode's adapter's `detect`, which tells a hook's payload from a shell's environment | The bridge, from the route's standard event |
+| `opencode` | OpenCode's adapter: `payloadMark`, and `hookInput`, which hands `info` to the name table | The bridge: `version`, the plugin context's `app.version` when it is text, and `info`, the part of the event's `info` the name table reads, `{}` in this version |
 | `turn_id` | Codex's adapter, as its payload mark | None |
 | `effort` | `hook-session-start.mjs`, for a subagent's effort line, through Claude Code's adapter (`subagentEffort`, which reads `effort.level`) | None: the OpenCode adapter reads no effort |
 | `session_id` | `hook-agent-gates.mjs`, `hook-bash.mjs`, `hook-bash-post.mjs`, `hook-write.mjs`, `hook-mcp-github.mjs`, `hook-tracker-pre.mjs`, `hook-tracker-post.mjs`, `hook-agent-post.mjs`, `hook-session-start.mjs`, `hook-prompt.mjs`, `hook-stop.mjs`, `hook-subagent-stop.mjs`, `hook-session-end.mjs`, and every hook's refusal row (`lib/hook-deny.mjs`) | The event's `sessionID`, followed up its parents to the root session ([Session ids](#session-ids)) |
 | `agent_id` | `hook-agent-gates.mjs` and the guards it calls, `hook-bash.mjs` and its rules, `hook-bash-post.mjs`, `hook-agent-pre.mjs`, `hook-enter-worktree.mjs`, `hook-plan-exit.mjs`, `hook-session-start.mjs`, `hook-prompt.mjs`, `hook-subagent-stop.mjs`, `hook-session-end.mjs`, and every hook's refusal row (`lib/hook-deny.mjs`) | The event's `sessionID`, when it is a child session's |
 | `agent_type` | `hook-agent-gates.mjs`, `hook-tracker-pre.mjs`, `hook-subagent-stop.mjs` (its delivery check and stop row), `hook-agent-post.mjs`, and every hook's refusal row (`lib/hook-deny.mjs`) | None: a tool event's `agent` names the agent a session runs, OpenCode's own `build` or `plan` among them, and no agent of this plugin is installed there. A child session's call carries `agent_id` alone |
 | `cwd` | Every script but `hook-compact.mjs` | A tool event: an absolute `workdir` in the shell's input, else the session's folder from a session read. Any other hook: the root session's folder, from its session read (later) |
-| `tool_name`, `raw_tool_name` | `hook-agent-gates.mjs`, `hook-bash.mjs`, `hook-mcp-github.mjs`, `hook-tracker-pre.mjs`, `hook-tracker-post.mjs`, `hook-agent-pre.mjs`, `hook-agent-post.mjs`, `hook-ask.mjs`, `hook-enter-worktree.mjs`, `hook-plan-exit.mjs`, and every hook's refusal row (`lib/hook-deny.mjs`) | The event's `tool`, mapped by the adapter's `hookInput`: `shell` as `Bash` today; the file tools, and an MCP tool's name from `info`, later |
+| `tool_name`, `raw_tool_name` | `hook-agent-gates.mjs`, `hook-bash.mjs`, `hook-mcp-github.mjs`, `hook-tracker-pre.mjs`, `hook-tracker-post.mjs`, `hook-agent-pre.mjs`, `hook-agent-post.mjs`, `hook-ask.mjs`, `hook-enter-worktree.mjs`, `hook-plan-exit.mjs`, and every hook's refusal row (`lib/hook-deny.mjs`) | The event's `tool`, mapped by the adapter's `hookInput` through the name table the bridge picks its routes by: `shell` as `Bash` today; the file tools, and an MCP tool's name from `info`, later |
 | `permission_tool_name` | `hook-agent-gates.mjs` | None: the adapter sets none, as no OpenCode tool is known to run under another tool's permission rules |
 | `sandbox_escape` | `hook-agent-gates.mjs`, through its sandbox escape guard (`lib/confine-guard.mjs`) | None: OpenCode's shell tool input asks for no sandbox escape, and the adapter maps none |
 | `tool_input.command` | `hook-bash.mjs`, `hook-bash-post.mjs`, `hook-agent-gates.mjs` and the guards it calls | The shell tool's input, which names it `command` too, so it needs no mapping. Its `workdir` is read by the bridge alone, as `cwd` |
@@ -224,16 +253,17 @@ pull request. None means no OpenCode hook or session read gives the field, and t
 ## Troubleshooting
 
 Every failure of the bridge is silent, so it keeps one trace. With `AIDRIAN_OPENCODE_TRACE` naming an absolute file in
-the environment OpenCode's plugins run in, the bridge appends one JSON line a step, `{ at, step, script, status }`, to
-that file, which it creates owner-only; a file already there keeps its mode.
+the environment OpenCode's plugins run in, the bridge appends one JSON line a step, `{ at, step, script, status, count }`,
+each field after `step` only where it applies, to that file, which it creates owner-only; a file already there keeps
+its mode. The calls counted unguarded are the last `count` of an `unguarded` line.
 It never writes a command, a payload, or output there, and a relative path writes nothing.
 Set it as `AIDRIAN_NODE` is set: `opencode service set env AIDRIAN_OPENCODE_TRACE <file>`, then a service restart.
 
 | `step` | When | `status` |
 | --- | --- | --- |
-| `setup` | Once, when OpenCode loads the plugin | How many routes it registered |
-| `run` | Each time it ran a script | The exit code or signal, `timeout` when it killed the script at the deadline, or a start error's code |
-| `skip` | A call of a route's tool it sent nothing for | `status` (not completed), `command`, `session`, `cwd` (no folder found), `timeout` (the session reads outlasted the deadline), `off`, or `gone` (the call's folder was removed) |
+| `setup` | Once, when OpenCode loads the plugin | How many OpenCode tool hooks it registered: 1 in this version, 0 when it read no route |
+| `run` | Each time it ran a script | The exit code or signal, `timeout` when it killed the script at its route's timeout, or a start error's code |
+| `skip` | A call it sent nothing for, and once at setup for a route list it could not read | `status` (not completed), `command`, `session`, `cwd` (no folder found), `timeout` (the session reads outlasted the deadline), `off`, `gone` (the call's folder was removed), `unguarded` (a tool whose name the leaf does not read, such as an MCP tool, with `count`, how many such calls this process has met), or `routes` (at setup: `routes.generated.json` is missing or no JSON list, so no tool hook is registered) |
 | `off` | Once, when a script could not start for want of Node | `ENOENT` |
 
 - No `setup` line: OpenCode did not load the plugin, or the variable is not in its plugins' environment. Check the

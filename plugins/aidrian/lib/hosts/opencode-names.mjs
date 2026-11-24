@@ -1,6 +1,7 @@
-// The one table of OpenCode's tool names and the standard names they stand for, which the adapter (opencode.mjs) reads.
-// It imports nothing, not even another lib file. The names come from OpenCode 2.4.0: its built-in shell tool is `shell`,
-// and its file tools `edit`, `write`, and `patch` (embedded source of its binary).
+// The one table of OpenCode's tool names and the standard names they stand for, which the adapter (opencode.mjs) reads,
+// and the bridge (plugins/aidrian/opencode/bridge.mjs) too, to pick a call's routes by the standard name. It imports
+// nothing, not even another lib file, so the bridge loads it in OpenCode's Bun. The names come from OpenCode 2.4.0: its
+// built-in shell tool is `shell`, and its file tools `edit`, `write`, and `patch` (embedded source of its binary).
 
 // Each built-in tool this version reads, and the standard tool of the same job; `patch` has none.
 const TABLE = new Map([['shell', 'Bash'], ['edit', 'Edit'], ['write', 'Write'], ['patch', null]]);
@@ -19,7 +20,8 @@ export function standardToolName(tool, _info) {
   return RENAMED.has(tool) ? TABLE.get(tool) : tool;
 }
 
-// The part of a tool's `info` that standardToolName reads, as plain JSON: none of it yet.
+// The part of a tool's `info` that standardToolName reads, as plain JSON: none of it yet. The bridge sends it in the
+// payload as `opencode.info`, so the adapter reads the same name the bridge picked the routes by.
 export function infoRead(_info) {
   return {};
 }

@@ -1,8 +1,6 @@
-// The hooks the OpenCode bridge runs (bridge.mjs), one row each: on the OpenCode event `on` of the tool `tool`, it runs
-// `script` from the plugin's scripts/ as hooks.json runs it under `event` for the standard tool `standard`, stopped at
-// `timeoutMs`, that entry's timeout. A hook runs on OpenCode only once a row names it; test/adapters.test.mjs holds each
-// row to hooks.json. This version routes the session ledger alone, and no guard: no route blocks a call.
+// The standard hook events the OpenCode bridge (bridge.mjs) runs, each to the OpenCode tool hook it runs on. The hooks
+// themselves are routes.generated.json, every hooks.json hook as `npm run build` writes it; the bridge runs those whose
+// event this map names and whose matcher fires on the call's standard tool name. PostToolUse alone: no PreToolUse or
+// any other event yet, so no guard runs on OpenCode and no route blocks a call.
 
-export const ROUTES = Object.freeze([
-  Object.freeze({ on: 'execute.after', event: 'PostToolUse', tool: 'shell', standard: 'Bash', script: 'hook-bash-post.mjs', timeoutMs: 5000 }),
-]);
+export const EVENTS = Object.freeze({ PostToolUse: 'execute.after' });

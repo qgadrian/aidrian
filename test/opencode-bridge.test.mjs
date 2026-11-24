@@ -1,7 +1,9 @@
 // The OpenCode bridge (plugins/aidrian/opencode/): on a fake OpenCode context and a fake spawn, what each tool event
 // sends a hook script, how the spawn is pinned, and that no failure reaches OpenCode; then, with the real spawn and this
 // Node, a completed `gh pr create` filed in the session ledger, and a call in a removed folder that leaves spawning on;
-// and that docs/providers/opencode.md and the README say what runs on OpenCode and that no guard holds a session there.
+// that the routes it picks from the generated list by the leaf's standard name are the ones hooks.json fires on the
+// name the adapter reads; and that docs/providers/opencode.md and the README say what runs on OpenCode and that no
+// guard holds a session there.
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
@@ -12,9 +14,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
 
+import { HOSTS } from '../plugins/aidrian/lib/hosts/index.mjs';
+import opencode from '../plugins/aidrian/lib/hosts/opencode.mjs';
+import { infoRead, RAW_NAMES, STANDARD_NAMES, standardToolName } from '../plugins/aidrian/lib/hosts/opencode-names.mjs';
 import { sectionLines } from '../plugins/aidrian/lib/markdown-sections.mjs';
 import { setup } from '../plugins/aidrian/opencode/bridge.mjs';
-import { ROUTES } from '../plugins/aidrian/opencode/routes.mjs';
+import { selectRoutes } from '../plugins/aidrian/opencode/route-select.mjs';
+import { EVENTS } from '../plugins/aidrian/opencode/routes.mjs';
 import server from '../plugins/aidrian/opencode/server.mjs';
 
 
@@ -30,13 +36,16 @@ const OWN_DIR = path.join(ROOT, 'plugin-folder');
 for (const dir of [PROJECT_DIR, SESSION_DIR, OWN_DIR]) mkdirSync(dir, { recursive: true });
 
 const ENV = Object.freeze({ PATH: '/usr/bin:/bin', HOME: ROOT });
+const GENERATED = JSON.parse(readFileSync(path.join(PLUGIN, 'opencode/routes.generated.json'), 'utf8'));
+const HOOKS = JSON.parse(readFileSync(path.join(PLUGIN, 'hooks/hooks.json'), 'utf8')).hooks;
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
 // A child process the fake spawn returns: `behave(child, call)` runs once the payload is written, by default a close with 0.
 const closes = (code = 0) => (child) => queueMicrotask(() => child.emit('close', code, null));
 
-// A fake spawn that records each call { program, args, options, stdin, killed } and returns a child that `behave` drives.
+// A fake spawn that records each call { program, args, options, stdin, killed, child } and returns a child that `behave`
+// drives.
 function fakeSpawn(behave = closes()) {
   const calls = [];
   const spawn = (program, args, options) => {
@@ -45,6 +54,7 @@ function fakeSpawn(behave = closes()) {
     const child = new EventEmitter();
     child.stdin = Object.assign(new EventEmitter(), { end: (text) => { call.stdin += text; behave(child, call); } });
     child.kill = (signal) => call.killed.push(signal);
+    call.child = child;
     return child;
   };
   return { spawn, calls };
@@ -87,6 +97,21 @@ const shellEvent = (fields = {}) => ({
   ...fields,
 });
 
+// A route list written to `name` under ROOT, for the `routes` seam: the routes as JSON, or `text` as it is.
+const routesFile = (name, routes) => {
+  const file = path.join(ROOT, name);
+  writeFileSync(file, typeof routes === 'string' ? routes : JSON.stringify(routes));
+  return file;
+};
+// A scripts folder holding `names`, empty files, for routes that name scripts of their own.
+const scriptsFolder = (name, names) => {
+  const dir = path.join(ROOT, name);
+  mkdirSync(dir, { recursive: true });
+  for (const each of names) writeFileSync(path.join(dir, each), '');
+  return dir;
+};
+const bashRoute = (script, fields = {}) => ({ event: 'PostToolUse', matcher: '^(?:Bash)$', script, args: [], timeoutMs: 5000, ...fields });
+
 // The bridge set up on a fake context and spawn: `fire(event)` runs its execute.after callback.
 async function bridge({ context = fakeContext(), spawn = fakeSpawn(), env = ENV, ...seams } = {}) {
   assert.equal(await setup(context, { spawn: spawn.spawn, env, node: '/opt/node22/bin/node', ...seams }), undefined);
@@ -99,9 +124,121 @@ const APP = Object.freeze({ name: 'opencode', version: '2.4.0', channel: 'latest
 const ENOENT = () => Object.assign(new Error('spawn node ENOENT'), { code: 'ENOENT' });
 const traceLines = (file) => (existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []);
 
-test('ROUTES is one frozen row: the shell tool`s execute.after runs the session ledger hook', () => {
-  assert.deepEqual(ROUTES, [{ on: 'execute.after', event: 'PostToolUse', tool: 'shell', standard: 'Bash', script: 'hook-bash-post.mjs', timeoutMs: 5000 }]);
-  assert.ok(Object.isFrozen(ROUTES) && Object.isFrozen(ROUTES[0]));
+test('EVENTS is PostToolUse on execute.after alone, frozen: no guard runs on OpenCode yet', () => {
+  assert.deepEqual(EVENTS, { PostToolUse: 'execute.after' });
+  assert.ok(Object.isFrozen(EVENTS));
+});
+
+test('a completed shell call runs hook-bash-post.mjs alone of the generated routes', async () => {
+  assert.deepEqual(selectRoutes(GENERATED, EVENTS, 'execute.after', 'Bash').map((route) => route.script), ['hook-bash-post.mjs']);
+  const { context, calls, fire } = await bridge();
+  assert.deepEqual(Object.keys(context.hooks).sort(), ['create.before', 'execute.after']);
+  await fire(shellEvent());
+  assert.deepEqual(calls.map((call) => call.args), [[HOOK]]);
+});
+
+test('selectRoutes takes the routes of the hook`s events whose matcher fires on the name, in order, and none for a null name', () => {
+  const routes = [
+    { event: 'PostToolUse', matcher: '*', script: 'all.mjs' },
+    { event: 'PostToolUse', matcher: '^(?:Bash|Edit)$', script: 'bash.mjs' },
+    { event: 'PostToolUse', matcher: '^(?:Bas)$', script: 'prefix.mjs' },
+    { event: 'PostToolUse', matcher: null, script: 'none.mjs' },
+    { event: 'PostToolUse', matcher: '(', script: 'broken.mjs' },
+    { event: 'PreToolUse', matcher: '*', script: 'pre.mjs' },
+    { event: 'toString', matcher: '*', script: 'proto.mjs' },
+  ];
+  const scripts = (hook, name, events = EVENTS) => selectRoutes(routes, events, hook, name).map((route) => route.script);
+  assert.deepEqual(scripts('execute.after', 'Bash'), ['all.mjs', 'bash.mjs']);
+  assert.deepEqual(scripts('execute.after', 'bash'), ['all.mjs'], 'a matcher is case-sensitive');
+  assert.deepEqual(scripts('execute.before', 'Bash'), []);
+  assert.deepEqual(scripts('execute.before', 'Bash', { PreToolUse: 'execute.before' }), ['pre.mjs']);
+  assert.deepEqual(scripts('execute.after', null), []);
+  assert.deepEqual(selectRoutes(null, EVENTS, 'execute.after', 'Bash'), []);
+});
+
+test('a call whose tool name the leaf cannot read spawns nothing, and the trace counts it unguarded', async () => {
+  const trace = path.join(ROOT, 'trace-unguarded.jsonl');
+  const { calls, fire } = await bridge({ env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace } });
+  await fire(shellEvent({ tool: 'linear_save_issue', input: { title: 'x' } }));
+  await fire(shellEvent({ tool: 'read', input: { filePath: '/x' } }));
+  await fire(shellEvent({ tool: 'edit', input: { path: 'a.md' } }));
+  assert.equal(calls.length, 0);
+  assert.deepEqual(traceLines(trace).map(({ at, ...rest }) => rest), [
+    { step: 'setup', status: 1 }, { step: 'skip', status: 'unguarded', count: 1 }, { step: 'skip', status: 'unguarded', count: 2 },
+  ], 'edit has a name, and no PostToolUse route fires on it');
+});
+
+test('two matching routes start together, each under its own timeout from its spawn: the one that outlives it is killed', { timeout: 10_000 }, async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const trace = path.join(ROOT, 'trace-parallel.jsonl');
+  const scripts = scriptsFolder('parallel-scripts', ['hook-slow.mjs', 'hook-fast.mjs']);
+  const routes = routesFile('parallel.json', [bashRoute('hook-slow.mjs', { timeoutMs: 1000, args: ['--subagent'] }), bashRoute('hook-fast.mjs', { timeoutMs: 3000 })]);
+  const spawn = fakeSpawn(() => {});
+  const { fire } = await bridge({ spawn, scripts, routes, env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace } });
+  let resolved = false;
+  const running = fire(shellEvent()).then(() => { resolved = true; });
+  while (spawn.calls.length < 2) await settle();
+  assert.deepEqual(spawn.calls.map((call) => call.args), [[path.join(scripts, 'hook-slow.mjs'), '--subagent'], [path.join(scripts, 'hook-fast.mjs')]], 'both started, the flags as given');
+  assert.deepEqual(spawn.calls.map((call) => sent(call).hook_event_name), ['PostToolUse', 'PostToolUse']);
+  t.mock.timers.tick(999);
+  await settle();
+  assert.deepEqual(spawn.calls.map((call) => call.killed), [[], []]);
+  t.mock.timers.tick(1);
+  await settle();
+  assert.deepEqual(spawn.calls.map((call) => call.killed), [['SIGKILL'], []], 'the slow one killed at its own 1000 ms');
+  assert.equal(resolved, false, 'the callback waits for the other');
+  t.mock.timers.tick(1500);
+  await settle();
+  assert.deepEqual(spawn.calls[1].killed, []);
+  spawn.calls[1].child.emit('close', 0, null);
+  await running;
+  assert.deepEqual(traceLines(trace).map(({ step, script, status }) => [step, script, status]), [
+    ['setup', undefined, 1], ['run', 'hook-slow.mjs', 'timeout'], ['run', 'hook-fast.mjs', 0],
+  ]);
+});
+
+test('the session reads end at the longest selected route`s timeout, and each script then has its own from its spawn', { timeout: 10_000 }, async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const scripts = scriptsFolder('deadline-scripts', ['hook-one.mjs', 'hook-three.mjs']);
+  const routes = routesFile('deadline.json', [bashRoute('hook-one.mjs', { timeoutMs: 1000 }), bashRoute('hook-three.mjs', { timeoutMs: 3000 })]);
+  const slow = () => new Promise((resolve) => setTimeout(() => resolve({}), 2500));
+  const context = fakeContext({ sessions: { ses_slow: slow } });
+  const spawn = fakeSpawn(() => {});
+  const { fire } = await bridge({ context, spawn, scripts, routes });
+  const running = fire(shellEvent({ sessionID: 'ses_slow' }));
+  while (context.reads.length === 0) await settle();
+  t.mock.timers.tick(2500);
+  while (spawn.calls.length < 2) await settle();
+  t.mock.timers.tick(999);
+  await settle();
+  assert.deepEqual(spawn.calls.map((call) => call.killed), [[], []], 'reads past the shorter timeout still spawn both');
+  t.mock.timers.tick(2001);
+  await running;
+  assert.deepEqual(spawn.calls.map((call) => call.killed), [['SIGKILL'], ['SIGKILL']]);
+});
+
+test('a route list that is missing, no JSON, or no list registers no tool hook, keeps the PATH hook, and is traced', async () => {
+  const cases = { missing: path.join(ROOT, 'no-routes.json'), garbage: routesFile('garbage.json', '{ not json'), object: routesFile('object.json', { PostToolUse: [] }) };
+  for (const [name, routes] of Object.entries(cases)) {
+    const trace = path.join(ROOT, `trace-routes-${name}.jsonl`);
+    const context = fakeContext();
+    assert.equal(await setup(context, { spawn: fakeSpawn().spawn, env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace }, routes }), undefined, name);
+    assert.deepEqual(Object.keys(context.hooks), ['create.before'], name);
+    assert.deepEqual(traceLines(trace).map(({ step, status }) => [step, status]), [['skip', 'routes'], ['setup', 0]], name);
+  }
+});
+
+test('a generated route the bridge cannot spawn as it is, such as one whose flag is no literal --flag, is left out', async () => {
+  const scripts = scriptsFolder('odd-scripts', ['hook-ok.mjs']);
+  const odd = [
+    bashRoute('hook-ok.mjs', { args: ['; rm -rf /'] }), bashRoute('hook-ok.mjs', { args: '--x' }), bashRoute('../hook-ok.mjs'),
+    bashRoute('hook-ok.mjs', { timeoutMs: 0 }), bashRoute('hook-ok.mjs', { timeoutMs: 1.5 }), bashRoute('hook-ok.mjs', { matcher: 7 }), null, 'hook-ok.mjs',
+  ];
+  const { context } = await bridge({ scripts, routes: routesFile('odd.json', odd) });
+  assert.deepEqual(Object.keys(context.hooks), ['create.before']);
+  const kept = await bridge({ scripts, routes: routesFile('odd-kept.json', [...odd, bashRoute('hook-ok.mjs', { args: ['--subagent'] })]) });
+  await kept.fire(shellEvent());
+  assert.deepEqual(kept.calls.map((call) => call.args), [[path.join(scripts, 'hook-ok.mjs'), '--subagent']], 'the one usable route alone runs');
 });
 
 test('a completed shell call spawns node once with the hook`s absolute path and the standard envelope on stdin', async () => {
@@ -112,7 +249,7 @@ test('a completed shell call spawns node once with the hook`s absolute path and 
   assert.equal(calls[0].program, '/opt/node22/bin/node');
   assert.deepEqual(calls[0].args, [HOOK]);
   assert.deepEqual(sent(calls[0]), {
-    hook_event_name: 'PostToolUse', opencode: { version: '2.4.0' }, session_id: 'ses_root', cwd: PROJECT_DIR,
+    hook_event_name: 'PostToolUse', opencode: { version: '2.4.0', info: {} }, session_id: 'ses_root', cwd: PROJECT_DIR,
     tool_name: 'shell', tool_input: event.input, tool_response: event.result, tool_use_id: 'call_1',
   });
 });
@@ -168,8 +305,8 @@ test('the node program is AIDRIAN_NODE when it is an absolute path, else node', 
   }
 });
 
-test('the payload holds no turn_id, and its opencode mark is an object: with app.version when a string, else {}', async () => {
-  const cases = [[APP, { version: '2.4.0' }], [undefined, {}], [{ ...APP, version: 24 }, {}], [{ name: 'opencode' }, {}], [null, {}]];
+test('the payload holds no turn_id, and its opencode mark is an object: app.version when a string, and the info the leaf read', async () => {
+  const cases = [[APP, { version: '2.4.0', info: {} }], [undefined, { info: {} }], [{ ...APP, version: 24 }, { info: {} }], [{ name: 'opencode' }, { info: {} }], [null, { info: {} }]];
   for (const [app, mark] of cases) {
     const { calls, fire } = await bridge({ context: fakeContext({ app }) });
     await fire(shellEvent());
@@ -179,7 +316,10 @@ test('the payload holds no turn_id, and its opencode mark is an object: with app
   }
   const topLevel = await bridge({ context: { ...fakeContext(), version: '2.4.0' } });
   await topLevel.fire(shellEvent());
-  assert.deepEqual(sent(topLevel.calls[0]).opencode, {}, 'a version outside app is not 2.4.0`s field');
+  assert.deepEqual(sent(topLevel.calls[0]).opencode, { info: {} }, 'a version outside app is not 2.4.0`s field');
+  const withInfo = await bridge();
+  await withInfo.fire(shellEvent({ info: { namespace: 'x', secret: 'hush' } }));
+  assert.deepEqual(sent(withInfo.calls[0]).opencode, { info: infoRead({ namespace: 'x' }) }, 'only what the leaf reads of info is sent');
 });
 
 test('cwd: an absolute workdir; with none, the session`s folder, or the plugin`s own when that read fails; a relative workdir sends nothing', async () => {
@@ -262,7 +402,7 @@ test('session reads that never settle end at the route`s timeout, and the call t
   assert.deepEqual(event.result, before);
 });
 
-test('one deadline ends the reads and the script together: reads that take 3000 ms leave the child 2000 ms', { timeout: 10_000 }, async (t) => {
+test('the reads have the route`s timeout, and the script its own from its spawn: reads of 3000 ms leave the child 5000 ms', { timeout: 10_000 }, async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const slow = () => new Promise((resolve) => setTimeout(() => resolve({}), 3000));
   const context = fakeContext({ sessions: { ses_slow: slow } });
@@ -273,12 +413,12 @@ test('one deadline ends the reads and the script together: reads that take 3000 
   while (context.reads.length === 0) await settle();
   t.mock.timers.tick(3000);
   while (spawn.calls.length === 0) await settle();
-  t.mock.timers.tick(1999);
+  t.mock.timers.tick(4999);
   await settle();
-  assert.deepEqual([resolved, spawn.calls[0].killed], [false, []], 'not killed at 4999 ms in all');
+  assert.deepEqual([resolved, spawn.calls[0].killed], [false, []], 'not killed at 4999 ms after its spawn');
   t.mock.timers.tick(1);
   await running;
-  assert.deepEqual(spawn.calls[0].killed, ['SIGKILL'], 'killed at 5000 ms in all');
+  assert.deepEqual(spawn.calls[0].killed, ['SIGKILL'], 'killed at 5000 ms after its spawn');
 });
 
 test('the parent walk stops at 8 reads, on a chain longer than that and on a cycle', async () => {
@@ -442,16 +582,34 @@ test('the trace holds setup and each run with no command, payload, or output; un
   assert.deepEqual(readdirSync(process.cwd()).sort(), cwdBefore, 'no relative trace file written');
 });
 
-test('the bridge files import only node: built-ins and each other', () => {
+// Every module a file names: static and re-export `from`, bare side-effect imports, and dynamic import().
+const specifiersOf = (text) => [...text.matchAll(/^\s*(?:import|export)\b[^'"]*?\bfrom\s+['"]([^'"]+)['"]|^\s*import\s+['"]([^'"]+)['"]|\bimport\(\s*['"`]([^'"`]+)/gmu)].map((match) => match[1] ?? match[2] ?? match[3]);
+// The lib files the bridge may import, each a leaf that imports node: built-ins alone, so the bridge loads in Bun with
+// no other lib file: the name table now, and the hook-result reader once the bridge applies hook output.
+const LIB_LEAVES = ['lib/hosts/opencode-names.mjs', 'lib/hook-result.mjs'];
+
+test('the bridge files import only node: built-ins, each other, the generated routes, and the lib leaves', () => {
   const dir = path.join(PLUGIN, 'opencode');
-  const files = readdirSync(dir).filter((name) => name.endsWith('.mjs')).sort();
-  assert.deepEqual(files, ['bridge.mjs', 'routes.mjs', 'server.mjs']);
-  for (const name of files) {
+  const files = readdirSync(dir).sort();
+  assert.deepEqual(files, ['bridge.mjs', 'route-select.mjs', 'routes.generated.json', 'routes.mjs', 'server.mjs']);
+  const allowed = new Set([...files.map((name) => `./${name}`), ...LIB_LEAVES.map((leaf) => `../${leaf}`)]);
+  for (const name of files.filter((each) => each.endsWith('.mjs'))) {
     const text = readFileSync(path.join(dir, name), 'utf8');
-    const specifiers = [...text.matchAll(/^\s*(?:import|export)\b[^'"]*?\bfrom\s+['"]([^'"]+)['"]|^\s*import\s+['"]([^'"]+)['"]|\bimport\(\s*['"`]([^'"`]+)/gmu)].map((match) => match[1] ?? match[2] ?? match[3]);
-    for (const specifier of specifiers) assert.ok(specifier.startsWith('node:') || files.includes(specifier.replace(/^\.\//u, '')), `${name} imports ${specifier}`);
+    for (const specifier of specifiersOf(text)) assert.ok(specifier.startsWith('node:') || allowed.has(specifier), `${name} imports ${specifier}`);
     assert.doesNotMatch(text, /\brequire\(/u, name);
   }
+  assert.deepEqual(specifiersOf(readFileSync(path.join(dir, 'bridge.mjs'), 'utf8')).filter((each) => !each.startsWith('node:')),
+    ['../lib/hosts/opencode-names.mjs', './route-select.mjs', './routes.mjs']);
+  assert.deepEqual(specifiersOf(readFileSync(path.join(dir, 'route-select.mjs'), 'utf8')).filter((each) => !each.startsWith('node:')), [], 'the route list half imports node: built-ins alone');
+});
+
+test('each lib leaf the bridge may import imports node: built-ins alone', () => {
+  for (const leaf of LIB_LEAVES) {
+    const text = readFileSync(path.join(PLUGIN, leaf), 'utf8');
+    for (const specifier of specifiersOf(text)) assert.match(specifier, /^node:/u, `${leaf} imports ${specifier}`);
+    assert.doesNotMatch(text, /\brequire\(/u, leaf);
+  }
+  assert.deepEqual(specifiersOf("import { x } from '../y.mjs';\nimport './side.mjs';\nawait import('z');"), ['../y.mjs', './side.mjs', 'z'], 'the scan sees each form');
 });
 
 test('server.mjs`s default export is { id: aidrian, setup }', () => {
@@ -528,9 +686,54 @@ test('the ignore-file walk never lists a node_modules or evals results folder, o
   assert.ok(listed.includes(path.join(root, 'lib')), listed.join('\n'));
 });
 
+// The scripts the bridge can run: the generated routes it selects on each of its hooks for a name the leaf can return.
+const DELIVERED = [...new Set(Object.values(EVENTS).flatMap((hook) => STANDARD_NAMES.flatMap((name) => selectRoutes(GENERATED, EVENTS, hook, name)))
+  .map((route) => route.script))].sort();
+
+// Whether a hooks.json matcher fires on `name`, as Claude Code applies it: "*" or none on every tool, else a full match.
+const hooksJsonFires = (matcher, name) => matcher === undefined || matcher === '*' || new RegExp(`^(?:${matcher})$`, 'u').test(name);
+
+// Conformance: each OpenCode call the tests hold a payload of runs the scripts hooks.json fires on the name the adapter
+// reads from the payload the bridge sends, and a call whose name the leaf cannot read, as an MCP tool's with no info,
+// runs none and is counted unguarded. The fixture's shell call, the adapter tests' shell call, each tool of the leaf's
+// table, OpenCode's read tool, and an MCP tool, with no info and with info that carries fields the leaf drops.
+test('the bridge runs on each OpenCode call the scripts hooks.json fires on the name the adapter reads from its payload', async () => {
+  const fixture = JSON.parse(readFileSync(path.join(REPO, 'test/fixtures/hosts/opencode/bash-post.json'), 'utf8')).post;
+  const fromPayload = (post) => shellEvent({ tool: post.tool_name, sessionID: post.session_id, id: post.tool_use_id, input: { ...post.tool_input, workdir: PROJECT_DIR }, result: post.tool_response });
+  const events = [
+    fromPayload(fixture),
+    shellEvent({ input: { command: 'gh pr view 3', workdir: PROJECT_DIR } }),
+    shellEvent({ tool: 'edit', input: { path: 'a.md', oldString: 'a', newString: 'b' } }),
+    shellEvent({ tool: 'write', input: { path: 'a.md', content: 'x' } }),
+    shellEvent({ tool: 'patch', input: { patchText: '*** Begin Patch\n*** End Patch\n' } }),
+    shellEvent({ tool: 'read', input: { filePath: '/x' } }),
+    shellEvent({ tool: 'linear_save_issue', input: { title: 'x' } }),
+    shellEvent({ tool: 'linear_save_issue', input: { title: 'x' }, info: { namespace: 'linear', title: 'Save issue', secret: 'hush' } }),
+    shellEvent({ info: { namespace: 'builtin', secret: 'hush' } }),
+  ];
+  for (const event of events) {
+    const trace = path.join(ROOT, `trace-conformance-${event.tool}-${events.indexOf(event)}.jsonl`);
+    const { calls, fire } = await bridge({ context: fakeContext({ app: APP }), env: { ...ENV, AIDRIAN_OPENCODE_TRACE: trace } });
+    await fire(event);
+    const ran = calls.map((call) => path.basename(call.args[0])).sort();
+    const payload = { hook_event_name: 'PostToolUse', opencode: { version: APP.version, info: infoRead(event.info) }, session_id: event.sessionID, cwd: PROJECT_DIR, tool_name: event.tool, tool_input: event.input };
+    const name = opencode.hookInput(payload).tool_name;
+    const expected = [...new Set(Object.keys(EVENTS).flatMap((standard) => HOOKS[standard].filter((group) => hooksJsonFires(group.matcher, name))
+      .flatMap((group) => group.hooks.map((hook) => /scripts\/(hook-[\w-]+\.mjs)/u.exec(hook.command)[1]))))].sort();
+    assert.deepEqual(ran, expected, `${event.tool} as ${name}`);
+    for (const call of calls) {
+      assert.deepEqual(sent(call).opencode.info, infoRead(event.info), 'the info sent is the info the routes were picked by');
+      assert.deepEqual(opencode.hookInput(sent(call)).tool_name, name, 'the adapter reads the name the bridge picked');
+    }
+    const unguarded = traceLines(trace).filter((line) => line.status === 'unguarded');
+    if (standardToolName(event.tool, infoRead(event.info)) === null) assert.deepEqual([ran, unguarded.length], [[], 1], event.tool);
+    else assert.equal(unguarded.length, 0, event.tool);
+  }
+});
+
 // The OpenCode page (docs/providers/opencode.md) says which hooks run there: its Hooks table has one row for each
-// script hooks.json runs, and its yes rows are the scripts ROUTES names, so a route or a hook added without the page
-// fails here. The README's entry and the page's Limits say no guard holds an OpenCode session.
+// script hooks.json runs, and its yes rows are the scripts the bridge can run (DELIVERED), so a route or a hook added
+// without the page fails here. The README's entry and the page's Limits say no guard holds an OpenCode session.
 const PAGE = readFileSync(path.join(REPO, 'docs/providers/opencode.md'), 'utf8');
 const hooksJsonScripts = () => {
   const { hooks } = JSON.parse(readFileSync(path.join(PLUGIN, 'hooks/hooks.json'), 'utf8'));
@@ -550,11 +753,15 @@ function hookRows(page) {
   return lines.slice(2).map(cells).map(([script, runs, verified, why]) => ({ script: script.replaceAll('`', ''), runs, verified, why }));
 }
 
-test('the OpenCode page`s Hooks table has a row for each hooks.json script, and its yes rows are the scripts of ROUTES', () => {
+test('the bridge can run hook-bash-post.mjs alone on OpenCode', () => {
+  assert.deepEqual(DELIVERED, ['hook-bash-post.mjs']);
+});
+
+test('the OpenCode page`s Hooks table has a row for each hooks.json script, and its yes rows are the scripts the bridge can run', () => {
   const rows = hookRows(PAGE);
   assert.deepEqual(rows.map((row) => row.script).sort(), [...hooksJsonScripts()].sort());
   assert.equal(new Set(rows.map((row) => row.script)).size, rows.length, 'one row a script');
-  assert.deepEqual(rows.filter((row) => row.runs === 'yes').map((row) => row.script).sort(), [...new Set(ROUTES.map((route) => route.script))].sort());
+  assert.deepEqual(rows.filter((row) => row.runs === 'yes').map((row) => row.script).sort(), DELIVERED);
   for (const row of rows) {
     assert.ok(['yes', 'no'].includes(row.runs), row.script);
     assert.ok(row.verified === '-' || row.verified === 'fixture only' || /^live on OpenCode \d+\.\d+\.\d+/u.test(row.verified), `${row.script}: ${row.verified}`);
@@ -563,11 +770,57 @@ test('the OpenCode page`s Hooks table has a row for each hooks.json script, and 
   }
 });
 
-test('the hook table check fails on a missing script and on a yes row ROUTES does not name', () => {
+test('the hook table check fails on a missing script and on a yes row the bridge cannot run', () => {
   const rows = hookRows(PAGE.replace(/^\| `hook-stop\.mjs` .*\n/mu, ''));
   assert.notDeepEqual(rows.map((row) => row.script).sort(), [...hooksJsonScripts()].sort());
   const yes = hookRows(PAGE.replace('| `hook-bash.mjs` | no |', '| `hook-bash.mjs` | yes |')).filter((row) => row.runs === 'yes').map((row) => row.script);
-  assert.notDeepEqual(yes.sort(), ROUTES.map((route) => route.script).sort());
+  assert.notDeepEqual(yes.sort(), DELIVERED);
+});
+
+// The standard tools hooks.json names that OpenCode has no tool for, each with its reason, in the page's list: each
+// listed name is an alternative of a hooks.json matcher, and none is a name the leaf returns.
+const NO_EQUIVALENT = 'Standard tools with no OpenCode equivalent';
+// The lines under the `### <NO_EQUIVALENT>` heading, to the next heading of any level.
+const subsectionLines = (page, title) => {
+  const lines = page.split('\n');
+  const start = lines.indexOf(`### ${title}`);
+  if (start === -1) return [];
+  const end = lines.findIndex((line, at) => at > start && /^#{1,6} /u.test(line));
+  return lines.slice(start + 1, end === -1 ? undefined : end);
+};
+const noEquivalentNames = (page) => subsectionLines(page, NO_EQUIVALENT).map((line) => /^- `([^`]+)`: \S/u.exec(line)?.[1]).filter(Boolean)
+  .flatMap((entry) => entry.split('|'));
+const matcherAlternatives = new Set(Object.values(HOOKS).flat().flatMap((group) => (typeof group.matcher === 'string' ? group.matcher.split('|') : [])));
+
+test('the OpenCode page lists the standard tools with no OpenCode equivalent, each a hooks.json matcher name the leaf never returns', () => {
+  const names = noEquivalentNames(PAGE);
+  assert.deepEqual(names, ['EnterWorktree', 'ExitPlanMode', 'NotebookEdit', 'Agent', 'Task', 'AskUserQuestion']);
+  for (const name of names) {
+    assert.ok(matcherAlternatives.has(name), `${name} is no hooks.json matcher name`);
+    assert.ok(!STANDARD_NAMES.includes(name), `${name} is a name the leaf returns`);
+  }
+  const page = PAGE.replace('- `EnterWorktree`:', '- `Frobnicate`:');
+  assert.ok(!noEquivalentNames(page).every((name) => matcherAlternatives.has(name)), 'a name hooks.json does not hold fails');
+});
+
+// The other direction: each plain tool name a hooks.json matcher names, an identifier that is no MCP name, in a matcher
+// that is a plain list of names (a pattern such as the plugin GitHub server's is not one), is one the leaf maps (a key of RAW_NAMES), another host's own raw name for a standard tool (as Codex's apply_patch),
+// or on the page's list, so a tool added to hooks.json says how OpenCode meets it.
+const PLAIN_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/u;
+const plainAlternatives = new Set(Object.values(HOOKS).flat().map((group) => group.matcher)
+  .filter((matcher) => typeof matcher === 'string' && matcher.split('|').every((name) => PLAIN_NAME.test(name))).flatMap((matcher) => matcher.split('|')));
+const otherHostNames = new Set(HOSTS.filter((host) => host.id !== 'opencode')
+  .flatMap((host) => [...plainAlternatives].map((standard) => [standard, host.rawToolName(standard)]))
+  .filter(([standard, raw]) => raw !== standard).map(([, raw]) => raw));
+const unaccounted = (alternatives, listed) => [...alternatives].filter((name) => !name.startsWith('mcp__'))
+  .filter((name) => !Object.hasOwn(RAW_NAMES, name) && !otherHostNames.has(name) && !listed.includes(name));
+
+test('every plain tool name of a hooks.json matcher is mapped by the leaf, another host`s raw name, or on the no-equivalent list', () => {
+  assert.ok(otherHostNames.has('apply_patch'), 'Codex`s file edit tool is read from its adapter');
+  for (const name of ['Bash', 'EnterWorktree', 'apply_patch', 'Task']) assert.ok(plainAlternatives.has(name), `the plain names hold ${name}`);
+  assert.deepEqual(unaccounted(plainAlternatives, noEquivalentNames(PAGE)), []);
+  assert.deepEqual(unaccounted(new Set([...plainAlternatives, 'Frobnicate']), noEquivalentNames(PAGE)), ['Frobnicate'], 'a new tool name fails');
+  assert.deepEqual(unaccounted(plainAlternatives, noEquivalentNames(PAGE).filter((name) => name !== 'ExitPlanMode')), ['ExitPlanMode']);
 });
 
 test('the README`s OpenCode entry says the plugin keeps the session ledger only, and that no guard holds an OpenCode session', () => {

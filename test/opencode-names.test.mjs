@@ -1,16 +1,13 @@
 // The leaf that maps OpenCode's tool names to the standard ones (lib/hosts/opencode-names.mjs): the one table the adapter
-// reads them from.
+// and the bridge read them from. test/opencode-bridge.test.mjs holds it to node: imports alone.
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
 import test from 'node:test';
 
 import { NATIVE_NAMES, RAW_NAMES, STANDARD_NAMES, infoRead, standardToolName } from '../plugins/aidrian/lib/hosts/opencode-names.mjs';
 import opencode from '../plugins/aidrian/lib/hosts/opencode.mjs';
 
-const LEAF = path.resolve(import.meta.dirname, '../plugins/aidrian/lib/hosts/opencode-names.mjs');
 const MCP = 'linear_save_issue';
 const CASES = [
   ['shell', undefined, 'Bash'],
@@ -59,13 +56,6 @@ test('RAW_NAMES reverses every row with a standard tool and NATIVE_NAMES only th
     assert.equal(Object.getPrototypeOf(map), null, 'no name of Object.prototype is a mapped tool');
   }
   for (const [standard, raw] of Object.entries(NATIVE_NAMES)) assert.equal(standardToolName(raw), standard);
-});
-
-test('the leaf imports node built-ins only, so it loads on its own', () => {
-  const specifiers = [...readFileSync(LEAF, 'utf8').matchAll(/^\s*(?:import|export)\b[^'"]*?from\s+['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]/gmu)]
-    .map((match) => match[1] ?? match[2]);
-  for (const specifier of specifiers) assert.match(specifier, /^node:/u, specifier);
-  assert.doesNotMatch(readFileSync(LEAF, 'utf8'), /^\s*import\s+['"]/mu, 'no bare side-effect import');
 });
 
 test('the adapter reads names through the leaf: a marked shell call is Bash, and an unmarked one is unchanged', () => {

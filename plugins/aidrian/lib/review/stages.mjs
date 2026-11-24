@@ -216,6 +216,7 @@ export async function runStages(s) {
           // A finding about the review bot's own receipt or status card, not the change, is dropped with a note
           // (bot-echo.mjs): the reviewer read the pull request's conversation for itself.
           const echoes = dropBotEchoes(outcome.findings, { comments: s.comments, reviewer: config.github.reviewer, changes: s.changes });
+          const dropped = echoes.notes.length ? [...(outcome.dropped ?? []), ...echoes.notes] : outcome.dropped;
           // From review round N, the disposition table makes a low finding a residual: it is recorded accepted, blocks
           // nothing, and `residuals` names it for the pull request body. cleanOutput (reviewers.mjs) already limits a
           // reviewer's output to the schema's keys; this strip is the step's own rule for any exec outcome, so the three
@@ -236,8 +237,7 @@ export async function runStages(s) {
           recordFindings(state, pass.id, {
             head, reviewer: pass.reviewer, seconds, files: Array.isArray(pass.files) ? [...pass.files].sort() : null, findings: list.length + ruled.length, open: list.filter(blocks).length, list, verdicts: outcome.verdicts,
             ...(ruled.length ? { ruled } : {}), ...(carried.length ? { carried } : {}),
-            ...(pass.role ? { contracts: outcome.contracts ?? [], cross_notes: outcome.cross_notes ?? [] } : {}),
-            dropped: echoes.notes.length ? [...(Array.isArray(outcome.dropped) ? outcome.dropped : []), ...echoes.notes] : outcome.dropped,
+            ...(pass.role ? { contracts: outcome.contracts ?? [], cross_notes: outcome.cross_notes ?? [] } : {}), dropped,
           }, { mint: state.floored === true, securityPass: state.planNote?.passes?.[pass.id]?.security === true, paths: s.paths.at(head), listed: listed.get(pass.id), plan: planPasses(plan), stage: stage.name, reviewer: pass.reviewer, range: closingRange(root, s.base) });
           recorded = true;
         }

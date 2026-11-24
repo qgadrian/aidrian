@@ -123,7 +123,7 @@ export function viewPrAt(cwd, forge = null) {
 // read is null: a dynamic head or number is read through gh; a dynamic repository counts as this one.
 // `cwd` is the folder a query file a `gh api graphql` call names is read from.
 export function readMerge({ program, args, environment = [] }, env = {}, { cwd = process.cwd() } = {}) {
-  if (program === 'curl') return readCurl(args);
+  if (program === 'curl') return readCurl(args, cwd);
   if (program !== 'gh') return null;
   const merge = readGh(args, environment, env, cwd);
   return merge && !merge.graphql ? { ...merge, ...ghHosts(args, environment, env, commandPath(args)[0] === 'api') } : merge;
@@ -239,17 +239,36 @@ const placesOf = (named) => {
   return { ...(hosts.length ? { hosts } : {}), ...(named.includes(UNREAD_HOST) ? { hostUnread: true } : {}) };
 };
 
-// A word that names a pull request's REST merge URL path, or GraphQL's endpoint path, as written, a variable included.
-const CURL_MERGE = /\/repos\/[^\s?#]+\/pulls\/[^\s/?#]+\/merge\/?(?:[?#]|$)/iu;
-const CURL_GRAPHQL = /(?:^|\/)graphql\/?(?:[?#]|$)/iu;
+// A URL path that is a pull request's REST merge, or GraphQL's endpoint, a variable included.
+const CURL_MERGE = /\/repos\/.+\/pulls\/[^/]+\/merge\/?$/iu;
+const CURL_GRAPHQL = /\/graphql\/?$/iu;
+
+// A word's URL path as curl reads a URL: no scheme and host, or, with no scheme, no first segment, which curl takes as
+// the host (a variable there included); and no query or fragment. A bare host has none.
+const urlPath = (text) => {
+  const rest = /^[a-z][a-z0-9+.-]*:\/\//iu.test(text) ? text.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*/iu, '') : text.startsWith('/') ? text : text.replace(/^[^/]*/u, '');
+  return rest.replace(/[?#].*$/u, '');
+};
+
+// The files a curl call sends as its body: an `@file` value (`-d @f`, `-d@f`, `--data=@f`), and `-T`'s file.
+function curlFiles(args) {
+  const files = [];
+  args.forEach((token, i) => {
+    if (token.dynamic) return;
+    const at = /^(?:-[A-Za-z]+|--[a-z-]+=)?@(.+)$/u.exec(token.text);
+    if (at && at[1] !== '-') files.push(at[1]);
+    if (['-T', '--upload-file'].includes(token.text) && args[i + 1] && !args[i + 1].dynamic) files.push(args[i + 1].text);
+  });
+  return files;
+}
 
 // Whether one curl call may merge, as { outright: true }, or null. curl is no merge tool, and reading which of its
-// transfers writes needs the arity of every curl option, so the rule parses none of it: any word that names a REST merge
-// URL, GraphQL's endpoint, or a merge mutation (namesMutation, a JSON body decoded) refuses the call outright, a read
-// included; `gh pr merge`, `gh pr view`, and `gh api` do those calls, and the guard reads them.
-// A word's JSON is read from its first `{`, so a body attached to its option (`-d{...}`, `--data={...}`) is decoded too.
-const curlNames = (text) => CURL_MERGE.test(text) || CURL_GRAPHQL.test(text) || namesMutation(text) || (text.includes('{') && namesMutation(text.slice(text.indexOf('{'))));
-const readCurl = (args) => (args.some((token) => curlNames(token.text)) ? { outright: true } : null);
+// transfers writes needs the arity of every curl option, so the rule parses none of it: a word whose URL path is a REST
+// merge's or GraphQL's, or a word or a body file it can read that names a merge mutation (namesMutation, a JSON body
+// decoded, from its first `{` when an option is glued to it), refuses the call outright, a read included; `gh pr merge`,
+// `gh pr view`, and `gh api` do those calls, and the guard reads them. `cwd` is the folder a body file is read from.
+const curlNames = (text) => CURL_MERGE.test(urlPath(text)) || CURL_GRAPHQL.test(urlPath(text)) || namesMutation(text) || (text.includes('{') && namesMutation(text.slice(text.indexOf('{'))));
+const readCurl = (args, cwd) => (args.some((token) => curlNames(token.text)) || curlFiles(args).some((file) => namesMutation(queryFile(file, cwd))) ? { outright: true } : null);
 
 // Whether a `gh api` call's literal `query` field (`-f query=...`, `-F query=...`, not a file) names a merge mutation.
 // With `--input`, the body is the file's, and gh sends the fields in the URL: graphqlMerge reads that file instead.

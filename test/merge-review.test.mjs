@@ -396,8 +396,17 @@ test('a curl call that names a merge URL, GraphQL, or a merge mutation is refuse
     `curl "$API" --data='${escaped}'`,
     'curl "$API" -d \'{"query":"mutation { enqueuePullRequest(input: {}) { clientMutationId } }"}\'',
   ]) assert.equal(r.run(command), CURL_REASON, command);
+  // A body file the call sends that names a mutation refuses it, whatever URL it goes to.
+  const file = path.join(r.dir, 'merge.json');
+  writeFileSync(file, escaped);
+  for (const command of [`curl "$API" -d @${file}`, `curl "$API" --data-binary=@${file}`, `curl "$API" -d@${file}`, `curl "$API" -T ${file}`]) {
+    assert.equal(r.run(command), CURL_REASON, command);
+  }
+  // Only a URL's path counts: not its host, its query, or its fragment.
   for (const command of ['curl -X PUT https://api.github.com/repos/acme/notes/pulls/5', 'curl "$UPLOAD_URL" --data-binary "$JSON"',
-    'curl -X POST https://uploads.example.com/upload -d x', 'curl https://graphql.example.com/health']) {
+    'curl -X POST https://uploads.example.com/upload -d x', 'curl https://graphql.example.com/health', 'curl https://graphql', 'curl graphql',
+    'curl https://graphql/', "curl -X POST 'https://uploads.example.com/upload?next=/repos/acme/notes/pulls/5/merge' -d x",
+    "curl 'https://uploads.example.com/upload?return=/graphql#/graphql' -d x", 'curl "$UPLOAD_URL" -d @missing.json']) {
     assert.equal(r.run(command), null, command);
   }
   assert.doesNotMatch(CURL_REASON, /\b(?:I|you|your)\b/u);

@@ -579,6 +579,50 @@ test('a local base ref older than the forge, which both name alike once pinned, 
   assert.deepEqual(launchedServers(fx), ['issues'], 'the server both reads define once the base is pinned');
 });
 
+// The one policy read takes its local half at the commit the start pinned, never at the base ref, which may move after.
+test('teamPolicy with the pinned tip reads the local half at that commit, whatever the tracking ref names since', (t) => {
+  const fx = runFixture(t);
+  const pinned = fx.git('rev-parse', 'refs/remotes/origin/main').trim();
+  moveMain(fx, { ...fx.committed, projectRun: { ...fx.committed.projectRun, maxStarts: 5 } });
+  fx.git('fetch', '-q', fx.bare, '+refs/heads/main:refs/remotes/origin/main');
+  const repository = { host: 'github.com', owner: 'acme', name: 'widgets' };
+  assert.equal(teamPolicy(fx.project, repository, fx.forge).maxStarts, 5, 'the ref moved on');
+  assert.equal(teamPolicy(fx.project, repository, fx.forge, { tip: pinned }).maxStarts, 300, 'the pinned commit\'s value');
+});
+
+// The forge's half of the one read: a server the pinned commit still defines and the forge no longer does is not handed over.
+test('a server the forge revokes while the pinned commit still defines it is not handed to the launch', (t) => {
+  const fx = runFixture(t, { projectRun: { allow: true, unverifiedHosts: true, mcpServers: { issues: ISSUES_SERVER } } });
+  fx.serveConfig({ ...fx.committed, projectRun: { allow: true, unverifiedHosts: true } });
+  const started = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(started.exitCode, 0, started.err.join('\n'));
+  assert.deepEqual(launchedServers(fx), []);
+});
+
+// Another start of the run lands between the cap check and the write-ahead row: the cap holds under the ledger's lock.
+test('projectRun.maxStarts holds under the write-ahead lock, against the ledger as it is then', (t) => {
+  const fx = runFixture(t, { projectRun: { allow: true, unverifiedHosts: true, maxStarts: 1, maxParallel: 2 } });
+  const asked = fx.forge.repository;
+  let landed = false;
+  fx.forge.repository = (...args) => {
+    if (!landed) {
+      landed = true;
+      const now = at(Date.now());
+      appendToRun(fx.state, 'launch', () => ({ rows: [
+        { event: 'start', key: 'ENG-4', attempt: 1, session: DRIVER, name: 'launch · ENG-4 · 1', cwd: fx.dir, branch: 'fix/eng-4-typo', outcome: 'started', id: 'pid-1-0000000000000000', child: null, at: now },
+        { event: 'issue', key: 'ENG-4', state: 'running', at: now },
+      ] }));
+    }
+    return asked(...args);
+  };
+  const refused = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(refused.exitCode, 1, refused.out.join('\n'));
+  assert.deepEqual(refused.err, ['aidrian project start: the run started 1 sessions, and a run starts at most 1, under projectRun.maxStarts and the cap in code of 1000']);
+  assert.deepEqual(fx.claude.starts(), []);
+  assert.equal(fx.rows().filter((row) => row.event === 'start' && row.key === 'ENG-1').length, 0, 'no start row');
+  assert.equal(existsSync(path.dirname(work(fx))), false, 'no clone is left');
+});
+
 // The base tip keeps a gitlink in a host folder the branch, cut before it, does not have.
 test('a host path the base keeps as a submodule parks the issue, named as the base\'s', (t) => {
   const fx = runFixture(t, { files: { '.claude/settings.json': '{"permissions":{}}\n' } });

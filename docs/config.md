@@ -1973,11 +1973,13 @@ the review bot, github.reviewer on the default branch, passed exactly that head 
 the harness-config flow on that head, or the default branch sets `github.autoMerge.includeGuardedPaths` and no policy
 file changed; otherwise its clone holds the base branch's copies, git leaves them out of its commits, and a push that
 changes one is refused.
-The start reads the team's policy once more after it pins and fetches the base tip, so the local half of that read
-is the pinned commit, and every value from there on comes from that one answer: projectRun.outsideSandbox, mcpServers,
-registries, localBinding, and maxParallel, github.reviewer, and `github.autoMerge.includeGuardedPaths` among them.
+The start pins the base tip, reads the team policy once with its local half at that commit, and decides everything
+from that read: the machine's switch and solo, projectRun.unverifiedHosts, the caps, maxStarts asked again under the
+ledger's lock with the write-ahead row, the access check with outsideSandbox and localBinding, the clone's checks, and
+every value of the launch, mcpServers and registries among them, as well as github.reviewer and
+`github.autoMerge.includeGuardedPaths`.
 Since a key counts only where the local read and the forge's define it alike, the pinned commit bounds each of them.
-A change on the forge after that read is an accepted residual.
+Only checks that read no policy run before the pin; a change on the forge after the read is an accepted residual.
 The start row records that head as `overlay`, and `<attempt>/base-copies.txt` lists the files, cleaned and fenced as
 data from the branch.
 The branch's own changes stay in its commits for the pull request's review.

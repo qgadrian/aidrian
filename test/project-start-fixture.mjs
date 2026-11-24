@@ -210,7 +210,7 @@ export function handVerdict(work, session, confine = passVerdict) {
 // The project, run, and helpers. `projectRun` is the committed projectRun, which allows runs and unverified hosts by
 // default; `working` a working copy config.json
 // written over the committed one; `local` the machine's git-ignored file; `forgeConfig` the config the forge answers
-// with, the committed one by default; `bootstrap` the worktrees' bootstrap command; `ignore` more .gitignore lines;
+// with, the committed one by default, which the fixture's `serveConfig` changes; `bootstrap` the worktrees' bootstrap command; `ignore` more .gitignore lines;
 // `files` more files committed with the config, by path; `links` symbolic links committed with it, each path to its
 // target; `inRepo` keeps the worktrees in `.worktrees` of the checkout;
 // `config` more keys of the committed config.json, its `git` group merged with the worktrees folder.
@@ -268,7 +268,12 @@ export function runFixture(t, { projectRun = { allow: true, unverifiedHosts: tru
   };
   const project = findProject(dir);
   const { config } = loadConfig(project);
-  const text = () => JSON.stringify(forgeConfig ?? committed);
+  // The config the forge answers with, which `serveConfig(value)` changes for the reads after it.
+  let served = forgeConfig ?? committed;
+  const text = () => JSON.stringify(served);
+  const serveConfig = (value) => {
+    served = value;
+  };
   const forge = fakeForge(text, () => execFileSync('git', ['-C', bare, 'rev-parse', 'refs/heads/main'], { encoding: 'utf8' }).trim());
   const claude = fakeClaude({ dir, env });
   const store = openStore(state, { checkouts: project.checkouts, maxChain: config.session.handoff.maxChain });
@@ -283,5 +288,5 @@ export function runFixture(t, { projectRun = { allow: true, unverifiedHosts: tru
   const cmd = (args, { session = DRIVER, ...more } = {}) => projectCommand(args, { cwd: dir, env: as(session), home, forge, spawn: claude.run, wait: noWait, pause: noWait, platform: 'linux', ...more });
   const run = () => readRun(state, 'launch');
   const rows = () => run().rows;
-  return { root, dir, state, worktrees, home, bin, bare, env, as, git, project, config, forge, claude, store, cmd, run, rows, committed };
+  return { root, dir, state, worktrees, home, bin, bare, env, as, git, project, config, forge, claude, store, cmd, run, rows, committed, serveConfig };
 }

@@ -26,14 +26,14 @@ and `product_sensitive` docs when a comment touches what users see, money, or da
 aidrian pr review <n>    # one step of the review plan; give the shell call a 15-minute timeout
 ```
 
-It plans the review from the diff and config.json `review`, runs what it can, and prints the next action.
+It plans the review from the diff and config.json `review`, runs what it can itself, and prints the next action.
 Act on `status`, then run it again, until it stops:
 
 | Status | Do |
 | --- | --- |
 | `dispatch` | run each `dispatch[]` entry as its read-only `agent`, briefed with the entry as `references/review-plan.md` says; record each with its `record` command |
 | `fix_required` | triage `open`, `flows`, `tests_removed`, and `checks_failing` in step 3, fix, push |
-| `running`, `checks_pending`, `timed_out` | run it again; `incomplete` with `retry_recommended: true`: act on `reason`, then again |
+| `running`, `checks_pending`, `timed_out` | run it again; `incomplete`: as `references/review-plan.md` says |
 | `received`, `none_needed` | copy `residuals` to the body's Accepted residuals; step 2 for comments people or the bot left, then step 7 |
 | `received` with `replies.unanswered` | run it once more; report what is left |
 | `replies.waiting` | run nothing for it; report each thread as waiting on its `login`'s machine |
@@ -110,7 +110,7 @@ The agent that made the fix verifies, commits, and pushes it, then returns the S
 
 ## 7. Summary
 
-Report, in order: the triage table; what changed per file, with triage numbers; the exact verification
+Report, in this order: the triage table; what changed per file, with triage numbers; the exact verification
 commands, pass or fail; the replies posted, and any that failed; and a sign-off naming the addressed,
 not applicable, accepted, and blocked rows, the residual risks, and whether the pull request is ready for another review.
 On a draft, when config.json `github.markReady` is `"auto"`, the default, or the Human asked in this session,

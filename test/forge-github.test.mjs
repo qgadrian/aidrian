@@ -171,7 +171,9 @@ test('docs/providers/adding-a-host.md names every method a forge adapter impleme
   // Every place the file table names, past the adapter's own `<id>` files, is a file in the repository.
   const table = section.slice(0, section.indexOf('\n\n', section.indexOf('| File |')));
   const named = [...table.matchAll(/^\| `([^`]+)` \|/gmu)].map((row) => row[1]).filter((file) => !file.includes('<'));
-  assert.ok(named.includes('plugins/aidrian-claude-mod/lib/format.mjs'), 'the Claude mod\'s forge table is listed');
+  for (const file of ['plugins/aidrian-claude-mod/lib/format.mjs', 'plugins/aidrian/lib/rules/<id>/session-calls.mjs', 'plugins/aidrian/scripts/hook-bash-post.mjs']) {
+    assert.ok(table.includes(`| \`${file}\` |`), `the table lists ${file}`);
+  }
   assert.deepEqual(named.filter((file) => !existsSync(new URL(`../${file}`, import.meta.url))), []);
 });
 

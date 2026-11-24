@@ -105,9 +105,10 @@ Fix every finding a review identified; never leave one silently open. Do not go 
   aidrian decisions resolve --domain backlog --class backlog-rank --reversible no,no,no,no
   ```
 
-  - `decide`: follow its whole answer, with severity `low` for that file's § Second look, then fix within the round cap.
-    A second look with no `approved` makes it `ask`. The record is the `decision_made` row `resolve` logs and one
-    line in the report: it writes no rule, so it takes no marker.
+  - `decide`, with `secondLook` `null` or its `minSeverity` above `low`, this stop's severity: fix within the round cap.
+    The record is the `decision_made` row `resolve` logs and one line in the report: it writes no rule, so it takes no marker.
+  - `decide` with a `secondLook` at `minSeverity` `low`: it names a second look for this stop, which records nothing for one
+    to read, so run none and treat the answer as `ask`.
   - `ask`: ask the Human, and in an unattended run park it with class `scope`, whatever `unattended` says.
 
   The round cap and the extra rounds past it are unchanged: this settles only the cost question before the cap.

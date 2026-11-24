@@ -1112,10 +1112,10 @@ Whether the rest is worth its cost is a `scope` decision.
 Its options: fix the open findings within the round cap, record them as accepted residuals, or split the pull request.
 The session runs `aidrian decisions resolve --domain backlog --class backlog-rank --reversible no,no,no,no` ([Decisions](config.md#decisions)).
 Its class is `backlog-rank`, since the question is which findings get fixed now and which become residuals or follow-ups.
-Under `decide`, it follows the whole answer, then fixes within the round cap.
-That includes the [second look](../plugins/aidrian/skills/knowledge/references/decisions.md#second-look) `resolve` names.
-A second look with no `approved` makes it `ask`.
+Under `decide`, with `secondLook` `null` or its `minSeverity` above `low`, this stop's severity, the session fixes within the round cap.
 The record is the `decision_made` row `resolve` logs and one line in the session's report: it writes no rule, so it takes no marker.
+A `decide` with a `secondLook` at `minSeverity` `low` names a second look for this stop, which records nothing for one to read.
+So the session runs none and treats the answer as `ask`.
 Under `ask`, the Human answers, and an unattended run parks it with class `scope`, whatever `unattended` says.
 The stop changes neither the cap nor the rules below: an extra round over a red flag always needs the Human.
 

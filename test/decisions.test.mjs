@@ -6,6 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
+import { loadTable as dispositionTable } from '../plugins/aidrian/lib/finding-disposition.mjs';
 import { ageDays, CLASS_MAX, DECISION_DOMAINS, DECISION_STATUSES, decisionClasses, decisionWarnings, escalateDocWarnings, isClassName, isDecisionLine, loadVocab, lowerMode, parseDecisions, resolveAuthority, setDecisionStatus, unattendedAnswer, undoDecision } from '../plugins/aidrian/lib/decisions.mjs';
 import { findWrapViolations } from '../plugins/aidrian/lib/markdown-wrap.mjs';
 import { check as prBodyDeny } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
@@ -677,4 +678,14 @@ test('the review rules\' fix-cost stop resolves to decide under decide-reversibl
   const stop = question({ domain, class: kind, reversible });
   assert.deepEqual(pick(resolveAuthority(open, stop)), ['decide', 'mode']);
   assert.equal(resolveAuthority(DEFAULTS, stop).authority, 'ask');
+  // The stop records nothing a second look could read, so one that covers it fails closed to ask. Its severity is the
+  // lowest, so only a secondLook at minSeverity low covers it, and the default (high) leaves a plain decide.
+  const severities = dispositionTable().severities;
+  assert.equal(severities.at(-1), 'low', 'low is the lowest severity a secondLook can name');
+  assert.equal(DEFAULTS.decisions.secondLook.minSeverity, 'high', 'the default second look does not cover the stop');
+  for (const file of sources) {
+    const text = readFileSync(path.join(ROOT, file), 'utf8').replace(/\s+/gu, ' ');
+    assert.match(text, /`decide`,? with `secondLook` `null` or its `minSeverity` above `low`, this stop's severity/u, `${file} decides only past a second look`);
+    assert.match(text, /`decide` with a `secondLook` at `minSeverity` `low`.*treats? the answer as `ask`/u, `${file} fails closed on a second look`);
+  }
 });

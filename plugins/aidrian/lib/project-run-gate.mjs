@@ -263,14 +263,17 @@ const baseCopiesLine = (file) => `This branch changes host config or instruction
 // publication decision and fails closed: it names the finding by the id and file the engine already posted on the pull
 // request, as the record its summary comment carries holds them under the default publish settings (docs/review.md,
 // Finding ids and Publishing), never by a title or a reason, so the body and the stop show nothing the engine withholds.
-export const HOST_FILE_RESIDUAL = 'A low or medium review finding whose fix lies in a host file, whose id and file the review step\'s own post '
-  + 'on this pull request already shows, as the record its summary comment carries does, is a stated residual, never a decision: '
+// Only that comment for the head the round reviewed counts, and a security finding never takes the route.
+export const HOST_FILE_RESIDUAL = 'A low or medium review finding whose fix lies in a host file, that the review step does not mark `security`, '
+  + 'and whose id and file the review step\'s own summary comment for the pull request\'s current head, the head this round reviewed, '
+  + 'already shows in the record it carries, is a stated residual, never a decision: '
   + 'an item of the pull request body\'s Accepted residuals that names it only by that shown id and file, '
   + 'as `<id>: the run may not write this host file (<file>)` with its `R<round>-<n>` id, and no title or reason. '
   + 'Every other finding of the round takes its own route first, and keeps any decision it raises, which then decides the result. '
   + 'Only when such residuals are the one stop left, record the result pr_open with only that shown file in its stop and no decisions, and run no merge: '
   + 'the Human reads the file\'s diff and merges it. '
-  + 'A finding whose id or file no such post shows, as under review.record "local", which posts none, parks as before.';
+  + 'A security finding in a host file parks as before, whatever a post shows, and so does a finding whose id or file no such comment shows: '
+  + 'one posted for an earlier head, or none, as under review.record "local", which posts none.';
 
 // The line of projectPrompt for an attempt on an existing branch: stop-action's catch-up, whose line names the one way
 // it merges a base its pull request conflicts with (project-stops.mjs catchUpStop), and parks one into another branch.

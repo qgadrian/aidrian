@@ -341,7 +341,7 @@ export const includesPolicyFiles = (policies) => includesGuardedPaths(policies)
 
 // Why a change the includePolicyFiles lift lets through the paths check may not merge, or null. The policy that judges
 // the merges after this one is the config the merge leaves, so, in this order, each failing closed:
-//   - the pull request changes no pointer file (`.aidrian.json` at the project root, in any case), which would move the
+//   - the pull request changes no pointer file (trailPaths' `pointer`, at the project root, in any case), which would move the
 //     config the gate reads;
 //   - its head holds the base's tip now: the forge's compare of the base's tip by its SHA, `pr.baseOid` (the pull
 //     request's baseRefOid), with the head, through the same facade, is behind by none, so the head's config is the one
@@ -364,7 +364,7 @@ export const includesPolicyFiles = (policies) => includesGuardedPaths(policies)
 export function headPolicyProblem(forge, pr, policies, files, prefix = '') {
   if (!includesPolicyFiles(policies) || !files.some(({ path }) => isPolicyPath(path, policies.policyFiles))) return null;
   const at = String(pr.head).slice(0, 7);
-  const pointer = `${prefix}.aidrian.json`.toLowerCase();
+  const pointer = trailPaths(prefix).pointer.toLowerCase();
   const moved = files.find(({ path }) => path.toLowerCase() === pointer);
   if (moved) return `it changes ${JSON.stringify(moved.path)}, the pointer file that locates the config, which includePolicyFiles never lets a pull request change by itself`;
   const behind = (() => {
@@ -377,7 +377,7 @@ export function headPolicyProblem(forge, pr, policies, files, prefix = '') {
     }
   })();
   if (behind !== 0) return `head ${at} ${behind === null ? 'cannot be compared with its base on the forge' : `is behind its base ${pr.base} by ${behind} ${behind === 1 ? 'commit' : 'commits'}`}, so the merged config is not the one checked; merge the base first`;
-  const linked = headEntryProblem(forge, pr, `${prefix}.aidrian.json`, { optional: true });
+  const linked = headEntryProblem(forge, pr, trailPaths(prefix).pointer, { optional: true });
   if (linked) return linked;
   const seen = [];
   let config;

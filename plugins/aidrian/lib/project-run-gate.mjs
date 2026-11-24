@@ -61,7 +61,7 @@ import { DEFAULTS } from './config-defaults.mjs';
 import { pauseSync, resolvedPath } from './fs.mjs';
 import { changeNotFound, forgeDomains, forgeFor, forgeTokenVars } from './forges/index.mjs';
 import { gateGit, knownPrefix } from './git.mjs';
-import { configPathIn, isPolicyPath, mayFollowTeamDefault, projectId, stateRoot, trailPaths } from './project.mjs';
+import { configPathIn, DEFAULT_CONFIG, isPolicyPath, mayFollowTeamDefault, projectId, stateRoot, trailPaths } from './project.mjs';
 import { botProblem, NO_BOT, readHumanSignoffs, signoffProblem } from './review/merge-trust.mjs';
 import { HARNESS_FLOW } from './review/plan.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
@@ -260,7 +260,7 @@ export function projectPrompt({ run, key, attempt, branch, clone, skill = SKILL,
 // copy, a host file the sandbox and the write guard refuse, or a workflow file. The autopilot skill's project-run rules
 // key on its first words.
 export const POLICY_FILES_LINE = 'The team\'s `github.autoMerge.includePolicyFiles` is on: this session may write host instruction files, such as a `CLAUDE.md` or an `AGENTS.md`, '
-  + 'the `.aidrian/` folder, its knowledge index and `config.json` among them, and the other policy files, when the issue needs it, but no base copy this message lists. '
+  + `the \`${path.posix.dirname(DEFAULT_CONFIG)}/\` folder, its knowledge index and \`config.json\` among them, and the other policy files, when the issue needs it, but no base copy this message lists. `
   + 'A review finding in a file this attempt may write is fixed as any other finding. '
   + 'This attempt may not write a base copy this message lists, a host settings, skills, agents, commands, hooks, or MCP server file, or a forge workflow file: '
   + 'a finding in one keeps the autopilot skill\'s host-file route, a stated residual or a park.';

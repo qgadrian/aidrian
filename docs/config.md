@@ -1302,9 +1302,9 @@ An entry has `deny`, `allow`, or both, each a list of tool patterns:
   for a Bash deny only on Windows with Git Bash installed. So on Windows without Git Bash, a `Bash` deny in `main` or `*`
   leaves the main session no shell tool: a recorded limit ([provider page](providers/claude-code.md#powershell-commands)).
 - The gates are asked before the guards below, which read a command's paths and globs, so a call a gate denies is
-  denied before the guards read it. The guards then have a time budget, 2.5 seconds from the hook's start, well inside
-  the host's 5 second hook timeout: a subagent's call they cannot finish reading in time is refused, as is one of a
-  main session no Human attends or a project run's driver, and an attended main session's runs. A call that is no shell
+  denied before the guards read it. The guards then have a time budget from the hook's start, inside the hook's
+  10 second timeout: a subagent's call they cannot finish reading in 7.5 seconds is refused, as is one of a main session
+  no Human attends or a project run's driver, and an attended main session's runs after 2.5 seconds. A call that is no shell
   and writes no file, such as a Read, runs past the budget for every session, as no guard refuses it.
   A PowerShell command of more than 512 words, counting each case, and a Bash call of more than 1024 write targets,
   of a subagent, a main session no Human attends, or a project run's driver, are refused too, as the guards read no more

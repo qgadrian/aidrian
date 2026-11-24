@@ -16,10 +16,11 @@
 // It runs before every tool call, so without gates it stops as soon as it has read the config and run the guards that hold
 // without gates; a call a gate blocks exits 2 with the rule's name on stderr, and the block is recorded as the Bash hook
 // records its blocks (lib/hook-deny.mjs). The gates are asked before any guard, so a call they deny never waits on one.
-// The guards then run under a time budget (lib/deadline.mjs), GUARD_BUDGET_MS from the hook's start, well inside the
-// host's 5 second hook timeout, past which the host runs the call with no guard: a call of a subagent, of a session no
-// Human attends, or of a session a project run's driver mark holds, that they cannot finish reading in time is refused
-// (config-guard.mjs deadlineDenial), and an attended main session's runs, as the guards allow it anyway; a call that is
+// The guards then run under a time budget (lib/deadline.mjs guardBudget) from the hook's start, inside the hook's
+// 10 second timeout in hooks.json, past which the host runs the call with no guard: a call of a subagent, of a session
+// an unattended mark holds, or of a session a project run's driver mark holds, that they cannot finish reading in
+// HELD_BUDGET_MS is refused (config-guard.mjs deadlineDenial), and an attended main session's runs after
+// GUARD_BUDGET_MS, as the guards allow it anyway; a call that is
 // no shell and writes no file, which no guard refuses, runs for all (writesNothing). The same three are refused a
 // command longer than the guards read. The driver's run's state folder is guarded by its mark (runStateDenial).
 // A session the gate is starting, whose id the host has not listed yet, is held by the gate's pending mark
@@ -65,12 +66,15 @@ import { canonical } from '../lib/rules/main-checkout.mjs';
 import { issueHeld, liftAttended, noteBeacon, readDriverMark, readUnattendedMark } from '../lib/unattended-mark.mjs';
 import { unattendedPlaces, unattendedWriteDenial } from '../lib/unattended-write.mjs';
 
-// The deadline of the running call, in performance.now() milliseconds: its start plus the budget.
+// The deadline of the running call, in performance.now() milliseconds: its start plus the budget, the held budget once
+// the call is read as held (gate), and the call's start.
 let budget = GUARD_BUDGET_MS;
+let callStart = 0;
 
 // The hook's body, for the payload `input`; `start` is when the call began, 0 for the hook's own process (lib/hook-io.mjs
 // callHook).
 export async function handle(input, { start = 0 } = {}) {
+  callStart = start;
   budget = start + guardBudget(process.env);
   try {
     await gate(input);
@@ -121,6 +125,10 @@ async function gate(input) {
   // in, and the mark the one the gate ran in.
   // A project run's driver is held to its run's project wherever its call runs, as a marked session is (runDriver).
   const driven = readDriverMark(input.session_id);
+  // A call the guards' deadline would refuse gets the longer budget: a subagent's, or a marked session's or a driver's.
+  // A session the legacy chain floor alone holds (startedUnattended) keeps the short one, as that floor is read late.
+  const heldCall = (typeof input.agent_id === 'string' && input.agent_id !== '') || mark !== null || driven !== null;
+  budget = callStart + guardBudget(process.env, { held: heldCall });
   // The driver's holds, asked once a call, here, so every guard and the time budget's answer share them: `drives()`, its
   // run under way, holds it from the continuation store and the runs folder, and `drove()`, any driver mark, from the
   // marks and the sign-off store after its run's end too (run-driver.mjs drivesRun, droveRun), and from a call the

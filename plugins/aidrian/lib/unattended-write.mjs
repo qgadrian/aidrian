@@ -819,6 +819,10 @@ function sayer(input, human, opaque, mark) {
     },
     unknown: () => deny('unattended write with no known places', `it ${verb} a file, and the places this session may write cannot be told: its unattended mark names no main checkout or project that can be read, and no Human attends this session, so it writes nothing until they can`),
     refused: (entry, shown) => deny(`unattended write to ${entry.what}`, refusedWhy(entry, shown)),
+    // A refused path read from the text of code the call runs (nameDenial), which the code may only put in a file: a
+    // session told only where scratch files go built the path at run time instead. It names the file tool, which
+    // writes only the file it names, whatever its text says.
+    named: (entry, shown) => deny(`unattended write to ${entry.what}`, `it names ${shown} in the text of code it runs, such as an interpreter's script, which may write it, and that is ${entry.what}, which a session no Human attends never changes; only ${human} does; when the code only puts that text in a file, write the file with the file tool instead, which writes only the file it names`),
     outside: (shown) => deny('unattended write outside its places', `it ${verb} ${shown}, outside the places a session no Human attends may write: ${list}`),
     meets(met, shown) {
       if (met?.refused) return deny(`unattended write to ${met.refused.what}`, refusedWhy(met.refused, shown));
@@ -979,7 +983,7 @@ function nameDenial(texts, found, say) {
     for (const [word] of text.matchAll(PATH_IN_TEXT)) {
       const spelled = word.startsWith('~') ? path.join(found.home, word.slice(1)) : word;
       const met = placed(spelled, found, { holds: false });
-      if (met?.refused) return say.refused(met.refused, spelled);
+      if (met?.refused) return say.named(met.refused, spelled);
     }
   }
   return null;

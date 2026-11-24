@@ -40,7 +40,7 @@
           {
             "type": "command",
             "command": "node \"$CLAUDE_PLUGIN_ROOT/scripts/hook-agent-gates.mjs\"",
-            "timeout": 5
+            "timeout": 10
           }
         ]
       },
@@ -90,7 +90,7 @@
           {
             "type": "command",
             "command": "node \"$CLAUDE_PLUGIN_ROOT/scripts/hook-tracker-pre.mjs\"",
-            "timeout": 5
+            "timeout": 10
           }
         ]
       },

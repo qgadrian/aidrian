@@ -7,7 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { repoName } from '../plugins/aidrian/lib/remotes.mjs';
-import { check, REASON, SUBAGENT_REASON } from '../plugins/aidrian/lib/rules/review-signoff.mjs';
+import { check, REASON, SUBAGENT_REASON, TEXT_ROUTE, UNATTENDED_REASON } from '../plugins/aidrian/lib/rules/review-signoff.mjs';
 
 // A deny of the sign-off: REASON, and after it the miss, when the session holds answers to go by.
 const denies = (got, why = '') => assert.ok(typeof got === 'string' && got.startsWith(REASON), `${why}: ${got}`);
@@ -309,15 +309,18 @@ test('a sign-off whose program or line the shell builds at run time is denied, a
     'xargs aidrian pr signoff 9 --last',
     'npx aidrian pr signoff 9 --last',
     'C="aidrian pr signoff 9 --last"; eval "$C"',
-    `python3 -c "os.system('aidrian pr signoff 9 --last')"`,
     "alias s='aidrian pr signoff'; s 9 --last",
     '$TOOL pr "$SUB" 9 --last',
     'aidrian pr {signoff,review} 9',
     'x=aidrian; $x pr signoff 9 --flow ui --head abc1234',
     'npx aidrian pr signoff 9 --flow ui --head abc1234',
     'npx aidrian pr signoff 9 --last --check',
-    `python3 -c "os.system('aidrian pr signoff 9 --last'); print('--check')"`,
   ]) assert.equal(check(command, { cwd }), REASON, command);
+  // Code an interpreter runs is refused alike, and its refusal also names the file tool for text that only quotes it.
+  for (const command of [
+    `python3 -c "os.system('aidrian pr signoff 9 --last')"`,
+    `python3 -c "os.system('aidrian pr signoff 9 --last'); print('--check')"`,
+  ]) assert.equal(check(command, { cwd }), `${REASON} ${TEXT_ROUTE}`, command);
   // Outside a project, a subagent and a session no Human attends are refused the text shapes too.
   const bare = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-signoff-bare-')));
   t.after(() => rmSync(bare, { recursive: true, force: true }));
@@ -333,4 +336,26 @@ test('a sign-off whose program or line the shell builds at run time is denied, a
     'x=aidrian; $x pr review 9',
     'aidrian pr product-feedback "$ACTION" 9',
   ]) assert.equal(check(command, { cwd }), null, command);
+});
+
+// A background session rewriting its handoff brief with a Python heredoc, whose text quoted the sign-off command for the
+// Human, was refused with a reason that said only "stop and report", and then split the words to get past the rule.
+// A sign-off named only in text the rule cannot read as commands now names the file tool, which this rule does not
+// read, for text that only quotes the command; a sign-off the rule reads as a command keeps its reason alone.
+test('a sign-off named only in a script`s text names the file tool for text that quotes it; a read sign-off does not', (t) => {
+  const cwd = project(t);
+  const brief = path.join(cwd, 'brief.md');
+  const quoted = 'run `aidrian pr signoff 6144 --flow ui-visual --accept fit-at-widths`';
+  const heredoc = `python3 -I - ${brief} > ${brief}.tmp <<'EOF'\nimport sys\nt=open(sys.argv[1]).read()\nt=t.replace("x", "${quoted}")\nsys.stdout.write(t)\nEOF`;
+  const unattended = { input: { session_id: 's1' }, unattendedMark: () => ({ root: cwd }), drives: () => false };
+  const subagent = { input: { agent_id: 'a1' }, unattendedMark: () => null, drives: () => false };
+  assert.equal(check(heredoc, { cwd, ...unattended }), `${UNATTENDED_REASON} ${TEXT_ROUTE}`);
+  assert.equal(check(heredoc, { cwd, ...subagent }), `${SUBAGENT_REASON} ${TEXT_ROUTE}`);
+  assert.equal(check(heredoc, { cwd, input: {}, unattendedMark: () => null, drives: () => false }), `${REASON} ${TEXT_ROUTE}`, 'an attended session');
+  assert.equal(check('echo "aidrian pr signoff 9 --last" | bash', { cwd, ...unattended }), `${UNATTENDED_REASON} ${TEXT_ROUTE}`, 'a shell fed text');
+  assert.match(TEXT_ROUTE, /only in text this rule cannot read as commands, such as an interpreter's script.*when that text only quotes the command, as a brief or a body for the Human does, write the file with the file tool instead, which this rule does not read/u);
+  // A sign-off the rule reads as a command keeps its own reason, with no text route.
+  for (const command of ['aidrian pr signoff 9 --flow ui --head abc1234', `bash <<'EOF'\naidrian pr signoff 9 --last\nEOF`]) {
+    assert.equal(check(command, { cwd, ...unattended }), UNATTENDED_REASON, command);
+  }
 });

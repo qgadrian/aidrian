@@ -487,8 +487,12 @@ test('a write through a link or a hard link to a body file is a write to it', (t
   assert.match(run(`cat > New.md <<'EOF'\n${GOOD}EOF\ngh pr create -t x -F new.md`) ?? '', unread, 'the heredoc may be another file');
   assert.match(run(`cat > a.md <<'EOF'\n${GOOD}EOF\ncat > A.md <<'EOF'\nno sections\nEOF\ngh pr create -t x -F a.md`) ?? '', unread, 'the second write may be the first file');
   assert.equal(run(`cat > a.md <<'EOF'\n${GOOD}EOF\ngh pr create -t x -F a.md`), null, 'one spelling is read as written');
-  // So are two Unicode spellings a disk may read as one name: é composed and decomposed, and a ß against its SS.
-  for (const [first, second] of [['caf\u00e9.md', 'cafe\u0301.md'], ['stra\u00dfe.md', 'STRASSE.md']]) {
+  assert.equal(run(`cat > a.md <<'EOF'\n${GOOD}EOF\nmkdir -p r && echo x > r/a.md\ngh pr create -t x -F a.md`), null, 'a name in another folder is another file');
+  assert.equal(run(`cat > r\uff0fa.md <<'EOF'\n${GOOD}EOF\necho x > b/r/a.md\ngh pr create -t x -F r\uff0fa.md`), null, 'a fullwidth slash in a name is no folder');
+  // So is a name with any character past ASCII against another in its folder, as a disk may fold Unicode spellings,
+  // and drop ignorable characters, in ways the rule never tries to match: é composed and decomposed, ß against SS,
+  // the capital ẞ against ss, a zero-width joiner.
+  for (const [first, second] of [['caf\u00e9.md', 'cafe\u0301.md'], ['stra\u00dfe.md', 'STRASSE.md'], ['\u1e9e.md', 'ss.md'], ['a\u200d.md', 'a.md']]) {
     assert.match(run(`cat > ${first} <<'EOF'\n${GOOD}EOF\ncat > ${second} <<'EOF'\nno sections\nEOF\ngh pr create -t x -F ${first}`) ?? '', unread, `${first} and ${second}`);
   }
   // A heredoc written through a link whose target is not there yet is the body gh then reads by the target's name.

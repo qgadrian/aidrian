@@ -356,11 +356,19 @@ export function fileIdentity(file) {
 const LINK_HOPS = 40;
 
 // Whether two identities (fileIdentity) may be one file: the same, or, for names that are no file yet or below a
-// folder, the same once folded as a disk that folds names may: letter case, and Unicode spellings that are equivalent,
-// canonically or by compatibility, as APFS and a casefold ext4 read them. Folding more than a disk does is safe here:
-// a possible alias only makes a write unknown.
-const nameFold = (name) => name.normalize('NFKC').toUpperCase().toLowerCase().normalize('NFKC');
-const mayAlias = (a, b) => a !== null && b !== null && (a === b || (!a.startsWith('inode:') && !b.startsWith('inode:') && nameFold(a) === nameFold(b)));
+// folder, the same part by part, each pair of parts equal, equal but for ASCII letter case, or either one not plain
+// ASCII. A disk may fold case, Unicode spellings, and ignorable characters in ways this rule never tries to match, so a
+// name with any character past ASCII may be any other in its folder; folding more than a disk does only makes a write
+// unknown, never a body read as another's.
+const PLAIN_PART = /^[\x20-\x7e]*$/u;
+const partsAlias = (x, y) => x === y || !PLAIN_PART.test(x) || !PLAIN_PART.test(y) || x.toLowerCase() === y.toLowerCase();
+function mayAlias(a, b) {
+  if (a === null || b === null) return false;
+  if (a === b) return true;
+  if (a.startsWith('inode:') || b.startsWith('inode:')) return false;
+  const [left, right] = [a.split('/'), b.split('/')];
+  return left.length === right.length && left.every((part, i) => partsAlias(part, right[i]));
+}
 
 // What the line wrote to the file of identity `key`, from `written` (lineWrites files): { text } when it holds that
 // file's text, { text: null } when a write it cannot read, or one to a name that may be the same file, came before,

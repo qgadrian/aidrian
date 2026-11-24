@@ -270,9 +270,9 @@ What each rule matches:
   shell's own folder and a body file in the one `env -C` or `git -C` gives its program, as bash opens a redirect first,
   and the shell's folder known only as a `cd` joined by `&&` alone moves it, so after `cd x && true;` a relative
   redirect is one the rule cannot place, two names of one file, through a link, a `..` after one, or a second hard
-  link, counting as one file, two spellings of a name that differ only in letter case or by an equivalent Unicode
-  spelling as maybe one, so a write to either makes the other unknown, and a name whose file cannot be told counting
-  as any; any
+  link, counting as one file, and two names not there yet as maybe one, so a write to either makes the other unknown,
+  when they differ only in ASCII letter case or either has a character past ASCII, which a disk may fold in ways the
+  rule never tries to match; a name whose file cannot be told counts as any; any
   command between the write and gh that is not a known reader (such as `sed -i`, a script, or a program fed code on
   stdin); and a variable a nested shell or substitution assigns, or one used inside it. Such a body is one the rule
   cannot read: gh then runs as its own command after it.

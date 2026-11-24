@@ -409,7 +409,7 @@ same number names no waiting route; and the Human may still run the raise in
 their own shell, as the refusal writes it, with the command's own subcommand and `--with-bot` or `--request`, since each
 counts its own rounds.
 
-The [merge guard](hooks.md#merge-guard)'s round-limit question is a second ask that approves the raise. At a review this
+The [merge guard](hooks.md#merge-guard)'s round-limit question also approves the raise. At a review this
 machine's record holds stopped at its round limit with no check at the cap waiting, as after a judge's stop, the
 Human's latest answer to it, at or after that outcome, being "Grant more review rounds", with `#<PR>` and the capped head's
 first 7 characters in the question or that option, approves one more round: the record's source's command, `aidrian pr review`

@@ -13,7 +13,7 @@ import { commands } from '../plugins/aidrian/lib/pr.mjs';
 import { findProject, projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { baseProblem } from '../plugins/aidrian/lib/review/in-force.mjs';
 import { adoptedCopy, emptyState, owed, readLocalState, refreshSummary, stateFromComment, summaryBody, WAIVER_HEADING, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
-import { capProblem, guardWaiver, MAX_REASON, parseWaive, runWaive, takeWaivedMerge, WAIVER_DEADLINE_MS, waiverFor, waiverKind } from '../plugins/aidrian/lib/review/waiver.mjs';
+import { capProblem, guardWaiver, MAX_REASON, parseWaive, runWaive, takeWaivedMerge, verdictNext, WAIVER_DEADLINE_MS, waiverFor, waiverKind } from '../plugins/aidrian/lib/review/waiver.mjs';
 import { budgetProblem, judgeProblem, offerWaiver, readGate, runOf, WAIVED_MERGES } from '../plugins/aidrian/lib/review/waiver-stand.mjs';
 import { atCap, offerLand, runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
 import { postedCopy } from '../plugins/aidrian/lib/review/publish.mjs';
@@ -257,6 +257,40 @@ test('aidrian pr waive records a round_cap verdict on the current head, visible 
   assert.equal(issue.length, 1, 'posted the summary comment');
   assert.equal(stateFromComment(issue[0].body, 5).waivers[0].head, HEAD, 'the comment carries the record');
   assert.match(issue[0].body, new RegExp(`${WAIVER_HEADING.replace(/\*/gu, '\\*')}\\n- round_cap on \`abcdef1\`: waive by unknown: the three open findings are style nits \\(an audit entry, not proof\\)`, 'u'));
+});
+
+test('aidrian pr waive in a fork checkout reads, records, and prints the one repository the forge names for the pull request', async (t) => {
+  // Origin is acme/notes; gh's default, and the pull request, is upstream's up/notes#5.
+  const r = repo(t, { local: ON });
+  r.git('remote', 'add', 'upstream', 'git@github.com:Up/Notes.git');
+  r.git('update-ref', `refs/remotes/upstream/${r.git('branch', '--show-current')}`, 'HEAD');
+  const state = emptyState(5, 'up/notes');
+  roundLimit(state);
+  writeLocalState(r.project(), state, { repo: 'up/notes' });
+  const asked = [];
+  const forge = {
+    change: (ref, fields, given) => {
+      asked.push([fields, given?.repo ?? null]);
+      if (fields === 'url') return { url: 'https://github.com/Up/Notes/pull/5' };
+      if (fields === 'baseRefName') return { baseRefName: r.git('branch', '--show-current') };
+      return { number: 5, headRefOid: HEAD, url: 'https://github.com/Up/Notes/pull/5' };
+    },
+    conversationComments: () => [],
+  };
+  const out = [];
+  t.mock.method(console, 'log', (line) => out.push(line));
+  const project = r.project();
+  const config = loadConfig(project).config;
+  const code = await runWaive(['5', '--verdict', 'refuse', '--reason', 'R2-1 is a real fix_now'], project, { ...config, review: { ...config.review, record: 'local' } }, { forge, env: {} }).finally(() => t.mock.restoreAll());
+  assert.equal(code, 0);
+  assert.deepEqual(asked[0], ['url', null], 'the repository is resolved once, from the forge');
+  assert.deepEqual(asked.slice(1, 3), [['baseRefName', 'up/notes'], ['number,headRefOid,url', 'up/notes']]);
+  assert.ok(asked.slice(1).every(([, named]) => named === 'up/notes'), 'every later read names it');
+  assert.equal(readLocalState(project, 5, 'up/notes').waivers.length, 1, 'the verdict is in up/notes\'s record');
+  assert.equal(readLocalState(project, 5, 'acme/notes'), null, 'origin\'s holds none');
+  // A waive's merge names that same repository.
+  const named = verdictNext({ verdict: 'waive', head: HEAD }, 5, LOCAL, 'up/notes');
+  assert.match(named, new RegExp(`gh pr merge 5 --match-head-commit ${HEAD} --repo up/notes\``, 'u'));
 });
 
 test('aidrian pr waive on a repository that is not private posts the waiver line and the record with no reason', async (t) => {

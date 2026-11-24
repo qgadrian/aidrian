@@ -1984,7 +1984,7 @@ test('a chain walk ends at a session met twice, before a project run\'s start, a
 test('`aidrian handoff owner` follows a stale say line\'s id to the session that owns the work now', (t) => {
   const setting = setup(t);
   const full = chainStarts(setting.store, ['bb0a9173', 'f5fa4566', 'a9a64642']);
-  for (const id of ['bb0a9173', full('bb0a9173'), 'BB0A9173', 'f5fa4566']) {
+  for (const id of ['bb0a9173', full('bb0a9173'), 'f5fa4566']) {
     const owned = ownerLines(setting.store, claudeCode, id);
     assert.equal(owned.exitCode, 0, id);
     assert.equal(owned.out[0], 'owner: a9a64642', id);

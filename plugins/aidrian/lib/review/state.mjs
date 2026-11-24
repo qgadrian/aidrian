@@ -532,8 +532,10 @@ function writeState(project, state, { repo = null } = {}) {
   writeAt(project, state);
 }
 
-// Holds `state` to the repository `repo` of the command that writes it (writeLocalState).
-function ownedBy(state, repo) {
+// Holds `state` to the repository `repo` of the command that writes it (writeLocalState): a record that names none
+// takes `repo`, and one that names another throws. The unattended waiver's gate names its copy so too (waiver-stand.mjs
+// readGate), so it weighs the owed reviews the write would merge in.
+export function ownedBy(state, repo) {
   const want = repoName(repo ?? null);
   if (want === null) return;
   const named = repoName(state.repo ?? null);

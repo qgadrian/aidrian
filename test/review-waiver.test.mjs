@@ -14,7 +14,7 @@ import { findProject, projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { baseProblem } from '../plugins/aidrian/lib/review/in-force.mjs';
 import { adoptedCopy, emptyState, owed, readLocalState, refreshSummary, stateFromComment, summaryBody, WAIVER_HEADING, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { capProblem, guardWaiver, MAX_REASON, parseWaive, runWaive, takeWaivedMerge, WAIVER_DEADLINE_MS, waiverFor, waiverKind } from '../plugins/aidrian/lib/review/waiver.mjs';
-import { budgetProblem, judgeProblem, offerWaiver, runOf, WAIVED_MERGES } from '../plugins/aidrian/lib/review/waiver-stand.mjs';
+import { budgetProblem, judgeProblem, offerWaiver, readGate, runOf, WAIVED_MERGES } from '../plugins/aidrian/lib/review/waiver-stand.mjs';
 import { atCap, offerLand, runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
 import { postedCopy } from '../plugins/aidrian/lib/review/publish.mjs';
 import { logPath } from '../plugins/aidrian/lib/dispatch-log.mjs';
@@ -1192,8 +1192,7 @@ test('a record newer than the file on disk that holds the owed review answered l
 test('a record whose pending is no list, or that names no repository, never throws in the merge guard or the gate', async (t) => {
   const r = repo(t, { local: ON });
   const command = `gh pr merge 5 --match-head-commit ${HEAD}`;
-  const config = loadConfig(r.project()).config;
-  const gateOf = () => offerWaiver({ status: 'round_limit', pr: 5, repo: 'acme/notes', head: HEAD }, r.project(), config, { forge: gateForge(), run: () => undefined, runHost: CONFIRMS });
+  const gateOf = (each) => readGate({ pr: 5 }, each.project(), { forge: gateForge(), run: () => undefined, runHost: CONFIRMS });
   // Its own record's pending, and another repository's record of the same number, hold an object, not a list.
   r.record(5, (state) => (roundLimit(state), (state.pending = {})));
   const other = emptyState(5, 'other/notes');
@@ -1201,7 +1200,7 @@ test('a record whose pending is no list, or that names no repository, never thro
   const file = readLocalState(r.project(), 5, 'other/notes');
   writeLocalState(r.project(), Object.assign(file, { pending: {} }), { repo: 'other/notes' });
   assert.equal(typeof (merge(r, command) ?? ''), 'string');
-  assert.equal(typeof gateOf().may, 'boolean');
+  assert.deepEqual(gateOf(r), { code: 0, may: true, why: null, head: HEAD, repo: 'acme/notes', base: 'main' }, 'a pending that is no list owes nothing');
   // A record that names no repository.
   const unnamed = repo(t, { local: ON });
   const state = emptyState(5, null);
@@ -1209,6 +1208,25 @@ test('a record whose pending is no list, or that names no repository, never thro
   writeLocalState(unnamed.project(), state);
   assert.equal(typeof (merge(unnamed, command) ?? ''), 'string');
   assert.equal(adoptedCopy(unnamed.project(), state), state, 'no repository: nothing is looked up');
+  assert.deepEqual(gateOf(unnamed), { code: 0, may: true, why: null, head: HEAD, repo: 'acme/notes', base: 'main' }, 'the gate names it for the pull request\'s repository, as the writer does');
+  // A record that names another repository than the pull request's is refused, with the reason the writer gives.
+  const mismatch = readGate({ pr: 5 }, unnamed.project(), { forge: gateForge(), run: () => undefined, runHost: CONFIRMS, record: () => ({ ...state, repo: 'other/notes' }) });
+  assert.deepEqual([mismatch.code, mismatch.may], [1, false]);
+  assert.match(mismatch.why, /the review record of #5 this command built is other\/notes's, not acme\/notes's/u);
+});
+
+test('an origin record that names no repository weighs the reviews another record owes, as its write would: land refused, nothing written', async (t) => {
+  const r = repo(t, { local: ON });
+  const legacy = emptyState(5, null);
+  atCheck(legacy);
+  writeLocalState(r.project(), legacy);
+  const other = emptyState(5, 'other/notes');
+  other.pending = [{ id: 'owed-1', kind: 'review', head: HEAD, at: T0, by: 'someone', repo: 'acme/notes' }];
+  writeLocalState(r.project(), other, { repo: 'other/notes' });
+  const before = JSON.stringify(readLocalState(r.project(), 5, 'acme/notes'));
+  assert.equal(JSON.parse(before).repo ?? null, null, 'the record names no repository');
+  await assert.rejects(extend(t, r, ['--verdict', 'land', '--reason', 'nits', '--judge', JUDGE.judge_id]), /may not land #5: 1 review entry is still owed on #5/u);
+  assert.equal(JSON.stringify(readLocalState(r.project(), 5, 'acme/notes')), before, 'nothing written');
 });
 
 test('at a round_limit with no check, the judge it dispatched lands with one extend call, and its stop records the refuse', async (t) => {

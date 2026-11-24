@@ -17,7 +17,7 @@ export function fullAutoLines({ base, policy, projectKey, env = process.env, cou
     'a pull request that changes a policy file, the config.json the gate reads, the pointer file, or the local switch file, never merges by itself; the Human merges it',
     signoffLine(config),
     decisionLine({ policy, projectKey, env, count, safeDefaults: config.decisions?.unattended?.safeDefaults }),
-    'a halt, such as a failed sandbox proof or a broken environment, waits for `aidrian project resume <run>` from a session the Human attends, or the Human\'s own shell',
+    'a halt, such as a failed sandbox proof or a broken environment, waits for the Human: the driver names it in its final report, and the Human lifts it with `aidrian project resume <run>` in a session they attend',
     'a run whose driver chain ended, with no session the host continued its driver as, waits for the Human to take it up',
     ...parkingLines(config, policy),
   ];

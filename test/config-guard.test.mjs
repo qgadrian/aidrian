@@ -447,7 +447,7 @@ test('a subagent may not set the auto-merge switch, with or without gates; other
   }
 });
 
-test('interpreter code that names the local file only in its comments sets no switch; a quoted text or any write names it, and the refusal points to Edit and Write', (t) => {
+test('a docs or test file that mentions the local file and a switch is edited with Edit or Write, which run, as a read-only search does; interpreter code that names it is refused and pointed there', (t) => {
   const { dir } = project(t, { version: 1 });
   const found = findProject(dir);
   const denial = (tool, toolInput) => machineSwitchWriteDenial(subagent(dir, tool, toolInput), found, { names: { human: 'the owner' } });
@@ -456,11 +456,6 @@ test('interpreter code that names the local file only in its comments sets no sw
   const py = (code) => `python3 - <<'PY'\n${code}\nPY`;
   const js = (code) => `node - <<'JS'\n${code}\nJS`;
   for (const command of [
-    py(`# a note on ${L} and github.autoMerge\nopen('docs/x.md', 'a').write('its keys')`),
-    py(`# See **${L}**.\nopen('docs/x.md', 'a').write('github.autoMerge')`),
-    js(`// docs: \`${L}\`\nrequire('fs').appendFileSync('docs/x.md', 'github.autoMerge')`),
-    // A block comment loses both its marks, so a name glued to the closing one is still a word of its own.
-    js(`/* writes docs, not ${L}*/\nrequire('fs').appendFileSync('docs/x.md', 'github.autoMerge')`),
     // A read-only search of a transcript whose pattern names the key and the file, as the issue reports.
     `grep -n 'github.autoMerge' ~/.claude/projects/x/s.jsonl | grep ${L}`,
     `rg -n 'github\\.autoMerge.*${L}' ~/.claude/projects/x/`,
@@ -470,10 +465,13 @@ test('interpreter code that names the local file only in its comments sets no sw
     ['Edit', { file_path: path.join(dir, 'docs/config.md'), old_string: 'x', new_string: `Set \`github.autoMerge\` in \`${L}\` to "on".` }],
     ['Write', { file_path: path.join(dir, 'test/x.test.mjs'), content: `writeFileSync(path.join(dir, '${L}'), JSON.stringify({ github: { autoMerge: 'on' } }));\n` }],
   ]) assert.equal(denial(tool, toolInput), null, JSON.stringify(toolInput));
-  // A docs edit written from code, as the issue's subagent ran, stays refused, and the refusal says how to make it.
+  // A docs edit written from code, as the issue's subagent ran, stays refused, a mention in a comment as well, and the
+  // refusal says how to make it.
   for (const command of [
     py(`import pathlib\np = pathlib.Path('docs/config.md')\nt = p.read_text()\nt = t.replace('x', 'Set \`github.autoMerge\` in \`${L}\` to "on".')\np.write_text(t)`),
     py(`open('docs/x.md', 'a').write('the ${L} file')`),
+    py(`# See **${L}**.\nopen('docs/x.md', 'a').write('github.autoMerge')`),
+    js(`/* writes docs, not ${L}*/\nrequire('fs').appendFileSync('docs/x.md', 'github.autoMerge')`),
   ]) assert.match(denial('Bash', { command })?.reason ?? '', /to edit a doc or test file that mentions \.aidrian\.local\.json, use the Edit or Write tool, which the guard judges by the file it writes/u, command);
   for (const [command, match] of [
     // Code can derive the path from any text: a bare word split, replaced, or sliced out, or a wrapped name stripped.

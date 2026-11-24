@@ -379,7 +379,7 @@ export function projectCalls(input) {
 // `next`. A subcommand word built from a variable is refused to every session; another hidden form (projectCalls) to a
 // subagent and to a session `unattended()` says no Human attends.
 // Every session's call is then authorized against the run's ledger by `input.session_id`, the host's own session id,
-// which no variable of the command moves: `init` by attendedProblem with the hook's payload; `start`, `wait`, and
+// which no variable of the command moves: `init`, `resume`, and `decision` by attendedProblem with the hook's payload; `start`, `wait`, and
 // `handoff` only for the driver, or a continuation custody may move to; `result` only for a session of the issue's
 // chain; `stop-action` only for that session's newest one (stopActorProblem). A call whose run, issue, or project folder
 // is built from a variable is refused to all but `next` and
@@ -441,6 +441,12 @@ const RULES = Object.freeze({
   recorded: driverOnly,
   // Reads every check a start would make, and starts nothing.
   preflight: readOnly,
+  // Prints the entry that pins a decision the Human recorded, which a person checks before the team commits it: only an
+  // attended main session, by attendedProblem with the hook's own payload, as init.
+  decision: ({ input, session, project, config, state, home }) => {
+    const problem = attendedProblem({ input, session, project, config, state, ...(home ? { home } : {}) });
+    return problem && `\`aidrian project decision\` pins a decision the Human recorded, from an attended session only, and ${problem}`;
+  },
   // Proves the sandbox of the issue's own session from inside it (lib/project-confine.mjs): only the session the run
   // started for the issue, by its own mark, or, before the gate files that, by the pending mark that starts it in the
   // issue's clone, where the call runs.
@@ -493,7 +499,7 @@ function authorize({ input, sub, rest, folder, home, rule }) {
   const place = runPlace(project, config, home ? { home } : {});
   if (place.problem) return null;
   const session = input.session_id;
-  if (sub === 'init' || sub === 'resume') return rule({ input, session, project, config, state: place.state, home, run: rest.positionals[0] });
+  if (sub === 'init' || sub === 'resume' || sub === 'decision') return rule({ input, session, project, config, state: place.state, home, run: rest.positionals[0] });
   const [run, key] = rest.positionals;
   if (typeof run !== 'string' || !RUN_ID.test(run)) return null;
   const found = readRun(place.state, run);

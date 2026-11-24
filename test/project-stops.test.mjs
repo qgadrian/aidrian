@@ -20,7 +20,7 @@ import { classifyStop, POLICY_REASONS, STOP_ACTIONS, STOP_CAPS, STOPS_FILE, stop
 import { emptyState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { archiveFile } from '../plugins/aidrian/lib/stop-history.mjs';
 import { markFolder, markPending, markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
-import { DRIVER, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
+import { decidedFixture, DRIVER, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
 
 const HEAD = 'a'.repeat(40);
 const NEW = 'b'.repeat(40);
@@ -176,6 +176,15 @@ function stopped(t, { merge = {}, checks = [checkRow('e2e', 'SUCCESS', 40)], for
   return { ...fx, gh, writes, drop: dropOf(), dropOf, act, forge };
 }
 const called = (fx, name) => fx.writes.filter((each) => each[0] === name);
+
+test('a sign-off the Human owes parks with its line on an issue with a recorded decision too: the grant signs off no flow', (t) => {
+  const fx = decidedFixture(t);
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  assert.ok(fx.claude.starts()[0].args.at(-1).includes('a decision the Human recorded on this issue'), 'the grant stood');
+  const parked = stopped(t, { fx }).act(off('trust', { trust: 'signoff' }));
+  assert.equal(parked.exitCode, 0, parked.err.join('\n'));
+  assert.match(parked.out[0], /^park ENG-1 #12 at aaaaaaa: .*; record the result parked with one decision of class product: the Human's sign-off of the flows of #12 at head aaaaaaa, options "leave the pull request unmerged" and "sign off from an attended session", recommended the first$/u);
+});
 
 test('stop-action reruns the failed jobs of first runs of the head through the forge, records it, and parks the second time', (t) => {
   const fx = stopped(t, { checks: [checkRow('e2e', 'FAILURE', 41), checkRow('lint', 'SUCCESS', 41)] });

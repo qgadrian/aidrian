@@ -42,14 +42,17 @@ const CONTROLS = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]|\p{Cs}/gu;
 const kept = (value, cap) => (typeof value === 'string' ? stripHidden(value).replace(CONTROLS, '').slice(0, cap).replace(CONTROLS, '') : '');
 
 // One issue's text, each field kept (kept): { title, description, criteria, labels }, from `given`, whose labels are
-// strings or objects with a `name`.
+// strings or objects with a `name`, and `descriptionCut: true` when the cap cut the description off, or `given` says an
+// earlier keeping did, so no recorded decision is pinned on a description cut off (project-decision.mjs).
 function textOf(given) {
   const labels = (Array.isArray(given.labels) ? given.labels : []).map((label) => (isObject(label) ? label.name : label));
+  const cut = given.descriptionCut === true || kept(given.description, Infinity).length > TEXT_CAPS.description;
   return {
     title: kept(given.title, TEXT_CAPS.title),
     description: kept(given.description, TEXT_CAPS.description),
     criteria: kept(given.criteria, TEXT_CAPS.criteria),
     labels: labels.slice(0, TEXT_CAPS.labels).map((label) => kept(label, TEXT_CAPS.label)).filter(Boolean),
+    ...(cut ? { descriptionCut: true } : {}),
   };
 }
 const hasText = (text) => Boolean(text.title || text.description || text.criteria || text.labels.length);

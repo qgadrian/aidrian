@@ -1,4 +1,5 @@
-// scripts/build.mjs: the neutral agent sources, the provider files, how they merge, and the generated Claude Code agents.
+// scripts/build.mjs: the neutral agent sources, the provider files, how they merge, the generated Claude Code agents,
+// and the OpenCode hook routes it generates from hooks.json.
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
@@ -10,7 +11,10 @@ import test from 'node:test';
 import { parse as parseToml } from 'smol-toml';
 import { parse } from 'yaml';
 
-import { CLAUDE_AGENTS, CODEX_AGENTS, GROUPS, NEUTRAL, PREFIX, agentSettings, compareGenerated, providerNames, readAgents, readProviders, renderAgents } from '../scripts/build.mjs';
+import {
+  CLAUDE_AGENTS, CODEX_AGENTS, GROUPS, HOOKS_FILE, NEUTRAL, OPENCODE_ROUTES, PREFIX,
+  agentSettings, compareGenerated, compareRoutes, providerNames, readAgents, readProviders, renderAgents, renderRoutes, routeMatcher,
+} from '../scripts/build.mjs';
 
 // A scratch plugin: agents-src/, providers/, agent-addons/, and a knowledge skill.
 // A source keyed by a bare name goes in the build group; a key such as review/reader names its group.
@@ -277,4 +281,97 @@ test('both builders, on both hosts, stage their edits before a whole-file tool a
       assert.doesNotMatch(body, /only a generator produced/, `${where}: the old bare generator line is gone`);
     }
   }
+});
+
+// A scratch hooks.json holding one group under each event given, as { <event>: [group, ...] }.
+function scratchHooks(t, hooks) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-hooks-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'hooks.json');
+  writeFileSync(file, JSON.stringify({ hooks }));
+  return file;
+}
+// A hooks.json hook; timeout null leaves the field out.
+const hook = (command, timeout = 5) => ({ type: 'command', command, ...(timeout === null ? {} : { timeout }) });
+const NODE = (name) => `node "$CLAUDE_PLUGIN_ROOT/scripts/${name}.mjs"`;
+
+test('the committed OpenCode route list is the one hooks.json generates (npm run build regenerates it)', () => {
+  assert.equal(readFileSync(OPENCODE_ROUTES, 'utf8'), renderRoutes());
+  assert.deepEqual(compareRoutes(), []);
+  const hooks = JSON.parse(readFileSync(HOOKS_FILE, 'utf8')).hooks;
+  const count = Object.values(hooks).flat().reduce((sum, group) => sum + group.hooks.length, 0);
+  assert.equal(JSON.parse(renderRoutes()).length, count, 'every hooks.json hook is a route');
+});
+
+test('--check reports a stale or missing OpenCode route list', (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-routes-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'routes.generated.json');
+  assert.match(compareRoutes(renderRoutes(), file)[0], /^missing .*routes\.generated\.json$/);
+  writeFileSync(file, renderRoutes().replace('5000', '6000'));
+  assert.match(compareRoutes(renderRoutes(), file)[0], /^stale .*routes\.generated\.json$/);
+  writeFileSync(file, renderRoutes());
+  assert.deepEqual(compareRoutes(renderRoutes(), file), []);
+});
+
+test('a route keeps hooks.json order, its script, its flags, and its timeout in whole milliseconds', (t) => {
+  const file = scratchHooks(t, {
+    SessionStart: [{ hooks: [hook(NODE('hook-a')), hook(`${NODE('hook-a')} --subagent --dry-run`, 15)] }],
+    PreToolUse: [{ matcher: '*', hooks: [hook(NODE('hook-b'), 0.5)] }, { matcher: 'Edit|Write', hooks: [hook(NODE('hook-c'), 16.1)] }],
+  });
+  const text = renderRoutes(file);
+  assert.ok(text.endsWith(']\n') && text.startsWith('[\n  {\n    "event"'), 'two-space JSON with a trailing newline');
+  assert.deepEqual(JSON.parse(text), [
+    { event: 'SessionStart', matcher: null, script: 'hook-a.mjs', args: [], timeoutMs: 5000 },
+    { event: 'SessionStart', matcher: null, script: 'hook-a.mjs', args: ['--subagent', '--dry-run'], timeoutMs: 15000 },
+    { event: 'PreToolUse', matcher: '*', script: 'hook-b.mjs', args: [], timeoutMs: 500 },
+    { event: 'PreToolUse', matcher: '^(?:Edit|Write)$', script: 'hook-c.mjs', args: [], timeoutMs: 16100 },
+  ]);
+  assert.equal(renderRoutes(file), text, 'deterministic');
+});
+
+test('a route matcher is null with no matcher, "*" for any tool, else the anchored full match the adapters suite applies', () => {
+  assert.equal(routeMatcher(undefined), null);
+  assert.equal(routeMatcher('*'), '*');
+  const source = routeMatcher('Edit|Write');
+  assert.equal(source, '^(?:Edit|Write)$');
+  const matches = (name) => new RegExp(source, 'u').test(name);
+  assert.deepEqual(['Edit', 'Write', 'NotebookEdit', 'Writer'].map(matches), [true, true, false, false]);
+  assert.ok(new RegExp(routeMatcher('mcp__.*'), 'u').test('mcp__linear__save_issue'));
+  assert.throws(() => routeMatcher(''), /is not a pattern/);
+  assert.throws(() => routeMatcher('mcp__(unclosed'), SyntaxError);
+  // Wrapped, this one compiles as ^(?:Edit)|(.*)$ and matches every tool; alone it does not compile.
+  assert.throws(() => routeMatcher('Edit)|(.*'), SyntaxError);
+});
+
+test('a hooks.json command the bridge cannot run without a shell fails the route build, naming its event and command', (t) => {
+  const refused = [
+    ['bash -c "node x.mjs"', /runs only node/],
+    [`${NODE('hook-x')} && rm -rf /`, /runs only node/],
+    ['node "$HOME/x.mjs"', /runs only node/],
+    [`${NODE('hook-x')} payload`, /runs only node/],
+    [`${NODE('hook-x')} --flag=$VALUE`, /runs only node/],
+    [`${NODE('hook-x')}  --flag`, /runs only node/],
+    ['node "$CLAUDE_PLUGIN_ROOT/scripts/../lib/x.mjs"', /runs only node/],
+    ['node "$CLAUDE_PLUGIN_ROOT/scripts/Hook_X.mjs"', /runs only node/],
+    ["node '$CLAUDE_PLUGIN_ROOT/scripts/hook-x.mjs'", /runs only node/],
+    [`${NODE('hook-x')}\n`, /runs only node/],
+    [`${NODE('hook-x')}\nrm -rf /`, /runs only node/],
+    [`${NODE('hook-x')} `, /runs only node/],
+    [`${NODE('hook-x')}\t--flag`, /runs only node/],
+    [`${NODE('hook-x')} --a" "--b`, /runs only node/],
+    [NODE('hook-\u0445'), /runs only node/], // a Cyrillic х, a lookalike of x
+  ];
+  for (const [command, why] of refused) {
+    const file = scratchHooks(t, { PostToolUse: [{ matcher: 'Bash', hooks: [hook(command)] }] });
+    assert.throws(() => renderRoutes(file), (error) => why.test(error.message) && error.message.includes(`PostToolUse hook ${JSON.stringify(command)}`), command);
+  }
+  for (const timeout of [null, 0, -5, '5', 1e308, 1e-9, 2 ** 31]) {
+    const file = scratchHooks(t, { Stop: [{ hooks: [hook(NODE('hook-stop'), timeout)] }] });
+    assert.throws(() => renderRoutes(file), /Stop hook .*hook-stop\.mjs.*: timeout must be a positive number/, String(timeout));
+  }
+  const prompt = scratchHooks(t, { Stop: [{ hooks: [{ type: 'prompt', command: NODE('hook-stop'), timeout: 5 }] }] });
+  assert.throws(() => renderRoutes(prompt), /Stop hook .*: type must be "command"/);
+  const badMatcher = scratchHooks(t, { PreToolUse: [{ matcher: 'mcp__(', hooks: [hook(NODE('hook-x'))] }] });
+  assert.throws(() => renderRoutes(badMatcher), /PreToolUse: Invalid regular expression/);
 });

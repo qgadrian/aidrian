@@ -10,7 +10,7 @@ Read [working-agreement.md](working-agreement.md) first: the rules every change 
 ```sh
 npm ci
 make hooks       # once per clone, run by the Human in the main checkout: the hooks in .githooks/
-npm run build    # after editing plugins/aidrian/agents-src/<group>/, providers/, or agent-addons/
+npm run build    # after editing plugins/aidrian/agents-src/<group>/, providers/, agent-addons/, or hooks/hooks.json
 aidrian test changed  # before a push: the test files the change touches
 npm run check    # npm run check:static && npm test, what CI runs on the pushed head
 ```
@@ -67,6 +67,9 @@ A clone set up with the earlier relative `.githooks` reruns `make hooks`. Agents
 `npm run check` fails when:
 
 - a generated agent is stale, or edited by hand;
+- `plugins/aidrian/opencode/routes.generated.json`, the hooks the OpenCode bridge runs, is missing, stale, or edited by hand,
+  or `hooks/hooks.json` holds a hook it cannot run: one other than `node "$CLAUDE_PLUGIN_ROOT/scripts/<name>.mjs"`
+  followed by `--flag` arguments, or one with no positive `timeout`;
 - the example's project folder, or this repository's own, is invalid;
 - a test fails;
 - a test file starts more child processes than its [budget](test-processes.md#child-process-budget);

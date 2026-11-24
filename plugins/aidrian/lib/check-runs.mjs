@@ -78,11 +78,11 @@ const startsWith = (key, prefix) => key === prefix || key.startsWith(`${prefix} 
 // Only the stored key is capped: a configured command is matched as a prefix of the whole command (isTestRun).
 const capped = (key) => (key.length <= COMMAND_MAX ? key : `${key.slice(0, COMMAND_MAX)} #${createHash('sha256').update(key).digest('hex').slice(0, 12)}`);
 
-// A quoted line that runs a command through xargs, by its text alone: no run of it is recorded, so none supports it.
-const XARGS_LINE = /\|\s*xargs\b|^\s*xargs\b/u;
+// The key a run and a claim are matched by: the whole key (fullKey), capped.
+export const commandKey = (invocation) => capped(fullKey(invocation));
 
-// The whole key of a readInvocation result, uncapped: its words with wrappers that run a test runner peeled, joined by
-// spaces. `rtk npm run check 2>&1` and `npm run check` are one key.
+// The words of a readInvocation result, wrappers that run a test runner peeled, joined by spaces, uncapped.
+// `rtk npm run check 2>&1` and `npm run check` are one key.
 function fullKey(invocation) {
   const own = aidrianArgs(invocation);
   if (own) return ['aidrian', ...own.map((token) => token.text)].join(' ');
@@ -97,22 +97,19 @@ function fullKey(invocation) {
   return words.join(' ');
 }
 
-// The key a run and a claim are matched by: the whole key (fullKey), capped.
-export const commandKey = (invocation) => capped(fullKey(invocation));
-
 // Whether the readInvocation result runs tests: a word list of TEST_PREFIXES, a configured full suite or changed-files
 // command, `node --test`, or `aidrian test changed`.
 export function isTestRun(invocation, testing = {}) {
   if (invocation.dynamic) return false;
   const words = aidrianArgs(invocation)?.map((token) => token.text);
   if (words) return words[0] === 'test' && words[1] === 'changed';
-  const configured = [...(testing.fullSuite ?? []), ...(testing.changedCommand ? [testing.changedCommand] : [])].map(keyOfText);
   const key = fullKey(invocation);
   if (key.startsWith('node ') && key.split(' ').includes('--test')) return true;
+  const configured = [...(testing.fullSuite ?? []), ...(testing.changedCommand ? [testing.changedCommand] : [])].map(keyOfText);
   return [...TEST_PREFIXES, ...configured].some((prefix) => prefix && startsWith(key, prefix));
 }
 
-// The whole key of a command written as text, such as a config entry: its first command's.
+// The whole key of a command written as text, such as a config entry: its first command's (fullKey).
 function keyOfText(text) {
   const [segment] = lexPipeline(String(text)).segments;
   return segment ? fullKey(readInvocation(segment)) : '';
@@ -544,12 +541,10 @@ function textClaims(body, { section, testing, ownOnly, suites, own }) {
     for (const written of unit.split(/;\s+|\.\s+(?=[A-Z`])/u)) {
       const clause = ownOnly ? ownClause(written, own) : written;
       if (!PASS_WORD.test(clause) || FAIL_WORD.test(clause) || CI_WORD.test(clause)) continue;
-      // A line through xargs is a claim under its own text, which no recorded run's key is (claimProblem says why).
+      // A quoted line's first test run, so `git status && npx jest a.test.ts` is jest's claim.
       const keys = [...clause.matchAll(/`([^`\n]+)`/gu)].flatMap(([, code]) => {
-        if (XARGS_LINE.test(code)) return [capped(code.trim())];
-        const [segment] = lexPipeline(code).segments.filter((each) => !CHANGES_DIRECTORY.has(readInvocation(each).program));
-        const invocation = segment ? readInvocation(segment) : null;
-        return invocation && isTestRun(invocation, testing) ? [commandKey(invocation)] : [];
+        const invocation = lexPipeline(code).segments.map(readInvocation).find((each) => !CHANGES_DIRECTORY.has(each.program) && isTestRun(each, testing));
+        return invocation ? [commandKey(invocation)] : [];
       });
       const bare = clause.replace(/`[^`\n]*`/gu, ' ');
       for (const suite of suites) if (new RegExp(`(?:^|[\\s(])${escape(suite)}(?=$|[\\s:,.)])`, 'u').test(bare)) keys.push(capped(suite));
@@ -625,8 +620,7 @@ export function claimProblem(missing, runs, { where }) {
   const near = held.length ? [] : [...new Set(runs.filter((run) => missing.some(({ key }) => runner(run.command) === runner(key))).map((run) => run.command))].slice(-3);
   const clip = (command) => (command.length > 120 ? `${command.slice(0, 120)}…` : command);
   const others = near.length ? ` Its runs of \`${runner(missing[0].key)}\` ran other words: ${near.map((command) => `\`${clip(command)}\``).join(', ')}; quote the command as it ran.` : '';
-  const viaXargs = missing.some(({ key }) => XARGS_LINE.test(key)) ? ' A run through xargs is not credited: run the test command with its paths as one plain command.' : '';
-  const record = held.length ? `The record holds ${shown.join('; ')}.` : `The record holds no finished run of it.${others}${viaXargs}`;
+  const record = held.length ? `The record holds ${shown.join('; ')}.` : `The record holds no finished run of it.${others}`;
   const stated = missing.some((each) => each.counts.length) ? 'with the count it states, ' : '';
   const beside = [...new Set(held.flatMap((run) => run.untrackedCode ?? []))];
   const untracked = beside.length

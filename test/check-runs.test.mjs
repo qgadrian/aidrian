@@ -86,8 +86,8 @@ test('a test run is read through wrappers and redirects, and keyed the same way 
 });
 
 // A jest run of named test files, as a body line quotes it (#548): the record and the claim read the quoted command the
-// same way, so only a run of those same files supports it. A run through xargs is not credited, and the deny says so.
-test('a jest run by test paths supports a body line that quotes it, and a line through xargs is told to run it plain', () => {
+// same way, so only a run of those same files supports it.
+test('a jest run by test paths supports a body line that quotes it, and only a run of those files does', () => {
   const output = 'PASS src/a.test.ts\nTest Suites: 3 passed, 3 total\nTests:       12 passed, 12 total\nSnapshots:   0 total\n';
   const tree = () => ({ tree: 't', trackedTree: 't', untrackedCode: [] });
   const rowOf = (command) => checkRows({ command, cwd: '/w', output, exitZero: true, tree });
@@ -104,12 +104,9 @@ test('a jest run by test paths supports a body line that quotes it, and a line t
   assert.equal(claimed(`\`npx jest --no-coverage --runTestsByPath ${files('src/y.test.tsx')}\`: 12 tests passed.`, long).length, 1, 'another last file');
   const placeholder = claimsOf('`npx jest --no-coverage --runTestsByPath <31 files>`: 12 tests passed.');
   assert.match(claimProblem(placeholder, plain, { where: 'The body' }), /Its runs of `jest` ran other words: `jest --no-coverage --runTestsByPath a\.test\.ts b\.test\.ts c\.test\.ts`; quote the command as it ran\./u);
-  const piped = 'printf \'%s\\n\' a.test.ts b.test.ts | xargs npx jest --no-coverage --runTestsByPath';
-  assert.deepEqual(rowOf(piped), [], 'xargs runs no recorded test');
-  const viaXargs = claimed(`\`${piped}\`: 12 tests passed.`, plain);
-  assert.equal(viaXargs.length, 1);
-  assert.match(claimProblem(viaXargs, plain, { where: 'The body' }), /A run through xargs is not credited: run the test command with its paths as one plain command\./u);
-  assert.doesNotMatch(claimProblem(placeholder, plain, { where: 'The body' }), /through xargs/u);
+  // A quoted line's first test run is its claim, after a command that runs none.
+  assert.deepEqual(claimsOf('`git status && npx jest a.test.ts`: 12 tests passed.').map((claim) => claim.key), ['jest a.test.ts']);
+  assert.equal(claimed('`git status && npx jest a.test.ts`: 12 tests passed.', []).length, 1, 'with no run of it recorded, the claim fails');
 });
 
 // A configured command longer than the stored key's cap is still a prefix of its runs: the cap is the key's alone.

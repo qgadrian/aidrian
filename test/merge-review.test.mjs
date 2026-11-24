@@ -397,13 +397,15 @@ test('a curl call that names a merge URL, GraphQL, or a merge mutation is refuse
     'curl "$API" -d \'{"query":"mutation { enqueuePullRequest(input: {}) { clientMutationId } }"}\'',
   ]) assert.equal(r.run(command), CURL_REASON, command);
   assert.equal(r.run('curl --url=https://api.github.com/graphql -d x'), CURL_REASON, 'a glued --url');
+  // A body file the call sends is no word the guard reads, even one that names a mutation (the hooks doc's limits).
+  writeFileSync(path.join(r.dir, 'merge.json'), escaped);
   // Only a URL's path counts: not its host, its query, or its fragment.
   for (const command of ['curl -X PUT https://api.github.com/repos/acme/notes/pulls/5', 'curl "$UPLOAD_URL" --data-binary "$JSON"',
     'curl -X POST https://uploads.example.com/upload -d x', 'curl https://graphql.example.com/health', 'curl https://graphql', 'curl graphql',
     'curl https://graphql/', "curl -X POST 'https://uploads.example.com/upload?next=/repos/acme/notes/pulls/5/merge' -d x",
     "curl 'https://uploads.example.com/upload?return=/graphql#/graphql' -d x", 'curl --url=https://graphql/ ', 'curl --url=https://graphql',
     "curl 'uploads.example.com?next=/repos/acme/notes/pulls/5/merge'", "curl 'uploads.example.com#/graphql'",
-    // A body file is no word the guard reads, as the hooks doc's limits say: only a GraphQL URL in the call refuses it.
+    // Only a word does: a merge or GraphQL path, or a mutation, in the command itself.
     'curl "$UPLOAD_URL" -d @merge.json', 'curl "$UPLOAD_URL" --data-raw @merge.json']) {
     assert.equal(r.run(command), null, command);
   }

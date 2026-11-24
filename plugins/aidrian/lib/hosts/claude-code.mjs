@@ -6,7 +6,7 @@ import { lstatSync, realpathSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import path from 'node:path';
 
-import { attachLine, findLine, findSessions, nameMatcher, sessionEnded, sessionFinished, startBackground, startFolder, startProject, stopBackground, stopLine, stopOwnBackground } from './claude-code-background.mjs';
+import { attachLine, findLine, findSessions, heldSessions, listBackground, nameMatcher, sessionEnded, sessionFinished, startBackground, startFolder, startProject, stopBackground, stopLine, stopOwnBackground } from './claude-code-background.mjs';
 import { PROJECT_AGENTS, subagentEffort } from './claude-code-agents.mjs';
 import { configDir } from './claude-code-config.mjs';
 import { pushPermission } from './claude-code-push.mjs';
@@ -386,6 +386,15 @@ export default {
       // (code.claude.com/docs/en/commands) has `/clear [name]`, with the aliases `/reset` and `/new`, and `/compact [instructions]`.
       keepsArmed: (prompt) => typeof prompt === 'string' && /^\/(?:clear|reset|new|compact)(?:\s[\s\S]*)?$/u.test(prompt.trim()),
       hookHostPid: (pid = process.ppid) => (Number.isInteger(pid) && pid > 1 ? pid : null),
+    },
+    // The background sessions the supervisor holds (hosts/claude-code-background.mjs): `list` and `held` each read the
+    // plain `claude agents --json` once, which keeps a session whose turn ended until `claude stop` releases it (read on
+    // 2.1.331); `stop` and `stopLine` are the project start's. docs/providers/claude-code.md#background-sessions.
+    backgroundSessions: {
+      list: ({ env, run }) => listBackground({ env, run }),
+      held: ({ sessions, env, run }) => heldSessions({ sessions, env, run }),
+      stop: ({ id, started, env, run }) => stopBackground({ id, started, env, run }),
+      stopLine,
     },
     // How `aidrian project start` starts the session of one issue (lib/project-run-gate.mjs): Claude Code is `confined`,
     // as Codex is. The session works in a fresh clone made for its attempt, never a linked worktree, whose shared .git the

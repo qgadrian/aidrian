@@ -1013,6 +1013,34 @@ That return to the list was not probed further.
 Not verified live: a handoff that ends a session through the Stop hook end to end, or `claude attach` in the shell
 function; a handoff through a wrapped launcher, end to end.
 
+## Background sessions
+
+The harness starts background sessions here through `claude --bg`, for the background handoff route and for each
+attempt of a project run, both under the host's background-session supervisor. The supervisor keeps such a session
+after its turn ends, until something stops it.
+The adapter's `capabilities.backgroundSessions` ([the adapter's fields](adding-a-host.md#the-adapters-fields)) says
+which sessions it holds (`listBackground` in `lib/hosts/claude-code-background.mjs`) and which of a run's start records
+it still holds (`heldSessions`). Each reads `claude agents --json` once, without `--all`: the plain listing holds the
+sessions the supervisor keeps, while `--all` adds the completed ones it no longer holds.
+
+- A row counts when `kind` is `background` and `sessionId` has the id shape; the interactive session's own row, which
+  carries no `id`, is left out. `id` is the row's short id, which `claude stop` takes, else its `sessionId`.
+- `idle` needs `status: "idle"` with `state` either `done` or `blocked`. A row with no `status`, or in any other
+  state, is never idle. On 2.1.331, a background session whose turn ended while a task it started still ran was listed
+  with `state: "working"` and `status: "idle"`. It is still at work, so it is not idle. `waiting` is `state: "blocked"`.
+- A `name` or `cwd` that holds a hidden character reads as null. `startedAt` is the listing's number of milliseconds,
+  as every live row gave it, and anything else reads as null.
+- A start record is held when a background row names it: by its full id when it has one, else by the printed id, as
+  the row's `id`, its `sessionId`, or the start of its `sessionId`, as `sessionEnded` matches.
+- With no `claude` on PATH, or a listing that gives no answer, both answer `{ problem }`.
+
+Verified live on Claude Code 2.1.331, while seven idle sessions were stopped by hand: the plain listing gave finished
+background rows with `state: "done"`, `status: "idle"`, and a `pid`; `claude stop <short id>` printed
+`stopped <id>` for each, and the next plain listing no longer held them. `--all` kept completed rows with no `pid` and
+no `status`. The row shapes of an interactive session at work, a background one at work, one waiting on a response,
+and one still working with `status: "idle"` come from 2.1.331 listings too, and `test/adapters.test.mjs` holds them. Not verified live: a `done` row in the plain
+listing of a session the harness itself started, read through the adapter.
+
 ## Push permission in auto mode
 
 The adapter's `capabilities.pushPermission` ([the adapter's fields](adding-a-host.md#the-adapters-fields)),

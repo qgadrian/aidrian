@@ -6,7 +6,8 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os, { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -17,7 +18,8 @@ import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { GUARDED_PATHS } from '../plugins/aidrian/lib/project.mjs';
 import { CONTINUE_ROUTES } from '../plugins/aidrian/lib/config-schema.mjs';
 import { pushPermission as claudePushPermission } from '../plugins/aidrian/lib/hosts/claude-code-push.mjs';
-import { agentAliases, continueRoutes, deniedNames, detectHost, HOSTS, opaqueShellCommand, PUSH_ANSWERS, pushPermission, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
+import { heldSessions, listBackground } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
+import { agentAliases, backgroundHeld, backgroundList, continueRoutes, deniedNames, detectHost, HOSTS, opaqueShellCommand, PUSH_ANSWERS, pushPermission, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { trackerWarnings, unwatchedLine } from '../plugins/aidrian/lib/tracker-check.mjs';
 import { judgeTrackerWrite, readTrackerValue, serverPrefix, unlistedTool } from '../plugins/aidrian/lib/tracker-guard.mjs';
 import { expandTracker, knownServers, readToolsOf, TRACKERS, writeToolsOf } from '../plugins/aidrian/lib/trackers/index.mjs';
@@ -1119,4 +1121,251 @@ test('Claude Code\'s adapter answers denied from a transcript in auto mode and s
   writeFileSync(path.join(config, 'settings.json'), JSON.stringify(trusting(['$defaults'])));
   assert.deepEqual(pushPermission(claudeCode, { repository: REPOSITORY, session: 'session-1', cwd, env: { CLAUDE_CONFIG_DIR: config } }), { answer: 'allowed' });
   assert.deepEqual(pushPermission(claudeCode, { repository: REPOSITORY, session: 'session-2', cwd, env: { CLAUDE_CONFIG_DIR: config } }), { answer: 'unknown' }, 'a session with no transcript');
+});
+
+// capabilities.backgroundSessions: which background sessions a host holds, which of a given set it still holds, or
+// why it cannot. Shared code reads `list` and `held` only through backgroundList and backgroundHeld in
+// lib/hosts/index.mjs, which never throw, and `stop` and `stopLine` directly, through a guard that catches a throw.
+// Every call here goes through the run stand-in, so no test starts a process.
+const CLAUDE = '/usr/local/bin/claude';
+const WORKING = '306d6ea0-6f93-4ac6-abe0-473db3caabb0';
+const BLOCKED = '42cf8d0a-1111-4222-8333-444455556666';
+const DONE = '189eaf3d-aaaa-4bbb-8ccc-ddddeeeeffff';
+const OWN = '0badf00d-1234-4567-89ab-cdef01234567';
+const TASKED = '48fd3d0f-5555-4666-8777-888899990000';
+// The row shapes `claude agents --json` gave on 2.1.331: the interactive session itself, which carries no `id`, a
+// background one at work, one waiting on a response, one whose turn ended that the supervisor still holds, and one
+// whose turn ended while a task it started still runs (`state: "working"`, `status: "idle"`). `startedAt` is a number of
+// milliseconds on every row.
+const ROWS_2_1_331 = [
+  { kind: 'interactive', sessionId: OWN, name: 'main', cwd: '/work', startedAt: 1_700_000_000_000, state: 'working', status: 'busy', pid: 101 },
+  { kind: 'background', id: '306d6ea0', sessionId: WORKING, name: 'widget · 1', cwd: '/runs/w/1', startedAt: 1_700_000_100_000, state: 'working', status: 'busy', pid: 102 },
+  { kind: 'background', id: '42cf8d0a', sessionId: BLOCKED, name: 'TAX-8 · 1', cwd: '/runs/t/8', startedAt: 1_700_000_200_000, state: 'blocked', status: 'idle', pid: 103 },
+  { kind: 'background', id: '189eaf3d', sessionId: DONE, name: 'harness-supporter', cwd: '/work', startedAt: 1_700_000_300_000, state: 'done', status: 'idle', pid: 104 },
+  { kind: 'background', id: '48fd3d0f', sessionId: TASKED, name: 'opencode · 10', cwd: '/work', startedAt: 1_700_000_400_000, state: 'working', status: 'idle', pid: 105 },
+];
+
+// A fake `claude` whose `agents --json` lists `rows` (a string is printed as it is), recording each call's arguments.
+function agentsListing(rows, { status = 0 } = {}) {
+  const calls = [];
+  const run = (_claude, args) => {
+    calls.push(args);
+    return { status, stdout: typeof rows === 'string' ? rows : JSON.stringify(rows), stderr: '' };
+  };
+  return { run, calls, resolve: () => CLAUDE };
+}
+
+const hostOf = (id) => HOSTS.find((host) => host.id === id);
+const oneLine = (text) => typeof text === 'string' && text.trim() !== '' && !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(text);
+
+test('every host and the unknown host answer backgroundList with rows or a one-line reason, and never throw', () => {
+  const run = () => { throw new Error('no process may start'); };
+  for (const host of [...HOSTS, fakeHost, UNKNOWN_HOST, null, undefined, {}]) {
+    const read = backgroundList(host, { env: {}, run });
+    const reason = read.problem ?? read.unsupported;
+    assert.ok(Array.isArray(read.sessions) || oneLine(reason), `${host?.id}: ${JSON.stringify(read)}`);
+    const held = backgroundHeld(host, { sessions: [{ id: 'abcd1234', session: null }], env: {}, run });
+    assert.ok(Array.isArray(held.held) || oneLine(held.problem ?? held.unsupported), `${host?.id}: ${JSON.stringify(held)}`);
+  }
+  assert.deepEqual(Object.keys(backgroundList(hostOf('claude-code'), { env: {}, run })), ['problem'], 'Claude Code with no claude on PATH');
+  assert.match(backgroundList(hostOf('claude-code'), { env: {}, run }).problem, /`claude` is not on PATH/u);
+});
+
+test('Codex and OpenCode say by design that they hold no idle background session, apart from a failure', () => {
+  const codex = backgroundList(hostOf('codex'), { env: {}, run: () => ({ status: 1 }) });
+  assert.deepEqual(Object.keys(codex).sort(), ['byDesign', 'unsupported']);
+  assert.equal(codex.byDesign, true);
+  assert.match(codex.unsupported, /codex exec/u);
+  const opencode = hostOf('opencode');
+  assert.deepEqual(Object.keys(opencode.capabilities.backgroundSessions), ['unsupported'], 'OpenCode declares its reason and nothing else');
+  for (const read of [backgroundList(opencode, { env: {} }), backgroundHeld(opencode, { sessions: [{ id: 'x' }], env: {} })]) {
+    assert.equal(read.byDesign, true);
+    assert.match(read.unsupported, /starts no background session/u);
+    assert.equal(read.problem, undefined);
+  }
+  for (const host of [fakeHost, UNKNOWN_HOST]) {
+    const read = backgroundList(host, { env: {} });
+    assert.ok(oneLine(read.problem), host.id);
+    assert.equal(read.byDesign, undefined, `${host.id}: a host that says nothing is a problem, not a design`);
+  }
+});
+
+test('Claude Code maps the 2.1.331 row shapes, reading the listing once without --all', () => {
+  const { run, calls, resolve } = agentsListing(ROWS_2_1_331);
+  const read = listBackground({ env: {}, run, resolve });
+  assert.deepEqual(calls, [['agents', '--json']]);
+  assert.deepEqual(read, {
+    sessions: [
+      { id: '306d6ea0', session: WORKING, name: 'widget · 1', cwd: '/runs/w/1', startedAt: 1_700_000_100_000, idle: false, waiting: false },
+      { id: '42cf8d0a', session: BLOCKED, name: 'TAX-8 · 1', cwd: '/runs/t/8', startedAt: 1_700_000_200_000, idle: true, waiting: true },
+      { id: '189eaf3d', session: DONE, name: 'harness-supporter', cwd: '/work', startedAt: 1_700_000_300_000, idle: true, waiting: false },
+      { id: '48fd3d0f', session: TASKED, name: 'opencode · 10', cwd: '/work', startedAt: 1_700_000_400_000, idle: false, waiting: false },
+    ],
+  }, 'a row still working is never idle, whatever its status says');
+});
+
+test('Claude Code leaves out a row it cannot hold to a background session, and reads an unprintable name or folder as null', () => {
+  const rows = [
+    { kind: 'background', id: 'aaaa1111', sessionId: 'no', name: 'short id', cwd: '/x', status: 'idle' },
+    { kind: 'background', id: 'bbbb2222', name: 'no session id', cwd: '/x', status: 'idle' },
+    { kind: 'background', sessionId: 'cccc3333-0000', name: 'two\nlines', cwd: '/x\u202e', status: 'IDLE', state: 'done' },
+    { kind: 'background', id: 'bad id!', sessionId: 'dddd4444-0000', name: 7, cwd: null, startedAt: '2023-11-14T22:20:00.000Z', status: 'idle' },
+    { kind: 'background', id: 'eeee5555', sessionId: 'eeee5555-0000', name: 'stopped', cwd: '/x', startedAt: Number.NaN, state: 'stopped', status: 'idle' },
+    null,
+    'text',
+  ];
+  const { run, resolve } = agentsListing(rows);
+  assert.deepEqual(listBackground({ env: {}, run, resolve }), {
+    sessions: [
+      { id: 'cccc3333-0000', session: 'cccc3333-0000', name: null, cwd: null, startedAt: null, idle: false, waiting: false },
+      { id: 'dddd4444-0000', session: 'dddd4444-0000', name: null, cwd: null, startedAt: null, idle: false, waiting: false },
+      { id: 'eeee5555', session: 'eeee5555-0000', name: 'stopped', cwd: '/x', startedAt: null, idle: false, waiting: false },
+    ],
+  }, 'a status other than idle, in any case, is never idle, nor idle in no state or another state; with no row id, the session id names it; a startedAt that is no number reads null');
+});
+
+test('Claude Code answers a problem when claude is not on PATH and when the listing gives no answer', () => {
+  assert.match(listBackground({ env: {}, run: () => ({ status: 0, stdout: '[]' }), resolve: () => null }).problem, /`claude` is not on PATH/u);
+  assert.match(heldSessions({ sessions: [{ id: '306d6ea0' }], env: {}, run: () => ({ status: 0, stdout: '[]' }), resolve: () => null }).problem, /`claude` is not on PATH/u);
+  for (const [what, listing] of [['an exit 1', agentsListing([], { status: 1 })], ['no JSON', agentsListing('not json')], ['no list', agentsListing('{}')]]) {
+    assert.match(listBackground({ env: {}, ...listing }).problem, /`claude agents --json` did not answer/u, what);
+    assert.match(heldSessions({ sessions: [{ id: '306d6ea0' }], env: {}, ...listing }).problem, /`claude agents --json` did not answer/u, what);
+  }
+  const failed = { env: {}, run: () => ({ error: Object.assign(new Error('spawn'), { code: 'ETIMEDOUT' }) }), resolve: () => CLAUDE };
+  assert.ok(oneLine(listBackground(failed).problem));
+});
+
+test('Claude Code held matches a full id, a printed short id, and no row, from one listing read', () => {
+  const { run, calls, resolve } = agentsListing(ROWS_2_1_331);
+  const sessions = [
+    { id: '42cf8d0a', session: BLOCKED },
+    { id: 'zzzz9999', session: DONE },
+    { id: '306d6ea0', session: null },
+    { id: '306d6e' },
+    { id: 'ffff0000', session: 'ffff0000-1111-4222-8333-444455556666' },
+    { id: '0badf00d', session: OWN },
+    { id: '48fd3d0f', session: TASKED },
+    { id: '' },
+    {},
+  ];
+  assert.deepEqual(heldSessions({ sessions, env: {}, run, resolve }), { held: [true, true, true, true, false, false, true, null, null] },
+    'the full id decides when given; a short id matches the row id or the start of its session id; an interactive row is no background session');
+  assert.deepEqual(calls, [['agents', '--json']]);
+});
+
+test('Claude Code\'s adapter answers backgroundList and backgroundHeld through a claude on PATH', { skip: process.platform === 'win32' }, (t) => {
+  const bin = mkdtempSync(path.join(tmpdir(), 'aidrian-bg-'));
+  t.after(() => rmSync(bin, { recursive: true, force: true }));
+  writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\nexit 1\n');
+  chmodSync(path.join(bin, 'claude'), 0o755);
+  const claudeCode = hostOf('claude-code');
+  const { run, calls } = agentsListing(ROWS_2_1_331);
+  const env = { PATH: bin };
+  assert.deepEqual(backgroundList(claudeCode, { env, run }).sessions.map(({ id, idle }) => [id, idle]), [['306d6ea0', false], ['42cf8d0a', true], ['189eaf3d', true], ['48fd3d0f', false]]);
+  assert.deepEqual(backgroundHeld(claudeCode, { sessions: [{ id: '189eaf3d', session: DONE }, { id: 'ffff0000' }], env, run }), { held: [true, false] });
+  assert.deepEqual(calls, [['agents', '--json'], ['agents', '--json']]);
+  const { stop, stopLine } = claudeCode.capabilities.backgroundSessions;
+  assert.equal(typeof stop, 'function');
+  assert.equal(stopLine({ id: '189eaf3d' }), '`claude stop 189eaf3d` stops it');
+});
+
+test('Codex held follows the process table through the run stand-in', { skip: process.platform === 'win32' }, () => {
+  const start = 'Mon Nov 24 10:00:00 2026';
+  const digest = createHash('sha256').update(start).digest('hex').slice(0, 16);
+  const table = new Map([[4100, `S ${start}`], [4200, `Z ${start}`], [4300, 'S Mon Nov 24 11:00:00 2026']]);
+  const asked = [];
+  const run = (_ps, args) => {
+    const pid = Number(args.at(-1));
+    asked.push(pid);
+    if (pid === 4400) return { error: new Error('ps failed') };
+    return table.has(pid) ? { status: 0, stdout: `${table.get(pid)}\n` } : { status: 1, stdout: '' };
+  };
+  const sessions = [
+    { id: `pid-4100-${digest}` },
+    { id: `pid-4200-${digest}` },
+    { id: `pid-4300-${digest}` },
+    { id: `pid-4500-${digest}` },
+    { id: `pid-4400-${digest}` },
+    { id: 'thread-1', session: `pid-4100-${digest}` },
+    { id: 'abcd1234' },
+  ];
+  const held = backgroundHeld(hostOf('codex'), { sessions, env: {}, run });
+  assert.deepEqual(held, { held: [true, false, false, false, null, true, null] },
+    'running, a zombie, a pid another process took over, gone, an unreadable table, the session id, and an id that names no process');
+  assert.deepEqual(asked, [4100, 4200, 4300, 4500, 4400, 4100]);
+  const { stop, stopLine } = hostOf('codex').capabilities.backgroundSessions;
+  assert.equal(typeof stop, 'function');
+  assert.equal(typeof stopLine({ id: `pid-4100-${digest}` }), 'string');
+});
+
+test('the background session wrappers turn a throw, a promise, and each wrong shape into a problem', () => {
+  const answering = (backgroundSessions) => ({ ...fakeHost, capabilities: { ...fakeHost.capabilities, backgroundSessions } });
+  const lists = (read) => answering({ list: () => read, held: () => read });
+  const isProblem = (read, what) => {
+    assert.deepEqual(Object.keys(read), ['problem'], `${what}: ${JSON.stringify(read)}`);
+    assert.ok(oneLine(read.problem), what);
+  };
+  const rejected = Promise.reject(new Error('later'));
+  const wrong = [
+    ['no answer', undefined], ['null', null], ['text', 'idle'], ['an array', []], ['an empty object', {}],
+    ['an empty problem', { problem: '' }], ['a blank problem', { problem: '  ' }], ['a problem on two lines', { problem: 'a\nb' }],
+    ['a problem with a bidi mark', { problem: 'a\u202eb' }], ['a problem that is no text', { problem: 7 }],
+    ['an empty unsupported', { unsupported: '' }], ['an unsupported with a zero-width space', { unsupported: 'a\u200bb' }],
+    ['a rejected promise', rejected], ['a promise', Promise.resolve({ sessions: [] })],
+  ];
+  for (const [what, read] of wrong) {
+    isProblem(backgroundList(lists(read), {}), `list: ${what}`);
+    isProblem(backgroundHeld(lists(read), { sessions: [{ id: 'a' }] }), `held: ${what}`);
+  }
+  for (const [what, sessions] of [['no array', { id: 'a' }], ['a row that is no object', ['a']], ['a row with no id', [{ session: 'x' }]], ['an empty id', [{ id: '' }]], ['an id that is no text', [{ id: 7 }]], ['an id on two lines', [{ id: 'a\nb' }]]]) {
+    isProblem(backgroundList(lists({ sessions }), {}), `sessions: ${what}`);
+  }
+  const throwing = answering({ list: () => { throw new Error('boom'); }, held: () => { throw new Error('boom'); } });
+  isProblem(backgroundList(throwing, {}), 'list throws');
+  isProblem(backgroundHeld(throwing, { sessions: [{ id: 'a' }] }), 'held throws');
+  const getter = { get sessions() { throw new Error('boom'); } };
+  isProblem(backgroundList(lists(getter), {}), 'a getter that throws');
+  isProblem(backgroundHeld(lists({ get held() { throw new Error('boom'); } }), { sessions: [{ id: 'a' }] }), 'a held getter that throws');
+  isProblem(backgroundHeld(lists({ held: [] }), { get sessions() { throw new Error('boom'); } }), 'an ask whose sessions getter throws');
+  const unnamed = { get name() { throw new Error('boom'); }, get id() { throw new Error('boom'); }, capabilities: { backgroundSessions: { list: () => ({ sessions: [] }), held: () => ({ held: [true] }) } } };
+  assert.deepEqual(backgroundList(unnamed, {}), { sessions: [] }, 'a host name getter that throws');
+  assert.deepEqual(backgroundHeld(unnamed, { sessions: [{ id: 'a' }] }), { held: [true] }, 'a host name getter that throws');
+  const hidden = { get capabilities() { throw new Error('boom'); } };
+  isProblem(backgroundList(hidden, {}), 'a capabilities getter that throws');
+  isProblem(backgroundHeld(hidden, { sessions: [{ id: 'a' }] }), 'a capabilities getter that throws');
+  for (const [what, held] of [['shorter', [true]], ['longer', [true, false, null]], ['no array', true], ['a value outside true, false, null', [true, 'yes']]]) {
+    isProblem(backgroundHeld(lists({ held }), { sessions: [{ id: 'a' }, { id: 'b' }] }), `held: ${what}`);
+  }
+  for (const [what, ask] of [['no ask', undefined], ['no sessions', {}], ['sessions no array', { sessions: 'a' }], ['a member that is no object', { sessions: ['a'] }]]) {
+    isProblem(backgroundHeld(lists({ held: [] }), ask), `ask: ${what}`);
+  }
+  isProblem(backgroundList(answering({ held: () => ({ held: [] }) }), {}), 'no list');
+  isProblem(backgroundHeld(answering({ list: () => ({ sessions: [] }) }), { sessions: [{ id: 'a' }] }), 'no held');
+  isProblem(backgroundList(answering(null), {}), 'a capability that is null');
+  for (const host of [...HOSTS, fakeHost, UNKNOWN_HOST]) {
+    for (const read of [backgroundList(host, { env: {} }), backgroundList(answering(() => {}), {}), backgroundHeld(lists({ held: 1 }), { sessions: [] })]) {
+      const reason = read.problem ?? read.unsupported;
+      assert.ok(!reason.startsWith(host.name), `${host.id}: a reason follows the host's name, never repeats it: ${reason}`);
+    }
+  }
+});
+
+test('the background session wrappers pass a clear answer on, with only the fields of a row', () => {
+  let asked = null;
+  const row = { id: 'abcd1234', session: 'abcd1234-0000', name: 'widget · 1', cwd: '/w', startedAt: 5, idle: true, waiting: false, extra: 'kept out' };
+  const host = { ...fakeHost, capabilities: { ...fakeHost.capabilities, backgroundSessions: {
+    list: (ask) => { asked = ask; return { sessions: [row, { id: 'efgh5678', name: 'a\u202eb', cwd: 'x\ny', startedAt: 'soon', idle: 'yes' }] }; },
+    held: (ask) => { asked = ask; return { held: ask.sessions.map((each) => each.id === 'abcd1234') }; },
+  } } };
+  const ask = { env: {}, run: () => ({}) };
+  assert.deepEqual(backgroundList(host, ask), { sessions: [
+    { id: 'abcd1234', session: 'abcd1234-0000', name: 'widget · 1', cwd: '/w', startedAt: 5, idle: true, waiting: false },
+    { id: 'efgh5678', session: null, name: null, cwd: null, startedAt: null, idle: false, waiting: false },
+  ] });
+  assert.equal(asked, ask, 'the capability gets the ask as given');
+  const heldAsk = { sessions: [{ id: 'abcd1234' }, { id: 'zzzz0000' }], env: {} };
+  assert.deepEqual(backgroundHeld(host, heldAsk), { held: [true, false] });
+  assert.equal(asked, heldAsk);
+  assert.deepEqual(backgroundHeld(host, { sessions: [] }), { held: [] });
+  assert.deepEqual(backgroundList({ ...fakeHost, capabilities: { backgroundSessions: { list: () => ({ problem: 'the listing timed out' }) } } }, {}), { problem: 'the listing timed out' });
 });

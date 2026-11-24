@@ -4,7 +4,7 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-import { attachLine, findProcesses, localBindingRisk, logLimit, processEnded, sessionNote, startProject, stopLine, stopProcess } from './codex-exec.mjs';
+import { attachLine, findProcesses, heldProcesses, localBindingRisk, logLimit, NO_IDLE, processEnded, sessionNote, startProject, stopLine, stopProcess } from './codex-exec.mjs';
 import { patchEdit } from './patch.mjs';
 import { responseObjects } from './response.mjs';
 
@@ -357,6 +357,15 @@ export default {
     pushPermission: () => ({ answer: 'unknown' }),
     // No handoff continue route runs here: session.handoff.continue falls back to none on Codex.
     handoffContinue: { routes: [] },
+    // A session the harness starts here is a `codex exec` process, which exits once its turn ends, so `list` says none
+    // stays idle by design; `held` reads the process table for each session a start record names (codex-exec.mjs
+    // heldProcesses), and `stop` and `stopLine` are the project start's. docs/providers/codex.md#background-sessions.
+    backgroundSessions: {
+      list: () => ({ unsupported: NO_IDLE }),
+      held: ({ sessions, run }) => heldProcesses({ sessions, run }),
+      stop: ({ id, started, run }) => stopProcess({ id, started, run }),
+      stopLine,
+    },
     // A project run's issue session, through a detached `codex exec` in a fresh clone made for its attempt
     // (hosts/codex-exec.mjs, lib/project-start.mjs): Codex is `confined` to its workspace-write sandbox, with `--add-dir`
     // for what the gate grants. Codex lists no sessions, so a session is known by its process, and a start holds it only

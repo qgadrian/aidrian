@@ -4,6 +4,7 @@
 
 import path from 'node:path';
 
+import { hasHidden } from '../hidden-text.mjs';
 import claudeCode from './claude-code.mjs';
 import codex from './codex.mjs';
 import opencode from './opencode.mjs';
@@ -300,6 +301,87 @@ export function pushPermission(host, ask) {
     return clear && path.isAbsolute(denial.file) ? { answer: 'denied', ...denial } : UNKNOWN_PUSH;
   } catch {
     return UNKNOWN_PUSH;
+  }
+}
+
+// What a host says of the background sessions it holds (docs/providers/adding-a-host.md, capabilities.backgroundSessions).
+// Each wrapper below never throws and answers one of three shapes: the answer; { unsupported, byDesign: true }, a
+// one-line reason the host by design holds no such session, from a host that declares `unsupported` or whose call
+// answers it; or { problem }, a one-line reason it cannot say now, for a host with no capability, a call that throws or
+// answers a promise, and an answer of the wrong shape.
+const isLine = (text) => typeof text === 'string' && text.trim() !== '' && !hasHidden(text);
+const plainOrNull = (value) => (isLine(value) ? value : null);
+const isRow = (row) => row !== null && typeof row === 'object' && isLine(row.id);
+
+// The wrappers' own reasons, each one line that follows the host's name, as `note <host name>: <reason>` prints it.
+const NO_CAPABILITY = 'its adapter says nothing of the background sessions it holds';
+const LATE = 'its adapter answered later than asked about its background sessions';
+const FAILED = 'its adapter failed while it read its background sessions';
+const BAD_LIST = 'its adapter gave background sessions in a shape the harness cannot read';
+const BAD_HELD = 'its adapter answered which background sessions it holds in a shape the harness cannot read';
+
+// The host's call `member` of capabilities.backgroundSessions with `ask`: { answer }, or a wrapper's other shape.
+function askBackground(host, member, ask) {
+  try {
+    const capability = host?.capabilities?.backgroundSessions;
+    if (isLine(capability?.unsupported)) return { unsupported: capability.unsupported, byDesign: true };
+    if (typeof capability?.[member] !== 'function') return { problem: NO_CAPABILITY };
+    const read = capability[member](ask);
+    if (typeof read?.then === 'function') {
+      Promise.resolve(read).catch(() => {});
+      return { problem: LATE };
+    }
+    if (read !== null && typeof read === 'object' && !Array.isArray(read)) {
+      if (isLine(read.unsupported)) return { unsupported: read.unsupported, byDesign: true };
+      if (isLine(read.problem)) return { problem: read.problem };
+    }
+    return { answer: read };
+  } catch {
+    return { problem: FAILED };
+  }
+}
+
+// The background sessions `host` holds, `ask` being { env, run }: { sessions: [{ id, session, name, cwd, startedAt,
+// idle, waiting }] }, with `id` one line of plain text, `session`, `name`, and `cwd` plain text or null, `startedAt` in
+// milliseconds or null, and `idle` and `waiting` booleans; or a wrapper's other shape.
+export function backgroundList(host, ask) {
+  const read = askBackground(host, 'list', ask);
+  if (!('answer' in read)) return read;
+  try {
+    const sessions = read.answer?.sessions;
+    if (!Array.isArray(sessions) || !sessions.every(isRow)) return { problem: BAD_LIST };
+    return {
+      sessions: sessions.map((row) => ({
+        id: row.id,
+        session: plainOrNull(row.session),
+        name: plainOrNull(row.name),
+        cwd: plainOrNull(row.cwd),
+        startedAt: Number.isFinite(row.startedAt) ? row.startedAt : null,
+        idle: row.idle === true,
+        waiting: row.waiting === true,
+      })),
+    };
+  } catch {
+    return { problem: FAILED };
+  }
+}
+
+// Which of `ask.sessions`, each { id, session } as a start record names it, `host` still holds: { held: [true | false
+// | null, ...] } in their order, null where it cannot tell; or a wrapper's other shape, which an answer of another
+// length or with another value is.
+export function backgroundHeld(host, ask) {
+  try {
+    const sessions = ask?.sessions;
+    if (!Array.isArray(sessions) || !sessions.every((each) => each !== null && typeof each === 'object')) {
+      return { problem: 'the sessions to look for are not a list of start records' };
+    }
+    const read = askBackground(host, 'held', ask);
+    if (!('answer' in read)) return read;
+    const held = read.answer?.held;
+    const clear = Array.isArray(held) && held.length === sessions.length && held.every((each) => each === true || each === false || each === null);
+    return clear ? { held: [...held] } : { problem: BAD_HELD };
+  } catch {
+    return { problem: FAILED };
   }
 }
 

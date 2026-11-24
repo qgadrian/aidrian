@@ -118,6 +118,22 @@ export function processEnded({ id, run = runCommand }) {
   return Boolean(state.gone || state.zombie || state.digest !== own.digest);
 }
 
+// Which of `sessions`, each { id, session } as a start record names it, still runs, from the process table:
+// { held: [true | false | null, ...] } in their order, processEnded's answer turned over, by the first of `id` and
+// `session` that names a process. Null for a member that names no process, or whose row the table cannot give.
+export function heldProcesses({ sessions, run = runCommand }) {
+  return {
+    held: sessions.map((member) => {
+      const id = [member.id, member.session].find((each) => processOf(each) !== null);
+      const ended = id === undefined ? null : processEnded({ id, run });
+      return ended === null ? null : !ended;
+    }),
+  };
+}
+
+// Why Codex lists no background session: `codex exec` runs one turn and exits, so none stays idle after its work.
+export const NO_IDLE = 'a `codex exec` session exits once its turn ends, so none stays idle in the background';
+
 // Sends `signal` to the process group of `pid`, else to `pid` alone: whether it went.
 function signalGroup(pid, signal) {
   for (const target of [-pid, pid]) {

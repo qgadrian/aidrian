@@ -486,14 +486,14 @@ test('the plugin folder`s package.json is private, aidrian`s version, and export
 // an ignore file not yet tracked fails too.
 const IGNORE_FIXTURES = ['evals/harness-setup-rerun/fixture/.gitignore', 'evals/product-quorum-auto-start-off/fixture/.gitignore'];
 // Skipped: the folders the repository's .gitignore names, `node_modules` anywhere and `results` below `evals/`, which no
-// install takes. The walk checks a folder before it descends, so it never reads inside one.
+// install takes. The walk checks a folder before it descends, so it never reads inside one; `read` lists one folder.
 const ignored = (each) => each.split('/').includes('node_modules') || (each.startsWith('evals/') && each.split('/').includes('results'));
-function ignoreFiles(root, rel = '') {
+function ignoreFiles(root, rel = '', read = readdirSync) {
   const found = [];
-  for (const entry of readdirSync(path.join(root, rel), { withFileTypes: true })) {
+  for (const entry of read(path.join(root, rel), { withFileTypes: true })) {
     const each = rel ? `${rel}/${entry.name}` : entry.name;
     if (ignored(each)) continue;
-    if (entry.isDirectory()) found.push(...ignoreFiles(root, each));
+    if (entry.isDirectory()) found.push(...ignoreFiles(root, each, read));
     else if (['.npmignore', '.gitignore'].includes(entry.name)) found.push(each);
   }
   return rel ? found : found.sort();
@@ -508,19 +508,24 @@ test('the plugin folder holds no .npmignore, and no .gitignore but the two eval 
     ['lib/.npmignore', 'evals/x/.npmignore', 'scripts/.gitignore', '.gitignore']);
 });
 
-// A folder the walk skips is never read: each one here is unreadable, so a walk that goes into it throws.
-test('the ignore-file walk never reads inside a node_modules or evals results folder', (t) => {
+// A folder the walk skips is never listed: the walk's `read` records each folder it is given.
+test('the ignore-file walk never lists a node_modules or evals results folder, or one inside them', () => {
   const root = mkdtempSync(path.join(ROOT, 'ignore-walk-'));
-  const locked = [path.join(root, 'node_modules', 'x'), path.join(root, 'evals', 'a', 'results', 'y')];
-  for (const dir of locked) {
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(path.join(dir, '.gitignore'), '');
+  for (const dir of ['node_modules/x', 'evals/a/results/y']) {
+    mkdirSync(path.join(root, dir), { recursive: true });
+    writeFileSync(path.join(root, dir, '.gitignore'), '');
   }
   mkdirSync(path.join(root, 'lib'));
   writeFileSync(path.join(root, 'lib', '.npmignore'), '');
-  t.after(() => { for (const dir of locked) chmodSync(dir, 0o755); });
-  for (const dir of locked) chmodSync(dir, 0o000);
-  assert.deepEqual(ignoreFiles(root), ['lib/.npmignore']);
+  const listed = [];
+  const read = (dir, options) => {
+    listed.push(dir);
+    return readdirSync(dir, options);
+  };
+  assert.deepEqual(ignoreFiles(root, '', read), ['lib/.npmignore']);
+  const skipped = [path.join(root, 'node_modules'), path.join(root, 'evals', 'a', 'results')];
+  assert.deepEqual(listed.filter((dir) => skipped.some((each) => dir === each || dir.startsWith(`${each}${path.sep}`))), []);
+  assert.ok(listed.includes(path.join(root, 'lib')), listed.join('\n'));
 });
 
 // The OpenCode page (docs/providers/opencode.md) says which hooks run there: its Hooks table has one row for each

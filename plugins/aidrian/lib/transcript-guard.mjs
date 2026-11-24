@@ -2,16 +2,18 @@
 // as another session (`capabilities.continuedIn`), and under the team's projectRun.fullAuto that row alone lets the session
 // it names take the run's custody with no person (lib/project-run-gate.mjs resumeRun). No session needs to write a
 // transcript, so until the project's run records its end the agent gate hook refuses every session and subagent a write
-// that reaches one (scripts/hook-agent-gates.mjs): a host's transcript folder, a project folder in it, or a `.jsonl`
-// file in one of those. Deeper entries, such as a host's memory folder inside a project folder, stay writable.
-// Accepted residual: a script that writes the file, which the hooks never see, as for a forged typed turn.
+// under a host's transcript folder (scripts/hook-agent-gates.mjs), but in a project folder's `memory` folder, where a
+// host keeps its memory. One rule, failing closed: a glob counts by its literal prefix alone.
+// Accepted residuals: a script that writes the file, which the hooks never see, as for a forged typed turn; a link
+// already on disk that a write passes through, since the guard is for cooperating agents (docs/hooks.md); and a glob
+// that starts above the transcript folder, such as one beside a host's config folder, is refused though it may reach none.
 
 import { userInfo } from 'node:os';
 import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
 import { writeTargets } from './config-guard.mjs';
-import { foldCase, globParts, isWithin, partsReach } from './fs.mjs';
+import { foldCase, isWithin } from './fs.mjs';
 import { globPaths } from './handoff-guard.mjs';
 import { transcriptFolders } from './hosts/index.mjs';
 import { canonical } from './rules/main-checkout.mjs';
@@ -20,40 +22,17 @@ const real = (file) => foldCase(canonical(file));
 // A transcript as a text from a folder no path gives spells it: `projects/<folder>/<session>.jsonl`.
 const SPELLED = /(?:^|[\\/])projects[\\/][^\\/\s'"]+[\\/][^\\/\s'"]+\.jsonl(?![\w.-])/iu;
 
-// Whether the real path `target` is a transcript place of the real transcript folder `folder`: the folder itself, a
-// project folder in it, or a `.jsonl` file in one of those.
-function transcriptPlace(folder, target) {
+// Whether the real path `target` lies under the real transcript folder `folder`, the folder itself included, and outside
+// the `memory` folder of a project folder in it.
+function underTranscripts(folder, target) {
   if (!isWithin(folder, target)) return false;
   const parts = path.relative(folder, target).split(path.sep).filter(Boolean);
-  return parts.length <= 1 || (parts.length === 2 && parts[1].toLowerCase().endsWith('.jsonl'));
+  return !(parts.length >= 2 && parts[1] === foldCase('memory'));
 }
 
-// Stand-ins for the parts of a transcript path below the folder: a project folder of any name, and a `.jsonl` file.
-const ANY = Symbol('any');
-const JSONL = Symbol('jsonl');
-const GLOB = /[*?[]/u;
-const FOLD_FLAG = foldCase('A') === 'a' ? 'i' : '';
-
-// Whether the glob path part `part` may match a name that ends `.jsonl`: plainly, when it does; else when the text after
-// its last wildcard, which every match ends with, ends so or is the end of `.jsonl` itself.
-function mayEndJsonl(part) {
-  if (!GLOB.test(part)) return part.toLowerCase().endsWith('.jsonl');
-  const tail = part.slice(Math.max(part.lastIndexOf('*'), part.lastIndexOf('?'), part.lastIndexOf(']')) + 1).toLowerCase();
-  return tail.endsWith('.jsonl') || '.jsonl'.endsWith(tail);
-}
-
-// Whether a glob write from a known folder, { prefix, rest } (handoff-guard.mjs globPaths), may reach a transcript place
-// of `folder`: its parts may name the folder or a folder above it, a project folder in it, or a `.jsonl` file in one
-// (fs.mjs partsReach, where a part of only stars spans any number of parts). A glob that goes on deeper reaches none.
-function globReachesTranscript(folder, { prefix, rest }) {
-  const split = (file) => file.split(path.sep).filter((part, i) => i === 0 || part !== '');
-  const matches = (part, name) => {
-    if (name === ANY) return true;
-    if (name === JSONL) return mayEndJsonl(part);
-    return GLOB.test(part) ? globParts(part, [], FOLD_FLAG).pattern.test(name) : foldCase(part) === name;
-  };
-  return partsReach([...split(prefix), ...rest], [...split(folder), ANY, JSONL], matches, false);
-}
+// Whether a glob write from a known folder, { prefix } (handoff-guard.mjs globPaths), may reach `folder`: its literal
+// prefix, the parts before the first wildcard, is at or above the folder, or under it as underTranscripts reads it.
+const globReaches = (folder, { prefix }) => isWithin(prefix, folder) || underTranscripts(folder, prefix);
 
 // Why the call in `input` may not run because it writes a host's session transcript while `runSession()` says the
 // call's project has a project run whose ledger records no end (project-run-guard.mjs projectRunActive with
@@ -68,8 +47,8 @@ export function transcriptWriteDenial(input, { names: { human } }, { runSession 
   const placed = files.map(real);
   const hit = names.some((text) => SPELLED.test(text))
     || globs.some((glob) => (glob.unsure || glob.opaque) && SPELLED.test(glob.text))
-    || guarded.some((folder) => placed.some((target) => transcriptPlace(folder, target))
-      || globs.filter((glob) => !glob.unsure).flatMap(globPaths).some((each) => globReachesTranscript(folder, each)));
+    || guarded.some((folder) => placed.some((target) => underTranscripts(folder, target))
+      || globs.filter((glob) => !glob.unsure).flatMap(globPaths).some((each) => globReaches(folder, each)));
   if (!hit || !runSession()) return null;
   const why = 'it may change a host\'s session transcript, which a project run reads its driver\'s continuation from, and no session or subagent writes one while a project run is under way';
   return { match: 'may change a host\'s session transcript', reason: projectRuleReason(input, why, human) };

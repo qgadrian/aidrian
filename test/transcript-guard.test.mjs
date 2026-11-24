@@ -73,18 +73,19 @@ test('the guard holds the folder the custody reader reads, under a host HOME tha
   assert.match(denied?.match ?? '', /host's session transcript/u);
 });
 
-test('a glob counts only when it may reach a transcript place: a folder above, a project folder, or a .jsonl file in one', (t) => {
+test('a write counts under the transcript folder but in a project\'s memory folder, and a glob by its literal prefix', (t) => {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-transcripts-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const projects = path.join(root, '.claude', 'projects');
   const own = path.join(projects, '-work');
-  mkdirSync(path.join(own, 'memory'), { recursive: true });
-  const ask = (command) => transcriptWriteDenial(bash(command, root), SETTINGS, { runSession: () => true, folders: [projects] });
-  for (const command of [`rm -f ${root}/build-*.tmp`, `rm -f ${own}/memory-*.md`, `rm -f ${projects}/*/memory/*.md`, `rm -f ${own}/*.json`]) {
+  const beside = path.join(root, 'beside');
+  for (const folder of [path.join(own, 'memory'), beside]) mkdirSync(folder, { recursive: true });
+  const ask = (command) => transcriptWriteDenial(bash(command, beside), SETTINGS, { runSession: () => true, folders: [projects] });
+  for (const command of [`printf x > ${own}/memory/note.md`, `rm -f ${own}/memory/*.md`, `rm -f ${beside}/build-*.tmp`, 'rm -f ./build-*.tmp']) {
     assert.equal(ask(command), null, command);
   }
-  for (const command of [`rm -rf ${root}/.cl*`, `rm -rf ${projects}/*`, `rm -f ${projects}/*/x.jsonl`, `rm -f ${own}/*.json*`, `rm -f ${own}/*`, `rm -f ${root}/**/*.jsonl`]) {
+  for (const command of [`printf x > ${own}/notes.md`, `printf x > ${own}/a/b/c.jsonl`, `rm -rf ${projects}`, `rm -f ${own}/memory-*.md`, `rm -f ${projects}/*/memory/*.md`, `rm -rf ${root}/.cl*`, `rm -f ${root}/**/*.jsonl`]) {
     assert.notEqual(ask(command), null, command);
   }
-  assert.equal(transcriptWriteDenial(bash(`rm -f ${own}/*`, root), SETTINGS, { runSession: () => false, folders: [projects] }), null, 'no run under way');
+  assert.equal(transcriptWriteDenial(bash(`rm -f ${own}/*`, beside), SETTINGS, { runSession: () => false, folders: [projects] }), null, 'no run under way');
 });

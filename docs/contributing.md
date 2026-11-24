@@ -166,6 +166,26 @@ and open the pull request. It is a skill of this repository only, never shipped 
 To try a branch in a real session before it merges, install the plugin from your checkout:
 [Claude Code](providers/claude-code.md#from-a-local-checkout), [Codex](providers/codex.md#from-a-local-checkout).
 
+### A live Claude Code run the session drives
+
+A session can run a live Claude Code test of its own change, with no Human at the keyboard: it drives a second
+`claude` through tmux, with the branch's plugin loaded and the installed one turned off. A live test is never handed to
+the Human when this recipe can run it.
+
+```sh
+copy=$(mktemp -d)/aidrian && cp -R plugins/aidrian "$copy"
+# Raise the copy's version, never the checkout's, so the run reads as a version of its own.
+node -e 'for (const f of process.argv.slice(1)) { const fs = require("fs"); const j = JSON.parse(fs.readFileSync(f)); j.version += "-try"; fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\n"); }' "$copy/plugin.json" "$copy/.claude-plugin/plugin.json"
+tmux new-session -d -s try -c <scratch project> \
+  "claude --plugin-dir $copy --settings '{\"enabledPlugins\":{\"aidrian@aidrian-harness\":false}}'"
+tmux send-keys -t try '<the prompt that exercises the change>' Enter
+tmux capture-pane -p -t try   # read the screen; repeat until the run settles
+tmux kill-session -t try
+```
+
+The scratch project is a git repository whose `.aidrian/config.json` is committed: a worktree the run makes has only
+committed files, so with the config left untracked its worktrees have none, and a knowledge route there reads `none`.
+
 ## Skill evals
 
 `plugins/aidrian/evals/<case>/` holds behavior cases for skills, run with model calls, so not by `npm run check`.

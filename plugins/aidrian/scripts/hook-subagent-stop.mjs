@@ -163,7 +163,7 @@ export async function handle(input) {
     const cwd = typeof input.cwd === 'string' ? input.cwd : project.root;
     const refused = new Set((checked.rejected ?? []).map(({ value }) => resolveClaim(cwd, value)));
     const missing = delivery.missing.filter((file) => !refused.has(resolveClaim(cwd, file)));
-    recordSignal(project, deliverySignal({ agentType: agent.agent_type, agentId, session: agent.session_id, missing: undelivered(delivery) }), { config });
+    recordSignal(project, deliverySignal({ agentType: agent.agent_type, agentId, session: agent.session_id, missing: delivery.missing, unwritten }), { config });
     if (missing.length) {
       reasons.push(
         `Your report names ${missing.map((file) => `\`${file}\``).join(', ')}, which does not exist. ` +

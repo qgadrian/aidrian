@@ -1569,3 +1569,20 @@ test('mkdir of the reviews or dispatch folder itself passes; below it, with a mo
   }
   assert.match(fx.ask(write(reviews))?.reason ?? '', /the review and attest records/u, 'the write tool on the folder itself');
 });
+
+// A host's own scratch folder under the home folder, such as a job's `tmp` in a host dot folder, is refused, and an agent
+// that read only "only the Human does" tried the same write three times in a run. The refusal names where scratch work
+// goes instead: the temporary folder and the state folder's tmp, by their paths.
+test('a refused write to a home dot folder, or to a path built at run time beside one, names the temporary folders to write instead', (t) => {
+  const fx = fixture(t);
+  const job = path.join(fx.home, '.claude', 'jobs', 'f5fa4566', 'tmp');
+  const tmp = path.join(realFolded(fx.state), 'tmp');
+  for (const input of [bash(`node --test > ${job}/changed.log 2>&1`), bash(`mkdir -p ${job}/oc1/home`), bash(`D=${job}/probe; mkdir -p $D`), write(path.join(job, 'x.txt'), { agent_id: 'a5f0c1' })]) {
+    const reason = fx.ask(input)?.reason ?? '';
+    assert.match(reason, /a dot file or folder of the user's home folder/u, input.tool_input.command ?? input.tool_input.file_path);
+    assert.ok(reason.includes(`write scratch files in ${realFolded(fx.temp)}`), reason);
+    assert.ok(reason.includes(tmp), reason);
+  }
+  // The temporary folder it names passes.
+  assert.equal(fx.ask(bash(`node --test > ${fx.temp}/changed.log 2>&1`)), null);
+});

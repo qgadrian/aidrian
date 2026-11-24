@@ -1,13 +1,17 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { snapshotPath } from '../plugins/aidrian/lib/gate-snapshot.mjs';
 import { GIT_TIMEOUT_MS } from '../plugins/aidrian/lib/git.mjs';
+import { DEFINITION_CAP, readDefinition, SCAN_BUDGET } from '../plugins/aidrian/lib/hosts/claude-code-agents.mjs';
+import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
+import { agentCheckouts } from '../plugins/aidrian/scripts/hook-session-start.mjs';
+import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { hookCall } from './hook-call.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -67,8 +71,10 @@ function hookProcess(options = {}) {
   return spawnSync(process.execPath, [HOOK, ...args], spawnOptions);
 }
 
-function hookOptions({ input = '{}', args = [], cwd = ROOT, PATH = WITHOUT_BIN, XDG_STATE_HOME = XDG, CLAUDECODE, AIDRIAN_ALLOW_MAIN_COMMIT, CLAUDE_CONFIG_DIR = USER_SETTINGS, PLUGIN_ROOT = CLAUDECODE === undefined ? PLUGIN_DIR : null } = {}) {
-  const env = { ...process.env, PATH, XDG_STATE_HOME, CLAUDECODE, AIDRIAN_ALLOW_MAIN_COMMIT, CLAUDE_CONFIG_DIR };
+// `more` adds variables to the hook's environment; CLAUDE_CODE_EFFORT_LEVEL is unset unless it names one.
+function hookOptions({ input = '{}', args = [], cwd = ROOT, PATH = WITHOUT_BIN, XDG_STATE_HOME = XDG, CLAUDECODE, AIDRIAN_ALLOW_MAIN_COMMIT, CLAUDE_CONFIG_DIR = USER_SETTINGS, PLUGIN_ROOT = CLAUDECODE === undefined ? PLUGIN_DIR : null, more = {} } = {}) {
+  const env = { ...process.env, PATH, XDG_STATE_HOME, CLAUDECODE, AIDRIAN_ALLOW_MAIN_COMMIT, CLAUDE_CONFIG_DIR, ...more };
+  if (!Object.hasOwn(more, 'CLAUDE_CODE_EFFORT_LEVEL')) delete env.CLAUDE_CODE_EFFORT_LEVEL;
   if (CLAUDECODE === undefined) delete env.CLAUDECODE;
   if (PLUGIN_ROOT === null) {
     delete env.PLUGIN_ROOT;
@@ -149,6 +155,235 @@ test('the main session hears when its host reaches a known tracker server the ke
   write({ enabled: true, provider: 'linear', workspace: { expect: workspace.expect }, team: { key: 'NOTES' } });
   assert.doesNotMatch((await hook({ input, CLAUDECODE: '1' })).stdout, /Tracker guard:/u, 'the short key covers them all');
   assert.doesNotMatch((await hook({ input })).stdout, /Tracker guard:/u);
+});
+
+// The line a subagent hears of the effort its commits name, while attribution.commit lists effort.
+const EFFORT = (effort) => `Attribution: this agent's commits carry the trailer \`Agent-Effort: ${effort}\`, the effort it starts at; the commit check reads the effort it runs at and names it when they differ.`;
+// A project whose commits carry `fields`, with the custom agents `agents`, each a file name to its text.
+function attributedProject(t, fields, agents = {}) {
+  const project = mkdtempSync(path.join(tmpdir(), 'aidrian-start-effort-'));
+  t.after(() => rmSync(project, { recursive: true, force: true }));
+  mkdirSync(path.join(project, '.aidrian/knowledge'), { recursive: true });
+  mkdirSync(path.join(project, '.claude/agents'), { recursive: true });
+  writeFileSync(path.join(project, '.aidrian/config.json'), JSON.stringify({ version: 1, attribution: { commit: fields } }));
+  for (const [file, text] of Object.entries(agents)) writeFileSync(path.join(project, '.claude/agents', file), text);
+  return project;
+}
+const effortLineOf = async (project, given, more = {}) => {
+  const { stdout } = await hook({ args: ['--subagent'], input: JSON.stringify({ cwd: project, hook_event_name: 'SubagentStart', agent_id: 'a1', ...given }), CLAUDECODE: '1', ...more });
+  return JSON.parse(stdout).hookSpecificOutput.additionalContext.split('\n').filter((line) => line.startsWith('Attribution:'));
+};
+
+test('a subagent hears the Agent-Effort trailer its definition sets, the host\'s own level first, and none when nothing says it', async (t) => {
+  const agents = {
+    'review.md': '---\nname: reviewer\ndescription: Reviews.\neffort: medium\n---\nReview.\n',
+    'plain.md': '---\nname: plain-helper\ndescription: Helps.\n---\nHelp.\n',
+  };
+  const project = attributedProject(t, ['agent', 'effort'], agents);
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'reviewer' }), [EFFORT('medium')], 'the project agent the host names by its frontmatter name');
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'reviewer', effort: { level: 'xhigh' } }), [EFFORT('xhigh')], 'the level the payload carries wins');
+  const own = /^effort: (\w+)$/mu.exec(readFileSync(path.join(PLUGIN_DIR, 'agents/harness-mechanic.md'), 'utf8'))[1];
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'aidrian:harness-mechanic' }), [EFFORT(own)], 'this plugin\'s generated agent');
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'plain-helper' }), [], 'a definition with no effort');
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'Explore' }), [], 'a built-in agent no file defines');
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'other-plugin:reviewer' }), [], 'another plugin\'s agent');
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'reviewer', effort: { level: 'turbo' } }), [EFFORT('medium')], 'a level the host does not name is no level');
+});
+
+test('the effort config.json models gives this plugin\'s agent, which the dispatch takes, wins over its definition, after the payload\'s', async (t) => {
+  const project = attributedProject(t, ['effort']);
+  const config = path.join(project, '.aidrian/config.json');
+  writeFileSync(config, JSON.stringify({ ...JSON.parse(readFileSync(config, 'utf8')), models: { claude: { agents: { designer: { effort: 'high' } } } } }));
+  assert.match(readFileSync(path.join(PLUGIN_DIR, 'agents/designer.md'), 'utf8'), /^effort: medium$/mu, 'the definition says medium');
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'aidrian:designer' }), [EFFORT('high')]);
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'aidrian:designer', effort: { level: 'max' } }), [EFFORT('max')], 'the payload\'s level first');
+});
+
+test('CLAUDE_CODE_EFFORT_LEVEL, a level, sets the hint past the models effort and the definition, after the payload\'s level', async (t) => {
+  const project = attributedProject(t, ['effort'], { 'review.md': '---\nname: reviewer\neffort: medium\n---\n' });
+  const config = path.join(project, '.aidrian/config.json');
+  writeFileSync(config, JSON.stringify({ ...JSON.parse(readFileSync(config, 'utf8')), models: { claude: { agents: { designer: { effort: 'high' } } } } }));
+  const level = (CLAUDE_CODE_EFFORT_LEVEL) => ({ more: { CLAUDE_CODE_EFFORT_LEVEL } });
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'reviewer' }, level('low')), [EFFORT('low')], 'past the definition');
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'aidrian:designer' }, level('low')), [EFFORT('low')], 'past the models effort');
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'reviewer', effort: { level: 'max' } }, level('low')), [EFFORT('max')], 'the payload first');
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'reviewer' }, level('turbo')), [EFFORT('medium')], 'a value the host names no level is no override');
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'Explore' }, level('low')), [EFFORT('low')], 'it sets a built-in agent\'s too');
+  for (const automatic of ['auto', 'unset']) {
+    assert.deepEqual(await effortLineOf(project, { agent_type: 'reviewer' }, level(automatic)), [], `${automatic}: no definition's effort`);
+    assert.deepEqual(await effortLineOf(project, { agent_type: 'aidrian:designer' }, level(automatic)), [], `${automatic}: no models effort`);
+  }
+});
+
+test('a definition is read only as a regular file under its cap: a FIFO, a link to one, or a large file is skipped and blocks nothing', { timeout: 20_000 }, async (t) => {
+  const project = attributedProject(t, ['effort']);
+  const folder = path.join(project, '.claude/agents');
+  const fifo = path.join(folder, 'a-pipe.md');
+  assert.equal(spawnSync('mkfifo', [fifo]).status, 0, 'mkfifo');
+  symlinkSync(fifo, path.join(folder, 'b-link.md'));
+  writeFileSync(path.join(folder, 'c-large.md'), `---\nname: large\neffort: low\n---\n${'x'.repeat(DEFINITION_CAP)}\n`);
+  writeFileSync(path.join(folder, 'd-review.md'), '---\nname: reviewer\neffort: medium\n---\n');
+  symlinkSync(path.join(folder, 'd-review.md'), path.join(folder, 'e-linked.md'));
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'reviewer' }), [EFFORT('medium')], 'the scan goes past the FIFO and its link to a regular file');
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'large' }), [], 'a file past the cap');
+});
+
+test('a scan past its budget of folder entries, files, or bytes names no definition, and ends quickly', async (t) => {
+  const match = '---\nname: reviewer\neffort: medium\n---\n';
+  const fill = (folder, count, text = '---\nname: other\n---\n', extension = '.md') => {
+    for (let n = 0; n < count; n += 1) writeFileSync(path.join(folder, `a${String(n).padStart(4, '0')}${extension}`), text);
+  };
+  const entries = attributedProject(t, ['effort'], { 'z-review.md': match });
+  fill(path.join(entries, '.claude/agents'), SCAN_BUDGET.entries, 'not markdown', '.txt');
+  const started = Date.now();
+  assert.deepEqual(await effortLineOf(entries, { agent_type: 'reviewer' }), [], 'past the entries, whatever they hold');
+  assert.ok(Date.now() - started < 5000, 'quickly');
+  const within = attributedProject(t, ['effort'], { 'z-review.md': match });
+  fill(path.join(within, '.claude/agents'), SCAN_BUDGET.entries - 1, 'not markdown', '.txt');
+  assert.deepEqual(await effortLineOf(within, { agent_type: 'reviewer' }), [EFFORT('medium')], 'at the entry budget');
+  const files = attributedProject(t, ['effort'], { 'z-review.md': match });
+  fill(path.join(files, '.claude/agents'), SCAN_BUDGET.files);
+  assert.deepEqual(await effortLineOf(files, { agent_type: 'reviewer' }), [], 'the match sorts past the file budget');
+  const bytes = attributedProject(t, ['effort'], { 'z-review.md': match });
+  fill(path.join(bytes, '.claude/agents'), Math.ceil(SCAN_BUDGET.bytes / (DEFINITION_CAP - 64)), `---\nname: other\n---\n${'x'.repeat(DEFINITION_CAP - 64)}`);
+  assert.deepEqual(await effortLineOf(bytes, { agent_type: 'reviewer' }), [], 'the files before it spend the byte budget');
+});
+
+test('a definition read is held to what is left of the byte budget, and counts the bytes it read', (t) => {
+  const folder = mkdtempSync(path.join(tmpdir(), 'aidrian-start-read-'));
+  t.after(() => rmSync(folder, { recursive: true, force: true }));
+  const file = path.join(folder, 'review.md');
+  const text = `---\nname: reviewer\neffort: medium\n---\n${'é'.repeat(400)}\n`;
+  writeFileSync(file, text);
+  const size = Buffer.byteLength(text, 'utf8');
+  assert.deepEqual(readDefinition(file, size - 1), { over: true }, 'less than its size left: nothing read');
+  assert.deepEqual(readDefinition(file, size), { text, bytes: size }, 'the bytes readSync returned, not the text\'s length');
+  assert.notEqual(text.length, size);
+  assert.equal(readDefinition(folder, size), null, 'no regular file');
+  writeFileSync(path.join(folder, 'large.md'), 'x'.repeat(DEFINITION_CAP + 1));
+  assert.equal(readDefinition(path.join(folder, 'large.md'), SCAN_BUDGET.bytes), null, 'past the file cap, whatever the allowance');
+});
+
+// Spends all but `left` bytes of the scan's byte budget in `folder`, with files that sort first, name no agent, and hold
+// `filler` bytes after their frontmatter, each file DEFINITION_CAP - 536 bytes long.
+function spendBudget(folder, left, filler = (count) => Buffer.alloc(count, 'x')) {
+  const size = DEFINITION_CAP - 536;
+  const count = Math.floor((SCAN_BUDGET.bytes - left) / size);
+  const head = Buffer.from('---\nname: other\n---\n');
+  for (let n = 0; n < count; n += 1) writeFileSync(path.join(folder, `a${String(n).padStart(4, '0')}.md`), Buffer.concat([head, filler(size - head.length)]));
+  return SCAN_BUDGET.bytes - count * size;
+}
+const MATCH = '---\nname: reviewer\neffort: medium\n---\n';
+
+test('a file the hook cannot open spends none of the byte budget, however large, so a later definition that fits is read', async (t) => {
+  if (process.getuid?.() === 0) return t.skip('root opens a file of mode 000');
+  const project = attributedProject(t, ['effort']);
+  const folder = path.join(project, '.claude/agents');
+  const left = spendBudget(folder, 8_000);
+  const locked = path.join(folder, 'b-locked.md');
+  writeFileSync(locked, `---\nname: other\n---\n${'x'.repeat(left + 1000)}\n`);
+  chmodSync(locked, 0o000);
+  writeFileSync(path.join(folder, 'c-review.md'), MATCH);
+  assert.ok(left < statSync(locked).size && statSync(locked).size <= DEFINITION_CAP && Buffer.byteLength(MATCH) < left, 'the locked file is within the file cap and past the allowance, the match within it');
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'reviewer' }), [EFFORT('medium')]);
+});
+
+test('the scan counts the raw bytes it read: malformed UTF-8 that decodes longer still leaves room for a later match', async (t) => {
+  const project = attributedProject(t, ['effort']);
+  const folder = path.join(project, '.claude/agents');
+  // 0xff bytes decode to U+FFFD, three bytes each once encoded again: counted so, the budget would be spent long before.
+  const left = spendBudget(folder, 8_000, (count) => Buffer.alloc(count, 0xff));
+  writeFileSync(path.join(folder, 'c-review.md'), MATCH);
+  const first = path.join(folder, 'a0000.md');
+  const decoded = Buffer.byteLength(readFileSync(first, 'utf8'), 'utf8');
+  assert.ok(decoded > 2 * statSync(first).size && left > Buffer.byteLength(MATCH), 'counted as decoded text, half the files would spend the budget');
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'reviewer' }), [EFFORT('medium')]);
+});
+
+test('an attempt clone, whose project names the driver\'s main checkout, reads no agent of that checkout', async (t) => {
+  const main = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-start-driver-')));
+  t.after(() => rmSync(main, { recursive: true, force: true }));
+  const git = (cwd, ...args) => assert.equal(spawnSync('git', args, { cwd, encoding: 'utf8' }).status, 0, args.join(' '));
+  writeFileSync(path.join(main, 'README.md'), '# x\n');
+  git(main, 'init', '-q', '-b', 'main');
+  git(main, 'add', '.');
+  git(main, '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'x');
+  mkdirSync(path.join(main, '.claude/agents'), { recursive: true });
+  writeFileSync(path.join(main, '.claude/agents/review.md'), '---\nname: reviewer\neffort: medium\n---\n');
+  const clone = `${main}-clone`;
+  t.after(() => rmSync(clone, { recursive: true, force: true }));
+  git(path.dirname(main), 'clone', '-q', main, clone);
+  // The clone's project names the driver's checkout as its main one, as lib/project.mjs does for an attempt clone.
+  const checkouts = agentCheckouts({ checkouts: [clone, main] });
+  assert.deepEqual(checkouts, [clone]);
+  assert.equal(claudeCode.subagentEffort({ input: { agent_type: 'reviewer' }, checkouts, env: {} }), null);
+  assert.equal(claudeCode.subagentEffort({ input: { agent_type: 'reviewer' }, checkouts: [clone, main], env: {} }), 'medium', 'the fallback this guards');
+});
+
+test('a project below the checkout root of a linked worktree reads that project folder\'s agents in the main checkout', async (t) => {
+  const main = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-start-nested-')));
+  t.after(() => rmSync(main, { recursive: true, force: true }));
+  const git = (...args) => assert.equal(spawnSync('git', args, { cwd: main, encoding: 'utf8' }).status, 0, args.join(' '));
+  const web = path.join(main, 'packages/web');
+  mkdirSync(path.join(web, '.aidrian/knowledge'), { recursive: true });
+  writeFileSync(path.join(web, '.aidrian/config.json'), JSON.stringify({ version: 1, attribution: { commit: ['effort'] } }));
+  writeFileSync(path.join(main, '.gitignore'), '.claude/\n');
+  git('init', '-q', '-b', 'main');
+  git('add', '.');
+  git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'config');
+  mkdirSync(path.join(web, '.claude/agents'), { recursive: true });
+  writeFileSync(path.join(web, '.claude/agents/review.md'), '---\nname: reviewer\neffort: medium\n---\n');
+  const linked = `${main}-linked`;
+  t.after(() => rmSync(linked, { recursive: true, force: true }));
+  git('worktree', 'add', '-q', linked, '-b', 'side');
+  const project = path.join(linked, 'packages/web');
+  assert.deepEqual(agentCheckouts({ checkouts: [project, web] }), [project, web]);
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'reviewer' }), [EFFORT('medium')]);
+});
+
+test('a linked worktree with no agents folder reads the main checkout\'s, as Claude Code does', async (t) => {
+  const main = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-start-main-')));
+  t.after(() => rmSync(main, { recursive: true, force: true }));
+  const git = (...args) => assert.equal(spawnSync('git', args, { cwd: main, encoding: 'utf8' }).status, 0, args.join(' '));
+  mkdirSync(path.join(main, '.aidrian/knowledge'), { recursive: true });
+  writeFileSync(path.join(main, '.aidrian/config.json'), JSON.stringify({ version: 1, attribution: { commit: ['effort'] } }));
+  writeFileSync(path.join(main, '.gitignore'), '.claude/\n');
+  git('init', '-q', '-b', 'main');
+  git('add', '.');
+  git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'config');
+  mkdirSync(path.join(main, '.claude/agents'), { recursive: true });
+  writeFileSync(path.join(main, '.claude/agents/review.md'), '---\nname: reviewer\neffort: medium\n---\n');
+  const linked = path.join(main, '..', `${path.basename(main)}-linked`);
+  t.after(() => rmSync(linked, { recursive: true, force: true }));
+  git('worktree', 'add', '-q', linked, '-b', 'side');
+  assert.equal(existsSync(path.join(linked, '.claude/agents')), false);
+  assert.deepEqual(agentCheckouts({ checkouts: [linked, main] }), [linked, main]);
+  assert.deepEqual(await effortLineOf(linked, { agent_type: 'reviewer' }), [EFFORT('medium')], 'the main checkout\'s agents');
+  // A worktree with an agents folder of its own reads only its own.
+  mkdirSync(path.join(linked, '.claude/agents'), { recursive: true });
+  writeFileSync(path.join(linked, '.claude/agents/review.md'), '---\nname: reviewer\neffort: high\n---\n');
+  assert.deepEqual(await effortLineOf(linked, { agent_type: 'reviewer' }), [EFFORT('high')]);
+});
+
+test('a frontmatter value drops a plain scalar\'s ` #` comment and keeps a quoted one whole', async (t) => {
+  const project = attributedProject(t, ['effort'], {
+    'a.md': '---\nname: reviewer # the team\'s\neffort: medium # default\n---\n',
+    'b.md': '---\nname: "quoted" # named\neffort: \'high\' # quoted\n---\n',
+    'c.md': '---\nname: kept\neffort: "low # not a comment"\n---\n',
+    'd.md': '---\nname: hashed\neffort: low#tag\n---\n',
+  });
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'reviewer' }), [EFFORT('medium')]);
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'quoted' }), [EFFORT('high')]);
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'kept' }), [], 'a quoted # is the value\'s own');
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'hashed' }), [], 'a # with no blank before it is no comment');
+});
+
+test('a subagent hears no Agent-Effort line while attribution leaves effort out, or on Codex, whose adapter knows none', async (t) => {
+  const agents = { 'review.md': '---\nname: reviewer\neffort: medium\n---\n' };
+  assert.deepEqual(await effortLineOf(attributedProject(t, ['agent', 'model'], agents), { agent_type: 'reviewer' }), [], 'effort not listed');
+  assert.deepEqual(await effortLineOf(attributedProject(t, [], agents), { agent_type: 'reviewer' }), [], 'attribution off');
+  assert.deepEqual(await effortLineOf(attributedProject(t, ['effort'], agents), { agent_type: 'reviewer', effort: { level: 'high' } }, { CLAUDECODE: undefined }), [], 'Codex');
+  assert.equal(codex.subagentEffort({ input: { agent_type: 'reviewer', effort: { level: 'high' } }, root: '/' }), null);
 });
 
 test('a host no adapter claims is called the AI, neither Claude nor Codex', async () => {

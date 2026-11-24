@@ -162,6 +162,9 @@ Use the exact section order for the relevant artifact type.
 
 - Explicitly list nearby work that must not be folded into the issue.
 - If the title could imply a broad cleanup, this section is mandatory.
+- Write a freeze, here and in an escalation trigger, as the meaning it keeps, such as "hospitality wording keeps its
+  meaning", never as bytes, such as "hospitality text must not change" or "byte-identical": a defect in the frozen
+  copy is still fixed, and only a change to its meaning escalates.
 
 ### Repository Context
 

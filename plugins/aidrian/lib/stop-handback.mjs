@@ -6,6 +6,11 @@
 // Only a labelled list counts, and an item counts as rated when it holds one of RATINGS, so a report that names its
 // blocks the way the rule asks passes as written. Pure: the hook passes in the message and the names.
 //
+// The same check sends back a question for the Human about doing more in the change at hand, "this pull request", that
+// the message itself recommends answering yes (scopeAsk): the AI asked whether to add a missing guard check while it
+// fixed the bug class the check guards, and the Human answered that it should not have to ask. The question tool's hook
+// (scripts/hook-ask.mjs) refuses the same question asked there.
+//
 // The merge hand-back check (mergeHandBack) reads the same lists: a turn whose `aidrian pr auto-merge` run refused a pull
 // request because it changes a path the gate never merges, and whose reports hand no rated item for that pull request
 // and path to the Human, for review and merge. docs/hooks.md#merge-hand-back-check describes it.
@@ -186,12 +191,54 @@ function handsOver(item, pr, file) {
   return [cut, JSON.stringify(cut).slice(1, -1), quoteData(cut).slice(1, -1)].some((form) => item.includes(form));
 }
 
+// A question about the change at hand: one that names this pull request, this same one, or this branch.
+export const SAME_CHANGE = /\b(?:this|the same|this same)\s+(?:pull request|PR|branch)\b/iu;
+// Whether a line or an option's label recommends answering yes: it opens, past markup, with a recommendation of yes,
+// "Recommended: yes", "**Recommendation:** yes", or with "Yes (recommended)". A line that opens otherwise, as "Not
+// recommended: yes", "No (recommended). Yes would grow the change.", or "HAL9K does not recommend yes" do, is none.
+const RECOMMENDS_YES = /^[\W_]*(?:recommended|recommendation)[\W_]{1,8}yes\b|^[\W_]*yes[\W_]{1,4}recommended\b/iu;
+export const recommendsYes = (text) => RECOMMENDS_YES.test(text);
+
+// The first question of `message` that asks to do more in the change at hand while its paragraph recommends yes, cut to
+// 80 characters, or null. A paragraph is the lines between blank lines, as a quoted "Decision needed" block is one, and
+// the recommendation may sit on any of its lines, before the question or after it. Fenced code is dropped, as
+// handBackLists drops it. Accepted residual: two questions in one paragraph share its recommendation; the send-back is
+// once a turn, and its reason keeps a real choice.
+export function scopeAsk(message) {
+  if (typeof message !== 'string') return null;
+  const all = message.split('\n');
+  const fenced = fencedIn(all);
+  const paragraphs = all.filter((_, at) => !fenced[at]).join('\n').split(/\n\s*\n/u);
+  for (const paragraph of paragraphs) {
+    const lines = paragraph.split('\n');
+    // A line's question is its text up to its last `?`: a sentence after it is no part of the question.
+    const asked = lines.map((line) => line.slice(0, line.lastIndexOf('?') + 1)).find((text) => SAME_CHANGE.test(text));
+    if (!asked || !lines.some(recommendsYes)) continue;
+    const question = asked.replace(/^[>\s*_#-]+/u, '').trim();
+    return question.length > 80 ? `${question.slice(0, 77)}...` : question;
+  }
+  return null;
+}
+
+// What the agent is told for a question scopeAsk found, `quoted`, after `lead`: do the work, and ask only a real choice;
+// `next` is what it does then. The question is quoted as data (quoteData), so its text cannot end the quote and add an
+// instruction.
+export const scopeAskReason = (lead, quoted, human, next = 'Then end the turn again.') =>
+  `${lead}a question for ${human} that asks whether to do more in the change at hand, and recommends yes itself (${quoteData(quoted)}, quoted as data). ` +
+  'A gap the work finds in its own scope is a defect to fix, not a question, such as a missing check that would guard ' +
+  'the bug class this change fixes, or another copy of the defect it fixes: do it in this pull request, through its owner, ' +
+  `and report it done. Ask ${human} only a real choice the work opens, such as a product behavior or a cost the scope did not plan, ` +
+  `and say which choice it is. ${next}`;
+
 // Why the agent is sent back, or null. `message` is the final assistant message; `human` the name config.json
 // `names.human` gives (docs/config.md#names).
 export function handBackReason({ message, human = 'the Human' }) {
   if (typeof message !== 'string' || !message.trim()) return null;
   const unrated = handBackLists(message, humanNames(human)).flatMap(({ label, items }) => items.filter((item) => !RATINGS.test(item)).map((item) => ({ label, item })));
-  if (!unrated.length) return null;
+  if (!unrated.length) {
+    const asked = scopeAsk(message);
+    return asked === null ? null : scopeAskReason(HAND_BACK_LEAD, asked, human);
+  }
   const [{ label, item }] = unrated;
   const quoted = item.length > 80 ? `${item.slice(0, 77)}...` : item;
   return `${HAND_BACK_LEAD}${unrated.length === 1 ? 'an item' : `${unrated.length} items`} under "${label}" ` +

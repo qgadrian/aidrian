@@ -216,10 +216,12 @@ export function handoffContinueDenial(input, { names: { human } }) {
 const opaqueRuns = (texts, actions) => [/\bhandoff\b/iu, new RegExp(String.raw`\b(?:${actions.join('|')})\b`, 'iu')].every((word) => texts.some((text) => word.test(text)));
 
 // Whether a command walkCommands read runs `aidrian handoff <action>` for one of `actions`, read as handoffContinueDenial
-// says: a command word or action it cannot read counts, unless a later plain word is `check` or `snapshot`.
+// says: a command word or action it cannot read counts, unless a later plain word is `check` or `snapshot`. In a text
+// the lexer cannot read, such as a script a shell runs, `handoff` and the action count only as whole words: a word that
+// joins them by a hyphen, a dot, or a slash, as the test file name `handoff-continue-hooks` does, is one argument.
 const runsGate = (actions) => ({ invocation, unread }) => {
   const names = actions.join('|');
-  if (unread !== undefined && new RegExp(String.raw`\bhandoff\b[^\n;|&]*\b(?:${names})\b`, 'u').test(unread)) return true;
+  if (unread !== undefined && new RegExp(String.raw`(?<![\w./-])handoff(?![\w./-])[^\n;|&]*(?<![\w./-])(?:${names})(?![\w./-])`, 'u').test(unread)) return true;
   if (invocation.dynamic) {
     const words = invocation.args.filter((token) => !token.dynamic).map((token) => token.text);
     const at = words.indexOf('handoff');

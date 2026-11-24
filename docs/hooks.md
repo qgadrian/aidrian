@@ -247,6 +247,10 @@ What each rule matches:
   So gh on a new line after `cd /other && cat > b.md <<'EOF'` answers to the session's rules, since a failed `cd` would leave
   it in the session's folder. To be judged by the other project, join gh on the heredoc's first line
   (`cd /other && cat > b.md <<'EOF' && gh pr edit 1 --body-file b.md`, then the body) or use `env -C /other gh …`.
+  A deny under the session's rules after a leading `cd` into another project, joined to gh by a `;` or a newline,
+  says whose rules they are and gives the `env -C` form for the other's. `env -C "$W"` names the folder `W` holds when the
+  line set `W` to an absolute literal before it (`W=/other; env -C "$W" gh …`): `env -C` moves only gh, which runs there
+  or not at all.
   Naming the repository with `-R` gets none of these rules, as the next lines say.
   A call that names a repository other than that checkout's remotes, through `-R`, a pull request URL, or `GH_REPO`,
   gets none of these rules: that repository's config cannot be found from there, so its rules go unchecked.
@@ -1544,6 +1548,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   a string spells it, or a session file but `usage.json` by its name alone, read as a path part, whatever quote stands
   around it, so `cd "$X" && echo {} >> prs.jsonl` is refused; the word `sessions` alone never counts, so a project's
   own folder of that name stays writable, and nor does `usage.json` alone, a name other tools use.
+  A path with a placeholder part in angle brackets, such as `<state>/sessions/<session id>/prs.jsonl` in the text of a
+  plan that interpreter code writes, never counts: no session or state folder holds `<` or `>` in its name. One with a
+  `..` part still counts, and a session file's name outside such a path counts as before.
   The hooks and the `aidrian` commands write there through their own code, which no guard reads, so the
   [ledger](#session-ledger) still records a subagent's push. An attended main session is not held. The guard shares
   the store guard's reach check (`reachesStateFolder` in `lib/handoff-guard.mjs`) and its limits, and runs where it

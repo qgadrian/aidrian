@@ -22,7 +22,7 @@ import { runGit } from '../git.mjs';
 import { findProject } from '../project.mjs';
 import { isLongOption, lexCommand, readGit, walkCommands } from '../shell-lex.mjs';
 import { readText } from '../transcript.mjs';
-import { bodyRead, lineWrites, stdinBody, readPrCall, readPrCalls, targetsAnotherRepo, unchangedHeredoc } from './github/pr-body.mjs';
+import { bodyRead, lineWrites, stdinBody, readPrCall, readPrCalls, targetsAnotherRepo, unchangedHeredoc, withLineChdir } from './github/pr-body.mjs';
 import { invocationRepo } from './github/review-request.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_UNATTRIBUTED';
@@ -152,7 +152,8 @@ function readCalls(command, cwd) {
         call.stdin = stdinBody(entry);
         call.bodyFile = writes.token(call.bodyFile, entry);
         call.bodyOverwritten = writes.overwrites(entry, call.bodyFile);
-        prCreates.push({ call, dir: folder, at: chained, environment: entry.invocation.environment, written: new Map(writes.files) });
+        const moved = withLineChdir(entry, writes);
+        prCreates.push({ call, dir: moved.folder, at: moved.chained, environment: entry.invocation.environment, written: new Map(writes.files) });
       }
     }
     // Every command, a gh call too, may write a body file a later gh call reads.

@@ -789,6 +789,15 @@ function reachesStateFolder(input, { files, globs, modes }, { dir, links, folder
 // `sessions` alone never counts, since a project may hold a folder of that name.
 const escapedNames = (names) => names.map((name) => name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')).join('|');
 const BARE_SESSION_FILES = SESSION_FILES.filter((name) => name !== 'usage.json');
+// A path written with a placeholder part in angle brackets, such as `<state>/sessions/<session id>/prs.jsonl` in the text
+// of a plan an interpreter's code writes: prose that says where a file lives, never a file a command opens, since a
+// session id or a state folder holds no `<` or `>`. Each placeholder is a word, spaces and `-` included; the path runs
+// to a space or a quote, which a path in code ends at. One with a `..` part keeps its text: a folder of that literal
+// name could be made, and `..` would leave it for a real one.
+const PLACEHOLDER = String.raw`<[\w -]{1,64}>`;
+const PLACEHOLDER_PATH = new RegExp(String.raw`(?:[^\s'"\x60<>]|${PLACEHOLDER})*${PLACEHOLDER}(?:[^\s'"\x60<>]|${PLACEHOLDER})*`, 'gu');
+const UP = /(?:^|[\\/])\.\.(?:[\\/]|$)/u;
+export const withoutPlaceholderPaths = (text) => text.replace(PLACEHOLDER_PATH, (found) => (UP.test(found) ? found : ' '));
 export const SESSION_FILE_NAME = new RegExp(String.raw`(?<![\w.-])sessions[\\/]+[^\\/]+[\\/]+(?:${escapedNames(SESSION_FILES)})(?![\w.-])|(?<![\w.-])(?:${escapedNames(BARE_SESSION_FILES)})(?![\w.-])`, 'iu');
 
 // The sessions folders of every project's default state folder under the state root, `<root>/projects/<id>/sessions`,
@@ -881,7 +890,7 @@ export function sessionFoldersWriteDenial(input, project, { names: { human }, st
   const writer = subagent ? 'only the hooks and the `aidrian` commands write' : `only the hooks and the \`aidrian\` commands write, ${UNATTENDED}`;
   const why = (verb, shown) => projectRuleReason(input, `it ${verb} ${shown}, the session folders, where ${writer}`, human);
   const held = () => subagent || unattended();
-  const named = (text) => SESSION_FILE_NAME.test(text);
+  const named = (text) => SESSION_FILE_NAME.test(withoutPlaceholderPaths(text));
   const unplaced = modes.filter(({ text, folder }) => folder === null && !path.isAbsolute(text));
   if (names.some(named) || unplaced.some(({ text }) => named(text)) || globs.some((glob) => (glob.unsure || glob.opaque) && named(glob.text))) {
     return held() ? { match: 'may change the session folders', reason: why('may change', 'sessions/<id>') } : null;

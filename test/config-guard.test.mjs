@@ -1436,6 +1436,9 @@ test('a subagent, and a session the background route started, may not write in t
     ['Bash', { command: `python3 -c "open('${own}/prs.jsonl', 'a').write('{}')"` }],
     ['Bash', { command: `node -e "require('fs').appendFileSync('${own}/links.jsonl', '{}')"` }],
     ['Bash', { command: 'python3 -c "open(\'sessions/abc-1/usage.json\', \'w\')"' }],
+    // A placeholder path beside a real one hides neither, and one that climbs out of its placeholder with `..` counts.
+    ['Bash', { command: `python3 -c "open('<state>/sessions/<id>/prs.jsonl'); open('${own}/prs.jsonl', 'a')"` }],
+    ['Bash', { command: 'python3 -c "open(\'<x>/../sessions/abc-1/prs.jsonl\', \'a\')"' }],
     // A file appended in place, by its name alone, after a `cd` the guard cannot follow.
     ['Bash', { command: 'cd "$X" && echo {} >> prs.jsonl' }],
     ['Bash', { command: 'cd "$X" && echo {} >> links.jsonl' }],
@@ -1453,6 +1456,11 @@ test('a subagent, and a session the background route started, may not write in t
     ['Bash', { command: 'cd "$X" && echo {} > sessions/notes.md' }],
     ['Bash', { command: 'cd "$X" && echo {} > usage.json' }],
     ['Bash', { command: 'cd "$X" && echo {} > old-prs.jsonl.bak' }],
+    // Interpreter code that writes a plan whose text names a session file by a placeholder path: prose, not a write there.
+    ['Bash', { command: "python3 - <<'EOF'\np='plan.md'\nnew='''a row lands in `<state>/sessions/<session id>/prs.jsonl`'''\nopen(p,'w').write(new)\nEOF" }],
+    ['Bash', { command: "node -e \"require('fs').writeFileSync('plan.md', 'see <state>/sessions/<id>/checks.jsonl')\"" }],
+    // Heredoc data written to another file is no write to the paths it quotes.
+    ['Bash', { command: `cat > ${path.join(dir, 'plan.md')} <<'EOF'\nThe hook appends to ${own}/prs.jsonl.\nEOF` }],
   ];
   for (const [session, agent] of [['plain-session', true], [full, false]]) {
     for (const [tool, toolInput] of blocked) {

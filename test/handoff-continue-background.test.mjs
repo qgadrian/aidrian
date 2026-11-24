@@ -16,9 +16,9 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { checkBrief, chainOf } from '../plugins/aidrian/lib/handoff-brief.mjs';
-import { BACKGROUND_HOPS, backgroundPrompt, continueBrief, deliverCleared, routeOf, STALL_HOPS, UNHOOKED, unattendedHere, unhookedLine } from '../plugins/aidrian/lib/handoff-continue.mjs';
+import { BACKGROUND_HOPS, backgroundNotice, backgroundPrompt, continueBrief, deliverCleared, routeOf, STALL_HOPS, UNHOOKED, ownerLines, unattendedHere, unhookedLine } from '../plugins/aidrian/lib/handoff-continue.mjs';
 import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
-import { CHAIN_CEILING, CLAIM_AGE, claimStart, keepClaim, noteFollow, noteFrom, noteStarted, openStore, readArmed, readFrom, readHop, readStarted, startedInBackground, takeEnding } from '../plugins/aidrian/lib/handoff-markers.mjs';
+import { CHAIN_CEILING, chainOwner, CLAIM_AGE, claimStart, keepClaim, noteFollow, noteFrom, noteStarted, openStore, readArmed, readFrom, readHop, readStarted, startedInBackground, takeEnding } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { claudeOnPath, sessionEnded, sessionMode, startBackground, startIn } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
 import { HOSTS } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { findProject, stateDir } from '../plugins/aidrian/lib/project.mjs';
@@ -121,7 +121,7 @@ test('the background route starts the new session in this session\'s folder, rec
   const result = gate(setting, { run, env });
   assert.equal(result.exitCode, 0, result.err.join('\n'));
   assert.equal(result.out[0], 'continue: background');
-  assert.equal(result.out[1], `say: The brief widget continues in the new background session abcd1234 'harness-handoff · 1', started in ${setting.dir}, with nothing to type: \`claude attach abcd1234\` opens it, or \`claude attach 'harness-handoff · 1'\` by its name, and \`claude agents\` lists it. It resumes from ${setting.file}. This session has ended its work; the new one is \`harness-handoff · 1\`, open it with \`claude attach abcd1234\`.`);
+  assert.equal(result.out[1], `say: The brief widget continues in the new background session abcd1234 'harness-handoff · 1', started in ${setting.dir}, with nothing to type: \`claude attach abcd1234\` opens it, or \`claude attach 'harness-handoff · 1'\` by its name, and \`claude agents\` lists it. It resumes from ${setting.file}. If that session hands off in turn, \`aidrian handoff owner abcd1234\`, run in ${setting.dir}, names the one that owns the work then. This session has ended its work; the new one is \`harness-handoff · 1\`, open it with \`claude attach abcd1234\`.`);
 
   const [started] = bgCalls(calls);
   assert.equal(started.command, path.join(setting.bin, 'claude'), 'claude by its absolute path');
@@ -1941,4 +1941,60 @@ test('settings the preflight cannot read, no remote, and a session not in auto m
     assert.deepEqual(result.err, [], label);
     assert.equal(bgCalls(calls).length, 1, label);
   }
+});
+
+const BRIEF = '/state/handoffs/2026-11-15-widget.md';
+// A chain of background starts as the gate records them: `first` started the session of each next id in turn.
+function chainStarts(store, ids, { project = null } = {}) {
+  const full = (id) => `${id}-0000-4000-8000-000000000000`;
+  ids.forEach((id, i) => {
+    const starter = i === 0 ? SESSION : full(ids[i - 1]);
+    const from = project && i === ids.length - 1 ? { project, sha256: null, brief: null } : { sha256: 'a'.repeat(64), brief: BRIEF };
+    assert.ok(noteStarted(store, starter, { slug: 'widget', chain: i + 1, id, session: full(id), name: `widget · ${i + 1}`, cwd: '/w', mode: 'auto', ...from }));
+  });
+  return full;
+}
+
+test('the old session\'s prompt names the last session of a chain of handoffs, which owns the work now, not the first hop', (t) => {
+  const { store } = setup(t);
+  chainStarts(store, ['bb0a9173', 'f5fa4566', 'a9a64642', '88033793']);
+  assert.deepEqual(chainOwner(store, SESSION).hops, 4);
+  assert.equal(chainOwner(store, SESSION).record.id, '88033793');
+  assert.equal(backgroundNotice(store, claudeCode, SESSION),
+    "Handoff: this session handed the work of the brief widget to the background session bb0a9173, which handed it on in turn: 3 handoffs later, the background session 88033793 owns it now: `claude attach 88033793` opens it, or `claude attach 'widget · 4'` by its name, and `claude agents` lists it. " +
+    'Before doing any of that work here, tell the Human, so the two sessions do not work on it at once.');
+  assert.equal(chainOwner(store, 'no-such-session'), null);
+});
+
+test('a chain walk ends at a session met twice, at a project run\'s start, and at a record with no full id', (t) => {
+  const { store } = setup(t);
+  const full = chainStarts(store, ['bb0a9173', 'f5fa4566']);
+  // The second session's start names the first again: the walk stops instead of going round.
+  assert.ok(noteStarted(store, full('f5fa4566'), { sha256: 'a'.repeat(64), slug: 'widget', brief: BRIEF, chain: 3, id: 'bb0a9173', session: full('bb0a9173'), name: null, cwd: '/w' }));
+  assert.equal(chainOwner(store, SESSION).hops, 3);
+  const other = setup(t).store;
+  chainStarts(other, ['aaaa1111', 'bbbb2222'], { project: { run: 'r1', issue: '1', attempt: 1 } });
+  assert.equal(chainOwner(other, SESSION).record.id, 'bbbb2222', 'the project start is the last walked');
+  const unnamed = setup(t).store;
+  assert.ok(noteStarted(unnamed, SESSION, { sha256: 'a'.repeat(64), slug: 'widget', brief: BRIEF, chain: 1, id: 'cccc3333', session: null, name: null, cwd: '/w' }));
+  assert.deepEqual(chainOwner(unnamed, SESSION).hops, 1);
+});
+
+test('`aidrian handoff owner` follows a stale say line\'s id to the session that owns the work now', (t) => {
+  const setting = setup(t);
+  const full = chainStarts(setting.store, ['bb0a9173', 'f5fa4566', 'a9a64642']);
+  for (const id of ['bb0a9173', full('bb0a9173'), 'BB0A9173', 'f5fa4566']) {
+    const owned = ownerLines(setting.store, claudeCode, id);
+    assert.equal(owned.exitCode, 0, id);
+    assert.equal(owned.out[0], 'owner: a9a64642', id);
+  }
+  assert.match(ownerLines(setting.store, claudeCode, 'bb0a9173').out[1], /^say: The background session a9a64642 'widget · 3' owns the work of the brief widget now, after 2 handoffs since: `claude attach a9a64642` opens it/u);
+  assert.match(ownerLines(setting.store, claudeCode, 'a9a64642').out[1], /now, which has not handed off since: /u);
+  assert.deepEqual(ownerLines(setting.store, claudeCode, 'ffff0000').err, ["aidrian handoff owner: no background start of the last day in this project's continuation store names the session ffff0000"]);
+  assert.equal(ownerLines(setting.store, claudeCode, 'b').exitCode, 1, 'too short an id names none');
+  // A host with no attach line, as a plain terminal is, still names the id.
+  assert.match(ownerLines(setting.store, { capabilities: {} }, 'bb0a9173').out[1], /: its id is a9a64642\.$/u);
+  const cli = spawnSync(CLI, ['handoff', 'owner', 'bb0a9173'], { cwd: setting.dir, encoding: 'utf8', env: setting.env });
+  assert.equal(cli.status, 0, cli.stderr);
+  assert.match(cli.stdout, /^owner: a9a64642$/mu);
 });

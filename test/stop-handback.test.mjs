@@ -398,7 +398,7 @@ test('a question to do more in this pull request that the message recommends ans
     'Fold the sibling fix into this branch?\n- Yes (recommended)\n- No',
     // A recommendation before the question, or past a link's `?`, is in the same paragraph.
     'Recommended: yes. Add it to this PR?',
-    'Add it to this PR?\nSee [the audit](https://example.test/a?b=1). Recommended: yes.',
+    'Add it to this PR?\nSee [the audit](https://example.test/a?b=1).\n**Recommended:** **yes**.',
   ]) assert.ok(fires(message), message);
   for (const message of [
     'Add a wording check to this same pull request? Adrian decides the scope.',
@@ -414,6 +414,9 @@ test('a question to do more in this pull request that the message recommends ans
     // A recommendation of no that mentions a yes, and a pull request named after the question, are no such question.
     'Add it to this PR?\nRecommendation: no. The audit status is yes.',
     'Any updates? CI is green on this PR.\nRecommended: yes.',
+    'Add it to this PR?\nNo (Recommended). Yes would expand scope.',
+    'Add it to this PR?\nHAL9K does not recommend yes.',
+    'Add it to this PR?\nNot **recommended: yes**.',
   ]) assert.ok(!fires(message), message);
   // A long message of questions is read in one pass.
   const started = process.cpuUsage();

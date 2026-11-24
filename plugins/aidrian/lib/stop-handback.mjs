@@ -193,9 +193,10 @@ function handsOver(item, pr, file) {
 
 // A question about the change at hand: one that names this pull request, this same one, or this branch.
 export const SAME_CHANGE = /\b(?:this|the same|this same)\s+(?:pull request|PR|branch)\b/iu;
-// Whether a text recommends answering yes: a recommendation and a yes next to each other, only punctuation between, as in
-// "Recommended: yes" or "Yes (recommended)", with no "not" or "never" just before it, as in "Not recommended: yes".
-const RECOMMENDS_YES = /(?<!\b(?:not|never)\s)\brecommend(?:ed|s|ation)?\b\W{0,3}yes\b|\byes\b\W{0,3}recommended\b/iu;
+// Whether a line or an option's label recommends answering yes: it opens, past markup, with a recommendation of yes,
+// "Recommended: yes", "**Recommendation:** yes", or with "Yes (recommended)". A line that opens otherwise, as "Not
+// recommended: yes", "No (recommended). Yes would grow the change.", or "HAL9K does not recommend yes" do, is none.
+const RECOMMENDS_YES = /^[\W_]*(?:recommended|recommendation)[\W_]{1,8}yes\b|^[\W_]*yes[\W_]{1,4}recommended\b/iu;
 export const recommendsYes = (text) => RECOMMENDS_YES.test(text);
 
 // The first question of `message` that asks to do more in the change at hand while its paragraph recommends yes, cut to

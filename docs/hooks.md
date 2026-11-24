@@ -1945,14 +1945,15 @@ do it, and how critical it is. It sends a turn back at most once ([Send-backs pe
 
 With no such item, the same check sends back once a question for the Human about doing more in the change at hand,
 one whose text up to its `?` names this pull request, the same one, or this branch, in a paragraph with a line that
-recommends yes, a recommendation and a yes with only punctuation between, as "Recommended: yes" or "Yes (recommended)",
-and no "not" or "never" just before it. A paragraph is the lines
+opens, past markup, with a recommendation of yes: "Recommended: yes", "**Recommendation:** yes", or "Yes (recommended)".
+A line that opens otherwise, such as "Not recommended: yes" or "No (recommended). Yes would grow the change.", is none. A paragraph is the lines
 between blank lines, as a quoted "Decision needed" block is one; two questions in one paragraph share its recommendation,
 the accepted residual of a send-back made once a turn. The reason quotes the question as data. The AI once asked whether to
 add a missing check to the pull request that fixed the bug class the check guards, and the Human answered that it should
 not have to ask. A gap the work finds in its own scope is a defect to fix there, through its owner; the Human is asked
 only a real choice the work opens, such as a product behavior or a cost the scope did not plan. The question tool's hook
-refuses the same question asked there, as the rule `ask-scope`, when an option recommends yes.
+refuses the same question asked there, as the rule `ask-scope`, when an option's own label recommends yes, such as
+"Yes (Recommended)"; a description is not read.
 
 The announce, review-loop, and merge hand-back checks run first; a stop any of them sends back is checked here at the
 stop that ends its continuation, unless this check sent the turn back already.

@@ -27,12 +27,13 @@ function texts(input) {
   ].filter((t) => typeof t === 'string');
 }
 
-// The first question of the call that names the change at hand and whose options recommend yes, cut to 80 characters,
-// or null.
+// The first question of the call that names the change at hand and whose options recommend yes by an option's own
+// label, as "Yes (Recommended)", cut to 80 characters, or null. A description is not read: it may mention a yes the
+// option argues against.
 function scopeQuestion(input) {
   const questions = Array.isArray(input?.questions) ? input.questions : [];
   const found = questions.find((q) => typeof q?.question === 'string' && SAME_CHANGE.test(q.question)
-    && (Array.isArray(q.options) ? q.options : []).some((o) => recommendsYes(`${o?.label ?? ''} ${o?.description ?? ''}`)));
+    && (Array.isArray(q.options) ? q.options : []).some((o) => typeof o?.label === 'string' && recommendsYes(o.label)));
   if (!found) return null;
   return found.question.length > 80 ? `${found.question.slice(0, 77)}...` : found.question;
 }

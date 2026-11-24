@@ -96,6 +96,8 @@ test('a question about doing more in this pull request that recommends yes is bl
   assert.equal(ask('Which wording should the check allow?', { options: recommended }).status, 0, 'not about the change at hand');
   const negated = [{ label: 'Yes', description: 'Not recommended: it grows the change.' }, { label: 'No (Recommended)', description: 'Leave it.' }];
   assert.equal(ask('Fold the sibling fix into this PR?', { options: negated }).status, 0, 'a yes the options do not recommend');
+  const against = [{ label: 'No (Recommended)', description: 'Yes would expand scope.' }, { label: 'Yes', description: 'Add it.' }];
+  assert.equal(ask('Fold the sibling fix into this PR?', { options: against }).status, 0, 'a description that mentions yes recommends nothing');
   const caution = [{ label: 'Yes (Recommended)', description: 'Do not merge until CI passes.' }, { label: 'No', description: 'Leave it.' }];
   assert.equal(ask('Fold the sibling fix into this PR?', { options: caution }).status, 2, 'a caution in the description is no negation of the recommendation');
 });

@@ -130,7 +130,7 @@ test('solo is a top-level boolean, false by default, that only config.json sets'
   assert.deepEqual(errors, ['config.json: "solo" must be true or false']);
   // The machine's file cannot set it: it is the team's word.
   const r = repo(t, { local: { solo: true } });
-  assert.ok(r.project().errors.some((error) => error === `${LOCAL}: unknown key "solo"`));
+  assert.ok(r.project().warnings.some((warning) => warning === `${LOCAL}: unknown key "solo"`));
 });
 
 test('machineSwitch: a local value wins, an unset one follows solo on an untracked file, and solo is read only then', (t) => {

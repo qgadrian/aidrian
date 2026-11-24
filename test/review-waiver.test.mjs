@@ -184,11 +184,16 @@ test('the local switch reads both shapes, unset when absent, and off with one er
     assert.equal(project.localUnattendedWaiver, 'off', JSON.stringify(wrong));
     assert.deepEqual(project.errors, [`${LOCAL}: "github.unattendedWaiver" must be { "enabled": true } or { "enabled": false }`], JSON.stringify(wrong));
   }
-  // One wrong key turns both switches off, and its error prints once.
-  writeFileSync(local, JSON.stringify({ github: { autoMerge: 'on', unattendedWaiver: 'on', strategy: 'squash' } }));
+  // One wrong value turns both switches off, and its error prints once.
+  writeFileSync(local, JSON.stringify({ github: { autoMerge: 'yes', unattendedWaiver: 'on' } }));
   const broken = findProject(r.dir);
   assert.deepEqual([broken.localAutoMerge, broken.localUnattendedWaiver], ['off', 'off']);
-  assert.deepEqual(broken.errors, [`${LOCAL}: unknown key "github.strategy"; only "github.autoMerge" and "github.unattendedWaiver" are machine settings`]);
+  assert.deepEqual(broken.errors, [`${LOCAL}: "github.autoMerge" must be { "enabled": true } or { "enabled": false }`]);
+  // A key the team sets is ignored with a warning, and the switches the file sets hold.
+  writeFileSync(local, JSON.stringify({ github: { autoMerge: 'on', unattendedWaiver: 'on', strategy: 'squash' } }));
+  const team = findProject(r.dir);
+  assert.deepEqual([team.localAutoMerge, team.localUnattendedWaiver, team.errors], ['on', 'on', []]);
+  assert.deepEqual(team.warnings, [`${LOCAL}: unknown key "github.strategy"; only "github.autoMerge" and "github.unattendedWaiver" are machine settings`]);
   writeFileSync(local, '{ not json');
   assert.equal(findProject(r.dir).localUnattendedWaiver, 'off', 'unparsable');
 });
@@ -197,10 +202,13 @@ test('an error anywhere in the local file reads the waiver "off" though it says 
   const r = repo(t);
   writeFileSync(path.join(r.dir, '.gitignore'), `${LOCAL}\nwt/\n`);
   const local = path.join(r.dir, LOCAL);
-  const stray = (waiver) => JSON.stringify({ stray: 1, github: { unattendedWaiver: waiver } });
+  const stray = (waiver) => JSON.stringify({ reviewApprovals: 'maybe', github: { unattendedWaiver: waiver } });
   writeFileSync(local, stray('on'));
   const main = findProject(r.dir);
-  assert.deepEqual([main.localUnattendedWaiver, main.errors], ['off', [`${LOCAL}: unknown key "stray"`]], 'the main checkout\'s own file');
+  assert.deepEqual([main.localUnattendedWaiver, main.errors], ['off', [`${LOCAL}: "reviewApprovals" must be "on" or "off"`]], 'the main checkout\'s own file');
+  writeFileSync(local, JSON.stringify({ stray: 1, github: { unattendedWaiver: 'on' } }));
+  const unknown = findProject(r.dir);
+  assert.deepEqual([unknown.localUnattendedWaiver, unknown.errors, unknown.warnings], ['on', [], [`${LOCAL}: unknown key "stray"`]], 'an unknown key is no error');
   writeFileSync(local, JSON.stringify({ sources: 'no-list', github: { unattendedWaiver: { enabled: true } } }));
   assert.equal(findProject(r.dir).localUnattendedWaiver, 'off', 'a wrong sources value');
 

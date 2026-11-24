@@ -99,6 +99,8 @@ It writes nothing at all when a symlink would take a write outside the project, 
   error, with the fix `git rm --cached .aidrian.local.json`. So does a checkout where git cannot say whether it tracks the file.
   `review.productFeedback` takes only `auto`, true or false. In the main checkout's file, a tracked copy, or a checkout where git
   cannot say, has its value ignored and the same error: [Product feedback](config.md#product-feedback).
+  A key the plugin does not read, such as one a newer release adds, is a warning, and the check passes; the key is ignored,
+  and each switch the file leaves unset reads `"off"` while it is there: [Plugin version](config.md#plugin-version).
 - `.gitignore`: git ignores `.aidrian.local.json`, and the worktrees and state folders when they are inside the repository.
 
 On success it also prints the state folder, and the size of the `always` docs against their [budget](config.md#knowledge-budgets):

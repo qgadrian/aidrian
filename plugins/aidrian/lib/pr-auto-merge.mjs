@@ -869,7 +869,8 @@ export function gateVerdict(argv, project, { forge = forgeFor(project.root), ses
     effective, reason, why, allow: team.allow, local, strategy: team.strategy, deleteBranch: team.deleteBranch,
     deleteWorktree: team.deleteWorktree, pr: pr.number, head: pr.head, repo: pr.repo, base: pr.base, ...(waived ? { waived } : {}), ...(trust ? { trust } : {}), ...(trust === 'signoff' ? signoff ?? {} : {}),
   };
-  const localErrors = reason === 'local' ? project.errors.filter((each) => each.startsWith(`${project.paths.local}:`)) : [];
+  // An unknown key reads an unset switch "off" (project.mjs machineSwitches), so its warning says why too.
+  const localErrors = reason === 'local' ? [...project.errors, ...project.warnings].filter((each) => each.startsWith(`${project.paths.local}:`)) : [];
   return { code: effective ? 0 : 1, result, host: pr.host, localErrors };
 }
 

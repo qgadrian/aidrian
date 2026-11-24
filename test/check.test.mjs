@@ -440,13 +440,13 @@ test('check follows worktrees.dir: a folder inside the project needs a line, one
   assert.equal((await run(['check'], dir)).status, 0);
 });
 
-test('check names a bad name in config.json and in .aidrian.local.json', async (t) => {
+test('check names a bad name in config.json, and warns on an unknown one in .aidrian.local.json', async (t) => {
   const dir = exampleRepo(t);
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, names: { human: '' } }));
   writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ names: { robot: 'the agent' } }));
   const { status, stdout, stderr } = await run(['check'], dir);
   assert.deepEqual([status, stdout], [1, '']);
-  assert.equal(stderr, '.aidrian/config.json: "names.human" must be a non-empty string\n.aidrian.local.json: unknown key "names.robot"\n');
+  assert.equal(stderr, 'warning: .aidrian.local.json: unknown key "names.robot"\n.aidrian/config.json: "names.human" must be a non-empty string\n');
 });
 
 test('check names a bad agent gate in config.json and in .aidrian.local.json', async (t) => {

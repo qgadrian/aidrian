@@ -10,6 +10,15 @@ import { isObject } from './fs.mjs';
 import { mayFollowTeamDefault } from './project.mjs';
 import { PUBLISH_DEFAULTS } from './review/config.mjs';
 
+// `messages`, the errors of the local settings file `file`, split into { errors, warnings }: an unknown key, top-level or
+// nested, is a warning, and the key is ignored, unless its message is one of `kept`, such as a gate error (checkAgents).
+// The file is per machine and git-ignored, written once for the newest plugin while older ones still run on the same
+// machine, so a key a newer release reads must not fail an older one's check (docs/config.md#plugin-version).
+export function splitUnknownKeys(messages, file, kept = new Set()) {
+  const unknown = (message) => message.startsWith(`${file}: unknown key "`) && !kept.has(message);
+  return { errors: messages.filter((message) => !unknown(message)), warnings: messages.filter(unknown) };
+}
+
 // `team`, the `decisions` of config.json, with the local file's `decisions` over it, as `project.localDecisions` holds
 // it. The local file may set `mode` and `domains`, each held to the team's `maxMode`; `unreviewed.remind`; and
 // `unreviewed.pauseDomainAt`, of which only a value lower than the team's applies, one limit at a time. Any other key

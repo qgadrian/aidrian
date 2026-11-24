@@ -11,7 +11,7 @@ import path from 'node:path';
 
 import { anchorReaders } from './attempt-clone.mjs';
 import { loadConfig, pluginRepository } from './config.mjs';
-import { localForgeTokenKeychain } from './config-local.mjs';
+import { localForgeTokenKeychain, splitUnknownKeys } from './config-local.mjs';
 import { insidePath, isDirectory, isFile, isObject, isWithin, joinedInside, readJson } from './fs.mjs';
 import { checkoutRoots, mainRoot, readOriginUrl, readPrefix, readRemoteUrls, repositoryCheckouts, runGit } from './git.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
@@ -192,7 +192,7 @@ export function projectAt(start) {
 // The project rooted at `root`, whether or not its folder exists yet:
 // { root, dir, paths, sources, checkouts, localModels, localNames, localTelemetry, localAgents, localReview, localDecisions,
 // localAutoMerge, localUnattendedWaiver, localReviewApprovals, localHandoffBackground, localFeedbackAuto,
-// localForgeTokenKeychain, errors, unreadable }.
+// localForgeTokenKeychain, errors, warnings, unreadable }.
 // `dir` and every path are POSIX-style and relative to `root`. `sources` lists where knowledge indexes are read from:
 // the project folder first, then each local source. `checkouts` is `root`, then, when it is in a git worktree, the same
 // folder in the main checkout. `localModels`, `localNames`, `localTelemetry`, `localAgents`, `localReview`, and
@@ -210,19 +210,21 @@ export function projectAt(start) {
 // `localFeedbackAuto` is the main checkout's `review.productFeedback.auto`: true or false, or undefined when unset or
 // unusable (mainFeedbackAuto), so the team's value holds. `localForgeTokenKeychain` is the main checkout's
 // `projectRun.forgeTokenKeychain`, `{ service, account }`, or null (config-local.mjs localForgeTokenKeychain, mainKeychain). `errors` lists the problems in the root files; a broken
-// `.aidrian.json` leaves the default folder in place, and a broken local source is left out.
+// `.aidrian.json` leaves the default folder in place, and a broken local source is left out. `warnings` lists each key
+// of the local file this plugin does not read, which is ignored (config-local.mjs splitUnknownKeys).
 // `unreadable` names each of `.aidrian.json` and `.aidrian.local.json` that is there but whose settings are not in force,
 // because it could not be read or names no usable folder: from `root`, or absolute when it is in the main checkout.
 // `roots` is git's checkoutRoots for a folder in the same checkout, when the caller already asked; null outside git.
 // `read`, when given, gives the options of each git read the local file takes, as findProject's does.
 export function openProject(root, roots, read) {
   const errors = [];
+  const warnings = [];
   const unreadable = [];
   const dir = folderDir(root, errors, unreadable);
   const paths = { config: `${dir}/config.json`, knowledge: `${dir}/knowledge`, local: LOCAL };
   const found = roots === undefined ? safeRoots(root, read) : roots;
   const checkouts = checkoutsOf(root, found);
-  const local = cloneLocal(found, checkouts, errors, unreadable, read);
+  const local = cloneLocal(found, checkouts, { errors, warnings }, unreadable, read);
   const sources = [{ label: dir, base: root, index: paths.knowledge, local: false }, ...local.sources];
   return {
     root,
@@ -247,6 +249,7 @@ export function openProject(root, roots, read) {
     // mayFollowTeamDefault answers with, since this process cannot ask git there.
     ...(found?.attempt?.machine ? { recordedFollow: found.attempt.machine.autoMerge === 'unset' } : {}),
     errors,
+    warnings,
     unreadable,
   };
 }
@@ -352,10 +355,10 @@ function safeRoots(root, read) {
 // clone (lib/attempt-clone.mjs), whose session writes its folder, only the run's main checkout's file counts, the
 // clone's own never; and one whose link cannot be read reads every switch off and no decisions, but the auto-merge
 // switch a confined session's start row recorded (attempt-clone.mjs confinedMachine). `read` is readLocal's.
-function cloneLocal(roots, checkouts, errors, unreadable, read) {
-  if (!roots?.attempt) return readLocal(checkouts, errors, unreadable, read);
+function cloneLocal(roots, checkouts, problems, unreadable, read) {
+  if (!roots?.attempt) return readLocal(checkouts, problems, unreadable, read);
   if (roots.unlinked) return { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined, ...OFF_SWITCHES, ...(roots.attempt.machine ? { autoMerge: roots.attempt.machine.autoMerge } : {}) };
-  return readLocal([checkouts.at(-1)], errors, unreadable, read);
+  return readLocal([checkouts.at(-1)], problems, unreadable, read);
 }
 
 function checkoutsOf(root, roots) {
@@ -382,16 +385,19 @@ const LOCAL_KEYS = ['sources', 'models', 'names', 'telemetry', 'agents', 'review
 // Behind such a copy, the main checkout's file gets every check it gets when it is the one loaded, and its errors are
 // reported, so a worktree's copy hides none of them. Whether git tracks the main checkout's file is asked once, and only
 // when a switch or `review.productFeedback.auto` needs it, with the options `read` gives, as findProject's reads take them.
-function readLocal(checkouts, errors, unreadable, read) {
+// `errors` gets every error, and `warnings` every key the plugin does not read (splitUnknownKeys).
+function readLocal(checkouts, { errors, warnings }, unreadable, read) {
   const none = { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined, ...UNSET_SWITCHES };
   const holder = checkouts.find((dir) => isFile(path.join(dir, LOCAL)));
   if (!holder) return none;
   const main = checkouts.at(-1);
   const raw = readJson(holder, LOCAL, errors);
   const own = raw && checkedLocal(raw, holder);
-  if (own) errors.push(...own.problems);
-  else unreadable.push(holder === checkouts[0] ? LOCAL : path.join(holder, LOCAL));
-  const mainFile = holder === main ? own : mainLocal(main, errors);
+  if (own) {
+    errors.push(...own.problems);
+    warnings.push(...own.unknown);
+  } else unreadable.push(holder === checkouts[0] ? LOCAL : path.join(holder, LOCAL));
+  const mainFile = holder === main ? own : mainLocal(main, errors, warnings);
   let asked = null;
   const tracked = () => (asked ??= runGit(['ls-files', '--error-unmatch', '--', `:(icase)${LOCAL}`], main, typeof read === 'function' ? read() : undefined)).status;
   const switches = machineSwitches(mainFile, tracked, errors);
@@ -403,30 +409,33 @@ function readLocal(checkouts, errors, unreadable, read) {
 }
 
 // Every check of the local file `raw`, read from `dir`, whichever checkout it is in: { raw, sources, autoMerge,
-// unattendedWaiver, reviewApprovals, problems }, with each switch as the file sets it and `problems` every error in it.
+// unattendedWaiver, reviewApprovals, problems, unknown }, with each switch as the file sets it, `problems` every error in
+// it, and `unknown` the warning for each key, top-level or in `github`, that this plugin does not read and ignores.
 function checkedLocal(raw, dir) {
-  const problems = [];
+  const found = [];
   for (const key of Object.keys(raw)) {
-    if (!LOCAL_KEYS.includes(key)) problems.push(`${LOCAL}: unknown key "${key}"`);
+    if (!LOCAL_KEYS.includes(key)) found.push(`${LOCAL}: unknown key "${key}"`);
   }
-  const sources = localSources(dir, raw, problems);
-  const autoMerge = localAutoMerge(raw, problems);
+  const sources = localSources(dir, raw, found);
+  const autoMerge = localAutoMerge(raw, found);
   const unattendedWaiver = localUnattendedWaiver(raw);
-  const reviewApprovals = localReviewApprovals(raw, problems);
-  const unattendedSignoff = localUnattendedSignoff(raw, problems);
-  const handoffBackground = localHandoffBackground(raw, problems);
-  const forgeTokenKeychain = localForgeTokenKeychain(raw, problems, LOCAL);
-  return { raw, sources, autoMerge, unattendedWaiver, reviewApprovals, unattendedSignoff, handoffBackground, forgeTokenKeychain, problems };
+  const reviewApprovals = localReviewApprovals(raw, found);
+  const unattendedSignoff = localUnattendedSignoff(raw, found);
+  const handoffBackground = localHandoffBackground(raw, found);
+  const forgeTokenKeychain = localForgeTokenKeychain(raw, found, LOCAL);
+  const { errors: problems, warnings: unknown } = splitUnknownKeys(found, LOCAL);
+  return { raw, sources, autoMerge, unattendedWaiver, reviewApprovals, unattendedSignoff, handoffBackground, forgeTokenKeychain, problems, unknown };
 }
 
 // The main checkout's local file behind a worktree's own copy, through checkedLocal: undefined when there is none, null
-// when it cannot be read. Its errors are added to `errors`, as they are when it is the file loaded.
-function mainLocal(main, errors) {
+// when it cannot be read. Its errors and warnings are added to `errors` and `warnings`, as they are when it is the file loaded.
+function mainLocal(main, errors, warnings) {
   if (!isFile(path.join(main, LOCAL))) return undefined;
   const raw = readJson(main, LOCAL, errors);
   if (!raw) return null;
   const file = checkedLocal(raw, main);
   errors.push(...file.problems);
+  warnings.push(...file.unknown);
   return file;
 }
 
@@ -436,7 +445,9 @@ const OFF_SWITCHES = Object.freeze({ autoMerge: 'off', unattendedWaiver: 'off', 
 // This machine's switches, from the main checkout's file as checkedLocal read it: each "unset" when there is no file,
 // and "off" when it cannot be read. An error anywhere in the file, a tracked-file one too, reads an unset auto-merge
 // "off", so it never follows a team default of "on", and the waiver "off" though it says "on": a wrong local file never
-// turns merging on, nor lets a verdict stand in for the Human.
+// turns merging on, nor lets a verdict stand in for the Human. A key the plugin does not read is no error, and a switch
+// the file sets still holds, but each switch the file leaves unset reads "off", so a misspelt switch never follows a
+// team default or `solo`.
 // `tracked` gives git's status for the question whether it tracks the file (readLocal).
 function machineSwitches(file, tracked, errors) {
   if (file === undefined) return UNSET_SWITCHES;
@@ -449,12 +460,14 @@ function machineSwitches(file, tracked, errors) {
   const handoffBackground = untrackedSwitch(file.handoffBackground, 'handoff.background', tracked, problems);
   errors.push(...problems);
   const broken = file.problems.length > 0 || problems.length > 0;
+  const unsetOff = (value) => ((broken || file.unknown.length > 0) && value === 'unset' ? 'off' : value);
+  const guarded = (value) => (broken ? 'off' : unsetOff(value));
   return {
-    autoMerge: broken && autoMerge === 'unset' ? 'off' : autoMerge,
-    unattendedWaiver: broken ? 'off' : unattendedWaiver,
+    autoMerge: unsetOff(autoMerge),
+    unattendedWaiver: guarded(unattendedWaiver),
     reviewApprovals,
-    unattendedSignoff: broken ? 'off' : unattendedSignoff,
-    handoffBackground: broken ? 'off' : handoffBackground,
+    unattendedSignoff: guarded(unattendedSignoff),
+    handoffBackground: guarded(handoffBackground),
   };
 }
 
@@ -511,8 +524,9 @@ export function mayFollowTeamDefault(project, options) {
 // The machine settings of the local file's `github` group, the only keys it takes: { autoMerge, unattendedWaiver, problems }.
 // Each is `{ "enabled": true | false }`, the shape of the team's key, or the older "on" and "off", and reads "on", "off",
 // or "unset". The team sets the strategy, the cleanup, the default, and both ceilings in config.json, and no machine can
-// change them. `problems` lists every error in the group; both readers below read "off" when there is any, so a wrong
-// local file never turns merging on, nor lets a verdict stand in for the Human.
+// change them. `problems` lists every error in the group; both readers below read "off" when there is any but an unknown
+// key, which is a warning (splitUnknownKeys), so a wrong local file never turns merging on, nor lets a verdict stand in
+// for the Human. A key the team sets, such as `strategy` or `allow`, is unknown here, and the team's value holds.
 const MACHINE_GITHUB = Object.freeze(['autoMerge', 'unattendedWaiver']);
 function githubGroup(raw) {
   const none = { autoMerge: 'unset', unattendedWaiver: 'unset', problems: [] };
@@ -539,7 +553,7 @@ function githubGroup(raw) {
 function localAutoMerge(raw, errors) {
   const { autoMerge, problems } = githubGroup(raw);
   errors.push(...problems);
-  return problems.length ? 'off' : autoMerge;
+  return splitUnknownKeys(problems, LOCAL).errors.length ? 'off' : autoMerge;
 }
 
 // The local file's `github.unattendedWaiver`: githubGroup's, "off" when the group has any error. It adds none, since
@@ -547,7 +561,7 @@ function localAutoMerge(raw, errors) {
 // (config-local.mjs machineSwitch): the waiver has no team default of its own.
 function localUnattendedWaiver(raw) {
   const { unattendedWaiver, problems } = githubGroup(raw);
-  return problems.length ? 'off' : unattendedWaiver;
+  return splitUnknownKeys(problems, LOCAL).errors.length ? 'off' : unattendedWaiver;
 }
 
 // The local file's `reviewApprovals` as "on", "off", or "unset": whether this machine lets a named approver's review on

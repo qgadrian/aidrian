@@ -501,7 +501,7 @@ const waivedNote = (result) => (result.waived ? ' on a judge\'s verdict at the r
 const allowedLead = (result) => `auto-merge allowed for #${result.pr} at ${result.head.slice(0, 7)}${waivedNote(result)}`;
 function verdictLine({ result }, asJson) {
   if (asJson) return JSON.stringify(result);
-  if (result.effective) return `${allowedLead(result)}, not merged yet: ${result.strategy ?? 'no strategy set'}, ${cleanup(result)}`;
+  if (result.effective) return `${allowedLead(result)}, this check merges nothing: ${result.strategy ?? 'no strategy set'}, ${cleanup(result)}`;
   // A trust refusal names its reason and which half is missing: the bot's verdict, or a sign-off.
   return result.reason === 'trust' ? `auto-merge off for #${result.pr} (trust: ${result.trust}): ${result.why}` : `auto-merge off for #${result.pr}: ${result.why}`;
 }

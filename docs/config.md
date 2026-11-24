@@ -363,7 +363,7 @@ An older plugin rejects the key as unknown, so set `requires.aidrian` as above.
 
 `aidrian pr auto-merge [PR] --check [--json]` reports it for one pull request: a number, `#number`, or URL, or by default the
 current branch's. It exits 0 when on, 1 when off, and 3 on an error, such as a bad argument or a failed gh read.
-Exit 0 merges nothing: its line reads `auto-merge allowed for #<PR> at <sha>, not merged yet: …`.
+Exit 0 merges nothing and reads no merge state: its line reads `auto-merge allowed for #<PR> at <sha>, this check merges nothing: …`.
 
 Without `--check`, the command says whether the merge happened, so a session that reads it as the merge is never told
 it merged when nothing did. When the gate is off, it prints and exits as `--check` does. When it is on, it reads the

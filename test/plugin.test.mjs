@@ -393,7 +393,7 @@ test('pr-merge-when-green is the Human\'s to start; pr-auto-merge is the one way
   assert.doesNotMatch(auto.split(/^---$/mu)[1], /disable-model-invocation/u, 'skills run it, so the model must be able to');
   const flat = auto.replace(/\s+/g, ' ');
   assert.match(flat, /Run `aidrian pr auto-merge <n> --check`\. Unless it exits 0, stop and report the line it printed/u);
-  assert.match(flat, /Exit 0 only allows the merge: nothing has merged until step 3's `gh pr merge` does/u, 'the gate\'s pass is no merge');
+  assert.match(flat, /Exit 0 only allows the merge: it reads no merge state, its line says `this check merges nothing`, and step 3 merges\./u, 'the gate\'s pass is no merge');
   assert.match(flat, /Without `--check`, `aidrian pr auto-merge <n>` says whether the pull request merged: exit 0 when GitHub merged it, queued it, or holds an auto-merge request for it, and 4/u);
   assert.match(flat, /follow its steps for this pull request as an unattended run, through its confirm and cleanup steps/u, 'an unattended merge runs the cleanup its choices ask for');
   assert.match(flat, /Read `\.\.\/pr-merge-when-green\/SKILL\.md`/u);

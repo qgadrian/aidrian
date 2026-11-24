@@ -184,7 +184,7 @@ test('both layers on, the Human\'s own pull request, and a finished review on it
   const human = run(t, r, ['7']);
   assert.equal(human.code, 0);
   assert.equal(human.out.length, 1);
-  assert.match(human.out[0], /^auto-merge allowed for #7 at abcdef1, not merged yet: squash, delete the branch, keep the worktree$/);
+  assert.match(human.out[0], /^auto-merge allowed for #7 at abcdef1, this check merges nothing: squash, delete the branch, keep the worktree$/);
 });
 
 // The command as `aidrian pr auto-merge` runs it: the gate, then, when it allows the merge, where the pull request stands
@@ -254,7 +254,7 @@ test('aidrian pr auto-merge --check is the gate alone; without it, the merge sta
   const r = repo(t);
   r.record((state) => finished(state));
   const check = runCommand(t, r, ['7', '--check'], () => assert.fail('--check reads no merge state'));
-  assert.deepEqual([check.code, check.out], [0, ['auto-merge allowed for #7 at abcdef1, not merged yet: squash, delete the branch, keep the worktree']]);
+  assert.deepEqual([check.code, check.out], [0, ['auto-merge allowed for #7 at abcdef1, this check merges nothing: squash, delete the branch, keep the worktree']]);
   const checkJson = runCommand(t, r, ['--check', '7', '--json'], () => assert.fail('--check reads no merge state'));
   assert.deepEqual([checkJson.code, json(checkJson).effective, json(checkJson).merge], [0, true, undefined]);
   for (const status of [OPEN, { ...OPEN, merged: true, state: 'merged' }, { ...OPEN, autoMerge: 'squash' }]) {
@@ -283,7 +283,7 @@ test('review: a waiver above low the body dropped, which the review of the head 
   const body = (lines) => `## Summary\n\nx\n\n## Accepted residuals\n\n${lines.map((line) => `- ${line}`).join('\n')}\n`;
   const at = (text, head = HEAD) => ({ pullHead: () => ({ head: { sha: head }, body: text }) });
   const gone = run(t, r, ['7'], at(body(['Another: reason'])));
-  assert.deepEqual([gone.code, gone.out], [0, ['auto-merge allowed for #7 at abcdef1, not merged yet: squash, delete the branch, keep the worktree']]);
+  assert.deepEqual([gone.code, gone.out], [0, ['auto-merge allowed for #7 at abcdef1, this check merges nothing: squash, delete the branch, keep the worktree']]);
   assert.deepEqual(gone.calls.filter((call) => call[0] === 'pull'), [['pull', 'acme/notes', 7, 'github.com']], 'the body is read once, at the head');
   assert.deepEqual(run(t, r, ['7'], at(null)).code, 0, 'an empty body lists nothing');
   const listed = run(t, r, ['7'], at(body([residual])));
@@ -470,7 +470,7 @@ test('review: none_needed on the current head, of files the team lists in github
   assert.deepEqual(reasonOf(t, r, listed(changing('README.md', 'guide/a.md', 'img/b.png', 'img/d.ico', 'img/e.webp', 'img/f.jpeg', 'img/g.gif'))), [0, null], 'listed prose and raster images');
   assert.deepEqual(reasonOf(t, r, { files: onMain(listing(), { nonBehaviour: ['**/*.md', '**/*.avif'] }), view: changing('README.md', 'img/c.avif') }), [0, null], 'an .avif the default branch\'s own list names');
   const human = run(t, r, ['7'], listed(changing('README.md')));
-  assert.deepEqual([human.code, human.out], [0, ['auto-merge allowed for #7 at abcdef1, not merged yet: squash, delete the branch, keep the worktree']]);
+  assert.deepEqual([human.code, human.out], [0, ['auto-merge allowed for #7 at abcdef1, this check merges nothing: squash, delete the branch, keep the worktree']]);
 });
 
 test('review: none_needed for an earlier head, a missing record, or an owed review is off, as for a received review', (t) => {

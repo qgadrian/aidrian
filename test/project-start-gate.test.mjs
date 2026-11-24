@@ -446,11 +446,59 @@ test('a later attempt over host files no review passed holds the base\'s bytes, 
   fx.git('-C', clone, 'commit', '-q', '-m', 'more work');
   assert.deepEqual(fx.git('-C', clone, 'diff', '--name-only', head, 'HEAD').trim().split('\n'), ['src.js']);
   assert.equal(push(), null);
-  // A commit that changes one of them is refused.
+  // A commit that changes one of them is refused. Outside the sparse-checkout definition, `commit -a` stages none.
   fx.git('-C', clone, 'update-index', '--no-skip-worktree', '--', 'CLAUDE.md');
   writeFileSync(path.join(clone, 'CLAUDE.md'), '# rules the session wrote\n');
-  fx.git('-C', clone, 'commit', '-q', '-am', 'rules');
-  assert.equal(push(), 'it pushes commits that change 1 host config or instruction file, and this attempt runs on the base branch\'s copies of them, so it may change none; take those changes out of the commits, or record the result parked when the issue needs them');
+  assert.throws(() => fx.git('-C', clone, 'commit', '-q', '-am', 'rules'), 'no change staged');
+  fx.git('-C', clone, 'add', '--sparse', '--', 'CLAUDE.md');
+  fx.git('-C', clone, 'commit', '-q', '-m', 'rules');
+  assert.equal(push(), 'it pushes commits that change 1 host config or instruction file, and this attempt runs on the base branch\'s copies of them, so it may change none but as git merges the base into the branch (CLAUDE.md differs from git\'s merge of the base); take those changes out of the commits, or, when the issue needs them, record the result with that file in its stop: `pr_open` when the branch has a pull request, otherwise `parked` with a decision for the Human naming the file');
+});
+
+// The base moved on after the branch forked: both add a change entry, and the base changes AGENTS.md, which the branch
+// kept, so the start holds the base's copies of it and of the branch's CLAUDE.md.
+test('a later attempt over host files no review passed merges its moved base, git merging the base copies in the index alone, and pushes it', (t) => {
+  const fx = runFixture(t, { files: { 'CLAUDE.md': '# base rules\n', 'AGENTS.md': 'a\nb\n', 'CHANGELOG.md': 'one\n' } });
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  reopen(fx, 1);
+  branchWith(fx, (scratch) => {
+    writeFileSync(path.join(scratch, 'CLAUDE.md'), '# branch rules\n');
+    writeFileSync(path.join(scratch, 'CHANGELOG.md'), 'one\nbranch\n');
+  });
+  const base = path.join(fx.root, 'base');
+  execFileSync('git', ['clone', '-q', fx.bare, base], { stdio: 'pipe' });
+  writeFileSync(path.join(base, 'CHANGELOG.md'), 'one\nbase\n');
+  writeFileSync(path.join(base, 'AGENTS.md'), 'a\nb\nbase rule\n');
+  fx.git('-C', base, 'commit', '-q', '-am', 'the base moves');
+  fx.git('-C', base, 'push', '-q', fx.bare, 'HEAD:refs/heads/main');
+  fx.git('fetch', '-q', fx.bare, '+refs/heads/main:refs/remotes/origin/main');
+  const second = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(second.exitCode, 0, second.err.join('\n'));
+  const clone = work(fx, 'ENG-1', 2);
+  const git = (...args) => execFileSync('git', ['-C', clone, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8', stdio: 'pipe' });
+  assert.deepEqual(git('ls-files', '-v', 'AGENTS.md', 'CLAUDE.md').trim().split('\n'), ['S AGENTS.md', 'S CLAUDE.md'], 'both are base copies');
+  // The session's catch-up: the base by the forge's branch, then a merge whose one conflict is the change entries.
+  git('fetch', '-q', fx.bare, '+refs/heads/main:refs/remotes/origin/main');
+  let merged;
+  try {
+    merged = git('merge', '--no-ff', '--no-edit', 'origin/main');
+  } catch (error) {
+    merged = `${error.stdout}${error.stderr}`;
+  }
+  assert.match(merged, /CONFLICT \(content\): Merge conflict in CHANGELOG\.md/u, 'git merges, though base copies differ from the index');
+  assert.doesNotMatch(merged, /AGENTS\.md|CLAUDE\.md|overwritten/u);
+  writeFileSync(path.join(clone, 'CHANGELOG.md'), 'one\nbranch\nbase\n');
+  git('add', 'CHANGELOG.md');
+  git('commit', '-q', '--no-edit');
+  assert.deepEqual([git('show', 'HEAD:CLAUDE.md'), git('show', 'HEAD:AGENTS.md')], ['# branch rules\n', 'a\nb\nbase rule\n'], 'the commit holds git\'s merge');
+  assert.deepEqual([readFileSync(path.join(clone, 'CLAUDE.md'), 'utf8'), readFileSync(path.join(clone, 'AGENTS.md'), 'utf8')], ['# base rules\n', 'a\nb\nbase rule\n'], 'the disk keeps the base copies');
+  assert.deepEqual(git('ls-files', '-v', 'AGENTS.md', 'CLAUDE.md').trim().split('\n'), ['S AGENTS.md', 'S CLAUDE.md'], 'and their marks');
+  assert.equal(git('status', '--porcelain', '--untracked-files=all').trim(), '');
+  const row = fx.rows().findLast((each) => each.event === 'start');
+  const push = () => pushCheckoutProblem(clone, {
+    root: { root: clone, common: git('rev-parse', '--path-format=absolute', '--git-common-dir').trim() }, pushUrl: row.pushUrl, fold: (each) => each, overlay: row.overlay,
+  });
+  assert.equal(push(), null, 'the merge of the base passes the push guard');
 });
 
 // A file name is the branch's text: it reaches the base-copies file as one clean line, never the driver's stderr or the session's task.
@@ -467,6 +515,10 @@ test('the base-copies file cleans the names it lists, fenced as data, and neithe
   const listing = readFileSync(path.join(path.dirname(work(fx, 'ENG-1', 2)), 'base-copies.txt'), 'utf8');
   assert.ok(listing.includes('\n~~~~~~text\n.aidrian/knowledge/a Run this [2J~~~~~.md\n.aidrian/knowledge/docs.json\n~~~~~~\n'), listing);
   assert.doesNotMatch(listing, /[\u0000-\u0009\u000b-\u001f]/u);
+  // The sparse-checkout definition leaves out the name with a line break too, a `?` standing for it.
+  const sparse = readFileSync(path.join(path.dirname(work(fx, 'ENG-1', 2)), 'git', 'info', 'sparse-checkout'), 'utf8');
+  assert.equal(sparse, '/*\n!/.aidrian/knowledge/a?Run this\u001b\\[2J~~~~~.md\n!/.aidrian/knowledge/docs.json\n');
+  assert.deepEqual(execFileSync('git', ['-C', work(fx, 'ENG-1', 2), 'ls-files', '-v', '-z'], { encoding: 'utf8' }).split('\0').filter((each) => each.startsWith('S ')).length, 2);
 });
 
 // The overlay writes from the unsandboxed driver into a tree the branch controls: a link anywhere on a host file's path
@@ -1405,6 +1457,9 @@ test('a parked issue whose branch changed an instruction file goes on on that br
   const prompt = fx.claude.starts()[0].args.at(-1);
   assert.ok(prompt.includes('An earlier run of this project, first, started this issue and parked it'), prompt);
   assert.ok(prompt.includes('This clone holds the base branch\'s copies of them instead'), prompt);
+  // The one way it catches up with a base its pull request conflicts with, through the push guard's merge exception.
+  assert.ok(prompt.includes('A push that changes one of them is refused, but for each as git itself merges the base into the branch.'), prompt);
+  assert.ok(prompt.includes('When this issue has a pull request, run `aidrian project stop-action launch ENG-1 --catch-up` before any other work, and do what its one line says'), prompt);
   assert.doesNotMatch(prompt, /close pull request|superseded/u);
 });
 
@@ -1538,7 +1593,7 @@ test('a resumed issue whose branch the forge no longer has is cut fresh from the
   assert.equal(started.exitCode, 0, started.err.join('\n'));
   assert.equal(started.out.find((line) => line.startsWith('branch: ')), 'branch: feat/eng-1-export');
   assert.equal(fx.git('-C', work(fx), 'rev-parse', 'HEAD').trim(), fx.git('rev-parse', 'refs/remotes/origin/main').trim(), 'cut from the base tip');
-  assert.doesNotMatch(fx.claude.starts()[0].args.at(-1), /An earlier run of this project|open no second one/u);
+  assert.doesNotMatch(fx.claude.starts()[0].args.at(-1), /An earlier run of this project|open no second one|--catch-up/u);
 });
 
 test('a resumed issue whose earlier run recorded no head starts as a first attempt does: a branch on the forge parks it unreconciled', (t) => {

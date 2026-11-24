@@ -441,6 +441,9 @@ function folderSet(files) {
 // line for each the branch deleted, so `git add -A` stages none of them, and git asked again that it ignores each:
 // a committed ignore rule that negates one wins over info/exclude. Null, { stageable }, the first such path git would
 // still stage, or { problem }.
+// Each skip-worktree path also stays out of a sparse-checkout definition that holds every other path, with git told to
+// expect it on disk (sparseMarks), so a merge of the base writes git's merge of it to the index alone and leaves the
+// base copy on disk: without one, git refuses any merge that changes such a path, as a local change it would overwrite.
 function baseCopyMarks({ work, gitFolder, tip, overlay, git }) {
   const [head, base] = [commitFiles(work, overlay.sha), commitFiles(work, tip)];
   if (!head || !base) return { problem: 'git cannot read the files of the branch\'s head and the base tip' };
@@ -449,13 +452,14 @@ function baseCopyMarks({ work, gitFolder, tip, overlay, git }) {
   if (indexed.length) {
     const skip = git(['update-index', '--skip-worktree', '-z', '--stdin'], work, { input: `${indexed.join('\0')}\0` });
     if (skip.status !== 0) return { problem: `git cannot mark them skip-worktree (${said(skip)})` };
+    const sparse = sparseMarks({ work, gitFolder, indexed, git });
+    if (sparse) return { problem: sparse };
   }
   const deleted = overlay.files.filter((file) => !head.has(file) && base.has(file));
   if (!deleted.length) return null;
   // An ignore line cannot spell a name with a line break, so such a name refuses the start.
   if (deleted.some((file) => /[\r\n]/u.test(file))) return { problem: 'a host file the branch deleted has a line break in its name' };
-  // Each pattern from the root, its glob characters and trailing spaces escaped, so it names that one path.
-  const lines = deleted.map((file) => `/${file.replace(/[\\*?[]/gu, '\\$&').replace(/ +$/u, (spaces) => spaces.replaceAll(' ', '\\ '))}`);
+  const lines = deleted.map(rootPattern);
   try {
     mkdirSync(path.join(gitFolder, 'info'), { recursive: true, mode: 0o700 });
     appendFileSync(path.join(gitFolder, 'info', 'exclude'), `\n# aidrian: the base branch's copies of host files the branch deleted\n${lines.join('\n')}\n`);
@@ -468,6 +472,30 @@ function baseCopyMarks({ work, gitFolder, tip, overlay, git }) {
   const ignored = new Set(checked.stdout.split('\0').filter(Boolean));
   const stageable = deleted.find((file) => !ignored.has(file));
   return stageable ? { stageable } : null;
+}
+
+// An ignore or sparse-checkout pattern from the root that names the one path `file`: its glob characters and trailing
+// spaces escaped.
+const rootPattern = (file) => `/${file.replace(/[\\*?[]/gu, '\\$&').replace(/ +$/u, (spaces) => spaces.replaceAll(' ', '\\ '))}`;
+
+// The clone's own config for a sparse checkout of every path but `indexed`, the skip-worktree base copies: patterns, not
+// cone mode, and git told to expect those files on disk, so it never clears their marks. Each must be left out: git
+// would write one the patterns hold from the index, the branch's own copy, at its next checkout or merge. A pattern
+// cannot spell a line break, so `?` stands for one, which leaves out at most a name that differs from it there alone.
+// Null, or why it failed.
+const SPARSE = Object.freeze([['core.sparseCheckout', 'true'], ['core.sparseCheckoutCone', 'false'], ['sparse.expectFilesOutsideOfPatterns', 'true']]);
+function sparseMarks({ work, gitFolder, indexed, git }) {
+  try {
+    mkdirSync(path.join(gitFolder, 'info'), { recursive: true, mode: 0o700 });
+    writeFileSync(path.join(gitFolder, 'info', 'sparse-checkout'), ['/*', ...indexed.map((file) => `!${rootPattern(file).replace(/[\r\n]/gu, '?')}`), ''].join('\n'));
+  } catch (error) {
+    return `their sparse-checkout lines could not be written (${error.code ?? 'no code'})`;
+  }
+  for (const [key, value] of SPARSE) {
+    const set = git(['config', '--local', key, value], work);
+    if (set.status !== 0) return `git cannot set ${key} (${String(set.stderr ?? '').trim().split('\n').at(-1) || `exit ${set.status}`})`;
+  }
+  return null;
 }
 
 // The signing keys each attempt's clone turns off, in its own config and nowhere else, so the user's global and system

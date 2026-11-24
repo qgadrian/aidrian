@@ -77,10 +77,12 @@ test('every policy reason, changes requested, a sign-off the Human owes, and a r
   assert.equal(classify({ view: view({ draft: true }) }).action, 'park', 'a draft parks');
 });
 
-test('a conflict merges the base in and a branch behind its base is updated, at most twice per issue together; the line fetches both branches first and says the new head voids every sign-off', () => {
+test('a conflict merges the base in and a branch behind its base is updated, at most twice per issue together; the line fetches both, merges only into a HEAD that holds the forge\'s branch, and says the new head voids every sign-off', () => {
   const conflict = classify({ view: view({ mergeable: 'CONFLICTING', status: 'DIRTY' }) });
   assert.deepEqual([conflict.action, conflict.used, conflict.cap], ['merge_base', 1, STOP_CAPS.base_update]);
-  assert.match(lineOf(conflict), /^merge_base ENG-1 #12 at aaaaaaa: it conflicts with main; the new head voids every sign-off and review of this one, so a pull request whose flows need the Human's sign-off parks after it \(1 of 2 for this issue\); run `git fetch origin main feat\/eng-1-export` and `git checkout -B feat\/eng-1-export origin\/feat\/eng-1-export`, merge origin\/main, resolve the conflicts, run the tests, commit, and push with `git push origin HEAD:refs\/heads\/feat\/eng-1-export` in a call of its own, never with force; then run the pr-auto-merge skill again$/u);
+  assert.match(lineOf(conflict), /^merge_base ENG-1 #12 at aaaaaaa: it conflicts with main; the new head voids every sign-off and review of this one, so a pull request whose flows need the Human's sign-off parks after it \(1 of 2 for this issue\); run `git fetch origin main feat\/eng-1-export`, and when it fails, run it again in this turn, up to three times in all; when it still fails, merge nothing and record the result pr_open with a stop that names the failed fetch, never asking this command again for it; `git merge-base --is-ancestor origin\/feat\/eng-1-export HEAD`: when it fails, HEAD does not hold the branch as the forge has it, so merge nothing and record the result pr_open with a stop that says feat\/eng-1-export diverged from origin\/feat\/eng-1-export; then `git merge-tree --write-tree --name-only HEAD origin\/main` lists the files that would conflict: when one is a host config or instruction file, record the result pr_open with that file's path in its stop, and merge nothing; else run `git merge --no-ff --no-edit origin\/main`, a merge commit, never a rebase, resolve the conflicts without editing a host config or instruction file by hand \(a merge git refuses over one is recorded the same way\), run the tests, commit, and push with `git push origin HEAD:refs\/heads\/feat\/eng-1-export` in a call of its own, never with force; then run the pr-auto-merge skill again$/u);
+  // The catch-up at an attempt's start gives the same route, then goes on with the work.
+  assert.equal(lineOf(conflict, { catchUp: true }), lineOf(conflict).replace(/; then run the pr-auto-merge skill again$/u, '; then go on with the work, the checks and the review on the new head'));
   assert.equal(classify({ view: view({ status: 'BEHIND' }), autoMerge: off('trust', { trust: 'bot' }) }).action, 'update_branch', 'an update comes before a bot request');
   assert.equal(classify({ view: view({ status: 'BEHIND' }), history: rows('merge_base', 1, NEW) }).used, 2, 'the two share one cap');
   const spent = classify({ view: view({ status: 'BEHIND' }), history: [...rows('merge_base', 1, NEW), ...rows('update_branch', 1, OTHER_HEAD)] });
@@ -137,7 +139,7 @@ test('a line cleans its reason as a result\'s stop is: no control or bidirection
 });
 
 test('every action a line names is one the classifier gives, and each capped one has its cap', () => {
-  assert.deepEqual([...STOP_ACTIONS].sort(), ['done', 'merge', 'merge_base', 'park', 'request_bot', 'rerun_checks', 'review_round', 'update_branch', 'wait']);
+  assert.deepEqual([...STOP_ACTIONS].sort(), ['done', 'merge', 'merge_base', 'none', 'park', 'request_bot', 'rerun_checks', 'review_round', 'update_branch', 'wait']);
   assert.deepEqual(Object.keys(STOP_CAPS).sort(), ['base_update', 'merge', 'request_bot', 'rerun_checks', 'retry', 'review_round', 'wait']);
 });
 
@@ -173,7 +175,9 @@ function stopped(t, { merge = {}, checks = [checkRow('e2e', 'SUCCESS', 40)], for
   };
   const dropOf = () => fx.rows().filter((row) => row.event === 'start' && row.outcome === 'started').at(-1).drop;
   const act = (autoMerge, session = CHILD) => fx.cmd(['stop-action', 'launch', 'ENG-1'], { session, forge, autoMerge: () => autoMerge });
-  return { ...fx, gh, writes, drop: dropOf(), dropOf, act, forge };
+  // The catch-up at an attempt's start, which reads no auto-merge answer.
+  const catchUp = () => fx.cmd(['stop-action', 'launch', 'ENG-1', '--catch-up'], { session: CHILD, forge, autoMerge: () => assert.fail('the catch-up reads no auto-merge answer') });
+  return { ...fx, gh, writes, drop: dropOf(), dropOf, act, catchUp, forge };
 }
 const called = (fx, name) => fx.writes.filter((each) => each[0] === name);
 
@@ -233,7 +237,7 @@ test('a branch behind its base is merged up to date on the forge, rebased only u
 
 test('stop-action answers a conflict, a stale review after an update, a missing bot, pending checks, and a merge, each recorded against its cap', (t) => {
   const fx = stopped(t, { merge: { mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' } });
-  assert.match(fx.act(on()).out[0], /^merge_base ENG-1 #12 at aaaaaaa: .*\(1 of 2 for this issue\); run `git fetch origin main feat\/eng-1-export`/u);
+  assert.match(fx.act(on()).out[0], /^merge_base ENG-1 #12 at aaaaaaa: .*\(1 of 2 for this issue\); run `git fetch origin main feat\/eng-1-export`, and when it fails, run it again in this turn, up to three times in all; when it still fails, merge nothing and record the result pr_open with a stop that names the failed fetch, never asking this command again for it; `git merge-base --is-ancestor origin\/feat\/eng-1-export HEAD`/u);
   fx.gh.view = { ...fx.gh.view, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', headRefOid: NEW };
   assert.match(fx.act(off('review', { head: NEW })).out[0], /^review_round ENG-1 #12 at bbbbbbb: a base update made this head/u);
   assert.match(fx.act(off('trust', { head: NEW, trust: 'bot' })).out[0], /^request_bot ENG-1 #12 at bbbbbbb/u);
@@ -270,6 +274,36 @@ test('a forge read or action that fails waits under the wait cap, and parks only
 test('a pull request retargeted to another base parks with no forge update', (t) => {
   const fx = stopped(t, { merge: { baseRefName: 'release', mergeStateStatus: 'BEHIND' } });
   assert.match(fx.act(on()).out[0], /^park ENG-1 #12 at aaaaaaa: it targets release, not the default branch main/u);
+  assert.equal(called(fx, 'updateBranch').length, 0);
+  // The catch-up at an attempt's start parks it the same way, before it reads any conflict.
+  fx.gh.view = { ...fx.gh.view, mergeStateStatus: 'DIRTY', mergeable: 'CONFLICTING' };
+  assert.match(fx.catchUp().out[0], /^park ENG-1 #12 at aaaaaaa: it targets release, not the default branch main/u);
+});
+
+test('the catch-up gives a merged or closed pull request the answer stop-action gives without it', (t) => {
+  const fx = stopped(t, { merge: { state: 'MERGED' } });
+  const plain = fx.act(on()).out;
+  assert.match(plain[0], /^done ENG-1 #12 at aaaaaaa: the forge shows it merged; record the result merged/u);
+  assert.deepEqual(fx.catchUp().out, plain);
+  fx.gh.view = { ...fx.gh.view, state: 'CLOSED' };
+  const closed = fx.act(on()).out;
+  assert.match(closed[0], /^park ENG-1 #12 at aaaaaaa: the forge shows it closed; record the result pr_open with this line as its stop$/u);
+  assert.deepEqual(fx.catchUp().out, closed);
+});
+
+test('the catch-up at an attempt\'s start merges a base a draft conflicts with, under the base-update cap, and otherwise goes on', (t) => {
+  const fx = stopped(t, { merge: { isDraft: true, mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' } });
+  assert.match(fx.catchUp().out[0], /^merge_base ENG-1 #12 at aaaaaaa: it conflicts with main; .*\(1 of 2 for this issue\); run `git fetch origin main feat\/eng-1-export`, and when it fails, run it again in this turn, up to three times in all; when it still fails, merge nothing and record the result pr_open with a stop that names the failed fetch, never asking this command again for it; `git merge-base --is-ancestor origin\/feat\/eng-1-export HEAD`.*`git merge-tree --write-tree --name-only HEAD origin\/main`.*; then go on with the work, the checks and the review on the new head$/u);
+  fx.gh.view = { ...fx.gh.view, mergeable: 'UNKNOWN', mergeStateStatus: 'UNKNOWN', headRefOid: NEW };
+  assert.match(fx.catchUp().out[0], /^wait ENG-1 #12 at bbbbbbb: the forge has not worked out yet whether it merges \(1 of 3 for this head\); wait 60 seconds, then run this command again$/u);
+  fx.gh.view = { ...fx.gh.view, mergeable: 'MERGEABLE', mergeStateStatus: 'BLOCKED' };
+  assert.equal(fx.catchUp().out[0], 'none ENG-1 #12 at bbbbbbb: it does not conflict with main; go on with the work');
+  fx.gh.view = { ...fx.gh.view, headRefOid: OTHER_HEAD, mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' };
+  assert.match(fx.catchUp().out[0], /^merge_base .*\(2 of 2 for this issue\)/u);
+  fx.gh.view = { ...fx.gh.view, headRefOid: HEAD };
+  assert.match(fx.catchUp().out[0], /^park .*base update has reached its cap of 2 for this issue/u);
+  const recorded = readFileSync(path.join(fx.drop, STOPS_FILE), 'utf8').trim().split('\n').map((line) => JSON.parse(line).action);
+  assert.deepEqual(recorded, ['merge_base', 'wait', 'merge_base']);
   assert.equal(called(fx, 'updateBranch').length, 0);
 });
 

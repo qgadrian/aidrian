@@ -25,6 +25,8 @@
 // A forge or auto-merge read that fails, or a forge action it refuses, is a `wait` under its own cap, RETRY_PAUSES, per
 // attempt, each longer than the last, never a park until that cap is spent. Each capped action is recorded (lib/stop-history.mjs), and the caps
 // count every attempt of the issue. A history it cannot read parks. Every forge call goes through the forge facade.
+// With --catch-up, at the start of an attempt that takes up the issue's pull request, it reads step 1 and the conflict
+// alone (catchUpStop): `merge_base` on a conflict, `none` when there is none, so the work goes on, under the same caps.
 
 import path from 'node:path';
 
@@ -44,7 +46,7 @@ export { STOPS_FILE };
 // per issue, and `retry`, the waits on a failed read or action, per attempt.
 export const STOP_CAPS = Object.freeze({ rerun_checks: 1, base_update: 2, wait: 3, retry: 3, review_round: 1, request_bot: 1, merge: 1 });
 // The actions a line may name.
-export const STOP_ACTIONS = Object.freeze(['done', 'merge', 'park', 'wait', 'rerun_checks', 'update_branch', 'merge_base', 'review_round', 'request_bot']);
+export const STOP_ACTIONS = Object.freeze(['done', 'merge', 'park', 'wait', 'rerun_checks', 'update_branch', 'merge_base', 'review_round', 'request_bot', 'none']);
 const CAPPED = new Set(['wait', 'retry', 'rerun_checks', 'update_branch', 'merge_base', 'review_round', 'request_bot', 'merge']);
 const BASE_UPDATES = new Set(['update_branch', 'merge_base']);
 // The auto-merge reasons nothing a session does unattended can change: they wait for the Human.
@@ -102,9 +104,8 @@ export function classifyStop({ view, autoMerge, checks = null, history = [], att
     if (!KNOWN_REASONS.has(reason)) return park(`auto-merge is off for a reason this command does not know (${String(reason)}): ${result.why}`);
   }
   if (view.draft) return park('it is still a draft, which the ready step never marked ready');
-  const newHead = 'the new head voids every sign-off and review of this one, so a pull request whose flows need the Human\'s sign-off parks after it';
-  if (view.mergeable === 'CONFLICTING' || view.status === 'DIRTY') return act('merge_base', 'for this issue', `it conflicts with ${view.base}; ${newHead}`);
-  if (view.status === 'BEHIND') return act('update_branch', 'for this issue', `it is behind ${view.base}; ${newHead}`);
+  if (conflicts(view)) return act('merge_base', 'for this issue', `it conflicts with ${view.base}; ${NEW_HEAD}`);
+  if (view.status === 'BEHIND') return act('update_branch', 'for this issue', `it is behind ${view.base}; ${NEW_HEAD}`);
   if (view.mergeable === 'UNKNOWN' || view.status === 'UNKNOWN') return act('wait', 'for this head', 'the forge has not worked out yet whether it merges');
   if (!result.effective) {
     if (result.reason === 'review') {
@@ -126,6 +127,20 @@ export function classifyStop({ view, autoMerge, checks = null, history = [], att
   return merge.action === 'park' ? { ...merge, parkAs: 'merge_steps' } : merge;
 }
 
+const NEW_HEAD = 'the new head voids every sign-off and review of this one, so a pull request whose flows need the Human\'s sign-off parks after it';
+// Whether the pull request `view` conflicts with its base.
+const conflicts = (view) => view.mergeable === 'CONFLICTING' || view.status === 'DIRTY';
+
+// The one action at the start of an attempt that takes up the open pull request `view`, whose base is the default
+// branch: `merge_base` on a conflict and `wait` while the forge works it out, each under its cap in `history`, else
+// `none`. Pure.
+export function catchUpStop({ view, history = [] }) {
+  const act = (action, scope, why) => capped(history, view.head, action, scope, why);
+  if (conflicts(view)) return act('merge_base', 'for this issue', `it conflicts with ${view.base}; ${NEW_HEAD}`);
+  if (view.mergeable === 'UNKNOWN' || view.status === 'UNKNOWN') return act('wait', 'for this head', 'the forge has not worked out yet whether it merges');
+  return { action: 'none', why: `it does not conflict with ${view.base}` };
+}
+
 // How the session waits `seconds`: in one call, or, past WAIT_STEP, in foreground calls of at most WAIT_STEP seconds each,
 // since a host moves a longer call to the background.
 function waitWords(seconds) {
@@ -133,9 +148,10 @@ function waitWords(seconds) {
   return `wait ${seconds} seconds in all, in ${Math.ceil(seconds / WAIT_STEP)} foreground waits of at most ${WAIT_STEP} seconds each, never one longer call, which the host moves to the background`;
 }
 
-// What the session does after each action, once stopAction took the forge's part.
-function nextStep(decision, { view, branch, method }) {
-  const again = 'then run the pr-auto-merge skill again';
+// What the session does after each action, once stopAction took the forge's part. Under --catch-up (`catchUp`), the
+// work goes on after a merge of the base, and a wait asks the same command again.
+function nextStep(decision, { view, branch, method, catchUp = false }) {
+  const again = catchUp ? 'then run this command again' : 'then run the pr-auto-merge skill again';
   switch (decision.action) {
     case 'done': return 'record the result merged with `aidrian project result`';
     case 'merge': return 'run the pr-auto-merge skill again';
@@ -148,18 +164,29 @@ function nextStep(decision, { view, branch, method }) {
       : `${waitWords(decision.pause ?? WAIT_PAUSE)}, ${again}`;
     case 'rerun_checks': return `the forge started the failed jobs of ${decision.runs.length} workflow run${decision.runs.length === 1 ? '' : 's'} again; ${again}`;
     case 'update_branch': return `the forge ${method === 'rebase' ? `rebased it onto ${view.base}` : `merged ${view.base} into it`}; ${again}`;
-    case 'merge_base': return `run \`git fetch origin ${view.base} ${branch}\` and \`git checkout -B ${branch} origin/${branch}\`, merge origin/${view.base}, resolve the conflicts, run the tests, commit, and push with \`git push origin HEAD:refs/heads/${branch}\` in a call of its own, never with force; ${again}`;
+    case 'merge_base': return `${mergeBaseRoute(view.base, branch)}; ${catchUp ? 'then go on with the work, the checks and the review on the new head' : again}`;
+    case 'none': return 'go on with the work';
     case 'review_round': return 'run one review round on this head, with § 4\'s waiver at the round cap; when it signs off with nothing to push, run the pr-auto-merge skill again, else record the result pr_open';
     case 'request_bot': return `run \`aidrian pr await-review ${view.number} --request\`, ${again}`;
     default: return 'record the result pr_open with this line as its stop';
   }
 }
 
+// The one way an issue's session merges the base `base` into its branch `branch`, on which its clone already is, its
+// own commits kept, once HEAD holds the branch as the forge has it: a conflict inside a host file stops before any merge, which would write the branch's lines over the
+// base copy, and the push guard lets the host files through only as git merged them (issue-push-checkout.mjs).
+const mergeBaseRoute = (base, branch) => `run \`git fetch origin ${base} ${branch}\`, and when it fails, run it again in this turn, up to three times in all; when it still fails, merge nothing and record the result pr_open with a stop that names the failed fetch, never asking this command again for it; \`git merge-base --is-ancestor origin/${branch} HEAD\`: when it fails, `
+  + `HEAD does not hold the branch as the forge has it, so merge nothing and record the result pr_open with a stop that says ${branch} diverged from origin/${branch}; `
+  + `then \`git merge-tree --write-tree --name-only HEAD origin/${base}\` lists the files that would conflict: when one is a host config or instruction file, `
+  + 'record the result pr_open with that file\'s path in its stop, and merge nothing; '
+  + `else run \`git merge --no-ff --no-edit origin/${base}\`, a merge commit, never a rebase, resolve the conflicts without editing a host config or instruction file by hand (a merge git refuses over one is recorded the same way), `
+  + `run the tests, commit, and push with \`git push origin HEAD:refs/heads/${branch}\` in a call of its own, never with force`;
+
 // The line of a decision. `why` is cleaned and capped as a result's `stop` is (project-result.mjs cleanText).
-export function stopLine(decision, { view, key, branch, method = 'merge' }) {
+export function stopLine(decision, { view, key, branch, method = 'merge', catchUp = false }) {
   const tally = decision.cap ? ` (${decision.used} of ${decision.cap} ${decision.scope})` : '';
   const number = Number.isInteger(view?.number) ? ` #${view.number}` : '';
-  return `${decision.action} ${key}${number} at ${short(view?.head)}: ${cleanText(decision.why, CAPS.stop)}${tally}; ${nextStep(decision, { view: view ?? {}, branch, method })}`;
+  return `${decision.action} ${key}${number} at ${short(view?.head)}: ${cleanText(decision.why, CAPS.stop)}${tally}; ${nextStep(decision, { view: view ?? {}, branch, method, catchUp })}`;
 }
 
 // A forge error as a line quotes it.
@@ -246,8 +273,9 @@ function autoMergeOf(project, url, { forge, session, home }) {
 
 // Runs `aidrian project stop-action RUN KEY` for the session `env` names: { exitCode, out, err }. Only the issue's own
 // session (project-run-guard.mjs stopActorProblem). `forge` and `autoMerge(url)` are test seams, the forge facade and
-// the auto-merge answer; `config` is this checkout's, whose `github` check lists judge the checks.
-export function stopAction({ project, config, run, key, env = process.env, home, now = Date.now(), forge = forgeFor(project.root), autoMerge }) {
+// the auto-merge answer; `config` is this checkout's, whose `github` check lists judge the checks. `catchUp` reads only
+// the pull request's own stop and its conflict (catchUpStop), after the same base check.
+export function stopAction({ project, config, run, key, env = process.env, home, now = Date.now(), forge = forgeFor(project.root), autoMerge, catchUp = false }) {
   const refuse = (why) => ({ exitCode: 1, out: [], err: [`aidrian project stop-action: ${why}`] });
   if (typeof run !== 'string' || !RUN_ID.test(run)) return refuse(`the run id ${JSON.stringify(run)} is not a run id`);
   const { session } = sessionIdentity(env);
@@ -274,7 +302,7 @@ export function stopAction({ project, config, run, key, env = process.env, home,
       const kept = appendStops(path.join(start.drop, STOPS_FILE), [{ action: decision.record ?? decision.action, head: view?.head ?? UNKNOWN_HEAD, pr: view?.number ?? null, attempt: start.attempt, session, at: new Date(now).toISOString() }]);
       if (kept) return { exitCode: 0, out: [stopLine({ action: 'park', why: `the stop history cannot be kept: ${kept}` }, { view, key, branch })], err: [] };
     }
-    return { exitCode: 0, out: [stopLine(decision, { view, key, branch, method })], err: [] };
+    return { exitCode: 0, out: [stopLine(decision, { view, key, branch, method, catchUp })], err: [] };
   };
   if (history.problem) return { exitCode: 0, out: [stopLine({ action: 'park', why: history.problem }, { view: null, key, branch })], err: [] };
   const rows = history.rows;
@@ -288,6 +316,8 @@ export function stopAction({ project, config, run, key, env = process.env, home,
     return answer(transientWait(rows, start.attempt, error.message), view);
   }
   if (view.state === 'OPEN' && view.base !== main) return answer({ action: 'park', why: `it targets ${view.base}, not the default branch ${main}, which a project run's issue merges into` }, view);
+  // A merged or closed pull request gets the answer the command gives without --catch-up.
+  if (catchUp && view.state === 'OPEN') return answer(catchUpStop({ view, history: rows }), view);
   const merged = view.state === 'OPEN' ? (autoMerge ?? ((url) => autoMergeOf(project, url, { forge, session, home })))(view.url) : null;
   const checks = merged?.result?.effective === true && merged.result.head === view.head ? readChecks(forge, repository, view, config.github) : null;
   if (checks?.error) return answer(transientWait(rows, start.attempt, checks.error), view);

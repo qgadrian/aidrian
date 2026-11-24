@@ -666,6 +666,12 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   sign-off where [Project run](config.md#project-run) asks for one; otherwise its clone holds the base branch's copies,
   git leaves them out of its commits, and a push that changes one is refused.
   The branch's own changes stay in its commits for the pull request's review.
+  A later or resumed attempt runs `aidrian project stop-action RUN ISSUE --catch-up` first.
+  It parks a pull request into another branch than the default.
+  On a conflict its line names the one route, on the branch the clone is on, its commits kept, once HEAD holds the forge's branch.
+  A host file `git merge-tree` names as conflicting records `pr_open` with that path in its stop; else `git merge origin/<base>`, never a rebase.
+  It never edits a host file: git merges the base copies in the index alone and leaves them on disk.
+  The push guard lets that merge's host files through only as git merges them ([agent gates](hooks.md#agent-gates)).
   A branch the run's ledger cannot account for, or base copies that cannot be made safely, park the issue as
   unreconciled, with the branch and pull request untouched ([Project run](config.md#project-run) lists each case).
   To start an issue over, a person deletes its branch on the forge; closing the pull request alone does not.

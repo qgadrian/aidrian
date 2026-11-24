@@ -815,6 +815,8 @@ test('a subagent may not run `aidrian handoff continue`, with or without gates, 
     '$(command -v aidrian) handoff continue x.md',
     '`command -v aidrian` handoff continue x.md',
     'env $AIDRIAN handoff --route clear continue x.md',
+    // A shell runs a script it cannot read, whose arguments read handoff, then continue, as separate words.
+    'bash run.sh handoff continue x.md',
   ];
   const allowed = [
     'aidrian handoff check x.md',
@@ -825,6 +827,9 @@ test('a subagent may not run `aidrian handoff continue`, with or without gates, 
     '$EDITOR handoff.md',
     'echo aidrian handoff continue',
     "grep -n 'handoff continue' docs/handoff.md",
+    // A test file's name is one word, not the two words handoff and continue, even passed to a script a shell runs.
+    'zsh /tmp/hal-bak/run-tests.sh session-snapshot handoff-continue-hooks',
+    'bash run-tests.sh test/handoff-continue-hooks.test.mjs test/handoff.continue.test.mjs',
   ];
   for (const [cwd, label] of [[project(t, { version: 1 }).dir, 'no gates'], [project(t).dir, 'gates'], [outside, 'no project']]) {
     for (const command of blocked) {

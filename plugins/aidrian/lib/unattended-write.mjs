@@ -22,7 +22,7 @@ import { bashCall, writeTargets } from './config-guard.mjs';
 import { checkDeadline, PastDeadline, remainingMs } from './deadline.mjs';
 import { isManifestPath } from './finding-disposition.mjs';
 import { forgeWorkflowFolders } from './forges/index.mjs';
-import { foldCase, isWithin, joinSpelled, systemPath } from './fs.mjs';
+import { foldCase, isWithin, joinSpelled } from './fs.mjs';
 import { gitConfigFiles, gitFolders, repositoryCheckouts, runGit, underGit, withGitFacts } from './git.mjs';
 import { GLOB_WORD, globStarts, sameFile } from './glob-links.mjs';
 import { globReaches, modeTargets, sessionWorktrees, startedFolder, stateFolders } from './handoff-guard.mjs';
@@ -679,13 +679,6 @@ function placed(spelled, places, options) {
   return placeOf(real(spelled), spelled, places, options);
 }
 
-// What a spelled path meets folded as text or, when that passes, where the system lands (fs.mjs systemPath).
-function placedEither(spelled, places, options) {
-  const met = placed(spelled, places, options);
-  const system = met?.refused ? null : systemPath(spelled);
-  return system && system !== path.resolve(spelled) ? placed(system, places, options) ?? met : met;
-}
-
 // The text a file edit tool writes to each file it names, { file, texts }, for the manifest check.
 function editedTexts(input) {
   const edit = fileEditOf(input);
@@ -784,6 +777,13 @@ export function unattendedWriteDenial(input, { names: { human } }, { mark = null
   const any = [files, names, globs, modes, shell?.dynamic ?? [], shell?.links ?? [], shell?.programs ?? [], shell?.removed ?? []].some((list) => list.length > 0);
   if (!any) return null;
   const say = sayer(input, human, opaqueShellCommand(input) !== null, mark);
+  // Every target text the readers keep as spelled, the file tools' and the shell's alike.
+  const spelledTargets = [...files, ...names, ...globs.map(({ text }) => text), ...modes.map(({ text }) => text),
+    ...['dynamic', 'links', 'programs', 'manifests', 'removed'].flatMap((key) => (shell?.[key] ?? []).flatMap((each) => [each.text, each.to, each.from, each.file]))].filter((each) => typeof each === 'string');
+  // A target joined to the call's own folder climbs from that folder, which the host names as the system resolves it.
+  const own = `${cwd.endsWith(path.sep) ? cwd.slice(0, -1) : cwd}${path.sep}`;
+  const climb = spelledTargets.map((each) => climbIn(each.startsWith(own) ? each.slice(own.length) : each)).find(Boolean);
+  if (climb) return say.deny('unattended write through a climbing path', `it ${say.verb} a file and names \`${climb.slice(0, 120)}\`, a path that climbs with \`..\` from a folder it names, which a link there would lead elsewhere than the text says, and no Human attends this session; name the path without \`..\``);
   const found = places();
   if (!found) return say.unknown();
   say.hold(found);
@@ -862,16 +862,22 @@ function madeFolders(files, shell) {
 // write of it, such as rm, rmdir, or mv, the folder's own rule judges.
 const madeOnly = (spelled, made, found) => made.has(path.resolve(spelled)) && found.reviews.includes(real(spelled));
 
-// Each path of `spelled` is judged folded as text and where the system lands (fs.mjs systemPath), where a `..` after a
-// link climbs from the link's target, and refused when either is.
 function pathDenial(spelled, found, say) {
   for (const each of spelled) {
-    checkDeadline();
-    const system = systemPath(each);
-    for (const at of [each, ...(system && system !== path.resolve(each) ? [system] : [])]) {
-      const denial = say.meets(placed(at, found), each);
-      if (denial) return denial;
-    }
+    const denial = say.meets(placed(each, found), each);
+    if (denial) return denial;
+  }
+  return null;
+}
+
+// A path in `text`, a target as a reader spells it, that climbs with `..` from a folder it names, as `a/link/../x`
+// or `$d/..`, the first one, or null: the system takes the `..` from where a link there leads, and the guard's readers
+// fold it as text, so a call that writes anything and names one is refused, whatever its readers make of it. A path
+// that starts with `..`, or `./..`, climbs from the call's own folder, which the host names as the system resolves it.
+const CLIMB = /([^\s'"`;&|<>()/]+)\/\.\.(?=\/|[\s'"`;&|<>()]|$)/gu;
+function climbIn(text) {
+  for (const match of text.matchAll(CLIMB)) {
+    if (match[1] !== '.' && match[1] !== '..') return match[0];
   }
   return null;
 }
@@ -909,7 +915,7 @@ function builtDenial(text, target, found, say) {
   const deny = (what) => say.deny('unattended write to a path built at run time', `it ${say.verb} \`${target.slice(0, 80)}\`, a path built at run time, in a command that names ${what}, and no Human attends this session; write to a literal path instead${say.scratch()}`);
   for (const [word] of text.matchAll(PATH_IN_TEXT)) {
     const spelled = word.startsWith('~') ? `${found.home}${word.slice(1)}` : word;
-    const met = placedEither(spelled, found, { holds: false });
+    const met = placed(spelled, found, { holds: false });
     if (met?.refused) return deny(`${spelled.slice(0, 120)}, ${met.refused.what}`);
   }
   if (REFUSED_NAME.test(text) || HOME_DOT.test(text)) return deny('a shell startup file, a git config, or a dot entry of the home folder');
@@ -1000,7 +1006,7 @@ function nameDenial(texts, found, say) {
     if (!found.limited && GIT_WORD.test(text)) return say.deny('unattended write to a refused name', `it ${say.verb} a file named in \`${text.slice(0, 80)}\`, which names a \`.git\` entry, ${GIT_ENTRY}, and no Human attends this session`);
     for (const [word] of text.matchAll(PATH_IN_TEXT)) {
       const spelled = word.startsWith('~') ? `${found.home}${word.slice(1)}` : word;
-      const met = placedEither(spelled, found, { holds: false });
+      const met = placed(spelled, found, { holds: false });
       if (met?.refused) return code ? say.named(met.refused, spelled) : say.refused(met.refused, spelled);
     }
   }

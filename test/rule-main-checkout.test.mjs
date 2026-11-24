@@ -1020,9 +1020,12 @@ test('a write through a variable is judged where it leads, and blocked from the 
   assert.match(at(`S=${repo}; x=$(S=/tmp/x); echo x > "$S/src/app.js"`) ?? '', /a tracked file/u, 'so does a substitution\'s');
   // A shell the line starts sees what its invocation sets, and no earlier assignment, whose export is not followed.
   // A shell the line starts reads no variable, whatever its invocation or an export sets: it fails closed.
-  for (const command of [`S=/tmp/x; S=${repo} bash -c 'echo x > "$S/a"'`, `export S=/tmp/x; bash -c 'echo x > "$S/a"'`, `env -i bash -c 'echo x > "$S/a"'`, `env -u S bash -c 'echo x > "$S/a"'`]) {
+  for (const command of [`export S=/tmp/x; bash -c 'echo x > "$S/a"'`, `env -i bash -c 'echo x > "$S/a"'`, `env -u S bash -c 'echo x > "$S/a"'`]) {
     assert.match(at(command) ?? '', /a path built from a variable/u, command);
   }
+  // What its invocation sets literally is read there, from the main checkout and from a linked worktree alike.
+  assert.match(at(`S=/tmp/x; S=${repo} bash -c 'echo x > "$S/src/app.js"'`) ?? '', /a tracked file/u);
+  assert.match(at(`cd ${path.join(repo, 'wt/task')} && S=${repo} bash -c 'echo x > "$S/src/app.js"'`) ?? '', /a tracked file/u, 'a child started in a worktree');
   // A git write's operands are read with the line's assignments too, after git's own folder change.
   assert.match(at(`F=src/app.js; git -C ${repo} rm "$F"`) ?? '', /^Blocked/u);
   assert.equal(at(`F=/tmp/x/a; git -C ${repo} rm "$F"`), null, 'the line\'s value, never the environment\'s');

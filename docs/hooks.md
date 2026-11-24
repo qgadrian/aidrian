@@ -1382,11 +1382,12 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   builds in its temporary folder or a state work folder link nothing; so must its git folder hold no `commondir` or
   `config.worktree` but the gate's placeholders. Any other reader, and a clone that fails a check, read every machine switch off.
 - **The write allowlist of a session no Human attends** (`lib/unattended-write.mjs`). A session its own unattended
-  mark holds, read by the hook payload's session id, and every subagent of it, writes only the places below. A path a
-  file tool or a command names is judged both folded as text and where the system lands, where a `..` after a link
-  climbs from the link's target, and refused when either is: `<worktree>/a/out/../x`, with `out` a link outside the
-  places, lands outside. A glob's folder, and a path the guard expands from `~` or a variable, are read the same way.
-  It writes only:
+  mark holds, read by the hook payload's session id, and every subagent of it, writes only the places below. A call that
+  writes anything and names a target that climbs with `..` from a folder it names, as `<worktree>/a/out/../x`,
+  `"$d/../x"`, or `~/a/../x`, by a file tool, a redirect, a writer, a glob, a removal, a mode change, or a link, is
+  refused first, whatever the folder is: the system takes that `..` from where a link there leads, and the guard's
+  readers fold it as text, so it names the path without `..` instead. A target that starts with `..` climbs from the
+  call's own folder, which the host names as the system resolves it, and is placed as usual. It writes only:
   - its own worktree: the checkout of the folder its mark says the gate started it in, when that checkout shares its git
     folder with the main checkout the mark names: a linked worktree from any folder inside it, such as a package of a
     monorepo, and the main checkout only from its own top, so a removed worktree's folder left as a plain one inside the

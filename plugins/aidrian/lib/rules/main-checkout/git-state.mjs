@@ -71,7 +71,7 @@ function readsOnly({ subcommand, rest }) {
 
 // The changes a git segment makes after an untrusted `cd`, judged at the folders before it: any call that is not
 // read-only and whose folder is a guarded main checkout, and a call whose subcommand an expansion hides.
-function strictChanges(invocation, call, { cd, from }, scope) {
+function strictChanges(invocation, call, { cd, from }, scopeOf) {
   if (!call) {
     if (invocation.program !== 'git') return [];
     const { args } = invocation;
@@ -87,7 +87,7 @@ function strictChanges(invocation, call, { cd, from }, scope) {
   if (readsOnly(call)) return [];
   const folders = [];
   for (const at of from) {
-    const each = gitFolders(call.globals, invocation.chdir, at, scope);
+    const each = gitFolders(call.globals, invocation.chdir, at, scopeOf());
     if (each === null) return [];
     folders.push(...each);
   }
@@ -153,14 +153,16 @@ function gitStateChanges(command, state, depth = 0, inherited = []) {
     const inner = depth < SUBSTITUTION_DEPTH_LIMIT ? inlineShellCommand(invocation) : null;
     const where = inner === null ? null : stateIn(now, invocation.chdir);
     if (where) found.push(...gitStateChanges(inner, where, depth + 1, [...env, ...assignments]));
-    // The assignments in force are copied only for a git call, which reads them.
+    // The assignments in force are copied only for a check that resolves a git call's folder.
     if (!call && invocation.program !== 'git') continue;
-    const scope = [...env, ...assignments];
+    let scope = null;
+    const scopeOf = () => (scope ??= [...env, ...assignments]);
     if (now.strict) {
-      found.push(...strictChanges(invocation, call, now.strict, scope));
+      found.push(...strictChanges(invocation, call, now.strict, scopeOf));
       continue;
     }
     if (!call || !JUDGED.has(call.subcommand)) continue;
+    scopeOf();
     for (const cwd of now.folders) {
       const change = knownChange(call, invocation, cwd, scope);
       if (change) found.push(change);

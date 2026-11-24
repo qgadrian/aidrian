@@ -765,8 +765,9 @@ Before `verified` changes, a live Claude Code must show every one of these, each
     adapter's `filePath` does, as text, for every guard of a file tool; and a Glob pattern's `..` reaches above its path. A `..`
     past the pattern's first glob character is bounded by no folder, so the adapter reads it as the file system's root.
 24. Whether Claude Code's Write and Edit open a path such as `<folder>/link/../x` as spelled, where the system climbs
-    from the link's target, or fold its `..` as text first. Until it is shown, the write guards judge such a target
-    both ways and refuse when either is refused (`lib/fs.mjs` systemPath), so the answer only removes a refusal.
+    from the link's target, or fold its `..` as text first. Until it is shown, the main-checkout rule judges such a
+    target both ways and refuses when either is refused (`lib/fs.mjs` systemPath), and the unattended write allowlist
+    refuses it outright, so the answer only removes a refusal.
 
 ### The sandbox proof
 

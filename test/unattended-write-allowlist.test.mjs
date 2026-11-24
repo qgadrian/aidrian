@@ -896,8 +896,8 @@ test('a copy, move, or link into a folder is judged by the name it makes there, 
     ['cp stage/opencode.json .', later], ['cp stage/.mcp.json .', later], ['cp -R stage/.agents .', later], ['git mv pkg/.claude .', later],
     // rsync makes the same names, a destination from a variable the hook expands included.
     [`rsync -a ${wt}/pkg/.claude ${wt}/`, later], [`rsync -a ${wt}/pkg/.opencode $TMPDIR/x/`, temp], [`rsync -a ${wt}/pkg/opencode.json ${x}/`, temp],
-    // A `..` right after the variable is not folded into it before the hook expands it.
-    [`cp ${wt}/pkg/opencode.json $TMPDIR/../${path.basename(fx.temp)}/x/`, temp], [`rsync -a ${wt}/pkg/.opencode $TMPDIR/../${path.basename(fx.temp)}/x/`, temp],
+    // A `..` right after the variable climbs from the folder it names: refused before it is placed.
+    [`cp ${wt}/pkg/opencode.json $TMPDIR/../${path.basename(fx.temp)}/x/`, /a path that climbs with `\.\.`/u], [`rsync -a ${wt}/pkg/.opencode $TMPDIR/../${path.basename(fx.temp)}/x/`, /a path that climbs with `\.\.`/u],
     // rsync never renames a folder source: a destination not there yet gets it inside.
     [`rsync -a ${wt}/pkg/.opencode ${path.join(fx.temp, 'new')}`, temp],
     // rsync -R and cp --parents make the source's relative path there; a remote-spelled source lands by its last part.
@@ -1662,19 +1662,17 @@ test('a Write or an Edit through a link and a `..` that lands outside the places
   const ask = fx.steady();
   const through = `${fx.worktree}/a/out/../x.txt`;
   assert.equal(path.resolve(through), path.join(fx.worktree, 'a', 'x.txt'), 'the text folds into the worktree');
-  for (const input of [write(through), { tool_name: 'Edit', tool_input: { file_path: through, old_string: 'a', new_string: 'b' } }, write('a/out/../x.txt')]) {
-    assert.match(ask(input)?.reason ?? '', /outside the places a session no Human attends may write/u, JSON.stringify(input));
-  }
+  // Any reader's target that climbs from a folder it names is refused before it is placed, a link there or not: a
+  // file tool's, a literal or variable shell target's, a glob's, a removal's, a mode change's, and a link's.
+  for (const input of [
+    write(through), { tool_name: 'Edit', tool_input: { file_path: through, old_string: 'a', new_string: 'b' } }, write('a/out/../x.txt'),
+    bash(`rm -f ${fx.worktree}/a/out/../*.txt`), bash(`rm -rf ${fx.worktree}/a/out/../gone`), bash(`chmod 600 ${fx.worktree}/a/out/../gone`),
+    bash('d=a/out; echo x > "$d/../x.txt"'), bash(`ln -s ${fx.worktree}/a/out/../x link`), bash(`echo x > ~/lnk/../x.txt`), write(`${fx.worktree}/a/b/../y.txt`),
+  ]) assert.match(ask(input)?.reason ?? '', /a path that climbs with `\.\.` from a folder it names.*name the path without `\.\.`/u, JSON.stringify(input));
   assert.equal(ask(write(path.join(fx.worktree, 'a', 'x.txt'))), null, 'the same file named without the link');
-  // A glob whose folder climbs out of the link, and a home path through a link in the home folder.
-  assert.match(ask(bash(`rm -f ${fx.worktree}/a/out/../*.txt`))?.reason ?? '', /outside the places/u, 'a glob');
-  // A removal and a mode change through the same spelling, which the shell's own readers give.
-  for (const command of [`rm -rf ${fx.worktree}/a/out/../gone`, `chmod 600 ${fx.worktree}/a/out/../gone`]) {
-    assert.match(ask(bash(command))?.reason ?? '', /outside the places/u, command);
-  }
-  mkdirSync(path.join(fx.worktree, 'b'));
-  symlinkSync(path.join(fx.worktree, 'b'), path.join(fx.worktree, 'a', 'in'));
-  assert.equal(ask(write(`${fx.worktree}/a/in/../y.txt`)), null, 'a link that stays in the worktree');
+  // A path that climbs from the call's own folder, which the host names as the system resolves it, is placed as usual.
+  assert.equal(ask(write('../wt/a/x.txt')), null);
+  assert.equal(ask(bash('cat ../notes/a/../b > a/x.txt')), null, 'a climb in what the command reads, not writes');
 });
 
 // A folder that holds a checkout of the repository git lists, wherever it lies, is refused to a removal or move: the

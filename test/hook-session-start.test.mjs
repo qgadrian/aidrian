@@ -185,6 +185,15 @@ test('a subagent hears the Agent-Effort trailer its definition sets, the host\'s
   assert.deepEqual(await effortLineOf(project, { agent_type: 'reviewer', effort: { level: 'turbo' } }), [EFFORT('medium')], 'a level the host does not name is no level');
 });
 
+test('the effort config.json models gives this plugin\'s agent, which the dispatch takes, wins over its definition, after the payload\'s', async (t) => {
+  const project = attributedProject(t, ['effort']);
+  const config = path.join(project, '.aidrian/config.json');
+  writeFileSync(config, JSON.stringify({ ...JSON.parse(readFileSync(config, 'utf8')), models: { claude: { agents: { designer: { effort: 'high' } } } } }));
+  assert.match(readFileSync(path.join(PLUGIN_DIR, 'agents/designer.md'), 'utf8'), /^effort: medium$/mu, 'the definition says medium');
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'aidrian:designer' }), [EFFORT('high')]);
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'aidrian:designer', effort: { level: 'max' } }), [EFFORT('max')], 'the payload\'s level first');
+});
+
 test('a subagent hears no Agent-Effort line while attribution leaves effort out, or on Codex, whose adapter knows none', async (t) => {
   const agents = { 'review.md': '---\nname: reviewer\neffort: medium\n---\n' };
   assert.deepEqual(await effortLineOf(attributedProject(t, ['agent', 'model'], agents), { agent_type: 'reviewer' }), [], 'effort not listed');

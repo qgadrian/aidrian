@@ -5,6 +5,8 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { agentCall } from '../agent-models.mjs';
+
 // This plugin's generated Claude Code agents (scripts/build.mjs), and the project folder the host reads agents from.
 const PLUGIN_AGENTS = path.resolve(import.meta.dirname, '../../agents');
 const PROJECT_AGENTS = '.claude/agents';
@@ -49,12 +51,15 @@ function definitionOf(type, root) {
 }
 
 // The effort the subagent of the SubagentStart payload `input` runs at, one of `efforts`, or null: the level the payload
-// carries (`effort.level`), else its definition's `effort:` frontmatter; a dispatch that sets its own effort may still
-// differ, which the commit check names.
-export function subagentEffort({ input, root, efforts }) {
+// carries (`effort.level`), else the effort the project's config.json `models` gives this plugin's agent, as the Agent
+// tool's PreToolUse hook adds it to the dispatch (agent-models.mjs agentCall), else its definition's `effort:`
+// frontmatter. A dispatch that sets its own effort may still differ, which the commit check names.
+export function subagentEffort({ input, root, efforts, models }) {
   const given = input?.effort?.level;
   if (efforts.includes(given)) return given;
   const type = typeof input?.agent_type === 'string' ? input.agent_type : '';
+  const configured = type && models ? agentCall({ subagent_type: type }, models)?.effort : undefined;
+  if (efforts.includes(configured)) return configured;
   const text = type ? definitionOf(type, root) : null;
   const declared = text === null ? null : frontmatterValue(text, 'effort');
   return efforts.includes(declared) ? declared : null;

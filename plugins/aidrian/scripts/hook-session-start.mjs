@@ -196,7 +196,7 @@ function auditLine(project, config) {
 // time (lib/attribution.mjs currentAuthor), stays the authority, and names the real value when a dispatch changed it.
 function effortLine(input, project, config) {
   if (!config.attribution.commit.includes('effort')) return null;
-  const effort = detectHost({ input }).subagentEffort({ input, root: project.root });
+  const effort = detectHost({ input }).subagentEffort({ input, root: project.root, models: config.models });
   return effort ? `Attribution: this agent's commits carry the trailer \`Agent-Effort: ${effort}\`, the effort it starts at; the commit check reads the effort it runs at and names it when they differ.` : null;
 }
 

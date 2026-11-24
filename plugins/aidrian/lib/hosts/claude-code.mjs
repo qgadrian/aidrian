@@ -199,9 +199,9 @@ export default {
   sessionId: (env) => env.CLAUDE_CODE_SESSION_ID || null,
   agentName,
   effort,
-  // The effort a subagent runs at, from its SubagentStart payload and its definition (claude-code-agents.mjs), or null:
-  // a hint for its commit trailers, never what the commit check reads.
-  subagentEffort: ({ input, root }) => subagentEffort({ input, root, efforts: MODEL_CHOICES.effort }),
+  // The effort a subagent runs at, from its SubagentStart payload, the project's `models`, and its definition
+  // (claude-code-agents.mjs), or null: a hint for its commit trailers, never what the commit check reads.
+  subagentEffort: ({ input, root, models }) => subagentEffort({ input, root, models, efforts: MODEL_CHOICES.effort }),
   runEnv: (env) => (env.CLAUDE_CODE_REMOTE === 'true' ? 'cloud' : null),
   // `aidrian:<agent>` for this plugin's agents, and `<plugin>:<agent>` for another's.
   pluginAgentPrefix: 'aidrian:',

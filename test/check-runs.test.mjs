@@ -469,6 +469,18 @@ test('a run after a cd is recorded when the call\'s own folder holds no project'
   // With no `cd` to a project, nothing is recorded.
   await call('npm run check', 'moved-2');
   assert.deepEqual(recorded('moved-2'), []);
+  // An earlier command of the line in another project does not take the run: it goes where the run ran.
+  const { dir: other } = repo();
+  await call(`git -C ${other} status && env -C ${dir} npm run check`, 'moved-3');
+  const holders = readdirSync(path.join(STATE, 'aidrian/projects')).filter((id) => {
+    try {
+      return readdirSync(path.join(STATE, 'aidrian/projects', id, 'sessions')).includes('moved-3');
+    } catch {
+      return false;
+    }
+  });
+  assert.equal(holders.length, 1);
+  assert.deepEqual(readdirSync(path.join(STATE, 'aidrian/projects', holders[0], 'sessions')).sort(), ['moved-1', 'moved-3'], 'the run went to the project of the folder it ran in');
 });
 
 test('a call whose output Claude Code kept in a file is counted from that file\'s tail', () => {
@@ -805,6 +817,10 @@ test('aidrian test changed runs a test file whose path holds pattern characters,
   writeFileSync(path.join(scripts, 'package.json'), JSON.stringify({ scripts: { test: 'npm run test:unit', 'test:unit': 'node --no-sparkplug node_modules/jest/bin/jest.js', vt: 'vitest run' } }));
   assert.deepEqual(['npm test --', 'npx jest', 'pnpm run vt', 'yarn test', 'bun test', 'npm run missing'].map((command) => testRunner(scripts, command)),
     ['jest', 'jest', null, 'jest', null, null]);
+  // The runner is the program the shell runs, not a word among its arguments, and `--runTestsByPath` reads exact paths.
+  writeFileSync(path.join(scripts, 'package.json'), JSON.stringify({ scripts: { test: 'jest --runTestsByPath' } }));
+  assert.deepEqual(['vitest --project jest', "node --test --test-name-pattern='a;b'", 'jest --runTestsByPath', 'npm test --', 'npm test -- --runTestsByPath', 'FOO=1 rtk jest']
+    .map((command) => testRunner(scripts, command)), [null, 'node', null, null, null, 'jest']);
   const pattern = literalPattern(file, 'jest');
   assert.equal(pattern, 'app/\\[org\\]/\\(group\\)/\\[...slug\\]/page.test.mjs');
   assert.ok(new RegExp(pattern).test(file) && !new RegExp(file).test(file), 'the escaped path matches itself, as the raw one does not');

@@ -61,21 +61,22 @@ function pendingChecks(rollup) {
 // The latest start among the checks of `rollup`, in ms, or -Infinity with none.
 const lastStart = (rollup) => Math.max(-Infinity, ...rollup.map((row) => millis(row?.startedAt)).filter(Number.isFinite));
 
-const pendingReason = (n, names) =>
+// `ref` is how the commands it names take the pull request: its number, with `-R <repo>` when the call named one.
+const pendingReason = (n, names, ref = n) =>
   `Blocked: pull request #${n} has checks that have not finished on its head: ${[...new Set(names)].join(', ')}. ` +
   'A check an edit or a push re-queued can still fail after the draft is marked ready. ' +
-  `Wait with \`gh pr checks ${n} --watch\` until every check reports, then mark it ready with \`gh pr ready ${n}\` in a separate call.`;
+  `Wait with \`gh pr checks ${ref} --watch\` until every check reports, then mark it ready with \`gh pr ready ${ref}\` in a separate call.`;
 
 const iso = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/u, 'Z');
 
 // The route it names is a wait that ends: `gh pr checks --watch` reads the run from before, so it returns at once, and a
 // ready sent right after it was refused again, three times in a row in one session.
-const missingReason = (n, what, changedAt) =>
+const missingReason = (n, what, changedAt, ref = n) =>
   `Blocked: pull request #${n} ${what} at ${iso(changedAt)}, and no check has started since. GitHub takes a few seconds to ` +
   'queue the checks a change re-runs, such as a title check, and until then the checks shown are the ones from before, ' +
-  `so \`gh pr checks ${n} --watch\` returns at once and a ready sent after it is refused again. ` +
-  `Wait with \`aidrian pr ready-wait ${n}\`, which returns once the new run has shown and every check has reported, ` +
-  `then mark it ready with \`gh pr ready ${n}\` in a separate call. ` +
+  `so \`gh pr checks ${ref} --watch\` returns at once and a ready sent after it is refused again. ` +
+  `Wait with \`aidrian pr ready-wait ${ref}\`, which returns once the new run has shown and every check has reported, ` +
+  `then mark it ready with \`gh pr ready ${ref}\` in a separate call. ` +
   `With no check that runs on this change, the hold lifts at ${iso(changedAt + EDIT_WINDOW_MS)}.`;
 
 // The newest change to the pull request that may re-queue a check and that is inside the window, as { what, at }, or null.
@@ -99,17 +100,28 @@ function editsOf(forge, view) {
 }
 
 // The deny reason for one pull request, `view` as `pr view` gave it, or null. `aidrian pr ready-wait` waits on it.
-export function holdReason(view, forge, now) {
+// `repo`, the repository the call named, goes into the commands the reason names, as `-R <repo>`.
+export function holdReason(view, forge, now, { repo = null } = {}) {
   if (view?.isDraft !== true || !Array.isArray(view.statusCheckRollup)) return null;
   const n = Number.isInteger(view.number) ? view.number : '<n>';
+  const ref = repo ? `${n} -R ${repo}` : n;
   const pending = pendingChecks(view.statusCheckRollup);
-  if (pending.length) return pendingReason(n, pending);
+  if (pending.length) return pendingReason(n, pending, ref);
   const started = lastStart(view.statusCheckRollup);
   const unseen = (change) => change && started < change.at;
   const opened = recentChange([{ what: 'was opened', at: millis(view.createdAt) }], now());
-  if (unseen(opened)) return missingReason(n, opened.what, opened.at);
+  if (unseen(opened)) return missingReason(n, opened.what, opened.at, ref);
   const edited = recentChange(editsOf(forge, view), now());
-  return unseen(edited) ? missingReason(n, edited.what, edited.at) : null;
+  return unseen(edited) ? missingReason(n, edited.what, edited.at, ref) : null;
+}
+
+// The repository a ready call names, as `-R` takes it: its `-R`, else the one a pull request URL names, with the host
+// when it is not github.com, else null (this checkout's).
+export function repoOf(target, repo) {
+  if (repo) return repo;
+  const link = PULL_URL.exec(String(target ?? ''));
+  if (!link) return null;
+  return link[1].toLowerCase() === 'github.com' ? link[2] : `${link[1]}/${link[2]}`;
 }
 
 // The deny reason for each ready call, { target, repo } at `folder`, read in turn under one deadline, or null.
@@ -124,7 +136,7 @@ function judgeCalls(calls, seams) {
     } catch {
       continue;
     }
-    const reason = holdReason(view, forge, now);
+    const reason = holdReason(view, forge, now, { repo: repoOf(target, repo) });
     if (reason) return reason;
   }
   return null;

@@ -82,8 +82,10 @@ test('a check on the head that has not finished holds the draft, and the deny na
       const { reason, calls } = judge(dir, { view: draft([...GREEN, ...rows]) }, command);
       assert.match(reason ?? '', /^Blocked: pull request #7 has checks that have not finished/u, `${command}: ${JSON.stringify(rows)}`);
       assert.ok(reason.includes(rows[0].name ?? rows[0].context), reason);
-      assert.match(reason, /`gh pr checks 7 --watch`/u);
-      assert.match(reason, /`gh pr ready 7` in a separate call/u);
+      // A call that names the repository, by `-R` or a URL, gets it back in the commands the deny names.
+      const ref = command.includes(URL7) || command.includes('-R') ? '7 -R acme/notes' : '7';
+      assert.ok(reason.includes(`\`gh pr checks ${ref} --watch\``), `${command}: ${reason}`);
+      assert.ok(reason.includes(`\`gh pr ready ${ref}\` in a separate call`), `${command}: ${reason}`);
       assert.equal(calls.length, 1, 'one view of the pull request, and no edit read while a check is pending');
     }
   }
@@ -191,8 +193,13 @@ test('ready-wait waits until the run an edit re-queues has shown and finished, a
       step = Math.min(step + 1, steps.length - 1);
       Object.assign(spec, steps[step]);
     };
-    const code = await runReadyWait(argv, { forge: forge(dir, { killSignal: 'SIGKILL' }), now: () => clock, sleep, log: (line) => out.push(line), error: (line) => out.push(line) });
-    return { code, out, calls, polls: step + 1 };
+    const budgets = [];
+    const forgeAt = (options) => {
+      budgets.push(options.timeoutMs);
+      return forge(dir, options);
+    };
+    const code = await runReadyWait(argv, { forgeAt, now: () => clock, sleep, log: (line) => out.push(line), error: (line) => out.push(line) });
+    return { code, out, calls, budgets, polls: step + 1 };
   };
   const edits = { lastEditedAt: at(-2_000) };
   // Edited two seconds ago with only the old run: held; the re-queued title check shows, runs, and passes.
@@ -209,6 +216,13 @@ test('ready-wait waits until the run an edit re-queues has shown and finished, a
   const held = await wait(['7', '--timeout-sec', '10'], [{ view: draft([run('CI', at(-1_000), 'IN_PROGRESS')]), edits }]);
   assert.equal(held.code, 2);
   assert.match(held.out.at(-1), /^held after 10 s: pull request #7 has checks that have not finished on its head: CI/u);
+  // Each poll's gh calls stop at the time left, and never below five seconds, so the last poll still reads.
+  assert.deepEqual(held.budgets, [10_000, 5_000, 5_000]);
+  // The repository a call names, by `-R` or by its URL, goes into every command the output names.
+  const other = await wait(['7', '-R', 'acme/notes'], [{ view: draft(GREEN), edits: {} }]);
+  assert.match(other.out.at(-1), /`gh pr ready 7 -R acme\/notes`$/u);
+  const linked = await wait([URL7, '--timeout-sec', '1'], [{ view: draft([run('CI', at(-1_000), 'IN_PROGRESS')]), edits }]);
+  assert.match(linked.out.at(-1), /`gh pr checks 7 -R acme\/notes --watch`.*`aidrian pr ready-wait 7 -R acme\/notes` again/u);
   // Not a draft: clear at once. A view gh cannot read, or a bad argument: exit 3.
   assert.equal((await wait(['7'], [{ view: { ...draft(GREEN), isDraft: false } }])).code, 0);
   assert.equal((await wait(['7'], [{ view: null }])).code, 3);

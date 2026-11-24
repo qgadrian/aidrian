@@ -897,7 +897,9 @@ A check that finished and failed does not hold the draft; the review reads it.
 5 seconds, by default, until the rule would hold nothing: no check pending, and a check started since the last change or
 the 30 seconds past. It marks nothing ready. It exits 0 when the draft may be marked ready, or is not a draft; 2 when it is
 still held at the timeout, 840 seconds by default, naming the hold, so the session runs it again; and 3 on a usage error or a
-view gh cannot read. A failed edit-time read lets it end, as it lets the rule's command run.
+view gh cannot read. A failed edit-time read lets it end, as it lets the rule's command run. Each poll's gh calls stop at
+the time left, never below 5 seconds, so a run ends at most a few seconds past its timeout. The repository a call names,
+by `-R` or a pull request URL, goes into each command its output and every deny of this rule name, as `<n> -R <repo>`.
 
 Its gh calls share one deadline, as the ready hold's do: 3.5 seconds from its first call, and never later than 4 seconds
 after the hook started, so a ready hold that spent the time leaves this one none, and the command runs.
@@ -2203,7 +2205,8 @@ A call stopped, started in the background, or moved there at its timeout records
 A line of only programs that run no tests, such as git and grep, reads no config and records nothing.
 The row goes to the session folder of the project the call's folder is in. When that folder holds none, as when another
 session removed the worktree a session started in and the host sends the home folder as its cwd, it goes to the project
-of the first folder a `cd` on the line moves to, such as the worktree of `cd <worktree> && node --test`.
+of the folder the line's first test run runs in, such as the worktree of `cd <worktree> && node --test`, read with that
+project's `testing` config, never to the project of another command on the line.
 
 Claude Code runs the hook only for a call that exited 0, so there a run passed unless its counts show a failure, when
 the line's status is the run's: no separator but `&&` before or after it. After `;` or `||` the run may not have run,
@@ -2323,11 +2326,13 @@ file in a test folder, such as a fixture or a `.jsx` file named like a test, cou
 its file name, so the tests that name it run instead of the fixture itself. A configured command gets every changed file
 in a test folder as it is, with no search for the tests that name it, unless it is no longer a file on disk, staged or not, or is in a nested package.
 A project with `.ts` tests sets `testing.changedCommand`.
-When the command ends in jest or `node --test`, by its own words or the package.json script it runs, followed through
-`npm test`, `npm run <name>`, and their pnpm, yarn, and bun forms, each file goes with its pattern characters escaped:
+When the command ends in jest or `node --test`, by the program its last command runs, as the shell lexer reads it with
+wrappers such as `npx` peeled, or the package.json script it runs, followed through `npm test`, `npm run <name>`, and
+their pnpm, yarn, and bun forms, each file goes with its pattern characters escaped:
 jest reads a file as a regular expression, so `[`, `]`, `(`, `)`, `{`, `}`, `*`, `?`, `+`, `|`, `^`, `$`, and `\` get a
 backslash, and node reads it as a glob, so `[`, `]`, `{`, `}`, `*`, and `?` each go inside a class, as `[[]`.
-A Next.js segment such as `[org]` or `(group)` found no test before, and the run exited 1. Any other runner gets the paths as they are.
+A Next.js segment such as `[org]` or `(group)` found no test before, and the run exited 1. Any other runner gets the
+paths as they are, and so does jest given `--runTestsByPath` on the way, which reads exact paths.
 A project whose CI cannot run the suite leaves `testing.pushFirstMinutes` at 0, and runs the suite once before marking ready.
 
 ## Overrides

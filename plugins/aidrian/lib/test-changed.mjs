@@ -18,12 +18,13 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { CODE_FILE, TEST_FILE } from './check-runs.mjs';
+import { CODE_FILE, commandKey, TEST_FILE } from './check-runs.mjs';
 import { commandConfig } from './config.mjs';
 import { isFile } from './fs.mjs';
 import { currentRoot, runGit } from './git.mjs';
 import { findProject } from './project.mjs';
 import { remoteCopy } from './rules/push-first.mjs';
+import { lexPipeline, readInvocation } from './shell-lex.mjs';
 
 export { TEST_FILE };
 
@@ -106,14 +107,20 @@ export function testCommand(root, testing = {}) {
   }
 }
 
-// The runner a test command ends in, `jest` or `node` (`node --test`), or null for any other: its last command's words,
-// else the package.json script that command runs (`npm test`, `npm run <name>`, and their pnpm, yarn, and bun forms),
-// followed at most 5 deep. Both read a file argument as a pattern: jest as a regular expression, node as a glob.
+// The runner a test command ends in, `jest` or `node` (`node --test`), or null for any other: its last command, read by
+// the shell lexer with wrappers such as `npx` peeled (check-runs.mjs commandKey), else the package.json script that
+// command runs (`npm test`, `npm run <name>`, and their pnpm, yarn, and bun forms), followed at most 5 deep. Both read a
+// file argument as a pattern: jest as a regular expression, node as a glob. Jest given `--runTestsByPath` anywhere on the
+// way reads exact paths, so it is none.
 export function testRunner(root, command, depth = 0, scripts = null) {
-  const last = String(command).split(/&&|\|\||;/u).at(-1) ?? '';
-  const words = last.split(/\s+/u).filter((word) => word !== '' && !/^\w+=/u.test(word));
-  if (words.some((word) => /(?:^|\/)jest(?:\.js)?$/u.test(word))) return 'jest';
-  if (words.some((word) => /(?:^|\/)node$/u.test(word)) && words.includes('--test')) return 'node';
+  const words = lastCommandWords(command);
+  const [program, ...rest] = words;
+  if (rest.includes('--runTestsByPath')) return null;
+  if (program === 'jest') return 'jest';
+  if (program === 'node') {
+    if (rest.some((word) => /(?:^|\/)(?:jest\/bin\/jest\.js|\.bin\/jest)$/u.test(word))) return 'jest';
+    return rest.includes('--test') ? 'node' : null;
+  }
   const name = scriptName(words);
   if (name === null || depth >= 5) return null;
   if (scripts === null) {
@@ -126,12 +133,17 @@ export function testRunner(root, command, depth = 0, scripts = null) {
   return typeof scripts[name] === 'string' ? testRunner(root, scripts[name], depth + 1, scripts) : null;
 }
 
+// The words of the last command of `text`, as the test-run key spells them, or none for one the shell fills in.
+function lastCommandWords(text) {
+  const last = lexPipeline(String(text)).segments.filter((segment) => segment.length > 0).at(-1);
+  if (!last) return [];
+  const invocation = readInvocation(last);
+  return invocation.dynamic ? [] : commandKey(invocation).split(' ');
+}
+
 // The package.json script a command's words run, or null: `npm test`, `npm run <name>`, `pnpm|yarn [run] <name>`, `bun run <name>`.
-function scriptName(words) {
-  const at = words.findIndex((word) => ['npm', 'pnpm', 'yarn', 'bun'].includes(path.basename(word)));
-  if (at < 0) return null;
-  const [manager, verb, next] = [path.basename(words[at]), words[at + 1], words[at + 2]];
-  if (verb === undefined || verb.startsWith('-')) return null;
+function scriptName([manager, verb, next]) {
+  if (!['npm', 'pnpm', 'yarn', 'bun'].includes(manager) || verb === undefined || verb.startsWith('-')) return null;
   if (['run', 'run-script'].includes(verb)) return next && !next.startsWith('-') ? next : null;
   if (manager === 'bun') return null;
   if (['test', 't', 'tst'].includes(verb)) return 'test';

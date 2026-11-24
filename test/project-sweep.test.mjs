@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { forgetEnvFiles } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
+import { forgetEnvFiles, sessionEnvFile } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
 import { attemptFolder, cloneHeads, sweepAttempts } from '../plugins/aidrian/lib/project-start.mjs';
 import { recordTokenFile, TOKEN_FILES } from '../plugins/aidrian/lib/project-token.mjs';
 import { DRIVER, runFixture, STARTED } from './project-start-fixture.mjs';
@@ -84,6 +84,9 @@ test('the clone\'s refs are read as files: a detached HEAD, a packed branch, and
     writeFileSync(path.join(dir, name), text);
   };
   assert.deepEqual(cloneHeads(path.join(dir, 'none'), BRANCH), { heads: [] }, 'no git folder, no work');
+  at(`refs/heads/${BRANCH}`, `${a}\n`);
+  assert.deepEqual(cloneHeads(dir, BRANCH), { problem: 'HEAD is missing' }, 'a git folder whose HEAD is gone may still hold the branch');
+  rmSync(path.join(dir, 'refs'), { recursive: true });
   at('HEAD', `ref: refs/heads/${BRANCH}\n`);
   assert.deepEqual(cloneHeads(dir, BRANCH), { heads: [] }, 'a branch not born yet');
   at('packed-refs', `# pack-refs with: peeled fully-peeled sorted\n${b} refs/heads/${BRANCH}\n^${a}\n`);
@@ -97,6 +100,16 @@ test('the clone\'s refs are read as files: a detached HEAD, a packed branch, and
   rmSync(path.join(dir, 'HEAD'));
   symlinkSync(path.join(dir, 'packed-refs'), path.join(dir, 'HEAD'));
   assert.match(cloneHeads(dir, BRANCH).problem, /^HEAD cannot be read/u, 'a link is never followed');
+  // Nor a link at a folder on the way to a ref: refs/heads leading elsewhere is no ref of the clone.
+  rmSync(path.join(dir, 'HEAD'));
+  at('HEAD', `ref: refs/heads/${BRANCH}\n`);
+  const elsewhere = path.join(dir, 'elsewhere');
+  mkdirSync(path.join(elsewhere, 'feat'), { recursive: true });
+  writeFileSync(path.join(elsewhere, 'feat', 'eng-1-export'), `${b}\n`);
+  rmSync(path.join(dir, 'refs'), { recursive: true });
+  mkdirSync(path.join(dir, 'refs'));
+  symlinkSync(elsewhere, path.join(dir, 'refs', 'heads'));
+  assert.deepEqual(cloneHeads(dir, BRANCH), { problem: `refs/heads/${BRANCH} lies below refs/heads, a link` });
 });
 
 test('a clone whose refs cannot be read keeps its folder, with a kept row', (t) => {
@@ -144,7 +157,7 @@ test('the token files go even where the folder stays, as after an environment re
   const found = { rows: [start, { event: 'result', key: 'ENG-1', attempt: 1, status: 'environment' }], states: new Map([['ENG-1', { state: 'open' }]]) };
   const forgot = [];
   let asked = 0;
-  const cap = { ended: () => ((asked += 1), true), forgetShellEnv: (given) => forgot.push(given) };
+  const cap = { ended: () => ((asked += 1), true), forgetShellEnv: (given) => (forgot.push(given), []) };
   writeFileSync(path.join(folder, TOKEN_FILES), JSON.stringify({ session: CHILD, files: ['/x/session-env/a.sh'] }));
   assert.deepEqual(sweepAttempts({ state, run: 'launch', found, cap, env: {}, spawn: null }), []);
   assert.deepEqual(forgot.map(({ files, session }) => ({ files, session })), [{ files: ['/x/session-env/a.sh'], session: CHILD }]);
@@ -156,6 +169,20 @@ test('the token files go even where the folder stays, as after an environment re
   writeFileSync(path.join(folder, TOKEN_FILES), JSON.stringify({ session: 'someone-else', files: ['/x/session-env/b.sh'] }));
   sweepAttempts({ state, run: 'launch', found, cap, env: {}, spawn: null });
   assert.equal(forgot.length, 1);
+  assert.equal(existsSync(path.join(folder, TOKEN_FILES)), false, 'and the record goes');
+  // A file the host could not remove stays recorded, for the next sweep, and keeps an attempt that would go otherwise.
+  const plain = { rows: [start], states: found.states };
+  writeFileSync(path.join(folder, TOKEN_FILES), JSON.stringify({ session: CHILD, files: ['/x/session-env/c.sh', '/x/session-env/d.sh'] }));
+  sweepAttempts({ state, run: 'launch', found: plain, cap: { ended: () => true, forgetShellEnv: () => ['/x/session-env/d.sh'] }, env: {}, spawn: null });
+  assert.deepEqual(JSON.parse(readFileSync(path.join(folder, TOKEN_FILES), 'utf8')), { session: CHILD, files: ['/x/session-env/d.sh'] });
+  assert.ok(existsSync(folder), 'kept while a token file is left');
+  sweepAttempts({ state, run: 'launch', found: plain, cap: { ended: () => true, forgetShellEnv: () => { throw new Error('busy'); } }, env: {}, spawn: null });
+  assert.ok(existsSync(path.join(folder, TOKEN_FILES)), 'a removal that threw leaves every file recorded');
+  // A handed-over result no row took in yet keeps the folder, but not the token.
+  writeFileSync(path.join(folder, 'drop', 'result.json'), '{}');
+  sweepAttempts({ state, run: 'launch', found: plain, cap: { ended: () => true, forgetShellEnv: () => [] }, env: {}, spawn: null });
+  assert.equal(existsSync(path.join(folder, TOKEN_FILES)), false, 'the token goes though the result waits');
+  assert.ok(existsSync(folder), 'the waiting result keeps the folder');
 });
 
 test('the host removes only a regular file of its own folder for that session, never through a link', (t) => {
@@ -169,10 +196,15 @@ test('the host removes only a regular file of its own folder for that session, n
   for (const file of [path.join(own, 'a.sh'), path.join(other, 'a.sh'), outside]) writeFileSync(file, 'x');
   symlinkSync(outside, path.join(own, 'link.sh'));
   const files = [path.join(own, 'a.sh'), path.join(other, 'a.sh'), outside, path.join(own, 'link.sh'), path.join(own, 'gone.sh'), `${own}/../other-session/a.sh`];
-  assert.equal(forgetEnvFiles({ files, session: CHILD, env }), 1);
+  assert.deepEqual(forgetEnvFiles({ files, session: CHILD, env }), [], 'nothing left that was its to remove');
   assert.equal(existsSync(path.join(own, 'a.sh')), false);
   assert.equal(readFileSync(outside, 'utf8'), 'x', 'nothing outside, and no link followed');
   assert.ok(existsSync(path.join(other, 'a.sh')), 'another session\'s file stays');
   assert.ok(existsSync(path.join(own, 'link.sh')), 'a link is no regular file');
-  assert.equal(forgetEnvFiles({ files: [path.join(own, 'x')], session: '../config', env }), 0, 'a session id that is no plain name');
+  assert.deepEqual(forgetEnvFiles({ files: [path.join(own, 'x')], session: '../config', env }), [], 'a session id that is no plain name');
+  // The file the host names for a SessionStart is one the hook may hand the token to only when it lies there too.
+  assert.equal(sessionEnvFile({ env: { ...env, CLAUDE_ENV_FILE: path.join(own, 'b.sh') }, session: CHILD }), path.join(own, 'b.sh'));
+  for (const file of [path.join(other, 'b.sh'), path.join(home, 'b.sh'), 'relative.sh', undefined]) {
+    assert.equal(sessionEnvFile({ env: { ...env, CLAUDE_ENV_FILE: file }, session: CHILD }), null, String(file));
+  }
 });

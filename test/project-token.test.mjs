@@ -361,7 +361,8 @@ test('the SessionStart hook hands GH_TOKEN, from the source the start checked, t
     input: JSON.stringify({ session_id: session, cwd, hook_event_name: 'SessionStart', source: 'startup' }),
     env: { ...fx.env, CLAUDE_ENV_FILE: file, CLAUDE_CODE_SESSION_ID: session, ...more }, encoding: 'utf8',
   });
-  const envFile = (name) => path.join(fx.root, 'session-env', name, 'sessionstart-hook-0.sh');
+  // Where the host keeps each SessionStart's file: the session's own folder of its session-env tree.
+  const envFile = (name) => path.join(fx.env.CLAUDE_CONFIG_DIR, 'session-env', STARTED[0].session, `sessionstart-hook-${name}.sh`);
   const text = (file) => {
     try {
       return readFileSync(file, 'utf8');
@@ -409,6 +410,12 @@ test('the SessionStart hook hands GH_TOKEN, from the source the start checked, t
   assert.match(refused.stdout, /Forge token: not handed to this session: the host's session environment file could not be recorded for removal once the session ends/u);
   assert.equal(readFileSync(path.join(attempt, 'token-handoff.json'), 'utf8').includes('"handed":false'), true, 'and records why');
   rmSync(path.join(attempt, TOKEN_FILES), { recursive: true });
+  // Nor does a file outside the session's own folder, which the driver could not remove once the session ended.
+  const astray = path.join(fx.root, 'session-env', 'astray.sh');
+  mkdirSync(path.dirname(astray), { recursive: true });
+  const outside = hook(STARTED[0].session, work, astray, { [CLAIM_VAR]: claim });
+  assert.doesNotMatch(text(astray), /GH_TOKEN/u);
+  assert.match(outside.stdout, /could not be recorded for removal once the session ends \(the host named no session environment file it can remove once the session ends\)/u);
   assert.equal(hook(STARTED[0].session, work, envFile('again'), { [CLAIM_VAR]: claim }).status, 0);
   // The same session without the claim, as one another person opened, gets no token, is told why, and leaves the
   // record of the successful handoff as it was.

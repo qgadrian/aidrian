@@ -325,7 +325,7 @@ function shareToken(input) {
     // after (lib/project-start.mjs sweepAttempts): a token whose file the record cannot name is not handed over.
     // A token always comes with its attempt's folder (confinedTokenVars).
     const unrecorded = token.vars && start.forgetShellEnv
-      ? recordTokenFile(token.folder, { session: input.session_id, file: start.shellEnvFile?.({ env: process.env }) ?? null }) : null;
+      ? recordTokenFile(token.folder, { session: input.session_id, file: start.shellEnvFile?.({ env: process.env, session: input.session_id }) ?? null }) : null;
     const handed = Boolean(token.vars) && !unrecorded && start.shellEnv?.({ env: process.env, vars: token.vars }) === true;
     const why = handed ? null : token.problem ?? (unrecorded ? `the host's session environment file could not be recorded for removal once the session ends (${unrecorded})` : 'the host\'s session environment file could not be written owner-only');
     // The verdict the start's proof check reads (lib/project-confine.mjs confineCheck): nothing secret, and only from the

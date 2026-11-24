@@ -225,7 +225,9 @@ test('a heredoc that another input or a later command can replace is never trust
   // names where gh posts, so the unknown folder alone does not refuse it (unreadDestination).
   assert.equal(anywhere(`${write(file)}cd ${out} && gh auth status 2>&1 | head -3 && git push -q 2>&1 | tail -3 && ${create(file)} -R acme/notes`), null,
     'a 2>&1 duplicates a descriptor and writes no file');
-  assert.match(anywhere(`${write(file)}cd ${out} && gh auth status 2> err.txt; ${create(file)} -R acme/notes`) ?? '', /^Blocked: the body is one this rule cannot read/, 'a relative redirect in an unknown folder still does');
+  // The shell opens a redirect where it is whenever the command runs: after `cd x &&`, in x; after `cd x;`, unknown.
+  assert.equal(anywhere(`${write(file)}cd ${out} && gh auth status 2> err.txt; ${create(file)} -R acme/notes`), null, 'a redirect in the folder the && chain names');
+  assert.match(anywhere(`${write(file)}cd ${out}; gh auth status 2> err.txt; ${create(file)} -R acme/notes`) ?? '', /^Blocked: the body is one this rule cannot read/, 'a relative redirect in an unknown folder still does');
 });
 
 test('a redirection that names a descriptor is read as bash runs it, failing closed on any but stdin or stdout', (t) => {
@@ -451,4 +453,7 @@ test("a redirect resolves in the shell's folder, and the body file in the folder
     'gh reads the very good.md bash empties first');
   // A heredoc a wrapped cat writes lands in the shell's folder, where a later gh reads it.
   assert.equal(run(`env -C sub cat > b.md <<'EOF'\n${GOOD}EOF\ngh pr create -t x -F b.md`), null);
+  // After a leading cd that a `;` ends, the shell may still be where it was, so the heredoc may never reach sub/b.md:
+  // the write is one the rule cannot place, whatever folder env -C gives gh.
+  assert.match(run(`cd sub && true; cat > b.md <<'EOF'\n${GOOD}EOF\nenv -C ${path.join(dir, 'sub')} gh pr create -t x -F b.md`) ?? '', /^Blocked: the body is one this rule cannot read/u);
 });

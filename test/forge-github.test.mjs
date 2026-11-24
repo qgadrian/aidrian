@@ -1672,16 +1672,29 @@ test('reviewThreads, changeEdits, and reviewsWithComments send the owner and nam
   assert.equal(args().length, 3, 'no gh call for a number that fails');
 });
 
-test('hasCommit: the git database read of one commit, false only when GitHub answers it has none', () => {
+test('hasCommit: the git database read of one commit, false only when GitHub confirms it has none', () => {
   const sha = 'a'.repeat(40);
   const { forge, args } = recorded(() => JSON.stringify({ sha }));
   assert.equal(forge.hasCommit('acme/widgets', sha, { host: 'ghe.example.com' }), true);
   assert.deepEqual(args(), [['api', '--hostname', 'ghe.example.com', `repos/acme/widgets/git/commits/${sha}`]]);
-  const failing = (text) => recorded(() => {
-    throw Object.assign(new Error(text), { stderr: text });
-  }).forge;
-  assert.equal(failing('gh: Not Found (HTTP 404)').hasCommit('acme/widgets', sha), false);
-  assert.equal(failing('gh: No commit found for SHA (HTTP 422)').hasCommit('acme/widgets', sha), false);
-  assert.throws(() => failing('gh: Bad Gateway (HTTP 502)').hasCommit('acme/widgets', sha), /HTTP 502/u, 'an outage is no answer');
+  const fails = (text) => Object.assign(new Error(text), { stderr: text });
+  // A 404 of the commit, and a repository that reads: the commit is missing.
+  const missing = recorded((call) => {
+    if (call.at(-1).includes('/git/commits/')) throw fails('gh: Not Found (HTTP 404)');
+    return JSON.stringify({ full_name: 'acme/widgets' });
+  });
+  assert.equal(missing.forge.hasCommit('acme/widgets', sha), false);
+  assert.deepEqual(missing.args().map((call) => call.at(-1)), [`repos/acme/widgets/git/commits/${sha}`, 'repos/acme/widgets']);
+  // A 404 of the repository too, as for a token that cannot see it: nothing is confirmed.
+  const hidden = recorded(() => {
+    throw fails('gh: Not Found (HTTP 404)');
+  });
+  assert.throws(() => hidden.forge.hasCommit('acme/widgets', sha), /HTTP 404/u);
+  for (const text of ['gh: Bad Gateway (HTTP 502)', 'gh: Validation Failed (HTTP 422)']) {
+    assert.throws(() => recorded(() => {
+      throw fails(text);
+    }).forge.hasCommit('acme/widgets', sha), /HTTP/u, text);
+  }
+  assert.throws(() => recorded(() => JSON.stringify({ sha: 'b'.repeat(40) })).forge.hasCommit('acme/widgets', sha), /another commit/u, 'an answer that names another commit');
   assert.throws(() => forge.hasCommit('acme/widgets', 'HEAD'), /a commit is a full hex id/u, 'no call for a ref that is not a commit id');
 });

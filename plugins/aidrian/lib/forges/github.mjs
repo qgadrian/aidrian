@@ -981,17 +981,24 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
       const sha = rest(`repos/${repo}/branches/${encodeURIComponent(branch)}`, { host })?.commit?.sha;
       return typeof sha === 'string' && /^[0-9a-f]{40}$/u.test(sha) ? sha : null;
     },
-    // Whether `repo` holds the commit `sha`, a full hex id, on any ref or none: true, false when the forge answers that it
-    // has no such commit, or a throw when it cannot answer. Read through the git database, whose answer is the commit
-    // alone, never its diff.
+    // Whether `repo` holds the commit `sha`, a full hex id, on any ref or none: true, false only when the forge confirms
+    // it has no such commit, or a throw when the answer is not conclusive. Read through the git database, whose answer
+    // is the commit alone, never its diff. GitHub answers 404 both for a commit it lacks and for a repository the
+    // token cannot see, so a 404 counts as missing only once the repository itself reads; any other answer, such as an
+    // outage, a validation error, or one that names another commit, throws, and the caller asks again later.
     hasCommit: (repo, sha, { host } = {}) => {
       if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(String(sha))) throw new Error('a commit is a full hex id');
+      let answer;
       try {
-        return rest(`repos/${repo}/git/commits/${sha}`, { host })?.sha === sha;
+        answer = rest(`repos/${repo}/git/commits/${sha}`, { host });
       } catch (error) {
-        if (notFound(error) || /\(HTTP 422\)/u.test(`${error?.message ?? ''} ${error?.stderr ?? ''}`)) return false;
-        throw error;
+        if (!notFound(error)) throw error;
+        // Throws when the repository does not read either: then nothing is confirmed.
+        rest(`repos/${repo}`, { host });
+        return false;
       }
+      if (answer?.sha !== sha) throw new Error(`the forge answered another commit than ${sha}`);
+      return true;
     },
     // One file of `repo` at `ref`, such as `refs/heads/main`: `{ type, encoding, content }`, its content base64.
     contents: (repo, file, ref, { host } = {}) => rest(`repos/${repo}/contents/${file.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(ref)}`, { host }),

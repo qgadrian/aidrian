@@ -857,7 +857,8 @@ const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
 // Every command a command line runs, in the order it runs, nested ones included: the body of each command substitution
 // (before the command that owns it), each `sh -c "<string>"` and `eval` string, and each command line a heredoc or
 // here-string feeds a shell. Each is { segment, invocation, folder, shell, line, inputs, heredocs, unread? }: `folder` is the folder it runs in, from `cwd`,
-// or null when it cannot be known, and `shell` the folder of the shell that runs it, where its redirects open; `line` is the command line it was read from; `inputs` the heredoc bodies and
+// or null when it cannot be known, and `shell` the folder of the shell that runs it, where its redirects open, known as
+// `chained` is below, or null; `line` is the command line it was read from; `inputs` the heredoc bodies and
 // here-string words fed to its input; `heredocs` its heredocs alone, as { body, expands, fd? }. A leading `cd <dir> &&` moves the folder; any other directory change (in a subshell, a pipe,
 // after `;` or `||`, a second one) leaves it unknown for the commands after it. With `enters`, a predicate on a folder,
 // a line that opens with a plain `cd <absolute folder>` that `;` or a newline ends (plainCd) moves it too, when
@@ -935,8 +936,10 @@ export function walkCommands(command, cwd, { enters = null } = {}) {
         ...own.map((each) => each.body),
         ...segment.flatMap((token, at) => (token.operator && token.text === '<<<' && segment[at + 1] ? [segment[at + 1].text] : [])),
       ];
-      // A redirect is opened by the shell, before any wrapper runs: it resolves in `shell`, never in `env -C`'s or git's -C folder.
-      const entry = { segment, invocation, folder, shell: here, chained, line, inputs, heredocs: own };
+      // A redirect is opened by the shell, before any wrapper runs: it resolves in `shell`, never in `env -C`'s or git's
+      // -C folder, and only where the shell is whenever the command runs at all (`chain`), since a `cd` that failed
+      // leaves the shell where it was.
+      const entry = { segment, invocation, folder, shell: chain, chained, line, inputs, heredocs: own };
       out.push(entry);
       const unread = [];
       // eval joins its words with spaces and runs the result as a command line; a leading `--` only ends its options.

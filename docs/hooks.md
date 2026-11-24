@@ -267,7 +267,9 @@ What each rule matches:
   through a descriptor other than 1 (`cat 2> b.md`) or with standard output duplicated off it (`>&2`), while `2>&1`
   writes no file; a `tee` whose own output lands on its file; a body file a
   redirect writes, gh's own output on any descriptor included (`-F b.md {fd}>b.md`), a redirect's target read in the
-  shell's own folder and a body file in the one `env -C` or `git -C` gives its program, as bash opens a redirect first; any
+  shell's own folder and a body file in the one `env -C` or `git -C` gives its program, as bash opens a redirect first,
+  and the shell's folder known only as a `cd` joined by `&&` alone moves it, so after `cd x && true;` a relative
+  redirect is one the rule cannot place; any
   command between the write and gh that is not a known reader (such as `sed -i`, a script, or a program fed code on
   stdin); and a variable a nested shell or substitution assigns, or one used inside it. Such a body is one the rule
   cannot read: gh then runs as its own command after it.

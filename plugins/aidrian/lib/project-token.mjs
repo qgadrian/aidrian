@@ -15,7 +15,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { forgeFor, forgeGitHelper, forgeLoginStep, forgeTokenNote, forgeTokenVar } from './forges/index.mjs';
@@ -188,12 +188,25 @@ const TOKEN_FILES_CAP = 64;
 // Adds `file`, a session environment file of the host session `session`, to the record in the attempt's folder
 // `folder`, before the token is written there: null, or why it could not.
 export function recordTokenFile(folder, { session, file }) {
-  if (typeof session !== 'string' || typeof file !== 'string' || !path.isAbsolute(file)) return 'the host named no session environment file';
+  if (typeof session !== 'string' || typeof file !== 'string' || !path.isAbsolute(file)) return 'the host named no session environment file it can remove once the session ends';
   const read = tokenFiles(folder);
   const files = read?.session === session ? read.files : [];
   if (!files.includes(file)) files.push(file);
   if (files.length > TOKEN_FILES_CAP) return 'the session has handed the token to too many files';
   return writeJson(path.join(folder, TOKEN_FILES), { session, files });
+}
+
+// Keeps only `files` in the record of `folder`, the ones the host could not remove yet, or removes the record when none
+// is left: whether the record now says what is left.
+export function keepTokenFiles(folder, { session, files }) {
+  const file = path.join(folder, TOKEN_FILES);
+  if (files.length) return writeJson(file, { session, files }) === null;
+  try {
+    rmSync(file, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // The record recordTokenFile keeps in `folder`: { session, files }, or null when there is none, or it is no record.

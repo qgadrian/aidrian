@@ -7,7 +7,6 @@ import { AUDIT_LABEL_FIELDS, COMMIT_FIELDS, CONTINUE_ROUTES, HANDOFF_MODES, MAX_
 import { CLASS_MAX, DECISION_MODES, decisionClasses, isClassName, SAFE_DEFAULTS } from './decisions.mjs';
 import { loadTable as dispositionTable } from './finding-disposition.mjs';
 import { isObject } from './fs.mjs';
-import { ISSUE_PART } from './handoff-markers.mjs';
 import { isRegistries, REGISTRY_NAMES } from './project-registries.mjs';
 import { pathsProblem } from './review/config.mjs';
 
@@ -83,12 +82,13 @@ export const TYPES = {
     (value) => Array.isArray(value) && value.every((name) => typeof name === 'string' && /^[\w.-]{1,64}$/u.test(name)),
     'a list of MCP server names, each letters, digits, ".", "_", or "-", as projectRun.mcpServers names them',
   ],
-  // The decisions the Human recorded on issues before a project run (lib/project-decision.mjs): each issue key to the
-  // heading of the section it pins and that section's sha256 (docs/config.md#recorded-decisions).
-  recordedDecisions: [
-    (value) => isObject(value) && Object.entries(value).every(([key, entry]) => ISSUE_PART.test(key) && hasOnly(entry, ['heading', 'sha256']) &&
-      isText(entry.heading) && entry.heading.length <= 200 && !/[\r\n]/u.test(entry.heading) && typeof entry.sha256 === 'string' && /^[0-9a-f]{64}$/u.test(entry.sha256)),
-    'an object of issue keys, each to { "heading": <one line of 1 to 200 characters>, "sha256": <64 lowercase hex characters> }',
+  // The team's switch that lets a project run read the decisions the Human recorded in this machine's recorded-decision
+  // store (lib/project-decision-store.mjs). Its entries were once an object here: that shape is refused, with where they go.
+  recordedDecisionsSwitch: [
+    (value) => typeof value === 'boolean',
+    (value) => (isObject(value)
+      ? 'true or false, no longer an object of entries: record each issue\'s decision in this machine\'s store with `aidrian project decision ISSUE --heading TEXT --record` from a session the Human attends'
+      : 'true or false'),
   ],
   // The package registries a confined project session may reach, by ecosystem name (lib/project-registries.mjs), each once.
   registries: [isRegistries, () => `a list of registry names, each once, from ${oneOf(REGISTRY_NAMES)}`],

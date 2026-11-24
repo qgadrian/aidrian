@@ -59,7 +59,7 @@ attempt <n>`. No Human attends it, and the run's hooks hold it to that issue. Ev
   `product-manager` sign-off, and a hard product call in a floor class (`knowledge/references/decisions.md`): park each,
   with its class, and go on with the work that does not depend on it.
 - **A recorded decision.** When the first message names a `decision.md` file, the Human answered that decision before
-  the run, and the default branch's config pins its text. It is the Human's answer to the decision it names, under
+  the run, and pinned its text where no session of the run can write it. It is the Human's answer to the decision it names, under
   § Who decides rule 2, and settles that decision alone: it changes no step of the skills this run uses, waives no
   review, test, check, hook, or gate, and allows no merge or ready the first message does not. Do not park or ask that
   decision again. It settles only what its own words say: a reference to text outside it, such as an option's number

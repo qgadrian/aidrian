@@ -1,10 +1,12 @@
 // A decision the Human recorded on an issue before a project run: one section of the issue's description in the tracker,
-// pinned by its heading and sha256 in the team's projectRun.recordedDecisions on the default branch (docs/config.md#recorded-decisions).
+// pinned by its heading and sha256 in this machine's recorded-decision store (lib/project-decision-store.mjs), which a
+// start reads while the team's projectRun.recordedDecisions switch is on (docs/config.md#recorded-decisions).
 // The grant changes only what an issue's session is told: each start checks the pinned section against the text the run
 // kept at init (lib/project-issue-text.mjs), and when it stands writes it to `<attempt>/decision.md`, read-only, which
 // the first message names (lib/project-run-gate.mjs). Results, parks, stop actions, and merge trust are as without it.
-// `aidrian project decision ISSUE --heading TEXT` prints the entry to pin, from this session's recorded tracker read of the
-// issue, the same bytes init keeps; only an attended session runs it (lib/project-run-guard.mjs), and it writes nothing.
+// `aidrian project decision ISSUE --heading TEXT` prints the section and its sha256, from this session's recorded tracker
+// read of the issue, the same bytes init keeps, and with `--record` writes the store's entry; only an attended session
+// runs it (lib/project-run-guard.mjs).
 
 import { createHash } from 'node:crypto';
 import { chmodSync, writeFileSync } from 'node:fs';
@@ -13,11 +15,14 @@ import path from 'node:path';
 import { sessionIdentity } from './hosts/index.mjs';
 import { fencedIn } from './markdown-sections.mjs';
 import { fenceFor, recordedTexts, TEXT_CAPS } from './project-issue-text.mjs';
+import { forgetDecision, recordDecision } from './project-decision-store.mjs';
 import { attendedProblem, ISSUE_KEY, runPlace } from './project-run.mjs';
+import { projectId } from './project.mjs';
+import { droveRun } from './run-driver.mjs';
 
 // The file each attempt's session reads a recorded decision from, in its attempt folder, beside issue.md.
 export const DECISION_FILE = 'decision.md';
-// The longest heading an entry pins, as the config check holds it (config-types.mjs recordedDecisions).
+// The longest heading an entry pins.
 export const HEADING_CAP = 200;
 // What the grant settles and what it never does, in the first message and in decision.md alike.
 export const DECISION_SCOPE = 'It is the Human\'s answer to the decision it names, under the autopilot skill\'s § Who decides rule 2, and settles that decision alone: ' +
@@ -97,7 +102,7 @@ export function decisionMarkdown(key, entry, section) {
   return [
     `# Issue ${key}: a decision the Human recorded`,
     '',
-    `The team's config on the default branch pins this section of the issue's description in the tracker by its heading and sha256. ${DECISION_SCOPE}`,
+    `The Human pinned this section of the issue's description in the tracker by its heading and sha256, from a session they attend, in a store no session of the run can write. ${DECISION_SCOPE}`,
     '',
     `sha256: ${entry.sha256}`,
     '',
@@ -116,20 +121,29 @@ export function writeDecisionFile(attemptFolder, key, entry, section) {
   return file;
 }
 
-// `aidrian project decision ISSUE --heading TEXT`, from an attended session (attendedProblem): the section of ISSUE's
-// description headed `heading`, from this session's recorded tracker read (recordedTexts), fenced as it is hashed; how to
-// write it; and, last, the entry to add to projectRun.recordedDecisions. Exit 1 with no recorded read of ISSUE, or a
-// section that may not be pinned (pinnable). Writes nothing.
-export function decisionCommand({ project, config, key, heading, env = process.env, home }) {
+// `aidrian project decision ISSUE --heading TEXT [--record]`, from an attended session (attendedProblem): the section of
+// ISSUE's description headed `heading`, from this session's recorded tracker read (recordedTexts), fenced as it is hashed;
+// how to write it; and, last, its sha256 with how to record it, or, with `record`, the entry written to this machine's
+// recorded-decision store (project-decision-store.mjs) and where. `forget` removes ISSUE's entry instead, reading no
+// issue. Exit 1 with no recorded read of ISSUE, a section that may not be pinned (pinnable), or a store that cannot be
+// written. `record` and `forget` are refused to a session that drove a project run (run-driver.mjs droveRun), as the
+// sign-off store's writer is: a run's driver may run on for hours with no Human.
+export function decisionCommand({ project, config, key, heading, record = false, forget = false, env = process.env, home }) {
   const refuse = (why) => ({ exitCode: 1, out: [], err: [`aidrian project decision: ${why}`] });
   if (!ISSUE_KEY.test(key ?? '')) return refuse(`${JSON.stringify(key)} is not an issue key`);
+  if (record && forget) return refuse('--record and --forget each act alone: give one');
   const title = typeof heading === 'string' ? heading.trim() : '';
-  if (title === '' || title.length > HEADING_CAP || /[\r\n]/u.test(title)) return refuse(`--heading takes one line of 1 to ${HEADING_CAP} characters, the section's heading without its hashes`);
+  if (forget && heading !== undefined) return refuse('--forget takes no --heading: it removes the issue\'s whole entry');
+  if (!forget && (title === '' || title.length > HEADING_CAP || /[\r\n]/u.test(title))) return refuse(`--heading takes one line of 1 to ${HEADING_CAP} characters, the section's heading without its hashes`);
   const place = runPlace(project, config, { env, ...(home ? { home } : {}) });
   if (place.problem) return refuse(place.problem);
   const { session } = sessionIdentity(env);
   const attended = attendedProblem({ session, project, config, state: place.state, env, ...(home ? { home } : {}) });
   if (attended) return refuse(`a recorded decision is pinned from an attended session, and ${attended}`);
+  if ((record || forget) && droveRun(session, { env, ...(home ? { home } : {}) })) {
+    return refuse('this session drove a project run, which may run on with no Human, so it records and forgets no decision; run this from another session the Human attends');
+  }
+  if (forget) return forgotten(project, key, env);
   const text = recordedTexts(session, [key], { env, ...(home ? { home } : {}) })[key];
   if (!text) return refuse(`this session recorded no tracker read of ${key}; read it with the tracker's own issue read, then run this again`);
   const checked = pinnable(text.description, title, text.descriptionCut === true);
@@ -137,14 +151,28 @@ export function decisionCommand({ project, config, key, heading, env = process.e
   if (checked.why === WHY.cut) return refuse(`${WHY.cut}; keep a pinned issue's description under ${TEXT_CAPS.description} characters, then read the issue again`);
   if (checked.why === WHY.hidden) return refuse(`${WHY.hidden} (an HTML comment, a <details> tag, or a +++ line, anywhere, fenced or not); write it as plain text, then read the issue again`);
   const { section } = checked;
+  const sha256 = digest(section);
   const fence = fenceFor(section);
-  return {
-    exitCode: 0,
-    out: [
-      `${fence}text`, section, fence,
-      'Write the section so it stands alone: it names the question and the chosen path in full, since a reference to text outside it, such as an option\'s number, settles nothing.',
-      `"${key}": { "heading": ${JSON.stringify(title)}, "sha256": "${digest(section)}" }`,
-    ],
-    err: [],
-  };
+  const shown = [
+    `${fence}text`, section, fence,
+    'Write the section so it stands alone: it names the question and the chosen path in full, since a reference to text outside it, such as an option\'s number, settles nothing.',
+  ];
+  if (!record) return { exitCode: 0, out: [...shown, `sha256 ${sha256}; record it with \`aidrian project decision ${key} --heading ${JSON.stringify(title)} --record\``], err: [] };
+  let written;
+  try {
+    written = recordDecision({ projectKey: projectId(project), key, heading: title, sha256, env });
+  } catch (error) {
+    return refuse(`the recorded-decision store cannot be written: ${String(error?.message ?? error).split('\n')[0]}`);
+  }
+  return { exitCode: 0, out: [...shown, `recorded-decision: ${key} recorded in ${written.file}, sha256 ${sha256}`], err: [] };
+}
+
+// `--forget` of issue `key`: the answer of forgetDecision.
+function forgotten(project, key, env) {
+  try {
+    const { file, removed } = forgetDecision({ projectKey: projectId(project), key, env });
+    return { exitCode: 0, out: [removed ? `recorded-decision: ${key} forgotten, ${file} removed` : `recorded-decision: ${key} has no recorded decision on this machine`], err: [] };
+  } catch (error) {
+    return { exitCode: 1, out: [], err: [`aidrian project decision: the recorded-decision store cannot be written: ${String(error?.message ?? error).split('\n')[0]}`] };
+  }
 }

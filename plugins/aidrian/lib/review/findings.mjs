@@ -95,9 +95,10 @@ const text = (value, max) => (typeof value === 'string' && value.trim() !== '' ?
 // SHORTCUT: `aidrian pr attest` (lib/review/record.mjs recordPass) passes no `settled` list yet, so on that path every
 // `already_ruled` is left out and the finding read as it stands: safe, since nothing is waived, and enough while only
 // exec reviewers return repeats. Wiring recordSettled and residualTexts into recordPass would replace it.
-// `round` is the review round of the head the pass attests, when the caller knows it: an agent's finding is no
-// person's, so it is read as the review loop reads it, `--source bot --round`, late rounds included. A finding with no
-// likelihood or affects keeps the reading with no source, needs_axis, so it still blocks until it is classified.
+// `round` is the record's review round, when the caller knows it: an agent's finding is no person's, so it is read as
+// the review loop reads it, `--source bot --round`, late rounds included. A finding with no likelihood or affects keeps
+// the reading with no source, needs_axis, so it still blocks until it is classified, except a late low one, which
+// `lateRound` takes with or without axes, as it does an exec reviewer's.
 export function parseFindings(raw, settled = [], { round } = {}) {
   let parsed;
   try {

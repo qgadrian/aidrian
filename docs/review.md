@@ -1013,8 +1013,9 @@ carried ruling cannot see a real fix, so a session skips a row whose defect is f
 A low finding recorded with
 `--findings-file` keeps its own state: the session classifies it with `aidrian pr disposition`, writes the residual
 into the body, and attests it `accepted`. Attestation reads a finding as that command does with `--source bot --round`,
-the round being the one of the head it attests, so a late residual the command gives is accepted there too; a finding
-with no likelihood or affects still needs them. A code comment the residual needs is a [quiet push](#rounds), so neither opens a round.
+at the record's round count, as the step reads an exec reviewer's, so a late residual the command gives is accepted there
+too. A finding with no likelihood or affects still needs them, except a late low one, which `lateRound` takes with or
+without axes. A head whose round no step has opened yet reads the round before: only ever an earlier, stricter reading. A code comment the residual needs is a [quiet push](#rounds), so neither opens a round.
 
 ### Small gaps
 

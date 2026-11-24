@@ -48,14 +48,6 @@ export function remoteState(repo, pr, forge = forgeFor(undefined), config = null
   }
 }
 
-// The review round of `head`: the last round's when it reviews that head, else the one the next step opens for it
-// (stages.mjs opens a round for a head a pass attested first). Undefined before any round, as a pass reads with no round.
-export function attestedRound(state, head) {
-  const rounds = Array.isArray(state?.rounds) ? state.rounds : [];
-  if (!rounds.length) return undefined;
-  return rounds.at(-1)?.head === head ? rounds.length : rounds.length + 1;
-}
-
 // `aidrian pr attest <PR> --pass <id> ...`: one pass's result, for this head, into the review record.
 // With `findingsText` (--findings-file), the counts come from the findings one by one, and the disposition table
 // decides which stay open (lib/review/findings.mjs). The result replaces the pass's counts and list, and keeps the waivers
@@ -68,7 +60,9 @@ export function recordPass(project, args) {
 
 function writePass(project, { pr, repo, pass, head, reviewer, findings, fixed, accepted = 0, verdictsText = null, findingsText = null, remote = null, reading = undefined }) {
   const state = current(project, pr, repo, remote, reading);
-  const itemized = findingsText === null ? null : parseFindings(findingsText, [], { round: attestedRound(state, head) });
+  // The record's round count, as the step reads an exec reviewer's findings (stages.mjs): a quiet push keeps it, and
+  // a head whose round no step opened yet reads the round before, which only ever reads a finding as early.
+  const itemized = findingsText === null ? null : parseFindings(findingsText, [], { round: state.rounds?.length || undefined });
   if (itemized) ({ findings, fixed, accepted } = itemized);
   if (fixed + accepted > findings) throw new Error('--fixed and --accepted together cannot exceed --findings');
   const verdicts = verdictsText === null ? [] : parseVerdicts(verdictsText);

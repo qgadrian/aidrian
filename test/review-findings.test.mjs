@@ -9,7 +9,6 @@ import test from 'node:test';
 import { loadTable } from '../plugins/aidrian/lib/finding-disposition.mjs';
 import { blocks, freshId, listedTo, listing, MAX_COUNTER, parseFindings, recordFindings, settledMatch, twinMatch } from '../plugins/aidrian/lib/review/findings.mjs';
 import { gitPaths } from '../plugins/aidrian/lib/review/publish.mjs';
-import { attestedRound } from '../plugins/aidrian/lib/review/record.mjs';
 import { emptyState } from '../plugins/aidrian/lib/review/state.mjs';
 import { cleanOutput, FINDINGS_SCHEMA, REQUEST_BRIEF, reviewPrompt, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
 import { isCleanReceipt, RECEIPT_MARKER, REQUEST_COMMENT, requestCommentBody } from '../plugins/aidrian/lib/pr-await-review.mjs';
@@ -53,18 +52,13 @@ test('parseFindings: a low finding that cites a written project rule in cites is
 test('parseFindings: from the late round on, an agent\'s low finding is a residual, cited or trivial, as the review loop reads it', () => {
   const low = { title: 'Copy names no next step', file: 'src/a.ts', severity: 'low', likelihood: 'routine', affects: 'users', cost: 'trivial', state: 'accepted' };
   const medium = { ...low, severity: 'medium', likelihood: 'plausible', affects: 'operators', cost: 'bounded' };
-  const raw = JSON.stringify([low, { ...low, cost: 'structural', likelihood: 'contrived', affects: 'internal', cites: 'docs/rules.md' }, { ...low, severity: 'medium', cost: 'bounded' }, medium, { title: 'No axes', severity: 'medium', state: 'accepted' }]);
+  const raw = JSON.stringify([low, { ...low, cost: 'structural', likelihood: 'contrived', affects: 'internal', cites: 'docs/rules.md' }, { ...low, severity: 'medium', cost: 'bounded' }, medium, { title: 'No axes', severity: 'medium', state: 'accepted' }, { title: 'Late nit', severity: 'low', state: 'accepted' }]);
   const N = loadTable().lateRoundFrom;
-  assert.deepEqual(parseFindings(raw, [], { round: N - 1 }).list.map((each) => each.disposition), ['fix_now', 'fix_now', 'fix_now', 'fix_now', 'needs_axis']);
+  assert.deepEqual(parseFindings(raw, [], { round: N - 1 }).list.map((each) => each.disposition), ['fix_now', 'fix_now', 'fix_now', 'fix_now', 'needs_axis', 'needs_axis']);
   const late = parseFindings(raw, [], { round: N });
-  assert.deepEqual(late.list.map((each) => each.disposition), ['accepted_residual', 'accepted_residual', 'fix_now', 'accepted_residual', 'needs_axis'], 'the loop\'s late reading; a routine medium stays, and a finding with no axes still needs them');
+  assert.deepEqual(late.list.map((each) => each.disposition), ['accepted_residual', 'accepted_residual', 'fix_now', 'accepted_residual', 'needs_axis', 'accepted_residual'], 'the loop\'s late reading; a routine medium stays, a finding with no axes still needs them, and a late low takes lateRound with or without');
   assert.equal(late.open, 2);
-  assert.deepEqual(parseFindings(raw).list.map((each) => each.disposition), ['fix_now', 'fix_now', 'fix_now', 'fix_now', 'needs_axis'], 'no round: early');
-});
-
-test('attestedRound: the last round for the head it reviews, the next one for a new head, none before any round', () => {
-  const state = { rounds: [{ head: 'a' }, { head: 'b' }] };
-  assert.deepEqual([attestedRound(state, 'b'), attestedRound(state, 'c'), attestedRound({ rounds: [] }, 'a'), attestedRound({}, 'a')], [2, 3, undefined, undefined]);
+  assert.deepEqual(parseFindings(raw).list.map((each) => each.disposition), ['fix_now', 'fix_now', 'fix_now', 'fix_now', 'needs_axis', 'needs_axis'], 'no round: early');
 });
 
 test('parseFindings: a malformed file is refused, never read as zero findings', () => {

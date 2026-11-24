@@ -1088,11 +1088,15 @@ owed, the skill's re-check run, then `status` once more. On any other exit the d
 
 A `## Accepted residuals` item, or an item of the section config.json `github.pullRequest.residuals.section` names, is a defect
 the branch ships on purpose. Before the body ships, `pr-write` sets each one against the decisions on record:
-`aidrian decisions residuals --body <file>` lists each item beside every decision marker in the indexed docs (id, status, wording,
+`aidrian decisions residuals --body <file>` sets each item against every decision marker in the indexed docs (id, status, wording,
 doc and line), a marker whose class no list holds included and a `rejected` one left out, since it is no rule, and the
 `## Consequences` lines of each ADR in `docs/adr/`, or the folder `--adr` names, an ADR whose Status starts `Superseded` skipped
 with a note; no `docs/adr/` is an empty list, an `--adr` that is no folder fails, and with no project folder the record is the ADR
-lines alone. An ADR, or an ADR folder, that is there but does not read is a problem of the record, never an empty list.
+lines alone. It lists each decision and each ADR line once, then each residual by its number, and every residual is set
+against the whole record, so the listing grows with the residuals plus the record, never their product; `--json` prints it
+pretty, one value a line. `--residual <n>` lists one residual, and `--path <doc or folder>` every decision and ADR line there,
+with no cap; neither goes with `--judged`, which checks rows against the whole record.
+An ADR, or an ADR folder, that is there but does not read is a problem of the record, never an empty list.
 It reads the branch's working copy, so a marker or wording the branch changes must already show in the body's
 Decisions. That part is deterministic. When the list holds no decision and no ADR line, it ends
 `nothing on record: no judgment owed` and exits 0, `--judged` or not, unless part of the record did not read (an index problem, a

@@ -67,22 +67,6 @@ test('a description that holds markup the tracker\'s view hides anywhere, fenced
   for (const plain of ['a+++b', '+++b', '++ x', 'details in prose', '<!- not a comment']) assert.equal(pinned(`${clean}\n${plain}`).void, undefined, plain);
 });
 
-test('a description its cap cut off keeps that mark, and voids every grant on it, even one a heading ends before the cut', (t) => {
-  const head = 'Intro\n## Decision\nChosen: CSV.\n## Next\n';
-  const long = `${head}${'x'.repeat(TEXT_CAPS.description)}`;
-  const fx = runFixture(t, { init: false });
-  recordIssueReads(DRIVER, [{ key: 'ENG-1', text: { title: 'Export', description: long } }, { key: 'ENG-4', text: { title: 'Typo', description: head } }], { env: fx.env });
-  const texts = recordedTexts(DRIVER, ['ENG-1', 'ENG-4'], { env: fx.env, home: fx.home });
-  assert.deepEqual([texts['ENG-1'].description.length, texts['ENG-1'].descriptionCut, Object.hasOwn(texts['ENG-4'], 'descriptionCut')], [TEXT_CAPS.description, true, false]);
-  const kept = texts['ENG-1'].description;
-  assert.equal(sectionOf(kept, 'Decision'), '## Decision\nChosen: CSV.', 'a heading ends the section well before the cut');
-  assert.deepEqual(pinned(kept, 'Decision', { cut: true }), CUT);
-  assert.equal(pinned(kept).section, '## Decision\nChosen: CSV.', 'the same text uncut stands');
-  const refused = fx.cmd(['decision', 'ENG-1', '--heading', 'Decision']);
-  assert.equal(refused.exitCode, 1);
-  assert.match(refused.err[0], /the kept description was cut off at its 20,000-character cap; keep a pinned issue's description under 20000 characters/u);
-});
-
 // The fixture with the tracker's answer for ENG-1 recorded for `session`, as the post-call tracker hook records it.
 function withRead(t, description = DECIDED.description, session = DRIVER, more = {}) {
   const fx = runFixture(t, { init: false, ...more });
@@ -107,17 +91,21 @@ test('project decision prints, --record writes, --forget removes, and a malforme
   const file = storeFile(fx);
   const read = () => readRecordedDecision({ projectKey: keyOf(fx), key: 'ENG-1', env: fx.env });
 
-  // Run from inside another project, whose origin names another repository, so its project key differs, with
-  // --project naming this one.
-  const other = runFixture(t, { init: false });
-  other.git('remote', 'set-url', 'origin', 'https://github.com/acme/other.git');
+  // Run from inside another project, nested in this one's repository and committed to its base branch, whose folder
+  // in the repository gives it a project key of its own, with --project naming this one.
+  const nested = path.join(fx.dir, 'packages', 'web');
+  mkdirSync(path.join(nested, '.aidrian'), { recursive: true });
+  writeFileSync(path.join(nested, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: fx.state } }));
+  fx.git('add', 'packages');
+  fx.git('commit', '-q', '-m', 'nested project');
+  fx.git('update-ref', 'refs/remotes/origin/main', 'HEAD');
   const named = shellQuoted(realpathSync(fx.dir));
 
   // Without --record: the section as hashed, then its sha256 and the command that records it. The heading, which starts
   // with a dash, goes in attached; the printed one is attached too, and one POSIX shell word, single-quoted, so
   // `$(...)`, a backtick, and `$VAR` never expand; and --project is always printed, as this project's real path, so the
   // pasted command records here and not in the project it is pasted in. Nothing is written.
-  const preview = fx.cmd(['decision', 'ENG-1', `--heading=${SHELLY}`, '--project', fx.dir], { cwd: other.dir });
+  const preview = fx.cmd(['decision', 'ENG-1', `--heading=${SHELLY}`, '--project', fx.dir], { cwd: nested });
   assert.equal(preview.exitCode, 0, preview.err.join('\n'));
   const section = `## ${SHELLY}\n\nChosen: CSV.`;
   const sha256 = createHash('sha256').update(section).digest('hex');
@@ -132,11 +120,10 @@ test('project decision prints, --record writes, --forget removes, and a malforme
   // it: an owner-only entry under owner-only folders, from the same read.
   const words = lexCommand(line.slice(line.indexOf('`') + 1, line.lastIndexOf('`')))[0].map((word) => word.text);
   assert.deepEqual(words.slice(0, 4), ['aidrian', 'project', 'decision', 'ENG-1']);
-  const recorded = fx.cmd(words.slice(2), { cwd: other.dir });
+  const recorded = fx.cmd(words.slice(2), { cwd: nested });
   assert.equal(recorded.exitCode, 0, recorded.err.join('\n'));
   assert.equal(recorded.out.at(-1), `recorded-decision: ENG-1 recorded in ${file}, sha256 ${sha256}`);
-  assert.notEqual(keyOf(other), keyOf(fx));
-  assert.equal(existsSync(path.join(decisionStoreFolder(fx.env), keyOf(other), 'ENG-1.json')), false, 'never under the project it was pasted in');
+  assert.deepEqual(readdirSync(decisionStoreFolder(fx.env)), [keyOf(fx)], 'never under the project it was pasted in');
   assert.equal(statSync(file).mode & 0o777, 0o600);
   assert.equal(statSync(path.dirname(file)).mode & 0o777, 0o700);
   const stored = read().entry;
@@ -150,6 +137,27 @@ test('project decision prints, --record writes, --forget removes, and a malforme
   assert.match(direct({ heading: 'Export format', record: true, forget: true }), /--record and --forget each act alone/u);
   assert.match(direct({ heading: 'Export format', forget: true }), /--forget takes no --heading/u);
   assert.match(direct({}), /--heading takes one line of 1 to 200 characters/u);
+
+  // A description its cap cut off keeps that mark, and voids every grant on it, even one a heading ends before the cut.
+  const head = 'Intro\n## Decision\nChosen: CSV.\n## Next\n';
+  recordIssueReads(DRIVER, [{ key: 'ENG-4', text: { title: 'Typo', description: `${head}${'x'.repeat(TEXT_CAPS.description)}` } }, { key: 'ENG-9', text: { title: 'Short', description: head } }], { env: fx.env });
+  const texts = recordedTexts(DRIVER, ['ENG-4', 'ENG-9'], { env: fx.env, home: fx.home });
+  assert.deepEqual([texts['ENG-4'].description.length, texts['ENG-4'].descriptionCut, Object.hasOwn(texts['ENG-9'], 'descriptionCut')], [TEXT_CAPS.description, true, false]);
+  const kept = texts['ENG-4'].description;
+  assert.equal(sectionOf(kept, 'Decision'), '## Decision\nChosen: CSV.', 'a heading ends the section well before the cut');
+  assert.deepEqual(pinned(kept, 'Decision', { cut: true }), CUT);
+  assert.equal(pinned(kept).section, '## Decision\nChosen: CSV.', 'the same text uncut stands');
+  assert.match(direct({ key: 'ENG-4', heading: 'Decision' }), /the kept description was cut off at its 20,000-character cap; keep a pinned issue's description under 20000 characters/u);
+
+  // A printed command whose project is gone, as a removed nested project or worktree, is refused, never recorded in the
+  // project above it.
+  const own = fx.cmd(['decision', 'ENG-1', `--heading=${SHELLY}`], { cwd: nested }).out.at(-1);
+  assert.ok(own.includes(`--project=${shellQuoted(realpathSync(nested))} --record`), own);
+  rmSync(nested, { recursive: true, force: true });
+  const gone = fx.cmd(lexCommand(own.slice(own.indexOf('`') + 1, own.lastIndexOf('`')))[0].map((word) => word.text).slice(2), { cwd: fx.dir });
+  assert.equal(gone.exitCode, 1);
+  assert.match(gone.err[0], /--project names .*packages\/web, which is not the root of a project here/u);
+  assert.equal(existsSync(file), false, 'nothing written under the parent\'s key');
 
   // A malformed entry whose place, owner, type, and links pass: a start reads no grant, --record replaces it whole, and
   // --forget removes one of another shape; a file another user could write still refuses both.

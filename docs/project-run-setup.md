@@ -212,8 +212,9 @@ Then per issue, in the attended driver session before `init`:
    The whole description holds no HTML comment, `<details>` block, or `+++` line, fenced or not, and stays under
    20,000 characters: either voids every grant on the issue.
 2. Read the issue with the tracker's own full issue read, Linear's `get_issue`, so the run records its description.
-3. Run `aidrian project decision <issue> --heading "<heading>"`, read the section it prints, then run it again with
-   `--record`, which writes the entry to this machine's store and prints where.
+3. Run `aidrian project decision <issue> --heading "<heading>"`, read the section it prints, then run the `--record`
+   command its last line prints, which carries the heading and the project's path attached, `--heading='<heading>'`
+   and `--project='<path>'`: it writes the entry to this machine's store and prints where.
 4. `aidrian project init <run> --file <snapshot> --check` prints `note recorded-decision: <issue> stands: <heading>`.
    A `void` note says why the run goes on without it; a `blocker recorded-decision` asks for step 2 in this session, or
    names the policy read that failed.

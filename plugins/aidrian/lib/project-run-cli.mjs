@@ -134,7 +134,15 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
     const pullHead = ({ pr, branch, repository }) => openPullHead({ forge: forge ?? forgeFor(project.root), repository, pr, branch });
     return initRun({ project, config, run, file: path.resolve(cwd, values.file), session: sessionIdentity(env).session, env, home, pullHead });
   }
-  if (action === 'decision') return decisionCommand({ project, config, key: run, heading: values.heading, record: values.record === true, forget: values.forget === true, env, home });
+  if (action === 'decision') {
+    // A write goes only to the project --project names itself: a folder that is gone, or no project's root, such as a
+    // removed nested project or worktree, never falls through to the project above it.
+    const named = values.project === undefined ? null : resolvedPath(path.resolve(cwd, values.project));
+    if ((values.record || values.forget) && values.project !== undefined && (named === null || named !== resolvedPath(project.root))) {
+      return refused('decision', `--project names ${path.resolve(cwd, values.project)}, which is not the root of a project here (it resolves to ${project.root}); record or forget the decision from the project the preview named`);
+    }
+    return decisionCommand({ project, config, key: run, heading: values.heading, record: values.record === true, forget: values.forget === true, env, home });
+  }
   if (action === 'preflight') return preflightCommand({ project, config, run: run ?? null, env, home, ...(forge ? { forge } : {}), ...(platform ? { platform } : {}), ...(exec ? { exec } : {}) });
   if (action === 'report') return reportCommand({ project, config, run, json: values.json === true, env, home });
   if (action === 'recorded') return recordedCommand({ project, config, run, key: second, env, home, ...(now === undefined ? {} : { now }) });

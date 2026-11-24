@@ -1549,7 +1549,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   own folder of that name stays writable, and nor does `usage.json` alone, a name other tools use.
   A path with a placeholder part in angle brackets, such as `<state>/sessions/<session id>/prs.jsonl` in the text of a
   plan that interpreter code writes, does not count while no folder the guard keeps, the state root's, a project's
-  state folder, or one the session started with, has `<` or `>` in its own path; where one does, it counts, since it
+  state folder, or one the session started with, has `<` or `>` in its path as written or as its real path through any
+  link; where one does, it counts, since it
   could name that folder. One with a `..` part always counts, and a session file's name outside such a path counts
   as before.
   The hooks and the `aidrian` commands write there through their own code, which no guard reads, so the

@@ -1488,6 +1488,20 @@ test('a placeholder path is prose only while no state folder has a bracket in it
   const refused = await inHook({ input: JSON.stringify({ ...subagent(dir, 'Bash', { command }), session_id: 's1' }), cwd: dir, encoding: 'utf8' });
   assert.equal(refused.status, 2, refused.stderr);
   assert.match(refused.stderr, /the session folders/u);
+  // A state.dir spelled with no bracket, through a link to that folder, is guarded the same.
+  const linked = path.join(root, 'linked-state');
+  symlinkSync(bracketed, linked);
+  const viaLink = project(t, { version: 1, state: { dir: linked } }).dir;
+  const throughLink = `python3 -c "open('${bracketed}/sessions/abc-1/prs.jsonl', 'a')"`;
+  const linkRefused = await inHook({ input: JSON.stringify({ ...subagent(viaLink, 'Bash', { command: throughLink }), session_id: 's1' }), cwd: viaLink, encoding: 'utf8' });
+  assert.equal(linkRefused.status, 2, linkRefused.stderr);
+  // A long interpreter body with no placeholder is read in linear time.
+  const long = `python3 -c "x='${'a'.repeat(200_000)}'; open('prs.jsonl', 'a')"`;
+  const started = process.cpuUsage();
+  const longRefused = await inHook({ input: JSON.stringify({ ...subagent(dir, 'Bash', { command: long }), session_id: 's1' }), cwd: dir, encoding: 'utf8' });
+  assert.equal(longRefused.status, 2, longRefused.stderr);
+  const { user } = process.cpuUsage(started);
+  assert.ok(user < 2_000_000, `${user} µs of processor time`);
   // Placeholder prose cannot be told from such a path here, so it is refused too: the guard stays closed.
   const prose = "python3 - <<'EOF'\nopen('plan.md','w').write('''rows land in `<state>/sessions/<session id>/prs.jsonl`''')\nEOF";
   const held = await inHook({ input: JSON.stringify({ ...subagent(dir, 'Bash', { command: prose }), session_id: 's1' }), cwd: dir, encoding: 'utf8' });

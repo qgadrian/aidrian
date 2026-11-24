@@ -190,11 +190,11 @@ With `github.extraRounds` on, the cap first checks whether one more round is wor
 - `extension_check`: `extension` holds each round's open findings, each fix's size, the pull request's `files`, its
   `goal`, and the `signals`; `extension.red_flags` lists each red flag the judge must answer. When the head is a fix no round reviewed, `extension.unreviewed_head` names
   that `head`, the last reviewed head (`from`), and the `fix` between them.
-  Run `dispatch[0]` as its read-only `agent` with `brief` and `extension`. It returns `extend` or `stop` with
-  evidence; record it with `record`, its `--reason` naming that evidence. Then run the step again.
-  When `waiver.may` is true, `brief` also offers `land`: `record` is then the `land|stop` line, ending in
-  `--judge <agent id>`, and `record_extend` the `extend` line, with no `--judge`. Read § At the cap: a judge's waiver
-  before recording it.
+  Run `dispatch[0]` as its read-only `agent` with `brief` and `extension`. It returns its verdict with evidence;
+  record it with the line for that verdict, its `--reason` naming that evidence:
+  - `waiver.may` true: `brief` also offers `land`. `record` takes `land` or `stop`, ending in `--judge <agent id>`,
+    and `record_extend` takes `extend`, with no `--judge`. Read § At the cap: a judge's waiver before recording it.
+  - Otherwise: `record` takes `extend` or `stop`. Then run the step again.
   The session never writes a verdict the judge did not give.
 - `extension_ask`: the judge said extend, under `"ask"` or over a red flag, and the Human decides. Ask `question` with AskUserQuestion, with `options`
   as given, word for word. Record what the Human picked: `aidrian pr extend <n> --human approve` for the option that

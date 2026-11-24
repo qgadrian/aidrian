@@ -158,12 +158,15 @@ export function noteOutcome(state, { status, head, reason, carried_from, carried
 // An entry another repository's record moved to its own (adoptOwed) is owed there, not here.
 export const owed = (state) => pendingOf(state).filter((entry) => !entry.answered && !entry.moved);
 
+// What makes two owed entries one: the entry's id, else what it was made of.
+export const pendingKey = (entry) => entry.id ?? `${entry.kind}@${entry.at}@${entry.head}@${entry.by}`;
+
 // One list from two copies of `pending`, such as the one on disk and one a long step read before: every entry of
 // either, and of an entry in both, each mark either holds.
 export function mergePending(a, b) {
   const out = new Map();
   for (const entry of [...pendingOf({ pending: a }), ...pendingOf({ pending: b })]) {
-    const key = entry.id ?? `${entry.kind}@${entry.at}@${entry.head}@${entry.by}`;
+    const key = pendingKey(entry);
     const seen = out.get(key) ?? {};
     const merged = { ...seen, ...entry };
     for (const mark of ['sent', 'answered']) if (seen[mark] ?? entry[mark]) merged[mark] = seen[mark] ?? entry[mark];

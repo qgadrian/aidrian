@@ -527,7 +527,9 @@ whose state folder is not the default branch's. Exit 1 says why; exit 3 is a rea
 At the cap, a session types no gate command: the review step runs the same gate and reports it.
 At `round_limit` and at `extension_check`, the JSON of `aidrian pr review` carries `waiver`, `{ may, why }`.
 Only with `may` true is a judge offered `land`: the check's own judge at `extension_check`, or one judge the step's `dispatch` names at `round_limit`.
-The session records that judge's verdict with `aidrian pr extend <PR> --verdict land|stop --reason "<evidence>" --head <sha> --judge <agent id>`.
+With `may` true, the step's `record` takes `land` or `stop`, naming the judge:
+`aidrian pr extend <PR> --verdict land|stop --reason "<evidence>" --head <sha> --judge <agent id>`.
+At `extension_check`, its `record_extend` takes `extend`, with no `--judge`; with `may` false, `record` takes `extend` or `stop`.
 `land` asks the same gate again, and is refused, writing nothing, whenever it refuses.
 It then records the `waive` that `aidrian pr waive --verdict waive --judge` records, through the same code; `stop` with `--judge` records its `refuse`.
 [At the cap under autopilot](review.md#at-the-cap-under-autopilot) has the details.

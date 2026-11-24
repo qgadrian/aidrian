@@ -1304,11 +1304,15 @@ With `waiver.may` true, one judge rules on both questions:
 - At `extension_check`, the check's own judge may rule `extend`, `stop`, or `land`.
 - At `round_limit`, where no check runs, the step's `dispatch` names one read-only `code-reviewer` that rules `land` or `stop`.
 
-The session records the judge's verdict with the `record` it was given, naming the judge's agent id:
+The session records the judge's verdict with the line the step gave for it.
+With `waiver.may` true, `record` takes `land` or `stop` and names the judge's agent id, and `record_extend`, at `extension_check` only, takes `extend`:
 
 ```sh
 aidrian pr extend <PR> --verdict land|stop --reason "<evidence>" --head <sha> --judge <agent id>
+aidrian pr extend <PR> --verdict extend --reason "<evidence>" --head <sha> [--check <id>]
 ```
+
+Otherwise `record` takes `extend` or `stop`, with no `--judge`, as [Extra rounds](#extra-rounds) shows.
 
 `land` stops a check waiting for its verdict, as `stop` does, and the cap then stands as `round_limit`, at the time and with the cause the step kept.
 It asks the gate again on that record and head, and is refused, writing nothing, whenever the gate refuses.

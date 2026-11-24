@@ -1168,6 +1168,23 @@ test('aidrian pr extend --verdict land weighs the reviews another record file ow
   assert.equal(JSON.stringify(readLocalState(r.project(), 5, 'acme/notes')), before, 'nothing written');
 });
 
+test('a record newer than the file on disk that holds the owed review answered lands: the entry is counted once, as that record holds it', async (t) => {
+  const r = repo(t, { local: ON });
+  r.record(5, atCheck);
+  const owing = { id: 'owed-1', kind: 'review', head: HEAD, at: T0, by: 'someone', repo: 'acme/notes' };
+  const other = emptyState(5, 'other/notes');
+  other.pending = [owing];
+  writeLocalState(r.project(), other, { repo: 'other/notes' });
+  // The summary comment's copy is newer than this machine's file, and holds that review answered.
+  const copy = emptyState(5, 'acme/notes');
+  atCheck(copy);
+  copy.revision = 50;
+  copy.pending = [{ ...owing, answered: { at: '2026-11-03T14:10:00.000Z', head: HEAD, by: 'received' } }];
+  const comments = [{ id: 1, user: { login: 'someone' }, author_association: 'MEMBER', body: summaryBody(copy, null, 'extension_check', { reading: { visibility: 'PRIVATE', inside: true }, checker: { allows: () => true } }) }];
+  const { code, out } = await extend(t, r, ['--verdict', 'land', '--reason', 'nits', '--judge', JUDGE.judge_id], { forge: landForge(r, { comments }) });
+  assert.deepEqual([code, out.waiver.verdict], [0, 'waive']);
+});
+
 test('at a round_limit with no check, the judge it dispatched lands with one extend call, and its stop records the refuse', async (t) => {
   const r = repo(t, { local: ON });
   r.record(5, roundLimit);

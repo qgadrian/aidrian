@@ -13,7 +13,7 @@ import { passInput } from '../plugins/aidrian/lib/review/dispatch.mjs';
 import { reviewPrompt, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
 import { lateResiduals, recordPass, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { reviewProblem } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
-import { contextFindings, heldWaiver as heldWaiverOf, MAX_RESIDUAL_CHARS, MAX_RESIDUALS, MAX_SETTLED, namedBy, offeredCarried, recordSettled, residualTexts, RULED_HEADING, ruledLines, settledBrief, settledEntries, splitRuled, withEndedWaivers } from '../plugins/aidrian/lib/review/settled.mjs';
+import { bodyAccepts, contextFindings, heldWaiver as heldWaiverOf, MAX_RESIDUAL_CHARS, MAX_RESIDUALS, MAX_SETTLED, namedBy, offeredCarried, recordSettled, residualTexts, RULED_HEADING, ruledLines, settledBrief, settledEntries, splitRuled, withEndedWaivers } from '../plugins/aidrian/lib/review/settled.mjs';
 import { emptyState, readLocalState, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { freshId, recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
 import { postedCopy } from '../plugins/aidrian/lib/review/publish.mjs';
@@ -1407,6 +1407,42 @@ test('every hold keys on the id a ruling names: on a record with no text, a fixe
   const bare = { ...emptyState(7, 'o/r'), passes: { p: { head: 'h', list: [{ file: 'src/a.js', state: 'fixed' }], carried: [{ file: 'src/a.js', severity: 'medium', residual: true, ended: true }] } } };
   assert.ok(heldWaiverOf(bare));
   assert.deepEqual(ruledLines(state).length, 0, 'every waiver ended with a listing: no line');
+});
+
+test('the auto-merge gate judges only the waivers the body still accepts: one the body dropped stops holding once the review of the head re-weighed it (#623)', () => {
+  const HEAD = 'b'.repeat(40);
+  const OLDER = 'c'.repeat(40);
+  const RESIDUAL_TEXT = 'Preserve citations: only `cites` is a citation';
+  // As #623's record held it: the body dropped the residual, so the pass that reviewed the head carries it ended.
+  const ended = { id: 'R5-11', mint: 'eb765f86', title: 'Preserve citations', already_ruled: 'Preserve citations', from: 'residual', severity: 'medium', settled_severity: 'medium', residual: RESIDUAL_TEXT, ended: true, file: 'src/a.js', line: 3, ruled_id: 'R1-1' };
+  const { ended: _ended, ...standing } = ended;
+  const record = (passes) => ({ ...emptyState(7, 'o/r'), passes, outcome: { status: 'received', head: HEAD, at: '2026-11-24T11:31:20.832Z' } });
+  const bodyWith = (lines) => `## Summary\n\nx\n\n## Accepted residuals\n\n${lines.map((line) => `- ${line}`).join('\n')}\n`;
+  const dropped = { accepts: bodyAccepts(bodyWith(['Another: reason']), undefined) };
+  const gate = (state, reads = dropped) => reviewProblem(state, HEAD, {}, reads);
+  const onHead = record({ 'engine:codex-local': { head: HEAD, list: [], carried: [ended] }, 'engine:pr-bot': { head: HEAD, bot: true } });
+  assert.equal(gate(onHead), null, 'the body dropped it, and the review of the head was given it to weigh again');
+  assert.equal(heldWaiverOf(onHead, { head: HEAD, ...dropped }), null);
+  assert.match(reviewProblem(onHead, HEAD) ?? '', /and no listing holds it fixed, so the merge waits for the Human$/u, 'with no body read, the hold stays');
+  assert.ok(heldWaiverOf(onHead), 'as a judge\'s verdict at the round cap reads it, the hold stays');
+  for (const line of [RESIDUAL_TEXT, 'Preserve citations: reworded, the same finding']) {
+    assert.match(gate(onHead, { accepts: bodyAccepts(bodyWith([line]), undefined) }) ?? '', /no listing holds it fixed/u, `a body that still lists it holds, whatever ended it on the pass: ${line}`);
+  }
+  const past = bodyWith([...Array.from({ length: MAX_RESIDUALS }, (_, i) => `Unrelated ${i}: why`), RESIDUAL_TEXT]);
+  assert.ok(gate(onHead, { accepts: bodyAccepts(past, undefined) }), 'past the residual limit, the body still lists it');
+  assert.ok(gate(onHead, { accepts: bodyAccepts(`## Residuals\n\n- ${RESIDUAL_TEXT}\n`, 'Residuals') }), 'under the team\'s own section');
+  const earlier = record({ 'engine:codex-local': { head: HEAD, list: [], carried: [ended] }, 'agent:code-reviewer': { head: OLDER, list: [], ruled: [standing] } });
+  assert.equal(gate(earlier), null, 'an earlier head\'s standing entry of that finding ends with it');
+  const stillOffered = record({ 'engine:codex-local': { head: HEAD, list: [], carried: [standing] } });
+  assert.match(gate(stillOffered) ?? '', /^the accepted residual "Preserve citations: only `cites` is a citation" waived a finding above low severity, so the merge waits for the Human$/u, 'a waiver the head\'s pass still carries holds');
+  const notReweighed = record({ 'engine:codex-local': { head: OLDER, list: [], carried: [ended] } });
+  assert.match(gate(notReweighed) ?? '', /no listing holds it fixed/u, 'ended on another head only: no review of this head weighed it');
+  const another = record({ 'engine:codex-local': { head: HEAD, list: [], carried: [{ ...ended, ruled_id: 'R1-2', id: 'R5-12' }] }, 'agent:code-reviewer': { head: OLDER, list: [], ruled: [standing] } });
+  assert.ok(gate(another), 'the head ended another finding, not this one');
+  let reads = 0;
+  assert.equal(reviewProblem(stillOffered, HEAD, {}, { accepts: () => { reads += 1; return false; } }) !== null, true);
+  assert.equal(reads, 0, 'the body is read only for a waiver the head\'s pass ended');
+  assert.throws(() => reviewProblem(onHead, HEAD, {}, { accepts: () => { throw new Error('could not read the body'); } }), /could not read the body/u);
 });
 
 test('splitRuled keeps a repeat`s security flag, so a low security finding a residual waives posts no place', () => {

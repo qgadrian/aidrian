@@ -269,6 +269,31 @@ test('aidrian pr auto-merge --check is the gate alone; without it, the merge sta
   assert.deepEqual([failed.code, failed.out, failed.err], [3, [], ['aidrian pr auto-merge: could not read whether #7 merged with gh (gh: Bad credentials (HTTP 401))']]);
 });
 
+test('review: a waiver above low the body dropped, which the review of the head weighed again, no longer holds the gate (#623)', (t) => {
+  const r = repo(t);
+  const residual = 'Preserve citations: only `cites` is a citation';
+  const ended = { id: 'R5-11', title: 'Preserve citations', already_ruled: 'Preserve citations', from: 'residual', severity: 'medium', settled_severity: 'medium', residual, ended: true, file: 'src/a.js', line: 3, ruled_id: 'R1-1' };
+  r.record((state) => {
+    finished(state);
+    state.passes = { 'engine:codex-local': { head: HEAD, list: [], carried: [ended] } };
+  });
+  const body = (lines) => `## Summary\n\nx\n\n## Accepted residuals\n\n${lines.map((line) => `- ${line}`).join('\n')}\n`;
+  const at = (text, head = HEAD) => ({ pullHead: () => ({ head: { sha: head }, body: text }) });
+  const gone = run(t, r, ['7'], at(body(['Another: reason'])));
+  assert.deepEqual([gone.code, gone.out], [0, ['auto-merge allowed for #7 at abcdef1, not merged yet: squash, delete the branch, keep the worktree']]);
+  assert.deepEqual(gone.calls.filter((call) => call[0] === 'pull'), [['pull', 'acme/notes', 7, 'github.com']], 'the body is read once, at the head');
+  assert.deepEqual(run(t, r, ['7'], at(null)).code, 0, 'an empty body lists nothing');
+  const listed = run(t, r, ['7'], at(body([residual])));
+  assert.equal(listed.code, 1);
+  assert.match(listed.out[0], /^auto-merge off for #7: the accepted residual "Preserve citations: only `cites` is a citation" waived a finding above low severity and no listing holds it fixed, so the merge waits for the Human$/u, 'a body that still lists it holds');
+  const moved = run(t, r, ['7'], at(body([]), OLD));
+  assert.deepEqual([moved.code, moved.err], [3, ['aidrian pr auto-merge: the head of #7 moved from abcdef1 to 1234567 while the gate read its body']]);
+  const failed = run(t, r, ['7'], { pullHead: () => { throw Object.assign(new Error('Command failed'), { stderr: 'gh: Bad credentials (HTTP 401)\n' }); } });
+  assert.deepEqual([failed.code, failed.err], [3, ['aidrian pr auto-merge: could not read the body of #7 with gh (gh: Bad credentials (HTTP 401))']]);
+  r.record((state) => finished(state));
+  assert.deepEqual(run(t, r, ['7'], { pullHead: () => assert.fail('no waiver: no body read') }).code, 0);
+});
+
 test('every forge call after the view names the host of the pull request\'s URL', (t) => {
   const r = repo(t);
   r.record((state) => finished(state));

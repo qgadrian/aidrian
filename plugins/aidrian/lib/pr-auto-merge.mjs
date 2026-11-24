@@ -29,8 +29,9 @@
 //   7. review: nobody's latest review requests changes, and this machine's review record (lib/review/state.mjs), scoped
 //      to the pull request's repository, holds the outcome `received` on exactly the pull request's current head,
 //      and nothing is owed. A waiver above low through an accepted residual, on any pass record, keeps it off too, also
-//      after the waiver ends. A reviewer's output cannot end that hold; a listing of the finding's title and file as
-//      fixed does (settled.mjs heldWaiver).
+//      after the waiver ends, until a listing holds the finding as fixed, or until the body no longer lists it and a pass
+//      of exactly the head carries it as ended, having weighed it again (settled.mjs heldWaiver, bodyAccepts): the gate then
+//      reads the body through the forge, at the head, once.
 //      `round_limit` on exactly the head counts in place of `received` only with a judge's `waive` verdict that stands for
 //      that head under the unattended waiver (lib/review/waiver-stand.mjs waivedReview): the team's
 //      `github.unattendedWaiver.allow` on both branches, read with the policies above, and this machine's switch; every
@@ -96,7 +97,7 @@ import { readHumanSignoffs, trustVerdict } from './review/merge-trust.mjs';
 import { closingContextOf, closingTextsProblem, markOnce } from './closing-words.mjs';
 import { driverHold } from './run-driver.mjs';
 import { readUnattendedMark } from './unattended-mark.mjs';
-import { heldWaiver } from './review/settled.mjs';
+import { bodyAccepts, heldWaiver } from './review/settled.mjs';
 import { owed } from './review/state.mjs';
 import { waiverKind } from './review/waiver.mjs';
 import { runOf, waivedReview } from './review/waiver-stand.mjs';
@@ -431,6 +432,20 @@ export function outsiderOn(forge, { repo, host, number }, reviewer) {
   return outsider ? outsider.user?.login ?? 'a deleted account' : null;
 }
 
+// settled.mjs bodyAccepts over the body of the pull request `pr` ({ repo, host, number, head }), read through the forge at
+// exactly its head. Throws, naming the read, when gh fails, the head moved, or gh gives no body.
+function bodyAt(forge, { repo, host, number, head }, section) {
+  let pull;
+  try {
+    pull = forge.pull(repo, number, { host });
+  } catch (error) {
+    throw new Error(`could not read the body of #${number} with gh (${ghError(error)})`);
+  }
+  if (pull?.head?.sha !== head) throw new Error(`the head of #${number} moved from ${head.slice(0, 7)} to ${String(pull?.head?.sha ?? 'none').slice(0, 7)} while the gate read its body`);
+  if (pull.body !== null && typeof pull.body !== 'string') throw new Error(`gh returned no body for #${number}`);
+  return bodyAccepts(pull.body ?? '', section);
+}
+
 // Who requested changes, as a string, or null: the review decision, then anyone's latest review.
 export function changesRequested({ reviewDecision, latestReviews }) {
   const reviewer = latestReviews.find((review) => review?.state === 'CHANGES_REQUESTED');
@@ -442,8 +457,10 @@ export function changesRequested({ reviewDecision, latestReviews }) {
 // owed, or a `none_needed` one that pr-auto-merge-docs.mjs noneNeededProblem lets stand, by `unreviewed`: { files, prefix,
 // review, errors, lists, listErrors }.
 // A finding above low that an accepted residual waived is the author's word on a reviewer's finding, so the merge waits
-// for the Human, whatever the review's outcome, and after the waiver ends, until a listing holds the finding as fixed.
-export function reviewProblem(state, head, unreviewed = {}) {
+// for the Human, whatever the review's outcome, and after the waiver ends, until a listing holds the finding as fixed, or,
+// with `accepts` (settled.mjs bodyAccepts over the pull request's body at `head`), until the body no longer lists it and a
+// pass of `head` re-weighed it (settled.mjs heldWaiver). `accepts` may throw, and its throw goes to the caller.
+export function reviewProblem(state, head, unreviewed = {}, { accepts = null } = {}) {
   if (!state) return 'this machine holds no review record for it: run `aidrian pr review`';
   const owing = owed(state);
   if (owing.length) return `${owing.length} review ${owing.length === 1 ? 'entry is' : 'entries are'} still owed`;
@@ -455,7 +472,7 @@ export function reviewProblem(state, head, unreviewed = {}) {
     const why = noneNeededProblem(outcome, unreviewed);
     if (why) return `${status}, and ${why}, so the merge waits for the Human`;
   } else if (outcome.status !== 'received') return status;
-  const waived = heldWaiver(state);
+  const waived = heldWaiver(state, { head, accepts });
   if (!waived) return null;
   // A record without the residual's text names the finding by its id.
   const finding = [waived.ruled_id, waived.id].find(isFindingId);
@@ -677,7 +694,19 @@ export function gateVerdict(argv, project, { forge = forgeFor(project.root), ses
       const unreviewed = { files: listed.files, prefix, review: policy.review, errors: policies.policyErrors, ...unreviewedLists(policies, pr), startDocs: loaded, tree, pluginRepository };
       const state = scoped(recordFor(project, pr.number, pr.repo), project, pr.repo);
       const changes = changesRequested(pr);
-      let problem = changes ?? reviewProblem(state, pr.head, unreviewed);
+      // The body at the head, read once and only for a waiver above low the head's review re-weighed: the gate holds only
+      // the waivers it still lists.
+      let accepted = null;
+      const accepts = (entry) => {
+        accepted ??= bodyAt(forge, pr, policy.github.pullRequest?.residuals?.section);
+        return accepted(entry);
+      };
+      let problem;
+      try {
+        problem = changes ?? reviewProblem(state, pr.head, unreviewed, { accepts });
+      } catch (error) {
+        return fail(error.message);
+      }
       // A sign-off of the Human's that a judge's verdict would otherwise need: merge trust's `signoff` stop.
       let owedSignoff = null;
       // The review trail, read at most once: for a verdict's bot check and for merge trust.

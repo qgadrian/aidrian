@@ -824,7 +824,7 @@ test('aidrian test changed runs a test file whose path holds pattern characters,
   const ran = spawnSync(process.execPath, [CLI, 'test', 'changed'], { cwd: dir, env: ENV, encoding: 'utf8' });
   assert.equal(ran.status, 0, ran.stdout + ran.stderr);
   assert.ok(ran.stdout.includes("'app/[[]org[]]/(group)/[[]...slug[]]/page.test.mjs'"), ran.stdout);
-  assert.match(ran.stdout, /ℹ tests 1\nℹ suites 0\nℹ pass 1\n/u);
+  assert.match(ran.stdout, /[ℹ#] tests 1\n[ℹ#] suites 0\n[ℹ#] pass 1\n/u, 'node 22 prints TAP off a terminal, later ones the spec summary');
   const [row] = checkRows({ command: 'aidrian test changed', cwd: dir, output: ran.stdout, exitZero: true, tree: () => ({ tree: 't', trackedTree: 't' }) });
   assert.deepEqual([row.command, row.status, row.pass], ['aidrian test changed', 'passed', 1]);
   // jest, by its name or at the end of a script chain, takes a backslash before each pattern character.

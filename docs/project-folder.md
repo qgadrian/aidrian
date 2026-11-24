@@ -274,6 +274,8 @@ and that it holds the sections a resume needs ([handoff.md](handoff.md#the-skill
 ([handoff.md](handoff.md#the-gate)); `aidrian handoff route` prints that route as this host runs it, and writes nothing
 ([handoff.md](handoff.md#the-route-the-host-runs)); `aidrian handoff verify <copy> <sha256>` holds the copy a background
 continuation reads to the sha256 its first message names, and prints the bytes it checked for that session to follow
+([handoff.md](handoff.md#the-background-route)); `aidrian handoff owner <id>` names the background session that owns
+the work of a handoff chain now, from the id of any earlier one, and writes nothing
 ([handoff.md](handoff.md#the-background-route)).
 `aidrian report` summarizes the [dispatch log](dispatch-log.md).
 

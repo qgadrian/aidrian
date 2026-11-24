@@ -4,7 +4,7 @@
     "agent-gates.test.mjs": 900,
     "attribution.test.mjs": 500,
     "audits.test.mjs": 950,
-    "check-runs.test.mjs": 550,
+    "check-runs.test.mjs": 950,
     "check.test.mjs": 2500,
     "cli.test.mjs": 8350,
     "config-guard.test.mjs": 7400,

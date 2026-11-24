@@ -498,15 +498,59 @@ export function startedFolders(store, session, { now = Date.now() } = {}) {
   const names = (record) => (record.session === null
     ? foldCase(record.id) === own || (record.id.length >= SHORT_ID && own.startsWith(foldCase(record.id)))
     : foldCase(record.session) === own);
-  const folders = new Set();
+  return [...new Set(startRecords(store, { now }).filter(names).map((record) => record.cwd))];
+}
+
+// Every background start of the last day the store holds. The store is listed here, from its own listing, and each file
+// read checks the guards' deadline (deadline.mjs), so a store of many files cannot run a hook past its budget.
+function startRecords(store, { now }) {
+  const records = [];
   // Accepted residual: the store's one listing runs before the first deadline check; each file read after it checks.
   for (const name of listStore(store)) {
     checkDeadline();
     const ran = STARTED_FILE.exec(name)?.[1];
     const record = ran ? readStarted(store, ran, { now }) : null;
-    if (record && names(record)) folders.add(record.cwd);
+    if (record) records.push(record);
   }
-  return [...folders];
+  return records;
+}
+
+// The background session that owns the work of a handoff chain now (docs/handoff.md#the-background-route): from the
+// start record `session` made in the last day, each next record the session it started made in turn, as one that hands
+// off again does, to the last, as { record, hops }, where `hops` counts the starts walked, 1 for `session`'s own. The
+// walk ends at a record that names no full session id and at a session met twice, and never takes a project run's
+// start, which is another piece of work than the brief's: the session that made it owns the brief still. Null when
+// `session` made no start.
+export function chainOwner(store, session, { now = Date.now() } = {}) {
+  let record = readStarted(store, session, { now });
+  if (!record) return null;
+  const seen = new Set([foldCase(session)]);
+  let hops = 1;
+  while (!record.project && typeof record.session === 'string' && !seen.has(foldCase(record.session)) && hops < CHAIN_CEILING) {
+    seen.add(foldCase(record.session));
+    const next = readStarted(store, record.session, { now });
+    if (!next || next.project) break;
+    record = next;
+    hops += 1;
+  }
+  return { record, hops };
+}
+
+// The owner of the work of the background session `id` the store holds a start record of from the last day: `id` is its
+// full id, or the id the gate printed for it, of SHORT_ID characters or more, which its full id starts with, in the case
+// the disk folds to. { record, hops } as chainOwner, `hops` counting the start of `id` too; { ambiguous: n } when n
+// records name it; null when none does.
+export function ownerOfStarted(store, id, { now = Date.now() } = {}) {
+  if (store.refused || typeof id !== 'string' || id.length < SHORT_ID || !SESSION_ID.test(id)) return null;
+  const given = foldCase(id);
+  const names = (record) => [record.id, record.session].some((each) => typeof each === 'string' && foldCase(each).startsWith(given));
+  const found = startRecords(store, { now }).filter(names);
+  if (found.length > 1) return { ambiguous: found.length };
+  if (!found.length) return null;
+  const [first] = found;
+  const later = !first.project && typeof first.session === 'string' ? chainOwner(store, first.session, { now }) : null;
+  // A project run's start the session made is other work, as chainOwner never takes one.
+  return later && !later.record.project ? { record: later.record, hops: later.hops + 1 } : { record: first, hops: 1 };
 }
 
 // A task worktree's record (noteWorktree): the file of `worktree` made in `session`, and its shape.

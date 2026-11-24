@@ -1440,6 +1440,11 @@ test('a subagent, and a session the background route started, may not write in t
     ['Bash', { command: `python3 -c "open('${own}/prs.jsonl', 'a').write('{}')"` }],
     ['Bash', { command: `node -e "require('fs').appendFileSync('${own}/links.jsonl', '{}')"` }],
     ['Bash', { command: 'python3 -c "open(\'sessions/abc-1/usage.json\', \'w\')"' }],
+    // A placeholder path beside a real one hides neither, and one that climbs out of its placeholder with `..` counts.
+    ['Bash', { command: `python3 -c "open('<state>/sessions/<id>/prs.jsonl'); open('${own}/prs.jsonl', 'a')"` }],
+    ['Bash', { command: 'python3 -c "open(\'<x>/../sessions/abc-1/prs.jsonl\', \'a\')"' }],
+    // A `>` that is no placeholder's ends the placeholder path: the name after it still counts.
+    ['Bash', { command: 'python3 -c "open(\'<id>>prs.jsonl\', \'a\')"' }],
     // A file appended in place, by its name alone, after a `cd` the guard cannot follow.
     ['Bash', { command: 'cd "$X" && echo {} >> prs.jsonl' }],
     ['Bash', { command: 'cd "$X" && echo {} >> links.jsonl' }],
@@ -1457,6 +1462,13 @@ test('a subagent, and a session the background route started, may not write in t
     ['Bash', { command: 'cd "$X" && echo {} > sessions/notes.md' }],
     ['Bash', { command: 'cd "$X" && echo {} > usage.json' }],
     ['Bash', { command: 'cd "$X" && echo {} > old-prs.jsonl.bak' }],
+    // Interpreter code that writes a plan whose text names a session file by a placeholder path: prose, not a write there.
+    ['Bash', { command: "python3 - <<'EOF'\np='plan.md'\nnew='''a row lands in `<state>/sessions/<session id>/prs.jsonl`'''\nopen(p,'w').write(new)\nEOF" }],
+    ['Bash', { command: "node -e \"require('fs').writeFileSync('plan.md', 'see <state>/sessions/<id>/checks.jsonl')\"" }],
+    // In a Markdown link's destination, and in parentheses.
+    ['Bash', { command: "python3 - <<'EOF'\nopen('plan.md','w').write('''the [ledger](<state>/sessions/<id>/prs.jsonl), (or <state>/sessions/[draft]/links.jsonl)''')\nEOF" }],
+    // Heredoc data written to another file is no write to the paths it quotes.
+    ['Bash', { command: `cat > ${path.join(dir, 'plan.md')} <<'EOF'\nThe hook appends to ${own}/prs.jsonl.\nEOF` }],
   ];
   for (const [session, agent] of [['plain-session', true], [full, false]]) {
     for (const [tool, toolInput] of blocked) {
@@ -1470,6 +1482,37 @@ test('a subagent, and a session the background route started, may not write in t
   for (const [tool, toolInput] of blocked.filter(([, input]) => !String(input.command ?? '').startsWith('chmod -R'))) {
     assert.equal((await run('plain-session', tool, toolInput)).status, 0, `an attended session may: ${JSON.stringify(toolInput)}`);
   }
+});
+
+test('a placeholder path is prose only while no state folder has a bracket in its path: a state.dir with one stays guarded', async (t) => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-bracketed-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const bracketed = path.join(root, '<team>', 'state');
+  mkdirSync(path.join(bracketed, 'sessions', 'abc-1'), { recursive: true });
+  const { dir } = project(t, { version: 1, state: { dir: bracketed } });
+  const command = `python3 -c "open('${bracketed}/sessions/abc-1/prs.jsonl', 'a')"`;
+  const refused = await inHook({ input: JSON.stringify({ ...subagent(dir, 'Bash', { command }), session_id: 's1' }), cwd: dir, encoding: 'utf8' });
+  assert.equal(refused.status, 2, refused.stderr);
+  assert.match(refused.stderr, /the session folders/u);
+  // A state.dir spelled with no bracket, through a link to that folder, is guarded the same.
+  const linked = path.join(root, 'linked-state');
+  symlinkSync(bracketed, linked);
+  const viaLink = project(t, { version: 1, state: { dir: linked } }).dir;
+  const throughLink = `python3 -c "open('${bracketed}/sessions/abc-1/prs.jsonl', 'a')"`;
+  const linkRefused = await inHook({ input: JSON.stringify({ ...subagent(viaLink, 'Bash', { command: throughLink }), session_id: 's1' }), cwd: viaLink, encoding: 'utf8' });
+  assert.equal(linkRefused.status, 2, linkRefused.stderr);
+  // A long interpreter body, in a project whose folders have no bracket so the placeholder read runs, takes linear time.
+  const plain = project(t, { version: 1 }).dir;
+  const long = `python3 -c "x='${'a'.repeat(200_000)}<'; y='<id>'; open('prs.jsonl', 'a')"`;
+  const started = process.cpuUsage();
+  const longRefused = await inHook({ input: JSON.stringify({ ...subagent(plain, 'Bash', { command: long }), session_id: 's1' }), cwd: plain, encoding: 'utf8' });
+  assert.equal(longRefused.status, 2, longRefused.stderr);
+  const { user } = process.cpuUsage(started);
+  assert.ok(user < 2_000_000, `${user} µs of processor time`);
+  // Placeholder prose cannot be told from such a path here, so it is refused too: the guard stays closed.
+  const prose = "python3 - <<'EOF'\nopen('plan.md','w').write('''rows land in `<state>/sessions/<session id>/prs.jsonl`''')\nEOF";
+  const held = await inHook({ input: JSON.stringify({ ...subagent(dir, 'Bash', { command: prose }), session_id: 's1' }), cwd: dir, encoding: 'utf8' });
+  assert.equal(held.status, 2, held.stderr);
 });
 
 // A session folder of `session` under the state folder of the project at `dir`, as the hooks make it.

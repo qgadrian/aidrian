@@ -62,6 +62,8 @@ const shellQuoted = (text) => `'${String(text).replaceAll("'", "'\\''")}'`;
 // { args, timeout, killSignal, at }. A gh that a short deadline stops before its node starts is still here.
 const ghSpawned = (log) => (existsSync(`${log}.spawns`) ? readFileSync(`${log}.spawns`, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []);
 const ghSpawns = (log) => ghSpawned(log).length;
+// How each of those calls ended, as the spawn's result reported it in the snapshot's process: { status, signal }.
+const ghExits = (log) => (existsSync(`${log}.spawns.exits`) ? readFileSync(`${log}.spawns.exits`, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []);
 
 // A fake gh that logs each call's arguments to `log`, waits `delay` ms, then prints `answer` and exits with `status`. With
 // `trap`, it ignores SIGTERM, as a gh stuck in its own cleanup may.
@@ -108,9 +110,8 @@ function setup(t, { config = {}, origin = null, branch = 'main', name = 'project
     rmSync(cpuLog, { force: true });
     const started = Date.now();
     const result = spawnSync(process.execPath, ['--import', GH_SPAWNS, '--import', CPU_USED, CLI, 'session', 'snapshot', ...args], { cwd, env: { ...env, GH_SPAWN_LOG: `${log}.spawns`, CPU_USED_LOG: cpuLog, ...extraEnv }, encoding: 'utf8', timeout: 30_000 });
-    const endedAt = Date.now();
     const cpu = existsSync(cpuLog) ? JSON.parse(readFileSync(cpuLog, 'utf8')) : null;
-    return { ...result, ms: endedAt - started, endedAt, cpuMs: cpu && (cpu.user + cpu.system) / 1000, json: args.includes('--line') || result.status !== 0 ? null : JSON.parse(result.stdout) };
+    return { ...result, ms: Date.now() - started, cpuMs: cpu && (cpu.user + cpu.system) / 1000, json: args.includes('--line') || result.status !== 0 ? null : JSON.parse(result.stdout) };
   };
   const projectState = () => spawnSync(process.execPath, [CLI, 'state'], { cwd: dir, env, encoding: 'utf8' }).stdout.trim();
   return { base, dir, state, temp, env, run, log, projectState };
@@ -467,10 +468,9 @@ test('worktrees counts the owned and the merged ones, and reads merged heads onc
   fakeGh(path.join(env.base, 'bin'), { log: env.log, delay: 5000 });
   const late = env.run(['--session', ID, '--deadline-ms', '200']);
   assert.deepEqual(late.json.worktrees, { owned: 1, mergedNotCleaned: 1, stale: true }, 'a refresh past the deadline shows the cached value as stale');
-  // From gh's spawn, as the snapshot's own process recorded it, to the snapshot's exit: the node and git startups a loaded
-  // machine slows come before it.
-  const lateMs = late.endedAt - ghSpawned(env.log).at(-1).at;
-  assert.ok(lateMs < 4000, `${lateMs} ms`);
+  // What the snapshot asked of the late gh, recorded in its own process before the spawn: the 200 ms deadline and SIGKILL.
+  // Load cannot change what is asked, so no wall time is compared; 'a gh that ignores SIGTERM' shows the kill lands.
+  assert.deepEqual((({ timeout, killSignal }) => ({ timeout, killSignal }))(ghSpawned(env.log).at(-1)), { timeout: 200, killSignal: 'SIGKILL' });
   // Calls the snapshot made, counted in its process: the 200 ms deadline can stop a slowly started gh before it logs one.
   assert.equal(ghSpawns(env.log), 2);
   assert.deepEqual(env.run(['--session', ID]).json.worktrees.stale, true);
@@ -555,7 +555,9 @@ test('a gh that ignores SIGTERM is killed at the deadline', (t) => {
   // default, and SIGKILL, which the shell's `trap '' TERM` cannot ignore. Load cannot change what is asked.
   const spawned = ghSpawned(env.log);
   assert.deepEqual(spawned.map(({ timeout, killSignal }) => ({ timeout, killSignal })), [{ timeout: 1500, killSignal: 'SIGKILL' }]);
-  // No wall-clock bound: when the kill lands depends on the scheduler, and the request above is what aidrian controls.
+  // And the signal that ended it, as the spawn's result reported it: SIGKILL, delivered. No wall-clock bound: when the kill
+  // lands depends on the scheduler.
+  assert.deepEqual(ghExits(env.log), [{ status: null, signal: 'SIGKILL' }]);
   // Dead, not left behind: no heartbeat once the snapshot has exited.
   const beats = sizeOf(beat);
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);
@@ -1161,10 +1163,9 @@ test('prs: results cache 60s; past the deadline the cached rows are stale, and w
   writeFileSync(cache, JSON.stringify({ ...stored, attemptAt: Date.now() - 120_000 }));
   env.answer({ data: {} }, { delay: 5000 });
   const late = env.run(['--session', ID, '--deadline-ms', '200']);
-  // From gh's spawn, as the snapshot's own process recorded it, to the snapshot's exit: the node and git startups a loaded
-  // machine slows come before it.
-  const lateMs = late.endedAt - ghSpawned(env.log).at(-1).at;
-  assert.ok(lateMs < 4000, `${lateMs} ms`);
+  // What the snapshot asked of the late gh, recorded in its own process before the spawn: the 200 ms deadline and SIGKILL.
+  // Load cannot change what is asked, so no wall time is compared; 'a gh that ignores SIGTERM' shows the kill lands.
+  assert.deepEqual((({ timeout, killSignal }) => ({ timeout, killSignal }))(ghSpawned(env.log).at(-1)), { timeout: 200, killSignal: 'SIGKILL' });
   assert.deepEqual(late.json.prs, [{ ...PR_ROW, stale: true }]);
   assert.deepEqual(late.json.errors, []);
   // Calls the snapshot made, counted in its process: the 200 ms deadline can stop a slowly started gh before it logs one.
@@ -1265,10 +1266,9 @@ test('tickets: past the deadline the branch`s key still shows, prs alone is in e
   rmSync(path.join(env.folder, PRS_CACHE.name));
   env.answer({ data: {} }, { delay: 5000 });
   const late = env.run(['--session', ID, '--ticket-prefixes', 'ABC', '--deadline-ms', '200']);
-  // From gh's spawn, as the snapshot's own process recorded it, to the snapshot's exit: the node and git startups a loaded
-  // machine slows come before it.
-  const lateMs = late.endedAt - ghSpawned(env.log).at(-1).at;
-  assert.ok(lateMs < 4000, `${lateMs} ms`);
+  // What the snapshot asked of the late gh, recorded in its own process before the spawn: the 200 ms deadline and SIGKILL.
+  // Load cannot change what is asked, so no wall time is compared; 'a gh that ignores SIGTERM' shows the kill lands.
+  assert.deepEqual((({ timeout, killSignal }) => ({ timeout, killSignal }))(ghSpawned(env.log).at(-1)), { timeout: 200, killSignal: 'SIGKILL' });
   assert.deepEqual([late.json.tickets, late.json.prs, late.json.errors], [[{ key: '#42', source: 'branch' }], null, ['prs']]);
   // Calls the snapshot made, counted in its process: the 200 ms deadline can stop a slowly started gh before it logs one.
   assert.equal(env.spawns(), 2, 'the late snapshot started one forge call, and the tickets section none');

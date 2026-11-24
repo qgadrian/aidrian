@@ -5,6 +5,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rea
 import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
 import { inboxPath, lessons, pluginInboxPath } from '../plugins/aidrian/lib/lesson-inbox.mjs';
@@ -14,6 +15,7 @@ import { projectAt, projectId, stateDir } from '../plugins/aidrian/lib/project.m
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SCRIPTS = path.join(ROOT, 'plugins/aidrian/scripts');
+const WAITS = path.join(ROOT, 'test/fixtures/waits.mjs');
 
 // A copy of the example consumer in a git repository, with its own state and temporary folders. The variables are set
 // for this process too, so library calls and hook processes share the state folder.
@@ -188,11 +190,12 @@ test('a hook blocks at once while the inbox lock is held, and the next block rec
   const amend = { tool_name: 'Bash', tool_input: { command: 'git commit --amend' }, session_id: 'locked-1' };
   for (let i = 1; i < REPEATED_DENIALS; i += 1) assert.equal(hook('hook-bash.mjs', amend).status, 2);
   const release = holdLock(pluginInboxPath());
-  const started = Date.now();
-  const third = hook('hook-bash.mjs', amend);
-  const took = Date.now() - started;
+  // "At once" is a block that never waits for the lock, counted in the hook's own process (test/fixtures/waits.mjs),
+  // not its wall time, which a loaded machine stretches: a lock's poll waits between its looks (lib/jsonl.mjs).
+  const waits = path.join(path.dirname(pluginInboxPath()), 'waits.jsonl');
+  const third = hook('hook-bash.mjs', amend, { NODE_OPTIONS: `--import ${pathToFileURL(WAITS).href}`, WAIT_LOG: waits });
   assert.deepEqual([third.status, third.stderr.startsWith('Blocked: ')], [2, true]);
-  assert.ok(took < 1500, `the third block took ${took} ms, inside the host's 5-second hook timeout`);
+  assert.equal(existsSync(waits) ? readFileSync(waits, 'utf8') : '', '', 'the third block waited on nothing');
   assert.deepEqual(plugin(), [], 'the lesson is not recorded while the lock is held');
   release();
   assert.equal(hook('hook-bash.mjs', amend).status, 2);

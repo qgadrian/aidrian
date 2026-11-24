@@ -20,12 +20,23 @@ import { runSignoff } from '../plugins/aidrian/lib/review-gate.mjs';
 import { botProblem, flowsFloor, NO_BOT, readHumanSignoffs, recordHumanSignoff, signoffFile, signoffFolder, signoffFolders, unsignedFlows } from '../plugins/aidrian/lib/review/merge-trust.mjs';
 import { recordSignoff } from '../plugins/aidrian/lib/review/run.mjs';
 import { emptyState, readLocalState, RECORD_LIST_CAP, recordFile, recordNames, recordProblem, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
-import { check, checkMcp, endpointOf, MERGE_MUTATIONS } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
+import { check as checkAt, checkMcp as checkMcpAt, endpointOf, MERGE_MUTATIONS } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 import { markDriver, markFolder, markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { check as signoffCheck, SUBAGENT_REASON, UNATTENDED_REASON } from '../plugins/aidrian/lib/rules/review-signoff.mjs';
 import { DRIVER, ISSUES, OTHER, recordIssue, runFixture, STARTED } from './project-start-fixture.mjs';
 
 import { hookCall } from './hook-call.mjs';
+
+// The merge guard's checks on a clock that stands at the call's start (its `startedAt` and `now`), so its 4 s budget
+// (WAIVER_DEADLINE_MS) never runs out on a loaded machine, where its records folder walk then refused an unattended merge
+// as "could not be listed in time". These tests check what the guard decides; the deadline's own tests give it the time
+// spent, as recordProblem's `pastDeadline` below and test/review-waiver.test.mjs do. A test that gives its own clock keeps it.
+const frozenAtCall = (options) => {
+  const at = Date.now();
+  return { startedAt: at, now: () => at, ...options };
+};
+const check = (command, options) => checkAt(command, frozenAtCall(options));
+const checkMcp = (toolInput, options) => checkMcpAt(toolInput, frozenAtCall(options));
 
 // An unattended merge never rests on a record a confined session can write (docs/review.md, Merge trust): the merge guard
 // and `aidrian pr auto-merge` confirm the team's policy and the review bot's verdict on the forge, and read the Human's

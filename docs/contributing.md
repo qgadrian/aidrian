@@ -86,20 +86,20 @@ These are warnings, and never fail the check.
 A full local run loads the machine, and a test that races a real deadline then fails at random.
 A test that does not test the deadline itself gives the code the time the test says:
 
-- In process, through the rule's clock seam, such as the ready hold's `now` (`deadlineForge`), frozen as `FROZEN` in
-  `test/ready-hold.test.mjs`.
-- For a hook the test runs as a program, the test runs the shipped hook under a test-owned preload,
-  `node --import test/fixtures/frozen-clock.mjs <hook>`, whose `Date.now` stands at the process's start, so the ready
-  hold gives each `gh` call the whole 3.5 s. The plugin reads no test switch from the environment: a hook a real
-  session starts keeps its whole deadline whatever variables it inherits.
-- A test that counts the `gh` calls a command made, or times them, reads them where the command makes them:
-  `node --import test/fixtures/gh-spawns.mjs <cli>` records each call in the command's own process before `gh` is
-  spawned, with the time limit and signal it asks for, so a `gh` a short deadline stops before it starts still counts.
-- A wall-clock bound measures only the part the deadline bounds, such as from `gh`'s spawn to the command's exit.
-- A "fast" claim that is not a deadline bounds processor time, not wall time: in process, `process.cpuUsage()`
-  around the call (`test/guard-budget.test.mjs`); for a command the test runs as a program,
-  `node --import test/fixtures/cpu-used.mjs <cli>` with `CPU_USED_LOG` set writes the command's processor time when
-  it exits, which counts that process alone, not its children.
+- In process, through the rule's clock seam, such as the ready hold's `now` (`deadlineForge`, `FROZEN` in
+  `test/ready-hold.test.mjs`), or a `Date.now` mock that steps 1 ms a read, which still ends a lock's wait
+  (`test/hook-bash-post.test.mjs`).
+- For a hook run as a program, under a test-owned preload: `test/fixtures/frozen-clock.mjs` stands `Date.now` at the
+  process's start, so the ready hold gives each `gh` call its 3.5 s; `test/fixtures/frozen-performance.mjs` stands
+  `performance.now`, the guards' clock (`lib/deadline.mjs`), at `FROZEN_PERFORMANCE_MS` from the hook's start (`late`
+  in `test/guard-budget.test.mjs`). The plugin reads no test switch: a real session's hook keeps its whole deadline.
+- `node --import test/fixtures/gh-spawns.mjs <cli>` records each `gh` call in the command's process before the spawn,
+  with the time limit and signal asked for, and in `<GH_SPAWN_LOG>.exits` the status and signal it ended with.
+  Assert what was asked, never the wall time from it.
+- `node --import test/fixtures/waits.mjs <hook>` with `WAIT_LOG` set records each sleep and `Atomics.wait` it starts:
+  "at once" is no wait at all.
+- A "fast" claim bounds processor time: `process.cpuUsage()` around an in-process call, or
+  `node --import test/fixtures/cpu-used.mjs <cli>` with `CPU_USED_LOG`, which counts that process alone.
 
 A test of the deadline itself keeps the real clock, and no production deadline changes for a test.
 

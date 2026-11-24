@@ -49,7 +49,8 @@ function frontmatterValue(text, key) {
 
 // `file` read when it is a regular file, or a link to one, opened so a FIFO or a device never blocks: { text, bytes },
 // `bytes` the count readSync returned, at most the lower of DEFINITION_CAP and `allowance`. { over: true }, with nothing
-// read, for a regular file of at most DEFINITION_CAP bytes past `allowance`; null for any other file, read or not.
+// read, for a regular file it opened of at most DEFINITION_CAP bytes past `allowance`; null for any other file, and for
+// one it cannot open.
 export function readDefinition(file, allowance = DEFINITION_CAP) {
   let fd;
   const most = Math.min(DEFINITION_CAP, allowance);
@@ -57,7 +58,7 @@ export function readDefinition(file, allowance = DEFINITION_CAP) {
     const entry = lstatSync(file);
     const target = entry.isSymbolicLink() ? statSync(file) : entry;
     if (!target.isFile() || target.size > DEFINITION_CAP) return null;
-    if (target.size > most) return { over: true };
+    // The allowance is judged on the opened file alone: one the hook cannot open is skipped, and spends nothing.
     fd = openSync(file, NO_BLOCK);
     const opened = fstatSync(fd);
     if (!opened.isFile() || opened.size > DEFINITION_CAP) return null;

@@ -82,15 +82,17 @@ test('a write counts under the transcript folder but in a project\'s memory fold
   for (const folder of [path.join(own, 'memory'), beside]) mkdirSync(folder, { recursive: true });
   const ask = (command) => transcriptWriteDenial(bash(command, beside), SETTINGS, { runSession: () => true, folders: [projects] });
   const sibling = [`printf x > ${own}/memory/note.md`, `rm -f ${own}/memory/*.md`, `rm -f ${beside}/build-*.tmp`, 'rm -f ./build-*.tmp', `rm -rf ${beside}`, `mv ${beside} ${beside}-old`];
-  // A write into a folder above one, or a mkdir -p of it, changes no transcript: judged by its own path.
-  const into = [`cp ${beside}/f ${root}`, `mv ${beside}/f ${root}`, `cp ${beside}/f ${path.dirname(projects)}`, `mkdir -p ${path.dirname(projects)}`, `mkdir -p ${root}`, `ln -s ${beside}/f ${root}`, `cp ${beside}/b* ${root}`, `cp -r ${beside}/[b]uild ${root}`];
-  for (const command of [...sibling, ...into]) assert.equal(ask(command), null, command);
+  // A mkdir, -p or not, of a folder above one changes no transcript.
+  const made = [`mkdir -p ${path.dirname(projects)}`, `mkdir -p ${root}`, `mkdir ${root}`];
+  for (const command of [...sibling, ...made]) assert.equal(ask(command), null, command);
+  // Failing closed: a cp, mv, or ln into a folder above one is refused, whatever it copies.
+  const into = [`cp ${beside}/f ${root}`, `mv ${beside}/f ${root}`, `cp ${beside}/f ${path.dirname(projects)}`, `ln -s ${beside}/f ${root}`, `cp ${beside}/b* ${root}`, `cp -r ${beside}/[b]uild ${root}`, `cp -r ${beside}/. ${root}`, `cp --target-directory=${root} ${beside}/f`];
   // A folder above a transcript folder, removed or moved, takes its transcripts along; a bracket counts as a glob.
   const above = [`rm -rf ${root}`, `rmdir ${path.dirname(projects)}`, `mv ${projects} ${beside}/x`, `mv ${path.dirname(projects)} ${beside}/y`, `mv -t ${beside} ${root}`, `mv -T ${beside} ${path.dirname(projects)}`, `ln -sfT ${beside} ${path.dirname(projects)}`,
     `rm -rf ${root}/.clau[d]e`, `mv ${root}/.cl[a]ude ${beside}/z`, `rmdir ${root}/[.]claude`, `mv -T ${beside} ${root}/.clau[d]e`];
   // A copy, move, or link into a folder writes its child by the source's name, which may be a transcript folder.
   const children = [`cp -r ${beside}/.claude ${root}`, `mv ${beside}/projects ${root}/.claude`, `ln -s ${beside}/projects ${path.dirname(projects)}`, `cp -r ${beside}/.c* ${root}`, `cp -r ${beside}/.clau[d]e ${root}`, `cp -r -t ${root} ${beside}/.claude`];
-  for (const command of [...above, ...children, `printf x > ${own}/notes.md`, `printf x > ${own}/a/b/c.jsonl`, `rm -rf ${projects}`, `rm -f ${own}/memory-*.md`, `rm -f ${projects}/*/memory/*.md`, `rm -rf ${root}/.cl*`, `rm -f ${root}/**/*.jsonl`]) {
+  for (const command of [...into, ...above, ...children, `mv --no-target-dir ${beside} ${root}/.claude`, `cp -r ${beside}/x ${root}/.c*`, `printf x > ${own}/notes.md`, `printf x > ${own}/a/b/c.jsonl`, `rm -rf ${projects}`, `rm -f ${own}/memory-*.md`, `rm -f ${projects}/*/memory/*.md`, `rm -rf ${root}/.cl*`, `rm -f ${root}/**/*.jsonl`]) {
     assert.notEqual(ask(command), null, command);
   }
   assert.equal(transcriptWriteDenial(bash(`rm -f ${own}/*`, beside), SETTINGS, { runSession: () => false, folders: [projects] }), null, 'no run under way');

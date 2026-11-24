@@ -1121,24 +1121,22 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   Any other spelling, such as `-- --custody`, `--custody=false`, or `--custody` twice, meets the attended rules.
   Neither the command nor the rule lets that form, or a resume from the continuation the host names, lift a halt.
 - Until the project's run records its end, its issues all done included, read from the ledgers alone and never from a
-  mark (`projectRunActive` with `untilEnd`), no session or subagent, attended or not, may write under a host's
-  transcript folder (`lib/transcript-guard.mjs`), but in the `memory` folder of a project folder there, where a host
-  keeps its memory, nor remove, move away, or replace the folder or a folder above it whole, as `rm -rf`, `rmdir`, a
-  source of `mv`, or the `-T` destination of `mv`, `cp`, or `ln` does to the config or home folder.
-  A write into a folder above it, such as a copy or move into the home folder, or a `mkdir -p` of one, is judged by
-  its own path, and a `cp`, `mv`, or `ln` into a folder also by each child it makes there, `<destination>/<source's
-  name>`, so `cp -r x/.claude ~` is refused like a write to that folder.
+  mark (`projectRunActive` with `untilEnd`), every session and subagent, attended or not, meets one rule, failing
+  closed (`lib/transcript-guard.mjs`).
+  A write the shared reader reports, and every operand of `cp`, `mv`, `ln`, `rm`, `rmdir`, or `unlink`, in any place
+  and after any option, is refused when it lies under a host's transcript folder, but in the `memory` folder of a
+  project folder there, where a host keeps its memory, or is the transcript folder or any folder above it.
+  A glob, an operand with `*`, `?`, or `[`, counts by its literal prefix, the parts before its first wildcard.
+  A folder a `mkdir` makes, with `-p` or not, never counts as one above it.
   The folders are the ones the host adapter names (`transcriptFolders`); on Claude Code, `projects/` under `~/.claude`
   of the account's home, and the folder the custody reader reads (`transcriptRoot`: under `CLAUDE_CONFIG_DIR`, else
   under the host's `HOME`).
-  A write counts by its path, and a glob, an operand with `*`, `?`, or `[`, by its literal prefix, the parts before its
-  first wildcard, by the same rule;
-  where the folder is unknown, a spelling `projects/<folder>/<file>.jsonl` counts.
+  Where the folder is unknown, a spelling `projects/<folder>/<file>.jsonl` counts.
   A project run reads the driver's continuation there, so no row is forged.
   Accepted residuals: a script that writes the file; a link already on disk a write passes through, since the guard is
-  for cooperating agents; an operand of those commands built from a variable, or after a `cd` the hook cannot follow;
-  and a glob whose prefix is a folder above the transcript folder, such as `rm -f ~/build-*.tmp`, is refused while the
-  run lasts, though it may reach no transcript.
+  for cooperating agents; an operand built from a variable, or after a `cd` the hook cannot follow.
+  During a run, a `cp`, `mv`, or `ln` into the home folder or any folder above the host's config folder is refused,
+  failing closed, as is any glob from there, such as `rm -f ~/build-*.tmp`.
 - With or without gates or a project, a subagent, and a main session the background handoff route started, may not
   write in the unattended marks' folder, nor change the mode or owner of it or of the state root, by a path, a glob
   that may reach it, a link already on disk, or, where the folder is unknown, a part named `unattended`. The same holds

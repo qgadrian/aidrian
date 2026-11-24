@@ -40,7 +40,7 @@ A row holds names, counts, durations, costs, and file paths. It never holds a pr
 | `tokens` | `input`, `output`, `cache_read`, and `cache_write` over the subagent's API requests, each request counted once. |
 | `models`, `cost_usd` | The models it used, and the cost estimated from list prices (the host adapter's `modelPrices`, [Model prices](#model-prices)). |
 | `requests`, `tool_requests`, `tool_calls` | Its API requests, the requests that made a tool call, and its tool calls, as on a `session` row's sides. |
-| `docs_read` | The knowledge docs it opened with the Read tool, as `{ "path", "bytes" }`: index path and size. `null` while `telemetry.docReads` is off. |
+| `docs_read` | The knowledge docs it opened with the Read tool or printed with a shell command (`cat`, `head`, `tail`, `sed`, `awk`, `less`, `more`, `bat`, `nl`), as `{ "path", "bytes" }`: index path and size. A shell path counts by its end, so `$W/docs/x.md` and a `docs/x.md` relative to a `cd` both name `docs/x.md`. `null` while `telemetry.docReads` is off. |
 | `delivered` | `file` when every `.md` or `.json` path its last message presents as delivered exists, `missing` when one does not or a handoff file its brief asked for is not written, `pending` when nothing is missing but such a handoff file is not due yet, since a background task of its own still runs and a later stop is sure ([delivery check](hooks.md#delivery-check)), `chat` for none. A pending file is never in `paths`, even when the message names it. |
 | `paths` | Those paths, at most 20. |
 | `running` | The background shells and agents it started that still ran as it stopped: the [background check](hooks.md#background-check). A row written before the field has none. |
@@ -83,8 +83,13 @@ A draft create and a review run are read from the commands a Bash call runs, as 
 a continued line, `&&`, and a command substitution count, and an `echo`, a heredoc body, or a quoted pattern that names one does not.
 A tool call counts only by its result, matched by its id, because a hook or the permissions can refuse a call after it is written.
 A Skill call and a draft create whose result is an error count nowhere: a hook's refusal, a permission denial, or the user's rejection.
-A review command counts only when its result holds the JSON object `aidrian pr review` or `aidrian pr await-review` prints,
-a `"status"` that one of them prints followed by `"pr"`, whether the result is an error or not.
+A review command whose output stays in the result counts only when its result holds the JSON object `aidrian pr review`
+or `aidrian pr await-review` prints, a `"status"` that one of them prints followed by `"pr"`, whether the result is an error or not.
+One that sends its output to a file (`> r.json`) prints none, so it counts by its recorded tool result instead: one with no
+error, or one that starts `Exit code 9` (`human_required`) or `Exit code 11` (`extension_ask`), as the
+[review-loop check](hooks.md#review-loop-check) reads it.
+A redirected review call the host runs in the background, asked for or moved there at its timeout, has its launch as its
+result, which shows nothing of how it ended, so it counts as no review run.
 An exit code cannot tell: it is the whole line's, so `aidrian pr review 12; test -f x` can fail after a review ran,
 and `false && aidrian pr review 12` fails with none. The command's own text, which a refusal quotes, is never read as its output.
 A call with no result, as in a session cut off mid-call, counts nowhere.

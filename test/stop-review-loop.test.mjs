@@ -201,6 +201,10 @@ test('reviewLoopOwed: a reason only under "auto", with a transcript, and for a d
   assert.equal(owed([of('draft', 40), of('review', null)]), null, 'a review of no known pull request may be of any');
   assert.equal(owed([of('draft', null), of('review', 41)]), null, 'a draft of no known pull request, and a review');
   assert.equal(owed([of('draft', 40), of('draft', 41), of('review', 41), of('review', 40)]), null);
+  assert.equal(owed([of('draft', 40), of('merge', 40)]), null, 'a merged pull request owes no review');
+  assert.equal(owed([of('draft', 40), of('merge', 0)]), null, 'a merge of the current branch may be of any');
+  assert.ok(owed([of('draft', 40), of('merge', 41)]), 'a merge of another pull request');
+  assert.ok(owed([of('merge', 40), of('draft', 40)]), 'a draft after the merge, such as a new pull request');
   assert.match(owed([of('draft', 40)]), /after it\. The draft owed a review: #40\. .* skill on it now/u, 'one draft');
   assert.match(owed([of('draft', 40), of('review', 40), of('draft', 41), of('draft', 41), of('draft', null)]),
     /The drafts owed a review: #41, a draft with no number shown\. .* skill on each now/u, 'each owed draft once, and one with no number');

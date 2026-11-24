@@ -149,8 +149,9 @@ export function subagentTranscripts(transcriptPath, sessionId) {
   }
 }
 
-// Every `file_path` the transcript's Read tool calls name, in order, once each. `keep` takes a request by key, as in
-// partOf; the Read calls of a request it refuses are left out.
+// Every file the transcript's Read tool calls name, and every Markdown file a Bash call prints with a program that reads
+// files (shellReads), in order, once each. `keep` takes a request by key, as in partOf; the calls of a request it refuses
+// are left out. Agents read docs with `cat` or `sed -n` as often as with Read, so the dispatch log's `docs_read` counts both.
 export function filesRead(text, keep = () => true) {
   const read = new Set();
   for (const line of text.split('\n')) {
@@ -158,10 +159,44 @@ export function filesRead(text, keep = () => true) {
     const content = entry?.message?.content;
     if (!Array.isArray(content) || !keep(requestKey(entry))) continue;
     for (const block of content) {
-      if (block?.type === 'tool_use' && block.name === 'Read' && typeof block.input?.file_path === 'string') read.add(block.input.file_path);
+      if (block?.type !== 'tool_use') continue;
+      if (block.name === 'Read' && typeof block.input?.file_path === 'string') read.add(block.input.file_path);
+      if (block.name === SHELL_TOOL && typeof block.input?.command === 'string') for (const file of shellReads(block.input.command)) read.add(file);
     }
   }
   return [...read];
+}
+
+// Claude Code's shell tool, whose commands the readers here walk.
+const SHELL_TOOL = 'Bash';
+
+// The programs whose operands are files they print, whole or in part.
+const FILE_READERS = new Set(['cat', 'head', 'tail', 'sed', 'awk', 'less', 'more', 'bat', 'nl']);
+
+// The `.md` operands of the reading programs a shell command runs (shell-lex walkCommands): resolved against the folder a
+// leading `cd` moved to when it is known, else as written, such as `docs/x.md` or `$W/docs/x.md`, whose end still names
+// the doc. A simple brace list, as in `docs/{a,b}.md`, names each file.
+export function shellReads(command) {
+  let commands;
+  try {
+    commands = walkCommands(command, null);
+  } catch {
+    return [];
+  }
+  return commands.flatMap(({ invocation, folder }) => {
+    if (!FILE_READERS.has(path.basename(invocation.program ?? ''))) return [];
+    const words = invocation.args.map((token) => token.text).filter((word) => !word.startsWith('-'));
+    return words.flatMap(braceList).filter((word) => word.endsWith('.md')).map((word) => {
+      const plain = path.normalize(word);
+      return folder && !path.isAbsolute(plain) && !plain.startsWith('$') ? path.resolve(folder, plain) : plain;
+    });
+  });
+}
+
+// The words a brace list such as `docs/{a,b}.md` expands to; any other word as it is.
+function braceList(word) {
+  const match = /^(?<head>[^{}]*)\{(?<items>[^{}]*,[^{}]*)\}(?<tail>[^{}]*)$/u.exec(word);
+  return match ? match.groups.items.split(',').map((item) => `${match.groups.head}${item}${match.groups.tail}`) : [word];
 }
 
 // Every `file_path` the transcript's Read, Write, Edit, MultiEdit, and NotebookEdit calls name, once each: the files the
@@ -247,6 +282,13 @@ function runsReview({ invocation }) {
   return words?.[0]?.text === 'pr' && ['review', 'await-review'].includes(words[1]?.text);
 }
 
+// Whether a walked command sends its standard output to a file, as `aidrian pr review 12 > r.json` does: a `>`, `>>`,
+// `>|`, `&>`, or `&>>` redirection with no descriptor or descriptor 1, not a duplication such as `>&2`. Such a review
+// prints no JSON into the transcript, so its call is read by the pull request it was given (settleCalls).
+const STDOUT_TO_FILE = new Set(['>', '>>', '>|', '&>', '&>>']);
+const writesStdout = ({ segment }) => segment.some((token, at) => token.operator && STDOUT_TO_FILE.has(token.text)
+  && (token.fd === undefined || token.fd === '1') && Boolean(segment[at + 1]) && !segment[at + 1].fdDup);
+
 // Whether a walked command runs the auto-merge gate, `aidrian pr auto-merge`, by any path to aidrian.
 function runsGate({ invocation }) {
   const words = aidrianArgs(invocation);
@@ -260,11 +302,25 @@ const prNumber = (text) => {
   return named ? Number(named[1] ?? named[2]) : null;
 };
 
-// The pull request an `aidrian pr <subcommand>` command was given, its first word after the subcommand that is no flag;
-// null when it names none or one this cannot read, such as a dynamic word.
+// The pull request an `aidrian pr <subcommand>` command was given: the value of its last `--pr`, as pr-await-review.mjs
+// parseArgs keeps, else its first word after the subcommand that is neither a flag nor the value of one; null when it
+// names none or one this cannot read, such as a dynamic word. VALUE_OPTIONS are the options `aidrian pr review`
+// (review/run.mjs) and `aidrian pr await-review` read a value for, so `--timeout-sec 60 41` names 41.
+const VALUE_OPTIONS = new Set(['--repo', '--reviewer', '--timeout-sec', '--interval-sec', '--max-rounds', '--head', '--quota-fallback']);
+const wordPull = (token) => (token && !token.dynamic ? prNumber(token.text) : null);
 function aidrianTarget({ invocation }) {
-  const word = aidrianArgs(invocation).slice(2).find((token) => token.dynamic || !token.text.startsWith('-'));
-  return word && !word.dynamic ? prNumber(word.text) : null;
+  const words = aidrianArgs(invocation).slice(2);
+  let positional;
+  let flagged;
+  for (let at = 0; at < words.length; at += 1) {
+    const token = words[at];
+    if (token.text === '--pr') {
+      flagged = words[at + 1] ?? null;
+      at += 1;
+    } else if (VALUE_OPTIONS.has(token.text)) at += 1;
+    else if (positional === undefined && (token.dynamic || !token.text.startsWith('-'))) positional = token;
+  }
+  return wordPull(flagged !== undefined ? flagged : positional);
 }
 
 // The pull request a `gh pr merge` command that merges names: its number, or 0 for one it names none of (the current
@@ -432,10 +488,11 @@ function actionOf(block) {
   if (block.name === 'Skill' && typeof block.input?.skill === 'string') {
     const skill = block.input.skill.replace(/^\//u, '');
     const loop = baseName(skill) === LOOP_SKILL;
-    return { skill, review: REVIEW_SKILLS.has(baseName(skill)), loop, loopPull: loop ? argsPull(block.input.args) : null, draft: false, edit: false, reviews: [], edits: [], gates: [], merges: [] };
+    return { skill, review: REVIEW_SKILLS.has(baseName(skill)), loop, loopPull: loop ? argsPull(block.input.args) : null, draft: false, edit: false, reviews: [], filed: [], edits: [], gates: [], merges: [] };
   }
-  if (block.name !== 'Bash' || typeof block.input?.command !== 'string') return null;
+  if (block.name !== SHELL_TOOL || typeof block.input?.command !== 'string') return null;
   const reviews = matching(block.input.command, runsReview).map(aidrianTarget);
+  const filed = matching(block.input.command, (walked) => runsReview(walked) && writesStdout(walked)).map(aidrianTarget);
   const draft = runs(block.input.command, createsDraft);
   const edits = matching(block.input.command, editsPr).map(editTarget);
   const gates = matching(block.input.command, runsGate).map(aidrianTarget);
@@ -443,7 +500,7 @@ function actionOf(block) {
   const review = reviews.length > 0;
   const edit = edits.length > 0;
   return review || draft || edit || gates.length || merges.length
-    ? { skill: null, review, loop: review, loopPull: null, draft, edit, reviews, edits, gates, merges, command: block.input.command }
+    ? { skill: null, review, loop: review, loopPull: null, draft, edit, reviews, filed, edits, gates, merges, command: block.input.command }
     : null;
 }
 
@@ -456,6 +513,7 @@ function actionOf(block) {
 // - `review_runs` counts the review skills run, as `skills` reads them, and the Bash calls that run `aidrian pr review`
 //   or `aidrian pr await-review` whose result holds that command's JSON output, error or not: the exit is the whole
 //   line's, so `aidrian pr review 12; test -f x` can fail after a review ran and `false && aidrian pr review 12` with none.
+//   A call that sends a review command's output to a file (`> r.json`) counts once its result settles, as it prints none.
 // A call a forked subagent's transcript repeats counts once, by its id. Names and counts only: no command or output
 // leaves this function.
 export function sessionActions(texts) {
@@ -501,7 +559,7 @@ const typedSkills = (entry) => typedRuns(entry).map(({ skill }) => skill);
 // Reads one entry's tool calls and results into `calls`, as sessionActions counts them: a call actionOf counts is added
 // under its id, once, and a result settles the call of its id. `ran` is a result that is no error, `opened` a draft
 // create's such result that names a pull request URL, and `reviewed` a review skill that ran or a review command whose
-// result printed its JSON. `pull` is the pull request a draft create or edit that ran names: an edit's target, else the
+// result printed its JSON or sent it to a file. `pull` is the pull request a draft create or edit that ran names: an edit's target, else the
 // one URL its output names; null when that is none or several. `looped` are the pull requests a review the review-loop
 // check counts reviewed, null for one unknown: a pr-review-loop run's argument, or the `pr` of each object a review
 // command printed, else its target. `verdicts` are what a gate call printed (callVerdicts). `merged` are the pull
@@ -528,18 +586,40 @@ function settleCalls(entry, calls) {
       call.pull = named.length && named.length === call.edits.length ? onePull(named) : onePull(urlPulls(output));
     }
     const printed = call.skill ? [] : printedReviews(output, call.command);
-    call.reviewed ||= call.review && (call.skill ? call.ran : printed.length > 0);
+    // A review that sends its JSON to a file (`> r.json`) prints none, so it counts only when the call ended with no
+    // error, or with an exit that waits on the Human (HUMAN_EXITS). Any other nonzero exit, a review step that stopped
+    // (extension_check exits 10, review_required 5) or a shell that could not open the file, leaves the turn a step to
+    // run, and a send-back then is right.
+    // SHORTCUT: the exit is the whole line's, so a review the line skipped counts when the line ends with no error, as in
+    // `false && aidrian pr review 12 > f; true`, and one a later failing command follows does not. Such lines are rare.
+    // A call the host runs in the background, asked for or moved there at its timeout, has the launch as its result, no
+    // error whatever the command does after it: it settles no review sent to a file and no merge, as nothing shows how it
+    // ended. The structured result's `backgroundTaskId` marks it, as launchedTaskIds reads it, or the host's launch line.
+    const backgrounded = idOf(entry.toolUseResult?.backgroundTaskId) !== null || BACKGROUND_LINE.test(output);
+    const filed = call.filed.length && !backgrounded && (block.is_error !== true || HUMAN_EXITS.has(exitOf(output))) ? call.filed : [];
+    call.reviewed ||= call.review && (call.skill ? call.ran : printed.length > 0 || filed.length > 0);
     if (call.loop && call.skill && call.ran) call.looped = [call.loopPull];
-    else if (call.loop && printed.length) call.looped = loopedPulls(printed, call.reviews);
+    else if (call.loop && (printed.length || filed.length)) {
+      call.looped = [...new Set([...(printed.length ? loopedPulls(printed, call.reviews) : []), ...filed])];
+    }
     if (call.gates.length) call.verdicts = callVerdicts(gateVerdicts(withoutCommand(output, call.command)), call.gates);
     // SHORTCUT: a call whose result is no error counts each merge command in it as run, even one a shell expression
     // skipped, as in `false && gh pr merge 12 || true`. It can only clear a refusal, never raise one, and such a line
     // is contrived; reading which command ran would need its own output, which gh prints only on a terminal.
-    if (call.merges.length && block.is_error !== true) call.merged = mergedPulls(call.merges, output);
+    if (call.merges.length && block.is_error !== true && !backgrounded) call.merged = mergedPulls(call.merges, output);
     settled.push(call);
   }
   return settled;
 }
+
+// The exits of a review that stopped on a question only the Human answers: human_required (9) and extension_ask (11)
+// in review/run.mjs EXIT, which test/transcript.test.mjs checks them against. exitOf reads the `Exit code <n>` line
+// Claude Code starts a failed Bash result with, or null.
+export const HUMAN_EXITS = new Set([9, 11]);
+const exitOf = (output) => {
+  const code = /^Exit code (\d+)/u.exec(output);
+  return code ? Number(code[1]) : null;
+};
 
 // The pull requests a review call reviewed: those its printed objects name, else the one its commands were given, else
 // one unknown (null).
@@ -606,7 +686,8 @@ export const SENT_BACK = 'Stop hook feedback:';
 // copies residuals into the body, even when the turn started at the loop on an earlier turn's pull request. A draft
 // create after a review still counts, and so does an edit of another pull request. A review is a pr-review-loop run, a
 // Skill call that ran or a typed command, of the pull request its first argument names, or an `aidrian pr review` or
-// `aidrian pr await-review` call that printed its JSON, of each pull request it printed, else the one it was given;
+// `aidrian pr await-review` call that printed its JSON, of each pull request it printed, else the one it was given, or
+// one that wrote its JSON to a file (`> r.json`), of the one it was given;
 // a pr-review run is none. A review and a draft are of the same pull request when they name it, or either names none.
 // A call counts only by its result, as in sessionActions. A gate is one verdict an `aidrian pr auto-merge` call printed
 // (settleCalls): a call that printed none, such as an error exit, is none. A merge is a pull request a `gh pr merge`
@@ -674,6 +755,63 @@ export function firstPrompt(text) {
     if (typeof content === 'string') return content;
     const texts = Array.isArray(content) ? content.filter((block) => block?.type === 'text' && typeof block.text === 'string') : [];
     return texts.length ? texts.map((block) => block.text).join('\n') : null;
+  }
+  return null;
+}
+
+// What a session resumed from a handoff brief read before it started working: { tokens, at }, `tokens` the context of the
+// model call that made the first call of one of `workTools`, the host's file edits and dispatches, that did not fail,
+// less the context of its first model call, and `at` the time of that call's result, null when the entry has none.
+// Null when no such call succeeded yet, or when no resume came before it: a session-continue skill run, a Skill call
+// that did not fail or a typed command, or a `Handoff continuation:` block before the first model call, in the first
+// prompt, the message the background route starts a session with, or in the context a SessionStart hook added, which
+// a clear's delivery writes (lib/handoff-continue.mjs backgroundPrompt, continuationContext). A call counts by its result, matched by id, so one a
+// hook or the permissions refused is not where work began. It reads up to that result and no further, so a long
+// transcript costs no more than its start. lib/resume-tokens.mjs records it.
+const RESUME_SKILL = 'session-continue';
+export const CONTINUATION_LEAD = 'Handoff continuation:';
+const usageContext = (usage) => (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
+const leadsContinuation = (text) => typeof text === 'string' && text.split('\n').some((line) => line.startsWith(CONTINUATION_LEAD));
+// The context a SessionStart hook added, as Claude Code writes it, or null.
+const startContext = (entry) => (entry?.type === 'attachment' && entry.attachment?.type === 'hook_additional_context'
+  && entry.attachment.hookEvent === 'SessionStart' ? [entry.attachment.content].flat() : null);
+// A prompt's own text, '' for a prompt with none, such as an image alone, or null for an entry that is no prompt: a tool
+// result, or the host's own entry (isMeta).
+function promptText(entry) {
+  const content = entry?.message?.content;
+  if (entry?.type !== 'user' || entry.isMeta === true || !isPrompt(content)) return null;
+  if (typeof content === 'string') return content;
+  return content.filter((block) => block?.type === 'text' && typeof block.text === 'string').map((block) => block.text).join('\n');
+}
+const isResumeSkill = (block) => block.name === 'Skill' && typeof block.input?.skill === 'string' && baseName(block.input.skill.replace(/^\//u, '')) === RESUME_SKILL;
+export function resumeRead(text, workTools) {
+  let first = null;
+  let resumed = false;
+  // The pending calls by id: a resume Skill call as true, a work call as the context it read, or null when no resume
+  // came before it.
+  const pending = new Map();
+  let prompted = false;
+  for (const line of text.split('\n')) {
+    const entry = parseLine(line);
+    const prompt = promptText(entry);
+    const opening = first === null && ((prompt !== null && !prompted) || startContext(entry) !== null);
+    if ((opening && [prompt, ...(startContext(entry) ?? [])].some(leadsContinuation)) || typedSkills(entry).some((skill) => baseName(skill) === RESUME_SKILL)) resumed = true;
+    prompted ||= prompt !== null;
+    const { usage, model, content } = entry?.message ?? {};
+    if (!Array.isArray(content)) continue;
+    const call = usage && model && model !== '<synthetic>';
+    if (call) first ??= usageContext(usage);
+    for (const block of content) {
+      if (call && block?.type === 'tool_use' && typeof block.id === 'string') {
+        if (isResumeSkill(block)) pending.set(block.id, true);
+        else if (workTools.includes(block.name)) pending.set(block.id, resumed ? Math.max(usageContext(usage) - first, 0) : null);
+      }
+      if (block?.type !== 'tool_result' || block.is_error === true || !pending.has(block.tool_use_id)) continue;
+      const settled = pending.get(block.tool_use_id);
+      if (settled === true) resumed = true;
+      else if (settled === null) return null;
+      else return { tokens: settled, at: Number.isFinite(Date.parse(entry.timestamp)) ? Date.parse(entry.timestamp) : null };
+    }
   }
   return null;
 }

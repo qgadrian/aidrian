@@ -50,7 +50,9 @@ import { sessionIdentity } from './hosts/index.mjs';
 import { repoFlag } from './remotes.mjs';
 import { cardState, isReviewSummaryCard, REVIEW_SUMMARY_CARD_MARKER } from './review/bot-card.mjs';
 import { holdToBase } from './review/in-force.mjs';
-import { REQUEST_COMMENT, REQUEST_INSTRUCTIONS, REQUEST_TEXT } from './review/request-text.mjs';
+import { RECEIPT_MARKER, REQUEST_COMMENT, REQUEST_INSTRUCTIONS, REQUEST_TEXT } from './review/request-text.mjs';
+
+export { RECEIPT_MARKER };
 
 export const DEFAULT_REVIEWER = CONFIG_DEFAULTS.github.reviewer;
 // The statuses that carry the bot's answer for the head: one that arrived during the wait, or one already there.
@@ -100,7 +102,6 @@ export { cardState, isReviewSummaryCard, REVIEW_SUMMARY_CARD_MARKER };
 // its words anywhere: it opens with the receipt marker, the text after it opens with "Codex Review: Didn't find any
 // major issues", and it names the reviewed commit. A comment that only quotes the phrase, such as a finding about a
 // screen that shows it, is never clean.
-export const RECEIPT_MARKER = '<!-- codex-review-receipt:v1 -->';
 const isReceipt = (body) => typeof body === 'string' && body.trimStart().startsWith(RECEIPT_MARKER);
 const CLEAN_RECEIPT_LEAD = /^Codex Review: Didn['’]t find any major issues\b/u;
 export const isCleanReceipt = (body) => {
@@ -276,7 +277,8 @@ export const latestBotSignal = ({ reviews, reviewComments, issueComments = [], r
   ].filter(Boolean).sort((a, b) => ms(b.at) - ms(a.at))[0] ?? null;
   if (!newest) return null;
   if (newest.kind === 'review') {
-    const lineComments = reviewComments.filter((c) => c.pull_request_review_id === review.id).length;
+    // Top-level inline comments only, as the bot history counts them (review/extension.mjs botRounds): a reply is no finding.
+    const lineComments = reviewComments.filter((c) => c.pull_request_review_id === review.id && !c.in_reply_to_id).length;
     return { kind: 'review', at: review.submitted_at, review_id: review.id, commit_id: review.commit_id, state: review.state, line_comments: lineComments };
   }
   const kind = isQuotaNotice(comment.body) ? 'quota_exhausted' : 'comment';
@@ -566,7 +568,7 @@ async function botAtCap(result, { project, config, forge, base, record, policy, 
   const extension = await import('./review/extension.mjs');
   const n = Number(base.n);
   const decision = extension.atCap({
-    state: record.state, source: 'bot', round: result.codex_rounds, head: result.head_sha, policy, pr: n, repo: base.repo, repoArg: repoFlag(project, base.repo),
+    state: record.state, source: 'bot', round: result.codex_rounds, head: result.head_sha, policy, pr: n, repo: base.repo, repoArg: repoFlag(project, base.repo), reviewer: result.reviewer ?? null,
     goal: { title: base.pr?.title ?? null, body: base.pr?.body ?? null },
     command: `aidrian pr await-review ${n} --request${repoFlag(project, base.repo)}`,
     history: botHistory(extension, { project, config, forge, base, reviewer: result.reviewer, head: result.head_sha }),
@@ -589,13 +591,13 @@ async function botAtCap(result, { project, config, forge, base, record, policy, 
 // moved past the head it was made on: read again on the new head before the cap counts it. Returns whether it changed.
 async function botRevalidate({ project, config, forge, base, record, reviewer, env, head }) {
   const extension = await import('./review/extension.mjs');
-  const open = (record.state.extensions ?? []).filter((entry) => entry.source === 'bot' && ['judging', 'asking', 'granted'].includes(entry.status));
+  const open = (record.state.extensions ?? []).filter((entry) => entry.source === 'bot' && extension.sameReviewer(entry, reviewer) && ['judging', 'asking', 'granted'].includes(entry.status));
   if (!head || !open.some((entry) => entry.head !== head)) return false;
   const round = codexRounds(forge.reviews(base.repo, base.n) ?? [], reviewer);
   const entry = open.find((each) => each.round === round);
   if (!entry || entry.head === head) return false;
   extension.revalidate({
-    state: record.state, source: 'bot', round, head,
+    state: record.state, source: 'bot', round, head, reviewer,
     history: botHistory(extension, { project, config, forge, base, reviewer, head }),
     log: extension.extensionLogger(project, config, { pr: Number(base.n), repo: base.repo, env }),
   });
@@ -617,7 +619,10 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
     // Each extra round the base branch's github.extraRounds granted the bot raises the cap by one.
     const { grantedRounds, policyOf, roundCap } = await import('./review/extension.mjs');
     const policy = policyOf(base?.github ?? config.github);
-    const record = base && opts.request && policy.mode !== 'off' ? await reviewRecord(project, forge, base) : null;
+    // A wait on another `--reviewer` than the configured one stays outside the check at the cap: the reruns it prints,
+    // and the one `aidrian pr extend` prints, name no `--reviewer`, so they would wait on the configured one.
+    const ownReviewer = !args.includes('--reviewer') || opts.reviewer === config.github.reviewer;
+    const record = base && opts.request && policy.mode !== 'off' && ownReviewer ? await reviewRecord(project, forge, base) : null;
     // The baseline: an explicit --max-rounds, held to the base branch's cap unless the Human set the override, else that
     // cap. Grants add to it either way, as in `aidrian pr review`.
     const explicit = args.includes('--max-rounds');
@@ -628,7 +633,7 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
     let moved = false;
     const allowFor = async (head) => {
       if (record && (await botRevalidate({ project, config, forge, base, record, reviewer: opts.reviewer, env, head }))) moved = true;
-      const granted = grantedRounds(record?.state, 'bot', policy);
+      const granted = grantedRounds(record?.state, 'bot', policy, opts.reviewer);
       // A request past grantFloor uses a grant, and only for the head the grant was read on.
       ({ maxRounds: opts.maxRounds, grantFloor: opts.grantFloor } = roundCap({ baseline, granted }));
       opts.validHead = granted > 0 ? head : null;
@@ -656,9 +661,18 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
       result = await awaitReview(opts, { gate, ...deps });
     }
     result = { ...result, waited_sec: Math.round((clock() - started) / 1000) };
+    // The raise a round_limit prints waits on the configured reviewer: a wait on another `--reviewer` gets none, since
+    // its rounds are that reviewer's, and the review-rounds rule approves no `--reviewer`.
     if (result.status === 'round_limit' && record) result = await botAtCap(result, { project, config, forge, base, record, policy, env });
     else if (moved) await saveRecord(record, { project, config, forge, base, status: result.status });
-    else if (result.status === 'round_limit' && base && policy.mode === 'off') result = { ...result, extension: { status: 'off', mode: 'off' } };
+    else if (result.status === 'round_limit' && base && policy.mode === 'off') {
+      const { raiseAsk } = await import('./review/extension.mjs');
+      result = { ...result, extension: { status: 'off', mode: 'off' }, ...raiseAsk({ pr: Number(base.n), repo: base.repo, source: 'bot', round: result.codex_rounds }) };
+    }
+    if (result.status === 'round_limit' && !ownReviewer) {
+      const { question, options, raise, ...kept } = result;
+      result = kept;
+    }
     if (result.status === 'review_required') console.error(result.reason);
     // The bot review the Human asked for (`aidrian pr request`): sent once this run posted it, and answered once the
     // bot's answer is in, an answer that was already there included.

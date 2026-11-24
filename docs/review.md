@@ -334,7 +334,7 @@ This machine keeps one review record a repository and pull request number, in th
 `pr-<N>-review-<owner>--<name>.json`, keyed by the repository's own `<owner>/<name>` whichever remote is origin, so one
 checkout reviews `a/b#12` and `c/d#12` apart, and a record never changes file when the remotes change, as when
 `gh repo fork` renames origin to upstream. The attest record (`pr-<N>-<owner>--<name>.json`) and a dispatch's findings
-folder (`tmp/review-<N>-<owner>--<name>/`, led by the issue key in an issue session) are keyed the same way. Every reader gets its own repository's record or
+folder (`tmp/review-<N>-<owner>--<name>/`, led by `@<key>-` in an issue session) are keyed the same way. Every reader gets its own repository's record or
 none: a bot request, `aidrian pr extend` and its rule, `aidrian pr waive`, `aidrian pr delegate` and its rule, the quota-fallback rule, a sign-off, an
 attest, the review step's notes of a held finding or an error, and the merge guard read only that one, and start fresh,
 or refuse, when there is none. A record under the old name `pr-<N>-review.json`, written before the key, is read for the
@@ -675,6 +675,9 @@ marker lines such as `<!-- pr-await-review: head=<sha> -->`. Without the exempti
 a finding on every pull request, and no fix to the change could close it. Any other comment that asks to change the
 review, broader or narrower, is still a finding, even one that opens with `@codex review`, quotes the request, or adds
 text to it: who posted a comment does not show in how it opens.
+The review bot's receipt, whose first line is `<!-- codex-review-receipt:v1 -->`, may end with a stock sign-off
+such as "Another round soon, please!": the prompt says that sign-off asks nothing of the review.
+Any other request a receipt carries is still a finding.
 
 `codex-local`'s Codex run also serves plans: the `quorum` skill runs it as a plan's adversary, and the `plan-review`
 skill runs the quorum on high-stakes plans ([quorum ledgers](project-folder.md#local-state)).
@@ -788,9 +791,14 @@ A project adds its own in `review.reviewers`:
   JSON (the agent writes no file), and which the step names under the state folder, outside every checkout, so their text is
   never committed: the pass id with every character but a letter, digit, `.`, `_`, or `-` as `-`, its first 100
   characters, then the first 8 hex digits of the whole id's SHA-256, so two passes never share a file, in a folder
-  keyed by the pull request's repository, `review-<PR>-<owner>--<name>`, so two repositories' pull requests of one number never do either ([Findings one by one](#findings-one-by-one)); in a project run's issue session the folder leads with the issue key, `<key>-review-<PR>-<owner>--<name>`, since that session writes in `tmp/` only what is named for its issue ([Agent gates](hooks.md#agent-gates)), and the agent's final JSON on stdin: either the bare verdicts array or the whole `{ findings, verdicts, contracts, cross_notes }`
+  keyed by the pull request's repository, `review-<PR>-<owner>--<name>`,
+  so two repositories' pull requests of one number never do either ([Findings one by one](#findings-one-by-one));
+  in a project run's issue session the folder leads with `@` and the issue key, `@<key>-review-<PR>-<owner>--<name>`,
+  since that session writes in `tmp/` only what is named for its issue ([Agent gates](hooks.md#agent-gates)),
+  and the agent's final JSON on stdin: either the bare verdicts array or the whole `{ findings, verdicts, contracts, cross_notes }`
   object. `--verdicts FILE` reads a file instead; `--findings-file` takes a file only.
-  `aidrian worktree cleanup execute` removes the findings folder `review-<PR>-<owner>--<name>/` once the pull request is merged or closed; from an issue session's `<key>-review-<PR>-<owner>--<name>/` it removes only the regular files named as above, `<pass>-<hash>.findings.json`, and the folder once it is empty, since that session names its own scratch for its key too
+  `aidrian worktree cleanup execute` removes the findings folder once the pull request is merged or closed, whole.
+  No issue key starts with `@`, so no issue session's own scratch shares the findings folder's name, and cleanup never removes it.
   ([Local state](project-folder.md#local-state)).
 
 **The security key.** A finding is a security finding when it is `critical` or `high`, when its reviewer set
@@ -849,11 +857,16 @@ always gets its independent review before the cap, then lets the earlier stages 
 when nothing is left to fix, and stops at the cap when a fix would need another head. A reviewer that fails or hits
 its quota gives the round back. After a fix, each pass re-reviews only what changed since its last review; a pass
 the change does not touch carries forward.
+A pass `aidrian pr attest` records on a head no round is on yet, with no step that dispatched it there, opens that head's round on the next step.
+Past the cap, that step stops at `round_limit`, so a pass attested on each new head still counts one round a head.
+Only a result the step would use counts, one whose files are the pass's own and whose evidence was not withheld: a pass it runs again opens nothing.
+A round a usable attested result opened or moved stays on its head when another pass then fails.
 
 **A quiet push.** A push whose change since the round's head is quiet opens no round: the round keeps its number,
-cap, and last-round flag, moves to the new head, and records the head it moved from in its `quiet` list. That holds in
-the last round too, so a quiet fix there is reviewed without reaching `round_limit`. A change is quiet when every file
-in it is one of:
+cap, and last-round flag, moves to the new head, and records the head it moved from in its `quiet` list.
+The step's output says so beside `round`: `round_kept` holds `from`, the head the round moved from, and `reason`, the line `plan.reasons` also holds.
+That holds in the last round too, so a quiet fix there is reviewed without reaching `round_limit`.
+A change is quiet when every file in it is one of:
 
 - prose or ignored, by `review.nonBehaviour` and `review.ignore`;
 - a test, by `**/*.test.*`, `**/*.spec.*`, `**/*_test.*`, a `test/`, `tests/`, `__tests__/`, or `spec/` folder, or a
@@ -1097,6 +1110,9 @@ It applies to `aidrian pr review` and to `aidrian pr await-review --request`, wh
    the judge as evidence, in `extension.red_flags`, and an extra round over it always needs the Human, under `"auto"`
    too:
    - **converging**: the last round left fewer open findings than the round before. Equal or more is a red flag.
+     A review-bot answer with no inline comment counts one open finding, a floor, since it may hold more.
+     A floor decides only what it proves: a floor at least the previous exact count is a red flag,
+     an exact count under the previous floor converges, and anything else leaves the signal unknown.
    - **looping**: a finding comes back after a fix, in the same file within 3 lines, or under the same title (its words of
      four letters or more, without markup, in any order).
    - **drifting**: a finding after round 1 sits in a file the pull request did not change at its first round.
@@ -1120,7 +1136,7 @@ It applies to `aidrian pr review` and to `aidrian pr await-review --request`, wh
    flag as real or a false alarm. It records its word:
 
    ```sh
-   aidrian pr extend <PR> --verdict extend|stop --reason "<evidence>" [--head <sha>]
+   aidrian pr extend <PR> --verdict extend|stop --reason "<evidence>" [--head <sha>] [--check <id>]
    ```
 
 4. **Grant.** `stop` is `round_limit`. `extend` grants the round under `"auto"` when no red flag stands. Under
@@ -1128,9 +1144,19 @@ It applies to `aidrian pr review` and to `aidrian pr await-review --request`, wh
    and the session records the answer. The question names the red flags, by name only:
 
    ```sh
-   aidrian pr extend <PR> --human approve|deny
+   aidrian pr extend <PR> --human approve|deny [--check <id>]
    ```
 
+At the cap that stands, `round_limit` carries a `question`, `options`, and `raise` when the repository is known: the
+question names `<owner>/<name>#<PR>` and `--max-rounds <N>`, its first option starts with "Approve", and `raise` is
+`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N>`, with `--with-bot` when the step ran the bot
+(`aidrian pr await-review <PR> --request` for the bot's rounds alone, `"off"` included), ending in
+`--repo <owner>/<name>`, the repository the question names. A wait on a `--reviewer` other than the configured one prints
+no raise and runs no check at the cap: its rounds are that reviewer's, and the reruns the check prints name no
+`--reviewer`, nor does the `review-rounds` rule approve one. The raise runs
+from a checkout whose remotes name the repository, as the `review-rounds` rule requires. `<N>` allows exactly one more round of the cap that stopped, the bot's when
+its cap stopped `aidrian pr review --with-bot`. The session asks that question word for word, and on the first option runs `raise`: the `review-rounds` rule
+reads that one answer as the grant, so no second question follows, and a second round needs a new answer.
 At the cap that stands, `stop` or the ceiling, the merge guard asks the Human to ship with the findings filed or to
 grant more rounds. When every open finding is low and the Human answers in their own words that the session decides,
 the session records that answer with the follow-up issue, `aidrian pr delegate`, and merges naming the head:
@@ -1151,6 +1177,15 @@ record's rounds or the bot's last review, and says the same. `"off"` reads nothi
 `aidrian pr review` round reviews that head, the line goes away; a bot round's line stays until the next check at the
 bot's cap.
 
+A bot's check, its question, and its grant are for the reviewer whose rounds it read: each bot entry names that
+reviewer, and another reviewer, such as the one a checkout with another `github.reviewer` waits on, never takes it, counts
+it, or reads it again on a new head. An entry with no reviewer, which an earlier version or an override wrote, belongs to
+none, so the cap is checked afresh. The plan's entries name none. The summary comment's record keeps the reviewer. Before another machine records a verdict or an answer on a private pull request's check, the review step runs on that machine first: the `review-extend` rule reads only the local record, and refuses until it holds the check. A public one's record restarts there, as every check does.
+Each check has an id, `plan` or `bot:<reviewer>` (`bot` for an entry with no reviewer), and the record commands the
+step prints name it with `--check '<id>'`, so a verdict or an answer lands on the check that asked for it, and a delayed
+one for a check already settled lands on no other. With no `--check`, `aidrian pr extend` refuses while two checks wait,
+and the `review-extend` rule reads the Human's answer against the check the call names.
+
 A grant is exactly one round: the cap rises by one, and the next cap runs the check again. It adds to the cap in
 force, the base branch's or an explicit `--max-rounds`, in both commands; a `--max-rounds` above the base branch's cap
 still needs `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`, grant or not.
@@ -1158,9 +1193,11 @@ still needs `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`, grant or not.
 Every open decision is bound to the head its signals were read on: a check waiting for the judge or the Human, and a
 grant whose round has not opened yet. When the pull request moves, the next step reads the signals again on the new
 head. A new red flag sends it back to the judge, a grant or a Human's approval included, so a push after the verdict
-cannot carry a bloated fix into the extra round unseen. Without one, a check waiting for the Human goes back to the
-judge, who has not seen the push, and a grant stands. `aidrian pr extend --human approve` and `--verdict` are refused once the pull request's head is not the one the
-check was for. A bot request on an extra round goes out only for the head its grant was read on: when the
+cannot carry a bloated fix into the extra round unseen. Without one, a grant stands, and so does a check waiting for
+the Human, on the new head: the push is most often the last round's fix, the very change the extra round would review,
+so the Human's answer, given before or after it, records with no second judge run. `aidrian pr extend --human approve`
+and `--verdict` are refused once the pull request's head is not the one the check was for; that refusal says to run
+the review step again, which moves a check with no new red flag to the new head, and then the same answer records. A bot request on an extra round goes out only for the head its grant was read on: when the
 pull request moves between the reads, or during the wait, the command reads the grant again on the head it would ask
 about, and posts nothing when a red flag sends the grant back to the judge. A bot request records the raised cap in its comment, as a Human's `--max-rounds` does, but a later
 run counts that record only under `AIDRIAN_ALLOW_EXTRA_ROUNDS=1` with no `--max-rounds`: otherwise the cap is its
@@ -1173,8 +1210,9 @@ in [the record](#the-record), listed under **Extra rounds** in the summary comme
 **Trust.** The `review-extend` rule ([hooks.md](hooks.md#bash-rules)) lets an agent's `--human approve` run only when
 the session's transcript holds the Human's answer to an AskUserQuestion that names the pull request with its
 repository (`<owner>/<name>#<PR>`, as the question the review step prints does; `#<PR>` alone in a checkout with no
-remote) and the round it grants (`round <N>`), given after the judge's verdict, with the option that starts with
-"Approve". The repository is the call's `--repo`, one of this checkout's remotes, else the one repository the remotes
+remote), given after the judge's verdict, with the option that starts with "Approve", where the question or that
+chosen option names the round it grants (`round <N>`): a question reworded as "Grant a fourth review round?" counts
+when the option picked is "Approve round 4". When both name a round, they name the same one. The repository is the call's `--repo`, one of this checkout's remotes, else the one repository the remotes
 name; a checkout whose remotes name more than one needs `--repo`, which the review step prints on the extend commands
 there. `aidrian pr extend` itself acts on that one repository: `--repo`, else the one the forge names for the pull
 request, as the review step does, else origin; it reads the head, the record, and the summary comment there, so in a
@@ -1204,6 +1242,7 @@ check. Among them, on exactly that head:
 - the open findings of this machine's own reviewers, the local and independent stages, are the whole cause of the cap,
   each listed, each of `medium` severity or lower, and none a security finding, of a security pass, or of the
   `security-engineer`;
+- a review round stopped on the head: a cause judged past the cap by attested results alone (`past_cap`) is never waived;
 - no sign-off of the Human's is owed on the head;
 - the review bot passed exactly the head on the forge: a verdict never stands in for it;
 - the host confirms the judge's dispatch in the dispatch log, which Codex cannot, and no judge has ruled on the head yet;
@@ -1410,7 +1449,11 @@ shows, such as a waiver's reason, has `<!--` and `-->` escaped, so no text can c
   stage, whether each is listed, the flows left unsigned, deleted flow tests, failing flow checks, passes that never
   reviewed the head, the bot's own round limit, and the flows the Human signs off with no sign-off kept. Its flows are
   every flow of the plan not all held, whichever stage answers for it. The cause of a reviewed head is kept on its
-  round too (`rounds[].cap`), which a later cap on a head no round reviewed reads. The posted copy keeps no `cap`,
+  round too (`rounds[].cap`), which a later cap on a head no round reviewed reads.
+  A head past the cap that holds a result a pass uses, as one `aidrian pr attest` recorded there, is judged by its own results instead.
+  That cause is `past_cap`: the step stopped before the flows' checks, so no waiver passes it until a review round, the Human's extra round, runs.
+  It replaces the round's, so a later head no pass reviewed inherits no cause, and a waiver refuses that head too.
+  The posted copy keeps no `cap`,
   on the outcome or a round, and no waiver's `judge_id` and `session`. Each binds to one head and
   one kind. The summary comment shows them under **Merge guard waivers**, each marked an audit entry, not proof; the
   posted copy keeps no `judge_id` or `session`.
@@ -1559,8 +1602,11 @@ A pass's list still holds each of its findings in full; a re-recorded list and a
   `priorFindings` carry the entries listed to it, each with its id; every other finding they show, such as one of its
   own last list that closed or was handed to another pass, carries no id.
 - *A returned id.* An `id` a finding returns counts only when it is exactly `R<digits>-<digits>`, names an entry that
-  same pass's input listed, and that entry is still open. Any other value is read as no id, kept off the record, and
-  named in the pass's `dropped` notes by the finding's own id, never by the value; the finding is kept. A finding with
+  same pass's input listed, and that entry is still open. Any other value is read as no id, kept off the record, and,
+  when it reads like an id, as ` r1-2` or `R1-2x`, named in the pass's `dropped` notes by the finding's own id, never by the value.
+  A label of the reviewer's own, such as `missing-qualifier`, gets no note. The finding is kept either way.
+  An exec reviewer's `id` that is not a string at all, as `7`, breaks its schema.
+  Its intake notes that as `findings[<i>].id is not a string`. A finding with
   no valid id takes the id of an entry its input listed with the same title and file, then of an open entry listed to
   no pass whose pass left the plan, and the first pass to claim such an entry keeps it.
 - *Omission.* An entry any pass of the head's plan lists in its result for the head is held. Any other open entry

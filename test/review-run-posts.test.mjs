@@ -1159,7 +1159,7 @@ test('with remotes of several repositories, the review step`s rerun at the cap n
   assert.ok(capped.dispatch[0].record.endsWith(' --repo o/r'), `the judge's record command names the repository (#302): ${capped.dispatch[0].record}`);
   await extend(t, r, ['--verdict', 'extend', '--reason', 'src/booking/a.js:1 is a real high-severity bug', '--head', capped.head]);
   const ask = await r.step({ exec: clean });
-  assert.deepEqual([ask.status, ask.then, ask.record], ['extension_ask', 'aidrian pr review 7 --repo o/r', 'aidrian pr extend 7 --human approve|deny --repo o/r']);
+  assert.deepEqual([ask.status, ask.then, ask.record], ['extension_ask', 'aidrian pr review 7 --repo o/r', "aidrian pr extend 7 --human approve|deny --check 'plan' --repo o/r"]);
   assert.match(ask.question, /^Pull request o\/r#7 reached/u);
 });
 

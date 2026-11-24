@@ -12,12 +12,15 @@ gives the snapshot's line without it.
 ```text
 🪐 Opus 5.5 xhigh · ctx 48% ━━━━──── · ♨️ cache 5m · 5h 26% ↻3h09m · 7d 15%
    ⧉  feature-band · ABC-12 In Progress · ◐ 2 agents
-   2.3x · handoff due, pays back in ~24 calls · armed 1/3 · 📥 1 P1 · 🧹 1 worktree
+   2.3x · handoff worth it if 38+ calls left · armed 1/3 · 📥 1 P1 · 🧹 1 worktree
    PRs ✓5 ✗1 ⏳1 · #4012, #4019, #4023, #4031, #4036, +2
 ```
 
-- **The band.** The model and effort, context use, the prompt cache time left, the 5-hour and 7-day limits (each only
-  once Claude Code reports it, so a plan with no 5-hour limit shows none), the branch
+- **The band.** The model and effort, context use, the prompt cache time left (counted from when the last main-chain
+  model request was sent, once its response starts to stream, or from the main turn's end, so a long turn keeps it
+  warm; after an API retry, from the step's first attempt, so the band may show less time left than there is, never
+  more; a subagent's request does not count, and the lifetime is read from the transcript when a main turn ends), the
+  5-hour and 7-day limits (each only once Claude Code reports it, so a plan with no 5-hour limit shows none), the branch
   or linked worktree (`detached` with no branch), the session's tickets, and the running subagents. The tickets are
   the snapshot's `tickets`, from the branch, the session ledger, and the pull requests the session touched
   ([The snapshot](handoff.md#the-snapshot)): one shows its key with its title and state; two or more show the first
@@ -236,7 +239,7 @@ And point the status line at it in `~/.claude/settings.json`:
   for a minute.
 - **Tried.** The script ran on Claude Code 2.1.327 data: a stdin JSON in the status line's shape, with a live
   session's id and transcript in this repository, and a PATH that held no `aidrian`, printed
-  `2.1x · handoff due, pays back in ~53 calls · 📥 1 P1 · 🧹 9 worktrees` in under 3 seconds.
+  `2.1x · handoff worth it if 53+ calls left · 📥 1 P1 · 🧹 9 worktrees` in under 3 seconds.
   It was not run from a live session's status line.
 
 ## Hosts

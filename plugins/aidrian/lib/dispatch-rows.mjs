@@ -217,11 +217,11 @@ export function sessionRow(input, project, { env = process.env, now = Date.now()
 
 // The knowledge docs among `files`, as { path, bytes }: the path as the index names it, and the size of the copy that
 // was read, or of the project's copy once that one is gone. A project doc matches by its path's end, so a read in a
-// worktree counts too.
+// worktree counts too, and so does a path a shell command gave relative to a folder it moved to, as `docs/x.md`.
 function knowledgeDocsRead(files, project) {
   const docs = loadKnowledge(project).buckets.flatMap((bucket) => bucket.docs.map((doc) => doc.path));
   return docs.flatMap((doc) => {
-    const file = files.find((each) => (path.isAbsolute(doc) ? each === doc : each.endsWith(`/${doc}`)));
+    const file = files.find((each) => (path.isAbsolute(doc) ? each === doc : each === doc || each.endsWith(`/${doc}`)));
     return file ? [{ path: doc, bytes: fileBytes(file) ?? fileBytes(path.resolve(project.root, doc)) }] : [];
   });
 }

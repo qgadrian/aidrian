@@ -163,6 +163,24 @@ test('the orchestrator agent file fits in 9,000 bytes', () => {
   assert.ok(bytes <= MAX_ORCHESTRATOR_BYTES, `orchestrator.md is ${bytes} bytes; move detail into the orchestration skill`);
 });
 
+// Designer review passes read no knowledge doc in 120 of 121 stops: a pass input or a delta round stood in for it.
+test('the designer loads its knowledge before a review pass, whatever the pass input holds', () => {
+  const designer = readFileSync(path.join(PLUGIN, 'agents-src/product-design/designer.md'), 'utf8').replace(/\s+/g, ' ');
+  const review = designer.slice(designer.indexOf('## Review mode'), designer.indexOf('## Implementation mode'));
+  assert.match(review, /Load the knowledge first, as in every mode: the `always` docs the start hook names, then your tags' docs/);
+  assert.match(review, /A pass input, a checklist, or a later round's delta adds to them; it never replaces them\./);
+});
+
+// The handoff-file detail lives in the orchestration skill's briefs reference, so the agent file keeps room under its cap:
+// a brief whose marker path was not absolute went unfilled once the agent's line dropped the word.
+test('the orchestrator names the absolute Handoff file line, and the briefs reference holds its format', () => {
+  const orchestrator = readFileSync(path.join(PLUGIN, 'agents-src/coordination/orchestrator.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(orchestrator, /each brief names its absolute path on its own `Handoff file: <path>` line/);
+  const briefs = readFileSync(path.join(PLUGIN, 'skills/orchestration/references/briefs.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(briefs, /`Handoff file: <state>\/dispatch\/<branch>-<slice>-<agent>\.json`, an absolute path, with `<state>` expanded/);
+  assert.ok(statSync(path.join(CLAUDE_AGENTS, 'orchestrator.md')).size <= MAX_ORCHESTRATOR_BYTES - 100, 'the agent file keeps room under its cap');
+});
+
 test('the orchestrator checks the work against the project`s core invariants, and names only files it can show', () => {
   // A resumed brief's locked scope missed a core product mode, and the orchestrator asked whether to fix the gap; a
   // report named a shortened path and one no agent wrote, and the stop hook sent it back.
@@ -1947,4 +1965,14 @@ test('the Claude mod ignores the types Claude Code writes when it loads it', () 
   assert.match(modText('.gitignore'), /^\.claude-plugin\/types\/$/mu);
   const ignored = spawnSync('git', ['check-ignore', '-q', 'plugins/aidrian-claude-mod/.claude-plugin/types/claude-code/index.d.ts'], { cwd: ROOT });
   assert.equal(ignored.status, 0);
+});
+
+// The Human answered the round-limit question once, and the hook asked again in another shape: the skill now asks the
+// one question the step prints, which the review-rounds rule reads as the grant.
+test('pr-review-loop asks the round_limit question word for word, and runs its raise on "Approve"', () => {
+  const skill = readFileSync(path.join(PLUGIN, 'skills/pr-review-loop/SKILL.md'), 'utf8');
+  assert.match(skill, /^\| `extension_check`, `extension_ask`, `blocked_quota`, `round_limit` \| run the judge, or ask the Human `question`, as `references\/review-plan\.md` says \|$/mu);
+  const plan = readFileSync(path.join(PLUGIN, 'skills/pr-review-loop/references/review-plan.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(plan, /With `question` and `options`, report the open findings, then ask the Human that question with AskUserQuestion, the options word for word/);
+  assert.match(plan, /On "Approve", run `raise` exactly as printed, as one plain command/);
 });

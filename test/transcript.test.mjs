@@ -12,7 +12,7 @@ import { priceFor } from '../plugins/aidrian/lib/model-prices.mjs';
 import { EXIT } from '../plugins/aidrian/lib/review/run.mjs';
 import { pathsProblem } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import {
-  aggregateUsage, estimateCostUsd, filesRead, gateVerdicts, partOf, REVIEW_OUTPUT_STATUSES, SENT_BACK, sessionActions, subagentTranscripts, sumTokens, launchedTaskIds, turnActions,
+  aggregateUsage, estimateCostUsd, filesRead, gateVerdicts, partOf, HUMAN_EXITS, REVIEW_OUTPUT_STATUSES, SENT_BACK, sessionActions, subagentTranscripts, sumTokens, launchedTaskIds, turnActions,
 } from '../plugins/aidrian/lib/transcript.mjs';
 
 // One transcript line: an assistant message with usage, as Claude Code writes it.
@@ -211,6 +211,8 @@ test('the statuses a review run is read by are every status aidrian pr review an
   for (const status of ['dispatch', 'blocked_quota', 'unsatisfied', 'stuck']) assert.ok(written.has(status), `the scan finds ${status} where aidrian pr review writes it`);
   const printed = new Set([...Object.keys(EXIT), ...written, ...statuses(wait, 'result'), ...exitCodes]);
   assert.deepEqual([...REVIEW_OUTPUT_STATUSES].sort(), [...printed].sort());
+  // A review sent to a file that stopped on the Human's question counts: its exits are those of these two statuses.
+  assert.deepEqual([...HUMAN_EXITS].sort(), [EXIT.human_required, EXIT.extension_ask].sort());
 
   // The real output of one of them reads as a run.
   const output = JSON.stringify(await awaitReview({ pr: '40', reviewer: null }, { git: {} }), null, 2);
@@ -300,6 +302,39 @@ test('turnActions names the pull request of each draft and review where the tran
     [{ kind: 'review', pr: 40 }], 'an edit of the pull request the turn reviewed is the loop`s own');
   assert.deepEqual(actions(turn.human('go'), loop('k1'), write('p1'), bash('e1', 'gh pr edit 41 --body-file b.md', 'https://github.com/acme/notes/pull/41')),
     [{ kind: 'review', pr: null }], 'a loop of no known pull request may be of any');
+  // A review that sends its JSON to a file prints none: it counts by the pull request it was given, when the call ended
+  // with no error.
+  assert.deepEqual(actions(turn.human('go'), draftOpened('d1', 40), bash('r1', 'aidrian pr review 40 --with-bot > /s/tmp/pr40-r1.json', '')),
+    [{ kind: 'draft', pr: 40 }, { kind: 'review', pr: 40 }], 'a review written to a file');
+  assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr review 40 >> r.json', 'Exit code 10', true), bash('r2', 'aidrian pr review 41 &> r.json', '')),
+    [{ kind: 'review', pr: 41 }], 'a round that stopped at extension_check owes its next step; both streams to a file count');
+  assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr review 40 > r.json', 'Exit code 9', true), bash('r2', 'aidrian pr review 41 > r.json', 'Exit code 11', true)),
+    [{ kind: 'review', pr: 40 }, { kind: 'review', pr: 41 }], 'a round that waits on the Human, human_required or extension_ask, counts');
+  assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr await-review 40 --pr 41 --pr 42 > r.json', '')),
+    [{ kind: 'review', pr: 42 }], 'the last --pr wins over a word before it, as the command reads it');
+  assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr review 40 2> err.log', 'Exit code 1', true), bash('r2', 'aidrian pr review 40 >&2', '')),
+    [], 'only standard error to a file, or standard output to another descriptor, is no review');
+  assert.deepEqual(actions(turn.human('go'), bash('r1', 'echo x > f; aidrian pr review 40', 'Exit code 1', true)), [],
+    'a redirect of another command in the line');
+  assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr review 40 > /missing/r.json', 'Exit code 1\n(eval):1: no such file or directory: /missing/r.json', true)),
+    [], 'a file the shell could not open: the review never ran');
+  assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr review 40 > a.json; aidrian pr review 41 > b.json', '')),
+    [{ kind: 'review', pr: 40 }, { kind: 'review', pr: 41 }], 'two reviews to files in one call keep each pull request');
+  assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr review 40; aidrian pr review 41 > b.json', '{\n  "status": "received",\n  "pr": 40\n}')),
+    [{ kind: 'review', pr: 40 }, { kind: 'review', pr: 41 }], 'one review printed, one to a file');
+  assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr review --timeout-sec 60 --repo acme/notes 41 > r.json', ''),
+    bash('r2', 'aidrian pr await-review --pr 42 --interval-sec 5 > r.json', '')),
+  [{ kind: 'review', pr: 41 }, { kind: 'review', pr: 42 }], 'an option`s value is not the pull request');
+  // A call run in the background has its launch as its result: it settles no review sent to a file, and no merge.
+  const launched = (id, command) => [turn.call(id, 'Bash', { command, run_in_background: true }),
+    JSON.stringify({ type: 'user', toolUseResult: { backgroundTaskId: 'b7k2' }, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'Command running in background with ID: b7k2. Output is being written to: /t/b7k2.output', is_error: false }] } })];
+  assert.deepEqual(actions(turn.human('go'), draftOpened('d1', 40), launched('r1', 'aidrian pr review 40 > r.json'), launched('m1', 'gh pr merge 40 --squash')),
+    [{ kind: 'draft', pr: 40 }], 'a review and a merge launched in the background');
+  assert.deepEqual(actions(turn.human('go'), bash('r1', 'aidrian pr review 40 > r.json', 'Command running in background with ID: b7k2.')), [],
+    'the host`s launch line alone, with no structured result, marks it too');
+  // A merge that ran is listed, so the review-loop check drops a merged pull request (stop-review-loop.mjs).
+  assert.deepEqual(actions(turn.human('go'), draftOpened('d1', 40), bash('m1', 'gh pr merge 40 --squash', '✓ Squashed and merged pull request acme/notes#40 (fix: a)')),
+    [{ kind: 'draft', pr: 40 }, { kind: 'merge', pr: 40 }], 'a draft, then its merge');
 });
 
 test('sessionActions still counts a pr-review run as a review run, as the health report reads it', () => {
@@ -554,8 +589,16 @@ test('launchedTaskIds takes ids from the structured result of the calls that lau
 
 test('filesRead lists each Read file_path once; subagentTranscripts finds a session`s subagent files', (t) => {
   const read = (file) => usageLine(file, 'claude-opus-5-5', {}, { content: [{ type: 'tool_use', name: 'Read', input: { file_path: file } }] });
-  const other = usageLine('x', 'claude-opus-5-5', {}, { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'cat /a.md' } }] });
-  assert.deepEqual(filesRead([read('/r/a.md'), other, read('/r/b.md'), read('/r/a.md')].join('\n')), ['/r/a.md', '/r/b.md']);
+  const bash = (id, command) => usageLine(id, 'claude-opus-5-5', {}, { content: [{ type: 'tool_use', name: 'Bash', input: { command } }] });
+  const other = bash('x', 'grep -n x /g.md; wc -l /w.md');
+  assert.deepEqual(filesRead([read('/r/a.md'), other, read('/r/b.md'), read('/r/a.md')].join('\n')), ['/r/a.md', '/r/b.md'], 'a program that only searches or counts reads no doc');
+  // A doc printed by a shell command counts as read: agents read docs with cat or sed as often as with Read.
+  const shell = [
+    bash('s1', 'W=/wt; cat $W/docs/a.md; sed -n 1,80p "$W/docs/b.md"'),
+    bash('s2', 'cd /r && head -50 docs/{c,d}.md | tail -5 && cat src/x.ts'),
+    bash('s3', 'cd $W; awk 1 ./docs/e.md'),
+  ].join('\n');
+  assert.deepEqual(filesRead(shell), ['$W/docs/a.md', '$W/docs/b.md', '/r/docs/c.md', '/r/docs/d.md', 'docs/e.md']);
   assert.deepEqual(filesRead([read('/r/a.md'), read('/r/b.md')].join('\n'), (key) => key !== '/r/a.md'), ['/r/b.md'], 'only the requests `keep` takes');
 
   const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-transcript-'));

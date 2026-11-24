@@ -321,7 +321,15 @@ What each rule matches:
   so a session can try a command before it hands it to the Human. A pipe into a shell that names a sign-off stays
   blocked, `--check` or not, since the rule cannot read it. Only a plain `--check` counts: one the shell builds at run
   time, such as `` `printf …`--check ``, is no dry run. An `aidrian` whose subcommand the shell builds at run time,
-  such as `aidrian "$@"`, is denied too. The rule's message stops the session; at `human_required` naming one flow,
+  such as `aidrian "$@"`, is denied too, and so is a program the shell builds (`$x pr signoff`,
+  `"$(command -v aidrian)" pr signoff`) and a call only text names: `xargs`, `parallel`, `npx`, an interpreter's code,
+  or a variable or alias whose words hold `aidrian … pr signoff`, as the product-feedback rule reads its own (its
+  `textDenial`). A `--check` in such text is no dry run. A command that only handles text, such as `echo`, `grep`, or
+  `git commit -m`, still runs. A subagent and a session no Human attends are refused these shapes outside a project too.
+  When the session holds answers and none approves the call, the deny names the nearest miss: a word the shell builds,
+  no question naming `<owner>/<name>#<PR>`, the head, or the `<flow>/<invariant>` written as one word, an answer that
+  is not "Approve", or a checkout whose remotes need `--repo`. A subagent is told to return `status: needs_input` with
+  the sign-off question and the command for its dispatcher, which has the answer route. The rule's message stops the session; at `human_required` naming one flow,
   once `--last --check` exits 0, it hands the Human the short form, `aidrian pr signoff <PR> --last`, short enough to
   type from a phone, which refuses any other stop. A long form runs on the Human's AskUserQuestion answer naming
   `<owner>/<name>#<PR>` of the repository it acts on ([review.md](review.md#answering-in-the-session)): its `--repo`,
@@ -397,7 +405,11 @@ What each rule matches:
   to a question naming `#<PR>`, not after a `/` or a word character, the item's id, and its title in double quotes, and no other item,
   whose chosen option is that decision alone: `fix-now` also reads as "Fix now", and "Drop nothing, keep it open" is no drop. A note goes in the option's description: "Fix now, in this pull request" as a label is refused, since a typed reply and a picked label read the same, and the refusal says so.
   A call whose folder or project it cannot read is refused only while this machine keeps product feedback: a `product-feedback/` folder
-  in a project's state folder under the state root, or in the current project's state folder. That is a call after a `cd` it cannot
+  in a project's state folder under the state root, in a state folder that config.json `state.dir` moved, which every
+  `aidrian pr product-feedback` command that writes (`record`, `answer`, `recheck`, `post`, `diff`) notes in the state root's
+  `feedback-folders/` before it writes or calls GitHub (a note that cannot be written stops the command there), or in the
+  current project's state folder. A moved folder whose feedback was
+  written before that note existed is seen once its next write notes it. That is a call after a `cd` it cannot
   follow, such as `cd "$D" &&`, `cd ~/x &&`, `(cd "$D"; …)`, `pushd "$D" &&`, or `env -C "$D"`; after a `cd` whose word the shell
   expands, such as `cd ../proj[B] &&`, or a `cd` or `pushd` with two operands, as zsh's `cd old new`; in a folder, or with a
   `--project`, that is no existing directory; in any folder but the current one when the command or the environment holds a `CDPATH`,
@@ -1042,6 +1054,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   counts as a write to each of the files its code or its other words name, whatever the code calls.
   Only code that is nothing but reads runs: in Python `json.load(open(p))` and `open(p).read()`,
   in Node `require(p)`, `readFileSync(p)`, and `JSON.parse(readFileSync(p))`, each printed or not, with `p` a quoted path.
+  A read may be bound to a name, as in `const r = require(p)` or `r = json.load(open(p))`, and that name printed by keys only, as `r.status`.
+  The name may not be one a read calls, such as `readFileSync`, `JSON`, or `open`.
   perl and ruby have none. Read, `cat`, and `jq` still read the files, as the block says.
 - A write to a folder that holds one of the files, such as `rm -rf .aidrian`, counts; one to the project root, such as `cp notes.md .`, does not.
   A glob counts when it may match one of the files, and so does a bracket class, such as `conf[i]g.json`, which the shell expands.
@@ -1102,6 +1116,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   issue's session may run the confine command (`lib/project-run-guard.mjs`), and one its pending mark starts only from a folder that resolves inside its clone. A session with no proof in its mark
   and no plan beside its clone, as Codex's, is not held so. And a session an unattended mark holds never runs a call
   that asks the host to run it outside its sandbox (`sandbox_escape`, Claude Code's `dangerouslyDisableSandbox`).
+- `aidrian project decision`, which prints the entry that pins a [decision the Human recorded](config.md#recorded-decisions),
+  is held as `init` and `resume` are (`attendedProblem`, by `lib/project-run-guard.mjs`): a subagent, a session the
+  background handoff route started, and an issue session of a project run never run it, and the command checks the same.
 - With or without gates or a project, a subagent, and a main session the background handoff route started, may not
   write in the unattended marks' folder, nor change the mode or owner of it or of the state root, by a path, a glob
   that may reach it, a link already on disk, or, where the folder is unknown, a part named `unattended`. The same holds
@@ -1602,7 +1619,11 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   past which the host runs the call with no guard. They check it as they read targets, words, folders, and links; past it,
   a call of a subagent, of a main session the background handoff route started, or of a main session a project run's
   driver mark holds, its run's first driver included, is refused, as the guards could not finish reading the command
-  in time, and an attended main session's runs, as the guards allow it anyway. A call that is no shell and has no
+  in time, and an attended main session's runs, as the guards allow it anyway.
+  The time depends on the machine's load, so that refusal gives one ordered recovery: retry the same call by itself, up
+  to three times, then run a shell call as shorter commands where a split keeps what it does, and only then stop and
+  report it to the Human.
+  An agent that read "tell the Human" first stopped at one small Edit instead. A call that is no shell and has no
   write target, such as a Read, a search, or an MCP tool's call, runs past it for every session, since every guard
   reads a shell command or the files a call writes. The walk checks it at each entry it tests, so a folder of many long names cannot hold
   the hook past it, and a glob part rejects at once a name with fewer characters than it must match, or one whose end it
@@ -1705,16 +1726,30 @@ doc in another project. An absolute or `~/` path is checked as written.
 A path shortened with `...` or `…`, such as `.../review/x.json`, cannot be checked, so it is never sent back.
 
 The check also reads the subagent's brief, the first prompt of its transcript.
-A brief names the run's own handoff file on a line that starts with `Handoff file:`, such as
+A brief names the run's own handoff file with a `Handoff file:` marker, such as
 `Handoff file: <state>/dispatch/<branch>-signoff-product-manager.json`, or `**Handoff file:**` or `**Handoff file**:`,
-in any case, after an optional list marker, with LF or CRLF line ends.
-Each such line names one file: everything inside the backticks that open its value, spaces included, else its first word.
+in any case, with LF or CRLF line ends. The marker opens a line, after an optional list marker, or opens a sentence
+later in one, as in `Under 4 KB. Handoff file: <path>`. Inside a sentence, as in `Read the earlier handoff file: <path>`,
+it names a file to read, which is never owed. A line may hold several markers, each opening a sentence. A mid-line
+marker counts only with no backtick before it on the line, so one in inline code, an example the brief quotes, is not
+read; a marker after a stray backtick is not read either, the residual of that rule.
+Each such marker names one file: everything inside the backticks that open its value, spaces included, else its first word,
+without the trailing `.`, `,`, `;`, `:`, or `)` that ends a sentence, as in `Handoff file: <path>.`.
 The whole value must be an absolute path in the state folder's `dispatch/` that ends in `.json`; prose after it is not read.
-Only the files these lines name are owed, and a brief with no such line owes none: the agent still writes its own file,
+A marker that names no path, or a path that is not one, such as `<state>/dispatch/...` left unexpanded or a relative
+path, cannot be filled by the hook. Unless this run wrote a regular file there, by the transcript's start time, the agent
+is sent back once, on the first stop of its turn, with the marker and the reason, and with no "write it now" for that
+path even when its report claims it: it writes nothing at that path, which may lie outside the
+dispatch folder, and hands back its report as its last message, saying that the brief's path was rejected, so its
+dispatcher corrects its briefs.
+Only the files these markers name are owed, and a brief with no marker owes none: the agent still writes its own file,
 and the hook no longer searches the brief's prose for one, since a file named to read there could be taken for the output.
 Another file of the agent's role the brief names, such as the gate run's `<branch>-gate-product-manager.json` to read,
 is never written, whether it is there or not.
-A file a marker line names must exist when the agent stops: an absolute path in the state folder's `dispatch/` whose file name ends with the agent's name,
+In a project run's issue session, a file is owed only when the unattended write guard would let that session write it:
+one named for its own issue's branch that no other issue of the run spells alike, and none when its issue cannot be read.
+So one issue's report never replaces another issue's handoff.
+A file a marker names must exist when the agent stops: an absolute path in the state folder's `dispatch/` whose file name ends with the agent's name,
 or with it and one more word, such as `<state>/dispatch/feat-12-S1-code-reviewer.json` or `S1-code-reviewer-result.json`
 for `code-reviewer`. A branch name that holds the agent's name does not make another agent's file its own. When one does not,
 the hook writes the agent's final report there: the message of its last handback call (Claude Code's `SubagentHandback`)
@@ -1845,12 +1880,21 @@ hand-back check on the report ([Send-backs per turn](#send-backs-per-turn)).
   request from an earlier turn. A draft create after a review is a new pull request and counts, and so does an update
   of another pull request.
 - A review is a `pr-review-loop` Skill call that ran, or such a typed slash command, or an `aidrian pr review` or
-  `aidrian pr await-review` call whose result printed its JSON. A `pr-review` run is none: it is the integration
+  `aidrian pr await-review` call whose result printed its JSON, or that sent its output to a file (`> r.json`).
+  A call that sends it to a file prints no JSON, so it counts, of each pull request it was given, only when the call
+  ended with no error, or stopped on a question only the Human answers (`human_required` 9, `extension_ask` 11).
+  Any other nonzero exit, a round stopped at `extension_check` (10) or a file the shell could not open, leaves the
+  turn a step to run, so a send-back is right; the exit is the whole call's.
+  A call run in the background has only its launch as its result,
+  so it settles neither a review sent to a file nor a merge. A `pr-review` run is none: it is the integration
   review `issue-implement` runs after the draft, and the loop still follows it. The health report still counts it.
 - Each draft and review is of the pull request the transcript shows: a create's printed URL, an edit's target or its
-  printed URL, the loop's first argument, and the `pr` each review command printed, else the one it was given.
+  printed URL, the loop's first argument, and the `pr` each review command printed, else the one it was given, as its
+  last `--pr` or its first word that is no option or an option's value.
   A draft is owed when no review of its pull request follows it in the turn: a review before it, or of another pull
-  request, leaves it unreviewed. A draft or a review whose pull request the transcript does not show matches any, since
+  request, leaves it unreviewed. A `gh pr merge` of its pull request that ran after it settles it too: a merged pull
+  request owes no review, and a merge that names none (the current branch's) settles any.
+  A draft or a review whose pull request the transcript does not show matches any, since
   a false send-back costs more than a missed one: a loop run with no argument counts for every draft before it.
   The one send-back names each draft still owed, by its number, or as a draft with no number shown.
 - `"ask"` turns it off, and the transcript is then not parsed for it. A background task still running holds it, as it
@@ -1973,6 +2017,9 @@ Two hooks weigh what continuing the main session costs against a fresh session s
   nothing is typed, and still counts a Human who is not watching. A background route this machine or the base branch
   has not turned on is worded as the clear route the gate falls back to, read only on a stop that fires.
   With `none`, or a route the host does not list, the text is as above.
+- Both price a fresh session with this project's resume tokens, and the Stop hook records a sample for each session
+  that resumed from a brief, once, at its first stop after its first edit or dispatch, in any `mode`
+  ([Resume tokens](handoff.md#resume-tokens)).
 
 Both read Claude Code transcripts only: a transcript with no Claude Code usage, a subagent, or a payload without
 `stop_hook_active` does nothing.
@@ -1994,7 +2041,7 @@ snapshot's `displayText` removes). One call writes at most 32 rows and has git r
 
 | Kind | From | Its repository and pull request |
 | --- | --- | --- |
-| `created` | `gh pr create`, never with `--dry-run`, which creates nothing | A line of the output, from its last 64 KB, that is exactly a pull request link. Its repository must be the one `-R` or `GH_REPO` names, else one of the repositories the remotes of the call's folder name, so a fork's pull request on its parent records the parent and an echoed link of another repository records nothing. The output is read only when `gh pr create` is the line's one command, after a leading `cd` or bare variable assignments, with no other command that could print: a `cat` with no redirection inside a substitution, such as a heredoc body, is the one other command allowed, so `gh pr create && echo <link>` records nothing |
+| `created` | `gh pr create`, never with `--dry-run`, which creates nothing | A line of the output, from its last 64 KB, that is exactly a pull request link. Its repository must be the one `-R` or `GH_REPO` names, else one of the repositories the remotes of the call's folder name, so a fork's pull request on its parent records the parent and an echoed link of another repository records nothing. The output is read only when `gh pr create` is the line's one command, after a leading `cd` or bare variable assignments, with no other command that could print, so `git -C <folder> status; gh pr create` records nothing: a `cat` with no redirection inside a substitution, such as a heredoc body, is the one other command allowed, so `gh pr create && echo <link>` records nothing |
 | `pushed` | `git push` | What git itself recorded, not the command's words: each remote-tracking ref whose reflog, `<git common dir>/logs/refs/remotes/<remote>/<branch>`, ends in an `update by push` entry written within the last 60 s (`PUSH_WINDOW_MS` in `lib/git-push.mjs`) whose new commit is the HEAD commit of the call's folder, so git's own remote selection, `push.default`, `remote.<name>.push`, and refspec mapping decide the branch, and `git push origin HEAD && git switch main` records the branch pushed. The branch is the ref's path after `<remote>/`, the remote the configured one whose name, the longest, starts that path, and the repository that remote's first `remote.<name>.pushurl` when one is set, so a push to a fork records the fork and a push URL that names no repository records nothing, else its first `remote.<name>.url`. Logs older than the window by their mtime are skipped, a symlink is never followed, and only each log's last line is read, from its last 4 KB, 4,096 entries at most. A push to a URL that no remote names, a tag, a delete, and a dry run update no remote-tracking ref, and a reftable repository keeps no such log, so they record nothing, an accepted limit. Every worktree of a repository shares those logs, so the HEAD commit keeps another worktree's push out; a push of a branch other than the one checked out, such as `git push origin other`, records nothing for the same reason, also accepted, and so is a sibling worktree's push of that same commit within the window. A push an earlier call made within the window is read again, also accepted, and its repeat is left out as below |
 | `touched` | `gh pr ready`, `edit`, `merge`, `checks`, `view`, `comment` | A link names its own repository. A number, a branch, or no target takes the repository `-R` or `GH_REPO` names, else the one repository on a declared host the folder's remotes name, and nothing when they name several, as in a fork checkout. No target is the folder's current branch, or the pull request gh checked out on it, as its `branch.<name>.merge` of `refs/pull/<n>/head` names, and nothing when a later command on the line runs `git checkout`, `git switch`, or `git worktree add`, since the branch is read after the line. An `owner:branch` target is that branch of the owner's repository of the same name, gh's fork |
 
@@ -2005,10 +2052,16 @@ push records it.
 
 The call's folder holds under either reading of the payload's `cwd`, the folder the line started in or the one it
 ended in, which no host documents for a Bash call ([Claude Code](providers/claude-code.md)): it is the absolute folder
-a leading `cd <folder> &&`, `git -C`, or `env -C` names, as `lib/shell-lex.mjs` reads it; the payload's `cwd` only on a
+a leading `cd <folder> &&`, `git -C`, or `env -C` names, as `lib/shell-lex.mjs` reads it, or a leading `cd <folder>` that
+`;` or a newline ends, as in `cd <folder>; gh pr create` or `cd <folder>; git push`, when the line's own text opens,
+after any blank or comment lines, with spaces or tabs, `cd`, and one unquoted absolute folder of plain characters with no `.` or `..` part, then `;`, or a
+newline after an optional comment, so no option, redirection, heredoc, wrapper, or other character stands in it, and that folder
+is a directory the hook may search just after the call, so the `cd` cannot have failed: after a failed one the
+commands ran in the folder the line started in, which no row then names; the payload's `cwd` only on a
 line where no command, a nested one included, runs `cd`, `pushd`, or `popd`, plain or through `builtin`, and nothing
 else moves the call; and
-otherwise none, so the call records nothing. `cd sub && gh pr create` and `git push && cd /other` record nothing.
+otherwise none, so the call records nothing. `cd sub && gh pr create`, `cd /gone; gh pr create`, `cd <folder> & gh pr view`,
+and `git push && cd /other` record nothing.
 The current branch is read with `git symbolic-ref`, the remotes' `url` and `pushurl` and branches' `merge` with one `git config --get-regexp`, and, on a line that runs `git push`, the git common dir with one `git rev-parse --git-common-dir` and the HEAD commit with one `git rev-parse HEAD`, in that folder: no word of the line or value of the ledger reaches git's arguments.
 
 What may point a call at another repository records nothing: a folder, repository, or target the shell
@@ -2270,9 +2323,11 @@ extension, `index.*` by its folder and name, any other file by its path. A test 
 its own package.json, is left out for that package's runner. It runs `testing.changedCommand` with the files after it,
 else `npm test --` when package.json has a test script, and exits with that command's status. With `npm test --`, a test
 file must also be a module `node --test` loads with no flag, `.js`, `.mjs`, or `.cjs`, and no Go test is given. Any other
-file in a test folder, such as a fixture, counts as a changed file named by its path or its file name, so the tests that
-name it run instead of the fixture itself. A project with `.ts` tests sets `testing.changedCommand`. A project whose CI cannot
-run the suite leaves `testing.pushFirstMinutes` at 0, and runs the suite once before marking ready.
+file in a test folder, such as a fixture or a `.jsx` file named like a test, counts as a changed file named by its path or
+its file name, so the tests that name it run instead of the fixture itself. A configured command gets every changed file
+in a test folder as it is, with no search for the tests that name it, unless it is no longer a file on disk, staged or not, or is in a nested package.
+A project with `.ts` tests sets `testing.changedCommand`.
+A project whose CI cannot run the suite leaves `testing.pushFirstMinutes` at 0, and runs the suite once before marking ready.
 
 ## Overrides
 

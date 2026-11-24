@@ -3,8 +3,8 @@
 // `github.extraRounds: "ask"` (lib/review/extension.mjs). The rule lets it run only when this session's transcript holds
 // the Human's answer to the question `extension_ask` printed: an AskUserQuestion answer, given after the judge's
 // verdict, to a question naming the pull request with the repository the call acts on (`<owner>/<name>#<PR>`;
-// `#<PR>` alone in a checkout with no remote) and the round it grants (`round <N>`), whose chosen option starts with
-// "Approve". That repository is the call's `--repo`, one of this checkout's remotes, else the one repository the remotes
+// `#<PR>` alone in a checkout with no remote), whose chosen option starts with "Approve", where the question or that
+// option names the round it grants (`round <N>`). That repository is the call's `--repo`, one of this checkout's remotes, else the one repository the remotes
 // name; a checkout whose remotes name several needs the `--repo` (review-signoff.mjs callRepo), and the record read is
 // that repository's. The host writes that answer to the transcript, a file in the agent's own account, so an agent
 // with a shell could forge one there: a residual this rule accepts.
@@ -24,7 +24,7 @@ import { readFileSync } from 'node:fs';
 
 import { humanAnswer } from '../hosts/index.mjs';
 import { findProject } from '../project.mjs';
-import { readLocalState } from '../review/state.mjs';
+import { checkId, readLocalState } from '../review/state.mjs';
 import { aidrianArgs, walkCommands } from '../shell-lex.mjs';
 import { callRepo, namesChange, NOTIFY_CLAUSE, severalRemotes } from './review-signoff.mjs';
 
@@ -90,16 +90,18 @@ function extendCall(words) {
   if (words?.[0]?.text !== 'pr' || words[1]?.text !== 'extend') return null;
   let answer;
   let pr;
+  let check;
   for (let i = 2; i < words.length; i += 1) {
     const { text, dynamic } = words[i];
     if (text === '--human') {
       answer = words[i + 1] && !words[i + 1].dynamic ? words[i + 1].text : null;
       i += 1;
     } else if (text.startsWith('--human=')) answer = dynamic ? null : text.slice('--human='.length);
+    else if (text === '--check') check = words[(i += 1)] && !words[i].dynamic ? words[i].text : null;
     else if (['--verdict', '--reason', '--head', '--repo'].includes(text)) i += 1;
     else if (pr === undefined && !text.startsWith('-')) pr = !dynamic && /^#?\d+$/u.test(text) ? Number(text.replace('#', '')) : null;
   }
-  return answer === undefined ? null : { answer, pr: pr ?? null, words };
+  return answer === undefined ? null : { answer, pr: pr ?? null, words, check };
 }
 
 // The Human's answers to AskUserQuestion in a Claude Code transcript, oldest first: [{ question, answer, at, options,
@@ -182,8 +184,8 @@ function humanText(entry) {
 export const approved = (answers, query) => mismatch(answers, query) === null;
 
 // Why `answers` hold no approval of round `round` of pull request `pr` given at or after `since`, or null when they do.
-// It names the nearest miss: no answer, none after the verdict, none naming the pull request, none naming the round,
-// or the label the Human picked. With `repo`, the question names `<repo>#<PR>`, the repository the call acts on; with
+// It names the nearest miss: no answer, none after the verdict, none naming the pull request, none whose question or
+// chosen option names the round, or the label the Human picked. With `repo`, the question names `<repo>#<PR>`, the repository the call acts on; with
 // none, in a checkout with no remote, `#<PR>`.
 export function mismatch(answers, { pr, round, since = null, repo = null }) {
   const plain = new RegExp(`#${pr}(?!\\d)`, 'u');
@@ -195,8 +197,12 @@ export function mismatch(answers, { pr, round, since = null, repo = null }) {
   if (!after.length) return `no AskUserQuestion answer came after the judge's verdict at ${since}`;
   const onPr = after.filter((each) => names.test(each.question));
   if (!onPr.length) return `no question answered since the judge's verdict names ${named}`;
-  const onRound = onPr.filter((each) => grants.test(each.question));
-  if (!onRound.length) return `the questions naming ${named} do not name "round ${round}"`;
+  // The round may be named by the question or by the option the Human chose, as "Approve round 4" under a question
+  // reworded to "Grant a fourth review round?". When both name one, they must name the same.
+  const rounds = (text) => [...text.matchAll(/\bround (\d+)(?!\d)/giu)].map((match) => Number(match[1]));
+  const agrees = (text) => rounds(text).every((each) => each === round);
+  const onRound = onPr.filter((each) => (grants.test(each.question) || grants.test(each.answer)) && agrees(each.question) && agrees(each.answer));
+  if (!onRound.length) return `neither the questions naming ${named} nor the options the Human chose name "round ${round}"`;
   if (onRound.some((each) => /^\s*approve\b/iu.test(each.answer))) return null;
   return `the Human picked "${onRound.at(-1).answer}", not the option that starts with "Approve"`;
 }
@@ -212,7 +218,9 @@ function nextCap(state) {
   const bot = last.source === 'bot';
   const planRounds = !bot && Array.isArray(state?.rounds) ? state.rounds.length : 0;
   const done = Math.max(Number.isInteger(last.round) ? last.round : 0, planRounds);
-  const granted = entries.filter((entry) => entry.source === last.source && entry.status === 'granted').length;
+  const granted = entries.filter((entry) => entry.source === last.source && (entry.reviewer ?? null) === (last.reviewer ?? null) && entry.status === 'granted').length;
+  // SHORTCUT: the suggested --max-rounds counts the latest check's reviewer's grants, every one; the rerun counts the
+  // configured reviewer's under the policy in force, which a switch of reviewer or policy can make differ by a round.
   return { last, next: done ? Math.max(1, done + 1 - granted) : null, bot };
 }
 
@@ -244,7 +252,9 @@ function judge(call, project, input) {
   try {
     state = readLocalState(project, call.pr, target.repo ?? undefined);
   } catch {}
-  const pending = (state?.extensions ?? []).filter((entry) => entry.status === 'asking').at(-1);
+  // The check the call names (`--check`), as the command reads it; with none, the latest waiting, and the command
+  // refuses a call that names none while two checks wait.
+  const pending = (state?.extensions ?? []).filter((entry) => entry.status === 'asking' && (call.check === undefined || checkId(entry) === call.check)).at(-1);
   if (!pending) return noAskReason(call.pr, { ...nextCap(state), several: severalRemotes(project), repo: target.repo });
   const round = pending.round + 1;
   const since = pending.judge?.at ?? pending.decided_at ?? null;

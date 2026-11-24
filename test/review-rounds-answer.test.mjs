@@ -9,6 +9,7 @@ import test from 'node:test';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { emptyState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import * as awaitReview from '../plugins/aidrian/lib/pr-await-review.mjs';
+import { raiseAsk } from '../plugins/aidrian/lib/review/extension.mjs';
 import { noAskReason } from '../plugins/aidrian/lib/rules/review-extend.mjs';
 import { ASK_ROUTE, check, OVERRIDE_REASON } from '../plugins/aidrian/lib/rules/github/review-rounds.mjs';
 
@@ -385,4 +386,29 @@ test('the waiting route comes from the record of the repository the raise acts o
   } finally {
     writeLocalState(project, emptyState(77, 'up/r'));
   }
+});
+
+// The round_limit question at the cap is the one this rule reads: the Human's one answer to it, its first option,
+// approves exactly the raise it prints, one more round, and no second question follows.
+test('the Human`s answer to a round_limit question approves its raise, for exactly one more round', (t) => {
+  for (const [source, round, granted, next] of [['plan', 3, 0, 4], ['bot', 3, 1, 3]]) {
+    const ask = raiseAsk({ pr: 12, repo: 'o/r', source, round, granted });
+    assert.match(ask.question, new RegExp(`o/r#12 .*--max-rounds ${next}\\?$`, 'u'));
+    assert.match(ask.options[0], /^Approve /u);
+    const context = setup(t, [{ [ask.question]: ask.options[0] }]);
+    assert.equal(check(ask.raise, context), null, `${source}: ${ask.raise}`);
+    missOf(ask.raise.replace(`--max-rounds ${next}`, `--max-rounds ${next + 1}`), context);
+    missOf(ask.raise, setup(t, [{ [ask.question]: ask.options[1] }]));
+  }
+  // The raise always names the repository, so with several remotes the same answer approves it.
+  const several = raiseAsk({ pr: 12, repo: 'o/r', source: 'plan', round: 3 });
+  assert.match(several.raise, / --repo o\/r$/u);
+  const context = setup(t, [{ [several.question]: several.options[0] }]);
+  execFileSync('git', ['remote', 'add', 'upstream', 'https://github.com/up/r.git'], { cwd: context.cwd });
+  assert.equal(check(several.raise, context), null);
+  // A step that ran the bot raises with it, past the bot's rounds when its cap stopped the step.
+  const withBot = raiseAsk({ pr: 12, repo: 'o/r', source: 'plan', round: 3, withBot: true });
+  assert.equal(withBot.raise, 'AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --with-bot --max-rounds 4 --repo o/r');
+  assert.equal(check(withBot.raise, setup(t, [{ [withBot.question]: withBot.options[0] }])), null);
+  assert.deepEqual(raiseAsk({ pr: 12, repo: null, source: 'plan', round: 3 }), {}, 'no repository, no question the rule could read');
 });

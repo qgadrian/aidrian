@@ -345,6 +345,7 @@ const URL = /^https:\/\/[^\s<>"'`]{1,500}$/u;
 // A follow-up issue as a delegation names it: `<owner>/<name>#<n>`.
 const ISSUE_REF = /^[\w.-]{1,100}\/[\w.-]{1,100}#\d{1,10}$/u;
 const WORD = /^[a-z_]{1,40}$/u;
+const REVIEWER_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\[bot\])?$/u;
 const CAPTURE_KEY = /^[\w.:/@=+-]{1,200}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const OVERRIDE = /^round \d{1,4} ran the ([\w.:-]{1,80}) stage first$/u;
@@ -412,7 +413,7 @@ export function postedCopy(state, post = {}) {
 // The record's own key names, which carry no data: the checks read only the keys that do, such as a pass id, a flow,
 // or a commit, and every value.
 const FIXED_KEYS = new Set([
-  'version', 'revision', 'pr', 'repo', 'updatedAt', 'idCounter', 'floored', 'rounds', 'head', 'at', 'final', 'quiet', 'from', 'open',
+  'version', 'revision', 'pr', 'repo', 'updatedAt', 'idCounter', 'floored', 'rounds', 'head', 'at', 'final', 'quiet', 'from', 'open', 'floor',
   'findings', 'passes', 'reviewer', 'seconds', 'files', 'bot', 'kind', 'review_id', 'list', 'ruled', 'carried', 'verdicts', 'flow',
   'invariant', 'verdict', 'evidence', 'reason', 'contracts', 'cross_notes', 'dropped', 'signoffs', 'by', 'overrides', 'overrulings',
   'acceptances', 'outside', 'approvals', 'login', 'url', 'failures', 'outcome', 'status', 'depth', 'carried_from', 'carried_base',
@@ -678,6 +679,8 @@ function allowlisted(state, post, counter) {
     const decision = check((value) => isObject(value));
     return object(source, {
       source: word(new Set(['plan', 'bot'])),
+      // The bot whose rounds a bot check read: a GitHub login, as `chatgpt-codex-connector[bot]`.
+      reviewer: check((value) => typeof value === 'string' && REVIEWER_LOGIN.test(value)),
       mode: word(),
       status: word(),
       by: word(),
@@ -717,6 +720,7 @@ function allowlisted(state, post, counter) {
       seconds: int,
       findings: int,
       open: int,
+      floor: bool,
       files: (value) => (value === null ? null : paths_(head)(value)),
       bot: (value) => object(value, { kind: word(), review_id: check((each) => each === null || isInt(each)) }),
       list: (value) => (value === null ? null : findings(head)(value)),
@@ -741,6 +745,7 @@ function allowlisted(state, post, counter) {
       final: bool,
       quiet: list((each) => object(each, { from: sha, at: date })),
       open: int,
+      floor: bool,
       findings: (value) => (value === null ? null : findings(round?.head)(value)),
     })),
     passes: keyed(pass, name(names.passes)),

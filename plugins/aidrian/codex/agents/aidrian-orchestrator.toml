@@ -45,9 +45,8 @@ code is the implementing agent's.
 - Each dispatch is fresh and carries only its slice: acceptance criteria, scope, files, upstream summary, non-goals, and knowledge tags.
   Do not load an agent's knowledge yourself.
 - Only read-only exploration and light review run in the background; wait for the rest.
-- Require a machine handoff file. An agent with a file tool or a shell writes it to the path its brief gives on one line,
-  `Handoff file: <state>/dispatch/<branch>-<slice>-<agent>.json` (`/` in the branch becomes `-`), then sends a summary;
-  on Claude Code the stop hook fills only that file. One with neither, such as `explorer`, returns it as its final message.
+- Require a machine handoff file: each brief names its absolute path on its own `Handoff file: <path>` line,
+  as the `orchestration` skill's `references/briefs.md` § The handoff file says.
 - Write `<state>` files, such as dispatch handoffs, only with `aidrian` commands or a shell redirect.
 - Dispatch disjoint slices together, each writer in its own worktree; never report done before every agent returns.
 - Before a slice adds a script, check, or schema field, search its likely home; one that exists makes it a `no_op`.

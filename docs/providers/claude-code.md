@@ -215,9 +215,10 @@ feedback and a skill's text are meta entries; and the prompt the background star
 know never counts. The adapter's `ownTranscript` vouches for the transcript: the session's own, `<session id>.jsonl` in a folder of
 `.claude/projects` under the account's home folder (the user's entry, not `$HOME`), which the write guard refuses an
 unattended session, reached through no link. One the host keeps elsewhere, as under another `HOME` or
-`CLAUDE_CONFIG_DIR`, never counts, since a session could write its own proof there. The agent gate hook reads the last
-256 KB of it, from the regular file the checked path names when it is opened, on each main-session call while the session holds a plain unattended mark, and on
-such an entry records the session attended ([The background route](../handoff.md#the-background-route)). Claude Code
+`CLAUDE_CONFIG_DIR`, never counts, since a session could write its own proof there.
+The agent gate hook reads the last 256 KB of it, from the regular file the checked path names when it is opened,
+on each main-session call while the session holds a plain unattended mark and is not yet recorded attended beside each one,
+and on such an entry records the session attended ([The background route](../handoff.md#the-background-route)). Claude Code
 runs a call's hooks in parallel, so another hook can still read the session as unattended on that first call.
 
 ## Handoff continuation
@@ -261,7 +262,7 @@ Not verified, each with its answer in the design:
 | --- | --- |
 | Whether UserPromptSubmit fires for the clear or compact command | The adapter's `keepsArmed(prompt)` leaves the continuation for `/clear`, `/reset`, `/new`, and `/compact`. |
 | Whether other built-in commands fire UserPromptSubmit | Each one that does cancels the continuation, as any prompt does: only those four are spared. |
-| Whether a hook payload's `cwd` follows a `cd` in the Bash tool, as the Bash tool's own folder does | No hook compares a folder: the session start matches the host process, and every checkout of the project shares one store. The [session ledger](../hooks.md#session-ledger) does not depend on the answer either: it takes a call's folder from an absolute leading `cd`, `git -C`, or `env -C`, and the payload's `cwd` only on a line that changes no directory. |
+| Whether a hook payload's `cwd` follows a `cd` in the Bash tool, as the Bash tool's own folder does | No hook compares a folder: the session start matches the host process, and every checkout of the project shares one store. The [session ledger](../hooks.md#session-ledger) does not depend on the answer either: it takes a call's folder from an absolute leading `cd` that `&&` ends, or `;` or a newline when it cannot fail, `git -C`, or `env -C`, and the payload's `cwd` only on a line that changes no directory. |
 
 UserPromptSubmit also fires when a background subagent reports back, on a scheduled-task or loop iteration, on a
 message from another session, and on the output of Claude's code in a Code Mode session when that code runs in the

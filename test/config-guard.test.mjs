@@ -138,6 +138,14 @@ test('a subagent may still read those files and write anything else, and the mai
       "python3 -Bc\"import json; print(json.load(open('.aidrian/config.json')))\"",
       "node -pe \"require('./.aidrian/config.json').agents\"",
       "node --print=\"require('./.aidrian/config.json').agents\"",
+      // A read bound to a name, then that name printed by its keys.
+      "node -e \"const r = require('./.aidrian/config.json'); console.log(r['github'].autoMerge)\"",
+      "node -e \"const r = JSON.parse(require('fs').readFileSync('.aidrian/config.json', 'utf8')); console.log(JSON.stringify(r.agents, null, 2))\"",
+      "python3 -c \"import json; r = json.load(open('.aidrian/config.json')); print(r['agents'])\"",
+      // The same reads over several lines.
+      "node - <<'EOF'\nconst r =\n  require('./.aidrian/config.json');\nconsole.log(r.agents)\nEOF",
+      "node - <<'EOF'\nconst r = require('./.aidrian/config.json')\n  .agents\nconsole.log(r)\nEOF",
+      "python3 - <<'EOF'\nimport json\nr = json.load(\n  open('.aidrian/config.json'))\nprint(r['agents'])\nEOF",
     ].map((command) => ['Bash', { command }]),
   ];
   for (const [tool, toolInput] of allowed) assert.equal(verdict(dir, subagent(dir, tool, toolInput)), null, `${tool} ${JSON.stringify(toolInput)}`);
@@ -145,6 +153,16 @@ test('a subagent may still read those files and write anything else, and the mai
   const main = { tool_name: 'Edit', tool_input: { file_path: '.aidrian/config.json' }, cwd: dir };
   assert.equal(verdict(dir, main), null, 'the main session');
   assert.equal(verdict(dir, { ...main, agent_type: 'aidrian:explorer' }), null, 'a session started with --agent is the main session');
+});
+
+test('interpreter code with a long run of blank lines is judged in linear time', async (t) => {
+  const { dir } = project(t);
+  for (const command of [`node -e "console.log(1)${'\n'.repeat(40000)}x"`, `node -e "const r =${'\n'.repeat(40000)}x"`]) {
+    const before = process.cpuUsage();
+    verdict(dir, subagent(dir, 'Bash', { command }));
+    const { user, system } = process.cpuUsage(before);
+    assert.ok((user + system) / 1000 < 1000, `took ${Math.round((user + system) / 1000)} ms of CPU`);
+  }
 });
 
 test('a write to an unknown folder, or code an interpreter runs, is judged by the names it holds', async (t) => {
@@ -198,6 +216,13 @@ test('a write to an unknown folder, or code an interpreter runs, is judged by th
     ["python3 -c \"open = lambda p: __import__('os').remove(p); open('.aidrian/config.json').read()\"", '.aidrian/config.json'],
     ["node -e \"const fs = { readFileSync: require('fs').unlinkSync }; fs.readFileSync('.aidrian/config.json')\"", '.aidrian/config.json'],
     ["python3 -c \"open('.aidrian/config.json', 'w').read()\"", '.aidrian/config.json'],
+    // A write after a read on the next line, or inside brackets over several lines.
+    ["node - <<'EOF'\nconst r = require('./x.json')\nrequire('fs').unlinkSync('.aidrian/config.json')\nEOF", '.aidrian/config.json'],
+    ["python3 - <<'EOF'\nprint(\n  open('.aidrian/config.json', 'w'))\nEOF", '.aidrian/config.json'],
+    // A binding that would turn a later read into another call.
+    ["node -e \"const readFileSync = require('child_process').execSync; readFileSync('rm .aidrian/config.json')\"", '.aidrian/config.json'],
+    ["node -e \"var JSON = require('./x.json'); console.log(JSON.parse(require('fs').readFileSync('.aidrian/config.json')))\"", '.aidrian/config.json'],
+    ["python3 -c \"import json; open = json.load(open('x.json')); print(open('.aidrian/config.json').read())\"", '.aidrian/config.json'],
     ["node -e \"require('fs').readFileSync('.aidrian/config.json', { flag: 'w' })\"", '.aidrian/config.json'],
     ["python3 -c \"print(open('.aidrian/config.json').read())\" .aidrian.json", '.aidrian.json'],
     ["ruby -e \"puts File.read('.aidrian/config.json')\"", '.aidrian/config.json'],

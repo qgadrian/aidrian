@@ -3,6 +3,7 @@
 `aidrian pr review <n>` prints one JSON object. Every status carries `pr`, `head`, `base`, `depth`, `round`,
 `max_rounds`, `engine`, and `plan` (its depth, reasons, flows, and stages). docs/review.md in the aidrian
 repository describes the plan itself.
+A status on a head a quiet push moved the round to carries `round_kept` too: `from`, the head the round moved from, and `reason`, why it is the same round.
 
 With `--with-bot`, run the step right after each push, before any other review of that head: the step that opens the
 head's round asks the review bot, so the bot, CI, and the local passes review the head together. Never hold the bot
@@ -154,7 +155,10 @@ Never cite an engine post, a finding's, the review summary, or the product feedb
 - `round_limit`: the round cap, `github.maxReviewRounds` as the base branch commits it. Its last round always runs
   the final stage. `extension` says why no extra round: `off`, the ceiling, the judge, or the Human. A red flag
   never stops it alone: it goes to the judge. With `unreviewed_head: true`, the head is a fix no round reviewed: say so when reporting
-  the stop, so the Human does not merge it as reviewed. A session the Human told to merge, and then left, and a run
+  the stop, so the Human does not merge it as reviewed. With `question` and `options`, report the open findings, then ask
+  the Human that question with AskUserQuestion, the options word for word, the "Approve" one first: it is the one
+  question at the cap. On "Approve", run `raise` exactly as printed, as one plain command: it allows one more round,
+  and the next cap asks again. On the other option, stop. A session the Human told to merge, and then left, and a run
   under `autopilot`, read § At the cap: a judge's waiver before reporting the stop. When the Human answers the merge
   guard's question by leaving the decision to the session, read § At the cap: the Human leaves it to the session.
 

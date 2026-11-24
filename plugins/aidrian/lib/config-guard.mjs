@@ -34,11 +34,20 @@ const PYTHON_READ = String.raw`(?:json\.load\(\s*OPEN\s*\)|OPEN\.read\(\s*\))(?:
   .replaceAll('OPEN', String.raw`open\(\s*${TEXT}(?:\s*,\s*(?:'[rbt]+'|"[rbt]+"))?\s*\)`);
 const NODE_FILE = String.raw`(?:(?:require\(\s*${FS}\s*\)|fs)\s*\.\s*)?readFileSync\(\s*${TEXT}(?:\s*,\s*${TEXT})?\s*\)`;
 const NODE_READ = String.raw`(?:require\(\s*${TEXT}\s*\)|JSON\.parse\(\s*${NODE_FILE}\s*\)|${NODE_FILE})(?:\s*\.\s*[A-Za-z_$][\w$]*|\s*\[\s*(?:${TEXT}|\d+)\s*\])*`;
+// A read may also be bound to a name, as in `r = json.load(open(p))` or `const r = require(p)`, and a name followed by
+// keys only, such as `r['agents']` or `r.agents`, printed: neither calls anything. A bound name is never one a read
+// calls, such as `readFileSync` or `open`, so a binding cannot turn a later read into another call.
+const PYTHON_BOUND = String.raw`(?!(?:open|json|print)\b)[A-Za-z_]\w*`;
+const NODE_BOUND = String.raw`(?!(?:fs|require|readFileSync|JSON|console)(?![\w$]))[A-Za-z_$][\w$]*`;
+const PYTHON_NAME = String.raw`[A-Za-z_]\w*(?:\s*\[\s*(?:${TEXT}|\d+)\s*\])*`;
+const NODE_NAME = String.raw`[A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*|\s*\[\s*(?:${TEXT}|\d+)\s*\])*`;
+const PYTHON_VALUE = String.raw`(?:${PYTHON_READ}|${PYTHON_NAME})`;
+const NODE_VALUE = String.raw`(?:${NODE_READ}|${NODE_NAME})`;
 // The code of each interpreter (shell-lex.mjs INTERPRETERS) that only reads, by its name; perl and ruby have none, as
 // ruby's `open('|rm x')` runs a command.
 const READS = {
-  python: new RegExp(String.raw`^(?:import\s+json|print\(\s*(?:json\.dumps\(\s*${PYTHON_READ}(?:\s*,\s*indent\s*=\s*\d+)?\s*\)|${PYTHON_READ})\s*\)|${PYTHON_READ})$`, 'u'),
-  node: new RegExp(String.raw`^(?:(?:const|let|var)\s+(?:fs|\{\s*readFileSync\s*\})\s*=\s*require\(\s*${FS}\s*\)|console\.log\(\s*(?:JSON\.stringify\(\s*${NODE_READ}(?:\s*,\s*(?:null|\d+))*\s*\)|${NODE_READ})\s*\)|${NODE_READ})$`, 'u'),
+  python: new RegExp(String.raw`^(?:import\s+json|${PYTHON_BOUND}\s*=\s*${PYTHON_READ}|print\(\s*(?:json\.dumps\(\s*${PYTHON_VALUE}(?:\s*,\s*indent\s*=\s*\d+)?\s*\)|${PYTHON_VALUE})\s*\)|${PYTHON_READ})$`, 'u'),
+  node: new RegExp(String.raw`^(?:(?:const|let|var)\s+(?:fs|\{\s*readFileSync\s*\})\s*=\s*require\(\s*${FS}\s*\)|(?:const|let|var)\s+${NODE_BOUND}\s*=\s*${NODE_READ}|console\.log\(\s*(?:JSON\.stringify\(\s*${NODE_VALUE}(?:\s*,\s*(?:null|\d+))*\s*\)|${NODE_VALUE})\s*\)|${NODE_READ})$`, 'u'),
 };
 
 // Why the subagent call in `input`, a PreToolUse payload, may not run because it changes one of `project`'s config files,
@@ -414,12 +423,19 @@ export function writesNothing(input) {
 // run (onlyMain): the guards it could not finish hold a run's driver from the run's stores, the marks, and the sign-off
 // store. A call that writes nothing (writesNothing), which no guard refuses, runs for every session, so a loaded machine
 // never stalls a session the guards hold on its reads; a shell call, such as a driver's `aidrian project wait`, is held.
+// The time the guards take depends on the machine's load, as when many sessions or a test suite run at once, so the same
+// call often passes a moment later: the refusal gives one ordered recovery, a retry of the call alone first, then shorter
+// commands where a split keeps what the call does, then the report. An agent that read "tell the Human" first stopped at once, as a fix agent with one small
+// Edit did.
+const RETRY = 'only after these steps, in order: a busy machine slows the guards, so 1) retry this same call by itself,'
+  + ' up to three times (a retry is the same tool, not another one); 2) if a shell call is still refused and splitting it keeps what it does, run it as shorter commands;'
+  + ' 3) when those are refused too, or the call is no shell call or cannot be split, stop and report that the command takes the guards longer than they have';
 export function deadlineDenial(input, { names: { human } }, { unattended = () => false, drove = () => false, issue = () => false, mark = null } = {}) {
   if (writesNothing(input)) return null;
   const who = onlyMain(input, { unattended, drove, issue });
   if (who === null) return null;
   const why = `the guards could not finish reading this command in time, so it may change a file ${who}`;
-  return { match: 'past the guards\' time budget', reason: projectRuleReason(input, why, human, 'that the command takes the guards longer than they have, or run it as shorter commands', { mark }) };
+  return { match: 'past the guards\' time budget', reason: projectRuleReason(input, why, human, RETRY, { mark }) };
 }
 
 // The texts a command in a shell the lexer cannot read is judged by: the command as given, and, when it differs, a copy
@@ -608,8 +624,39 @@ function interpretedCode(command) {
 
 // Whether every statement of `code`, split at `;` and line ends, is one `reads` matches.
 function onlyReads(code, reads) {
-  const statements = code.split(/[;\n]/u).map((each) => each.trim()).filter(Boolean);
+  const statements = statementsOf(code).map((each) => each.replace(/\s+/gu, ' ').trim()).filter(Boolean);
   return statements.length > 0 && statements.every((each) => reads.test(each));
+}
+
+// `code` split at each `;` and line end outside quotes and brackets, except a line end right after `=` or before a line
+// that starts with `.`, so a read written over several lines, as `const r =\n  require(p)\n  .agents` or
+// `json.load(\n  open(p))`, is one statement.
+function statementsOf(code) {
+  const statements = [];
+  let current = '';
+  let quote = null;
+  let depth = 0;
+  // A line that starts with an accessor, as `.agents`, continues the one before it.
+  // Each run of white space is read once, and what follows it decides, so the scan stays linear.
+  const joined = code.replace(/\n\s*/gu, (run, at, text) => (text[at + run.length] === '.' ? ' ' : run));
+  // `last` is the last character of `current` that is not white space, kept as the loop goes, so no line end rescans it.
+  let last = '';
+  for (const char of joined) {
+    if (quote) {
+      if (char === quote) quote = null;
+    } else if (char === "'" || char === '"') quote = char;
+    else if ('([{'.includes(char)) depth += 1;
+    else if (')]}'.includes(char)) depth = Math.max(0, depth - 1);
+    else if (depth === 0 && (char === ';' || (char === '\n' && last !== '='))) {
+      statements.push(current);
+      current = '';
+      last = '';
+      continue;
+    }
+    current += char;
+    if (!/\s/u.test(char)) last = char;
+  }
+  return [...statements, current];
 }
 
 function blocked(input, file, verb, human) {

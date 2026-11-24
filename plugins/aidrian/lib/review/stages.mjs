@@ -85,12 +85,24 @@ export async function runStages(s) {
     if (quiet && !recorded) {
       Object.assign(current, roundBefore);
       if (roundBefore.quiet === undefined) delete current.quiet;
+      delete s.roundKept;
     }
   };
   // A quiet push moves the round to this head before any pass runs, so a step whose passes all carry still moves it.
+  // The step's output says so in `round_kept`, beside its round number.
   if (quiet) {
     openRound();
-    plan.reasons = [...plan.reasons, `a comment, doc, or test-only change since ${roundBefore.head.slice(0, 7)}: the round stays open; the passes it touches re-review it`];
+    const reason = `a comment, doc, or test-only change since ${roundBefore.head.slice(0, 7)}: the round stays open; the passes it touches re-review it`;
+    s.roundKept = { from: roundBefore.head, reason };
+    plan.reasons = [...plan.reasons, reason];
+  }
+  // A pass `aidrian pr attest` recorded on this head before any step opened its round, as a session does that reviews
+  // a push and attests it with no step between, is a review of this head all the same: its round opens here, or the
+  // cap stops it. Only a result the step would use counts (resultFor), and it keeps the round, a quiet one too, when
+  // another pass then fails.
+  if (passes.some((pass) => sameCommit(resultFor(pass)?.head, head))) {
+    if (openRound() === 'round_limit') return capReached({ max_rounds: maxRounds });
+    recorded = true;
   }
 
   // The review bot's request: the gate's marker sums every code-reviewer pass that counts for this head (a
@@ -115,10 +127,14 @@ export async function runStages(s) {
   // `holds_finding`: a receipt beside the bot's status card that still holds one of its findings at this head, kept on
   // the record so `fix_required` says the open work is the bot's earlier threads, not this answer.
   const recordBot = (pass, bot) => {
-    const clean = bot.signal?.kind === 'thumbs_up' || (bot.signal?.kind === 'comment' && bot.signal.clean === true);
+    // An approving review with no inline comment is clean too, as the bot history reads it (extension.mjs botRounds).
+    const approves = bot.signal?.kind === 'review' && bot.signal.state === 'APPROVED' && !(bot.signal.line_comments >= 1);
+    const clean = bot.signal?.kind === 'thumbs_up' || (bot.signal?.kind === 'comment' && bot.signal.clean === true) || approves;
     const open = clean ? 0 : Math.max(1, bot.signal?.line_comments ?? 0);
     const holds = !clean && bot.signal?.holds_finding === true;
-    state.passes[pass.id] = { head, reviewer: pass.reviewer, findings: open, open, bot: { kind: bot.signal?.kind ?? null, review_id: bot.signal?.review_id ?? null, ...(holds ? { holds_finding: true } : {}) } };
+    // With no inline comment to count, the one open finding is a floor: the answer may hold more (extension.mjs signals).
+    const floor = !clean && !(bot.signal?.line_comments >= 1);
+    state.passes[pass.id] = { head, reviewer: pass.reviewer, findings: open, open, ...(floor ? { floor: true } : {}), bot: { kind: bot.signal?.kind ?? null, review_id: bot.signal?.review_id ?? null, ...(holds ? { holds_finding: true } : {}) } };
     recorded = true;
   };
   // A request a wait posted, from either call, is on record for the head it asked about (`requested_head`), never
@@ -271,7 +287,7 @@ export async function runStages(s) {
       // A fix needs a new head, and in the last round there is none left: that is the cap, with the work named.
       return (lastRound ? capReached : (extra) => finish('fix_required', extra))({
         stage: stage.name,
-        open: open.map(([pass, result]) => ({ pass: pass.id, reviewer: pass.reviewer, head: result.head, open: result.open, findings: result.list ?? null, ...(result.bot?.holds_finding ? { holds_finding: true } : {}), ...(result.dropped?.length ? { dropped: result.dropped } : {}) })),
+        open: open.map(([pass, result]) => ({ pass: pass.id, reviewer: pass.reviewer, head: result.head, open: result.open, findings: result.list ?? null, ...(result.floor === true ? { floor: true } : {}), ...(result.bot?.holds_finding ? { holds_finding: true } : {}), ...(result.dropped?.length ? { dropped: result.dropped } : {}) })),
         // One entry per mistake when slices and the cross pass report the same one.
         ...(stage.passes.some((pass) => pass.role) ? { findings_merged: dedupe(open.map(([pass, result]) => [pass.id, result.list ?? []])) } : {}),
         flows: unsigned.map(([flow, status]) => ({

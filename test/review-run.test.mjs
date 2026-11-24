@@ -107,6 +107,7 @@ test('a comment-, doc-, or test-only push keeps its round, and the passes it tou
     assert.deepEqual([second.status, second.round, seen.inputs.length], ['received', 1, 2], `a ${what}-only push is reviewed, and opens no round`);
     assert.deepEqual([seen.inputs[1].context, seen.inputs[1].base, seen.inputs[1].head], ['delta', first.head, pushed], `${what}: only the change since the round's head`);
     assert.match(second.plan.reasons.join('\n'), /a comment, doc, or test-only change since [0-9a-f]{7}: the round stays open; the passes it touches re-review it/u, what);
+    assert.deepEqual([second.round_kept.from, second.round_kept.reason], [first.head, second.plan.reasons.at(-1)], `${what}: the output names the kept round, beside its number`);
     const state = readLocalState(r.project, 7);
     assert.equal(state.passes['engine:codex-local'].head, pushed, `${what}: the result is the new head's`);
     assert.deepEqual([state.rounds.length, state.rounds[0].head, state.rounds[0].quiet.map((each) => each.from)], [1, pushed, [first.head]], `${what}: the round moved to the new head`);
@@ -592,9 +593,18 @@ test('the review bot as the engine: a thumbs-up passes, a review with comments i
   const off = () => ({ ok: false, reason: 'the codex CLI is not installed' });
   const comments = await r.step({ codex: off, awaitBot: async () => ({ status: 'received', signal: { kind: 'review', line_comments: 2 } }) });
   assert.deepEqual([comments.status, comments.open[0].open], ['fix_required', 2]);
+  assert.equal(readLocalState(r.project, 7).rounds.at(-1).floor, undefined, 'two inline comments are a count');
+  r.write('src/app.js', 'b2\n');
+  r.commit();
+  const bare = await r.step({ codex: off, awaitBot: async () => ({ status: 'received', signal: { kind: 'review', line_comments: 0 } }) });
+  assert.deepEqual([bare.status, bare.open[0].open, bare.open[0].floor], ['fix_required', 1, true]);
+  assert.equal(readLocalState(r.project, 7).rounds.at(-1).floor, true, 'an answer with no inline comment holds at least one');
   r.write('src/app.js', 'c\n');
   r.commit();
-  assert.equal((await r.step({ codex: off, awaitBot: async () => ({ status: 'received', signal: { kind: 'thumbs_up' } }) })).status, 'received');
+  const approval = await r.step({ codex: off, awaitBot: async () => ({ status: 'received', signal: { kind: 'review', state: 'APPROVED', line_comments: 0 } }) });
+  // latestBotSignal counts no thread reply (test/pr-await-review.test.mjs), so an approval with only replies reads as this one.
+  assert.equal(approval.status, 'received', 'an approval with no inline comment is clean, as the bot history reads it');
+  assert.ok(Object.values(readLocalState(r.project, 7).passes).some((pass) => pass.bot && pass.open === 0 && pass.floor === undefined));
 });
 
 test('the review bot`s clean comment on a draft records no open finding, and the step is received; another comment holds one', async (t) => {

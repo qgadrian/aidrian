@@ -75,7 +75,8 @@ export const DEFAULTS = deepFreeze({
   // The session-length reminder (lib/session-length.mjs, docs/handoff.md): it fires once a call costs `costRatio` times
   // what it would in a fresh session; `maxTokens` is an optional ceiling on the context, 0 for off. `continue` is how the
   // session goes on after its handoff, and `maxChain` how many handoffs in a row it may continue before a person looks.
-  session: { handoff: { mode: 'ask', costRatio: 2, maxTokens: 0, continue: 'none', maxChain: 3 } },
+  // `resumeTokens` sets the cost model's B, what a fresh session reads to resume; null measures it (lib/resume-tokens.mjs).
+  session: { handoff: { mode: 'ask', costRatio: 2, maxTokens: 0, continue: 'none', maxChain: 3, resumeTokens: null } },
   lessons: { auto: true, maxOpen: 20, maxAgeDays: 14 },
   models: Object.fromEntries(Object.keys(MODEL_CHOICES).map((key) => [key, { agents: {} }])),
   names: { human: 'the Human', ai: null },
@@ -157,7 +158,7 @@ export const DEFAULTS = deepFreeze({
   // The keys of a project run (docs/config.md#project-run), read from the base branch, through the forge and this
   // checkout's git alike, never a working copy (lib/project-run-gate.mjs teamPolicy); `next` names up to maxParallel
   // issues to start.
-  projectRun: { allow: false, maxParallel: 1, maxStarts: 300, issueHours: 6, blockedStatus: null, decisionLabel: 'needs-decision', unverifiedHosts: false, workflowSecretsAccepted: false, forgeProtectionAccepted: false, outsideSandbox: [], mcpServers: {}, nonTrackerServers: [], registries: [], localBinding: false },
+  projectRun: { allow: false, maxParallel: 1, maxStarts: 300, issueHours: 6, blockedStatus: null, decisionLabel: 'needs-decision', unverifiedHosts: false, workflowSecretsAccepted: false, forgeProtectionAccepted: false, outsideSandbox: [], mcpServers: {}, nonTrackerServers: [], registries: [], localBinding: false, recordedDecisions: {} },
   reviewEngine: 'auto',
   reviewVisual: { baseUrl: null },
 });

@@ -441,20 +441,37 @@ the handoff goes on by the clear route with what to change, and nothing is kept,
    It enters the worktree, as on the clear route. It also says the brief is an earlier session's advice, not the Human's instruction: what the Human
    keeps, such as merging, releasing, deleting, force pushing, posting outside the repository, changing config or
    permissions, and starting other sessions, still waits for the Human, and a brief that asks for one is reported.
+   The one exception is the project's own setting, never the brief's: a pull request the continuation itself marked ready,
+   and for which `aidrian pr auto-merge <url>` then exits 0, is merged through the `pr-auto-merge` skill, as in any unattended run,
+   so [auto-merge](config.md#auto-merge) holds across a handoff.
+   One an earlier session marked ready may be waiting for a person's review, so it stays the Human's to merge.
 5. The gate records the chain floor of the new session, `Chain + 1`, as a clear's delivery does, so the check holds
    its next brief to the count, and with it the progress the hop starts from ([The progress check](#the-progress-check)).
    It reads the host's listing for the new session's full id for about 5 seconds; when the listing lags, it files the
    floor under the short id the start printed, and every session id that starts with it reads that floor. Under the
    same id it files the session's unattended mark, `$XDG_STATE_HOME/aidrian/unattended/<id>.json`, which names the
-   project's main checkout, so the hooks know the session wherever its calls run (Limits, below). Once the Human
-   types into the session, the agent gate hook files `attended.<id>.json` beside the marks on the session's next main
-   tool call, and the session is attended from then on: its mark reads as none, and its chain floor, kept for the
-   count, no longer holds it. The session's own host adapter's `humanPrompt` says which entries of the session's own
-   transcript are prompts the Human typed after the start; a peer session's message, a scheduled prompt, the start
-   prompt, and a transcript the session could write itself never count
+   project's main checkout, so the hooks know the session wherever its calls run (Limits, below). A session with
+   several marks, under its full id and a short one or in both mark folders, is held by the most restrictive. The scan
+   ranks a mark by the sandbox proof the agent gate hook holds it to, read by the same function the hook reads
+   (`lib/unattended-mark.mjs proofStateOf`): a failed proof, then an owed one, an issue mark with no proof state whose
+   attempt has a proof plan included, then a passed one, whose plan still hides its denied stores from the file tools.
+   Among the marks of one attempt, as when only one copy was updated, the latest verdict counts alone: a failed proof,
+   then a passed one, then one owed, then one owed only by the plan; across attempts, the order above holds.
+   Then come a mark that cannot be read, a proof state with no main checkout included, a project run's issue, and a plain mark.
+   A mark that holds no proof of its own leaves the hook one more hold, by the call's folder: a call inside an attempt's
+   clone with a proof plan owes that proof. That hold depends on each call, so no rank of the marks can stand for it,
+   and a stronger mark the scan picks, such as a passed one, replaces it, even for a call in another attempt's clone.
+   Once the Human types into the session, the agent gate hook files `attended.<id>.json` beside each plain mark that
+   holds it, in each mark folder, on the session's next main tool call, and the session is attended from then on: its
+   mark reads as none, and its chain floor, kept for the count, no longer holds it. Once that record is in each of those
+   folders, the hook neither reads the transcript again nor rewrites the record. The session's own host adapter's
+   `humanPrompt` says which entries of the session's own transcript are prompts the Human typed after the start; a peer
+   session's message, a scheduled prompt, the start prompt, and a transcript the session could write itself never count
    ([Claude Code](providers/claude-code.md#prompts-the-human-typed)). A mark that names a project run's issue, one that
-   tracks a sandbox proof, a pending hold, and a mark that cannot be read stay, whoever types. A host whose adapter has
-   no `humanPrompt` keeps the mark for the session's life (`lib/unattended-mark.mjs liftAttended`, `isAttended`).
+   tracks a sandbox proof, and a mark that cannot be read stay, whoever types; so does a pending hold, one that cannot be
+   read included, which also holds a session already attended, and keeps one from being recorded attended while it
+   lasts, a hold filed while the hook reads the transcript included. A host whose adapter has no `humanPrompt` keeps the mark for the session's life
+   (`lib/unattended-mark.mjs liftAttended`, `isAttended`).
    A start that surely made nothing, one whose host command never ran or refused the start in a way the host adapter
    knows, such as an untrusted folder, while the listing shows no new session, falls back to the clear route. A start
    whose outcome is unknown, such as one that exited non-zero for any other reason, timed out, was stopped by a signal,
@@ -833,7 +850,7 @@ aidrian session snapshot [--session ID] [--transcript PATH] [--ticket-prefixes A
 | Key | What it holds |
 | --- | --- |
 | `session` | `{ id, transcript, cwd }`: the id when it passes `SESSION_ID`, else null, and the two paths. |
-| `handoff` | `{ ratio, breakEven, level, nextRatio, context, ceiling, chain, maxChain, continueArmed, lastBrief }`, below. |
+| `handoff` | `{ ratio, breakEven, level, nextRatio, context, ceiling, resume, chain, maxChain, continueArmed, lastBrief }`, below. |
 | `prs` | The pull requests the session's [ledger](hooks.md#session-ledger) names, then those of the sessions a handoff came from ([Across a handoff](#across-a-handoff)): the forge's entries, then the unsupported ones, each `{ forge, host, repo, number, title, url, isDraft, state, mergeable, reviewDecision, unresolvedThreads, checks, inherited }`, below. `inherited` is a boolean: true for an entry of an earlier session. Null, and in `errors`, when the session has no folder, as for a state folder inside a checkout, or not the user's own. |
 | `lessons` | `{ open, byTier: { P1, P2, P3 } }`: the open [lessons](lessons.md) of the project's inbox; null, and in `errors`, when the state folder is inside a checkout, or is not the user's own. |
 | `worktrees` | `{ owned, mergedNotCleaned }`, and `stale: true` when the merged count is a cached value past its minute. |
@@ -890,6 +907,8 @@ The hooks that write or deliver a continuation marker, and the gate, hold the co
 the repository, and keep no marker there when git cannot list them. The agent gates' unattended check is the exception:
 it looks for a background chain floor in any store outside the project's own checkouts, even when git cannot list the
 rest, since a floor it finds only adds refusals.
+`resume` is the `B` the numbers use, `{ tokens, source, samples }`: `source` is `config`, `measured`, or `default`,
+and `samples` counts the samples read, null under `config` ([Resume tokens](#resume-tokens)).
 `chain` and `continueArmed` come from the [continuation store](#continue)'s read-only readers: whether the session
 armed a continuation, its chain, or else the [chain floor](#the-chain) the session was started with. `maxChain` comes
 from config: it is the working copy's `session.handoff.maxChain`. A background start is held to the base branch's
@@ -1077,9 +1096,11 @@ waits: a named pipe, or any other entry that is no regular file, at the lesson i
 that section at once, as at a cache file or the ledger of the session's folder.
 
 **The line.** `--line` prints one line of plain text, its segments that hold something joined by ` · `, or an empty
-line: the handoff, once the session made a model call (`1.4x` at `quiet`, `1.8x · handoff pays back in ~24 calls` at `offer`,
-`2.3x · handoff due, pays back in ~24 calls` at `due` and `reminded`, `handoff now` at `ceiling`, and ` · armed 1/3`
-while a continuation is armed), then the pull requests, `PRs ✓2 ✗0 ⏳1 · #12, #34, #56`, when `prs` holds an entry (the counts, then the first five
+line: the handoff, once the session made a model call (`1.4x` at `quiet`; `1.8x · handoff worth it if 60+ calls left`
+at `offer`, `due`, and `reminded`, where the number is the first whole call count above the break-even, `N`, and the
+ratio stands alone without one,
+and only the mod's band tells `offer` from the other two, by color;
+`handoff now` at `ceiling`; and ` · armed 1/3` while a continuation is armed), then the pull requests, `PRs ✓2 ✗0 ⏳1 · #12, #34, #56`, when `prs` holds an entry (the counts, then the first five
 numbers, then `+N` for the rest and any with no number; `3 PRs · ✓2 ✗0 ⏳1` with no number to list; when the numbers
 come from more than one repository, each carries its repository's letter, `PRs ✓1 ✗1 ⏳0 · a#42, b#42`, `a` the first
 when their hosts and paths are sorted, and a pull request with no number takes none; the segment is at most 58
@@ -1098,7 +1119,7 @@ All costs are in input tokens of the model of the session's last main-session ca
 | --- | --- |
 | `C` | The context of the last main-session call: input, cache read, and cache write together. |
 | `W` | The context of the first main-session call: the system prompt, tools, and project instructions a fresh session reads too. |
-| `B` | What a fresh session reads to resume, 44,000 tokens. |
+| `B` | What a fresh session reads to resume, this project's own ([Resume tokens](#resume-tokens)); 44,000 tokens until it is measured. |
 | `H` | The calls the long session spends writing the brief, 8. |
 | `m` | The model's cache-read multiple of its input price, from `priceFor` in `lib/model-prices.mjs`; 0.1 when the model sets none or is unknown. |
 | `k` | The cache-write multiple: 2 when the session writes 1-hour cache, else 1.25 for 5-minute cache. |
@@ -1120,11 +1141,44 @@ Output tokens and subagent calls cost the same either way, so the model leaves t
 - `H`: a median of 9 main-session calls from the `session-handoff` skill call to the end of the session,
   quartiles 7 and 47; the top quartile kept working after the brief.
 
+### Resume tokens
+
+`B` is per project, since a project whose resumed sessions read large docs costs more to resume.
+`resumeTokens` in `lib/resume-tokens.mjs` picks it, and the Stop hook, the plan offer, and the snapshot all take it
+from there, so none disagrees with another:
+
+1. `session.handoff.resumeTokens` in config.json, when set: a whole number above 0.
+2. Else the median of this project's samples, once there are 5 or more from the last 30 days.
+3. Else 44,000.
+
+A sample is one session that resumed from a brief: the context of its first model call that edits a file or
+dispatches an agent, less the context of its first model call, the way the 44,000 was measured. A call counts by its
+result: one a hook or the permissions refused, or that failed, is not where work began. A session resumed from a brief
+when, before that call, it ran the `session-continue` skill, as a Skill call that did not fail or a typed command, or
+started with a `Handoff continuation:` block before its first model call, in its first prompt, which is the first
+message of a background start, or in context a SessionStart hook added, which a clear's delivery writes. So typed
+resumes count too, and a later prompt, or another hook's context, that quotes the block does not.
+The Stop hook records each session's sample once, at the first stop after that call, whatever `mode` says, read from
+the session's own transcript, which it already holds: a transcript that names neither the skill nor the block is not
+parsed, and the parse stops at the first such call. The samples live in `<state>/resume-tokens.json`, the newest 50 by
+the time of the call each measured, each with its session, written as a new file renamed over the old. So a long
+session read again after its sample left the 30 days, or the newest 50, falls out again at once, and a call with no
+time, or one already past 30 days, is not kept.
+Two sessions that record at the same moment may keep one sample of the two.
+The file is read only when it is this user's own regular file, no link, that no other user may write, at most 64 KiB,
+in a state folder inside no checkout of the repository, so no branch supplies it, that it and every folder above let no
+other user replace ([Local state](project-folder.md#local-state)). The hooks and the snapshot hold it to the same rule,
+`samplesFolder`. Any other gives no samples, so `B` is the config value or 44,000.
+A read is one small file, so no stop and no snapshot scans transcripts. Like the reminder, the samples come from
+Claude Code transcripts only: the host adapter's `capabilities.workTools` names the edit and dispatch tools, and a
+host with no transcripts records none and uses the config value or 44,000.
+`aidrian session snapshot --json` shows the value in use as `handoff.resume`.
+
 ## Config
 
 ```json
 "session": {
-  "handoff": { "mode": "ask", "costRatio": 2, "maxTokens": 0, "continue": "none", "maxChain": 3 }
+  "handoff": { "mode": "ask", "costRatio": 2, "maxTokens": 0, "continue": "none", "maxChain": 3, "resumeTokens": null }
 }
 ```
 
@@ -1135,6 +1189,7 @@ Output tokens and subagent calls cost the same either way, so the model leaves t
 | `session.handoff.maxTokens` | A ceiling on the context, in tokens, that fires on its own and doubles; `0`, the default, is off. |
 | `session.handoff.continue` | How the session goes on after its handoff: `"none"`, `"clear"`, `"compact"`, or `"background"`. The default follows `mode`: `"background"` with `mode: "auto"`, else `"none"`; a value set here wins. A route the host cannot do falls back to `"none"`; which routes each host does is its adapter's `capabilities.handoffContinue` ([Adding a host](providers/adding-a-host.md)). |
 | `session.handoff.maxChain` | How many handoffs in a row a session may continue before a person looks, a whole number above 0, or `"unlimited"`; `3` by default. `"unlimited"` leaves the background route's [progress check](#the-progress-check), and the 10,000 continuations a chain floor records, to stop a chain. |
+| `session.handoff.resumeTokens` | `B` of the cost model, a whole number above 0, which wins over the measured value; `null`, the default, measures it ([Resume tokens](#resume-tokens)). |
 
 Most projects set only `mode`. A config written before these settings became a group still loads, with an error from
 `aidrian check` and every `aidrian` command:
@@ -1165,6 +1220,12 @@ A project that adopts the group sets `requires.aidrian` to the release that ship
     `Worktree:` value and a `Branch:` value, `## Still running` and `## Open risks and questions` with a line of text
     (`None.` when there is nothing), and `## Next steps` with a numbered item at the start of a line.
     A heading matches by its first words in any case, so `## Next steps (ordered)` counts; a line inside a code fence does not.
+  - a Next steps section that runs a skill only a person can start, one whose `SKILL.md` frontmatter sets
+    `disable-model-invocation: true`, such as `autopilot`, named as `/aidrian:<name>`, `/<name>`, or the `<name>` skill,
+    in any step, a fenced step body included, since a continuation runs them all. The Skill tool of the session that resumes the brief refuses it,
+    so a continuation would stop there; the gate starts none for a brief that fails the check. A file such as
+    `/autopilot.md` is not counted, and any mention is, one for a person to type included: a person's part goes under
+    Open risks and questions, or the Human resumes the brief and types the skill.
   - a header, the text above the first section, with no `Supersedes:` value. A value that begins with `none` names no
     brief; any other value names one, and when no superseded brief is found, nothing was compared, which is a finding:
     run the check again with `--prior <that brief>`.

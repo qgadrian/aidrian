@@ -99,7 +99,7 @@ export const SCHEMA = {
   terms: { file: 'textOrNull' },
   knowledge: { budgets: { alwaysBytes: 'positive', taggedDocBytes: 'positive', untaggedDocBytes: 'positiveOrNull', enforce: 'budgetEnforce', baseline: 'docBytes' }, defaults: { codeStyle: 'boolean' } },
   skills: { descriptionChars: 'positive', listingBytes: 'positive' },
-  session: { handoff: { mode: 'handoffMode', costRatio: 'costRatio', maxTokens: 'zeroOrMore', continue: 'continueRoute', maxChain: 'positiveOrUnlimited' } },
+  session: { handoff: { mode: 'handoffMode', costRatio: 'costRatio', maxTokens: 'zeroOrMore', continue: 'continueRoute', maxChain: 'positiveOrUnlimited', resumeTokens: 'positiveOrNull' } },
   lessons: { auto: 'boolean', maxOpen: 'zeroOrMore', maxAgeDays: 'zeroOrMore' },
   models: 'models',
   names: { human: 'text', ai: 'textOrNull' },
@@ -128,7 +128,7 @@ export const SCHEMA = {
   decisions: DECISIONS_SCHEMA,
   audits: { triage: { issueCreation: 'issueCreationMode', labels: 'auditLabels' } },
   tracker: 'tracker',
-  projectRun: { allow: 'boolean', maxParallel: 'parallelCap', maxStarts: 'startCap', issueHours: 'hourCap', blockedStatus: 'textOrNull', decisionLabel: 'text', unverifiedHosts: 'boolean', workflowSecretsAccepted: 'boolean', forgeProtectionAccepted: 'boolean', outsideSandbox: 'texts', mcpServers: 'mcpServers', nonTrackerServers: 'serverNames', registries: 'registries', localBinding: 'boolean' },
+  projectRun: { allow: 'boolean', maxParallel: 'parallelCap', maxStarts: 'startCap', issueHours: 'hourCap', blockedStatus: 'textOrNull', decisionLabel: 'text', unverifiedHosts: 'boolean', workflowSecretsAccepted: 'boolean', forgeProtectionAccepted: 'boolean', outsideSandbox: 'texts', mcpServers: 'mcpServers', nonTrackerServers: 'serverNames', registries: 'registries', localBinding: 'boolean', recordedDecisions: 'recordedDecisions' },
 };
 
 // Keys a format change renamed or moved, old name to new; a key inside a group is named with its group, "group.key".

@@ -7,12 +7,13 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
+import { confineDenial } from '../plugins/aidrian/lib/confine-guard.mjs';
 import { unattendedHere } from '../plugins/aidrian/lib/handoff-continue.mjs';
 import { startedUnattended } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { noteFrom, openStore, storePath } from '../plugins/aidrian/lib/handoff-markers.mjs';
@@ -496,4 +497,174 @@ test('the agent gate hook never lifts a session from a transcript outside the ac
   assert.equal((await run({})).status, 0);
   assert.ok(readUnattendedMark(session, { home: TEST_HOME }), 'still held');
   assert.equal(humanPrompts({ session_id: session, transcript_path: transcript }), null, 'no transcript of the account home');
+});
+
+// Two mark folders, the environment's and the account's own, a mark writer, and a transcript the Human typed into.
+function markSetup(t) {
+  const env = { ...process.env, XDG_STATE_HOME: folder(t, 'aidrian-marks-') };
+  const home = folder(t, 'aidrian-home-');
+  const root = folder(t, 'aidrian-root-');
+  const ownMarks = path.join(home, '.local/state/aidrian/unattended');
+  mkdirSync(ownMarks, { recursive: true, mode: 0o700 });
+  mkdirSync(markFolder(env), { recursive: true, mode: 0o700 });
+  const write = (where, name, value) => writeFileSync(path.join(where, name), typeof value === 'string' ? value : JSON.stringify({ root, at: Date.now(), ...value }));
+  const entry = (promptIndex) => ({ type: 'user', isSidechain: false, entrypoint: 'cli', message: { role: 'user', content: 'x' }, origin: { kind: 'human' }, turnOrigin: 'human', turnPosition: { promptIndex, turnIndex: promptIndex } });
+  const transcript = path.join(folder(t, 'aidrian-transcript-'), 'typed.jsonl');
+  writeFileSync(transcript, `${JSON.stringify(entry(1))}\n${JSON.stringify(entry(2))}\n`);
+  const lift = (session, file = transcript) => liftAttended(session, file, { env, home, isHuman: claudeCode.humanPrompt });
+  const read = (session, options = {}) => readUnattendedMark(session, { env, home, ...options });
+  return { env, home, root, ownMarks, marks: markFolder(env), write, lift, read };
+}
+
+test('the mark scan reads every matching mark and gives the most restrictive, whichever folder comes first', (t) => {
+  const { ownMarks, marks, write, read } = markSetup(t);
+  // An issue mark with no proof state in the first folder, one whose proof is owed in the second.
+  const owed = 'feed0010-0000-4000-8000-000000000010';
+  write(marks, `${owed}.json`, { project: 'r1', issue: 'ENG-1' });
+  write(ownMarks, `${owed}.json`, { project: 'r1', issue: 'ENG-1', confine: true });
+  assert.equal(read(owed)?.confine, true, 'an owed proof is not masked by an issue mark with none');
+  // A mark that cannot be read in the first folder, one whose proof failed in the second.
+  const failed = 'feed0011-0000-4000-8000-000000000011';
+  write(marks, `${failed}.json`, 'not json');
+  write(ownMarks, `${failed}.json`, { project: 'r1', issue: 'ENG-1', confine: 'failed' });
+  assert.equal(read(failed)?.confine, 'failed', 'a failed proof is not masked by a mark that cannot be read');
+  // A plain mark first and an issue mark second still give the issue.
+  const issue = 'feed0012-0000-4000-8000-000000000012';
+  write(marks, `${issue}.json`, {});
+  write(ownMarks, `${issue}.json`, { project: 'r1', issue: 'ENG-1' });
+  assert.equal(read(issue)?.issue, 'ENG-1');
+});
+
+test('a session plain-marked in both folders is recorded attended in each, so a reader of either folder alone sees it', (t) => {
+  const { home, ownMarks, marks, write, lift, read } = markSetup(t);
+  const session = 'feed0013-0000-4000-8000-000000000013';
+  write(marks, `${session}.json`, {});
+  write(ownMarks, `${session}.json`, {});
+  assert.equal(lift(session), true);
+  assert.deepEqual([marks, ownMarks].map((where) => readdirSync(where).includes(`attended.${session}.json`)), [true, true]);
+  // A caller whose environment moves no state root reads only the account's own folder.
+  assert.equal(read(session, { env: { ...process.env, XDG_STATE_HOME: path.join(home, '.local/state') } }), null);
+  assert.equal(read(session), null);
+});
+
+test('an attended session is still held by a pending hold, an unreadable one too, and a pending hold keeps a session from being lifted', (t) => {
+  const { env, root, marks, write, lift, read } = markSetup(t);
+  const session = 'feed0014-0000-4000-8000-000000000014';
+  write(marks, `${session}.json`, {});
+  assert.equal(lift(session), true);
+  assert.equal(read(session), null, 'attended');
+  const gate = 'feed0015-0000-4000-8000-000000000015';
+  const pending = markPending(gate, { cwd: root, root, env });
+  assert.ok(pending);
+  assert.deepEqual(read(session), { root, cwd: root, pending: true }, 'a pending hold with no listing holds the attended session');
+  // While the pending hold is there, a session the Human types into is not lifted.
+  const typed = 'feed0016-0000-4000-8000-000000000016';
+  write(marks, `${typed}.json`, {});
+  assert.equal(lift(typed), false, 'a readable pending hold');
+  writeFileSync(pending, 'not json');
+  assert.deepEqual(read(session), { root: null, pending: true }, 'an unreadable pending hold holds the attended session');
+  assert.equal(lift(typed), false, 'an unreadable pending hold');
+  assert.ok(dropPending(pending));
+  assert.equal(read(session), null);
+  assert.equal(lift(typed), true, 'once the pending hold is gone');
+  // The gate's own session is not held by its own pending mark, attended or not.
+  write(marks, `${gate}.json`, {});
+  assert.equal(lift(gate), true);
+  assert.ok(markPending(gate, { cwd: root, root, env }));
+  assert.equal(read(gate), null);
+});
+
+test('an attended session is not lifted again: its record is neither rewritten nor its transcript read', (t) => {
+  const { marks, write, lift } = markSetup(t);
+  const session = 'feed0017-0000-4000-8000-000000000017';
+  write(marks, `${session}.json`, {});
+  assert.equal(lift(session), true);
+  const record = path.join(marks, `attended.${session}.json`);
+  const earlier = Math.floor((Date.now() - 24 * 60 * 60 * 1000) / 1000);
+  utimesSync(record, earlier, earlier);
+  assert.equal(lift(session), true, 'still attended');
+  assert.equal(Math.floor(statSync(record).mtimeMs / 1000), earlier, 'the record was not rewritten');
+  assert.equal(lift(session, path.join(marks, 'no-such.jsonl')), true, 'no transcript is read');
+});
+
+test('the scan gives the mark the agent gate hook enforces: a proof state counts only with a root, and a passed proof keeps its denied stores', (t) => {
+  const { root, ownMarks, marks, write, read } = markSetup(t);
+  const outside = folder(t, 'aidrian-outside-');
+  const call = (input) => ({ session_id: 'x', cwd: outside, tool_name: 'Bash', tool_input: { command: 'ls' }, ...input });
+  // An owed proof with a root, then a failed one whose root cannot be read, which the hook would not hold to its proof.
+  const owed = 'feed0018-0000-4000-8000-000000000018';
+  write(marks, `${owed}.json`, { project: 'r1', issue: 'ENG-1', confine: true });
+  write(ownMarks, `${owed}.json`, { root: 'relative', project: 'r1', issue: 'ENG-1', confine: 'failed' });
+  assert.deepEqual(read(owed), { root, project: 'r1', issue: 'ENG-1', confine: true });
+  assert.equal(confineDenial(call(), { mark: read(owed) })?.match, 'sandbox proof owed', 'outside the clone too');
+  // A passed proof whose plan hides a store, beside a mark that cannot be read and a proof-less issue mark.
+  const work = path.join(folder(t, 'aidrian-run-state-'), 'runs', 'r1', 'attempts', 'ENG-1.1', 'work');
+  mkdirSync(work, { recursive: true });
+  const store = folder(t, 'aidrian-denied-store-');
+  writeFileSync(path.join(path.dirname(work), 'confine-plan.json'), JSON.stringify({ unreadable: [store] }));
+  for (const [first, name] of [['not json', 'feed0019-0000-4000-8000-000000000019'], [{ project: 'r1', issue: 'ENG-1' }, 'feed001a-0000-4000-8000-00000000001a']]) {
+    write(marks, `${name}.json`, first);
+    write(ownMarks, `${name}.json`, { cwd: work, project: 'r1', issue: 'ENG-1', confine: 'passed' });
+    assert.equal(read(name)?.confine, 'passed', name);
+    const reads = call({ tool_name: 'Read', tool_input: { file_path: path.join(store, 'secret') } });
+    assert.equal(confineDenial(reads, { mark: read(name) })?.match, 'reads a denied store', `${name}: a read outside the clone`);
+    assert.equal(confineDenial(call(), { mark: read(name) }), null, `${name}: another call runs`);
+  }
+});
+
+test('an issue mark with no proof state owes the proof its attempt\'s plan names, above a passed mark of another attempt', (t) => {
+  const { ownMarks, marks, write, read } = markSetup(t);
+  const attempts = path.join(folder(t, 'aidrian-run-state-'), 'runs', 'r1', 'attempts');
+  const [owing, passed] = ['ENG-1.1', 'ENG-1.2'].map((each) => path.join(attempts, each, 'work'));
+  for (const work of [owing, passed]) mkdirSync(work, { recursive: true });
+  writeFileSync(path.join(path.dirname(owing), 'confine-plan.json'), JSON.stringify({ unreadable: [] }));
+  const session = 'feed001e-0000-4000-8000-00000000001e';
+  write(marks, `${session}.json`, { cwd: passed, project: 'r1', issue: 'ENG-1', confine: 'passed' });
+  write(ownMarks, `${session}.json`, { cwd: owing, project: 'r1', issue: 'ENG-1' });
+  assert.equal(read(session)?.cwd, owing, 'the mark whose attempt owes its proof');
+  const call = { session_id: session, cwd: folder(t, 'aidrian-outside-'), tool_name: 'Bash', tool_input: { command: 'ls' } };
+  assert.equal(confineDenial(call, { mark: read(session) })?.match, 'sandbox proof owed');
+});
+
+test('a proof owed only by its attempt\'s plan yields to the state another mark records for that attempt', (t) => {
+  const { ownMarks, marks, write, read } = markSetup(t);
+  const work = path.join(folder(t, 'aidrian-run-state-'), 'runs', 'r1', 'attempts', 'ENG-1.1', 'work');
+  mkdirSync(work, { recursive: true });
+  writeFileSync(path.join(path.dirname(work), 'confine-plan.json'), JSON.stringify({ unreadable: [] }));
+  const session = 'feed001f-0000-4000-8000-00000000001f';
+  // The same attempt's mark in both folders, only one copy updated once the start confirmed the proof.
+  write(marks, `${session}.json`, { cwd: work, project: 'r1', issue: 'ENG-1' });
+  write(ownMarks, `${session}.json`, { cwd: work, project: 'r1', issue: 'ENG-1', confine: 'passed' });
+  assert.equal(read(session)?.confine, 'passed');
+  const call = { session_id: session, cwd: folder(t, 'aidrian-outside-'), tool_name: 'Bash', tool_input: { command: 'ls' } };
+  assert.equal(confineDenial(call, { mark: read(session) }), null, 'an ordinary call runs');
+});
+
+test('a passed proof supersedes an owed copy of the same attempt\'s mark', (t) => {
+  const { ownMarks, marks, write, read } = markSetup(t);
+  const work = path.join(folder(t, 'aidrian-run-state-'), 'runs', 'r1', 'attempts', 'ENG-1.1', 'work');
+  mkdirSync(work, { recursive: true });
+  writeFileSync(path.join(path.dirname(work), 'confine-plan.json'), JSON.stringify({ unreadable: [] }));
+  const session = 'feed0020-0000-4000-8000-000000000020';
+  write(marks, `${session}.json`, { cwd: work, project: 'r1', issue: 'ENG-1', confine: true });
+  write(ownMarks, `${session}.json`, { cwd: work, project: 'r1', issue: 'ENG-1', confine: 'passed' });
+  assert.equal(read(session)?.confine, 'passed');
+  const call = { session_id: session, cwd: folder(t, 'aidrian-outside-'), tool_name: 'Bash', tool_input: { command: 'ls' } };
+  assert.equal(confineDenial(call, { mark: read(session) }), null, 'an ordinary call runs');
+});
+
+test('a hold filed while the transcript is read keeps the session from being recorded attended', (t) => {
+  const { env, home, root, marks, write } = markSetup(t);
+  const transcript = path.join(folder(t, 'aidrian-transcript-'), 'typed.jsonl');
+  writeFileSync(transcript, `${JSON.stringify({ type: 'user', isSidechain: false, entrypoint: 'cli', message: { role: 'user', content: 'x' }, origin: { kind: 'human' }, turnOrigin: 'human', turnPosition: { promptIndex: 2, turnIndex: 2 } })}\n`);
+  const lift = (session, meanwhile) => liftAttended(session, transcript, { env, home, isHuman: claudeCode.humanPrompt, still: () => (meanwhile(), true) });
+  const pendingSession = 'feed001b-0000-4000-8000-00000000001b';
+  write(marks, `${pendingSession}.json`, {});
+  assert.equal(lift(pendingSession, () => assert.ok(markPending('feed001c-0000-4000-8000-00000000001c', { cwd: root, root, env }))), false, 'a pending hold');
+  assert.equal(isAttended(pendingSession, { env, home }), false);
+  const issueSession = 'feed001d-0000-4000-8000-00000000001d';
+  write(marks, `${issueSession}.json`, {});
+  rmSync(path.join(marks, 'pending.feed001c-0000-4000-8000-00000000001c.json'));
+  assert.equal(lift(issueSession, () => write(marks, `${issueSession.slice(0, 8)}.json`, { project: 'r1', issue: 'ENG-1' })), false, 'an issue mark');
+  assert.equal(isAttended(issueSession, { env, home }), false);
 });

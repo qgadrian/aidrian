@@ -24,13 +24,13 @@ import { appendToRun, readRun, runFolder } from '../plugins/aidrian/lib/project-
 import { recheckHalt } from '../plugins/aidrian/lib/project-recheck.mjs';
 import { DROP_FILE as GUARD_DROP_FILE, resultHoldReason, spentAttempts } from '../plugins/aidrian/lib/project-run-guard.mjs';
 import { markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
-import { DRIVER, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
+import { decidedFixture, DRIVER, OTHER, runFixture, STARTED } from './project-start-fixture.mjs';
 
 const CHILD = STARTED[0].session;
 
-// A run whose ENG-1 started, with a result file writer.
-function started(t, options) {
-  const fx = runFixture(t, options);
+// A run whose ENG-1 started, with a result file writer; `make` makes the run, runFixture by default.
+function started(t, options, make = runFixture) {
+  const fx = make(t, options);
   const start = fx.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(start.exitCode, 0, start.err.join('\n'));
   const results = path.join(fx.root, 'results');
@@ -259,6 +259,14 @@ test('the result\'s text is cleaned of controls, bidirectional and zero-width ch
   assert.equal(kept.stop, 'Waiting on a decision');
   assert.equal(kept.title, undefined);
   assert.deepEqual([kept.run, kept.key, kept.attempt, kept.session], ['launch', 'ENG-1', 1, CHILD]);
+});
+
+test('a result on an issue with a recorded decision that still carries a decision parks as on any other, security included', (t) => {
+  const fx = started(t, {}, decidedFixture);
+  assert.ok(fx.claude.starts()[0].args.at(-1).includes('a decision the Human recorded on this issue'), 'the grant stood');
+  const out = fx.recorded({ status: 'parked', pr: null, decisions: [{ question: 'Hand over identification now?', options: ['hand it over', 'synthetic fixtures'], recommended: 0, class: 'security' }], stop: 'a security decision' });
+  assert.deepEqual(out.out, ['result ENG-1 parked -> parked decision-1']);
+  assert.equal(fx.run().states.get('ENG-1').state, 'parked');
 });
 
 test('a result of a wrong shape, too large, not JSON, or behind a symlink is refused, and records nothing', (t) => {

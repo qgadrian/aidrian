@@ -1,8 +1,18 @@
 # Briefs
 
 What a brief from the `orchestrator` holds beyond its slice, and how to correct one an agent is working on.
-Read it before the first brief that changes behaviour, before you retract or replace a brief, and before several
+Read it before the first brief, before you retract or replace a brief, and before several
 pull requests land on the default branch.
+
+## The handoff file
+
+Every brief to an agent with a file tool or a shell names its machine handoff file on its own line:
+`Handoff file: <state>/dispatch/<branch>-<slice>-<agent>.json`, an absolute path, with `<state>` expanded to the folder
+`aidrian state` prints, each `/` in the branch written as `-`, and the agent's name last.
+The agent writes its handoff there, then sends a short summary. On Claude Code the stop hook fills only that file when
+the agent does not, and sends the agent back once for a marker whose path is not absolute, such as one that still says
+`<state>`. An agent with neither a file tool nor a shell, such as `explorer`, returns the handoff as its final message.
+The file is the record: read it after the agent returns, since a handback can reach another session, or none.
 
 ## A decision on record
 

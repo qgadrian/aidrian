@@ -24,11 +24,13 @@ import { givenRepo, repoFlag } from '../remotes.mjs';
 import { changedFiles, diffLines, mergeBase, resolve } from './diff.mjs';
 import { holdToBase } from './in-force.mjs';
 import { classify } from './plan.mjs';
-import { postContext, readReading } from './dispatch.mjs';
+import { postContext, readReading, shellQuote } from './dispatch.mjs';
 // One reading of a red flag, a full reason or the bare name a posted copy keeps (publish.mjs flagName).
 import { flagName } from './publish.mjs';
 import { isFindingId, twinMatch } from './findings.mjs';
-import { heldMessage, publishState, readRecord, sameCommit, writeLocalState } from './state.mjs';
+import { checkId, heldMessage, publishState, readRecord, sameCommit, writeLocalState } from './state.mjs';
+
+export { checkId };
 
 // The twin match lives with the findings (lib/review/findings.mjs), which the security mark reads too.
 export { NEAR_LINES, normalizeTitle } from './findings.mjs';
@@ -47,13 +49,17 @@ const MAX_BODY = 4000;
 
 export const policyOf = (github) => ({ mode: github?.extraRounds ?? 'ask', max: github?.maxExtraRounds ?? 2 });
 
-const entriesOf = (state, source) => (state.extensions ?? []).filter((entry) => entry.source === source);
+// The entries of `source`, and for the bot's rounds those of `reviewer` alone: a bot decision is for the reviewer whose
+// history it read, so another bot never takes its check, its question, or its grant. A bot entry with no reviewer, one an
+// older version or an override wrote, belongs to none, and the cap is checked afresh. A plan entry names no reviewer.
+export const sameReviewer = (entry, reviewer = null) => (entry.reviewer ?? null) === (reviewer ?? null);
+const entriesOf = (state, source, reviewer = null) => (state.extensions ?? []).filter((entry) => entry.source === source && sameReviewer(entry, reviewer));
 
 // The extra rounds the base branch's policy lets count: each granted entry, once its mode allows it ("auto" takes the
 // judge's word, "ask" needs the Human's approval), up to the ceiling. "off" counts none.
-export function grantedRounds(state, source, policy) {
+export function grantedRounds(state, source, policy, reviewer = null) {
   if (!state || policy.mode === 'off') return 0;
-  const granted = entriesOf(state, source).filter((entry) => entry.status === 'granted' && (policy.mode === 'auto' || entry.human?.answer === 'approve'));
+  const granted = entriesOf(state, source, reviewer).filter((entry) => entry.status === 'granted' && (policy.mode === 'auto' || entry.human?.answer === 'approve'));
   return Math.min(granted.length, policy.max);
 }
 
@@ -81,7 +87,7 @@ const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
 // Each signal is true, false, or null when the history cannot tell. `reasons` lists every red flag; any red flag sends
 // the judge's extend to the Human. A history from which no signal can be read is a red flag too: nothing in it shows
 // the review converging.
-// `rounds`: [{ round, head, open, findings: [{ title, file, line }] | null, fix: { added, code_added, removed, files } | null }],
+// `rounds`: [{ round, head, open, floor?, findings: [{ title, file, line }] | null, fix: { added, code_added, removed, files } | null }],
 // where `fix` is the change from that round's head to the next round's, or to the current head for the last, and
 // `code_added` the lines of `added` outside prose files. Bloat counts `code_added` when it is there.
 export function signals({ rounds = [], originalFiles = null, originalAdded = null, originalCodeAdded = null } = {}) {
@@ -91,8 +97,15 @@ export function signals({ rounds = [], originalFiles = null, originalAdded = nul
   const last = rounds.at(-1);
   const previous = rounds.at(-2);
 
+  // A round marked `floor` holds a count that is a floor: a bot answer with no inline comment counts one, whatever it
+  // holds (stages.mjs recordBot). A floor decides only what it still proves: the last round at least the previous
+  // round's exact count is not converging, and an exact last round under the previous floor is converging. Anything
+  // else cannot tell.
   let converging = null;
-  if (last && previous && Number.isInteger(last.open) && Number.isInteger(previous.open)) {
+  const exact = (each) => each.floor !== true;
+  const counted = last && previous && Number.isInteger(last.open) && Number.isInteger(previous.open);
+  const decided = counted && (exact(last) && exact(previous) ? true : exact(previous) ? last.open >= previous.open : exact(last) && last.open < previous.open);
+  if (decided) {
     converging = last.open < previous.open;
     evidence.converging = { round: last.round, open: last.open, previous_round: previous.round, previous_open: previous.open };
     if (!converging) reasons.push(`not converging: round ${last.round} left ${plural(last.open, 'open finding')}, round ${previous.round} left ${previous.open}`);
@@ -241,7 +254,7 @@ export function ownDelta(before, after) {
 }
 
 // The review bot's rounds as a history: one round per bot review, oldest first, its findings the review's top-level
-// inline comments.
+// inline comments, or a floor of one when a review that does not approve has none.
 export function botRounds(reviews, reviewComments, reviewer) {
   return (reviews ?? [])
     .filter((review) => review?.user?.login === reviewer)
@@ -250,6 +263,9 @@ export function botRounds(reviews, reviewComments, reviewer) {
       const findings = (reviewComments ?? [])
         .filter((comment) => comment.pull_request_review_id === review.id && !comment.in_reply_to_id)
         .map((comment) => ({ title: findingTitle(comment.body), file: comment.path ?? null, line: Number.isInteger(comment.line) ? comment.line : Number.isInteger(comment.original_line) ? comment.original_line : null }));
+      // A review with no inline comment that does not approve holds its findings in its body: at least one, a floor
+      // (stages.mjs recordBot), with no list to read for loops or drift. An approval with none is an exact zero.
+      if (!findings.length && review.state !== 'APPROVED') return { round: index + 1, head: review.commit_id ?? null, open: 1, floor: true, findings: null };
       return { round: index + 1, head: review.commit_id ?? null, open: findings.length, findings };
     });
 }
@@ -268,6 +284,25 @@ export const askQuestion = (pr, round, unreviewed = null, flags = [], repo = nul
     : `Pull request ${named} reached its review-round cap.${warn} Grant one extra review round, round ${round}?`;
 };
 export const askOptions = (round) => [`Approve round ${round}`, 'Deny'];
+
+// What a `round_limit` carries for the Human, so the one question at the cap is the one the review-rounds rule
+// (lib/rules/github/review-rounds.mjs) reads as the grant: `question` names `<owner>/<name>#<PR>` and `--max-rounds <N>`,
+// the first of `options` starts with "Approve", and `raise` is the one command that answer approves, ending in
+// `--repo <owner>/<name>` always, so it acts on the repository the question names, whatever the checkout's remotes. `<N>` allows one more round: the cap is the
+// --max-rounds baseline plus the rounds `granted`, so it is `round + 1 - granted`. A second round needs a new answer.
+// `source` "bot" raises `aidrian pr await-review --request`, else `aidrian pr review`, with `--with-bot` when the step
+// ran the bot (`withBot`). Nothing without the repository: the rule needs it named.
+export function raiseAsk({ pr, repo, source, round, granted = 0, withBot = false }) {
+  if (!repo || !Number.isInteger(pr) || !Number.isInteger(round)) return {};
+  const next = Math.max(1, round + 1 - granted);
+  const bot = withBot ? ' --with-bot' : '';
+  const step = source === 'bot' ? `aidrian pr await-review ${pr} --request` : `aidrian pr review ${pr}${bot}`;
+  return {
+    question: `Pull request ${repo}#${pr} reached its review-round cap. Allow one more review round, with --max-rounds ${next}?`,
+    options: [`Approve one more round (--max-rounds ${next})`, 'Stop at the cap'],
+    raise: `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 ${step} --max-rounds ${next} --repo ${repo}`,
+  };
+}
 
 const JUDGE_BRIEF =
   'Read-only. Decide whether this pull request earns one more review round past its cap. Read `extension.history` (each ' +
@@ -314,10 +349,12 @@ const PENDING = new Set(['judging', 'asking', 'granted']);
 
 // A pending decision whose head is not `head` any more is re-read on the new head: a push after the judge's verdict
 // can grow the fixes past the bloat limit, and the verdict and any approval were for the head before. A new red flag
-// sends it back to the judge, a grant included, and so does a check waiting for the Human: the judge has not seen
-// the push. A grant with no new red flag stands, as one round for the fix it was given for. Returns the entry, or null.
-export function revalidate({ state, source, round, head, history, log = () => {}, now = () => new Date().toISOString() }) {
-  const entry = (state?.extensions ?? []).find((each) => each.source === source && each.round === round && PENDING.has(each.status));
+// sends it back to the judge, a grant or a check waiting for the Human included. With no new red flag, a grant stands,
+// as one round for the fix it was given for, and so does a check waiting for the Human, on the new head: the push is
+// most often the very fix the extra round would review, and the Human's answer, given or still to come, records with
+// no second judge run. Returns the entry, or null.
+export function revalidate({ state, source, round, head, history, reviewer = null, log = () => {}, now = () => new Date().toISOString() }) {
+  const entry = (state?.extensions ?? []).find((each) => each.source === source && each.round === round && sameReviewer(each, reviewer) && PENDING.has(each.status));
   if (!entry || !head || sameCommit(entry.head, head)) return entry ?? null;
   const read = history();
   const sig = signals(read);
@@ -334,36 +371,39 @@ export function revalidate({ state, source, round, head, history, log = () => {}
   const known = new Set((entry.red_flags ?? []).map(flagName));
   const fresh = sig.reasons.filter((reason) => !known.has(flagName(reason)));
   entry.red_flags = sig.reasons;
-  if (fresh.length || entry.status === 'asking') {
+  if (fresh.length) {
     if (entry.judge) entry.stale_judge = entry.judge;
     delete entry.judge;
     delete entry.human;
-    decide('judging', null, fresh.length ? [...fresh, `read again on ${String(head).slice(0, 7)}, pushed after the decision on ${String(before).slice(0, 7)}`] : []);
+    decide('judging', null, [...fresh, `read again on ${String(head).slice(0, 7)}, pushed after the decision on ${String(before).slice(0, 7)}`]);
   }
   return entry;
 }
 
-// The decision at the cap, written into `state` (an entry of `state.extensions` per source and round). Returns the
+// The decision at the cap, written into `state` (an entry of `state.extensions` per source, round, and for the bot,
+// reviewer). Returns the
 // status and what it carries: round_limit with `extension` (off, the ceiling, the judge, or the Human
 // said stop), extension_check with the history and the judge's `dispatch`, or extension_ask with the question.
 // `history` is a function, called only when the signals need reading. `lastReviewed`, when given, is a function that
 // returns the head of the last round without git work: the record's rounds, or the bot's last review; a stop that reads
 // no signals, the ceiling or one made on an earlier head, asks it whether the head now is one no round reviewed.
-// `log(row)` gets each new decision.
-export function atCap({ state, source, round, head, policy, history: readHistory, lastReviewed = null, pr, repo = null, repoArg = '', goal = null, command, log = () => {}, now = () => new Date().toISOString() }) {
-  if (policy.mode === 'off') return { status: 'round_limit', extension: { status: 'off', mode: 'off' } };
+// `log(row)` gets each new decision. `reviewer` is the bot whose rounds the check reads, for the bot's cap; null for the
+// plan's. `raise` overrides what the `round_limit` question is computed from (raiseAsk): the
+// rounds of the cap that stopped, when that is not `round`, and `withBot`.
+export function atCap({ state, source, round, head, policy, history: readHistory, lastReviewed = null, pr, repo = null, repoArg = '', goal = null, command, log = () => {}, now = () => new Date().toISOString(), raise = {}, reviewer = null }) {
+  if (policy.mode === 'off') return { status: 'round_limit', extension: { status: 'off', mode: 'off' }, ...raiseAsk({ pr, repo, source, round, ...raise }) };
   let cached = null;
   const history = () => (cached ??= readHistory());
-  const granted = grantedRounds(state, source, policy);
+  const granted = grantedRounds(state, source, policy, reviewer);
   state.extensions ??= [];
-  let entry = state.extensions.find((each) => each.source === source && each.round === round);
+  let entry = state.extensions.find((each) => each.source === source && each.round === round && sameReviewer(each, reviewer));
   const decide = (status, by, reasons = []) => {
     Object.assign(entry, { status, by, reasons, decided_at: now() });
     log(rowOf(entry));
   };
-  if (entry) revalidate({ state, source, round, head, history, log, now });
+  if (entry) revalidate({ state, source, round, head, history, reviewer, log, now });
   else {
-    entry = { source, round, head, at: now(), mode: policy.mode, max: policy.max, granted_before: granted, status: 'new', by: null, reasons: [] };
+    entry = { source, round, head, ...(reviewer ? { reviewer } : {}), at: now(), mode: policy.mode, max: policy.max, granted_before: granted, status: 'new', by: null, reasons: [] };
     state.extensions.push(entry);
     if (granted >= policy.max) decide('stopped', 'ceiling', [`${plural(granted, 'extra round')} granted already, and github.maxExtraRounds is ${policy.max}`]);
   }
@@ -412,7 +452,7 @@ export function atCap({ state, source, round, head, policy, history: readHistory
         pass: JUDGE_PASS,
         agent: JUDGE_AGENT,
         brief: JUDGE_BRIEF,
-        record: `aidrian pr extend ${pr} --verdict extend|stop --reason "<evidence>" --head ${head}${repoArg}`,
+        record: `aidrian pr extend ${pr} --verdict extend|stop --reason "<evidence>" --head ${head}${checkArg(entry)}${repoArg}`,
       }],
     };
   }
@@ -422,29 +462,42 @@ export function atCap({ state, source, round, head, policy, history: readHistory
       extension: summary,
       question: askQuestion(pr, round + 1, entry.unreviewed, entry.red_flags, repo),
       options: askOptions(round + 1),
-      record: `aidrian pr extend ${pr} --human approve|deny${repoArg}`,
+      record: `aidrian pr extend ${pr} --human approve|deny${checkArg(entry)}${repoArg}`,
       then: command,
     };
   }
   // The cap stands on a head no round reviewed: said in the result, and in the summary comment's Extra rounds list.
-  return { status: 'round_limit', extension: summary, ...(sameCommit(entry.unreviewed?.head, head) ? { unreviewed_head: true } : {}) };
+  return { status: 'round_limit', extension: summary, ...(sameCommit(entry.unreviewed?.head, head) ? { unreviewed_head: true } : {}), ...raiseAsk({ pr, repo, source, round, granted, ...raise }) };
 }
 
-// The entry that waits for `status` ("judging" or "asking"): the latest one.
-export const waiting = (state, status) => (state?.extensions ?? []).filter((entry) => entry.status === status).at(-1) ?? null;
+// ` --check '<id>'`, quoted for any shell: a login's brackets are a glob unquoted, and a quote in a configured reviewer
+// stays inside the one argument.
+const checkArg = (entry) => ` --check ${shellQuote(checkId(entry))}`;
+
+// The entry that waits for `status` ("judging" or "asking"): the latest one, of the check `check` names when given.
+// With none named, checks of two sources or reviewers that wait at once are refused: a verdict or an answer meant for one
+// would land on the other.
+export function waiting(state, status, check = null) {
+  const all = (state?.extensions ?? []).filter((entry) => entry.status === status && (check === null || checkId(entry) === check));
+  const ids = [...new Set(all.map(checkId))];
+  if (check === null && ids.length > 1) {
+    throw new Error(`checks ${ids.join(' and ')} both wait for ${status === 'judging' ? 'a verdict' : 'the Human'}: name the one with --check <id>`);
+  }
+  return all.at(-1) ?? null;
+}
 
 // A decision is for the head its signals were read on: refused when the pull request has moved since.
 function sameHead(entry, current) {
   if (current !== undefined && current !== null && !sameCommit(current, entry.head)) {
-    throw new Error(`the check was for ${String(entry.head).slice(0, 7)}, and the pull request is at ${String(current).slice(0, 7)} now: run the review step again, which reads the signals on the new head`);
+    throw new Error(`the check was for ${String(entry.head).slice(0, 7)}, and the pull request is at ${String(current).slice(0, 7)} now: run the review step again, which reads the signals on the new head and, with no new red flag, keeps a question to the Human waiting, so the same answer then records here`);
   }
 }
 
 // The judge's verdict into `state`: stop ends the check; extend grants on "auto" and asks the Human on "ask", or
 // whenever a red flag stands.
 // `current` is the pull request's head now, when known.
-export function recordVerdict(state, { verdict, reason, head = null, current = null, at = new Date().toISOString() }) {
-  const entry = waiting(state, 'judging');
+export function recordVerdict(state, { verdict, reason, head = null, current = null, check = null, at = new Date().toISOString() }) {
+  const entry = waiting(state, 'judging', check);
   if (!entry) throw new Error('no extension check waits for a verdict: run the review step at the cap first');
   if (head !== null && !sameCommit(head, entry.head)) throw new Error(`the check was for ${String(entry.head).slice(0, 7)}, not ${head.slice(0, 7)}: run the review step again`);
   sameHead(entry, current);
@@ -457,8 +510,8 @@ export function recordVerdict(state, { verdict, reason, head = null, current = n
 
 // The Human's answer into `state`. An approval needs `current`, the pull request's head now, to be the head the judge
 // ruled on: a push since may have raised a red flag the approval would skip. A deny needs no head.
-export function recordHuman(state, { answer, by, session = null, current, at = new Date().toISOString() }) {
-  const entry = waiting(state, 'asking');
+export function recordHuman(state, { answer, by, session = null, current, check = null, at = new Date().toISOString() }) {
+  const entry = waiting(state, 'asking', check);
   if (!entry) throw new Error('no extension waits for the Human: a judge must first record --verdict extend under github.extraRounds "ask"');
   if (answer === 'approve') {
     if (!current) throw new Error('the pull request\'s head could not be read, so the approval cannot be tied to the head the judge ruled on: try again');
@@ -471,7 +524,7 @@ export function recordHuman(state, { answer, by, session = null, current, at = n
 
 const SHA = /^[0-9a-f]{7,40}$/iu;
 
-// `aidrian pr extend <PR> (--verdict extend|stop --reason TEXT [--head SHA] | --human approve|deny)`.
+// `aidrian pr extend <PR> (--verdict extend|stop --reason TEXT [--head SHA] | --human approve|deny) [--check ID]`.
 export function parseExtend(args) {
   const [ref, ...rest] = args;
   const match = /^#?(\d+)$/u.exec(ref ?? '') ?? /\/pull\/(\d+)/u.exec(ref ?? '');
@@ -479,7 +532,7 @@ export function parseExtend(args) {
   const flags = {};
   for (let i = 0; i < rest.length; i += 1) {
     const flag = rest[i];
-    if (!['--verdict', '--reason', '--head', '--human', '--repo'].includes(flag)) throw new Error(`unknown argument: ${flag}`);
+    if (!['--verdict', '--reason', '--head', '--human', '--repo', '--check'].includes(flag)) throw new Error(`unknown argument: ${flag}`);
     const value = rest[++i];
     if (value === undefined || value.startsWith('--')) throw new Error(`${flag} needs a value`);
     flags[flag.slice(2)] = value;
@@ -493,14 +546,14 @@ export function parseExtend(args) {
     if (flags.head !== undefined) throw new Error('--head goes with --verdict');
   }
   if (flags.head !== undefined && !SHA.test(flags.head)) throw new Error('--head must be a commit SHA');
-  return { pr: Number(match[1]), verdict: flags.verdict ?? null, reason: flags.reason?.trim() ?? null, head: flags.head ?? null, human: flags.human ?? null, repo: flags.repo === undefined ? null : givenRepo(flags.repo) };
+  return { pr: Number(match[1]), verdict: flags.verdict ?? null, reason: flags.reason?.trim() ?? null, head: flags.head ?? null, human: flags.human ?? null, repo: flags.repo === undefined ? null : givenRepo(flags.repo), check: flags.check ?? null };
 }
 
 // What to run after a recorded decision.
 function nextStep(entry, pr, repo, repoArg = '') {
   const again = entry.source === 'bot' ? `aidrian pr await-review ${pr} --request${repoArg}` : `aidrian pr review ${pr}${repoArg}`;
   if (entry.status === 'granted') return `round ${entry.round + 1} is granted: run ${again}`;
-  if (entry.status === 'asking') return `ask the Human "${askQuestion(pr, entry.round + 1, entry.unreviewed, entry.red_flags, repo)}" with the options ${askOptions(entry.round + 1).map((each) => `"${each}"`).join(' and ')}, then record the answer: aidrian pr extend ${pr} --human approve|deny${repoArg}`;
+  if (entry.status === 'asking') return `ask the Human "${askQuestion(pr, entry.round + 1, entry.unreviewed, entry.red_flags, repo)}" with the options ${askOptions(entry.round + 1).map((each) => `"${each}"`).join(' and ')}, then record the answer: aidrian pr extend ${pr} --human approve|deny${checkArg(entry)}${repoArg}`;
   return 'the cap stands: report round_limit and the findings left open';
 }
 
@@ -537,10 +590,10 @@ export async function runExtend(args, project, config, deps = {}) {
   const { state } = record;
   const env = deps.env ?? process.env;
   let entry;
-  if (opts.verdict) entry = recordVerdict(state, { verdict: opts.verdict, reason: opts.reason, head: opts.head, current });
+  if (opts.verdict) entry = recordVerdict(state, { verdict: opts.verdict, reason: opts.reason, head: opts.head, current, check: opts.check });
   else {
     const by = runGit(['config', 'user.name'], project.root).stdout.trim() || 'unknown';
-    entry = recordHuman(state, { answer: opts.human, by, session: sessionIdentity(env).session, current });
+    entry = recordHuman(state, { answer: opts.human, by, session: sessionIdentity(env).session, current, check: opts.check });
   }
   writeLocalState(project, state, { repo });
   const unposted = held === null ? 'the forge named no base branch, so nothing was posted' : null;

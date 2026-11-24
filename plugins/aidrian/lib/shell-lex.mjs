@@ -859,7 +859,11 @@ const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
 // here-string feeds a shell. Each is { segment, invocation, folder, line, inputs, heredocs, unread? }: `folder` is the folder it runs in, from `cwd`,
 // or null when it cannot be known; `line` is the command line it was read from; `inputs` the heredoc bodies and
 // here-string words fed to its input; `heredocs` its heredocs alone, as { body, expands, fd? }. A leading `cd <dir> &&` moves the folder; any other directory change (in a subshell, a pipe,
-// after `;` or `||`, a second one) leaves it unknown for the commands after it. A wrapper's own directory (`env -C`)
+// after `;` or `||`, a second one) leaves it unknown for the commands after it. With `enters`, a predicate on a folder,
+// a line that opens with a plain `cd <absolute folder>` that `;` or a newline ends (plainCd) moves it too, when
+// `enters` says a `cd` to that folder cannot fail, since after a failed one the commands run in the old folder: a
+// reader of display data, never a guard, passes it.
+// A wrapper's own directory (`env -C`)
 // and git's `-C` apply to their command only. Directory changes themselves are left out.
 // `chained` is the folder the command runs in whenever it runs at all, for a rule that asks which project a command
 // answers to. It follows a `cd` only when every link from that `cd` to the command is `&&` in the same shell, as in
@@ -870,7 +874,7 @@ const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
 // `unread` is the text of the commands a shell or `eval` runs that the walk could not read as command lines: what a pipe
 // feeds a shell (`echo 'git push' | bash`) with the shell itself, a shell's script or unreadable options, or a body
 // nested past SUBSTITUTION_DEPTH_LIMIT. A rule that must not miss a command fails closed on it when it names one.
-export function walkCommands(command, cwd) {
+export function walkCommands(command, cwd, { enters = null } = {}) {
   const out = [];
   const walk = (line, start, depth, chainStart = start) => {
     const { segments, separators, substitutions, ends, heredocs, spans } = lexSegments(line);
@@ -905,7 +909,10 @@ export function walkCommands(command, cwd) {
       const closes = holds(')');
       if (CHANGES_DIRECTORY.has(invocation.program)) {
         const leading = index === 0 && separators[0] === '&&' && !segment[0]?.text.startsWith('(') && !invocation.uncertain && !invocation.viaCommand;
-        here = leading ? folderAfter(start, invocation) : null;
+        // The word plainCd reads off the line is both the folder `enters` checks and the one the commands after it run in.
+        const word = enters !== null && index === 0 && !leading ? plainCd(line) : null;
+        if (leading) here = folderAfter(start, invocation);
+        else here = word !== null && enters(word) ? folderAfter(start, { program: 'cd', args: [{ text: word, dynamic: false }] }) : null;
         const movesThisShell = !closes && !invocation.negated && !invocation.uncertain && !invocation.viaCommand && !runsInOwnProcess(segment) && !['||', '|', '|&'].includes(after);
         chain = movesThisShell ? folderAfter(chain, invocation) : null;
         moved = true;
@@ -956,6 +963,18 @@ export function walkCommands(command, cwd) {
 function runsInOwnProcess(segment) {
   const at = segment.findIndex((token) => CHANGES_DIRECTORY.has(path.basename(token.text.replace(/^\(+/u, ''))));
   return segment.slice(0, at).some(({ text }) => WRAPPERS.has(path.basename(text)) && text !== 'command' && text !== 'time');
+}
+
+// The folder of a line that opens with `cd <folder>` and then `;` or a newline, read off the line's own text, never the
+// lexer's tokens: after any blank or comment lines, spaces or tabs only, `cd`, one unquoted word of plain characters (PLAIN_WORD), absolute and as
+// path.normalize writes it, so no `.` or `..` part, then `;`, or a newline after an optional comment. Any other character
+// before that end, such as an option, a redirection, a heredoc, a carriage return, or a no-break space, which the shell
+// keeps in a word, gives null. So a `cd` that `enters` finds that folder of cannot have failed on another part of its
+// own segment, and it runs in this shell, never in a function body or a coprocess.
+const PLAIN_CD = /^(?:[ \t]*(?:#[^\n]*)?\n)*[ \t]*cd[ \t]+([A-Za-z0-9_@%+=:,./-]+)(?:[ \t]*;|(?:[ \t]+#[^\n]*)?[ \t]*\n)/u;
+function plainCd(line) {
+  const word = PLAIN_CD.exec(line)?.[1];
+  return word && path.isAbsolute(word) && path.normalize(word) === word ? word : null;
 }
 
 // The folder a `cd`, `pushd`, or `popd` invocation reaches from `here`, or null when it cannot be known: a word the shell

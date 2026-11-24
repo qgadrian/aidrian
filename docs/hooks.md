@@ -1482,8 +1482,10 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     `yarn dlx`, `npm exec`, `npm x`, and `pnpm exec`, by a host's own package name too (an adapter's `packages`), so
     `npx opencode-ai plugin add x` reads as `opencode plugin add x`. The first word after the runner's own word that
     names a host's program or package is the program, wherever the runner's options stand, so `npm --cache /d exec
-    codex login` counts. A call that names none is read through only when the runner's word is its first word that is
-    no option, as `npm exec -- lerna publish`, so `npm -w web exec lerna publish` reads as npm and passes. Its false
+    codex login` counts. The program the runner plainly runs, the first word past its own word and options, is checked
+    as well, so `npx npm publish codex` counts as `npm publish`. A call that names no host is read through only when the
+    runner's word is its first word that is no option, as `npm exec -- lerna publish`, so `npm -w web exec lerna publish`
+    reads as npm and passes. Its false
     refusals: a runner call that names a host's program as a later argument of another program, such as
     `npx prettier codex login`, and a runner option's value whose last path part is a host's program, when the words
     after it spell one of that program's guarded subcommands.

@@ -32,7 +32,7 @@ import { globLinksTo, globStarts, linkWalk } from './glob-links.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
 import { ARMING_FILE, madeWorktrees, openStore, SESSION_ID, startedFolders, startedInBackground, storePath } from './handoff-markers.mjs';
 import { DETECT_VARS, HOSTS, IDENTITY_VARS, localServices, mainCheckoutPaths, opaqueShellCommand } from './hosts/index.mjs';
-import { unwrapped } from './package-runner.mjs';
+import { readings } from './package-runner.mjs';
 import { defaultStateDir, findProject, projectCheckouts, stateDir, stateRoot } from './project.mjs';
 import { GIT_VARS } from './review/env.mjs';
 import { DECISION_STORE_FOLDER, decisionStoreFolders } from './project-decision-store.mjs';
@@ -354,11 +354,10 @@ export function hostSessionStartDenial(input, { names: { human } }, { unattended
   const hosts = starters();
   // The host whose program `text`, which no lexer read, names as a word.
   const namedIn = (text) => hosts.find((each) => programWord(each.sessionStart.programs).test(text));
-  // Through a package runner, the program its package installs (package-runner.mjs), as `npx @anthropic-ai/claude-code -p` runs claude.
-  const starts = (invocation) => {
-    const { program, args } = unwrapped(programName(invocation.program), invocation.args, (token) => (token.dynamic ? null : token.text));
-    return hosts.find((each) => each.sessionStart.programs.includes(programName(program)) && each.sessionStart.starts(args));
-  };
+  // Through a package runner, each program it may run (package-runner.mjs readings), as `npx @anthropic-ai/claude-code -p` runs claude.
+  const starts = (invocation) => readings(programName(invocation.program), invocation.args, (token) => (token.dynamic ? null : token.text))
+    .map(({ program, args }) => hosts.find((each) => each.sessionStart.programs.includes(programName(program)) && each.sessionStart.starts(args)))
+    .find(Boolean);
   const read = ({ invocation, unread }) => (unread !== undefined ? namedIn(unread) : null) ?? (invocation.dynamic ? null : starts(invocation));
   const host = opaque !== null ? opaqueTexts(opaque).map(namedIn).find(Boolean) : walkCommands(command, null).map(read).find(Boolean);
   const subagent = isSubagent(input);

@@ -506,6 +506,8 @@ test('a session no Human attends never publishes, withdraws, or changes a packag
     'lerna publish', 'npx lerna publish', 'pnpm dlx lerna publish', 'npx changeset publish', 'npx @changesets/cli publish', 'pnpm dlx @changesets/cli@2 publish',
     'npm exec -- lerna publish', 'npm exec lerna publish', 'npm x changeset publish', 'pnpm exec changeset publish', 'npm exec -- npm publish',
     'npx --package @changesets/cli npm publish', 'npm exec --package @changesets/cli -- npm publish',
+    // A host's name later in the call, or as an option's value, leaves the real program's check in place.
+    'npx npm publish codex', 'npx --package opencode-ai npm publish', 'npm exec -- npm publish claude',
     'bundle exec rake release', 'rake release',
     // Options before the subcommand, in any order and form.
     'pnpm --filter web publish', 'pnpm -F web publish', 'pnpm --filter=web publish', 'yarn workspace web publish', 'yarn workspace web npm publish',

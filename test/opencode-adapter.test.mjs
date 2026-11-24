@@ -14,7 +14,7 @@ import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { nestedProtected as anyHostNested, credentialStores, fileEditOf, HOSTS, nestedGlobs, otherPlaceholders, packagePrograms, protectedFile, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
 import opencode, { NO_SESSION } from '../plugins/aidrian/lib/hosts/opencode.mjs';
-import { unwrapped } from '../plugins/aidrian/lib/package-runner.mjs';
+import { readings, unwrapped } from '../plugins/aidrian/lib/package-runner.mjs';
 
 const MARK = { version: '2.4.0' };
 const SHELL = { hook_event_name: 'PostToolUse', opencode: MARK, session_id: 'ses_a', cwd: '/x', tool_name: 'shell', tool_input: { command: 'gh pr view 3' }, tool_use_id: 'call_1' };
@@ -184,6 +184,16 @@ test('its packages run as its program, Claude Code\'s too, and a package runner 
     assert.deepEqual([read.program, read.args], expected, `${program} ${words.join(' ')}`);
   }
   assert.deepEqual(unwrapped('npx', [null, 'run'], (each) => each), { program: 'npx', args: [null, 'run'] }, 'a package built at run time stays the runner');
+  // A host's program a later word or an option's value names is one reading; the program the runner plainly runs is
+  // the other, so neither guard loses the real program's checks to a host's name.
+  for (const [program, words, expected] of [
+    ['npx', ['npm', 'publish', 'opencode'], [['npm', ['publish', 'opencode']], ['opencode', []]]],
+    ['npx', ['--package', 'opencode-ai', 'npm', 'publish'], [['npm', ['publish']], ['opencode', ['npm', 'publish']]]],
+    ['npm', ['exec', '--', 'gh', 'auth', 'login', 'claude'], [['gh', ['auth', 'login', 'claude']], ['claude', []]]],
+    ['npx', ['@opencode/cli', 'run'], [['opencode', ['run']]]], ['npx', ['prettier', '.'], [['prettier', ['.']]]],
+  ]) {
+    assert.deepEqual(readings(program, words).map((each) => [each.program, each.args]), expected, `${program} ${words.join(' ')}`);
+  }
   // A word that names a property every object has is no runner, no package of another name, and no mapped tool.
   for (const name of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf']) {
     assert.deepEqual(unwrapped(name, ['x']), { program: name, args: ['x'] }, `the program ${name}`);

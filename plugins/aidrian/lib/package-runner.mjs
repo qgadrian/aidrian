@@ -36,26 +36,50 @@ const hostWord = (word) => typeof word === 'string' && !word.startsWith('-')
 // reads an argument's text, null for one built at run time, so a list of plain words and the lexer's tokens both read.
 // A host's program counts wherever the runner's options stand, so no list of them can hide one: the runner's word is the
 // first argument that is one of its `forms`, and the program the first word after it that names a host's program. When
-// none does, the runner's word is its first word that is no option, and the program the first word after it that is no
-// option, past the values of its `options`. The one false reading: a host's program named as a later argument of another
-// program, as `npx prettier claude` or `npm install x claude`, reads as that host's program.
+// none does, the call is read as plainly as `plainReading` reads it. The one false reading: a host's program named as a
+// later argument of another program, as `npx prettier claude` or `npm install x claude`, reads as that host's program.
 export function unwrapped(program, args, word = (each) => each) {
+  return hostReading(program, args, word) ?? plainReading(program, args, word);
+}
+
+// Every program the call may run, each { program, args }: the plain reading, and the host's program a later word names
+// when it differs, so a guard that checks each fails closed both ways. `npx npm publish codex` is npm's publish to the
+// registry guard, and codex's to the session-start guard.
+export function readings(program, args, word = (each) => each) {
+  const plain = plainReading(program, args, word);
+  const host = hostReading(program, args, word);
+  return host && (host.program !== plain.program || host.args.length !== plain.args.length) ? [plain, host] : [plain];
+}
+
+// The runner's word is its first word that is no option, and the program the first word after it that is no option,
+// past the values of its `options`; the call as it is when `program` is no runner or none is found.
+function plainReading(program, args, word) {
   const runner = own(RUNNERS, program);
   if (!runner) return { program, args };
   const words = args.map(word);
-  // The index of the runner's word among `words` that `counts`, -1 for a runner with none.
-  const formAt = (counts) => (runner.forms.length === 0 ? -1 : words.findIndex((each, i) => counts(each, i) && runner.forms.includes(each)));
-  const form = formAt(() => true);
-  let at = runner.forms.length > 0 && form < 0 ? -1 : words.findIndex((each, i) => i > form && hostWord(each));
-  if (at < 0) {
-    const first = words.findIndex((each) => each === null || !each.startsWith('-'));
-    const plain = formAt((_, i) => i === first);
-    if (runner.forms.length > 0 && plain < 0) return { program, args };
-    at = plain + 1;
-    while (at < words.length && words[at]?.startsWith('-')) at += runner.options.includes(words[at]) ? 2 : 1;
-  }
-  const named = at < words.length ? words[at] : null;
-  if (named === null) return { program, args };
-  const spec = spelling(named);
+  const first = words.findIndex((each) => each === null || !each.startsWith('-'));
+  const plain = runner.forms.length === 0 ? -1 : (runner.forms.includes(words[first]) ? first : -2);
+  if (plain === -2) return { program, args };
+  let at = plain + 1;
+  while (at < words.length && words[at]?.startsWith('-')) at += runner.options.includes(words[at]) ? 2 : 1;
+  return named(program, args, words, at);
+}
+
+// The host's program a later word names, after the runner's word wherever it stands, or null when none does.
+function hostReading(program, args, word) {
+  const runner = own(RUNNERS, program);
+  if (!runner) return null;
+  const words = args.map(word);
+  const form = runner.forms.length === 0 ? -1 : words.findIndex((each) => runner.forms.includes(each));
+  if (runner.forms.length > 0 && form < 0) return null;
+  const at = words.findIndex((each, i) => i > form && hostWord(each));
+  return at < 0 ? null : named(program, args, words, at);
+}
+
+// The program the word at `at` names and the arguments after it, or the call as it is past the end or for a run-time word.
+function named(program, args, words, at) {
+  const name = at < words.length ? words[at] : null;
+  if (name === null) return { program, args };
+  const spec = spelling(name);
   return { program: own(PACKAGE_PROGRAMS, spec) ?? path.basename(spec), args: args.slice(at + 1) };
 }

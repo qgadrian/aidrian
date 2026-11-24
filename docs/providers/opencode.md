@@ -315,6 +315,8 @@ Both guards read a package runner as the program it runs: `npx`, `bunx`, `npm ex
 run `claude`. No list of the runner's options is kept: the program is the first word after the runner's own word,
 such as npm's `exec` or pnpm's `dlx`, that names a host's program or package, wherever the runner's options stand, so
 `npm --cache /d exec opencode run x` and `pnpm --dir x dlx opencode-ai run x` count (`lib/package-runner.mjs`).
+The program the runner plainly runs is checked as well, so a host's name later in the call, as
+`npx npm publish opencode`, leaves `npm publish` refused.
 Its false refusals, to a subagent or a session no Human attends: a runner call that names a host's program as a later argument
 of another program, such as `npx prettier claude` to the session-start guard or `npx prettier codex login` to the
 config guard, and a runner option's value whose last path part is a host's program, such as

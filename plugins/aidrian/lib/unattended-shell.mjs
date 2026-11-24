@@ -9,7 +9,7 @@ import { checkDeadline } from './deadline.mjs';
 import { forgeConfigCommands } from './forges/index.mjs';
 import { configForm } from './handoff-guard.mjs';
 import { configCommands } from './hosts/index.mjs';
-import { unwrapped } from './package-runner.mjs';
+import { readings } from './package-runner.mjs';
 import { isFolderIn } from './rules/main-checkout/bash-writes.mjs';
 import { WRITERS, written } from './rules/main-checkout/writers.mjs';
 import { readGit, walkCommands } from './shell-lex.mjs';
@@ -183,10 +183,19 @@ export function runsDeclared(each, program, words) {
 // a program (attempt-clone.mjs PROGRAM_KEYS) at any scope, the folders `git worktree add`, `git clone`, and `git init`
 // make, the forge CLI's and each host's own config subcommands, SHARED_COMMANDS, PUBLISH_COMMANDS, crontab, and launchctl.
 function programWrites(segment, invocation, folder) {
-  // Through a package runner, the program its package installs (package-runner.mjs), as `npx codex login` runs codex.
-  const { program, args: words } = unwrapped(invocation.program, plainWords(invocation.args));
   const shown = [invocation.program, ...plainWords(invocation.args)].join(' ').slice(0, 120);
-  if (program === 'git' && invocation.program === 'git') return gitWrites(readGit(segment), folder, shown);
+  if (invocation.program === 'git') return gitWrites(readGit(segment), folder, shown);
+  // Through a package runner, each program it may run (package-runner.mjs readings), as `npx codex login` runs codex,
+  // and `npx npm publish codex` both npm's publish and codex: the first that writes config counts.
+  for (const { program, args: words } of readings(invocation.program, plainWords(invocation.args))) {
+    const writes = readingWrites(program, words, shown);
+    if (writes.length > 0) return writes;
+  }
+  return [];
+}
+
+// The config one program call with the arguments `words` writes, as programWrites reads it, shown as `shown`.
+function readingWrites(program, words, shown) {
   const refuse = (what) => [{ what, text: shown }];
   const forge = forgeConfigCommands().find((each) => runsDeclared(each, program, words));
   if (forge) return refuse(forge.what);

@@ -27,7 +27,7 @@
 // its second sentence, right after the cause, as the two steps that pass (`twoSteps`). The first sentence stays the
 // cause, since the dispatch log records it.
 
-import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { loadConfig } from '../../config.mjs';
@@ -195,13 +195,19 @@ export function lineWrites(top) {
   // before a wrapper such as `env -C` moves (shell-lex walkCommands `shell`).
   const fileOf = (each, entry, folder = entry.folder) => {
     const known = token(each, entry);
-    return known && !known.dynamic && known.text && known.text !== '-' ? resolveIn(folder, known.text) : null;
+    return known && !known.dynamic && known.text && known.text !== '-' ? joinedIn(folder, known.text) : null;
   };
   const targetOf = (each, entry) => fileOf(each, entry, entry.shell === undefined ? entry.folder : entry.shell);
+  // `files` is keyed by each file's identity (fileIdentity), so two names of one file, through a link or a second hard
+  // link, are one entry; a path whose identity cannot be told is no key, and a write to one may be to any file.
+  const same = (a, b) => a !== null && b !== null && fileIdentity(a) !== null && fileIdentity(a) === fileIdentity(b);
   const outputs = (segment) => segment.flatMap((each, i) => (each.operator && each.operator !== '<' && !segment[i + 1]?.fdDup ? [[each, segment[i + 1]]] : []));
   const overwrites = (entry, file) => {
     const body = file ? fileOf(file, entry) : null;
-    return body !== null && outputs(entry.segment).some(([, each]) => [null, body].includes(targetOf(each, entry)));
+    return body !== null && outputs(entry.segment).some(([, each]) => {
+      const target = targetOf(each, entry);
+      return target === null || fileIdentity(target) === null || same(target, body);
+    });
   };
   const note = (entry) => {
     const { segment, invocation, folder, heredocs = [] } = entry;
@@ -234,16 +240,25 @@ export function lineWrites(top) {
       target = at(args[0]);
       // A redirect of its own output onto the same file races the write, and so may one the rule cannot place: what
       // lands there is unknown.
-      text = target !== null && redirects.some(([, each]) => [null, target].includes(opened(each))) ? null : stdinBody(entry);
+      text = target !== null && redirects.some(([, each]) => {
+        const out = opened(each);
+        return out === null || fileIdentity(out) === null || same(out, target);
+      }) ? null : stdinBody(entry);
     } else if (program === 'cp' && !redirects.length) {
       const operands = args.filter((arg) => !/^-[fpv]+$/u.test(arg.text));
       const source = operands.length === 2 && !operands[0].text.startsWith('-') ? at(operands[0]) : null;
       target = source === null || operands[1].text.endsWith('/') ? null : at(operands[1]);
       if (target !== null && isDirectory(target)) target = null;
-      else if (target !== null) text = files.has(source) ? files.get(source) : readText(source);
+      else if (target !== null) text = files.has(fileIdentity(source)) ? files.get(fileIdentity(source)) : readText(source);
     }
     const unknown = () => {
       for (const known of files.keys()) files.set(known, null);
+    };
+    // A write to `file` with `value`: to its identity, or, for a file whose identity cannot be told, to any file.
+    const write = (file, value) => {
+      const key = fileIdentity(file);
+      if (key === null) unknown();
+      else files.set(key, value);
     };
     // A command that is neither a known reader nor one of the writes above may change any file: a script, `sed -i`, or
     // a program fed its own code on stdin.
@@ -252,15 +267,15 @@ export function lineWrites(top) {
       // A file it names on disk is one it may change too.
       for (const each of segment) {
         const file = each.operator || each.fdDup ? null : at(each);
-        if (file !== null) files.set(file, null);
+        if (file !== null) write(file, null);
       }
     }
     for (const [, each] of redirects) {
       const file = opened(each);
-      if (file !== null) files.set(file, null);
+      if (file !== null) write(file, null);
       else unknown();
     }
-    if (target !== null) files.set(target, text);
+    if (target !== null) write(target, text);
   };
   return { files, token, note, overwrites };
 }
@@ -289,7 +304,47 @@ const onlyHeredoc = (heredocs) => (heredocs.length === 1 && [undefined, '0'].inc
 // `< file` or `<<< word`, may replace it, so the input is one this rule cannot know.
 export const stdinBody = ({ segment = [], heredocs = [] }) => (segment.some((each) => each.operator === '<') ? null : onlyHeredoc(heredocs));
 
-const resolveIn = (folder, file) => (path.isAbsolute(file) ? path.resolve(file) : folder === null ? null : path.resolve(folder, file));
+// A path joined as the system opens it, a link followed before a `..` after it, never normalized first.
+const joinedIn = (folder, file) => (path.isAbsolute(file) ? file : folder === null ? null : `${folder}/${file}`);
+
+// The identity of the file the absolute path `file` names, for telling two names of one file apart, or null when it
+// cannot be told: an existing file's device and inode, so a second hard link is the same file; else the real path of
+// the part of the path that exists, a link at the end of that part, even one whose target is not there yet, followed
+// in turn, with the rest joined on. A read that fails, or more links than LINK_HOPS, gives null.
+export function fileIdentity(file) {
+  if (typeof file !== 'string' || !path.isAbsolute(file)) return null;
+  const gone = (error) => ['ENOENT', 'ENOTDIR'].includes(error?.code);
+  let head = file;
+  const rest = [];
+  for (let hops = 0; hops <= LINK_HOPS; hops += 1) {
+    try {
+      const real = realpathSync(head);
+      if (rest.length === 0) {
+        const stat = statSync(real);
+        if (!stat.isDirectory()) return `inode:${stat.dev}:${stat.ino}`;
+      }
+      return path.join(real, ...rest);
+    } catch (error) {
+      if (!gone(error)) return null;
+    }
+    let link = null;
+    try {
+      if (lstatSync(head).isSymbolicLink()) link = readlinkSync(head);
+    } catch (error) {
+      if (!gone(error)) return null;
+    }
+    if (link !== null) {
+      head = path.isAbsolute(link) ? link : `${path.dirname(head)}/${link}`;
+      continue;
+    }
+    const parent = path.dirname(head);
+    if (parent === head) return path.join(head, ...rest);
+    rest.unshift(path.basename(head));
+    head = parent;
+  }
+  return null;
+}
+const LINK_HOPS = 40;
 
 const isDirectory = (file) => {
   try {
@@ -809,7 +864,11 @@ export function bodyRead(call, cwd, written = new Map()) {
   if (cwd === null && !path.isAbsolute(given)) {
     return unread(`the body file \`${given}\` is a relative path, and the folder gh runs in is unknown after that directory change`, 'Write the path out in full.');
   }
-  const file = resolveIn(cwd, given);
+  // Only a line that wrote files asks which file this is: the read below is then the one look at it.
+  const file = written.size ? fileIdentity(joinedIn(cwd, given)) : null;
+  if (file === null && written.size) {
+    return unread(`the body file \`${given}\` is one whose identity the hook cannot tell, so whether another command on this line writes it first cannot be told`, 'Run that command first, then gh as its own command.');
+  }
   if (written.has(file)) {
     const text = written.get(file);
     return text !== null ? { text } : unread('another command on this line changes the body file before gh reads it, such as a script or `sed -i`, ' +

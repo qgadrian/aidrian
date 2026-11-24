@@ -4,14 +4,14 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { forgetEnvFiles, sessionEnvFile } from '../plugins/aidrian/lib/hosts/claude-code-sandbox.mjs';
 import { attemptFolder, cloneHeads, sweepAttempts } from '../plugins/aidrian/lib/project-start.mjs';
-import { recordTokenFile, TOKEN_FILES } from '../plugins/aidrian/lib/project-token.mjs';
+import { recordTokenFile, TOKEN_FILES, tokenRecordThere } from '../plugins/aidrian/lib/project-token.mjs';
 import { DRIVER, runFixture, STARTED } from './project-start-fixture.mjs';
 
 const CHILD = STARTED[0].session;
@@ -218,4 +218,22 @@ test('the host removes only a regular file of its own folder for that session, n
   for (const file of [path.join(other, 'b.sh'), path.join(home, 'b.sh'), 'relative.sh', undefined]) {
     assert.equal(sessionEnvFile({ env: { ...env, CLAUDE_ENV_FILE: file }, session: CHILD }), null, String(file));
   }
+});
+
+test('a token record counts as gone only when the system says so, and one that cannot be read is never replaced', (t) => {
+  const folder = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-token-record-')));
+  t.after(() => {
+    chmodSync(folder, 0o700);
+    rmSync(folder, { recursive: true, force: true });
+  });
+  assert.equal(tokenRecordThere(folder), false);
+  writeFileSync(path.join(folder, TOKEN_FILES), 'not json');
+  assert.equal(tokenRecordThere(folder), true);
+  const file = path.join(folder, 'sessionstart-hook-1.sh');
+  assert.match(recordTokenFile(folder, { session: CHILD, file }), /cannot be read/u, 'a later SessionStart never overwrites it');
+  assert.equal(readFileSync(path.join(folder, TOKEN_FILES), 'utf8'), 'not json');
+  // A folder the look cannot search: the record may be there.
+  rmSync(path.join(folder, TOKEN_FILES));
+  chmodSync(folder, 0o600);
+  assert.equal(tokenRecordThere(folder), true);
 });

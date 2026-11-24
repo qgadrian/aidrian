@@ -32,7 +32,7 @@ import { ATTEMPT_KEEP, attemptOf, GIT_PLACEHOLDERS, KEPT_FOLDERS, systemReal } f
 import { isWithin, readSmallJson, resolvedPath } from './fs.mjs';
 import { gateGit } from './git.mjs';
 import { nestedPathspecs } from './hosts/index.mjs';
-import { claimedSource, forgeToken, gitCredentialVars, keepTokenFiles, sessionToken, TOKEN_FILES, tokenDigest, tokenFiles, tokenVars } from './project-token.mjs';
+import { claimedSource, forgeToken, gitCredentialVars, keepTokenFiles, sessionToken, tokenDigest, tokenFiles, tokenRecordThere, tokenVars } from './project-token.mjs';
 import { loadConfig } from './config.mjs';
 import { findProject, stateRoot } from './project.mjs';
 import { NPM_CONFIGS, SHELL_VAR_NAMES, varsProblem } from './project-registries.mjs';
@@ -666,7 +666,7 @@ export function sweepAttempts({ state, run, found, cap, env, home, spawn, forge 
     const current = found.states.get(row.key)?.state === 'running' && latestStart(found, row.key)?.attempt === row.attempt;
     if (current) continue;
     const { stays, waits } = folderHolds(found, row);
-    const token = existsSync(path.join(folder, TOKEN_FILES));
+    const token = tokenRecordThere(folder);
     if ((stays || waits) && !token) continue;
     const done = row.outcome === 'void' || settled.has(`${row.key}#${row.attempt}`)
       || (row.outcome === 'started' && safely(() => cap.ended({ id: row.id, session: row.child, env, run: spawn })) === true);
@@ -723,7 +723,7 @@ function keepClone({ state, run, row, folder, unpushed }) {
 function forgetToken({ cap, folder, row, env, home }) {
   const record = safely(() => tokenFiles(folder));
   // A record that is there but cannot be read may still name a file: it stays, and keeps the folder.
-  if (!record) return !existsSync(path.join(folder, TOKEN_FILES));
+  if (!record) return !tokenRecordThere(folder);
   const own = typeof row.child !== 'string' || record.session === row.child;
   // A host with no such files has none to remove; one whose removal threw leaves every file recorded.
   const left = own && typeof cap.forgetShellEnv === 'function' ? safely(() => cap.forgetShellEnv({ files: record.files, session: record.session, env, home })) : [];

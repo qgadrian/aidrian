@@ -575,7 +575,8 @@ No `sandbox.excludedCommands` is passed. Three conditions hold on top of the san
   process and runs its lines ahead of each Bash command (2.1.330: "Session environment loaded from CLAUDE_ENV_FILE"),
   so the sandbox hides the whole `session-env` tree and each session still gets its own variables, while no session
   reads another's. The host keeps that file after the session ends, token and all, so the hook first records its path
-  in the attempt's folder, `token-files.json`, and hands no token over when it cannot, or when the file does not lie
+  in the attempt's folder, `token-files.json`, and hands no token over when it cannot, as when an earlier record is
+  there and cannot be read, or when the file does not lie
   directly in `session-env/<that session>/` of the host's config folder; once the host lists the session as ended, the
   driver's `wait`, or `end`, removes each recorded file there, only a regular file of the user, not a link, so no other
   session's file goes, kept attempt folder or not, waiting result or not. A file still there that it did not remove,

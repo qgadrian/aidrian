@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { linkSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -458,4 +458,24 @@ test("a redirect resolves in the shell's folder, and the body file in the folder
   assert.match(run(`cd sub && true; cat > b.md <<'EOF'\n${GOOD}EOF\nenv -C ${path.join(dir, 'sub')} gh pr create -t x -F b.md`) ?? '', /^Blocked: the body is one this rule cannot read/u);
   // A tee whose file env -C places, with a redirect the rule cannot place, may race its own write.
   assert.match(run(`cd sub && true; env -C ${path.join(dir, 'sub')} tee b.md > b.md <<'EOF'\n${GOOD}EOF\nenv -C ${path.join(dir, 'sub')} gh pr create -t x -F b.md`) ?? '', /^Blocked: the body is one this rule cannot read/u);
+});
+
+// Two names of one file, through a link or a second hard link, are one file to every write and read the rule tracks.
+test('a write through a link or a hard link to a body file is a write to it', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-prbody-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  for (const name of ['b.md', 'c.md']) writeFileSync(path.join(dir, name), GOOD);
+  symlinkSync('b.md', path.join(dir, 'link.md'));
+  linkSync(path.join(dir, 'c.md'), path.join(dir, 'hard.md'));
+  symlinkSync('new.md', path.join(dir, 'ahead.md'));
+  const run = (command) => check(command, { cwd: dir, env: {} });
+  const unread = /^Blocked: the body is one this rule cannot read/u;
+  assert.match(run('gh pr create -t x -F b.md > link.md') ?? '', unread, 'bash empties b.md through the link before gh reads it');
+  assert.match(run(`tee b.md > link.md <<'EOF'\n${GOOD}EOF\ngh pr create -t x -F b.md`) ?? '', unread, 'tee races its own output through the link');
+  assert.match(run(`cat > c.md <<'EOF'\n${GOOD}EOF\necho x > hard.md\ngh pr create -t x -F c.md`) ?? '', unread, 'the echo rewrites c.md through its hard link');
+  // A heredoc written through a link whose target is not there yet is the body gh then reads by the target's name.
+  assert.equal(run(`cat > ahead.md <<'EOF'\n${GOOD}EOF\ngh pr create -t x -F new.md`), null);
+  assert.match(run(`cat > ahead.md <<'EOF'\n## Summary\nEOF\ngh pr create -t x -F new.md`) ?? '', /^Blocked: the body has no `## Tests run` section/u);
 });

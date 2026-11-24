@@ -15,7 +15,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { forgeFor, forgeGitHelper, forgeLoginStep, forgeTokenNote, forgeTokenVar } from './forges/index.mjs';
@@ -190,10 +190,23 @@ const TOKEN_FILES_CAP = 64;
 export function recordTokenFile(folder, { session, file }) {
   if (typeof session !== 'string' || typeof file !== 'string' || !path.isAbsolute(file)) return 'the host named no session environment file it can remove once the session ends';
   const read = tokenFiles(folder);
+  // A record that is there and cannot be read may name a file that still holds the token: it is never replaced.
+  if (!read && tokenRecordThere(folder)) return 'the record of the files the token went to cannot be read';
   const files = read?.session === session ? read.files : [];
   if (!files.includes(file)) files.push(file);
   if (files.length > TOKEN_FILES_CAP) return 'the session has handed the token to too many files';
   return writeJson(path.join(folder, TOKEN_FILES), { session, files });
+}
+
+// Whether the record of `folder` is there: false only when the system says it is not (ENOENT), so a look that fails
+// counts as one there, which keeps it.
+export function tokenRecordThere(folder) {
+  try {
+    lstatSync(path.join(folder, TOKEN_FILES));
+    return true;
+  } catch (error) {
+    return error?.code !== 'ENOENT';
+  }
 }
 
 // Keeps only `files` in the record of `folder`, the ones the host could not remove yet, or removes the record when none

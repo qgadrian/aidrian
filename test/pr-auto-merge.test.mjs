@@ -1628,14 +1628,15 @@ const TEAM_KEYS = { own: 'ENG-1', prefixes: new Set(['ENG', 'TAX']) };
 // `title` and `body` are the pull request's as the review trail gives them, with the issues the forge links to close at
 // the merge (none by default); `trail` overrides fields of that trail, and 'down' makes its read fail. The REST view
 // (`forge.pull`) gives the commit count, and a title and body of its own, `pullTitle` and `pullBody`, which the gate
-// never judges: the trail is its one snapshot of the text and the links.
-function closing(t, { title = 'feat(export): add CSV export', body = 'Fixes ENG-1', messages = ['feat: export'], context = TEAM_KEYS, runIssue = () => context, commits, pullHead = HEAD, trail = {}, pullTitle = 'chore: an older title', pullBody = '' } = {}) {
+// never judges: the trail is its one snapshot of the text and the links. `duringCommits(trail)` runs while the commits
+// are listed, as an edit on the forge would land then.
+function closing(t, { title = 'feat(export): add CSV export', body = 'Fixes ENG-1', messages = ['feat: export'], context = TEAM_KEYS, runIssue = () => context, commits, pullHead = HEAD, trail = {}, pullTitle = 'chore: an older title', pullBody = '', duringCommits = () => {} } = {}) {
   const r = repo(t);
   r.record((state) => finished(state));
   const { forge, calls } = fakeForge();
   const listed = messages.map((message, i) => ({ sha: `${i}`.repeat(40), commit: { message } }));
   forge.pull = (repo, n, { host } = {}) => (calls.push(['pull', repo, n, host]), { head: { sha: pullHead }, title: pullTitle, body: pullBody, commits: commits ?? listed.length });
-  forge.changeCommits = (repo, n, { host } = {}) => (calls.push(['changeCommits', repo, n, host]), listed);
+  forge.changeCommits = (repo, n, { host } = {}) => (calls.push(['changeCommits', repo, n, host]), duringCommits(trail), listed);
   forge.reviewTrail = (...args) => {
     calls.push(['reviewTrail', ...args.slice(0, 2)]);
     if (trail === 'down') throw Object.assign(new Error('trail'), { stderr: 'HTTP 502\n' });
@@ -1748,6 +1749,14 @@ test('closes: the title and body are judged from the review trail, the same snap
   assert.equal(cleaned.calls.filter((call) => call[0] === 'reviewTrail').length, 1, 'one trail serves the text, the links, and merge trust');
 });
 
+test('closes: a sidebar link added while the commits are read is seen: the trail is taken after them (#448)', (t) => {
+  const linked = closing(t, { duringCommits: (trail) => (trail.closingIssues = [{ number: 12, repo: 'acme/notes' }]) });
+  assert.deepEqual([linked.code, linked.reason], [1, 'closes'], linked.why);
+  assert.match(linked.why, /the forge links issue acme\/notes#12 to the pull request to close at the merge/u);
+  const order = linked.calls.map((call) => call[0]).filter((name) => ['pull', 'changeCommits', 'reviewTrail'].includes(name));
+  assert.deepEqual(order, ['pull', 'changeCommits', 'reviewTrail'], 'the commits first, then the one snapshot');
+});
+
 test('closes: a session no mark names an issue for, and an attended one, read no closing words', (t) => {
   const unmarked = closing(t, { runIssue: () => undefined, body: 'Fixes ENG-9' });
   passes(unmarked, 'unmarked');
@@ -1800,19 +1809,25 @@ function waived(t, r, { config = waiverConfig(), card = HEAD, run = undefined, u
   t.mock.method(console, 'log', (line) => out.push(line));
   t.mock.method(console, 'error', () => {});
   const { forge, calls } = fakeForge({ files: { 'acme/notes@main:.aidrian/config.json': config }, view: { headRefOid: head } });
+  // The issues the forge links to close at the merge: `closing.linkDuringCommits` is linked while the commits are read.
+  const live = { closingIssues: [] };
   forge.reviewTrail = (repoName, n, { host, paths } = {}) => {
     calls.push(['reviewTrail', repoName, n, host, paths]);
     return {
       viewer: 'adrian', head, base: 'main', author: 'adrian', draft: false, reviewDecision: '', latestReviews: [],
       checks: { head, rows: [{ name: 'e2e', state: 'SUCCESS' }], complete: true }, files: [{ path: 'src/app.js', changeType: 'MODIFIED' }], filesTotal: 1, filesComplete: true,
       reviews: [], reviewsComplete: true, comments: card === null ? [] : [botCard(card)], commentsComplete: true,
-      closingIssues: [], closingIssuesComplete: true, title: closing?.title ?? 'feat: export', body: closing?.body ?? '',
+      closingIssues: live.closingIssues, closingIssuesComplete: true, title: closing?.title ?? 'feat: export', body: closing?.body ?? '',
       branches: { default: { name: 'main', pointer: null, config, knowledge: null }, base: { name: 'main', pointer: null, config } },
     };
   };
   if (closing) {
     forge.pull = (repoName, n, { host } = {}) => (calls.push(['pull', repoName, n, host]), { head: { sha: head }, title: 'chore: an older title', body: 'Fixes OTHER-1', commits: 1 });
-    forge.changeCommits = (repoName, n, { host } = {}) => (calls.push(['changeCommits', repoName, n, host]), [{ sha: '0'.repeat(40), commit: { message: 'feat: export' } }]);
+    forge.changeCommits = (repoName, n, { host } = {}) => {
+      calls.push(['changeCommits', repoName, n, host]);
+      if (closing.linkDuringCommits) live.closingIssues = closing.linkDuringCommits;
+      return [{ sha: '0'.repeat(40), commit: { message: 'feat: export' } }];
+    };
   }
   const reads = mark ? { mark } : { run: () => run, ...(closing ? { runIssue: () => closing.context } : {}) };
   const code = runAutoMerge(['7', '--json'], r.project, { forge, unattended: () => unattended, runHost, ...reads });
@@ -1905,9 +1920,16 @@ test('a waived round cap still meets the closing-word check, first, and an owed 
   const own = waived(t, r, { unattended: true, closing: { context, body: 'Fixes ENG-1' } });
   assert.deepEqual([own.code, own.result.waived], [0, true], own.result.why);
   assert.ok(own.calls.some(([name]) => name === 'changeCommits'), 'the closing words were read');
-  // One trail serves the judge's verdict, the title, body, and closing links, and merge trust: the REST view's older
-  // body, which closes OTHER-1, is never judged (#448).
-  assert.equal(own.calls.filter(([name]) => name === 'reviewTrail').length, 1, 'the waiver\'s cached trail is the closing check\'s snapshot');
+  // The judge's verdict reads the trail first; the closing check takes it again after its commit reads, and that
+  // snapshot gives the title, body, and closing links, and serves merge trust. The REST view's older body, which closes
+  // OTHER-1, is never judged (#448).
+  const names = own.calls.map(([name]) => name);
+  assert.equal(names.filter((name) => name === 'reviewTrail').length, 2, 'the waiver\'s read, then the closing check\'s');
+  assert.ok(names.lastIndexOf('reviewTrail') > names.indexOf('changeCommits'), 'the snapshot comes after the commit reads');
+  // A sidebar link added while the commits are read: off, closes, though the waiver read the trail before it.
+  const late = waived(t, r, { unattended: true, closing: { context, body: 'Fixes ENG-1', linkDuringCommits: [{ number: 12, repo: 'acme/notes' }] } });
+  assert.deepEqual([late.code, late.result.reason], [1, 'closes'], late.result.why);
+  assert.match(late.result.why, /links issue acme\/notes#12/u);
   // Another issue after a closing word: off, closes, though the judge's verdict stands.
   const other = waived(t, r, { unattended: true, closing: { context, body: 'Fixes ENG-1\nFixes OTHER-9' } });
   assert.deepEqual([other.code, other.result.reason], [1, 'closes']);

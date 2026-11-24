@@ -56,7 +56,8 @@
 //      (closing-words.mjs runClosingContext): the pull request's title, body, and every commit message, read through the
 //      forge at exactly the head, name no issue but that one after a closing word, and the title no other key of a team
 //      the run knows; and the issues the forge links to close at the merge, by hand in the sidebar included, are that
-//      one alone and all of them. The title, the body, and those issues come from one review trail (closingProblem). A mark it cannot read names no issue, so any
+//      one alone and all of them. The title, the body, and those issues come from one review trail, read after the
+//      commits, which merge trust then reads too (closingProblem). A mark it cannot read names no issue, so any
 //      counts. Computed from the final review verdict, after every check before it.
 //   8. trust, only for a session no Human attends (its unattended mark): the record is this machine's word, which a
 //      project run's confined session can write, so the merge also rests on what no such session writes
@@ -813,6 +814,9 @@ export function gateVerdict(argv, project, { forge = forgeFor(project.root), ses
       // The review trail, read at most once: for a verdict's bot check and for merge trust.
       let trail = null;
       const readTrail = () => (trail ??= forge.reviewTrail(pr.repo, pr.number, { host: pr.host, paths: trailPaths(prefix) }));
+      // A read taken now, kept for every reader after it: the closing check takes its snapshot after its commit reads,
+      // so a link added while they ran is seen, and merge trust then judges that same snapshot.
+      const freshTrail = () => (trail = forge.reviewTrail(pr.repo, pr.number, { host: pr.host, paths: trailPaths(prefix) }));
       if (!outsider && !changes && problem && waiverKind(state, pr.head) === 'round_cap') {
         let stand;
         try {
@@ -838,7 +842,7 @@ export function gateVerdict(argv, project, { forge = forgeFor(project.root), ses
       let closing = null;
       if (context !== undefined && unattended()) {
         try {
-          closing = closingProblem(forge, pr, context, readTrail);
+          closing = closingProblem(forge, pr, context, freshTrail);
         } catch (error) {
           return fail(error.message);
         }
@@ -877,25 +881,16 @@ export function gateVerdict(argv, project, { forge = forgeFor(project.root), ses
 // --- The closing words of a project run's issue session (reason `closes`, lib/closing-words.mjs) ---
 
 // Why the title, body, or a commit of the pull request `pr` ({ repo, host, number, head }) would close, or its title link,
-// an issue other than the run's own, by `context` { own, prefixes } (closing-words.mjs runClosingContext), or null. The
-// title, the body, and the issues the forge itself links to close at the merge, a sidebar link included
-// (closing-words.mjs forgeClosingProblem), come from one snapshot: the review trail `readTrail` gives, read once a
-// command and the same one a judge's verdict and merge trust read, as the merge guard judges them. The commits come from
-// the forge's list for the pull request at exactly `head`, which must be all of them: GitHub lists at most 250, and a
-// commit's message is fixed by its SHA. Throws, naming the read, when gh fails or the head moved during the read: the
-// caller exits 3, and the stop's command waits for a settled head rather than refuse on a race.
-export function closingProblem(forge, pr, context, readTrail) {
+// an issue other than the run's own, by `context` { own, prefixes } (closing-words.mjs runClosingContext), or null. First
+// the commits, from the forge's list for the pull request at exactly `head`, which must be all of them: GitHub lists at
+// most 250, and a commit's message is fixed by its SHA. Then one snapshot, the review trail `takeTrail` reads afresh
+// after them, gives the title, the body, and the issues the forge itself links to close at the merge, a sidebar link
+// included (closing-words.mjs forgeClosingProblem), as the merge guard judges them: an edit or a link made while the
+// commits were read is seen, and merge trust reads that same snapshot after it. Throws, naming the read, when gh fails
+// or the head moved during the read: the caller exits 3, and the stop's command waits for a settled head rather than
+// refuse on a race.
+export function closingProblem(forge, pr, context, takeTrail) {
   const { repo, host, number, head } = pr;
-  let trail;
-  try {
-    trail = readTrail();
-  } catch (error) {
-    throw new Error(`could not read the review trail of #${number} with gh (${ghError(error)})`);
-  }
-  if (typeof trail?.head !== 'string' || trail.head.toLowerCase() !== head.toLowerCase()) {
-    throw new Error(`the head of #${number} moved from ${head.slice(0, 7)} to ${String(trail?.head ?? 'none').slice(0, 7)} while the gate read its title, body, and the issues it closes`);
-  }
-  if (typeof trail.title !== 'string' || (trail.body !== null && typeof trail.body !== 'string')) return `the forge gave no title or body for #${number}`;
   let pull;
   let commits;
   try {
@@ -911,12 +906,23 @@ export function closingProblem(forge, pr, context, readTrail) {
     throw new Error(`could not read the commits of #${number} with gh (${ghError(error)})`);
   }
   if (!Array.isArray(commits) || commits.length !== pull.commits) return `gh listed ${Array.isArray(commits) ? commits.length : 'none'} of its ${pull.commits} commits, and GitHub lists at most 250, so a closing word may hide in one it did not list`;
-  const texts = [{ where: 'its title', text: trail.title, title: true }, { where: 'its body', text: trail.body ?? '' }];
+  const messages = [];
   for (const commit of commits) {
     const message = commit?.commit?.message;
     if (typeof message !== 'string') return `gh returned a commit of #${number} with no message`;
-    texts.push({ where: `commit ${String(commit.sha ?? '').slice(0, 7) || 'with no SHA'}`, text: message });
+    messages.push({ where: `commit ${String(commit.sha ?? '').slice(0, 7) || 'with no SHA'}`, text: message });
   }
+  let trail;
+  try {
+    trail = takeTrail();
+  } catch (error) {
+    throw new Error(`could not read the review trail of #${number} with gh (${ghError(error)})`);
+  }
+  if (typeof trail?.head !== 'string' || trail.head.toLowerCase() !== head.toLowerCase()) {
+    throw new Error(`the head of #${number} moved from ${head.slice(0, 7)} to ${String(trail?.head ?? 'none').slice(0, 7)} while the gate read its title, body, and the issues it closes`);
+  }
+  if (typeof trail.title !== 'string' || (trail.body !== null && typeof trail.body !== 'string')) return `the forge gave no title or body for #${number}`;
+  const texts = [{ where: 'its title', text: trail.title, title: true }, { where: 'its body', text: trail.body ?? '' }, ...messages];
   return closingTextsProblem(texts, context, pr) ?? forgeClosingProblem(trail, context, pr);
 }
 

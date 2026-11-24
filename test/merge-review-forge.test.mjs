@@ -289,7 +289,67 @@ test('an unattended merge names its number and full head, in the repository the 
   assert.match(failing ?? '', /the forge could not confirm it in time \(gh: Bad credentials \(HTTP 401\)\); running the merge once more is safe/u);
 });
 
-test('a GraphQL merge, auto-merge, or queue mutation is refused to a session no Human attends, and stays an attended session`s call', (t) => {
+test('an unattended merge naming another host, in any spelling gh takes, is refused; the pinned host or none passes (#447)', (t) => {
+  const r = repo(t);
+  r.record(forged());
+  const named = `--match-head-commit ${HEAD}`;
+  for (const command of [
+    `gh pr merge https://ghe.example.com/acme/notes/pull/7 ${named}`,
+    `gh pr merge 7 -R ghe.example.com/acme/notes ${named}`,
+    `gh pr merge 7 --repo https://ghe.example.com/acme/notes ${named}`,
+    `GH_REPO=ghe.example.com/acme/notes gh pr merge 7 ${named}`,
+    `GH_HOST=ghe.example.com gh pr merge 7 ${named}`,
+    `env GH_HOST=ghe.example.com gh pr merge 7 -R acme/notes ${named}`,
+    `gh api --hostname ghe.example.com -X PUT repos/acme/notes/pulls/7/merge -f sha=${HEAD}`,
+    `GH_HOST=ghe.example.com gh api -X PUT repos/acme/notes/pulls/7/merge -f sha=${HEAD}`,
+    `curl -X PUT https://ghe.example.com/api/v3/repos/acme/notes/pulls/7/merge -d '{"sha":"${HEAD}"}'`,
+  ]) assert.match(merge(r, command) ?? '', /^Blocked: no Human attends this session, and this merges pull request #7, but it names the host ghe\.example\.com, and this session works in acme\/notes on github\.com\./u, command);
+  for (const command of [`gh pr merge 7 -R "$R" ${named}`, `GH_HOST=$H gh pr merge 7 ${named}`, `GH_REPO="$R" gh pr merge 7 ${named}`,
+    `gh api --hostname "$H" -X PUT repos/acme/notes/pulls/7/merge -f sha=${HEAD}`, `curl -X PUT "$API/repos/acme/notes/pulls/7/merge" -d '{"sha":"${HEAD}"}'`]) {
+    assert.match(merge(r, command) ?? '', /but it names its repository or its host in a word the shell builds/u, command);
+  }
+  for (const command of [
+    MERGE,
+    `gh pr merge https://github.com/acme/notes/pull/7 ${named}`,
+    `gh pr merge 7 -R github.com/acme/notes ${named}`,
+    `GH_HOST=github.com gh pr merge 7 ${named}`,
+    `gh api --hostname github.com -X PUT repos/acme/notes/pulls/7/merge -f sha=${HEAD}`,
+    `curl -X PUT https://api.github.com/repos/acme/notes/pulls/7/merge -d '{"sha":"${HEAD}"}'`,
+  ]) assert.equal(merge(r, command), null, command);
+  // An attended merge is unchanged: the host is the unattended rule's.
+  assert.equal(merge(r, `gh pr merge 7 -R ghe.example.com/acme/notes ${named}`, { mark: null }), null);
+});
+
+test('an unattended merge at the round cap with the waiver off is told to file and stop, never to ask (#352)', (t) => {
+  const r = repo(t);
+  const capped = (status, extensions = []) => (state) => {
+    state.rounds.push({ head: HEAD, open: 1 });
+    if (extensions.length) state.extensions = extensions;
+    state.outcome = { status, head: HEAD, at: '2026-11-18T09:00:00.000Z' };
+  };
+  r.record(capped('round_limit'));
+  const reason = merge(r, MERGE) ?? '';
+  assert.match(reason, /^Blocked: this merges pull request #7 at abcdef1, and the review of head abcdef1 is `round_limit`: stopped at its round limit, with 1 finding open, and not running\. No Human attends this session to answer, so do not ask with AskUserQuestion\. /u);
+  assert.match(reason, /do not merge: file what the review left open as a follow-up issue, report the pull request as stopped at its round limit with that issue, and stop\./u);
+  assert.match(reason, /github\.unattendedWaiver\.allow true on the default and base branches, and github\.unattendedWaiver "on" in \.aidrian\.local\.json /u);
+  assert.doesNotMatch(reason, /Only the Human decides|the options "Merge with the findings filed"|aidrian pr extend 7 --human/u);
+  assert.equal(mcp(r, { owner: 'acme', repo: 'notes', pullNumber: 7, sha: HEAD }), reason, 'the MCP tool gets the same deny');
+  // A check at the cap waiting for its judge names the judge's route, still with no question.
+  r.record(capped('extension_check', [{ source: 'plan', round: 3, head: HEAD, status: 'judging', mode: 'auto', red_flags: [] }]));
+  const judging = merge(r, MERGE) ?? '';
+  assert.match(judging, /The check at round 3 waits for its judge: .*`aidrian pr extend 7 --verdict extend\|stop --reason "<evidence>" --head <sha>`\./u);
+  assert.doesNotMatch(judging, /put .* to the Human with AskUserQuestion|Only the Human decides/u);
+  // Any other denial in such a session asks no question either.
+  r.record((state) => (state.outcome = { status: 'running', head: HEAD, at: '2026-11-18T09:00:00.000Z' }));
+  const running = merge(r, MERGE) ?? '';
+  assert.match(running, /No Human attends this session to waive this, so do not ask with AskUserQuestion: finish the review, or report the pull request unmerged\./u);
+  assert.doesNotMatch(running, /"Merge anyway"/u);
+  // The same records, attended: the Human's question, as before.
+  r.record(capped('round_limit'));
+  assert.match(merge(r, MERGE, { mark: null }) ?? '', /Only the Human decides this: ask with AskUserQuestion/u);
+});
+
+test('a GraphQL merge, auto-merge, or queue mutation is refused to a session no Human attends, and to an attended one in a project (#425)', (t) => {
   const r = repo(t);
   const query = path.join(r.root, 'merge.graphql');
   writeFileSync(query, 'mutation { mergePullRequest(input: { pullRequestId: "PR_x" }) { clientMutationId } }');
@@ -305,9 +365,12 @@ test('a GraphQL merge, auto-merge, or queue mutation is refused to a session no 
     `gh api graphql -F query=@${path.join(r.root, 'missing.graphql')}`,
   ]) {
     assert.match(merge(r, command) ?? '', /GraphQL call/u, command);
-    assert.equal(merge(r, command, { mark: null }), null, `attended: ${command}`);
+    const attended = merge(r, command, { mark: null }) ?? '';
+    assert.match(attended, /^Blocked: this is a GraphQL call .*by a node id the merge guard cannot match to a pull request's review record\. Merge with `gh pr merge <PR> --match-head-commit <sha>`/u, `attended: ${command}`);
   }
   assert.equal(merge(r, `gh api graphql -F query=@${plain} -F n=$N`), null, 'a query that merges nothing');
+  assert.equal(merge(r, `gh api graphql -F query=@${plain} -F n=$N`, { mark: null }), null, 'attended: a query that merges nothing');
+  assert.equal(merge(r, 'gh api repos/acme/notes/pulls/7', { mark: null }), null, 'attended: a GET of the pull request');
   assert.match(merge(r, 'echo mergePullRequest | bash') ?? '', /cannot read as commands/u, 'fed text naming one');
 });
 
@@ -784,7 +847,7 @@ test('a merge mutation is read in every `gh api` call, whatever the endpoint`s s
     for (const endpoint of ['graphql', '/graphql', 'graphql/', 'https://api.github.com/graphql', "'graphql?x=1'", 'repos/acme/notes']) {
       const command = `gh api -X POST ${endpoint} ${field}`;
       assert.match(merge(r, command) ?? '', /GraphQL call/u, command);
-      assert.equal(merge(r, command, { mark: null }), null, `attended: ${command}`);
+      assert.match(merge(r, command, { mark: null }) ?? '', /GraphQL call/u, `attended: ${command}`);
     }
   }
   const query = path.join(r.root, 'm.graphql');

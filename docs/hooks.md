@@ -592,9 +592,18 @@ On a host with no SessionEnd it is never recorded.
 
 A session must not merge a pull request while a review of its head is still open, or while a review the Human asked for
 was never sent. The rule, `plugins/aidrian/lib/rules/github/merge-review.mjs`, reads `gh pr merge`, a `gh api` PUT or POST
-to `repos/<owner>/<name>/pulls/<n>/merge`, the MCP tool `mcp__github__merge_pull_request`, on Claude Code
+to `repos/<owner>/<name>/pulls/<n>/merge`, a `curl` PUT or POST to that path's URL (`-X PUT`, `-XPUT`, `--request PUT`,
+`-T`, or a body with no method; a method the shell builds counts as PUT), the MCP tool `mcp__github__merge_pull_request`, on Claude Code
 [a GitHub MCP server a plugin installs](providers/claude-code.md#a-github-mcp-server-from-a-plugin), and on Codex
 [the GitHub connector's merge tools](providers/codex.md#github-through-the-app-connector). It is on in every project.
+A `curl` merge reads its head and merge commit text from one JSON body written in the command (`sha`, `commit_title`,
+`commit_message`); a body from a file or one the shell builds names no head.
+
+A GraphQL call that may merge, `gh api` or `curl` naming `mergePullRequest`, `enablePullRequestAutoMerge`, or
+`enqueuePullRequest`, or sending to GraphQL a query from a file that names one, or one the shell builds, is refused
+outright inside a project, for every session: it names its pull request by a node id no review record is keyed by, so the
+guard cannot check the review it owes. The denial says to merge with `gh pr merge <PR> --match-head-commit <sha>`. A
+query that only reads runs as before. A `curl` whose whole URL the shell builds is not read as a GraphQL call.
 
 Before it reads the record, a merge of this repository, one that names none or one of this checkout's remotes, holds the
 working copy to [the base branch's config](review.md#the-record) from local git alone. A merge naming its number compares
@@ -648,6 +657,11 @@ The Human waives it. The reason prints a question naming `#<PR>` and the head's 
 the session transcript holds the Human's AskUserQuestion answer to a question naming both, whose chosen option starts
 with "Merge anyway", given at or after the head's outcome and every owed review. Without a transcript in that shape
 (Codex), the Human merges in their own shell.
+Every denial in a session a Human attends ends with that route and the one command for it, `gh pr merge <PR> --match-head-commit <sha>`
+with the merge's `--repo` when it named one and the working copy's `github.autoMerge.strategy` flag when it sets one:
+when the Human already gave the decision in their own words, such as "merge it" typed in chat, the session does not
+ask it again, and hands that command over for the Human to run with `!` in the prompt. The guard never takes a chat
+message as the answer: the transcript is a file in the session's own account, and a typed decision has no head to bind to.
 
 At the round cap, with nothing owed and the head's outcome `extension_check` or `round_limit`, the review is stopped
 and not running, so the reason offers no wait. It says the review is stopped at its round limit and not running, and
@@ -662,6 +676,14 @@ review rounds" merges nothing, and the reason names the route to one more round:
 at the cap waits for its judge or the Human, else `aidrian pr extend <PR> --human approve`, whose refusal names the
 route when no extension waits for the Human ([Extra rounds](review.md#extra-rounds)). `extension_ask` keeps the first
 question: the step waits for the Human's answer to the extra-round question there.
+
+In a session no Human attends, a question has no one to answer it, so no denial asks one. At the round cap the denial
+says not to ask, names the judge's route while the check at the cap waits for its judge, and otherwise says that while
+the review stays stopped and no judge's verdict stands for the head, the session does not merge: it files what the
+review left open as a follow-up issue, reports the pull request stopped at its round limit with that issue, and stops.
+It names the two switches a verdict needs, `github.unattendedWaiver.allow` on the default and base branches and
+`github.unattendedWaiver` in the local file ([Unattended waiver](config.md#unattended-waiver)). Any other denial says to
+finish the review or report the pull request unmerged.
 
 When every open finding of the head is low, the reason also names a third route, for an answer in the Human's own words
 that the session decides, such as "whatever you recommend": the session files what the review left open as an open
@@ -752,7 +774,10 @@ the merge to GitHub. Before any record is parsed, its pull request's record file
 session makes that the checks above let through, with a record or none, the Human's answer, or a waiver, must also:
 name its number and its full 40-character head (`--match-head-commit`, `sha=`, the merge tool's `sha`, or the GitHub MCP
 server's `expectedHeadSha`, which its merge passes to GitHub), in the repository the session is pinned to, its project
-run's, read from the run's ledger, else the main checkout's origin (a merge naming another repository is refused); read
+run's, read from the run's ledger, else the main checkout's origin (a merge naming another repository is refused), and on
+its host: every host the merge names, in any spelling gh takes (a pull request URL, `-R HOST/OWNER/NAME` or a URL,
+`GH_REPO`, `GH_HOST`, and `gh api --hostname`, else `gh api`'s default, `github.com`), and a `curl` merge's URL, with
+`api.github.com` read as `github.com`, must be the pinned host, and a repository or host the shell builds refuses; read
 its record files bounded, each parsed once a call; and pass on the forge, in one GraphQL
 read on the waiver's clock below, `aidrian pr auto-merge`'s policy and [merge trust](review.md#merge-trust). The policy:
 `github.autoMerge.allow` on both branches, the main checkout's own switch on, the default branch's required checks named,

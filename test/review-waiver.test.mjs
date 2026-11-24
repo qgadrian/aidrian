@@ -27,6 +27,8 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 const GATES_HOOK = path.join(ROOT, 'plugins/aidrian/scripts/hook-agent-gates.mjs');
 const LOCAL = '.aidrian.local.json';
 const HEAD = 'abcdef1234567890abcdef1234567890abcdef12';
+// Today's denial ends at the Human's own shell, with the one merge command to hand over (#390).
+const SHELL_TAIL = /Or the Human merges in their own shell \(`!` in the prompt\): .*; hand over `gh pr merge 5 --match-head-commit [0-9a-f]{40}`, with the team's merge-strategy flag, for the Human to run\.$/u;
 const NEXT = '1234567890abcdef1234567890abcdef12345678';
 const URL = 'https://github.com/Acme/Notes/pull/5';
 const T0 = '2026-11-03T14:00:00.000Z';
@@ -506,7 +508,7 @@ test('a verdict counts only for a merge that names its head', (t) => {
 test('without a verdict that stands for this head and kind, the denial is today\'s, plus the route under both switches', (t) => {
   const r = repo(t, { local: ON });
   const command = `gh pr merge 5 --match-head-commit ${HEAD}`;
-  const route = /Or the Human merges in their own shell\. Or, under the unattended waiver this repository allows \(github\.unattendedWaiver\), a run with no Human present first checks `aidrian pr waive 5 --gate`, then records the verdict of one fresh judge, as the pr-review-loop skill's references\/review-plan\.md § At the cap says, with `aidrian pr waive 5 --verdict waive\|refuse --reason "<evidence>" --head abcdef1234567890abcdef1234567890abcdef12 --judge <agent id>`, then merges naming that head\.$/u;
+  const route = /for the Human to run\. Or, under the unattended waiver this repository allows \(github\.unattendedWaiver\), a run with no Human present first checks `aidrian pr waive 5 --gate`, then records the verdict of one fresh judge, as the pr-review-loop skill's references\/review-plan\.md § At the cap says, with `aidrian pr waive 5 --verdict waive\|refuse --reason "<evidence>" --head abcdef1234567890abcdef1234567890abcdef12 --judge <agent id>`, then merges naming that head\.$/u;
   for (const [name, edit] of [
     ['no entry', (state) => roundLimit(state)],
     ['an entry for another head', (state) => (roundLimit(state), waiver(state, { head: NEXT }))],
@@ -536,7 +538,7 @@ test('the local switch off: today\'s denial, no route, and no forge read at all'
     const forge = teamForge();
     const views = [];
     const reason = merge(r, `gh pr merge 5 --match-head-commit ${HEAD}`, { forge, views });
-    assert.match(reason ?? '', /Or the Human merges in their own shell\.$/u);
+    assert.match(reason ?? '', SHELL_TAIL);
     assert.doesNotMatch(reason, /aidrian pr waive/u);
     assert.deepEqual([forge.calls, forge.options, views], [[], [], []], 'no network');
   }
@@ -552,7 +554,7 @@ test('the team refuses on the default or the base branch: today\'s denial, and n
     const r = repo(t, { local: ON });
     r.record(5, (state) => (roundLimit(state), waiver(state)));
     const reason = merge(r, `gh pr merge 5 --match-head-commit ${HEAD}`, { forge: teamForge(branches, { base }) });
-    assert.match(reason ?? '', /Or the Human merges in their own shell\.$/u, name);
+    assert.match(reason ?? '', SHELL_TAIL, name);
     assert.doesNotMatch(reason, /aidrian pr waive|could not be read|recorded verdict/u, name);
   }
   // Allowed on both: the trail gives the base's config beside the default branch's, so nothing is read over REST.

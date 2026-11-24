@@ -49,7 +49,8 @@ export function mainsOf(dirs) {
 // `dests` the folders it names when it names them literally, which an untrusted change may never reach.
 export function trustOf(change, from, mains) {
   const { program, to, uncertain = false, viaCommand = false } = change;
-  const named = program === 'popd' || !to || to.dynamic || to.text.startsWith('~') ? [] : path.isAbsolute(to.text) ? [to.text] : from.map((dir) => path.resolve(dir, to.text));
+  const unnamed = program === 'popd' || !to || to.dynamic || to.text.startsWith('~');
+  const named = unnamed ? [] : from.map((dir) => path.resolve(dir, to.text));
   if (uncertain || viaCommand || !named.length) return { kind: 'untrusted', dests: named };
   let inMain = false;
   for (const dest of named) {

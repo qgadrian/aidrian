@@ -62,7 +62,8 @@ function expansionDenial(command, cwd, env) {
     // taken as done; none when the line starts in no guarded main checkout.
     const walk = write.cds.length ? afterChanges(write.cds) : null;
     if (write.cds.length && !walk) continue;
-    const dirs = walk ? walk.at : write.dirs.length ? write.dirs : [cwd];
+    let dirs = write.dirs.length ? write.dirs : [cwd];
+    if (walk) dirs = walk.at;
     if (!/[$`]/u.test(text)) {
       const denial = decide(dirs.map((dir) => joinSpelled(dir, text)), cwd, false, 'this command writes');
       if (denial) return denial;

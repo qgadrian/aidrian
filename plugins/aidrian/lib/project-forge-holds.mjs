@@ -48,23 +48,30 @@ export function holdLines({ facade, repository, policy, token = null, lines, che
       const plan = `the forge offers no rule for this repository, since ${read.why}, so nothing holds the signed-in user, whose token an issue's session keeps, from pushing to the default branch ${read.branch} or a tag, and a script it runs could; move to a plan that offers them, or make the repository public, then add the rules, or the default branch sets projectRun.forgeProtectionAccepted to run with only the hooks holding it`;
       guard('branch-protection', plan);
       guard('release-tags', plan);
-    } else if (read) {
-      // An administrator's token can turn off or edit any rule of the repository, so no rule holds it (adminWhy).
-      const admin = read.admin === true;
-      if (read.protected === null && accepted) guard('branch-protection', read.why);
-      else if (read.protected === null) asks.push(`ask branch-protection: confirm on the forge that the default branch ${read.branch} asks for a pull request of the signed-in user too, since ${read.why}; a missing one is a blocker, unless the default branch sets projectRun.forgeProtectionAccepted`);
-      else guard('branch-protection', read.protected ? null : `no rule on the forge holds the signed-in user, whose token an issue's session keeps, to a pull request on the default branch ${read.branch} (${read.why}), so a script it runs could push to it; ${admin ? ADMIN_FIX : 'protect it with a rule that asks for a pull request, includes administrators, and lets that user bypass nothing'}, before the run, or the default branch sets projectRun.forgeProtectionAccepted`);
-      const held = admin ? [] : read.tags.filter((rule) => rule.all && rule.creation && rule.update && rule.bypass === 'never');
-      guard('release-tags', held.length ? null : admin
-        ? `no tag rule on the forge holds the signed-in user, whose token an issue's session keeps, since ${ADMIN_WHY}, so a script it runs could push a release tag; ${ADMIN_FIX}, before the run, or the default branch sets projectRun.forgeProtectionAccepted`
-        : 'no active tag rule on the forge names every tag and stops the signed-in user, whose token an issue\'s session keeps, creating or moving one, so a script it runs could push a release tag; add a tag ruleset over all tags (~ALL or refs/tags/**/*, excluding none; refs/tags/* stops at a slash) that restricts creations and updates, with no bypass for that user, before the run, or the default branch sets projectRun.forgeProtectionAccepted');
-    }
+    } else if (read) refLines({ read, accepted, guard, asks });
   } else if (accepted) lines.push(`note protection: ${ACCEPTED_PROTECTION}`);
   else asks.push('ask protection: confirm on the forge that the default branch asks for a pull request of the signed-in user, admin or not, and that a tag rule the signed-in user cannot bypass stops a tag being created or moved; a missing one is a blocker, unless the default branch sets projectRun.forgeProtectionAccepted');
   secretsLines({ facade, named, reads, permissions, policy, check, failed, asks });
   if (!notes) return;
   lines.push(`note workflows: the forge runs a branch's own workflow files, and the code they call, with the repository's secrets on every push, and an issue's session pushes its branch: keep release and deploy secrets in environments held for a reviewer who prevents self-review or is not the signed-in user; an environment limited to protected branches or branch patterns counts as open, since a deployment branch rule is no hold against code the run pushes; ${SECRETS_ACCEPTED}; a token without the workflow scope keeps the session from changing a workflow file, not from changing the tests and scripts a workflow runs; a cloud role trusted through OIDC federation for any ref of the repository (a subject such as repo:<owner>/<name>:*) can be assumed from any branch, so limit its trust to a protected branch, or to an environment held as above; the hook refuses an issue session's writes to the workflow files and a push whose commits change them, and a script it runs is the residual`);
   lines.push('note triggers: other services that act on a push or a pull request comment, such as preview deploys and ChatOps bots, run for an issue\'s branch too, with their own secrets; keep them to protected branches or reviewed pull requests');
+}
+
+// The branch-protection and release-tags lines of the forge's read `read` (refProtection), through `guard`, which
+// turns a blocker into a note when the team accepts it (`accepted`), and `asks`. An administrator's token can turn off or
+// edit any rule of the repository, so no rule holds it.
+function refLines({ read, accepted, guard, asks }) {
+  const admin = read.admin === true;
+  const branchFix = admin ? ADMIN_FIX : 'protect it with a rule that asks for a pull request, includes administrators, and lets that user bypass nothing';
+  if (read.protected === null && accepted) guard('branch-protection', read.why);
+  else if (read.protected === null) asks.push(`ask branch-protection: confirm on the forge that the default branch ${read.branch} asks for a pull request of the signed-in user too, since ${read.why}; a missing one is a blocker, unless the default branch sets projectRun.forgeProtectionAccepted`);
+  else guard('branch-protection', read.protected ? null : `no rule on the forge holds the signed-in user, whose token an issue's session keeps, to a pull request on the default branch ${read.branch} (${read.why}), so a script it runs could push to it; ${branchFix}, before the run, or the default branch sets projectRun.forgeProtectionAccepted`);
+  if (admin) {
+    guard('release-tags', `no tag rule on the forge holds the signed-in user, whose token an issue's session keeps, since ${ADMIN_WHY}, so a script it runs could push a release tag; ${ADMIN_FIX}, before the run, or the default branch sets projectRun.forgeProtectionAccepted`);
+    return;
+  }
+  const held = read.tags.filter((rule) => rule.all && rule.creation && rule.update && rule.bypass === 'never');
+  guard('release-tags', held.length ? null : 'no active tag rule on the forge names every tag and stops the signed-in user, whose token an issue\'s session keeps, creating or moving one, so a script it runs could push a release tag; add a tag ruleset over all tags (~ALL or refs/tags/**/*, excluding none; refs/tags/* stops at a slash) that restricts creations and updates, with no bypass for that user, before the run, or the default branch sets projectRun.forgeProtectionAccepted');
 }
 
 // Why no rule holds an administrator's token, and how the run gets one that does: the token can turn off branch

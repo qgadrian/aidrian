@@ -21,6 +21,8 @@ const LEAKED = {
   GIT_DIR: '/nonexistent/.git',
   GIT_WORK_TREE: '/nonexistent',
   GIT_INDEX_FILE: '/nonexistent/.git/index',
+  // The config file a shell may name for OpenCode, which `aidrian check` would read as this machine's setup.
+  OPENCODE_CONFIG: '/nonexistent/opencode.json',
 };
 
 test('the test setup clears the session, override, and git variables from every test and what it spawns', () => {

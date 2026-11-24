@@ -129,6 +129,28 @@ test("another project's rules apply where the call runs: env -C and a leading cd
   await refuses(`env -C ${OTHER} gh pr edit 1 --body-file ${FOOTER}`, /carries the "Generated with \[Claude Code\]" footer/);
 });
 
+test("a deny under the session's rules for gh in a folder a variable holds says so, and how to name the folder", async () => {
+  // A variable's value at run time is not read: an assignment may sit in a branch that never ran, or be unset since.
+  for (const line of [`W=${OTHER}; env -C "$W" gh`, `env -C $W gh`, `cd "$W" && gh`]) {
+    const { status, stderr } = await hook(`${line} pr edit 1 --body-file ${WHY}`);
+    assert.equal(status, 2, line);
+    assert.match(stderr, noSummary, line);
+    assert.ok(stderr.includes(`These are the rules of ${OWN}, the session's project: the folder gh runs in is one this rule cannot read`), stderr);
+    assert.ok(stderr.includes('run `env -C <the folder, written out> gh …`'), stderr);
+  }
+});
+
+test("a deny under the session's rules after a cd into another project says whose rules they are and how to reach the other's", async () => {
+  const { stderr } = await hook(`cd ${OTHER} && true; gh pr edit 1 --body-file ${WHY}`);
+  assert.match(stderr, noSummary);
+  assert.ok(stderr.includes(`These are the rules of ${OWN}, the session's project`), stderr);
+  assert.ok(stderr.includes(`run \`env -C ${OTHER} gh …\``), stderr);
+  assert.ok(stderr.indexOf('These are the rules') < stderr.indexOf('To override'), 'the note sits before the override line');
+  // No cd into another project: no note.
+  assert.ok(!(await hook(`gh pr edit 1 --body-file ${WHY}`)).stderr.includes('These are the rules'));
+  assert.ok(!(await hook(`cd ${OWN} && true; gh pr edit 1 --body-file ${WHY}`)).stderr.includes('These are the rules'));
+});
+
 test('a later cd joined to gh by && alone still names the project gh answers to', async () => {
   const body = path.join(OTHER, 'b.md');
   await passes(`cat > ${body} <<'EOF'\n## Why\nThe reason.\nEOF\ncd ${OTHER} && gh pr edit 1 --body-file ${body}`);

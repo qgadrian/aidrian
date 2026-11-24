@@ -247,6 +247,9 @@ What each rule matches:
   So gh on a new line after `cd /other && cat > b.md <<'EOF'` answers to the session's rules, since a failed `cd` would leave
   it in the session's folder. To be judged by the other project, join gh on the heredoc's first line
   (`cd /other && cat > b.md <<'EOF' && gh pr edit 1 --body-file b.md`, then the body) or use `env -C /other gh …`.
+  A deny under the session's rules where the folder gh runs in names no project, as after such a `cd` or in a folder a
+  variable holds (`env -C "$W" gh …`, whose value the rule never guesses), says whose rules they are, names the folder
+  a leading `cd` went into when it is another project's, and gives the `env -C <folder> gh …` form for another's rules.
   Naming the repository with `-R` gets none of these rules, as the next lines say.
   A call that names a repository other than that checkout's remotes, through `-R`, a pull request URL, or `GH_REPO`,
   gets none of these rules: that repository's config cannot be found from there, so its rules go unchecked.
@@ -1550,6 +1553,12 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   a string spells it, or a session file but `usage.json` by its name alone, read as a path part, whatever quote stands
   around it, so `cd "$X" && echo {} >> prs.jsonl` is refused; the word `sessions` alone never counts, so a project's
   own folder of that name stays writable, and nor does `usage.json` alone, a name other tools use.
+  A path with a placeholder part in angle brackets, such as `<state>/sessions/<session id>/prs.jsonl` in the text of a
+  plan that interpreter code writes, does not count while no folder the guard keeps, the state root's, a project's
+  state folder, or one the session started with, has `<` or `>` in its path as written or as its real path through any
+  link; where one does, it counts, since it
+  could name that folder. One with a `..` part always counts, and a session file's name outside such a path counts
+  as before.
   The hooks and the `aidrian` commands write there through their own code, which no guard reads, so the
   [ledger](#session-ledger) still records a subagent's push. An attended main session is not held. The guard shares
   the store guard's reach check (`reachesStateFolder` in `lib/handoff-guard.mjs`) and its limits, and runs where it

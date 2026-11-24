@@ -790,6 +790,23 @@ function reachesStateFolder(input, { files, globs, modes }, { dir, links, folder
 // `sessions` alone never counts, since a project may hold a folder of that name.
 const escapedNames = (names) => names.map((name) => name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')).join('|');
 const BARE_SESSION_FILES = SESSION_FILES.filter((name) => name !== 'usage.json');
+// A path with a placeholder part in angle brackets, such as `<state>/sessions/<session id>/prs.jsonl` in the text of a
+// plan an interpreter's code writes: prose that says where a file lives, never a file a command opens, as long as no
+// folder the guard keeps has `<` or `>` in its real path (sessionFoldersWriteDenial checks that before it strips one).
+// Each placeholder is a word, spaces and `-` included; the path runs to a space or a quote, which a path in code ends
+// at, or to a `<` or `>` that is no placeholder's. One with a `..` part keeps its text: a folder of the placeholder's literal name could be made, and `..` would
+// leave it for a real one. Linear in the text: each placeholder becomes one mark, a bounded match, then the text is
+// split at its spaces and quotes once, so a long interpreter body cannot hold the guard past its deadline.
+const PLACEHOLDER = /<[\w -]{1,64}>/gu;
+const MARK = '\u0000';
+const UP = /(?:^|[\\/])\.\.(?:[\\/]|$)/u;
+export function withoutPlaceholderPaths(text) {
+  if (!text.includes('<')) return text;
+  const marked = text.replaceAll(MARK, '').replace(PLACEHOLDER, MARK);
+  if (!marked.includes(MARK)) return text;
+  // A `<` or `>` left once the placeholders are marked is no placeholder's, and bounds a path as a space does.
+  return marked.split(/([\s'"\x60<>]+)/u).map((part) => (part.includes(MARK) && !UP.test(part) ? ' ' : part)).join('');
+}
 export const SESSION_FILE_NAME = new RegExp(String.raw`(?<![\w.-])sessions[\\/]+[^\\/]+[\\/]+(?:${escapedNames(SESSION_FILES)})(?![\w.-])|(?<![\w.-])(?:${escapedNames(BARE_SESSION_FILES)})(?![\w.-])`, 'iu');
 
 // The sessions folders of every project's default state folder under the state root, `<root>/projects/<id>/sessions`,
@@ -882,16 +899,24 @@ export function sessionFoldersWriteDenial(input, project, { names: { human }, st
   const writer = subagent ? 'only the hooks and the `aidrian` commands write' : `only the hooks and the \`aidrian\` commands write, ${UNATTENDED}`;
   const why = (verb, shown) => projectRuleReason(input, `it ${verb} ${shown}, the session folders, where ${writer}`, human);
   const held = () => subagent || unattended();
-  const named = (text) => SESSION_FILE_NAME.test(text);
+  const started = () => readOnce(input, 'origins', () => origins(input.session_id));
+  // A placeholder path is prose only while no folder the guard keeps, the state root's, the project's, or one the
+  // session started with, has an angle bracket in its own path, as written or as its real path, or that of its sessions
+  // folder, through any link, as the reachability scan resolves them (scanSessions); read
+  // once, and only for a text that names a session file.
+  let bracketed;
+  const kept = () => [stateRoot(), ...defaultSessionsFolders(input), ...(project === null ? [] : folders(state)), ...started()];
+  const spellings = (folder) => [folder, real(folder), real(path.join(folder, 'sessions'))];
+  const prose = () => (bracketed ??= kept().flatMap(spellings).some((each) => /[<>]/u.test(each))) === false;
+  const named = (text) => SESSION_FILE_NAME.test(text) && (!prose() || SESSION_FILE_NAME.test(withoutPlaceholderPaths(text)));
   const unplaced = modes.filter(({ text, folder }) => folder === null && !path.isAbsolute(text));
   if (names.some(named) || unplaced.some(({ text }) => named(text)) || globs.some((glob) => (glob.unsure || glob.opaque) && named(glob.text))) {
     return held() ? { match: 'may change the session folders', reason: why('may change', 'sessions/<id>') } : null;
   }
-  const started = readOnce(input, 'origins', () => origins(input.session_id));
   const roots = () => readOnce(input, `roots:${project?.root ?? ''}`, () => (project === null ? [] : projectCheckouts(project, deadlineGit) ?? project.checkouts).map(real));
   // Every state folder `state` gives (stateFolders), then those the session started with.
-  const sessions = () => sessionsFolders(input, [...(project === null ? [] : folders(state)), ...started], roots());
-  const anchors = started.map(real);
+  const sessions = () => sessionsFolders(input, [...(project === null ? [] : folders(state)), ...started()], roots());
+  const anchors = started().map(real);
   const hit = reachesStateFolder(input, { files, globs, modes }, { dir: project !== null && Boolean(dir), links, folders: sessions, roots, anchors });
   if (!hit || !held()) return null;
   const verb = opaque ? 'may change' : 'changes';

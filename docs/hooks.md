@@ -1635,8 +1635,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   program the session runs, or `curl` with the token, can still push or call the forge, a command an earlier call left
   running in the background can still commit between the hook's read and the push, and git in the session's own
   checkout can move its copy of origin's default branch, the base the workflow diff starts from; the forge itself holds
-  that, so `aidrian project preflight` blocks a run whose default branch asks the signed-in user, admin or not, for no
-  pull request, or whose tags no rule that user cannot bypass stops being created or moved, unless the team sets
+  that, so `aidrian project preflight` blocks, and every start halts, read with the token the session gets, a run whose
+  default branch asks the signed-in user, admin or not, for no pull request, or whose tags no rule that user cannot
+  bypass stops being created or moved, or whose user administers the repository, which no rule holds, unless the team sets
   `projectRun.forgeProtectionAccepted`, which removes that backstop, so a script the session runs can push to the
   default branch or a tag; and one whose workflows see CI secrets, whatever that token's `workflow` scope, unless the
   team sets `projectRun.workflowSecretsAccepted`, which accepts all current and future workflow secret exposure for

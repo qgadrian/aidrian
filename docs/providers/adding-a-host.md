@@ -362,16 +362,18 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
 - The auto-merge command's merge state (`lib/pr-auto-merge.mjs`): `mergeStatus(repo, n, { host })`, in one read,
   `{ state, merged, mergedAt, head, autoMerge, queued }`: whether the forge merged it, the merge method of an
   auto-merge request or null, and whether a merge queue holds it ([config.md](../config.md#when-it-is-on)).
-- A project run's preflight (`lib/project-preflight.mjs`): `reviewerSeen(repo, login, { host, limit, counts })`, whether
+- A project run's preflight (`lib/project-preflight.mjs`), and for the last two every start
+  (`lib/project-forge-holds.mjs`): `reviewerSeen(repo, login, { host, limit, counts })`, whether
   the reviewer reviewed, or left a comment whose body `counts` accepts on, any of the repository's last `limit` pull
   requests, as `{ changes, seen }`, a bot's login compared with or without its `[bot]` suffix (preflight's `counts`
   skips a usage-limit notice and a status card that does not yet say the review completed, which show no finished review); `ciWorkflows(repo, { host })`, the names of its active CI workflows;
-  `refProtection(repo, { host })`, `{ branch, protected, why, tags }`: the default branch's name, whether a rule that
+  `refProtection(repo, { host, token })`, `{ branch, protected, why, tags, admin }`: the default branch's name, whether a rule that
   asks for a pull request there binds the signed-in user (true; false; null when the forge shows the rule's settings
-  only to an administrator, which the preflight asks of the driver), why not, and each active tag rule as `{ name, all,
+  only to an administrator, which the preflight asks of the driver and a start halts on), why not, `admin` true and
+  `protected` false for a user who administers the repository, whose token can turn any rule off, and each active tag rule as `{ name, all,
   creation, update, bypass }`: whether it names every tag and excludes none, whether it restricts creating and updating
   a tag, and whether the signed-in user may bypass it (`never` is the only answer the preflight accepts); and
-  `workflowSecrets(repo, { host })`, `{ secrets, workflowPush }`: how many CI secrets the repository's workflows see,
+  `workflowSecrets(repo, { host, token })`, `{ secrets, workflowPush }`: how many CI secrets the repository's workflows see,
   its own, those its organization shares, and those of each environment with no required reviewers rule that holds the
   signed-in user (one that prevents self-review, or names only other users; a team may hold that user), or those of
   every environment when the signed-in user is an admin of the repository, since an admin's token can edit an
@@ -380,6 +382,8 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   hold against code the run pushes. `projectRun.workflowSecretsAccepted` skips this read whole, accepting all current
   and future workflow secret exposure for project runs, so a team sets it only when that is acceptable. And whether the
   signed-in token may push a change to a workflow file (null when the token does not say), which the preflight's blocker only words: secrets block whatever the scope.
+  With `token`, both make every read with that token, on `host` alone, so the signed-in user is the token's own
+  account; GitHub's adapter puts it in each variable gh reads a token from, with `GH_HOST` unset.
 - Links: `compareUrl(repo, from, to)`, the web link that shows the commits from `from` to `to`, which the review
   summary's findings table gives a finding's closing range. It is built only from two full-hex SHAs and the forge's own
   identity of the repository, never from pull request content: GitHub's adapter reads the repository's `html_url` once,

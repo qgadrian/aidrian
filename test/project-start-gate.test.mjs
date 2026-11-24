@@ -27,7 +27,7 @@ import { decisionStoreFolder } from '../plugins/aidrian/lib/project-decision-sto
 import { projectId } from '../plugins/aidrian/lib/project.mjs';
 import { attemptFolder, guardedFolders, runLogFile, setUnsigned, signingProblem, sweepAttempts, UNSIGNED } from '../plugins/aidrian/lib/project-start.mjs';
 import { markUnattended, PENDING_AGE, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
-import { decidedEntry, decidedFixture, DRIVER, fakeClaude, ORIGIN, OTHER, runFixture, STARTED, testGlobalConfig } from './project-start-fixture.mjs';
+import { decidedEntry, decidedFixture, DRIVER, fakeClaude, HELD_REFS, ORIGIN, OTHER, runFixture, STARTED, testGlobalConfig } from './project-start-fixture.mjs';
 
 const SKILL = path.resolve(import.meta.dirname, '../plugins/aidrian/skills/autopilot/SKILL.md');
 const at = (ms) => new Date(ms).toISOString();
@@ -293,6 +293,57 @@ test('start halts when the user\'s git config gives origin a second push URL, wh
   assert.match(halt, /an issue session pushes to exactly one, the URL its start pins; remove the extra push URL, then start again/u);
   assert.deepEqual(fx.rows(), [], 'a halt records nothing');
   assert.deepEqual(fx.claude.starts(), []);
+});
+
+// What the forge holds the issue sessions to, asked again at every start, with the very token the start hands the session
+// (lib/project-forge-holds.mjs holdsProblem): a protection changed since the preflight, or read for another account,
+// starts nothing.
+test('every start reads the forge rules and the secrets with the session\'s token, and halts on a repository they do not hold', (t) => {
+  const fx = runFixture(t);
+  fx.forge.holds = () => ({ refs: { branch: 'main', protected: false, why: 'it has no branch protection', tags: [] }, secrets: { secrets: 0, workflowPush: false } });
+  const open = fx.cmd(['start', 'launch', 'ENG-1']);
+  const halt = open.out.find((line) => line.startsWith('halt ')) ?? '';
+  assert.match(halt, /^halt the forge does not hold the issue sessions as a run needs, and a start has no person to answer it: branch-protection: no rule on the forge holds the signed-in user.*\(it has no branch protection\).*; release-tags: no active tag rule/u, JSON.stringify(open));
+  assert.deepEqual(fx.claude.starts(), [], 'no session');
+  assert.deepEqual(fx.forge.calls.filter(([name]) => ['refProtection', 'workflowSecrets'].includes(name)).map(([name, repo, options]) => [name, repo, options]), [
+    ['refProtection', 'acme/widgets', { host: 'github.com', token: 'given' }], ['workflowSecrets', 'acme/widgets', { host: 'github.com', token: 'given' }],
+  ], 'read with the token the session gets, on the pinned host');
+  // An administrator's token, which can turn off any rule, and secrets a branch's workflows may read, halt too.
+  const admin = runFixture(t);
+  admin.forge.holds = () => ({ refs: { branch: 'main', protected: false, admin: true, why: 'the signed-in user administers the repository', tags: [] }, secrets: { secrets: 2, workflowPush: true } });
+  const held = admin.cmd(['start', 'launch', 'ENG-1']).out.find((line) => line.startsWith('halt ')) ?? '';
+  assert.match(held, /branch-protection: .*does not administer the repository.*; release-tags: no tag rule on the forge holds the signed-in user.*; workflow-secrets: the repository's workflows see 2 CI secrets/u, held);
+  assert.deepEqual(admin.claude.starts(), []);
+});
+
+test('a forge read of the rules or the secrets that fails at a start retries it, and starts nothing', (t) => {
+  for (const failing of ['refs', 'secrets']) {
+    const fx = runFixture(t);
+    fx.forge.holds = () => ({ ...HELD_REFS, [failing]: new Error('gh: Server Error (HTTP 502)') });
+    const started = fx.cmd(['start', 'launch', 'ENG-1']);
+    assert.equal(started.exitCode, 75, `${failing}: ${started.err.join('\n')}`);
+    assert.match(started.out[0], /^retry: (?:branch-protection|workflow-secrets): the forge cannot say .*\(gh: Server Error \(HTTP 502\)\); a fine-grained token needs Administration: Read-only, Secrets: Read-only, and Environments: Read-only for these reads/u, failing);
+    assert.deepEqual(fx.claude.starts(), [], failing);
+    assert.ok(!fx.rows().some((row) => row.event === 'start'), `${failing}: no start row`);
+  }
+});
+
+test('the team\'s acceptance on the default branch lets a start past the rules or the secrets it accepts, and no other', (t) => {
+  const exposed = { refs: { branch: 'main', protected: false, why: 'it has no branch protection', tags: [] }, secrets: { secrets: 3, workflowPush: true } };
+  const started = (projectRun) => {
+    const fx = runFixture(t, { projectRun: { allow: true, unverifiedHosts: true, ...projectRun } });
+    fx.forge.holds = () => exposed;
+    const answer = fx.cmd(['start', 'launch', 'ENG-1']);
+    return { halt: answer.out.find((line) => line.startsWith('halt ')) ?? null, starts: fx.claude.starts().length };
+  };
+  const both = started({ forgeProtectionAccepted: true, workflowSecretsAccepted: true });
+  assert.deepEqual(both, { halt: null, starts: 1 }, 'both accepted');
+  const rules = started({ forgeProtectionAccepted: true });
+  assert.match(rules.halt, /workflow-secrets: the repository's workflows see 3 CI secrets/u);
+  assert.doesNotMatch(rules.halt, /branch-protection|release-tags/u, 'the rules accepted');
+  const secrets = started({ workflowSecretsAccepted: true });
+  assert.match(secrets.halt, /branch-protection: /u);
+  assert.doesNotMatch(secrets.halt, /workflow-secrets/u, 'the secrets accepted');
 });
 
 // The push preflight (docs/handoff.md#the-push-preflight) on the attempt's clone: a driver in auto mode whose user

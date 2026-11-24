@@ -1126,11 +1126,13 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   keeps its memory, nor remove, move away, or replace the folder or a folder above it whole, as `rm -rf`, `rmdir`, a
   source of `mv`, or the `-T` destination of `mv`, `cp`, or `ln` does to the config or home folder.
   A write into a folder above it, such as a copy or move into the home folder, or a `mkdir -p` of one, is judged by
-  its own path.
+  its own path, and a `cp`, `mv`, or `ln` into a folder also by each child it makes there, `<destination>/<source's
+  name>`, so `cp -r x/.claude ~` is refused like a write to that folder.
   The folders are the ones the host adapter names (`transcriptFolders`); on Claude Code, `projects/` under `~/.claude`
   of the account's home, and the folder the custody reader reads (`transcriptRoot`: under `CLAUDE_CONFIG_DIR`, else
   under the host's `HOME`).
-  A write counts by its path, and a glob by its literal prefix, the parts before its first wildcard, by the same rule;
+  A write counts by its path, and a glob, an operand with `*`, `?`, or `[`, by its literal prefix, the parts before its
+  first wildcard, by the same rule;
   where the folder is unknown, a spelling `projects/<folder>/<file>.jsonl` counts.
   A project run reads the driver's continuation there, so no row is forged.
   Accepted residuals: a script that writes the file; a link already on disk a write passes through, since the guard is

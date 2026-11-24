@@ -160,8 +160,10 @@ test('a marked session is held from a folder outside its project, and in another
     [`mv ${marks} ${outside}/kept`, /the unattended marks/u],
     [`touch -t 200001010000 ${marks}/cafe0002.json`, /the unattended marks/u],
     ['cd "$X" && rm -rf unattended', /may change the unattended marks/u],
+    // OpenCode's background service, which starts a session no guard holds.
+    ['curl -u opencode:pw http://127.0.0.1:49374/api/session', /local service starts a session no guard holds/u],
   ];
-  const allowed = ['ls', 'claude agents --json', `rm -f ${outside}/x`, 'echo hi > note.txt', 'aidrian handoff continue b.md'];
+  const allowed = ['ls', 'claude agents --json', `rm -f ${outside}/x`, 'echo hi > note.txt', 'aidrian handoff continue b.md', 'curl -s http://localhost:3000'];
   for (const session of [full, short]) {
     for (const [command, reason] of refused) {
       const result = await run(session, command);
@@ -174,6 +176,7 @@ test('a marked session is held from a folder outside its project, and in another
     assert.equal((await run(session, `rm ${store}/from-${full}.json`, { cwd: other })).status, 2, `${session}: the marked project's store from another project`);
     assert.equal((await run(session, `echo '{"handoff":{"background":"on"}}' > ${dir}/.aidrian.local.json`, { cwd: other })).status, 2, `${session}: a switch from another project`);
     assert.equal((await run(session, 'claude -p x', { cwd: other })).status, 2, `${session}: a start from another project`);
+    assert.equal((await run(session, 'cat ~/.local/state/opencode/service.json', { cwd: other })).status, 2, `${session}: OpenCode's service password, in a project`);
     assert.equal((await run(session, `rm -f ${other}/src/app.js`, { cwd: other })).status, 0, session);
   }
   assert.equal((await run(gone, 'claude -p x')).status, 2, 'a mark whose project is gone');

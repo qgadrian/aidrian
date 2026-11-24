@@ -147,6 +147,12 @@ export default {
   // Its logins and its service's state, which Claude Code's confined sandbox denies reading and its sandbox proof tries;
   // Codex's sandbox takes no such list (lib/hosts/index.mjs credentialStores).
   credentialStores,
+  // Its background service, which runs sessions and shell commands as the user for any caller that holds the password
+  // in `service.json` of its state folder, one of credentialStores: the port 2.4.0's source gives it on the release
+  // channel, on the loopback address. The agent gate hook refuses a session no Human attends a shell command that names
+  // the port or a credential store, since a session the service starts meets no guard (lib/handoff-guard.mjs
+  // hostServiceDenial).
+  localService: { ports: [49374] },
   projectFolders: {},
   // The host files of a checkout a session no Human attends never writes, from its root: `.opencode/plugins/` loads code
   // into the next session there, either config file can name plugins, and 2.4.0 loads skills from the `skills` folder of

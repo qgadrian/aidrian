@@ -13,7 +13,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
-import { baseReader, continueStoreWriteDenial, hostSessionStartDenial, mainCheckoutWriteDenial, projectRunWriteDenial, stateFolders } from '../plugins/aidrian/lib/handoff-guard.mjs';
+import { baseReader, continueStoreWriteDenial, hostServiceDenial, hostSessionStartDenial, mainCheckoutWriteDenial, projectRunWriteDenial, stateFolders } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { activeRuns, appendToRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { ownAttemptFolder, projectRunActive } from '../plugins/aidrian/lib/project-run-guard.mjs';
@@ -144,6 +144,24 @@ test('a subagent, and a session the background route started, may not start an O
   }
   // Claude Code's package too.
   assert.match(startAsk('npx @anthropic-ai/claude-code -p x')?.reason ?? '', /starts or resumes a session of Claude Code outside the handoff gate/u);
+});
+
+test('a session no Human attends may not read OpenCode\'s service password or reach its background service, by any spelling, and other ports pass', () => {
+  const env = { HOME: '/home/user', XDG_STATE_HOME: '/xs' };
+  const ask = (command, unattended = () => true) => hostServiceDenial(bash(command, { session_id: OTHER, cwd: '/x' }), { names: { human: 'the Human' } }, { unattended, env, home: '/home/user' });
+  const refused = [
+    'cat ~/.local/state/opencode/service.json', 'cat $HOME/.local/state/opencode/service.json', 'cat "${HOME}"/.local/state/opencode/service.json',
+    'cat /home/user/.local/state/opencode/service.json', 'jq -r .password $XDG_STATE_HOME/opencode/service.json', 'cat /XS/OpenCode/service.json',
+    'python3 -c "print(open(\'/xs/opencode/service.json\').read())"', 'ls ~/.config/opencode', 'cat ~/.local/share/opencode/auth.json',
+    'curl -u opencode:pw http://127.0.0.1:49374/api/session', 'curl localhost:49374/api/info', 'curl \'http://[::1]:49374/api/info\'',
+  ];
+  for (const command of refused) {
+    assert.match(ask(command)?.reason ?? '', /local service starts a session no guard holds/u, command);
+    assert.equal(ask(command, () => false), null, `an attended session may: ${command}`);
+  }
+  for (const command of ['curl http://localhost:3000', 'curl 127.0.0.1:493740', 'cat ~/.local/state/opencode-old/x', 'cat notes.md', 'ls ~/.local/state']) {
+    assert.equal(ask(command), null, command);
+  }
 });
 
 test('a live unattended mark that names the project is a run under way', (t) => {

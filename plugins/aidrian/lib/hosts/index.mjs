@@ -232,6 +232,13 @@ export const packagePrograms = (hosts = HOSTS) => Object.fromEntries(hosts.flatM
 export const credentialStores = ({ env = process.env, home } = {}, hosts = HOSTS) => [...new Set(hosts.flatMap((host) => host.credentialStores?.({ env, home }) ?? []))]
   .filter((each) => typeof each === 'string' && path.isAbsolute(each) && !CONTROL.test(each));
 
+// The local services the hosts run that start a session no guard holds, each { name, ports, stores }: from each
+// adapter's optional `localService` ({ ports }, its fixed ports), with `stores` its own credentialStores, which hold the
+// service's password, for the user whose home is `home` under `env`.
+export const localServices = ({ env = process.env, home } = {}, hosts = HOSTS) => hosts
+  .filter((host) => Array.isArray(host.localService?.ports))
+  .map((host) => ({ name: host.name, ports: host.localService.ports, stores: credentialStores({ env, home }, [host]) }));
+
 // The host files of a checkout no session no Human attends writes, from its root, as every host declares them
 // (`protectedPaths`): their union, so a session of one host cannot plant what another loads. The write guard refuses
 // them at the root of the session's worktree, of each checkout nested in it, of each folder between the two, and of its

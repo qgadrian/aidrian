@@ -10,7 +10,7 @@ import path from 'node:path';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
-import { recordPass, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
+import { recordPass, reviewStep, runReview } from '../plugins/aidrian/lib/review/run.mjs';
 import { HELD_LINE } from '../plugins/aidrian/lib/review/state.mjs';
 import { runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
 
@@ -68,7 +68,20 @@ export function repo(t, { baseConfig = { version: 1 }, change, headConfig, baseF
     const current = projectAt(dir);
     return reviewStep({ pr: '7', ...opts }, { project: current, config: loadConfig(current).config, forge, codex: () => ({ ok: true }), ...deps });
   };
-  return { dir, git, write, forge, comments, project, step, commit: (msg = 'next') => (git('add', '-A'), git('commit', '-q', '-m', msg), git('rev-parse', 'HEAD')) };
+  // `aidrian pr review 7` as the CLI runs it, over the same deps: its exit code and the JSON it prints.
+  const cli = async (deps = {}) => {
+    const current = projectAt(dir);
+    const printed = [];
+    const log = console.log;
+    console.log = (line) => printed.push(line);
+    try {
+      const code = await runReview(['7'], loadConfig(current).config, current, { forge, codex: () => ({ ok: true }), ...deps });
+      return { code, out: JSON.parse(printed.at(-1)) };
+    } finally {
+      console.log = log;
+    }
+  };
+  return { dir, git, write, forge, comments, project, step, cli, commit: (msg = 'next') => (git('add', '-A'), git('commit', '-q', '-m', msg), git('rev-parse', 'HEAD')) };
 }
 
 export const clean = async () => ({ status: 'done', findings: [], verdicts: [], dropped: [] });

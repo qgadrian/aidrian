@@ -211,7 +211,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `attribution.commit` | The trailers an agent's commit must carry: [Attribution](#attribution). `[]`, the default, is off. |
 | `attribution.pullRequest` | The lines a pull request body an agent opens must end with: [Attribution](#attribution). `[]` is off. |
 | `attribution.exclude` | The agents the `Assisted-by:` lines leave out; by default the ones that only search and read. |
-| `telemetry.enabled` | `false` stops the hooks and `aidrian decisions` from writing the [dispatch log](dispatch-log.md): [Telemetry](#telemetry). It also refuses recording a judge with `aidrian pr waive --judge`, and keeps auto-merge from taking a judge's verdict, since the log confirms the judge: [Unattended waiver](#unattended-waiver). |
+| `telemetry.enabled` | `false` stops the hooks and `aidrian decisions` from writing the [dispatch log](dispatch-log.md): [Telemetry](#telemetry). It also refuses recording a judge with `aidrian pr extend --judge` or `aidrian pr waive --judge`, and keeps auto-merge from taking a judge's verdict, since the log confirms the judge: [Unattended waiver](#unattended-waiver). |
 | `telemetry.docReads` | `false` leaves out which knowledge docs each agent read. |
 | `telemetry.hookDenies` | `false` leaves out the `hook_deny` row each block by one of the plugin's rules writes; the rules still block. |
 | `telemetry.maxMb` | The size, in megabytes, at which the dispatch log moves to its rotated part. |
@@ -522,8 +522,16 @@ the round cap there, the team's `allow` on the default branch and the base, read
 copy, this machine's switch, the open findings as above, the bot's pass of the head, no judge's verdict on that head
 yet (one judge rules per head), a host that confirms a judge with telemetry on, no sign-off owed, and, in a project
 run, its budget of waived merges and a pull request of the run's pinned repository. It also refuses a working copy
-whose state folder is not the default branch's. Exit 1 says why; exit 3 is a read that failed. `autopilot` runs it at
-the cap and dispatches a judge only on exit 0.
+whose state folder is not the default branch's. Exit 1 says why; exit 3 is a read that failed.
+
+At the cap, a session types no gate command: the review step runs the same gate and reports it.
+At `round_limit` and at `extension_check`, the JSON of `aidrian pr review` carries `waiver`, `{ may, why }`.
+Only with `may` true is a judge offered `land`: the check's own judge at `extension_check`, or one judge the step's `dispatch` names at `round_limit`.
+The session records that judge's verdict with `aidrian pr extend <PR> --verdict land|stop --reason "<evidence>" --head <sha> --judge <agent id>`.
+`land` asks the same gate again, and is refused, writing nothing, whenever it refuses.
+It then records the `waive` that `aidrian pr waive --verdict waive --judge` records, through the same code; `stop` with `--judge` records its `refuse`.
+[At the cap under autopilot](review.md#at-the-cap-under-autopilot) has the details.
+`aidrian pr waive` stays for a session a person attends.
 
 A project run merges at most 3 pull requests on a verdict. The gate and `aidrian pr auto-merge` only count that budget;
 the merge guard takes it at the merge itself, under the run's ledger lock, once every other check of the merge,
@@ -543,17 +551,18 @@ lock or a read refuses is not merged.
 
 ### Example
 
-1. The review of pull request #151 stops with `round_limit` on head `abc1234`.
-2. The session runs `gh pr merge 151`. The merge guard denies it and names `aidrian pr waive` as a second route.
-3. The session runs `aidrian pr waive 151 --gate`, which exits 0, then dispatches a fresh read-only judge, as the
-   `pr-review-loop` skill's `references/review-plan.md` § At the cap says. The judge rules that the change may merge.
-4. The session records that verdict, naming the judge's agent id:
-   `aidrian pr waive 151 --verdict waive --reason "<the judge's evidence>" --judge <agent id>`.
-5. `gh pr merge 151 --squash --match-head-commit abc1234` passes the guard. Give the full SHA, as the denial prints it.
+1. The review of pull request #151 stops at the cap on head `abc1234` with `extension_check`, and its `waiver` says `"may": true`.
+2. The session dispatches the check's judge with the `brief` the step printed, which offers `land`, and keeps the agent id the host returns.
+   The judge rules that no extra round is worth it and that the change may merge with its open findings filed.
+3. The session records that verdict, naming the judge's agent id:
+   `aidrian pr extend 151 --verdict land --reason "<the judge's evidence>" --head <sha> --judge <agent id>`.
+4. `gh pr merge 151 --squash --match-head-commit abc1234` passes the guard. Give the full SHA, as the step prints it.
+   Under `autopilot`, the session merges only through the `pr-auto-merge` skill instead.
 
-When the judge says no, the session records `aidrian pr waive 151 --verdict refuse --reason "<why>"` and stops.
+When the judge says no, the session records `aidrian pr extend 151 --verdict stop --reason "<why>" --head <sha> --judge <agent id>` and stops.
+That records a `refuse`, so no second judge rules on the head.
 The last verdict for a head counts, so a `refuse` withdraws an earlier `waive`, and a new push needs a new verdict.
-The command records `waive` only while this machine's switch is on.
+`aidrian pr waive 151 --verdict waive|refuse` records the same entries for a session a person attends, `waive` only while this machine's switch is on.
 The verdicts are kept in the [review record](review.md#the-record), and shown in the pull request's summary comment
 when `review.record` posts the record there.
 

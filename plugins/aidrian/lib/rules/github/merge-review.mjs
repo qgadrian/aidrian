@@ -40,7 +40,7 @@
 // head, while every open finding of the head stays low and the entry is at or after the outcome; an entry another
 // session recorded is not taken when the hook gives this session's id and the entry holds its own. The guard reads it
 // from the record it already loaded, with no call.
-// An unattended run's judge verdict (`aidrian pr waive`, lib/review/waiver.mjs) waives it in that answer's place, only
+// An unattended run's judge verdict (`aidrian pr extend --verdict land` or `aidrian pr waive`, lib/review/waiver.mjs) waives it in that answer's place, only
 // for `round_limit` on the merge's own head, nothing owed, and only under both switches:
 // `github.unattendedWaiver.allow` on the default and base branches, read from GitHub, and the main checkout's local switch.
 // It never stands in for the review bot: it waives only this machine's reviewers' findings, each of medium severity or

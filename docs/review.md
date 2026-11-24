@@ -1178,7 +1178,13 @@ The stop changes neither the cap nor the rules below: an extra round over a red 
    aidrian pr extend <PR> --verdict extend|stop --reason "<evidence>" [--head <sha>] [--check <id>]
    ```
 
-4. **Grant.** `stop` is `round_limit`. `extend` grants the round under `"auto"` when no red flag stands. Under
+   Under the [unattended waiver](config.md#unattended-waiver), the step's JSON also carries `waiver`, the waiver's gate on this head.
+   Only when `waiver.may` is true, the brief offers the judge a third verdict, `land`.
+   `land` means the cap stands, and the pull request may merge with its open findings filed.
+   `record` then reads `--verdict extend|stop|land` and ends in `--judge <agent id>`, the agent id the host returned for the judge.
+   [At the cap under autopilot](#at-the-cap-under-autopilot) says what `land` and a `stop` with `--judge` record.
+
+4. **Grant.** `stop` and `land` are `round_limit`. `extend` grants the round under `"auto"` when no red flag stands. Under
    `"ask"`, or over a red flag, the status is `extension_ask` (exit 11), with a `question` and `options` for the Human,
    and the session records the answer. The question names the red flags, by name only:
 
@@ -1272,11 +1278,14 @@ listed on the pull request.
 
 Under the `autopilot` skill, and in each issue's session of a [project run](config.md#project-run), no one is there to
 answer at the cap. An extra round goes as [Extra rounds](#extra-rounds) says: under `"ask"`, or over a red flag, it is
-parked as a decision for the Human. What follows `round_limit` on the current head is the
-[unattended waiver](config.md#unattended-waiver), and only when `aidrian pr waive <n> --gate` exits 0. The gate
-checks more than this list, such as the waiver's two switches, telemetry, and every flow of the plan:
-[Before a judge rules](config.md#before-a-judge-rules) and [What it covers](config.md#what-it-covers) hold every
-check. Among them, on exactly that head:
+parked as a decision for the Human.
+What follows on the current head is the [unattended waiver](config.md#unattended-waiver), on one route with no gate command of its own.
+At `extension_check` and at `round_limit`, `aidrian pr review` reports the waiver's gate in its JSON as `waiver`: `{ may, why }`.
+It is the gate `aidrian pr waive <n> --gate` runs, read for the record the step just wrote.
+At `extension_check` it reads the cap as the judge's stop would leave it.
+The gate checks more than this list, such as the waiver's two switches, telemetry, and every flow of the plan:
+[Before a judge rules](config.md#before-a-judge-rules) and [What it covers](config.md#what-it-covers) hold every check.
+Among them, on exactly that head:
 
 - the open findings of this machine's own reviewers, the local and independent stages, are the whole cause of the cap,
   each listed, each of `medium` severity or lower, and none a security finding, of a security pass, or of the
@@ -1288,11 +1297,27 @@ check. Among them, on exactly that head:
 - in a project run, the run has merged fewer than 3 pull requests on a judge's verdict (`WAIVED_MERGES`), and the pull
   request is in the repository the run pinned. Past that budget, the issue parks for the Human.
 
-The session then dispatches one fresh read-only `code-reviewer` as the judge and records its verdict with `--judge`,
-as the `pr-review-loop` skill's `references/review-plan.md` § At the cap: a judge's waiver says.
+With `waiver.may` false, `why` says which check refused, no judge is offered `land`, and the session reports the stop with that line.
+With `waiver.may` true, one judge rules on both questions:
+
+- At `extension_check`, the check's own judge may rule `extend`, `stop`, or `land`.
+- At `round_limit`, where no check runs, the step's `dispatch` names one read-only `code-reviewer` that rules `land` or `stop`.
+
+The session records the judge's verdict with the `record` it was given, naming the judge's agent id:
+
+```sh
+aidrian pr extend <PR> --verdict land|stop --reason "<evidence>" --head <sha> --judge <agent id>
+```
+
+`land` stops a check waiting for its verdict, as `stop` does, and the cap then stands as `round_limit`, at the time and with the cause the step kept.
+It asks the gate again on that record and head, and is refused, writing nothing, whenever the gate refuses.
+Then it records the `waive` that `aidrian pr waive <PR> --verdict waive --judge <agent id>` records, through the same code.
+The same checks hold it: the switches, the cause, the severities, the bot's pass, the dispatch log's judge, and the run's budget.
+A `stop` with `--judge` records that command's `refuse`, so no second judge rules on the head.
+After `land`, the session runs no review step on that head: a new step's outcome comes after the verdict, which then no longer stands.
 `aidrian pr auto-merge` takes a standing `waive` for that head in place of `received`, and its JSON says
-`"waived": true`; every check of [merge trust](#merge-trust) still applies. Exit 1 from the gate is a stop the session
-reports with the line the gate prints; no judge is dispatched.
+`"waived": true`; every check of [merge trust](#merge-trust) still applies.
+`aidrian pr waive` stays for a session a person attends, and for older scripts.
 
 When the merge stops after the review, an issue's session of a project run runs
 `aidrian project stop-action <run> <issue>`, which prints exactly one action: done when the forge shows the pull request
@@ -1481,9 +1506,9 @@ shows, such as a waiver's reason, has `<!--` and `-->` escaped, so no text can c
   An entry is only ever marked, never removed, and the review step merges in the entries and marks on disk before it
   writes, so a request recorded while a reviewer ran survives the step's write. Both live in the state folder: another
   machine does not see them.
-- **Waivers.** `waivers` lists the judge verdicts `aidrian pr waive` recorded, each `{ head, kind, verdict, reason, judge, at }`,
+- **Waivers.** `waivers` lists the judge verdicts `aidrian pr extend --judge` and `aidrian pr waive` recorded, each `{ head, kind, verdict, reason, judge, at }`,
   where `kind` is `round_cap` and `verdict` is `waive` or `refuse`, and, with `--judge`, `judge_id` and `session`: the
-  judge's agent id and the recording session, which auto-merge finds in the dispatch log. A `round_limit` outcome also
+  judge's agent id and the recording session, which auto-merge finds in the dispatch log. A `round_limit` or `extension_check` outcome also
   keeps `cap`, what stopped the review (`plugins/aidrian/lib/review/run.mjs` capCause): the open findings by pass and
   stage, whether each is listed, the flows left unsigned, deleted flow tests, failing flow checks, passes that never
   reviewed the head, the bot's own round limit, and the flows the Human signs off with no sign-off kept. Its flows are

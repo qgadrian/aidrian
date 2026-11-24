@@ -263,7 +263,7 @@ The one-time steps before a run are in [Project run setup](../project-run-setup.
   prints a `note handoff` line, and the driver keeps driving in its one session, which Codex compacts
   ([Handoff](../handoff.md#a-project-run)). An issue's session starts no continuation on any host.
 - No judge's verdict stands for auto-merge on Codex ([Limits](#limits)), so an issue whose review stops at the round
-  cap does not merge on a waiver: its session reports the stop, as `aidrian pr waive --gate` prints it.
+  cap does not merge on a waiver: its session reports the stop, as the review step's `waiver` says it.
 - A session is known by its process: liveness and stop read the process table, and stop a pid only while its start
   time is the one recorded. The table is read whole, up to 64 MiB of command lines, so a busy machine's listing still
   finds a start by its folder. A session `wait` could not stop is named with how the Human stops it: the listing
@@ -352,4 +352,4 @@ Read in Codex's source at `rust-v0.166.0` on 2026-11-18, not live:
   Verified by `node --test` on fixtures (`test/adapters.test.mjs`), not live.
 - No hook writes a `dispatch` row with the agent id of a subagent Codex spawns, so the adapter declares no
   `capabilities.judgeDispatch`: under the [unattended waiver](../config.md#unattended-waiver), no judge's verdict stands
-  for `aidrian pr auto-merge` on Codex, and `aidrian pr waive --gate` exits 1 and says so.
+  for `aidrian pr auto-merge` on Codex, and the review step's `waiver` and `aidrian pr waive --gate` both say so.

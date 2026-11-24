@@ -14,7 +14,8 @@ import { findProject, projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { baseProblem } from '../plugins/aidrian/lib/review/in-force.mjs';
 import { emptyState, owed, readLocalState, refreshSummary, stateFromComment, summaryBody, WAIVER_HEADING, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { capProblem, guardWaiver, MAX_REASON, parseWaive, runWaive, takeWaivedMerge, WAIVER_DEADLINE_MS, waiverFor, waiverKind } from '../plugins/aidrian/lib/review/waiver.mjs';
-import { budgetProblem, judgeProblem, runOf, WAIVED_MERGES } from '../plugins/aidrian/lib/review/waiver-stand.mjs';
+import { budgetProblem, judgeProblem, offerWaiver, runOf, WAIVED_MERGES } from '../plugins/aidrian/lib/review/waiver-stand.mjs';
+import { offerLand, runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
 import { postedCopy } from '../plugins/aidrian/lib/review/publish.mjs';
 import { logPath } from '../plugins/aidrian/lib/dispatch-log.mjs';
 import { appendToRun } from '../plugins/aidrian/lib/project-run.mjs';
@@ -506,7 +507,7 @@ test('a verdict counts only for a merge that names its head', (t) => {
 test('without a verdict that stands for this head and kind, the denial is today\'s, plus the route under both switches', (t) => {
   const r = repo(t, { local: ON });
   const command = `gh pr merge 5 --match-head-commit ${HEAD}`;
-  const route = /Or the Human merges in their own shell\. Or, under the unattended waiver this repository allows \(github\.unattendedWaiver\), a run with no Human present first checks `aidrian pr waive 5 --gate`, then records the verdict of one fresh judge, as the pr-review-loop skill's references\/review-plan\.md § At the cap says, with `aidrian pr waive 5 --verdict waive\|refuse --reason "<evidence>" --head abcdef1234567890abcdef1234567890abcdef12 --judge <agent id>`, then merges naming that head\.$/u;
+  const route = /Or the Human merges in their own shell\. Or, under the unattended waiver this repository allows \(github\.unattendedWaiver\), a run with no Human present reads `waiver` in the JSON of `aidrian pr review 5`, and only when it says a judge may rule runs the one judge its `dispatch` names, as the pr-review-loop skill's references\/review-plan\.md § At the cap says, then records that judge's verdict with `aidrian pr extend 5 --verdict land\|stop --reason "<evidence>" --head abcdef1234567890abcdef1234567890abcdef12 --judge <agent id>`, and on `land` merges naming that head\.$/u;
   for (const [name, edit] of [
     ['no entry', (state) => roundLimit(state)],
     ['an entry for another head', (state) => (roundLimit(state), waiver(state, { head: NEXT }))],
@@ -983,6 +984,142 @@ test('aidrian pr waive --judge keeps the judge\'s agent id and the session, and 
   const [entry] = readLocalState(project, 5).waivers;
   assert.deepEqual([entry.judge_id, entry.session, entry.verdict], ['judge-1', 'sess-1', 'waive']);
   assert.throws(() => parseWaive(['5', '--verdict', 'waive', '--reason', 'x', '--judge', '$(id)']), /--judge must be the judge's agent id/u);
+});
+
+// ---- the one route at the cap: the review step's `waiver`, and `aidrian pr extend --verdict land` (issue 634)
+
+// A check at the cap waiting for its judge, as the review step leaves it: the outcome `extension_check` on `head`, with
+// the cap's cause, and the plan's check of round 2 judging.
+const atCheck = (state, head = HEAD, extra = {}) => {
+  roundLimit(state, head, extra);
+  state.outcome.status = 'extension_check';
+  state.extensions = [{ source: 'plan', round: 2, head, at: T0, mode: 'ask', max: 2, granted_before: 0, status: 'judging', by: null, reasons: [] }];
+};
+
+// The review gate's forge and `aidrian pr extend`'s in one: the pull request is on this checkout's own branch, which,
+// as the default branch, holds `policy` (by default allowing the waiver), so holdToBase and the gate read the same base.
+function landForge(r, { policy = ALLOW, ...options } = {}) {
+  const branch = r.git('branch', '--show-current');
+  const make = teamForge({ main: policy, [branch]: policy }, { base: branch, ...options });
+  const issue = [];
+  const facade = make({});
+  return Object.assign({
+    ...facade,
+    visibility: () => 'PRIVATE',
+    pull: () => ({ author_association: 'MEMBER', base: { repo: { fork: false } } }),
+    change: (ref, fields, given) => (fields === 'isCrossRepository' ? { isCrossRepository: false } : facade.change(ref, fields, given)),
+    conversationComments: () => issue,
+    postComment: (_repo, _n, body) => (issue.push({ id: issue.length + 1, user: { login: 'someone' }, author_association: 'MEMBER', body }), issue.at(-1)),
+    editComment: (_repo, id, body) => (issue.find((comment) => comment.id === id).body = body),
+    viewer: () => 'someone',
+  }, { calls: make.calls });
+}
+
+// `aidrian pr extend 5 ...` as the CLI runs it, in the judge's session, on a host that confirms the judge.
+async function extend(t, r, args, { forge = landForge(r), runHost = CONFIRMS } = {}) {
+  const out = [];
+  t.mock.method(console, 'log', (line) => out.push(line));
+  try {
+    const project = r.project();
+    const code = await runExtend(['5', ...args], project, loadConfig(project).config, { forge, repo: 'acme/notes', env: { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: JUDGE.session }, gate: { run: () => undefined, runHost } });
+    return { code, out: JSON.parse(out.at(-1)) };
+  } finally {
+    t.mock.restoreAll();
+  }
+}
+
+test('the review step reports the waiver gate at the cap, and offers its judge `land` only when the gate says a judge may rule', (t) => {
+  const r = repo(t, { local: ON });
+  const config = loadConfig(r.project()).config;
+  const seams = (forge = gateForge()) => ({ forge, run: () => undefined, runHost: CONFIRMS });
+  const capped = (status) => ({ status, pr: 5, repo: 'acme/notes', head: HEAD });
+  // At round_limit, with no check: the gate's word, and one judge for landing alone.
+  r.record(5, roundLimit);
+  const limit = offerLand(capped('round_limit'), offerWaiver(capped('round_limit'), r.project(), config, seams()));
+  assert.deepEqual(limit.waiver, { may: true, why: null });
+  assert.deepEqual([limit.dispatch[0].pass, limit.dispatch[0].agent], ['waiver-judge', 'code-reviewer']);
+  assert.equal(limit.dispatch[0].record, `aidrian pr extend 5 --verdict land|stop --reason "<evidence>" --head ${HEAD} --judge <agent id>`);
+  assert.match(limit.dispatch[0].brief, /`waiver\.may` is true[\s\S]*Verdict `land` only when every open finding is `accepted_residual`/u);
+  // At a check waiting for its judge: read as the round_limit the judge's stop leaves, and the third verdict offered.
+  r.record(5, atCheck);
+  const judging = { ...capped('extension_check'), dispatch: [{ pass: 'extension-judge', agent: 'code-reviewer', brief: 'Read-only.', record: `aidrian pr extend 5 --verdict extend|stop --reason "<evidence>" --head ${HEAD} --check 'plan'` }] };
+  const check = offerLand(judging, offerWaiver(judging, r.project(), config, seams()));
+  assert.equal(check.waiver.may, true, check.waiver.why);
+  assert.equal(check.dispatch[0].record, `aidrian pr extend 5 --verdict extend|stop|land --reason "<evidence>" --head ${HEAD} --check 'plan' --judge <agent id>`);
+  assert.match(check.dispatch[0].brief, /^Read-only\. `waiver\.may` is true: .*a third verdict is open: `land`/u);
+  // Whatever the gate refuses, the step says why and offers no `land`: the same gate as `aidrian pr waive --gate`.
+  r.record(5, (state) => (atCheck(state), (state.index = { 'R1-1': openFinding('R1-1', { severity: 'high' }) })));
+  const high = offerLand({ ...judging, dispatch: [...judging.dispatch] }, offerWaiver(judging, r.project(), config, seams()));
+  assert.equal(high.waiver.may, false);
+  assert.match(high.waiver.why, /finding R1-1 is high/u);
+  assert.equal(high.dispatch[0].record, judging.dispatch[0].record, 'no land offered');
+  r.record(5, roundLimit);
+  const noBot = offerLand(capped('round_limit'), offerWaiver(capped('round_limit'), r.project(), config, seams(gateForge(undefined, { bot: false }))));
+  assert.match(noBot.waiver.why, /a verdict never stands in for the review bot/u);
+  assert.equal(noBot.dispatch, undefined, 'no judge dispatched');
+  // A machine that has not opted in reads nothing from the forge.
+  const off = repo(t);
+  off.record(5, roundLimit);
+  const make = teamForge();
+  assert.match(offerWaiver(capped('round_limit'), off.project(), config, seams(make({}))).why, /this machine has not opted in/u);
+  assert.equal(make.calls.length, 0, 'no forge read');
+});
+
+test('aidrian pr extend --verdict land at the check: stops it, the cap stands, and the waive aidrian pr waive records lets the merge guard merge', async (t) => {
+  const r = repo(t, { local: ON });
+  r.record(5, atCheck);
+  const { code, out } = await extend(t, r, ['--verdict', 'land', '--reason', 'R2-1 is acceptable_as_is at src/a.js:3', '--head', HEAD, '--judge', JUDGE.judge_id]);
+  assert.equal(code, 0);
+  assert.deepEqual({ ...out.waiver, at: null }, { head: HEAD, kind: 'round_cap', verdict: 'waive', reason: 'R2-1 is acceptable_as_is at src/a.js:3', judge: 'unknown', ...JUDGE, at: null });
+  assert.deepEqual([out.extension.status, out.extension.by], ['stopped', 'judge']);
+  assert.match(out.next, /gh pr merge 5 --match-head-commit abcdef1234567890[\s\S]*run no review step on this head first/u);
+  const state = readLocalState(r.project(), 5);
+  assert.deepEqual([state.outcome.status, state.outcome.at, state.outcome.cap.head], ['round_limit', T0, HEAD], 'the cap stands, at the time it was reached');
+  assert.equal(state.extensions[0].judge.verdict, 'land');
+  assert.equal(merge(r, `gh pr merge 5 --squash --match-head-commit ${HEAD}`), null, 'no aidrian pr waive call');
+  // One judge per head: the gate now says one ruled, and a second land is refused, writing nothing.
+  await assert.rejects(extend(t, r, ['--verdict', 'land', '--reason', 'again', '--judge', JUDGE.judge_id]), /a judge already gave its verdict on head abcdef1 \(waive\): one judge rules per head/u);
+  assert.equal(readLocalState(r.project(), 5).waivers.length, 1);
+});
+
+test('aidrian pr extend --verdict land is refused whenever the gate refuses, and writes nothing', async (t) => {
+  const r = repo(t, { local: ON });
+  const before = (edit) => (r.record(5, edit), JSON.stringify(readLocalState(r.project(), 5)));
+  for (const [name, edit, options, pattern] of [
+    ['a high finding', (state) => (atCheck(state), (state.index = { 'R1-1': openFinding('R1-1', { severity: 'high' }) })), {}, /may not land #5: finding R1-1 is high/u],
+    ['a security finding', (state) => atCheck(state, HEAD, { items: [{ id: 'R2-1', severity: 'low', stage: 'local', reviewer: 'agent:security-engineer', pass: 'self:0' }], counted: 1 }), {}, /finding R2-1 is a security finding/u],
+    ['the bot has not passed the head', atCheck, { forge: landForge(r, { bot: false }) }, /a verdict never stands in for the review bot/u],
+    ['the team does not allow it', atCheck, { forge: landForge(r, { policy: REFUSE }) }, /the team does not allow it/u],
+    ['a host that does not confirm a judge', atCheck, { runHost: { name: 'codex', capabilities: {} } }, /does not confirm a judge's dispatch/u],
+    ['a flow left unsigned', (state) => atCheck(state, HEAD, { flows: ['payments'] }), {}, /flow payments has an invariant violated, unverified, or unsigned/u],
+    ['a head pushed after the cap', atCheck, { forge: landForge(r, { head: NEXT }) }, /the check was for abcdef1, and the pull request is at 1234567 now/u],
+    ['a received review', received, {}, /the review of head abcdef1 is received: a verdict covers only round_limit/u],
+  ]) {
+    const kept = before(edit);
+    await assert.rejects(extend(t, r, ['--verdict', 'land', '--reason', 'nits', '--judge', JUDGE.judge_id], options), pattern, name);
+    assert.equal(JSON.stringify(readLocalState(r.project(), 5)), kept, `${name}: nothing written`);
+  }
+  // A judge the dispatch log does not show: the gate passes, and the writer `aidrian pr waive` uses refuses.
+  const kept = before(atCheck);
+  await assert.rejects(extend(t, r, ['--verdict', 'land', '--reason', 'nits', '--judge', 'judge-9']), /the dispatch log holds no dispatch of the code-reviewer judge-9/u);
+  assert.equal(JSON.stringify(readLocalState(r.project(), 5)), kept);
+});
+
+test('at a round_limit with no check, the judge it dispatched lands with one extend call, and its stop records the refuse', async (t) => {
+  const r = repo(t, { local: ON });
+  r.record(5, roundLimit);
+  const landed = await extend(t, r, ['--verdict', 'land', '--reason', 'nits', '--head', HEAD, '--judge', JUDGE.judge_id]);
+  assert.deepEqual([landed.code, landed.out.extension, landed.out.waiver.verdict], [0, null, 'waive']);
+  assert.equal(merge(r, `gh pr merge 5 --match-head-commit ${HEAD}`), null);
+  // Its stop is the waiver's refuse, so no second judge rules on the head, and the guard keeps its denial.
+  r.record(5, roundLimit);
+  const stopped = await extend(t, r, ['--verdict', 'stop', '--reason', 'R2-1 is a real fix_now', '--judge', JUDGE.judge_id]);
+  assert.deepEqual([stopped.code, stopped.out.waiver.verdict], [0, 'refuse']);
+  assert.match(stopped.out.next, /the cap stands: report round_limit/u);
+  assert.match(merge(r, `gh pr merge 5 --match-head-commit ${HEAD}`) ?? '', /stopped at its round limit/u);
+  const config = loadConfig(r.project()).config;
+  const after = offerWaiver({ status: 'round_limit', pr: 5, repo: 'acme/notes', head: HEAD }, r.project(), config, { forge: gateForge(), run: () => undefined, runHost: CONFIRMS });
+  assert.match(after.why, /a judge already gave its verdict on head abcdef1 \(refuse\)/u);
 });
 
 // ---- the config guard and aidrian check (AC12)

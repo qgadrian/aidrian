@@ -158,7 +158,8 @@ Never cite an engine post, a finding's, the review summary, or the product feedb
   the stop, so the Human does not merge it as reviewed. With `question` and `options`, report the open findings, then ask
   the Human that question with AskUserQuestion, the options word for word, the "Approve" one first: it is the one
   question at the cap. On "Approve", run `raise` exactly as printed, as one plain command: it allows one more round,
-  and the next cap asks again. On the other option, stop. A session the Human told to merge, and then left, and a run
+  and the next cap asks again. On the other option, stop. `waiver` says whether the unattended waiver may run on the
+  head, and with `may` true `dispatch` names its one judge. A session the Human told to merge, and then left, and a run
   under `autopilot`, read § At the cap: a judge's waiver before reporting the stop. When the Human answers the merge
   guard's question by leaving the decision to the session, read § At the cap: the Human leaves it to the session.
 
@@ -191,6 +192,8 @@ With `github.extraRounds` on, the cap first checks whether one more round is wor
   that `head`, the last reviewed head (`from`), and the `fix` between them.
   Run `dispatch[0]` as its read-only `agent` with `brief` and `extension`. It returns `extend` or `stop` with
   evidence; record it with `record`, its `--reason` naming that evidence. Then run the step again.
+  When `waiver.may` is true, `brief` also offers `land`, and `record` ends in `--judge <agent id>`: read
+  § At the cap: a judge's waiver before recording it.
   The session never writes a verdict the judge did not give.
 - `extension_ask`: the judge said extend, under `"ask"` or over a red flag, and the Human decides. Ask `question` with AskUserQuestion, with `options`
   as given, word for word. Record what the Human picked: `aidrian pr extend <n> --human approve` for the option that
@@ -222,35 +225,30 @@ such an answer, and never change its words or add an option to it.
 ## At the cap: a judge's waiver
 
 For a session the Human told to merge and then left, and for a run under `autopilot`, when the step returned
-`round_limit` on the pull request's current head. A head pushed after the last review step gets no waiver: run the
-step again on it.
+`round_limit` or `extension_check` on the pull request's current head. A head pushed after the last review step gets
+no waiver: run the step again on it. The session runs no gate command: the step already ran it.
 
-- First run `aidrian pr waive <n> --gate`. Only exit 0 lets a judge rule. It reads the team's
-  `github.unattendedWaiver.allow` on the default and base branches through the forge, and this machine's switch,
-  and checks that the review bot passed exactly this head on the forge; that open findings of this machine's own
-  reviewers, each medium or lower and no security finding, are the whole cause of the cap; that no sign-off of the
-  Human's is owed on the head; that this host confirms a judge; that no judge ruled on this head yet; and, in a
-  project run, that the run has not spent its waived merges. Exit 1: report the stop with the line it prints. A
-  verdict never stands in for the review bot, and never lifts a sign-off the Human owes.
-- Dispatch a fresh `code-reviewer` as the waiver's judge, read-only, as `extension_check` dispatches its judge: never
-  the agent that wrote the change, and never one that reviewed a round of this pull request. One judge per head:
-  never dispatch another to get a different verdict. Keep the agent id the host returns for it. Brief it with the
-  pull request, the head, the step's result, and:
-
-  > Read-only. Decide whether pull request `<n>` may merge at head `<sha>`, whose review stopped at the round cap.
-  > Read every finding still open on the head, at the head's code, and its verdict from `aidrian pr disposition`.
-  > Verdict `waive` only when every open finding is `accepted_residual`, `acceptable_as_is`, or `drop_unless_cited`,
-  > no flow has a `violated` or `unverified` invariant, the result has no `unreviewed_head`, and `aidrian pr checks <n>`
-  > is not failing; otherwise `refuse`. Return the verdict and the evidence for each open finding: `path:line` at the
-  > head, the round that raised it, and its disposition.
-
-- Record the verdict the judge gave, and only that one, naming the judge:
-  `aidrian pr waive <n> --verdict <the judge's verdict> --reason "<the judge's evidence>" --head <sha> --judge <agent id>`.
-  The session never writes a verdict the judge did not give, and never turns the judge's `refuse` into `waive`.
-- On `waive`: under `autopilot`, merge only through the `pr-auto-merge` skill; `aidrian pr auto-merge` takes the
-  verdict for that head alone. Otherwise merge naming the head, as the command's `next` says:
-  `gh pr merge <n> --match-head-commit <sha>`. On `refuse`, report the stop with the judge's evidence: the Human
-  merges, or answers the merge guard's question with "Merge with the findings filed".
+- Read `waiver` in the step's JSON. It reads the team's `github.unattendedWaiver.allow` on the default and base
+  branches through the forge, and this machine's switch, and checks that the review bot passed exactly this head on
+  the forge; that open findings of this machine's own reviewers, each medium or lower and no security finding, are the
+  whole cause of the cap; that no sign-off of the Human's is owed on the head; that this host confirms a judge; that no
+  judge ruled on this head yet; and, in a project run, that the run has not spent its waived merges.
+  `may` false: report the stop with its `why`. A verdict never stands in for the review bot, and never lifts a
+  sign-off the Human owes.
+- `may` true: one judge rules on landing, and only that one. At `extension_check` it is the check's own judge, whose
+  `brief` now offers `land` beside `extend` and `stop`. At `round_limit` the step's `dispatch[0]` names it, with a
+  `brief` for `land` or `stop`. Run it as its read-only `agent`, with `brief` and the step's result: never the agent
+  that wrote the change, and never one that reviewed a round of this pull request. One judge per head: never dispatch
+  another to get a different verdict. Keep the agent id the host returns for it.
+- Record the verdict the judge gave, and only that one, with `record`, naming the judge:
+  `aidrian pr extend <n> --verdict <the judge's verdict> --reason "<the judge's evidence>" --head <sha> --judge <agent id>`.
+  The session never writes a verdict the judge did not give, and never turns the judge's `stop` into `land`.
+  `land` asks the gate again and is refused, with nothing written, whenever the gate refuses: report that refusal.
+- On `land`: run no review step on this head, since its new outcome would come after the verdict. Under `autopilot`,
+  merge only through the `pr-auto-merge` skill; `aidrian pr auto-merge` takes the verdict for that head alone.
+  Otherwise merge naming the head, as the command's `next` says: `gh pr merge <n> --match-head-commit <sha>`.
+  On `stop`, report the stop with the judge's evidence: the Human merges, or answers the merge guard's question with
+  "Merge with the findings filed". On `extend`, go on as § At the cap: extra rounds says.
 
 ## Owed reviews
 

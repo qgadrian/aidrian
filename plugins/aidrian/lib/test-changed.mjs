@@ -118,7 +118,8 @@ export function testRunner(root, command, depth = 0, scripts = null) {
   if (program === 'jest') return jestMode(rest);
   if (program === 'node') {
     const runner = nodeRunner(rest);
-    return runner === 'jest' ? jestMode(rest) : runner;
+    // Jest reads only the words after its entry point; node's own `--` comes before it.
+    return runner === 'jest' ? jestMode(rest.slice(rest.findIndex((word) => JEST_ENTRY.test(word)) + 1)) : runner;
   }
   const script = scriptName(words);
   if (script === null || depth >= 5) return null;
@@ -151,17 +152,23 @@ const NODE_VALUE_OPTIONS = new Set(['-r', '--require', '--import', '--loader', '
 // What `node <words>` runs: jest when its script is jest's entry point, the node runner when `--test` comes before the
 // script, else none: a script's own arguments name no runner.
 // SHORTCUT: an option that takes its value as the next word and is not in NODE_VALUE_OPTIONS ends the scan there, as
-// does a package runner option of that kind outside dropOptions's list: each review round found one more such option,
-// and a full option reader per runner would replace these lists.
+// does a package runner option of that kind outside dropOptions's list; and words forwarded to a package script reach
+// its command as written, though an npm it runs with no `--` of its own takes their options for npm's. Each review
+// round found one more such case, and a full argument reader per runner and package manager would replace these rules.
 function nodeRunner(words) {
   for (let i = 0; i < words.length; i += 1) {
     const word = words[i];
     if (word === '--test') return 'node';
-    if (!word.startsWith('-')) return /(?:^|\/)(?:jest\/bin\/jest\.js|\.bin\/jest)$/u.test(word) ? 'jest' : null;
+    // After node's own `--`, the next word is the script.
+    if (word === '--') return JEST_ENTRY.test(words[i + 1] ?? '') ? 'jest' : null;
+    if (!word.startsWith('-')) return JEST_ENTRY.test(word) ? 'jest' : null;
     if (NODE_VALUE_OPTIONS.has(word)) i += 1;
   }
   return null;
 }
+
+// Jest's entry point as a node script.
+const JEST_ENTRY = /(?:^|\/)(?:jest\/bin\/jest\.js|\.bin\/jest)$/u;
 
 // The words of the last command of `text`, its program's base name first, after a package runner's own words; none for
 // one the shell fills in.

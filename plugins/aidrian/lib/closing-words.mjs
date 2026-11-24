@@ -99,7 +99,7 @@ export function namesOwnIssue(ref, own, pr) {
 // known team does too, with or without a closing word. `context` is { own, prefixes } (runClosingContext), `pr`
 // { repo, host }.
 export function closingTextsProblem(texts, { own, prefixes }, pr) {
-  const owned = typeof own === 'string' ? `its own issue ${own}` : 'the issue its unattended mark names, and that mark names none it can read';
+  const owned = ownedText(own);
   for (const { where, text, title } of texts) {
     const { refs, overflow } = closingRefs(text, prefixes);
     if (overflow) return `${where} lists more than ${LIST_CAP} references after a closing word, more than the gate reads, so its merge may close an issue other than ${owned}`;
@@ -113,6 +113,25 @@ export function closingTextsProblem(texts, { own, prefixes }, pr) {
       }
     }
   }
+  return null;
+}
+
+// How a refusal names the issue a pull request may close: `own`, the run's issue key, or the mark that names none.
+const ownedText = (own) => (typeof own === 'string' ? `its own issue ${own}` : 'the issue its unattended mark names, and that mark names none it can read');
+
+// Why the issues the forge itself says a merge of the pull request closes name one other than the run's own, or null:
+// the review trail's `closingIssues` ([{ number, repo }]), which hold an issue linked by hand in the pull request's
+// sidebar as well as one its text names, and `closingIssuesComplete`. A list the forge gave only in part refuses, as an
+// issue past it may be another. `context` is { own } (runClosingContext), `pr` { repo, host }. Both merge paths ask it:
+// `aidrian pr auto-merge` (pr-auto-merge.mjs closingProblem) and the merge guard (merge-review.mjs mergeClosesProblem).
+export function forgeClosingProblem(trail, { own }, pr) {
+  const owned = ownedText(own);
+  if (trail?.closingIssuesComplete !== true || !Array.isArray(trail.closingIssues)) {
+    return `the forge gave only part of the issues it links to the pull request to close at the merge, so its merge may close an issue other than ${owned}`;
+  }
+  const other = trail.closingIssues.find((issue) => !(Number.isSafeInteger(issue?.number) && typeof issue.repo === 'string'
+    && namesOwnIssue({ number: issue.number, repo: issue.repo.toLowerCase(), host: null }, own, pr)));
+  if (other) return `the forge links issue ${other?.repo ?? 'of no repository'}#${other?.number ?? '?'} to the pull request to close at the merge, which may be by hand in its sidebar, so its merge would close an issue other than ${owned}`;
   return null;
 }
 

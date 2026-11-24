@@ -65,6 +65,7 @@ const trailOf = (text, over = {}) => ({
   reviews: [], reviewsComplete: true, comments: [card()], commentsComplete: true,
   branches: { default: { name: 'main', pointer: null, config: text, knowledge: null }, base: { name: 'main', pointer: null, config: text } },
   headRef: 'feat/eng-1-export', title: 'feat(export): add CSV export', body: 'Fixes ENG-1', messages: [{ oid: HEAD, message: 'feat: export' }], messagesComplete: true,
+  closingIssues: [], closingIssuesComplete: true,
   ...over,
 });
 // The bot's clean receipt as it posts one on every clean pass, its footer quoting the trigger, by the bot, every edit
@@ -251,6 +252,16 @@ test('the bot`s verdict counts only as the bot`s own, on exactly the head, with 
   assert.match(passes(base({ comments: [card(HEAD, { editors: [BOT, 'adrian'] })] })) ?? '', /edited by another account/u);
   assert.equal(botProblem(base(), HEAD, null), NO_BOT);
   assert.match(passes(base({ comments: [], commentsComplete: false })) ?? '', /more comments than the forge read gives/u);
+});
+
+test('the bot`s verdict needs the whole review list: a cut one refuses even beside its passing card, so auto-merge and the guard agree (#448)', () => {
+  const reviewer = `${BOT}[bot]`;
+  for (const over of [{ reviewsComplete: false }, { reviewsComplete: undefined }]) {
+    assert.match(botProblem(trailOf('{}', over), HEAD, reviewer) ?? '', /the forge gave only part of its reviews, so whether chatgpt-codex-connector\[bot\] reviewed head abcdef1 in a state that does not pass cannot be told/u, JSON.stringify(over));
+  }
+  const approved = { comments: [], reviews: [{ login: BOT, bot: true, state: 'APPROVED', commit: HEAD, at: 'x' }] };
+  assert.match(botProblem(trailOf('{}', { ...approved, reviewsComplete: false }), HEAD, reviewer) ?? '', /only part of its reviews/u, 'an approval in a cut list');
+  assert.equal(botProblem(trailOf('{}', approved), HEAD, reviewer), null, 'the same approval in a whole list');
 });
 
 test('a card of the head that still holds a finding of the bot`s own is refused by name, beside a clean receipt; one with both flags false passes', () => {
@@ -1015,6 +1026,25 @@ test('the merge guard refuses a run issue\'s merge whose body, title, commits, o
   assert.match(run(`gh pr merge 7 -F body.md --match-head-commit ${HEAD}`) ?? '', /comes from a file or a variable the guard cannot read/u);
   assert.match(mcpRun({ owner: 'acme', repo: 'widgets', pullNumber: 7, sha: HEAD, commit_message: 'Fixes ENG-2' }) ?? '', /the merge commit's body says "Fixes ENG-2"/u);
   assert.equal(mcpRun({ owner: 'acme', repo: 'widgets', pullNumber: 7, sha: HEAD, commit_message: 'Fixes ENG-1' }), null);
+});
+
+test('the merge guard refuses a run issue\'s merge the forge links to close another issue, by hand in its sidebar included, or a cut list of them (#448)', (t) => {
+  const { run } = closingRun(t);
+  // A sidebar link: no text names #12, and the body still says only Fixes ENG-1.
+  for (const [over, why] of [
+    [{ closingIssues: [{ number: 12, repo: 'acme/widgets' }] }, /the forge links issue acme\/widgets#12 to the pull request to close at the merge, which may be by hand in its sidebar, so its merge would close an issue other than its own issue ENG-1/u],
+    [{ closingIssues: [{ number: 1, repo: 'other/repo' }] }, /links issue other\/repo#1/u],
+    [{ closingIssues: [{ number: null, repo: null }] }, /links issue of no repository#\?/u],
+    [{ closingIssuesComplete: false }, /the forge gave only part of the issues it links to the pull request to close at the merge/u],
+    [{ closingIssues: undefined, closingIssuesComplete: undefined }, /only part of the issues it links/u],
+  ]) assert.match(run(MERGE, { over }) ?? '', why, JSON.stringify(over));
+});
+
+test('a run whose issue is a forge issue merges when the forge links that issue alone (#448)', (t) => {
+  const { fx, run } = closingRun(t);
+  const mark = { root: fx.dir, project: 'launch', issue: '12' };
+  assert.equal(run(MERGE, { mark, over: { body: 'Closes #12', closingIssues: [{ number: 12, repo: 'acme/widgets' }] } }), null, 'its own issue, linked');
+  assert.match(run(MERGE, { mark, over: { body: 'Closes #12', closingIssues: [{ number: 12, repo: 'acme/widgets' }, { number: 13, repo: 'acme/widgets' }] } }) ?? '', /links issue acme\/widgets#13/u);
 });
 
 test('the merge guard holds the run\'s driver, whose mark names no issue, to the issue whose branch the pull request is from; an attended merge reads none of it', (t) => {

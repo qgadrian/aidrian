@@ -55,8 +55,9 @@
 //   then closes, only for a session no Human attends whose unattended mark names a project run's issue
 //      (closing-words.mjs runClosingContext): the pull request's title, body, and every commit message, read through the
 //      forge at exactly the head, name no issue but that one after a closing word, and the title no other key of a team
-//      the run knows (closingProblem). A mark it cannot read names no issue, so any counts. Computed from the final
-//      review verdict, after every check before it.
+//      the run knows; and the issues the forge links to close at the merge, by hand in the sidebar included, read in the
+//      review trail, are that one alone and all of them (closingProblem). A mark it cannot read names no issue, so any
+//      counts. Computed from the final review verdict, after every check before it.
 //   8. trust, only for a session no Human attends (its unattended mark): the record is this machine's word, which a
 //      project run's confined session can write, so the merge also rests on what no such session writes
 //      (lib/review/merge-trust.mjs): the default branch's `github.reviewer` bot passed exactly the head on GitHub, read in
@@ -95,7 +96,7 @@ import { prNumber, repoName } from './review-gate.mjs';
 import { isFindingId } from './review/findings.mjs';
 import { detectHost, sessionIdentity } from './hosts/index.mjs';
 import { readHumanSignoffs, trustVerdict } from './review/merge-trust.mjs';
-import { closingContextOf, closingTextsProblem, markOnce } from './closing-words.mjs';
+import { closingContextOf, closingTextsProblem, forgeClosingProblem, markOnce } from './closing-words.mjs';
 import { driverHold } from './run-driver.mjs';
 import { readUnattendedMark } from './unattended-mark.mjs';
 import { bodyAccepts, heldWaiver } from './review/settled.mjs';
@@ -837,7 +838,7 @@ export function gateVerdict(argv, project, { forge = forgeFor(project.root), ses
       let closing = null;
       if (context !== undefined && unattended()) {
         try {
-          closing = closingProblem(forge, pr, context);
+          closing = closingProblem(forge, pr, context, readTrail);
         } catch (error) {
           return fail(error.message);
         }
@@ -878,9 +879,11 @@ export function gateVerdict(argv, project, { forge = forgeFor(project.root), ses
 // Why the title, body, or a commit of the pull request `pr` ({ repo, host, number, head }) would close, or its title link,
 // an issue other than the run's own, by `context` { own, prefixes } (closing-words.mjs runClosingContext), or null. Read
 // through the forge: the pull request, at exactly `head`, then its commits, which must be all of them: GitHub lists at
-// most 250. Throws, naming the read, when gh fails or the head moved during the read: the caller exits 3, and the
-// stop's command waits for a settled head rather than refuse on a race.
-export function closingProblem(forge, pr, context) {
+// most 250. Then the issues the forge itself links to close at the merge, a sidebar link included, from the review
+// trail `readTrail` gives (closing-words.mjs forgeClosingProblem), as the merge guard reads them. Throws, naming the
+// read, when gh fails or the head moved during the read: the caller exits 3, and the stop's command waits for a
+// settled head rather than refuse on a race.
+export function closingProblem(forge, pr, context, readTrail) {
   const { repo, host, number, head } = pr;
   let pull;
   let commits;
@@ -903,7 +906,18 @@ export function closingProblem(forge, pr, context) {
     if (typeof message !== 'string') return `gh returned a commit of #${number} with no message`;
     texts.push({ where: `commit ${String(commit.sha ?? '').slice(0, 7) || 'with no SHA'}`, text: message });
   }
-  return closingTextsProblem(texts, context, pr);
+  const said = closingTextsProblem(texts, context, pr);
+  if (said) return said;
+  let trail;
+  try {
+    trail = readTrail();
+  } catch (error) {
+    throw new Error(`could not read the review trail of #${number} with gh (${ghError(error)})`);
+  }
+  if (typeof trail?.head !== 'string' || trail.head.toLowerCase() !== head.toLowerCase()) {
+    throw new Error(`the head of #${number} moved from ${head.slice(0, 7)} to ${String(trail?.head ?? 'none').slice(0, 7)} while the gate read the issues it closes`);
+  }
+  return forgeClosingProblem(trail, context, pr);
 }
 
 // The class of the decision the missing sign-offs of `flows` are for the Human (`aidrian project stop-action` names it):

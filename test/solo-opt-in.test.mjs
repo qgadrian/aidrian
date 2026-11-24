@@ -93,7 +93,7 @@ function fakeForge(branches = { main: SOLO }, { base = 'main', down = false } = 
       if (name !== REPO) notFound();
       const text = (branch) => (Object.hasOwn(branches, branch) ? JSON.stringify(branches[branch]) : null);
       return {
-        head: HEAD, base, files: [{ path: 'src/app.js', changeType: 'MODIFIED' }], filesTotal: 1, filesComplete: true, comments: [BOT_PASS], commentsComplete: true,
+        head: HEAD, base, files: [{ path: 'src/app.js', changeType: 'MODIFIED' }], filesTotal: 1, filesComplete: true, reviews: [], reviewsComplete: true, comments: [BOT_PASS], commentsComplete: true,
         branches: { default: { name: 'main', pointer: null, config: text('main'), knowledge: null }, base: { name: base, pointer: null, config: text(base) } },
       };
     },

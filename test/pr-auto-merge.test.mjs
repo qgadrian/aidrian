@@ -1625,14 +1625,18 @@ test('reviewProblem holds on a waiver whose record holds no text, and names the 
 // merges only a pull request whose title, body, and commits close, and whose title links, no other issue of a team the
 // run knows (lib/closing-words.mjs).
 const TEAM_KEYS = { own: 'ENG-1', prefixes: new Set(['ENG', 'TAX']) };
-function closing(t, { title = 'feat(export): add CSV export', body = 'Fixes ENG-1', messages = ['feat: export'], context = TEAM_KEYS, runIssue = () => context, commits, pullHead = HEAD } = {}) {
+// `trail`, when given, is the review trail the forge answers, which also gives the issues it links to close at the merge;
+// with none, reading the trail fails, past the closing words.
+function closing(t, { title = 'feat(export): add CSV export', body = 'Fixes ENG-1', messages = ['feat: export'], context = TEAM_KEYS, runIssue = () => context, commits, pullHead = HEAD, trail = null } = {}) {
   const r = repo(t);
   r.record((state) => finished(state));
   const { forge, calls } = fakeForge();
   const listed = messages.map((message, i) => ({ sha: `${i}`.repeat(40), commit: { message } }));
   forge.pull = (repo, n, { host } = {}) => (calls.push(['pull', repo, n, host]), { head: { sha: pullHead }, title, body, commits: commits ?? listed.length });
   forge.changeCommits = (repo, n, { host } = {}) => (calls.push(['changeCommits', repo, n, host]), listed);
-  forge.reviewTrail = () => {
+  forge.reviewTrail = (...args) => {
+    calls.push(['reviewTrail', ...args.slice(0, 2)]);
+    if (trail) return trail;
     throw Object.assign(new Error('trail'), { stderr: 'past the closing words\n' });
   };
   const out = [];
@@ -1705,6 +1709,30 @@ test('closes: a list longer than the gate reads is off; a cut commit list is off
   assert.match(moved.err.join('\n'), /the head of #7 moved from abcdef1 to 1234567 while the gate read its title and body/u);
 });
 
+test('closes: an issue the forge links to close at the merge, by hand in the sidebar included, other than the run\'s own, or a cut list of them, is off (closes) (#448)', (t) => {
+  const linked = (closingIssues, extra = {}) => ({ head: HEAD, closingIssues, closingIssuesComplete: true, ...extra });
+  for (const [trail, why] of [
+    [linked([{ number: 12, repo: 'acme/notes' }]), /the forge links issue acme\/notes#12 to the pull request to close at the merge, which may be by hand in its sidebar, so its merge would close an issue other than its own issue ENG-1/u],
+    [linked([{ number: 5, repo: 'other/repo' }]), /links issue other\/repo#5/u],
+    [linked([], { closingIssuesComplete: false }), /the forge gave only part of the issues it links to the pull request to close at the merge/u],
+    [{ head: HEAD }, /only part of the issues it links/u],
+  ]) {
+    const result = closing(t, { trail });
+    assert.deepEqual([result.code, result.reason], [1, 'closes'], JSON.stringify(trail));
+    assert.match(result.why, why);
+  }
+  // Its own issue alone, linked: past closes, on to merge trust, which reads the same trail once.
+  const own = closing(t, { context: { own: '12', prefixes: new Set() }, body: 'Closes #12', trail: linked([{ number: 12, repo: 'acme/notes' }]) });
+  assert.equal(own.reason, 'trust', own.why);
+  assert.equal(own.calls.filter((call) => call[0] === 'reviewTrail').length, 1, 'one trail read serves closes and merge trust');
+  const none = closing(t, { trail: linked([]) });
+  assert.equal(none.reason, 'trust', 'no issue linked');
+  // A trail of another head is a race, an error the stop waits on.
+  const moved = closing(t, { trail: linked([], { head: OLD }) });
+  assert.equal(moved.code, 3);
+  assert.match(moved.err.join('\n'), /the head of #7 moved from abcdef1 to 1234567 while the gate read the issues it closes/u);
+});
+
 test('closes: a session no mark names an issue for, and an attended one, read no closing words', (t) => {
   const unmarked = closing(t, { runIssue: () => undefined, body: 'Fixes ENG-9' });
   passes(unmarked, 'unmarked');
@@ -1763,6 +1791,7 @@ function waived(t, r, { config = waiverConfig(), card = HEAD, run = undefined, u
       viewer: 'adrian', head, base: 'main', author: 'adrian', draft: false, reviewDecision: '', latestReviews: [],
       checks: { head, rows: [{ name: 'e2e', state: 'SUCCESS' }], complete: true }, files: [{ path: 'src/app.js', changeType: 'MODIFIED' }], filesTotal: 1, filesComplete: true,
       reviews: [], reviewsComplete: true, comments: card === null ? [] : [botCard(card)], commentsComplete: true,
+      closingIssues: [], closingIssuesComplete: true,
       branches: { default: { name: 'main', pointer: null, config, knowledge: null }, base: { name: 'main', pointer: null, config } },
     };
   };

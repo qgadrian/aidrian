@@ -477,6 +477,7 @@ const TRAIL_QUERY = `query($o: String!, $r: String!, $n: Int!, $pointer: String!
       baseRef { name target { ... on Commit { ${POLICY_FILES} } } }
       latestReviews(first: ${TRAIL_PAGE}) { nodes { author { login } state } }
       history: commits(first: ${TRAIL_PAGE}) { totalCount nodes { commit { oid message } } }
+      closingIssuesReferences(first: ${TRAIL_PAGE}) { totalCount nodes { number repository { name owner { login } } } }
       commits(last: 1) {
         nodes { commit { oid statusCheckRollup { contexts(first: ${TRAIL_PAGE}) { totalCount nodes { __typename ... on CheckRun { name status conclusion checkSuite { matchingPullRequests(first: 2) { totalCount nodes { number } } workflowRun { databaseId event workflow { databaseId } } } } ... on StatusContext { context state } } } } } }
       }
@@ -1270,6 +1271,7 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     },
     // What an unattended merge of pull request `n` of `repo` confirms on the forge, in the facade's shape: { viewer, head,
     // base, author, draft, reviewDecision, latestReviews: [{ author: { login }, state }], checks: { head, rows, complete },
+    // closingIssues: [{ number, repo }], closingIssuesComplete,
     // files: [{ path, changeType }], filesTotal, filesComplete, reviews: [{ login, bot, association, state, commit, at }], reviewsComplete,
     // comments: [{ id, login, bot, association, body, at, editors, editsComplete }], commentsComplete, branches: { default,
     // base } }. `reviews` are the newest TRAIL_PAGE, `comments` and `files` the first TRAIL_PAGE; `editors` holds the
@@ -1307,6 +1309,7 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
       const comments = trailNodes(pr.comments);
       const commit = pr.commits?.nodes?.at(-1)?.commit ?? null;
       const history = trailNodes(pr.history);
+      const closing = trailNodes(pr.closingIssuesReferences);
       const contexts = trailNodes(commit?.statusCheckRollup?.contexts);
       const association = (each) => (typeof each?.authorAssociation === 'string' ? each.authorAssociation : null);
       return {
@@ -1318,6 +1321,13 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
         // Every commit's message, for the closing-word check (lib/closing-words.mjs); complete only when all are here.
         messages: history.nodes.map((each) => ({ oid: each?.commit?.oid ?? null, message: typeof each?.commit?.message === 'string' ? each.commit.message : null })),
         messagesComplete: history.complete,
+        // The issues GitHub says the merge closes, linked by a closing keyword or by hand in the sidebar, for the
+        // closing-issue check (lib/closing-words.mjs forgeClosingProblem); complete only when all are here.
+        closingIssues: closing.nodes.map((each) => ({
+          number: Number.isSafeInteger(each?.number) ? each.number : null,
+          repo: typeof each?.repository?.owner?.login === 'string' && typeof each?.repository?.name === 'string' ? `${each.repository.owner.login}/${each.repository.name}`.toLowerCase() : null,
+        })),
+        closingIssuesComplete: closing.complete,
         base: typeof pr.baseRefName === 'string' ? pr.baseRefName : null,
         // The base branch's tip as GitHub gives it, for a compare by commit (pr-auto-merge.mjs headPolicyProblem).
         baseOid: typeof pr.baseRefOid === 'string' ? pr.baseRefOid : null,

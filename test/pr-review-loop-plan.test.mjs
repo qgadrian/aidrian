@@ -36,3 +36,14 @@ test('review-plan.md keeps every step behind the merged row: the quota question 
     assert.ok(cap.includes(step), `extension: ${step}`);
   }
 });
+
+test('at the cap, the waiver takes one route: the step\'s `waiver`, its one judge, and `aidrian pr extend --judge`, never a gate command', () => {
+  const waiver = section(read('references/review-plan.md'), 'At the cap: a judge\'s waiver');
+  for (const step of ['`waiver`', '`may` false', '`may` true', 'One judge per head', 'aidrian pr extend <n> --verdict', '--judge <agent id>', 'run no review step on this head', '`pr-auto-merge` skill']) {
+    assert.ok(waiver.includes(step), `waiver: ${step}`);
+  }
+  const phases = readFileSync(path.resolve(SKILL, '../autopilot/references/phases.md'), 'utf8');
+  for (const [name, text] of [['review-plan.md § At the cap: a judge\'s waiver', waiver], ['autopilot phases.md', phases]]) {
+    assert.doesNotMatch(text, /aidrian pr waive/u, `${name} names no separate waiver command`);
+  }
+});

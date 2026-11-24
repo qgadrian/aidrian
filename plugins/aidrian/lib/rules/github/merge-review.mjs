@@ -40,7 +40,7 @@
 // head, while every open finding of the head stays low and the entry is at or after the outcome; an entry another
 // session recorded is not taken when the hook gives this session's id and the entry holds its own. The guard reads it
 // from the record it already loaded, with no call.
-// An unattended run's judge verdict (`aidrian pr waive`, lib/review/waiver.mjs) waives it in that answer's place, only
+// An unattended run's judge verdict (`aidrian pr extend --verdict land` or `aidrian pr waive`, lib/review/waiver.mjs) waives it in that answer's place, only
 // for `round_limit` on the merge's own head, nothing owed, and only under both switches:
 // `github.unattendedWaiver.allow` on the default and base branches, read from GitHub, and the main checkout's local switch.
 // It never stands in for the review bot: it waives only this machine's reviewers' findings, each of medium severity or
@@ -76,7 +76,7 @@ import { originRepo, prNumber, remoteRepos, repoName } from '../../review-gate.m
 import { baseProblem, boundedReads, recourse } from '../../review/in-force.mjs';
 import { delegationFor, lowOnly } from '../../review/delegation.mjs';
 import { readHumanSignoffs, sameBot, trustProblem } from '../../review/merge-trust.mjs';
-import { CAPPED, emptyState, FINISHED, openCount, owed, owedElsewhere, readLocalState, recordProblem, recordRepos, sameCommit, withRecordMemo } from '../../review/state.mjs';
+import { CAPPED, emptyState, FINISHED, openCount, owed, owedElsewhere, pendingOf, readLocalState, recordProblem, recordRepos, sameCommit, withRecordMemo } from '../../review/state.mjs';
 // A cycle (waiver.mjs → pr-auto-merge.mjs → this file), benign while neither uses the other's exports as it loads.
 import { budgetedForge, guardWaiver, READ_TIMEOUT_MS, runOf, trailKey, WAIVER_DEADLINE_MS } from '../../review/waiver.mjs';
 import { walkCommands } from '../../shell-lex.mjs';
@@ -401,7 +401,7 @@ export const recordFor = (project, pr, repo) => {
   const own = readLocalState(project, pr, repo);
   const extra = repo === null ? [] : owedElsewhere(project, pr, repo);
   if (!extra.length) return own;
-  return { ...(own ?? { ...emptyState(pr, repoName(repo)) }), pending: [...(own?.pending ?? []), ...extra] };
+  return { ...(own ?? { ...emptyState(pr, repoName(repo)) }), pending: [...pendingOf(own), ...extra] };
 };
 
 export function scoped(state, project, repo) {

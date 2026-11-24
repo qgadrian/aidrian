@@ -698,9 +698,10 @@ merging session's transcript to the same question, at or after the entry, outran
 reason names `aidrian pr extend <PR> --human approve`. The guard reads the entry from the record it already loaded: it
 makes no call for it; without a transcript, the entry stands. `aidrian pr auto-merge` reads no delegation.
 
-Under the [unattended waiver](config.md#unattended-waiver), a judge's verdict recorded with `aidrian pr waive` stands in
+Under the [unattended waiver](config.md#unattended-waiver), a judge's verdict recorded with `aidrian pr extend --verdict land`,
+or with `aidrian pr waive`, stands in
 for that answer, for one denial only: `round_limit` on the merge's own head, with nothing owed. A head pushed after the
-last review step, whatever its outcome, is never waived, and its denial names no `aidrian pr waive` route: the review
+last review step, whatever its outcome, is never waived, and its denial names no waiver route: the review
 can still run on it. Every other denial keeps its reason. A verdict counts only for
 a merge that names its head, `--match-head-commit <sha>`, `sha=` in a `gh api` merge, or the merge tool's `sha`; for
 any other, the denial says to name it. It never stands in for the review bot: it stands only when the review bot
@@ -738,7 +739,8 @@ the later ones do not wait.
 A call held to the deadline, the guard's own view included, ends within 4 seconds of the hook's start, however many merges
 one command holds.
 A read that fails or would begin too late keeps the denial, which then says the team's value could not be read in time.
-With both switches on, the denial names `aidrian pr waive` as a second route.
+With both switches on, the denial names the waiver as a second route: the `waiver` the JSON of `aidrian pr review` reports at the cap,
+the judge its `dispatch` names, and `aidrian pr extend <PR> --verdict land|stop --judge <agent id>` to record that judge's verdict.
 
 A session no Human attends, one whose [unattended mark](handoff.md#the-background-route) the hook reads by the host's own
 session id, a pending or unreadable mark included, such as a project run's issue session, may not take the record's word

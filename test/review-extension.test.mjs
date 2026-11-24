@@ -296,14 +296,19 @@ test('the summary: a fix head a plan round reviewed since is not listed as unrev
 });
 
 test('aidrian pr extend: its arguments are checked before anything is recorded', () => {
-  assert.deepEqual(parseExtend(['#12', '--verdict', 'extend', '--reason', ' a.js:3 is real ', '--head', 'abc1234']), { pr: 12, verdict: 'extend', reason: 'a.js:3 is real', head: 'abc1234', human: null, repo: null, check: null });
-  assert.deepEqual(parseExtend(['12', '--human', 'deny']), { pr: 12, verdict: null, reason: null, head: null, human: 'deny', repo: null, check: null });
+  assert.deepEqual(parseExtend(['#12', '--verdict', 'extend', '--reason', ' a.js:3 is real ', '--head', 'abc1234']), { pr: 12, verdict: 'extend', reason: 'a.js:3 is real', head: 'abc1234', human: null, repo: null, check: null, judge: null });
+  assert.deepEqual(parseExtend(['12', '--human', 'deny']), { pr: 12, verdict: null, reason: null, head: null, human: 'deny', repo: null, check: null, judge: null });
   assert.equal(parseExtend(['12', '--human', 'deny', '--repo', 'Up/Notes']).repo, 'up/notes');
+  assert.deepEqual([parseExtend(['12', '--verdict', 'land', '--reason', 'x', '--judge', 'j-1']).judge, parseExtend(['12', '--verdict', 'stop', '--reason', 'x', '--judge', 'j-1']).verdict], ['j-1', 'stop']);
   for (const [args, error] of [
     [[], /needs a pull request number/u],
     [['12'], /exactly one of --verdict or --human/u],
     [['12', '--verdict', 'extend', '--human', 'approve'], /exactly one of --verdict or --human/u],
-    [['12', '--verdict', 'maybe', '--reason', 'x'], /--verdict must be extend or stop/u],
+    [['12', '--verdict', 'maybe', '--reason', 'x'], /--verdict must be extend, stop, or land/u],
+    [['12', '--verdict', 'land', '--reason', 'x'], /--verdict land needs --judge with the judge's agent id/u],
+    [['12', '--verdict', 'extend', '--reason', 'x', '--judge', 'j-1'], /--judge goes with --verdict land or stop/u],
+    [['12', '--verdict', 'land', '--reason', 'x', '--judge', '$(id)'], /--judge must be the judge's agent id/u],
+    [['12', '--human', 'deny', '--judge', 'j-1'], /--judge goes with --verdict/u],
     [['12', '--verdict', 'stop'], /--verdict needs --reason/u],
     [['12', '--verdict', 'stop', '--reason', '  '], /--verdict needs --reason/u],
     [['12', '--human', 'yes'], /--human must be approve or deny/u],

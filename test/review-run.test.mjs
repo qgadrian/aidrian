@@ -391,6 +391,11 @@ test('the round cap with extraRounds off: the last round goes to the final stage
   assert.deepEqual([cause.head, cause.reviewed, cause.counted, cause.itemized, cause.flows, cause.unrun, cause.bot], [capped.head, capped.head, 1, false, ['booking'], [], false]);
   assert.match(capProblem(readLocalState(r.project, 7), capped.head) ?? '', /flow booking has an invariant violated, unverified, or unsigned/u);
   assert.equal(stateFromComment(r.comments[0].body, 7).outcome.cap, undefined, 'the posted copy keeps no cause');
+  // The CLI's JSON at the cap carries the unattended waiver's gate, so no gate command is typed: here, off, with no
+  // judge dispatched for landing, since this machine never opted in.
+  const printed = await r.cli({ exec: clean });
+  assert.deepEqual([printed.code, printed.out.status, printed.out.waiver.may, printed.out.dispatch], [4, 'round_limit', false, undefined]);
+  assert.match(printed.out.waiver.why, /this machine has not opted in/u);
   r.write('src/booking/a.js', '3\n');
   const pushed = r.commit();
   assert.equal((await r.step({ exec: clean })).status, 'round_limit');

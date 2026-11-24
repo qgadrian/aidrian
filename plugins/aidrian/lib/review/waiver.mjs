@@ -15,8 +15,10 @@
 // the forge (merge-trust.mjs botProblem), read from the review trail, which also gives both branches' policy files, so
 // the gate below reads no policy of its own. The record, the judge's verdict, and the dispatch log are all in folders a
 // project run's confined session can write: the bot's pass is the part of the waiver no such session writes.
-// `aidrian pr auto-merge` takes a standing verdict for `round_limit` too, and `aidrian pr waive --gate` says whether a
-// judge may be dispatched at all (waiver-stand.mjs): each holds a project run to WAIVED_MERGES. The guard and auto-merge
+// `aidrian pr auto-merge` takes a standing verdict for `round_limit` too, and the gate says whether a judge may be
+// dispatched at all (waiver-stand.mjs): `aidrian pr waive --gate`, and the `waiver` the review step reports at the cap,
+// which `aidrian pr extend --verdict land` asks again before it records a `waive` here (appendVerdict). Each holds a
+// project run to WAIVED_MERGES. The guard and auto-merge
 // each take a verdict only for the judge the recording session's dispatch log shows (judgeProblem). A merge no Human
 // attends still meets every merge-trust check; the waiver lifts only the `round_limit` stop, and a project run's waived
 // merge is taken from its budget only after those checks pass (readWaiver `take`).
@@ -48,7 +50,7 @@ import { stateFolders } from '../handoff-guard.mjs';
 import { appendToRun, readRun } from '../project-run.mjs';
 import { mayFollowTeamDefault } from '../project.mjs';
 import { hostOf } from '../remotes.mjs';
-import { originRepo, repoName } from '../review-gate.mjs';
+import { forgeRepo, repoName } from '../review-gate.mjs';
 import { localRefSolo, viewSolo } from '../solo.mjs';
 import { isFindingId, noHigher, severityOf } from './findings.mjs';
 import { boundedReads, holdToBase } from './in-force.mjs';
@@ -513,36 +515,51 @@ function readWaiver({ project, state, pr, head, named = false, repo = null, view
     return { allow: true, note: '', route: '' };
   }
   if (verdict) {
-    return { ...none, route: ` A judge's recorded verdict waives this head, but only for a merge that names it: merge with \`gh pr merge ${pr} --match-head-commit ${head}\`, or give the merge tool its \`sha\`.` };
+    return { ...none, route: ` A judge's recorded verdict waives this head, but only for a merge that names it: merge with \`gh pr merge ${pr} --match-head-commit ${head} --repo ${home}\`, or give the merge tool its \`sha\`.` };
   }
   return {
     ...none,
-    route: ` Or, under the unattended waiver this repository allows (github.unattendedWaiver), a run with no Human present first checks \`aidrian pr waive ${pr} --gate\`, then records the verdict of one fresh judge, as the pr-review-loop skill's references/review-plan.md § At the cap says, with \`aidrian pr waive ${pr} --verdict waive|refuse --reason "<evidence>" --head ${head} --judge <agent id>\`, then merges naming that head.`,
+    route: ` Or, under the unattended waiver this repository allows (github.unattendedWaiver), a run with no Human present reads \`waiver\` in the JSON of \`aidrian pr review ${pr} --repo ${home}\`, and only when it says a judge may rule runs the one judge its \`dispatch\` names, as the pr-review-loop skill's references/review-plan.md § At the cap says, then records that judge's verdict with \`aidrian pr extend ${pr} --verdict land|stop --reason "<evidence>" --head ${head} --judge <agent id> --repo ${home}\`, and on \`land\` merges naming that head.`,
   };
 }
 
-// What to run after a recorded verdict.
-const nextStep = (entry, pr, local) => (entry.verdict === 'waive'
-  ? `merge with \`gh pr merge ${pr} --match-head-commit ${entry.head}\`: the merge guard accepts this verdict only while github.unattendedWaiver.allow is true on the base and default branches and the switch is on in ${local}`
+// What to run after a recorded verdict, naming the pull request's repository `repo` (`owner/name`) when known, so the
+// merge acts on that repository whatever the checkout's default.
+export const verdictNext = (entry, pr, local, repo = null) => (entry.verdict === 'waive'
+  ? `merge with \`gh pr merge ${pr} --match-head-commit ${entry.head}${repo ? ` --repo ${repo}` : ''}\`: the merge guard accepts this verdict only while github.unattendedWaiver.allow is true on the base and default branches and the switch is on in ${local}`
   : 'the guard stands: the Human merges, or answers the merge guard\'s question with "Merge with the findings filed"');
 
 // The CLI body. It reads and writes the record where the review step does: this machine's state folder and, unless the
 // base branch's `review.record` is "local", the pull request's summary comment. The entries owed on this machine are
 // merged in first, as the review step does, so a newer record from the comment never hides one; and when this machine's
 // record changes before the write, nothing is written. `deps.forge` replaces the forge (change, conversationComments,
-// postComment, editComment, viewer), `deps.repo` the origin, and `deps.env` the environment, in tests.
+// postComment, editComment, viewer), `deps.repo` the pull request's repository, and `deps.env` the environment, in tests.
+// That repository is resolved once, from a lookup of the pull request on the forge (review-gate.mjs forgeRepo), never
+// origin in its place: a lookup that fails exits 3 with nothing written (VERDICT_UNREAD). Every forge read, the record,
+// and the printed `next` use that one value, so in a fork checkout a verdict never lands on, or merges, the other
+// repository's pull request of the same number.
 export async function runWaive(args, project, config, deps = {}) {
+  const url = urlRef(args[0]);
+  if (url !== null && !args.includes('--gate')) {
+    // Fixed text: nothing the URL holds reaches the message.
+    console.error('aidrian pr waive: a verdict takes the pull request\'s number, not a URL; `aidrian pr waive <n>` reads the number in gh\'s default repository; for another repository, a dispatched judge\'s verdict is recorded with `aidrian pr extend <n> --verdict land|stop --reason "<evidence>" --head <sha> --judge <agent id> --repo OWNER/NAME`.');
+    return USAGE;
+  }
   const opts = parseWaive(args);
   if (opts.gate) return (await import('./waiver-stand.mjs')).runWaiveGate(opts, project, { config, ...(deps.forge ? { forge: deps.forge } : {}), ...(deps.gate ?? {}) });
   const machine = project.localUnattendedWaiver;
   const switchOff = () => new Error(`this machine's github.unattendedWaiver is not on in ${project.paths.local}, so the merge guard would not take a waive verdict; --verdict refuse is still recorded`);
   if (opts.verdict === 'waive' && machine !== 'on' && machine !== 'unset') throw switchOff();
   const forge = deps.forge ?? forgeFor(project.root);
-  const repo = deps.repo ?? originRepo(project);
+  const repo = deps.repo ?? forgeRepo(opts.pr, forge);
+  if (!repo) {
+    console.error(`aidrian pr waive: ${unreadRepo(opts.pr)}`);
+    return VERDICT_UNREAD;
+  }
   // The record is read only from the state.dir the pull request's base branch commits, so a verdict needs that base.
   let base = null;
   try {
-    base = forge.change(String(opts.pr), 'baseRefName')?.baseRefName ?? null;
+    base = forge.change(String(opts.pr), 'baseRefName', { repo })?.baseRefName ?? null;
   } catch {}
   if (!base) throw new Error('cannot read the pull request\'s base branch: the review record is read from the state.dir it commits');
   const { committed } = holdToBase(project, config, { repo, base });
@@ -561,7 +578,7 @@ export async function runWaive(args, project, config, deps = {}) {
   let current = null;
   let viewed = null;
   try {
-    viewed = forge.change(String(opts.pr), 'number,headRefOid,url');
+    viewed = forge.change(String(opts.pr), 'number,headRefOid,url', { repo });
     current = viewed?.headRefOid ?? null;
   } catch {}
   if (typeof current !== 'string' || !SHA_REF.test(current)) throw new Error('cannot read the pull request\'s head: a verdict binds to one head');
@@ -569,24 +586,47 @@ export async function runWaive(args, project, config, deps = {}) {
   if (!sameCommit(head, current)) throw new Error(`the pull request's head is ${current.slice(0, 7)}, not ${head.slice(0, 7)}: the verdict binds to the current head`);
   // An unset switch follows the team's `solo`, read at the base on the forge as the guard reads it.
   if (opts.verdict === 'waive' && machineSwitch(machine, () => viewSolo(project, { baseRefName: base, url: viewed?.url }, { forge }), project) !== 'on') throw switchOff();
-  const kind = waiverKind(state, current);
-  if (kind === null) throw new Error(notWaivable(state, current, opts.pr));
-  const env = deps.env ?? process.env;
+  const entry = appendVerdict(state, { project, config, pr: opts.pr, head: current, verdict: opts.verdict, reason: opts.reason, judge: opts.judge, env: deps.env ?? process.env });
+  // A request or a review step written since the read would be lost under this write: refused, and nothing written.
+  sameRevision(project, opts.pr, repo, local);
+  writeLocalState(project, state, { repo });
+  const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => forge.postComment(repo, opts.pr, body), edit: (id, body) => forge.editComment(repo, id, body), viewer: () => forge.viewer() }, `waiver ${opts.verdict}`, postContext({ forge, repo, n: opts.pr, project, configs: [committed, config], env: deps.env ?? process.env })) : null;
+  console.log(JSON.stringify({ status: 'recorded', pr: opts.pr, waiver: entry, next: verdictNext(entry, opts.pr, project.paths.local, repo), ...(summaryError ? { summary_error: summaryError } : {}) }, null, 2));
+  return 0;
+}
+
+// A command that records a judge's verdict takes the pull request's number alone: a URL could name a repository other
+// than the one its reads resolve (forgeRepo), so it is refused as a usage error, exit USAGE. `urlRef` gives the number a
+// pull request URL names, or null for anything else.
+export const USAGE = 2;
+export const urlRef = (ref) => (typeof ref === 'string' && !/^#?\d+$/u.test(ref) ? /\/pull\/(\d+)/u.exec(ref)?.[1] ?? null : null);
+
+// The exit of a command that records a judge's verdict when the forge cannot name the pull request's repository, and
+// why: the verdict would otherwise go to origin's pull request of that number.
+export const VERDICT_UNREAD = 3;
+export const unreadRepo = (pr) => `cannot read pull request #${pr} on the forge, so its repository cannot be told: nothing is recorded, since origin's pull request of that number may be another one. Run it again once gh can read it`;
+
+// Throws when this machine's record of `pr` changed since `local`, its copy read before: a write would lose it.
+export function sameRevision(project, pr, repo, local) {
+  const again = readLocalState(project, pr, repo);
+  if ((again?.revision ?? null) !== (local?.revision ?? null)) throw new Error(`the review record of #${pr} changed while the verdict was recorded: run again`);
+}
+
+// Appends a judge's verdict for `head` to `state.waivers` and returns the entry: the one writer of a waiver, for
+// `aidrian pr waive --verdict` and `aidrian pr extend --verdict land|stop --judge`. Throws, writing nothing, when no
+// verdict may cover `head` (waiverKind, notWaivable), or when `judge`, the judge's agent id, has no dispatch of this
+// session's in the dispatch log between the cap and now (judgeProblem). The entry keeps the judge's id with this
+// session's, so auto-merge and the merge guard can find that dispatch again.
+export function appendVerdict(state, { project, config, pr, head, verdict, reason, judge = null, env = process.env }) {
+  const kind = waiverKind(state, head);
+  if (kind === null) throw new Error(notWaivable(state, head, pr));
   const identity = sessionIdentity(env);
-  // `--judge` names the judge's agent id, and the entry keeps it with this session's id, so auto-merge can find the
-  // judge's dispatch in this session's dispatch log; one the log does not show is refused here already.
-  const named = opts.judge === null ? {} : { judge_id: opts.judge, session: identity.session ?? null };
-  const entry = { head: current, kind, verdict: opts.verdict, reason: opts.reason, judge: identity.agent ?? 'unknown', ...named, at: new Date().toISOString() };
-  if (opts.judge !== null) {
+  const named = judge === null ? {} : { judge_id: judge, session: identity.session ?? null };
+  const entry = { head, kind, verdict, reason, judge: identity.agent ?? 'unknown', ...named, at: new Date().toISOString() };
+  if (judge !== null) {
     const unseen = judgeProblem({ project, config, state, entry });
     if (unseen) throw new Error(unseen);
   }
   state.waivers = [...(Array.isArray(state.waivers) ? state.waivers : []), entry];
-  // A request or a review step written since the read would be lost under this write: refused, and nothing written.
-  const again = readLocalState(project, opts.pr, repo);
-  if ((again?.revision ?? null) !== (local?.revision ?? null)) throw new Error(`the review record of #${opts.pr} changed while the verdict was recorded: run again`);
-  writeLocalState(project, state, { repo });
-  const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => forge.postComment(repo, opts.pr, body), edit: (id, body) => forge.editComment(repo, id, body), viewer: () => forge.viewer() }, `waiver ${opts.verdict}`, postContext({ forge, repo, n: opts.pr, project, configs: [committed, config], env: deps.env ?? process.env })) : null;
-  console.log(JSON.stringify({ status: 'recorded', pr: opts.pr, waiver: entry, next: nextStep(entry, opts.pr, project.paths.local), ...(summaryError ? { summary_error: summaryError } : {}) }, null, 2));
-  return 0;
+  return entry;
 }

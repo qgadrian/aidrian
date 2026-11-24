@@ -107,10 +107,17 @@ test('project decision prints, --record writes, --forget removes, and a malforme
   const file = storeFile(fx);
   const read = () => readRecordedDecision({ projectKey: keyOf(fx), key: 'ENG-1', env: fx.env });
 
+  // Run from inside another project, whose origin names another repository, so its project key differs, with
+  // --project naming this one.
+  const other = runFixture(t, { init: false });
+  other.git('remote', 'set-url', 'origin', 'https://github.com/acme/other.git');
+  const named = shellQuoted(realpathSync(fx.dir));
+
   // Without --record: the section as hashed, then its sha256 and the command that records it. The heading, which starts
   // with a dash, goes in attached; the printed one is attached too, and one POSIX shell word, single-quoted, so
-  // `$(...)`, a backtick, and `$VAR` never expand; nothing is written.
-  const preview = fx.cmd(['decision', 'ENG-1', `--heading=${SHELLY}`]);
+  // `$(...)`, a backtick, and `$VAR` never expand; and --project, given, is printed as this project's real path, so the
+  // pasted command records here and not in the project it is pasted in. Nothing is written.
+  const preview = fx.cmd(['decision', 'ENG-1', `--heading=${SHELLY}`, '--project', fx.dir], { cwd: other.dir });
   assert.equal(preview.exitCode, 0, preview.err.join('\n'));
   const section = `## ${SHELLY}\n\nChosen: CSV.`;
   const sha256 = createHash('sha256').update(section).digest('hex');
@@ -118,16 +125,18 @@ test('project decision prints, --record writes, --forget removes, and a malforme
   assert.match(preview.out.at(-2), /^Write the section so it stands alone: it names the question and the chosen path in full/u);
   assert.equal(shellQuoted(SHELLY), "'- Pick $(id) `uname` $HOME it'\\''s'");
   const line = preview.out.at(-1);
-  assert.equal(line, `sha256 ${sha256}; record it with \`aidrian project decision ENG-1 --heading='- Pick $(id) \`uname\` $HOME it'\\''s' --record\``);
+  assert.equal(line, `sha256 ${sha256}; record it with \`aidrian project decision ENG-1 --heading='- Pick $(id) \`uname\` $HOME it'\\''s' --project=${named} --record\``);
   assert.equal(existsSync(decisionStoreFolder(fx.env)), false, 'nothing written');
 
   // The printed command, read back into the words a shell hands over (the plugin's own lexer: no shell runs), records
   // it: an owner-only entry under owner-only folders, from the same read.
   const words = lexCommand(line.slice(line.indexOf('`') + 1, line.lastIndexOf('`')))[0].map((word) => word.text);
   assert.deepEqual(words.slice(0, 4), ['aidrian', 'project', 'decision', 'ENG-1']);
-  const recorded = fx.cmd(words.slice(2));
+  const recorded = fx.cmd(words.slice(2), { cwd: other.dir });
   assert.equal(recorded.exitCode, 0, recorded.err.join('\n'));
   assert.equal(recorded.out.at(-1), `recorded-decision: ENG-1 recorded in ${file}, sha256 ${sha256}`);
+  assert.notEqual(keyOf(other), keyOf(fx));
+  assert.equal(existsSync(path.join(decisionStoreFolder(fx.env), keyOf(other), 'ENG-1.json')), false, 'never under the project it was pasted in');
   assert.equal(statSync(file).mode & 0o777, 0o600);
   assert.equal(statSync(path.dirname(file)).mode & 0o777, 0o700);
   const stored = read().entry;
@@ -205,25 +214,28 @@ test('a state root that is a link gets nothing made in its target: both stores r
 
 test('project decision refuses with no recorded read, no single section, hidden markup, a session no Human attends, one that drove a run, and a store not the user\'s alone', (t) => {
   const fx = runFixture(t, { init: false });
+  // The command's own function, with the project read once: the CLI's wiring is covered by the record above.
+  const decide = (more, session = DRIVER) => decisionCommand({ project: fx.project, config: fx.config, key: 'ENG-1', env: fx.as(session), home: fx.home, ...more });
   const readFor = (session, description) => assert.equal(recordIssueReads(session, [{ key: 'ENG-1', text: { title: 'Export', description, criteria: '', labels: [] } }], { env: fx.env }), 1);
-  const missing = fx.cmd(['decision', 'ENG-1', '--heading', 'Export format']);
+  const missing = decide({ heading: 'Export format' });
   assert.equal(missing.exitCode, 1);
   assert.match(missing.err[0], /this session recorded no tracker read of ENG-1; read it with the tracker's own issue read/u);
   readFor(OTHER, DECIDED.description);
-  assert.equal(fx.cmd(['decision', 'ENG-1', '--heading', 'Export format']).exitCode, 1, 'another session\'s read');
+  assert.equal(decide({ heading: 'Export format' }).exitCode, 1, 'another session\'s read');
   readFor(DRIVER, `${DECIDED.description}\n<!-- and XLSX -->`);
-  assert.match(fx.cmd(['decision', 'ENG-1', '--heading', 'Export format']).err[0], /the issue's description holds text the tracker's view hides \(an HTML comment, a <details> tag, or a \+\+\+ line, anywhere, fenced or not\)/u);
+  assert.match(decide({ heading: 'Export format' }).err[0], /the issue's description holds text the tracker's view hides \(an HTML comment, a <details> tag, or a \+\+\+ line, anywhere, fenced or not\)/u);
   readFor(DRIVER, DECIDED.description);
-  assert.match(fx.cmd(['decision', 'ENG-1', '--heading', 'Missing']).err[0], /no section of ENG-1's description, or more than one, has the heading "Missing"/u);
+  assert.match(decide({ heading: 'Missing' }).err[0], /no section of ENG-1's description, or more than one, has the heading "Missing"/u);
+  assert.equal(decide({ heading: 'Export format' }).out.at(-1), `sha256 ${decidedEntry().sha256}; record it with \`aidrian project decision ENG-1 --heading='Export format' --record\``, 'no --project given, none printed');
   // A session no Human attends, and one that drove a run, record and forget nothing.
   const driver = STARTED[0].session;
   markUnattended(OTHER, { root: fx.dir, env: fx.env });
   markDriver(driver, { run: 'launch', root: fx.dir, state: fx.state, env: fx.env });
   // Both forms meet the same checks before either acts; the hook rule covers each form (project-start-guard.test.mjs).
-  const unattended = fx.cmd(['decision', 'ENG-1', '--heading', 'Export format', '--record'], { session: OTHER });
+  const unattended = decide({ heading: 'Export format', record: true }, OTHER);
   assert.equal(unattended.exitCode, 1);
   assert.match(unattended.err[0], /from an attended session, and the background handoff route started this session/u);
-  assert.match(fx.cmd(['decision', 'ENG-1', '--forget'], { session: driver }).err[0], /this session drove a project run, which may run on with no Human, so it records and forgets no decision/u);
+  assert.match(decide({ forget: true }, driver).err[0], /this session drove a project run, which may run on with no Human, so it records and forgets no decision/u);
   assert.equal(existsSync(decisionStoreFolder(fx.env)), false, 'nothing written');
   // A store folder another user may write.
   mkdirSync(path.join(decisionStoreFolder(fx.env), keyOf(fx)), { recursive: true });
@@ -244,6 +256,22 @@ test('init --check names each recorded decision of an issue to start: a blocker 
   assert.deepEqual(check(DECIDED.description), ['note recorded-decision: ENG-1 stands: Export format'], 'an issue the plan does not start gets no line');
   assert.deepEqual(check(DECIDED.description.replace('CSV with', 'XLSX with')), ['note recorded-decision: ENG-1 void: the section\'s sha256 differs, so it changed after it was pinned']);
   assert.deepEqual(check(''), ['blocker recorded-decision: ENG-1 has a recorded decision in this machine\'s recorded-decision store and this session recorded no description of it; read it in this session with the tracker\'s own issue read']);
+  // The forge's copy of the default branch decides too: without the switch there, nothing is read; refusing runs, the
+  // switch on the local ref with an entry stored is a blocker. The same fixture, its forge's answer swapped.
+  assert.equal(recordIssueReads(DRIVER, [{ key: 'ENG-1', text: { title: 'Export', description: DECIDED.description, criteria: '', labels: [] } }], { env: fx.env }), 1);
+  const answer = fx.forge.contents;
+  const forge = (config) => {
+    fx.forge.contents = (repo, name, ref, options) => (name === '.aidrian/config.json' ? { type: 'file', encoding: 'base64', content: Buffer.from(JSON.stringify(config)).toString('base64') } : answer(repo, name, ref, options));
+  };
+  forge({ version: 1, projectRun: { allow: true, unverifiedHosts: true } });
+  const forgeless = fx.cmd(['init', 'launch', '--file', file, '--check']);
+  assert.ok(!forgeless.out.some((line) => line.includes('recorded-decision')), `only the local ref turns it on: ${forgeless.out.join('\n')}`);
+  forge({ version: 1, projectRun: { allow: false } });
+  const policyRefused = fx.cmd(['init', 'launch', '--file', file, '--check']);
+  assert.equal(policyRefused.exitCode, 1);
+  assert.match(policyRefused.out.find((line) => line.includes('recorded-decision')), /^blocker recorded-decision: the team's policy cannot be read \(the default branch main on the forge does not set projectRun\.allow to true\), so whether the decisions recorded for ENG-1 stand cannot be told; check again once it can$/u);
+  fx.forge.contents = answer;
+
   // A state folder init refuses, here a runs folder that is a symlink, is a snapshot blocker of its own, and then no
   // recorded decision is named as standing: the check calls snapshotCheck in this process, as the command does.
   assert.equal(recordIssueReads(DRIVER, [{ key: 'ENG-1', text: { title: 'Export', description: DECIDED.description, criteria: '', labels: [] } }], { env: fx.env }), 1);
@@ -254,21 +282,6 @@ test('init --check names each recorded decision of an issue to start: a blocker 
   assert.equal(refused.exitCode, 1);
   assert.ok(refused.out.some((line) => /^blocker snapshot: the folder .*runs is a symlink, so no project run is kept there$/u.test(line)), refused.out.join('\n'));
   assert.ok(!refused.out.some((line) => line.includes('recorded-decision')), 'no stands line while init would refuse the state folder');
-});
-
-test('init --check reads the store only where the team switch is on on the local ref and the forge alike', (t) => {
-  const check = (forgeConfig) => {
-    const fx = withRead(t, DECIDED.description, DRIVER, { projectRun: { allow: true, unverifiedHosts: true, recordedDecisions: true }, forgeConfig });
-    recordIn(fx, decidedEntry());
-    const file = path.join(fx.dir, 'snapshot.input');
-    writeFileSync(file, JSON.stringify({ issues: ISSUES }));
-    return fx.cmd(['init', 'launch', '--file', file, '--check']);
-  };
-  const forgeless = check({ version: 1, projectRun: { allow: true, unverifiedHosts: true } });
-  assert.ok(!forgeless.out.some((line) => line.includes('recorded-decision')), `only the local ref turns it on: ${forgeless.out.join('\n')}`);
-  const refused = check({ version: 1, projectRun: { allow: false } });
-  assert.equal(refused.exitCode, 1);
-  assert.match(refused.out.find((line) => line.includes('recorded-decision')), /^blocker recorded-decision: the team's policy cannot be read \(the default branch main on the forge does not set projectRun\.allow to true\), so whether the decisions recorded for ENG-1 stand cannot be told; check again once it can$/u);
 });
 
 test('init --check names no recorded decision of a canceled issue or one skipped below it, and keeps one that waits on a blocker', (t) => {

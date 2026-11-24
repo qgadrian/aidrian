@@ -134,7 +134,7 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
     const pullHead = ({ pr, branch, repository }) => openPullHead({ forge: forge ?? forgeFor(project.root), repository, pr, branch });
     return initRun({ project, config, run, file: path.resolve(cwd, values.file), session: sessionIdentity(env).session, env, home, pullHead });
   }
-  if (action === 'decision') return decisionCommand({ project, config, key: run, heading: values.heading, record: values.record === true, forget: values.forget === true, env, home });
+  if (action === 'decision') return decisionCommand({ project, config, key: run, heading: values.heading, record: values.record === true, forget: values.forget === true, named: values.project !== undefined, env, home });
   if (action === 'preflight') return preflightCommand({ project, config, run: run ?? null, env, home, ...(forge ? { forge } : {}), ...(platform ? { platform } : {}), ...(exec ? { exec } : {}) });
   if (action === 'report') return reportCommand({ project, config, run, json: values.json === true, env, home });
   if (action === 'recorded') return recordedCommand({ project, config, run, key: second, env, home, ...(now === undefined ? {} : { now }) });

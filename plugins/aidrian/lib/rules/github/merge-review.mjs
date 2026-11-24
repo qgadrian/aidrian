@@ -67,7 +67,7 @@ import { closeSync, constants, fstatSync, openSync, readFileSync, readSync } fro
 import path from 'node:path';
 
 import { loadConfig, resolveAutoMerge } from '../../config.mjs';
-import { forgeFor, isTrustedCommenter, repoIdentity } from '../../forges/index.mjs';
+import { forgeApiHost, forgeFor, isTrustedCommenter, repoIdentity } from '../../forges/index.mjs';
 import { knownPrefix } from '../../git.mjs';
 import { stateFolders } from '../../handoff-guard.mjs';
 // A cycle (pr-auto-merge.mjs imports this file), benign while neither uses the other's exports as it loads.
@@ -168,12 +168,21 @@ function readGh(args, environment, env, cwd) {
     head: head && SHA.test(head) ? head : null,
     target,
     repo: flagRepo ? literal(flagRepo) : urlRepo ?? invocationRepo(environment, env),
-    // A target the rule cannot read, such as `"$PR"`, is no pull request it can check.
-    unreadable: Boolean(words[2]) && target === null,
+    // A target the rule cannot read, such as `"$PR"`, is no pull request it can check; nor is a pull request URL whose
+    // repository or host an `-R` beside it contradicts, since the guard would read one and gh may merge the other.
+    unreadable: (Boolean(words[2]) && target === null) || selectorsDisagree(target, urlRepo, flagRepo),
     text: mergeText(last('-t', '--subject'), last('-b', '--body'), last('-F', '--body-file')),
     // `--auto` leaves the merge to GitHub once the checks pass, at whatever head the branch has then.
     ...(flags.some((flag) => flag.name === '--auto') ? { auto: true } : {}),
   };
+}
+
+// Whether a pull request URL `target` (its repository `urlRepo`) and an `-R` value `flagRepo` beside it name different
+// repositories, or different hosts when the `-R` names one.
+function selectorsDisagree(target, urlRepo, flagRepo) {
+  if (!urlRepo || !flagRepo || flagRepo.dynamic) return false;
+  const host = hostNamed(flagRepo);
+  return repoName(flagRepo.text) !== urlRepo || (typeof host === 'string' && host !== hostNamed({ text: target, dynamic: false }));
 }
 
 // The value of the variable `name` for one gh invocation, after its assignments and env changes, as a word, or null
@@ -187,16 +196,20 @@ function invocationValue(name, environment, env) {
   return value === null || value.text === '' ? null : value;
 }
 
-// The host a word names, lower-cased, with GitHub's API host read as the host it serves (`api.github.com` is
-// `github.com`): from a URL, git's `host:path`, or gh's `HOST/OWNER/REPO`; null for a bare `OWNER/REPO`, which names
-// none; UNREAD_HOST for a word the shell builds, or one that names no host gh could reach.
+// The host a word names, lower-cased, with a forge's own API host read as the host it serves, and no other `api.` host
+// (forgeApiHost): `api.github.com` is `github.com`, and `api.<name>.ghe.com` is `<name>.ghe.com`. From a URL, git's `host:path`, or
+// gh's `HOST/OWNER/REPO`; null for a bare `OWNER/REPO`, which names none; UNREAD_HOST for a word the shell builds, or
+// one that names no host gh could reach.
 const UNREAD_HOST = Symbol('unread host');
 function hostNamed(word, { bare = false } = {}) {
   if (!word || word.dynamic || /[$`]/u.test(word.text)) return UNREAD_HOST;
   const text = word.text.trim();
   if (!bare && !text.includes(':') && text.split('/').filter(Boolean).length === 2) return null;
   const host = repoIdentity(bare ? `https://${text}/o/n` : text)?.host ?? null;
-  return host === null ? UNREAD_HOST : host.toLowerCase().replace(/^api\.(?=[^.]+\.[^.]+)/u, '');
+  if (host === null) return UNREAD_HOST;
+  const lower = host.toLowerCase();
+  const served = lower.replace(/^api\./u, '');
+  return served !== lower && forgeApiHost(served) === lower ? served : lower;
 }
 
 // The hosts one gh merge names, as { hosts } and { hostUnread: true }, each only when there is one, in gh's order:
@@ -247,21 +260,16 @@ function readCurl(args, cwd) {
   const { words, flags } = readWords(args, CURL_VALUES);
   const urls = [...words, ...flags.filter((flag) => flag.name === '--url').map((flag) => flag.value)].filter(Boolean);
   const data = flags.filter((flag) => CURL_DATA.includes(flag.name) || ['-T', '--upload-file'].includes(flag.name));
-  const found = (unreadable) => ({ graphql: true, pr: null, head: null, target: null, repo: null, unreadable });
-  const graphql = urls.some((url) => CURL_GRAPHQL.test(url.text));
-  if ((graphql || urls.some((url) => url.dynamic)) && args.some((token) => MUTATION_TEXT.test(token.text))) return found(false);
-  if (graphql) {
-    for (const { name, value } of data) {
-      const file = ['-T', '--upload-file'].includes(name) ? value?.text : /^@(.+)$/u.exec(value?.text ?? '')?.[1];
-      if (!value || value.dynamic || file === '-') return found(true);
-      if (file === undefined) continue;
-      const text = queryFile(file, cwd);
-      if (text === null || MUTATION_TEXT.test(text)) return found(text === null);
-    }
-    return null;
+  const unread = { pr: null, head: null, target: null, repo: null, unreadable: true };
+  if (urls.some((url) => CURL_GRAPHQL.test(url.text) || url.dynamic)) {
+    const query = curlQuery(args, data, cwd, urls.some((url) => CURL_GRAPHQL.test(url.text)));
+    if (query) return query;
   }
-  const url = urls.map((each) => ({ each, match: CURL_MERGE.exec(each.text) })).find(({ match }) => match);
-  if (!url) return null;
+  const merges = urls.filter((url) => CURL_MERGE.test(url.text));
+  if (!merges.length) return null;
+  // Several merge URLs are several merges, and `--next` (`-:`) gives each transfer its own method and body: the rule
+  // reads one transfer, so such a call is one it cannot check.
+  if (merges.length > 1 || args.some((token) => token.text === '--next' || token.text === '-:')) return unread;
   const given = flags.filter((flag) => flag.name === '-X' || flag.name === '--request').at(-1)?.value;
   let method = given?.dynamic ? 'PUT' : given?.text?.toUpperCase();
   if (!method) {
@@ -270,12 +278,44 @@ function readCurl(args, cwd) {
     else method = 'GET';
   }
   if (!['PUT', 'POST'].includes(method)) return null;
-  const [, hostPart, repoPart, number] = url.match;
+  const [, hostPart, repoPart, number] = CURL_MERGE.exec(merges[0].text);
   const variable = /[$`]/u;
-  if (variable.test(number) || variable.test(repoPart) || !/^\d+$/u.test(number) || !/^[^/]+\/[^/]+$/u.test(repoPart)) return { pr: null, head: null, target: null, repo: null, unreadable: true };
+  if (variable.test(number) || variable.test(repoPart) || !/^\d+$/u.test(number) || !/^[^/]+\/[^/]+$/u.test(repoPart)) return unread;
   const body = curlBody(data);
   const host = variable.test(hostPart) ? UNREAD_HOST : hostNamed({ text: hostPart, dynamic: false }, { bare: true });
   return { pr: Number(number), head: body.head, target: null, repo: repoPart, text: body.text, ...placesOf([host]) };
+}
+
+// The GraphQL merge a curl call to a GraphQL URL (`graphql`), or to one the shell builds, may make, as readCurl gives
+// it, or null: a word naming a mutation, decoded as JSON too, and for a GraphQL URL, a body from a file that names
+// one, or one the shell builds or reads from stdin, which is unread.
+function curlQuery(args, data, cwd, graphql) {
+  const found = (unreadable) => ({ graphql: true, pr: null, head: null, target: null, repo: null, unreadable });
+  if (args.some((token) => namesMutation(token.text))) return found(false);
+  if (!graphql) return null;
+  for (const { name, value } of data) {
+    const file = ['-T', '--upload-file'].includes(name) ? value?.text : /^@(.+)$/u.exec(value?.text ?? '')?.[1];
+    if (!value || value.dynamic || file === '-') return found(true);
+    if (file === undefined) continue;
+    const text = queryFile(file, cwd);
+    if (text === null || namesMutation(text)) return found(text === null);
+  }
+  return null;
+}
+
+// Whether `text` names a merge mutation, as written or, when it is JSON, in any string it holds once decoded, so an
+// escape such as `\u0050` in a request envelope hides none.
+function namesMutation(text) {
+  if (typeof text !== 'string') return false;
+  if (MUTATION_TEXT.test(text)) return true;
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return false;
+  }
+  const strings = (value) => (typeof value === 'string' ? [value] : value && typeof value === 'object' ? Object.values(value).flatMap(strings) : []);
+  return strings(parsed).some((each) => MUTATION_TEXT.test(each));
 }
 
 // The head (`sha`) and merge commit text (`commit_title`, `commit_message`) of a curl merge's one JSON body, each null
@@ -405,7 +445,7 @@ function graphqlMerge(args, flags, cwd) {
     if (flag.name === '--input') {
       if (!value || value.dynamic || value.text === '-') return found(true);
       const text = queryFile(value.text, cwd);
-      if (text === null || MUTATION_TEXT.test(text)) return found(text === null);
+      if (text === null || namesMutation(text)) return found(text === null);
       continue;
     }
     if (!['-f', '--raw-field', '-F', '--field'].includes(flag.name) || !value) continue;
@@ -414,7 +454,7 @@ function graphqlMerge(args, flags, cwd) {
     if (flag.name.startsWith('-F') || flag.name === '--field') {
       if (at) {
         const text = queryFile(at[1], cwd);
-        if (text === null || MUTATION_TEXT.test(text)) return found(text === null);
+        if (text === null || namesMutation(text)) return found(text === null);
       }
     }
   }
@@ -478,11 +518,22 @@ const delegateRoute = (pr, head, repoArg, mergeArg = repoArg) =>
 
 // ` --repo <owner>/<name>` for a command in a checkout whose remotes name several repositories: the merge's own when it
 // names one, else a placeholder; '' with one remote. A git read that fails reads as one remote.
-// ` --repo <owner>/<name>` for a merge command the guard suggests, when the merge named its repository: gh's default may
-// be another one even in a checkout with one remote. Only a name repoName reads is written, so no shell syntax.
-const mergeRepoArg = (repo) => {
+// ` --repo [<host>/]<owner>/<name>` for a merge command the guard suggests, when the merge named its repository: gh's
+// default may be another one even in a checkout with one remote. The host is written when the merge named exactly one
+// other than github.com (`hosts`, readMerge's). Only a name and host of GitHub's own characters are written, so no
+// shell syntax reaches a command the Human runs; any other is a placeholder.
+const SAFE_NAME = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/u;
+const SAFE_HOST = /^[a-z0-9.-]+(?::\d{1,5})?$/u;
+const safeRepo = (repo) => {
   const name = repoName(repo);
-  return name ? ` --repo ${name}` : '';
+  return name && SAFE_NAME.test(name) ? name : null;
+};
+export const mergeRepoArg = (repo, hosts = []) => {
+  if (repo === null || repo === undefined) return '';
+  const name = safeRepo(repo);
+  if (!name) return ' --repo <owner>/<name>';
+  const [host] = hosts.length === 1 && hosts[0] !== API_HOST && SAFE_HOST.test(hosts[0]) ? hosts : [null];
+  return ` --repo ${host ? `${host}/` : ''}${name}`;
 };
 
 const repoArgFor = (project, repo) => {
@@ -490,7 +541,7 @@ const repoArgFor = (project, repo) => {
   try {
     several = severalRemotes(project);
   } catch {}
-  return several ? ` --repo ${repoName(repo) ?? '<owner>/<name>'}` : '';
+  return several ? ` --repo ${safeRepo(repo) ?? '<owner>/<name>'}` : '';
 };
 
 const readTranscript = (file) => {
@@ -590,7 +641,7 @@ function delegated({ state, pr, head, capped, named, session, answers = [], coun
 // `waiverForge` is the test seam for the unattended waiver's reads (lib/review/waiver.mjs guardWaiver, budgetedForge's
 // `make`); null builds forgeFor's only when the waiver is asked. `startedAt` is when the hook's process started, shared by
 // every merge of one command; `now` the clock. `session` is the merging session's id from the hook, or null.
-export function judgeMerge({ project, pr = null, head = null, target = null, repo = null, unreadable = false, viewPr, answers = [], how = MERGE_HOW, waiverForge = null, startedAt = null, now = Date.now, memo = {}, session = null, unattended = false }) {
+export function judgeMerge({ project, pr = null, head = null, target = null, repo = null, hosts = [], unreadable = false, viewPr, answers = [], how = MERGE_HOW, waiverForge = null, startedAt = null, now = Date.now, memo = {}, session = null, unattended = false }) {
   startedAt ??= now();
   // Only a merge that names its head can take a recorded verdict: otherwise gh merges whatever head the branch has then.
   const named = head !== null;
@@ -651,7 +702,7 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
   }
   const since = [onHead ? outcome.at : null, ...owing.map((entry) => entry.at)].filter((at) => typeof at === 'string').sort().at(-1) ?? null;
   if (mergeApproved(answers, { pr, head, since, capped })) return null;
-  const delegation = delegated({ state, pr, head, capped, named, session, answers, count, repoArg: capped ? mergeRepoArg(repo) : '' });
+  const delegation = delegated({ state, pr, head, capped, named, session, answers, count, repoArg: capped ? mergeRepoArg(repo, hosts) : '' });
   if (delegation.allow) return null;
   // A judge's recorded verdict, under both switches, for the round cap on this head only (waiverKind).
   const waiver = guardWaiver({ project, state, pr, head, named, repo, view, forge: waiverForge, startedAt, now, memo });
@@ -661,12 +712,12 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
   const last = state.extensions?.at(-1) ?? null;
   let ask;
   if (unattended) ask = capped ? unattendedCap({ pr, last, local: project.paths.local }) : UNATTENDED_WAIT;
-  else if (capped) ask = cappedAsk({ pr, count, last, head, delegable: delegation.delegable, repoArg, mergeArg: mergeRepoArg(repo) });
+  else if (capped) ask = cappedAsk({ pr, count, last, head, delegable: delegation.delegable, repoArg, mergeArg: mergeRepoArg(repo, hosts) });
   else {
     ask = `Only the Human waives this: ask with AskUserQuestion, the question "${question}", the options "Wait for the review" ` +
       '(first, recommended) and "Merge anyway", and merge only when the Human picks "Merge anyway". ';
   }
-  const shell = unattended ? 'Or the Human merges in their own shell.' : handOver(project, pr, head, repo);
+  const shell = unattended ? 'Or the Human merges in their own shell.' : handOver(project, pr, head, mergeRepoArg(repo, hosts));
   const blocked = (note, route) => `Blocked: this merges pull request #${pr} at ${sha7}, and ${problem}${note}. ${ask}${shell}${route}`;
   if (waiver.allow) {
     // A project run's waived merge is taken from its budget only after every other check of the merge passed (takeWaived).
@@ -698,14 +749,14 @@ const UNATTENDED_WAIT = 'No Human attends this session to waive this, so do not 
 // The deny's last route in a session a Human attends: the Human's own shell, with the one merge command to hand over when
 // the Human already gave the decision in their own words, so the Human never answers it twice. It names the merge's
 // repository when the merge did, and the working copy's `github.autoMerge.strategy` when it sets one.
-function handOver(project, pr, head, repo) {
+function handOver(project, pr, head, repoArg) {
   let strategy = null;
   try {
     strategy = loadConfig(project).config.github.autoMerge.strategy ?? null;
   } catch {}
   const flag = typeof strategy === 'string' && /^[a-z]+$/u.test(strategy) ? ` --${strategy}` : '';
   return 'Or the Human merges in their own shell (`!` in the prompt): when the Human already gave this decision in their own words in this session, ' +
-    `do not ask it again; hand over \`gh pr merge ${pr}${mergeRepoArg(repo)}${flag} --match-head-commit ${head}\`${flag ? '' : ', with the team\'s merge-strategy flag,'} for the Human to run.`;
+    `do not ask it again; hand over \`gh pr merge ${pr}${repoArg}${flag} --match-head-commit ${head}\`${flag ? '' : ', with the team\'s merge-strategy flag,'} for the Human to run.`;
 }
 
 // The session the hook payload names, or null.

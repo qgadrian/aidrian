@@ -14,7 +14,7 @@ import { isAncestor } from '../plugins/aidrian/lib/review/diff.mjs';
 import { recordPass, recordSignoff, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { answerOwed, markRequestsSent, recordPending, runRequest } from '../plugins/aidrian/lib/review/pending.mjs';
 import { answerPending, emptyState, noteOutcome, readLocalState, readRecord, recordFile, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
-import { check, checkMcp, readMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
+import { check, checkMcp, mergeRepoArg, readMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 import { waitingRoute } from '../plugins/aidrian/lib/rules/review-extend.mjs';
 import { lexCommand, readInvocation } from '../plugins/aidrian/lib/shell-lex.mjs';
 
@@ -428,6 +428,45 @@ test('a refused merge hands over the one command the Human runs, naming the team
   // A review still running keeps its question, and the same hand-over.
   r.record(5, (state) => outcome(state, 'running'));
   assert.ok((r.run('gh pr merge 5') ?? '').endsWith(handOver(5, { flags: ' --squash', strategy: '' })));
+});
+
+test('a curl call holding several transfers, a JSON-escaped mutation, or a URL and -R that disagree is one the guard cannot check', (t) => {
+  const r = repo(t);
+  const url = (n) => `https://api.github.com/repos/acme/notes/pulls/${n}/merge`;
+  // No record at all: each still names a merge the rule cannot pin to one pull request, so it is refused.
+  for (const command of [
+    `curl -X PUT ${url(5)} ${url(6)}`,
+    `curl -X PUT ${url(5)} --next -X GET https://api.github.com/repos/acme/notes`,
+    `curl ${url(5)} -: -X PUT https://api.github.com/repos/acme/notes`,
+    `gh pr merge https://github.com/acme/notes/pull/5 -R acme/other --match-head-commit ${HEAD}`,
+    `gh pr merge https://github.com/acme/notes/pull/5 -R ghe.example.com/acme/notes --match-head-commit ${HEAD}`,
+  ]) assert.match(r.run(command) ?? '', /could not read which one/u, command);
+  assert.equal(r.run(`gh pr merge https://github.com/acme/notes/pull/5 -R Acme/Notes --match-head-commit ${HEAD}`), null, 'a URL and -R that agree');
+  // A read-only GraphQL transfer beside a REST merge does not hide the merge.
+  r.record(5, (state) => outcome(state, 'running'));
+  assert.match(r.run(`curl -X PUT -d '{"query":"query { viewer { login } }"}' https://api.github.com/graphql ${url(5)}`) ?? '', /could not read which one|pull request #5 at abcdef1/u);
+  assert.match(r.run(`curl -X PUT https://api.github.com/graphql/x ${url(5)}`) ?? '', /pull request #5 at abcdef1/u);
+  // A mutation name JSON spells with an escape is still a merge, inline or in a file.
+  const escaped = '{"query":"mutation { merge\\u0050ullRequest(input: {}) { clientMutationId } }"}';
+  const file = path.join(r.dir, 'escaped.json');
+  writeFileSync(file, escaped);
+  for (const command of [`curl https://api.github.com/graphql -d '${escaped}'`, `curl https://api.github.com/graphql -d @${file}`, `gh api graphql --input ${file}`]) {
+    assert.match(r.run(command) ?? '', /^Blocked: this is a GraphQL call/u, command);
+  }
+});
+
+test('the merge to hand over keeps the merge`s host, and writes only a repository name of GitHub`s own characters', (t) => {
+  const r = repo(t);
+  r.record(5, (state) => outcome(state, 'running'));
+  assert.ok((r.run('gh pr merge https://ghe.example.com/acme/notes/pull/5') ?? '').endsWith(handOver(5, { flags: ' --repo ghe.example.com/acme/notes' })), 'an Enterprise URL');
+  assert.ok((r.run('gh pr merge 5 -R ghe.example.com/acme/notes') ?? '').endsWith(handOver(5, { flags: ' --repo ghe.example.com/acme/notes' })), 'a host-qualified -R');
+  assert.ok((r.run('gh pr merge 5 -R github.com/acme/notes') ?? '').endsWith(handOver(5, { flags: ' --repo acme/notes' })), 'github.com is gh`s default');
+  // A repository or host with shell syntax in it is never written into a command the Human runs.
+  assert.equal(mergeRepoArg('acme/no$(touch x)tes'), ' --repo <owner>/<name>');
+  assert.equal(mergeRepoArg("acme/no'tes"), ' --repo <owner>/<name>');
+  assert.equal(mergeRepoArg('acme/notes', ['gh;e.example.com']), ' --repo acme/notes');
+  assert.equal(mergeRepoArg('acme/notes', ['ghe.example.com', 'other.example.com']), ' --repo acme/notes', 'hosts that disagree name none');
+  assert.equal(mergeRepoArg(null), '');
 });
 
 test('the MCP merge tool is guarded too', (t) => {

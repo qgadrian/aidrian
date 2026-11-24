@@ -597,12 +597,15 @@ to `repos/<owner>/<name>/pulls/<n>/merge`, a `curl` PUT or POST to that path's U
 [a GitHub MCP server a plugin installs](providers/claude-code.md#a-github-mcp-server-from-a-plugin), and on Codex
 [the GitHub connector's merge tools](providers/codex.md#github-through-the-app-connector). It is on in every project.
 A `curl` merge reads its head and merge commit text from one JSON body written in the command (`sha`, `commit_title`,
-`commit_message`); a body from a file or one the shell builds names no head.
+`commit_message`); a body from a file or one the shell builds names no head. A `curl` call naming more than one merge
+URL, or holding `--next` (`-:`) beside one, gives each transfer its own method and body, so it is refused as a merge the
+guard cannot read, and so is a `gh pr merge` whose pull request URL and `-R` name different repositories or hosts.
 
 A GraphQL call that may merge, `gh api` or `curl` naming `mergePullRequest`, `enablePullRequestAutoMerge`, or
 `enqueuePullRequest`, or sending to GraphQL a query from a file that names one, or one the shell builds, is refused
 outright inside a project, for every session: it names its pull request by a node id no review record is keyed by, so the
 guard cannot check the review it owes. The denial says to merge with `gh pr merge <PR> --match-head-commit <sha>`. A
+mutation's name is read as written and, in a JSON body or file, decoded, so an escape such as `\u0050` hides none. A
 query that only reads runs as before. A `curl` whose whole URL the shell builds is not read as a GraphQL call.
 
 Before it reads the record, a merge of this repository, one that names none or one of this checkout's remotes, holds the
@@ -658,7 +661,9 @@ the session transcript holds the Human's AskUserQuestion answer to a question na
 with "Merge anyway", given at or after the head's outcome and every owed review. Without a transcript in that shape
 (Codex), the Human merges in their own shell.
 Every denial in a session a Human attends ends with that route and the one command for it, `gh pr merge <PR> --match-head-commit <sha>`
-with the merge's `--repo` when it named one and the working copy's `github.autoMerge.strategy` flag when it sets one:
+with the merge's `--repo` when it named one, its host included when that is not `github.com`, and the working copy's
+`github.autoMerge.strategy` flag when it sets one; a repository name or host with any character GitHub does not use in
+one is written as `<owner>/<name>`, so no shell syntax reaches the command:
 when the Human already gave the decision in their own words, such as "merge it" typed in chat, the session does not
 ask it again, and hands that command over for the Human to run with `!` in the prompt. The guard never takes a chat
 message as the answer: the transcript is a file in the session's own account, and a typed decision has no head to bind to.
@@ -778,8 +783,8 @@ run's, read from the run's ledger, else the main checkout's origin (a merge nami
 its host: the host the merge names, read as gh reads it, must be the pinned host, and a repository or host the shell
 builds refuses. `gh pr merge` reads a pull request URL, else `-R HOST/OWNER/NAME` or a URL, else `GH_REPO`, with
 `GH_HOST` for a bare `OWNER/NAME` or none; `gh api` reads `--hostname`, else `GH_HOST`, else `github.com`, and
-`GH_REPO`'s host too, since it may fill `{owner}/{repo}`; a `curl` merge reads its URL, with `api.github.com` read as
-`github.com`; read
+`GH_REPO`'s host too, since it may fill `{owner}/{repo}`; a `curl` merge reads its URL. Only GitHub's own API hosts
+read as the host they serve, `api.github.com` as `github.com` and `api.<name>.ghe.com` as `<name>.ghe.com`; read
 its record files bounded, each parsed once a call; and pass on the forge, in one GraphQL
 read on the waiver's clock below, `aidrian pr auto-merge`'s policy and [merge trust](review.md#merge-trust). The policy:
 `github.autoMerge.allow` on both branches, the main checkout's own switch on, the default branch's required checks named,

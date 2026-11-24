@@ -304,6 +304,11 @@ test('an unattended merge naming another host, in any spelling gh takes, is refu
     `GH_HOST=ghe.example.com gh api -X PUT repos/acme/notes/pulls/7/merge -f sha=${HEAD}`,
     `curl -X PUT https://ghe.example.com/api/v3/repos/acme/notes/pulls/7/merge -d '{"sha":"${HEAD}"}'`,
   ]) assert.match(merge(r, command) ?? '', /^Blocked: no Human attends this session, and this merges pull request #7, but it names the host ghe\.example\.com, and this session works in acme\/notes on github\.com\./u, command);
+  // Only GitHub's own API hosts read as the host they serve: an `api.` host of anyone else's stays itself.
+  for (const [command, host] of [
+    [`curl -X PUT https://api.ghe.example.com/repos/acme/notes/pulls/7/merge -d '{"sha":"${HEAD}"}'`, 'api\\.ghe\\.example\\.com'],
+    [`curl -X PUT https://api.acme.ghe.com/repos/acme/notes/pulls/7/merge -d '{"sha":"${HEAD}"}'`, 'acme\\.ghe\\.com'],
+  ]) assert.match(merge(r, command) ?? '', new RegExp(`it names the host ${host}, and`, 'u'), command);
   for (const command of [`gh pr merge 7 -R "$R" ${named}`, `GH_HOST=$H gh pr merge 7 ${named}`, `GH_REPO="$R" gh pr merge 7 ${named}`,
     `gh api --hostname "$H" -X PUT repos/acme/notes/pulls/7/merge -f sha=${HEAD}`, `curl -X PUT "$API/repos/acme/notes/pulls/7/merge" -d '{"sha":"${HEAD}"}'`]) {
     assert.match(merge(r, command) ?? '', /but it names its repository or its host in a word the shell builds/u, command);

@@ -666,6 +666,10 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   sign-off where [Project run](config.md#project-run) asks for one; otherwise its clone holds the base branch's copies,
   git leaves them out of its commits, and a push that changes one is refused.
   The branch's own changes stay in its commits for the pull request's review.
+  An issue's session never writes a host file, on any attempt and whatever `github.autoMerge.includeGuardedPaths` says.
+  A low or medium review finding whose fix lies in one is a stated residual, never a decision: an Accepted residuals item
+  with the finding's title and the file, and the result `pr_open` with that file in its stop, for the Human's merge.
+  A high or critical finding there, and any finding outside host files, keep their route.
   A later or resumed attempt runs `aidrian project stop-action RUN ISSUE --catch-up` first.
   It parks a pull request into another branch than the default.
   On a conflict its line names the one route, on the branch the clone is on, its commits kept, once HEAD holds the forge's branch.

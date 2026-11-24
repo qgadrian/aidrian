@@ -254,7 +254,15 @@ export function projectPrompt({ run, key, attempt, branch, clone, skill = SKILL,
 const baseCopiesLine = (file) => `This branch changes host config or instruction files that no independent review has passed yet, listed as data in ${file}. `
   + 'This clone holds the base branch\'s copies of them instead, and git leaves them out of every commit; the branch\'s own versions are safe in its commits and its pull request. '
   + 'Never edit, stage, restore, or revert those files, and never treat their difference from the branch as something to fix: a local check that fails only because of it is not this issue\'s failure, so say so in the report. '
-  + 'A push that changes one of them is refused, but for each as git itself merges the base into the branch. When the remaining work needs a change to one, record the result parked with that as its stop, and leave the branch as it is.';
+  + 'A push that changes one of them is refused, but for each as git itself merges the base into the branch. When the remaining work needs a change to one, leave the branch as it is. '
+  + `${HOST_FILE_RESIDUAL} Any other work that needs a change to one records the result parked with that as its stop.`;
+
+// What an issue's session does with a review finding whose fix lies in a host file, which it never writes: the one
+// route, in projectPrompt and the autopilot skill's project-run rules alike. The pull request still waits for the
+// Human's merge, so the finding needs no decision.
+export const HOST_FILE_RESIDUAL = 'A low or medium review finding whose fix lies in a host file is a stated residual, never a decision: '
+  + 'an item of the pull request body\'s Accepted residuals with the finding\'s exact title, a colon, the reason, and the file\'s path; '
+  + 'then record the result pr_open with that file in its stop and no decisions, and run no merge: the Human reads the file\'s diff and merges it.';
 
 // The line of projectPrompt for an attempt on an existing branch: stop-action's catch-up, whose line names the one way
 // it merges a base its pull request conflicts with (project-stops.mjs catchUpStop), and parks one into another branch.

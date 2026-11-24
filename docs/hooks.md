@@ -592,21 +592,25 @@ On a host with no SessionEnd it is never recorded.
 
 A session must not merge a pull request while a review of its head is still open, or while a review the Human asked for
 was never sent. The rule, `plugins/aidrian/lib/rules/github/merge-review.mjs`, reads `gh pr merge`, a `gh api` PUT or POST
-to `repos/<owner>/<name>/pulls/<n>/merge`, a `curl` PUT or POST to that path's URL (`-X PUT`, `-XPUT`, `--request PUT`,
-`-T`, or a body with no method; a method the shell builds counts as PUT), the MCP tool `mcp__github__merge_pull_request`, on Claude Code
+to `repos/<owner>/<name>/pulls/<n>/merge`, the MCP tool `mcp__github__merge_pull_request`, on Claude Code
 [a GitHub MCP server a plugin installs](providers/claude-code.md#a-github-mcp-server-from-a-plugin), and on Codex
 [the GitHub connector's merge tools](providers/codex.md#github-through-the-app-connector). It is on in every project.
-A `curl` merge reads its head and merge commit text from one JSON body written in the command (`sha`, `commit_title`,
-`commit_message`); a body from a file or one the shell builds names no head. A `curl` call naming more than one merge
-URL, or holding `--next` (`-:`) beside one, gives each transfer its own method and body, so it is refused as a merge the
-guard cannot read, and so is a `gh pr merge` whose pull request URL and `-R` name different repositories or hosts.
+A `gh pr merge` whose pull request URL and `-R` name different repositories or hosts, or whose `-R` beside such a URL
+is one the shell builds, is refused as a merge it cannot read.
 
-A GraphQL call that may merge, `gh api` or `curl` naming `mergePullRequest`, `enablePullRequestAutoMerge`, or
-`enqueuePullRequest`, or sending to GraphQL a query from a file that names one, or one the shell builds, is refused
-outright inside a project, for every session: it names its pull request by a node id no review record is keyed by, so the
-guard cannot check the review it owes. The denial says to merge with `gh pr merge <PR> --match-head-commit <sha>`. A
-mutation's name is read as written and, in a JSON body or file, decoded, so an escape such as `\u0050` hides none. A
-query that only reads runs as before. A `curl` whose whole URL the shell builds is not read as a GraphQL call.
+Two kinds of call are refused outright inside a project, for every session, with a denial that says to merge with
+`gh pr merge <PR> --match-head-commit <sha>`, which the guard checks:
+
+- A GraphQL call that may merge: `gh api` naming `mergePullRequest`, `enablePullRequestAutoMerge`, or
+  `enqueuePullRequest`, or either `gh api` or `curl` sending to GraphQL a query that names one, from a file it names, or
+  one the shell builds or reads from stdin. It names its pull request by a node id no review record is keyed by, so the
+  guard cannot check the review it owes. A JSON body's `query` field is read decoded, so an escape such as `\u0050`
+  hides none, and a variable's value counts for nothing.
+- A `curl` call that names a REST merge URL and may write, by any transfer: a method other than `GET` or `HEAD`, one the
+  shell builds, or a body, form, or upload. The options are read as curl reads them, a group such as `-sXPUT` included.
+  curl is no merge tool, so the guard reads no head or record for it.
+
+A call that only reads, such as a GraphQL query or a `curl` GET of whether a pull request merged, runs as before.
 
 Before it reads the record, a merge of this repository, one that names none or one of this checkout's remotes, holds the
 working copy to [the base branch's config](review.md#the-record) from local git alone. A merge naming its number compares
@@ -661,7 +665,7 @@ the session transcript holds the Human's AskUserQuestion answer to a question na
 with "Merge anyway", given at or after the head's outcome and every owed review. Without a transcript in that shape
 (Codex), the Human merges in their own shell.
 Every denial in a session a Human attends ends with that route and the one command for it, `gh pr merge <PR> --match-head-commit <sha>`
-with the merge's `--repo` when it named one, its host included when that is not `github.com`, and the working copy's
+with the merge's `--repo` when it named one, its host included when it named exactly one, and the working copy's
 `github.autoMerge.strategy` flag when it sets one; a repository name or host with any character GitHub does not use in
 one is written as `<owner>/<name>`, so no shell syntax reaches the command:
 when the Human already gave the decision in their own words, such as "merge it" typed in chat, the session does not
@@ -783,8 +787,7 @@ run's, read from the run's ledger, else the main checkout's origin (a merge nami
 its host: the host the merge names, read as gh reads it, must be the pinned host, and a repository or host the shell
 builds refuses. `gh pr merge` reads a pull request URL, else `-R HOST/OWNER/NAME` or a URL, else `GH_REPO`, with
 `GH_HOST` for a bare `OWNER/NAME` or none; `gh api` reads `--hostname`, else `GH_HOST`, else `github.com`, and
-`GH_REPO`'s host too, since it may fill `{owner}/{repo}`; a `curl` merge reads its URL. Only GitHub's own API hosts
-read as the host they serve, `api.github.com` as `github.com` and `api.<name>.ghe.com` as `<name>.ghe.com`; read
+`GH_REPO`'s host too, since it may fill `{owner}/{repo}`; read
 its record files bounded, each parsed once a call; and pass on the forge, in one GraphQL
 read on the waiver's clock below, `aidrian pr auto-merge`'s policy and [merge trust](review.md#merge-trust). The policy:
 `github.autoMerge.allow` on both branches, the main checkout's own switch on, the default branch's required checks named,
@@ -811,8 +814,8 @@ for proof, protect the branch with a required review from a second account. [Lim
 Limits:
 
 - A record written on another machine is not read here.
-- A `curl` merge whose whole URL the shell builds, or whose options come from a config file (`-K`, `.curlrc`), is not
-  read, like the other commands the shell lexer does not see through, such as `xargs`.
+- A `curl` call whose whole URL the shell builds is read as a GraphQL call only by its body, and options from a config
+  file (`-K`, `.curlrc`) are not read, like the other commands the shell lexer does not see through, such as `xargs`.
 - Two sessions writing the same record at once can lose an update; the last write wins.
 - Two concurrent review steps on one pull request share one open mark: the first to finish clears the other's.
 - In a fork checkout with gh offline, `aidrian pr request`, `attest`, and `signoff` fall back to origin, and a merge

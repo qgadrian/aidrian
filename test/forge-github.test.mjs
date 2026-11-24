@@ -210,7 +210,6 @@ test('the forge token helpers: GH_TOKEN, which gh and its git helper read, the l
   assert.equal(facade.forgeTokenVar('ghe.example.com'), 'GH_ENTERPRISE_TOKEN', 'a GitHub Enterprise Server host');
   for (const host of ['github.com', 'ghe.example.com']) assert.ok(facade.forgeTokenVars().includes(facade.forgeTokenVar(host)), 'the sandbox keeps the variable the token goes in');
   assert.equal(facade.forgeLoginStep('github.com'), 'gh auth login --hostname github.com --git-protocol https');
-  assert.deepEqual(['github.com', 'acme.ghe.com', 'ghe.example.com'].map(facade.forgeApiHost), ['api.github.com', 'api.acme.ghe.com', 'ghe.example.com'], 'each host`s API host');
   // gh's own helper by its absolute path, quoted for the shell git runs it in; none without a gh on PATH.
   const bin = mkdtempSync(path.join(tmpdir(), "aidrian-gh's-"));
   writeFileSync(path.join(bin, 'gh'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
@@ -226,7 +225,7 @@ test('the forge token helpers: GH_TOKEN, which gh and its git helper read, the l
 });
 
 test('the facade index gives shared code forgeFor and its helpers, and nothing of GitHub`s by name', () => {
-  assert.deepEqual(Object.keys(facade).sort(), ['MAX_BODY', 'REVIEWS_PAGE', 'changeNotFound', 'diffTooLarge', 'forgeApiHost', 'forgeApiWrite', 'forgeConfigCommands', 'forgeDomains', 'forgeFor', 'forgeGitHelper', 'forgeLoginStep', 'forgeRefCommands', 'forgeTokenNote', 'forgeTokenVar', 'forgeTokenVars', 'forgeWorkflowFolders', 'isLogin', 'isTrustedCommenter', 'remoteIdentity', 'repoIdentity', 'servedRepository']);
+  assert.deepEqual(Object.keys(facade).sort(), ['MAX_BODY', 'REVIEWS_PAGE', 'changeNotFound', 'diffTooLarge', 'forgeApiWrite', 'forgeConfigCommands', 'forgeDomains', 'forgeFor', 'forgeGitHelper', 'forgeLoginStep', 'forgeRefCommands', 'forgeTokenNote', 'forgeTokenVar', 'forgeTokenVars', 'forgeWorkflowFolders', 'isLogin', 'isTrustedCommenter', 'remoteIdentity', 'repoIdentity', 'servedRepository']);
   assert.equal(facade.servedRepository, servedRepository);
   // The forge CLI's subcommands that write the user's config, for the unattended write allowlist.
   const commands = facade.forgeConfigCommands();

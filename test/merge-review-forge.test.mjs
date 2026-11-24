@@ -302,15 +302,11 @@ test('an unattended merge naming another host, in any spelling gh takes, is refu
     `env GH_HOST=ghe.example.com gh pr merge 7 -R acme/notes ${named}`,
     `gh api --hostname ghe.example.com -X PUT repos/acme/notes/pulls/7/merge -f sha=${HEAD}`,
     `GH_HOST=ghe.example.com gh api -X PUT repos/acme/notes/pulls/7/merge -f sha=${HEAD}`,
-    `curl -X PUT https://ghe.example.com/api/v3/repos/acme/notes/pulls/7/merge -d '{"sha":"${HEAD}"}'`,
   ]) assert.match(merge(r, command) ?? '', /^Blocked: no Human attends this session, and this merges pull request #7, but it names the host ghe\.example\.com, and this session works in acme\/notes on github\.com\./u, command);
-  // Only GitHub's own API hosts read as the host they serve: an `api.` host of anyone else's stays itself.
-  for (const [command, host] of [
-    [`curl -X PUT https://api.ghe.example.com/repos/acme/notes/pulls/7/merge -d '{"sha":"${HEAD}"}'`, 'api\\.ghe\\.example\\.com'],
-    [`curl -X PUT https://api.acme.ghe.com/repos/acme/notes/pulls/7/merge -d '{"sha":"${HEAD}"}'`, 'acme\\.ghe\\.com'],
-  ]) assert.match(merge(r, command) ?? '', new RegExp(`it names the host ${host}, and`, 'u'), command);
+  // curl is no merge the guard reads: a write to a merge URL is refused, on any host.
+  assert.match(merge(r, `curl -X PUT https://api.github.com/repos/acme/notes/pulls/7/merge -d '{"sha":"${HEAD}"}'`) ?? '', /^Blocked: this sends a write to a pull request's merge URL with curl/u);
   for (const command of [`gh pr merge 7 -R "$R" ${named}`, `GH_HOST=$H gh pr merge 7 ${named}`, `GH_REPO="$R" gh pr merge 7 ${named}`,
-    `gh api --hostname "$H" -X PUT repos/acme/notes/pulls/7/merge -f sha=${HEAD}`, `curl -X PUT "$API/repos/acme/notes/pulls/7/merge" -d '{"sha":"${HEAD}"}'`]) {
+    `gh api --hostname "$H" -X PUT repos/acme/notes/pulls/7/merge -f sha=${HEAD}`]) {
     assert.match(merge(r, command) ?? '', /but it names its repository or its host in a word the shell builds/u, command);
   }
   for (const command of [
@@ -321,7 +317,6 @@ test('an unattended merge naming another host, in any spelling gh takes, is refu
     `GH_REPO=ghe.example.com/acme/notes gh pr merge 7 -R acme/notes ${named}`,
     `GH_HOST=ghe.example.com gh pr merge 7 -R github.com/acme/notes ${named}`,
     `gh api --hostname github.com -X PUT repos/acme/notes/pulls/7/merge -f sha=${HEAD}`,
-    `curl -X PUT https://api.github.com/repos/acme/notes/pulls/7/merge -d '{"sha":"${HEAD}"}'`,
   ]) assert.equal(merge(r, command), null, command);
   // An attended merge is unchanged: the host is the unattended rule's.
   assert.equal(merge(r, `gh pr merge 7 -R ghe.example.com/acme/notes ${named}`, { mark: null }), null);

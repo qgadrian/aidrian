@@ -6,7 +6,7 @@
 // payloads are: a second forge reshapes them with its adapter.
 
 import { apiWrite, changeNotFound, CONFIG_COMMANDS, createGithubForge, diffTooLarge, domains, GITHUB_JSON, isLogin, isTrustedCommenter, MAX_BODY, REF_COMMANDS, REVIEWS_PAGE, servedRepository, TOKEN_VARS, WORKFLOW_FOLDERS } from './github.mjs';
-import { apiRoot, gitHelperValue, loginStep, tokenNote, tokenVarFor } from './github-token.mjs';
+import { gitHelperValue, loginStep, tokenNote, tokenVarFor } from './github-token.mjs';
 import { remoteIdentity, repoIdentity } from './identity.mjs';
 
 // A repository's `{ host, path }` from a remote or a `-R` value: the facade's own helper (identity.mjs), which reads
@@ -53,10 +53,6 @@ export const forgeTokenVar = (host) => tokenVarFor(host);
 // holds, from the CLI on `env`'s PATH; null when the CLI is not there.
 export const forgeGitHelper = (env) => gitHelperValue(env);
 export const forgeLoginStep = (host) => loginStep(host);
-
-// The host the forge at `host` serves its API from, lower-cased: GitHub's `api.github.com` for github.com, and the
-// host itself for a GitHub Enterprise Server, which serves it under /api/v3.
-export const forgeApiHost = (host) => new URL(apiRoot(host)).hostname.toLowerCase();
 export const forgeTokenNote = (token) => tokenNote(token);
 
 // Whether a comment's author belongs to the repository. Each forge method object carries it too.

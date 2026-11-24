@@ -22,13 +22,15 @@ const RAW_TOOLS = { Bash: 'shell', Edit: 'edit', Write: 'write' };
 const NATIVE_TOOLS = { Bash: 'shell' };
 
 // Whether the path whose parts from a confined clone's root are `segments` is a host file of OpenCode at any depth: a
-// `.opencode` folder and all it holds, or a config file, either of which can load plugins. Whether OpenCode reads a
-// nested one is not known yet, so it is held wherever it lies. Names are compared in lower case, as a disk that folds
-// case reads them.
+// `.opencode` folder and all it holds, or a config file, either of which can load plugins, or an `.agents` folder and
+// all it holds, whose `skills` it loads. OpenCode 2.4.0 looks for `.claude`, `.agents`, `.opencode`, and both config
+// files in the folder a session starts in and in every folder above it up to `/`, with no stop at the git root
+// (ConfigDiscovery.discover, read as text from its binary), so a nested one loads into every session started below it.
+// Names are compared in lower case, as a disk that folds case reads them.
 function nestedProtected(segments) {
   const lower = segments.filter(Boolean).map((each) => each.toLowerCase());
   const last = lower.at(-1);
-  return lower.includes('.opencode') || last === 'opencode.json' || last === 'opencode.jsonc';
+  return lower.includes('.opencode') || lower.includes('.agents') || last === 'opencode.json' || last === 'opencode.jsonc';
 }
 
 // Its command line that starts, resumes, attaches to, or serves a session, which lib/handoff-guard.mjs
@@ -145,12 +147,13 @@ export default {
   credentialStores,
   projectFolders: {},
   // The host files of a checkout a session no Human attends never writes, from its root: `.opencode/plugins/` loads code
-  // into the next session there, and either config file can name plugins (lib/unattended-write.mjs).
-  protectedPaths: ['.opencode', 'opencode.json', 'opencode.jsonc'],
+  // into the next session there, either config file can name plugins, and 2.4.0 loads skills from the `skills` folder of
+  // `.agents` (its opencode.config.compatibility plugin), held whole (lib/unattended-write.mjs).
+  protectedPaths: ['.opencode', 'opencode.json', 'opencode.jsonc', '.agents'],
   nestedProtected,
   // The same files at any depth, as globs from a clone's root in the `**` form git and the sandbox both read: a confined
   // session's sandbox denies them, and the write guard lists the git index's links among them.
-  nestedGlobs: ['**/.opencode', '**/.opencode/**', '**/opencode.json', '**/opencode.jsonc'],
+  nestedGlobs: ['**/.opencode', '**/.opencode/**', '**/opencode.json', '**/opencode.jsonc', '**/.agents', '**/.agents/**'],
   mainCheckoutPaths: { folders: [], settings: [] },
   capabilities: {
     transcripts: false,

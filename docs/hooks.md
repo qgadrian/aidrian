@@ -447,6 +447,11 @@ What each rule matches:
   `cd` names; `npm test -- <file>` runs no full suite. [Push first](#push-first) says when it refuses.
 - Main checkout: `>`, `>>`, `tee`, `sed -i`, `perl -i`, `ruby -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`,
   `touch`, `mkdir`, and `rsync` (sources too under `--remove-source-files`); a branch switch or `git add -A` there;
+  a `cp`, `ln`, `install`, `mv`, `git mv`, or `rsync` into a folder also writes the file it makes there,
+  `<folder>/<source's last part>`, when the text shows a folder (`-t`, two or more sources, a closing slash, `.`, `..`,
+  or `ln` with one operand) or the destination is a folder on the disk, so the config guard judges it the same way;
+  `rsync` does so for each local source with no closing slash, since one with it copies its contents, whatever the
+  destination is, since rsync never renames a folder source (so `rsync pkg/x.md new.md` also names `new.md/x.md`);
   and there `git commit`, `commit-tree`, `cherry-pick`, `revert`, `rebase`, `am` (all but `--abort` and `--quit`),
   `merge` and `pull` but a `--ff-only` toward the default branch's upstream, and a `git reset` of anything but named
   files ([Main checkout](#main-checkout)).
@@ -1252,7 +1257,11 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     main checkout gives none; never the call's folder, so another worktree of the same repository
     is outside, unless it lies inside that checkout, as a task worktree under the main checkout's `.claude/worktrees/`
     does for a session started in the main checkout; each checkout nested so keeps its `.git` pointer and its host
-    files refused, as below, and a checkout whose nested checkouts git cannot list is no worktree. A mark filed before
+    files refused, as below, and so does each folder strictly between the worktree's top and such a checkout, such as
+    `.claude/` or `.claude/worktrees/`, since a host that reads the folders above a start folder loads its root host
+    files into every session started below; the worktrees folder `git.worktrees.dir` names, `.worktrees` by default,
+    keeps its root host files refused too, with no checkout in it yet; a checkout whose nested checkouts git cannot list
+    is no worktree. A mark filed before
     the start folder was recorded, by an older gate, names the main checkout as its root wherever the session started,
     so that checkout never stands in: the start folder is the one the gate's start record in the continuation store
     names for the session, by the payload's full id or the short id the host printed (`lib/handoff-guard.mjs
@@ -1278,7 +1287,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     must be no link, and lie in no state folder, no host folder of any
     of the repository's checkouts, such as `.claude/skills`, and no dot folder of the home folder outside the main
     checkout, since the worktrees folder is the config's. It keeps its nested checkouts, git folders, `.git` pointer, and
-    host files refused from the same call on, as the start worktree does, a host file that is a link included. A worktree
+    host files refused from the same call on, as the start worktree does, the folders between it and a checkout nested
+    in it and a host file that is a link included. A worktree
     made by plain `git worktree add`, by another session, or by a shell with no session id, is outside, and a project
     run's issue session gets none: it stays confined to its attempt. The session ledger's `links.jsonl` is display data
     that a call's output can forge, so no grant reads it. A record lasts 30 days. Accepted residuals: a recorded checkout
@@ -1306,7 +1316,14 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     run has a branch, planned or attempted, spelled the same once each `/` is a `-` (as `feat/eng-1-export` and
     `feat-eng-1/export`), or spelled the same and then `-` more, a body or handoff file named for the branch is neither
     issue's: the refusal names a key-named body file, such as `tmp/eng-1-pr-body.md`, which `--body-file` takes;
-  - the temporary folder, this process's `TMPDIR` and `/tmp`, but for a state folder inside it, as one under `/tmp`
+  - the temporary folder, this process's `TMPDIR` and `/tmp`, but for a host file some host loads from any depth
+    (`nestedProtected`, the union of every host's), at any depth there, such as a `.claude` folder's skills or settings,
+    a `SKILL.md`, an `.opencode` or `.agents` folder, or an `opencode.json`: a host that reads the folders above its
+    start folder, as OpenCode does, loads it into every session started below that folder, so it is refused by the
+    write tool and the shell, as "a host file a session started below that temporary folder loads", a copy, move, or
+    link by the path it names and by the name it makes inside a destination folder, never by what a copied or moved
+    folder holds; a glob there is not judged for one ([OpenCode residuals](providers/opencode.md#rules-for-the-other-hosts-sessions)).
+    Also but for a state folder inside it, as one under `/tmp`
     is, where only the state places above pass, and for any checkout of the repository inside it, which keeps the rules
     above: a checkout that is not the session's worktree stays outside, and the worktree's host files and `.git` entries
     stay refused; with checkouts git cannot list, or a main checkout git cannot read though a `.git` lies at or above it,
@@ -1334,14 +1351,17 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   and a temporary copy of either, by a write, a delete, a removal of a folder above them, or a hard link to the record,
   in every layout, a state folder inside the session's own checkout or a limited mark's included, and for a project
   run's issue session the whole `audits` folder; the host files every host's adapter protects (`protectedPaths`), in the
-  session's own worktree, each checkout of the repository nested in it, and its attempt's clone: `.claude/settings.json`, `.claude/settings.local.json`,
+  session's own worktree, each checkout of the repository nested in it, each folder strictly between the two, and its
+  attempt's clone: `.claude/settings.json`, `.claude/settings.local.json`,
   `.claude/skills`, `.claude/agents`, `.claude/commands`, `.claude/hooks`, `.claude/workflows`,
   `.claude/scheduled_tasks.json`, and `.mcp.json`, and OpenCode's `.opencode` folder, `opencode.json`, and
-  `opencode.jsonc` ([OpenCode](providers/opencode.md#rules-for-the-other-hosts-sessions)), which a later session there
-  loads, to a Claude Code or Codex session alike; at any depth of the attempt's clone, the host files a host loads from a
-  nested folder (`nestedProtected`): a `.claude` folder itself, the `skills`, `agents`, `commands`, `hooks`,
-  `workflows`, `scheduled_tasks.json`, and `settings*.json` of any `.claude` folder, any `SKILL.md`, any `.opencode`
-  folder and all it holds, and any `opencode.json` or `opencode.jsonc`, by the write tool, the shell, a link's target,
+  `opencode.jsonc`, and the `.agents` folder, which OpenCode's adapter holds whole and where Codex keeps its plugin
+  marketplace ([OpenCode](providers/opencode.md#rules-for-the-other-hosts-sessions)), which a later session there
+  loads, to a Claude Code or Codex session alike; at any depth of the attempt's clone, and of the temporary folder, the
+  host files a host loads from a nested folder (`nestedProtected`): a `.claude` folder itself, the `skills`, `agents`,
+  `commands`, `hooks`, `workflows`, `scheduled_tasks.json`, and `settings*.json` of any `.claude` folder, any
+  `SKILL.md`, any `.opencode` or `.agents` folder and all it holds, and any `opencode.json` or `opencode.jsonc`, by the
+  write tool, the shell, a link's target,
   or a glob that may reach one, such as a part that may name `.claude` or `.opencode`, or a last part that may name
   `SKILL.md` (`*.md`) or an OpenCode config file; judged
   by the real path's parts, by the path as written past each leading part that resolves into the clone, so a write
@@ -1352,6 +1372,17 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   folders. A repository under a dot folder, such as `~/.dotfiles`, still writes itself when it is the session's worktree.
   A write through a hard link to a refused file counts as one to it, and a link a command makes (`ln`, `ln -s`,
   `cp -s`, `cp -l`) is judged by the path it points at: it is refused when that path is refused or outside the places.
+  Accepted residuals of the host-file rules
+  ([OpenCode residuals](providers/opencode.md#rules-for-the-other-hosts-sessions)): a copy, move, sync, archive
+  extraction, or clone of a folder whose contents hold a host file, or one that names its sources by a glob, is judged
+  by its destination alone, with the reach of a program's own write. A move into a folder the same command line makes
+  first, by a name with no closing slash, is judged as a rename, since the folder is read from the disk when the call is
+  checked. A target built at run time, such as `d=$TMPDIR/a; echo x > $d/.opencode/plugins/x.js`, is judged by its
+  names, and host-file names are not among them, so it passes, with the reach of a program's own write. A write to a
+  path that an existing link in a temporary folder makes a host file passes, since the temporary rule reads the path's
+  own parts and no links. The configured worktrees folder is read from `config.json` on each call, and a session in the
+  main checkout may edit that file, so renaming `git.worktrees.dir`, writing a host file in the old folder, and renaming
+  it back is not refused: three deliberate steps, and the tracked edit shows until it is reverted.
   - A target built from a variable is read with `$HOME`, `${HOME}`, `$XDG_CONFIG_HOME`, `$ZDOTDIR`, and `$TMPDIR`
     expanded from the hook's environment, unless the command sets that variable itself. One that still holds `$` or a
     backtick is judged by its names (a startup file, a git config, a dot entry of the home folder), by a git folder it

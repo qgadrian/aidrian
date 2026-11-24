@@ -28,6 +28,7 @@ import { GLOB_WORD, globStarts, sameFile } from './glob-links.mjs';
 import { globReaches, modeTargets, sessionWorktrees, startedFolder, stateFolders } from './handoff-guard.mjs';
 import { fileEditOf, nestedGlobs, nestedPathspecs, nestedProtected, opaqueShellCommand, protectedFile, protectedPaths, transcriptFolders } from './hosts/index.mjs';
 import { issueForgeDenial } from './issue-forge-guard.mjs';
+import { worktreesDir } from './project.mjs';
 import { ownIssue } from './project-run-guard.mjs';
 import { canonical } from './rules/main-checkout.mjs';
 import { issueHeld } from './unattended-mark.mjs';
@@ -115,7 +116,8 @@ const refuser = (list) => (file, what, folder = false, allows = null, always = f
 //     the mark's main checkout, and `worktreeCommon` its git common folder; never the call's folder. Every other checkout
 //     of the repository nested in it keeps its `.git` pointer and host files refused (nestedRefused). `nested` holds the attempt's
 //     clone, { root, work, common, links }, `common` the git folder the start cloned it with. `temp`: the temporary
-//     folders, this process's and /tmp by default. `states`: every state folder of `project`, where only `specific`
+//     folders, this process's and /tmp by default, where every file passes but a host file some host loads from any
+//     depth (placeOf, TEMP_HOST). `states`: every state folder of `project`, where only `specific`
 //     and `reviews` pass, even inside a temporary folder, as a state folder under /tmp is. `checkouts`: every checkout of
 //     the mark's repository, where a temporary folder passes nothing either, so a checkout under /tmp keeps its own rules;
 //     with checkouts git cannot list, no temporary folder passes. A main checkout that is no git repository has none.
@@ -218,7 +220,7 @@ function ownPlaces(places, { mark, project, config, base, own, home, temp, sessi
   const from = repo ? startFolder(mark, places.issueHeld, () => startedFolder(project, config, session, stateOptions(base, home))) : null;
   const start = from ? gitFolders(from, gitBudget()) : null;
   if (places.issueHeld) places.issue = ownIssue(project, config, mark, stateOptions(base, home));
-  if (start && real(start.common) === real(repo.common) && startTop(start, from) && nestedRefused(refuse, checkouts, start.top)) {
+  if (start && real(start.common) === real(repo.common) && startTop(start, from) && nestedRefused(refuse, checkouts, start.top, [worktreesDir(project, { config })])) {
     places.worktree = real(start.top);
     places.worktreeCommon = real(start.common);
     gitRefused(refuse, start);
@@ -244,7 +246,7 @@ function ownPlaces(places, { mark, project, config, base, own, home, temp, sessi
     refuse(path.join(attempt, 'work', '.git'), 'the attempt clone\'s pointer to its git folder');
   }
   const states = stateWork(places, { project, config, base, home }, refuse);
-  if (repo) madePlaces(places, { repo, checkouts, recorded: () => sessionWorktrees(states, session, [...project.checkouts, ...(checkouts ?? [])], config.session.handoff.maxChain) }, refuse);
+  if (repo) madePlaces(places, { repo, checkouts, folders: [worktreesDir(project, { config })], recorded: () => sessionWorktrees(states, session, [...project.checkouts, ...(checkouts ?? [])], config.session.handoff.maxChain) }, refuse);
   places.temp = unknown || (repo && !checkouts) ? [] : (temp ?? [tmpdir(), '/tmp']).filter(absolute).map(real);
 }
 
@@ -258,11 +260,12 @@ function ownPlaces(places, { mark, project, config, base, own, home, temp, sessi
 // old path all grant nothing. None lies in a state folder, in a host folder of a checkout of the repository, as a
 // worktrees folder set to `.claude/skills` would place it, or in a dot entry of the home folder outside the main checkout,
 // since config.json, which the session may edit, names the folder the command makes it in. A project run's issue session
-// stays confined to its attempt and gets none. Each candidate costs one git call per hook call, only for this session's
-// records. Accepted residuals: a checkout git is slow to read spends the guards' budget; and a record is told by its path
+// stays confined to its attempt and gets none. The configured worktrees folder (`folders`) is held in a made worktree
+// as in the start worktree, only when it lies strictly inside it (nestedRefused). Each candidate costs one git call per
+// hook call, only for this session's records. Accepted residuals: a checkout git is slow to read spends the guards' budget; and a record is told by its path
 // alone, so one a session forged by running the plugin's code, which no guard sees, grants another linked worktree of the
 // same repository.
-function madePlaces(places, { repo, checkouts, recorded }, refuse) {
+function madePlaces(places, { repo, checkouts, folders, recorded }, refuse) {
   if (places.issueHeld || !checkouts) return;
   const main = real(repo.top);
   const hosts = places.checkouts.flatMap((top) => protectedPaths().map((each) => real(path.join(top, each))));
@@ -274,7 +277,7 @@ function madePlaces(places, { repo, checkouts, recorded }, refuse) {
     if (places.states.some((state) => isWithin(state, top)) || hosts.some((host) => isWithin(host, top)) || dotted(top)) continue;
     const made = gitFolders(each, gitBudget());
     if (!made || real(made.common) !== real(repo.common) || !startTop(made, each) || real(made.top) !== top) continue;
-    if (!nestedRefused(refuse, checkouts, each)) continue;
+    if (!nestedRefused(refuse, checkouts, each, folders)) continue;
     places.made.push(top);
     gitRefused(refuse, made);
     hostRefused(refuse, each);
@@ -298,17 +301,28 @@ const startTop = (start, from) => real(start.gitDir) !== real(start.common) || r
 // The other checkouts of the repository, `checkouts` (git.mjs repositoryCheckouts), that lie inside the session's worktree `top`, as
 // task worktrees under the main checkout's `.claude/worktrees/` do for a session started there: each one's `.git`
 // pointer is refused, whole folders that hold it included (`always`), and so are its host files, which a later session
-// there loads (hostRefused). Whether git could list the checkouts: a worktree whose nested checkouts cannot be told is
-// none of the session's.
+// there loads (hostRefused), and the root host files of each folder strictly between `top` and it, such as
+// `.claude/worktrees/` and `.claude/`: a host that reads the folders above a session's start folder loads them into every
+// session started in that checkout, and a worktrees folder is git-ignored, so no review sees them. Each of `folders`
+// inside `top`, the configured worktrees folder (project.mjs worktreesDir), is held as a nested checkout is, less the
+// `.git` entry, whether or not a checkout is in it yet. Each folder is listed once however many checkouts it holds, and
+// a nested checkout or held folder is never listed again as a folder between. Whether git could list the checkouts: a
+// worktree whose nested checkouts cannot be told is none of the session's.
 const NESTED_POINTER = 'a nested checkout\'s pointer to its git folder, which only git writes';
-function nestedRefused(refuse, checkouts, top) {
+function nestedRefused(refuse, checkouts, top, folders = []) {
   if (!checkouts) return false;
   const own = real(top);
-  for (const each of checkouts) {
-    const at = real(each);
-    if (at === own || !isWithin(own, at)) continue;
-    refuse(path.join(each, '.git'), NESTED_POINTER, false, null, true);
+  const inside = (each) => real(each) !== own && isWithin(own, real(each));
+  const nested = checkouts.filter(inside);
+  for (const each of nested) refuse(path.join(each, '.git'), NESTED_POINTER, false, null, true);
+  const roots = new Map([...nested, ...folders.filter(inside)].map((each) => [real(each), each]));
+  const seen = new Set(roots.keys());
+  for (const [at, each] of roots) {
     hostRefused(refuse, each);
+    for (let folder = path.dirname(at); folder !== own && isWithin(own, folder) && !seen.has(folder); folder = path.dirname(folder)) {
+      seen.add(folder);
+      hostRefused(refuse, folder);
+    }
   }
   return true;
 }
@@ -582,7 +596,9 @@ function refusedHit(target, spelled, entries, { own, holds }) {
 // come first, then the session's places, its own worktree before the home folder's dot entries, so a repository there
 // still writes itself; a target that would pass meets the git config files git names (`later`) too. A temporary folder
 // passes nothing inside a state folder (`states`), whose own places alone pass there, so a state folder under /tmp keeps
-// its handoff briefs, quorum ledgers, and other sessions' files from the session.
+// its handoff briefs, quorum ledgers, and other sessions' files from the session. Elsewhere in it, a host file some host
+// loads from any depth is refused (TEMP_HOST), judged as a confined clone is (nestedHit), with each temporary folder
+// that holds the target as a root.
 function placeOf(target, spelled, places, { holds = true } = {}) {
   const own = [...places.specific, places.worktree, ...(places.made ?? []), ...places.temp].includes(target);
   const hit = refusedHit(target, spelled, places.refused, { own, holds }) ?? nestedHit(target, places.nested ?? [], spelled);
@@ -599,9 +615,16 @@ function placeOf(target, spelled, places, { holds = true } = {}) {
   // Accepted residual: a checkout here only keeps the temporary folder from passing a path inside it; it is no refused
   // entry, so a removal of a temporary folder above it, such as `rm -rf /tmp/work` over a sibling worktree in it, passes.
   const held = [...(places.states ?? []), ...(places.checkouts ?? [])].some((dir) => isWithin(dir, target));
-  if (!held && places.temp.some((dir) => isWithin(dir, target))) return passes();
+  const temp = held ? [] : places.temp.filter((dir) => isWithin(dir, target));
+  // `links: []`: a temporary folder has no git index whose links nestedLinkHit would list.
+  if (temp.length) return nestedHit(target, temp.map((root) => ({ root, links: [] })), spelled) ? { refused: TEMP_HOST } : passes();
   return { outside: true };
 }
+
+// A host file some host loads from any depth (hosts/index.mjs nestedProtected), in a temporary folder: a host that reads
+// the folders above the one a session starts in loads it into every session started below that folder. No glob rule
+// holds it there: a glob reaches only a host folder already there, and `rm -rf /tmp/work/*` would refuse.
+const TEMP_HOST = { what: 'a host file a session started below that temporary folder loads, such as a .claude folder\'s skills or settings, or a SKILL.md' };
 
 // A `.git` entry at any depth of the place `top` the real, case-folded path `target` lies in, the session's worktree,
 // an attempt folder, or a state folder it writes, below the entries gitRefused names: a checkout nested in it, as a task

@@ -90,6 +90,10 @@ test('a subagent may not change a file that sets the gates, with any write tool 
       + ' the same result with another tool; tell the product owner what the task needs.',
   );
   assert.match(verdict(dir, subagent(dir, 'Bash', { command: 'rm -rf .aidrian' })), /^aidrian: Bash is blocked .* it changes \.aidrian\/config\.json,/);
+  // A move into the existing config folder by its name is the move onto the file it makes there.
+  const into = verdict(dir, subagent(dir, 'Bash', { command: 'mv /tmp/x/config.json .aidrian' }));
+  assert.match(into ?? '', /^aidrian: Bash is blocked .* it changes \.aidrian\/config\.json,/);
+  assert.equal(into, verdict(dir, subagent(dir, 'Bash', { command: 'mv /tmp/x/config.json .aidrian/config.json' })));
 });
 
 test('a subagent may still read those files and write anything else, and the main session may change them', async (t) => {

@@ -3,6 +3,7 @@
 import path from 'node:path';
 
 import { checkDeadline } from '../../deadline.mjs';
+import { isDirectory } from '../../fs.mjs';
 import { inlineShellCommand, isLongOption, lexSteps, readGit, readInvocation, SUBSTITUTION_DEPTH_LIMIT } from '../../shell-lex.mjs';
 import { cdChange, directoryChange } from './directory-change.mjs';
 import { expandHome, WRITERS, written } from './writers.mjs';
@@ -70,6 +71,7 @@ export function bashWrites(command, cwd, { followCd = false, shells = false, res
   visit(command, { dirs: [cwd], unsure: false, cds: [], via: [] }, 0);
   return targets
     .filter(({ token }) => (!token.dynamic || (globs && !/[$`]/u.test(token.text))) && token.text !== '')
+    .filter(({ token, place }) => !token.joined || token.joined.certain || intoFolder(token.joined.into, place.dirs))
     .map(({ token, place: { dirs, unsure, cds, via } }) => {
       const { dynamic } = token;
       const text = expandHome(token);
@@ -77,6 +79,18 @@ export function bashWrites(command, cwd, { followCd = false, shells = false, res
       if (path.isAbsolute(text)) return { text, files: [text], unsure: false, cds, via };
       return { text, files: dirs.map((dir) => path.resolve(dir, text)), unsure, cds, via };
     });
+}
+
+// Whether the destination token `into` of a joined name (writers.mjs joinedNames) is a folder on the disk, from the
+// shell's folders `dirs`, so a rename onto a path that is no folder yields no joined name. One built at run time is none.
+const intoFolder = (into, dirs) => !into.dynamic && isFolderIn(expandHome(into), dirs);
+
+// Whether the path `text` is a folder on the disk, absolute or from one of the folders `dirs`: one stat each, under the
+// guards' deadline. A relative path with no folder to read it from is none. unattended-shell.mjs shellWrites asks it of
+// a destination it expanded.
+export function isFolderIn(text, dirs) {
+  checkDeadline();
+  return path.isAbsolute(text) ? isDirectory(text) : dirs.some((dir) => isDirectory(path.resolve(dir, text)));
 }
 
 // The shell's folder once a `cd` may have moved it anywhere: no folder is certain.
@@ -117,5 +131,7 @@ function gitWritten(segment, place, restores) {
   if (call.subcommand === 'checkout') rest = dashes === -1 ? [] : rest.slice(dashes);
   const has = (letter, long, shortest) => rest.some(({ text }) => isLongOption(text, long, shortest) || (/^-[A-Za-z]+$/u.test(text) && text.includes(letter)));
   if (call.subcommand === 'restore' && has('S', '--staged', '--st') && !has('W', '--worktree', '--w')) return [];
-  return written('git', rest, writers.get(call.subcommand)).map((token) => ({ token, place: at }));
+  // git mv moves as mv does, into a folder by the name of each source too.
+  const program = call.subcommand === 'mv' ? 'mv' : 'git';
+  return written(program, rest, writers.get(call.subcommand)).map((token) => ({ token, place: at }));
 }

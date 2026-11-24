@@ -77,7 +77,8 @@ const isHomeWord = ({ text, literal = false }) => !literal && (text === '~' || t
 export const expandHome = (token) => (isHomeWord(token) ? path.join(homedir(), token.text.slice(1)) : token.text);
 
 // The operands a writer writes: all of them, every path of mv, the destination of cp and rsync (and rsync's sources
-// under --remove-source-files), and the files of sed -i, never its script.
+// under --remove-source-files), and the files of sed -i, never its script; for cp, ln, install, mv, and rsync, also the
+// name each makes inside a destination folder (joinedNames).
 export function written(program, args, valueFlags = WRITERS.get(program)) {
   const flags = [];
   const operands = [];
@@ -114,14 +115,15 @@ export function written(program, args, valueFlags = WRITERS.get(program)) {
   if (program === 'install' && flags.some((flag) => flag === '-d' || isLongOption(flag, '--directory', '--d'))) return operands;
   if (COPIERS.has(program) || program === 'mv') {
     const directory = targetDirectory(args);
-    if (program === 'mv') return directory ? [...operands, directory] : operands;
-    if (directory) return [directory];
-    return operands.length >= 2 ? operands.slice(-1) : [];
+    const joined = copyJoined(program, operands, directory);
+    if (program === 'mv') return [...operands, ...(directory ? [directory] : []), ...joined];
+    if (directory) return [directory, ...joined];
+    return [...(operands.length >= 2 ? operands.slice(-1) : []), ...joined];
   }
   if (program === 'rsync') {
     if (operands.length < 2) return [];
     const removesSources = flags.some((flag) => isLongOption(flag, '--remove-source-files', '--remov') || isLongOption(flag, '--remove-sent-files', '--remov'));
-    return (removesSources ? operands : operands.slice(-1)).filter((token) => !REMOTE.test(token.text));
+    return [...(removesSources ? operands : operands.slice(-1)).filter((token) => !REMOTE.test(token.text)), ...syncJoined(operands)];
   }
   if (SCRIPT_OPTIONS.has(program)) {
     // perl -i and ruby -i edit their files in place; without -i they only read them, and -c only checks syntax.
@@ -140,6 +142,45 @@ export function written(program, args, valueFlags = WRITERS.get(program)) {
   if (!inPlace) return [];
   const scripted = flags.some((flag) => flag === '-e' || flag === '-f' || isLongOption(flag, '--expression', '--e') || isLongOption(flag, '--file', '--fi'));
   return scripted ? operands : operands.slice(1);
+}
+
+// A destination the text shows is a folder: one with a closing slash, `.`, `..`, or ending in either.
+const FOLDER_TEXT = /\/$|(?:^|\/)\.\.?$/u;
+// A source's last part that names no file the copy makes: `.` or `..`, or one built at run time or by a glob.
+const NO_NAME = /^\.\.?$|[$`*?[{]/u;
+
+// The names cp, ln, install, or mv makes inside a destination folder (joinedNames): its sources are every operand but
+// the destination, and the destination is certain a folder for -t, two or more sources, FOLDER_TEXT, or ln with one
+// operand, which links into the shell's folder.
+function copyJoined(program, operands, directory) {
+  const lone = program === 'ln' && !directory && operands.length === 1;
+  const sources = directory || lone ? operands : operands.slice(0, -1);
+  const into = directory ?? (lone ? { text: '.', dynamic: false, literal: true } : operands.at(-1));
+  if (!into) return [];
+  return joinedNames(sources, into, Boolean(directory) || lone || sources.length >= 2 || FOLDER_TEXT.test(into.text));
+}
+
+// The names rsync makes inside its destination (joinedNames), for each local source with no closing slash: one with it
+// copies its contents, the stated residual below. Each is certain: rsync never renames a folder source, so
+// `rsync -a pkg/dir new` makes new/dir whether or not new is there. The price is a rare extra refusal of a file synced
+// to a new name, as `rsync -a pkg/x.md new.md` also names new.md/x.md. A remote destination or source makes no local name.
+function syncJoined(operands) {
+  const into = operands.at(-1);
+  if (REMOTE.test(into.text)) return [];
+  const local = operands.slice(0, -1).filter((source) => !REMOTE.test(source.text) && !source.text.endsWith('/'));
+  return joinedNames(local, into, true);
+}
+
+// `<into>/<last part of each source>`, each marked `joined: { into, certain }`: `into` the destination token, and
+// `certain` when the text says it is a folder. A reader keeps an uncertain one only when its destination is a folder
+// on the disk (bash-writes.mjs bashWrites, unattended-shell.mjs shellWrites), so a rename yields none. Accepted
+// residual: what a copied, moved, or synced folder holds is not read, so `cp -R pkg <dest>` is judged by `<dest>/pkg`
+// alone, however many host files pkg holds, as is `rsync -a pkg/ <dest>/` by `<dest>`, and a source named by a glob.
+function joinedNames(sources, into, certain) {
+  return sources
+    .map((source) => path.basename(source.text))
+    .filter((name) => name !== '' && !NO_NAME.test(name))
+    .map((name) => ({ text: path.join(into.text, name), dynamic: into.dynamic, literal: into.literal, joined: { into, certain } }));
 }
 
 // The backup an in-place edit with `suffix` writes for `file`, as each interpreter does it (checked by running both):

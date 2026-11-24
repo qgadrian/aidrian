@@ -19,7 +19,8 @@ import { anchorClones, cloneConfigProblem, cloneGitProblem, GIT_PLACEHOLDERS } f
 import { noteStarted, openStore, startedFolders } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { PastDeadline, withinDeadline } from '../plugins/aidrian/lib/deadline.mjs';
 import { committedConfig } from '../plugins/aidrian/lib/config-committed.mjs';
-import { foldCase } from '../plugins/aidrian/lib/fs.mjs';
+import { foldCase, isWithin } from '../plugins/aidrian/lib/fs.mjs';
+import { protectedPaths } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { runGit } from '../plugins/aidrian/lib/git.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { unattendedPlaces, unattendedWriteDenial } from '../plugins/aidrian/lib/unattended-write.mjs';
@@ -798,12 +799,136 @@ test('a temporary folder that holds a checkout passes none of it: the checkout\'
     assert.match(ask(bash(`printf x > "${file}"`), withheld, none) ?? '', /outside the places|pointer to its git folder/u, `shell ${file}`);
   }
   assert.equal(ask(write(path.join(fx.root, 'elsewhere', 'notes.md')), withheld, none), null, 'the temporary folder outside every checkout');
+  assert.match(ask(write(path.join(fx.root, 'elsewhere', '.opencode', 'plugins', 'x.js')), withheld, none) ?? '', /a host file a session started below that temporary folder loads/u, 'a host file there');
   // With its own worktree, the others stay outside, and its host files and git pointer refused.
   recordStart(fx, { cwd: first });
   const own = placesFor(withheld);
   assert.equal(ask(write(path.join(first, 'a.ts')), withheld, own), null);
   assert.match(ask(write(path.join(first, '.claude', 'settings.json')), withheld, own) ?? '', /a host file a later session/u);
   for (const file of [path.join(second, 'a.ts'), path.join(fx.worktree, 'a.ts'), path.join(fx.dir, 'README.md')]) assert.match(ask(write(file), withheld, own) ?? '', /outside the places/u, file);
+});
+
+test('a session no Human attends never writes a host file in a temporary folder, by the write tool, the shell, a move, or a link, and other files there pass', (t) => {
+  const fx = fixture(t);
+  const reason = /a host file a session started below that temporary folder loads/u;
+  // OpenCode's files and Claude Code's nested ones, from the one union of the hosts' lists.
+  const refused = ['.opencode/plugins/x.js', 'opencode.json', 'a/opencode.json', 'A/OpenCode.JSONC',
+    'a/.claude/skills/x/SKILL.md', 'a/.claude/settings.json', 'docs/SKILL.md', 'a/.agents/skills/x/run.sh'];
+  for (const file of refused) {
+    const target = path.join(fx.temp, file);
+    for (const input of [write(target), bash(`echo x > ${target}`), bash(`mkdir -p ${path.dirname(target)} && touch ${target}`), bash(`cp /dev/null ${target}`)]) {
+      assert.match(fx.ask(input)?.reason ?? '', reason, `${input.tool_input.command ?? 'Write'} ${file}`);
+    }
+  }
+  for (const file of ['a/notes.md', 'a/opencode.md', 'a/src/opencode.json.ts', 'scratch.txt', 'a/.claude/notes.md']) {
+    const target = path.join(fx.temp, file);
+    for (const input of [write(target), bash(`echo x > ${target}`)]) assert.equal(fx.ask(input), null, `${input.tool_name} ${file}`);
+  }
+  assert.equal(fx.ask(bash(`rm -rf ${path.join(fx.temp, 'a')}`)), null, 'a removal of a folder there');
+  // A tree prepared under another name, which passes, then moved or linked in.
+  const stage = path.join(fx.temp, 'stage');
+  assert.equal(fx.ask(write(path.join(stage, 'plugins', 'x.js'))), null, 'the prepared tree');
+  mkdirSync(path.join(stage, 'plugins'), { recursive: true });
+  writeFileSync(path.join(stage, 'plugins', 'x.js'), 'x\n');
+  for (const command of [`mv ${stage} ${path.join(fx.temp, '.opencode')}`, `ln -s ${stage} ${path.join(fx.temp, 'a', '.opencode')}`, `ln -s ${path.join(fx.temp, '.opencode', 'plugins')} p`]) {
+    assert.match(fx.ask(bash(command))?.reason ?? '', reason, command);
+  }
+});
+
+test('a copy, move, or link into a folder is judged by the name it makes there, in a temporary folder and at the worktree\'s root, and a rename is not', (t) => {
+  const fx = fixture(t);
+  const wt = fx.worktree;
+  const x = path.join(fx.temp, 'x');
+  mkdirSync(x);
+  const later = /a host file a later session/u;
+  const temp = /a host file a session started below that temporary folder loads/u;
+  const refused = [
+    [`cp -R ${wt}/pkg/.claude ${wt}/`, later], [`mv ${wt}/pkg/.claude ${wt}/`, later],
+    [`cp ${wt}/pkg/opencode.json ${x}/`, temp], [`cp -R ${wt}/pkg/.opencode ${x}/`, temp], [`mv ${wt}/pkg/.opencode ${x}`, temp],
+    [`ln -s ${wt}/pkg/.opencode ${x}/`, temp], [`cp -t ${x} ${wt}/pkg/opencode.json`, temp], [`cp ${wt}/a.md ${wt}/pkg/opencode.json ${x}`, temp],
+    ['cp stage/opencode.json .', later], ['cp stage/.mcp.json .', later], ['cp -R stage/.agents .', later], ['git mv pkg/.claude .', later],
+    // rsync makes the same names, a destination from a variable the hook expands included.
+    [`rsync -a ${wt}/pkg/.claude ${wt}/`, later], [`rsync -a ${wt}/pkg/.opencode $TMPDIR/x/`, temp], [`rsync -a ${wt}/pkg/opencode.json ${x}/`, temp],
+    // rsync never renames a folder source: a destination not there yet gets it inside.
+    [`rsync -a ${wt}/pkg/.opencode ${path.join(fx.temp, 'new')}`, temp],
+  ];
+  for (const [command, reason] of refused) assert.match(fx.ask(bash(command))?.reason ?? '', reason, command);
+  // One operand: the link is made in the shell's folder, by the name of what it links to.
+  assert.match(fx.ask(bash(`ln -s ${wt}/pkg/.opencode`), { cwd: x })?.reason ?? '', temp, 'ln with one operand');
+  for (const command of [`cp notes.md ${x}/`, 'cp x .', 'mv a.txt b.txt', `mv ${wt}/pkg/.opencode ${path.join(fx.temp, 'y')}`,
+    `rsync -a notes.md ${x}/`, `rsync -a pkg/ ${path.join(fx.temp, 'w')}/`, `rsync -a pkg/notes.md ${path.join(fx.temp, 'new.md')}`]) {
+    assert.equal(fx.ask(bash(command)), null, command);
+  }
+  // The review manifest's rename keeps its verdict, with the manifest there and without it.
+  const reviews = path.join(fx.state, 'reviews');
+  mkdirSync(reviews, { recursive: true });
+  const [copy, manifest] = [path.join(reviews, '.pr-7.json.tmp'), path.join(reviews, 'pr-7.json')];
+  writeFileSync(copy, JSON.stringify({ pr: 7, rounds: [], findings: [] }));
+  assert.equal(fx.ask(bash(`mv ${copy} ${manifest}`)), null, 'the rename, no manifest there');
+  writeFileSync(manifest, '{}\n');
+  assert.equal(fx.ask(bash(`mv ${copy} ${manifest}`)), null, 'the rename over the manifest');
+});
+
+test('the configured worktrees folder of a session started in the main checkout keeps its root host files refused with no checkout in it', (t) => {
+  const fx = fixture(t);
+  const held = { root: fx.dir, cwd: fx.dir };
+  const placesWith = (config = fx.config) => unattendedPlaces({ cwd: fx.dir, mark: held, project: fx.project, config, env: fx.env, home: fx.home, temp: [fx.temp], session: SESSION });
+  const withDir = (dir) => ({ ...fx.config, git: { ...fx.config.git, worktrees: { ...fx.config.git.worktrees, dir } } });
+  const ask = (input, found) => fx.ask(input, { held, cwd: fx.dir, places: () => found })?.reason ?? null;
+  const trees = path.join(fx.dir, '.worktrees');
+  for (const made of [false, true]) {
+    if (made) mkdirSync(trees);
+    const found = placesWith();
+    for (const file of ['.opencode/plugins/x.js', 'opencode.json', '.mcp.json', '.agents/skills/x/SKILL.md']) {
+      const target = path.join(trees, file);
+      assert.match(ask(write(target), found) ?? '', /a host file a later session/u, `${made} ${file}`);
+      assert.match(ask(bash(`printf x > "${target}"`), found) ?? '', /a host file a later session/u, `${made} shell ${file}`);
+    }
+    assert.equal(ask(write(path.join(trees, 'notes.md')), found), null, `${made} notes.md`);
+  }
+  // A worktrees folder in a host's own folder, and the folders between it and the top.
+  const claude = placesWith(withDir('.claude/worktrees'));
+  for (const file of [path.join(fx.dir, '.claude', 'worktrees', 'opencode.json'), path.join(fx.dir, '.claude', 'opencode.json')]) {
+    assert.match(ask(write(file), claude) ?? '', /a host file a later session/u, file);
+  }
+  // A folder outside the main checkout adds nothing; the default one adds the root list once.
+  const outside = placesWith(withDir('../trees')).refused.map((entry) => entry.path);
+  const inside = placesWith().refused.map((entry) => entry.path);
+  assert.equal(outside.length, inside.length - protectedPaths().length);
+  assert.ok(!outside.some((each) => isWithin(realFolded(trees), each)), 'no entry under the default folder');
+  gitIn(fx.dir)('worktree', 'add', '-q', '-b', 'feat/three', path.join(trees, 'eng-3'));
+  const listed = placesWith().refused.filter((entry) => entry.path === path.join(realFolded(trees), 'opencode.json'));
+  assert.equal(listed.length, 1, 'held once, with a checkout in it');
+});
+
+test('a session started in the main checkout never writes a host file in a folder between it and a checkout nested in it, and lists each such folder once', (t) => {
+  const fx = fixture(t);
+  const { first, second } = nestedWorktrees(fx);
+  const third = path.join(fx.dir, '.worktrees', 'eng-3');
+  const direct = path.join(fx.dir, 'eng-4');
+  const inner = path.join(first, '.claude', 'worktrees', 'b');
+  gitIn(fx.dir)('worktree', 'add', '-q', '-b', 'feat/three', third);
+  gitIn(fx.dir)('worktree', 'add', '-q', '-b', 'feat/four', direct);
+  gitIn(fx.dir)('worktree', 'add', '-q', '-b', 'feat/inner', inner);
+  const held = { root: fx.dir, cwd: fx.dir };
+  const found = unattendedPlaces({ cwd: fx.dir, mark: held, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.temp], session: SESSION });
+  const ask = (input) => fx.ask(input, { held, cwd: fx.dir, places: () => found })?.reason ?? null;
+  for (const file of ['.worktrees/.opencode/plugins/x.js', '.worktrees/opencode.json', '.claude/worktrees/opencode.jsonc', '.claude/worktrees/.mcp.json', '.claude/.opencode/plugins/x.js']) {
+    const target = path.join(fx.dir, file);
+    assert.match(ask(write(target)) ?? '', /a host file a later session/u, file);
+    assert.match(ask(bash(`printf x > "${target}"`)) ?? '', /a host file a later session/u, `shell ${file}`);
+  }
+  for (const file of [path.join(fx.dir, '.worktrees', 'notes.md'), path.join(fx.dir, '.claude', 'worktrees', 'notes.md'), path.join(first, 'src', 'a.ts')]) {
+    assert.equal(ask(write(file)), null, file);
+    assert.equal(ask(bash(`printf x > "${file}"`)), null, `shell ${file}`);
+  }
+  assert.match(ask(bash(`rm -f ${path.join(fx.dir, '.worktrees')}/.o*/plugins/x.js`)) ?? '', /a host file a later session/u, 'a glob whose part may name the folder');
+  // Each folder that holds a root host file, once: the top, each nested checkout, a worktree nested in a worktree
+  // included, and each folder between, and no other.
+  const folders = found.refused.filter((entry) => path.basename(entry.path) === 'opencode.json' && /a host file a later session in that checkout/u.test(entry.what)).map((entry) => path.dirname(entry.path));
+  const expected = [fx.dir, first, second, third, direct, inner, path.join(fx.dir, '.claude', 'worktrees'), path.join(fx.dir, '.claude'), path.join(fx.dir, '.worktrees'),
+    path.join(first, '.claude', 'worktrees'), path.join(first, '.claude')].map(realFolded);
+  assert.deepEqual([...folders].sort(), [...expected].sort());
 });
 
 test('a main checkout git cannot read, with a .git on disk, grants no checkout and no temporary folder; one outside git keeps the temporary folder', (t) => {
@@ -1207,11 +1332,16 @@ test('a confined session never writes a host file its clone loads from any depth
   const own = () => fx.attempt;
   const work = path.join(fx.attempt, 'work');
   for (const file of ['pkg/.claude/skills/x/SKILL.md', 'a/b/.claude/agents/x.md', 'a/.claude/commands/c.md', 'a/.claude/settings.local.json', 'a/.claude/settings.json',
-    'a/.claude/hooks/h.sh', 'docs/SKILL.md', '.agents/skills/foo/SKILL.md']) {
+    'a/.claude/hooks/h.sh', 'docs/SKILL.md', 'pkg/.agents/skills/x/run.sh']) {
     const target = path.join(work, file);
     for (const input of [write(target), bash(`echo x > ${target}`), bash(`cp /dev/null ${target}`)]) {
       assert.match(fx.ask(input, { own })?.reason ?? '', /a host file a later session in that clone loads from any depth/u, `${input.tool_name} ${file}`);
     }
+  }
+  // At the clone's root, `.agents` is a root host file, met before the any-depth rule.
+  const rootSkill = path.join(work, '.agents/skills/foo/SKILL.md');
+  for (const input of [write(rootSkill), bash(`echo x > ${rootSkill}`), bash(`cp /dev/null ${rootSkill}`)]) {
+    assert.match(fx.ask(input, { own })?.reason ?? '', /a host file a later session/u, `${input.tool_name} .agents/skills/foo/SKILL.md`);
   }
   assert.match(fx.ask(bash(`rm -rf ${path.join(work, 'pkg', '.claude')}`), { own })?.reason ?? '', /from any depth/u, 'a nested .claude folder itself');
   // A skill folder that links out of .claude/skills: a write through the link, or to its target, refuses.
@@ -1223,10 +1353,10 @@ test('a confined session never writes a host file its clone loads from any depth
     assert.match(fx.ask(bash(`echo x > ${target}`), { own })?.reason ?? '', /a host file a later session/u, target);
   }
   // A glob that may reach one.
-  for (const command of [`rm -f ${work}/*/.claude/skills/x.md`, `rm -f ${work}/pkg/.c*/settings.json`, `cp x ${work}/docs/*.md`]) {
+  for (const command of [`rm -f ${work}/*/.claude/skills/x.md`, `rm -f ${work}/pkg/.c*/settings.json`, `cp x ${work}/docs/*.md`, `rm -f ${work}/*/.agents/skills/x/run.sh`]) {
     assert.match(fx.ask(bash(command), { own })?.reason ?? '', /a host file a later session in that c(?:heckout|lone) loads/u, command);
   }
-  for (const file of ['pkg/src/x.js', 'a/.claude/notes.md', 'a/claude/skills/x.md', 'docs/README.md']) {
+  for (const file of ['pkg/src/x.js', 'a/.claude/notes.md', 'a/claude/skills/x.md', 'docs/README.md', 'pkg/agents/x.md']) {
     assert.equal(fx.ask(write(path.join(work, file)), { own }), null, file);
     assert.equal(fx.ask(bash(`echo x > ${path.join(work, file)}`), { own }), null, file);
   }
@@ -1323,7 +1453,7 @@ test('the host files a later session loads stay refused in its own worktree and 
   const own = () => fx.attempt;
   for (const top of [fx.worktree, path.join(fx.attempt, 'work')]) {
     for (const file of ['.claude/settings.json', '.claude/settings.local.json', '.claude/skills/x/SKILL.md', '.claude/agents/a.md', '.claude/commands/c.md', '.claude/hooks/h.sh', '.claude/workflows/w.md', '.claude/scheduled_tasks.json', '.mcp.json',
-      '.opencode/plugins/x.js', 'opencode.json', 'opencode.jsonc']) {
+      '.opencode/plugins/x.js', 'opencode.json', 'opencode.jsonc', '.agents/skills/x/SKILL.md', '.agents/skills/x/run.sh', '.agents/plugins/marketplace.json']) {
       const target = path.join(top, file);
       for (const input of [write(target), bash(`echo x > ${target}`), bash(`mkdir -p ${path.dirname(target)} && touch ${target}`)]) {
         assert.match(fx.ask(input, { own })?.reason ?? '', /a host file a later session in that checkout loads/u, `${input.tool_name} ${file} in ${top}`);

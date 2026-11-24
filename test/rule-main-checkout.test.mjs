@@ -193,25 +193,25 @@ test('bashTargets finds the certain write targets, resolved against cwd, and not
   assert.deepEqual(at('tee -a src/a.ts src/b.ts'), ['src/a.ts', 'src/b.ts']);
   assert.deepEqual(at('cp /tmp/a.ts src/a.ts'), ['src/a.ts']);
   assert.deepEqual(at('mv -f src/a.ts src/b.ts'), ['src/a.ts', 'src/b.ts'], 'a move removes its source');
-  assert.deepEqual(at('mv src/a.ts src/b.ts lib/'), ['src/a.ts', 'src/b.ts', 'lib'], 'every source of a multi-source move');
-  assert.deepEqual(at('mv -t lib src/a.ts'), ['src/a.ts', 'lib']);
-  assert.deepEqual(at('mv --target-directory=lib src/a.ts'), ['src/a.ts', 'lib']);
-  assert.deepEqual(at('cp -t lib /tmp/a.ts /tmp/b.ts'), ['lib'], 'cp -t names its destination first');
-  assert.deepEqual(at('cp -rtlib /tmp/a'), ['lib']);
-  assert.deepEqual(at('cp -rt lib /tmp/a'), ['lib']);
-  assert.deepEqual(at('cp --target-dir lib /tmp/a'), ['lib']);
+  assert.deepEqual(at('mv src/a.ts src/b.ts lib/'), ['src/a.ts', 'src/b.ts', 'lib', 'lib/a.ts', 'lib/b.ts'], 'every source of a multi-source move');
+  assert.deepEqual(at('mv -t lib src/a.ts'), ['src/a.ts', 'lib', 'lib/a.ts']);
+  assert.deepEqual(at('mv --target-directory=lib src/a.ts'), ['src/a.ts', 'lib', 'lib/a.ts']);
+  assert.deepEqual(at('cp -t lib /tmp/a.ts /tmp/b.ts'), ['lib', 'lib/a.ts', 'lib/b.ts'], 'cp -t names its destination first');
+  assert.deepEqual(at('cp -rtlib /tmp/a'), ['lib', 'lib/a']);
+  assert.deepEqual(at('cp -rt lib /tmp/a'), ['lib', 'lib/a']);
+  assert.deepEqual(at('cp --target-dir lib /tmp/a'), ['lib', 'lib/a']);
   assert.deepEqual(at('cp -S .t /tmp/a.ts src/a.ts'), ['src/a.ts'], 'a t in -S`s suffix names no directory');
   assert.deepEqual(at('rm -f src/a.ts'), ['src/a.ts']);
   assert.deepEqual(at('unlink src/a.ts'), ['src/a.ts']);
   assert.deepEqual(at('git mv src/a.ts src/b.ts'), ['src/a.ts', 'src/b.ts']);
-  assert.deepEqual(at('git -C src mv -k a.ts b.ts lib/'), ['src/a.ts', 'src/b.ts', 'src/lib']);
+  assert.deepEqual(at('git -C src mv -k a.ts b.ts lib/'), ['src/a.ts', 'src/b.ts', 'src/lib', 'src/lib/a.ts', 'src/lib/b.ts']);
   assert.deepEqual(at('git rm -r --cached src'), ['src']);
   assert.deepEqual(at('git rm --pathspec-from-file list.txt'), [], 'paths read from a file are not certain');
   assert.deepEqual(at('rsync -a /tmp/x/ src/'), ['src']);
-  assert.deepEqual(at('rsync -a --remove-source-files src/a.ts src/b.ts /tmp/out/'), ['src/a.ts', 'src/b.ts', '../tmp/out']);
+  assert.deepEqual(at('rsync -a --remove-source-files src/a.ts src/b.ts /tmp/out/'), ['src/a.ts', 'src/b.ts', '../tmp/out', '../tmp/out/a.ts', '../tmp/out/b.ts']);
   assert.deepEqual(at('rsync -av -e ssh --remove-sou src/a.ts host:/srv/'), ['src/a.ts'], 'a remote operand is not a local write');
   assert.deepEqual(at('rsync -a src/ user@host:/srv/'), []);
-  assert.deepEqual(at('rsync --partial --remove-source-files src/a.ts /tmp/out'), ['src/a.ts', '../tmp/out'], 'a switch never swallows an operand');
+  assert.deepEqual(at('rsync --partial --remove-source-files src/a.ts /tmp/out'), ['src/a.ts', '../tmp/out', '../tmp/out/a.ts'], 'a switch never swallows an operand');
   assert.deepEqual(at('rm -rf src'), ['src']);
   assert.deepEqual(at('touch -d "2 days ago" src/a.ts'), ['src/a.ts']);
   assert.deepEqual(at('mkdir -p -m 755 src/new'), ['src/new']);
@@ -316,10 +316,50 @@ test('the write hook denies through stdin, and exits 0 silently for anything it 
   }
 });
 
+test('a copy, move, or link into a folder names the file it makes there: by the text, or by the folder on the disk', (t) => {
+  // /repo is no folder on the disk, so only what the text shows is a folder counts.
+  const at = (command) => bashTargets(command, '/repo').map((file) => path.relative('/repo', file));
+  assert.deepEqual(at('cp a b/'), ['b', 'b/a'], 'a closing slash');
+  assert.deepEqual(at('cp -t d a b'), ['d', 'd/a', 'd/b'], '-t');
+  assert.deepEqual(at('cp a b c'), ['c', 'c/a', 'c/b'], 'two or more sources');
+  assert.deepEqual(at('mv a d/'), ['a', 'd', 'd/a']);
+  assert.deepEqual(at('ln -s ../x/y'), ['y'], 'ln with one operand links into the shell`s folder');
+  assert.deepEqual(at('cp a .'), ['', 'a'], 'the folder itself and the file in it');
+  assert.deepEqual(at('cp a ..'), ['..', '../a']);
+  assert.deepEqual(at('git mv pkg/.claude .'), ['pkg/.claude', '', '.claude'], 'git mv moves as mv does');
+  // rsync: a local source with no closing slash makes its name in the folder; one with it copies its contents.
+  assert.deepEqual(at('rsync -a a d/'), ['d', 'd/a']);
+  assert.deepEqual(at('rsync -a a b d'), ['d', 'd/a', 'd/b'], 'two or more sources');
+  assert.deepEqual(at('rsync -a pkg/ d/'), ['d'], 'a closing slash on the source: its contents, the stated residual');
+  assert.deepEqual(at('rsync -a host:/x/y d/'), ['d'], 'a remote source');
+  assert.deepEqual(at('rsync -a a host:/x/'), [], 'a remote destination');
+  // As today: no folder by the text, and none on the disk.
+  assert.deepEqual(at('cp a b'), ['b']);
+  assert.deepEqual(at('mv a.txt b.txt'), ['a.txt', 'b.txt']);
+  // A source whose last part names no file the copy makes.
+  for (const source of ['pkg/.', 'pkg/..', '"$f"', 'src/*.ts', 'src/[ab].ts']) {
+    assert.deepEqual(at(`cp -R ${source} d/`), ['d'], source);
+  }
+  // A destination folder on the disk makes the same line a move into it; a file there keeps it a rename.
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-joined-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(path.join(root, 'd'));
+  writeFileSync(path.join(root, 'f'), 'x\n');
+  const disk = (command) => bashTargets(command, root).map((file) => path.relative(root, file));
+  assert.deepEqual(disk('mv a d'), ['a', 'd', 'd/a']);
+  assert.deepEqual(disk(`mv a ${path.join(root, 'd')}`), ['a', 'd', 'd/a'], 'an absolute folder');
+  assert.deepEqual(disk('mv a f'), ['a', 'f']);
+  assert.deepEqual(disk('cp a d'), ['d', 'd/a']);
+  assert.deepEqual(disk('cp a gone'), ['gone'], 'a folder not there is a rename');
+  // rsync never renames a folder source, so its joined name is certain, a destination not there included.
+  assert.deepEqual(disk('rsync -a a d'), ['d', 'd/a']);
+  assert.deepEqual(disk('rsync -a a gone'), ['gone', 'gone/a']);
+});
+
 test('bashTargets finds the targets of ln, truncate, install, and dd; with restores, those of git checkout -- and git restore', () => {
   const at = (command) => bashTargets(command, '/repo').map((file) => path.relative('/repo', file));
   assert.deepEqual(at('ln -sf /tmp/x src/a.ts'), ['src/a.ts']);
-  assert.deepEqual(at('ln -s -t src /tmp/x /tmp/y'), ['src']);
+  assert.deepEqual(at('ln -s -t src /tmp/x /tmp/y'), ['src', 'src/x', 'src/y']);
   assert.deepEqual(at('truncate -s 0 src/a.ts src/b.ts'), ['src/a.ts', 'src/b.ts']);
   assert.deepEqual(at('install -m 644 /tmp/x src/a.ts'), ['src/a.ts']);
   assert.deepEqual(at('install -d src/new'), ['src/new']);

@@ -51,13 +51,16 @@ function fixture(t, { tags = null } = {}) {
   const project = findProject(dir);
   const { config } = loadConfig(project);
   const made = (branch, session = SESSION) => createWorktree({ branch }, { cwd: start, env: { ...env, CLAUDE_CODE_SESSION_ID: session } }).worktree_path;
-  const ask = (input, hookEnv = env) => unattendedWriteDenial({ session_id: SESSION, cwd: start, ...input }, config, {
+  // The places under `told`, the config the guard reads them with, which `withTrees` gives another worktrees folder.
+  const placesWith = (told = config) => unattendedPlaces({ cwd: start, mark, project, config: told, env, home, temp: [temp], session: SESSION });
+  const withTrees = (trees) => ({ ...config, git: { ...config.git, worktrees: { ...config.git.worktrees, dir: trees } } });
+  const ask = (input, hookEnv = env, told = config) => unattendedWriteDenial({ session_id: SESSION, cwd: start, ...input }, config, {
     mark,
     env: hookEnv,
-    places: () => unattendedPlaces({ cwd: start, mark, project, config, env, home, temp: [temp], session: SESSION }),
+    places: () => placesWith(told),
   });
   const store = () => openStore(state, { checkouts: project.checkouts, maxChain: config.session.handoff.maxChain });
-  return { root, dir, state, home, start, env, git, made, ask, store };
+  return { root, dir, state, home, start, env, git, made, ask, store, placesWith, withTrees };
 }
 
 const write = (file, more = {}) =>({ tool_name: 'Write', tool_input: { file_path: file, content: 'x' }, ...more });
@@ -91,6 +94,22 @@ test('a session no Human attends, and its subagents, write a task worktree `aidr
   assert.equal(fx.ask({ tool_name: 'Bash', tool_input: { command: `echo x > "$TMPDIR/${slug}/notes.md"` } }, hookEnv), null, 'a variable redirect');
   assert.ok(fx.ask({ tool_name: 'Bash', tool_input: { command: `echo x > "$TMPDIR/${slug}/.mcp.json"` } }, hookEnv), 'a variable redirect to a host file');
   assert.match(fx.ask(write(path.join(fx.dir, 'README.md')))?.reason ?? '', /outside the places/u);
+});
+
+test('a made worktree keeps the configured worktrees folder\'s root host files refused when that folder lies inside it, and gains none from one above it', (t) => {
+  const fx = fixture(t);
+  const made = fx.made('feat/slice');
+  const trees = path.join(made, 'trees');
+  const inside = fx.withTrees(path.relative(fx.dir, trees));
+  for (const file of ['opencode.json', '.mcp.json', '.opencode/plugins/x.js']) {
+    assert.match(fx.ask(write(path.join(trees, file)), fx.env, inside)?.reason ?? '', /a host file a later session/u, file);
+  }
+  assert.equal(fx.ask(write(path.join(trees, 'notes.md')), fx.env, inside), null, 'another file there');
+  // The default folder, `.worktrees` of the main checkout, holds the made worktree: it adds no entry, as one outside
+  // every checkout adds none, and a file of that name inside the made worktree passes as before.
+  const paths = (told) => fx.placesWith(told).refused.map((entry) => entry.path);
+  assert.deepEqual(paths(), paths(fx.withTrees('../elsewhere-trees')));
+  assert.equal(fx.ask(write(path.join(trees, 'opencode.json'))), null, 'under the default folder');
 });
 
 test('a worktree another session made, or plain `git worktree add` made, stays outside, and so does one made with no session', (t) => {

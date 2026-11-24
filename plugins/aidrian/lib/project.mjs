@@ -83,9 +83,10 @@ const GUARDED_PLUGIN = String.raw`bin/|scripts/|hooks/|lib/(?:forges|rules|revie
 // any infix, such as AGENTS.override.md, which Codex reads first, or CLAUDE.local.md; and AGENT.md, QWEN.md, WARP.md,
 // CRUSH.md, and CONVENTIONS.md.
 const HOST_NAMES = String.raw`(?:AGENTS?|CLAUDE|GEMINI|QWEN|WARP|CRUSH|CONVENTIONS)(?:\.[^/]+)?\.md`;
-// The instruction files and folders AI hosts read by path: Cursor's, Cline's, Windsurf's, and OpenCode's at any depth,
-// since they read nested ones or may; GitHub Copilot's at the repository root or the project root.
-const HOST_PATHS = String.raw`(?:^|/)(?:\.cursor|\.windsurf|\.clinerules|\.opencode)(?:/|$)|(?:^|/)(?:\.cursorrules|\.windsurfrules)$` +
+// The instruction files and folders AI hosts read by path: Cursor's, Cline's, Windsurf's, and OpenCode's, its `.agents`
+// skills folder included, at any depth, since they read nested ones or may; GitHub Copilot's at the repository root or
+// the project root.
+const HOST_PATHS = String.raw`(?:^|/)(?:\.cursor|\.windsurf|\.clinerules|\.opencode|\.agents)(?:/|$)|(?:^|/)(?:\.cursorrules|\.windsurfrules)$` +
   String.raw`|^\.github/copilot-instructions\.md$|^\.github/instructions(?:/|$)`;
 export const GUARDED_PATHS = new RegExp(
   String.raw`(?:^|/)(?:${HOST_NAMES}|SKILL\.md|CODEOWNERS|opencode\.jsonc?|\.aidrian\.json|\.aidrian\.local\.json|\.banned-terms\.local)$` +

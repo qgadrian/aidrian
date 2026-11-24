@@ -205,6 +205,11 @@ test("OpenCode's folder and config files keep auto-merge off at any depth and in
   for (const file of free) assert.equal(guarded(file), false, file);
 });
 
+test("an .agents folder, which OpenCode loads skills from, keeps auto-merge off at any depth and in any case, and a folder that only shares its name does not", () => {
+  for (const file of ['.agents/skills/x/run.sh', 'packages/web/.agents/skills/x/run.sh', 'a/.Agents/x', '.agents/plugins/marketplace.json']) assert.ok(guarded(file), file);
+  for (const file of ['src/agents/x.js', 'pkg/agents/skills/run.sh', 'my.agents/x']) assert.equal(guarded(file), false, file);
+});
+
 test("the Claude mod's folder is guarded everywhere, and the release script only in the plugin's own repository", () => {
   for (const file of ['plugins/aidrian-claude-mod/lib/snapshot-client.mjs', 'plugins/aidrian-claude-mod/.claude-plugin/plugin.json']) assert.ok(guarded(file), file);
   for (const file of ['plugins/aidrian-claude-mod-extra/x.mjs', 'scripts/version.mjs.bak', 'docs/scripts/version.mjs']) assert.equal(guarded(file), false, file);

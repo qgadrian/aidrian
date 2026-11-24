@@ -138,14 +138,16 @@ const tokens = (...words) => words.map((word) => (word === null ? { text: '$X', 
 const { starts } = opencode.sessionStart;
 
 test('its host files: the folder and both config files at the root, and the same at any depth of a clone', () => {
-  assert.deepEqual(opencode.protectedPaths, ['.opencode', 'opencode.json', 'opencode.jsonc']);
-  assert.deepEqual(opencode.nestedGlobs, ['**/.opencode', '**/.opencode/**', '**/opencode.json', '**/opencode.jsonc']);
+  assert.deepEqual(opencode.protectedPaths, ['.opencode', 'opencode.json', 'opencode.jsonc', '.agents']);
+  assert.deepEqual(opencode.nestedGlobs, ['**/.opencode', '**/.opencode/**', '**/opencode.json', '**/opencode.jsonc', '**/.agents', '**/.agents/**']);
   assert.deepEqual(nestedGlobs(), opencode.nestedGlobs, 'the union: Claude Code keeps its own globs where they are');
-  for (const each of ['pkg/.opencode/plugins/x.js', 'pkg/.OPENCODE/x', 'pkg/opencode.json', 'a/b/opencode.jsonc', 'pkg/.opencode', '.opencode', 'a//OpenCode.JSON']) {
+  for (const each of ['pkg/.opencode/plugins/x.js', 'pkg/.OPENCODE/x', 'pkg/opencode.json', 'a/b/opencode.jsonc', 'pkg/.opencode', '.opencode', 'a//OpenCode.JSON',
+    'pkg/.agents/skills/x/SKILL.md', 'pkg/.agents/skills/x/run.sh', 'pkg/.AGENTS/x', 'pkg/.agents', '.agents']) {
     assert.equal(opencode.nestedProtected(each.split('/')), true, each);
     assert.equal(anyHostNested(each.split('/')), true, each);
   }
-  for (const each of ['pkg/opencode.md', 'pkg/src/opencode.json.ts', 'my-opencode.json', 'pkg/opencode/plugins/x.js', 'src/app.js', '']) {
+  for (const each of ['pkg/opencode.md', 'pkg/src/opencode.json.ts', 'my-opencode.json', 'pkg/opencode/plugins/x.js', 'src/app.js', '',
+    'pkg/agents/x.md', 'pkg/my.agents/x', 'pkg/agents.txt']) {
     assert.equal(opencode.nestedProtected(each.split('/')), false, each);
   }
 });
@@ -210,7 +212,7 @@ test('its lists hold their shape: no entry of more than two words, and no lone w
 });
 
 test('the other hosts\' placeholders: a folder, or a file holding {}, for each root host file the starting host does not protect', () => {
-  assert.deepEqual(otherPlaceholders(claudeCode), [{ path: '.opencode', folder: true }, { path: 'opencode.json', text: '{}\n' }, { path: 'opencode.jsonc', text: '{}\n' }]);
+  assert.deepEqual(otherPlaceholders(claudeCode), [{ path: '.opencode', folder: true }, { path: 'opencode.json', text: '{}\n' }, { path: 'opencode.jsonc', text: '{}\n' }, { path: '.agents', folder: true }]);
   const one = { protectedPaths: ['x/skills', 'x.json'] };
   const own = { protectedPaths: ['x.json'] };
   assert.deepEqual(otherPlaceholders(own, [one, own]), [{ path: 'x/skills', folder: true }]);

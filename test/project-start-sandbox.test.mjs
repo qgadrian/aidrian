@@ -49,8 +49,8 @@ function halted(fx, result, cause) {
 }
 const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 // OpenCode's host files at a clone's root, and the denyWrite entries of every other host's files under the clone `work`.
-const OPENCODE_FILES = ['.opencode', 'opencode.json', 'opencode.jsonc'];
-const OTHER_GLOBS = ['**/.opencode', '**/.opencode/**', '**/opencode.json', '**/opencode.jsonc'];
+const OPENCODE_FILES = ['.opencode', 'opencode.json', 'opencode.jsonc', '.agents'];
+const OTHER_GLOBS = ['**/.opencode', '**/.opencode/**', '**/opencode.json', '**/opencode.jsonc', '**/.agents', '**/.agents/**'];
 const otherDenied = (work) => [...OPENCODE_FILES, ...OTHER_GLOBS].map((each) => `${work}/${each}`);
 
 // Folders for the adapter's start outside the gate: a clone, its git folder, and a granted folder, by their real paths,
@@ -375,9 +375,11 @@ test('a start on Claude Code works in a fresh clone with a drop and its placehol
   assert.throws(() => lstatSync(path.join(work(fx), '.claude/scheduled_tasks.json')), /ENOENT/u, 'no scheduled tasks file');
   // The other hosts' root files too, each file excluded beside Claude Code's, so none shows as a change.
   assert.deepEqual(readdirSync(path.join(work(fx), '.opencode')), [], 'an empty .opencode folder');
+  assert.deepEqual(readdirSync(path.join(work(fx), '.agents')), [], 'an empty .agents folder');
   for (const file of ['opencode.json', 'opencode.jsonc']) assert.equal(readFileSync(path.join(work(fx), file), 'utf8'), '{}\n', file);
   const excluded = readFileSync(path.join(git, 'info', 'exclude'), 'utf8').split('\n');
   for (const line of ['/.claude/settings.json', '/.mcp.json', '/opencode.json', '/opencode.jsonc']) assert.ok(excluded.includes(line), line);
+  assert.ok(!excluded.some((line) => /\.agents/u.test(line)), 'an empty folder git never shows needs no exclude line');
   // A commondir that names the git folder itself, which git reads as no other folder, so the denial holds it by path.
   assert.equal(readFileSync(path.join(git, 'commondir'), 'utf8'), GIT_PLACEHOLDERS.commondir);
   assert.equal(GIT_PLACEHOLDERS.commondir, '.\n');
@@ -395,11 +397,16 @@ test('a start on Claude Code works in a fresh clone with a drop and its placehol
   const ownExcluded = readFileSync(path.join(path.dirname(work(own)), 'git', 'info', 'exclude'), 'utf8').split('\n');
   assert.ok(!ownExcluded.includes('/opencode.json') && ownExcluded.includes('/opencode.jsonc'), 'only the file the clone lacked');
   assert.equal(own.git('-C', work(own), 'status', '--porcelain', '--untracked-files=all'), '');
+  // And a tracked .agents folder's file, as a Codex marketplace is.
+  const market = runFixture(t, { files: { '.agents/plugins/marketplace.json': '{"plugins":[]}\n' } });
+  assert.equal(market.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
+  assert.equal(readFileSync(path.join(work(market), '.agents/plugins/marketplace.json'), 'utf8'), '{"plugins":[]}\n');
+  assert.equal(market.git('-C', work(market), 'status', '--porcelain', '--untracked-files=all'), '');
 });
 
 test('a clone that tracks another host\'s root file as a link is refused at start, and nothing is written through the link', (t) => {
   // The folder links to a folder, the config file to a file: the placeholder would write {} through either.
-  for (const [name, target] of [['.opencode', 'shared'], ['opencode.jsonc', 'shared/keep.md']]) {
+  for (const [name, target] of [['.opencode', 'shared'], ['opencode.jsonc', 'shared/keep.md'], ['.agents', 'shared']]) {
     const fx = runFixture(t, { files: { 'shared/keep.md': 'x\n' }, links: { [name]: target } });
     const result = fx.cmd(['start', 'launch', 'ENG-1']);
     assert.equal(result.exitCode, 1, name);

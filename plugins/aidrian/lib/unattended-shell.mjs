@@ -10,6 +10,7 @@ import { forgeConfigCommands } from './forges/index.mjs';
 import { configForm } from './handoff-guard.mjs';
 import { configCommands } from './hosts/index.mjs';
 import { unwrapped } from './package-runner.mjs';
+import { isFolderIn } from './rules/main-checkout/bash-writes.mjs';
 import { WRITERS, written } from './rules/main-checkout/writers.mjs';
 import { readGit, walkCommands } from './shell-lex.mjs';
 
@@ -99,7 +100,12 @@ export function shellWrites(command, cwd, env) {
     });
     if (WRITERS.has(program)) {
       const mode = program === 'mkdir' && setsMode(args);
+      const dirs = folder === null ? [] : [folder];
       for (const token of written(program, args)) {
+        // An uncertain joined name (writers.mjs joinedNames) stays only when its destination, expanded, is a folder.
+        const unsure = token.joined?.certain === false ? token.joined.into : null;
+        const into = unsure && expand(unsure.text, env, unsure.dynamic ? command : '');
+        if (unsure && (/[$`*?[{]/u.test(into) || !isFolderIn(into, dirs))) continue;
         if (token.dynamic && /[$`]/u.test(token.text)) found.dynamic.push({ text: expand(token.text, env, command), folder });
         else found.manifests.push({ text: token.text, folder, how: program, sources: copySources(program, args), ...(mode ? { mode } : {}) });
       }

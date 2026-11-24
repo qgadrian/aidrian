@@ -233,11 +233,13 @@ export const credentialStores = ({ env = process.env, home } = {}, hosts = HOSTS
   .filter((each) => typeof each === 'string' && path.isAbsolute(each) && !CONTROL.test(each));
 
 // The host files of a checkout no session no Human attends writes, from its root, as every host declares them
-// (`protectedPaths`): their union, so a session of one host cannot plant what another loads.
+// (`protectedPaths`): their union, so a session of one host cannot plant what another loads. The write guard refuses
+// them at the root of the session's worktree, of each checkout nested in it, of each folder between the two, and of its
+// attempt's clone (lib/unattended-write.mjs hostRefused).
 export const protectedPaths = (hosts = HOSTS) => [...new Set(hosts.flatMap((host) => host.protectedPaths ?? []))];
 
-// Whether the path whose parts from a confined attempt's clone root are `segments` is a host file some host loads from
-// any depth (`nestedProtected`), which no session no Human attends writes there.
+// Whether the path whose parts from a confined attempt's clone root, or from a temporary folder, are `segments` is a
+// host file some host loads from any depth (`nestedProtected`), which no session no Human attends writes there.
 export const nestedProtected = (segments, hosts = HOSTS) => hosts.some((host) => typeof host.nestedProtected === 'function' && host.nestedProtected(segments) === true);
 
 // The globs, from a confined clone's root, of the host files the hosts load from any depth (an adapter's optional

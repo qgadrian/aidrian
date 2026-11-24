@@ -95,7 +95,11 @@ const text = (value, max) => (typeof value === 'string' && value.trim() !== '' ?
 // SHORTCUT: `aidrian pr attest` (lib/review/record.mjs recordPass) passes no `settled` list yet, so on that path every
 // `already_ruled` is left out and the finding read as it stands: safe, since nothing is waived, and enough while only
 // exec reviewers return repeats. Wiring recordSettled and residualTexts into recordPass would replace it.
-export function parseFindings(raw, settled = []) {
+// `round` is the record's review round, when the caller knows it: an agent's finding is no person's, so it is read as
+// the review loop reads it, `--source bot --round`, late rounds included. A finding with no likelihood or affects keeps
+// the reading with no source, needs_axis, so it still blocks until it is classified, except a late low one, which
+// `lateRound` takes with or without axes, as it does an exec reviewer's.
+export function parseFindings(raw, settled = [], { round } = {}) {
   let parsed;
   try {
     parsed = JSON.parse(raw);
@@ -114,7 +118,11 @@ export function parseFindings(raw, settled = []) {
     if (!FINDING_STATES.includes(finding.state)) throw new Error(`${at}.state must be ${FINDING_STATES.join(', ')}`);
     if (finding.line !== undefined && !(Number.isInteger(finding.line) && finding.line >= 1)) throw new Error(`${at}.line must be a line number`);
     const axes = { severity: finding.severity, likelihood: finding.likelihood, affects: finding.affects, cost: finding.cost };
-    const decided = decideDisposition(Object.fromEntries(Object.entries(axes).filter(([, value]) => value !== undefined)));
+    // The written project rule the finding cites, which turns a drop_unless_cited into fix_now; an empty or non-string
+    // value is no citation. Reviewers return it as `cites` (knowledge skill's handoff reference); `violated_rule` is a
+    // rule or lens label, such as the critic's `simpler`, and is never read as one.
+    const cites = text(finding.cites, 300);
+    const decided = agentReading({ ...axes, cites }, round);
     if (decided.disposition === 'invalid') throw new Error(`${at}: ${decided.reason} (\`aidrian pr disposition --vocab\` lists the words)`);
     const { entry: ruled, note } = ruling({ file: text(finding.file, 300), severity: finding.severity, already_ruled: finding.already_ruled }, decided.disposition, settled);
     if (note) notes.push(`${at}.already_ruled ${note}: read as it stands`);
@@ -125,6 +133,7 @@ export function parseFindings(raw, settled = []) {
       ...(text(finding.body, 2000) ? { body: text(finding.body, 2000) } : {}),
       ...Object.fromEntries(Object.entries(axes).filter(([, value]) => typeof value === 'string')),
       ...(text(finding.evidence, 300) ? { evidence: text(finding.evidence, 300) } : {}),
+      ...(cites ? { cites } : {}),
       ...(ruled ? { already_ruled: ruled.title } : {}),
       ...(flagged(finding.security) ? { security: true } : {}),
       // The id of a priorFindings entry the reviewer reports again: recordFindings checks it, and never stores it.
@@ -136,6 +145,36 @@ export function parseFindings(raw, settled = []) {
   const fixed = out.filter((finding) => finding.state === 'fixed').length;
   const open = out.filter(blocks).length;
   return { list: out, findings: out.length, fixed, accepted: out.length - fixed - open, open, notes };
+}
+
+// An agent finding's disposition from its axes and citation, read at review round `round` as the review loop reads it
+// (`--source bot --round`), or with no source when the round is unknown. A finding with no likelihood or affects keeps
+// the reading with no source, needs_axis, unless `lateRound` takes it.
+function agentReading({ severity, likelihood, affects, cost, cites }, round) {
+  const given = Object.fromEntries(Object.entries({ severity, likelihood, affects, cost, cites }).filter(([, value]) => value !== undefined && value !== null && value !== ''));
+  const plain = decideDisposition(given);
+  if (round === undefined || plain.disposition === 'invalid') return plain;
+  const asAgent = decideDisposition({ ...given, source: 'bot', round });
+  return asAgent.rule === 'botSourceWithoutAxis' ? plain : asAgent;
+}
+
+// A pass result `aidrian pr attest` recorded with its findings one by one, read again at review round `round`: the
+// round the step opens for the result's head, which an attestation made before that step could not know. Each
+// finding's disposition and the result's open count follow the table at that round. Whether it changed anything:
+// only a result whose last attestation gave the list (`itemized`, record.mjs) is read again; counts attested over a
+// kept list stand.
+export function rereadAt(result, round) {
+  if (!isObject(result) || result.itemized !== true || !Array.isArray(result.list)) return false;
+  let changed = false;
+  for (const finding of result.list) {
+    if (!isObject(finding) || typeof finding.severity !== 'string') continue;
+    const decided = agentReading(finding, round);
+    if (decided.disposition === 'invalid' || decided.disposition === finding.disposition) continue;
+    finding.disposition = decided.disposition;
+    changed = true;
+  }
+  result.open = result.list.filter(blocks).length;
+  return changed;
 }
 
 // A reviewer's `security` flag (--findings-file, and an exec reviewer's key): absent or false is no flag, and any other
@@ -264,7 +303,7 @@ const FULL_SHA = /^[0-9a-f]{40}$/u;
 export const CLOSED_STATES = Object.freeze(['fixed', 'not_reported']);
 export const isClosed = (entry) => CLOSED_STATES.includes(entry?.state);
 // What an index entry keeps of its finding: the title is its only text. `reviewer`, the recording pass's, stays local.
-const ENTRY_KEYS = ['title', 'file', 'line', 'severity', 'likelihood', 'affects', 'cost', 'disposition', 'accepted_by'];
+const ENTRY_KEYS = ['title', 'file', 'line', 'severity', 'likelihood', 'affects', 'cost', 'cites', 'disposition', 'accepted_by'];
 
 const indexOf = (state) => {
   if (!isObject(state.index)) state.index = {};

@@ -91,9 +91,11 @@ In a project that turns it on, the push-first hook refuses a full suite while th
 
 Fix every finding a review identified; never leave one silently open. Do not go hunting for new ones.
 
-- A finding blocks the pull request only when it breaks a path real sessions take: the skill's own steps, a direct
-  command, or a checkout the project uses. One that needs a contrived race or a hypothetical setup is fixed in the same
-  commit when it is small, and otherwise is `accepted_residual`, named in the body.
+- A rare edge case is a finding whose likelihood is `contrived`; a `plausible` one is not rare. Chase none,
+  but the table, not this list, decides each finding a review raised, a trivial contrived one included.
+- A gap a handoff names in its `risks` goes through `aidrian pr disposition` with its axes, like a review finding,
+  instead of staying prose: a `fix_now` goes to its owner by the `orchestration` skill § 4.
+- The table decides what blocks: a finding blocks while it is `fix_now`, whatever setup it needs.
 - Each round's findings get one fix pass. Add no hardening, check, or config that no review found.
 - When the fixes since round 1 pass half of what the pull request first added, or a finding comes back at a spot already
   fixed, stop before the next pass and ask the Human whether the rest is worth its cost.
@@ -107,7 +109,7 @@ Fix every finding a review identified; never leave one silently open. Do not go 
 | `fix_now` | Fixed in this pull request, by its owner. |
 | `accepted_residual` | No code fix: a short code comment at the line, and a line in the body's Accepted residuals section, through the `pr-write` skill. |
 | `acceptable_as_is` | No fix: a reply with the reason. |
-| `drop_unless_cited` | No fix unless it cites a written project rule: a reply with the reason. |
+| `drop_unless_cited` | A low finding that reaches only internal readers, needs a contrived setup, or costs a structural change: no fix unless it cites a written project rule, which `--cites` turns into `fix_now`. Otherwise a reply with the reason. |
 | `needs_axis` | A person's comment lacks likelihood or affects: set them from the comment and the code, or ask its author. |
 
 ## The bot is out

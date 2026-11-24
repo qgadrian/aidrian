@@ -633,7 +633,8 @@ A finding blocks the pass while it is open and not `acceptable_as_is`, or accept
 accepted (`fix_now`, or no likelihood and affects yet): one the reviewer calls accepted still blocks then. This is
 stricter than the count it replaces, which took the reviewer's word for what it accepted. The counts form,
 `--findings <n> --fixed <n>`, is still accepted, for a pass an older release dispatched, and is read as before.
-A finding may add `"security": true` for a security problem; any value but `false` counts as true
+A finding may add `"cites"`, the written project rule it breaks, which turns a `drop_unless_cited` into `fix_now`
+([Small gaps](#small-gaps)); the summary comment posts the disposition, not the citation. A finding may add `"security": true` for a security problem; any value but `false` counts as true
 ([Reviewers](#reviewers)). A finding that reports a `priorFindings` entry again sets `id` to that entry's id; the engine
 checks it ([Finding ids](#finding-ids)), and a mint mark in the file is never read.
 
@@ -1011,8 +1012,27 @@ A row is one per title and file, and `pass` is the first pass holding it. A carr
 carried ruling cannot see a real fix, so a session skips a row whose defect is fixed or that already has its body line.
 A low finding recorded with
 `--findings-file` keeps its own state: the session classifies it with `aidrian pr disposition`, writes the residual
-into the body, and attests it `accepted`. Attestation decides from the finding's axes with no round, so a late medium
-the command calls a residual still reads `fix_now` there and blocks until it is fixed. A code comment the residual needs is a [quiet push](#rounds), so neither opens a round.
+into the body, and attests it `accepted`. Attestation reads a finding as that command does with `--source bot --round`,
+at the record's round count, as the step reads an exec reviewer's, so a late residual the command gives is accepted there
+too. A finding with no likelihood or affects still needs them, except a late low one, which `lateRound` takes with or
+without axes. A pass attested on a head whose round no step has opened yet reads the round before; the step that opens
+the round reads its findings again at the new round, so a late residual stops blocking there. A code comment the residual needs is a [quiet push](#rounds), so neither opens a round.
+
+### Small gaps
+
+A low finding is fixed in the pull request when its fix is trivial, and when its fix is bounded and it reaches users or
+operators at routine or plausible likelihood. Every other low finding is `drop_unless_cited`: one that reaches only internal
+readers or revenue, needs a contrived setup, or costs a structural change. It is fixed only when it cites a written
+project rule or documented anti-pattern, which `aidrian pr disposition --cites <doc>#<section>` and a manifest finding's
+`cites` record: the table then gives `fix_now`. The late-round rule above is the bound: from round N a low bot
+finding is a residual, cited or not.
+
+Two routes still keep a small gap out of the pull request: the `pr-review` skill's `pre_existing`, for a failure that also
+happens at the base, and the `issue-implement` skill's new issue, for work found outside the issue's scope.
+With config.json `review.fixSmallGaps` true, a gap on either route whose fix is trivial on the table's cost axis is
+fixed in the same pull request instead: the finding stays `open` and the table gives its disposition.
+`aidrian pr disposition --manifest <file>`, run in the project, lists each finding set `pre_existing` with a trivial
+cost under `status_drift` and exits 1. Off, the default, both routes stay as they were.
 
 ### Product feedback in the rounds
 

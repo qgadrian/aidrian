@@ -15,6 +15,8 @@ and config.json `github.maxReviewRounds`, the `orchestration` skill's round cap,
   plus an extra round `github.extraRounds: "auto"` grants at the cap.
 - **No rare edge cases.** End the loop early once a review of the current head leaves every open finding `accepted_residual`,
   `acceptable_as_is`, or `drop_unless_cited` by `aidrian pr disposition`. Reply with the reason; resolve only the bot's threads.
+  Rare means likelihood `contrived`, as the review rules § Proportion define it: a `plausible` finding is not rare,
+  and the table, never the word, decides what is fixed.
   A round that pushed a fix has not reached that point: the next round reviews the new head.
 - **The bot is asked at most once per round** through `aidrian pr await-review`, and never once it is out,
   as the review rules define it. Its state is recorded every round.
@@ -75,11 +77,11 @@ Up to config.json `github.maxReviewRounds` rounds, or the number the Human set a
    Its findings go through the `pr-review-fix` skill.
 3. **Findings.** Every finding from either skill goes through the `orchestration` skill § 4: `aidrian pr disposition` gives
    its verdict, and each `fix_now` goes to its owner, highest likelihood × impact first.
-4. **Rare edge cases.** A finding whose verdict is `accepted_residual`, `acceptable_as_is`, or `drop_unless_cited` is not fixed.
+4. **Findings with no fix.** A finding whose verdict is `accepted_residual`, `acceptable_as_is`, or `drop_unless_cited` is not fixed.
    Reply on its thread with the reason, in the `pr-review-loop` skill's reply shapes. Resolve a bot's thread;
    a person's thread stays open for its author.
    An `accepted_residual` also goes in the pull request body through the `pr-write` skill, with a code comment.
-   A comment that does not apply at all is not a rare edge case: its thread stays open with the evidence, as the loop says.
+   A comment that does not apply at all is not one of these: its thread stays open with the evidence, as the loop says.
 5. **Push.** The agent that made each fix commits and pushes it. Confirm the remote has the new head with
    `git ls-remote --heads origin <branch>`, then checkpoint as `SKILL.md` § Checkpoints allows.
 
@@ -88,7 +90,7 @@ Up to config.json `github.maxReviewRounds` rounds, or the number the Human set a
 The loop ends at the first of these:
 
 - **Sign-off**: the `orchestration` skill § 3 stop rule: a round's review of the current head finds no `fix_now`,
-  and `aidrian pr checks <n>` is not failing, so the round pushes no fix: nothing is open, or every open finding is a rare edge case.
+  and `aidrian pr checks <n>` is not failing, so the round pushes no fix: nothing is open, or every open finding has a verdict with no fix.
   A round that pushes a fix moves the head, and no review has seen the new one: run the next round on it.
   The code comment an `accepted_residual` gets is not a fix.
 - **The cap**: the last round ends with `fix_now` findings open, or with fixes pushed that no review has seen.

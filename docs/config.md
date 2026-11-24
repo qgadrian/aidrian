@@ -532,6 +532,8 @@ With `may` true, the step's `record` takes `land` or `stop`, naming the judge:
 At `extension_check`, its `record_extend` takes `extend`, with no `--judge`.
 With `may` false, at `extension_check`, `record` takes `extend` or `stop`, and at `round_limit` no judge is dispatched.
 `land` asks the same gate again, and is refused, writing nothing, whenever it refuses.
+A verdict goes only to the repository `--repo` names or the forge names for the pull request, never origin in its place.
+When the forge cannot look the pull request up, `aidrian pr extend --judge` and `aidrian pr waive --verdict` exit 3 and write nothing.
 It then records the `waive` that `aidrian pr waive --verdict waive --judge` records, through the same code; `stop` with `--judge` records its `refuse`.
 [At the cap under autopilot](review.md#at-the-cap-under-autopilot) has the details.
 `aidrian pr waive` stays for a session a person attends.

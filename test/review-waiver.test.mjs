@@ -293,6 +293,30 @@ test('aidrian pr waive in a fork checkout reads, records, and prints the one rep
   assert.match(named, new RegExp(`gh pr merge 5 --match-head-commit ${HEAD} --repo up/notes\``, 'u'));
 });
 
+test('a verdict whose pull request the forge cannot look up exits 3 with nothing written: aidrian pr waive and aidrian pr extend --judge alike', async (t) => {
+  const r = repo(t, { local: ON });
+  r.record(5, atCheck);
+  const before = JSON.stringify(readLocalState(r.project(), 5));
+  // gh cannot read the pull request: origin is never taken in its place.
+  const forge = { change: () => { throw new Error('gh: HTTP 502'); }, conversationComments: () => [] };
+  const err = [];
+  t.mock.method(console, 'error', (line) => err.push(line));
+  t.mock.method(console, 'log', () => {});
+  const project = r.project();
+  const config = loadConfig(project).config;
+  const env = { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: JUDGE.session };
+  try {
+    assert.equal(await runWaive(['5', '--verdict', 'refuse', '--reason', 'nits', '--judge', JUDGE.judge_id], project, config, { forge, env }), 3);
+    assert.equal(await runExtend(['5', '--verdict', 'land', '--reason', 'nits', '--judge', JUDGE.judge_id], project, config, { forge, env, gate: { run: () => undefined, runHost: CONFIRMS } }), 3);
+    assert.equal(await runExtend(['5', '--verdict', 'stop', '--reason', 'nits', '--judge', JUDGE.judge_id], project, config, { forge, env }), 3);
+  } finally {
+    t.mock.restoreAll();
+  }
+  assert.deepEqual(err.map((line) => line.split(':')[0]), ['aidrian pr waive', 'aidrian pr extend', 'aidrian pr extend']);
+  assert.ok(err.every((line) => /cannot read pull request #5 on the forge, so its repository cannot be told: nothing is recorded/u.test(line)), err.join('\n'));
+  assert.equal(JSON.stringify(readLocalState(r.project(), 5)), before, 'nothing written');
+});
+
 test('aidrian pr waive on a repository that is not private posts the waiver line and the record with no reason', async (t) => {
   for (const visibility of ['PUBLIC', 'INTERNAL', null]) {
     const r = repo(t, { local: ON });

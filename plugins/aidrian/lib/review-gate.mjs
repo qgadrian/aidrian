@@ -184,16 +184,22 @@ export function denyReason(pr, checklist) {
   ].join(' ');
 }
 
-// The repository of pull request `pr`, as `owner/name`: `--repo` (`given`), else the one `gh pr view` names, gh's
-// default repository, which in a fork checkout is the upstream, else origin, so it works offline. `forge` reads the pull
-// request; it is the test seam.
+// The repository the forge names for pull request `pr`, as `owner/name`, from `gh pr view`'s URL: gh's default
+// repository, which in a fork checkout is the upstream. Null when the lookup fails or names none. A command that
+// records a judge's verdict takes it alone, never origin in its place (lib/review/waiver.mjs runWaive).
+export function forgeRepo(pr, forge) {
+  try {
+    return repoName(forge.change(String(pr), 'url')?.url ?? null);
+  } catch {
+    return null;
+  }
+}
+
+// The repository of pull request `pr`, as `owner/name`: `--repo` (`given`), else the one the forge names (forgeRepo),
+// else origin, so it works offline. `forge` reads the pull request; it is the test seam.
 export function prRepo(project, pr, given, forge = forgeFor(project.root)) {
   if (given !== undefined && given !== null) return givenRepo(given);
-  let url = null;
-  try {
-    url = forge.change(pr, 'url')?.url ?? null;
-  } catch {}
-  const name = repoName(url) ?? originRepo(project);
+  const name = forgeRepo(pr, forge) ?? originRepo(project);
   if (!name) throw new Error("cannot read this repository's origin; the marker must name it: pass --repo OWNER/NAME");
   return name;
 }

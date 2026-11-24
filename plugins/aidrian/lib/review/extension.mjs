@@ -27,7 +27,7 @@ import { runGit } from '../git.mjs';
 import { sessionIdentity } from '../hosts/index.mjs';
 import { givenRepo, repoFlag } from '../remotes.mjs';
 import { readGate, asLanded } from './waiver-stand.mjs';
-import { appendVerdict, JUDGE_ID, sameRevision, verdictNext } from './waiver.mjs';
+import { appendVerdict, JUDGE_ID, sameRevision, unreadRepo, VERDICT_UNREAD, verdictNext } from './waiver.mjs';
 import { changedFiles, diffLines, mergeBase, resolve } from './diff.mjs';
 import { holdToBase } from './in-force.mjs';
 import { classify } from './plan.mjs';
@@ -620,9 +620,16 @@ function nextStep(entry, pr, repo, repoArg = '') {
 // resolved repository, in tests.
 export async function runExtend(args, project, config, deps = {}) {
   const opts = parseExtend(args);
-  const { prRepo } = await import('../review-gate.mjs');
+  const { forgeRepo, prRepo } = await import('../review-gate.mjs');
   const forge = deps.forge ?? forgeFor(undefined);
-  const repo = deps.repo ?? prRepo(project, opts.pr, opts.repo, forge);
+  // A judge's verdict (`--judge`) goes only to the repository `--repo` names or a lookup of the pull request on the forge
+  // finds, never origin in its place: a failed lookup exits 3 with nothing written.
+  const strict = opts.judge !== null && opts.repo === null && deps.repo === undefined;
+  const repo = strict ? forgeRepo(opts.pr, forge) : deps.repo ?? prRepo(project, opts.pr, opts.repo, forge);
+  if (!repo) {
+    console.error(`aidrian pr extend: ${unreadRepo(opts.pr)}`);
+    return VERDICT_UNREAD;
+  }
   // The pull request now: a decision is for the head its signals were read on, and the record is read only from the
   // state.dir its base branch commits. A forge that cannot answer, or names no base, leaves no base to hold to, so the
   // decision stays on this machine: nothing publishes.

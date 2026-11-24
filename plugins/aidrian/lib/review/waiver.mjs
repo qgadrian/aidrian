@@ -50,7 +50,7 @@ import { stateFolders } from '../handoff-guard.mjs';
 import { appendToRun, readRun } from '../project-run.mjs';
 import { mayFollowTeamDefault } from '../project.mjs';
 import { hostOf } from '../remotes.mjs';
-import { prRepo, repoName } from '../review-gate.mjs';
+import { forgeRepo, repoName } from '../review-gate.mjs';
 import { localRefSolo, viewSolo } from '../solo.mjs';
 import { isFindingId, noHigher, severityOf } from './findings.mjs';
 import { boundedReads, holdToBase } from './in-force.mjs';
@@ -534,9 +534,10 @@ export const verdictNext = (entry, pr, local, repo = null) => (entry.verdict ===
 // merged in first, as the review step does, so a newer record from the comment never hides one; and when this machine's
 // record changes before the write, nothing is written. `deps.forge` replaces the forge (change, conversationComments,
 // postComment, editComment, viewer), `deps.repo` the pull request's repository, and `deps.env` the environment, in tests.
-// That repository is resolved once, as `aidrian pr extend` resolves it (review-gate.mjs prRepo): the one the forge names
-// for the pull request, else origin. Every forge read, the record, and the printed `next` use that one value, so in a
-// fork checkout a verdict never lands on, or merges, the other repository's pull request of the same number.
+// That repository is resolved once, from a lookup of the pull request on the forge (review-gate.mjs forgeRepo), never
+// origin in its place: a lookup that fails exits 3 with nothing written (VERDICT_UNREAD). Every forge read, the record,
+// and the printed `next` use that one value, so in a fork checkout a verdict never lands on, or merges, the other
+// repository's pull request of the same number.
 export async function runWaive(args, project, config, deps = {}) {
   const opts = parseWaive(args);
   if (opts.gate) return (await import('./waiver-stand.mjs')).runWaiveGate(opts, project, { config, ...(deps.forge ? { forge: deps.forge } : {}), ...(deps.gate ?? {}) });
@@ -544,7 +545,11 @@ export async function runWaive(args, project, config, deps = {}) {
   const switchOff = () => new Error(`this machine's github.unattendedWaiver is not on in ${project.paths.local}, so the merge guard would not take a waive verdict; --verdict refuse is still recorded`);
   if (opts.verdict === 'waive' && machine !== 'on' && machine !== 'unset') throw switchOff();
   const forge = deps.forge ?? forgeFor(project.root);
-  const repo = deps.repo ?? prRepo(project, String(opts.pr), null, forge);
+  const repo = deps.repo ?? forgeRepo(opts.pr, forge);
+  if (!repo) {
+    console.error(`aidrian pr waive: ${unreadRepo(opts.pr)}`);
+    return VERDICT_UNREAD;
+  }
   // The record is read only from the state.dir the pull request's base branch commits, so a verdict needs that base.
   let base = null;
   try {
@@ -583,6 +588,11 @@ export async function runWaive(args, project, config, deps = {}) {
   console.log(JSON.stringify({ status: 'recorded', pr: opts.pr, waiver: entry, next: verdictNext(entry, opts.pr, project.paths.local, repo), ...(summaryError ? { summary_error: summaryError } : {}) }, null, 2));
   return 0;
 }
+
+// The exit of a command that records a judge's verdict when the forge cannot name the pull request's repository, and
+// why: the verdict would otherwise go to origin's pull request of that number.
+export const VERDICT_UNREAD = 3;
+export const unreadRepo = (pr) => `cannot read pull request #${pr} on the forge, so its repository cannot be told: nothing is recorded, since origin's pull request of that number may be another one. Run it again once gh can read it`;
 
 // Throws when this machine's record of `pr` changed since `local`, its copy read before: a write would lose it.
 export function sameRevision(project, pr, repo, local) {

@@ -601,23 +601,17 @@ is one the shell builds, is refused as a merge it cannot read.
 Two kinds of call are refused outright inside a project, for every session, with a denial that says to merge with
 `gh pr merge <PR> --match-head-commit <sha>`, which the guard checks:
 
-- A GraphQL call that may merge: a `gh api` call whose `query` field names `mergePullRequest`,
-  `enablePullRequestAutoMerge`, or `enqueuePullRequest`, at any endpoint, or a `gh api` or `curl` call to GraphQL whose
-  query names one, from a file it names, or whose query the shell builds or reads from stdin (a URL whose host the shell
-  builds keeps its GraphQL path, and one with `/graphql` only in its query or fragment has none); and a `curl` call to a
-  URL the shell builds whole whose body names one as written. With `--input`, `gh api` sends the last one's file as the
-  body and its fields in the URL, so that file alone decides. It names its pull request by a node id no review record is keyed
-  by, so the guard cannot check the review it owes. Only the query counts: a JSON body's `query` field is read decoded,
-  so an escape such as `\u0050` hides none, and a variable or a `--jq` filter naming a mutation counts for nothing.
-- A `curl` call whose URL path is a REST merge's and that may write: a method other than `GET` or `HEAD`, one the shell
-  builds, an upload or a form, an unquoted word before `--` that the shell splits, which may be any option, or a body,
-  unless the call's last of `-G`, `--get`, and `--no-get` sends it as a GET and nothing in it may start another
-  transfer (`--next`, or a short-option group holding `:`). Its options are read as curl reads them, a group such as
-  `-sXPUT` included. curl is no merge tool, so the guard reads no head or record for it, and reads no transfer apart
-  from another, since where curl splits one depends on every option's arity: a read of a merge URL in a call that
-  writes elsewhere, or that sends `-G` data and may hold several transfers, is refused too.
-
-A call that only reads, such as a GraphQL query or a `curl` GET of whether a pull request merged, runs as before.
+- A `gh api` GraphQL call that may merge: one whose `query` field names `mergePullRequest`,
+  `enablePullRequestAutoMerge`, or `enqueuePullRequest`, at any endpoint, or one to GraphQL whose query names one, from
+  a file it names, or whose query the shell builds or reads from stdin. It names its pull request by a node id no
+  review record is keyed by, so the guard cannot check the review it owes. Only the query counts: a JSON body's `query`
+  field is read decoded, so an escape such as `\u0050` hides none, and a variable or a `--jq` filter naming a mutation
+  counts for nothing. With `--input`, `gh api` sends the last one's file as the body and its fields in the URL, so that
+  file alone decides. A GraphQL query that only reads runs as before.
+- Any `curl` call with a word that names a pull request's REST merge URL path (`/repos/<owner>/<name>/pulls/<n>/merge`),
+  GraphQL's endpoint path (`/graphql`), or a merge mutation, as written or in a JSON body decoded, a read included.
+  The guard parses no curl call: which of its transfers writes depends on the arity of every curl option, so it reads
+  none, and the denial also says to read with `gh pr view` or `gh api`, which it does read.
 
 Before it reads the record, a merge of this repository, one that names none or one of this checkout's remotes, holds the
 working copy to [the base branch's config](review.md#the-record) from local git alone. A merge naming its number compares
@@ -821,8 +815,8 @@ for proof, protect the branch with a required review from a second account. [Lim
 Limits:
 
 - A record written on another machine is not read here.
-- A `curl` call whose whole URL the shell builds is read as a GraphQL call only by its body, and options from a config
-  file (`-K`, `.curlrc`) are not read, like the other commands the shell lexer does not see through, such as `xargs`.
+- A `curl` call whose URL the shell builds whole, with a body from a file or the shell, and curl options from a config
+  file (`-K`, `.curlrc`), are not read, like the other commands the shell lexer does not see through, such as `xargs`.
 - Two sessions writing the same record at once can lose an update; the last write wins.
 - Two concurrent review steps on one pull request share one open mark: the first to finish clears the other's.
 - In a fork checkout with gh offline, `aidrian pr request`, `attest`, and `signoff` fall back to origin, and a merge

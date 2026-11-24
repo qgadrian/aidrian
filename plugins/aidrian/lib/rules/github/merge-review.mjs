@@ -4,8 +4,8 @@
 //   - `gh pr merge` (but `--disable-auto`, and `--help` or `-h`, which merge nothing), `--auto` included;
 //   - `gh api repos/<owner>/<name>/pulls/<n>/merge` sent as a PUT or a POST;
 //   - the MCP tool `mcp__github__merge_pull_request`, or a host connector's call that stands for it (scripts/hook-mcp-github.mjs).
-// A GraphQL call through `gh api` or `curl` that may merge (MERGE_MUTATIONS) names its pull request by a node id no record
-// is keyed by, and a curl call that may write to a REST merge URL is no merge the rule reads (readCurl), so inside a
+// A GraphQL call through `gh api` that may merge (MERGE_MUTATIONS) names its pull request by a node id no record is keyed
+// by, and a curl call that names a merge URL, GraphQL, or a mutation is no call the rule reads (readCurl), so inside a
 // project each is refused outright, for every session, with the `gh pr merge` to run instead.
 // Each is read wherever it runs (shell-lex walkCommands): in a substitution, `sh -c`, `eval`, or a heredoc fed to a shell.
 // A shell fed text the rule cannot read as commands, such as a pipe into `bash`, is refused when that text names a merge.
@@ -123,7 +123,7 @@ export function viewPrAt(cwd, forge = null) {
 // read is null: a dynamic head or number is read through gh; a dynamic repository counts as this one.
 // `cwd` is the folder a query file a `gh api graphql` call names is read from.
 export function readMerge({ program, args, environment = [] }, env = {}, { cwd = process.cwd() } = {}) {
-  if (program === 'curl') return readCurl(args, cwd);
+  if (program === 'curl') return readCurl(args);
   if (program !== 'gh') return null;
   const merge = readGh(args, environment, env, cwd);
   return merge && !merge.graphql ? { ...merge, ...ghHosts(args, environment, env, commandPath(args)[0] === 'api') } : merge;
@@ -239,59 +239,17 @@ const placesOf = (named) => {
   return { ...(hosts.length ? { hosts } : {}), ...(named.includes(UNREAD_HOST) ? { hostUnread: true } : {}) };
 };
 
-// The options of curl that take a value, from `curl --help all`: the ones that send, and the common rest, so the word
-// after one is never read as the URL.
-const CURL_DATA = ['-d', '--data', '--data-raw', '--data-binary', '--data-ascii', '--data-urlencode', '--json'];
-const CURL_SENDS = [...CURL_DATA, '-T', '--upload-file', '-F', '--form', '--form-string'];
-const CURL_VALUES = new Set([...CURL_SENDS, '-X', '--request', '-H', '--header', '-u', '--user', '-o', '--output',
-  '-A', '--user-agent', '-e', '--referer', '-b', '--cookie', '-c', '--cookie-jar', '-K', '--config',
-  '-w', '--write-out', '--url', '-x', '--proxy', '-m', '--max-time', '--connect-timeout', '-r', '--range', '-E', '--cert', '--cacert',
-  '--key', '--retry', '-U', '--proxy-user', '--oauth2-bearer', '--resolve', '--connect-to', '-D', '--dump-header']);
-// A URL path (urlPath), a variable included, that is a pull request's REST merge.
-const CURL_MERGE = /\/repos\/.+\/pulls\/[^/]+\/merge\/?$/iu;
-const CURL_GRAPHQL = /(?:^|\/)graphql\/?$/iu;
+// A word that names a pull request's REST merge URL path, or GraphQL's endpoint path, as written, a variable included.
+const CURL_MERGE = /\/repos\/[^\s?#]+\/pulls\/[^\s/?#]+\/merge\/?(?:[?#]|$)/iu;
+const CURL_GRAPHQL = /(?:^|\/)graphql\/?(?:[?#]|$)/iu;
 
-// The merge one curl invocation may make, as { outright: true, graphql, unreadable }, or null. curl is no merge tool, so
-// the rule reads no head or body of it, and no transfer apart from another, since where curl splits one (`--next`,
-// `-:`) depends on every option's arity: it refuses outright, as a GraphQL merge, a call that names a REST merge URL and
-// may write anywhere in it (curlWrites), and a call whose body names a merge mutation (namesMutation) sent to a URL whose
-// path is GraphQL's, or to one the shell builds whole; to a GraphQL path, also a body from stdin, a file it cannot read,
-// or the shell. A call that only reads, such as a GET of whether a pull request merged, runs. Its options are read as
-// curl reads them, a short-option group such as `-sXPUT` included.
-function readCurl(args, cwd) {
-  const { words, flags } = readWords(args, CURL_VALUES);
-  const urls = [...words, ...flags.filter((flag) => flag.name === '--url').map((flag) => flag.value)].filter(Boolean);
-  const sends = flags.filter((flag) => CURL_SENDS.includes(flag.name));
-  if (curlWrites(args, flags, sends) && urls.some((url) => CURL_MERGE.test(urlPath(url.text)))) return { outright: true, graphql: false, unreadable: false };
-  const graphql = urls.some((url) => CURL_GRAPHQL.test(urlPath(url.text)));
-  if (!graphql && !urls.some((url) => url.dynamic)) return null;
-  for (const { name, value } of sends) {
-    const file = value && !value.dynamic ? (['-T', '--upload-file'].includes(name) ? value.text : /^@(.+)$/u.exec(value.text)?.[1]) : undefined;
-    const unread = !value || value.dynamic || file === '-';
-    const text = unread ? null : file === undefined ? value.text : queryFile(file, cwd);
-    if (text !== null && namesMutation(text)) return { outright: true, graphql: true, unreadable: false };
-    if (text === null && graphql) return { outright: true, graphql: true, unreadable: true };
-  }
-  return null;
-}
-
-// A URL's path as written, a variable included: no scheme and host, and no query or fragment.
-const urlPath = (text) => text.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*/iu, '').replace(/[?#].*$/u, '');
-
-// Whether a curl call may write, by any of its transfers: a method other than GET or HEAD, or one the shell builds; an
-// upload or a form; an unquoted word before `--` that the shell splits, which may be any option; or a body, unless the
-// call's last `-G`, `--get`, or `--no-get` is a `-G` or `--get`, which sends it in the URL's query string, and nothing in
-// the call may start another transfer (`--next`, or a short-option group holding `:`).
-function curlWrites(args, flags, sends) {
-  const methods = flags.filter((flag) => flag.name === '-X' || flag.name === '--request').map((flag) => flag.value);
-  if (methods.some((value) => !value || value.dynamic || !['GET', 'HEAD'].includes(value.text.toUpperCase()))) return true;
-  const end = args.findIndex((token) => token.text === '--' && !token.dynamic);
-  const options = end === -1 ? args : args.slice(0, end);
-  if (options.some((token) => token.splits)) return true;
-  const several = options.some((token) => !token.dynamic && (token.text === '--next' || /^-[^-][^\s]*:/u.test(token.text)));
-  const get = !several && ['-G', '--get'].includes(flags.filter((flag) => ['-G', '--get', '--no-get'].includes(flag.name)).at(-1)?.name);
-  return sends.some((flag) => !(get && CURL_DATA.includes(flag.name)));
-}
+// Whether one curl call may merge, as { outright: true }, or null. curl is no merge tool, and reading which of its
+// transfers writes needs the arity of every curl option, so the rule parses none of it: any word that names a REST merge
+// URL, GraphQL's endpoint, or a merge mutation (namesMutation, a JSON body decoded) refuses the call outright, a read
+// included; `gh pr merge`, `gh pr view`, and `gh api` do those calls, and the guard reads them.
+// A word's JSON is read from its first `{`, so a body attached to its option (`-d{...}`, `--data={...}`) is decoded too.
+const curlNames = (text) => CURL_MERGE.test(text) || CURL_GRAPHQL.test(text) || namesMutation(text) || (text.includes('{') && namesMutation(text.slice(text.indexOf('{'))));
+const readCurl = (args) => (args.some((token) => curlNames(token.text)) ? { outright: true } : null);
 
 // Whether a `gh api` call's literal `query` field (`-f query=...`, `-F query=...`, not a file) names a merge mutation.
 // With `--input`, the body is the file's, and gh sends the fields in the URL: graphqlMerge reads that file instead.
@@ -369,9 +327,10 @@ export const graphqlReason = (unreadable) =>
   `Blocked: this ${graphqlCall(unreadable)}, by a node id the merge guard cannot match to a pull request's review record. ` +
   'Merge with `gh pr merge <PR> --match-head-commit <sha>`, which the guard checks; a query that only reads runs as before.';
 
-// The deny for a curl call that may write to a pull request's merge URL, in any session: the guard reads no curl merge.
-export const CURL_REASON = 'Blocked: this sends a write to a pull request\'s merge URL with curl, which the merge guard does not read, so it cannot check the ' +
-  'review the pull request owes. Merge with `gh pr merge <PR> --match-head-commit <sha>`, which the guard checks; a curl call that only reads runs as before.';
+// The deny for a curl call that names a merge URL, GraphQL's endpoint, or a merge mutation, in any session (readCurl).
+export const CURL_REASON = 'Blocked: this curl call names a pull request\'s merge URL, GraphQL\'s endpoint, or a merge mutation, and the merge guard reads ' +
+  'no curl call, so it cannot check the review a merge owes. Merge with `gh pr merge <PR> --match-head-commit <sha>`, and read with `gh pr view` or `gh api`, ' +
+  'which the guard reads.';
 
 // The largest query file a `gh api graphql` call may name that the rule reads.
 const QUERY_CAP = 1024 * 1024;
@@ -904,7 +863,7 @@ function checkCommand(command, { cwd, env, input, viewPr, waiverForge, startedAt
     if (mark && !places) return NO_PROJECT;
     const project = places?.project ?? found;
     if (!project) continue;
-    if (merge.outright && !merge.graphql) return CURL_REASON;
+    if (merge.outright) return CURL_REASON;
     if (merge.graphql && !mark) return graphqlReason(merge.unreadable);
     if (mark && (merge.graphql || merge.auto)) return unattendedProblem({ project, home: places.home, merge, mark, startedAt, now });
     // A session of a project run is held to the run's budget of waived merges (waiver.mjs budgetProblem).

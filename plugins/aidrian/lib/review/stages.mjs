@@ -53,6 +53,8 @@ export async function runStages(s) {
   // answer is awaited after every earlier pass.
   const finalStage = [...plan.stages].reverse().find((stage) => stage.passes.every((pass) => map[pass.reviewer]?.kind !== 'remote')) ?? null;
   const current = state.rounds.at(-1);
+  // A head that only caught up with the base at the cap (step.mjs `catchUp`) runs no pass: the cap carries to it.
+  if (s.catchUp && state.rounds.length >= maxRounds) return capReached({ max_rounds: maxRounds });
   // A quiet push since the round's head keeps the round: it moves to this head, its number, cap, and last-round flag
   // as they were, and the heads it moved from go in its `quiet` list. The passes it touches still re-review it.
   const quiet = Boolean(current) && current.head !== head && quietSince(current.head);

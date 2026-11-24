@@ -3,26 +3,37 @@
 // it names take the run's custody with no person (lib/project-run-gate.mjs resumeRun). No session needs to write a
 // transcript, so until the project's run records its end the agent gate hook refuses every session and subagent a write
 // under a host's transcript folder (scripts/hook-agent-gates.mjs), but in a project folder's `memory` folder, where a
-// host keeps its memory, and a write to the folder or a folder above it, as a removal or a move of the host's config
-// folder or the home folder is. One rule, failing closed, for a literal path and a glob alike, which counts by its
-// literal prefix alone.
+// host keeps its memory. A literal path and a glob's literal prefix count alike. A folder above it, the folder itself
+// included, counts only when the call removes, moves away, or replaces it whole, as `rm -rf`, `rmdir`, a source of `mv`,
+// or the `-T` destination of `mv`, `cp`, or `ln` does: a write into a folder above it is judged by its own path.
 // Accepted residuals: a script that writes the file, which the hooks never see, as for a forged typed turn; a link
-// already on disk that a write passes through, since the guard is for cooperating agents (docs/hooks.md); and a glob
-// that starts above the transcript folder, such as one beside a host's config folder, is refused though it may reach none.
+// already on disk that a write passes through, since the guard is for cooperating agents (docs/hooks.md); an operand of
+// those commands built from a variable, or in a folder the shell may have left; and a glob such a command takes whose
+// prefix lies above the transcript folder, such as one beside a host's config folder, is refused though it may reach none.
 
 import { userInfo } from 'node:os';
 import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
-import { writeTargets } from './config-guard.mjs';
+import { bashCall, writeTargets } from './config-guard.mjs';
 import { foldCase, isWithin } from './fs.mjs';
+import { globStarts } from './glob-links.mjs';
 import { globPaths } from './handoff-guard.mjs';
 import { transcriptFolders } from './hosts/index.mjs';
 import { canonical } from './rules/main-checkout.mjs';
+import { expandHome, written } from './rules/main-checkout/writers.mjs';
+import { walkCommands } from './shell-lex.mjs';
 
 const real = (file) => foldCase(canonical(file));
 // A transcript as a text from a folder no path gives spells it: `projects/<folder>/<session>.jsonl`.
 const SPELLED = /(?:^|[\\/])projects[\\/][^\\/\s'"]+[\\/][^\\/\s'"]+\.jsonl(?![\w.-])/iu;
+// The programs that remove each operand whole, with the value options none of them takes.
+const REMOVERS = new Set(['rm', 'rmdir', 'unlink']);
+// The programs whose destination `-T` (`--no-target-directory`) replaces whole, rather than writing into it.
+const REPLACERS = new Set(['mv', 'cp', 'ln']);
+// A command that names none of them is not walked: most calls name none.
+const NAMES_ONE = /(?<![\w.-])(?:rm|rmdir|unlink|mv|cp|ln)(?![\w.-])/u;
+const NO_TARGET = (text) => text === '--no-target-directory' || /^-[A-Za-z]*T[A-Za-z]*$/u.test(text);
 
 // Whether the real path `target` lies under the real transcript folder `folder`, the folder itself included, and outside
 // the `memory` folder of a project folder in it.
@@ -32,10 +43,33 @@ function underTranscripts(folder, target) {
   return !(parts.length >= 2 && parts[1] === foldCase('memory'));
 }
 
-// Whether a write to the real path `target`, a literal one or a glob's literal prefix, the parts before its first
-// wildcard (handoff-guard.mjs globPaths), may change a transcript of `folder`: it lies under the folder as
-// underTranscripts reads it, or is the folder or a folder above it, which a removal or a move takes along.
-const reaches = (folder, target) => isWithin(target, folder) || underTranscripts(folder, target);
+// The operands of `invocation` it removes, moves away, or replaces whole: every operand of a remover, every source of
+// `mv`, and the destination of `mv`, `cp`, or `ln` under `-T`. Each is a token as the lexer gives it.
+function wholeOperands({ program, args }) {
+  if (REMOVERS.has(program)) return written(program, args, new Set());
+  if (!REPLACERS.has(program)) return [];
+  const operands = written(program, args);
+  const replaced = args.some(({ text }) => NO_TARGET(text));
+  if (program === 'mv') return replaced ? operands : operands.slice(0, -1);
+  return replaced ? operands.slice(-1) : [];
+}
+
+// The real paths a Bash call removes, moves away, or replaces whole (wholeOperands): a literal operand by its path, and a
+// glob by its literal prefix, from the folder each command runs in. An operand built from a variable, or of a command in
+// a folder the walk cannot know, is left out.
+function wholePaths(input) {
+  if (!bashCall(input) || typeof input.tool_input?.command !== 'string' || !NAMES_ONE.test(input.tool_input.command)) return [];
+  const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
+  return walkCommands(input.tool_input.command, cwd).flatMap(({ invocation, folder }) => {
+    if (folder === null) return [];
+    return wholeOperands(invocation).flatMap((token) => {
+      const text = expandHome(token);
+      if (!token.dynamic) return [real(path.resolve(folder, text))];
+      if (/[$`]/u.test(text)) return [];
+      return globStarts({ text, dirs: [folder] }).map(({ start }) => real(start));
+    });
+  });
+}
 
 // Why the call in `input` may not run because it writes a host's session transcript while `runSession()` says the
 // call's project has a project run whose ledger records no end (project-run-guard.mjs projectRunActive with
@@ -45,13 +79,16 @@ const reaches = (folder, target) => isWithin(target, folder) || underTranscripts
 // hook's environment moves a host's config folder.
 export function transcriptWriteDenial(input, { names: { human } }, { runSession = () => false, folders = transcriptFolders(userInfo().homedir) } = {}) {
   const { files, names, globs } = writeTargets(input);
-  if (files.length === 0 && names.length === 0 && globs.length === 0) return null;
+  // rmdir is no writer the shared reader lists, so its operands come from wholePaths alone.
+  const whole = wholePaths(input);
+  if (files.length === 0 && names.length === 0 && globs.length === 0 && whole.length === 0) return null;
   const guarded = folders.map(real);
   const placed = files.map(real);
+  const prefixes = globs.filter((glob) => !glob.unsure).flatMap(globPaths).map(({ prefix }) => prefix);
   const hit = names.some((text) => SPELLED.test(text))
     || globs.some((glob) => (glob.unsure || glob.opaque) && SPELLED.test(glob.text))
-    || guarded.some((folder) => placed.some((target) => reaches(folder, target))
-      || globs.filter((glob) => !glob.unsure).flatMap(globPaths).some(({ prefix }) => reaches(folder, prefix)));
+    || guarded.some((folder) => [...placed, ...prefixes].some((target) => underTranscripts(folder, target))
+      || whole.some((target) => isWithin(target, folder)));
   if (!hit || !runSession()) return null;
   const why = 'it may change a host\'s session transcript, which a project run reads its driver\'s continuation from, and no session or subagent writes one while a project run is under way';
   return { match: 'may change a host\'s session transcript', reason: projectRuleReason(input, why, human) };

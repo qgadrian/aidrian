@@ -15,6 +15,7 @@
 // and `unjudged` when it printed no count, since its exit status is unknown. A call whose output the host kept in a file,
 // as Claude Code does with one too long for the payload, is read from the tail of that file (outputText).
 
+import { createHash } from 'node:crypto';
 import { closeSync, constants, copyFileSync, fstatSync, mkdtempSync, openSync, readSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -73,11 +74,18 @@ export function mayRunTests(command, cwd = null) {
 const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 const startsWith = (key, prefix) => key === prefix || key.startsWith(`${prefix} `);
 
-// The words of a readInvocation result, wrappers that run a test runner peeled, joined by spaces: the key a run and a
-// claim are matched by. `rtk npm run check 2>&1` and `npm run check` are one key.
-export function commandKey(invocation) {
+// A key past COMMAND_MAX keeps its head and a digest of the whole, so two runs of different long file lists stay two keys.
+// Only the stored key is capped: a configured command is matched as a prefix of the whole command (isTestRun).
+const capped = (key) => (key.length <= COMMAND_MAX ? key : `${key.slice(0, COMMAND_MAX)} #${createHash('sha256').update(key).digest('hex').slice(0, 12)}`);
+
+// The key a run and a claim are matched by: the whole key (fullKey), capped.
+export const commandKey = (invocation) => capped(fullKey(invocation));
+
+// The words of a readInvocation result, wrappers that run a test runner peeled, joined by spaces, uncapped.
+// `rtk npm run check 2>&1` and `npm run check` are one key.
+function fullKey(invocation) {
   const own = aidrianArgs(invocation);
-  if (own) return ['aidrian', ...own.map((token) => token.text)].join(' ').slice(0, COMMAND_MAX);
+  if (own) return ['aidrian', ...own.map((token) => token.text)].join(' ');
   let words = [invocation.program, ...invocation.args.map((token) => token.text)].filter((word) => typeof word === 'string' && word !== '');
   for (let peeled = 0; peeled < 3 && RUNNER_WRAPPERS.has(words[0]); peeled += 1) {
     const after = RUNNER_WRAPPERS.get(words[0]);
@@ -86,7 +94,7 @@ export function commandKey(invocation) {
     else break;
   }
   if (words[0] !== undefined) words[0] = path.basename(words[0]);
-  return words.join(' ').slice(0, COMMAND_MAX);
+  return words.join(' ');
 }
 
 // Whether the readInvocation result runs tests: a word list of TEST_PREFIXES, a configured full suite or changed-files
@@ -95,21 +103,21 @@ export function isTestRun(invocation, testing = {}) {
   if (invocation.dynamic) return false;
   const words = aidrianArgs(invocation)?.map((token) => token.text);
   if (words) return words[0] === 'test' && words[1] === 'changed';
-  const key = commandKey(invocation);
+  const key = fullKey(invocation);
   if (key.startsWith('node ') && key.split(' ').includes('--test')) return true;
   const configured = [...(testing.fullSuite ?? []), ...(testing.changedCommand ? [testing.changedCommand] : [])].map(keyOfText);
   return [...TEST_PREFIXES, ...configured].some((prefix) => prefix && startsWith(key, prefix));
 }
 
-// The key of a command written as text, such as a config entry: its first command's.
+// The whole key of a command written as text, such as a config entry: its first command's (fullKey).
 function keyOfText(text) {
   const [segment] = lexPipeline(String(text)).segments;
-  return segment ? commandKey(readInvocation(segment)) : '';
+  return segment ? fullKey(readInvocation(segment)) : '';
 }
 
 // Whether the readInvocation result runs one of `testing.fullSuite` as written, with no more arguments: `npm test -- f`
 // runs one file, and is no full suite.
-export const isFullSuite = (invocation, testing = {}) => !invocation.dynamic && (testing.fullSuite ?? []).map(keyOfText).includes(commandKey(invocation));
+export const isFullSuite = (invocation, testing = {}) => !invocation.dynamic && (testing.fullSuite ?? []).map(keyOfText).includes(fullKey(invocation));
 
 // The test runs on the top level of `command`, as { key, folder, carries }: `folder` the folder it runs in (shell-lex
 // walkCommands), and `carries` whether the line's exit status of 0 says the run exited 0: no separator before or after it
@@ -539,7 +547,7 @@ function textClaims(body, { section, testing, ownOnly, suites, own }) {
         return invocation && isTestRun(invocation, testing) ? [commandKey(invocation)] : [];
       });
       const bare = clause.replace(/`[^`\n]*`/gu, ' ');
-      for (const suite of suites) if (new RegExp(`(?:^|[\\s(])${escape(suite)}(?=$|[\\s:,.)])`, 'u').test(bare)) keys.push(suite);
+      for (const suite of suites) if (new RegExp(`(?:^|[\\s(])${escape(suite)}(?=$|[\\s:,.)])`, 'u').test(bare)) keys.push(capped(suite));
       const counts = [...clause.matchAll(PASS_COUNT)].map((match) => Number(match[1] ?? match[2] ?? match[3]));
       const commits = [...clause.matchAll(COMMIT_ID)].map((match) => match[0]);
       for (const key of new Set(keys)) claims.push({ clause: clause.trim(), key, counts, commits });
@@ -607,7 +615,12 @@ export function claimProblem(missing, runs, { where }) {
   const counted = (run) => (run.pass === null && run.fail === null ? '' : ` (pass ${run.pass ?? 'unknown'}, fail ${run.fail ?? 'unknown'})`);
   const at = (run) => (run.tree ? `at tree ${String(run.tree).slice(0, 12)}` : 'at a tree git could not read');
   const shown = held.slice(-3).map((run) => `${run.status}${counted(run)} ${at(run)}`);
-  const record = held.length ? `The record holds ${shown.join('; ')}.` : 'The record holds no finished run of it.';
+  // A run of the same program with other words, such as other test files, is named, since a claim quotes its run as it ran.
+  const runner = (key) => key.split(' ')[0];
+  const near = held.length ? [] : [...new Set(runs.filter((run) => missing.some(({ key }) => runner(run.command) === runner(key))).map((run) => run.command))].slice(-3);
+  const clip = (command) => (command.length > 120 ? `${command.slice(0, 120)}…` : command);
+  const others = near.length ? ` Its runs of \`${runner(missing[0].key)}\` ran other words: ${near.map((command) => `\`${clip(command)}\``).join(', ')}; quote the command as it ran.` : '';
+  const record = held.length ? `The record holds ${shown.join('; ')}.` : `The record holds no finished run of it.${others}`;
   const stated = missing.some((each) => each.counts.length) ? 'with the count it states, ' : '';
   const beside = [...new Set(held.flatMap((run) => run.untrackedCode ?? []))];
   const untracked = beside.length

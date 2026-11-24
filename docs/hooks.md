@@ -2169,6 +2169,8 @@ A test run is a command of config.json [`testing.fullSuite`](config.md#testing) 
 and its pnpm, yarn, and bun forms, `node --test`, vitest, jest, pytest, `go test`, `cargo test`, `mix test`, rspec,
 `make test`, `make check`, or `aidrian test changed`, read through wrappers such as `rtk`, `timeout`, and `npx`, with
 redirects dropped. A project's own script, such as `npm run check`, counts once `testing.fullSuite` names it.
+A key past 300 characters keeps its first 300 and a digest of the whole, so a run of other files is never its run.
+A configured command is still matched as a prefix of the whole command, so a long `testing.changedCommand` with files after it is a run.
 A call stopped, started in the background, or moved there at its timeout records nothing: no hook sees it end.
 A line of only programs that run no tests, such as git and grep, reads no config and records nothing.
 
@@ -2278,7 +2280,9 @@ aidrian test changed --base origin/main
 ```
 
 `aidrian test changed` reads the change against `--base`, else the branch's remote copy, else its merge base with the
-default branch on `origin`, uncommitted and untracked files included. A test file is a changed one, a Go `_test.go`
+default branch on `origin`, uncommitted and untracked files included.
+A remote copy at HEAD, as on a branch just pushed, holds the whole change, so the merge base is the base there, else that copy.
+A test file is a changed one, a Go `_test.go`
 beside a changed `.go` file, or one that names a changed file: a code file by its name and by its name without the
 extension, `index.*` by its folder and name, any other file by its path. A test file in a nested package, a folder with
 its own package.json, is left out for that package's runner. It runs `testing.changedCommand` with the files after it,

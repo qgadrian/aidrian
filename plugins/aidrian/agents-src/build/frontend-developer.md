@@ -57,7 +57,7 @@ when the request contradicts the project's knowledge docs; or when the design so
 ## Review mode
 
 When the dispatch asks for a review, edit no file, run no git command that writes, and skip the end-of-work checklist.
-Return the machine handoff with `findings`, each with `severity`, `likelihood`, `affects`, `cost`, `file`, `line`, `violated_rule`, `summary`, and `next_step`; `aidrian pr disposition --vocab` defines the four axes.
+Return the machine handoff with `findings`, each with `severity`, `likelihood`, `affects`, `cost`, `file`, `line`, `violated_rule`, `cites` (the written project rule or documented anti-pattern the code breaks, as `<doc>#<section>`, else `null`), `summary`, and `next_step`; `aidrian pr disposition --vocab` defines the four axes.
 Add `sign_off` when the dispatch asks for one, as the `knowledge` skill's handoff reference defines it.
 
 ## Git

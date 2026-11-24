@@ -93,8 +93,9 @@ or `user_chose`.
 ## Output
 
 Return the machine handoff from the `knowledge` skill with `findings`, ordered by severity, each with
-`severity`, `likelihood`, `affects`, `cost`, `file`, `line`, `violated_rule`, `summary`, and `next_step`;
-`summary` is the impact and `next_step` the fix direction.
+`severity`, `likelihood`, `affects`, `cost`, `file`, `line`, `violated_rule`, `cites`, `summary`, and `next_step`;
+`cites` is the written project rule or documented anti-pattern the code breaks, as `<doc>#<section>`, else `null`,
+`summary` the impact, and `next_step` the fix direction.
 A `next_step` never hands the Human work an agent can do, or a choice the decision rule or the review rules settle;
 a `human_only` deferral stays as it is.
 A finding that a slice's closure criterion is unmet as written, while the behaviour it names is proven elsewhere, adds `plan_change`

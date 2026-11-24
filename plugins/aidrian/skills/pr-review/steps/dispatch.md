@@ -31,7 +31,8 @@ and its change with `git diff <base_sha> <head_sha> -- <path>`.
 <the weighing paragraph below>
 
 Return the machine handoff from the `knowledge` skill, with `findings`: one object per finding with
-severity, likelihood, affects, cost, file, line, violated_rule, summary, and next_step. Use [] when you found nothing.
+severity, likelihood, affects, cost, file, line, violated_rule, cites (only a written project rule the code breaks,
+as `<doc>#<section>`, else null), summary, and next_step. Use [] when you found nothing.
 For each modified, renamed, or removed file with no finding, add one `evidence` item:
 "regression_check: clean, <path> compared at <base_sha, 7> and <head_sha, 7>".
 ```

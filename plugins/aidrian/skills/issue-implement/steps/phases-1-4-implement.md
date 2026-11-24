@@ -53,8 +53,8 @@ For each slice:
    When the slice may add a helper, run `helper-scout` first; its result is advisory.
 4. **Dispatch a fresh agent** with the brief from the authority contract, plus:
    - the closure gate: the commands the project's `testing` knowledge names for the changed files pass, and the docs it makes stale are updated;
-   - when to escalate: scope grows, product truth or a type is missing, a trust boundary or shared wrapper changes,
-     or a hook would need bypassing;
+   - when to escalate: scope grows past a small gap phase 4 lets it fix, product truth or a type is missing,
+     a trust boundary or shared wrapper changes, or a hook would need bypassing;
    - tests first where practical. An exception goes in `compliance` as `tdd_exception: <reason>`, with the closest regression test;
    - implement and verify only, no commit yet; list each changed file in `pending_commit`.
 5. **Check what landed.** Before the slice's first dispatch, keep `git -C <worktree> rev-parse HEAD` as the slice base.
@@ -71,7 +71,8 @@ For each slice:
    `architect` only when the shape changed materially or `code-reviewer` asks for it.
 7. **Findings.** Take each through the `orchestration` skill § 4. Before a `fix_now` goes to the owner, check that
    the cited file or symbol exists as cited, that the preferred pattern appears in two other places or in a knowledge doc,
-   and that the fix stays inside the acceptance criteria. A finding that fails a check moves to residual risks,
+   and that the fix stays inside the acceptance criteria, or is a small gap phase 4 lets the slice fix.
+   A finding that fails a check moves to residual risks,
    with `false_positive_on_reverification` and the reason.
    A security `fix_now` never moves on a failed check: only `security-engineer` closes it, as phase 5 gate 5 says.
    Send it the failed check; a finding it confirms goes to the owner.
@@ -94,5 +95,9 @@ For each slice:
 
 - Read the plan again. A remaining slice that now spans two owners, two commits, or unclear verification is split before its dispatch.
 - Work found outside the issue goes to `agent-issue-writer` as a new issue; never widen the scope in silence.
+  With config.json `review.fixSmallGaps` true, a gap whose fix is `trivial` on the table's cost axis is fixed in the
+  slice that found it, before its commit, and the pull request body names it; a larger one still gets an issue.
+  One first seen here goes into the next slice's brief; with no slice left, it gets an issue.
+  Phase 3's escalation and step 7's scope check let such a fix through.
 - **Re-size.** When the work has left the issue's files to modify, or no longer fits its size, check with the Human:
   go on, split, or defer. Record the new size and a one-line reason in the plan's frontmatter for phase 7.

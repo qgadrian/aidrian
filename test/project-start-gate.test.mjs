@@ -42,17 +42,14 @@ test('the caps in code', () => {
 
 // A finding the session cannot fix because its fix lies in a host file goes to the Human's merge as a stated residual,
 // in the prompt of an attempt on base copies and in the skill's rules for every attempt alike, never as a decision.
-test('a low or medium finding review already posted in a host file is a stated residual, and pr_open once it is the last stop', () => {
-  // Two conditions, both the engine's own: no security mark, and the id and file shown by the record the summary comment
-  // for the head this round reviewed carries, as it does under the default publish settings.
-  assert.match(HOST_FILE_RESIDUAL, /^A low or medium review finding whose fix lies in a host file, that the review step does not mark `security`, and whose id and file the review step's own summary comment for the pull request's current head, the head this round reviewed, already shows in the record it carries, is a stated residual, never a decision: /u);
-  // Named only by the shown id and file, with a fixed reason, never a title or the finding's text; the stop names only that file.
-  assert.match(HOST_FILE_RESIDUAL, /Accepted residuals that names it only by that shown id and file, as `<id>: the run may not write this host file \(<file>\)` with its `R<round>-<n>` id, and no title or reason\./u);
-  assert.match(HOST_FILE_RESIDUAL, /record the result pr_open with only that shown file in its stop/u);
-  assert.doesNotMatch(HOST_FILE_RESIDUAL, /<title>|the reason, and the file's path/u, 'no title or raw text');
-  // A security finding parks whatever is published; so does one only an earlier head's comment shows, as a review now
-  // kept local under a record posted before, or one no comment shows.
-  assert.match(HOST_FILE_RESIDUAL, /A security finding in a host file parks as before, whatever a post shows, and so does a finding whose id or file no such comment shows: one posted for an earlier head, or none, as under review\.record "local", which posts none\.$/u);
+test('a low or medium finding in a host file is a stated residual by its id alone, and pr_open once it is the last stop', () => {
+  // One condition beside severity: no security mark. The line publishes nothing, so no post or head condition applies.
+  assert.match(HOST_FILE_RESIDUAL, /^A low or medium review finding whose fix lies in a host file, that the review step does not mark `security`, is a stated residual, never a decision: /u);
+  assert.match(HOST_FILE_RESIDUAL, /names it by its `R<round>-<n>` id alone, as `<id>: the run may not write a host file this finding needs`, never by its file, title, or reason\./u);
+  assert.match(HOST_FILE_RESIDUAL, /record the result pr_open with that same line as its stop and no decisions, and run no merge/u);
+  assert.doesNotMatch(HOST_FILE_RESIDUAL, /<file>|<title>|path|post|comment|head/u, 'no file, title, or path wording, and no post condition');
+  // A security finding parks, whatever else holds.
+  assert.match(HOST_FILE_RESIDUAL, /A security finding in a host file parks as before\.$/u);
   // A mixed round: every other finding takes its own route first, and a decision it raises decides the result.
   assert.match(HOST_FILE_RESIDUAL, /Every other finding of the round takes its own route first, and keeps any decision it raises, which then decides the result\. Only when such residuals are the one stop left, record the result pr_open/u);
   const given = { run: 'launch', key: 'ENG-1', attempt: 2, branch: 'feat/eng-1', clone: '/c' };

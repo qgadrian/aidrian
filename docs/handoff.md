@@ -668,15 +668,14 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   The branch's own changes stay in its commits for the pull request's review.
   An issue's session never writes a host file, on any attempt and whatever `github.autoMerge.includeGuardedPaths` says.
   A low or medium review finding whose fix lies in one, that the review step does not mark as a
-  [security finding](review.md#reviewers), and whose [id](review.md#finding-ids) and file the review step's own summary
-  comment for the pull request's current head already shows in the record it carries, is a stated residual, never a
-  decision: an Accepted residuals item, `<id>: the run may not write this host file (<file>)`, with no title or reason.
-  The session reuses the engine's [publication decision](review.md#publishing) and makes none of its own.
+  [security finding](review.md#reviewers), is a stated residual, never a decision: an Accepted residuals item that
+  names it by its [id](review.md#finding-ids) alone, `<id>: the run may not write a host file this finding needs`.
+  Neither that item nor the result's stop names the finding's file, title, or reason, so it publishes nothing.
   Every other finding of the round takes its own route first and keeps any decision it raises.
-  Only when such residuals are the one stop left is the result `pr_open`, with only that shown file in its stop, for the Human's merge.
-  A security finding in a host file parks as before, whatever a post shows.
-  So does a finding whose id or file no such comment shows: one posted for an earlier head, or none, as under
-  `review.record: "local"`, which posts none.
+  Only when such residuals are the one stop left is the result `pr_open`, with that same line as its stop, for the Human's merge.
+  The Human reads the finding's file and text in the review record: on the pull request, or under
+  `review.record: "local"` on the machine that keeps it.
+  A security finding in a host file parks as before.
   A finding outside host files keeps its route.
   A later or resumed attempt runs `aidrian project stop-action RUN ISSUE --catch-up` first.
   It parks a pull request into another branch than the default.

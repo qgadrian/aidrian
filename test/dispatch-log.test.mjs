@@ -825,6 +825,10 @@ test('summarize: per agent type dispatches, re-dispatch rate, medians, cost, del
   const onlyDenies = formatReport(summarize([deny('s', 'pr-body', 'main', 'the body has no `## Summary` section.')]), { file: 'f', since: '7d', skipped: 0 });
   assert.match(onlyDenies, /\nSessions: 0, .*\nHook denies: 1 in 1 session\n {2}pr-body: 1, by main 1\n/, 'denies alone are rows');
   assert.match(formatReport(summarize([rows[0]]), { file: 'f', since: '7d', skipped: 0 }), /\nHook denies: none$/);
+  // A time budget's refusal files no lesson, so the report counts it by reason and never claims one for it.
+  const loaded = summarize(Array.from({ length: 3 }, () => deny('s', 'config-guard', 'main', 'past the guards\' time budget')));
+  assert.deepEqual(loaded.hook_denies.by_rule, [{ rule: 'config-guard', count: 3, agents: [['main', 3]], repeated_runs: 0, reasons: [['past the guards\' time budget', 3]] }]);
+  assert.doesNotMatch(formatReport(loaded, { file: 'f', since: '7d', skipped: 0 }), /automatic lesson/);
 });
 
 test('parseSince takes a span or a date; aidrian report prints the log, --json the summary', (t) => {

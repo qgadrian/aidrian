@@ -16,7 +16,7 @@ import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
 import { localForgeTokenKeychain } from './config-local.mjs';
-import { checkDeadline } from './deadline.mjs';
+import { checkDeadline, GUARDS_PAST_BUDGET } from './deadline.mjs';
 import { foldCase, globParts, isEntry, isWithin, joinSpelled } from './fs.mjs';
 import { folderOf, GLOB_WORD, globLinksTo, globStarts, linkBelow, linkReaches, linkWalk, partMatches, reachesFile, realOf, sameFile } from './glob-links.mjs';
 import { fileEditOf, isFileEditTool, opaqueShellCommand } from './hosts/index.mjs';
@@ -441,7 +441,7 @@ export function deadlineDenial(input, { names: { human } }, { unattended = () =>
   const who = onlyMain(input, { unattended, drove, issue });
   if (who === null) return null;
   const why = `the guards could not finish reading this command in time, so it may change a file ${who}`;
-  return { match: 'past the guards\' time budget', reason: projectRuleReason(input, why, human, RETRY, { mark }) };
+  return { match: GUARDS_PAST_BUDGET, reason: projectRuleReason(input, why, human, RETRY, { mark }) };
 }
 
 // The texts a command in a shell the lexer cannot read is judged by: the command as given, and, when it differs, a copy

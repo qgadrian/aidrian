@@ -205,6 +205,9 @@ A signal with target `plugin` lands in the [plugin's inbox](#the-plugins-inbox).
   A run is one subagent, by its `agent_id`, or the main thread; the cause is the rule's own words for what it matched,
   the `reason` of its `hook_deny` row. A count per session once filed lessons for blocks days apart, by different agents,
   on different pull requests, for different causes, each a block the rule was right to make.
+  A refusal because the guards or the project run rule ran out of their [time budget](hooks.md#agent-gates), the causes
+  `past the guards' time budget` and `the project run rule ran out of time`, never counts: it is the machine's load, not a
+  way the agent was never shown, and its message already gives the retry steps.
   The tracker write guard's [refusal of a write with no read yet](config.md#how-a-write-is-judged) counts once at most, at the session's end,
   and only when no read was recorded, so a batch of first writes never fires this, and a session stuck on that refusal files no lesson by itself.
   With `telemetry.enabled` or `telemetry.hookDenies` off, such a session leaves no row either, though the agent still sees each refusal.

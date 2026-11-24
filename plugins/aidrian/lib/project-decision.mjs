@@ -129,7 +129,7 @@ export function writeDecisionFile(attemptFolder, key, entry, section) {
 // issue. Exit 1 with no recorded read of ISSUE, a section that may not be pinned (pinnable), or a store that cannot be
 // written. `record` and `forget` are refused to a session that drove a project run (run-driver.mjs droveRun), as the
 // sign-off store's writer is: a run's driver may run on for hours with no Human.
-export function decisionCommand({ project, config, key, heading, record = false, forget = false, named = false, env = process.env, home }) {
+export function decisionCommand({ project, config, key, heading, record = false, forget = false, env = process.env, home }) {
   const refuse = (why) => ({ exitCode: 1, out: [], err: [`aidrian project decision: ${why}`] });
   if (!ISSUE_KEY.test(key ?? '')) return refuse(`${JSON.stringify(key)} is not an issue key`);
   if (record && forget) return refuse('--record and --forget each act alone: give one');
@@ -158,9 +158,9 @@ export function decisionCommand({ project, config, key, heading, record = false,
     `${fence}text`, section, fence,
     'Write the section so it stands alone: it names the question and the chosen path in full, since a reference to text outside it, such as an option\'s number, settles nothing.',
   ];
-  // A preview run for another project's folder (`named`, --project) prints that folder, by its real path, so the
-  // pasted command records the decision there and not in the project of the folder it is pasted in.
-  const where = named ? ` --project=${shellQuoted(resolvedPath(project.root) ?? project.root)}` : '';
+  // The printed command names the project it was previewed for, by its real path, so wherever it is pasted it records
+  // the decision there and not in the project of the folder it is pasted in.
+  const where = ` --project=${shellQuoted(resolvedPath(project.root) ?? project.root)}`;
   if (!record) return { exitCode: 0, out: [...shown, `sha256 ${sha256}; record it with \`aidrian project decision ${key} --heading=${shellQuoted(title)}${where} --record\``], err: [] };
   let written;
   try {

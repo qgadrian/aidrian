@@ -115,7 +115,7 @@ test('project decision prints, --record writes, --forget removes, and a malforme
 
   // Without --record: the section as hashed, then its sha256 and the command that records it. The heading, which starts
   // with a dash, goes in attached; the printed one is attached too, and one POSIX shell word, single-quoted, so
-  // `$(...)`, a backtick, and `$VAR` never expand; and --project, given, is printed as this project's real path, so the
+  // `$(...)`, a backtick, and `$VAR` never expand; and --project is always printed, as this project's real path, so the
   // pasted command records here and not in the project it is pasted in. Nothing is written.
   const preview = fx.cmd(['decision', 'ENG-1', `--heading=${SHELLY}`, '--project', fx.dir], { cwd: other.dir });
   assert.equal(preview.exitCode, 0, preview.err.join('\n'));
@@ -226,7 +226,7 @@ test('project decision refuses with no recorded read, no single section, hidden 
   assert.match(decide({ heading: 'Export format' }).err[0], /the issue's description holds text the tracker's view hides \(an HTML comment, a <details> tag, or a \+\+\+ line, anywhere, fenced or not\)/u);
   readFor(DRIVER, DECIDED.description);
   assert.match(decide({ heading: 'Missing' }).err[0], /no section of ENG-1's description, or more than one, has the heading "Missing"/u);
-  assert.equal(decide({ heading: 'Export format' }).out.at(-1), `sha256 ${decidedEntry().sha256}; record it with \`aidrian project decision ENG-1 --heading='Export format' --record\``, 'no --project given, none printed');
+  assert.equal(decide({ heading: 'Export format' }).out.at(-1), `sha256 ${decidedEntry().sha256}; record it with \`aidrian project decision ENG-1 --heading='Export format' --project=${shellQuoted(realpathSync(fx.dir))} --record\``, 'with no --project given, the resolved project\'s');
   // A session no Human attends, and one that drove a run, record and forget nothing.
   const driver = STARTED[0].session;
   markUnattended(OTHER, { root: fx.dir, env: fx.env });

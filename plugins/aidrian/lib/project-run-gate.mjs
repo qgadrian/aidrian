@@ -18,8 +18,10 @@
 //   3. a run whose state folder fails runPlace; a host that declares no `capabilities.projectStart`, and one whose start
 //      is not confined (a halt); from here on, an unverified host's every answer prints an `unverified:` line; and an
 //      earlier start of this session whose session the host does not list ended (heldProblem's read of it); up to here
-//      no check reads the team's policy, and nothing is fetched or written;
-//   4. a default branch whose head the forge cannot name (a retry), or that the local base refs do not name too (forgeBase): the
+//      no check reads the team's policy, nothing is fetched, and nothing on the path to a launch writes before the
+//      policy read, except a halt recheck's `resume` row;
+//   4. a default branch whose head the forge cannot name, or that git cannot fetch (each a retry), or that the local
+//      base refs do not name too (forgeBase): the
 //      pin, the base tip every later check, cut, and policy read uses, fetched only now. Then the team's policy, read
 //      once (teamPolicy), its local half at that very commit: a base branch whose config.json, there and as the forge's
 //      default branch commits it, does not set projectRun.allow; every check below decides from that one read;
@@ -407,9 +409,10 @@ function startContext(given) {
 // or { answer } when the start ends here, as for an issue it parks unreconciled (parkUnreconciled). The start pins the
 // base tip, reads the team policy once with its local half at that commit, and decides everything from that read: the
 // machine's switch, the host's start, the caps, the access check, the clone's checks, and every value of the launch.
-// Only checks that read no policy, and write nothing, run before the pin, so a start they refuse fetches nothing; what
-// writes the ledger or touches a session, as settling an orphan, runs only once the policy read and the checks it
-// feeds let the start go on.
+// Only checks that read no policy run before the pin, so a start they refuse fetches nothing, and nothing on the path to
+// a launch writes before the policy read, except a halt recheck's `resume` row (startContext): what writes the ledger
+// or touches a session, as settling an orphan, runs only once the policy read and the checks it feeds let the start go
+// on.
 function startPlace(context) {
   const { project, run, key, env, home, state, store, session, facade, cap, refuse, noted, spawn, main, found } = context;
   // An earlier start of this session that still runs holds this one back, read only, before anything is fetched; the
@@ -854,8 +857,9 @@ function earlierEnded({ cap, store, earlier, env, spawn, state, run }) {
 
 // The commit issues are cut from and checked against: the head of the default branch, as the forge reports it at the
 // repository init pinned, `repository`, fetched into the default branch's remote-tracking ref under `env`. { tip, main },
-// `main` the default branch's name, or { problem }, with `transient` when the forge could not answer now, as teamPolicy
-// marks its own read: the forge cannot say, the fetch fails, or a local base ref, which any session's git can move, names
+// `main` the default branch's name, or { problem }, with `transient` when the forge could not answer now, or git could
+// not fetch the head, as teamPolicy marks its own read: only a head that moved after a good fetch, and a local base ref
+// that names another commit, are refusals: the forge cannot say, the fetch fails, or a local base ref, which any session's git can move, names
 // another commit.
 export function forgeBase(project, repository, forge, env = process.env) {
   const named = `${repository.owner}/${repository.name}`;
@@ -869,7 +873,7 @@ export function forgeBase(project, repository, forge, env = process.env) {
   }
   if (typeof sha !== 'string' || !/^[0-9a-f]{40}$/u.test(sha)) return { problem: `the forge names no commit for the default branch of ${repository.host}/${named}` };
   const fetched = gateGit(['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${main}:refs/remotes/origin/${main}`], project.root, { env });
-  if (fetched.status !== 0) return { problem: `git could not fetch the default branch ${main} from origin (${String(fetched.stderr ?? '').trim().split('\n').at(-1) || `exit ${fetched.status}`})` };
+  if (fetched.status !== 0) return { problem: `git could not fetch the default branch ${main} from origin (${String(fetched.stderr ?? '').trim().split('\n').at(-1) || `exit ${fetched.status}`})`, transient: true };
   const tracked = gateGit(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${main}^{commit}`], project.root, { timeout: 30_000 }).stdout?.trim();
   if (tracked !== sha) return { problem: `the default branch ${main} moved while the start read it: the forge said ${sha}, and origin now gives ${tracked || 'nothing'}; start again` };
   const local = baseBranchTip(project.root);

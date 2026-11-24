@@ -1033,6 +1033,19 @@ test('a forge that cannot name the default branch now retries the start, and wri
   assert.deepEqual(fx.claude.starts(), []);
 });
 
+// The forge's API names the head, and git's fetch of it then fails: the remote the fixture serves is gone.
+test('a fetch of the base that fails after the forge named its head retries the start, and writes nothing', (t) => {
+  const fx = runFixture(t);
+  const rows = fx.rows().length;
+  const retried = fx.cmd(['start', 'launch', 'ENG-1'], { env: { ...fx.env, FIXTURE_REMOTE: path.join(fx.root, 'no-such-remote.git') } });
+  assert.equal(retried.exitCode, 75, retried.err.join('\n'));
+  assert.match(retried.out[0], /^retry: git could not fetch the default branch main from origin \(/u);
+  assert.ok(fx.forge.calls.some(([kind]) => kind === 'branchHead'), 'the forge named the head');
+  assert.equal(fx.rows().length, rows, 'no row');
+  assert.equal(existsSync(path.dirname(work(fx))), false, 'no clone');
+  assert.deepEqual(fx.claude.starts(), []);
+});
+
 test('the normal path: wait returns on the result while the issue\'s session is still listed working, and the next start waits for it without leaving a clone', (t) => {
   const fx = runFixture(t, { issues: [{ key: 'ENG-1', branch: 'feat/eng-1', status: 'unstarted' }, { key: 'ENG-4', branch: 'fix/eng-4', status: 'unstarted' }] });
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);

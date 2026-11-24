@@ -41,8 +41,8 @@ function nestedProtected(segments) {
 // `restart`, `upgrade` and `update`, which may restart the service, `uninstall`, a word a later version adds, and
 // `auth export`, whose help was not read. A word that takes subcommands is never listed alone. A `-h` or `--help`
 // anywhere before a `--` prints a command's help and starts nothing, as `opencode serve --help` does; `-v`, `--version`,
-// and `--completions` count only as the first word. A form with a word the shell expands, such as a variable or a
-// brace list, stays a start.
+// and `--completions` count only as the first word. A help flag past the first word on a line with a word the shell
+// expands, such as a variable or a brace list, is no help read: the line stays a start.
 const INFO = new Set(['-h', '--help', '-v', '--version', '--completions']);
 const HELP = new Set(['-h', '--help']);
 export const NO_SESSION = Object.freeze([
@@ -65,11 +65,12 @@ function credentialStores({ env = {}, home }) {
   return [...new Set([...folders, ...named('OPENCODE_CONFIG_DIR')])];
 }
 const starts = (args) => {
-  const words = args.map((token) => (token.dynamic || token.expands ? null : token.text));
-  if (words.length === 0 || words.includes(null)) return true;
+  const words = args.map((token) => (token.dynamic ? null : token.text));
+  if (words.length === 0 || words[0] === null) return true;
   if (INFO.has(words[0])) return false;
+  // A help flag past the first word counts only on a line the shell passes as written.
   const options = words.includes('--') ? words.slice(0, words.indexOf('--')) : words;
-  if (options.some((word) => HELP.has(word))) return false;
+  if (!args.some((token) => token.dynamic || token.expands) && options.some((word) => HELP.has(word))) return false;
   return !NO_SESSION.some((entry) => entry.every((word, at) => words[at] === word));
 };
 

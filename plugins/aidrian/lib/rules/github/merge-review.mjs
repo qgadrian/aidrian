@@ -253,10 +253,10 @@ const CURL_GRAPHQL = /(?:^|\/)graphql\/?(?:[?#].*)?$/iu;
 
 // The merge one curl invocation may make, as { outright: true, graphql, unreadable }, or null. curl is no merge tool, so
 // the rule reads no head or body of it: it refuses outright, as a GraphQL merge, a transfer that names a REST merge URL
-// and may write (curlWrites), and a GraphQL call whose body names a merge mutation (namesMutation): to a GraphQL URL,
-// also a body from stdin, a file it cannot read, or the shell; to a URL the shell builds, only one that names it as
-// written. A transfer that only reads, such as a GET of whether a pull request merged, runs. Each transfer, split at
-// `--next` (`-:`), is read alone, with its options read as curl reads them, a short-option group such as `-sXPUT` included.
+// and may write (curlWrites), and a transfer whose body names a merge mutation (namesMutation) sent to a URL whose path
+// is GraphQL's, or to one the shell builds whole; to a GraphQL path, also a body from stdin, a file it cannot read, or
+// the shell. A transfer that only reads, such as a GET of whether a pull request merged, runs. Each transfer
+// (curlTransfers) is read alone, its options as curl reads them, a short-option group such as `-sXPUT` included.
 function readCurl(args, cwd) {
   for (const transfer of curlTransfers(args)) {
     const merge = readTransfer(transfer, cwd);
@@ -265,13 +265,37 @@ function readCurl(args, cwd) {
   return null;
 }
 
-// The words of each curl transfer: `--next`, or `-:` alone or in a short-option group, ends one.
+// The words of each curl transfer, split where curl splits them: at `--next`, and at `-:`, alone or in a short-option
+// group, whose options before it stay with the transfer it ends. A word an option takes as its value, and every word
+// after `--`, never splits one.
 function curlTransfers(args) {
   const transfers = [[]];
-  for (const token of args) {
-    const short = /^-[^-]/u.test(token.text) && !token.dynamic ? readShortOptions(token.text, CURL_VALUES).options : [];
-    if (token.text === '--next' || short.includes('-:')) transfers.push([]);
-    else transfers.at(-1).push(token);
+  const queue = [...args];
+  let ended = false;
+  while (queue.length) {
+    const token = queue.shift();
+    const current = transfers.at(-1);
+    const option = !ended && !token.dynamic && token.text.startsWith('-') && token.text !== '-';
+    if (!option) current.push(token);
+    else if (token.text === '--') {
+      ended = true;
+      current.push(token);
+    } else if (token.text === '--next') transfers.push([]);
+    else if (token.text.startsWith('--')) {
+      current.push(token);
+      if (!token.text.includes('=') && CURL_VALUES.has(token.text) && queue.length) current.push(queue.shift());
+    } else {
+      const { options, value } = readShortOptions(token.text, CURL_VALUES);
+      const at = options.indexOf('-:');
+      if (at === -1) {
+        current.push(token);
+        if (value && value.attached === null && queue.length) current.push(queue.shift());
+        continue;
+      }
+      if (at > 0) current.push({ text: token.text.slice(0, at + 1), dynamic: false });
+      transfers.push([]);
+      if (token.text.length > at + 2) queue.unshift({ text: `-${token.text.slice(at + 2)}`, dynamic: false });
+    }
   }
   return transfers;
 }
@@ -280,30 +304,33 @@ function readTransfer(args, cwd) {
   const { words, flags } = readWords(args, CURL_VALUES);
   const urls = [...words, ...flags.filter((flag) => flag.name === '--url').map((flag) => flag.value)].filter(Boolean);
   const sends = flags.filter((flag) => CURL_SENDS.includes(flag.name));
-  if (curlWrites(flags, sends) && urls.some((url) => CURL_MERGE.test(url.text))) return { outright: true, graphql: false, unreadable: false };
-  const graphql = urls.some((url) => !url.dynamic && CURL_GRAPHQL.test(url.text));
+  if (curlWrites(words, flags, sends) && urls.some((url) => CURL_MERGE.test(url.text))) return { outright: true, graphql: false, unreadable: false };
+  const graphql = urls.some((url) => CURL_GRAPHQL.test(url.text));
   if (!graphql && !urls.some((url) => url.dynamic)) return null;
   for (const { name, value } of sends) {
     const file = value && !value.dynamic ? (['-T', '--upload-file'].includes(name) ? value.text : /^@(.+)$/u.exec(value.text)?.[1]) : undefined;
     const unread = !value || value.dynamic || file === '-';
-    const text = unread || file === '-' ? null : file === undefined ? value.text : queryFile(file, cwd);
+    const text = unread ? null : file === undefined ? value.text : queryFile(file, cwd);
     if (text !== null && namesMutation(text)) return { outright: true, graphql: true, unreadable: false };
     if (text === null && graphql) return { outright: true, graphql: true, unreadable: true };
   }
   return null;
 }
 
-// Whether one curl transfer may write: a method other than GET or HEAD, or one the shell builds; an upload or a form;
-// or a body, unless `-G` (`--get`) sends it in the URL's query string.
-function curlWrites(flags, sends) {
+// Whether one curl transfer may write: a method other than GET or HEAD, or one the shell builds; an upload or a form; a
+// body, unless the transfer's last `-G`, `--get`, or `--no-get` is a `-G` or `--get`, which sends it in the URL's query
+// string; or a word the shell builds and splits, which may be any option.
+function curlWrites(words, flags, sends) {
   const methods = flags.filter((flag) => flag.name === '-X' || flag.name === '--request').map((flag) => flag.value);
   if (methods.some((value) => !value || value.dynamic || !['GET', 'HEAD'].includes(value.text.toUpperCase()))) return true;
-  const get = flags.some((flag) => flag.name === '-G' || flag.name === '--get');
+  if (words.some((word) => word.splits)) return true;
+  const get = ['-G', '--get'].includes(flags.filter((flag) => ['-G', '--get', '--no-get'].includes(flag.name)).at(-1)?.name);
   return sends.some((flag) => !(get && CURL_DATA.includes(flag.name)));
 }
 
 // Whether a `gh api` call's literal `query` field (`-f query=...`, `-F query=...`, not a file) names a merge mutation.
-const queryNamesMutation = (flags) => flags.some((flag) => ['-f', '--raw-field', '-F', '--field'].includes(flag.name) && flag.value && !flag.value.dynamic &&
+// With `--input`, the body is the file's, and gh sends the fields in the URL: graphqlMerge reads that file instead.
+const queryNamesMutation = (flags) => !flags.some((flag) => flag.name === '--input') && flags.some((flag) => ['-f', '--raw-field', '-F', '--field'].includes(flag.name) && flag.value && !flag.value.dynamic &&
   /^query=(?!@)/u.test(flag.value.text) && MUTATION_TEXT.test(flag.value.text.slice('query='.length)));
 
 // Whether a GraphQL request's text names a merge mutation: for a JSON request body, its `query` field once decoded, so
@@ -425,8 +452,10 @@ export function endpointOf(text) {
 // Human attends wherever it runs.
 function graphqlMerge(args, flags, cwd) {
   const found = (unreadable) => ({ graphql: true, pr: null, head: null, target: null, repo: null, unreadable });
+  const input = flags.some((flag) => flag.name === '--input');
   for (const flag of flags) {
     const value = flag.value;
+    if (input && flag.name !== '--input') continue;
     if (flag.name === '--input') {
       if (!value || value.dynamic || value.text === '-') return found(true);
       const text = queryFile(value.text, cwd);

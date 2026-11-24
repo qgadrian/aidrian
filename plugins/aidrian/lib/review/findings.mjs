@@ -122,12 +122,7 @@ export function parseFindings(raw, settled = [], { round } = {}) {
     // value is no citation. Accepted residual: a `violated_rule` alone is never read as one, since a reviewer may put a
     // lens label there, so a producer that names the rule only there leaves the finding dropped, as before `cites`.
     const cites = text(finding.cites, 300);
-    const given = { ...Object.fromEntries(Object.entries(axes).filter(([, value]) => value !== undefined)), ...(cites ? { cites } : {}) };
-    let decided = decideDisposition(given);
-    if (round !== undefined && decided.disposition !== 'invalid') {
-      const asAgent = decideDisposition({ ...given, source: 'bot', round });
-      if (asAgent.rule !== 'botSourceWithoutAxis') decided = asAgent;
-    }
+    const decided = agentReading({ ...axes, cites }, round);
     if (decided.disposition === 'invalid') throw new Error(`${at}: ${decided.reason} (\`aidrian pr disposition --vocab\` lists the words)`);
     const { entry: ruled, note } = ruling({ file: text(finding.file, 300), severity: finding.severity, already_ruled: finding.already_ruled }, decided.disposition, settled);
     if (note) notes.push(`${at}.already_ruled ${note}: read as it stands`);
@@ -150,6 +145,31 @@ export function parseFindings(raw, settled = [], { round } = {}) {
   const fixed = out.filter((finding) => finding.state === 'fixed').length;
   const open = out.filter(blocks).length;
   return { list: out, findings: out.length, fixed, accepted: out.length - fixed - open, open, notes };
+}
+
+// An agent finding's disposition from its axes and citation, read at review round `round` as the review loop reads it
+// (`--source bot --round`), or with no source when the round is unknown. A finding with no likelihood or affects keeps
+// the reading with no source, needs_axis, unless `lateRound` takes it.
+function agentReading({ severity, likelihood, affects, cost, cites }, round) {
+  const given = Object.fromEntries(Object.entries({ severity, likelihood, affects, cost, cites }).filter(([, value]) => value !== undefined && value !== null && value !== ''));
+  const plain = decideDisposition(given);
+  if (round === undefined || plain.disposition === 'invalid') return plain;
+  const asAgent = decideDisposition({ ...given, source: 'bot', round });
+  return asAgent.rule === 'botSourceWithoutAxis' ? plain : asAgent;
+}
+
+// A pass result `aidrian pr attest` recorded with its findings one by one, read again at review round `round`: the
+// round the step opens for the result's head, which an attestation made before that step could not know. Each
+// finding's disposition and the result's counts follow the table at that round; a counts-only result is left as it is.
+export function rereadAt(result, round) {
+  if (!isObject(result) || !Array.isArray(result.list)) return result;
+  for (const finding of result.list) {
+    if (!isObject(finding) || (!ACCEPTABLE.has(finding.disposition) && finding.disposition !== 'fix_now')) continue;
+    const decided = agentReading(finding, round);
+    if (decided.disposition !== 'invalid') finding.disposition = decided.disposition;
+  }
+  result.open = result.list.filter(blocks).length;
+  return result;
 }
 
 // A reviewer's `security` flag (--findings-file, and an exec reviewer's key): absent or false is no flag, and any other

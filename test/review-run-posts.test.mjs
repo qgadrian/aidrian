@@ -49,6 +49,28 @@ test('attest mints no id on a record no step floored, or for a pass with no disp
   assert.equal(readLocalState(r.project, 7).passes['agent:never-dispatched'].list[0].id, undefined, 'a pass with no dispatch note mints none');
 });
 
+test('a pass attested before its round opened is read again at that round: a late trivial low it accepted stops blocking', async (t) => {
+  const r = bookingRepo(t, { maxReviewRounds: 8, extraRounds: 'off' });
+  const head = r.git('rev-parse', 'HEAD');
+  const one = await r.step({ exec: clean });
+  const [dispatched] = one.dispatch;
+  // Four rounds on the base commit before this head, so the step that consumes the attestation opens round 5.
+  const N = loadTable().lateRoundFrom;
+  const state = readLocalState(r.project, 7);
+  const base = r.git('rev-parse', 'HEAD~1');
+  state.rounds = Array.from({ length: N - 1 }, () => ({ head: base, at: new Date().toISOString() }));
+  writeLocalState(r.project, state);
+  const late = filed({ severity: 'low', likelihood: 'routine', cost: 'trivial', state: 'accepted' });
+  attestFile(r, dispatched.pass, head, [late]);
+  const attested = readLocalState(r.project, 7).passes[dispatched.pass];
+  assert.deepEqual([attested.list[0].disposition, attested.open], ['fix_now', 1], 'attested at round 4, where a trivial low is fixed');
+  const two = await r.step({ exec: clean });
+  const after = readLocalState(r.project, 7);
+  assert.notEqual(two.status, 'extension_check');
+  assert.equal(after.rounds.length, N, 'the step opened round 5 for the attested head');
+  assert.deepEqual([after.passes[dispatched.pass].list[0].disposition, after.passes[dispatched.pass].open], ['accepted_residual', 0], 'read again at round 5');
+});
+
 test('the exec step keeps a finding`s id while it is reported again with its title and file', async (t) => {
   const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 2;\nexport const b = 3;\n') });
   const exec = async () => ({ status: 'done', findings: [{ ...finding, severity: 'medium' }], verdicts: [], dropped: [] });

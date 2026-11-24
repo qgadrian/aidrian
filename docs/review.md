@@ -1015,7 +1015,8 @@ A low finding recorded with
 into the body, and attests it `accepted`. Attestation reads a finding as that command does with `--source bot --round`,
 at the record's round count, as the step reads an exec reviewer's, so a late residual the command gives is accepted there
 too. A finding with no likelihood or affects still needs them, except a late low one, which `lateRound` takes with or
-without axes. A head whose round no step has opened yet reads the round before: only ever an earlier, stricter reading. A code comment the residual needs is a [quiet push](#rounds), so neither opens a round.
+without axes. A pass attested on a head whose round no step has opened yet reads the round before; the step that opens
+the round reads its findings again at the new round, so a late residual stops blocking there. A code comment the residual needs is a [quiet push](#rounds), so neither opens a round.
 
 ### Small gaps
 

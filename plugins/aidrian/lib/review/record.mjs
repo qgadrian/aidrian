@@ -60,10 +60,9 @@ export function recordPass(project, args) {
 
 function writePass(project, { pr, repo, pass, head, reviewer, findings, fixed, accepted = 0, verdictsText = null, findingsText = null, remote = null, reading = undefined }) {
   const state = current(project, pr, repo, remote, reading);
-  // The record's round count, as the step reads an exec reviewer's findings (stages.mjs): a quiet push keeps it, and
-  // a head whose round no step opened yet reads the round before, which only ever reads a finding as early.
-  // Accepted residual: a pass attested before the step opens round lateRoundFrom keeps that earlier, stricter reading,
-  // so a late low or plausible medium it holds blocks until the pass is attested again in the new round.
+  // The record's round count, as the step reads an exec reviewer's findings (stages.mjs): a quiet push keeps it. A head
+  // whose round no step opened yet reads the round before, and the step that opens it reads the pass again
+  // (findings.mjs rereadAt).
   const itemized = findingsText === null ? null : parseFindings(findingsText, [], { round: state.rounds?.length || undefined });
   if (itemized) ({ findings, fixed, accepted } = itemized);
   if (fixed + accepted > findings) throw new Error('--fixed and --accepted together cannot exceed --findings');

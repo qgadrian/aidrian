@@ -134,24 +134,16 @@ test('one run per project is active: a second run waits until the first is done,
   assert.equal(init('second', input(SNAPSHOT)).exitCode, 0, 'nothing runs or may start in the first run, so it is done');
 });
 
-test('a landed row that names no branch carries on only for the branch the run whose pull request merged named', (t) => {
+test('a landed row that names no branch carries nothing on', (t) => {
   const { state, input, init } = setup(t);
   const at = new Date().toISOString();
-  const issue = (branch) => ({ issues: [{ key: 'ENG-1', branch, status: 'started' }] });
-  const done = (run) => appendToRun(state, run, () => ({ rows: [{ event: 'issue', key: 'ENG-1', state: 'done', at }] }));
-  // The run whose pull request merged, on feat/eng-1-export.
-  assert.equal(init('zero', input({ issues: [{ key: 'ENG-1', branch: 'feat/eng-1-export', status: 'unstarted' }] }, 'zero.json')).exitCode, 0);
-  done('zero');
-  // A run that carried it on while its snapshot named another branch, in a row that names none.
-  assert.equal(init('first', input(issue('feat/eng-1-other'), 'first.json')).exitCode, 0);
+  const issue = { issues: [{ key: 'ENG-1', branch: 'feat/eng-1-export', status: 'started' }] };
+  assert.equal(init('first', input(issue, 'first.json')).exitCode, 0);
   appendToRun(state, 'first', () => ({ rows: [{ event: 'landed', key: 'ENG-1', run: 'zero', attempt: 1, pr: 12, at }, { event: 'issue', key: 'ENG-1', state: 'done', at }] }));
-  // That run's branch is not the one the merge was checked for: nothing carries on for it.
-  const moved = init('moved', input(issue('feat/eng-1-other'), 'moved.json'));
-  assert.equal(moved.out.some((line) => line.startsWith('landed:')), false, 'the merge was checked for another branch');
-  const same = init('second', input(issue('feat/eng-1-export'), 'second.json'));
-  assert.equal(same.exitCode, 0, same.err.join('\n'));
-  assert.ok(same.out.includes('landed: 1 started issue whose pull request an earlier run left open merged since, which this run records done: ENG-1 (#12)'), same.out.join('\n'));
-  assert.equal(readRun(state, 'second').rows.find((row) => row.event === 'landed').branch, 'feat/eng-1-export');
+  const next = init('second', input(issue, 'second.json'));
+  assert.equal(next.exitCode, 0, next.err.join('\n'));
+  assert.equal(next.out.some((line) => line.startsWith('landed:')), false, 'which branch its merge was checked for cannot be told');
+  assert.deepEqual(planRun(readRun(state, 'second').snapshot, readRun(state, 'second').states).blocked, [{ key: 'ENG-1', reason: 'status', on: ['started'] }]);
 });
 
 test('init starts a started issue an earlier run parked on the same branch, and keeps every other started issue blocked', (t) => {

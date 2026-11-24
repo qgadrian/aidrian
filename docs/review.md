@@ -1130,7 +1130,8 @@ The session stops before the next pass when the fixes since round 1 pass half of
 or a finding comes back at a spot already fixed.
 Whether the rest is worth its cost is a `scope` decision.
 Its options: fix the open findings within the round cap,
-record the open findings whose disposition allows acceptance (not `fix_now`) as accepted residuals, or split the pull request.
+record the open findings whose disposition is `accepted_residual` as accepted residuals; any other follows its own disposition action;
+or split the pull request.
 The session runs `aidrian decisions resolve --domain backlog --class backlog-rank --reversible no,no,no,no` ([Decisions](config.md#decisions)).
 Its class is `backlog-rank`, since the question is which findings get fixed now and which become residuals or follow-ups.
 Under `decide`, with `secondLook` `null` or its `minSeverity` above `low`, this stop's severity, the session fixes within the round cap.

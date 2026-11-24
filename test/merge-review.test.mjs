@@ -202,14 +202,14 @@ const asked = (reason) => /the question "([^"]+)"/u.exec(reason ?? '')?.[1];
 
 test('a review stopped at its round limit asks the Human to ship or to grant rounds, never to wait', (t) => {
   const r = repo(t);
-  const question = 'Review of pull request #5 at abcdef1 stopped at its round limit, with 2 findings open. Ship, and file them as an issue?';
+  const question = 'Review of pull request acme/notes#5 at abcdef1 stopped at its round limit, with 2 findings open. Ship, and file them as an issue?';
   const grant = 'Run `aidrian pr extend 5 --human approve`: it records the grant when an extension waits for the Human, and otherwise its refusal names the route to one more round.';
   for (const [status, route] of [['extension_check', waitingRoute(5, JUDGING)], ['round_limit', grant]]) {
     r.record(5, stopped(status));
     const reason = r.run('gh pr merge 5');
     assert.equal(reason, `Blocked: this merges pull request #5 at abcdef1, and the review of head abcdef1 is \`${status}\`: stopped at its round limit, with 2 findings open, and not running. ` +
       `Only the Human decides this: ask with AskUserQuestion, the question "${question}", the options "Merge with the findings filed" and "Grant more review rounds", ` +
-      'and mark neither as preferred; a question in other words counts when it or the chosen option names #5 and abcdef1. ' +
+      'and mark neither as preferred; a question in other words counts when the chosen option, or else the question, names `acme/notes#5 at abcdef1` as written, and no other pull request at a head. ' +
       'When the Human picks "Merge with the findings filed", file the findings the review left open as a follow-up issue, then merge. ' +
       `When the Human picks "Grant more review rounds", do not merge. ${route} ${handOver(5)}`, status);
     assert.match(reason, /`aidrian pr extend 5 --human approve`/u, `${status}: both routes name the grant command`);
@@ -244,7 +244,7 @@ test('the count is the last round`s, for the merge`s head only', (t) => {
   r.record(5, stopped('round_limit', { rounds: [{ head: HEAD, open: 5 }, { head: HEAD, open: 1 }] }));
   const one = r.run('gh pr merge 5') ?? '';
   assert.match(one, /is `round_limit`: stopped at its round limit, with 1 finding open, and not running\./u);
-  assert.equal(asked(one), 'Review of pull request #5 at abcdef1 stopped at its round limit, with 1 finding open. Ship, and file it as an issue?');
+  assert.equal(asked(one), 'Review of pull request acme/notes#5 at abcdef1 stopped at its round limit, with 1 finding open. Ship, and file it as an issue?');
   for (const [name, rounds] of [
     ['a last round on another head', [{ head: HEAD, open: 2 }, { head: NEXT, open: 2 }]],
     ['a round with no count', [{ head: HEAD }]],
@@ -255,7 +255,7 @@ test('the count is the last round`s, for the merge`s head only', (t) => {
     r.record(5, stopped('round_limit', { rounds }));
     const reason = r.run('gh pr merge 5') ?? '';
     assert.match(reason, /is `round_limit`: stopped at its round limit, and not running\./u, name);
-    assert.equal(asked(reason), 'Review of pull request #5 at abcdef1 stopped at its round limit. Ship, and file what it left open as an issue?', name);
+    assert.equal(asked(reason), 'Review of pull request acme/notes#5 at abcdef1 stopped at its round limit. Ship, and file what it left open as an issue?', name);
     assert.doesNotMatch(reason, /findings? open/u, name);
   }
 });
@@ -300,32 +300,35 @@ test('the Human`s "Merge with the findings filed" lets a capped review merge, an
 
 // #645: a session asked the round-cap decision in its own words, and the Human's "Merge with the findings filed" was
 // ignored, since only the question was read for the pull request and the head.
-test('a round-cap answer counts in the Human`s words when the question or the chosen option names the pull request and head', () => {
+test('a round-cap answer counts in the Human`s words when the chosen option, or else the question, names the one pull request at its head', () => {
   const at = '2026-11-03T14:10:00.000Z';
   const on = { pr: 638, head: HEAD, repo: 'acme/notes', since: '2026-11-03T14:00:00.000Z', capped: true };
   const approves = (question, answer) => mergeApproved([{ question, answer, at }], on);
   const plain = 'The review hit its round limit with 2 findings open. Ship it and file them, or keep reviewing?';
   for (const [why, question, answer] of [
-    ['the option carries both', plain, 'Merge with the findings filed (#638 at abcdef1)'],
-    ['one in each', `${plain} (#638)`, 'Merge with the findings filed, abcdef1'],
-    ['the question carries both, as before', `#638 at abcdef1: ${plain}`, 'Merge with the findings filed'],
-    ['a longer head', plain, 'Merge anyway (#638 at abcdef1234)'],
-    ['the record`s repository', plain, 'Merge anyway (Acme/Notes#638 at abcdef1)'],
-    ['the option`s head decides over the question`s other one', `#638 at 1234567: ${plain}`, 'Merge anyway (abcdef1)'],
+    ['the exact pair in the option', plain, 'Merge with the findings filed (acme/notes#638 at abcdef1)'],
+    ['the pair with no repository in the option', plain, 'Merge with the findings filed (#638 at abcdef1)'],
+    ['the guard`s own question', 'Review of pull request acme/notes#638 at abcdef1 stopped at its round limit, with 2 findings open. Ship, and file them as an issue?', 'Merge with the findings filed'],
+    ['a longer head', plain, 'Merge anyway (Acme/Notes#638 at abcdef1234)'],
+    ['the option`s pair decides over a question naming two', `acme/notes#638 at abcdef1 or acme/notes#639 at 1234567: ${plain}`, 'Merge anyway (#638 at abcdef1)'],
   ]) assert.equal(approves(question, answer), true, why);
   for (const [why, question, answer] of [
-    ['no identifiers', plain, 'Merge with the findings filed'],
+    ['no pair', plain, 'Merge with the findings filed'],
+    ['a pull request and a head apart, not as a pair', `${plain} (#638)`, 'Merge with the findings filed, abcdef1'],
     ['no head', plain, 'Merge with the findings filed (#638)'],
     ['another head', plain, 'Merge with the findings filed (#638 at 1234567)'],
     ['another pull request', plain, 'Merge with the findings filed (#6380 at abcdef1)'],
-    ['an option naming another pull request decides alone', `#638 and #639 at abcdef1: ${plain}`, 'Merge with the findings filed (#639)'],
-    ['an option naming another head decides alone', `#638 at abcdef1 or at 1234567: ${plain}`, 'Merge anyway (1234567)'],
-    ['another repository in the option', plain, 'Merge anyway (fork/notes#638 at abcdef1)'],
-    ['another repository in the question', `fork/notes#638 at abcdef1: ${plain}`, 'Merge anyway'],
+    ['a question naming two pairs, and an option naming none', `#638 at abcdef1 or #639 at 1234567: ${plain}`, 'Merge anyway'],
+    ['a question naming two heads of the pull request', `#638 at abcdef1 or #638 at 1234567: ${plain}`, 'Merge anyway'],
+    ['an option naming another pull request decides alone', `#638 at abcdef1: ${plain}`, 'Merge with the findings filed (#639 at abcdef1)'],
+    ['an option naming two pairs', plain, 'Merge anyway (#638 at abcdef1, #639 at 1234567)'],
+    ['a pair with another repository in the option', plain, 'Merge anyway (fork/notes#638 at abcdef1)'],
+    ['a pair with another repository in the question', `fork/notes#638 at abcdef1: ${plain}`, 'Merge anyway'],
+    ['an option`s bare number under a question naming another repository', `fork/notes#638 at abcdef1: ${plain}`, 'Merge anyway (#638 at abcdef1)'],
+    ['another repository beside the pair', `fork/notes#638: ${plain}`, 'Merge anyway (#638 at abcdef1)'],
     ['the grant', plain, 'Grant more review rounds (#638 at abcdef1)'],
   ]) assert.equal(approves(question, answer), false, why);
   assert.equal(mergeApproved([{ question: plain, answer: 'Merge with the findings filed (#638 at abcdef1)', at: '2026-11-03T13:00:00.000Z' }], on), false, 'before the outcome');
-  assert.equal(approves(`fork/notes#638 at abcdef1: ${plain}`, 'Merge anyway (#638)'), true, 'the option`s plain number decides over the question`s repository');
 });
 
 test('the latest round-cap answer about the pull request and head decides, in either order', () => {
@@ -395,7 +398,7 @@ test('a review that runs, waits for the Human, covers another head, or is owed k
   const r = repo(t);
   r.record(5, (state) => outcome(state, 'running'));
   assert.equal(r.run('gh pr merge 5'), 'Blocked: this merges pull request #5 at abcdef1, and the review of head abcdef1 is `running`: run `aidrian pr review 5` until it returns `received` or `none_needed`. ' +
-    'Only the Human waives this: ask with AskUserQuestion, the question "Merge pull request #5 at abcdef1 before its review is finished?", the options "Wait for the review" ' +
+    'Only the Human waives this: ask with AskUserQuestion, the question "Merge pull request acme/notes#5 at abcdef1 before its review is finished?", the options "Wait for the review" ' +
     `(first, recommended) and "Merge anyway", and merge only when the Human picks "Merge anyway". ${handOver(5)}`);
   for (const [name, edit] of [
     ['a check that waits for the Human', stopped('extension_ask', { extensions: [{ ...JUDGING, status: 'asking' }] })],

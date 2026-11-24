@@ -328,7 +328,7 @@ recommended option's label carries the exact id, such as "Approve checkout/total
 as the word right after "Approve", whole, so "Approve ui/fit.js" names `ui/fit.js` and "Approve o/r.js#9" names none.
 An option that names an id decides alone, so "Approve ui/wrap" under a question naming `ui/fit` and `ui/wrap` approves
 `ui/wrap` only, and an option naming another invariant approves nothing. An "Approve" whose label names no id counts only
-for what its question names, never for an id another option it was not names. A refusal, such as "Keep it open", counts
+for what its question names, never for an id that only an option the Human did not choose names. A refusal, such as "Keep it open", counts
 for every id its question names or its offered "Approve" options name. The latest answer that counts
 decides, so a refusal after an approval under the same question refuses, and a push asks
 again. The command is one plain `aidrian pr` call run from the pull request's checkout, with no shell variables, repeated flags, `cd`, `env -C`, or chain.

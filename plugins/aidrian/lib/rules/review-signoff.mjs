@@ -155,7 +155,7 @@ export function signoffMiss(words, answers, target) {
   const onHead = onPr.filter(({ question }) => question.includes(head.slice(0, 7)));
   if (!onHead.length) return `no question naming ${named} names the head \`${head.slice(0, 7)}\``;
   // An answer whose own "Approve" label names an id counts for that id alone. Any other approval counts only for what
-  // its question names: another option it was not is never its target. A refusal also counts for every id its offered
+  // its question names, never for an id that only an option the Human did not choose names. A refusal also counts for every id its offered
   // "Approve" options name, so a later "Keep it open" under a plain-words question outweighs the approval before it.
   const counts = ({ question, answer, options }) => {
     const own = labelId(answer);

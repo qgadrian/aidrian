@@ -487,6 +487,9 @@ test('a run after a cd is recorded when the call\'s own folder holds no project'
   await call(`git -C ${smoke} status && env -C ${other} make smoke && env -C ${dir} npm run check`, 'moved-4');
   assert.deepEqual(holders('moved-4'), [first]);
   assert.deepEqual(recorded('moved-4').map(({ command }) => command), ['npm run check']);
+  // Two runs on the line, each its own project's: the line's one summary is neither's count.
+  await call(`env -C ${smoke} make smoke && env -C ${dir} npm run check`, 'moved-5');
+  assert.deepEqual(recorded('moved-5').map(({ command, pass }) => [command, pass]).sort(), [['make smoke', null], ['npm run check', null]]);
 });
 
 test('a call whose output Claude Code kept in a file is counted from that file\'s tail', () => {
@@ -830,8 +833,8 @@ test('aidrian test changed runs a test file whose path holds pattern characters,
   // Words are the shell's: an option inside a quoted value, or a node script's own arguments, name no runner mode.
   assert.deepEqual([
     "jest --testNamePattern='use --runTestsByPath here'", 'jest --runTestsByPath=true', 'jest --runTestsByPath=false', `jest ${'--verbose '.repeat(40)}--runTestsByPath`,
-    'npx --yes jest', 'pnpm exec jest', 'node --import tsx node_modules/jest/bin/jest.js', 'node scripts/run.mjs --test', 'node --test-reporter spec --test',
-  ].map((command) => testRunner(path.join(ROOT, 'none'), command)), ['jest', null, 'jest', null, 'jest', 'jest', 'jest', null, 'node']);
+    'npx --yes jest', 'pnpm exec jest', 'node --import tsx node_modules/jest/bin/jest.js', 'node --inspect-port 9230 --test', 'node --test-reporter spec --test',
+  ].map((command) => testRunner(path.join(ROOT, 'none'), command)), ['jest', null, 'jest', null, 'jest', 'jest', 'jest', 'node', 'node']);
   const pattern = literalPattern(file, 'jest');
   assert.equal(pattern, 'app/\\[org\\]/\\(group\\)/\\[...slug\\]/page.test.mjs');
   assert.ok(new RegExp(pattern).test(file) && !new RegExp(file).test(file), 'the escaped path matches itself, as the raw one does not');

@@ -129,20 +129,13 @@ export function testRunner(root, command, depth = 0, scripts = null) {
   return typeof scripts[name] === 'string' ? testRunner(root, scripts[name], depth + 1, scripts) : null;
 }
 
-// Node's options that take the next word as their value.
-const NODE_VALUE_OPTIONS = new Set(['-r', '--require', '--import', '--loader', '--experimental-loader', '--conditions', '-C', '--env-file',
-  '--test-reporter', '--test-reporter-destination', '--test-name-pattern', '--test-skip-pattern', '--test-concurrency', '--test-shard', '--test-timeout']);
-
-// What `node <words>` runs: jest when its script is jest's entry point, the node runner when `--test` comes before the
-// script, else none.
+// What `node <words>` runs: jest when a word is jest's entry point, else the node runner when a word is `--test`, else none.
+// SHORTCUT: no word is read in its argument's role, so a script's own `--test` reads as the node runner, as do
+// `jest -- --runTestsByPath`, which jest takes as a pattern, and `npx --cache <folder> jest`, whose option value ends the
+// peel (dropOptions): each review round found one more such case, and a full option reader per runner would replace this.
 function nodeRunner(words) {
-  for (let i = 0; i < words.length; i += 1) {
-    const word = words[i];
-    if (word === '--test') return 'node';
-    if (!word.startsWith('-')) return /(?:^|\/)(?:jest\/bin\/jest\.js|\.bin\/jest)$/u.test(word) ? 'jest' : null;
-    if (NODE_VALUE_OPTIONS.has(word)) i += 1;
-  }
-  return null;
+  if (words.some((word) => /(?:^|\/)(?:jest\/bin\/jest\.js|\.bin\/jest)$/u.test(word))) return 'jest';
+  return words.includes('--test') ? 'node' : null;
 }
 
 // The words of the last command of `text`, its program's base name first, after a package runner's own words; none for

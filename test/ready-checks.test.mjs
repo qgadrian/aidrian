@@ -223,11 +223,14 @@ test('ready-wait waits until the run an edit re-queues has shown and finished, a
   assert.equal(shown.code, 0, shown.out.join('\n'));
   assert.equal(shown.polls, 4);
   assert.match(shown.out.at(-1), /^clear: .*`gh pr ready 7`/u);
-  // Still held when the timeout ends: exit 2, naming the hold. No poll starts that its sleep would leave no time to read.
+  // Still held when the timeout ends: exit 2, naming the hold. The last sleep is cut short, so the last poll reads with
+  // two seconds left, and a check that clears before the timeout is seen.
   const held = await wait(['7', '--timeout-sec', '10'], [{ view: draft([run('CI', at(-1_000), 'IN_PROGRESS')]), edits }]);
   assert.equal(held.code, 2);
   assert.match(held.out.at(-1), /^held at the 10 s timeout: pull request #7 has checks that have not finished on its head: CI/u);
-  assert.deepEqual(held.budgets, [['view', 10_000], ['view', 5_000]]);
+  assert.deepEqual(held.budgets, [['view', 10_000], ['view', 5_000], ['view', 2_000]]);
+  const short = await wait(['7', '--timeout-sec', '4'], [{ view: draft([run('CI', at(-1_000), 'IN_PROGRESS')]), edits }, { view: draft(GREEN), edits: {} }]);
+  assert.deepEqual([short.code, short.budgets], [0, [['view', 4_000], ['view', 2_000], ['edits', 2_000]]]);
   // The view and the edit-time read share one deadline: a slow view leaves the edit read only what is left.
   const slow = await wait(['7', '--timeout-sec', '10'], [{ view: draft(GREEN), edits }], { viewMs: 4_000 });
   assert.deepEqual(slow.budgets.slice(0, 2), [['view', 10_000], ['edits', 6_000]]);

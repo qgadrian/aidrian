@@ -310,8 +310,11 @@ export function outputText(output, persisted = null) {
 // The rows a finished shell call adds, one a test run on its top level: `exitZero` as runStatus takes it, before the
 // line's own reach, and `persisted` as outputText takes it. `tree` reads a folder's trees (workingTree), once a folder;
 // a row whose trees git cannot give keeps them null, so a claim it cannot support names why. `keep` picks the runs by the
-// folder each runs in, as the PostToolUse hook files each run with the project it runs in.
-export function checkRows({ command, cwd, output, persisted = null, exitZero, testing = {}, agentId = null, at = new Date().toISOString(), tree = workingTree, keep = () => true }) {
+// folder each runs in, as the PostToolUse hook files each run with the project it runs in; `lineRuns`, how many runs
+// the whole line holds when other projects' configs read some of them, so the line's one count goes to a lone run only.
+export function checkRows({
+  command, cwd, output, persisted = null, exitZero, testing = {}, agentId = null, at = new Date().toISOString(), tree = workingTree, keep = () => true, lineRuns = null,
+}) {
   const runs = testRuns(command, cwd, testing);
   if (!runs.length) return [];
   const counts = runCounts(outputText(output, persisted));
@@ -322,7 +325,7 @@ export function checkRows({ command, cwd, output, persisted = null, exitZero, te
     if (!trees.has(where)) trees.set(where, tree(where) ?? {});
     const { tree: full = null, trackedTree = null, untrackedCode = [] } = trees.get(where);
     // One count for the line: with two runs on it, only the one whose status the line carries is judged by its exit.
-    const own = runs.length === 1 ? counts : { pass: null, fail: null };
+    const own = (lineRuns ?? runs.length) === 1 ? counts : { pass: null, fail: null };
     const status = runStatus(own, exitZero && carries);
     return [{ at, agentId, command: key, tree: full, trackedTree, untrackedCode, status, pass: own.pass, fail: own.fail }];
   });

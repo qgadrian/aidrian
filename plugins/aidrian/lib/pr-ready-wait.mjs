@@ -36,6 +36,8 @@ export function parseReadyWaitArgs(argv) {
 }
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// The time the last poll keeps to read in.
+const READ_MS = 2_000;
 
 // Runs the command; returns its exit code. `forgeAt` gives a forge whose gh calls stop after the `timeoutMs` it is given:
 // each call gets the time left then, so the view and the edit-time read share the one deadline. It, `now`, and `sleep`
@@ -76,11 +78,11 @@ export async function runReadyWait(argv, {
       log(`clear: no check on pull request #${n} is pending, and the run its last change re-queues has shown: mark it ready with \`gh pr ready ${ref}\``);
       return 0;
     }
-    // Another poll only when its sleep ends with time left to read.
-    if (left() <= intervalSec * 1000) {
+    // The last sleep is cut short, so the last poll still has READ_MS to read in before the timeout.
+    if (left() <= READ_MS) {
       log(`held at the ${timeoutSec} s timeout: ${reason.replace(/^Blocked: /u, '')} Run \`aidrian pr ready-wait ${ref}\` again to keep waiting.`);
       return 2;
     }
-    await sleep(intervalSec * 1000);
+    await sleep(Math.min(intervalSec * 1000, left() - READ_MS));
   }
 }

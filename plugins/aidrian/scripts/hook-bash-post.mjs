@@ -73,7 +73,7 @@ if (isMain(import.meta.url)) await runHook(handle);
 async function recordCheckRuns(input, command) {
   const run = detectHost({ input }).shellRun?.(input.tool_response);
   if (!run?.finished) return;
-  const [{ checkRows, appendCheckRuns }, { findProject, projectCheckouts, stateDir }, { loadConfig }, { sessionFolder }, { walkCommands }] = await Promise.all([
+  const [{ checkRows, appendCheckRuns, testRuns }, { findProject, projectCheckouts, stateDir }, { loadConfig }, { sessionFolder }, { walkCommands }] = await Promise.all([
     import('../lib/check-runs.mjs'),
     import('../lib/project.mjs'),
     import('../lib/config.mjs'),
@@ -81,9 +81,9 @@ async function recordCheckRuns(input, command) {
     import('../lib/shell-lex.mjs'),
   ]);
   const agentId = typeof input.agent_id === 'string' ? input.agent_id : null;
-  const record = (project, keep) => {
+  const record = (project, keep, lineRuns) => {
     const { config } = loadConfig(project);
-    const rows = checkRows({ command, cwd: input.cwd, output: run.output, persisted: run.persisted ?? null, exitZero: run.exitZero, testing: config.testing, agentId, keep });
+    const rows = checkRows({ command, cwd: input.cwd, output: run.output, persisted: run.persisted ?? null, exitZero: run.exitZero, testing: config.testing, agentId, keep, lineRuns });
     const folder = rows.length ? sessionFolder(stateDir(project, { config }), input.session_id, { checkouts: projectCheckouts(project) }) : null;
     if (folder) appendCheckRuns(folder, rows);
   };
@@ -100,7 +100,10 @@ async function recordCheckRuns(input, command) {
     const project = findProject(folder);
     if (project && !projects.has(project.root)) projects.set(project.root, project);
   }
-  for (const project of projects.values()) record(project, (folder) => findProject(folder)?.root === project.root);
+  const keeps = [...projects.values()].map((project) => [project, (folder) => findProject(folder)?.root === project.root]);
+  // The runs of the whole line, each read by its own project's config: the line's one count goes to a lone run only.
+  const lineRuns = keeps.reduce((sum, [project, keep]) => sum + testRuns(command, input.cwd, loadConfig(project).config.testing).filter((each) => keep(each.folder ?? input.cwd)).length, 0);
+  for (const [project, keep] of keeps) record(project, keep, lineRuns);
 }
 
 // Records the links of `command`, run from `cwd`, whose output was `output`: for each `aidrian worktree new` of the line

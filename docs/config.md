@@ -2172,9 +2172,10 @@ The snapshot input is one JSON object, at most 1 MiB, read as a regular file and
   the `head` that result recorded, and that `branch`, prints a `resumed:` line, and `next`, `start`, and the gate read
   the same plan. The new run works on that branch from its first attempt: `next` names it, and the start's clone, its
   start row, the session's push, the merge guard, and `stop-action` all take it.
-  A parked issue whose latest result in that run is `pr_open`, whose pull request the forge shows merged now, as after
-  a person merged it once that run ended, is never resumed: `init` and its check give it the check `wait` gives a merged
-  `pr_open` result, into the default branch of the pinned repository after that attempt started. When it passes, the
+  A parked issue whose latest result in that run names a pull request, `pr_open` or `parked` (on a decision, say),
+  whose pull request the forge shows merged now, as after a person merged it once that run ended, is never resumed:
+  `init` and its check give it the check `wait` gives a merged `pr_open` result, into the default branch of the pinned
+  repository after that attempt started. When it passes, the
   issue counts as done for the plan, so its dependents may start, `init` prints `landed: <n> started issues whose pull
   request an earlier run left open merged since, which this run records done: <issue> (#<n>)`, and writes a `landed` row
   and the issue done after its init row. That owes the report a merge owes, the done status, which also takes the
@@ -2289,7 +2290,7 @@ from any branch, and a `note triggers` line for other services that act on a pus
 preview deploys and ChatOps bots. It prints `ok NAME`, `blocker NAME: WHY`, `note NAME: WHAT`,
 or `ask NAME: WHAT` for a read the forge or tracker lacks, such as the decision label's existence, and exits 1 on any
 blocker. `init RUN --file PATH --check` checks the input as `init` would, prints its blockers
-(problems, cycles, issues started outside the run, a `resumed:` line for the started issues an earlier run parked, a `landed:` line for those whose open pull request merged since, and, when `projectRun.mcpServers` holds no tracker server, each issue
+(problems, cycles, issues started outside the run, a `resumed:` line for the started issues an earlier run parked, a `landed:` line for those whose pull request merged since, and, when `projectRun.mcpServers` holds no tracker server, each issue
 that may still start with no text, never a canceled or skipped one) and the `next` lines, and writes no run. An issue's text never comes from a file a session
 writes: after each call of a tracker's issue read (Linear's `get_issue` and `list_issues`), whatever `tracker.enabled`
 says, in a project whose base branch's config.json sets `projectRun.allow`, the post-call tracker hook records each

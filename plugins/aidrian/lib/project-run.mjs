@@ -591,7 +591,8 @@ function resumedOf(value, issues) {
 // parkUnreconciled), gives the branch, head, and pull request that row names, so a run that parked a resumed issue
 // without starting it hides no earlier record. A run that cannot be read is left out, and each run is read in turn,
 // keeping only the latest candidate of each issue.
-// An issue whose latest result in that run is `pr_open`, parked on it, may have merged since that run ended:
+// A parked issue whose latest result in that run names a pull request, `pr_open` or `parked` (on a decision, say), may
+// have merged since that run ended:
 // `landed({ pr, branch, repository, since })` (project-result.mjs landedPull), with `since` that attempt's start, says
 // so. One that merged as the run's work comes back with `landed: { run, attempt, pr }`, never to be resumed but taken in
 // as done (splitLanded); one the forge cannot clear comes back with `problem`, a line naming why. A run that took one in
@@ -633,7 +634,7 @@ export function resumedIssues(state, snapshot, { except, repository, pullHead = 
       // The label the run's report on the issue set, as its `recorded` row names it; none in a ledger from before.
       const reported = found.rows.findLast((row) => row.event === 'recorded' && row.key === issue.key && row.kind !== 'started');
       const label = typeof reported?.label === 'string' ? { label: reported.label } : {};
-      const open = held.state === 'parked' && held.decision === 'pr-open' && result?.status === 'pr_open' && Number.isInteger(result.pr) && result.pr > 0
+      const open = held.state === 'parked' && (result?.status === 'pr_open' || result?.status === 'parked') && Number.isInteger(result.pr) && result.pr > 0
         ? { pr: result.pr, attempt: result.attempt, since: Date.parse(found.rows.findLast((row) => row.event === 'start' && row.key === issue.key && row.attempt === result.attempt)?.at), ...label }
         : null;
       // A run that took the issue in as landed and ended before its report was recorded: the next run carries it on.

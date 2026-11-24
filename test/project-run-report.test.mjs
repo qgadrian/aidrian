@@ -1423,6 +1423,41 @@ test('init takes in an issue whose pull request an earlier run left open and tha
   assert.deepEqual(fx.cmd(['recorded', 'third', 'ENG-1']).out, ['recorded ENG-1']);
 });
 
+// An earlier run parked ENG-1 on a decision while its result named the pull request, and a person merged it since
+// (#658): init takes it in as landed, as for a pull request left open, and one still open resumes.
+test('init takes in an issue an earlier run parked on a decision whose pull request merged since', (t) => {
+  const fx = runFixture(t, { init: false, config: { tracker: { provider: 'linear' } }, projectRun: READY.projectRun });
+  const input = (issues, name) => {
+    const file = path.join(fx.dir, `${name}.input`);
+    writeFileSync(file, JSON.stringify({ issues, teams: ['ENG'] }));
+    return file;
+  };
+  const issues = (status) => [{ key: 'ENG-1', branch: 'feat/eng-1-export', status }, { key: 'ENG-2', branch: 'feat/eng-2-import', status: 'unstarted', blockedBy: ['ENG-1'] }];
+  assert.equal(fx.cmd(['init', 'first', '--file', input(issues('unstarted'), 'first')]).exitCode, 0);
+  const at = new Date(Date.now() - 60_000).toISOString();
+  appendToRun(fx.state, 'first', () => ({ rows: [
+    { event: 'start', key: 'ENG-1', attempt: 1, branch: 'feat/eng-1-export', outcome: 'started', at },
+    { event: 'result', key: 'ENG-1', attempt: 1, status: 'parked', pr: 12, head: 'a'.repeat(40), at },
+    { event: 'issue', key: 'ENG-1', state: 'parked', decision: 'decision-1', at },
+  ] }));
+  let view = merged();
+  fx.forge.change = (ref, fields, more) => {
+    fx.forge.calls.push(['change', ref, fields, more]);
+    return view;
+  };
+  const later = input(issues('started'), 'second');
+  const check = fx.cmd(['init', 'second', '--file', later, '--check']);
+  assert.equal(check.exitCode, 0, check.out.join('\n'));
+  assert.ok(check.out.includes('landed: 1 started issue whose pull request an earlier run left open merged since, which this run records done: ENG-1 (#12)'), check.out.join('\n'));
+  assert.equal(check.out.some((line) => line.startsWith('resumed:')), false, 'never resumed on its merged branch');
+  assert.ok(check.out.includes('next ENG-2 feat/eng-2-import'), 'its dependent may start');
+  // Its pull request still open: it resumes as before.
+  view = { ...merged(), state: 'OPEN' };
+  const open = fx.cmd(['init', 'second', '--file', later, '--check']);
+  assert.ok(open.out.includes('resumed: 1 started issue an earlier run parked on its branch, which this run starts again: ENG-1'), open.out.join('\n'));
+  assert.equal(open.out.some((line) => line.startsWith('landed:')), false);
+});
+
 test('a landed report whose earlier label the ledger does not name takes no label off', () => {
   const at = new Date().toISOString();
   const found = { snapshot: { issues: [{ key: 'ENG-1', branch: 'feat/eng-1-export', status: 'started' }] }, states: new Map([['ENG-1', { state: 'done', decision: null }]]), rows: [

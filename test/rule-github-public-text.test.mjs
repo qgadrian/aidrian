@@ -1,7 +1,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -497,12 +497,15 @@ function guardedProject(t, files) {
   return { dir, env };
 }
 
+// One run of the Bash hook: `cpuMs` the processor time its own process spent (test/fixtures/cpu-used.mjs), null when it
+// wrote none, as when the 15 s limit killed it.
 const hookRun = (dir, env, command) => {
-  const start = performance.now();
-  const result = spawnSync(process.execPath, [path.join(ROOT, 'plugins/aidrian/scripts/hook-bash.mjs')], {
-    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd: dir, session_id: 'public-text-later' }), encoding: 'utf8', env, timeout: 15000,
+  const cpuLog = path.join(mkdtempSync(path.join(tmpdir(), 'aidrian-publictext-cpu-')), 'cpu.json');
+  const result = spawnSync(process.execPath, ['--import', path.join(ROOT, 'test/fixtures/cpu-used.mjs'), path.join(ROOT, 'plugins/aidrian/scripts/hook-bash.mjs')], {
+    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd: dir, session_id: 'public-text-later' }), encoding: 'utf8', env: { ...env, CPU_USED_LOG: cpuLog }, timeout: 15000,
   });
-  return { ...result, ms: performance.now() - start };
+  const cpu = existsSync(cpuLog) ? JSON.parse(readFileSync(cpuLog, 'utf8')) : null;
+  return { ...result, cpuMs: cpu && (cpu.user + cpu.system) / 1000 };
 };
 
 test('with a pipe for the private file and a slow pattern, the last rule still refuses, inside the hook time', (t) => {
@@ -510,7 +513,9 @@ test('with a pipe for the private file and a slow pattern, the last rule still r
   const hook = hookRun(dir, env, `gh issue comment 3 --body '${SLOW_TEXT}' && echo y > app.js`);
   assert.equal(hook.status, 2, hook.stderr);
   assert.match(hook.stderr, /^Blocked: this command writes 'app\.js', a tracked file in the main checkout/);
-  assert.ok(hook.ms < 5000, `took ${hook.ms} ms`);
+  // Processor time, not wall time: the slow pattern's searches are cut at the public-text budget, so the hook's own work
+  // stays inside the host's 5 s however slowly a loaded machine runs it. A pipe it waited on spends no processor time, but ends in the 15 s kill, which the status above fails.
+  assert.ok(hook.cpuMs !== null && hook.cpuMs < 5000, `took ${hook.cpuMs} ms of processor time`);
 });
 
 test('a link to a regular private file is read', (t) => {

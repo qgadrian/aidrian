@@ -247,7 +247,9 @@ test('ready-wait waits until the run an edit re-queues has shown and finished, a
   for (const argv of [[], ['seven'], ['7', '--timeout-sec', '0'], ['7', '-R', '--json']]) assert.equal((await wait(argv, [{}])).code, 3, argv.join(' '));
 });
 
-// One hook run with the fake gh first on PATH, its calls logged.
+// One hook run with the fake gh first on PATH, its calls logged. The hook runs under test/fixtures/frozen-clock.mjs, so
+// the ready hold's deadline (deadlineForge, from the hook's start) gives each gh call its whole time however slowly a
+// loaded machine starts the hook: these tests check what the hold decides, and test/ready-hold.test.mjs its deadline.
 function hookRun(dir, script, payload, spec) {
   const bin = path.join(dir, 'bin');
   mkdirSync(bin, { recursive: true });
@@ -255,7 +257,7 @@ function hookRun(dir, script, payload, spec) {
   writeFileSync(path.join(dir, 'spec.json'), JSON.stringify(spec));
   const log = path.join(dir, 'gh.log');
   writeFileSync(log, '');
-  const result = spawnSync(process.execPath, [path.join(ROOT, 'plugins/aidrian/scripts', script)], {
+  const result = spawnSync(process.execPath, ['--import', path.join(ROOT, 'test/fixtures/frozen-clock.mjs'), path.join(ROOT, 'plugins/aidrian/scripts', script)], {
     input: JSON.stringify({ session_id: 's', hook_event_name: 'PreToolUse', ...payload, cwd: dir }),
     encoding: 'utf8',
     env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, READY_CHECKS_SPEC: path.join(dir, 'spec.json'), READY_CHECKS_LOG: log, AIDRIAN_TELEMETRY: '0' },

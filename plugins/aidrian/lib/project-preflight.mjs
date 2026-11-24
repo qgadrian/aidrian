@@ -10,7 +10,9 @@
 // sandbox: other enabled plugins, user hooks, a status line, a credential helper it cannot reach; and, on a host that
 // hands its sessions the forge token, a token to hand that may make the forge reads its session makes, with a note
 // naming its source), and whether the host
-// carries on by itself after a usage limit, which stops the driver too. Then the base branch's reviewer bot. A check whose input a failed one gives is still run where it can be, on what the base branch says alone,
+// carries on by itself after a usage limit, which stops the driver too. Then the base branch's reviewer bot. Where the team
+// sets projectRun.fullAuto, a `note full-auto:` line and a `note human:` line for each thing that still waits on a person
+// (lib/project-full-auto.mjs). A check whose input a failed one gives is still run where it can be, on what the base branch says alone,
 // so one pass names every blocker. Then what the run needs to finish with no one: the tracker's server among the
 // team's projectRun.mcpServers, each tracker server there mapped so the run rule can hold it, auto-merge on with
 // required checks, a handoff route for the driver, and, through the forge, the reviewer bot seen, CI workflows, a
@@ -35,6 +37,7 @@ import { isQuotaNotice } from './pr-await-review.mjs';
 import { branchPolicies } from './pr-auto-merge.mjs';
 import { mayFollowTeamDefault, projectId } from './project.mjs';
 import { recordedDecision } from './project-decision.mjs';
+import { fullAutoLines } from './project-full-auto.mjs';
 import { readRecordedDecision } from './project-decision-store.mjs';
 import { recordedTexts } from './project-issue-text.mjs';
 import { activeRuns, nextLines, pinnedRepository, planRun, readRun, readSnapshotInput, refNames, resumedIssues, resumedLine, resumedProblems, runPlace, runsFolder, SERIAL, teamsNote } from './project-run.mjs';
@@ -165,6 +168,8 @@ export function preflightCommand({ project, config, run = null, env = process.en
   }
   lines.push(...asks);
   if (typeof cap?.limitContinue !== 'function') lines.push('ask usage-limit: confirm this host carries on by itself after a usage limit, since a limit stops the driver too');
+  // Where the team sets projectRun.fullAuto: what it changes, and everything that still waits on a person.
+  lines.push(...fullAutoLines({ base, policy: read, projectKey: projectId(project), env }));
   const blocked = lines.some((line) => line.startsWith('blocker ') || line.startsWith('retry '));
   return { exitCode: blocked ? 1 : 0, out: lines, err: blocked ? ['aidrian project preflight: fix each blocker line, wait out each retry line, then run it again'] : [] };
 }

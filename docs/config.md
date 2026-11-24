@@ -2392,6 +2392,17 @@ The decision settings stay the one lever for what a run settles alone: `decision
 It merges nothing the auto-merge gate would hold, gives no sign-off a flow asks the Human for, and lifts no halt.
 A run whose driver chain ended, with no session the host continued its driver as, still waits for the Human.
 
+With the switch on, `aidrian project preflight` prints a `note full-auto:` line, then one `note human:` line for each
+thing that still waits on a person: a policy file's pull request, the default branch's sign-off flows with
+`signoff: "human"`, a floor-class decision with no recorded answer, with the count of grants pinned on this machine,
+a halt, and a run whose driver chain ended.
+One more `note human:` line names each setting that parks more than it must: `decisions.mode` or `decisions.maxMode`
+below `"decide-reversible"`, `decisions.unattended.safeDefaults` other than `"all"`, and
+`github.autoMerge.includeGuardedPaths` off.
+The driver hands the Human every such line in its one turn-1 message, as the complete list.
+The grant count is this machine's store, read as a start reads it, and a count only: a run driven from another machine
+sees none, and a grant stands only at a start whose kept text still hashes so.
+
 ## Testing
 
 CI runs the full suite on a pushed head, so a session pushes a fix and runs locally only the test files it touches.

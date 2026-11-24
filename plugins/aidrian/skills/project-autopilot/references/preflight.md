@@ -52,6 +52,9 @@ a database or an API server for their tests, and names the host's risk, such as 
 reaching them; it blocks nothing. Bind each test server to `127.0.0.1`, never `0.0.0.0`.
 `ask labels` names the tracker's label and status reads: the decision label, and `projectRun.blockedStatus` when set,
 must exist in the team.
+A `note full-auto` line says the team set `projectRun.fullAuto`: the session the host continues this driver as takes the
+run on with no person (loop.md § Continued). Each `note human:` line after it names something that still waits on a
+person, or a setting that parks more than it must; none blocks the run.
 
 ## 3. The snapshot
 
@@ -93,6 +96,8 @@ line: that issue's session runs without the recorded answer, and parks on that d
 ## 4. Tell the Human
 
 One message, with every blocker of steps 2 and 3, each with its fix.
+It also gives every `note human:` line of step 2, word for word, as the complete list of what the run leaves to the
+Human, so the Human can clear what they choose before leaving.
 
 - With blockers: ask the Human to fix them and say when. Then run steps 2 and 3 again, and start nothing until both
   are clean.

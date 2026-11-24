@@ -1,18 +1,22 @@
 // projectRun.fullAuto: the team's standing consent for custody of a driver session the host continued under a new id.
 // `aidrian project resume RUN --custody` (lib/project-run-gate.mjs resumeRun) and its hook rule
-// (lib/project-run-guard.mjs). test/transcript-guard.test.mjs holds the guard that keeps a forged continuation row
-// out. Every run comes from test/project-start-fixture.mjs: no real session, forge, or home.
+// (lib/project-run-guard.mjs), and the preflight's list of what still waits on a person (lib/project-full-auto.mjs).
+// test/transcript-guard.test.mjs holds the guard that keeps a forged continuation row out. Every run comes from
+// test/project-start-fixture.mjs: no real session, forge, or home.
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
+import { countRecordedDecisions, recordDecision } from '../plugins/aidrian/lib/project-decision-store.mjs';
+import { fullAutoLines } from '../plugins/aidrian/lib/project-full-auto.mjs';
 import { teamPolicy } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { appendToRun } from '../plugins/aidrian/lib/project-run.mjs';
 import { resumeWords } from '../plugins/aidrian/lib/project-run-guard.mjs';
+import { projectId } from '../plugins/aidrian/lib/project.mjs';
 import { markUnattended, readDriverMark, readUnattendedMark } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { hookCall } from './hook-call.mjs';
 import { DRIVER, OTHER, runFixture } from './project-start-fixture.mjs';
@@ -163,4 +167,51 @@ test('the hook lets the exact resume --custody through from the host-named conti
   const issue = continued(t);
   issue.unattended(NEXT, { project: 'launch', issue: 'ENG-1' });
   assert.equal((await issue.hook(NEXT, 'aidrian project resume launch --custody')).status, 2, 'an issue session');
+});
+
+test('preflight lists what fullAuto changes and every thing that still waits on a person, and nothing with it off', (t) => {
+  const fx = runFixture(t, { init: false, projectRun: ON });
+  const out = fx.cmd(['preflight']).out;
+  const notes = out.filter((line) => /^note (?:full-auto|human):/u.test(line));
+  assert.match(notes[0], /^note full-auto: projectRun\.fullAuto lets the session the host continued the driver as take the run's custody .*takes no decision, merges nothing more, signs nothing off, and lifts no halt$/u);
+  assert.deepEqual(notes.slice(1).map((line) => line.replace(/^note human: /u, '').split(' ').slice(0, 3).join(' ')), [
+    'a pull request', 'the sign-off flows', 'a floor-class decision', 'a halt, such', 'a run whose',
+    'decisions.mode is "ask"', 'decisions.unattended.safeDefaults is "outside-escalated"', 'github.autoMerge.includeGuardedPaths is off,',
+  ]);
+  assert.match(notes.join('\n'), /signoff "human"\): none;/u);
+  assert.match(notes.join('\n'), /projectRun\.recordedDecisions is off, so no recorded answer is read/u);
+  const off = runFixture(t, { init: false, projectRun: OFF });
+  assert.ok(!off.cmd(['preflight']).out.some((line) => /^note (?:full-auto|human):/u.test(line)));
+  const forgeOff = runFixture(t, { init: false, projectRun: ON, forgeConfig: { version: 1, projectRun: OFF } });
+  assert.ok(!forgeOff.cmd(['preflight']).out.some((line) => /^note (?:full-auto|human):/u.test(line)), 'the forge alone');
+});
+
+test('the full-auto lines name the human sign-off flows and drop each setting that no longer parks more than it must', () => {
+  const base = { config: {
+    review: { flows: { payments: { files: ['src/pay/**'], signoff: 'human' }, docs: { files: ['docs/**'] }, auth: { files: ['src/auth/**'], signoff: 'human' } } },
+    decisions: { mode: 'decide-reversible', maxMode: 'decide-reversible', unattended: { safeDefaults: 'all' } },
+  } };
+  const lines = fullAutoLines({ base, policy: { fullAuto: true, includeGuardedPaths: true }, projectKey: 'p', count: () => ({ count: 0 }) });
+  assert.equal(lines.length, 6);
+  assert.match(lines[2], /^note human: the sign-off flows the default branch gives the Human \(signoff "human"\): auth, payments;/u);
+  assert.match(lines[3], /takes a safe default that can be undone under decisions\.unattended\.safeDefaults "all"/u);
+  assert.deepEqual(fullAutoLines({ base, policy: { fullAuto: false }, projectKey: 'p' }), []);
+  assert.deepEqual(fullAutoLines({ base, policy: { problem: 'no forge' }, projectKey: 'p' }), []);
+});
+
+test('the floor-class line reads the decision switch and counts this machine\'s grants, printing no grant and writing nothing', (t) => {
+  const fx = runFixture(t, { init: false });
+  const projectKey = projectId(fx.project);
+  const line = (policy) => fullAutoLines({ base: { config: {} }, policy: { fullAuto: true, ...policy }, projectKey, env: fx.env }).find((each) => each.includes('floor-class'));
+  assert.match(line({ recordedDecisions: false }), /projectRun\.recordedDecisions is off/u);
+  assert.match(line({ recordedDecisions: true }), /no grant is pinned on this machine: record one with `aidrian project decision ISSUE --heading TEXT --record` from a session the Human attends; grants are this machine's, so a run driven from another machine sees none/u);
+  for (const key of ['ENG-1', 'ENG-2']) recordDecision({ projectKey, key, heading: `Heading of ${key}`, sha256: 'a'.repeat(64), env: fx.env });
+  const store = path.join(fx.env.XDG_STATE_HOME, 'aidrian', 'recorded-decisions', projectKey);
+  const before = readdirSync(store).sort();
+  const two = line({ recordedDecisions: true });
+  assert.match(two, /: 2 grants pinned on this machine; grants are this machine's/u);
+  assert.doesNotMatch(two, /Heading of|stands:/u, 'a count only');
+  assert.deepEqual(readdirSync(store).sort(), before, 'it writes nothing');
+  assert.deepEqual(countRecordedDecisions({ projectKey, env: fx.env }), { count: 2 });
+  assert.deepEqual(countRecordedDecisions({ projectKey: 'none-here', env: fx.env }), { count: 0 });
 });

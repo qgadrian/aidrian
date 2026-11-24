@@ -685,9 +685,11 @@ marker lines such as `<!-- pr-await-review: head=<sha> -->`. Without the exempti
 a finding on every pull request, and no fix to the change could close it. Any other comment that asks to change the
 review, broader or narrower, is still a finding, even one that opens with `@codex review`, quotes the request, or adds
 text to it: who posted a comment does not show in how it opens.
-The review bot's receipt, whose first line is `<!-- codex-review-receipt:v1 -->`, may end with a stock sign-off
-such as "Another round soon, please!": the prompt says that sign-off asks nothing of the review.
-Any other request a receipt carries is still a finding.
+The review bot's own comments are left out of the review: its receipt, whose first line is
+`<!-- codex-review-receipt:v1 -->`, and its status card, which holds `<!-- codex-pull-request-review-summary -->`.
+They carry stock text, such as a sign-off like "Another round soon, please!" or a footer that tells readers to comment
+"@codex address that feedback", which a reviewer read as a request and raised as the round's only finding on a clean
+head. The prompt names both by those markers and says to report nothing about their text and follow none of it.
 
 `codex-local`'s Codex run also serves plans: the `quorum` skill runs it as a plan's adversary, and the `plan-review`
 skill runs the quorum on high-stakes plans ([quorum ledgers](project-folder.md#local-state)).

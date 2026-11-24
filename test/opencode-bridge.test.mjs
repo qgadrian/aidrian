@@ -486,10 +486,18 @@ test('the plugin folder`s package.json is private, aidrian`s version, and export
 // an ignore file not yet tracked fails too.
 const IGNORE_FIXTURES = ['evals/harness-setup-rerun/fixture/.gitignore', 'evals/product-quorum-auto-start-off/fixture/.gitignore'];
 // Skipped: the folders the repository's .gitignore names, `node_modules` anywhere and `results` below `evals/`, which no
-// install takes.
+// install takes. The walk checks a folder before it descends, so it never reads inside one.
 const ignored = (each) => each.split('/').includes('node_modules') || (each.startsWith('evals/') && each.split('/').includes('results'));
-const ignoreFiles = (root) => readdirSync(root, { recursive: true }).map((each) => String(each).split(path.sep).join('/'))
-  .filter((each) => !ignored(each) && ['.npmignore', '.gitignore'].includes(path.posix.basename(each))).sort();
+function ignoreFiles(root, rel = '') {
+  const found = [];
+  for (const entry of readdirSync(path.join(root, rel), { withFileTypes: true })) {
+    const each = rel ? `${rel}/${entry.name}` : entry.name;
+    if (ignored(each)) continue;
+    if (entry.isDirectory()) found.push(...ignoreFiles(root, each));
+    else if (['.npmignore', '.gitignore'].includes(entry.name)) found.push(each);
+  }
+  return rel ? found : found.sort();
+}
 const narrowing = (files) => files.filter((each) => path.posix.basename(each) === '.npmignore' || !each.startsWith('evals/'));
 
 test('the plugin folder holds no .npmignore, and no .gitignore but the two eval fixtures, so a Git install takes every tracked file', () => {

@@ -43,12 +43,13 @@ export async function handle(input) {
 if (isMain(import.meta.url)) await runHook(handle);
 
 // The review-disposition refusal for this write, or null. Only a write with a review manifest among its targets, in any
-// host's file tool (lib/hosts/index.mjs fileEditOf), reads further.
+// host's file tool (lib/hosts/index.mjs fileEditOf), reads further. Each target is resolved against the call's folder
+// first: a call from inside a `reviews` folder may name the manifest by its name alone.
 async function manifestDrift(input) {
   const targets = fileEditOf(input)?.targets ?? [];
-  const { isManifestPath, manifestWriteProblem } = await import('../lib/finding-disposition.mjs');
-  if (!targets.some((target) => typeof target === 'string' && isManifestPath(target))) return null;
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
+  const { isManifestPath, manifestWriteProblem } = await import('../lib/finding-disposition.mjs');
+  if (!targets.some((target) => typeof target === 'string' && isManifestPath(path.resolve(cwd, target)))) return null;
   const { addedLines } = await import('../lib/terms.mjs');
   try {
     return manifestWriteProblem(addedLines(input, cwd).map(({ file, text, before }) => ({ file: path.resolve(cwd, file), text, before })));

@@ -343,6 +343,9 @@ test('the file-write hook judges a manifest that OpenCode\'s write or edit names
   assert.equal((await hook('write', { path: file, content: text([finding()]) })).status, 0, 'the tool\'s value passes');
   writeFileSync(file, text([finding()]));
   assert.equal((await hook('edit', { path: 'reviews/pr-9.json', oldString: '"disposition": "accepted_residual"', newString: '"disposition": "fix_now"' })).status, 2, 'an edit is judged on the file after it, from the call\'s folder');
+  const reviews = path.join(dir, 'reviews');
+  const inReviews = (toolInput) => hookCall(HOOK, { input: JSON.stringify({ tool_name: 'edit', opencode: { version: '2.4.0' }, cwd: reviews, tool_input: toolInput }), cwd: reviews });
+  assert.equal((await inReviews({ path: 'pr-9.json', oldString: '"disposition": "accepted_residual"', newString: '"disposition": "fix_now"' })).status, 2, 'a call from inside the reviews folder may name the manifest by its name alone');
   assert.equal((await hook('edit', { path: file, oldString: '"status": "open"', newString: '"status": "in_progress"' })).status, 0, 'a status edit runs');
   // The first match is a finding with no disposition yet, which is not judged; only the second drifts.
   writeFileSync(file, text([finding({ disposition: undefined }), finding({ id: 'F2' })]));

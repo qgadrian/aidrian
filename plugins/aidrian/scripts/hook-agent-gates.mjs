@@ -61,6 +61,7 @@ import { humanPrompts } from '../lib/hosts/index.mjs';
 import { findProject, openProject } from '../lib/project.mjs';
 import { confineDenial, sandboxEscapeDenial } from '../lib/confine-guard.mjs';
 import { drivesRun, ownAttemptFolder, projectCommandDenial, projectRunActive } from '../lib/project-run-guard.mjs';
+import { transcriptWriteDenial } from '../lib/transcript-guard.mjs';
 import { canonical } from '../lib/rules/main-checkout.mjs';
 import { issueHeld, liftAttended, noteBeacon, readDriverMark, readUnattendedMark } from '../lib/unattended-mark.mjs';
 import { unattendedPlaces, unattendedWriteDenial } from '../lib/unattended-write.mjs';
@@ -235,7 +236,7 @@ function guards(input, project, config, gated, snapshot, others, holds, base, ow
   const state = () => (dirs ??= stateFolders(project, config, { base }));
   const guarded = snapshot?.gates ? [snapshot.file, snapshot.marker] : [];
   // Whether this project has a project run under way, read only for a subagent's write that reaches the main
-  // checkout's host paths.
+  // checkout's host paths, and for any session's write that reaches a host's transcript.
   let active;
   const runSession = () => (active ??= projectRunActive(project, config, { base }));
   // A project run's driver is held as one no Human attends for the continuation store, the runs folder, the marks, and
@@ -257,6 +258,7 @@ function guards(input, project, config, gated, snapshot, others, holds, base, ow
     ?? stateFoldersWriteDenial(input, config, { project, links: false, unattended, marksHeld: droveHeld, signoffsHeld: droveHeld })
     ?? projectRunWriteDenial(input, project, config, state, { links: false, unattended, drives, base, own })
     ?? mainCheckoutWriteDenial(input, project, config, { links: false, unattended, runSession })
+    ?? transcriptWriteDenial(input, config, { runSession })
     ?? machineSwitchWriteDenial(input, project, config, { unattended })
     ?? (gated ? configWriteDenial(input, project, config, { also: guarded }) : null)
     ?? continueStoreWriteDenial(input, project, config, state, { unattended, drives, base })
@@ -295,7 +297,8 @@ function otherProject(input, marked, { unattended, drives }, own) {
   const runSession = () => projectRunActive(marked, config, { base });
   return machineSwitchWriteDenial(input, marked, config, { unattended }) ?? continueStoreWriteDenial(input, marked, config, state, { unattended, drives, base })
     ?? sessionFoldersWriteDenial(input, marked, config, state, { unattended })
-    ?? projectRunWriteDenial(input, marked, config, state, { unattended, drives, base, own }) ?? mainCheckoutWriteDenial(input, marked, config, { unattended, runSession });
+    ?? projectRunWriteDenial(input, marked, config, state, { unattended, drives, base, own }) ?? mainCheckoutWriteDenial(input, marked, config, { unattended, runSession })
+    ?? transcriptWriteDenial(input, config, { runSession });
 }
 
 // The denial of the continuation store and the runs folder in the state folder that `driven`, the session's driver

@@ -1113,6 +1113,12 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   `--record` or `--forget`, writes the recorded-decision store, is held as `init` and `resume` are (`attendedProblem`, by
   `lib/project-run-guard.mjs`), in every form: a subagent, a session the background handoff route started, an issue
   session of a project run, and a session that drove one never run it, and the command checks the same.
+- While the project has a run under way (`projectRunActive`), no session or subagent, attended or not, may write a
+  host's session transcript (`lib/transcript-guard.mjs`): a transcript folder the host adapter names
+  (`transcriptFolders`, Claude Code's `projects/` under `~/.claude` and under `CLAUDE_CONFIG_DIR`), a project folder in
+  it, or a `.jsonl` file in one of those, by a path, a glob that may reach one, or, where the folder is unknown, a
+  spelling `projects/<folder>/<file>.jsonl`. A project run reads the driver's continuation there, so no row is forged.
+  Deeper entries, such as a host's memory folder, stay writable. A script that writes the file is an accepted residual.
 - With or without gates or a project, a subagent, and a main session the background handoff route started, may not
   write in the unattended marks' folder, nor change the mode or owner of it or of the state root, by a path, a glob
   that may reach it, a link already on disk, or, where the folder is unknown, a part named `unattended`. The same holds

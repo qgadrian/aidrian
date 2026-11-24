@@ -909,6 +909,8 @@ test('a copy, move, or link into a folder is judged by the name it makes there, 
     [`RSYNC_RSH=./sh rsync -a pkg/opencode.json x:${x}/`, temp], [`rsync -a --rsh=./sh pkg/.opencode x:$TMPDIR/x/`, temp],
   ];
   for (const [command, reason] of refused) assert.match(ask(bash(command))?.reason ?? '', reason, command);
+  // A destination led by `~` keeps its `~/..` for the reader to expand, as a variable's does.
+  assert.ok(shellWrites('cp pkg/opencode.json ~/../scratch/', wt, {}).manifests.some((each) => each.text === '~/../scratch/opencode.json'), 'cp into ~/../scratch/');
   // One operand: the link is made in the shell's folder, by the name of what it links to.
   assert.match(ask(bash(`ln -s ${wt}/pkg/.opencode`), { cwd: x })?.reason ?? '', temp, 'ln with one operand');
   for (const command of [`cp notes.md ${x}/`, 'cp x .', 'mv a.txt b.txt', `mv ${wt}/pkg/.opencode ${path.join(fx.temp, 'y')}`,

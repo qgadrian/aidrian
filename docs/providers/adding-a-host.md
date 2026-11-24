@@ -157,8 +157,10 @@ the command's `status: "created"` result where the host's response holds the cal
 the payload's session id; a host added without that fixture fails it. The hook reads that output only through the
 host's `shellOutput`: a host whose adapter gives none records no worktree.
 
-Why the hook and not `aidrian worktree new` itself: the command files its row under the session id its shell's
-environment names, and a host's adapter must make that id the hook's in a subagent's shell too. Codex gives a shell
+Two records, two writers. The PostToolUse hook writes the snapshot link in `links.jsonl`, the row this section
+describes. `aidrian worktree new` itself writes a different record, the continuation-store record that worktree grants
+read, under the session id its shell's environment names. Why the hook writes the link: a host's adapter must make
+that environment id the hook's in a subagent's shell too, or the grant record and the link would name different sessions. Codex gives a shell
 call `CODEX_THREAD_ID`, the thread's own id, which differs in a subagent's thread, and `CODEX_SESSION_ID`, the root
 session's id its hooks carry as `session_id` ([Codex](codex.md#session-ids)): its adapter reads the second, and a host
 whose shell names only a thread's own id would send a subagent's row where no snapshot of the session reads. The hook

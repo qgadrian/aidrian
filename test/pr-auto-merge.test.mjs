@@ -8,7 +8,7 @@ import test from 'node:test';
 
 import { commands } from '../plugins/aidrian/lib/pr.mjs';
 import { computeVerdict } from '../plugins/aidrian/lib/pr-checks.mjs';
-import { pathsProblem, reviewProblem, runAutoMerge, runAutoMergeCommand } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
+import { headPolicyProblem, pathsProblem, reviewProblem, runAutoMerge, runAutoMergeCommand } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { markOnce } from '../plugins/aidrian/lib/closing-words.mjs';
 import { configFromText, loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
@@ -109,8 +109,8 @@ function fakeForge({ files = { 'acme/notes@main:.aidrian/config.json': configTex
     },
     contents: (repo, file, ref, { host } = {}) => {
       calls.push(['contents', repo, file, ref, host]);
-      assert.match(ref, /^refs\/heads\/./u, 'a branch, never a tag of the same name');
-      const key = `${repo}@${ref.slice('refs/heads/'.length)}:${file}`;
+      assert.match(ref, /^(?:refs\/heads\/.|[0-9a-f]{40}$)/u, 'a branch, never a tag of the same name, or a commit by its SHA');
+      const key = `${repo}@${ref.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : ref}:${file}`;
       if (!Object.hasOwn(files, key)) throw Object.assign(new Error(`Command failed: gh api ${repo} ${file}\ngh: Not Found (HTTP 404)`), { stderr: 'gh: Not Found (HTTP 404)\n' });
       if (typeof files[key] === 'function') return files[key]();
       if (Array.isArray(files[key])) return files[key].map((name) => ({ type: 'file', name, path: `${file}/${name}` }));
@@ -940,11 +940,12 @@ test('includeGuardedPaths true on the default branch and the base lets a guarded
 
   // github.autoMerge.includePolicyFiles on both branches, with includeGuardedPaths, lets each policy file through too.
   const policies = { ...LIFTED, includePolicyFiles: true };
-  const open = branches(policies, policies);
+  // The head's own config, read at its SHA, keeps the default branch's check lists and state folder.
+  const open = { ...branches(policies, policies), [`acme/notes@${HEAD}:.aidrian/config.json`]: configText(policies) };
   for (const file of ['.aidrian/config.json', '.aidrian.json', 'apps/web/.aidrian/config.json', '.aidrian.local.json', '.aidrian']) {
     assert.deepEqual(reasonOf(t, r, onStack(open, 'AGENTS.md', file)), [0, null], `includePolicyFiles: ${file}`);
   }
-  const read = { files: pointing('main', 'tools/policy', policies), view: { files: [{ path: 'tools/policy/config.json', changeType: 'MODIFIED' }], changedFiles: 1 } };
+  const read = { files: { ...pointing('main', 'tools/policy', policies), ...pointing(HEAD, 'tools/policy', policies) }, view: { files: [{ path: 'tools/policy/config.json', changeType: 'MODIFIED' }], changedFiles: 1 } };
   assert.deepEqual(reasonOf(t, r, read), [0, null], 'a file the gate reads its policy from');
   // On one branch only, or without includeGuardedPaths, it lifts nothing: the pull request that sets it is refused.
   for (const [name, files, line] of [
@@ -963,6 +964,19 @@ test('includeGuardedPaths true on the default branch and the base lets a guarded
   assert.match(pathsProblem({ files: [{ path: '.aidrian/config.json', changeType: 'MODIFIED' }], changedFiles: 1 }, 'apps/web/', lifted) ?? '', /outside this project's folder/u);
   assert.match(pathsProblem({ files: [{ path: 'notes.md', changeType: 'MODIFIED' }], changedFiles: 2 }, '', lifted) ?? '', /gh listed 1 of its 2/u);
   assert.match(pathsProblem({ files: [{ path: '.aidrian/config.json', changeType: 'MODIFIED' }], changedFiles: 1 }, '', { includePolicyFiles: true }) ?? '', /instructs AI sessions/u, 'alone');
+
+  // The head's config, read from the forge at the head, must keep the check lists and state.dir: the checkout here is
+  // the unchanged base, which the checks row compares.
+  const headed = (config) => onStack({ ...branches(policies, policies), [`acme/notes@${HEAD}:.aidrian/config.json`]: config }, '.aidrian/config.json');
+  const dropped = run(t, r, ['7'], headed(configText(policies, { ...CHECKS, requiredChecks: [] })));
+  assert.deepEqual([dropped.code, dropped.out[0]], [1, 'auto-merge off for #7: its config at head abcdef1 changes github.requiredChecks from acme/notes main, which includePolicyFiles never lets a pull request change by itself']);
+  assert.match(run(t, r, ['7'], headed(configText(policies, { ...CHECKS, conditionalChecks: [], ignoreCancelledChecks: ['x'] }))).out[0], /changes github\.conditionalChecks and github\.ignoreCancelledChecks from/u);
+  assert.match(run(t, r, ['7'], headed(configText(policies, CHECKS, { dir: '../elsewhere' }))).out[0], /changes state\.dir from/u);
+  const visual = JSON.stringify({ ...JSON.parse(configText(policies)), review: { visual: { platform: 'web', targets: [{ files: ['src/**'], routes: ['/'] }], viewports: [390] } } });
+  assert.deepEqual(reasonOf(t, r, headed(visual)), [0, null], 'a head that changes only review.visual');
+  assert.match(run(t, r, ['7'], headed('{ not json')).out[0], /its config at head abcdef1 cannot be read whole/u, 'a head config that does not parse');
+  assert.match(run(t, r, ['7'], onStack(branches(policies, policies), '.aidrian/config.json')).out[0], /head abcdef1 has no config/u, 'a head with no config');
+  assert.equal(headPolicyProblem(null, { repo: 'acme/notes', head: HEAD }, { policy: JSON.parse(configText(LIFTED)), basePolicy: JSON.parse(configText(LIFTED)), policyFiles: [] }, [{ path: '.aidrian/config.json' }]), null, 'no lift, no read');
 });
 
 test('includeGuardedPaths false, missing, or true on only one branch keeps a guarded path off (paths), with today\'s message', (t) => {

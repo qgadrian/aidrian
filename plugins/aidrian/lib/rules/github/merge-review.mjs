@@ -72,7 +72,7 @@ import { forgeFor, isTrustedCommenter, repoIdentity } from '../../forges/index.m
 import { knownPrefix } from '../../git.mjs';
 import { stateFolders } from '../../handoff-guard.mjs';
 // A cycle (pr-auto-merge.mjs imports this file), benign while neither uses the other's exports as it loads.
-import { branchPolicies, changesRequested, includesGuardedPaths, includesPolicyFiles, pathsProblem, refusingBranches, startDocs, trailDocs, trailPaths, trailPolicies } from '../../pr-auto-merge.mjs';
+import { branchPolicies, changesRequested, headPolicyProblem, includesGuardedPaths, includesPolicyFiles, pathsProblem, refusingBranches, startDocs, trailDocs, trailPaths, trailPolicies } from '../../pr-auto-merge.mjs';
 import { computeVerdict } from '../../pr-checks.mjs';
 import { findProject, mayFollowTeamDefault } from '../../project.mjs';
 import { closingTextsProblem, mergeClosingContext } from '../../closing-words.mjs';
@@ -750,7 +750,9 @@ export function markProjects(mark) {
 // `includeGuardedPaths`, `includePolicyFiles`, and the policy files), the pull request the gh user's own, no comment or review by an outsider,
 // no changes requested, not a draft, and every check of exactly the head finished and passed (pr-checks.mjs
 // computeVerdict), so gh merges it at once rather than leave it to auto-merge or a queue.
-export function policyProblem({ trail, head, policies, base, prefix, docs, home }) {
+// `reads` is the forge the guard reads through, for headPolicyProblem's read of the head's config, and `repo` and `host`
+// the pull request's repository.
+export function policyProblem({ trail, head, policies, base, prefix, docs, home, reads = null, repo = null, host = null }) {
   const refusing = refusingBranches(policies, base ?? policies.main, 'autoMerge');
   if (refusing.length) return `the team does not allow auto-merge (github.autoMerge.allow on ${refusing.join(' and ')}), which a merge no Human asks for needs`;
   const team = { ...policies.policy.github.autoMerge, allow: true };
@@ -761,6 +763,8 @@ export function policyProblem({ trail, head, policies, base, prefix, docs, home 
   if (!github.requiredChecks.length) return 'the default branch names no required checks (github.requiredChecks), so a check that has not registered would read as passed';
   const paths = pathsProblem({ files: trail.files ?? [], changedFiles: trail.filesTotal ?? -1 }, prefix, { includeGuardedPaths: includesGuardedPaths(policies), includePolicyFiles: includesPolicyFiles(policies), policyFiles: policies.policyFiles, startDocs: docs });
   if (paths) return paths;
+  const headPolicy = headPolicyProblem(reads, { repo, host, head }, policies, trail.files ?? [], prefix);
+  if (headPolicy) return headPolicy;
   if (typeof trail.author !== 'string' || typeof trail.viewer !== 'string' || trail.author.toLowerCase() !== trail.viewer.toLowerCase()) return `it is ${trail.author ?? 'nobody'}'s pull request, not ${trail.viewer ?? 'the gh user'}'s`;
   if (trail.commentsComplete !== true || trail.reviewsComplete !== true) return `the forge gave only part of its ${trail.commentsComplete !== true ? 'comments' : 'reviews'}, so who commented cannot be told`;
   const outsider = [...(trail.comments ?? []), ...(trail.reviews ?? [])].find((each) => !isTrustedCommenter({ author_association: each.association }) && !(each.bot && sameBot(each.login, github.reviewer)));
@@ -822,7 +826,7 @@ export function unattendedProblem({ project, home = project, merge, mark, forge 
     const remembered = memo.policies?.key === `${repo}|${base}|${prefix}` ? memo.policies.value : null;
     const policies = trailPolicies(trail, target, prefix) ?? remembered ?? branchPolicies(reads, target, prefix);
     const docs = trailDocs(trail, policies.configFile, prefix) ?? startDocs(reads, target, policies.main, policies.configFile, prefix);
-    const problem = policyProblem({ trail, head, policies, base, prefix, docs, home })
+    const problem = policyProblem({ trail, head, policies, base, prefix, docs, home, reads, repo, host: pinned.host })
       ?? trustProblem({
         trail, head, reviewer: policies.policy.github.reviewer, files: Array.isArray(trail?.files) ? trail.files : [], complete: trail?.filesComplete === true,
         configs: [policies.policy, policies.basePolicy], prefix, policyFiles: policies.policyFiles, state: scoped(recordFor(project, pr, repo), project, repo), signoffs: readHumanSignoffs({ repo, pr }),

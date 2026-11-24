@@ -756,8 +756,8 @@ A project adds its own in `review.reviewers`:
     listing of the same title and file as `fixed` under another id ends nothing. A judge's verdict at the round cap
     stays held until a listing holds the finding as fixed. `aidrian pr auto-merge` holds only the waivers the body still
     lists: once the pass that raised the finding ran on exactly the reviewed head, over its file, and carries it as
-    ended, and the body at that head no longer lists it, by its residual's text or a line that names it by the rules
-    below, it holds nothing ([config.md](config.md#when-it-is-on)). The hold's message names the id where the record holds no text. An ended entry settles nothing
+    ended, and the body at that head no longer lists it, by its residual's text or a line that opens with its title and
+    a colon, it holds nothing ([config.md](config.md#when-it-is-on)). The hold's message names the id where the record holds no text. An ended entry settles nothing
     and anchors nothing, and the summary comment names it as ended without a fix, never as standing. The
     pass input gives it among `priorFindings` as a context copy with nothing that settles, so a reviewer weighs it again.
   - It names one when the residual's text opens with the finding's exact title, a colon, and a reason: `<title>: <why>`,

@@ -187,8 +187,10 @@ const listedFixed = (fixed, each) => (isFindingId(each.ruled_id)
 // The waiver above low that holds auto-merge, or null: the first any pass record holds, on any head, ended or standing, but
 // an ended one only until a listing holds its title and file as fixed. With `head` and `accepts`, as the auto-merge gate
 // reads it (#623 stayed held after its fix): a finding the body no longer accepts, by `accepts(entry, raised)`
-// (bodyAccepts), no longer holds, on any record, once the pass that raised it, as the finding index names it, ran on
-// exactly `head` over the finding's file and carries it as ended. That pass was given the finding to weigh again with
+// (bodyAccepts), no longer holds, on any record, once the pass that raised it ran on exactly `head` over the finding's
+// file and carries it as ended. The raiser is the pass the finding index names for the finding the ruling names
+// (`ruled_id`), never for the copy's own id, which the index files under whichever pass carried the copy; a waiver with
+// no ruling id has no raiser, and holds. That pass was given the finding to weigh again with
 // nothing that settles it (endedContext), and the gate reads it only under a finished review of that head with nothing
 // owed. Another pass, such as a slice over other files or one of another lens, proves nothing of it, and nor does a slice
 // result reused from an earlier head. A waiver the body still lists holds, whatever kept it from the pass input, such as
@@ -199,7 +201,7 @@ export function heldWaiver(state, { head = null, accepts = null } = {}) {
   const fixed = fixedListings(state);
   const current = currentIds(state);
   const index = isObject(state?.index) ? state.index : {};
-  const raisedBy = (each) => [each.ruled_id, each.id].filter(isFindingId).flatMap((id) => [index[id], index[current(id)]]).map((entry) => entry?.pass).filter((pass) => typeof pass === 'string');
+  const raisedBy = (each) => (isFindingId(each.ruled_id) ? [index[each.ruled_id], index[current(each.ruled_id)]] : []).map((entry) => entry?.pass).filter((pass) => typeof pass === 'string');
   const covers = (result, each) => result.files == null || (Array.isArray(result.files) && result.files.includes(trim(each.file)));
   const reweighed = head === null || typeof accepts !== 'function' ? []
     : Object.entries(state?.passes ?? {}).filter(([, result]) => isObject(result) && result.head === head)
@@ -212,18 +214,22 @@ export function heldWaiver(state, { head = null, accepts = null } = {}) {
 
 // Whether the pull request body `body` still accepts the waiver `entry` under `section` (decisions.mjs residualItems),
 // every item read, past MAX_RESIDUALS too: an item whose text, cut as residualTexts cuts it, is the waiver's residual, or
-// one that names its finding by namedBy's rules over `raised`, the record's raised findings ({ title, file }): the
-// finding's title, a colon, and a reason, the longest title winning, and a title raised in several files naming only the
-// files whose path it holds. A body that is no string accepts nothing.
+// one that opens with the finding's title and a colon, whatever follows, so a longer title another finding has never
+// takes the line from it. When `raised`, the record's findings ({ title, file }), has that title in more than one file,
+// a line that holds another of those files' paths and not this one's names the other file alone; a line with no path
+// names each of them. A body that is no string lists nothing.
 export function bodyAccepts(body, section) {
   const items = (typeof body === 'string' ? residualItems(body, section ?? undefined) ?? [] : []).map((item) => trim(trim(item?.text).replace(LIST_ITEM, ''))).filter(Boolean);
   return (entry, raised = []) => {
     const residual = trim(entry?.residual);
     const title = waiverTitle(entry);
     const file = trim(entry?.file);
-    const candidates = [...raised, { title, file }].filter((each) => each.title);
-    return items.some((text) => (residual !== '' && text.slice(0, MAX_RESIDUAL_CHARS) === residual)
-      || namedBy(text, candidates).some((each) => each.title === title && each.file === file));
+    const others = [...new Set(raised.filter((each) => trim(each.title) === title).map((each) => trim(each.file)))].filter((each) => each && each !== file);
+    return items.some((text) => {
+      if (residual !== '' && text.slice(0, MAX_RESIDUAL_CHARS) === residual) return true;
+      if (title === '' || !text.startsWith(`${title}:`)) return false;
+      return holdsPath(text, file) || !others.some((other) => holdsPath(text, other));
+    });
   };
 }
 

@@ -1411,12 +1411,27 @@ test('init takes in an issue whose pull request an earlier run left open and tha
   // with no second forge read.
   appendToRun(fx.state, 'second', () => ({ rows: [{ event: 'issue', key: 'ENG-2', state: 'done', at: new Date().toISOString() }] }));
   view = { ...merged(), state: 'OPEN' };
+  // A snapshot that names another branch for ENG-1 is other work than the merge the take-in checked.
+  const moved = fx.cmd(['init', 'third', '--file', input([{ key: 'ENG-1', branch: 'feat/eng-1-other', status: 'started' }], 'moved'), '--check']);
+  assert.equal(moved.out.some((line) => line.startsWith('landed:')), false, moved.out.join('\n'));
+  assert.ok(moved.out.includes('blocker snapshot: ENG-1 is started in the tracker, which a run does not start from'), moved.out.join('\n'));
   const carried = fx.cmd(['init', 'third', '--file', input([{ key: 'ENG-1', branch: 'feat/eng-1-export', status: 'started' }], 'third')]);
   assert.equal(carried.exitCode, 0, carried.err.join('\n'));
   assert.ok(carried.out.includes('landed: 1 started issue whose pull request an earlier run left open merged since, which this run records done: ENG-1 (#12)'), carried.out.join('\n'));
   const [again] = JSON.parse(fx.cmd(['report', 'third', '--json']).out[0]).owed;
   assert.deepEqual([again.key, again.unlabel], ['ENG-1', 'old-decision']);
   assert.deepEqual(fx.cmd(['recorded', 'third', 'ENG-1']).out, ['recorded ENG-1']);
+});
+
+test('a landed report whose earlier label the ledger does not name takes no label off', () => {
+  const at = new Date().toISOString();
+  const found = { snapshot: { issues: [{ key: 'ENG-1', branch: 'feat/eng-1-export', status: 'started' }] }, states: new Map([['ENG-1', { state: 'done', decision: null }]]), rows: [
+    { event: 'landed', key: 'ENG-1', run: 'first', attempt: 1, pr: 12, branch: 'feat/eng-1-export', at },
+    { event: 'issue', key: 'ENG-1', state: 'done', at },
+  ] };
+  const [owed] = owedReports({ state: '/nonexistent', run: 'second', found, policy: { label: 'needs-decision', blockedStatus: null, done: 'completed' } });
+  assert.deepEqual([owed.outcome, owed.status, owed.label, owed.unlabel], ['merged', 'completed', null, null]);
+  assert.deepEqual(reportCalls(owed, linear)[0], { tool: 'save_issue', input: { id: 'ENG-1', state: 'completed' } });
 });
 
 test('the driver\'s first turn writes every team key of the tracker workspace into the snapshot as `teams`', () => {

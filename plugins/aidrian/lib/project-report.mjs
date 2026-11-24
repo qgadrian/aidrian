@@ -122,8 +122,9 @@ function buildReport({ state, run, key, cause, after, policy }) {
   const status = facts.outcome === 'merged' ? policy.done : facts.outcome === 'blocked' ? policy.blockedStatus : null;
   const label = facts.outcome === 'merged' ? null : policy.label;
   // The earlier run's report labeled the issue for a decision on its open pull request: the merge takes that label off,
-  // as that run's `recorded` row names it, or the base branch's label for a ledger from before rows named one.
-  const unlabel = cause.event === 'landed' ? (cleanText(cause.label, LABEL_CAP) || policy.label) : null;
+  // as that run's `recorded` row names it. A ledger that names none, from before rows named one, takes none off: the
+  // team's label may have changed since, and a label set for another reason stays.
+  const unlabel = cause.event === 'landed' ? cleanText(cause.label, LABEL_CAP) || null : null;
   const body = reportBody(run, facts, after.decision === 'attempts');
   return { key, attempt: facts.attempt, outcome: facts.outcome, pr: facts.pr, status, label, unlabel, body, sha256: bodyHash(body) };
 }

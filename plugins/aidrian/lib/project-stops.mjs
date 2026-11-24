@@ -131,9 +131,9 @@ const NEW_HEAD = 'the new head voids every sign-off and review of this one, so a
 // Whether the pull request `view` conflicts with its base.
 const conflicts = (view) => view.mergeable === 'CONFLICTING' || view.status === 'DIRTY';
 
-// The one action at the start of an attempt that takes up the pull request `view`, whose base is the default branch:
-// `merge_base` on a conflict and `wait` while the forge works it out, each under its cap in `history`, else `none`. A
-// merged or closed pull request is the start's business, not this one's. Pure.
+// The one action at the start of an attempt that takes up the open pull request `view`, whose base is the default
+// branch: `merge_base` on a conflict and `wait` while the forge works it out, each under its cap in `history`, else
+// `none`. Pure.
 export function catchUpStop({ view, history = [] }) {
   const act = (action, scope, why) => capped(history, view.head, action, scope, why);
   if (conflicts(view)) return act('merge_base', 'for this issue', `it conflicts with ${view.base}; ${NEW_HEAD}`);
@@ -175,7 +175,7 @@ function nextStep(decision, { view, branch, method, catchUp = false }) {
 // The one way an issue's session merges the base `base` into its branch `branch`, on which its clone already is, its
 // own commits kept, once HEAD holds the branch as the forge has it: a conflict inside a host file stops before any merge, which would write the branch's lines over the
 // base copy, and the push guard lets the host files through only as git merged them (issue-push-checkout.mjs).
-const mergeBaseRoute = (base, branch) => `run \`git fetch origin ${base} ${branch}\` and \`git merge-base --is-ancestor origin/${branch} HEAD\`: when it fails, `
+const mergeBaseRoute = (base, branch) => `run \`git fetch origin ${base} ${branch}\`, and when it fails, merge nothing and run this stop-action again later; \`git merge-base --is-ancestor origin/${branch} HEAD\`: when it fails, `
   + `HEAD does not hold the branch as the forge has it, so merge nothing and record the result pr_open with a stop that says ${branch} diverged from origin/${branch}; `
   + `then \`git merge-tree --write-tree --name-only HEAD origin/${base}\` lists the files that would conflict: when one is a host config or instruction file, `
   + 'record the result pr_open with that file\'s path in its stop, and merge nothing; '
@@ -316,7 +316,8 @@ export function stopAction({ project, config, run, key, env = process.env, home,
     return answer(transientWait(rows, start.attempt, error.message), view);
   }
   if (view.state === 'OPEN' && view.base !== main) return answer({ action: 'park', why: `it targets ${view.base}, not the default branch ${main}, which a project run's issue merges into` }, view);
-  if (catchUp) return answer(catchUpStop({ view, history: rows }), view);
+  // A merged or closed pull request gets the answer the command gives without --catch-up.
+  if (catchUp && view.state === 'OPEN') return answer(catchUpStop({ view, history: rows }), view);
   const merged = view.state === 'OPEN' ? (autoMerge ?? ((url) => autoMergeOf(project, url, { forge, session, home })))(view.url) : null;
   const checks = merged?.result?.effective === true && merged.result.head === view.head ? readChecks(forge, repository, view, config.github) : null;
   if (checks?.error) return answer(transientWait(rows, start.attempt, checks.error), view);

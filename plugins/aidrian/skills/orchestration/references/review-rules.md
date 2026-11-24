@@ -105,9 +105,9 @@ Fix every finding a review identified; never leave one silently open. Do not go 
   aidrian decisions resolve --domain backlog --class backlog-rank --reversible no,no,no,no
   ```
 
-  - `decide`: fix within the round cap, a `decided_provisional` of severity `low`, listed in the report and the pull
-    request body, attributed. It writes no rule, so it takes no marker: those lines and the `decision_made` row
-    `resolve` logs are its record.
+  - `decide`: follow its whole answer, with severity `low` for that file's § Second look, then fix within the round cap.
+    A second look with no `approved` makes it `ask`. The record is the `decision_made` row `resolve` logs and one
+    line in the report: it writes no rule, so it takes no marker.
   - `ask`: ask the Human, and in an unattended run park it with class `scope`, whatever `unattended` says.
 
   The round cap and the extra rounds past it are unchanged: this settles only the cost question before the cap.

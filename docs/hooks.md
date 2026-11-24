@@ -2209,7 +2209,8 @@ The row goes to the session folder of the project the call's folder is in. When 
 session removed the worktree a session started in and the host sends the home folder as its cwd, each run goes to the
 project of the folder it runs in, such as the worktree of `cd <worktree> && node --test` or `env -C <worktree> npm test`,
 and is read with that project's `testing` config: another project's command on the line takes no run, and one project's
-test command is no run in another. The line's one count goes to a run only when it is the line's one run across them all.
+test command is no run in another. The line's one count goes to a run only when it is the line's one run across them all,
+a run in no project and one only the defaults read included.
 
 Claude Code runs the hook only for a call that exited 0, so there a run passed unless its counts show a failure, when
 the line's status is the run's: no separator but `&&` before or after it. After `;` or `||` the run may not have run,
@@ -2335,8 +2336,9 @@ their pnpm, yarn, and bun forms, each file goes with its pattern characters esca
 jest reads a file as a regular expression, so `[`, `]`, `(`, `)`, `{`, `}`, `*`, `?`, `+`, `|`, `^`, `$`, and `\` get a
 backslash, and node reads it as a glob, so `[`, `]`, `{`, `}`, `*`, and `?` each go inside a class, as `[[]`.
 A Next.js segment such as `[org]` or `(group)` found no test before, and the run exited 1. Any other runner gets the
-paths as they are, and so does jest given `--runTestsByPath` on the way, which reads exact paths. A word is not read in
-its argument's role, so `jest -- --runTestsByPath` and a node script's own `--test` are misread: an accepted limit.
+paths as they are, and so does jest given `--runTestsByPath` before any `--` on the way, which reads exact paths.
+Node's options and a package runner's are read from a fixed list of those that take the next word as their value, and a
+node script's own arguments name no runner; an option outside that list ends the scan there, an accepted limit.
 A project whose CI cannot run the suite leaves `testing.pushFirstMinutes` at 0, and runs the suite once before marking ready.
 
 ## Overrides

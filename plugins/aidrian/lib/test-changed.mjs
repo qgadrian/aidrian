@@ -114,7 +114,9 @@ export function testCommand(root, testing = {}) {
 // Jest given `--runTestsByPath`, as its own word on the way and not `=false`, reads exact paths, so it is none.
 export function testRunner(root, command, depth = 0, scripts = null) {
   const [program, ...rest] = lastCommandWords(command);
-  if (rest.some((word) => /^--runTestsByPath(?:=(?!false$).*)?$/u.test(word))) return null;
+  // After `--`, jest reads every word as a pattern, an option's spelling included.
+  const options = rest.includes('--') ? rest.slice(0, rest.indexOf('--')) : rest;
+  if (options.some((word) => /^--runTestsByPath(?:=(?!false$).*)?$/u.test(word))) return null;
   if (program === 'jest') return 'jest';
   if (program === 'node') return nodeRunner(rest);
   const name = scriptName([program, ...rest]);
@@ -129,13 +131,24 @@ export function testRunner(root, command, depth = 0, scripts = null) {
   return typeof scripts[name] === 'string' ? testRunner(root, scripts[name], depth + 1, scripts) : null;
 }
 
-// What `node <words>` runs: jest when a word is jest's entry point, else the node runner when a word is `--test`, else none.
-// SHORTCUT: no word is read in its argument's role, so a script's own `--test` reads as the node runner, as do
-// `jest -- --runTestsByPath`, which jest takes as a pattern, and `npx --cache <folder> jest`, whose option value ends the
-// peel (dropOptions): each review round found one more such case, and a full option reader per runner would replace this.
+// Node's options that take the next word as their value.
+const NODE_VALUE_OPTIONS = new Set(['-r', '--require', '--import', '--loader', '--experimental-loader', '--conditions', '-C', '--env-file',
+  '--inspect-port', '--input-type', '--title', '--watch-path', '--test-reporter', '--test-reporter-destination', '--test-name-pattern',
+  '--test-skip-pattern', '--test-concurrency', '--test-shard', '--test-timeout']);
+
+// What `node <words>` runs: jest when its script is jest's entry point, the node runner when `--test` comes before the
+// script, else none: a script's own arguments name no runner.
+// SHORTCUT: an option that takes its value as the next word and is not in NODE_VALUE_OPTIONS ends the scan there, as
+// does a package runner option of that kind outside dropOptions's list: each review round found one more such option,
+// and a full option reader per runner would replace these lists.
 function nodeRunner(words) {
-  if (words.some((word) => /(?:^|\/)(?:jest\/bin\/jest\.js|\.bin\/jest)$/u.test(word))) return 'jest';
-  return words.includes('--test') ? 'node' : null;
+  for (let i = 0; i < words.length; i += 1) {
+    const word = words[i];
+    if (word === '--test') return 'node';
+    if (!word.startsWith('-')) return /(?:^|\/)(?:jest\/bin\/jest\.js|\.bin\/jest)$/u.test(word) ? 'jest' : null;
+    if (NODE_VALUE_OPTIONS.has(word)) i += 1;
+  }
+  return null;
 }
 
 // The words of the last command of `text`, its program's base name first, after a package runner's own words; none for
@@ -158,7 +171,7 @@ function lastCommandWords(text) {
 // `words` from its first word that is not an option, as a package runner reads its own options; `-p` and `--package` take a value.
 function dropOptions(words) {
   let i = 0;
-  while (i < words.length && words[i].startsWith('-')) i += ['-p', '--package', '-c', '--call'].includes(words[i]) ? 2 : 1;
+  while (i < words.length && words[i].startsWith('-')) i += ['-p', '--package', '-c', '--call', '--cache', '--userconfig', '--registry'].includes(words[i]) ? 2 : 1;
   return words.slice(i);
 }
 

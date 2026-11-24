@@ -73,7 +73,7 @@ if (isMain(import.meta.url)) await runHook(handle);
 async function recordCheckRuns(input, command) {
   const run = detectHost({ input }).shellRun?.(input.tool_response);
   if (!run?.finished) return;
-  const [{ checkRows, appendCheckRuns, testRuns }, { findProject, projectCheckouts, stateDir }, { loadConfig }, { sessionFolder }, { walkCommands }] = await Promise.all([
+  const [{ checkRows, appendCheckRuns, testRuns }, { findProject, projectCheckouts, stateDir }, { DEFAULTS, loadConfig }, { sessionFolder }, { walkCommands }] = await Promise.all([
     import('../lib/check-runs.mjs'),
     import('../lib/project.mjs'),
     import('../lib/config.mjs'),
@@ -87,9 +87,9 @@ async function recordCheckRuns(input, command) {
     const folder = rows.length ? sessionFolder(stateDir(project, { config }), input.session_id, { checkouts: projectCheckouts(project) }) : null;
     if (folder) appendCheckRuns(folder, rows);
   };
-  const own = findProject(input.cwd);
-  if (own) {
-    record(own);
+  const home = findProject(input.cwd);
+  if (home) {
+    record(home);
     return;
   }
   // A session whose starting folder another session removed gets the home folder as its cwd from the host, and runs its
@@ -101,8 +101,11 @@ async function recordCheckRuns(input, command) {
     if (project && !projects.has(project.root)) projects.set(project.root, project);
   }
   const keeps = [...projects.values()].map((project) => [project, (folder) => findProject(folder)?.root === project.root]);
-  // The runs of the whole line, each read by its own project's config: the line's one count goes to a lone run only.
-  const lineRuns = keeps.reduce((sum, [project, keep]) => sum + testRuns(command, input.cwd, loadConfig(project).config.testing).filter((each) => keep(each.folder ?? input.cwd)).length, 0);
+  // The runs of the whole line: each project's own, and at least as many as any one config, the defaults included, reads
+  // on it, so a run in no project counts too. The line's one count goes to a lone run only; a count too high withholds it.
+  const runsBy = (testing) => testRuns(command, input.cwd, testing);
+  const own = keeps.reduce((sum, [project, keep]) => sum + runsBy(loadConfig(project).config.testing).filter((each) => keep(each.folder ?? input.cwd)).length, 0);
+  const lineRuns = Math.max(own, runsBy(DEFAULTS.testing).length, ...keeps.map(([project]) => runsBy(loadConfig(project).config.testing).length));
   for (const [project, keep] of keeps) record(project, keep, lineRuns);
 }
 

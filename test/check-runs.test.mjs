@@ -490,6 +490,9 @@ test('a run after a cd is recorded when the call\'s own folder holds no project'
   // Two runs on the line, each its own project's: the line's one summary is neither's count.
   await call(`env -C ${smoke} make smoke && env -C ${dir} npm run check`, 'moved-5');
   assert.deepEqual(recorded('moved-5').map(({ command, pass }) => [command, pass]).sort(), [['make smoke', null], ['npm run check', null]]);
+  // A run in no project still counts among the line's runs: its summary is not the project's run's count.
+  await call(`node --test && env -C ${smoke} make smoke`, 'moved-6');
+  assert.deepEqual(recorded('moved-6').map(({ command, pass }) => [command, pass]), [['make smoke', null]]);
 });
 
 test('a call whose output Claude Code kept in a file is counted from that file\'s tail', () => {
@@ -834,7 +837,8 @@ test('aidrian test changed runs a test file whose path holds pattern characters,
   assert.deepEqual([
     "jest --testNamePattern='use --runTestsByPath here'", 'jest --runTestsByPath=true', 'jest --runTestsByPath=false', `jest ${'--verbose '.repeat(40)}--runTestsByPath`,
     'npx --yes jest', 'pnpm exec jest', 'node --import tsx node_modules/jest/bin/jest.js', 'node --inspect-port 9230 --test', 'node --test-reporter spec --test',
-  ].map((command) => testRunner(path.join(ROOT, 'none'), command)), ['jest', null, 'jest', null, 'jest', 'jest', 'jest', 'node', 'node']);
+    'node scripts/run.mjs --test', 'node scripts/run.mjs node_modules/jest/bin/jest.js', 'jest -- --runTestsByPath', 'npx --cache /tmp/npm jest',
+  ].map((command) => testRunner(path.join(ROOT, 'none'), command)), ['jest', null, 'jest', null, 'jest', 'jest', 'jest', 'node', 'node', null, null, 'jest', 'jest']);
   const pattern = literalPattern(file, 'jest');
   assert.equal(pattern, 'app/\\[org\\]/\\(group\\)/\\[...slug\\]/page.test.mjs');
   assert.ok(new RegExp(pattern).test(file) && !new RegExp(file).test(file), 'the escaped path matches itself, as the raw one does not');

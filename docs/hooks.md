@@ -2169,8 +2169,11 @@ A test run is a command of config.json [`testing.fullSuite`](config.md#testing) 
 and its pnpm, yarn, and bun forms, `node --test`, vitest, jest, pytest, `go test`, `cargo test`, `mix test`, rspec,
 `make test`, `make check`, or `aidrian test changed`, read through wrappers such as `rtk`, `timeout`, and `npx`, with
 redirects dropped. A project's own script, such as `npm run check`, counts once `testing.fullSuite` names it.
-A run through `xargs` is keyed with what feeds it: `printf '%s\n' a b | xargs npx jest` is `jest < printf %s\n a b`.
-A command past 300 characters keeps its first 300 and a digest of the whole, so a run of other files is never its run.
+An `xargs` segment is a test run when any word after `xargs` is, and its options are never parsed.
+Its key is the whole segment, then ` < ` and what it reads: its own `<` target, else the piped commands with their redirects, else `stdin`.
+So `printf '%s\n' a b | xargs npx jest` is `xargs npx jest < printf %s\n a b`, and other options or other input is another run.
+A key past 300 characters keeps its first 300 and a digest of the whole, so a run of other files is never its run.
+A configured command is still matched as a prefix of the whole command, so a long `testing.changedCommand` with files after it is a run.
 A call stopped, started in the background, or moved there at its timeout records nothing: no hook sees it end.
 A line of only programs that run no tests, such as git and grep, reads no config and records nothing.
 

@@ -7,7 +7,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -310,8 +310,18 @@ test('a merge the result command refuses as merged parks on one decision that na
   const done = stopped(t, { merge: { state: 'MERGED' } });
   assert.match(done.act(on()).out[0], /^done ENG-1 #12 at aaaaaaa: the forge shows it merged; record the result merged/u);
   assert.deepEqual(called(done, 'change')[0], ['change', '12', 'state,mergedAt,headRefName,baseRefName,url,isCrossRepository', { repo: 'github.com/acme/widgets' }]);
-  // A merge check the forge cannot answer waits under the retry cap, never done.
+  // A merge check the forge cannot answer waits under the retry cap, never done; a retry row that cannot be kept parks on
+  // the one decision, never on pr_open, which the result command may refuse for a merged pull request.
   done.gh.fail.add('change');
+  chmodSync(done.drop, 0o500);
+  let unkept;
+  try {
+    unkept = done.act(on()).out[0];
+  } finally {
+    chmodSync(done.drop, 0o700);
+  }
+  assert.ok(unkept.startsWith('park ENG-1 #12 at aaaaaaa: the stop history cannot be kept: '), unkept);
+  assert.ok(unkept.endsWith('; record the result parked with one decision of class other: whether the merge of #12 counts as the issue\'s work, options "leave the issue parked" and "count the issue done by hand once its work is on the default branch", recommended the first'), unkept);
   assert.match(done.act(on()).out[0], /^wait ENG-1 #12 at aaaaaaa: the forge shows it merged, and the merge check could not be read: the forge could not describe pull request #12 \(gh failed\) \(1 of 3 for this attempt\); wait 60 seconds, then run the pr-auto-merge skill again$/u);
   done.gh.fail.delete('change');
   assert.deepEqual(handOver(t, done, { status: 'merged', pr: 12 }, done.forge), ['result ENG-1 merged -> done']);

@@ -301,10 +301,13 @@ export function stopAction({ project, config, run, key, env = process.env, home,
   const { repository } = found.init;
   const named = `${repository.owner}/${repository.name}`;
   const history = issueStops({ state: place.state, run, key, starts: startsOf(found, key) });
-  const answer = (decision, view, method) => {
+  // Every line goes out here. A park of a pull request the forge showed merged is always the merge_refused one, `parked`
+  // on the one decision, whatever parked it: the result command may refuse pr_open, as merged, on a merged pull request.
+  const answer = (given, view, method) => {
+    const decision = given.action === 'park' && view?.state === 'MERGED' ? { ...given, parkAs: 'merge_refused' } : given;
     if (decision.action !== 'park' && CAPPED.has(decision.action)) {
       const kept = appendStops(path.join(start.drop, STOPS_FILE), [{ action: decision.record ?? decision.action, head: view?.head ?? UNKNOWN_HEAD, pr: view?.number ?? null, attempt: start.attempt, session, at: new Date(now).toISOString() }]);
-      if (kept) return { exitCode: 0, out: [stopLine({ action: 'park', why: `the stop history cannot be kept: ${kept}` }, { view, key, branch })], err: [] };
+      if (kept) return answer({ action: 'park', why: `the stop history cannot be kept: ${kept}` }, view);
     }
     return { exitCode: 0, out: [stopLine(decision, { view, key, branch, method, catchUp })], err: [] };
   };
@@ -313,12 +316,7 @@ export function stopAction({ project, config, run, key, env = process.env, home,
   const view = readMergeState(forge, repository, branch);
   if (view.problem) return refuse(view.problem);
   if (view.error) return answer(transientWait(rows, start.attempt, view.error), null);
-  // A wait on a read that failed. Once its cap is spent on a pull request the forge showed merged, the park is the
-  // merge_refused one, `parked` on one decision, since the result command may refuse pr_open on a merged pull request.
-  const retry = (why) => {
-    const waited = transientWait(rows, start.attempt, why);
-    return answer(waited.action === 'park' && view.state === 'MERGED' ? { ...waited, parkAs: 'merge_refused' } : waited, view);
-  };
+  const retry = (why) => answer(transientWait(rows, start.attempt, why), view);
   let main;
   try {
     main = defaultBranch(forge, { repo: named, host: repository.host });

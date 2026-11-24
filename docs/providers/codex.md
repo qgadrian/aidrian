@@ -208,7 +208,7 @@ The one-time steps before a run are in [Project run setup](../project-run-setup.
   folder.
   Its events go to `logs/<issue>.<attempt>.jsonl` in the run's folder.
 - The start makes no placeholders: Codex's confined start declares none, so its clone gets none of any host's. A
-  clone whose index tracks OpenCode's `.opencode`, `opencode.json`, or `opencode.jsonc` as a link, at its root or any
+  clone whose index tracks OpenCode's `.opencode`, `.agents`, `opencode.json`, or `opencode.jsonc` as a link, at its root or any
   depth, is refused at start, as on Claude Code ([OpenCode](opencode.md#rules-for-the-other-hosts-sessions)).
 - Git cannot reach the main checkout from there: nothing under its `.git` is granted, the clone's origin is the
   pinned forge URL, and work moves only through the forge. The session pushes with a full refspec and names the branch

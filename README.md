@@ -40,7 +40,8 @@
 ## Prerequisites
 
 - Node 22 or later, and git.
-- Claude Code, Codex CLI, or both.
+- Claude Code, Codex CLI, or both. OpenCode 2.0 or later runs the session ledger alone, with no guard, and its hook
+  scripts need Node 22 on its service's PATH ([Running aidrian](docs/providers/opencode.md#running-aidrian)).
 - The GitHub CLI, signed in with `gh auth login`. The `aidrian pr`, `aidrian report`, and `aidrian worktree` commands,
   and the `pr-*` skills, call `gh`.
 - Optional: a review bot. The default is `chatgpt-codex-connector[bot]`, the Codex GitHub connector, which reviews pull requests.
@@ -117,7 +118,8 @@ export PATH="$plugin/bin:$PATH"
 ```
 
 If that fails, run the commands from the plugin folder instead: [Running aidrian](docs/providers/claude-code.md#running-aidrian).
-For Codex, see [Running aidrian](docs/providers/codex.md#running-aidrian).
+For Codex, see [Running aidrian](docs/providers/codex.md#running-aidrian); in OpenCode's shell the bridge puts it on the
+PATH ([Running aidrian](docs/providers/opencode.md#running-aidrian)).
 
 1. Set up the project folder and index the existing docs:
 

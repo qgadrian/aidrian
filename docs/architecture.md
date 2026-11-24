@@ -17,7 +17,7 @@ plugins/aidrian/
 ├── agent-addons/*.<provider>.md    optional text only that host gets, after the agent's body
 ├── agents/*.md                     generated Claude Code agents; never edit
 ├── skills/*/SKILL.md               the skills; Claude Code and Codex read them as they are
-├── bin/aidrian                     project commands; on the Bash PATH in Claude Code sessions
+├── bin/aidrian                     project commands; on the shell PATH in Claude Code and OpenCode sessions
 ├── bin/aidrian-knowledge           the knowledge command; on the same PATH
 ├── hooks/hooks.json                the plugin's hooks, for Claude Code and Codex; OpenCode's bridge runs those it routes
 ├── scripts/hook-*.mjs              the programs those hooks run

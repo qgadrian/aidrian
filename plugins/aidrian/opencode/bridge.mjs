@@ -7,7 +7,10 @@
 // The payload holds text a model wrote, so the spawn is pinned: the program is Node, the one argument the script's
 // absolute path, the options `cwd`, `env` as the process has it, and `stdio`, with no shell, and the payload reaches
 // the child on stdin alone. No callback rejects, `setup` never throws, and the tool's result is never changed: a hook
-// that cannot run leaves the call as it would be without the plugin. This file never changes when a route is added.
+// that cannot run leaves the call as it would be without the plugin. A route that runs after a call (`execute.after`,
+// PostToolUse) is one row of ROUTES, and this file does not change for it. A blocking route needs this file to turn the
+// script's exit 2 into a throw that keeps its stderr first, which it does not yet do, so test/adapters.test.mjs refuses
+// such a row.
 //
 // With AIDRIAN_OPENCODE_TRACE naming an absolute file, it appends one JSON line a step, { at, step, script?, status? }:
 // `setup` once, `run` for each script it ran, `skip` for a call of a route's tool it sent nothing for, and `off` once,

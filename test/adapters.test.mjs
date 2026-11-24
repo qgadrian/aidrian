@@ -67,8 +67,11 @@ function routeTableProblems(routes) {
 
 // What a bridge's routes break of hooks.json: each route's script is listed under its event, that entry's matcher fires
 // on its standard tool, its timeout is the entry's, and its tool is the host's raw name of that standard tool.
+// Until the bridge handles a blocking route, turning exit 2 into a throw with stderr first, a row may only run after a
+// call: `execute.after`, under PostToolUse.
 function routeProblems(host, routes) {
   return routes.flatMap((route) => {
+    if (route.on !== 'execute.after' || route.event !== 'PostToolUse') return [`${route.script} runs on ${route.on} under ${route.event}, and the bridge runs no blocking route`];
     const listed = hookEntry(route.event, route.script);
     if (!listed) return [`${route.script} is not listed under ${route.event}`];
     const { group, entry } = listed;
@@ -264,7 +267,9 @@ test('a bridge route that leaves hooks.json is told apart: its event, matcher, t
   const opencode = HOSTS.find((host) => host.id === 'opencode');
   const route = { on: 'execute.after', event: 'PostToolUse', tool: 'shell', standard: 'Bash', script: 'hook-bash-post.mjs', timeoutMs: 5000 };
   assert.deepEqual(routeProblems(opencode, [route]), []);
-  assert.deepEqual(routeProblems(opencode, [{ ...route, event: 'PreToolUse' }]), ['hook-bash-post.mjs is not listed under PreToolUse']);
+  assert.deepEqual(routeProblems(opencode, [{ ...route, event: 'PreToolUse' }]), ['hook-bash-post.mjs runs on execute.after under PreToolUse, and the bridge runs no blocking route']);
+  assert.deepEqual(routeProblems(opencode, [{ ...route, on: 'execute.before', event: 'PreToolUse', script: 'hook-bash.mjs' }]), ['hook-bash.mjs runs on execute.before under PreToolUse, and the bridge runs no blocking route']);
+  assert.deepEqual(routeProblems(opencode, [{ ...route, on: 'execute.before' }]), ['hook-bash-post.mjs runs on execute.before under PostToolUse, and the bridge runs no blocking route']);
   assert.deepEqual(routeProblems(opencode, [{ ...route, script: 'hook-bash.mjs' }]), ['hook-bash.mjs is not listed under PostToolUse']);
   assert.deepEqual(routeProblems(opencode, [{ ...route, standard: 'Edit', tool: 'edit' }]), ['PostToolUse hook-bash-post.mjs does not fire on Edit']);
   assert.deepEqual(routeProblems(opencode, [{ ...route, timeoutMs: 4000 }]), ['hook-bash-post.mjs waits 4000 ms, hooks.json 5 s']);

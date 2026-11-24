@@ -392,10 +392,12 @@ test('pr-merge-when-green is the Human\'s to start; pr-auto-merge is the one way
   const auto = readFileSync(path.join(PLUGIN, 'skills/pr-auto-merge/SKILL.md'), 'utf8');
   assert.doesNotMatch(auto.split(/^---$/mu)[1], /disable-model-invocation/u, 'skills run it, so the model must be able to');
   const flat = auto.replace(/\s+/g, ' ');
-  assert.match(flat, /Run `aidrian pr auto-merge <n>`\. Unless it exits 0, stop and report the line it printed/u);
+  assert.match(flat, /Run `aidrian pr auto-merge <n> --check`\. Unless it exits 0, stop and report the line it printed/u);
+  assert.match(flat, /Exit 0 only allows the merge: nothing has merged until step 3's `gh pr merge` does/u, 'the gate\'s pass is no merge');
+  assert.match(flat, /Without `--check`, `aidrian pr auto-merge <n>` says whether the pull request merged: exit 0 when GitHub merged it or holds an auto-merge request for it, and 4/u);
   assert.match(flat, /Read `\.\.\/pr-merge-when-green\/SKILL\.md`/u);
   assert.match(flat, /only asked whether a pull request is green, never run this/u);
-  assert.ok(flat.indexOf('aidrian pr auto-merge <n>') < flat.indexOf('../pr-merge-when-green/SKILL.md'), 'the command comes first');
+  assert.ok(flat.indexOf('aidrian pr auto-merge <n> --check') < flat.indexOf('../pr-merge-when-green/SKILL.md'), 'the command comes first');
 });
 
 test('pr-auto-merge runs only in the run that marked the pull request ready, and an unattended run on a draft stops', () => {
@@ -591,7 +593,7 @@ test('a pull request pr-auto-merge refuses on a path goes to the Human in the fi
   // was never asked for.
   const read = (rel) => readFileSync(path.join(PLUGIN, rel), 'utf8').replace(/\s+/g, ' ');
   const auto = read('skills/pr-auto-merge/SKILL.md');
-  const step2 = auto.slice(auto.indexOf('2. Run `aidrian pr auto-merge <n>`'), auto.indexOf('3. Read `../pr-merge-when-green'));
+  const step2 = auto.slice(auto.indexOf('2. Run `aidrian pr auto-merge <n> --check`'), auto.indexOf('3. Read `../pr-merge-when-green'));
   assert.match(step2, /When the line says `it changes "<path>"`, the gate stopped at its path check, before its author, comment, and review checks, so the pull request waits for the Human's review and merge\./);
   assert.match(step2, /under a label for the Human such as `For <name>`, `needs your review and merge: #<n> touches <path>, which auto-merge never merges`/);
   assert.match(step2, /how critical it is: blocking, high, medium, or low\./, 'the four ratings the hand-back check reads');

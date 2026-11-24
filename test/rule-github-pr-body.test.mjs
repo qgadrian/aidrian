@@ -482,11 +482,11 @@ test('a write through a link or a hard link to a body file is a write to it', (t
   writeFileSync(path.join(dir, 'deep', 'b.md'), GOOD);
   assert.match(run('gh pr create -t x -F deep/b.md > sub/up/../b.md') ?? '', unread, 'the redirect lands on deep/b.md');
   assert.equal(run('gh pr create -t x -F b.md > sub/up/../other.md'), null, 'and only there');
-  // A disk that folds case reads two spellings of one name as one file, before the file is there too.
-  if (process.platform === 'darwin' || process.platform === 'win32') {
-    assert.equal(run(`cat > New.md <<'EOF'\n${GOOD}EOF\ngh pr create -t x -F new.md`), null, 'the heredoc is the body gh reads');
-    assert.match(run(`cat > New.md <<'EOF'\n${GOOD}EOF\necho x > NEW.MD\ngh pr create -t x -F new.md`) ?? '', unread);
-  }
+  // Whether the disk folds case is not told, so two spellings of a name the line writes are neither one file nor two:
+  // a write to one makes the other unknown, and gh reading one never gets the other's heredoc, on any disk.
+  assert.match(run(`cat > New.md <<'EOF'\n${GOOD}EOF\ngh pr create -t x -F new.md`) ?? '', unread, 'the heredoc may be another file');
+  assert.match(run(`cat > a.md <<'EOF'\n${GOOD}EOF\ncat > A.md <<'EOF'\nno sections\nEOF\ngh pr create -t x -F a.md`) ?? '', unread, 'the second write may be the first file');
+  assert.equal(run(`cat > a.md <<'EOF'\n${GOOD}EOF\ngh pr create -t x -F a.md`), null, 'one spelling is read as written');
   // A heredoc written through a link whose target is not there yet is the body gh then reads by the target's name.
   assert.equal(run(`cat > ahead.md <<'EOF'\n${GOOD}EOF\ngh pr create -t x -F new.md`), null);
   assert.match(run(`cat > ahead.md <<'EOF'\n## Summary\nEOF\ngh pr create -t x -F new.md`) ?? '', /^Blocked: the body has no `## Tests run` section/u);

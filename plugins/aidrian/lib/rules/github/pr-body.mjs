@@ -35,7 +35,6 @@ import { forgeFor } from '../../forges/index.mjs';
 import { claimProblem, passClaims, readCheckRuns, unsupportedClaims } from '../../check-runs.mjs';
 import { runGit } from '../../git.mjs';
 import { headings, sectionItems, unfencedLines } from '../../markdown-sections.mjs';
-import { foldCase } from '../../fs.mjs';
 import { findProject, projectCheckouts, stateDir } from '../../project.mjs';
 import { sessionFolder } from '../../session-folder.mjs';
 import { remoteRepos, repoName } from '../../review-gate.mjs';
@@ -201,7 +200,7 @@ export function lineWrites(top) {
   const targetOf = (each, entry) => fileOf(each, entry, entry.shell === undefined ? entry.folder : entry.shell);
   // `files` is keyed by each file's identity (fileIdentity), so two names of one file, through a link or a second hard
   // link, are one entry; a path whose identity cannot be told is no key, and a write to one may be to any file.
-  const same = (a, b) => a !== null && b !== null && fileIdentity(a) !== null && fileIdentity(a) === fileIdentity(b);
+  const same = (a, b) => a !== null && b !== null && mayAlias(fileIdentity(a), fileIdentity(b));
   const outputs = (segment) => segment.flatMap((each, i) => (each.operator && each.operator !== '<' && !segment[i + 1]?.fdDup ? [[each, segment[i + 1]]] : []));
   const overwrites = (entry, file) => {
     const body = file ? fileOf(file, entry) : null;
@@ -250,7 +249,11 @@ export function lineWrites(top) {
       const source = operands.length === 2 && !operands[0].text.startsWith('-') ? at(operands[0]) : null;
       target = source === null || operands[1].text.endsWith('/') ? null : at(operands[1]);
       if (target !== null && isDirectory(target)) target = null;
-      else if (target !== null) text = files.has(fileIdentity(source)) ? files.get(fileIdentity(source)) : readText(source);
+      else if (target !== null) {
+        const from = fileIdentity(source);
+        const before = from === null ? { text: null } : writtenText(files, from);
+        text = before ? before.text : readText(source);
+      }
     }
     const unknown = () => {
       for (const known of files.keys()) files.set(known, null);
@@ -258,8 +261,10 @@ export function lineWrites(top) {
     // A write to `file` with `value`: to its identity, or, for a file whose identity cannot be told, to any file.
     const write = (file, value) => {
       const key = fileIdentity(file);
-      if (key === null) unknown();
-      else files.set(key, value);
+      if (key === null) return unknown();
+      // Another spelling of the name may be this very file.
+      for (const known of files.keys()) if (known !== key && mayAlias(known, key)) files.set(known, null);
+      files.set(key, value);
     };
     // A command that is neither a known reader nor one of the writes above may change any file: a script, `sed -i`, or
     // a program fed its own code on stdin.
@@ -312,8 +317,9 @@ const joinedIn = (folder, file) => (path.isAbsolute(file) ? file : folder === nu
 // cannot be told: an existing file's device and inode, so a second hard link is the same file; else the real path of
 // the part of the path that exists, as the system resolves it, each link before a `..` after it (realpathSync.native,
 // never Node's own, which drops a `..` first), a link at the end of that part, even one whose target is not there yet,
-// followed in turn, with the rest joined on, the whole in the case a disk that folds case compares (foldCase). A read
-// that fails, or more links than LINK_HOPS, gives null.
+// followed in turn, with the rest joined on, in the case it was spelled. A read that fails, or more links than
+// LINK_HOPS, gives null. Whether a disk folds case is not told from here, so two spellings of a name are neither one
+// file nor two: a write to either makes the other unknown, and a read of one never takes the other's text (writtenText).
 export function fileIdentity(file) {
   if (typeof file !== 'string' || !path.isAbsolute(file)) return null;
   const gone = (error) => ['ENOENT', 'ENOTDIR'].includes(error?.code);
@@ -326,7 +332,7 @@ export function fileIdentity(file) {
         const stat = statSync(real);
         if (!stat.isDirectory()) return `inode:${stat.dev}:${stat.ino}`;
       }
-      return foldCase(path.join(real, ...rest));
+      return path.join(real, ...rest);
     } catch (error) {
       if (!gone(error)) return null;
     }
@@ -341,13 +347,26 @@ export function fileIdentity(file) {
       continue;
     }
     const parent = path.dirname(head);
-    if (parent === head) return foldCase(path.join(head, ...rest));
+    if (parent === head) return path.join(head, ...rest);
     rest.unshift(path.basename(head));
     head = parent;
   }
   return null;
 }
 const LINK_HOPS = 40;
+
+// Whether two identities (fileIdentity) may be one file: the same, or, for names that are no file yet or below a
+// folder, the same but for letter case, which a disk that folds it reads as one name.
+const mayAlias = (a, b) => a !== null && b !== null && (a === b || (!a.startsWith('inode:') && !b.startsWith('inode:') && a.toLowerCase() === b.toLowerCase()));
+
+// What the line wrote to the file of identity `key`, from `written` (lineWrites files): { text } when it holds that
+// file's text, { text: null } when a write it cannot read, or one to a name that may be the same file, came before,
+// and null when the line wrote neither.
+function writtenText(files, key) {
+  if (files.has(key)) return { text: files.get(key) };
+  for (const known of files.keys()) if (mayAlias(known, key)) return { text: null };
+  return null;
+}
 
 const isDirectory = (file) => {
   try {
@@ -847,7 +866,7 @@ const unread = (cause, fix = '') => ({ text: null, unread: { cause, fix } });
 // ''. A rule that refuses an unread body takes both from this one call: a second read could find a file the first did
 // not, and leave the text unchecked with no cause to refuse it. The pull request body, public text, and attribution rules
 // refuse with it, so the first deny names the form that passes.
-export function bodyRead(call, cwd, written = new Map()) {
+export function bodyRead(call, cwd, lineFiles = new Map()) {
   if (call.bodyOverwritten) {
     return unread('a redirect on the gh call writes onto its own body file, which bash empties before gh reads it', 'Send that output to another file.');
   }
@@ -868,12 +887,13 @@ export function bodyRead(call, cwd, written = new Map()) {
     return unread(`the body file \`${given}\` is a relative path, and the folder gh runs in is unknown after that directory change`, 'Write the path out in full.');
   }
   // Only a line that wrote files asks which file this is: the read below is then the one look at it.
-  const file = written.size ? fileIdentity(joinedIn(cwd, given)) : null;
-  if (file === null && written.size) {
+  const file = lineFiles.size ? fileIdentity(joinedIn(cwd, given)) : null;
+  if (file === null && lineFiles.size) {
     return unread(`the body file \`${given}\` is one whose identity the hook cannot tell, so whether another command on this line writes it first cannot be told`, 'Run that command first, then gh as its own command.');
   }
-  if (written.has(file)) {
-    const text = written.get(file);
+  const before = file === null ? null : writtenText(lineFiles, file);
+  if (before) {
+    const { text } = before;
     return text !== null ? { text } : unread('another command on this line changes the body file before gh reads it, such as a script or `sed -i`, ' +
       'or a redirect', 'Run that command first, then gh as its own command.');
   }

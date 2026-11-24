@@ -980,7 +980,17 @@ folder and a trivial prompt:
   session's process shows as `claude bg-spare` under `claude bg-pty-host`, so it never passes the check.
 
 A background session the gate started ends itself with `replaceTerminal.endOwn` (`stopOwnBackground` in
-`lib/hosts/claude-code-background.mjs`) once its own handoff started the next one, whether or not a terminal follows it.
+`lib/hosts/claude-code-background.mjs`) once its own handoff started the next one, whether or not a terminal follows it,
+and whether or not the Human typed into it since: the Stop hook asks that `CLAUDE_CODE_SESSION_ATTENDED` is not `1`
+and that the session's unattended mark or its chain floor of the background route holds it. Its request holds 24
+hours, so a turn that waited on a question still ends it. Claude Code runs no Stop hook for a turn the Human
+interrupts, and runs StopFailure instead of Stop on an API error (the host's hooks reference, read on 2026-11-24). So
+the hook drops a request when the session's transcript, `~/.claude/projects/<folder>/<session>.jsonl` as `ownTranscript`
+vouches for it, holds a prompt `humanPrompt` counts whose `timestamp` (`entryTime`) is later than the request. With the
+transcript under `CLAUDE_CONFIG_DIR`, or a `HOME` that is not the account's, `ownTranscript` vouches for none. Then the
+agent gate hook never lifts the session's mark either, so the mark still holds it, and a request its handoff turn left,
+as by an interrupt, ends it at the end of a later turn the Human typed, within 24 hours. That residual is accepted: no
+gate is added for it.
 It reads `claude agents --json` and runs `claude stop <id>` only when exactly
 one background row has that `id`, or a `sessionId` that starts with it, and its `sessionId` is the session's own.
 It never signals a process: the supervisor owns the background session's process.
@@ -1011,7 +1021,11 @@ follows every hop. Checked by hand on Claude Code 2.1.328 on 2026-11-19:
 That return to the list was not probed further.
 
 Not verified live: a handoff that ends a session through the Stop hook end to end, or `claude attach` in the shell
-function; a handoff through a wrapped launcher, end to end.
+function; a handoff through a wrapped launcher, end to end; and `CLAUDE_CODE_SESSION_ATTENDED` in a background session
+after a Human attached and typed into it. The indirect evidence, from two background continuations of 2026-11-24 the
+Human typed into: each gate's say line ended `This session has ended its work; the new one is ...`, without the line
+on why the terminal stays that the gate prints when the host says `1`, so the host did not say `1` there. If a later
+host version says `1` there, the session keeps the plain line and stays, as a session a Human attends.
 
 ## Background sessions
 

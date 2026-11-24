@@ -366,26 +366,32 @@ function trustedFolder(folder) {
   return stat.isDirectory() && (!Number.isInteger(uid) || stat.uid === uid);
 }
 
-// The entries of the last PROMPT_TAIL bytes of the regular JSONL file `file`, the cut first line left out: the file the
-// descriptor opened must be the one the path names now, so a swap between the check and the read reads nothing.
-function tailEntries(file) {
+// The entries of the last PROMPT_TAIL bytes of the regular JSONL file `file`, the cut first line left out.
+const tailEntries = (file) => transcriptTail(file)?.entries ?? [];
+
+// The entries of the last PROMPT_TAIL bytes of the regular JSONL file `file`, as { entries, cut }, where `cut` says the
+// file holds more before them, whose cut first line is left out; or null when the file the descriptor opened is not the
+// one the path names now, so a swap between the check and the read reads nothing. Throws when it cannot open the file.
+export function transcriptTail(file) {
   const fd = openSync(file, NO_FOLLOW);
   try {
     const stat = fstatSync(fd);
     const named = lstatSync(file);
-    if (!stat.isFile() || stat.dev !== named.dev || stat.ino !== named.ino) return [];
+    if (!stat.isFile() || stat.dev !== named.dev || stat.ino !== named.ino) return null;
     const length = Math.min(stat.size, PROMPT_TAIL);
     const buffer = Buffer.alloc(length);
     readSync(fd, buffer, 0, length, stat.size - length);
     const lines = buffer.toString('utf8').split('\n');
-    if (length < stat.size) lines.shift();
-    return lines.flatMap((line) => {
+    const cut = length < stat.size;
+    if (cut) lines.shift();
+    const entries = lines.flatMap((line) => {
       try {
         return line.trim() ? [JSON.parse(line)] : [];
       } catch {
         return [];
       }
     });
+    return { entries, cut };
   } finally {
     closeSync(fd);
   }

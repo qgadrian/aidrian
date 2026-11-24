@@ -412,8 +412,8 @@ function startInBackground(ready) {
   });
   if (held.outcome === 'started') {
     const { marker } = held;
-    const ending = handTerminal({ host, store, session, env, home, run, now, mode, id: marker.id, next: marker.session ?? null });
-    return startedLines(host, marker, { ending, unhooked: ending === null && unhooked({ host, store, session, env, home, now, mode }) });
+    const { ending, stays } = handTerminal({ host, store, session, env, home, run, now, mode, id: marker.id, next: marker.session ?? null });
+    return startedLines(host, marker, { ending, stays, unhooked: ending === null && stays === null && unhooked({ host, store, session, env, home, now, mode }) });
   }
   if (held.outcome === 'refused') return refusedLines({ handoff, held, slug });
   if (held.outcome === 'uncertain') return uncertain({ handoff, slug, problem: held.problem });
@@ -482,18 +482,33 @@ function progressOf({ store, session, now, cwd, text }) {
 }
 
 // How the session `session`, whose base branch's session.handoff.mode is `mode`, ends once this turn ends, now that the
-// background session `id`, whose full id is `next` or null, started (lib/terminal-replace.mjs): `switch` when its
-// terminal then opens the new session, `stop` when it only stops, or null when it stays open. Only in `auto` mode, on a
-// host that can. A session a Human attends switches, and needs a host process the shell function started. A session no
-// Human attends, which the background route started, names itself, never a process, on a host that can end its own
-// session: it switches when a terminal follows it (followed), and otherwise stops, so the host lists it as done rather
-// than idle. It notes the request in the store for the Stop hook. A request it cannot note is none: the session stays.
+// background session `id`, whose full id is `next` or null, started (lib/terminal-replace.mjs): { ending, stays }.
+// `ending` is `switch` when its terminal then opens the new session, `stop` when it only stops, or null when it stays
+// open. Only in `auto` mode, on a host that can. A session a Human attends switches, and needs a host process the shell
+// function started. A session no Human attends, and one the background route started that the Human typed into since,
+// which the host does not say a Human attends, names itself, never a process, on a host that can end its own session:
+// it switches when a terminal follows it (followed), and otherwise stops, so the host lists it as done rather than
+// idle. It notes the request in the store for the Stop hook. A request it cannot note is none: the session stays.
+// `stays` is why such a background session stays open, or null: a session a Human attends keeps the plain line.
 function handTerminal({ host, store, session, env, home, run, now, mode, id, next }) {
-  if (mode !== 'auto' || typeof id !== 'string' || !OPEN_ID.test(id) || !replacer(host)) return null;
-  const way = unattendedHere(session, { store, env, home, now }) ? followed({ host, store, session, env, run, now, next }) : safely(() => terminalOf(host, { env, run }));
-  if (way === null || safely(() => noteEnding(store, session, { ...way, id, next }, { now })) === null) return null;
-  return way.shell === null ? 'stop' : 'switch';
+  const replace = replacer(host);
+  const unattended = unattendedHere(session, { store, env, home, now });
+  const hostAttends = safely(() => replace?.attended(env)) === true;
+  const typedInto = !unattended && !hostAttends && safely(() => startedInBackground(store, session, { now })) === true;
+  const background = !hostAttends && (unattended || typedInto);
+  const stays = (why) => ({ ending: null, stays: background ? why : null });
+  if (mode !== 'auto') return stays('the base branch\'s session.handoff.mode is not "auto"');
+  if (!replace) return stays(CANNOT_END);
+  if (typeof id !== 'string' || !OPEN_ID.test(id)) return stays('the host named the new session by an id no request to end can hold');
+  const way = unattended || typedInto ? followed({ host, store, session, env, run, now, next }) : safely(() => terminalOf(host, { env, run }));
+  if (way === null) return stays(CANNOT_END);
+  if (safely(() => noteEnding(store, session, { ...way, id, next }, { now })) === null) return stays('the continuation store could not record its request to end');
+  return { ending: way.shell === null ? 'stop' : 'switch', stays: null };
 }
+
+const CANNOT_END = 'this host cannot end a session from inside it';
+// What the say line of a background session that stays open ends with (docs/handoff.md#idle-sessions).
+const IDLE_LINE = '`aidrian sessions idle` lists it, with the command that stops it.';
 
 // Whether the terminal stays on this session only because the shell function did not start it: auto mode, a host that
 // can replace a terminal, a session a Human attends, and no shell pid in its environment, as when a launcher or an
@@ -562,16 +577,20 @@ export const unhookedLine = (host) => `${UNHOOKED} ${olderWrap(replacer(host) ??
 
 // The lines of a background start, `marker` as noteStarted records it. The say line ends on what becomes of this session,
 // as `ending` (handTerminal) says: `switch`, its terminal switches to the new one once the turn ends, with nothing to
-// type; `stop`, it stops once the turn ends, and a plain line on how to open the new one; else that plain line alone.
-function startedLines(host, marker, { ending = null, unhooked = false } = {}) {
+// type; `stop`, it stops once the turn ends, and a plain line on how to open the new one; else that plain line alone,
+// and for a background session that stays open, `stays`, why, and the command that lists it with its stop line.
+function startedLines(host, marker, { ending = null, stays = null, unhooked = false } = {}) {
   const { attachLine, attachCommand } = host.capabilities.handoffContinue;
   const look = attachLine?.({ id: marker.id, name: marker.name }) ?? `its id is ${marker.id}`;
   const called = typeof marker.name === 'string' && PLAIN_NAME.test(marker.name) ? marker.name : marker.id;
   const open = attachCommand ? `, open it with \`${attachCommand({ id: marker.id })}\`` : '';
-  const stops = ending === 'stop' ? ' and stops once this turn ends' : '';
+  let stops = '';
+  if (ending === 'stop') stops = ' and stops once this turn ends';
+  else if (stays) stops = ` and stays open, since ${stays}`;
+  const listed = stays ? ` ${IDLE_LINE}` : '';
   const last = ending === 'switch'
     ? `This session has ended its work; this terminal switches to the new one, \`${called}\`, once this turn ends.`
-    : `This session has ended its work${stops}; the new one is \`${called}\`${open}.${unhooked ? ` ${unhookedLine(host)}` : ''}`;
+    : `This session has ended its work${stops}; the new one is \`${called}\`${open}.${listed}${unhooked ? ` ${unhookedLine(host)}` : ''}`;
   const named = marker.name ? ` '${marker.name}'` : '';
   // A terminal that switches follows each later handoff itself; a say line the Human reads to open the session does not.
   const pointer = ending === 'switch' ? '' : ` ${laterOwner(marker)}`;

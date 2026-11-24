@@ -113,6 +113,10 @@ const humanPrompt = (entry) => entry !== null && typeof entry === 'object' && en
   entry.isMeta !== true && entry.isCompactSummary !== true && entry.entrypoint === 'cli' && entry.origin?.kind === 'human' &&
   entry.turnOrigin === 'human' && Number.isInteger(entry.turnPosition?.promptIndex) && entry.turnPosition.promptIndex >= 2;
 
+// When a transcript entry was written, in epoch milliseconds, from its `timestamp`; NaN when it carries none it can read
+// (lib/terminal-replace.mjs typedSince).
+const entryTime = (entry) => (typeof entry?.timestamp === 'string' ? Date.parse(entry.timestamp) : Number.NaN);
+
 // The real path of `file` when it is the transcript of `session` the host keeps where an unattended session cannot
 // write: `<session>.jsonl` in a folder of `.claude/projects` under the account's home folder, the one the write guard
 // protects (lib/unattended-write.mjs, userInfo), reached through no link. Null otherwise: a transcript under another
@@ -257,6 +261,7 @@ export default {
   opaqueShellTools: OPAQUE_SHELL_TOOLS,
   humanAnswer,
   humanPrompt,
+  entryTime,
   ownTranscript,
   // The account home's, and the folder continuedIn reads, from the environment alone, as the command reads it
   // (claude-code-continuation.mjs transcriptRoot): a host whose HOME is not the account's home reads there.

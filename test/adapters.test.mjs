@@ -19,7 +19,7 @@ import { GUARDED_PATHS } from '../plugins/aidrian/lib/project.mjs';
 import { CONTINUE_ROUTES } from '../plugins/aidrian/lib/config-schema.mjs';
 import { pushPermission as claudePushPermission } from '../plugins/aidrian/lib/hosts/claude-code-push.mjs';
 import { heldSessions, listBackground } from '../plugins/aidrian/lib/hosts/claude-code-background.mjs';
-import { agentAliases, backgroundHeld, backgroundList, continueRoutes, deniedNames, detectHost, HOSTS, opaqueShellCommand, PUSH_ANSWERS, pushPermission, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
+import { agentAliases, backgroundHeld, backgroundList, continueRoutes, deniedNames, detectHost, HOSTS, humanPrompts, opaqueShellCommand, PUSH_ANSWERS, pushPermission, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { trackerWarnings, unwatchedLine } from '../plugins/aidrian/lib/tracker-check.mjs';
 import { judgeTrackerWrite, readTrackerValue, serverPrefix, unlistedTool } from '../plugins/aidrian/lib/tracker-guard.mjs';
 import { expandTracker, knownServers, readToolsOf, TRACKERS, writeToolsOf } from '../plugins/aidrian/lib/trackers/index.mjs';
@@ -1370,4 +1370,16 @@ test('the background session wrappers pass a clear answer on, with only the fiel
   assert.equal(asked, heldAsk);
   assert.deepEqual(backgroundHeld(host, { sessions: [] }), { held: [] });
   assert.deepEqual(backgroundList({ ...fakeHost, capabilities: { backgroundSessions: { list: () => ({ problem: 'the listing timed out' }) } } }, {}), { problem: 'the listing timed out' });
+});
+
+test('humanPrompts dates each transcript entry by the adapter\'s entryTime, and Claude Code reads its timestamp', () => {
+  const input = { transcript_path: '/transcripts/s-1.jsonl', session_id: 's-1' };
+  const host = (extra) => ({ ...UNKNOWN_HOST, id: 'stub', payloadMark: () => true, humanPrompt: () => true, ownTranscript: (file) => file, ...extra });
+  const dated = humanPrompts(input, [host({ entryTime: (entry) => entry.t })]);
+  assert.equal(dated.timeOf({ t: 5 }), 5);
+  assert.ok(Number.isNaN(dated.timeOf({ t: 'soon' })), 'a time that is no number is none');
+  assert.ok(Number.isNaN(humanPrompts(input, [host({})]).timeOf({ t: 5 })), 'a host that declares no entryTime dates no entry');
+  const claudeCode = HOSTS.find((each) => each.id === 'claude-code');
+  assert.equal(claudeCode.entryTime({ timestamp: '2026-11-24T12:00:00.000Z' }), Date.parse('2026-11-24T12:00:00.000Z'));
+  for (const entry of [{}, null, { timestamp: 7 }, { timestamp: 'not a time' }]) assert.ok(Number.isNaN(claudeCode.entryTime(entry)), JSON.stringify(entry));
 });

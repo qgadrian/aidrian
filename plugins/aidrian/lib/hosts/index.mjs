@@ -73,15 +73,21 @@ export const humanAnswer = (entry, hosts = HOSTS) => hosts.some((host) => host.h
 export const transcriptFolders = (home, { env = process.env, hosts = HOSTS } = {}) => hosts.flatMap((host) => host.transcriptFolders?.(home, env) ?? []);
 
 // The prompt the Human typed into a session, as the adapter of the host the call runs under (`input`, a hook's
-// payload) reads its transcript: { file, isHuman }, where `file` is the real path of the session's own transcript, kept
-// where the session cannot write (an adapter's `ownTranscript`), and `isHuman(entry)` its `humanPrompt`; null when that
-// host has neither, or the payload's transcript is not the session's own. Never another host's adapter.
+// payload) reads its transcript: { file, isHuman, timeOf, still }, where `file` is the real path of the session's own
+// transcript, kept where the session cannot write (an adapter's `ownTranscript`), `isHuman(entry)` its `humanPrompt`,
+// `timeOf(entry)` when the entry was written, in epoch milliseconds, by its `entryTime`, NaN when it cannot tell or
+// declares none, and `still()` whether the path names that transcript yet; null when that host has neither
+// `humanPrompt` nor `ownTranscript`, or the payload's transcript is not the session's own. Never another host's adapter.
 export function humanPrompts(input, hosts = HOSTS) {
   const host = detectHost({ input }, hosts);
   if (typeof host.humanPrompt !== 'function' || typeof host.ownTranscript !== 'function') return null;
   const file = host.ownTranscript(input?.transcript_path, { session: input?.session_id });
   // Checked again after the read: the entries count only while the path still names the session's own transcript.
-  return file ? { file, isHuman: (entry) => host.humanPrompt(entry) === true, still: () => host.ownTranscript(file, { session: input?.session_id }) === file } : null;
+  const timeOf = (entry) => {
+    const time = host.entryTime?.(entry);
+    return Number.isFinite(time) ? time : Number.NaN;
+  };
+  return file ? { file, isHuman: (entry) => host.humanPrompt(entry) === true, timeOf, still: () => host.ownTranscript(file, { session: input?.session_id }) === file } : null;
 }
 
 // `raw`, a hook's payload, in the standard names the shared code reads: `tool_name` as mcp__<server>__<tool> for an MCP tool.

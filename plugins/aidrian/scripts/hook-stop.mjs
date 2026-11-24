@@ -42,7 +42,8 @@
 // - The terminal hand-over (lib/terminal-replace.mjs endAfterTurn): on a stop no check sends back, sent back before or
 //   not, a session whose handoff gate asked to end itself once its turn ends does, so the terminal that ran it, or
 //   follows it, opens the background session that took the work; a background session no terminal follows only stops
-//   (docs/handoff.md#replacing-the-terminal). It skips the session-length reminder: the work has moved.
+//   (docs/handoff.md#replacing-the-terminal). A background session's request ends only the turn that noted it: a
+//   Human prompt after it in the session's own transcript drops it. It skips the session-length reminder: the work has moved.
 
 import { randomBytes } from 'node:crypto';
 import { renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -50,9 +51,9 @@ import path from 'node:path';
 
 import { loadConfig } from '../lib/config.mjs';
 import { ownFolderSync, readOwnText } from '../lib/fs.mjs';
-import { MARKER_CAP, noteFollow, takeEnding } from '../lib/handoff-markers.mjs';
+import { MARKER_CAP, noteFollow, startedInBackground, takeEnding } from '../lib/handoff-markers.mjs';
 import { deny, isMain, runHook } from '../lib/hook-io.mjs';
-import { detectHost } from '../lib/hosts/index.mjs';
+import { detectHost, humanPrompts } from '../lib/hosts/index.mjs';
 import { findProject } from '../lib/project.mjs';
 import { resultHoldReason } from '../lib/project-run-guard.mjs';
 import { recordResume, resolvedHandoff, resumeState } from '../lib/resume-tokens.mjs';
@@ -93,7 +94,7 @@ export async function handle(input) {
   }
   const marker = stopMarkerPath(input.session_id);
   if (marker === null) return;
-  if (await endsTerminal(host, project, config, input.session_id)) return;
+  if (await endsTerminal(host, project, config, input)) return;
   if (!settled || !text) return;
   const state = resumeState(project, config);
   const workTools = host.capabilities.transcripts === false ? null : host.capabilities.workTools;
@@ -167,24 +168,35 @@ function marked(text) {
   });
 }
 
-// Whether this stop ends the session `id` so its terminal opens the background session it handed off to. The modules
-// load only on a host that can replace a terminal.
-async function endsTerminal(host, project, config, id) {
+// Whether this stop ends the session of the payload `input` so its terminal opens the background session it handed off
+// to, or so a background session that handed off stops. The modules load only on a host that can replace a terminal.
+// `env`, `start`, the helper's launch, and `prompts`, the reader of the session's own transcript, are the tests'
+// (lib/terminal-replace.mjs endAfterTurn).
+export async function endsTerminal(host, project, config, input, { env = process.env, start, prompts } = {}) {
+  const id = input.session_id;
   const replace = host.capabilities.handoffContinue?.replaceTerminal;
   if (!replace) return false;
   // An attended session the shell function did not start has nothing to end, and pays for no import: the gate notes a
   // request only for one it started, as AIDRIAN_SHELL_PID (lib/terminal-replace.mjs SHELL_VAR) tells, or for a session
-  // no Human attends.
-  if (replace.attended(process.env) && !process.env.AIDRIAN_SHELL_PID) return false;
-  const { endAfterTurn } = await import('../lib/terminal-replace.mjs');
+  // the background route started that the host does not say a Human attends.
+  if (replace.attended(env) && !env.AIDRIAN_SHELL_PID) return false;
+  const { endAfterTurn, typedSince } = await import('../lib/terminal-replace.mjs');
   const { projectStore, unattendedHere } = await import('../lib/handoff-continue.mjs');
   const store = projectStore(project, config);
+  // The reader of the session's own transcript, opened only when a request that names its own id asks it.
+  const reader = () => (prompts === undefined ? humanPrompts(input) : prompts);
   return endAfterTurn({
     host,
     session: id,
     take: () => takeEnding(store, id),
-    unattended: () => unattendedHere(id, { store, env: process.env, now: Date.now() }),
+    unattended: () => unattendedHere(id, { store, env, now: Date.now() }),
+    // A background session the Human typed into ends itself too, once it handed off, at the end of that turn alone: a
+    // Human prompt after the request means this stop ends a later turn (docs/handoff.md#replacing-the-terminal).
+    background: () => startedInBackground(store, id),
+    typedSince: (at) => typedSince(reader(), at),
     follow: ({ session, shell }) => noteFollow(store, session, { shell }),
+    env,
+    ...(start ? { start } : {}),
   });
 }
 

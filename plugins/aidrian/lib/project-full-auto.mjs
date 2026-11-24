@@ -16,7 +16,9 @@ export function fullAutoLines({ base, policy, projectKey, env = process.env, cou
   const human = [
     policy.includePolicyFiles === true
       ? 'a pull request that changes a policy file, the config.json the gate reads, the pointer file, or the local switch file, merges by itself with no sign-off of the Human, since github.autoMerge.includePolicyFiles is on, '
-        + 'except one that changes github.requiredChecks, conditionalChecks, ignoreCancelledChecks, or state.dir, which the gate\'s checks row keeps off with the key on or off: the Human merges that one'
+        + 'except one that changes github.requiredChecks, conditionalChecks, ignoreCancelledChecks, or state.dir, which the gate\'s checks row keeps off with the key on or off: the Human merges that one; '
+        + 'and the harness-config flow still waits for the Human\'s sign-off while either branch\'s review runs a command of the project\'s (review.planCommand, an exec reviewer, or review.visual login or preview), '
+        + 'or when the policy file is also a doc a flow\'s invariants cite'
       : 'a pull request that changes a policy file, the config.json the gate reads, the pointer file, or the local switch file, never merges by itself; the Human merges it',
     signoffLine(config),
     decisionLine({ policy, projectKey, env, count, safeDefaults: config.decisions?.unattended?.safeDefaults }),

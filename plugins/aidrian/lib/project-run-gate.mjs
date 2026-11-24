@@ -256,14 +256,14 @@ export function projectPrompt({ run, key, attempt, branch, clone, skill = SKILL,
 
 // The line of projectPrompt for an attempt the team's github.autoMerge.includePolicyFiles reaches (teamPolicy, read at
 // the start's pin): the session may write the host instruction and policy files, but for a base copy baseCopiesLine
-// names. One rule decides a finding in a host file: one in a file the attempt may write is fixed as any other, and one in
-// a file it may not write, a base copy, a host file the sandbox and the write guard refuse, or a workflow file, keeps
-// HOST_FILE_RESIDUAL's route, a stated residual or a park. The autopilot skill's project-run rules key on its first words.
+// names. A finding in a file the attempt may write is fixed as any other; HOST_FILE_RESIDUAL covers the rest, a base
+// copy, a host file the sandbox and the write guard refuse, or a workflow file. The autopilot skill's project-run rules
+// key on its first words.
 export const POLICY_FILES_LINE = 'The team\'s `github.autoMerge.includePolicyFiles` is on: this session may write host instruction files, such as a `CLAUDE.md` or an `AGENTS.md`, '
   + 'the `.aidrian/` folder, its knowledge index and `config.json` among them, and the other policy files, when the issue needs it, but no base copy this message lists. '
-  + 'One rule decides a review finding in a host file: one in a file this attempt may write is fixed as any other finding, '
-  + 'and one in a file it may not write, a base copy this message lists, a host settings, skills, agents, commands, hooks, or MCP server file, or a forge workflow file, '
-  + 'keeps the autopilot skill\'s host-file route, a stated residual or a park.';
+  + 'A review finding in a file this attempt may write is fixed as any other finding. '
+  + 'This attempt may not write a base copy this message lists, a host settings, skills, agents, commands, hooks, or MCP server file, or a forge workflow file: '
+  + 'a finding in one keeps the autopilot skill\'s host-file route, a stated residual or a park.';
 
 // The line of projectPrompt for an attempt whose clone holds the base branch's copies of the host files `file` names.
 const baseCopiesLine = (file) => `This branch changes host config or instruction files that no independent review has passed yet, listed as data in ${file}. `
@@ -272,7 +272,7 @@ const baseCopiesLine = (file) => `This branch changes host config or instruction
   + 'A push that changes one of them is refused, but for each as git itself merges the base into the branch. When the remaining work needs a change to one, leave the branch as it is. '
   + `${HOST_FILE_RESIDUAL} Any other work that needs a change to one records the result parked with that as its stop.`;
 
-// What an issue's session does with a review finding whose fix lies in a host file, which it never writes: the one
+// What an issue's session does with a review finding whose fix lies in a host file it may not write: the one
 // route, in projectPrompt and the autopilot skill's project-run rules alike. The pull request still waits for the
 // Human's merge, so the finding needs no decision: the line only tells the Human, who reads the finding's file and text
 // in the review record. It publishes nothing: a finding id (docs/review.md, Finding ids) and HOST_FILE_REASON name no
@@ -281,7 +281,7 @@ const baseCopiesLine = (file) => `This branch changes host config or instruction
 // field filled with HOST_FILE_REASON. A security finding, a finding with no engine id, and an item the body rule refuses
 // for any reason, such as a closed heading list or an issue key that matches the id, park instead: one fail-closed rule.
 export const HOST_FILE_REASON = 'the run may not write a host file this finding needs';
-export const HOST_FILE_RESIDUAL = 'A low or medium review finding whose fix lies in a host file, that the review step does not mark `security`, '
+export const HOST_FILE_RESIDUAL = 'A low or medium review finding whose fix lies in a host file this attempt may not write, that the review step does not mark `security`, '
   + 'and that has the review engine\'s own `R<round>-<n>` id, is a stated residual, never a decision: one item of the residual section the project\'s pull request rules name, '
   + 'config.json `github.pullRequest.residuals.section`, by default Accepted residuals, that opens with its `R<round>-<n>` id and a colon, '
   + `then \`${HOST_FILE_REASON}\`, and states each field \`github.pullRequest.residuals.fields\` lists as \`<field>: ${HOST_FILE_REASON}\`, `
@@ -291,7 +291,7 @@ export const HOST_FILE_RESIDUAL = 'A low or medium review finding whose fix lies
   + 'the Human reads the finding in the review record and merges the pull request; whenever the pull request\'s copy of the record lacks the finding\'s details, '
   + 'the Human reads them in the review record on the machine that ran the review. '
   + 'When the pull request body rule refuses that item or its section for any reason, never work around it: the issue parks as before. '
-  + 'A security finding in a host file, and one with no such id, parks as before.';
+  + 'A security finding in a host file this attempt may not write, and one with no such id, parks as before.';
 
 // The line of projectPrompt for an attempt on an existing branch: stop-action's catch-up, whose line names the one way
 // it merges a base its pull request conflicts with (project-stops.mjs catchUpStop), and parks one into another branch.

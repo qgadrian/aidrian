@@ -139,7 +139,7 @@ test('the full-auto lines name the human sign-off flows and drop each setting th
   // With github.autoMerge.includePolicyFiles on, a policy file's pull request merges with no sign-off, but for the check lists.
   assert.match(parking[1], /never merges by itself; the Human merges it$/u, 'off');
   const policy = fullAutoLines({ base, policy: { fullAuto: true, includeGuardedPaths: true, includePolicyFiles: true }, projectKey: 'p', count: () => ({ count: 0 }) });
-  assert.match(policy[1], /merges by itself with no sign-off of the Human, since github\.autoMerge\.includePolicyFiles is on, except one that changes github\.requiredChecks, conditionalChecks, ignoreCancelledChecks, or state\.dir, which the gate's checks row keeps off with the key on or off: the Human merges that one$/u);
+  assert.match(policy[1], /merges by itself with no sign-off of the Human, since github\.autoMerge\.includePolicyFiles is on, except one that changes github\.requiredChecks, conditionalChecks, ignoreCancelledChecks, or state\.dir, which the gate's checks row keeps off with the key on or off: the Human merges that one; and the harness-config flow still waits for the Human's sign-off while either branch's review runs a command of the project's \(review\.planCommand, an exec reviewer, or review\.visual login or preview\), or when the policy file is also a doc a flow's invariants cite$/u);
 });
 
 test('the floor-class line reads the decision switch and counts this machine\'s grants, printing no grant and writing nothing', (t) => {

@@ -358,12 +358,21 @@ test('a pull request cannot weaken the review it is under: a removed flow still 
   assert.equal((await r.step({ exec: clean })).status, 'received');
 });
 
-test('a base that commits github.autoMerge.includePolicyFiles with includeGuardedPaths asks no harness-config sign-off for a config change, and the removed flow still runs', async (t) => {
+test('a base that commits github.autoMerge.includePolicyFiles with includeGuardedPaths still reviews a config-only change under harness-config, and its reviewer signs it in place of the Human', async (t) => {
   const flows = { booking: { files: ['src/booking/**'] } };
   const lifted = { autoMerge: { includeGuardedPaths: true, includePolicyFiles: true } };
-  const r = repo(t, { baseConfig: { version: 1, github: lifted, review: { flows } }, headConfig: { version: 1, github: lifted }, change: (write) => write('src/booking/book.js', 'x\n') });
+  // The config sorts as no behaviour, and no other file changes: the harness-config flow alone keeps the review.
+  const review = { flows, nonBehaviour: ['.aidrian/**'] };
+  const r = repo(t, { baseConfig: { version: 1, github: lifted, review }, headConfig: { version: 1, github: lifted, review: { nonBehaviour: ['.aidrian/**'] } }, change: () => {} });
   const first = await r.step({ exec: clean });
-  assert.deepEqual(first.plan.flows, ['booking'], 'no harness-config flow');
+  assert.deepEqual([first.plan.flows, first.plan.depth === 'none'], [['harness-config'], false], 'reviewed, never none_needed');
+  assert.ok(first.dispatch.length > 0, 'a pass reviews it');
+  for (const pass of first.dispatch) {
+    const ids = pass.flows.flatMap((flow) => flow.invariants.map((each) => [flow.id, each.id]));
+    recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'code-reviewer', findings: 0, fixed: 0,
+      verdictsText: JSON.stringify(ids.map(([flow, invariant]) => ({ flow, invariant, verdict: 'holds', evidence: '.aidrian/config.json:1' }))) });
+  }
+  assert.equal((await r.step({ exec: clean })).status, 'received', 'no sign-off of the Human');
   assert.deepEqual(readLocalState(r.project, 7, 'o/r').signoffable.flows, [], 'nothing for the Human to sign off');
 });
 

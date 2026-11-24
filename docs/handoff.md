@@ -687,7 +687,7 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   When the [pull request body rule](config.md#pull-request-contract) refuses that item or its section for any reason,
   such as a closed list of sections without it or an issue key pattern that matches the id, the session never works
   around it: the issue parks as before.
-  A security finding in a host file, and one with no engine id, parks as before.
+  A security finding in a host file the attempt may not write, and one with no engine id, parks as before.
   A finding outside host files keeps its route.
   A later or resumed attempt runs `aidrian project stop-action RUN ISSUE --catch-up` first.
   It parks a pull request into another branch than the default.

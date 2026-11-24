@@ -261,11 +261,7 @@ export async function prepareStep(s) {
   const changes = scope?.changes ?? changedFiles(root, base, head);
   const changedPaths = new Set(changes.map((change) => change.file));
   const harnessChanged = [];
-  // A change to the review config is the Human's to sign off, unless the base branch commits
-  // github.autoMerge.includePolicyFiles with includeGuardedPaths (policyFilesLifted): the team's explicit acceptance
-  // that a session changes the policy unattended. The merge gate asks both branches on the forge again (merge-trust.mjs
-  // flowsFloor), so a base this checkout holds stale lifts nothing there.
-  if (changed.length && changedPaths.has(project.paths.config) && !policyFilesLifted([committed])) harnessChanged.push(project.paths.config);
+  if (changed.length && changedPaths.has(project.paths.config)) harnessChanged.push(project.paths.config);
   for (const command of [review.planCommand, baseReview?.visual?.login, baseReview?.visual?.preview]) {
     for (const file of commandFiles(root, command, baseTip)) if (changedPaths.has(file)) harnessChanged.push(file);
   }
@@ -443,7 +439,15 @@ export async function prepareStep(s) {
   // rewrite it; a flow the change adds reads it from the head, the only place it exists.
   const readAt = (commit) => (file) => fileAt(root, commit, file);
   for (const flow of plan.flows) {
-    if (flow.id === HARNESS_FLOW) Object.assign(flow, { invariants: [HARNESS_INVARIANT], unspecified: false, signoff: 'human' });
+    // The harness-config flow is reviewed whatever the config says. Its sign-off is the Human's, unless the flow holds
+    // the config alone and the base branch commits github.autoMerge.includePolicyFiles with includeGuardedPaths
+    // (policyFilesLifted): the team's explicit acceptance that a session changes the policy unattended. Its reviewer
+    // signs it then. The merge gate asks both branches on the forge again (merge-trust.mjs flowsFloor), so a base this
+    // checkout holds stale lifts nothing there.
+    if (flow.id === HARNESS_FLOW) {
+      const lifted = policyFilesLifted([committed]) && flow.files.every((file) => file === project.paths.config);
+      Object.assign(flow, { invariants: [HARNESS_INVARIANT], unspecified: false, signoff: lifted ? 'reviewer' : 'human' });
+    }
     else Object.assign(flow, invariantsOf(review.flows[flow.id] ?? {}, readAt(baseReview?.flows?.[flow.id] ? baseTip : head)));
   }
   // The plan note for this head (G1, H6): each pass of the plan with its stage, its reviewer, and whether the plan

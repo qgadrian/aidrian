@@ -44,7 +44,7 @@ test('the caps in code', () => {
 // in the prompt of an attempt on base copies and in the skill's rules for every attempt alike, never as a decision.
 test('a low or medium finding in a host file is a stated residual by its id alone, and pr_open once it is the last stop', () => {
   // Beside severity: no security mark, and the engine's own id. The line publishes nothing, so no post or head condition applies.
-  assert.match(HOST_FILE_RESIDUAL, /^A low or medium review finding whose fix lies in a host file, that the review step does not mark `security`, and that has the review engine's own `R<round>-<n>` id, is a stated residual, never a decision: /u);
+  assert.match(HOST_FILE_RESIDUAL, /^A low or medium review finding whose fix lies in a host file this attempt may not write, that the review step does not mark `security`, and that has the review engine's own `R<round>-<n>` id, is a stated residual, never a decision: /u);
   // The project's residual format: its section, the id as the item's lead, and every field it requires, each filled with the fixed text.
   assert.equal(HOST_FILE_REASON, 'the run may not write a host file this finding needs');
   assert.ok(HOST_FILE_RESIDUAL.includes('one item of the residual section the project\'s pull request rules name, config.json `github.pullRequest.residuals.section`, by default Accepted residuals, that opens with its `R<round>-<n>` id and a colon, '
@@ -55,7 +55,7 @@ test('a low or medium finding in a host file is a stated residual by its id alon
   assert.ok(HOST_FILE_RESIDUAL.includes('whenever the pull request\'s copy of the record lacks the finding\'s details, the Human reads them in the review record on the machine that ran the review.'));
   // One fail-closed rule: whatever the body rule refuses, the issue parks, as do a security finding and one with no id.
   assert.ok(HOST_FILE_RESIDUAL.includes('When the pull request body rule refuses that item or its section for any reason, never work around it: the issue parks as before.'));
-  assert.match(HOST_FILE_RESIDUAL, /A security finding in a host file, and one with no such id, parks as before\.$/u);
+  assert.match(HOST_FILE_RESIDUAL, /A security finding in a host file this attempt may not write, and one with no such id, parks as before\.$/u);
   // A mixed round: every other finding takes its own route first, and a decision it raises decides the result.
   assert.match(HOST_FILE_RESIDUAL, /Every other finding of the round takes its own route first, and keeps any decision it raises, which then decides the result\. Only when such residuals are the one stop left, record the result pr_open/u);
   const given = { run: 'launch', key: 'ENG-1', attempt: 2, branch: 'feat/eng-1', clone: '/c' };
@@ -74,11 +74,11 @@ test('a low or medium finding in a host file is a stated residual by its id alon
   assert.doesNotMatch(projectPrompt(given), /includePolicyFiles/u, 'off: no line');
   assert.match(POLICY_FILES_LINE, /^The team's `github\.autoMerge\.includePolicyFiles` is on: this session may write host instruction files/u);
   // One rule, scoped to what this attempt may write: a base copy, a protected host file, or a workflow keeps the host-file route.
-  assert.match(POLICY_FILES_LINE, /and the other policy files, when the issue needs it, but no base copy this message lists\. One rule decides a review finding in a host file: one in a file this attempt may write is fixed as any other finding, and one in a file it may not write, a base copy this message lists, a host settings, skills, agents, commands, hooks, or MCP server file, or a forge workflow file, keeps the autopilot skill's host-file route, a stated residual or a park\.$/u);
+  assert.match(POLICY_FILES_LINE, /and the other policy files, when the issue needs it, but no base copy this message lists\. A review finding in a file this attempt may write is fixed as any other finding\. This attempt may not write a base copy this message lists, a host settings, skills, agents, commands, hooks, or MCP server file, or a forge workflow file: a finding in one keeps the autopilot skill's host-file route, a stated residual or a park\.$/u);
   const both = projectPrompt({ ...given, includePolicyFiles: true, baseCopies: '/a/base-copies.txt' });
   assert.ok(both.includes(POLICY_FILES_LINE) && both.includes(HOST_FILE_RESIDUAL), 'base copies keep their route beside the line');
   assert.match(bullet, /^\*\*A finding in a host file\.\*\* Unless the first message says the team's `github\.autoMerge\.includePolicyFiles` is on, this session never writes a host file/u);
-  assert.match(bullet, /When the first message says `github\.autoMerge\.includePolicyFiles` is on, this session may write .* but no base copy the first message lists\. Then one rule decides a finding in a host file: one in a file this attempt may write is fixed as any other finding, and one in a file it may not write, a base copy, a host settings, skills, agents, commands, hooks, or MCP server file, or a workflow file, takes the residual or park route above\./u);
+  assert.match(bullet, /When the first message says `github\.autoMerge\.includePolicyFiles` is on, this session may write .* but no base copy the first message lists, nor a host settings, skills, agents, commands, hooks, or MCP server file, nor a workflow file, and a finding in a file this attempt may write is fixed as any other finding\./u);
 });
 
 test('the driver starts the issue next lists in a fresh clone cut from the base tip, under the host sandbox, held to a floor and a tagged mark, and the ledger records it', (t) => {

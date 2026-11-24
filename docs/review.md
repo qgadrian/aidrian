@@ -220,8 +220,8 @@ plan command it adds, take effect once they are merged. The plan command runs fr
 so editing its script changes nothing until the merge. A flow the pull request adds reads its invariants from the
 pull request, and takes its invariants' `approvers` from there too, so the config change that adds it waits for the
 Human's `harness-config` sign-off. A change to any of these triggers the built-in `harness-config` flow, which the Human signs off.
-A change to the config itself does not, while the base branch commits `github.autoMerge.includePolicyFiles` with
-`includeGuardedPaths` ([Auto-merge](config.md#auto-merge)). A
+A change to the config alone is still reviewed under that flow, but its reviewer signs it in place of the Human while
+the base branch commits `github.autoMerge.includePolicyFiles` with `includeGuardedPaths` ([Auto-merge](config.md#auto-merge)). A
 flow's deleted test stops the review even when the change touches nothing else in the flow.
 
 `aidrian lint review` fails on a flow whose globs match no tracked file, an invariants doc that is missing or has no

@@ -379,8 +379,11 @@ export function hostSessionStartDenial(input, { names: { human } }, { unattended
 export function hostServiceDenial(input, { names: { human } }, { unattended = () => false, env = process.env, home = env.HOME || homedir() } = {}) {
   const command = opaqueShellCommand(input) ?? (bashCall(input) ? input.tool_input?.command : null);
   if (typeof command !== 'string') return null;
+  // The value of the variable `name`, by `env`'s own text entries only: a name such as `constructor` reads a function
+  // every object has, and a guard that passed one to path.isAbsolute would throw, which lets the whole call run.
+  const variable = (name) => (Object.hasOwn(env, name) && typeof env[name] === 'string' ? env[name] : '');
   const text = unquoted(command)
-    .replace(/\$\{(\w+)\}|\$(\w+)/gu, (whole, braced, bare) => (path.isAbsolute(env[braced ?? bare] ?? '') ? env[braced ?? bare] : whole))
+    .replace(/\$\{(\w+)\}|\$(\w+)/gu, (whole, braced, bare) => (path.isAbsolute(variable(braced ?? bare)) ? variable(braced ?? bare) : whole))
     .replace(/(^|[\s=:(])~(?=\/|\s|$)/gu, (_, before) => `${before}${home}`)
     .replace(/(?<![\w.~-])\/[^\s'"`;|&<>(){}]*/gu, (word) => path.normalize(word));
   const escape = (each) => each.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');

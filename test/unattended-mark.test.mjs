@@ -162,6 +162,10 @@ test('a marked session is held from a folder outside its project, and in another
     ['cd "$X" && rm -rf unattended', /may change the unattended marks/u],
     // OpenCode's background service, which starts a session no guard holds.
     ['curl -u opencode:pw http://127.0.0.1:49374/api/session', /local service starts a session no guard holds/u],
+    // A variable that names a property every object has expands to nothing the guard reads, so it neither hides the
+    // service's store nor stops a later guard of the chain from refusing.
+    ['echo $constructor; cat ~/.local/state/opencode/service.json', /local service starts a session no guard holds/u],
+    [`echo \${toString}; rm ${marks}/${full}.json`, /the unattended marks/u],
   ];
   const allowed = ['ls', 'claude agents --json', `rm -f ${outside}/x`, 'echo hi > note.txt', 'aidrian handoff continue b.md', 'curl -s http://localhost:3000'];
   for (const session of [full, short]) {

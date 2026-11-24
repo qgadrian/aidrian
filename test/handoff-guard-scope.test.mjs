@@ -147,7 +147,7 @@ test('a subagent, and a session the background route started, may not start an O
 });
 
 test('a session no Human attends may not read OpenCode\'s service password or reach its background service, by any spelling, and other ports pass', () => {
-  const env = { HOME: '/home/user', XDG_STATE_HOME: '/xs' };
+  const env = { HOME: '/home/user', XDG_STATE_HOME: '/xs', NUM: 7 };
   const ask = (command, unattended = () => true) => hostServiceDenial(bash(command, { session_id: OTHER, cwd: '/x' }), { names: { human: 'the Human' } }, { unattended, env, home: '/home/user' });
   const refused = [
     'cat ~/.local/state/opencode/service.json', 'cat $HOME/.local/state/opencode/service.json', 'cat "${HOME}"/.local/state/opencode/service.json',
@@ -157,6 +157,8 @@ test('a session no Human attends may not read OpenCode\'s service password or re
     // A path the shell reads the same, with a `.` part, a doubled slash, or a `..` part.
     'cat ~/.local/state/./opencode/service.json', 'cat ~/.local/state//opencode/service.json', 'cat /xs/x/../opencode/service.json',
     'cat $XDG_STATE_HOME/./opencode/service.json', 'ls ~/.config//opencode/',
+    // A variable that names a property every object has, or a value that is no text, expands to nothing.
+    'echo $constructor ${toString} $__proto__ $NUM; cat ~/.local/state/opencode/service.json',
   ];
   for (const command of refused) {
     assert.match(ask(command)?.reason ?? '', /local service starts a session no guard holds/u, command);

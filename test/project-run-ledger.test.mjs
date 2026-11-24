@@ -140,11 +140,13 @@ test('a landed row that names no branch carries nothing on', (t) => {
   const issue = { issues: [{ key: 'ENG-1', branch: 'feat/eng-1-export', status: 'started' }] };
   // The run the row names, and the run that wrote it, both on the snapshot's branch: neither tells which branch the
   // merge was checked for, so a match with either proves nothing.
-  assert.equal(init('zero', input({ issues: [{ key: 'ENG-1', branch: 'feat/eng-1-export', status: 'unstarted' }] }, 'zero.json')).exitCode, 0);
+  // Each run inits a minute after the one before, so which is the latest never rests on the clock's resolution.
+  const minute = (n) => ({ now: Date.now() + n * 60_000 });
+  assert.equal(init('zero', input({ issues: [{ key: 'ENG-1', branch: 'feat/eng-1-export', status: 'unstarted' }] }, 'zero.json'), minute(0)).exitCode, 0);
   appendToRun(state, 'zero', () => ({ rows: [{ event: 'issue', key: 'ENG-1', state: 'parked', decision: 'pr-open', at }] }));
-  assert.equal(init('first', input(issue, 'first.json')).exitCode, 0);
+  assert.equal(init('first', input(issue, 'first.json'), minute(1)).exitCode, 0);
   appendToRun(state, 'first', () => ({ rows: [{ event: 'landed', key: 'ENG-1', run: 'zero', attempt: 1, pr: 12, at }, { event: 'issue', key: 'ENG-1', state: 'done', at }] }));
-  const next = init('second', input(issue, 'second.json'));
+  const next = init('second', input(issue, 'second.json'), minute(2));
   assert.equal(next.exitCode, 0, next.err.join('\n'));
   assert.equal(next.out.some((line) => line.startsWith('landed:')), false, 'which branch its merge was checked for cannot be told');
   assert.deepEqual(planRun(readRun(state, 'second').snapshot, readRun(state, 'second').states).blocked, [{ key: 'ENG-1', reason: 'status', on: ['started'] }]);

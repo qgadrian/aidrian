@@ -114,8 +114,9 @@ id with a line that says `which the host continued as <id>`.
 1. Run `aidrian project resume <run> --custody` once.
 2. Exit 0 with a `custody:` line: this session drives the run now; drive on from step 1 of § Each pass. A
    `note: the halt stands:` line after it means the run is still halted, so that step's `halted` line comes next.
-3. Any other answer, exit 75 included: § Stop, with its stderr line as the cause; a driver command it runs that is
-   refused again with `which the host continued as` is skipped, never § Continued again. Never run the resume again.
+3. Any other answer, exit 75 included: no § Stop and no `wait`, since this session drives nothing. Run
+   `aidrian project summary <run>`, then give the final report of `SKILL.md` § Report with the resume's stderr line as
+   the cause, and end the turn. Run no other driver command, and never the resume again.
 
 ## Finish
 

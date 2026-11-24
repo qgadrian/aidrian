@@ -35,12 +35,21 @@ const recorded = (host) => JSON.parse(readFileSync(path.join(ROOT, 'test/fixture
 
 const DELIVERIES = new Set(['hooks-json', 'installer', 'bridge']);
 const script = (event, name) => HOOKS[event].find((group) => group.hooks.some(({ command }) => command.includes(name)));
-// Whether a hooks.json matcher fires on the tool `name` as Claude Code reads it (code.claude.com/docs/en/hooks): "*", empty,
-// or none on every tool; only letters, digits, _, -, spaces, commas, and | a list of exact names split on | or ,; any
-// other a regular expression that may match anywhere in the name.
-const fires = (matcher, name) => {
+// How each hooks-json host reads a hooks.json matcher: "*", empty, or none fires on every tool; one made only of the
+// `list` characters is exact names split on `separator`; any other is a regular expression that may match anywhere in
+// the name. Claude Code: code.claude.com/docs/en/hooks, Matcher patterns. Codex: HookMatcher in
+// codex-rs/hooks/src/engine/matcher.rs (openai/codex bd4204ef), whose list takes no `-`, space, or comma.
+const MATCHER_READINGS = {
+  'claude-code': { list: /^[A-Za-z0-9_ ,|-]+$/u, separator: /\s*[|,]\s*/u },
+  codex: { list: /^[A-Za-z0-9_|]+$/u, separator: '|' },
+  [fakeHost.id]: { list: /^[A-Za-z0-9_ ,|-]+$/u, separator: /\s*[|,]\s*/u },
+};
+// Whether the hooks.json matcher `matcher` fires on the tool `name` on the host `hostId`, as that host reads it.
+const fires = (hostId, matcher, name) => {
+  const reading = MATCHER_READINGS[hostId];
+  if (reading === undefined) throw new Error(`no matcher reading for host ${hostId}; add it to MATCHER_READINGS`);
   if (matcher === undefined || matcher === '' || matcher === '*') return true;
-  if (/^[A-Za-z0-9_ ,|-]+$/u.test(matcher)) return matcher.split(/\s*[|,]\s*/u).includes(name);
+  if (reading.list.test(matcher)) return matcher.split(reading.separator).includes(name);
   return new RegExp(matcher, 'u').test(name);
 };
 
@@ -111,7 +120,7 @@ function matcherProblems(host) {
     ['PreToolUse', 'hook-mcp-github.mjs', raw('mcp__github__merge_pull_request')],
     ...Object.keys(host.githubTools ?? {}).map((standard) => ['PreToolUse', 'hook-mcp-github.mjs', raw(standard)]),
   ];
-  return samples.filter(([event, name, tool]) => !fires(script(event, name).matcher, tool)).map(([event, name, tool]) => `${event} ${name} misses ${tool}`);
+  return samples.filter(([event, name, tool]) => !fires(host.id, script(event, name).matcher, tool)).map(([event, name, tool]) => `${event} ${name} misses ${tool}`);
 }
 
 for (const host of [...HOSTS, fakeHost]) {
@@ -341,6 +350,20 @@ test('Claude Code continues by clear and in the background: its own clear and co
   assert.equal(hookHostPid(4242), 4242);
   for (const pid of [1, 0, -5, 2.5, '4242', null, Number.NaN]) assert.equal(hookHostPid(pid), null, String(pid));
   assert.deepEqual(codex.capabilities.handoffContinue, { routes: [] });
+});
+
+test('each hooks-json host has its own matcher reading, and Claude Code and Codex differ on a comma and a hyphen', () => {
+  for (const host of [...HOSTS, fakeHost].filter((each) => each.delivery === 'hooks-json')) assert.ok(Object.hasOwn(MATCHER_READINGS, host.id), host.id);
+  assert.equal(fires('claude-code', 'Edit, Write', 'Edit'), true, 'Claude Code reads a comma list as names');
+  assert.equal(fires('codex', 'Edit, Write', 'Edit'), false, 'Codex reads it as a pattern that needs the comma');
+  assert.equal(fires('claude-code', 'code-reviewer', 'my-code-reviewer'), false, 'Claude Code reads a hyphen name exactly');
+  assert.equal(fires('codex', 'code-reviewer', 'my-code-reviewer'), true, 'Codex reads it as a pattern, unanchored');
+  for (const id of ['claude-code', 'codex']) {
+    assert.equal(fires(id, 'Edit|Write', 'NotebookEdit'), false, `${id} reads a | list exactly`);
+    assert.equal(fires(id, 'ash.*', 'Bash'), true, `${id} reads a pattern unanchored`);
+    assert.equal(fires(id, undefined, 'Bash') && fires(id, '', 'Bash') && fires(id, '*', 'Bash'), true, `${id} fires on every tool`);
+  }
+  assert.throws(() => fires('nohost', 'Bash', 'Bash'), /no matcher reading for host nohost/);
 });
 
 test('a host whose raw names miss the matchers is told apart: it fails that check, and has to name another delivery', () => {

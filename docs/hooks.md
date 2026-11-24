@@ -2169,9 +2169,7 @@ A test run is a command of config.json [`testing.fullSuite`](config.md#testing) 
 and its pnpm, yarn, and bun forms, `node --test`, vitest, jest, pytest, `go test`, `cargo test`, `mix test`, rspec,
 `make test`, `make check`, or `aidrian test changed`, read through wrappers such as `rtk`, `timeout`, and `npx`, with
 redirects dropped. A project's own script, such as `npm run check`, counts once `testing.fullSuite` names it.
-An `xargs` segment is a test run when any word after `xargs` is, and its options are never parsed.
-Its key is the whole segment, then ` < ` and what it reads: its own `<` target, else the piped commands with their redirects, else `stdin`.
-So `printf '%s\n' a b | xargs npx jest` is `xargs npx jest < printf %s\n a b`, and other options or other input is another run.
+A run through `xargs` is not credited: a body line that quotes one is told to run the test command with its paths as one plain command.
 A key past 300 characters keeps its first 300 and a digest of the whole, so a run of other files is never its run.
 A configured command is still matched as a prefix of the whole command, so a long `testing.changedCommand` with files after it is a run.
 A call stopped, started in the background, or moved there at its timeout records nothing: no hook sees it end.
@@ -2210,8 +2208,7 @@ Two checks read it:
 
 - The [pull request body rule](#bash-rules) reads the `## Tests run` section outside fenced code, one list item or
   paragraph at a time with its wrapped lines joined, split at `;` and sentence ends. A clause that names a test command,
-  in backticks, read as the record reads that line (its first test run), or, for a `testing.fullSuite` command, as plain words,
-  and says it passed (a pass word, a check mark, or
+  in backticks or, for a `testing.fullSuite` command, as plain words, and says it passed (a pass word, a check mark, or
   "N/N"), needs a row of that command that passed with more than 0 passes, at the tree of HEAD in the folder gh runs in,
   or of the commit the clause names, such as "at 056c3c2", and with each pass count the clause states. An id of digits
   alone, as about one abbreviated id in 27 is, names a commit only after "at" or "commit", and only when git knows that

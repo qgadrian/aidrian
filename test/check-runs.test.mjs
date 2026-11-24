@@ -85,42 +85,31 @@ test('a test run is read through wrappers and redirects, and keyed the same way 
   assert.ok(!isFullSuite(invocation('npm test -- test/a.test.mjs'), TESTING), 'one file is no full suite');
 });
 
-// A jest run of named test files, plain or through xargs, as a body line quotes it (#548): the record and the claim read
-// the quoted command the same way, so only a run of those same files supports it.
-test('a jest run by test paths, plain or through xargs, supports a body line that quotes it', () => {
+// A jest run of named test files, as a body line quotes it (#548): the record and the claim read the quoted command the
+// same way, so only a run of those same files supports it. A run through xargs is not credited, and the deny says so.
+test('a jest run by test paths supports a body line that quotes it, and a line through xargs is told to run it plain', () => {
   const output = 'PASS src/a.test.ts\nTest Suites: 3 passed, 3 total\nTests:       12 passed, 12 total\nSnapshots:   0 total\n';
   const tree = () => ({ tree: 't', trackedTree: 't', untrackedCode: [] });
   const rowOf = (command) => checkRows({ command, cwd: '/w', output, exitZero: true, tree });
-  const claimed = (line, rows) => unsupportedClaims(passClaims(`## Tests run\n\n- ${line}\n`), rows, { tree: 't' });
+  const claimsOf = (line) => passClaims(`## Tests run\n\n- ${line}\n`);
+  const claimed = (line, rows) => unsupportedClaims(claimsOf(line), rows, { tree: 't' });
   const plain = rowOf('npx jest --no-coverage --runTestsByPath a.test.ts b.test.ts c.test.ts');
   assert.deepEqual(plain.map((row) => [row.command, row.status, row.pass]), [['jest --no-coverage --runTestsByPath a.test.ts b.test.ts c.test.ts', 'passed', 12]]);
   assert.deepEqual(claimed('`npx jest --no-coverage --runTestsByPath a.test.ts b.test.ts c.test.ts`: 12 tests passed.', plain), []);
   assert.equal(claimed('`npx jest --no-coverage --runTestsByPath a.test.ts d.test.ts`: 12 tests passed.', plain).length, 1, 'a run of other files');
-  const piped = 'printf \'%s\\n\' a.test.ts b.test.ts | xargs -r npx jest --no-coverage --runTestsByPath';
-  const fed = rowOf(piped);
-  assert.deepEqual(fed.map((row) => [row.command, row.status, row.pass]), [['xargs -r npx jest --no-coverage --runTestsByPath < printf %s\\n a.test.ts b.test.ts', 'passed', 12]]);
-  assert.deepEqual(claimed(`\`${piped}\`: 12 tests passed.`, fed), []);
-  assert.equal(claimed('`npx jest --no-coverage --runTestsByPath`: 12 tests passed.', fed).length, 1, 'an xargs run is no run of the command with no files');
-  assert.equal(claimed('`printf \'%s\\n\' a.test.ts | xargs npx jest --no-coverage --runTestsByPath`: 12 tests passed.', fed).length, 1, 'nor of other input');
   // A line of many files is keyed whole: two lists that differ past the key's head are two runs.
   const files = (last) => [...Array.from({ length: 31 }, (_, i) => `src/features/booking/components/part-${i}.test.tsx`), last].join(' ');
   const long = rowOf(`npx jest --no-coverage --runTestsByPath ${files('src/x.test.tsx')}`);
   assert.deepEqual(claimed(`\`npx jest --no-coverage --runTestsByPath ${files('src/x.test.tsx')}\`: 12 tests passed.`, long), []);
   assert.equal(claimed(`\`npx jest --no-coverage --runTestsByPath ${files('src/y.test.tsx')}\`: 12 tests passed.`, long).length, 1, 'another last file');
-  const missing = passClaims('## Tests run\n\n- `npx jest --no-coverage --runTestsByPath <31 files>`: 12 tests passed.\n');
-  assert.match(claimProblem(missing, plain, { where: 'The body' }), /Its runs of `jest` ran other words: `jest --no-coverage --runTestsByPath a\.test\.ts b\.test\.ts c\.test\.ts`; quote the command as it ran\./u);
-  assert.equal(mayRunTests('git diff --name-only | xargs npx jest', '/w'), true);
-  assert.equal(mayRunTests('git ls-files | xargs --max-args 1 npx jest', '/w'), true, 'an option and its value are never parsed');
-  assert.equal(mayRunTests('git ls-files | xargs grep -l x', '/w'), false);
-  // An xargs segment is keyed whole, options and all, with what it reads: a pipe's commands, or its own `<` target.
-  const keyOf = (command) => checkRows({ command, cwd: '/w', output, exitZero: true, tree }).map((row) => row.command);
-  assert.notDeepEqual(keyOf("ls | xargs -I '{}' npx jest {}"), keyOf('ls | xargs npx jest'), '-I changes how xargs runs it');
-  const spaced = 'git ls-files | xargs --max-args 1 npx jest';
-  assert.deepEqual(keyOf(spaced), ['xargs --max-args 1 npx jest < git ls-files']);
-  assert.deepEqual(claimed(`\`${spaced}\`: 12 tests passed.`, rowOf(spaced)), []);
-  assert.deepEqual([keyOf('xargs npx jest < a.txt'), keyOf('xargs npx jest < b.txt')], [['xargs npx jest < a.txt'], ['xargs npx jest < b.txt']]);
-  assert.deepEqual([keyOf('cat < a.txt | xargs npx jest'), keyOf('cat < b.txt | xargs npx jest')], [['xargs npx jest < cat < a.txt'], ['xargs npx jest < cat < b.txt']]);
-  assert.deepEqual(keyOf('xargs npx jest'), ['xargs npx jest < stdin']);
+  const placeholder = claimsOf('`npx jest --no-coverage --runTestsByPath <31 files>`: 12 tests passed.');
+  assert.match(claimProblem(placeholder, plain, { where: 'The body' }), /Its runs of `jest` ran other words: `jest --no-coverage --runTestsByPath a\.test\.ts b\.test\.ts c\.test\.ts`; quote the command as it ran\./u);
+  const piped = 'printf \'%s\\n\' a.test.ts b.test.ts | xargs npx jest --no-coverage --runTestsByPath';
+  assert.deepEqual(rowOf(piped), [], 'xargs runs no recorded test');
+  const viaXargs = claimed(`\`${piped}\`: 12 tests passed.`, plain);
+  assert.equal(viaXargs.length, 1);
+  assert.match(claimProblem(viaXargs, plain, { where: 'The body' }), /A run through xargs is not credited: run the test command with its paths as one plain command\./u);
+  assert.doesNotMatch(claimProblem(placeholder, plain, { where: 'The body' }), /through xargs/u);
 });
 
 // A configured command longer than the stored key's cap is still a prefix of its runs: the cap is the key's alone.

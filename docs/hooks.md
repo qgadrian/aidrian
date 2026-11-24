@@ -2083,7 +2083,7 @@ sends it back once (`lib/stop-handback.mjs` `mergeHandBack`). The gate stopped a
 comment, and review checks, so the pull request waits for the Human's review and merge, and a report that ended on
 "ready, not merged" left the Human to find that out. The agent adds the item the `pr-auto-merge` skill's step 2 gives,
 `needs your review and merge: #<n> touches <path>, which auto-merge never merges`, with the Human's name in place of
-"your", and a rating. It sends a turn back at most once ([Send-backs per turn](#send-backs-per-turn)).
+"your", and a rating. It sends a turn back at most once a refusal ([Send-backs per turn](#send-backs-per-turn)).
 It runs on the stop that ends a continuation another check started too, such as the review loop a direct run runs after
 the review-loop check sends it back, where `pr-auto-merge` refuses the pull request; a refusal that send-back held off,
 earlier in the turn, is read there as well.
@@ -2119,9 +2119,9 @@ earlier in the turn, is read there as well.
 - It asks once per refusal: a refusal that one of its own send-backs after it names is not asked for again.
   A session no Human types into, woken only by other sessions' messages and task notifications, has one turn that spans every reply.
   There an item added in a form the check does not read was asked for again on every later stop.
-  A later refusal of the same pull request is a new one, and is asked for.
+  A later refusal of the same pull request is a new one, and is asked for, on the stop that ends the continuation its send-back started too.
 - With several pull requests refused and not handed over, the one send-back names each, with its path, and asks for
-  one item per pull request: after it the check is spent for the turn.
+  one item per pull request: after it the check is spent for each of them.
 - The path is branch text. The reason quotes it as one JSON string that holds printable ASCII alone, every other
   character and `<`, `>`, and the backtick written `\uXXXX`, cut at 200 characters, and calls it data.
 - A background task still running holds it, as it holds the announce check, and so does a stop with no final message.
@@ -2144,7 +2144,7 @@ do it, and how critical it is. It sends a turn back at most once ([Send-backs pe
 - A list counts when a label addressed to the Human comes before it: a heading, a bold line, or a line that ends in a colon,
   such as "For Adrian", "Needs the Human", "Open items for the user", "Waiting on Adrian", or "Adrian's to-do", where the
   Human is the name from [names](config.md#names), "the Human", "the user", or "you". Text after the label's colon is an item too.
-  A label may open with emoji, as in "### 🙋 For the Human"; they are not part of it.
+  Everything before a label's first letter, such as an emoji, a flag, or a keycap, as in "### 🙋 For the Human", is not part of it.
 - An item is a top-level list entry with its continuation lines. The list ends at a heading, or at a paragraph after a blank line
   that is neither an entry nor indented under one.
 - A fenced code block, read as the pull request body rule reads one (`lib/markdown-sections.mjs`), is skipped:
@@ -2168,11 +2168,13 @@ stop that ends its continuation, unless this check sent the turn back already.
 
 ## Send-backs per turn
 
-The announce, review-loop, merge hand-back, and hand-back checks each send a turn back at most once.
+The announce, review-loop, and hand-back checks each send a turn back at most once, and the merge hand-back check once a refusal.
 Claude Code marks every stop after a turn's first send-back with `stop_hook_active: true`, and writes each send-back's
 reason into the transcript as a `user` entry marked `isMeta` whose text starts `Stop hook feedback:`
 (`lib/transcript.mjs` `turnActions`). On such a stop the hook runs the checks that have not sent the turn back yet,
-when the turn's last send-back is one of theirs. A send-back is a check's when a line of it starts with that check's
+when the turn's last send-back is one of theirs.
+The merge hand-back check runs on it even after its own send-back, and asks only for a refusal no send-back of its own named.
+A send-back is a check's when a line of it starts with that check's
 reason's fixed opening, after `Stop hook feedback:` or the `[<command>]: ` the host writes before a reason, when it
 writes one. Text a reason quotes, such as a pull request's path or an item of the report, sits inside its one line,
 so it marks no check. So the stop that ends the continuation one check
@@ -2182,7 +2184,8 @@ the Human; after the announce check, a draft the continuation opens with no revi
 A stop whose last send-back is another hook's, the session-length reminder's, or the [result hold](config.md#project-run)'s,
 which runs only on a stop no hook sent back, a transcript that shows none, a payload
 without `stop_hook_active`, and Codex, whose rollout is not read, run none. Each send-back is in the transcript by the
-next stop, so a chain of stops gets at most four from these checks, and nothing can loop.
+next stop, so a chain of stops gets at most three from the other checks, and one from the merge hand-back check per refusal a new gate run printed.
+Nothing can loop.
 
 ## Session length
 

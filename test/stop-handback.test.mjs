@@ -9,7 +9,9 @@ import test from 'node:test';
 import { HAND_BACK_LEAD, handBackLists, handBackReason, mergeHandBack, MERGE_HAND_BACK_LEAD, quoteData } from '../plugins/aidrian/lib/stop-handback.mjs';
 import { ANNOUNCE_LEAD } from '../plugins/aidrian/lib/stop-announce.mjs';
 import { REVIEW_LOOP_LEAD } from '../plugins/aidrian/lib/stop-review-loop.mjs';
+import { callHook } from '../plugins/aidrian/lib/hook-io.mjs';
 import { turnActions } from '../plugins/aidrian/lib/transcript.mjs';
+import { handle } from '../plugins/aidrian/scripts/hook-stop.mjs';
 
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-stop.mjs');
 const HUMAN = 'Adrian';
@@ -271,10 +273,11 @@ test('mergeHandBack counts the item in any reply of the turn after the refusal, 
 });
 
 test('a label that opens with an emoji is read, by the hand-back check and the merge hand-back check', () => {
-  for (const label of ['### 🙋 For the Human', '**🙋 For Adrian**', '🙋‍♂️ **Needs Adrian:**', '## 👍🏽 Questions for you']) {
+  for (const label of ['### 🙋 For the Human', '**🙋 For Adrian**', '🙋‍♂️ **Needs Adrian:**', '## 👍🏽 Questions for you', '### 🇪🇸 For the Human',
+    '### 1️⃣ For the Human', '**1️⃣ For Adrian:**', '🇪🇸 For Adrian:']) {
     const lists = handBackLists(`${label}\n- Merge order of the two branches.`, 'Adrian|the Human|the user|you');
     assert.equal(lists.length, 1, label);
-    assert.ok(!/\p{Extended_Pictographic}/u.test(lists[0].label), lists[0].label);
+    assert.match(lists[0].label, /^\p{L}/u, lists[0].label);
     assert.ok(fires(`${label}\n- Merge order of the two branches.`), `${label}: an unrated item is sent back`);
   }
   assert.equal(merge(`### 🙋 For the Human\n- **Medium:** pull request #401 touches \`${KILL}\`, a path auto-merge never merges.`), null,
@@ -295,6 +298,46 @@ test('mergeHandBack asks once per refusal, in a session no Human types into, by 
     'a refusal of another pull request the send-back did not name');
   const quoted = { kind: 'sent-back', text: `Stop hook feedback:\n[x]: ${HAND_BACK_LEAD}an item ("${MERGE_HAND_BACK_LEAD}401 at its path check")` };
   assert.ok(merge('Done.', [refused(), quoted]), 'the lead quoted inside another check`s reason is data');
+});
+
+test('the Stop hook asks for a refusal a continuation gets after the merge hand-back send-back, and not again for the first', async (t) => {
+  const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-stop-merge-again-')));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const dir = path.join(base, 'project');
+  mkdirSync(path.join(dir, '.aidrian'), { recursive: true });
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, names: { human: 'Adrian', ai: 'HAL9K' } }));
+  const temp = path.join(base, 'tmp');
+  mkdirSync(temp);
+  const env = { ...process.env, TMPDIR: temp };
+  delete env.AIDRIAN_SHELL_PID;
+  const line = (entry) => JSON.stringify(entry);
+  const said = (text) => line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text }] } });
+  const bash = (id, command, output) => [
+    line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }] } }),
+    line({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: output, is_error: true }] } }),
+  ];
+  const first = merge('Done.');
+  const head = [
+    line({ type: 'user', origin: { kind: 'human' }, message: { role: 'user', content: 'implement #401' } }),
+    ...bash('g1', 'aidrian pr auto-merge 401', `Exit code 1\nauto-merge off for #401: ${GATE_WHY}`),
+    said('Done.'),
+    line({ type: 'user', isMeta: true, message: { role: 'user', content: `Stop hook feedback:\n[node "/p/scripts/hook-stop.mjs"]: ${first}` } }),
+  ];
+  let count = 0;
+  const stop = (entries, message) => {
+    count += 1;
+    const transcript = path.join(base, `session-${count}.jsonl`);
+    writeFileSync(transcript, `${entries.flat().join('\n')}\n`);
+    const payload = { hook_event_name: 'Stop', session_id: 'abc-123', transcript_path: transcript, cwd: dir, stop_hook_active: true, last_assistant_message: message };
+    return callHook(handle, payload, { cwd: dir, env });
+  };
+  const retried = await stop([...head, ...bash('g2', 'aidrian pr auto-merge 402', `Exit code 1\nauto-merge off for #402: it changes "AGENTS.md", which instructs AI sessions`), said(ITEM)], ITEM);
+  assert.equal(retried.status, 2, 'a refusal of another pull request in the continuation');
+  assert.match(retried.stderr, /^This turn's `aidrian pr auto-merge` run refused #402 at its path check/u);
+  const again = await stop([...head, ...bash('g3', 'aidrian pr auto-merge 401', `Exit code 1\nauto-merge off for #401: ${GATE_WHY}`)], 'Retried; still refused.');
+  assert.equal(again.status, 2, 'a fresh refusal of the same pull request');
+  assert.match(again.stderr, /^This turn's `aidrian pr auto-merge` run refused #401 at its path check/u);
+  assert.deepEqual(await stop(head, 'Added.'), { status: 0, stderr: '', stdout: '' }, 'the refusal the send-back named, with no gate run after it');
 });
 
 test('the driver shape: a refusal handed over under an emoji heading is not asked for on the stops of later wakes', () => {

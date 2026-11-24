@@ -26,20 +26,20 @@ const alternatives = (names) => [...new Set(names.filter((name) => typeof name =
 // The words that rate an item: the scale the orchestrator and issue-implement reports use, with `critical` and `blocker`.
 export const RATINGS = /\b(?:blocking|blocker|critical|high|medium|low)\b/iu;
 
-// The emoji, with their joiners, modifiers, and spaces, that open a label such as "### 🙋 For the Human".
-const LEADING_EMOJI = /^[\p{Extended_Pictographic}\p{Emoji_Modifier}‍️\s]+/u;
+// Everything before a label's first letter, such as the emoji in "### 🙋 For the Human", a flag, or a keycap.
+const BEFORE_LETTER = /^\P{L}+/u;
 
-// A heading, a bold line, or a line that ends in a colon, with its markup, the emoji it opens with, and that colon
-// removed; null for any other line. The text after a colon on the same line, such as "For Adrian: merge it", is returned
-// as `inline`.
+// A heading, a bold line, or a line that ends in a colon, with its markup, everything before its first letter, and that
+// colon removed; null for any other line. A bold label may follow such characters, as in "🙋 **Needs Adrian:**". The text
+// after a colon on the same line, such as "For Adrian: merge it", is returned as `inline`.
 function labelOf(line) {
   const heading = /^#{1,6}\s+(.*)$/u.exec(line);
-  const text = (heading ? heading[1] : line).trim().replace(LEADING_EMOJI, '');
-  const bold = /^(?:\*\*|__)(.+?)(?:\*\*|__)\s*(?::\s*(.*))?$/u.exec(text);
-  if (bold) return { label: bold[1].replace(LEADING_EMOJI, '').replace(/:\s*$/u, '').trim(), inline: bold[2]?.trim() ?? '' };
+  const text = (heading ? heading[1] : line).trim();
+  const bold = /^\P{L}*?(?:\*\*|__)(.+?)(?:\*\*|__)\s*(?::\s*(.*))?$/u.exec(text);
+  if (bold) return { label: bold[1].replace(BEFORE_LETTER, '').replace(/:\s*$/u, '').trim(), inline: bold[2]?.trim() ?? '' };
   const colon = /^([^:]{1,60}):\s*(.*)$/u.exec(text);
-  if (colon) return { label: colon[1].trim(), inline: colon[2].trim() };
-  return heading ? { label: text, inline: '' } : null;
+  if (colon) return { label: colon[1].replace(BEFORE_LETTER, '').trim(), inline: colon[2].trim() };
+  return heading ? { label: text.replace(BEFORE_LETTER, ''), inline: '' } : null;
 }
 
 // A label addressed to the Human: "For Adrian", "Open items for the Human", "Needs Adrian", "Waiting on the user",

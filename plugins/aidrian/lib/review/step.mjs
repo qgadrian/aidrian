@@ -11,7 +11,7 @@ import { packageRoots } from './split.mjs';
 import { contentFlows } from './content.mjs';
 import { touchedCitations } from './cited.mjs';
 import { buildPlan, classify, DEPTHS, detectFlows, HARNESS_FLOW, mergePlans, mergeStages, pathPattern } from './plan.mjs';
-import { flowsFloor } from './merge-trust.mjs';
+import { flowsFloor, policyFilesLifted } from './merge-trust.mjs';
 import { BUILT_IN, confinedReason, resolveEngine, reviewerMap, satisfies } from './reviewers.mjs';
 import { buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
 import { heldMessage, noteLocalOutcome, publishState, readLocalState, readRecord, recordFile, sameCommit, summaryToEdit } from './state.mjs';
@@ -39,12 +39,14 @@ export const MAX_LINES = 20000;
 const CHANGE_TYPES = Object.freeze({ A: 'ADDED', M: 'MODIFIED', D: 'DELETED', T: 'CHANGED', C: 'COPIED' });
 
 // Who signs the harness-config flow of a review whose changed files are `changes` ({ file, status }, from the project
-// root) under `committed`, the base branch's config, whose file is `config`: 'reviewer' only when merge trust's own
-// floor (merge-trust.mjs flowsFloor) asks no sign-off of the Human for the flow on these files under that config, as it
-// asks none for a policy file under github.autoMerge.includePolicyFiles with includeGuardedPaths; else 'human'. One
-// source, so the review record and an unattended merge never disagree. The flow is reviewed either way, and the merge
-// gate asks the floor again with both branches as the forge holds them.
+// root) under `committed`, the pull request's base branch's config, whose file is `config`: 'reviewer' only when both
+// hold, that base commits github.autoMerge.includePolicyFiles with includeGuardedPaths (merge-trust.mjs
+// policyFilesLifted), and merge trust's own floor (flowsFloor) asks no sign-off of the Human for the flow on these files
+// under that config; else 'human', as without the keys. The flow is reviewed either way. The step reads the base alone:
+// an unattended merge asks the floor again with the default branch and the base as the forge holds them, so with only
+// the base opted in, the merge still asks the Human.
 export function harnessSignoff({ changes, committed, config }) {
+  if (!policyFilesLifted([committed])) return 'human';
   const files = changes.map((change) => ({ path: change.file, changeType: CHANGE_TYPES[String(change.status ?? '').charAt(0)] }));
   return flowsFloor({ files, configs: [committed], policyFiles: [config] }).flows.has(HARNESS_FLOW) ? 'human' : 'reviewer';
 }

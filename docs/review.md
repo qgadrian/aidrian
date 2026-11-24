@@ -220,10 +220,14 @@ plan command it adds, take effect once they are merged. The plan command runs fr
 so editing its script changes nothing until the merge. A flow the pull request adds reads its invariants from the
 pull request, and takes its invariants' `approvers` from there too, so the config change that adds it waits for the
 Human's `harness-config` sign-off. A change to any of these triggers the built-in `harness-config` flow, which the Human signs off.
-A change to the config's `review` settings is still reviewed under that flow, as on main; any other edit of the config
-follows the usual file rules. The flow's reviewer signs it in place of the Human when merge trust would ask the Human
-no sign-off for these files, as while
-the base branch commits `github.autoMerge.includePolicyFiles` with `includeGuardedPaths` ([Auto-merge](config.md#auto-merge)). A
+A change to one of the config's review settings that the step compares, `engine`, `rules`, `ignore`, `nonBehaviour`,
+`flows`, `planCommand`, `reviewers`, `split`, `visual`, `approvals`, or `unattendedSignoff`, is still reviewed under that
+flow, as on main; any other edit of the config follows the usual file rules.
+The flow's reviewer signs it in place of the Human only when the pull request's base commits
+`github.autoMerge.includePolicyFiles` with `includeGuardedPaths` ([Auto-merge](config.md#auto-merge)) and merge trust's
+rule asks the Human no sign-off for these files.
+The step reads only the base: an unattended merge also needs the default branch to hold both keys, so with only the base
+opted in, the merge still asks the Human. A
 flow's deleted test stops the review even when the change touches nothing else in the flow.
 
 `aidrian lint review` fails on a flow whose globs match no tracked file, an invariants doc that is missing or has no

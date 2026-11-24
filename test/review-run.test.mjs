@@ -393,6 +393,11 @@ test('harnessSignoff asks merge trust\'s floor who signs the harness-config flow
   assert.equal(ask({ github: lifted, review: { flows, visual: { login: 'node login.mjs' } } }), 'human', 'a visual login');
   assert.equal(ask({ github: lifted, review: { flows } }, [{ file: config, status: 'M' }, { file: 'docs/flows/booking.md', status: 'M' }]), 'human', 'a flow\'s invariants doc');
   assert.equal(ask({ github: lifted, review: { flows } }, [{ file: config, status: 'X' }]), 'human', 'a change type the floor cannot read');
+  // Without the keys it stays the Human's, as on main, even for a change the floor asks nothing of, such as a source file.
+  for (const github of [{}, { autoMerge: { includeGuardedPaths: true } }]) {
+    assert.equal(ask({ github, review: { flows } }, [{ file: 'src/app.js', status: 'M' }]), 'human', JSON.stringify(github));
+  }
+  assert.equal(ask({ review: { flows } }, [{ file: 'src/app.js', status: 'M' }]), 'human', 'no github group');
 });
 
 test('reviewInForce: rules add up, flows and ignore lists come from the base, and every change is named', () => {

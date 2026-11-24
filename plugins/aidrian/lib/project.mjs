@@ -91,7 +91,8 @@ const HOST_PATHS = String.raw`(?:^|/)(?:\.cursor|\.windsurf|\.clinerules|\.openc
 export const GUARDED_PATHS = new RegExp(
   String.raw`(?:^|/)(?:${HOST_NAMES}|SKILL\.md|CODEOWNERS|opencode\.jsonc?|\.aidrian\.json|\.aidrian\.local\.json|\.banned-terms\.local)$` +
     `|${HOST_PATHS}` +
-    String.raw`|^(?:\.claude|\.codex|\.aidrian|\.github/workflows|\.github/actions)(?:/|$)` +
+    // A `.claude` folder at any depth, which Claude Code reads in a nested project too; the others at the root.
+    String.raw`|(?:^|/)\.claude(?:/|$)|^(?:\.codex|\.aidrian|\.github/workflows|\.github/actions)(?:/|$)` +
     String.raw`|^(?:\.claude-plugin|\.agents/plugins)/marketplace\.json$` +
     `|^plugins/aidrian/(?:${GUARDED_PLUGIN})` +
     String.raw`|^plugins/aidrian-claude-mod/`,
@@ -115,6 +116,11 @@ export const knowledgeIn = (configFile) => `${path.posix.dirname(configFile)}/kn
 // the key off, GUARDED_PATHS decides. A folder `.aidrian.json` names is no fixed name, so the gate also refuses the exact
 // paths it read on each branch (pr-auto-merge.mjs branchPolicies). Not configurable.
 export const POLICY_PATHS = /(?:^|\/)(?:\.aidrian\/config\.json|\.aidrian\.json|\.aidrian\.local\.json|\.aidrian)$/iu;
+
+// Whether `file`, from the top of the repository, is a policy file: a POLICY_PATHS name, or one of `policyFiles`, the
+// paths pr-auto-merge.mjs branchPolicies read the gate's policy from, as a config.json a pointer file relocates, in any
+// case, as the auto-merge gate matches them.
+export const isPolicyPath = (file, policyFiles = []) => POLICY_PATHS.test(file) || policyFiles.some((each) => typeof each === 'string' && each.toLowerCase() === file.toLowerCase());
 
 // The project at or above `start`: the nearest folder that has `.aidrian.json` or `.aidrian/config.json`. Null when none.
 // In a git checkout the search stops at its top folder, so a worktree whose branch has no project folder has no project,

@@ -627,7 +627,17 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   then drives on. A driver the host does not list so, such as the first one, a session the Human started, keeps
   custody: on a run that is not halted, the command prints `not halted <run>`, and, run from a session, says to resume
   that same host session, which keeps its id; on a halted run, it lifts the halt and the driver stays.
-- **Host files no review saw.** The session works in its attempt's clone, which loads no host file of the main
+- **Host files no review saw.** A run never discards or rebuilds existing work unless a person asks.
+  A later attempt goes on on the issue's branch.
+  When that branch's head changes a host config or instruction file, the session loads the branch's own copies only
+  when the review bot, github.reviewer on the default branch, passed exactly that head on the forge, with the Human's
+  sign-off where [Project run](config.md#project-run) asks for one; otherwise its clone holds the base branch's copies,
+  git leaves them out of its commits, and a push that changes one is refused.
+  The branch's own changes stay in its commits for the pull request's review.
+  A branch the run's ledger cannot account for, or base copies that cannot be made safely, park the issue as
+  unreconciled, with the branch and pull request untouched ([Project run](config.md#project-run) lists each case).
+  To start an issue over, a person deletes its branch on the forge; closing the pull request alone does not.
+  The session works in its attempt's clone, which loads no host file of the main
   checkout, and on Claude Code its sandbox also denies reads there, so the main checkout's own host files, such as a
   git-ignored `.claude/settings.local.json` or an untracked skill under `.claude/skills/`, refuse no start. A start
   refuses, and records nothing, when the clone itself holds a host config or instruction file that differs from the

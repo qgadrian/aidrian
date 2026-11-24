@@ -9,7 +9,7 @@
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -47,6 +47,13 @@ function halted(fx, result, cause) {
   assert.deepEqual(fx.claude.starts(), [], 'no claude --bg');
   assert.deepEqual(fx.rows(), [], 'nothing recorded');
 }
+// The driver's environment with an SSH stand-in that serves the fixture's bare remote, so the start's pin can fetch
+// over an SSH origin, as a driver with the user's keys does, and the gate's access check is what halts it.
+const sshFetch = (fx) => {
+  const script = path.join(fx.bin, 'ssh-stand-in');
+  writeFileSync(script, '#!/bin/sh\nexec git upload-pack "$FIXTURE_REMOTE"\n', { mode: 0o755 });
+  return { ...fx.env, GIT_SSH_COMMAND: script };
+};
 const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 // OpenCode's host files at a clone's root, and the denyWrite entries of every other host's files under the clone `work`.
 const OPENCODE_FILES = ['.opencode', 'opencode.json', 'opencode.jsonc', '.agents'];
@@ -673,6 +680,19 @@ test('a start halts, recording nothing, unless the user\'s settings enable this 
   assert.equal(enabled.cmd(['start', 'launch', 'ENG-1']).exitCode, 0, 'enabled in the user\'s settings');
 });
 
+// The default branch revokes the exception after the base ref this checkout holds: the start pins the base tip, reads
+// the policy once at that commit, and judges the user's settings by it, as it would a start after the revoke.
+test('an outsideSandbox exception the default branch revokes before the pin no longer lets the user\'s settings through', (t) => {
+  const fx = runFixture(t, { projectRun: { allow: true, unverifiedHosts: true, outsideSandbox: ['apiKeyHelper'] } });
+  userSettings(fx, { apiKeyHelper: '/bin/key' });
+  const main = path.join(fx.root, 'main-moves');
+  execFileSync('git', ['clone', '-q', fx.bare, main], { stdio: 'pipe' });
+  writeFileSync(path.join(main, '.aidrian/config.json'), `${JSON.stringify({ ...fx.committed, projectRun: { allow: true, unverifiedHosts: true } })}\n`);
+  fx.git('-C', main, 'commit', '-q', '-am', 'revoke the exception');
+  fx.git('-C', main, 'push', '-q', fx.bare, 'HEAD:refs/heads/main');
+  halted(fx, fx.cmd(['start', 'launch', 'ENG-1']), /set apiKeyHelper/u);
+});
+
 test('user settings that run a command outside the sandbox, or any other plugin, halt the start unless projectRun.outsideSandbox names them', (t) => {
   for (const [settings, cause, name] of [
     [{ hooks: { PreToolUse: [{ hooks: [{ type: 'command', command: 'true' }] }] } }, /user settings set hooks, a command the host runs outside the sandbox/u, 'hooks'],
@@ -889,13 +909,13 @@ test('an origin that pushes over SSH halts the start on every platform, through 
   for (const platform of ['darwin', 'linux']) {
     const fx = runFixture(t);
     fx.git('remote', 'set-url', 'origin', 'git@github.com:acme/widgets.git');
-    halted(fx, fx.cmd(['start', 'launch', 'ENG-1'], { platform }), /origin's URL, which the attempt's clone pushes to, goes over SSH/u);
+    halted(fx, fx.cmd(['start', 'launch', 'ENG-1'], { platform, env: sshFetch(fx) }), /origin's URL, which the attempt's clone pushes to, goes over SSH/u);
   }
   // The clone takes origin's URL, not its pushurl: an SSH URL with an HTTPS pushurl still halts, and the reverse passes.
   const fetchSsh = runFixture(t);
   fetchSsh.git('remote', 'set-url', 'origin', 'git@github.com:acme/widgets.git');
   fetchSsh.git('config', 'remote.origin.pushurl', 'https://github.com/acme/widgets.git');
-  halted(fetchSsh, fetchSsh.cmd(['start', 'launch', 'ENG-1']), /goes over SSH/u);
+  halted(fetchSsh, fetchSsh.cmd(['start', 'launch', 'ENG-1'], { env: sshFetch(fetchSsh) }), /goes over SSH/u);
   const pushSsh = runFixture(t);
   pushSsh.git('config', 'remote.origin.pushurl', 'git@github.com:acme/widgets.git');
   const passed = pushSsh.cmd(['start', 'launch', 'ENG-1']);
@@ -907,7 +927,7 @@ test('an HTTPS origin that the user\'s git config rewrites to SSH with url.<base
   const global = testGlobalConfig(t);
   writeFileSync(global, '[url "git@github.com:"]\n\tinsteadOf = https://github.com/\n');
   const fx = runFixture(t);
-  halted(fx, fx.cmd(['start', 'launch', 'ENG-1']), /goes over SSH \(git@github\.com:acme\/widgets\.git\).*remove any url\.<base>\.insteadOf rule that rewrites it to SSH from the file that defines it/u);
+  halted(fx, fx.cmd(['start', 'launch', 'ENG-1'], { env: sshFetch(fx) }), /goes over SSH \(git@github\.com:acme\/widgets\.git\).*remove any url\.<base>\.insteadOf rule that rewrites it to SSH from the file that defines it/u);
 });
 
 test('a clone that would push to another URL than the access check read, through the user\'s pushInsteadOf, halts the start', (t) => {

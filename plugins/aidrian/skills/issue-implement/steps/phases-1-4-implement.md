@@ -97,6 +97,7 @@ For each slice:
 - Work found outside the issue goes to `agent-issue-writer` as a new issue; never widen the scope in silence.
   With config.json `review.fixSmallGaps` true, a gap whose fix is `trivial` on the table's cost axis is fixed in the
   slice that found it, before its commit, and the pull request body names it; a larger one still gets an issue.
+  One first seen here goes into the next slice's brief; with no slice left, it gets an issue.
   Phase 3's escalation and step 7's scope check let such a fix through.
 - **Re-size.** When the work has left the issue's files to modify, or no longer fits its size, check with the Human:
   go on, split, or defer. Record the new size and a one-line reason in the plan's frontmatter for phase 7.

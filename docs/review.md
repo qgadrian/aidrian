@@ -633,8 +633,8 @@ A finding blocks the pass while it is open and not `acceptable_as_is`, or accept
 accepted (`fix_now`, or no likelihood and affects yet): one the reviewer calls accepted still blocks then. This is
 stricter than the count it replaces, which took the reviewer's word for what it accepted. The counts form,
 `--findings <n> --fixed <n>`, is still accepted, for a pass an older release dispatched, and is read as before.
-A finding may add `"cites"`, or carry the `violated_rule` of a reviewer's handoff: the written project rule it breaks,
-which turns a `drop_unless_cited` into `fix_now` ([Small gaps](#small-gaps)). A finding may add `"security": true` for a security problem; any value but `false` counts as true
+A finding may add `"cites"`, the written project rule it breaks, which turns a `drop_unless_cited` into `fix_now`
+([Small gaps](#small-gaps)); the summary comment posts the disposition, not the citation. A finding may add `"security": true` for a security problem; any value but `false` counts as true
 ([Reviewers](#reviewers)). A finding that reports a `priorFindings` entry again sets `id` to that entry's id; the engine
 checks it ([Finding ids](#finding-ids)), and a mint mark in the file is never read.
 
@@ -1012,9 +1012,9 @@ A row is one per title and file, and `pass` is the first pass holding it. A carr
 carried ruling cannot see a real fix, so a session skips a row whose defect is fixed or that already has its body line.
 A low finding recorded with
 `--findings-file` keeps its own state: the session classifies it with `aidrian pr disposition`, writes the residual
-into the body, and attests it `accepted`. Attestation reads the record's round only for that late low rule: it decides
-the rest from the finding's axes, so a late medium the command calls a residual still reads `fix_now` there and blocks
-until it is fixed. A code comment the residual needs is a [quiet push](#rounds), so neither opens a round.
+into the body, and attests it `accepted`. Attestation reads a finding as that command does with `--source bot --round`,
+the round being the one of the head it attests, so a late residual the command gives is accepted there too; a finding
+with no likelihood or affects still needs them. A code comment the residual needs is a [quiet push](#rounds), so neither opens a round.
 
 ### Small gaps
 

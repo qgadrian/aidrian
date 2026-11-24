@@ -8,7 +8,7 @@
 import { randomBytes } from 'node:crypto';
 
 import { isObject } from '../fs.mjs';
-import { decideDisposition, lateRoundResidual, loadTable } from '../finding-disposition.mjs';
+import { decideDisposition, loadTable } from '../finding-disposition.mjs';
 
 export const FINDING_STATES = Object.freeze(['open', 'fixed', 'accepted']);
 // The dispositions an accepted finding may close with. fix_now never closes until it is fixed, and a finding with
@@ -95,8 +95,9 @@ const text = (value, max) => (typeof value === 'string' && value.trim() !== '' ?
 // SHORTCUT: `aidrian pr attest` (lib/review/record.mjs recordPass) passes no `settled` list yet, so on that path every
 // `already_ruled` is left out and the finding read as it stands: safe, since nothing is waived, and enough while only
 // exec reviewers return repeats. Wiring recordSettled and residualTexts into recordPass would replace it.
-// `round` is the review round the pass was dispatched in, when the caller knows it: an agent's finding is no person's,
-// so from `lateRoundFrom` a low one takes the late-round residual, as the review loop's `--source bot --round` reads it.
+// `round` is the review round of the head the pass attests, when the caller knows it: an agent's finding is no
+// person's, so it is read as the review loop reads it, `--source bot --round`, late rounds included. A finding with no
+// likelihood or affects keeps the reading with no source, needs_axis, so it still blocks until it is classified.
 export function parseFindings(raw, settled = [], { round } = {}) {
   let parsed;
   try {
@@ -116,12 +117,15 @@ export function parseFindings(raw, settled = [], { round } = {}) {
     if (!FINDING_STATES.includes(finding.state)) throw new Error(`${at}.state must be ${FINDING_STATES.join(', ')}`);
     if (finding.line !== undefined && !(Number.isInteger(finding.line) && finding.line >= 1)) throw new Error(`${at}.line must be a line number`);
     const axes = { severity: finding.severity, likelihood: finding.likelihood, affects: finding.affects, cost: finding.cost };
-    // The written project rule the finding cites: `cites`, or the `violated_rule` a reviewer's handoff carries. It turns
-    // a drop_unless_cited into fix_now; an empty or non-string value is no citation.
-    const cites = [finding.cites, finding.violated_rule].map((value) => text(value, 300)).find(Boolean);
-    const decided = decideDisposition({ ...Object.fromEntries(Object.entries(axes).filter(([, value]) => value !== undefined)), ...(cites ? { cites } : {}) });
-    const late = decided.disposition === 'invalid' ? null : lateRoundResidual({ severity: finding.severity, source: 'bot', round });
-    if (late) Object.assign(decided, late);
+    // The written project rule the finding cites, which turns a drop_unless_cited into fix_now; an empty or non-string
+    // value is no citation.
+    const cites = text(finding.cites, 300);
+    const given = { ...Object.fromEntries(Object.entries(axes).filter(([, value]) => value !== undefined)), ...(cites ? { cites } : {}) };
+    let decided = decideDisposition(given);
+    if (round !== undefined && decided.disposition !== 'invalid') {
+      const asAgent = decideDisposition({ ...given, source: 'bot', round });
+      if (asAgent.rule !== 'botSourceWithoutAxis') decided = asAgent;
+    }
     if (decided.disposition === 'invalid') throw new Error(`${at}: ${decided.reason} (\`aidrian pr disposition --vocab\` lists the words)`);
     const { entry: ruled, note } = ruling({ file: text(finding.file, 300), severity: finding.severity, already_ruled: finding.already_ruled }, decided.disposition, settled);
     if (note) notes.push(`${at}.already_ruled ${note}: read as it stands`);

@@ -26,7 +26,7 @@ For each new finding:
 aidrian pr disposition --severity <s> --likelihood <l> --affects <a> [--cost <c>] [--cites <doc>#<section>]
 ```
 
-Pass each flag as its own word. Pass the agent's `violated_rule` as `--cites`, and store it in the finding's `cites`,
+Pass each flag as its own word. Pass the agent's `cites` as `--cites`, and store it in the finding's `cites`,
 only when it names a written project rule or documented anti-pattern that the code breaks.
 Store its `disposition`, never a value of your own: the table behind it does the weighing, and `--vocab` defines each word.
 

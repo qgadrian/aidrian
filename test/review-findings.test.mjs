@@ -9,6 +9,7 @@ import test from 'node:test';
 import { loadTable } from '../plugins/aidrian/lib/finding-disposition.mjs';
 import { blocks, freshId, listedTo, listing, MAX_COUNTER, parseFindings, recordFindings, settledMatch, twinMatch } from '../plugins/aidrian/lib/review/findings.mjs';
 import { gitPaths } from '../plugins/aidrian/lib/review/publish.mjs';
+import { attestedRound } from '../plugins/aidrian/lib/review/record.mjs';
 import { emptyState } from '../plugins/aidrian/lib/review/state.mjs';
 import { cleanOutput, FINDINGS_SCHEMA, REQUEST_BRIEF, reviewPrompt, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
 import { isCleanReceipt, RECEIPT_MARKER, REQUEST_COMMENT, requestCommentBody } from '../plugins/aidrian/lib/pr-await-review.mjs';
@@ -41,23 +42,29 @@ test('parseFindings: the disposition table decides which findings still block', 
   assert.equal(result.findings - result.fixed - result.accepted, result.open);
 });
 
-test('parseFindings: a low finding that cites a written project rule, as cites or a handoff\'s violated_rule, is fix_now and blocks', () => {
+test('parseFindings: a low finding that cites a written project rule in cites is fix_now and blocks', () => {
   const low = { title: 'Error text names no next step', file: 'src/a.ts', severity: 'low', likelihood: 'contrived', affects: 'internal', state: 'accepted' };
-  const result = parseFindings(JSON.stringify([low, { ...low, cites: 'docs/rules.md#errors' }, { ...low, violated_rule: 'docs/rules.md#errors' }, { ...low, violated_rule: '' }, { ...low, violated_rule: null }]));
-  assert.deepEqual(result.list.map((each) => each.disposition), ['drop_unless_cited', 'fix_now', 'fix_now', 'drop_unless_cited', 'drop_unless_cited']);
-  assert.deepEqual(result.list.map((each) => each.cites ?? null), [null, 'docs/rules.md#errors', 'docs/rules.md#errors', null, null], 'the record keeps the citation');
-  assert.deepEqual(result.list.map(blocks), [false, true, true, false, false], 'a cited finding cannot be accepted');
+  const result = parseFindings(JSON.stringify([low, { ...low, cites: 'docs/rules.md#errors' }, { ...low, cites: '' }, { ...low, cites: null }, { ...low, violated_rule: 'simpler' }]));
+  assert.deepEqual(result.list.map((each) => each.disposition), ['drop_unless_cited', 'fix_now', 'drop_unless_cited', 'drop_unless_cited', 'drop_unless_cited'], 'a lens label in violated_rule is no citation');
+  assert.deepEqual(result.list.map((each) => each.cites ?? null), [null, 'docs/rules.md#errors', null, null, null], 'the record keeps the citation');
+  assert.deepEqual(result.list.map(blocks), [false, true, false, false, false], 'a cited finding cannot be accepted');
 });
 
 test('parseFindings: from the late round on, an agent\'s low finding is a residual, cited or trivial, as the review loop reads it', () => {
   const low = { title: 'Copy names no next step', file: 'src/a.ts', severity: 'low', likelihood: 'routine', affects: 'users', cost: 'trivial', state: 'accepted' };
-  const raw = JSON.stringify([low, { ...low, cost: 'structural', likelihood: 'contrived', affects: 'internal', cites: 'docs/rules.md' }, { ...low, severity: 'medium', cost: 'bounded' }]);
+  const medium = { ...low, severity: 'medium', likelihood: 'plausible', affects: 'operators', cost: 'bounded' };
+  const raw = JSON.stringify([low, { ...low, cost: 'structural', likelihood: 'contrived', affects: 'internal', cites: 'docs/rules.md' }, { ...low, severity: 'medium', cost: 'bounded' }, medium, { title: 'No axes', severity: 'medium', state: 'accepted' }]);
   const N = loadTable().lateRoundFrom;
-  assert.deepEqual(parseFindings(raw, [], { round: N - 1 }).list.map((each) => each.disposition), ['fix_now', 'fix_now', 'fix_now']);
+  assert.deepEqual(parseFindings(raw, [], { round: N - 1 }).list.map((each) => each.disposition), ['fix_now', 'fix_now', 'fix_now', 'fix_now', 'needs_axis']);
   const late = parseFindings(raw, [], { round: N });
-  assert.deepEqual(late.list.map((each) => each.disposition), ['accepted_residual', 'accepted_residual', 'fix_now'], 'only low turns late');
-  assert.equal(late.open, 1);
-  assert.deepEqual(parseFindings(raw).list.map((each) => each.disposition), ['fix_now', 'fix_now', 'fix_now'], 'no round: early');
+  assert.deepEqual(late.list.map((each) => each.disposition), ['accepted_residual', 'accepted_residual', 'fix_now', 'accepted_residual', 'needs_axis'], 'the loop\'s late reading; a routine medium stays, and a finding with no axes still needs them');
+  assert.equal(late.open, 2);
+  assert.deepEqual(parseFindings(raw).list.map((each) => each.disposition), ['fix_now', 'fix_now', 'fix_now', 'fix_now', 'needs_axis'], 'no round: early');
+});
+
+test('attestedRound: the last round for the head it reviews, the next one for a new head, none before any round', () => {
+  const state = { rounds: [{ head: 'a' }, { head: 'b' }] };
+  assert.deepEqual([attestedRound(state, 'b'), attestedRound(state, 'c'), attestedRound({ rounds: [] }, 'a'), attestedRound({}, 'a')], [2, 3, undefined, undefined]);
 });
 
 test('parseFindings: a malformed file is refused, never read as zero findings', () => {

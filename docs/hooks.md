@@ -821,8 +821,10 @@ once rather than leave the merge to auto-merge or a merge queue. For a pull requ
 issue, the issue its mark names, or, for any other mark such as the driver's, the issue whose snapshot branch, or a branch any attempt of it recorded, is the
 pull request's head, the merge also keeps [`closes`](config.md#when-it-is-on): its title, body, and every commit
 message, as the same read gives them at merge time, and the merge's own subject and body (`-t`, `-b`, `commit_title`,
-`commit_message`), close or name no other issue of a team the run knows. A body from a file (`-F`, `@file`,
-`--input`) or a variable refuses, and so do commit messages the forge gave only in part. A read that fails or runs out of time refuses, and says
+`commit_message`), close or name no other issue of a team the run knows, and the issues the forge links to the pull
+request to close at the merge, one linked by hand in its sidebar included, are the run's own alone, as `aidrian pr
+auto-merge` reads them through the same check. A body from a file (`-F`, `@file`,
+`--input`) or a variable refuses, and so do commit messages or closing issues the forge gave only in part. A read that fails or runs out of time refuses, and says
 one more try is safe. Whether GitHub keeps `--match-head-commit` when a push lands between the guard's read and the
 merge is not verified live; the guard's read is of the same head it names. An attended session's merges are unchanged,
 and read nothing more.

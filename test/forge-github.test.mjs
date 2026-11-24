@@ -1011,6 +1011,7 @@ test('the review trail: one GraphQL call naming the host and the policy paths it
           title: 'feat: x',
           body: 'Fixes ENG-1',
           history: { totalCount: 101, nodes: [{ commit: { oid: sha, message: 'feat: x' } }] },
+          closingIssuesReferences: { totalCount: 2, nodes: [{ number: 12, repository: { name: 'Notes', owner: { login: 'Acme' } } }, { number: 3, repository: null }] },
           isDraft: false,
           reviewDecision: 'APPROVED',
           author: { login: 'adrian' },
@@ -1034,6 +1035,7 @@ test('the review trail: one GraphQL call naming the host and the policy paths it
   const paths = { pointer: '.aidrian.json', config: '.aidrian/config.json', knowledge: '.aidrian/knowledge' };
   assert.deepEqual(forge.reviewTrail('acme/notes', 7, { paths }), {
     viewer: 'adrian', head: sha, headRef: 'feat/x', title: 'feat: x', body: 'Fixes ENG-1', messages: [{ oid: sha, message: 'feat: x' }], messagesComplete: false,
+    closingIssues: [{ number: 12, repo: 'acme/notes' }, { number: 3, repo: null }], closingIssuesComplete: true,
     base: 'release', baseOid: 'c'.repeat(40), author: 'adrian', draft: false, reviewDecision: 'APPROVED',
     latestReviews: [{ author: { login: 'lead' }, state: 'APPROVED' }],
     checks: { head: sha, rows: [{ name: 'e2e', state: 'IN_PROGRESS', run: null, workflowId: null, event: null }, { name: 'deploy', state: 'SUCCESS' }], complete: true },
@@ -1049,6 +1051,12 @@ test('the review trail: one GraphQL call naming the host and the policy paths it
       base: { name: 'release', pointer: false, config: '{}' },
     },
   }, 'the last editor, each edit`s editor, whoever deleted an edit, and a file given only in part as false');
+  // The issues GitHub links to close at the merge, a sidebar link among them, with the count that says the list is whole (#448).
+  assert.match(args()[0].find((arg) => String(arg).startsWith('query=')), /closingIssuesReferences\(first: 100\) \{ totalCount nodes \{ number repository \{ name owner \{ login \} \} \} \}/u);
+  const cut = { data: { ...answer.data, repository: { ...answer.data.repository, pullRequest: { ...answer.data.repository.pullRequest, closingIssuesReferences: { totalCount: 101, nodes: [] } } } } };
+  assert.equal(recorded(() => JSON.stringify(cut)).forge.reviewTrail('acme/notes', 7, { paths }).closingIssuesComplete, false, 'a list shorter than its count');
+  const none = { data: { ...answer.data, repository: { ...answer.data.repository, pullRequest: { ...answer.data.repository.pullRequest, closingIssuesReferences: undefined } } } };
+  assert.equal(recorded(() => JSON.stringify(none)).forge.reviewTrail('acme/notes', 7, { paths }).closingIssuesComplete, false, 'no list at all');
   forge.reviewTrail('acme/notes', 7, { host: 'ghe.example.com', paths: { pointer: 'web/.aidrian.json', config: 'web/.aidrian/config.json', knowledge: 'web/.aidrian/knowledge' } });
   const [plain, enterprise] = args();
   assert.deepEqual(plain.slice(0, 2), ['api', 'graphql']);

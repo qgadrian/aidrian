@@ -61,8 +61,9 @@
 // the record's word alone, which a project run's confined session can write: a merge the checks above let through, with
 // a record or none, the Human's answer, or a waiver, must also name its number and full head, in the repository and on
 // the host the session is pinned to (every host the merge names, ghHosts), and pass lib/review/merge-trust.mjs trustProblem on the forge (unattendedProblem); a pull request
-// of a project run's issue may close or link no other issue, by its title, body, commits, and the merge's own subject and
-// body (mergeClosesProblem). Attended sessions are unchanged.
+// of a project run's issue may close or link no other issue, by its title, body, commits, the merge's own subject and
+// body, and the issues the forge links to it, by hand in its sidebar included (mergeClosesProblem). Attended sessions
+// are unchanged.
 
 import { closeSync, constants, fstatSync, openSync, readFileSync, readSync } from 'node:fs';
 import path from 'node:path';
@@ -75,7 +76,7 @@ import { stateFolders } from '../../handoff-guard.mjs';
 import { branchPolicies, changesRequested, headPolicyProblem, includesGuardedPaths, includesPolicyFiles, pathsProblem, refusingBranches, startDocs, trailDocs, trailPaths, trailPolicies } from '../../pr-auto-merge.mjs';
 import { computeVerdict } from '../../pr-checks.mjs';
 import { findProject, mayFollowTeamDefault } from '../../project.mjs';
-import { closingTextsProblem, mergeClosingContext } from '../../closing-words.mjs';
+import { closingTextsProblem, forgeClosingProblem, mergeClosingContext } from '../../closing-words.mjs';
 import { pinnedRepository, readRun } from '../../project-run.mjs';
 import { originRepo, prNumber, remoteRepos, repoName } from '../../review-gate.mjs';
 import { baseProblem, boundedReads, recourse } from '../../review/in-force.mjs';
@@ -305,8 +306,9 @@ function apiMergeText(fields, flags) {
 
 // Why a merge no Human asks for would close, or link, an issue other than its project run's own, or null
 // (closing-words.mjs): the pull request's title, body, and every commit message, from the review trail `trail` at the
-// pinned head, and the merge's own subject and body, `merge.text`. Only for a pull request of a run's issue, as
-// mergeClosingContext reads `mark` and the main checkout `home`; `pr` is { repo, host }.
+// pinned head, and the merge's own subject and body, `merge.text`; then the issues the trail says the forge links to
+// close at the merge, a sidebar link included (forgeClosingProblem), as `aidrian pr auto-merge` reads them. Only for a
+// pull request of a run's issue, as mergeClosingContext reads `mark` and the main checkout `home`; `pr` is { repo, host }.
 export function mergeClosesProblem({ trail, merge, mark, home, pr }) {
   const context = mergeClosingContext(mark, home, trail?.headRef);
   if (context === undefined) return null;
@@ -321,7 +323,7 @@ export function mergeClosesProblem({ trail, merge, mark, home, pr }) {
     ...(merge.text?.subject ? [{ where: 'the merge commit\'s subject', text: merge.text.subject, title: true }] : []),
     ...(merge.text?.body ? [{ where: 'the merge commit\'s body', text: merge.text.body }] : []),
   ];
-  return closingTextsProblem(texts, context, pr);
+  return closingTextsProblem(texts, context, pr) ?? forgeClosingProblem(trail, context, pr);
 }
 
 // The GraphQL mutations that merge a pull request, or leave its merge to GitHub: auto-merge and the merge queue.

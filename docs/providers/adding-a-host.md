@@ -317,7 +317,8 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
   `reviewTrail(repo, n, { host })`, what a merge no Human asks for confirms in one call: the head, the base, the first
   100 changed files, the newest 100 reviews, and the first 100 conversation comments, each author's login and whether it
   is a bot, and every editor of a comment ([Merge trust](../review.md#merge-trust)); and the head branch, title, body,
-  and the first 100 commit messages, whole or not, for the closing-word check.
+  and the first 100 commit messages, whole or not, for the closing-word check, with the first 100 issues the forge links
+  to the pull request to close at the merge, a sidebar link included, whole or not (`closingIssues`, `closingIssuesComplete`).
 - The repository: `repo`, `repository`, `branchHead`, the commit a branch points to, `hasCommit(repo, sha, { host })`,
   whether the forge holds a commit on any ref, false only once it confirms it has none (GitHub: a 404 of the commit
   while the same route reads the default branch's head commit), and a throw on any other answer, `contents`, `tree`, one folder of a

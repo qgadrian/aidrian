@@ -9,7 +9,7 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, closeSync, existsSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, closeSync, existsSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -20,7 +20,7 @@ import { machineSwitch } from '../plugins/aidrian/lib/config-local.mjs';
 import { pauseSync, resolvedPath } from '../plugins/aidrian/lib/fs.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { BEACON_GRACE, configFlags, FIRST_TOOL_WAIT, findProcesses, firstEvent, firstTool, launchCommand, processEnded, processState, PS_BUFFER, runCommand, SESSION_WAIT, START_CAP, startProject, stopProcess } from '../plugins/aidrian/lib/hosts/codex-exec.mjs';
-import { projectAt } from '../plugins/aidrian/lib/project.mjs';
+import { mayFollowTeamDefault, projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { ATTEMPT_ENV, cacheVars } from '../plugins/aidrian/lib/project-registries.mjs';
 import { projectCommand } from '../plugins/aidrian/lib/project-run-cli.mjs';
 import { projectCommandDenial } from '../plugins/aidrian/lib/project-run-guard.mjs';
@@ -813,6 +813,48 @@ test('an attempt clone reads its machine switches and decisions from the run\'s 
   writeFileSync(path.join(stray, '.aidrian.local.json'), JSON.stringify({ github: { autoMerge: 'on' }, handoff: { background: 'on' } }));
   const unlinked = projectAt(stray);
   assert.deepEqual([unlinked.localAutoMerge, unlinked.localHandoffBackground, unlinked.localDecisions], ['off', 'off', undefined]);
+});
+
+// A confined session's sandbox denies it the main checkout (lib/hosts/claude-code-sandbox.mjs), so from inside it the
+// clone's link cannot be read (#630). Its auto-merge switch is then the one the start row recorded from the main checkout,
+// outside the sandbox: a local file that sets none and that git does not track follows a team default of "on", as the
+// main checkout's own read does, while any other reader inside reads it off.
+test('a clone denied the main checkout reads the auto-merge switch its start recorded, only as its own session', (t) => {
+  // A mode the test sets denies nothing to root, which reads every folder.
+  if (process.getuid?.() === 0) {
+    t.skip('root reads a folder whatever its mode');
+    return;
+  }
+  const fx = codexRun(t);
+  assert.equal(fx.cmd(['start', 'launch', 'ENG-1'], { wait: fx.ready() }).exitCode, 0);
+  const start = fx.rows().findLast((row) => row.event === 'start');
+  assert.deepEqual(start.machine, { autoMerge: 'unset' }, 'the main checkout sets none, and git tracks no local file there');
+  const work = path.join(fx.attempt(), 'work');
+  const team = { autoMerge: { allow: true, default: 'on' } };
+  // The auto-merge gate's read (lib/pr-auto-merge.mjs): the team default followed only where git tracks no local file.
+  const gate = (project) => resolveAutoMerge(team, project.localAutoMerge === 'unset' && !mayFollowTeamDefault(project) ? 'off' : project.localAutoMerge).effective;
+  anchorClones({ session: THREAD, env: fx.env, home: fx.home });
+  t.after(() => anchorClones(null));
+  assert.equal(gate(projectAt(fx.dir)), true, 'the main checkout follows the team default');
+  // As the sandbox does: the main checkout's folder may not be read, while `read` runs.
+  const denied = (read) => {
+    chmodSync(fx.dir, 0o000);
+    try {
+      return read();
+    } finally {
+      chmodSync(fx.dir, 0o755);
+    }
+  };
+  const inside = denied(() => projectAt(work));
+  assert.equal(inside.localAutoMerge, 'unset');
+  assert.equal(inside.localHandoffBackground, 'off', 'every other switch still reads off');
+  assert.equal(denied(() => gate(inside)), true, 'the session agrees with the main checkout');
+  // Another session, or the session's mark naming another folder, reads it off.
+  anchorClones({ session: DRIVER, env: fx.env, home: fx.home });
+  assert.equal(denied(() => gate(projectAt(work))), false, 'another session');
+  markUnattended(THREAD, { root: readUnattendedMark(THREAD, { env: fx.env, home: fx.home }).root, cwd: fx.root, env: fx.env, tags: { project: 'launch', issue: 'ENG-1' } });
+  anchorClones({ session: THREAD, env: fx.env, home: fx.home });
+  assert.equal(denied(() => gate(projectAt(work))), false, 'a mark that names another start folder');
 });
 
 // Every host's protected host files stay refused in the clone (lib/hosts/index.mjs protectedPaths), so the folder made

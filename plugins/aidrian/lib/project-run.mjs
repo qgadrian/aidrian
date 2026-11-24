@@ -29,7 +29,7 @@ import { runGit } from './git.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
 import { RUNS_FOLDER, startedUnattended } from './handoff-guard.mjs';
 import { looseFolder, openStore, SESSION_ID } from './handoff-markers.mjs';
-import { appendRow, appendRowsAtOnce, withLocks } from './jsonl.mjs';
+import { appendRowsAtOnce, withLocks } from './jsonl.mjs';
 import { committedConfigFile, defaultStateDir, stateDir, stateRoot } from './project.mjs';
 import { dropIssueReads, recordedTexts, sweepIssueReads, writeIssueTexts } from './project-issue-text.mjs';
 import { endedIn } from './run-driver.mjs';
@@ -380,9 +380,10 @@ const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 // a state folder runPlace refuses, a project whose origin names no forge repository, a run that exists already, and any
 // other run still active. Each issue's text is the tracker's own answer the session's reads recorded
 // (project-issue-text.mjs recordedTexts), never a file a session wrote. Throws jsonl.mjs's LOCKED when another process
-// holds the runs lock. `pullHead` reads an old ledger's pull request head (resumedIssues), none by default. `home` is for
-// a test.
-export function initRun({ project, config, run, file, session, input = {}, env = process.env, home, now = Date.now(), pullHead }) {
+// holds the runs lock. `pullHead` reads an old ledger's pull request head (resumedIssues), none by default, and `landed`
+// whether a pull request an earlier run left open merged since (project-result.mjs landedPull), none by default. `home`
+// is for a test.
+export function initRun({ project, config, run, file, session, input = {}, env = process.env, home, now = Date.now(), pullHead, landed: mergedSince }) {
   // Recorded issue reads past their age go first, on every host, whatever init then answers.
   sweepIssueReads({ env, now });
   if (typeof run !== 'string' || !RUN_ID.test(run)) return refuse(`the run id ${quote(run)} is not lower-case letters, digits, and dashes, up to 64, starting with a letter or digit`);
@@ -399,8 +400,9 @@ export function initRun({ project, config, run, file, session, input = {}, env =
   // A started issue an earlier run parked starts again in this one, from its branch: the run records which, so `next`,
   // `start`, and the gate read one plan. Read before the runs lock, since an old ledger's pull request is read through
   // the forge; the runs it reads are no longer active, which the lock then checks.
-  const resumed = resumedIssues(state, read.snapshot, { except: run, repository, ...(pullHead ? { pullHead } : {}) });
-  const clash = resumedProblems(read.snapshot, resumed);
+  // One whose pull request merged since that run ended is taken in as done instead, and one the forge cannot clear refuses.
+  const { resumed, landed, problems } = splitLanded(resumedIssues(state, read.snapshot, { except: run, repository, ...(pullHead ? { pullHead } : {}), ...(mergedSince ? { landed: mergedSince } : {}) }));
+  const clash = [...problems, ...resumedProblems(read.snapshot, resumed)];
   if (clash.length) return { exitCode: 1, out: [], err: ['aidrian project init: the snapshot input has problems; fix them and run init again', ...clash.slice(0, 20).map((problem) => `  ${problem}`)] };
   const snapshot = resumed.length ? { ...read.snapshot, resumed } : read.snapshot;
 
@@ -428,7 +430,7 @@ export function initRun({ project, config, run, file, session, input = {}, env =
     dropIssueReads(session, { env, ...(home ? { home } : {}) });
     const row = { event: 'init', run, at: new Date(now).toISOString(), session, repository, main, issues: read.snapshot.issues.length, sha256: sha256(Buffer.from(text)) };
     // The runs lock covers this first row: no other writer appends to a run whose ledger has no init row (appendToRun).
-    appendRow(ledgerFile(state, run), row);
+    appendRowsAtOnce(ledgerFile(state, run), [row, ...landedRows(landed, row.at)]);
     const teams = teamsNote(read.snapshot);
     return {
       exitCode: 0,
@@ -439,6 +441,7 @@ export function initRun({ project, config, run, file, session, input = {}, env =
         ...(kept ? [`issue text: ${kept} of ${read.snapshot.issues.length} kept for the issues' sessions to read`] : []),
         ...(read.dropped ? [`dropped: ${read.dropped} fields the snapshot never keeps, such as titles and bodies`] : []),
         ...(resumed.length ? [resumedLine(resumed)] : []),
+        ...(landed.length ? [landedLine(landed)] : []),
         ...(teams ? [`teams: ${teams}`] : []),
         `folder: ${runFolder(state, run)}`,
       ],
@@ -588,7 +591,13 @@ function resumedOf(value, issues) {
 // parkUnreconciled), gives the branch, head, and pull request that row names, so a run that parked a resumed issue
 // without starting it hides no earlier record. A run that cannot be read is left out, and each run is read in turn,
 // keeping only the latest candidate of each issue.
-export function resumedIssues(state, snapshot, { except, repository, pullHead = () => null } = {}) {
+// An issue whose latest result in that run is `pr_open`, parked on it, may have merged since that run ended:
+// `landed({ pr, branch, repository, since })` (project-result.mjs landedPull), with `since` that attempt's start, says
+// so. One that merged as the run's work comes back with `landed: { run, attempt, pr }`, never to be resumed but taken in
+// as done (splitLanded); one the forge cannot clear comes back with `problem`, a line naming why. A run that took one in
+// as landed, and whose report on it no `recorded` row closed, carries it on the same way, with no second forge read,
+// while the snapshot names the branch that take-in checked.
+export function resumedIssues(state, snapshot, { except, repository, pullHead = () => null, landed = () => null } = {}) {
   const started = snapshot.issues.filter((issue) => issue.status === 'started');
   if (!started.length || !repository) return [];
   let names;
@@ -620,10 +629,27 @@ export function resumedIssues(state, snapshot, { except, repository, pullHead = 
         });
         continue;
       }
+      const held = found.states.get(issue.key);
+      // The label the run's report on the issue set, as its `recorded` row names it; none in a ledger from before.
+      const reported = found.rows.findLast((row) => row.event === 'recorded' && row.key === issue.key && row.kind !== 'started');
+      const label = typeof reported?.label === 'string' ? { label: reported.label } : {};
+      const open = held.state === 'parked' && held.decision === 'pr-open' && result?.status === 'pr_open' && Number.isInteger(result.pr) && result.pr > 0
+        ? { pr: result.pr, attempt: result.attempt, since: Date.parse(found.rows.findLast((row) => row.event === 'start' && row.key === issue.key && row.attempt === result.attempt)?.at), ...label }
+        : null;
+      // A run that took the issue in as landed and ended before its report was recorded: the next run carries it on.
+      const landedRow = held.state === 'done' ? found.rows.findLast((row) => row.event === 'landed' && row.key === issue.key) : null;
+      // Only on the branch the take-in checked the merge for: a snapshot that names another branch is other work, and a
+      // row that names no branch, which no release wrote, carries nothing.
+      const landedBranch = typeof landedRow?.branch === 'string' ? landedRow.branch : null;
+      const carried = landedRow && !reported && landedBranch !== null && landedBranch === issue.branch && Number.isInteger(landedRow.pr) && Number.isInteger(landedRow.attempt) && typeof landedRow.run === 'string' && RUN_ID.test(landedRow.run)
+        ? { run: landedRow.run, attempt: landedRow.attempt, pr: landedRow.pr, branch: landedBranch, ...(typeof landedRow.label === 'string' ? { label: landedRow.label } : {}) }
+        : null;
       latest.set(issue.key, {
         at,
         run: name,
-        parked: found.states.get(issue.key).state === 'parked',
+        open,
+        carried,
+        parked: held.state === 'parked',
         branch: issueBranch(found, issue.key),
         // The branch that run's own snapshot named for the issue, which an attempt branch it cut must be cut from.
         from: found.snapshot.issues.find((each) => each.key === issue.key)?.branch ?? null,
@@ -636,13 +662,40 @@ export function resumedIssues(state, snapshot, { except, repository, pullHead = 
     }
   }
   const worked = ({ parked, branch, from, cut }, issue) => parked && (branch === issue.branch || (cut && from === issue.branch && ownBranch(branch, issue.branch)));
-  return started.filter((issue) => latest.has(issue.key) && worked(latest.get(issue.key), issue))
+  return started.filter((issue) => latest.has(issue.key) && (latest.get(issue.key).carried || worked(latest.get(issue.key), issue)))
     .map((issue) => {
-      const { run, pr, head, legacy, branch } = latest.get(issue.key);
+      const { run, pr, head, legacy, branch, open, carried } = latest.get(issue.key);
+      if (carried) return { key: issue.key, landed: carried };
+      if (open) {
+        // With no start row to date the attempt, as a ledger of an older version, the merge cannot be checked: it resumes.
+        const merged = Number.isFinite(open.since) ? landed({ pr: open.pr, branch, repository, since: open.since }) : null;
+        if (merged?.merged === true) return { key: issue.key, landed: { run, attempt: open.attempt, pr: open.pr, branch: issue.branch, ...(open.label ? { label: open.label } : {}) } };
+        if (merged?.problem) return { key: issue.key, problem: `${issue.key} left pull request #${open.pr} open in the run ${run}, which merged since, and it cannot be taken in: ${merged.problem}` };
+      }
       const read = legacy === null ? head : pullHead({ pr: legacy, branch, repository });
       return { key: issue.key, run, pr, head: typeof read === 'string' && SHA.test(read) ? read : null, branch };
     });
 }
+
+// resumedIssues' answer `entries` sorted: { resumed, landed, problems }, the issues a run starts again on their branch,
+// those it takes in as done, [{ key, run, attempt, pr }], and a line for each it can do neither with.
+export function splitLanded(entries) {
+  return {
+    resumed: entries.filter((each) => !each.landed && !each.problem),
+    landed: entries.filter((each) => each.landed).map(({ key, landed }) => ({ key, ...landed })),
+    problems: entries.filter((each) => each.problem).map((each) => each.problem),
+  };
+}
+
+// The line init and its check print for the issues `landed` (splitLanded) an earlier run left on an open pull request
+// that merged since, which the run records done.
+export const landedLine = (landed) => `landed: ${landed.length} started ${landed.length === 1 ? 'issue' : 'issues'} whose pull request an earlier run left open merged since, which this run records done: ${landed.map(({ key, pr }) => `${key} (#${pr})`).join(', ')}`;
+
+// The ledger rows init writes after its init row for the issues `landed` (splitLanded), at `at`: for each, a `landed`
+// row naming the earlier run, its attempt, the pull request, the snapshot branch whose work it checked, and the label
+// that run's report set, when its ledger names it, then the issue done, which owes the report that moves it to done in
+// the tracker and takes that label off (project-report.mjs owedReports).
+export const landedRows = (landed, at) => landed.flatMap(({ key, run, attempt, pr, branch, label }) => [{ event: 'landed', key, run, attempt, pr, branch, ...(label ? { label } : {}), at }, { event: 'issue', key, state: 'done', at }]);
 
 // The start rows of issue `key` that ran in the run `found`, as [{ row, at }]: each attempt's latest start row, at its
 // index in the rows, unless that row gives the attempt back (`void`), so a write-ahead row whose launch failed counts
@@ -720,7 +773,9 @@ export function appendToRun(state, run, build, { waitMs } = {}) {
 
 // The runs in `state` other than `except` that are still active, as [{ run }]: a run whose files cannot be read counts,
 // and a folder of runs that is there and cannot be listed gives [{ run: null }], a run whose driver cannot be told.
-export function activeRuns(state, { except } = {}) {
+// With `untilEnd`, a run whose issues are done counts until its ledger records its end, as custody reads a run
+// (project-run-gate.mjs resumeRun): its driver still reports, and the host's continuation may still take it.
+export function activeRuns(state, { except, untilEnd = false } = {}) {
   let names;
   try {
     names = readdirSync(runsFolder(state));
@@ -733,7 +788,7 @@ export function activeRuns(state, { except } = {}) {
     // A run whose ledger records its end (`aidrian project end`), by the driver of that moment, is over, whatever its
     // issues (run-driver.mjs endedIn).
     if (endedIn(found)) return false;
-    return planRun(found.snapshot, found.states).verdict !== 'done';
+    return untilEnd || planRun(found.snapshot, found.states).verdict !== 'done';
   }).map((run) => ({ run }));
 }
 

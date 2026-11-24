@@ -71,11 +71,11 @@ const GUARDED_LIB = [
   'git-push', 'glob-links', 'handoff-continue', 'handoff-guard', 'handoff-markers', 'handoff-sections', 'hidden-text', 'hook-deny', 'hook-io', 'issue-forge-guard', 'issue-push-checkout',
   'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits', 'markdown-prose', 'markdown-sections', 'markdown-wrap',
   'model-prices', 'names', 'package-runner', 'personas', 'pr', 'pr-auto-merge', 'pr-auto-merge-docs', 'pr-await-review', 'pr-checks', 'pr-diff', 'pr-product-feedback',
-  'pr-ready-wait', 'pr-resolve', 'project', 'project-confine', 'project-decision', 'project-decision-store', 'project-issue-text', 'project-limit', 'project-linger', 'project-preflight', 'project-recheck', 'project-registries', 'project-report',
+  'pr-ready-wait', 'pr-resolve', 'project', 'project-confine', 'project-decision', 'project-decision-store', 'project-full-auto', 'project-issue-text', 'project-limit', 'project-linger', 'project-preflight', 'project-recheck', 'project-registries', 'project-report',
   'project-result', 'project-run', 'project-run-cli', 'project-run-gate', 'project-run-guard', 'project-start', 'project-stops', 'project-token', 'project-trust', 'push-preflight',
   'remotes', 'resume-tokens', 'review-gate', 'run-driver', 'session-folder', 'session-length', 'session-links', 'session-links-writer', 'session-origins',
   'session-prs', 'session-rows', 'session-start-gate', 'shell-init', 'shell-lex', 'solo', 'stop-announce', 'stop-handback', 'stop-history', 'stop-review-loop',
-  'terminal-replace', 'terms', 'test-changed', 'tracker-check', 'tracker-guard', 'transcript', 'unattended-mark', 'unattended-shell',
+  'terminal-replace', 'terms', 'test-changed', 'tracker-check', 'tracker-guard', 'transcript', 'transcript-guard', 'unattended-mark', 'unattended-shell',
   'unattended-write', 'usage', 'worktree',
 ].join('|');
 const GUARDED_PLUGIN = String.raw`bin/|scripts/|hooks/|lib/(?:forges|rules|review|hosts|trackers)/|lib/(?:${GUARDED_LIB})\.(?:mjs|json)$|agents/|codex/|agents-src/|providers/|agent-addons/|skills/|opencode/|package\.json$|(?:\.claude-plugin/)?plugin\.json$`;
@@ -242,6 +242,9 @@ export function openProject(root, roots, read) {
     localHandoffBackground: local.handoffBackground,
     localFeedbackAuto: local.feedbackAuto,
     localForgeTokenKeychain: local.forgeTokenKeychain ?? null,
+    // A confined attempt's recorded switch: whether git tracked no local file in the main checkout at the start, which
+    // mayFollowTeamDefault answers with, since this process cannot ask git there.
+    ...(found?.attempt?.machine ? { recordedFollow: found.attempt.machine.autoMerge === 'unset' } : {}),
     errors,
     unreadable,
   };
@@ -346,10 +349,11 @@ function safeRoots(root, read) {
 
 // The local settings of the checkouts `checkouts` whose roots are `roots`: readLocal's, but for a project run's attempt
 // clone (lib/attempt-clone.mjs), whose session writes its folder, only the run's main checkout's file counts, the
-// clone's own never; and one whose link cannot be read reads every switch off and no decisions. `read` is readLocal's.
+// clone's own never; and one whose link cannot be read reads every switch off and no decisions, but the auto-merge
+// switch a confined session's start row recorded (attempt-clone.mjs confinedMachine). `read` is readLocal's.
 function cloneLocal(roots, checkouts, errors, unreadable, read) {
   if (!roots?.attempt) return readLocal(checkouts, errors, unreadable, read);
-  if (roots.unlinked) return { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined, ...OFF_SWITCHES };
+  if (roots.unlinked) return { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined, ...OFF_SWITCHES, ...(roots.attempt.machine ? { autoMerge: roots.attempt.machine.autoMerge } : {}) };
   return readLocal([checkouts.at(-1)], errors, unreadable, read);
 }
 
@@ -496,7 +500,9 @@ function mainFeedbackAuto(raw, tracked, errors) {
 // Whether a machine with no setting may follow a team default of "on": git says it tracks no local file in the main
 // checkout, under any case, present on disk or not. Asked only when the default applies, so a hook pays no git call. A tracked file, or a git that fails
 // or stalls, is no machine's own, as machineSwitch reads it. `options` are runGit's, such as a hook's bounded `timeout`.
+// A confined attempt's clone answers from its start row instead (openProject's `recordedFollow`).
 export function mayFollowTeamDefault(project, options) {
+  if (typeof project.recordedFollow === 'boolean') return project.recordedFollow;
   const main = project.checkouts.at(-1);
   return runGit(['ls-files', '--error-unmatch', '--', `:(icase)${LOCAL}`], main, options).status === 1;
 }

@@ -11,7 +11,9 @@
 // sign-off of the Human's is owed on that head (waiver.mjs signoffOwed); a project run has merged fewer than
 // WAIVED_MERGES pull requests on a verdict; and no judge has ruled on that head yet, since one judge rules per head. The
 // gate also holds the working copy's state folder to the default branch's, as auto-merge's checks do, and, in a project
-// run, the pull request to the run's pinned repository.
+// run, the pull request to the run's pinned repository. The same gate (readGate) is the `waiver` the review step reports
+// at the cap (offerWaiver), and the check `aidrian pr extend --verdict land` makes before it records a `waive`, so a
+// session at the cap types no gate command of its own (docs/config.md#unattended-waiver).
 //
 // Any `aidrian pr auto-merge` under these switches takes `round_limit` on the head in place of `received` when the same
 // holds at merge time and a `waive` verdict stands for exactly that head (waiver.mjs waiverFor), recorded at or after the
@@ -30,10 +32,12 @@ import { detectHost, sessionIdentity } from '../hosts/index.mjs';
 // A cycle (pr-auto-merge.mjs imports this file), benign while neither uses the other's exports as it loads.
 import { branchPolicies, trailPaths, trailPolicies } from '../pr-auto-merge.mjs';
 import { hostOf, repoName } from '../remotes.mjs';
-import { recordFor, scoped } from '../rules/github/merge-review.mjs';
+import { localRefSolo } from '../solo.mjs';
+import { scoped } from '../rules/github/merge-review.mjs';
 import { readUnattendedMark } from '../unattended-mark.mjs';
 import { botProblem } from './merge-trust.mjs';
-import { SHA_REF } from './state.mjs';
+import { adoptedCopy, ownedBy, readLocalState, SHA_REF } from './state.mjs';
+import { isObject } from '../fs.mjs';
 import { budgetProblem, capProblem, judgeProblem, notWaivable, owedSignoffs, runLedger, runOf, waiverFor, waiverGate, waiverKind } from './waiver.mjs';
 
 export { budgetProblem, judgeProblem, runOf, WAIVED_MERGES, waivedMerges } from './waiver.mjs';
@@ -82,30 +86,29 @@ export function waivedReview(args) {
 
 const GATE_FIELDS = 'number,headRefOid,baseRefName,url';
 
-// `aidrian pr waive <PR> --gate [--json]`: exit 0 when a judge may be dispatched for the pull request's current head, 1
-// when not, 3 when the pull request, its trail, or its policies cannot be read. `forge` is the test seam, `session` the
-// session the host gives the command, `run()` the project run its unattended mark names (runOf), and `runHost` the host.
-export function runWaiveGate({ pr, json = false }, project, { forge = forgeFor(project.root), session = sessionIdentity(process.env).session, home, run = () => runOf(readUnattendedMark(session, home ? { home } : {})), config = null, runHost = detectHost() } = {}) {
-  const fail = (message) => {
-    console.error(`aidrian pr waive: ${message}`);
-    return 3;
-  };
+// Whether a judge may be dispatched for the pull request's current head: { code, may, why, head, repo, base } with code
+// 0 when one may, 1 when not, or { code: 3, error } when the pull request, its trail, or its policies cannot be read.
+// The one gate of `aidrian pr waive --gate`, the review step's `waiver` at the cap (offerWaiver), and `aidrian pr extend
+// --verdict land`. `forge` is the test seam, `session` the session the host gives the command, `run()` the project run
+// its unattended mark names (runOf), and `runHost` the host. `record(repo)` gives the review record the gate weighs,
+// this machine's file by default; the gate weighs it as the record's next write would hold it: named for `repo` as the
+// writer names it (state.mjs ownedBy), a record that names another refusing, with the reviews another record owes for
+// `repo` merged in by the writer's own merge (adoptedCopy), and that repository's part kept (scoped).
+// `repo`, when given, is the repository the pull request is read in, and must be the one the forge's view names.
+export function readGate({ pr, repo: given = null }, project, { forge = forgeFor(project.root), session = sessionIdentity(process.env).session, home, run = () => runOf(readUnattendedMark(session, home ? { home } : {})), config = null, runHost = detectHost(), record = null } = {}) {
   let view;
   try {
-    view = forge.change(String(pr), GATE_FIELDS);
+    view = given ? forge.change(String(pr), GATE_FIELDS, { repo: given }) : forge.change(String(pr), GATE_FIELDS);
   } catch (error) {
-    return fail(`could not read pull request #${pr} (${String(error?.message ?? error).split('\n')[0]})`);
+    return { code: 3, error: `could not read pull request #${pr} (${String(error?.message ?? error).split('\n')[0]})` };
   }
   const head = view?.headRefOid;
   const base = typeof view?.baseRefName === 'string' && view.baseRefName !== '' ? view.baseRefName : null;
   const host = typeof view?.url === 'string' ? hostOf(view.url) : null;
   const repo = typeof view?.url === 'string' ? repoName(view.url) : null;
-  if (typeof head !== 'string' || !SHA_REF.test(head) || head.length !== 40 || !base || !host || !repo) return fail(`gh returned no full head, base, or URL for #${pr}`);
-  const out = (may, why) => {
-    console.log(json ? JSON.stringify({ may, why, pr, head, repo, base })
-      : may ? `waiver may run for #${pr} at ${head.slice(0, 7)}: dispatch one fresh judge, and record its verdict with --head ${head} --judge <agent id>` : `waiver off for #${pr}: ${why}`);
-    return may ? 0 : 1;
-  };
+  if (typeof head !== 'string' || !SHA_REF.test(head) || head.length !== 40 || !base || !host || !repo) return { code: 3, error: `gh returned no full head, base, or URL for #${pr}` };
+  const out = (may, why) => ({ code: may ? 0 : 1, may, why, head, repo, base });
+  if (given && repoName(given) !== repo) return out(false, `the forge read #${pr} in ${repo}, not ${repoName(given) ?? 'the repository named'}`);
   const working = config ?? loadConfig(project).config;
   const runId = run();
   // A session of a project run works in the repository its run pinned, and nowhere else.
@@ -122,14 +125,68 @@ export function runWaiveGate({ pr, json = false }, project, { forge = forgeFor(p
     trail = forge.reviewTrail(repo, pr, { host, paths: trailPaths(prefix) });
     policies = trailPolicies(trail, { repo, base }, prefix) ?? branchPolicies(forge, { repo, host, base }, prefix);
   } catch (error) {
-    return fail(`could not read the review trail or the team's config of #${pr} (${String(error?.message ?? error).split('\n')[0]})`);
+    return { code: 3, error: `could not read the review trail or the team's config of #${pr} (${String(error?.message ?? error).split('\n')[0]})` };
   }
   // The record is read from the working copy's state folder, which must be the default branch's, as auto-merge holds it.
   const folder = stateDirProblem(working, policies.policy, `${repo} ${policies.main}`);
   if (folder) return out(false, folder);
-  const state = scoped(recordFor(project, pr, repo), project, repo);
+  let own = record ? record(repo) : readLocalState(project, pr, repo);
+  if (isObject(own)) {
+    own = { ...own };
+    try {
+      ownedBy(own, repo);
+    } catch (error) {
+      return out(false, error.message);
+    }
+  }
+  const state = scoped(adoptedCopy(project, own), project, repo);
   const ruled = (Array.isArray(state?.waivers) ? state.waivers : []).find((entry) => entry?.kind === 'round_cap' && typeof entry.head === 'string' && entry.head.toLowerCase() === head.toLowerCase());
   if (ruled) return out(false, `a judge already gave its verdict on head ${head.slice(0, 7)} (${ruled.verdict === 'waive' ? 'waive' : 'refuse'}): one judge rules per head`);
   const result = waiverMayRun({ project, config: working, state, pr, head, policies, repo, host, base, prefix, trail: () => trail, run: runId, runHost });
   return out(result.may === true, result.why ?? null);
+}
+
+// `aidrian pr waive <PR> --gate [--json]`: exit 0 when a judge may be dispatched for the pull request's current head, 1
+// when not, 3 when the pull request, its trail, or its policies cannot be read (readGate).
+export function runWaiveGate({ pr, json = false }, project, seams = {}) {
+  const gate = readGate({ pr }, project, seams);
+  if (gate.code === 3) {
+    console.error(`aidrian pr waive: ${gate.error}`);
+    return 3;
+  }
+  const { may, why, head, repo, base } = gate;
+  console.log(json ? JSON.stringify({ may, why, pr, head, repo, base })
+    : may ? `waiver may run for #${pr} at ${head.slice(0, 7)}: dispatch one fresh judge, and record its verdict with --head ${head} --judge <agent id>` : `waiver off for #${pr}: ${why}`);
+  return gate.code;
+}
+
+// The review step's record at the cap as a judge's `land` would leave it: a check waiting for its judge is the cap
+// standing once the judge stops it, so an `extension_check` outcome reads as `round_limit` on the same head, at the
+// same time, with the same cause. Any other record is returned as it is.
+export function asLanded(state) {
+  if (state?.outcome?.status !== 'extension_check') return state;
+  return { ...state, outcome: { ...state.outcome, status: 'round_limit' } };
+}
+
+// The `waiver` the review step reports at the cap (`round_limit` or `extension_check` on its head), so that a session
+// runs no gate command of its own: { may, why }, readGate's answer for the record the step just wrote, an
+// `extension_check` read as asLanded. A machine whose switch is off, or unset with the default branch's local ref
+// committing no `solo`, makes no read at all; a read that fails says so in `why`. `result` is the step's result;
+// `seams` readGate's.
+export function offerWaiver(result, project, config, seams = {}) {
+  const local = project.localUnattendedWaiver;
+  const notIn = `this machine has not opted in (github.unattendedWaiver in ${project.paths.local})`;
+  if (local !== 'on' && local !== 'unset') return { may: false, why: notIn };
+  if (local === 'unset' && !localRefSolo(project)) return { may: false, why: notIn };
+  let gate;
+  try {
+    gate = readGate({ pr: result.pr, repo: result.repo ?? null }, project, { config, ...seams, record: (repo) => asLanded(readLocalState(project, result.pr, repo)) });
+  } catch (error) {
+    return { may: false, why: `the gate could not be read (${String(error?.message ?? error).split('\n')[0]})` };
+  }
+  if (gate.code === 3) return { may: false, why: gate.error };
+  if (gate.may && typeof result.head === 'string' && gate.head.toLowerCase() !== result.head.toLowerCase()) {
+    return { may: false, why: `the pull request moved to ${gate.head.slice(0, 7)} after the step reviewed ${result.head.slice(0, 7)}: run the step again` };
+  }
+  return { may: gate.may, why: gate.why };
 }

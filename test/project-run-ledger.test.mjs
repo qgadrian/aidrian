@@ -134,6 +134,24 @@ test('one run per project is active: a second run waits until the first is done,
   assert.equal(init('second', input(SNAPSHOT)).exitCode, 0, 'nothing runs or may start in the first run, so it is done');
 });
 
+test('a landed row that names no branch carries nothing on', (t) => {
+  const { state, input, init } = setup(t);
+  const at = new Date().toISOString();
+  const issue = { issues: [{ key: 'ENG-1', branch: 'feat/eng-1-export', status: 'started' }] };
+  // The run the row names, and the run that wrote it, both on the snapshot's branch: neither tells which branch the
+  // merge was checked for, so a match with either proves nothing.
+  // Each run inits a minute after the one before, so which is the latest never rests on the clock's resolution.
+  const minute = (n) => ({ now: Date.now() + n * 60_000 });
+  assert.equal(init('zero', input({ issues: [{ key: 'ENG-1', branch: 'feat/eng-1-export', status: 'unstarted' }] }, 'zero.json'), minute(0)).exitCode, 0);
+  appendToRun(state, 'zero', () => ({ rows: [{ event: 'issue', key: 'ENG-1', state: 'parked', decision: 'pr-open', at }] }));
+  assert.equal(init('first', input(issue, 'first.json'), minute(1)).exitCode, 0);
+  appendToRun(state, 'first', () => ({ rows: [{ event: 'landed', key: 'ENG-1', run: 'zero', attempt: 1, pr: 12, at }, { event: 'issue', key: 'ENG-1', state: 'done', at }] }));
+  const next = init('second', input(issue, 'second.json'), minute(2));
+  assert.equal(next.exitCode, 0, next.err.join('\n'));
+  assert.equal(next.out.some((line) => line.startsWith('landed:')), false, 'which branch its merge was checked for cannot be told');
+  assert.deepEqual(planRun(readRun(state, 'second').snapshot, readRun(state, 'second').states).blocked, [{ key: 'ENG-1', reason: 'status', on: ['started'] }]);
+});
+
 test('init starts a started issue an earlier run parked on the same branch, and keeps every other started issue blocked', (t) => {
   const { state, input, init } = setup(t);
   const first = { issues: [
@@ -500,7 +518,7 @@ test('summary.md holds each issue\'s status, the parked decisions, and the skipp
 });
 
 test('projectRun: its keys and defaults, as docs/config.md shows them', () => {
-  assert.deepEqual(DEFAULTS.projectRun, { allow: false, maxParallel: 1, maxStarts: 300, issueHours: 6, blockedStatus: null, decisionLabel: 'needs-decision', unverifiedHosts: false, workflowSecretsAccepted: false, forgeProtectionAccepted: false, outsideSandbox: [], mcpServers: {}, nonTrackerServers: [], registries: [], localBinding: false, recordedDecisions: false });
+  assert.deepEqual(DEFAULTS.projectRun, { allow: false, maxParallel: 1, maxStarts: 300, issueHours: 6, blockedStatus: null, decisionLabel: 'needs-decision', unverifiedHosts: false, workflowSecretsAccepted: false, forgeProtectionAccepted: false, outsideSandbox: [], mcpServers: {}, nonTrackerServers: [], registries: [], localBinding: false, recordedDecisions: false, fullAuto: false });
   assert.deepEqual(Object.keys(SCHEMA.projectRun), Object.keys(DEFAULTS.projectRun));
   const doc = readFileSync(path.join(ROOT, 'docs/config.md'), 'utf8');
   const example = JSON.parse(doc.match(/## Keys[\s\S]*?```json\n([\s\S]*?)```/u)[1]);

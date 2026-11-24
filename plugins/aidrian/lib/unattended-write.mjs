@@ -169,7 +169,7 @@ function userRefused(refuse, user, env) {
   refuse(path.join(user, 'Library', 'LaunchAgents'), 'the user\'s launch agents, which macOS runs at every login', true);
   // Whatever the session's places, as a checkout at the home folder's own root: a host's transcripts there are its proof
   // that the Human typed into a session (lib/unattended-mark.mjs liftAttended), which no unattended session may write.
-  for (const folder of transcriptFolders(user)) refuse(folder, 'the host\'s session transcripts, the proof that a Human typed into a session', true, null, true);
+  for (const folder of transcriptFolders(user, { env })) refuse(folder, 'the host\'s session transcripts, the proof that a Human typed into a session', true, null, true);
 }
 
 // The user's and the system's git config files git names under `env`: a git call each, so read only when needed.
@@ -762,7 +762,9 @@ export function unattendedWriteDenial(input, { names: { human } }, { mark = null
   if (!mark) return null;
   // Accepted residual, tracked in #513: each write target is judged folded as text (writeTargets resolves it with
   // path.resolve), so a `..` after a link counts where the spelling folds, not where the system lands.
-  const { files, names, globs } = writeTargets(input);
+  const { files, names, globs, code = [] } = writeTargets(input);
+  // Each text the guard judges by name, with whether an interpreter reads it (config-guard.mjs writeTargets).
+  const named = names.map((text, i) => ({ text, code: code[i] === true }));
   const modes = modeTargets(input);
   const command = bashCall(input) && typeof input.tool_input?.command === 'string' ? input.tool_input.command : null;
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
@@ -787,7 +789,7 @@ export function unattendedWriteDenial(input, { names: { human } }, { mark = null
     ?? shellDenial(shell, found, say, texts)
     ?? globDenial(globs.filter((each) => !each.unsure), found, say)
     ?? manifestDenial(input, shell, found, say)
-    ?? nameDenial(texts, found, say);
+    ?? nameDenial([...named, ...texts.slice(names.length).map((text) => ({ text, code: false }))], found, say);
 }
 
 // The folders a project run's issue session pushes from, as `places` (unattendedPlaces) give them, each { root, common },
@@ -819,6 +821,10 @@ function sayer(input, human, opaque, mark) {
     },
     unknown: () => deny('unattended write with no known places', `it ${verb} a file, and the places this session may write cannot be told: its unattended mark names no main checkout or project that can be read, and no Human attends this session, so it writes nothing until they can`),
     refused: (entry, shown) => deny(`unattended write to ${entry.what}`, refusedWhy(entry, shown)),
+    // A refused path read from an interpreter's code, input, or words (nameDenial), which the code may only put in a
+    // file: a session told only where scratch files go built the path at run time instead. It names the file tool,
+    // which writes only the file it names, whatever its text says.
+    named: (entry, shown) => deny(`unattended write to ${entry.what}`, `it names ${shown} in an interpreter's code, input, or words, which may write it, and that is ${entry.what}, which a session no Human attends never changes; only ${human} does; when that text only goes in a file, write the file with the file tool instead, which writes only the file it names`),
     outside: (shown) => deny('unattended write outside its places', `it ${verb} ${shown}, outside the places a session no Human attends may write: ${list}`),
     meets(met, shown) {
       if (met?.refused) return deny(`unattended write to ${met.refused.what}`, refusedWhy(met.refused, shown));
@@ -971,15 +977,17 @@ function manifestDenial(input, shell, found, say) {
 
 // What no path places, judged by name: a startup file or a git config (REFUSED_NAME), a home dot entry (HOME_DOT), a
 // `.git` entry for a session its own mark holds (GIT_WORD), or a path in the text that meets a refused entry.
+// Each of `texts` is { text, code }: a path read from an interpreter's code, input, or words (`code`) gets the refusal
+// that says so (say.named).
 function nameDenial(texts, found, say) {
-  for (const text of texts) {
+  for (const { text, code } of texts) {
     checkDeadline();
     if (REFUSED_NAME.test(text) || HOME_DOT.test(text)) return say.deny('unattended write to a refused name', `it ${say.verb} a file named in \`${text.slice(0, 80)}\`, which names a shell startup file, a git config, or a dot entry of the home folder, and no Human attends this session`);
     if (!found.limited && GIT_WORD.test(text)) return say.deny('unattended write to a refused name', `it ${say.verb} a file named in \`${text.slice(0, 80)}\`, which names a \`.git\` entry, ${GIT_ENTRY}, and no Human attends this session`);
     for (const [word] of text.matchAll(PATH_IN_TEXT)) {
       const spelled = word.startsWith('~') ? path.join(found.home, word.slice(1)) : word;
       const met = placed(spelled, found, { holds: false });
-      if (met?.refused) return say.refused(met.refused, spelled);
+      if (met?.refused) return code ? say.named(met.refused, spelled) : say.refused(met.refused, spelled);
     }
   }
   return null;

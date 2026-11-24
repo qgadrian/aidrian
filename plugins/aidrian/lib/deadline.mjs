@@ -4,13 +4,21 @@
 // guards check it in their loops and before their slow reads (checkDeadline); outside a budget, as in every other hook
 // and command, the check does nothing.
 
-// The milliseconds from a hook's start its guards may take, well inside the host's 5 second hook timeout, past which the
-// host runs the call with no guard: GUARD_BUDGET_MS, or AIDRIAN_GUARD_BUDGET_MS in `env` when it is lower, as a test
-// sets it. The variable may only lower it.
+// The milliseconds from a hook's start its guards may take, at least 2.5 seconds inside the 10 second timeout hooks.json
+// gives each hook that runs under it, past which the host runs the call with no guard: GUARD_BUDGET_MS for a call that
+// runs past it, an attended main session's, and HELD_BUDGET_MS for a `held` call, which past it is refused: a
+// subagent's, or a session's an unattended or driver mark holds. AIDRIAN_GUARD_BUDGET_MS in `env` gives a lower budget
+// for both, as a test sets it; the variable may only lower them.
+// The guards read a call in about 100 ms on a quiet machine. A loaded one, with several sessions and test suites at
+// once, held small Edits and Writes past 2.5 seconds, and each refusal cost a held session a retry or its work: for a
+// call a refusal would stop, a slower answer costs less. An attended session's call runs at the budget's end anyway,
+// so it waits no longer.
 export const GUARD_BUDGET_MS = 2500;
-export function guardBudget(env = process.env) {
+export const HELD_BUDGET_MS = 7500;
+export function guardBudget(env = process.env, { held = false } = {}) {
+  const own = held ? HELD_BUDGET_MS : GUARD_BUDGET_MS;
   const lowered = env.AIDRIAN_GUARD_BUDGET_MS ? Number(env.AIDRIAN_GUARD_BUDGET_MS) : Number.NaN;
-  return Number.isFinite(lowered) && lowered >= 0 ? Math.min(lowered, GUARD_BUDGET_MS) : GUARD_BUDGET_MS;
+  return Number.isFinite(lowered) && lowered >= 0 ? Math.min(lowered, own) : own;
 }
 
 // What checkDeadline throws once the budget is spent.

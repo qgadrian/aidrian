@@ -21,6 +21,7 @@ The keys are in [Project run](config.md#project-run); how a start confines its s
 | [The decision label](#the-decision-label) | tracker team | both | `ask labels` |
 | [Recorded decisions](#recorded-decisions) | team once, then each issue before the run | both | `recorded-decision` of `init --check` |
 | [Local binding](#local-binding) | team | both | `note local-binding` |
+| [Full auto](#full-auto) | team | Claude Code | `note full-auto`, `note human` |
 | [Keep the user-scope plugin current](#keep-the-user-scope-plugin-current) | machine, after each release | Claude Code | `access` when it is not installed |
 | [Team config](#team-config) | team | both | `policy`, `tracker`, `handoff` |
 | [Host start](#host-start) | team, and on Codex each install | both | `host` |
@@ -235,6 +236,23 @@ interface of the machine and lets the session reach every service on its loopbac
 On Codex it turns the network proxy's local binding on. While it is on, the preflight prints `note local-binding`
 with the host's risk. Bind each test server to `127.0.0.1`, never `0.0.0.0` ([Project run](config.md#project-run)).
 
+## Full auto
+
+`projectRun.fullAuto`, default `false`, lets the run go on with no person when the host continues the driver under a
+new session id: that session takes custody with `aidrian project resume <run> --custody` and drives on
+([Full auto](config.md#full-auto)).
+The team sets it in `config.json` on the default branch, and the forge and the local ref must both say it.
+It takes no decision, merges nothing more, signs nothing off, and lifts no halt.
+The host's record of a continuation is read on Claude Code alone, so custody moves this way only there.
+
+While it is on, the preflight prints `note full-auto`, then a `note human` line for each thing that still waits on a
+person, and one for each setting that parks more than it must; the driver hands the Human every such line in turn 1.
+Clear what can be cleared before the run, such as a decision a [recorded decision](#recorded-decisions) can answer.
+
+An issue that needs a person's input the run cannot record, such as an account or a credential only the Human can
+create, waits for them: block it in the tracker, before `init`, on an open issue outside the project.
+The run then never starts it, nor an issue that waits on it, and a later run takes it up once that issue is completed.
+
 ## Keep the user-scope plugin current
 
 The issue session starts with `--setting-sources user`, so it loads only the plugin the user's settings enable: a
@@ -400,7 +418,9 @@ the old run parked it on the branch the snapshot names, or on an attempt branch 
 repository: `init` prints a `resumed:` line for it, and its first attempt goes on from that branch as the forge holds it, its open pull request its own, when the branch
 still holds the commit the old run recorded at the park, or, for an old run from before commits were recorded, the head
 of the open pull request its result named ([Project run](config.md#project-run)). An old run that parked before any
-push gives a plain first attempt.
+push gives a plain first attempt. An issue the old run left on an open pull request that a person merged after that
+run ended is not resumed: `init` prints a `landed:` line for it, counts it done, and the driver's first report moves it
+to done in the tracker and takes the decision label off.
 Any other started issue is a blocker.
 A first attempt of any other issue cuts its branch from the base tip, so one whose branch is already on the forge parks
 as unreconciled at its start, with the branch and its pull request left as they are.

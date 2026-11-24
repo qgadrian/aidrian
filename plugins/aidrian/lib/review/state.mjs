@@ -124,7 +124,7 @@ export const ofRepo = (state, entry, repo) => {
   return !repo || !own || String(own).toLowerCase() === String(repo).toLowerCase();
 };
 
-const pendingOf = (state) => (Array.isArray(state?.pending) ? state.pending.filter(isObject) : []);
+export const pendingOf = (state) => (Array.isArray(state?.pending) ? state.pending.filter(isObject) : []);
 
 // Marks the owed entries of `kind` on `state` answered by `by`'s answer for `head`. An answer counts for an entry made
 // for that head, or for an earlier head that `head` descends from: `isAncestor(a, b)`, git's `merge-base
@@ -145,8 +145,9 @@ export function answerPending(state, kind, { head, by, repo = null, isAncestor =
 export function noteOutcome(state, { status, head, reason, carried_from, carried_base, plan, cap }, isAncestor = () => false, repo = null) {
   const carried = typeof carried_from === 'string' ? { carried_from, ...(typeof carried_base === 'string' ? { carried_base } : {}) } : {};
   const reasons = status === 'none_needed' && Array.isArray(plan?.reasons) ? { reasons: plan.reasons.slice(0, MAX_REASONS).map(clip), depth: plan.depth } : {};
-  // A round_limit keeps what stopped it (review/run.mjs capCause), this machine's alone: the posted copy drops it.
-  const cause = status === 'round_limit' && isObject(cap) ? { cap } : {};
+  // A round_limit, and a check at the cap waiting for its judge, keep what stopped it (review/run.mjs capCause), this
+  // machine's alone: the posted copy drops it.
+  const cause = CAPPED.has(status) && isObject(cap) ? { cap } : {};
   state.outcome = { status, head, at: new Date().toISOString(), ...(reason ? { reason: clip(reason) } : {}), ...reasons, ...carried, ...cause };
   // A carried outcome ran no review, so it answers none: a review owed on the merge head stays owed.
   if (FINISHED.has(status) && typeof carried_from !== 'string') answerPending(state, 'review', { head, by: status, isAncestor, repo });
@@ -464,7 +465,7 @@ export function owedElsewhere(project, pr, repo) {
   const held = new Set(pendingOf(readLocalState(project, pr, target)).map((entry) => entry.id).filter(Boolean));
   return recordsOf(project, pr)
     .filter((state) => repoName(state.repo ?? null) !== target)
-    .flatMap((state) => (state.pending ?? []).filter((entry) => isObject(entry) && !entry.moved && repoName(entry.repo ?? null) === target && !(entry.id && held.has(entry.id))));
+    .flatMap((state) => pendingOf(state).filter((entry) => !entry.moved && repoName(entry.repo ?? null) === target && !(entry.id && held.has(entry.id))));
 }
 
 // This machine's review record of pull request `pr` of `repo`, or null: that repository's own, never another's. Its file;
@@ -531,8 +532,10 @@ function writeState(project, state, { repo = null } = {}) {
   writeAt(project, state);
 }
 
-// Holds `state` to the repository `repo` of the command that writes it (writeLocalState).
-function ownedBy(state, repo) {
+// Holds `state` to the repository `repo` of the command that writes it (writeLocalState): a record that names none
+// takes `repo`, and one that names another throws. The unattended waiver's gate names its copy so too (waiver-stand.mjs
+// readGate), so it weighs the owed reviews the write would merge in.
+export function ownedBy(state, repo) {
   const want = repoName(repo ?? null);
   if (want === null) return;
   const named = repoName(state.repo ?? null);
@@ -553,7 +556,7 @@ function adoptOwed(project, state) {
   for (const [at, dir] of recordFolders(project).entries()) {
     for (const { file: other, state: record } of filesIn(dir, state.pr)) {
       if (repoName(record.repo ?? null) === target) continue;
-      const ours = (record.pending ?? []).filter((entry) => isObject(entry) && !entry.moved && repoName(entry.repo ?? null) === target);
+      const ours = pendingOf(record).filter((entry) => !entry.moved && repoName(entry.repo ?? null) === target);
       if (!ours.length) continue;
       const ids = new Set(pendingOf(state).map((entry) => entry.id).filter(Boolean));
       state.pending = [...pendingOf(state), ...ours.filter((entry) => !entry.id || !ids.has(entry.id)).map(({ moved: _moved, ...entry }) => entry)];
@@ -561,6 +564,18 @@ function adoptOwed(project, state) {
     }
   }
   return marks;
+}
+
+// `state` as its next write would hold its owed entries, as a copy: adoptOwed's merge of the entries another
+// repository's record owes for it, the one merge the writer makes, with no record written or marked. A record whose
+// repository is unknown, and none at all, are returned as they are. What a gate weighs before a write, such as the
+// unattended waiver's before `aidrian pr extend --verdict land` records (waiver-stand.mjs readGate), so the gate and
+// the write never count an owed entry differently: by id, and an entry with no id always counts.
+export function adoptedCopy(project, state) {
+  if (!isObject(state) || repoName(state.repo ?? null) === null) return state;
+  const copy = { ...state, pending: pendingOf(state) };
+  adoptOwed(project, copy);
+  return copy;
 }
 
 // Marks the entries adoptOwed took as `moved` in the records that held them, where it can write; one it cannot keeps its
@@ -711,6 +726,8 @@ export const otherRecordMessage = (pr, recorded, repo, what) =>
 // { held, why: 'findings', finding }, with `own`, this machine's record and the copy's security marks, for the delete.
 // A caller that read no reading, such as a test of the record alone, builds on the copy as on a private one.
 // With `ignoreOther`, this machine's record is left out when it names another repository than `repo` (otherRecordRepo).
+// Every { state } also carries `local`, this machine's record file of that one read (or null), so a writer compares the
+// revision the state was built from, and merges its owed entries, with no second read before its write.
 export function readRecord(project, pr, comments, repo, reading = undefined, { ignoreOther = false } = {}) {
   const body = summaryComment(comments)?.body;
   const read = readLocalState(project, pr, repo);
@@ -719,13 +736,13 @@ export function readRecord(project, pr, comments, repo, reading = undefined, { i
   const held = remote ? null : heldRevision(body);
   if (held !== null && (local?.revision ?? 0) < held) return { held, why: heldWhy(body) };
   const chosen = newer(local, remote);
-  if (!chosen || chosen !== remote) return { state: chosen ?? emptyState(pr, repo) };
+  if (!chosen || chosen !== remote) return { state: chosen ?? emptyState(pr, repo), local: read };
   if (reading !== undefined && !isPrivate(typeof reading === 'function' ? reading() : reading)) {
     const own = widenMarks(local ?? emptyState(pr, repo), remote);
     const current = Array.isArray(remote.planNote?.current) ? remote.planNote.current : null;
     const finding = untextedBlocking(remote, local, current);
     if (finding) return { held: remote.revision ?? 0, why: 'findings', finding, own };
-    return { state: restartFrom(own, remote) };
+    return { state: restartFrom(own, remote), local: read };
   }
   // The private copy holds less than the record where a check withheld a string: that is filled from this machine's own
   // record. A machine with none fills from an empty one, so every finding of the copy is marked adopted.
@@ -734,7 +751,7 @@ export function readRecord(project, pr, comments, repo, reading = undefined, { i
   // since nothing takes one back: it is kept (record-merge.mjs keepHuman), as when a session on an older plugin posted
   // from its old-name file.
   if (local) keepHuman(remote, local);
-  return { state: remote };
+  return { state: remote, local: read };
 }
 
 // The pull request's comment copy `copy` as `repo`'s record, or null. The comment is that pull request's own, so a copy

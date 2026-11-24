@@ -339,7 +339,7 @@ test('an unattended merge at the round cap with the waiver off is told to file a
   // A check at the cap waiting for its judge names the judge's route, still with no question.
   r.record(capped('extension_check', [{ source: 'plan', round: 3, head: HEAD, status: 'judging', mode: 'auto', red_flags: [] }]));
   const judging = merge(r, MERGE) ?? '';
-  assert.match(judging, /The check at round 3 waits for its judge: .*`aidrian pr extend 7 --verdict extend\|stop --reason "<evidence>" --head <sha>`\./u);
+  assert.match(judging, /The check at round 3 waits for its judge: .*record its word with the `record` command of that dispatch, `aidrian pr extend 7 --verdict \.\.\.`\./u);
   assert.doesNotMatch(judging, /put .* to the Human with AskUserQuestion|Only the Human decides/u);
   // Any other denial in such a session asks no question either.
   r.record((state) => (state.outcome = { status: 'running', head: HEAD, at: '2026-11-18T09:00:00.000Z' }));

@@ -7,7 +7,7 @@
 // switch is on (lib/project-run-gate.mjs decisionFor). It lies apart from `<state>/decisions/`, the decision-review records.
 // Only file and path imports, so the hooks that guard the folder load nothing more.
 
-import { unlinkSync } from 'node:fs';
+import { readdirSync, unlinkSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import path from 'node:path';
 
@@ -65,6 +65,24 @@ export function readRecordedDecision({ projectKey, key, env = process.env }) {
   if (!isEntry(read.value)) return { problem: `${file} is not ${KIND}`, malformed: true };
   const { heading, sha256, by, at } = read.value;
   return { entry: { heading, sha256, by, at } };
+}
+
+// How many decisions the Human recorded for the project `projectKey` on this machine: { count }, the files of its folder
+// that readRecordedDecision reads as an entry, each read as a start reads it, or { problem } when the folder cannot be
+// trusted (storePathProblem) or listed. A folder not made yet holds none. It gives a count only, never an entry.
+export function countRecordedDecisions({ projectKey, env = process.env }) {
+  if (typeof projectKey !== 'string' || !PROJECT_KEY.test(projectKey)) return { problem: `${JSON.stringify(String(projectKey))} names no project the recorded-decision store keeps` };
+  const folder = path.join(decisionStoreFolder(env), projectKey);
+  const above = storePathProblem(path.join(folder, 'entry.json'), stateRoot(env));
+  if (above) return { problem: `the recorded-decision store cannot be trusted: ${above}` };
+  let names;
+  try {
+    names = readdirSync(folder);
+  } catch (error) {
+    return error.code === 'ENOENT' ? { count: 0 } : { problem: `the recorded-decision store ${folder} cannot be listed (${error.code ?? 'no code'})` };
+  }
+  const keys = names.map((name) => /^(.+)\.json$/u.exec(name)?.[1]).filter((key) => key !== undefined && ISSUE_KEY.test(key));
+  return { count: keys.filter((key) => readRecordedDecision({ projectKey, key, env }).entry).length };
 }
 
 // Records the decision on issue `key` of the project `projectKey` as the section headed `heading` whose sha256 is

@@ -1832,7 +1832,7 @@ test('project is a command with its forms, and init refuses a session the host n
   assert.ok(lines.includes('  aidrian project wait RUN [--max-wait SECONDS] [--project DIR]'));
   assert.ok(lines.includes('  aidrian project result RUN ISSUE --file PATH [--project DIR]'));
   assert.ok(lines.includes('  aidrian project handoff RUN BRIEF [--project DIR]'));
-  assert.ok(lines.includes('  aidrian project resume RUN [--project DIR]'));
+  assert.ok(lines.includes('  aidrian project resume RUN [--custody] [--project DIR]'));
   assert.ok(lines.includes('  aidrian project end RUN [--project DIR]'));
   assert.ok(lines.includes('  aidrian project report RUN [--json] [--project DIR]'));
   assert.ok(lines.includes('  aidrian project recorded RUN ISSUE [--project DIR]'));

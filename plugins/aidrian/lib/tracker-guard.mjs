@@ -399,7 +399,7 @@ function driverRefusal(writer, call, adapter, short, human) {
     if (typeof body !== 'string' || bodyHash(body) !== owed.sha256) return refused(`the comment on ${owed.key} is not the body ${report} printed`, `Post that body exactly, as its JSON gives it, with sha256 ${owed.sha256}`);
     return null;
   }
-  const wanted = { [call.spec.status]: owed.status, [call.spec.label]: owed.label === null ? null : [owed.label] };
+  const wanted = { [call.spec.status]: owed.status, [call.spec.label]: owed.label === null ? null : [owed.label], ...(call.spec.unlabel ? { [call.spec.unlabel]: owed.unlabel ? [owed.unlabel] : null } : {}) };
   const extra = call.fields.find((field) => field !== call.spec.key && (!(field in wanted) || wanted[field] === null));
   if (extra) return refused(`${short} sets ${extra} on ${owed.key}, and ${only}`, `Set only ${describeWanted(wanted)}`);
   const wrong = call.fields.find((field) => field !== call.spec.key && JSON.stringify(call.input[field]) !== JSON.stringify(wanted[field]));

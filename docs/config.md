@@ -127,7 +127,7 @@ In a group such as `github`, set only the keys you change; the others keep their
     "triage": { "issueCreation": "confirm", "labels": ["persona-audit", "persona:{persona}", "severity:{severity}"] }
   },
   "tracker": { "enabled": false, "workspace": null, "readTools": [], "writeTools": [], "team": null, "project": null },
-  "projectRun": { "allow": false, "maxParallel": 1, "maxStarts": 300, "issueHours": 6, "blockedStatus": null, "decisionLabel": "needs-decision", "unverifiedHosts": false, "workflowSecretsAccepted": false, "forgeProtectionAccepted": false, "outsideSandbox": [], "mcpServers": {}, "nonTrackerServers": [], "registries": [], "localBinding": false, "recordedDecisions": false }
+  "projectRun": { "allow": false, "maxParallel": 1, "maxStarts": 300, "issueHours": 6, "blockedStatus": null, "decisionLabel": "needs-decision", "unverifiedHosts": false, "workflowSecretsAccepted": false, "forgeProtectionAccepted": false, "outsideSandbox": [], "mcpServers": {}, "nonTrackerServers": [], "registries": [], "localBinding": false, "recordedDecisions": false, "fullAuto": false }
 }
 ```
 
@@ -211,7 +211,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `attribution.commit` | The trailers an agent's commit must carry: [Attribution](#attribution). `[]`, the default, is off. |
 | `attribution.pullRequest` | The lines a pull request body an agent opens must end with: [Attribution](#attribution). `[]` is off. |
 | `attribution.exclude` | The agents the `Assisted-by:` lines leave out; by default the ones that only search and read. |
-| `telemetry.enabled` | `false` stops the hooks and `aidrian decisions` from writing the [dispatch log](dispatch-log.md): [Telemetry](#telemetry). It also refuses recording a judge with `aidrian pr waive --judge`, and keeps auto-merge from taking a judge's verdict, since the log confirms the judge: [Unattended waiver](#unattended-waiver). |
+| `telemetry.enabled` | `false` stops the hooks and `aidrian decisions` from writing the [dispatch log](dispatch-log.md): [Telemetry](#telemetry). It also refuses recording a judge with `aidrian pr extend --judge` or `aidrian pr waive --judge`, and keeps auto-merge from taking a judge's verdict, since the log confirms the judge: [Unattended waiver](#unattended-waiver). |
 | `telemetry.docReads` | `false` leaves out which knowledge docs each agent read. |
 | `telemetry.hookDenies` | `false` leaves out the `hook_deny` row each block by one of the plugin's rules writes; the rules still block. |
 | `telemetry.maxMb` | The size, in megabytes, at which the dispatch log moves to its rotated part. |
@@ -522,8 +522,22 @@ the round cap there, the team's `allow` on the default branch and the base, read
 copy, this machine's switch, the open findings as above, the bot's pass of the head, no judge's verdict on that head
 yet (one judge rules per head), a host that confirms a judge with telemetry on, no sign-off owed, and, in a project
 run, its budget of waived merges and a pull request of the run's pinned repository. It also refuses a working copy
-whose state folder is not the default branch's. Exit 1 says why; exit 3 is a read that failed. `autopilot` runs it at
-the cap and dispatches a judge only on exit 0.
+whose state folder is not the default branch's. Exit 1 says why; exit 3 is a read that failed.
+
+At the cap, a session types no gate command: the review step runs the same gate and reports it.
+At `round_limit` and at `extension_check`, the JSON of `aidrian pr review` carries `waiver`, `{ may, why }`.
+Only with `may` true is a judge offered `land`: the check's own judge at `extension_check`, or one judge the step's `dispatch` names at `round_limit`.
+With `may` true, the step's `record` takes `land` or `stop`, naming the judge:
+`aidrian pr extend <PR> --verdict land|stop --reason "<evidence>" --head <sha> --judge <agent id>`.
+At `extension_check`, its `record_extend` takes `extend`, with no `--judge`.
+With `may` false, at `extension_check`, `record` takes `extend` or `stop`, and at `round_limit` no judge is dispatched.
+`land` asks the same gate again, and is refused, writing nothing, whenever it refuses.
+Both verdict commands take the pull request's number, never a URL, which exits 2.
+`--repo` is a flag of `aidrian pr extend`; `aidrian pr waive` takes the repository the forge names for the number.
+Neither takes origin in its place: when the forge cannot look the pull request up, both exit 3 and write nothing.
+It then records the `waive` that `aidrian pr waive --verdict waive --judge` records, through the same code; `stop` with `--judge` records its `refuse`.
+[At the cap under autopilot](review.md#at-the-cap-under-autopilot) has the details.
+`aidrian pr waive` stays for a session a person attends.
 
 A project run merges at most 3 pull requests on a verdict. The gate and `aidrian pr auto-merge` only count that budget;
 the merge guard takes it at the merge itself, under the run's ledger lock, once every other check of the merge,
@@ -548,17 +562,18 @@ issue, reports the pull request stopped at its round limit, and stops, and it na
 
 ### Example
 
-1. The review of pull request #151 stops with `round_limit` on head `abc1234`.
-2. The session runs `gh pr merge 151`. The merge guard denies it and names `aidrian pr waive` as a second route.
-3. The session runs `aidrian pr waive 151 --gate`, which exits 0, then dispatches a fresh read-only judge, as the
-   `pr-review-loop` skill's `references/review-plan.md` § At the cap says. The judge rules that the change may merge.
-4. The session records that verdict, naming the judge's agent id:
-   `aidrian pr waive 151 --verdict waive --reason "<the judge's evidence>" --judge <agent id>`.
-5. `gh pr merge 151 --squash --match-head-commit abc1234` passes the guard. Give the full SHA, as the denial prints it.
+1. The review of pull request #151 stops at the cap on head `abc1234` with `extension_check`, and its `waiver` says `"may": true`.
+2. The session dispatches the check's judge with the `brief` the step printed, which offers `land`, and keeps the agent id the host returns.
+   The judge rules that no extra round is worth it and that the change may merge with its open findings filed.
+3. The session records that verdict, naming the judge's agent id:
+   `aidrian pr extend 151 --verdict land --reason "<the judge's evidence>" --head <sha> --judge <agent id>`.
+4. `gh pr merge 151 --squash --match-head-commit abc1234` passes the guard. Give the full SHA, as the step prints it.
+   Under `autopilot`, the session merges only through the `pr-auto-merge` skill instead.
 
-When the judge says no, the session records `aidrian pr waive 151 --verdict refuse --reason "<why>"` and stops.
+When the judge says no, the session records `aidrian pr extend 151 --verdict stop --reason "<why>" --head <sha> --judge <agent id>` and stops.
+That records a `refuse`, so no second judge rules on the head.
 The last verdict for a head counts, so a `refuse` withdraws an earlier `waive`, and a new push needs a new verdict.
-The command records `waive` only while this machine's switch is on.
+`aidrian pr waive 151 --verdict waive|refuse` records the same entries for a session a person attends, `waive` only while this machine's switch is on.
 The verdicts are kept in the [review record](review.md#the-record), and shown in the pull request's summary comment
 when `review.record` posts the record there.
 
@@ -1307,9 +1322,9 @@ An entry has `deny`, `allow`, or both, each a list of tool patterns:
   for a Bash deny only on Windows with Git Bash installed. So on Windows without Git Bash, a `Bash` deny in `main` or `*`
   leaves the main session no shell tool: a recorded limit ([provider page](providers/claude-code.md#powershell-commands)).
 - The gates are asked before the guards below, which read a command's paths and globs, so a call a gate denies is
-  denied before the guards read it. The guards then have a time budget, 2.5 seconds from the hook's start, well inside
-  the host's 5 second hook timeout: a subagent's call they cannot finish reading in time is refused, as is one of a
-  main session no Human attends or a project run's driver, and an attended main session's runs. A call that is no shell
+  denied before the guards read it. The guards then have a time budget from the hook's start, inside the hook's
+  10 second timeout: a subagent's call they cannot finish reading in 7.5 seconds is refused, as is one of a main session
+  no Human attends or a project run's driver, and an attended main session's runs after 2.5 seconds. A call that is no shell
   and writes no file, such as a Read, runs past the budget for every session, as no guard refuses it.
   A PowerShell command of more than 512 words, counting each case, and a Bash call of more than 1024 write targets,
   of a subagent, a main session no Human attends, or a project run's driver, are refused too, as the guards read no more
@@ -1896,6 +1911,7 @@ the machine's local file, the forge, and the host; each `aidrian project preflig
 | `projectRun.registries` | `[]` | The package registries a confined session may reach to install the project's dependencies, by ecosystem name, each once: `npm` (`registry.npmjs.org`, and `registry.yarnpkg.com`, yarn's default), `pypi` (`pypi.org` and `files.pythonhosted.org`), `crates` (`index.crates.io` and `static.crates.io`), `go` (`proxy.golang.org` and `sum.golang.org`), and `rubygems` (`index.rubygems.org` and `rubygems.org`). The hosts are fixed in `lib/project-registries.mjs`: no name of a host, and no other domain, is ever accepted. A team opts in; a project with no code yet lists the ecosystems of the stack it will scaffold. Install scripts a package runs, such as npm's `postinstall`, run inside the session's sandbox, under its write and network limits, which is why letting a session install is acceptable. Every listed registry but `pypi` and `crates` gives a channel a sandboxed command can send data out on that an attacker can read, `go` the widest, since its proxy fetches from any host a module path names; each is accepted because the forge channel gives one already, and narrowing the forge token reopens that ruling ([Dependency installs](providers/claude-code.md#dependency-installs) names each one's path). With `npm` listed, corepack downloads pnpm and yarn from it too. Every session, whatever this lists, keeps its package managers' caches in its attempt's `cache` folder, and the home folder stays as it is. Codex holds a session to the same hosts through its network proxy, which no live run has checked yet ([Codex](providers/codex.md#project-start)). Only the names both the default branch on the forge and the local ref list count. |
 | `projectRun.localBinding` | `false` | Whether an issue's session may bind local ports, so the services its checks need, such as a database, an API server, a worker, or a browser, run on this machine. On Claude Code the session's sandbox then starts with `allowLocalBinding: true`, and an organization's managed `allowLocalBinding` passes at `true` or `false`. On macOS that lets a sandboxed command bind, and take inbound connections, on every interface of this machine, not only the loopback, so a server bound to `0.0.0.0` takes connections from other machines the firewall lets through, and lets it reach every service listening on this machine's loopback, outside the network allowlist; there the [sandbox proof](providers/claude-code.md#the-sandbox-proof) runs no localhost listener, so it does not check the loopback. On Linux the host gives a sandboxed command a network namespace of its own, so the key changes nothing there, and the proof keeps its listener. On Codex the start adds `-c features.network_proxy.allow_local_binding=true`, which in Codex 0.171.0 also turns off the proxy's refusal of private and link-local addresses, so an allowed host name that resolves to one is reached too; no live run has checked it ([Codex](providers/codex.md#project-start)). Bind each test server to `127.0.0.1`, never `0.0.0.0`. `aidrian project preflight` prints a `note local-binding` line naming the host's risk while it is on ([residual risks](providers/claude-code.md#project-start)). Read from the default branch on the forge and the local ref; both must set it, and no working copy or local file turns it on. Never set by a recipe. |
 | `projectRun.recordedDecisions` | `false` | Whether a run's starts read the decisions the Human recorded on issues in this machine's recorded-decision store, each pinning one section of the issue's description by its heading and sha256 ([Recorded decisions](#recorded-decisions)). A start hands a section that still hashes so to the issue's session as the Human's answer to the decision it names, and nothing more. Read from the default branch on the forge and the local ref; both must set it. It took an object of entries until it became a switch: a config that still sets one is refused, and its entries are recorded with `aidrian project decision ISSUE --heading TEXT --record`. Never set by a recipe. |
+| `projectRun.fullAuto` | `false` | Standing consent for custody of a driver session the host continued under a new id: that session takes the run with `aidrian project resume RUN --custody` and no person ([Full auto](#full-auto)). It takes no decision, merges nothing more, signs nothing off, and lifts no halt. Read from the default branch on the forge and the local ref; both must set it. Never set by a recipe. |
 | `projectRun.forgeTokenKeychain` in `.aidrian.local.json` | unset | This machine's keychain entry for the forge token of this project's issue sessions, `{ "service": "<name>", "account": "<name>" }`, such as a fine-grained token limited to the run's repository. The driver reads the token outside the sandbox, which hides the system keyring from the session, from the first of three sources that gives one: (1) this entry, on macOS; (2) the machine's default entry, service `aidrian-project-run` with any account, which every project on the machine shares, on macOS, and for a github.com run alone; (3) the forge CLI's own login, `gh auth token --hostname <host>`. Each keychain read is `security find-generic-password -s <service> [-a <account>] -w`, an argument list with no shell, with the `security` first on PATH. An entry that is not there passes to the next source; on another platform the key is a preflight `note` that it is unsupported. No source with a token blocks the preflight (`access`) and halts a start, and `note token:` names the source the preflight used, never the token. Read only from the main checkout's file, and only while git tracks no `.aidrian.local.json` there; any other shape is a config error and reads unset. The team's `config.json` cannot set it, and a subagent or a session no Human attends may not write it. How the token reaches the session: [Project start](providers/claude-code.md#project-start). |
 
 On a host whose start proves its sandbox ([Claude Code](providers/claude-code.md#the-sandbox-proof)), a start refuses
@@ -1915,7 +1931,9 @@ session that never named itself, whose hooks never ran, or whose sandbox proof f
 ([Claude Code](providers/claude-code.md#the-sandbox-proof)), gives its attempt back (a `void` start row, the issue open
 again) and writes a `halt` row: every later start refuses, however long ago it was written, until the Human's own shell,
 or another session a person attends that never drove the run, runs `aidrian project resume RUN`, which writes a `resume`
-row. The driver never runs it, and the hooks and the command refuse it to every session of the run's custody. `next` prints `halted <cause>` first, and `--json` adds `halt`.
+row. The driver never runs it, and the hooks and the command refuse it to every session of the run's custody; the
+session the host continued the driver as takes custody with it and lifts no halt ([Full auto](#full-auto)).
+`next` prints `halted <cause>` first, and `--json` adds `halt`.
 An issue's session that finds its own environment broken, such as a sandbox that refuses what the work needs, a forge
 sign-in or push that fails, or a host tool that fails, records the result `environment`, with the failing command and
 its error as its `stop`, which it must name. Every result's `stop` has anything shaped like a token, a URL's password,
@@ -2069,7 +2087,10 @@ prints `paused <issue> usage until <time>` and goes on waiting on it. Every othe
 attempt ends `limit`: one that ended on the limit, one of a host that does not continue (Codex), a rate limit, a
 session whose record is unchanged once its pause and that grace are over, and a limit past the run's 24 pauses. `wait` prints
 `limit <issue> <kind> until <time> -> open`. A limited attempt counts toward no cap of the
-issue, so a limit never parks one. Once the pause is over, the same issue starts again as a new attempt: a fresh
+issue, though it takes an attempt number: an issue is started at most 27 times, its 3 attempts that count and one
+for each of the run's 24 pauses. An attempt that ends with no number left, on a limit or a failure, parks the issue
+`attempts` (`-> parked attempts`) instead of opening it, so the run reports it rather than leave it open with no start
+the gate allows, as limits after an attended resume of a halt can make it. Once the pause is over, the same issue starts again as a new attempt: a fresh
 clone of the issue's branch as the forge holds it, whose prompt says the attempt before stopped on a limit. Work the
 limited session had not pushed is lost, which the host's own continuation makes rarer. A run waits out 24 pauses at
 most: the next limit writes a `halt` row instead, which only `aidrian project resume` lifts.
@@ -2081,7 +2102,14 @@ reset, which `autoContinueAtUsageLimit` in the user's own settings asks of the h
 For the issue's own session, whose unattended mark names the run and the issue, its attempt clone takes the run's
 main checkout, named in the ledger's init row, as its own: the machine's switches and decisions come from that
 checkout's `.aidrian.local.json`, never the clone's. Any other reader, and a clone whose link cannot be read or whose
-state folder the project does not name, reads every switch off.
+state folder the project does not name, reads every switch off. A confined session's sandbox denies it the main
+checkout, so its own commands, such as `aidrian pr auto-merge` and `stop-action`, cannot read that link: for them the
+auto-merge switch is the one the start row records as `machine.autoMerge`, which the driver reads in the main checkout
+as `aidrian pr auto-merge` reads it there, `unset` only for a local file git does not track, which then follows a team
+default of `"on"`. It holds only while the main checkout is denied to the reading process and the session's own mark
+names the run, the issue, the main checkout, and the clone as the folder its start began in; every other switch still
+reads off there. The merge guard, a hook outside the sandbox, still reads the main checkout's own switch at the merge,
+so a switch turned off after the start stops the merge.
 
 `init` reads none of these keys and does not check `allow`; `next` and `init --check` read `maxParallel` from the default branch, as `start` and `wait` read them all.
 
@@ -2122,6 +2150,18 @@ The snapshot input is one JSON object, at most 1 MiB, read as a regular file and
   the `head` that result recorded, and that `branch`, prints a `resumed:` line, and `next`, `start`, and the gate read
   the same plan. The new run works on that branch from its first attempt: `next` names it, and the start's clone, its
   start row, the session's push, the merge guard, and `stop-action` all take it.
+  A parked issue whose latest result in that run is `pr_open`, whose pull request the forge shows merged now, as after
+  a person merged it once that run ended, is never resumed: `init` and its check give it the check `wait` gives a merged
+  `pr_open` result, into the default branch of the pinned repository after that attempt started. When it passes, the
+  issue counts as done for the plan, so its dependents may start, `init` prints `landed: <n> started issues whose pull
+  request an earlier run left open merged since, which this run records done: <issue> (#<n>)`, and writes a `landed` row
+  and the issue done after its init row. That owes the report a merge owes, the done status, which also takes the
+  decision label the earlier run's report set off (Linear `removeLabels`), as that report's `recorded` row names it; a
+  ledger from before those rows named a label takes none off, since the team's label may have changed since. The
+  driver's first `report` makes that write, within its tracker guard. A run that ends before that report is recorded
+  leaves the issue started in the tracker: the next run's `init` takes it in as landed again, with no second forge
+  read, while its snapshot names the same branch. When the check fails, or the forge cannot answer, the issue is a `blocker snapshot` line
+  naming why, and `init` refuses.
   A result that parks an issue records the commit the forge shows its branch at then, or null when it shows none;
   a `pr_open` result records the head its pull request's check read, with no second read. A `pr_open` result whose
   pull request the forge shows merged by the time `wait` takes it in is checked as a `merged` one is, into the default
@@ -2227,8 +2267,8 @@ from any branch, and a `note triggers` line for other services that act on a pus
 preview deploys and ChatOps bots. It prints `ok NAME`, `blocker NAME: WHY`, `note NAME: WHAT`,
 or `ask NAME: WHAT` for a read the forge or tracker lacks, such as the decision label's existence, and exits 1 on any
 blocker. `init RUN --file PATH --check` checks the input as `init` would, prints its blockers
-(problems, cycles, issues started outside the run, a `resumed:` line for the started issues an earlier run parked, and, when `projectRun.mcpServers` holds no tracker server, each issue
-to start with no text) and the `next` lines, and writes no run. An issue's text never comes from a file a session
+(problems, cycles, issues started outside the run, a `resumed:` line for the started issues an earlier run parked, a `landed:` line for those whose open pull request merged since, and, when `projectRun.mcpServers` holds no tracker server, each issue
+that may still start with no text, never a canceled or skipped one) and the `next` lines, and writes no run. An issue's text never comes from a file a session
 writes: after each call of a tracker's issue read (Linear's `get_issue` and `list_issues`), whatever `tracker.enabled`
 says, in a project whose base branch's config.json sets `projectRun.allow`, the post-call tracker hook records each
 issue the tracker's answer holds, by its key, its title, description, and labels, under the unattended marks
@@ -2397,6 +2437,33 @@ It allows no real or personal data, no secret, and no new access, and it is no `
 sign-off of a pull request, so those park as before.
 A result that still carries a decision parks as on any other issue, and a flow's sign-off at merge stays the Human's.
 Forget the entry once the issue's pull request merges.
+
+### Full auto
+
+The team's `projectRun.fullAuto` switch lets a run go on when the host continues its driver under a new session id,
+as Claude Code does when it continues a session as a fork, with no person to take the run up.
+The session the host's own record names, and only that one, runs `aidrian project resume RUN --custody` and drives on:
+the [hook](hooks.md#agent-gates) lets that exact command through where the local base ref sets the switch, and the
+command checks the forge's copy too.
+It moves custody only, files a plain unattended mark beside the driver mark, and writes no `resume` row
+([A project run](handoff.md#a-project-run)).
+
+It changes nothing else.
+The decision settings stay the one lever for what a run settles alone: `decisions.mode`, `decisions.unattended`, and
+[recorded decisions](#recorded-decisions).
+It merges nothing the auto-merge gate would hold, gives no sign-off a flow asks the Human for, and lifts no halt.
+A run whose driver chain ended, with no session the host continued its driver as, still waits for the Human.
+
+With the switch on, `aidrian project preflight` prints a `note full-auto:` line, then one `note human:` line for each
+thing that still waits on a person: a policy file's pull request, the default branch's sign-off flows with
+`signoff: "human"`, a floor-class decision with no recorded answer, with the count of grants pinned on this machine,
+a halt, and a run whose driver chain ended.
+One more `note human:` line names each setting that parks more than it must: `decisions.mode` or `decisions.maxMode`
+below `"decide-reversible"`, `decisions.unattended.safeDefaults` other than `"all"`, and
+`github.autoMerge.includeGuardedPaths` off.
+The driver hands the Human every such line in its one turn-1 message, as the complete list.
+The grant count is this machine's store, read as a start reads it, and a count only: a run driven from another machine
+sees none, and a grant stands only at a start whose kept text still hashes so.
 
 ## Testing
 

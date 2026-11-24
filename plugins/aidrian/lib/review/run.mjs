@@ -34,7 +34,7 @@ import { isObject } from '../fs.mjs';
 import { forgeFor } from '../forges/index.mjs';
 import { withGitFacts, withoutGitFacts } from '../git.mjs';
 import { sessionIdentity } from '../hosts/index.mjs';
-import { repoName } from '../remotes.mjs';
+import { repoFlag, repoName } from '../remotes.mjs';
 import { isAncestor } from './diff.mjs';
 import { blocks, isFindingId } from './findings.mjs';
 import { isPrivate, residualRows } from './publish.mjs';
@@ -47,7 +47,7 @@ import { runExec } from './reviewers.mjs';
 import { where } from './settled.mjs';
 import { atCap } from './extension.mjs';
 import { settleCaptures } from './dispatch.mjs';
-import { answerPending, emptyState, mergeIndex, mergePending, noteOutcome, prunePasses, readLocalState, sameCommit, stateFromComment, summaryBody, summaryComment, writeSummary, writeLocalState } from './state.mjs';
+import { answerPending, CAPPED, emptyState, mergeIndex, mergePending, noteOutcome, prunePasses, readLocalState, sameCommit, stateFromComment, summaryBody, summaryComment, writeSummary, writeLocalState } from './state.mjs';
 import * as quota from './quota.mjs';
 import { ghImage } from './visual.mjs';
 import { prepareStep } from './step.mjs';
@@ -209,8 +209,8 @@ function capCause(s, extra) {
 }
 
 // The round cap: round_limit, unless the base branch's github.extraRounds lets the check at the cap run
-// (lib/review/extension.mjs), which may return extension_check or extension_ask instead. A round_limit carries the cap's
-// cause (capCause) to the outcome.
+// (lib/review/extension.mjs), which may return extension_check or extension_ask instead. A round_limit and an
+// extension_check carry the cap's cause (capCause) to the outcome.
 function capReached(s, extra) {
   const { state, head, policy, n, repo, info, planHistory, extensionLog, repoArg = '', opts } = s;
   noteFindings(s, extra);
@@ -226,7 +226,9 @@ function capReached(s, extra) {
     log: extensionLog,
   });
   const { status, ...carried } = decision;
-  return finish(s, status, { ...extra, ...carried, ...(status === 'round_limit' ? { cap: cause } : {}) });
+  // A check waiting for its judge keeps the cause too: a judge's `land` (`aidrian pr extend --verdict land`) stops the
+  // check, and the cap then stands with this cause, as the next step would return it.
+  return finish(s, status, { ...extra, ...carried, ...(CAPPED.has(status) ? { cap: cause } : {}) });
 }
 
 // A reviewer out of quota: the stop goes on the record for this head, and the Human is asked what replaces it, unless
@@ -402,6 +404,13 @@ export async function runReview(args, config, project, deps = {}) {
       opts.pr = url[2];
     }
     const result = await reviewStep(opts, { project, config, ...deps });
+    // At the cap, the unattended waiver's gate, so a session runs no gate command of its own, and the judge it may
+    // dispatch, which `aidrian pr extend --verdict land` records (docs/config.md#unattended-waiver).
+    if (CAPPED.has(result.status)) {
+      const { offerWaiver } = await import('./waiver-stand.mjs');
+      const { offerLand } = await import('./extension.mjs');
+      offerLand(result, offerWaiver(result, project, config, { ...(deps.forge ? { forge: deps.forge } : {}), ...(deps.gate ?? {}) }), repoFlag(project, result.repo));
+    }
     if (result.status === 'round_limit') {
       const { recordSignal, roundLimitSignal } = await import('../lesson-signals.mjs');
       recordSignal(project, roundLimitSignal({ repo: result.repo, pr: result.pr, maxRounds: result.max_rounds, rounds: result.round, ...sessionIdentity(deps.env ?? process.env) }), { config });

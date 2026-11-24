@@ -12,6 +12,11 @@
 //      "auto" grants on extend with no red flag; "ask", or any red flag, returns `extension_ask` until the Human
 //      answers, recorded with `aidrian pr extend <PR> --human approve|deny` (lib/rules/review-extend.mjs guards it).
 //   4. A grant is one round. The next cap repeats the check.
+//   5. Under the unattended waiver (docs/config.md#unattended-waiver), the step's `waiver` says whether the cap may end
+//      in a merge with its open findings filed (waiver-stand.mjs offerWaiver). Only then the judge may also rule `land`,
+//      and at a `round_limit` with no check one judge is dispatched for that alone (offerLand). `aidrian pr extend <PR>
+//      --verdict land --judge <agent id>` stops the check and records the waiver's `waive` verdict, through the gate and
+//      the writer `aidrian pr waive` uses (runLanding); `--verdict stop --judge` records its `refuse`.
 //
 // Each decision is an entry in the review record (lib/review/state.mjs) and a `review_extension` row in the dispatch
 // log. docs/review.md#extra-rounds describes it.
@@ -21,6 +26,8 @@ import { forgeFor } from '../forges/index.mjs';
 import { runGit } from '../git.mjs';
 import { sessionIdentity } from '../hosts/index.mjs';
 import { givenRepo, repoFlag } from '../remotes.mjs';
+import { readGate, asLanded } from './waiver-stand.mjs';
+import { appendVerdict, JUDGE_ID, sameRevision, unreadRepo, urlRef, USAGE, VERDICT_UNREAD, verdictNext } from './waiver.mjs';
 import { changedFiles, diffLines, mergeBase, resolve } from './diff.mjs';
 import { holdToBase } from './in-force.mjs';
 import { classify } from './plan.mjs';
@@ -28,7 +35,7 @@ import { postContext, readReading, shellQuote } from './dispatch.mjs';
 // One reading of a red flag, a full reason or the bare name a posted copy keeps (publish.mjs flagName).
 import { flagName } from './publish.mjs';
 import { isFindingId, twinMatch } from './findings.mjs';
-import { checkId, heldMessage, publishState, readRecord, sameCommit, writeLocalState } from './state.mjs';
+import { checkId, heldMessage, mergePending, publishState, readRecord, sameCommit, SHA_REF, writeLocalState } from './state.mjs';
 
 export { checkId };
 
@@ -320,6 +327,47 @@ const JUDGE_BRIEF =
   'saying whether it is real here or a false alarm (a doc reworded across rounds is normal review work, not bloat). An ' +
   '`extend` over a red flag goes to the Human, who decides. Record it with `record`, the reason naming the evidence.';
 
+// What a judge weighs before `land`, at an `extension_check` or a `round_limit` alike.
+const LAND_TEST =
+  'Read every finding still open on the head, at the head\'s code, and its verdict from `aidrian pr disposition`. ' +
+  'Verdict `land` only when every open finding is `accepted_residual`, `acceptable_as_is`, or `drop_unless_cited`, no ' +
+  'flow has a `violated` or `unverified` invariant, the result has no `unreviewed_head`, and `aidrian pr checks <n>` is ' +
+  'not failing. Give the evidence for each open finding: `path:line` at the head, the round that raised it, and its ' +
+  'disposition. The session records `land` and `stop` with `--judge`, naming your agent id.';
+
+// Added to JUDGE_BRIEF only when the step's `waiver` says a judge may rule on landing.
+const LAND_BRIEF =
+  '`waiver.may` is true: the team lets this pull request merge at the cap with its open findings filed, on your word. ' +
+  'So a third verdict is open: `land`, the cap stands and the pull request may merge as it is. When no extra round is ' +
+  `worth it, rule \`land\` or \`stop\`. ${LAND_TEST} The session records \`extend\` with \`record_extend\`, with no \`--judge\`.`;
+
+// The brief of the one judge a `round_limit` dispatches when its `waiver` says one may rule: no check runs there.
+const WAIVER_BRIEF =
+  'Read-only. This pull request\'s review stopped at its round cap, and `waiver.may` is true: the team lets it merge with ' +
+  `its open findings filed, on your word. Decide whether it may: \`land\` or \`stop\`. ${LAND_TEST}`;
+
+export const WAIVER_PASS = 'waiver-judge';
+const VERDICT_ARG = '--verdict extend|stop ';
+const JUDGE_ARG = ' --judge <agent id>';
+
+// Adds the step's `waiver` (waiver-stand.mjs offerWaiver) to a capped `result`, and, only when it says a judge may
+// rule, the `land` verdict: to the check's judge at `extension_check`, or, at a `round_limit`, a dispatch of one judge
+// for it. Its `record` is then the `land|stop` line, with `--judge`; at the check, `record_extend` is the `extend` line,
+// with none, since parseExtend refuses `--judge` with `extend`. `repoArg` is the step's ` --repo <owner>/<name>` or ''.
+// Returns `result`.
+export function offerLand(result, waiver, repoArg = '') {
+  result.waiver = waiver;
+  if (waiver?.may !== true) return result;
+  if (result.status === 'extension_check' && Array.isArray(result.dispatch) && result.dispatch[0]?.pass === JUDGE_PASS) {
+    const [judge, ...rest] = result.dispatch;
+    const record_extend = judge.record.replace(VERDICT_ARG, '--verdict extend ');
+    result.dispatch = [{ ...judge, brief: `${judge.brief} ${LAND_BRIEF}`, record: `${judge.record.replace(VERDICT_ARG, '--verdict land|stop ')}${JUDGE_ARG}`, record_extend }, ...rest];
+  } else if (result.status === 'round_limit' && typeof result.head === 'string') {
+    result.dispatch = [{ pass: WAIVER_PASS, agent: JUDGE_AGENT, brief: WAIVER_BRIEF, record: `aidrian pr extend ${result.pr} --verdict land|stop --reason "<evidence>" --head ${result.head}${JUDGE_ARG}${repoArg}` }];
+  }
+  return result;
+}
+
 // Whether the head at the cap is one no round reviewed: `last`, the last round ({ head, fix }), is on another head.
 // Notes it on the entry as { head, from }, or clears it, and returns { head, from, fix } for the judge, or null.
 function noteUnreviewed(entry, last, head) {
@@ -452,7 +500,7 @@ export function atCap({ state, source, round, head, policy, history: readHistory
         pass: JUDGE_PASS,
         agent: JUDGE_AGENT,
         brief: JUDGE_BRIEF,
-        record: `aidrian pr extend ${pr} --verdict extend|stop --reason "<evidence>" --head ${head}${checkArg(entry)}${repoArg}`,
+        record: `aidrian pr extend ${pr} ${VERDICT_ARG}--reason "<evidence>" --head ${head}${checkArg(entry)}${repoArg}`,
       }],
     };
   }
@@ -493,8 +541,8 @@ function sameHead(entry, current) {
   }
 }
 
-// The judge's verdict into `state`: stop ends the check; extend grants on "auto" and asks the Human on "ask", or
-// whenever a red flag stands.
+// The judge's verdict into `state`: stop and land end the check; extend grants on "auto" and asks the Human on "ask",
+// or whenever a red flag stands.
 // `current` is the pull request's head now, when known.
 export function recordVerdict(state, { verdict, reason, head = null, current = null, check = null, at = new Date().toISOString() }) {
   const entry = waiting(state, 'judging', check);
@@ -502,7 +550,8 @@ export function recordVerdict(state, { verdict, reason, head = null, current = n
   if (head !== null && !sameCommit(head, entry.head)) throw new Error(`the check was for ${String(entry.head).slice(0, 7)}, not ${head.slice(0, 7)}: run the review step again`);
   sameHead(entry, current);
   entry.judge = { verdict, reason, head: entry.head, at };
-  if (verdict === 'stop') Object.assign(entry, { status: 'stopped', by: 'judge', reasons: [reason], decided_at: at });
+  // A `land` stops the check as `stop` does: the cap stands, and the waiver's verdict is recorded beside it (runLanding).
+  if (verdict === 'stop' || verdict === 'land') Object.assign(entry, { status: 'stopped', by: 'judge', reasons: [reason], decided_at: at });
   else if (entry.mode === 'auto' && !entry.red_flags?.length) Object.assign(entry, { status: 'granted', by: 'judge', reasons: [reason], decided_at: at });
   else Object.assign(entry, { status: 'asking', by: 'judge', reasons: [reason], decided_at: at });
   return entry;
@@ -524,7 +573,8 @@ export function recordHuman(state, { answer, by, session = null, current, check 
 
 const SHA = /^[0-9a-f]{7,40}$/iu;
 
-// `aidrian pr extend <PR> (--verdict extend|stop --reason TEXT [--head SHA] | --human approve|deny) [--check ID]`.
+// `aidrian pr extend <PR> (--verdict extend|stop|land --reason TEXT [--head SHA] [--judge AGENT_ID] | --human
+// approve|deny) [--check ID]`: `land` needs `--judge`, which `stop` may give and `extend` may not.
 export function parseExtend(args) {
   const [ref, ...rest] = args;
   const match = /^#?(\d+)$/u.exec(ref ?? '') ?? /\/pull\/(\d+)/u.exec(ref ?? '');
@@ -532,21 +582,25 @@ export function parseExtend(args) {
   const flags = {};
   for (let i = 0; i < rest.length; i += 1) {
     const flag = rest[i];
-    if (!['--verdict', '--reason', '--head', '--human', '--repo', '--check'].includes(flag)) throw new Error(`unknown argument: ${flag}`);
+    if (!['--verdict', '--reason', '--head', '--human', '--repo', '--check', '--judge'].includes(flag)) throw new Error(`unknown argument: ${flag}`);
     const value = rest[++i];
     if (value === undefined || value.startsWith('--')) throw new Error(`${flag} needs a value`);
     flags[flag.slice(2)] = value;
   }
   if ((flags.verdict === undefined) === (flags.human === undefined)) throw new Error('give exactly one of --verdict or --human');
   if (flags.verdict !== undefined) {
-    if (!['extend', 'stop'].includes(flags.verdict)) throw new Error('--verdict must be extend or stop');
+    if (!['extend', 'stop', 'land'].includes(flags.verdict)) throw new Error('--verdict must be extend, stop, or land');
     if (!flags.reason?.trim()) throw new Error('--verdict needs --reason with the evidence');
+    if (flags.verdict === 'land' && flags.judge === undefined) throw new Error('--verdict land needs --judge with the judge\'s agent id');
+    if (flags.verdict === 'extend' && flags.judge !== undefined) throw new Error('--judge goes with --verdict land or stop');
+    if (flags.judge !== undefined && !JUDGE_ID.test(flags.judge)) throw new Error('--judge must be the judge\'s agent id, as the host returned it when the judge was dispatched');
   } else {
     if (!['approve', 'deny'].includes(flags.human)) throw new Error('--human must be approve or deny');
     if (flags.head !== undefined) throw new Error('--head goes with --verdict');
+    if (flags.judge !== undefined) throw new Error('--judge goes with --verdict');
   }
   if (flags.head !== undefined && !SHA.test(flags.head)) throw new Error('--head must be a commit SHA');
-  return { pr: Number(match[1]), verdict: flags.verdict ?? null, reason: flags.reason?.trim() ?? null, head: flags.head ?? null, human: flags.human ?? null, repo: flags.repo === undefined ? null : givenRepo(flags.repo), check: flags.check ?? null };
+  return { pr: Number(match[1]), verdict: flags.verdict ?? null, reason: flags.reason?.trim() ?? null, head: flags.head ?? null, human: flags.human ?? null, repo: flags.repo === undefined ? null : givenRepo(flags.repo), check: flags.check ?? null, judge: flags.judge ?? null };
 }
 
 // What to run after a recorded decision.
@@ -565,10 +619,22 @@ function nextStep(entry, pr, repo, repoArg = '') {
 // `deps.forge` replaces the forge (change, conversationComments, postComment, editComment, viewer) and `deps.repo` the
 // resolved repository, in tests.
 export async function runExtend(args, project, config, deps = {}) {
+  const url = urlRef(args[0]);
+  if (url !== null && args.includes('--judge')) {
+    console.error(`aidrian pr extend: a verdict with --judge takes the pull request's number, not a URL: give ${url}, with --repo OWNER/NAME for a repository other than gh's default`);
+    return USAGE;
+  }
   const opts = parseExtend(args);
-  const { prRepo } = await import('../review-gate.mjs');
+  const { forgeRepo, prRepo } = await import('../review-gate.mjs');
   const forge = deps.forge ?? forgeFor(undefined);
-  const repo = deps.repo ?? prRepo(project, opts.pr, opts.repo, forge);
+  // A judge's verdict (`--judge`) goes only to the repository `--repo` names or a lookup of the pull request on the forge
+  // finds, never origin in its place: a failed lookup exits 3 with nothing written.
+  const strict = opts.judge !== null && opts.repo === null && deps.repo === undefined;
+  const repo = strict ? forgeRepo(opts.pr, forge) : deps.repo ?? prRepo(project, opts.pr, opts.repo, forge);
+  if (!repo) {
+    console.error(`aidrian pr extend: ${unreadRepo(opts.pr)}`);
+    return VERDICT_UNREAD;
+  }
   // The pull request now: a decision is for the head its signals were read on, and the record is read only from the
   // state.dir its base branch commits. A forge that cannot answer, or names no base, leaves no base to hold to, so the
   // decision stays on this machine: nothing publishes.
@@ -589,6 +655,7 @@ export async function runExtend(args, project, config, deps = {}) {
   if (record.held !== undefined) throw new Error(heldMessage(opts.pr, record.held, record.why, record.finding));
   const { state } = record;
   const env = deps.env ?? process.env;
+  if (opts.judge !== null) return runLanding({ opts, project, config, forge, repo, view, held, onPr, comments, state, local: record.local, env, gate: deps.gate ?? {} });
   let entry;
   if (opts.verdict) entry = recordVerdict(state, { verdict: opts.verdict, reason: opts.reason, head: opts.head, current, check: opts.check });
   else {
@@ -602,6 +669,55 @@ export async function runExtend(args, project, config, deps = {}) {
     appendEvent(project, config, { ...rowOf(entry), ts: stamp(Date.now()), session_id: sessionIdentity(env).session, pr: opts.pr, repo });
   } catch {}
   console.log(JSON.stringify({ status: 'recorded', pr: opts.pr, extension: { source: entry.source, round: entry.round, head: entry.head, status: entry.status, by: entry.by, reasons: entry.reasons }, next: nextStep(entry, opts.pr, repo, repoFlag(project, repo)), ...(summaryError ? { summary_error: summaryError } : {}) }, null, 2));
+  return 0;
+}
+
+// `aidrian pr extend <PR> --verdict land|stop --judge <agent id>`: the judge the cap dispatched rules on landing too.
+// A check that waits for its verdict is stopped, as `stop` stops it, and the outcome, `extension_check` on its head,
+// becomes the `round_limit` it then is (waiver-stand.mjs asLanded). At a `round_limit` no check waits for. Then the
+// waiver's verdict goes into the record through the writer `aidrian pr waive` uses (waiver.mjs appendVerdict), naming
+// the judge: `waive` for `land`, only once the gate `aidrian pr waive --gate` runs (waiver-stand.mjs readGate) says a
+// judge may rule on this very record and head, and `refuse` for `stop`, so one judge rules per head. Any refusal writes
+// nothing.
+async function runLanding({ opts, project, config, forge, repo, view, held, onPr, comments, state, local, env, gate }) {
+  const current = view?.headRefOid ?? null;
+  if (typeof current !== 'string' || !SHA_REF.test(current)) throw new Error('cannot read the pull request\'s head: a verdict binds to one head');
+  if (opts.head !== null && !sameCommit(opts.head, current)) throw new Error(`the pull request's head is ${current.slice(0, 7)}, not ${opts.head.slice(0, 7)}: the verdict binds to the current head`);
+  // `local` is this machine's record file of the read `state` was built from: the write below is refused when the file
+  // changed since (sameRevision), and its owed entries are kept.
+  state.pending = mergePending(local?.pending, state.pending);
+  const check = waiting(state, 'judging', opts.check);
+  let entry = null;
+  if (check) {
+    if (check.source !== 'plan') throw new Error(`the check waiting for a verdict is the review bot's (${checkId(check)}): only the review step's check takes --judge`);
+    entry = recordVerdict(state, { verdict: opts.verdict, reason: opts.reason, head: opts.head, current, check: opts.check });
+    const outcome = state.outcome ?? null;
+    if (outcome?.status !== 'extension_check' || !sameCommit(outcome.head, current)) {
+      throw new Error(`the review step's outcome on #${opts.pr} is ${outcome?.status ?? 'none'}${outcome?.head ? ` on ${String(outcome.head).slice(0, 7)}` : ''}, not the check at the cap on ${current.slice(0, 7)}: run the review step again`);
+    }
+    state.outcome = asLanded(state).outcome;
+  }
+  if (opts.verdict === 'land') {
+    const said = readGate({ pr: opts.pr, repo }, project, { forge, config, ...gate, record: () => state });
+    if (said.code === 3) throw new Error(said.error);
+    if (!said.may) throw new Error(`the unattended waiver may not land #${opts.pr}: ${said.why}`);
+    if (!sameCommit(said.head, current)) throw new Error(`the pull request moved to ${said.head.slice(0, 7)} while the verdict was recorded: run the review step again`);
+  }
+  const waiver = appendVerdict(state, { project, config, pr: opts.pr, head: current, verdict: opts.verdict === 'land' ? 'waive' : 'refuse', reason: opts.reason, judge: opts.judge, env });
+  sameRevision(project, opts.pr, repo, local);
+  writeLocalState(project, state, { repo });
+  const unposted = held === null ? 'the forge named no base branch, so nothing was posted' : null;
+  const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => forge.postComment(repo, opts.pr, body), edit: (id, body) => forge.editComment(repo, id, body), viewer: () => forge.viewer() }, `extension ${opts.verdict}`, postContext({ forge, repo, n: opts.pr, project, configs: [held.committed, config], env })) : unposted;
+  if (entry) {
+    try {
+      appendEvent(project, config, { ...rowOf(entry), ts: stamp(Date.now()), session_id: sessionIdentity(env).session, pr: opts.pr, repo });
+    } catch {}
+  }
+  const next = opts.verdict === 'land'
+    ? `${verdictNext(waiver, opts.pr, project.paths.local, repo)}; run no review step on this head first: a new step's outcome comes after the verdict, and the verdict no longer stands`
+    : 'the cap stands: report round_limit, the judge\'s evidence, and the findings left open';
+  const extension = entry ? { source: entry.source, round: entry.round, head: entry.head, status: entry.status, by: entry.by, reasons: entry.reasons } : null;
+  console.log(JSON.stringify({ status: 'recorded', pr: opts.pr, extension, waiver, next, ...(summaryError ? { summary_error: summaryError } : {}) }, null, 2));
   return 0;
 }
 

@@ -328,7 +328,11 @@ What each rule matches:
   `"$(command -v aidrian)" pr signoff`) and a call only text names: `xargs`, `parallel`, `npx`, an interpreter's code,
   or a variable or alias whose words hold `aidrian … pr signoff`, as the product-feedback rule reads its own (its
   `textDenial`). A `--check` in such text is no dry run. A command that only handles text, such as `echo`, `grep`, or
-  `git commit -m`, still runs. A subagent and a session no Human attends are refused these shapes outside a project too.
+  `git commit -m`, still runs. A refusal for a sign-off named only in an interpreter's code or input opens with the
+  route for text that only quotes the command, as a handoff brief or a body for the Human does: write the file with
+  the file tool, which the rule does not read, and go on. The sign-off's own refusal follows, for text meant to record
+  one. A background session that rewrote its brief through a Python heredoc was refused three times in one run, told
+  only to stop, then split the command's words to get past the rule. Text piped into a shell keeps the refusal alone. A subagent and a session no Human attends are refused these shapes outside a project too.
   When the session holds answers and none approves the call, the deny names the nearest miss: a word the shell builds,
   no question naming `<owner>/<name>#<PR>`, the head, or the `<flow>/<invariant>` written as one word, an answer that
   is not "Approve", or a checkout whose remotes need `--repo`. A subagent is told to return `status: needs_input` with
@@ -727,9 +731,10 @@ merging session's transcript to the same question, at or after the entry, outran
 reason names `aidrian pr extend <PR> --human approve`. The guard reads the entry from the record it already loaded: it
 makes no call for it; without a transcript, the entry stands. `aidrian pr auto-merge` reads no delegation.
 
-Under the [unattended waiver](config.md#unattended-waiver), a judge's verdict recorded with `aidrian pr waive` stands in
+Under the [unattended waiver](config.md#unattended-waiver), a judge's verdict recorded with `aidrian pr extend --verdict land`,
+or with `aidrian pr waive`, stands in
 for that answer, for one denial only: `round_limit` on the merge's own head, with nothing owed. A head pushed after the
-last review step, whatever its outcome, is never waived, and its denial names no `aidrian pr waive` route: the review
+last review step, whatever its outcome, is never waived, and its denial names no waiver route: the review
 can still run on it. Every other denial keeps its reason. A verdict counts only for
 a merge that names its head, `--match-head-commit <sha>`, `sha=` in a `gh api` merge, or the merge tool's `sha`; for
 any other, the denial says to name it. It never stands in for the review bot: it stands only when the review bot
@@ -767,7 +772,8 @@ the later ones do not wait.
 A call held to the deadline, the guard's own view included, ends within 4 seconds of the hook's start, however many merges
 one command holds.
 A read that fails or would begin too late keeps the denial, which then says the team's value could not be read in time.
-With both switches on, the denial names `aidrian pr waive` as a second route.
+With both switches on, the denial names the waiver as a second route: the `waiver` the JSON of `aidrian pr review` reports at the cap,
+the judge its `dispatch` names, and `aidrian pr extend <PR> --verdict land|stop --judge <agent id>` to record that judge's verdict.
 
 A session no Human attends, one whose [unattended mark](handoff.md#the-background-route) the hook reads by the host's own
 session id, a pending or unreadable mark included, such as a project run's issue session, may not take the record's word
@@ -1188,6 +1194,30 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   `--record` or `--forget`, writes the recorded-decision store, is held as `init` and `resume` are (`attendedProblem`, by
   `lib/project-run-guard.mjs`), in every form: a subagent, a session the background handoff route started, an issue
   session of a project run, and a session that drove one never run it, and the command checks the same.
+- `aidrian project resume` is held as `init` is, and refused to a session that drove the run or is the continuation
+  custody would move to (`resumerProblem`). The exact words `aidrian project resume <run> --custody`, read with the
+  command's own option parser, skip the attended check only for the session the host continued the driver as
+  (`hostContinued`), where the local base ref sets [`projectRun.fullAuto`](config.md#full-auto), on a run that has not
+  ended, while no pending or issue mark holds the session; the command reads the forge's copy of the switch too.
+  Any other spelling, such as `-- --custody`, `--custody=false`, or `--custody` twice, meets the attended rules.
+  Neither the command nor the rule lets that form, or a resume from the continuation the host names, lift a halt.
+- Until the project's run records its end, its issues all done included, read from the ledgers alone and never from a
+  mark (`projectRunActive` with `untilEnd`), every session and subagent, attended or not, meets one rule, failing
+  closed (`lib/transcript-guard.mjs`).
+  A write the shared reader reports, and every operand of `cp`, `mv`, `ln`, `rm`, `rmdir`, or `unlink`, in any place
+  and after any option, is refused when it lies under a host's transcript folder, but in the `memory` folder of a
+  project folder there, where a host keeps its memory, or is the transcript folder or any folder above it.
+  A glob, an operand with `*`, `?`, or `[`, counts by its literal prefix, the parts before its first wildcard.
+  The folders are the ones the host adapter names (`transcriptFolders`); on Claude Code, `projects/` under `~/.claude`
+  of the account's home, and the folder the custody reader reads (`transcriptRoot`: under `CLAUDE_CONFIG_DIR`, else
+  under the host's `HOME`).
+  Where the folder is unknown, a spelling `projects/<folder>/<file>.jsonl` counts.
+  A project run reads the driver's continuation there, so no row is forged.
+  Accepted residuals: a script that writes the file; a link already on disk a write passes through, since the guard is
+  for cooperating agents; an operand built from a variable, or after a `cd` the hook cannot follow.
+  During a run, a `cp`, `mv`, or `ln` into the home folder or any folder above the host's config folder is refused,
+  failing closed, as is any glob from there, such as `rm -f ~/build-*.tmp`.
+  During a run, a `mkdir` of the home folder or any folder above the host's config folder is refused too, failing closed.
 - With or without gates or a project, a subagent, and a main session the background handoff route started, may not
   write in the unattended marks' folder, nor change the mode or owner of it or of the state root, by a path, a glob
   that may reach it, a link already on disk, or, where the folder is unknown, a part named `unattended`. The same holds
@@ -1558,7 +1588,7 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   | --- | --- | --- |
   | Literal targets of redirections and writing programs | placed by path | placed by the path the tool names |
   | A target built from a variable or a substitution | expanded where it can be, else judged by its names and the whole command | none: a file tool names a literal path |
-  | Code an interpreter runs, such as `python3 -c` | judged by the paths and names in its text | none |
+  | Code an interpreter runs, such as `python3 -c` | judged by the paths and names in its code, input, and words; a refusal for a path there that the guard places among the refused entries says so and names the file tool, for text that only goes in a file, while a refused name, such as `.gitconfig`, gets the plain refusal | none: the text a file tool writes names no target |
   | Links a command makes, and a program's own config | judged by what they point at or change | none |
   | Text written into a review manifest | the command must not name a `reviewer` key | the text must not give it one |
   | Where the host's sandbox stands | outside the guard: a confined session's Bash also runs in the host's sandbox | the file tools run outside the sandbox, held by this hook alone |
@@ -1733,11 +1763,15 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   each case, of a subagent, of a session the background route started, or of a session a project run's driver mark
   holds, is refused, since the guards resolve no more. In the gates, every `Bash` and `Bash(<prefix>)` deny blocks
   such a call, and the gates are asked before any guard ([config](config.md#agents)).
-- The guards run under a time budget: 2.5 seconds from the hook's start, well inside the host's 5 second hook timeout,
-  past which the host runs the call with no guard. They check it as they read targets, words, folders, and links; past it,
-  a call of a subagent, of a main session the background handoff route started, or of a main session a project run's
-  driver mark holds, its run's first driver included, is refused, as the guards could not finish reading the command
-  in time, and an attended main session's runs, as the guards allow it anyway.
+- The guards run under a time budget from the hook's start, inside the hook's 10 second timeout in `hooks.json`, past
+  which the host runs the call with no guard. They check it as they read targets, words, folders, and links. A call of a
+  subagent, of a main session an unattended mark holds, or of a main session a project run's driver mark holds, its
+  run's first driver included, has 7.5 seconds, and past them is refused, as the guards could not finish reading the
+  command in time. An attended main session's call has 2.5 seconds, and past them runs, as the guards allow it anyway,
+  so it waits no longer. The guards read a call in about 100 ms on a quiet machine; on a loaded one, small Edits and
+  Writes of held sessions took them about three seconds, past the 2.5 seconds held calls once had, and a planning agent
+  refused eight times in one run stopped with its plan half written. A session the background route started before
+  the marks, which only its chain floor holds, keeps the 2.5 seconds, since that floor is read only when a guard refuses.
   The time depends on the machine's load, so that refusal gives one ordered recovery: retry the same call by itself, up
   to three times, then run a shell call as shorter commands where a split keeps what it does, and only then stop and
   report it to the Human.

@@ -602,9 +602,26 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   ended does, so the driver's commands are refused to the new id with the way out named: `aidrian project resume <run>`
   from that continued session, when a person attends it; any other session is refused. Under the ledger's lock it
   checks again that the run is live and the host still records the continuation, files the driver mark, and moves
-  custody with a `driver` row, and the session drives on. Another attended session may still lift a halt, and takes no
-  custody. The old transcript is read in the main checkout's project folder, else where it is the only copy; with
-  several copies elsewhere, the host's record counts as none.
+  custody with a `driver` row, and the session drives on. Its resume never lifts a halt: the halt waits for another
+  attended session, which may lift it and takes no custody, or the Human's own shell. The old transcript is read in the
+  main checkout's project folder, else where it is the only copy; with several copies elsewhere, the host's record
+  counts as none.
+  `aidrian project resume <run> --custody` takes custody only and writes no `resume` row from any session.
+  Where the team sets [`projectRun.fullAuto`](config.md#full-auto), that form needs no person for the continued session
+  alone: the loop runs it once when a driver command names the continuation, and drives on.
+  It is refused, with no row, to a session whose unattended mark names an issue, to one that drove the run or is the
+  continuation custody would move to, and on an ended run; with the switch off it asks what a plain resume asks.
+  The waiver files a plain unattended mark beside the driver mark, so the session is held as a background continuation
+  is, refused `init`, `resume`, and `aidrian project decision`, until the Human types into it.
+  Both marks are filed before the custody row and never undone, which only restricts: a move whose row is not written
+  leaves a session with no custody, held as a driver of that run, its stores held and its driver commands refused,
+  until the run records its end; the Human typing into it lifts only the unattended hold.
+  So that a failed move replaces no mark of another run, `--custody` refuses, filing nothing, a session that already
+  holds the driver mark of another run, or one that cannot be read.
+  Until a run's ledger records its end, read from the ledgers alone and never from a mark, the
+  [agent gates](hooks.md#agent-gates) refuse every session and subagent a write to the host's transcripts, where the
+  custody reader reads them, so no session forges the row.
+  The host's record is read on Claude Code alone, so custody moves this way only there.
 - **`maxChain` binds the driver's chain alone.** The driver's hops count as any session's, up to the base branch's
   `session.handoff.maxChain`, at most 5 unless it is `"unlimited"`. At the limit the gate prints `continue: none`,
   and the driver keeps driving in its own session, which the host compacts; it does the same on `continue: clear`,
@@ -628,7 +645,8 @@ branch's `maxChain` of `"unlimited"` lifts it for the driver's chain, where the 
   usage limit past the run's 24 pauses, write a `halt` row, and every later start refuses. The resume runs from the
   Human's own shell, or from another session a person attends that never drove the run: the hooks and the command
   refuse it to the driver, to any session that drove the run, and to the continuation custody would move to, so the
-  driver never runs it. It writes a `resume` row that lifts the halt. The driver's own start of the halted issue lifts
+  driver never runs it. It writes a `resume` row that lifts the halt, unless the session is the one the host continued
+  the driver as, or the call takes `--custody`: those take custody only. The driver's own start of the halted issue lifts
   an environment result's halt, or a failed proof's but the sandbox proof's, once, when the preflight's checks of that
   cause pass ([Project run](config.md#project-run)). Run from a session, it also takes custody of a
   run whose driver the host lists as ended, as a background driver that ended with no successor, and that session

@@ -47,19 +47,24 @@ function frontmatterValue(text, key) {
   return found ? scalar(found[1]) : null;
 }
 
-// The text of `file` when it is a regular file, or a link to one, of at most DEFINITION_CAP bytes, opened so a FIFO or a
-// device never blocks; else null.
-function read(file) {
+// `file` read when it is a regular file, or a link to one, opened so a FIFO or a device never blocks: { text, bytes },
+// `bytes` the count readSync returned, at most the lower of DEFINITION_CAP and `allowance`. { over: true }, with nothing
+// read, for a regular file of at most DEFINITION_CAP bytes past `allowance`; null for any other file, read or not.
+export function readDefinition(file, allowance = DEFINITION_CAP) {
   let fd;
+  const most = Math.min(DEFINITION_CAP, allowance);
   try {
     const entry = lstatSync(file);
     const target = entry.isSymbolicLink() ? statSync(file) : entry;
     if (!target.isFile() || target.size > DEFINITION_CAP) return null;
+    if (target.size > most) return { over: true };
     fd = openSync(file, NO_BLOCK);
     const opened = fstatSync(fd);
     if (!opened.isFile() || opened.size > DEFINITION_CAP) return null;
+    if (opened.size > most) return { over: true };
     const buffer = Buffer.alloc(opened.size);
-    return buffer.subarray(0, readSync(fd, buffer, 0, opened.size, 0)).toString('utf8');
+    const bytes = readSync(fd, buffer, 0, opened.size, 0);
+    return { text: buffer.subarray(0, bytes).toString('utf8'), bytes };
   } catch {
     return null;
   } finally {
@@ -85,19 +90,20 @@ function agentsFolder(folders) {
 function definitionOf(type, folders) {
   if (type.startsWith(PREFIX)) {
     const name = type.slice(PREFIX.length);
-    return NAME.test(name) ? read(path.join(PLUGIN_AGENTS, `${name}.md`)) : null;
+    return NAME.test(name) ? readDefinition(path.join(PLUGIN_AGENTS, `${name}.md`))?.text ?? null : null;
   }
   const folder = NAME.test(type) ? agentsFolder(folders) : null;
   const files = folder === null ? null : listed(folder);
   if (files === null) return null;
-  // Past SCAN_BUDGET.files files, or SCAN_BUDGET.bytes bytes read in all, the scan stops with no definition.
-  let bytes = 0;
+  // Past SCAN_BUDGET.files files, or a file larger than what is left of SCAN_BUDGET.bytes, the scan stops with no
+  // definition: each read is held to that allowance, and counts the bytes it read.
+  let left = SCAN_BUDGET.bytes;
   for (const file of files.slice(0, SCAN_BUDGET.files)) {
-    const text = read(path.join(folder, file));
-    if (text === null) continue;
-    bytes += Buffer.byteLength(text, 'utf8');
-    if (bytes > SCAN_BUDGET.bytes) return null;
-    if (frontmatterValue(text, 'name') === type) return text;
+    const read = readDefinition(path.join(folder, file), left);
+    if (read?.over) return null;
+    if (!read) continue;
+    left -= read.bytes;
+    if (frontmatterValue(read.text, 'name') === type) return read.text;
   }
   return null;
 }

@@ -8,7 +8,7 @@ import test from 'node:test';
 
 import { snapshotPath } from '../plugins/aidrian/lib/gate-snapshot.mjs';
 import { GIT_TIMEOUT_MS } from '../plugins/aidrian/lib/git.mjs';
-import { DEFINITION_CAP, SCAN_BUDGET } from '../plugins/aidrian/lib/hosts/claude-code-agents.mjs';
+import { DEFINITION_CAP, readDefinition, SCAN_BUDGET } from '../plugins/aidrian/lib/hosts/claude-code-agents.mjs';
 import claudeCode from '../plugins/aidrian/lib/hosts/claude-code.mjs';
 import { agentCheckouts } from '../plugins/aidrian/scripts/hook-session-start.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
@@ -249,6 +249,21 @@ test('a scan past its budget of folder entries, files, or bytes names no definit
   assert.deepEqual(await effortLineOf(bytes, { agent_type: 'reviewer' }), [], 'the files before it spend the byte budget');
 });
 
+test('a definition read is held to what is left of the byte budget, and counts the bytes it read', (t) => {
+  const folder = mkdtempSync(path.join(tmpdir(), 'aidrian-start-read-'));
+  t.after(() => rmSync(folder, { recursive: true, force: true }));
+  const file = path.join(folder, 'review.md');
+  const text = `---\nname: reviewer\neffort: medium\n---\n${'é'.repeat(400)}\n`;
+  writeFileSync(file, text);
+  const size = Buffer.byteLength(text, 'utf8');
+  assert.deepEqual(readDefinition(file, size - 1), { over: true }, 'less than its size left: nothing read');
+  assert.deepEqual(readDefinition(file, size), { text, bytes: size }, 'the bytes readSync returned, not the text\'s length');
+  assert.notEqual(text.length, size);
+  assert.equal(readDefinition(folder, size), null, 'no regular file');
+  writeFileSync(path.join(folder, 'large.md'), 'x'.repeat(DEFINITION_CAP + 1));
+  assert.equal(readDefinition(path.join(folder, 'large.md'), SCAN_BUDGET.bytes), null, 'past the file cap, whatever the allowance');
+});
+
 test('an attempt clone, whose project names the driver\'s main checkout, reads no agent of that checkout', async (t) => {
   const main = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-start-driver-')));
   t.after(() => rmSync(main, { recursive: true, force: true }));
@@ -267,6 +282,27 @@ test('an attempt clone, whose project names the driver\'s main checkout, reads n
   assert.deepEqual(checkouts, [clone]);
   assert.equal(claudeCode.subagentEffort({ input: { agent_type: 'reviewer' }, checkouts, env: {} }), null);
   assert.equal(claudeCode.subagentEffort({ input: { agent_type: 'reviewer' }, checkouts: [clone, main], env: {} }), 'medium', 'the fallback this guards');
+});
+
+test('a project below the checkout root of a linked worktree reads that project folder\'s agents in the main checkout', async (t) => {
+  const main = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-start-nested-')));
+  t.after(() => rmSync(main, { recursive: true, force: true }));
+  const git = (...args) => assert.equal(spawnSync('git', args, { cwd: main, encoding: 'utf8' }).status, 0, args.join(' '));
+  const web = path.join(main, 'packages/web');
+  mkdirSync(path.join(web, '.aidrian/knowledge'), { recursive: true });
+  writeFileSync(path.join(web, '.aidrian/config.json'), JSON.stringify({ version: 1, attribution: { commit: ['effort'] } }));
+  writeFileSync(path.join(main, '.gitignore'), '.claude/\n');
+  git('init', '-q', '-b', 'main');
+  git('add', '.');
+  git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'config');
+  mkdirSync(path.join(web, '.claude/agents'), { recursive: true });
+  writeFileSync(path.join(web, '.claude/agents/review.md'), '---\nname: reviewer\neffort: medium\n---\n');
+  const linked = `${main}-linked`;
+  t.after(() => rmSync(linked, { recursive: true, force: true }));
+  git('worktree', 'add', '-q', linked, '-b', 'side');
+  const project = path.join(linked, 'packages/web');
+  assert.deepEqual(agentCheckouts({ checkouts: [project, web] }), [project, web]);
+  assert.deepEqual(await effortLineOf(project, { agent_type: 'reviewer' }), [EFFORT('medium')]);
 });
 
 test('a linked worktree with no agents folder reads the main checkout\'s, as Claude Code does', async (t) => {

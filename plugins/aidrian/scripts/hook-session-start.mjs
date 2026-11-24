@@ -201,10 +201,11 @@ function effortLine(input, project, config) {
   return effort ? `Attribution: this agent's commits carry the trailer \`Agent-Effort: ${effort}\`, the effort it starts at; the commit check reads the effort it runs at and names it when they differ.` : null;
 }
 
-// The checkouts a subagent's definition may be read from: the project's own, then its main checkout only when this one
-// is a linked worktree of it, whose git common folder is the main checkout's git folder. A project run's attempt clone,
-// whose project names the driver's main checkout too (lib/project.mjs checkouts), is a clone of its own: a host loads
-// nothing of that checkout's for it.
+// The checkouts a subagent's definition may be read from, each the project's folder there: the project's own, then the
+// same folder in its main checkout only when this one is a linked worktree of it, its own git folder apart from a git
+// common folder that is the main checkout's too, both by their real paths (lib/git.mjs gitFolders on each). A project
+// run's attempt clone, whose project names the driver's main checkout too (lib/project.mjs checkouts), is a clone with
+// its own git folder: a host loads nothing of that checkout's for it.
 export function agentCheckouts(project) {
   const [own, ...rest] = project.checkouts;
   const main = rest.at(-1);
@@ -216,9 +217,10 @@ export function agentCheckouts(project) {
       return null;
     }
   };
-  const git = gitFolders(own);
-  const common = git && git.gitDir !== git.common ? real(git.common) : null;
-  return common !== null && common === real(path.join(main, '.git')) ? [own, main] : [own];
+  const mine = gitFolders(own);
+  const theirs = gitFolders(main);
+  const common = mine && mine.gitDir !== mine.common ? real(mine.common) : null;
+  return common !== null && theirs && common === real(theirs.common) ? [own, main] : [own];
 }
 
 // Every session and subagent: disagree out loud instead of going along, ask questions the human can answer without the

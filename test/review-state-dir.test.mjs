@@ -1372,6 +1372,8 @@ test('a dirty or moved checkout with no difference from the base still says to c
   const fromBase = await stepFrom(linkedAt(t, r, 'main'), r);
   assert.deepEqual([fromBase.status, fromBase.retry_recommended], ['incomplete', true]);
   assert.match(fromBase.reason, /check out \S+ with a clean working tree first/u);
+  assert.match(fromBase.checkout_head ?? '', /^[0-9a-f]{40}$/u, 'the head to check out is a field of its own, not only words in the reason');
+  assert.equal(fromBase.checkout_head, fromBase.head);
   writeFileSync(path.join(r.dir, 'src/app.js'), 'dirty\n');
   const dirty = await r.step();
   assert.deepEqual([dirty.status, dirty.retry_recommended], ['incomplete', true]);

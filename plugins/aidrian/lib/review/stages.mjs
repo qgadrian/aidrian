@@ -198,7 +198,7 @@ export async function runStages(s) {
           undoRound();
           const refused = refusedAtHead(s.project, baseTip, head, s.codex);
           if (refused) return finish('incomplete', { reason: refused, retry_recommended: false });
-          return finish('incomplete', { reason: `a local reviewer reads the checkout: check out ${head.slice(0, 7)} with a clean working tree first`, retry_recommended: true });
+          return finish('incomplete', { reason: `a local reviewer reads the checkout: check out ${head.slice(0, 7)} with a clean working tree first`, checkout_head: head, retry_recommended: true });
         }
         // Codex reads the checkout at the head; a project's own reviewer runs as the base has it, and reads the head
         // through git (its input names both commits).

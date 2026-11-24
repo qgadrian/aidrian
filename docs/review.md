@@ -789,7 +789,8 @@ A project adds its own in `review.reviewers`:
   through git: a pull request that edits its script cannot run its own version, and the edit triggers
   `harness-config`. The checkout's installed dependency folders (`node_modules`, `vendor`, `.venv`) are linked in, so
   the base code runs with this machine's packages. A reviewer the pull request adds runs once it is merged.
-  `codex-local` reads the checkout at the head.
+  `codex-local` reads the checkout at the head: from any other commit, or a working tree with changes, the step returns
+  `incomplete` with `checkout_head`, the head to check out clean, and `retry_recommended: true`.
 - `agent`: the command cannot start an agent, so it returns `dispatch` and the skill runs it and records the result with
   `aidrian pr attest <PR> --pass <id> --head <sha> --reviewer <who> --findings-file <the file the step's record names> --verdicts -`, its
   findings one by one in the file, which the dispatching session writes from the `findings` array of the agent's final

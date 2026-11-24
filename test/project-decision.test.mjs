@@ -147,7 +147,9 @@ test('project decision prints, --record writes, --forget removes, and a malforme
   assert.equal(sectionOf(kept, 'Decision'), '## Decision\nChosen: CSV.', 'a heading ends the section well before the cut');
   assert.deepEqual(pinned(kept, 'Decision', { cut: true }), CUT);
   assert.equal(pinned(kept).section, '## Decision\nChosen: CSV.', 'the same text uncut stands');
-  assert.match(direct({ key: 'ENG-4', heading: 'Decision' }), /the kept description was cut off at its 20,000-character cap; keep a pinned issue's description under 20000 characters/u);
+  const cutOff = fx.cmd(['decision', 'ENG-4', '--heading', 'Decision']);
+  assert.equal(cutOff.exitCode, 1, cutOff.out.join('\n'));
+  assert.match(cutOff.err[0], /the kept description was cut off at its 20,000-character cap; keep a pinned issue's description under 20000 characters/u);
 
   // A printed command whose project is gone, as a removed nested project or worktree, is refused, never recorded in the
   // project above it.

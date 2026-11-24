@@ -1175,8 +1175,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   that names such a program counts, and a package runner, such as `npx`, `pnpm dlx`, or `bunx`, is read as the program
   its package installs, so `npx @anthropic-ai/claude-code -p` counts as `claude -p`, wherever the runner's options
   stand: the first word after the runner's own word, such as npm's `exec`, that names a host's program or package is
-  the program, so `npm --cache /d exec claude -p` counts too. Its one false refusal: a runner call that names a host's
-  program as a later argument of another program, such as `npx prettier claude`. The refusal says the command
+  the program, so `npm --cache /d exec claude -p` counts too. Its false refusals: a runner call that names a host's
+  program as a later argument of another program, such as `npx prettier claude`, and a runner option's value whose
+  last path part is a host's program, such as `npx --cache /tmp/opencode prettier x`. The refusal says the command
   "starts or resumes a session of" that host. A command that only manages sessions, such as `claude agents` or
   `claude stop`, runs; of `opencode`, only the info flags and the nine commands its
   [page](providers/opencode.md#rules-for-the-other-hosts-sessions) lists run.
@@ -1187,7 +1188,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   `127.0.0.1:49374`, `localhost:49374`, or `[::1]:49374`. The command's text is read unquoted, with each `$NAME` or
   `${NAME}` the hook's environment gives an absolute path and each leading `~` expanded, and each absolute path
   normalized, so `~/.local/state/./opencode` and `~/.local/state//opencode` count, as does a path in an interpreter's
-  code; the refusal says the host's "local service starts a session no guard holds". A path or port built at run time,
+  code; the refusal says the host's "local service starts a session no guard holds". A store path holding a space,
+  as under a home folder whose name has one, is normalized only when spelled as the store's own path. A path or port built at run time,
   a relative path from a folder above, a port given apart from its host, as `nc localhost 49374` or a Python
   `('127.0.0.1', 49374)` tuple, a port `service set` moved, or a read of a store by the file tools, as Read, Grep, or
   Glob in a session no sandbox confines, is not read ([OpenCode limits](providers/opencode.md#limits)).
@@ -1480,8 +1482,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     `npx opencode-ai plugin add x` reads as `opencode plugin add x`. The first word after the runner's own word that
     names a host's program or package is the program, wherever the runner's options stand, so `npm --cache /d exec
     codex login` counts. A call that names none is read through only when the runner's word is its first word that is
-    no option, as `npm exec -- lerna publish`, so `npm -w web exec lerna publish` reads as npm and passes. Its one false
-    refusal: a runner call that names a host's program as a later argument of another program, such as `npx prettier claude`.
+    no option, as `npm exec -- lerna publish`, so `npm -w web exec lerna publish` reads as npm and passes. Its false
+    refusals: a runner call that names a host's program as a later argument of another program, such as `npx prettier claude`,
+    and a runner option's value whose last path part is a host's program, such as `npx --cache /tmp/codex prettier x`.
   - A review manifest takes the name of the review gate's old attest record, `pr-<n>.json`, so a write that may give it
     a top-level `reviewer` key is refused: a file tool's text that parses as JSON with that key, escapes read as JSON
     reads them, or, when it does not parse, holds the key or a quoted key with an escape in it; a shell write of a

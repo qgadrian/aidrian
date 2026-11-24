@@ -93,6 +93,9 @@ To turn it off for one project while the global configuration names it, add `"-a
 
 - Restart the service after changing either, so it runs with the new value: a bridge that found no Node stops running
   hooks for the life of its process ([Troubleshooting](#troubleshooting)).
+- `AIDRIAN_NODE` reaches only the bridge's hook scripts. The `aidrian` and `aidrian-knowledge` commands run `node`
+  from the shell's `PATH`, so a shell where only `AIDRIAN_NODE` names Node records the ledger through its hooks while
+  `aidrian session snapshot` in that shell fails: put Node 22 on the shell's `PATH` as well.
 - A `--standalone` command of OpenCode 2.4.0 does not load a project's `.env` into the private server its plugins run
   in: a dummy variable in a `.env` at the start folder and at its parent reached no plugin. Whether the background
   service loads one has not been checked.
@@ -312,8 +315,9 @@ Both guards read a package runner as the program it runs: `npx`, `bunx`, `npm ex
 run `claude`. No list of the runner's options is kept: the program is the first word after the runner's own word,
 such as npm's `exec` or pnpm's `dlx`, that names a host's program or package, wherever the runner's options stand, so
 `npm --cache /d exec opencode run x` and `pnpm --dir x dlx opencode-ai run x` count (`lib/package-runner.mjs`).
-Its one false refusal, to a subagent or a session no Human attends: a runner call that names a host's program as a later argument
-of another program, such as `npx prettier claude`.
+Its false refusals, to a subagent or a session no Human attends: a runner call that names a host's program as a later argument
+of another program, such as `npx prettier claude`, and a runner option's value whose last path part is a host's
+program, such as `npx --cache /tmp/opencode prettier x`, since the runner's options are not parsed.
 
 **A confined clone.** On Claude Code's confined start, the clone gets empty `.opencode` and `.agents` folders, and
 `opencode.json` and `opencode.jsonc` holding `{}`, as placeholders, each file kept out of git through the git folder's
@@ -427,7 +431,9 @@ Never start OpenCode below the temporary folder: what any program wrote there lo
   from a file, a relative path from a folder above the store, a glob, a host and port given to a program as separate
   values, as `nc localhost 49374` or a Python `('127.0.0.1', 49374)` tuple, a host or port `service set` moved, a read
   of a store by the file tools, as Read, Grep, or Glob, in a session no sandbox confines, and a program that reads the
-  store or reaches the port by itself, with the reach of a program's own write.
+  store or reaches the port by itself, with the reach of a program's own write. A store path holding a space, as
+  under a home or XDG folder whose name has one, is not normalized, since quoting is dropped before paths are split
+  at spaces: such a path counts only spelled as the store's own path.
 - Not checked on a live OpenCode, since no model turn ran: a shell call's payload, and with it the Verified column's
   fixture only; whether the shell hook's environment holds `PATH`; whether a shell command gets
   `OPENCODE_SESSION_ID`; whether a subagent's session carries `parentID`; the `edit` tool's path field; and that the

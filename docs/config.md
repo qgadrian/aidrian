@@ -1979,7 +1979,10 @@ ledger's lock with the write-ahead row, the access check with outsideSandbox and
 every value of the launch, mcpServers and registries among them, as well as github.reviewer and
 `github.autoMerge.includeGuardedPaths`.
 Since a key counts only where the local read and the forge's define it alike, the pinned commit bounds each of them.
-Only checks that read no policy run before the pin; a change on the forge after the read is an accepted residual.
+Only checks that read no policy, and write nothing, run before the pin; settling an orphan or a lingering session, which
+writes the ledger and may stop a session, waits until the policy read and the checks it feeds let the start go on.
+A forge that cannot answer during the pin or the policy read makes `start` exit 75; a change on the forge after the
+read is an accepted residual.
 The start row records that head as `overlay`, and `<attempt>/base-copies.txt` lists the files, cleaned and fenced as
 data from the branch.
 The branch's own changes stay in its commits for the pull request's review.

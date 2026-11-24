@@ -1159,8 +1159,7 @@ test('a forge that cannot answer the team\'s policy now makes start exit 75 with
   };
   const start = fx.cmd(['start', 'launch', 'ENG-1']);
   assert.equal(start.exitCode, 75, start.err.join('\n'));
-  // The read follows the pin, so the host's `unverified:` note comes first, as on every answer of a start past it.
-  assert.match(start.out.find((line) => line.startsWith('retry: ')) ?? '', /^retry: the forge's copy of the default branch's config\.json cannot be read \(.*gh: HTTP 502/u);
+  assert.match(start.out[0], /^retry: the forge's copy of the default branch's config\.json cannot be read \(.*gh: HTTP 502/u);
   // wait starts nothing, so a sustained outage never dead-ends the driver's halt wait: it settles the run with a note.
   const wait = fx.cmd(['wait', 'launch', '--max-wait', '0']);
   assert.equal(wait.exitCode, 0, wait.err.join('\n'));

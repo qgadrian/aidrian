@@ -16,17 +16,19 @@
 //      checked before any other git call, and an origin whose fetch or push URL, with pushurl and insteadOf applied,
 //      names another repository than the one init pinned;
 //   3. a run whose state folder fails runPlace; a host that declares no `capabilities.projectStart`, and one whose start
-//      is not confined (a halt); from here on, an unverified host's every answer prints an `unverified:` line;
-//   4. a session that runs on after its issue settled (a retry), and what the held start would refuse (heldProblem),
-//      asked before any folder is made; up to here no check reads the team's policy, and nothing is fetched;
-//   5. a default branch whose head the forge cannot name, or that the local base refs do not name too (forgeBase): the
+//      is not confined (a halt); from here on, an unverified host's every answer prints an `unverified:` line; and an
+//      earlier start of this session whose session the host does not list ended (heldProblem's read of it); up to here
+//      no check reads the team's policy, and nothing is fetched or written;
+//   4. a default branch whose head the forge cannot name (a retry), or that the local base refs do not name too (forgeBase): the
 //      pin, the base tip every later check, cut, and policy read uses, fetched only now. Then the team's policy, read
 //      once (teamPolicy), its local half at that very commit: a base branch whose config.json, there and as the forge's
 //      default branch commits it, does not set projectRun.allow; every check below decides from that one read;
-//   6. a machine whose `handoff.background` switch is off, unless solo turns it on (config-local.mjs machineSwitch); a
+//   5. a machine whose `handoff.background` switch is off, unless solo turns it on (config-local.mjs machineSwitch); a
 //      host whose start is unverified where the base branch does not set projectRun.unverifiedHosts, or whose
-//      `hookTrust` does not answer 'trusted' (a halt);
-//   7. an issue `next` does not list, and a start past a cap in code: PROJECT_STARTS a run and PROJECT_PARALLEL
+//      `hookTrust` does not answer 'trusted' (a halt); only past these does the start write: it settles orphans and
+//      lingering sessions, reads the ledger, waits on a session that still runs on after its issue settled (a retry), and
+//      asks what the held start would refuse (heldProblem), before any folder is made;
+//   6. an issue `next` does not list, and a start past a cap in code: PROJECT_STARTS a run and PROJECT_PARALLEL
 //      running, each also under the base branch's projectRun.maxStarts and maxParallel, clamped to CEILINGS, asked again
 //      under the ledger's lock with the write-ahead row, PROJECT_STARTS_PER_DAY a project, and ISSUE_ATTEMPTS an issue
 //      (capProblem); each attempt counts once, and one given back (`void`) not at all, nor, toward ISSUE_ATTEMPTS, one a
@@ -35,7 +37,7 @@
 //      write a guarded folder (a halt); a forge that cannot be asked now; a state file with a second hard link (a
 //      halt). No session loads the main checkout's host files: it works in its clone, which loads none of them, under a
 //      sandbox that may also deny it reads there;
-//   8. a clone whose host config or instruction files differ from the base tip, or from the branch's head the review
+//   7. a clone whose host config or instruction files differ from the base tip, or from the branch's head the review
 //      bot and the Human passed (reviewedProblem), or hold any such file untracked or git-ignored, each compared by its
 //      bytes on disk, and a host
 //      instruction file in a folder above it that no review saw; then a clone the host says would run a command outside
@@ -395,7 +397,8 @@ function startContext(given) {
     return { answer: haltAnswer('this host\'s project start is not confined to a fresh clone under its own sandbox (capabilities.projectStart.confined), and a session no Human attends starts only confined') };
   }
   const note = [...unverifiedNote(cap), ...rechecked.lines];
-  const noted = (answer) => ({ ...answer, out: answer.out[0]?.startsWith('halt ') ? [answer.out[0], ...note, ...answer.out.slice(1)] : [...note, ...answer.out] });
+  // The status line, `halt <cause>` or `retry: <why>`, stays first; the notes follow it.
+  const noted = (answer) => ({ ...answer, out: /^(?:halt |retry: )/u.test(answer.out[0] ?? '') ? [answer.out[0], ...note, ...answer.out.slice(1)] : [...note, ...answer.out] });
   const refuse = (why, lines = []) => ({ answer: noted({ exitCode: 1, out: lines, err: [`aidrian project start: ${why}`] }) });
   return { ...given, session, state, found, store, held, facade, cap, refuse, noted, main };
 }
@@ -404,31 +407,41 @@ function startContext(given) {
 // or { answer } when the start ends here, as for an issue it parks unreconciled (parkUnreconciled). The start pins the
 // base tip, reads the team policy once with its local half at that commit, and decides everything from that read: the
 // machine's switch, the host's start, the caps, the access check, the clone's checks, and every value of the launch.
-// Only checks that read no policy run before the pin, so a start they refuse fetches nothing.
+// Only checks that read no policy, and write nothing, run before the pin, so a start they refuse fetches nothing; what
+// writes the ledger or touches a session, as settling an orphan, runs only once the policy read and the checks it
+// feeds let the start go on.
 function startPlace(context) {
   const { project, run, key, env, home, state, store, session, facade, cap, refuse, noted, spawn, main, found } = context;
+  // An earlier start of this session that still runs holds this one back, read only, before anything is fetched; the
+  // start's claim is asked once the orphans are settled, which drops the claim an orphan's start kept.
+  const before = heldProblem({ store, session, cap, env, spawn, state, run, claim: false });
+  if (before) return refuse(before);
+  // The pin: the base tip every later check, cut, and policy read uses, fetched only now. A forge that cannot answer
+  // now is a retry; a pin that does not hold is a refusal.
+  const base = forgeBase(project, found.init.repository, facade, env);
+  if (base.transient) return { answer: noted(retryAnswer('start', base.problem)) };
+  if (base.problem) return refuse(base.problem);
+  // The team's policy, read once, its local half at the pinned commit itself, never at a ref that may move since. A
+  // change on the forge after this read is an accepted residual.
+  const policy = teamPolicy(project, found.init.repository, facade, { tip: base.tip });
+  if (policy.transient) return { answer: noted(retryAnswer('start', policy.problem)) };
+  if (policy.problem) return refuse(policy.problem);
+  const machine = machineProblem(project, policy);
+  if (machine) return refuse(machine);
+  const hostProblem = hostStartProblem(cap, policy, env);
+  if (hostProblem) return { answer: noted(haltAnswer(hostProblem)) };
+  // Only now the writes: orphans settled, lingering sessions settled, and the ledger read after them. A session that
+  // runs on after its issue settled holds every start back until the host lists it ended, or `wait` stops it: a wait,
+  // not a refusal (project-linger.mjs).
   const orphans = settleOrphans({ state, run, store, cap, env, spawn, now: context.now });
-  // A session that runs on after its issue settled holds every start back until the host lists it ended, or `wait`
-  // stops it: a wait, not a refusal (project-linger.mjs).
   settleLingering({ state, run, store, cap, env, spawn, now: context.now });
   const current = readRun(state, run);
   if (current.problem) return refuse(current.problem, orphans);
   const lingers = lingerProblem(current);
   if (lingers) return { answer: noted(retryAnswer('start', lingers, orphans)) };
+  // After the settling, which drops the claim an orphan's start kept.
   const early = heldProblem({ store, session, cap, env, spawn, state, run });
   if (early) return refuse(early, orphans);
-  // The pin: the base tip every later check, cut, and policy read uses, fetched only now.
-  const base = forgeBase(project, found.init.repository, facade, env);
-  if (base.problem) return refuse(base.problem, orphans);
-  // The team's policy, read once, its local half at the pinned commit itself, never at a ref that may move since. A
-  // change on the forge after this read is an accepted residual.
-  const policy = teamPolicy(project, found.init.repository, facade, { tip: base.tip });
-  if (policy.transient) return { answer: noted(retryAnswer('start', policy.problem, orphans)) };
-  if (policy.problem) return refuse(policy.problem, orphans);
-  const machine = machineProblem(project, policy);
-  if (machine) return refuse(machine, orphans);
-  const hostProblem = hostStartProblem(cap, policy, env);
-  if (hostProblem) return { answer: noted(haltAnswer(hostProblem, { lines: orphans })) };
   const capped = capProblem({ found: current, key, policy, today: startsToday(state, context.now) });
   if (capped.problem) return refuse(capped.problem, orphans);
   const access = accessProblem({
@@ -815,10 +828,11 @@ function writeAhead({ state, run, base, held, session, now, found, env, parallel
   return done;
 }
 
-// Why startHeld would refuse a start for `session` now, or null: its claim on a start holds (claimBusy), or its earlier
-// start record names a session that holds the next start back (earlierEnded). startHeld asks both again under its claim.
-function heldProblem({ store, session, cap, env, spawn, state, run }) {
-  const busy = safely(() => claimBusy(store, session, { now: Date.now() }));
+// Why startHeld would refuse a start for `session` now, or null: its claim on a start holds (claimBusy), unless `claim`
+// is false, or its earlier start record names a session that holds the next start back (earlierEnded). startHeld asks
+// both again under its claim. Reads only.
+function heldProblem({ store, session, cap, env, spawn, state, run, claim = true }) {
+  const busy = claim ? safely(() => claimBusy(store, session, { now: Date.now() })) : null;
   if (busy) return `the start claim of this session is busy (${busy}); a start from it may still run`;
   const earlier = safely(() => readStarted(store, session, { now: Date.now() }));
   if (!earlier) return null;
@@ -840,7 +854,8 @@ function earlierEnded({ cap, store, earlier, env, spawn, state, run }) {
 
 // The commit issues are cut from and checked against: the head of the default branch, as the forge reports it at the
 // repository init pinned, `repository`, fetched into the default branch's remote-tracking ref under `env`. { tip, main },
-// `main` the default branch's name, or { problem }: the forge cannot say, the fetch fails, or a local base ref, which any session's git can move, names
+// `main` the default branch's name, or { problem }, with `transient` when the forge could not answer now, as teamPolicy
+// marks its own read: the forge cannot say, the fetch fails, or a local base ref, which any session's git can move, names
 // another commit.
 export function forgeBase(project, repository, forge, env = process.env) {
   const named = `${repository.owner}/${repository.name}`;
@@ -850,7 +865,7 @@ export function forgeBase(project, repository, forge, env = process.env) {
     main = defaultBranch(forge, { repo: named, host: repository.host });
     sha = forge.branchHead(named, main, { host: repository.host });
   } catch (error) {
-    return { problem: `the forge cannot say which commit the default branch of ${repository.host}/${named} is at (${String(error.message).split('\n')[0]})` };
+    return { problem: `the forge cannot say which commit the default branch of ${repository.host}/${named} is at (${String(error.message).split('\n')[0]})`, transient: true };
   }
   if (typeof sha !== 'string' || !/^[0-9a-f]{40}$/u.test(sha)) return { problem: `the forge names no commit for the default branch of ${repository.host}/${named}` };
   const fetched = gateGit(['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${main}:refs/remotes/origin/${main}`], project.root, { env });

@@ -992,6 +992,47 @@ test('an unknown start the host never lists is settled once its pending mark has
   assert.ok(!existsSync(path.join(fx.store.dir, `claim-${DRIVER}.json`)));
 });
 
+// What writes the ledger or touches a session waits for the policy read: an outage settles no orphan and stops nothing.
+test('a policy the forge cannot answer now retries the start with no row written and no orphan settled, while one waits', (t) => {
+  const fx = runFixture(t);
+  const claude = fakeClaude({ dir: fx.dir, start: () => ({ status: 1, stdout: '', stderr: 'timed out', listed: false }) });
+  fx.cmd(['start', 'launch', 'ENG-1'], { spawn: claude.run });
+  const later = Date.now() + PENDING_AGE + 60_000;
+  const rows = fx.rows().length;
+  const claim = path.join(fx.store.dir, `claim-${DRIVER}.json`);
+  assert.ok(existsSync(claim), 'the start kept its claim for the orphan settling');
+  const contents = fx.forge.contents;
+  fx.forge.contents = () => {
+    throw new Error('gh: HTTP 502');
+  };
+  const listed = claude.calls.length;
+  const retried = fx.cmd(['start', 'launch', 'ENG-4'], { spawn: claude.run, now: later });
+  assert.equal(retried.exitCode, 75, retried.err.join('\n'));
+  assert.match(retried.out[0], /^retry: the forge's copy of the default branch's config\.json cannot be read/u, 'the status line first');
+  assert.equal(fx.rows().length, rows, 'no row');
+  assert.ok(existsSync(claim), 'no claim dropped');
+  assert.deepEqual(claude.calls.slice(listed), [], 'no session listed or stopped');
+  // Once the forge answers, the start settles the orphan first.
+  fx.forge.contents = contents;
+  const settled = fx.cmd(['start', 'launch', 'ENG-4'], { spawn: claude.run, now: later });
+  assert.ok(settled.out.includes('orphan ENG-1 attempt 1 none listed'), settled.out.join('\n'));
+});
+
+// The forge's read of the default branch's head inside the pin: an outage is a retry, as the policy read's is.
+test('a forge that cannot name the default branch now retries the start, and writes nothing', (t) => {
+  const fx = runFixture(t);
+  fx.forge.repository = () => {
+    throw new Error('gh: HTTP 502');
+  };
+  const rows = fx.rows().length;
+  const retried = fx.cmd(['start', 'launch', 'ENG-1']);
+  assert.equal(retried.exitCode, 75, retried.err.join('\n'));
+  assert.match(retried.out[0], /^retry: the forge cannot say which commit the default branch of github\.com\/acme\/widgets is at \(.*gh: HTTP 502.*\)$/u);
+  assert.equal(fx.rows().length, rows, 'no row');
+  assert.equal(existsSync(path.dirname(work(fx))), false, 'no clone');
+  assert.deepEqual(fx.claude.starts(), []);
+});
+
 test('the normal path: wait returns on the result while the issue\'s session is still listed working, and the next start waits for it without leaving a clone', (t) => {
   const fx = runFixture(t, { issues: [{ key: 'ENG-1', branch: 'feat/eng-1', status: 'unstarted' }, { key: 'ENG-4', branch: 'fix/eng-4', status: 'unstarted' }] });
   assert.equal(fx.cmd(['start', 'launch', 'ENG-1']).exitCode, 0);
@@ -1436,9 +1477,16 @@ test('a start the cheap checks refuse fetches nothing from the forge or origin',
   fx.git('commit', '-q', '--allow-empty', '-m', 'on the remote');
   fx.git('push', '-q', fx.bare, 'HEAD:refs/heads/main');
   fx.git('reset', '-q', '--hard', 'HEAD~1');
-  assert.match(fx.cmd(['start', 'launch', 'ENG-4']).err[0], /the session of ENG-1 attempt 1 runs on after its issue settled/u);
+  // A session that is not the run's driver: refused before the pin.
+  assert.match(fx.cmd(['start', 'launch', 'ENG-4'], { session: OTHER }).err[0], /this session is not the driver of the run launch/u);
   assert.equal(fx.forge.calls.filter(([kind]) => kind === 'branchHead').length, before, 'no forge read of the head');
   assert.equal(fx.git('rev-parse', 'refs/remotes/origin/main').trim(), fetchedAt, 'no fetch');
+  // A session that runs on after its issue settled is known only once the start may settle it, past the pin and the
+  // policy read: still a wait, and no start is written.
+  const lingering = fx.cmd(['start', 'launch', 'ENG-4']);
+  assert.equal(lingering.exitCode, 75, lingering.err.join('\n'));
+  assert.match(lingering.err[0], /the session of ENG-1 attempt 1 runs on after its issue settled/u);
+  assert.equal(fx.rows().filter((row) => row.event === 'start' && row.key === 'ENG-4').length, 0);
 });
 
 test('the write-ahead row is dated when it is written, just before the launch, never by the time the command was given', (t) => {

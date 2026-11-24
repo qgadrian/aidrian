@@ -604,15 +604,18 @@ Two kinds of call are refused outright inside a project, for every session, with
 - A GraphQL call that may merge: a `gh api` call whose `query` field names `mergePullRequest`,
   `enablePullRequestAutoMerge`, or `enqueuePullRequest`, at any endpoint, or a `gh api` or `curl` call to GraphQL whose
   query names one, from a file it names, or whose query the shell builds or reads from stdin (a URL whose host the shell
-  builds keeps its GraphQL path); and a `curl` call to a URL the shell builds whole whose body names one as written.
-  With `--input`, `gh api` sends the file as the body and its fields in the URL, so the file alone decides. It names its pull request by a node id no review record is keyed
+  builds keeps its GraphQL path, and one with `/graphql` only in its query or fragment has none); and a `curl` call to a
+  URL the shell builds whole whose body names one as written. With `--input`, `gh api` sends the last one's file as the
+  body and its fields in the URL, so that file alone decides. It names its pull request by a node id no review record is keyed
   by, so the guard cannot check the review it owes. Only the query counts: a JSON body's `query` field is read decoded,
   so an escape such as `\u0050` hides none, and a variable or a `--jq` filter naming a mutation counts for nothing.
-- A `curl` transfer that names a REST merge URL and may write: a method other than `GET` or `HEAD`, one the shell
-  builds, an upload or a form, a body unless the transfer's last of `-G`, `--get`, and `--no-get` sends it as a GET, or
-  an unquoted word the shell splits, which may be any option. Each transfer, split where curl splits it, at `--next` and
-  at `-:` alone or in a group, never at an option's value or after `--`, is read alone, with its options read as curl
-  reads them, a group such as `-sXPUT` included. curl is no merge tool, so the guard reads no head or record for it.
+- A `curl` call whose URL path is a REST merge's and that may write: a method other than `GET` or `HEAD`, one the shell
+  builds, an upload or a form, an unquoted word before `--` that the shell splits, which may be any option, or a body,
+  unless the call's last of `-G`, `--get`, and `--no-get` sends it as a GET and nothing in it may start another
+  transfer (`--next`, or a short-option group holding `:`). Its options are read as curl reads them, a group such as
+  `-sXPUT` included. curl is no merge tool, so the guard reads no head or record for it, and reads no transfer apart
+  from another, since where curl splits one depends on every option's arity: a read of a merge URL in a call that
+  writes elsewhere, or that sends `-G` data and may hold several transfers, is refused too.
 
 A call that only reads, such as a GraphQL query or a `curl` GET of whether a pull request merged, runs as before.
 

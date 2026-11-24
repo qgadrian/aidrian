@@ -393,18 +393,23 @@ test('a curl call that may write to a REST merge URL is refused outright, by any
     `curl -s https://api.github.com/repos/acme/notes -s: -XPUT ${url}`,
     `curl -G -d a=1 https://api.github.com/repos/acme/notes --next -d '{}' ${url}`,
     `curl -G: -d '{}' ${url}`,
+    // Transfers are not read apart, since where curl splits one depends on every option's arity: a read of the merge
+    // URL beside a write, or with -G data in a call that may hold several transfers, is refused with the rest.
+    `curl ${url} --next -X PUT https://api.github.com/repos/acme/notes`,
+    `curl -s ${url} -s: -X PUT https://api.github.com/repos/acme/notes`,
+    `curl -G -d a=1 ${url} --next -G -d b=2 https://api.github.com/repos/acme/notes`,
+    `curl ${url} --next $OPTS https://api.github.com/repos/acme/notes`,
     `curl -H '--next' -X PUT ${url}`,
     `curl -X PUT -- ${url}`,
     `curl -G --no-get -d '{}' ${url}`,
     `curl $OPTS ${url}`,
     `curl -X PUT -d '{"query":"query { viewer { login } }"}' https://api.github.com/graphql ${url}`,
   ]) assert.equal(r.run(command), CURL_REASON, command);
-  // Each transfer is read alone: a read of the merge URL beside a write elsewhere runs, and `-G` sends its data as a GET.
+  // `-G` sends its data as a GET, and words after `--` are URLs, whatever the shell splits them into.
   for (const command of [`curl ${url}`, `curl -sI ${url}`, `curl -X GET ${url}`, `curl ${url} https://api.github.com/repos/acme/notes/pulls/6/merge`,
     `curl ${url} --next -X HEAD https://api.github.com/repos/acme/notes`, 'curl -X PUT https://api.github.com/repos/acme/notes/pulls/5',
-    `curl -G -d per_page=1 ${url}`, `curl -G -d a=1 ${url} --next -G -d b=2 https://api.github.com/repos/acme/notes`,
-    `curl ${url} --next -X PUT https://api.github.com/repos/acme/notes`, `curl -s ${url} -s: -X PUT https://api.github.com/repos/acme/notes`,
-    `curl --no-get -G -d per_page=1 ${url}`, `curl ${url} --next $OPTS https://api.github.com/repos/acme/notes`]) {
+    `curl -G -d per_page=1 ${url}`, `curl --no-get -G -d per_page=1 ${url}`, `curl -- $URLS ${url}`,
+    "curl -X POST 'https://uploads.example.com/upload?next=/repos/acme/notes/pulls/5/merge' -d x"]) {
     assert.equal(r.run(command), null, command);
   }
   assert.doesNotMatch(CURL_REASON, /\b(?:I|you|your)\b/u);
@@ -432,6 +437,7 @@ test('a GraphQL merge through curl is refused in a project, and a query that onl
   // A URL the shell builds is read only by a body that names a mutation as written: an opaque one is no evidence.
   assert.equal(r.run('curl "$UPLOAD_URL" --data-binary "$JSON"'), null);
   assert.equal(r.run('curl "$UPLOAD_URL" -d @-'), null);
+  assert.equal(r.run('curl "$UPLOAD_URL?return=/graphql#/graphql" --data-binary "$JSON"'), null, 'a GraphQL path in the query or fragment is no GraphQL URL');
   // A GraphQL path stays one when the shell builds only its host.
   assert.match(r.run('curl "$API/graphql" -d "$BODY"') ?? '', /^Blocked: this is a GraphQL call whose query the guard cannot read/u);
   assert.match(r.run('curl "$API/graphql" -d @-') ?? '', /^Blocked: this is a GraphQL call whose query the guard cannot read/u);
@@ -443,6 +449,9 @@ test('a GraphQL merge through curl is refused in a project, and a query that onl
   assert.equal(r.run(`gh api graphql --input ${plain} -f query='mutation { mergePullRequest(input: {}) { clientMutationId } }'`), null);
   assert.match(r.run(`gh api graphql --input ${query} -f per_page=1`) ?? '', /^Blocked: this is a GraphQL call/u);
   assert.match(r.run(`gh api graphql --input ${query} -F query=@${plain}`) ?? '', /^Blocked: this is a GraphQL call/u);
+  // gh reads the last --input alone.
+  assert.equal(r.run(`gh api graphql --input ${query} --input ${plain}`), null);
+  assert.match(r.run(`gh api graphql --input ${plain} --input ${query}`) ?? '', /^Blocked: this is a GraphQL call/u);
 });
 
 test('a refused merge hands over the one command the Human runs, naming the team`s strategy and the merge`s repository (#390)', (t) => {

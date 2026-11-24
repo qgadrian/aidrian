@@ -6,14 +6,19 @@ import path from 'node:path';
 
 import { packagePrograms } from './hosts/index.mjs';
 
-// The package runners that run another program, each program's forms { words, options }: `words`, the runner's own
-// words before the program, and `options`, its options that take the next word.
+// npm's options that take the next word, before or after its own words, as `npm --workspace web exec x` reads them:
+// its workspace, its prefix, and the config file, registry, and log level, as npm 11's help and shorthands give them.
+const NPM_GLOBALS = ['-w', '--workspace', '-C', '--prefix', '-L', '--location', '--userconfig', '--registry', '--loglevel'];
+// The package runners that run another program, each { globals, forms }: `globals`, the runner's options that take the
+// next word wherever they stand, and each program's forms { words, options }: `words`, the runner's own words before the
+// program, and `options`, the options of that form that take the next word.
 const RUNNERS = Object.freeze({
-  npx: [{ words: [], options: ['-p', '--package', '-c', '--call'] }],
-  bunx: [{ words: [], options: ['-p', '--package'] }],
-  npm: [{ words: ['exec'], options: ['-p', '--package', '-c', '--call', '-w', '--workspace'] }, { words: ['x'], options: ['-p', '--package', '-c', '--call'] }],
-  pnpm: [{ words: ['dlx'], options: ['--package', '-C', '--dir'] }, { words: ['exec'], options: ['-C', '--dir', '--filter', '-F'] }],
-  yarn: [{ words: ['dlx'], options: ['-p', '--package'] }],
+  npx: { globals: NPM_GLOBALS, forms: [{ words: [], options: ['-p', '--package', '-c', '--call'] }] },
+  bunx: { globals: [], forms: [{ words: [], options: ['-p', '--package'] }] },
+  npm: { globals: NPM_GLOBALS, forms: [{ words: ['exec'], options: ['-p', '--package', '-c', '--call'] }, { words: ['x'], options: ['-p', '--package', '-c', '--call'] }] },
+  // pnpm's folder, its filters, and its registry and output options, as pnpm's help gives them.
+  pnpm: { globals: ['-C', '--dir', '-F', '--filter', '--filter-prod', '--registry', '--reporter', '--loglevel'], forms: [{ words: ['dlx'], options: ['--package'] }, { words: ['exec'], options: [] }] },
+  yarn: { globals: [], forms: [{ words: ['dlx'], options: ['-p', '--package'] }] },
 });
 // A package whose program has another name than its last part, as `npx @changesets/cli publish` runs `changeset`, and
 // each host's own packages (hosts/index.mjs packagePrograms), as `npx @anthropic-ai/claude-code` runs `claude`.
@@ -27,15 +32,26 @@ const own = (table, word) => (Object.hasOwn(table, word) ? table[word] : undefin
 // reads an argument's text, null for one built at run time, so a list of plain words and the lexer's tokens both read.
 export function unwrapped(program, args, word = (each) => each) {
   const words = args.map(word);
-  const operands = words.filter((text) => text !== null && !text.startsWith('-'));
-  const runner = (own(RUNNERS, program) ?? []).find((each) => each.words.every((runnerWord, i) => operands[i] === runnerWord));
-  if (!runner) return { program, args };
-  const rest = [...args];
-  for (const runnerWord of runner.words) rest.splice(rest.findIndex((each) => word(each) === runnerWord), 1);
-  let at = 0;
-  while (at < rest.length && word(rest[at])?.startsWith('-')) at += runner.options.includes(word(rest[at])) ? 2 : 1;
-  const named = at < rest.length ? word(rest[at]) : null;
-  if (named === null) return { program, args };
-  const spec = named.replace(/(?<=.)@[^@/]*$/u, '');
-  return { program: own(PACKAGE_PROGRAMS, spec) ?? path.basename(spec), args: rest.slice(at + 1) };
+  const { globals = [], forms = [] } = own(RUNNERS, program) ?? {};
+  // The index of the first word from `at` that is no option, past each option and the value of those in `valued`, and
+  // past a word built at run time when `dynamic`.
+  const operand = (at, valued, dynamic) => {
+    while (at < words.length && ((dynamic && words[at] === null) || words[at]?.startsWith('-'))) at += valued.includes(words[at]) ? 2 : 1;
+    return at;
+  };
+  for (const form of forms) {
+    let at = 0;
+    const matched = form.words.every((runnerWord) => {
+      const next = operand(at, globals, true);
+      at = next + 1;
+      return words[next] === runnerWord;
+    });
+    if (!matched) continue;
+    at = operand(at, [...globals, ...form.options], false);
+    const named = at < words.length ? words[at] : null;
+    if (named === null) return { program, args };
+    const spec = named.replace(/(?<=.)@[^@/]*$/u, '');
+    return { program: own(PACKAGE_PROGRAMS, spec) ?? path.basename(spec), args: args.slice(at + 1) };
+  }
+  return { program, args };
 }

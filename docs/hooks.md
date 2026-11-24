@@ -1167,7 +1167,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   `claude --resume`, `codex exec`, or `opencode run`, by the matcher each host adapter declares (`sessionStart`,
   [Adding a host](providers/adding-a-host.md)), every host's whatever host runs the session; a shell it cannot read
   that names such a program counts, and a package runner, such as `npx`, `pnpm dlx`, or `bunx`, is read as the program
-  its package installs, so `npx @anthropic-ai/claude-code -p` counts as `claude -p`. The refusal says the command
+  its package installs, past the runner's options that take a value, as `npm -w web exec` and `pnpm -C web dlx`,
+  so `npx @anthropic-ai/claude-code -p` counts as `claude -p`. The refusal says the command
   "starts or resumes a session of" that host. A command that only manages sessions, such as `claude agents` or
   `claude stop`, runs; of `opencode`, only the info flags and the nine commands its
   [page](providers/opencode.md#rules-for-the-other-hosts-sessions) lists run.
@@ -1468,7 +1469,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
     ([Dependency installs](providers/claude-code.md#dependency-installs)). A subcommand is found past the program's global options that take a value, as in
     `codex --profile p login` or `gh -R o/r config set`, and through a package runner: `npx`, `pnpm dlx`, `bunx`,
     `yarn dlx`, `npm exec`, `npm x`, and `pnpm exec`, by a host's own package name too (an adapter's `packages`), so
-    `npx opencode-ai plugin add x` reads as `opencode plugin add x`.
+    `npx opencode-ai plugin add x` reads as `opencode plugin add x`, past the runner's options that take a value, so
+    `npm -w web exec` and `pnpm --dir web dlx` count too.
   - A review manifest takes the name of the review gate's old attest record, `pr-<n>.json`, so a write that may give it
     a top-level `reviewer` key is refused: a file tool's text that parses as JSON with that key, escapes read as JSON
     reads them, or, when it does not parse, holds the key or a quoted key with an escape in it; a shell write of a

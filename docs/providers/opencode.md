@@ -309,7 +309,8 @@ past the global options that take a value: `--server`, `--log-level`, `--complet
 
 Both guards read a package runner as the program it runs: `npx`, `bunx`, `npm exec`, `npm x`, `pnpm dlx`,
 `pnpm exec`, and `yarn dlx` of `@opencode/cli` or `opencode-ai` run `opencode`, and of `@anthropic-ai/claude-code`
-run `claude`.
+run `claude`, past the runner's options that take a value before or after its own word, such as npm's `-w`,
+`--workspace`, `-C`, and `--prefix`, and pnpm's `-C`, `--dir`, `-F`, and `--filter` (`lib/package-runner.mjs`).
 
 **A confined clone.** On Claude Code's confined start, the clone gets empty `.opencode` and `.agents` folders, and
 `opencode.json` and `opencode.jsonc` holding `{}`, as placeholders, each file kept out of git through the git folder's

@@ -131,7 +131,10 @@ const OPENCODE_STARTS = ['opencode', 'opencode run x', 'opencode serve', 'openco
   // A command that talks to the background service, which OpenCode discovers or starts, and one that may restart it.
   'opencode models', 'opencode session list', 'opencode mcp list', 'opencode upgrade',
   // Through a package runner, by its packages' names.
-  'npx @opencode/cli run x', 'npx -y @opencode/cli@2.4.0 run x', 'pnpm dlx @opencode/cli run x', 'bunx opencode-ai serve', 'npx opencode-ai', 'npm exec opencode-ai run x'];
+  'npx @opencode/cli run x', 'npx -y @opencode/cli@2.4.0 run x', 'pnpm dlx @opencode/cli run x', 'bunx opencode-ai serve', 'npx opencode-ai', 'npm exec opencode-ai run x',
+  // Past a runner's global option that takes the next word, before the runner's own word.
+  'npm --workspace web exec opencode run x', 'npm -w web exec opencode run x', 'npm --prefix /tmp/p exec opencode run x', 'npm -C /tmp/p x opencode run x',
+  'npx --prefix /tmp/p opencode run x', 'pnpm --dir web dlx @opencode/cli run x', 'pnpm -C web exec opencode run x', 'pnpm --filter web exec opencode run x', 'pnpm -F web exec opencode run x'];
 
 test('a subagent, and a session the background route started, may not start an OpenCode session, and may run what starts none', () => {
   for (const command of OPENCODE_STARTS) {
@@ -139,7 +142,8 @@ test('a subagent, and a session the background route started, may not start an O
     assert.match(startAsk(command, { agent: null, unattended: () => true })?.reason ?? '', /outside the handoff gate/u, `unattended: ${command}`);
     assert.equal(startAsk(command, { agent: null }), null, `an attended main session may: ${command}`);
   }
-  for (const command of ['opencode --version', 'opencode -h', 'opencode mcp add x', 'opencode service stop', 'opencode debug paths', 'echo opencode', 'npx @opencode/cli --version', 'npx prettier .', 'npx prettier --check .']) {
+  for (const command of ['opencode --version', 'opencode -h', 'opencode mcp add x', 'opencode service stop', 'opencode debug paths', 'echo opencode', 'npx @opencode/cli --version', 'npx prettier .', 'npx prettier --check .',
+    'npm -w opencode exec prettier .', 'pnpm --dir opencode exec prettier .', 'pnpm -C x run opencode']) {
     assert.equal(startAsk(command), null, command);
   }
   // Claude Code's package too.

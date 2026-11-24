@@ -142,13 +142,17 @@ test('a denial gives one line that names the host, the setting, its file, the re
   assert.deepEqual(personalWords(read.message), []);
 });
 
+// A password no path, branch, or variable of the machine running the test holds, so finding it anywhere is a leak.
+const PASSWORD = 'pw-q7Zk3vX9';
+const HALF = 'pw-h4Lr';
+
 test('a credential in the remote URL never reaches the host or the message: only host/owner/repo does', (t) => {
-  for (const url of ['https://user:secret@github.com/acme/widget.git', 'git@github.com:acme/widget.git', 'ssh://git@github.com:22/acme/widget', 'https://x-access-token:secret@GitHub.com/Acme/Widget/', 'https://user:sec:ret@github.com/acme/widget']) {
+  for (const url of [`https://user:${PASSWORD}@github.com/acme/widget.git`, 'git@github.com:acme/widget.git', 'ssh://git@github.com:22/acme/widget', `https://x-access-token:${PASSWORD}@GitHub.com/Acme/Widget/`, `https://user:${HALF}:${PASSWORD}@github.com/acme/widget`]) {
     const { asks, host } = answering(DENIAL);
     const read = pushPreflight({ cwd: repository(t, { origin: url }), host, session: SESSION });
     assert.equal(read.repository, REPOSITORY, url);
     assert.equal(asks[0].repository, REPOSITORY, url);
-    assert.ok(!JSON.stringify(asks).includes('secret') && !read.message.includes('secret') && !read.message.includes('sec:'), url);
+    assert.ok(!JSON.stringify(asks).includes(PASSWORD) && !read.message.includes(PASSWORD) && !read.message.includes(`${HALF}:`), url);
   }
   // A password that holds an `@` leaves part of itself before the host: nothing is asked or printed.
   for (const url of ['https://user:p@ss@github.com/acme/widget.git', 'https://user:p@ss:word@github.com/acme/widget']) {

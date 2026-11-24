@@ -1092,13 +1092,10 @@ the branch ships on purpose. Before the body ships, `pr-write` sets each one aga
 doc and line), a marker whose class no list holds included and a `rejected` one left out, since it is no rule, and the
 `## Consequences` lines of each ADR in `docs/adr/`, or the folder `--adr` names, an ADR whose Status starts `Superseded` skipped
 with a note; no `docs/adr/` is an empty list, an `--adr` that is no folder fails, and with no project folder the record is the ADR
-lines alone. It lists each decision and each ADR line once, then each residual by its number with the ADR lines it is set
-against, by `path:line`, so the listing grows with the residuals plus the record, never their product, and `--json` prints it
-pretty, one value a line. Past 40 ADR lines on record, a residual keeps every line of an ADR it names, by file name or as `ADR 12`,
-and the 40 lines that share the most words with it; its `dropped` counts the rest, and a note says so.
-`--residual <n>` lists one residual, `--path <doc or folder>` only the decisions and ADR lines there, and `--all-adrs` every ADR line
-beside every residual; none of the three goes with `--judged`, which checks rows against the whole record, so a row may name
-any ADR line on record, listed or not.
+lines alone. It lists each decision and each ADR line once, then each residual by its number, and every residual is set
+against the whole record, so the listing grows with the residuals plus the record, never their product; `--json` prints it
+pretty, one value a line. `--residual <n>` lists one residual, and `--path <doc or folder>` every decision and ADR line there,
+with no cap; neither goes with `--judged`, which checks rows against the whole record.
 An ADR, or an ADR folder, that is there but does not read is a problem of the record, never an empty list.
 It reads the branch's working copy, so a marker or wording the branch changes must already show in the body's
 Decisions. That part is deterministic. When the list holds no decision and no ADR line, it ends

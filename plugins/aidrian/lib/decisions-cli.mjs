@@ -8,7 +8,7 @@
 //   aidrian decisions set ID confirmed|changed|rejected  # the Human's answer: rewrites that one marker in the working copy; changed confirms it
 //   aidrian decisions undo ID                    # the Human's undo: puts back the old wording and removes the decision's lines
 //   aidrian decisions residuals --body FILE [--judged FILE] [--adr DIR] [--json]  # each accepted residual beside the decisions on record and the ADR consequences; with --judged, the contradictions, exit 1
-//   aidrian decisions residuals --body FILE [--residual N] [--path P] [--all-adrs]  # the listing narrowed to one residual or a path, or every ADR line
+//   aidrian decisions residuals --body FILE [--residual N] [--path P]  # the listing narrowed to one residual, or to the record under a path
 //
 // `--reversible` answers the questions of decisions.json in its order: storedData, external, pricingOrContract,
 // reachesUsersUnreviewed. An answer left out asks, and a yes asks but for one on the last that the base commit's
@@ -37,7 +37,7 @@ import { parseArgs } from 'node:util';
 import { baseBranchTip, commandConfig, committedAuthority, committedDecisions, DEFAULTS, loadConfig, localDecisions } from './config.mjs';
 import { appendEvent, stamp } from './dispatch-log.mjs';
 import { forgeFor } from './forges/index.mjs';
-import { ADR_CAP, ageDays, blockOf, classDomain, consequenceLines, supersededAdr, DECISION_STATUSES, isClassName, judgeResiduals, loadVocab, pairResiduals, parseDecisions, recordAt, residualItems, residualsListing, resolveAuthority, setDecisionStatus, unattendedAnswer, undoDecision, wordingProblems } from './decisions.mjs';
+import { ageDays, blockOf, classDomain, consequenceLines, supersededAdr, DECISION_STATUSES, isClassName, judgeResiduals, loadVocab, pairResiduals, parseDecisions, recordAt, residualItems, resolveAuthority, setDecisionStatus, unattendedAnswer, undoDecision, wordingProblems } from './decisions.mjs';
 import { checkoutRoots, runGit } from './git.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 import { indexedPaths, loadKnowledge } from './knowledge.mjs';
@@ -47,7 +47,7 @@ import { usageLines } from './usage.mjs';
 
 const USAGE = 'resolve --domain D --class C [--reversible A,B,C,D] [--doc PATH]... [--project DIR] | resolve --vocab [--project DIR] ' +
   '| list [--added-since REF] [--json] [--project DIR] | residuals --body FILE [--judged FILE] [--adr DIR] [--json] [--project DIR] ' +
-  '| residuals --body FILE [--residual N] [--path P] [--all-adrs] [--adr DIR] [--json] [--project DIR] ' +
+  '| residuals --body FILE [--residual N] [--path P] [--adr DIR] [--json] [--project DIR] ' +
   '| set ID confirmed|changed|rejected [--project DIR] | undo ID [--project DIR]';
 // Each answer `set` takes, and the status it writes. `changed` is the Human's wording in place of the agent's: the rule stands, so
 // the marker reads confirmed, and the log counts the answer as an override.
@@ -389,19 +389,18 @@ function list(args) {
 }
 
 // `decisions residuals`: each item of a pull request body's accepted residuals section beside every decision on record and the
-// `## Consequences` lines of the ADR folder it is set against (pairResiduals), each listed once, for `product-manager` to judge;
-// with `--judged`, that judgment checked against the whole record. `--residual N` lists residual N alone, `--path P` only the
-// decisions and ADR lines in P, a doc or a folder as the listing prints it, and `--all-adrs` sets every ADR line beside every
-// residual. `--json` prints pretty, one value a line, so a long listing reads in parts. `--body`, `--judged`, and `--adr` are
+// `## Consequences` line of the ADR folder, the record listed once (pairResiduals), for `product-manager` to judge; with
+// `--judged`, that judgment checked against the whole record. `--residual N` lists residual N alone, and `--path P` every
+// decision and ADR line in P, a doc or a folder as the listing prints it. `--json` prints pretty, one value a line, so a long listing reads in parts. `--body`, `--judged`, and `--adr` are
 // read from the current folder; `--project` only finds the project.
 function residuals(args) {
   const word = { type: 'string' };
   const flag = { type: 'boolean' };
-  const options = { body: word, judged: word, adr: word, json: flag, project: word, residual: word, path: word, 'all-adrs': flag };
+  const options = { body: word, judged: word, adr: word, json: flag, project: word, residual: word, path: word };
   const { values } = parseArgs({ args, options });
   if (!values.body) return fail('residuals needs --body FILE');
-  const narrowed = values.residual !== undefined || values.path !== undefined || values['all-adrs'];
-  if (narrowed && values.judged !== undefined) return fail('--residual, --path, and --all-adrs shape the listing; --judged checks the whole record');
+  const narrowed = values.residual !== undefined || values.path !== undefined;
+  if (narrowed && values.judged !== undefined) return fail('--residual and --path narrow the listing; --judged checks the whole record');
   const only = values.residual === undefined ? null : Number(values.residual);
   if (only !== null && !(Number.isInteger(only) && only > 0)) return fail(`--residual takes a residual's number, from 1, not "${values.residual}"`);
   const start = path.resolve(values.project ?? process.cwd());
@@ -418,12 +417,13 @@ function residuals(args) {
     return fail(`cannot read the body file ${bodyFile}: ${error.code ?? error.message}`);
   }
   const items = residualItems(text, section);
-  if (!items?.length) {
+  const count = items?.length ?? 0;
+  if (only !== null && only > count) return fail(`--residual ${only}: the body has ${count} residual${count === 1 ? '' : 's'}`);
+  if (!count) {
     const nothing = `nothing to check: the body has no "## ${section}" items`;
     console.log(values.json ? JSON.stringify({ residuals: [], section, nothing: true, notes: project ? [nothing] : [NO_FOLDER, nothing] }) : nothing);
     return 0;
   }
-  if (only !== null && only > items.length) return fail(`--residual ${only}: the body has ${items.length} residual${items.length === 1 ? '' : 's'}`);
   // A marker whose class no list holds is still a decision on record, as `list` and the domain pause count it.
   const scanned = project ? scanDecisions(project) : null;
   const decisions = scanned ? [...scanned.decisions, ...scanned.unlisted] : [];
@@ -439,16 +439,10 @@ function residuals(args) {
   const partial = unread.length > 0 || (scanned?.notes.length ?? 0) > 0;
   const prefix = values.path?.replace(/\/+$/u, '');
   const within = (file) => prefix === undefined || file === prefix || file.startsWith(`${prefix}/`);
-  const paired = pairResiduals(items, decisions.filter(({ doc }) => within(doc)), adrs.filter(({ path: file }) => within(file)),
-    values['all-adrs'] ? Infinity : ADR_CAP);
+  const paired = pairResiduals(items, decisions.filter(({ doc }) => within(doc)), adrs.filter(({ path: file }) => within(file)));
   // With no decision and no ADR line on record, no residual can contradict one: nothing is owed, --judged or not.
   const nothing = !decisions.some(({ status }) => status !== 'rejected') && adrs.every(({ lines }) => lines.length === 0);
-  const listing = residualsListing(paired, only);
-  const dropped = Math.max(0, ...listing.residuals.map((each) => each.dropped));
-  if (dropped && values.judged === undefined) {
-    notes.push(`with more than ${ADR_CAP} ADR lines on record, each residual is listed with the lines of an ADR it names and the ` +
-      `${ADR_CAP} that share the most words with it; \`dropped\` counts the rest, which --path P or --all-adrs lists`);
-  }
+  const listing = { ...paired, residuals: only === null ? paired.residuals : paired.residuals.filter(({ n }) => n === only) };
   const json = (value) => JSON.stringify(value, null, 2);
   if (nothing && partial) {
     const why = 'the decisions and ADRs on record could not all be read, so an empty record proves nothing: fix the problems above, then run this again';
@@ -463,15 +457,10 @@ function residuals(args) {
       console.log(json({ ...listing, section, adrFolder: folder, nothing, notes: nothing ? [...notes, last] : notes }));
       return 0;
     }
-    const all = listing.adrs.length;
     const shown = [
       ...(listing.decisions.length ? listing.decisions.map((each) => `decision ${each.id} ${each.status} ${place(each)}: ${each.wording}`) : ['decision none on record']),
-      ...(all ? listing.adrs.map((each) => `adr ${each.path}:${each.line}: ${each.text}`) : ['adr none found']),
-      ...listing.residuals.flatMap((each) => [
-        `residual ${each.n}: ${each.residual}`,
-        `  against every decision, and ${each.adrs.length === all && all ? 'every adr line above' : each.adrs.length ? `adr ${each.adrs.join(' ')}` : 'no adr line'}`,
-        ...(each.dropped ? [`  dropped ${each.dropped} adr line${each.dropped === 1 ? '' : 's'}`] : []),
-      ]),
+      ...(listing.adrs.length ? listing.adrs.map((each) => `adr ${each.path}:${each.line}: ${each.text}`) : ['adr none found']),
+      ...listing.residuals.map((each) => `residual ${each.n}: ${each.residual}`),
     ];
     console.log([...shown, ...notes.map((note) => `note\t${note}`), last].join('\n'));
     return 0;
@@ -486,7 +475,7 @@ function residuals(args) {
   const { contradictions, invalid } = judgeResiduals(paired, rows);
   const status = contradictions.length || invalid.length ? 1 : 0;
   if (values.json) {
-    console.log(json({ residuals: paired.residuals.map(({ n, residual }) => ({ n, residual })), contradictions, invalid, notes }));
+    console.log(json({ residuals: paired.residuals, contradictions, invalid, notes }));
     return status;
   }
   const shown = [

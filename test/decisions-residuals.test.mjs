@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { ADR_CAP, consequenceLines, judgeResiduals, pairResiduals, residualItems, residualsListing, supersededAdr } from '../plugins/aidrian/lib/decisions.mjs';
+import { consequenceLines, judgeResiduals, pairResiduals, residualItems, supersededAdr } from '../plugins/aidrian/lib/decisions.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CLI = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
@@ -104,54 +104,35 @@ test('pairResiduals lists the record once and sets every residual beside it', ()
     ],
     adrs: [{ path: 'docs/adr/0001.md', line: 7, text: '- X.' }],
     residuals: [
-      { n: 1, residual: '- A.', adrs: ['docs/adr/0001.md:7'], dropped: 0 },
-      { n: 2, residual: '- B.', adrs: ['docs/adr/0001.md:7'], dropped: 0 },
+      { n: 1, residual: '- A.' },
+      { n: 2, residual: '- B.' },
     ],
   });
-  assert.deepEqual(pairResiduals(items, [], []).residuals.map(({ adrs: a }) => a), [[], []]);
+  assert.deepEqual(pairResiduals(items, [], []), { decisions: [], adrs: [], residuals: [{ n: 1, residual: '- A.' }, { n: 2, residual: '- B.' }] });
   const rejected = pairResiduals(items, [{ ...decisions[0], status: 'rejected' }], []);
   assert.deepEqual(rejected.decisions, [], 'a rejected decision is no rule, so it is off the record');
 });
 
-// A record the size of a large project's: 80 decisions and 4,000 ADR consequence lines over 100 ADRs, each line its own words.
+// A record the size of a large project's: 80 decisions and 4,000 ADR consequence lines over 100 ADRs.
 function largeRecord() {
   const decisions = Array.from({ length: 80 }, (_, i) => ({ id: `rule-${i}`, status: 'confirmed', newWording: `Rule ${i} holds for every order.`, doc: 'docs/a.md', line: i + 1 }));
   const adrs = Array.from({ length: 100 }, (_, a) => ({
     path: `docs/adr/${String(a).padStart(4, '0')}-topic${a}.md`,
-    lines: Array.from({ length: 40 }, (_, l) => ({ line: l + 10, text: `- Consequence ${a}-${l}: subject${a}x${l} keeps topic${a} stable.` })),
+    lines: Array.from({ length: 40 }, (_, l) => ({ line: l + 10, text: `- Consequence ${a}-${l} keeps topic ${a} stable.` })),
   }));
   return { decisions, adrs };
 }
 
-test('a large record is listed once, so the listing grows with the residuals plus the record, not their product', () => {
+test('the record is listed once, so the pairing grows with the residuals plus the record, not their product', () => {
   const { decisions, adrs } = largeRecord();
-  const residual = (i) => ({ text: `- Residual ${i}: subject${i}x${i} and subject${i + 1}x3 stay as they are.` });
-  const size = (count) => JSON.stringify(residualsListing(pairResiduals(Array.from({ length: count }, (_, i) => residual(i)), decisions, adrs)), null, 2).length;
-  const [five, ten] = [size(5), size(10)];
-  assert.ok(five < 64_000, `five residuals over 4,000 ADR lines list in ${five} bytes, over a shell-less Read`);
-  assert.ok(ten - five < five / 2, `five more residuals add ${ten - five} bytes to ${five}: each repeats the record`);
-  const listed = residualsListing(pairResiduals([residual(1), residual(2)], decisions, adrs));
-  assert.equal(listed.decisions.length, 80, 'every decision, once');
-  assert.equal(new Set(listed.adrs.map(({ path: file, line }) => `${file}:${line}`)).size, listed.adrs.length, 'each ADR line once');
-});
-
-test('past the cap a residual keeps the ADR it names and the lines sharing its words, and counts the rest', () => {
-  const { adrs } = largeRecord();
-  const paired = pairResiduals([{ text: '- ADR 7 is not followed yet, and subject3x5 waits.' }, { text: '- Nothing on record is near this.' }], [], adrs);
-  const [named, unrelated] = paired.residuals;
-  const of = (ids, file) => ids.filter((id) => id.startsWith(`docs/adr/${file}`)).length;
-  assert.equal(of(named.adrs, '0007-topic7.md'), 40, 'every line of the ADR it names');
-  assert.ok(named.adrs.includes('docs/adr/0003-topic3.md:15'), 'the line sharing a word');
-  assert.ok(named.adrs.length <= 40 + ADR_CAP);
-  assert.equal(named.dropped, 4000 - named.adrs.length);
-  assert.deepEqual([unrelated.adrs, unrelated.dropped], [[], 4000]);
-  assert.equal(paired.adrs.length, 4000, 'the whole record stays for the judgment');
-  const judged = judgeResiduals(paired, [
-    { residual: named.residual, contradicts: 'docs/adr/0050-topic50.md:12', evidence: 'topic50' }, { residual: unrelated.residual, contradicts: null }]);
-  assert.deepEqual([judged.invalid, judged.contradictions.length], [[], 1], 'any line on record can be named, listed or not');
-  const all = pairResiduals([{ text: '- Nothing on record is near this.' }], [], adrs, Infinity);
-  assert.deepEqual([all.residuals[0].adrs.length, all.residuals[0].dropped], [4000, 0]);
-  assert.deepEqual(residualsListing(paired, 2).residuals.map(({ n }) => n), [2]);
+  const residual = (i) => ({ text: `- Residual ${i}: this stays as it is for now.` });
+  const size = (count) => JSON.stringify(pairResiduals(Array.from({ length: count }, (_, i) => residual(i)), decisions, adrs), null, 2).length;
+  const [one, five, ten] = [size(1), size(5), size(10)];
+  const perResidual = (ten - five) / 5;
+  assert.ok(perResidual < 200, `each residual adds ${perResidual} bytes: it repeats no part of the record`);
+  assert.ok(five - one < 1_000, `four more residuals add ${five - one} bytes to a ${one}-byte record`);
+  const paired = pairResiduals([residual(1), residual(2)], decisions, adrs);
+  assert.deepEqual([paired.decisions.length, paired.adrs.length], [80, 4000], 'every decision and every ADR line, once, none capped');
 });
 
 test('judgeResiduals lists contradictions with their place and every invalid row', () => {
@@ -195,7 +176,7 @@ test('residuals --body lists the record once and each residual against it, and s
   const out = run(['--body', write('body.md', body())], dir);
   assert.deepEqual([out.status, out.stderr], [0, '']);
   assert.equal(out.stdout.match(/^residual \d: /gmu).length, 2);
-  assert.match(out.stdout, new RegExp(`^residual 1: - ${CONTRADICTING}\n {2}against every decision, and every adr line above$`, 'mu'));
+  assert.match(out.stdout, new RegExp(`^residual 1: - ${CONTRADICTING}$`, 'mu'));
   assert.equal(out.stdout.match(/^decision refund-window /gmu).length, 1, 'each decision once');
   assert.match(out.stdout, new RegExp(`^decision refund-window unconfirmed docs/a\\.md:4: ${RULE}$`, 'mu'));
   assert.equal(out.stdout.match(/^adr docs\/adr\/0001-offer-window\.md:9: - An offer closes after 7 days\.$/gmu).length, 1, 'each ADR line once');
@@ -207,10 +188,30 @@ test('residuals --body lists the record once and each residual against it, and s
   assert.equal(json.status, 0);
   assert.ok(json.stdout.split('\n').length > 10, 'pretty-printed, so a long listing reads in parts');
   const parsed = JSON.parse(json.stdout);
-  assert.deepEqual(parsed.residuals.map(({ n, adrs }) => [n, adrs]), [1, 2].map((n) => [n, ['docs/adr/0001-offer-window.md:9', 'docs/adr/0001-offer-window.md:10']]));
+  assert.deepEqual(parsed.residuals, [{ n: 1, residual: `- ${CONTRADICTING}` }, { n: 2, residual: `- ${CLEAN}` }]);
   assert.deepEqual(parsed.decisions.map(({ id }) => id), ['refund-window']);
-  assert.equal(parsed.adrs[0].path, 'docs/adr/0001-offer-window.md');
+  assert.deepEqual(parsed.adrs.map(({ path: file, line }) => `${file}:${line}`), ['docs/adr/0001-offer-window.md:9', 'docs/adr/0001-offer-window.md:10']);
   assert.deepEqual([parsed.section, parsed.adrFolder, parsed.nothing, parsed.notes], ['Accepted residuals', 'docs/adr', false, []]);
+});
+
+test('--residual lists one residual and --path every line in scope; an --residual out of range fails, on an empty body too', (t) => {
+  const { dir, write } = project(t);
+  const many = Array.from({ length: 60 }, (_, i) => `- A closed bid is terminal, case ${i}.`).join('\n');
+  writeFileSync(path.join(dir, 'docs/adr/0002-bids.md'), `# 2. Bids\n\n## Consequences\n\n${many}\n`);
+  const file = write('body.md', body());
+  const one = JSON.parse(run(['--body', file, '--residual', '2', '--json'], dir).stdout);
+  assert.deepEqual(one.residuals, [{ n: 2, residual: `- ${CLEAN}` }]);
+  assert.deepEqual([one.decisions.length, one.adrs.length], [1, 62], 'the whole record still');
+  const scoped = JSON.parse(run(['--body', file, '--path', 'docs/adr/0002-bids.md/', '--json'], dir).stdout);
+  assert.deepEqual([scoped.decisions.length, scoped.adrs.length, scoped.residuals.length], [0, 60, 2], 'every line in scope, none capped');
+  for (const [text, count] of [[body(), 2], ['## Summary\n\nA change.\n', 0]]) {
+    const out = run(['--body', write('range.md', text), '--residual', '3'], dir);
+    assert.deepEqual([out.status, out.stdout], [1, ''], `${count} residuals`);
+    assert.match(out.stderr, new RegExp(`--residual 3: the body has ${count} residuals`, 'u'));
+  }
+  const judged = run(['--body', file, '--residual', '1', '--judged', write('judged.json', [])], dir);
+  assert.equal(judged.status, 1);
+  assert.match(judged.stderr, /--residual and --path narrow the listing; --judged checks the whole record/u);
 });
 
 test('a contradicting residual is listed with its decision and exits 1; a clean one is not listed', (t) => {
@@ -282,7 +283,6 @@ test('with no ADR folder the pairing still runs, and says none was found', (t) =
   const out = run(['--body', write('body.md', body())], dir);
   assert.deepEqual([out.status, out.stderr], [0, '']);
   assert.equal(out.stdout.match(/^adr none found$/gmu).length, 1);
-  assert.equal(out.stdout.match(/^ {2}against every decision, and no adr line$/gmu).length, 2);
   assert.equal(JSON.parse(run(['--body', path.join(dir, 'body.md'), '--json'], dir).stdout).adrFolder, null);
 });
 
@@ -503,10 +503,7 @@ test('pr-write runs the residuals check before the body ships, and the docs say 
   assert.match(step, /never reworded on this branch to make a residual pass/u);
   assert.match(step, /one line of why stays in the body/u);
   assert.match(step, /an ADR whose Status starts `Superseded` is skipped/iu);
-  for (const text of [step, read('docs/review.md')]) {
-    assert.match(text, new RegExp(`Past ${ADR_CAP} ADR lines.*the ${ADR_CAP} (lines )?that share the most words`, 'u'), 'the docs give the cap the code holds');
-    assert.match(text, /`--residual <n>`.*`--path <doc or folder>`.*`--all-adrs`/u);
-  }
+  for (const text of [step, read('docs/review.md')]) for (const flag of ['`--residual <n>`', '`--path <doc or folder>`']) assert.ok(text.includes(flag), flag);
   assert.match(read('plugins/aidrian/skills/pr-write/references/body-template.md'), /\(`aidrian decisions residuals`\)/u);
   const review = read('docs/review.md');
   assert.match(review, /an ADR whose Status starts `Superseded` skipped with a note/u);

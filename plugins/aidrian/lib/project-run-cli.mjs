@@ -36,9 +36,10 @@ import { parseArgs } from 'node:util';
 import { commandConfig } from './config.mjs';
 import { forgeFor } from './forges/index.mjs';
 import { resolvedPath } from './fs.mjs';
-import { clearLocation } from './git.mjs';
+import { clearLocation, knownPrefix } from './git.mjs';
 import { detectHost, sessionIdentity } from './hosts/index.mjs';
-import { projectAt } from './project.mjs';
+import { isPluginRepository, projectAt } from './project.mjs';
+import { humanMergeLines } from './project-human-merges.mjs';
 import { decisionCommand } from './project-decision.mjs';
 import { pauseOf } from './project-limit.mjs';
 import { sweepIssueReads } from './project-issue-text.mjs';
@@ -48,7 +49,7 @@ import { preflightCommand, recheckLines, snapshotCheck } from './project-preflig
 import { landedPull, openPullHead } from './project-result.mjs';
 import { recordedCommand, reportCommand } from './project-report.mjs';
 import { runConfine } from './project-confine.mjs';
-import { haltOf, initRun, nextLines, planRun, readRun, runPlace, writeSummary } from './project-run.mjs';
+import { haltOf, initRun, nextLines, pinnedRepository, planRun, readRun, runPlace, writeSummary } from './project-run.mjs';
 import { resumeWords, runStore } from './project-run-guard.mjs';
 import { stopAction } from './project-stops.mjs';
 import { endRun, recordHandoff, recordResult, resumeRun, RETRY_EXIT, runParallel, startIssue, WAIT_CEILING, WAIT_DEFAULT, waitRun } from './project-run-gate.mjs';
@@ -142,7 +143,9 @@ function projectAction(args, { cwd = process.cwd(), env = process.env, home, for
     const pullHead = ({ pr, branch, repository }) => openPullHead({ forge: forge ?? forgeFor(project.root), repository, pr, branch });
     // A pull request an earlier run left open that merged since takes its issue in as done (project-run.mjs resumedIssues).
     const landed = ({ pr, branch, repository, since }) => landedPull({ forge: forge ?? forgeFor(project.root), repository, pr, branch, since });
-    return initRun({ project, config, run, file: path.resolve(cwd, values.file), session: sessionIdentity(env).session, env, home, pullHead, landed });
+    // Each merge the run leaves to the Human that init can see already, named before any issue starts (lib/project-human-merges.mjs).
+    const humanMerges = ({ resumed, issues, texts }) => humanMergeLines({ forge: forge ?? forgeFor(project.root), repository: pinnedRepository(project), prefix: () => knownPrefix(project.root), pluginRepository: isPluginRepository(project), resumed, issues, texts });
+    return initRun({ project, config, run, file: path.resolve(cwd, values.file), session: sessionIdentity(env).session, env, home, pullHead, landed, humanMerges });
   }
   if (action === 'decision') {
     // A write goes only to the project --project names itself: a folder that is gone, or no project's root, such as a

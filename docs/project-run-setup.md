@@ -311,6 +311,10 @@ An issue's pull request merges with no one there only when (`blocker auto-merge`
 
 The repository needs an active CI workflow that runs on pull requests (`blocker ci`).
 
+Some pull requests wait for your merge whatever the run does: those that change a policy file, or a guarded path without `includeGuardedPaths`.
+`init` and `init --check` print a `needs your merge` line for each one they can see already ([Project run](config.md#project-run)).
+The run's first turn gives you each line, so you know before you leave which merges are yours.
+
 ## Review bot
 
 The default branch sets `github.reviewer`, the bot every unattended merge waits on (`blocker reviewer`). Install it on

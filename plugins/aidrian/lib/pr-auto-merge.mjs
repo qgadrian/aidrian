@@ -364,9 +364,8 @@ export const includesPolicyFiles = (policies) => includesGuardedPaths(policies)
 export function headPolicyProblem(forge, pr, policies, files, prefix = '') {
   if (!includesPolicyFiles(policies) || !files.some(({ path }) => isPolicyPath(path, policies.policyFiles))) return null;
   const at = String(pr.head).slice(0, 7);
-  const pointer = trailPaths(prefix).pointer.toLowerCase();
-  const moved = files.find(({ path }) => path.toLowerCase() === pointer);
-  if (moved) return `it changes ${JSON.stringify(moved.path)}, the pointer file that locates the config, which includePolicyFiles never lets a pull request change by itself`;
+  const moved = movedPointer(files, prefix);
+  if (moved) return movedLine(moved);
   const behind = (() => {
     try {
       if (typeof pr.baseOid !== 'string' || !SHA.test(pr.baseOid)) return null;
@@ -397,6 +396,31 @@ export function headPolicyProblem(forge, pr, policies, files, prefix = '') {
   if (!differing.length) return null;
   const names = differing.map((key) => (key === 'state.dir' ? key : `github.${key}`)).join(' and ');
   return `its config at head ${at} changes ${names} from ${pr.repo} ${policies.main}, which includePolicyFiles never lets a pull request change by itself`;
+}
+
+// The changed file of `files` ({ path }, from the top of the repository) that is the pointer file of the project folder
+// `prefix` (trailPaths' `pointer`), in any case, or undefined: the includePolicyFiles lift never lets one through.
+export const movedPointer = (files, prefix = '') => {
+  const pointer = trailPaths(prefix).pointer.toLowerCase();
+  return files.find(({ path }) => path.toLowerCase() === pointer);
+};
+const movedLine = (moved) => `it changes ${JSON.stringify(moved.path)}, the pointer file that locates the config, which includePolicyFiles never lets a pull request change by itself`;
+
+// The first of the changed files `files` ({ path, changeType }, from the top of the repository) that keeps auto-merge
+// off by its path alone, whatever its review, checks, or head: { path, why }, or null. Each file is judged alone by the
+// paths check's own rule (pathsProblem), under `policies`, branchPolicies' answer, with the lifts it reads
+// (includesGuardedPaths, includesPolicyFiles), the start hook's docs `startDocs`, as startDocs reads them, and
+// `pluginRepository`; then, while the includePolicyFiles lift counts, the pointer file, which headPolicyProblem never
+// lets through. A project run's init asks it of each pull request it resumes (project-human-merges.mjs), so the Human
+// hears of each merge that waits for them before the run starts.
+export function neverMerged(files, prefix, policies, { startDocs: loaded, pluginRepository = false } = {}) {
+  const options = { includeGuardedPaths: includesGuardedPaths(policies), includePolicyFiles: includesPolicyFiles(policies), policyFiles: policies.policyFiles, startDocs: loaded, pluginRepository };
+  for (const file of files) {
+    const why = pathsProblem({ files: [file], changedFiles: 1 }, prefix, options);
+    if (why) return { path: file.path, why };
+  }
+  const moved = options.includePolicyFiles ? movedPointer(files, prefix) : undefined;
+  return moved ? { path: moved.path, why: movedLine(moved) } : null;
 }
 
 // Why `file`, from the top of the repository, is no regular file at the head commit `pr.head`, or null: its entry in its

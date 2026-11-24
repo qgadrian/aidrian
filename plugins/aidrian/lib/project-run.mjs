@@ -381,9 +381,11 @@ const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 // other run still active. Each issue's text is the tracker's own answer the session's reads recorded
 // (project-issue-text.mjs recordedTexts), never a file a session wrote. Throws jsonl.mjs's LOCKED when another process
 // holds the runs lock. `pullHead` reads an old ledger's pull request head (resumedIssues), none by default, and `landed`
-// whether a pull request an earlier run named merged since (project-result.mjs landedPull), none by default. `home`
-// is for a test.
-export function initRun({ project, config, run, file, session, input = {}, env = process.env, home, now = Date.now(), pullHead, landed: mergedSince }) {
+// whether a pull request an earlier run named merged since (project-result.mjs landedPull), none by default.
+// `humanMerges({ resumed, issues, texts })` gives the lines that name each merge the run leaves to the Human that init
+// can see already (project-human-merges.mjs humanMergeLines), printed after the resumed and landed lines, none by
+// default. `home` is for a test.
+export function initRun({ project, config, run, file, session, input = {}, env = process.env, home, now = Date.now(), pullHead, landed: mergedSince, humanMerges = () => [] }) {
   // Recorded issue reads past their age go first, on every host, whatever init then answers.
   sweepIssueReads({ env, now });
   if (typeof run !== 'string' || !RUN_ID.test(run)) return refuse(`the run id ${quote(run)} is not lower-case letters, digits, and dashes, up to 64, starting with a letter or digit`);
@@ -405,6 +407,8 @@ export function initRun({ project, config, run, file, session, input = {}, env =
   const clash = [...problems, ...resumedProblems(read.snapshot, resumed)];
   if (clash.length) return { exitCode: 1, out: [], err: ['aidrian project init: the snapshot input has problems; fix them and run init again', ...clash.slice(0, 20).map((problem) => `  ${problem}`)] };
   const snapshot = resumed.length ? { ...read.snapshot, resumed } : read.snapshot;
+  // Read through the forge before the runs lock too, and printed in init's first output, before any issue starts.
+  const merges = humanMerges({ resumed, issues: read.snapshot.issues, texts });
 
   mkdirSync(runsFolder(state), { recursive: true, mode: 0o700 });
   return withLocks([runsLock(state)], () => {
@@ -442,6 +446,7 @@ export function initRun({ project, config, run, file, session, input = {}, env =
         ...(read.dropped ? [`dropped: ${read.dropped} fields the snapshot never keeps, such as titles and bodies`] : []),
         ...(resumed.length ? [resumedLine(resumed)] : []),
         ...(landed.length ? [landedLine(landed)] : []),
+        ...merges,
         ...(teams ? [`teams: ${teams}`] : []),
         `folder: ${runFolder(state, run)}`,
       ],

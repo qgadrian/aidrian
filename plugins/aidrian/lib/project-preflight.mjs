@@ -32,11 +32,12 @@ import { resolveAutoMerge } from './config-local.mjs';
 import { pluginRepository } from './config-version.mjs';
 import { forgeFor } from './forges/index.mjs';
 import { gateGit, knownPrefix } from './git.mjs';
+import { humanMergeLines } from './project-human-merges.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
 import { continueRoutes, detectHost } from './hosts/index.mjs';
 import { isQuotaNotice } from './pr-await-review.mjs';
 import { branchPolicies } from './pr-auto-merge.mjs';
-import { mayFollowTeamDefault, projectId } from './project.mjs';
+import { isPluginRepository, mayFollowTeamDefault, projectId } from './project.mjs';
 import { recordedDecision } from './project-decision.mjs';
 import { fullAutoLines } from './project-full-auto.mjs';
 import { holdLines } from './project-forge-holds.mjs';
@@ -364,8 +365,9 @@ function forgeLines({ facade, repository, reviewer, lines, check, asks }) {
 // `note teams` line when the snapshot names no team of the workspace (project-run.mjs teamsNote). For each issue that may
 // still start whose decision this machine's recorded-decision store holds, while the team's policy turns the store on as
 // start reads it, a `recorded-decision` line (decisionChecks), none while the state folder fails runPlace, which is a
-// `blocker snapshot` line of its own, as init refuses it.
-// Exit 1 on any blocker.
+// `blocker snapshot` line of its own, as init refuses it. After the resumed and landed lines, a `needs your merge` line
+// for each merge the run leaves to the Human that init names too (project-human-merges.mjs humanMergeLines), which
+// blocks nothing. Exit 1 on any blocker.
 export function snapshotCheck({ project, config, file, session = null, env = process.env, home, forge = null }) {
   const read = readSnapshotInput(file, refNames(project, config));
   if (!read.snapshot) return { exitCode: 1, out: read.problems.slice(0, 50).map((problem) => `blocker snapshot: ${problem}`), err: ['aidrian project init --check: fix the snapshot input, then check it again'] };
@@ -397,7 +399,8 @@ export function snapshotCheck({ project, config, file, session = null, env = pro
       .map((issue) => `blocker texts: ${issue.key} has no text, and projectRun.mcpServers holds no tracker server its session could read it through; read it in this session with the tracker's own issue read, whose answer the run records`));
   }
   const teams = teamsNote(read.snapshot);
-  const out = [`ok snapshot ${read.snapshot.issues.length} issues, ${Object.keys(kept.texts).length} with text`, ...(resumed.length ? [resumedLine(resumed)] : []), ...(landed.length ? [landedLine(landed)] : []), ...blockers, ...decisions.notes, ...nextLines(plan), ...(teams ? [`note teams: ${teams}`] : [])];
+  const merges = humanMergeLines({ forge: facade, repository, prefix: () => knownPrefix(project.root), pluginRepository: isPluginRepository(project), resumed, issues: read.snapshot.issues, texts: kept.texts });
+  const out = [`ok snapshot ${read.snapshot.issues.length} issues, ${Object.keys(kept.texts).length} with text`, ...(resumed.length ? [resumedLine(resumed)] : []), ...(landed.length ? [landedLine(landed)] : []), ...merges, ...blockers, ...decisions.notes, ...nextLines(plan), ...(teams ? [`note teams: ${teams}`] : [])];
   return blockers.length ? { exitCode: 1, out, err: ['aidrian project init --check: clear each blocker, then check again'] } : { exitCode: 0, out, err: [] };
 }
 

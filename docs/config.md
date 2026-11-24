@@ -2358,6 +2358,17 @@ tabs removed, in `<state>/runs/RUN/issues/ISSUE.json`, never in `snapshot.json`,
 `issue.md`, fenced and marked as untrusted text from the tracker, which the issue's session reads instead of the tracker. The `project-autopilot` skill runs both in its
 attended first turn, and `init` last, once nothing blocks.
 
+`init` and `init --check` both name, after the `resumed:` and `landed:` lines, each merge the run leaves to the Human that they can see already.
+A resumed issue whose open pull request changes a path auto-merge never merges gets `needs your merge: #<n> changes <path>, which auto-merge never merges`.
+The path rule is the [auto-merge gate's](#auto-merge) own, each changed file judged alone under the default branch's config on the forge.
+Without `github.autoMerge.includeGuardedPaths` a guarded path counts, and without `includePolicyFiles` too a policy file counts.
+With both, only the pointer file `.aidrian.json` counts, which no pull request may change by itself.
+An issue the run may still start whose tracker text names a policy file, such as `.aidrian/config.json`, gets a `needs your merge, maybe:` warning.
+Its diff does not exist yet, so the warning reads the text alone, and only for the fixed policy file names and the config the pointer file locates.
+A read the forge cannot answer gives a `needs your merge, unknown:` line that says what cannot be told.
+None of these lines blocks: they reach the Human in the run's first turn, before any issue starts, never when an issue's session reaches auto-merge.
+A run with none prints none, and reads nothing more from the forge.
+
 `report RUN [--json]` prints, for the driver only, the report the run owes each issue that settled for good, done after
 a forge-confirmed merge or parked: a status (the adapter's done status type for a merge, `projectRun.blockedStatus` for a
 blocked issue), `projectRun.decisionLabel` for any other, and a comment body with its sha256, with `--json` adding the

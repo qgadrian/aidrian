@@ -19,6 +19,7 @@ import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { noteFrom, openStore, storePath } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import { LOCKED } from '../plugins/aidrian/lib/jsonl.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
+import { humanMergeLines } from '../plugins/aidrian/lib/project-human-merges.mjs';
 import { appendToRun, INPUT_CAP, initRun, issueBranch, pinnedRepository, planRun, readCapped, readRun, runFolder, runPlace, runsFolder, writeSummary } from '../plugins/aidrian/lib/project-run.mjs';
 import { markPending, markUnattended } from '../plugins/aidrian/lib/unattended-mark.mjs';
 import { recordIssue } from './project-start-fixture.mjs';
@@ -175,9 +176,23 @@ test('init starts a started issue an earlier run parked on the same branch, and 
     { key: 'ENG-7', branch: 'feat/eng-7-outside', status: 'started' },
     { key: 'ENG-8', branch: 'feat/eng-8-renamed', status: 'unstarted' },
   ], resumed: [{ key: 'ENG-7', run: 'first', pr: null }] };
-  const result = init('second', input(second, 'second.json'));
+  // ENG-1's open pull request changes the config: init names it in its first output, after the resumed line.
+  const views = { 12: { number: 12, headRefOid: 'a'.repeat(40), baseRefName: 'main', author: { login: 'adrian' }, url: 'https://github.com/Acme/widgets/pull/12', files: [{ path: '.aidrian/config.json', changeType: 'MODIFIED' }], changedFiles: 1, reviewDecision: '', latestReviews: [], state: 'OPEN' } };
+  const forge = {
+    repository: () => ({ default_branch: 'main' }),
+    contents: (repo, file) => {
+      if (file !== '.aidrian/config.json') throw Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)' });
+      return { type: 'file', encoding: 'base64', content: Buffer.from(JSON.stringify({ version: 1 })).toString('base64') };
+    },
+    change: (ref) => views[ref],
+  };
+  const humanMerges = ({ resumed, issues, texts }) => humanMergeLines({ forge, repository: { host: 'github.com', owner: 'Acme', name: 'widgets' }, prefix: () => '', resumed, issues, texts });
+  const result = init('second', input(second, 'second.json'), { humanMerges });
   assert.equal(result.exitCode, 0, result.err.join('\n'));
   assert.ok(result.out.includes('resumed: 1 started issue an earlier run parked on its branch, which this run starts again: ENG-1'), result.out.join('\n'));
+  const merge = result.out.indexOf('needs your merge: #12 changes ".aidrian/config.json", which auto-merge never merges');
+  assert.ok(merge > result.out.findIndex((line) => line.startsWith('resumed:')), result.out.join('\n'));
+  assert.equal(result.out.filter((line) => line.startsWith('needs your merge')).length, 1, result.out.join('\n'));
   const found = readRun(state, 'second');
   assert.equal(found.problem, undefined);
   // The driver's own `resumed` is dropped: only init's read of the earlier runs names one.

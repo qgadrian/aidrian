@@ -33,10 +33,10 @@ import { detectHost, sessionIdentity } from '../hosts/index.mjs';
 import { branchPolicies, trailPaths, trailPolicies } from '../pr-auto-merge.mjs';
 import { hostOf, repoName } from '../remotes.mjs';
 import { localRefSolo } from '../solo.mjs';
-import { scoped, withOwedElsewhere } from '../rules/github/merge-review.mjs';
+import { scoped } from '../rules/github/merge-review.mjs';
 import { readUnattendedMark } from '../unattended-mark.mjs';
 import { botProblem } from './merge-trust.mjs';
-import { readLocalState, SHA_REF } from './state.mjs';
+import { adoptedCopy, readLocalState, SHA_REF } from './state.mjs';
 import { budgetProblem, capProblem, judgeProblem, notWaivable, owedSignoffs, runLedger, runOf, waiverFor, waiverGate, waiverKind } from './waiver.mjs';
 
 export { budgetProblem, judgeProblem, runOf, WAIVED_MERGES, waivedMerges } from './waiver.mjs';
@@ -90,8 +90,9 @@ const GATE_FIELDS = 'number,headRefOid,baseRefName,url';
 // The one gate of `aidrian pr waive --gate`, the review step's `waiver` at the cap (offerWaiver), and `aidrian pr extend
 // --verdict land`. `forge` is the test seam, `session` the session the host gives the command, `run()` the project run
 // its unattended mark names (runOf), and `runHost` the host. `record(repo)` gives the review record the gate weighs,
-// this machine's file by default; the gate adds to it the reviews another record owes for `repo` (merge-review.mjs
-// withOwedElsewhere, as recordFor reads them) and keeps that repository's part (scoped), whichever record it is.
+// this machine's file by default; the gate weighs it as the record's next write would hold it, with the reviews another
+// record owes for `repo` merged in by the writer's own merge (state.mjs adoptedCopy), and keeps that repository's part
+// (scoped), whichever record it is.
 // `repo`, when given, is the repository the pull request is read in, and must be the one the forge's view names.
 export function readGate({ pr, repo: given = null }, project, { forge = forgeFor(project.root), session = sessionIdentity(process.env).session, home, run = () => runOf(readUnattendedMark(session, home ? { home } : {})), config = null, runHost = detectHost(), record = null } = {}) {
   let view;
@@ -129,7 +130,7 @@ export function readGate({ pr, repo: given = null }, project, { forge = forgeFor
   const folder = stateDirProblem(working, policies.policy, `${repo} ${policies.main}`);
   if (folder) return out(false, folder);
   const own = record ? record(repo) : readLocalState(project, pr, repo);
-  const state = scoped(withOwedElsewhere(own, project, pr, repo), project, repo);
+  const state = scoped(adoptedCopy(project, own), project, repo);
   const ruled = (Array.isArray(state?.waivers) ? state.waivers : []).find((entry) => entry?.kind === 'round_cap' && typeof entry.head === 'string' && entry.head.toLowerCase() === head.toLowerCase());
   if (ruled) return out(false, `a judge already gave its verdict on head ${head.slice(0, 7)} (${ruled.verdict === 'waive' ? 'waive' : 'refuse'}): one judge rules per head`);
   const result = waiverMayRun({ project, config: working, state, pr, head, policies, repo, host, base, prefix, trail: () => trail, run: runId, runHost });

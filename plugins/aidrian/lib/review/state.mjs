@@ -124,7 +124,7 @@ export const ofRepo = (state, entry, repo) => {
   return !repo || !own || String(own).toLowerCase() === String(repo).toLowerCase();
 };
 
-const pendingOf = (state) => (Array.isArray(state?.pending) ? state.pending.filter(isObject) : []);
+export const pendingOf = (state) => (Array.isArray(state?.pending) ? state.pending.filter(isObject) : []);
 
 // Marks the owed entries of `kind` on `state` answered by `by`'s answer for `head`. An answer counts for an entry made
 // for that head, or for an earlier head that `head` descends from: `isAncestor(a, b)`, git's `merge-base
@@ -158,15 +158,12 @@ export function noteOutcome(state, { status, head, reason, carried_from, carried
 // An entry another repository's record moved to its own (adoptOwed) is owed there, not here.
 export const owed = (state) => pendingOf(state).filter((entry) => !entry.answered && !entry.moved);
 
-// What makes two owed entries one: the entry's id, else what it was made of.
-export const pendingKey = (entry) => entry.id ?? `${entry.kind}@${entry.at}@${entry.head}@${entry.by}`;
-
 // One list from two copies of `pending`, such as the one on disk and one a long step read before: every entry of
 // either, and of an entry in both, each mark either holds.
 export function mergePending(a, b) {
   const out = new Map();
   for (const entry of [...pendingOf({ pending: a }), ...pendingOf({ pending: b })]) {
-    const key = pendingKey(entry);
+    const key = entry.id ?? `${entry.kind}@${entry.at}@${entry.head}@${entry.by}`;
     const seen = out.get(key) ?? {};
     const merged = { ...seen, ...entry };
     for (const mark of ['sent', 'answered']) if (seen[mark] ?? entry[mark]) merged[mark] = seen[mark] ?? entry[mark];
@@ -468,7 +465,7 @@ export function owedElsewhere(project, pr, repo) {
   const held = new Set(pendingOf(readLocalState(project, pr, target)).map((entry) => entry.id).filter(Boolean));
   return recordsOf(project, pr)
     .filter((state) => repoName(state.repo ?? null) !== target)
-    .flatMap((state) => (state.pending ?? []).filter((entry) => isObject(entry) && !entry.moved && repoName(entry.repo ?? null) === target && !(entry.id && held.has(entry.id))));
+    .flatMap((state) => pendingOf(state).filter((entry) => !entry.moved && repoName(entry.repo ?? null) === target && !(entry.id && held.has(entry.id))));
 }
 
 // This machine's review record of pull request `pr` of `repo`, or null: that repository's own, never another's. Its file;
@@ -557,7 +554,7 @@ function adoptOwed(project, state) {
   for (const [at, dir] of recordFolders(project).entries()) {
     for (const { file: other, state: record } of filesIn(dir, state.pr)) {
       if (repoName(record.repo ?? null) === target) continue;
-      const ours = (record.pending ?? []).filter((entry) => isObject(entry) && !entry.moved && repoName(entry.repo ?? null) === target);
+      const ours = pendingOf(record).filter((entry) => !entry.moved && repoName(entry.repo ?? null) === target);
       if (!ours.length) continue;
       const ids = new Set(pendingOf(state).map((entry) => entry.id).filter(Boolean));
       state.pending = [...pendingOf(state), ...ours.filter((entry) => !entry.id || !ids.has(entry.id)).map(({ moved: _moved, ...entry }) => entry)];
@@ -565,6 +562,18 @@ function adoptOwed(project, state) {
     }
   }
   return marks;
+}
+
+// `state` as its next write would hold its owed entries, as a copy: adoptOwed's merge of the entries another
+// repository's record owes for it, the one merge the writer makes, with no record written or marked. A record whose
+// repository is unknown, and none at all, are returned as they are. What a gate weighs before a write, such as the
+// unattended waiver's before `aidrian pr extend --verdict land` records (waiver-stand.mjs readGate), so the gate and
+// the write never count an owed entry differently: by id, and an entry with no id always counts.
+export function adoptedCopy(project, state) {
+  if (!isObject(state) || repoName(state.repo ?? null) === null) return state;
+  const copy = { ...state, pending: pendingOf(state) };
+  adoptOwed(project, copy);
+  return copy;
 }
 
 // Marks the entries adoptOwed took as `moved` in the records that held them, where it can write; one it cannot keeps its

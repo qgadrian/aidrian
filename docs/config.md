@@ -529,7 +529,8 @@ At `round_limit` and at `extension_check`, the JSON of `aidrian pr review` carri
 Only with `may` true is a judge offered `land`: the check's own judge at `extension_check`, or one judge the step's `dispatch` names at `round_limit`.
 With `may` true, the step's `record` takes `land` or `stop`, naming the judge:
 `aidrian pr extend <PR> --verdict land|stop --reason "<evidence>" --head <sha> --judge <agent id>`.
-At `extension_check`, its `record_extend` takes `extend`, with no `--judge`; with `may` false, `record` takes `extend` or `stop`.
+At `extension_check`, its `record_extend` takes `extend`, with no `--judge`.
+With `may` false, at `extension_check`, `record` takes `extend` or `stop`, and at `round_limit` no judge is dispatched.
 `land` asks the same gate again, and is refused, writing nothing, whenever it refuses.
 It then records the `waive` that `aidrian pr waive --verdict waive --judge` records, through the same code; `stop` with `--judge` records its `refuse`.
 [At the cap under autopilot](review.md#at-the-cap-under-autopilot) has the details.

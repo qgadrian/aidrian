@@ -64,7 +64,6 @@ import path from 'node:path';
 
 import { loadConfig, resolveAutoMerge } from '../../config.mjs';
 import { forgeFor, isTrustedCommenter } from '../../forges/index.mjs';
-import { isObject } from '../../fs.mjs';
 import { knownPrefix } from '../../git.mjs';
 import { stateFolders } from '../../handoff-guard.mjs';
 // A cycle (pr-auto-merge.mjs imports this file), benign while neither uses the other's exports as it loads.
@@ -77,7 +76,7 @@ import { originRepo, prNumber, remoteRepos, repoName } from '../../review-gate.m
 import { baseProblem, boundedReads, recourse } from '../../review/in-force.mjs';
 import { delegationFor, lowOnly } from '../../review/delegation.mjs';
 import { readHumanSignoffs, sameBot, trustProblem } from '../../review/merge-trust.mjs';
-import { CAPPED, emptyState, FINISHED, openCount, owed, owedElsewhere, pendingKey, readLocalState, recordProblem, recordRepos, sameCommit, withRecordMemo } from '../../review/state.mjs';
+import { CAPPED, emptyState, FINISHED, openCount, owed, owedElsewhere, pendingOf, readLocalState, recordProblem, recordRepos, sameCommit, withRecordMemo } from '../../review/state.mjs';
 // A cycle (waiver.mjs → pr-auto-merge.mjs → this file), benign while neither uses the other's exports as it loads.
 import { budgetedForge, guardWaiver, READ_TIMEOUT_MS, runOf, trailKey, WAIVER_DEADLINE_MS } from '../../review/waiver.mjs';
 import { walkCommands } from '../../shell-lex.mjs';
@@ -398,19 +397,12 @@ export const UNREAD_REASON =
 // per number, so a fork checkout holds upstream#5 and origin#5 in one record: each merge reads only its own entries.
 // `readLocalState` gives a merge of `repo` that repository's own record alone; the entries another repository's record
 // holds for it (state.mjs owedElsewhere), as one written before the record was keyed by repository does, are added.
-export const recordFor = (project, pr, repo) => withOwedElsewhere(readLocalState(project, pr, repo), project, pr, repo);
-
-// `own`, a record of pull request `pr` of `repo` (null: none), with the entries owed for `repo` that another
-// repository's record holds added to a copy of it: what recordFor reads, for a record a command has in hand, such as
-// the one `aidrian pr extend --verdict land` is about to write, so its gate weighs every owed review. `own` itself is
-// never changed. An entry `own` holds itself, by identity (state.mjs pendingKey), is `own`'s copy alone: a record newer
-// than the file on disk may hold it answered.
-export function withOwedElsewhere(own, project, pr, repo) {
-  const held = new Set((own?.pending ?? []).filter(isObject).map(pendingKey));
-  const extra = repo === null ? [] : owedElsewhere(project, pr, repo).filter((entry) => !held.has(pendingKey(entry)));
+export const recordFor = (project, pr, repo) => {
+  const own = readLocalState(project, pr, repo);
+  const extra = repo === null ? [] : owedElsewhere(project, pr, repo);
   if (!extra.length) return own;
-  return { ...(own ?? { ...emptyState(pr, repoName(repo)) }), pending: [...(own?.pending ?? []), ...extra] };
-}
+  return { ...(own ?? { ...emptyState(pr, repoName(repo)) }), pending: [...pendingOf(own), ...extra] };
+};
 
 export function scoped(state, project, repo) {
   const target = repo === null ? null : repoName(repo);

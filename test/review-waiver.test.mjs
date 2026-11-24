@@ -12,7 +12,7 @@ import { machineSwitchWriteDenial } from '../plugins/aidrian/lib/config-guard.mj
 import { commands } from '../plugins/aidrian/lib/pr.mjs';
 import { findProject, projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { baseProblem } from '../plugins/aidrian/lib/review/in-force.mjs';
-import { emptyState, owed, readLocalState, refreshSummary, stateFromComment, summaryBody, WAIVER_HEADING, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
+import { adoptedCopy, emptyState, owed, readLocalState, refreshSummary, stateFromComment, summaryBody, WAIVER_HEADING, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { capProblem, guardWaiver, MAX_REASON, parseWaive, runWaive, takeWaivedMerge, WAIVER_DEADLINE_MS, waiverFor, waiverKind } from '../plugins/aidrian/lib/review/waiver.mjs';
 import { budgetProblem, judgeProblem, offerWaiver, runOf, WAIVED_MERGES } from '../plugins/aidrian/lib/review/waiver-stand.mjs';
 import { atCap, offerLand, runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
@@ -1183,6 +1183,32 @@ test('a record newer than the file on disk that holds the owed review answered l
   const comments = [{ id: 1, user: { login: 'someone' }, author_association: 'MEMBER', body: summaryBody(copy, null, 'extension_check', { reading: { visibility: 'PRIVATE', inside: true }, checker: { allows: () => true } }) }];
   const { code, out } = await extend(t, r, ['--verdict', 'land', '--reason', 'nits', '--judge', JUDGE.judge_id], { forge: landForge(r, { comments }) });
   assert.deepEqual([code, out.waiver.verdict], [0, 'waive']);
+  // The record the write kept holds that review once, answered, as the gate weighed it: one merge for both.
+  const kept = readLocalState(r.project(), 5, 'acme/notes');
+  assert.deepEqual(kept.pending.filter((entry) => entry.id === 'owed-1').map((entry) => Boolean(entry.answered)), [true]);
+  assert.deepEqual([owed(kept), owed(adoptedCopy(r.project(), kept))], [[], []]);
+});
+
+test('a record whose pending is no list, or that names no repository, never throws in the merge guard or the gate', async (t) => {
+  const r = repo(t, { local: ON });
+  const command = `gh pr merge 5 --match-head-commit ${HEAD}`;
+  const config = loadConfig(r.project()).config;
+  const gateOf = () => offerWaiver({ status: 'round_limit', pr: 5, repo: 'acme/notes', head: HEAD }, r.project(), config, { forge: gateForge(), run: () => undefined, runHost: CONFIRMS });
+  // Its own record's pending, and another repository's record of the same number, hold an object, not a list.
+  r.record(5, (state) => (roundLimit(state), (state.pending = {})));
+  const other = emptyState(5, 'other/notes');
+  writeLocalState(r.project(), other, { repo: 'other/notes' });
+  const file = readLocalState(r.project(), 5, 'other/notes');
+  writeLocalState(r.project(), Object.assign(file, { pending: {} }), { repo: 'other/notes' });
+  assert.equal(typeof (merge(r, command) ?? ''), 'string');
+  assert.equal(typeof gateOf().may, 'boolean');
+  // A record that names no repository.
+  const unnamed = repo(t, { local: ON });
+  const state = emptyState(5, null);
+  roundLimit(state);
+  writeLocalState(unnamed.project(), state);
+  assert.equal(typeof (merge(unnamed, command) ?? ''), 'string');
+  assert.equal(adoptedCopy(unnamed.project(), state), state, 'no repository: nothing is looked up');
 });
 
 test('at a round_limit with no check, the judge it dispatched lands with one extend call, and its stop records the refuse', async (t) => {

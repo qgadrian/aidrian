@@ -1312,7 +1312,7 @@ aidrian pr extend <PR> --verdict land|stop --reason "<evidence>" --head <sha> --
 aidrian pr extend <PR> --verdict extend --reason "<evidence>" --head <sha> [--check <id>]
 ```
 
-Otherwise `record` takes `extend` or `stop`, with no `--judge`, as [Extra rounds](#extra-rounds) shows.
+Otherwise, at `extension_check`, `record` takes `extend` or `stop`, with no `--judge`, as [Extra rounds](#extra-rounds) shows.
 
 `land` stops a check waiting for its verdict, as `stop` does, and the cap then stands as `round_limit`, at the time and with the cause the step kept.
 It asks the gate again on that record and head, and is refused, writing nothing, whenever the gate refuses.

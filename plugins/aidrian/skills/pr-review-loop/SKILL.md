@@ -68,8 +68,8 @@ One row per item:
 - **Source**: `inline`, `review-summary`, `comment`, or `check`, and its author: the bot, the default branch's config.json `github.reviewer`, or a person.
   A person's comment weighs more than a bot's; validate every bot comment before acting on it.
 - **Verdict**: `applies`, `partly applies`, `does not apply`, `already handled`, or `needs evidence`.
-  An inline comment whose code changed since it was posted (`git log <commit_id>..@{u} -- <path>`) is a candidate
-  for `already handled`: read the code at `@{u}` before you decide.
+  An inline comment whose code changed since it was posted (`git log <commit_id>..@{u} -- <path>`) may be
+  `already handled`: read the code at `@{u}` before you decide.
 - **Action** comes from the disposition table, never from severity alone:
 
   ```bash
@@ -84,20 +84,21 @@ One row per item:
 
 ## 4. Fix every copy of the mistake
 
-For each finding, search the pull request's changed files, and the code they call or are called by, for the same
-mistake, and fix every copy in the same commit. A copy outside the pull request's scope becomes a follow-up note.
+For each finding, search the pull request's changed files, and the code they call or that calls them, for the same
+mistake, and fix every copy in one commit. A copy outside the pull request's scope becomes a follow-up note.
 
 Pick each fix's owner by the `knowledge` skill's agent rule, and give it its files and findings.
 A session the Human runs directly may make a fix itself; under the `orchestrator`, every fix goes to an owner.
-One fixing agent per worktree at a time; each finding gets at most 2 fix passes, per the review rules.
-Fix the root cause the comment points at, not its literal wording, and nothing unrelated.
+One fixing agent per worktree at a time; each finding gets at most 2 fix passes, per the review rules,
+whose cost stop is a `scope` decision for `aidrian decisions resolve`.
+Fix the root cause the comment points at, not its wording, and nothing unrelated.
 
 ## 5. Verify and commit
 
 The agent that made the fix verifies, commits, and pushes it, then returns the SHAs:
 
-- Run the checks the project's `testing` knowledge names for the touched files, and a new or updated test for every
-  behaviour change. A behaviour change without a test change is not done.
+- Run the checks the project's `testing` knowledge names for the touched files.
+  A behaviour change without a new or updated test is not done.
 - One Conventional Commits commit per finding or tight group. Never bypass a hook; a failing hook is a verdict.
 - Push. Then confirm with `git ls-remote --heads origin <branch>` that every SHA a reply will cite is on the remote.
 

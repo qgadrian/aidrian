@@ -96,7 +96,19 @@ Fix every finding a review identified; never leave one silently open. Do not go 
   commit when it is small, and otherwise is `accepted_residual`, named in the body.
 - Each round's findings get one fix pass. Add no hardening, check, or config that no review found.
 - When the fixes since round 1 pass half of what the pull request first added, or a finding comes back at a spot already
-  fixed, stop before the next pass and ask the Human whether the rest is worth its cost.
+  fixed, stop before the next pass: whether the rest is worth its cost is a `scope` decision. Its options: fix the open
+  findings within the round cap, record them as accepted residuals, or split the pull request.
+  No option writes data, reaches outside the repository, or merges unreviewed, so run, as `knowledge/references/decisions.md` says:
+
+  ```bash
+  aidrian decisions resolve --domain backlog --class backlog-rank --reversible no,no,no,no
+  ```
+
+  - `decide`: fix within the round cap, a `decided_provisional` of severity `low`, listed in the report, attributed.
+    It writes no rule, so it takes no marker: the `decision_made` row `resolve` logs is its record.
+  - `ask`: ask the Human, and in an unattended run park it with class `scope`, whatever `unattended` says.
+
+  The round cap and the extra rounds past it are unchanged: this settles only the cost question before the cap.
 
 ## Disposition actions
 

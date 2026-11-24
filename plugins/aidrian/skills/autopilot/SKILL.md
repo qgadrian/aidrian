@@ -85,7 +85,7 @@ Write the brief first when checkpoints are allowed.
 
 ## Hard rules
 
-1. Merge only when `aidrian pr auto-merge <n>` exits 0, through the `pr-auto-merge` skill that `references/phases.md` § 4 runs:
+1. Merge only when `aidrian pr auto-merge <n> --check` exits 0, through the `pr-auto-merge` skill that `references/phases.md` § 4 runs:
    never `gh pr merge` yourself. Any other merge needs the Human's explicit say-so.
 2. Leave the pull request a draft, unless `github.markReady` is `"auto"`, the default, or the Human asked at launch to mark it ready;
    § 4 of the phases says when.

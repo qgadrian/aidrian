@@ -54,7 +54,7 @@ test('a turn that opened a draft and ran no review is sent back once, and the st
   assert.match(first.stderr, /^This turn opened or updated a draft pull request and ran no review after it\./u);
   assert.match(first.stderr, /`github\.reviewLoop` is "auto"/u);
   assert.match(first.stderr, /run the `pr-review-loop` skill on it now, as the session's own step/u);
-  assert.match(first.stderr, /`pr-auto-merge`, which merges only when `aidrian pr auto-merge <n>` exits 0/u);
+  assert.match(first.stderr, /`pr-auto-merge`, which merges only when `aidrian pr auto-merge <n> --check` exits 0/u);
   assert.match(first.stderr, /when Adrian asked the run to stop at the draft/u);
   assert.deepEqual(stop([human('implement #400'), DRAFT, DONE], { stop_hook_active: true }), QUIET, 'the stop this hook caused');
 });

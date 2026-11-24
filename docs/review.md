@@ -754,8 +754,11 @@ A project adds its own in `review.reviewers`:
   - The hold outlives the line. A pass that re-runs and is no longer offered a waiver above `low`, whatever ended the
     anchor, keeps it in `carried`, marked `ended`, as one entry for that finding. A result attested over a pass
     keeps that record's `ruled` and `carried`. The hold keys on the finding's [id](#finding-ids), never its title: a
-    waiver above `low` holds auto-merge until the Human merges, and a listing of the same title and file as `fixed` ends
-    nothing. The hold's message names the id where the record holds no text. An ended entry settles nothing
+    listing of the same title and file as `fixed` under another id ends nothing. A judge's verdict at the round cap
+    stays held until a listing holds the finding as fixed. `aidrian pr auto-merge` holds only the waivers the body still
+    lists: once the pass that raised the finding ran on exactly the reviewed head, over its file, and carries it as
+    ended, and the body at that head no longer lists it, by its residual's text or a line that names it by the rules
+    below, read over every item of the body's residuals section, past the pass input's limit, it holds nothing ([config.md](config.md#when-it-is-on)). The hold's message names the id where the record holds no text. An ended entry settles nothing
     and anchors nothing, and the summary comment names it as ended without a fix, never as standing. The
     pass input gives it among `priorFindings` as a context copy with nothing that settles, so a reviewer weighs it again.
   - It names one when the residual's text opens with the finding's exact title, a colon, and a reason: `<title>: <why>`,

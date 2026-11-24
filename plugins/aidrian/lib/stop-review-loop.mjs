@@ -36,7 +36,7 @@ export function reviewLoopOwed(input, actions, { reviewLoop, human = 'the Human'
   return `${REVIEW_LOOP_LEAD} ${several ? 'The drafts owed a review' : 'The draft owed a review'}: ${names.join(', ')}. ` +
     `config.json \`github.reviewLoop\` is "auto", so run the \`pr-review-loop\` skill on ${several ? 'each' : 'it'} now, as the session's own step and not ` +
     'as a step of the skill that opened it: its last step marks the draft ready as `github.markReady` says and runs ' +
-    '`pr-auto-merge`, which merges only when `aidrian pr auto-merge <n>` exits 0. ' +
+    '`pr-auto-merge`, which merges only when `aidrian pr auto-merge <n> --check` exits 0. ' +
     'End the turn again instead when a skill or agent that runs its own review loop owns the pull request, ' +
     'when no pull request was opened or updated, when the run is stopped on a question only ' +
     `${human} can answer, or when ${human} asked the run to stop at the draft.`;

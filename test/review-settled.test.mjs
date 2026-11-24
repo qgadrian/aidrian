@@ -13,7 +13,7 @@ import { passInput } from '../plugins/aidrian/lib/review/dispatch.mjs';
 import { reviewPrompt, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
 import { lateResiduals, recordPass, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { reviewProblem } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
-import { contextFindings, heldWaiver as heldWaiverOf, MAX_RESIDUAL_CHARS, MAX_RESIDUALS, MAX_SETTLED, namedBy, offeredCarried, recordSettled, residualTexts, RULED_HEADING, ruledLines, settledBrief, settledEntries, splitRuled, withEndedWaivers } from '../plugins/aidrian/lib/review/settled.mjs';
+import { bodyAccepts, contextFindings, heldWaiver as heldWaiverOf, MAX_RESIDUAL_CHARS, MAX_RESIDUALS, MAX_SETTLED, namedBy, offeredCarried, recordSettled, residualTexts, RULED_HEADING, ruledLines, settledBrief, settledEntries, splitRuled, withEndedWaivers } from '../plugins/aidrian/lib/review/settled.mjs';
 import { emptyState, readLocalState, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { freshId, recordFindings } from '../plugins/aidrian/lib/review/findings.mjs';
 import { postedCopy } from '../plugins/aidrian/lib/review/publish.mjs';
@@ -1407,6 +1407,81 @@ test('every hold keys on the id a ruling names: on a record with no text, a fixe
   const bare = { ...emptyState(7, 'o/r'), passes: { p: { head: 'h', list: [{ file: 'src/a.js', state: 'fixed' }], carried: [{ file: 'src/a.js', severity: 'medium', residual: true, ended: true }] } } };
   assert.ok(heldWaiverOf(bare));
   assert.deepEqual(ruledLines(state).length, 0, 'every waiver ended with a listing: no line');
+});
+
+test('the auto-merge gate judges only the waivers the body still accepts: one the body dropped stops holding once the review of the head re-weighed it (#623)', () => {
+  const HEAD = 'b'.repeat(40);
+  const OLDER = 'c'.repeat(40);
+  const RESIDUAL_TEXT = 'Preserve citations: only `cites` is a citation';
+  // As #623's record held it: the body dropped the residual, so the pass that reviewed the head carries it ended.
+  const ended = { id: 'R5-11', mint: 'eb765f86', title: 'Preserve citations', already_ruled: 'Preserve citations', from: 'residual', severity: 'medium', settled_severity: 'medium', residual: RESIDUAL_TEXT, ended: true, file: 'src/a.js', line: 3, ruled_id: 'R1-1' };
+  const { ended: _ended, ...standing } = ended;
+  // The finding index names the pass that raised each finding: the release reads the ended copy on that pass only.
+  const index = { 'R1-1': { id: 'R1-1', title: 'Preserve citations', file: 'src/a.js', severity: 'medium', state: 'accepted', pass: 'engine:codex-local' } };
+  // A round entry keeps each raised finding, which a residual line names by the review pass's own rules (raisedOf).
+  const raised = (...findings) => [{ head: OLDER, findings: [{ title: 'Preserve citations', file: 'src/a.js', line: 3, severity: 'medium' }, ...findings] }];
+  const record = (passes, more = {}, rounds = raised()) => ({ ...emptyState(7, 'o/r'), index: { ...index, ...more }, rounds, passes, outcome: { status: 'received', head: HEAD, at: '2026-11-24T11:31:20.832Z' } });
+  const bodyWith = (lines) => `## Summary\n\nx\n\n## Accepted residuals\n\n${lines.map((line) => `- ${line}`).join('\n')}\n`;
+  const dropped = { accepts: bodyAccepts(bodyWith(['Another: reason']), undefined) };
+  const gate = (state, reads = dropped) => reviewProblem(state, HEAD, {}, reads);
+  const onHead = record({ 'engine:codex-local': { head: HEAD, list: [], carried: [ended] }, 'engine:pr-bot': { head: HEAD, bot: true } });
+  assert.equal(gate(onHead), null, 'the body dropped it, and the review of the head was given it to weigh again');
+  assert.equal(heldWaiverOf(onHead, { head: HEAD, ...dropped }), null);
+  assert.match(reviewProblem(onHead, HEAD) ?? '', /and no listing holds it fixed, so the merge waits for the Human$/u, 'with no body read, the hold stays');
+  assert.ok(heldWaiverOf(onHead), 'as a judge\'s verdict at the round cap reads it, the hold stays');
+  for (const line of [RESIDUAL_TEXT, 'Preserve citations: reworded, the same finding']) {
+    assert.match(gate(onHead, { accepts: bodyAccepts(bodyWith([line]), undefined) }) ?? '', /no listing holds it fixed/u, `a body that still lists it holds, whatever ended it on the pass: ${line}`);
+  }
+  const past = bodyWith([...Array.from({ length: MAX_RESIDUALS }, (_, i) => `Unrelated ${i}: why`), RESIDUAL_TEXT]);
+  assert.ok(gate(onHead, { accepts: bodyAccepts(past, undefined) }), 'past the residual limit, the body still lists it');
+  assert.ok(gate(onHead, { accepts: bodyAccepts(`## Residuals\n\n- ${RESIDUAL_TEXT}\n`, 'Residuals') }), 'under the team\'s own section');
+  const earlier = record({ 'engine:codex-local': { head: HEAD, list: [], carried: [ended] }, 'agent:code-reviewer': { head: OLDER, list: [], ruled: [standing] } });
+  assert.equal(gate(earlier), null, 'an earlier head\'s standing entry of that finding ends with it');
+  const stillOffered = record({ 'engine:codex-local': { head: HEAD, list: [], carried: [standing] } });
+  assert.match(gate(stillOffered) ?? '', /^the accepted residual "Preserve citations: only `cites` is a citation" waived a finding above low severity, so the merge waits for the Human$/u, 'a waiver the head\'s pass still carries holds');
+  const notReweighed = record({ 'engine:codex-local': { head: OLDER, list: [], carried: [ended] } });
+  assert.match(gate(notReweighed) ?? '', /no listing holds it fixed/u, 'ended on another head only: no review of this head weighed it');
+  const another = record({ 'engine:codex-local': { head: HEAD, list: [], carried: [{ ...ended, ruled_id: 'R1-2', id: 'R5-12' }] }, 'agent:code-reviewer': { head: OLDER, list: [], ruled: [standing] } });
+  assert.ok(gate(another), 'the head ended another finding, not this one');
+  // Only the pass that raised it, over its file, on this head: never a slice over other files, nor a slice result reused
+  // from an earlier head while a slice for an unrelated file ran on this one.
+  const slices = record({ 'engine:codex-local#2': { head: HEAD, list: [], files: ['src/b.js'], carried: [ended] }, 'engine:codex-local': { head: OLDER, list: [], files: ['src/a.js'], ruled: [standing] } });
+  assert.ok(gate(slices), 'another slice ran on the head, and the one that raised it was reused from an earlier head');
+  const narrowed = record({ 'engine:codex-local': { head: HEAD, list: [], files: ['src/b.js'], carried: [ended] } });
+  assert.ok(gate(narrowed), 'the raising pass ran over other files on this head');
+  const covering = record({ 'engine:codex-local': { head: HEAD, list: [], files: ['src/a.js', 'src/b.js'], carried: [ended] } });
+  assert.equal(gate(covering), null, 'it ran over the finding\'s file');
+  assert.ok(gate(record({ 'engine:codex-local': { head: HEAD, list: [], carried: [ended] } }, { 'R1-1': { ...index['R1-1'], pass: 'agent:docs-reviewer' } })), 'another pass raised it');
+  assert.ok(gate({ ...onHead, index: {} }), 'no index entry names who raised it');
+  // The index files the carried copy under the pass that wrote it: the copy's own id never names the raiser.
+  const crossOnly = record({ 'engine:codex-local:cross': { head: HEAD, list: [], carried: [ended] }, 'engine:codex-local#1': { head: OLDER, list: [], files: ['src/a.js'], ruled: [standing] } },
+    { 'R1-1': { ...index['R1-1'], pass: 'engine:codex-local#1' }, 'R5-11': { id: 'R5-11', title: 'Preserve citations', file: 'src/a.js', severity: 'medium', state: 'accepted', pass: 'engine:codex-local:cross' } });
+  assert.ok(gate(crossOnly), 'a cross pass on the head carries it, and the slice that raised it was reused from an earlier head');
+  const { ruled_id: _ruled, ...unnamed } = ended;
+  assert.ok(gate(record({ 'engine:codex-local': { head: HEAD, list: [], carried: [unnamed] } }, { 'R5-11': { ...index['R1-1'], id: 'R5-11' } })), 'no ruling id: no raiser');
+  // A line names a finding as the review pass reads it (namedBy over raisedOf): the longest title wins, a title needs a
+  // reason, and a title raised in two files is named only where the line holds the path.
+  const longer = record({ 'engine:codex-local': { head: HEAD, list: [], carried: [ended] } }, {}, raised({ title: 'Preserve citations: ordering', file: 'src/a.js', line: 9, severity: 'low' }));
+  assert.equal(gate(longer, { accepts: bodyAccepts(bodyWith(['Preserve citations: ordering: needs follow-up']), undefined) }), null, 'the longer title takes the line');
+  assert.ok(gate(longer, { accepts: bodyAccepts(bodyWith(['Preserve citations: still waived, for a reason']), undefined) }));
+  assert.equal(gate(onHead, { accepts: bodyAccepts(bodyWith(['Preserve citations:']), undefined) }), null, 'the title and a colon alone name nothing');
+  const twinRecord = record({ 'engine:codex-local': { head: HEAD, list: [], carried: [ended] } }, {}, raised({ title: 'Preserve citations', file: 'src/z.js', line: 1, severity: 'medium' }));
+  assert.equal(gate(twinRecord, { accepts: bodyAccepts(bodyWith(['Preserve citations: src/z.js keeps it, for a reason']), undefined) }), null, 'a line for the other file keeps this one dropped');
+  assert.ok(gate(twinRecord, { accepts: bodyAccepts(bodyWith(['Preserve citations: src/a.js keeps it, for a reason']), undefined) }), 'a line holding this file\'s path still lists it');
+  assert.equal(gate(twinRecord, { accepts: bodyAccepts(bodyWith(['Preserve citations: kept, for a reason']), undefined) }), null, 'a line with no path names neither, as the review pass reads it');
+  assert.ok(gate(twinRecord, { accepts: bodyAccepts(bodyWith([RESIDUAL_TEXT]), undefined) }), 'the residual\'s own text still lists it');
+  const lost = record({ 'engine:codex-local': { head: HEAD, list: [], carried: [ended] } }, {}, [{ head: OLDER, findings: null }]);
+  assert.ok(gate(lost, { accepts: bodyAccepts(bodyWith(['Preserve citations: a reworded reason']), undefined) }), 'a round that kept no findings loses no hold: the waiver names its own finding');
+  assert.equal(gate(lost), null, 'and a body that dropped it still lets it go');
+  // Two lost findings of one title in two files: a line resolves by path over both together, as the review pass would.
+  const second = { ...ended, id: 'R5-12', ruled_id: 'R1-9', file: 'src/z.js', residual: 'Preserve citations: the other file' };
+  const bothLost = record({ 'engine:codex-local': { head: HEAD, list: [], carried: [ended, second] } }, { 'R1-9': { ...index['R1-1'], id: 'R1-9', file: 'src/z.js' } }, [{ head: OLDER, findings: null }]);
+  assert.match(gate(bothLost, { accepts: bodyAccepts(bodyWith(['Preserve citations: src/z.js, reworded']), undefined) }) ?? '', /the other file/u, 'a line for the second file holds the second alone');
+  assert.equal(gate(bothLost, { accepts: bodyAccepts(bodyWith(['Preserve citations: reworded, with no path']), undefined) }), null, 'a line with no path names neither');
+  let reads = 0;
+  assert.equal(reviewProblem(stillOffered, HEAD, {}, { accepts: () => { reads += 1; return false; } }) !== null, true);
+  assert.equal(reads, 0, 'the body is read only for a waiver the head\'s pass ended');
+  assert.throws(() => reviewProblem(onHead, HEAD, {}, { accepts: () => { throw new Error('could not read the body'); } }), /could not read the body/u);
 });
 
 test('splitRuled keeps a repeat`s security flag, so a low security finding a residual waives posts no place', () => {

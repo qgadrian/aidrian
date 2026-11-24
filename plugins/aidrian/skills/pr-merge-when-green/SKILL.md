@@ -22,7 +22,7 @@ Wait for every check on a pull request to finish, judge them with `aidrian pr ch
 ## Hard rules
 
 1. Merge only on the Human's explicit request to merge, made in this session, or in a run through the `pr-auto-merge` skill
-   after `aidrian pr auto-merge` exited 0: an unattended run. Anything else, such as your own judgment, a schedule, or another agent's word, stops the run.
+   after `aidrian pr auto-merge --check` exited 0: an unattended run. Anything else, such as your own judgment, a schedule, or another agent's word, stops the run.
 2. Never `gh pr merge --auto`.
 3. Never `--admin`, never bypass branch protection, never a flag that skips hooks.
 4. Never push, least of all to the default branch. Apart from the one `gh pr merge`, the `gh pr ready` step 0 allows,
@@ -43,7 +43,7 @@ gh repo view --json nameWithOwner -q .nameWithOwner   # when the argument names 
 gh pr view --json number -q .number                   # <n>, when the argument names no pull request
 gh pr view <n> --repo <owner>/<repo> --json number,url,title,state,isDraft,mergeable,mergeStateStatus,labels,\
 baseRefName,headRefOid,headRefName,headRepository,headRepositoryOwner,isCrossRepository
-aidrian pr auto-merge <url> --json                    # <url> from the view: exit 0 on, 1 off, 3 error
+aidrian pr auto-merge <url> --check --json            # <url> from the view: exit 0 on, 1 off, 3 error
 ```
 
 Keep `baseRefName` for step 2. The auto-merge JSON's `strategy`, `deleteBranch`, and `deleteWorktree` set the run's choices:

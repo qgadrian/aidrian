@@ -22,7 +22,7 @@ const FACADE = [
   'id', 'cwd', 'isTrustedCommenter', 'hosts', 'changeRef', 'changesState', 'changeUrl', 'pullUrl',
   'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'branchHead', 'contents', 'tree', 'visibility', 'viewer', 'authToken', 'tokenCanPush', 'tokenReads',
   'conversationComments', 'comment', 'issue', 'postComment', 'editComment', 'deleteComment', 'reactions',
-  'pull', 'diff', 'nodeChange', 'changeEdits', 'reviewTrail', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',
+  'pull', 'mergeStatus', 'diff', 'nodeChange', 'changeEdits', 'reviewTrail', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',
   'postReview', 'reviewComment', 'deleteReviewComment', 'findingThreads', 'replyToReviewComment', 'resolveThread', 'unresolveThread',
   'commit', 'checkRuns', 'compare', 'compareUrl', 'deployments', 'deploymentStatuses', 'uploadImages',
   'mergeState', 'rerunFailedChecks', 'branchAllowsForce', 'updateBranch', 'changeCommits', 'changeEnds', 'workflowRun',
@@ -760,6 +760,28 @@ test('aidrian pr auto-merge`s calls: --hostname on every REST call, the contents
   assert.deepEqual(empty.reviews('acme/notes', 7, { host: 'ghe.acme.io' }), [], 'an empty answer is no entries');
   assert.deepEqual(empty.changeFiles('acme/notes', 7, { host: 'ghe.acme.io' }), [], 'an empty file list is no entries, which the gate counts as short');
   assert.throws(() => recorded(() => 'not json').forge.viewer({ host: 'github.com' }), SyntaxError, 'an answer that is no JSON throws');
+});
+
+test('mergeStatus: one GraphQL call on the host, answered as merged, closed, an auto-merge request, or a merge queue entry', () => {
+  const HEAD = 'abcdef1234567890abcdef1234567890abcdef12';
+  const answer = (pr) => JSON.stringify({ data: { repository: { pullRequest: pr } } });
+  const open = { state: 'OPEN', merged: false, mergedAt: null, headRefOid: HEAD, autoMergeRequest: null, mergeQueueEntry: null };
+  const { forge, args } = recorded(() => answer(open));
+  assert.deepEqual(forge.mergeStatus('acme/notes', 7, { host: 'ghe.acme.io' }), { state: 'open', merged: false, mergedAt: null, head: HEAD, autoMerge: null, queued: false });
+  const [call] = args();
+  assert.deepEqual([call.slice(0, 5), call.slice(6)], [['api', 'graphql', '--hostname', 'ghe.acme.io', '-f'], ['-f', 'o=acme', '-f', 'r=notes', '-F', 'n=7']]);
+  assert.match(call[5], /^query=.*pullRequest\(number:\$n\)\{state merged mergedAt headRefOid autoMergeRequest\{mergeMethod\} mergeQueueEntry\{state\}\}/u);
+  const read = (pr) => recorded(() => answer(pr)).forge.mergeStatus('acme/notes', 7);
+  assert.deepEqual(read({ ...open, state: 'MERGED', merged: true, mergedAt: '2026-11-24T10:45:06Z' }), { state: 'merged', merged: true, mergedAt: '2026-11-24T10:45:06Z', head: HEAD, autoMerge: null, queued: false });
+  assert.equal(read({ ...open, autoMergeRequest: { mergeMethod: 'SQUASH' } }).autoMerge, 'squash');
+  assert.equal(read({ ...open, mergeQueueEntry: { state: 'QUEUED' } }).queued, true);
+  const noHost = recorded(() => answer(open));
+  noHost.forge.mergeStatus('acme/notes', 7);
+  assert.deepEqual(noHost.args()[0].slice(0, 3), ['api', 'graphql', '-f'], 'no host: gh\'s own');
+  for (const broken of [null, { ...open, merged: 'no' }, { ...open, headRefOid: null }, { ...open, state: 'DRAFT' }]) {
+    assert.throws(() => read(broken), /GitHub gave no merge state for pull request #7/u, JSON.stringify(broken));
+  }
+  assert.throws(() => forge.mergeStatus('acme', 7), /a repository is owner\/name/u);
 });
 
 test('the hooks` calls: the merge guard`s view and the pull request body rule`s open list, each bounded at 3 s inside the hook`s 5', () => {

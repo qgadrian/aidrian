@@ -368,7 +368,7 @@ test('each skill that marks a pull request ready merges only through pr-auto-mer
     assert.doesNotMatch(text, /Only the Human starts the `pr-merge-when-green`|which only the Human starts/, `${name} no longer reserves the merge to the Human`);
     assert.match(text, /pr-auto-merge|pr-merge-when-green/, `${name} names a merge skill`);
   }
-  assert.match(callerTexts.autopilot, /`aidrian pr auto-merge <n>` exits 0, through the `pr-auto-merge` skill/, 'autopilot names the auto-merge condition');
+  assert.match(callerTexts.autopilot, /`aidrian pr auto-merge <n> --check` exits 0, through the `pr-auto-merge` skill/, 'autopilot names the auto-merge condition');
   assert.match(callerTexts.autopilot, /# autopilot Take one task from implementation to a reviewed pull request while the Human is away, then report\. It merges only when auto-merge is on\./, 'its first line matches its description');
   assert.match(callerTexts.orchestrator, /`pr-merge-when-green` skill, which the Human starts, or as the `orchestration` skill's § 3 step 8 says/, 'the orchestrator names both ways to merge');
   assert.match(callerTexts.autopilot, /^---[^]*?description:[^\n]*Merges only when auto-merge is on\./, 'the listing says so too');
@@ -387,15 +387,18 @@ test('pr-merge-when-green is the Human\'s to start; pr-auto-merge is the one way
   assert.doesNotMatch(text, /--unattended/u);
   const rule = text.slice(text.indexOf('\n1. Merge only'), text.indexOf('\n2. Never `gh pr merge --auto`')).replace(/\s+/g, ' ');
   assert.match(rule, /the Human's explicit request/u);
-  assert.match(rule, /a run through the `pr-auto-merge` skill after `aidrian pr auto-merge` exited 0/u);
+  assert.match(rule, /a run through the `pr-auto-merge` skill after `aidrian pr auto-merge --check` exited 0/u);
   assert.match(rule, /Anything else.*stops the run/u);
   const auto = readFileSync(path.join(PLUGIN, 'skills/pr-auto-merge/SKILL.md'), 'utf8');
   assert.doesNotMatch(auto.split(/^---$/mu)[1], /disable-model-invocation/u, 'skills run it, so the model must be able to');
   const flat = auto.replace(/\s+/g, ' ');
-  assert.match(flat, /Run `aidrian pr auto-merge <n>`\. Unless it exits 0, stop and report the line it printed/u);
+  assert.match(flat, /Run `aidrian pr auto-merge <n> --check`\. Unless it exits 0, stop and report the line it printed/u);
+  assert.match(flat, /Exit 0 only allows the merge: it reads no merge state, its line says `this check merges nothing`, and step 3 merges\./u, 'the gate\'s pass is no merge');
+  assert.match(flat, /Without `--check`, `aidrian pr auto-merge <n>` says whether the pull request merged: exit 0 when GitHub merged it, queued it, or holds an auto-merge request for it, and 4/u);
+  assert.match(flat, /follow its steps for this pull request as an unattended run, through its confirm and cleanup steps/u, 'an unattended merge runs the cleanup its choices ask for');
   assert.match(flat, /Read `\.\.\/pr-merge-when-green\/SKILL\.md`/u);
   assert.match(flat, /only asked whether a pull request is green, never run this/u);
-  assert.ok(flat.indexOf('aidrian pr auto-merge <n>') < flat.indexOf('../pr-merge-when-green/SKILL.md'), 'the command comes first');
+  assert.ok(flat.indexOf('aidrian pr auto-merge <n> --check') < flat.indexOf('../pr-merge-when-green/SKILL.md'), 'the command comes first');
 });
 
 test('pr-auto-merge runs only in the run that marked the pull request ready, and an unattended run on a draft stops', () => {
@@ -555,14 +558,14 @@ test('a direct run of an implementing skill goes on into the review loop, and a 
   assert.match(phase8, /When no skill or agent above it runs the review loop, as on a direct run, the session owns what follows, and the run goes on after the report\./);
   assert.match(phase8, /config\.json `github\.reviewLoop` `"auto"`, the default, the session runs the `pr-review-loop` skill on the pull request right away/);
   assert.match(phase8, /as its own next step and not as a step of this skill/, 'the loop does not read itself as another skill\'s step');
-  assert.match(phase8, /marks the draft ready as `github\.markReady` says and, once it marked it ready, runs the `pr-auto-merge` skill, which merges only when `aidrian pr auto-merge <n>` exits 0/);
+  assert.match(phase8, /marks the draft ready as `github\.markReady` says and, once it marked it ready, runs the `pr-auto-merge` skill, which merges only when `aidrian pr auto-merge <n> --check` exits 0/);
   assert.match(phase8, /Under `"ask"`, the session offers the loop and runs it when the Human asks\./);
   assert.match(phase8, /A caller that runs its own review loop keeps it, so the loop runs once\./);
 
   // plan-implement runs phase 8 and never forks the engine, so it cites the continuation instead of copying it.
   const plan = read('skills/plan-implement/SKILL.md');
   assert.match(section(plan, '## After the draft'),
-    /Phase 8's end holds here, with this skill as the one run: on a direct run under `github\.reviewLoop` `"auto"` the session goes on into the `pr-review-loop` skill, its ready step, and the `pr-auto-merge` skill, which merges only when `aidrian pr auto-merge <n>` exits 0\./);
+    /Phase 8's end holds here, with this skill as the one run: on a direct run under `github\.reviewLoop` `"auto"` the session goes on into the `pr-review-loop` skill, its ready step, and the `pr-auto-merge` skill, which merges only when `aidrian pr auto-merge <n> --check` exits 0\./);
   assert.match(plan, /This skill writes to the pull request only through the `pr-write` step and phase 7's integration review/);
   assert.doesNotMatch(plan, /The run writes to the pull request only through/, 'plan-implement does not forbid the loop that follows');
 
@@ -591,7 +594,7 @@ test('a pull request pr-auto-merge refuses on a path goes to the Human in the fi
   // was never asked for.
   const read = (rel) => readFileSync(path.join(PLUGIN, rel), 'utf8').replace(/\s+/g, ' ');
   const auto = read('skills/pr-auto-merge/SKILL.md');
-  const step2 = auto.slice(auto.indexOf('2. Run `aidrian pr auto-merge <n>`'), auto.indexOf('3. Read `../pr-merge-when-green'));
+  const step2 = auto.slice(auto.indexOf('2. Run `aidrian pr auto-merge <n> --check`'), auto.indexOf('3. Read `../pr-merge-when-green'));
   assert.match(step2, /When the line says `it changes "<path>"`, the gate stopped at its path check, before its author, comment, and review checks, so the pull request waits for the Human's review and merge\./);
   assert.match(step2, /under a label for the Human such as `For <name>`, `needs your review and merge: #<n> touches <path>, which auto-merge never merges`/);
   assert.match(step2, /how critical it is: blocking, high, medium, or low\./, 'the four ratings the hand-back check reads');

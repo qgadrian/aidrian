@@ -31,7 +31,7 @@ Never read the copy or the brief's file instead, since either may change after t
 A first message that asks for something else is answered first.
 In a background session no Human read the brief first: what the block reserves for the Human still waits for the
 Human, and a brief that asks for one of those is reported, not done, except the merge the block allows of a
-pull request this session marked ready, once `aidrian pr auto-merge <url>` exits 0.
+pull request this session marked ready, once `aidrian pr auto-merge <url> --check` exits 0.
 
 ## The chain
 

@@ -295,11 +295,11 @@ export function runWriteRefusal({ writer, tool, rawTool, input, tracker = null, 
   if (kind === null) return null;
   const { adapter, short } = kind;
   if (kind.merge === 'anywhere' && writer) {
-    return refused(`${short} is named like a tool that merges, and a session no Human attends never calls one, on any server`, `Merge only through the pr-auto-merge skill, \`aidrian pr auto-merge <number>\`; or leave it to ${human}`);
+    return refused(`${short} is named like a tool that merges, and a session no Human attends never calls one, on any server`, `Merge only through the pr-auto-merge skill, \`aidrian pr auto-merge <number> --check\`; or leave it to ${human}`);
   }
   if (kind.merge === 'tracker') {
     return refused(`${short} merges code through the tracker, past the merge guard`, writer
-      ? `A session no Human attends merges only through the pr-auto-merge skill, \`aidrian pr auto-merge <number>\`; or leave the merge to ${human}`
+      ? `A session no Human attends merges only through the pr-auto-merge skill, \`aidrian pr auto-merge <number> --check\`; or leave the merge to ${human}`
       : 'Merge with `gh pr merge <number>`, which the merge guard judges');
   }
   if (kind.ready) return refused(`${short} marks a pull request ready through the tracker, past the ready hold`, 'Mark it ready with `gh pr ready <number>`, which the ready hold judges');

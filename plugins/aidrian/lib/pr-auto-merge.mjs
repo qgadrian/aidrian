@@ -1,4 +1,5 @@
-// `aidrian pr auto-merge [PR] [--json]`: whether a session may merge this pull request without asking. It is on only
+// `aidrian pr auto-merge [PR] --check [--json]`: whether a session may merge this pull request without asking; without
+// `--check`, whether it merged too (runAutoMergeCommand). It is on only
 // when all of these hold, and the first that fails is the reason it is off:
 //   1. team: both the repository's default branch and the pull request's base allow it. `github.autoMerge` is read
 //      from GitHub, as the pull request's repository commits it on each branch now: never from the working copy, its
@@ -28,8 +29,9 @@
 //   7. review: nobody's latest review requests changes, and this machine's review record (lib/review/state.mjs), scoped
 //      to the pull request's repository, holds the outcome `received` on exactly the pull request's current head,
 //      and nothing is owed. A waiver above low through an accepted residual, on any pass record, keeps it off too, also
-//      after the waiver ends. A reviewer's output cannot end that hold; a listing of the finding's title and file as
-//      fixed does (settled.mjs heldWaiver).
+//      after the waiver ends, until a listing holds the finding as fixed, or until the body no longer lists it and a pass
+//      of exactly the head carries it as ended, having weighed it again (settled.mjs heldWaiver, bodyAccepts): the gate then
+//      reads the body through the forge, at the head, once.
 //      `round_limit` on exactly the head counts in place of `received` only with a judge's `waive` verdict that stands for
 //      that head under the unattended waiver (lib/review/waiver-stand.mjs waivedReview): the team's
 //      `github.unattendedWaiver.allow` on both branches, read with the policies above, and this machine's switch; every
@@ -78,7 +80,7 @@
 // of merge trust is missing, as the plain line names it too; with `signoff`, `flow` names the flow and `signoffClass`
 // is `security` or `product` (signoffClassOf).
 // When the reason is local and the local file has errors, they go to stderr.
-// Exit 0 on, 1 off, 3 error (an argument, a gh read, or a pull request gh describes only in part).
+// Exit 0 on, 1 off, 3 error (an argument, a gh read, or a pull request gh describes only in part); exit 0 merges nothing.
 // A failed read of the full file list, or of the head after it, is off (paths): the paths check names it.
 
 import { configFromText, loadConfig, resolveAutoMerge, stateDirProblem } from './config.mjs';
@@ -95,7 +97,7 @@ import { readHumanSignoffs, trustVerdict } from './review/merge-trust.mjs';
 import { closingContextOf, closingTextsProblem, markOnce } from './closing-words.mjs';
 import { driverHold } from './run-driver.mjs';
 import { readUnattendedMark } from './unattended-mark.mjs';
-import { heldWaiver } from './review/settled.mjs';
+import { bodyAccepts, heldWaiver } from './review/settled.mjs';
 import { owed } from './review/state.mjs';
 import { waiverKind } from './review/waiver.mjs';
 import { runOf, waivedReview } from './review/waiver-stand.mjs';
@@ -114,14 +116,15 @@ export const ghError = (error) => String(error?.stderr ?? '').split('\n').map((l
   String(error?.message ?? error).split('\n')[0];
 export const notFound = (error) => /HTTP 404/u.test(`${error?.stderr ?? ''}\n${error?.message ?? ''}`);
 
-// [PR] [--json], where PR is a number, `#number`, or a pull request URL: { target, asJson, unknown }.
+// [PR] [--json] [--check], where PR is a number, `#number`, or a pull request URL: { target, asJson, check, unknown }.
 export function parseArgs(argv) {
-  const positional = argv.filter((arg) => arg !== '--json');
+  const positional = argv.filter((arg) => arg !== '--json' && arg !== '--check');
   const [first, ...extra] = positional;
   const valid = first === undefined || /^#?\d+$/u.test(first) || prNumber(first) !== null;
   return {
     target: first === undefined ? null : first.replace(/^#/u, ''),
     asJson: argv.includes('--json'),
+    check: argv.includes('--check'),
     unknown: valid ? extra[0] ?? null : first,
   };
 }
@@ -429,6 +432,20 @@ export function outsiderOn(forge, { repo, host, number }, reviewer) {
   return outsider ? outsider.user?.login ?? 'a deleted account' : null;
 }
 
+// settled.mjs bodyAccepts over the body of the pull request `pr` ({ repo, host, number, head }), read through the forge at
+// exactly its head. Throws, naming the read, when gh fails, the head moved, or gh gives no body.
+function bodyAt(forge, { repo, host, number, head }, section) {
+  let pull;
+  try {
+    pull = forge.pull(repo, number, { host });
+  } catch (error) {
+    throw new Error(`could not read the body of #${number} with gh (${ghError(error)})`);
+  }
+  if (pull?.head?.sha !== head) throw new Error(`the head of #${number} moved from ${head.slice(0, 7)} to ${String(pull?.head?.sha ?? 'none').slice(0, 7)} while the gate read its body`);
+  if (pull.body !== null && typeof pull.body !== 'string') throw new Error(`gh returned no body for #${number}`);
+  return bodyAccepts(pull.body ?? '', section);
+}
+
 // Who requested changes, as a string, or null: the review decision, then anyone's latest review.
 export function changesRequested({ reviewDecision, latestReviews }) {
   const reviewer = latestReviews.find((review) => review?.state === 'CHANGES_REQUESTED');
@@ -440,8 +457,10 @@ export function changesRequested({ reviewDecision, latestReviews }) {
 // owed, or a `none_needed` one that pr-auto-merge-docs.mjs noneNeededProblem lets stand, by `unreviewed`: { files, prefix,
 // review, errors, lists, listErrors }.
 // A finding above low that an accepted residual waived is the author's word on a reviewer's finding, so the merge waits
-// for the Human, whatever the review's outcome, and after the waiver ends, until a listing holds the finding as fixed.
-export function reviewProblem(state, head, unreviewed = {}) {
+// for the Human, whatever the review's outcome, and after the waiver ends, until a listing holds the finding as fixed, or,
+// with `accepts` (settled.mjs bodyAccepts over the pull request's body at `head`), until the body no longer lists it and a
+// pass of `head` re-weighed it (settled.mjs heldWaiver). `accepts` may throw, and its throw goes to the caller.
+export function reviewProblem(state, head, unreviewed = {}, { accepts = null } = {}) {
   if (!state) return 'this machine holds no review record for it: run `aidrian pr review`';
   const owing = owed(state);
   if (owing.length) return `${owing.length} review ${owing.length === 1 ? 'entry is' : 'entries are'} still owed`;
@@ -453,7 +472,7 @@ export function reviewProblem(state, head, unreviewed = {}) {
     const why = noneNeededProblem(outcome, unreviewed);
     if (why) return `${status}, and ${why}, so the merge waits for the Human`;
   } else if (outcome.status !== 'received') return status;
-  const waived = heldWaiver(state);
+  const waived = heldWaiver(state, { head, accepts });
   if (!waived) return null;
   // A record without the residual's text names the finding by its id.
   const finding = [waived.ruled_id, waived.id].find(isFindingId);
@@ -476,19 +495,121 @@ export function checksProblem({ github: policy, state }, working, where) {
 
 const cleanup = (team) => `${team.deleteBranch ? 'delete' : 'keep'} the branch, ${team.deleteWorktree ? 'delete' : 'keep'} the worktree`;
 
-// The CLI body. `forge` is the test seam: the forge facade (lib/forges), whose methods throw as gh does. `unattended`
+// The gate's verdict, as `aidrian pr auto-merge --check` prints it: the JSON object, or its line. A pass says the check
+// merges nothing, a verdict that reads no merge state, so it never reads as GitHub's own auto-merge turned on.
+const waivedNote = (result) => (result.waived ? ' on a judge\'s verdict at the round cap' : '');
+const allowedLead = (result) => `auto-merge allowed for #${result.pr} at ${result.head.slice(0, 7)}${waivedNote(result)}`;
+function verdictLine({ result }, asJson) {
+  if (asJson) return JSON.stringify(result);
+  if (result.effective) return `${allowedLead(result)}, this check merges nothing: ${result.strategy ?? 'no strategy set'}, ${cleanup(result)}`;
+  // A trust refusal names its reason and which half is missing: the bot's verdict, or a sign-off.
+  return result.reason === 'trust' ? `auto-merge off for #${result.pr} (trust: ${result.trust}): ${result.why}` : `auto-merge off for #${result.pr}: ${result.why}`;
+}
+const printVerdict = (verdict, asJson, out) => {
+  out.log(verdictLine(verdict, asJson));
+  for (const line of verdict.localErrors) out.error(line);
+};
+
+// `aidrian pr auto-merge --check`, the gate alone: whether a session may merge the pull request unasked. Exit 0 on, 1 off,
+// 3 error; exit 0 merges nothing. The options are gateVerdict's.
+export function runAutoMerge(argv, project, options = {}) {
+  const verdict = gateVerdict(argv, project, options);
+  if (verdict.code === 3) return 3;
+  printVerdict(verdict, parseArgs(argv).asJson, options.out ?? console);
+  return verdict.code;
+}
+
+// The repository of `result`, gateVerdict's object, as gh's `--repo` takes it: always with its host, so gh never resolves
+// a bare owner/name against another host it is signed in to.
+const repoArg = (result, host) => `${host}/${result.repo}`;
+
+// The `gh pr merge` command that merges the pull request of `result` by the team's choices, at exactly its head, or null
+// when the team sets no strategy: the pr-merge-when-green skill picks one then, and no flag can stand in for it.
+export function mergeCommand(result, host) {
+  if (!result.strategy) return null;
+  return `gh pr merge ${result.pr} --repo ${repoArg(result, host)} --${result.strategy} --match-head-commit ${result.head}${result.deleteBranch ? ' --delete-branch' : ''}`;
+}
+
+// Where the pull request stands, by the forge's mergeStatus: `merged`; `closed` with no merge; `queued` in GitHub's
+// merge queue; `requested` with GitHub's auto-merge request; or `none`.
+function mergeState(status) {
+  if (status.merged) return 'merged';
+  if (status.state === 'closed') return 'closed';
+  if (status.queued) return 'queued';
+  return status.autoMerge ? 'requested' : 'none';
+}
+
+// What the line says after the gate's lead, for each merge state.
+function mergeLine(merge, status, result, host, command) {
+  const checks = `\`aidrian pr checks ${result.pr} -R ${repoArg(result, host)}\` exits 0`;
+  const run = command ? `then runs \`${command}\``
+    : `picks a merge strategy, since the team sets none, then runs \`gh pr merge ${result.pr} --repo ${repoArg(result, host)} --match-head-commit ${result.head}${result.deleteBranch ? ' --delete-branch' : ''}\` with its flag`;
+  return {
+    merged: `merged: GitHub merged it at ${status.mergedAt ?? 'a time it does not give'}`,
+    queued: 'merge queued: GitHub\'s merge queue holds it, and merges it once the queue\'s checks pass',
+    requested: `merge requested: GitHub holds an auto-merge request (${status.autoMerge}) for it, and merges it once its required checks pass`,
+    closed: 'not merged: it is closed with no merge',
+    none: `not merged: nothing merged it, and GitHub holds no auto-merge request and no merge queue entry. Run the pr-auto-merge skill: it waits until ${checks}, ${run}`,
+  }[merge];
+}
+
+// `aidrian pr auto-merge [PR] [--json] [--check]`. With `--check`, the gate alone (runAutoMerge). Without it, a session
+// that reads the command as the merge is never told it merged when nothing did (#620 and #622 sat green until the Human
+// merged them): after a gate that allows it, one read of the pull request (the forge's mergeStatus) says whether GitHub
+// merged it (exit 0, `merge` "merged"), its merge queue holds it (exit 0, "queued"), or it holds an auto-merge request
+// for it (exit 0, "requested"); a pull request closed with no merge is exit 1 ("closed"); otherwise exit 4 ("none"), with
+// the `gh pr merge --match-head-commit` command a session runs once every check passes, as the pr-auto-merge skill does,
+// or with no strategy set, what that skill does. It never merges itself: a merge from this process would pass the merge
+// guard by, which reads the session's own command, and the skill's wait for every check and its confirm.
+// The read must give the head the gate passed: one that moved is exit 3, since the verdict is of the old head.
+// A refusal is the gate's (exit 1), and a failed read exit 3. `--json` adds `merge`, and `command` with "none", null
+// with no strategy set.
+export function runAutoMergeCommand(argv, project, options = {}) {
+  const { asJson, check } = parseArgs(argv);
+  if (check) return runAutoMerge(argv, project, options);
+  const out = options.out ?? console;
+  const fail = (message) => {
+    out.error(`aidrian pr auto-merge: ${message}`);
+    return 3;
+  };
+  const forge = options.forge ?? forgeFor(project.root);
+  const verdict = gateVerdict(argv, project, { ...options, forge });
+  if (verdict.code === 3) return 3;
+  if (verdict.code !== 0) {
+    printVerdict(verdict, asJson, out);
+    return verdict.code;
+  }
+  const { result, host } = verdict;
+  let status;
+  try {
+    status = forge.mergeStatus(result.repo, result.pr, { host });
+  } catch (error) {
+    return fail(`could not read whether #${result.pr} merged with gh (${ghError(error)})`);
+  }
+  if (status?.head !== result.head) {
+    return fail(`the head of #${result.pr} moved from ${result.head.slice(0, 7)} to ${String(status?.head ?? 'none').slice(0, 7)} after the gate passed it: run the command again`);
+  }
+  const merge = mergeState(status);
+  const command = mergeCommand(result, host);
+  out.log(asJson ? JSON.stringify({ ...result, merge, ...(merge === 'none' ? { command } : {}) }) : `${allowedLead(result)}, ${mergeLine(merge, status, result, host, command)}`);
+  return { merged: 0, queued: 0, requested: 0, closed: 1, none: 4 }[merge];
+}
+
+// The gate's verdict: { code, result, host, localErrors }, `code` 0 on and 1 off, `result` the --json object, `host` the
+// pull request's, and `localErrors` the local file's errors when the reason is local; or { code: 3 } once it printed
+// the error to `out.error`. `forge` is the test seam: the forge facade (lib/forges), whose methods throw as gh does. `unattended`
 // says whether no Human attends the session that runs it: its unattended mark, by the session id its host gives the
 // command (hosts/index.mjs sessionIdentity), a pending or unreadable mark included. `run` gives the project run that
 // mark names (waiver-stand.mjs runOf), for the run's budget of waived merges; `runHost` the host it runs under, which
 // must confirm a waiver's judge (waiver-stand.mjs judgeHostProblem); `runIssue` the issue that run holds the session to,
 // for the closing-word check (closing-words.mjs runClosingContext). Both come from one read of the mark (`mark`,
 // closing-words.mjs markOnce); a mark that cannot be read names a run whose budget cannot be counted.
-export function runAutoMerge(argv, project, { forge = forgeFor(project.root), session = sessionIdentity(process.env).session, home, unattended = () => heldSession(session, home ? { home } : {}), mark = markOnce(session, home ? { home } : {}), run = () => (mark().unreadable ? null : runOf(mark().mark)), runHost = detectHost(), runIssue = () => closingContextOf(mark(), home ? { home } : {}), out = console } = {}) {
+export function gateVerdict(argv, project, { forge = forgeFor(project.root), session = sessionIdentity(process.env).session, home, unattended = () => heldSession(session, home ? { home } : {}), mark = markOnce(session, home ? { home } : {}), run = () => (mark().unreadable ? null : runOf(mark().mark)), runHost = detectHost(), runIssue = () => closingContextOf(mark(), home ? { home } : {}), out = console } = {}) {
   const fail = (message) => {
     out.error(`aidrian pr auto-merge: ${message}`);
-    return 3;
+    return { code: 3 };
   };
-  const { target, asJson, unknown } = parseArgs(argv);
+  const { target, unknown } = parseArgs(argv);
   if (unknown) return fail(`unknown argument: ${unknown}`);
   let pr;
   try {
@@ -573,7 +694,19 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root), se
       const unreviewed = { files: listed.files, prefix, review: policy.review, errors: policies.policyErrors, ...unreviewedLists(policies, pr), startDocs: loaded, tree, pluginRepository };
       const state = scoped(recordFor(project, pr.number, pr.repo), project, pr.repo);
       const changes = changesRequested(pr);
-      let problem = changes ?? reviewProblem(state, pr.head, unreviewed);
+      // The body at the head, read once and only for a waiver above low the head's review re-weighed: the gate holds only
+      // the waivers it still lists.
+      let accepted = null;
+      const accepts = (entry, raised) => {
+        accepted ??= bodyAt(forge, pr, policy.github.pullRequest?.residuals?.section);
+        return accepted(entry, raised);
+      };
+      let problem;
+      try {
+        problem = changes ?? reviewProblem(state, pr.head, unreviewed, { accepts });
+      } catch (error) {
+        return fail(error.message);
+      }
       // A sign-off of the Human's that a judge's verdict would otherwise need: merge trust's `signoff` stop.
       let owedSignoff = null;
       // The review trail, read at most once: for a verdict's bot check and for merge trust.
@@ -636,14 +769,8 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root), se
     effective, reason, why, allow: team.allow, local, strategy: team.strategy, deleteBranch: team.deleteBranch,
     deleteWorktree: team.deleteWorktree, pr: pr.number, head: pr.head, repo: pr.repo, base: pr.base, ...(waived ? { waived } : {}), ...(trust ? { trust } : {}), ...(trust === 'signoff' ? signoff ?? {} : {}),
   };
-  // A trust refusal names its reason and which half is missing: the bot's verdict, or a sign-off.
-  const off = reason === 'trust' ? `auto-merge off for #${pr.number} (trust: ${trust}): ${why}` : `auto-merge off for #${pr.number}: ${why}`;
-  out.log(asJson ? JSON.stringify(result)
-    : effective ? `auto-merge on for #${pr.number} at ${pr.head.slice(0, 7)}${waived ? ' on a judge\'s verdict at the round cap' : ''}: ${team.strategy ?? 'no strategy set'}, ${cleanup(team)}` : off);
-  if (reason === 'local') {
-    for (const line of project.errors.filter((each) => each.startsWith(`${project.paths.local}:`))) out.error(line);
-  }
-  return effective ? 0 : 1;
+  const localErrors = reason === 'local' ? project.errors.filter((each) => each.startsWith(`${project.paths.local}:`)) : [];
+  return { code: effective ? 0 : 1, result, host: pr.host, localErrors };
 }
 
 // --- The closing words of a project run's issue session (reason `closes`, lib/closing-words.mjs) ---

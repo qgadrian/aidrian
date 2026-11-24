@@ -1135,6 +1135,23 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
       return content !== null && mediaType === null ? json(['api', '--paginate', '--slurp', route]).flat() : list(route);
     },
     pull: (repo, n, { host } = {}) => rest(`repos/${repo}/pulls/${n}`, { host }),
+    // Where pull request `n` of `repo` stands after a merge was allowed (lib/pr-auto-merge.mjs runAutoMergeCommand), in one
+    // GraphQL call on `host`: { state, merged, mergedAt, head, autoMerge, queued }, `state` `open`, `closed`, or `merged`,
+    // `autoMerge` the lowercased merge method of GitHub's auto-merge request or null, and `queued` whether the merge queue
+    // holds it, which is no auto-merge request. An answer with no pull request, merged state, or head throws.
+    mergeStatus: (repo, n, { host } = {}) => {
+      const number = idOf(n, 'a pull request number');
+      const [owner, name, ...extra] = String(repo).split('/');
+      if (!owner || !name || extra.length) throw new Error('a repository is owner/name');
+      const pr = json(['api', 'graphql', ...(host ? ['--hostname', host] : []), '-f', `query=${MERGE_STATUS_QUERY}`, '-f', `o=${owner}`, '-f', `r=${name}`, '-F', `n=${number}`])
+        ?.data?.repository?.pullRequest;
+      if (typeof pr?.merged !== 'boolean' || typeof pr.headRefOid !== 'string' || pick(STATES, pr.state) === null) throw new Error(`GitHub gave no merge state for pull request #${number}`);
+      const method = pr.autoMergeRequest?.mergeMethod;
+      return {
+        state: pick(STATES, pr.state), merged: pr.merged, mergedAt: typeof pr.mergedAt === 'string' ? pr.mergedAt : null, head: pr.headRefOid,
+        autoMerge: typeof method === 'string' ? method.toLowerCase() : null, queued: Boolean(pr.mergeQueueEntry),
+      };
+    },
     // The pull request `ref`'s diff, as gh prints it: text, not JSON. `repo` reads it from that repository.
     diff: (ref, { repo = null } = {}) => gh(['pr', 'diff', String(ref), ...(repo ? ['--repo', repo] : [])]),
     // The two commits the pull request `ref`'s diff spans, { base, head }: the base branch's commit and the head commit
@@ -1365,5 +1382,7 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
 
 // The fields mergeState reads.
 export const MERGE_STATE_FIELDS = 'number,url,state,isDraft,mergeable,mergeStateStatus,headRefOid,headRefName,baseRefName,isCrossRepository,reviewDecision,latestReviews';
+// What mergeStatus reads.
+const MERGE_STATUS_QUERY = 'query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){state merged mergedAt headRefOid autoMergeRequest{mergeMethod} mergeQueueEntry{state}}}}';
 // updateBranch's rebase, which GitHub's REST route does not offer.
 const REBASE_MUTATION = 'mutation($id:ID!,$head:GitObjectID!){updatePullRequestBranch(input:{pullRequestId:$id,expectedHeadOid:$head,updateMethod:REBASE}){pullRequest{headRefOid}}}';

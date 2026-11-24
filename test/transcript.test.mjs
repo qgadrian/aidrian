@@ -431,7 +431,14 @@ test('gateVerdicts reads the path of each refusal pathsProblem words as `it chan
   }
   const review = 'received, and it changes "AGENTS.md", which instructs AI sessions, so the merge waits for the Human';
   assert.deepEqual(gateVerdicts(gateJson(12, review, 'review')), [{ pr: 12, path: null }], 'a review refusal that quotes a path is no path refusal');
-  assert.deepEqual(gateVerdicts('auto-merge on for #12 at abc1234: squash, delete the branch, keep the worktree'), [{ pr: 12, path: null }]);
+  assert.deepEqual(gateVerdicts('auto-merge on for #12 at abc1234: squash, delete the branch, keep the worktree'), [{ pr: 12, path: null }], 'an older plugin\'s pass');
+  for (const pass of [
+    'auto-merge allowed for #12 at abc1234, this check merges nothing: squash, delete the branch, keep the worktree',
+    'auto-merge allowed for #12 at abc1234 on a judge\'s verdict at the round cap, this check merges nothing: squash, delete the branch, keep the worktree',
+    'auto-merge allowed for #12 at abc1234, merged: GitHub merged it at 2026-11-24T10:45:06Z',
+    'auto-merge allowed for #12 at abc1234, merge requested: GitHub holds an auto-merge request (squash) for it, and merges it once its required checks pass',
+    'auto-merge allowed for #12 at abc1234, not merged: nothing merged it, and GitHub holds no auto-merge request. Run the pr-auto-merge skill: it waits until `aidrian pr checks 12 -R a/b` exits 0, then runs `gh pr merge 12 --repo a/b --squash --match-head-commit abc1234`',
+  ]) assert.deepEqual(gateVerdicts(pass), [{ pr: 12, path: null }], pass);
   assert.deepEqual(gateVerdicts(JSON.stringify({ effective: true, reason: null, why: null, pr: 12 })), [{ pr: 12, path: null }]);
   // No verdict: an error exit, a line the gate did not start, and objects of another shape.
   assert.deepEqual(gateVerdicts('Exit code 3\naidrian pr auto-merge: could not read the pull request with gh (HTTP 404)'), []);
@@ -449,7 +456,7 @@ test('turnActions lists a gate run by the verdict it printed, and no call that o
     [{ kind: 'gate', pr: 12, path: 'AGENTS.md' }], 'a refusal, which exits 1');
   assert.deepEqual(actions(turn.human('go'), gate('g1', 'node /opt/plugin/lib/cli.mjs pr auto-merge 12 --json', gateJson(12, why))),
     [{ kind: 'gate', pr: 12, path: 'AGENTS.md' }], 'the --json form, by the cli');
-  assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge 12', 'auto-merge on for #12 at abc1234: squash, delete the branch, keep the worktree', false)),
+  assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge 12 --check', 'auto-merge allowed for #12 at abc1234, this check merges nothing: squash, delete the branch, keep the worktree', false)),
     [{ kind: 'gate', pr: 12, path: null }], 'a pass');
   assert.deepEqual(actions(turn.human('go'), gate('g1', `echo '${gateLine(12, why)}'`, gateLine(12, why), false)), [], 'an echo of the line is no gate run');
   assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge 12', 'Exit code 3\naidrian pr auto-merge: gh api user returned no login')), [], 'an error exit');
@@ -464,8 +471,8 @@ test('turnActions counts a gate call only when it printed one verdict per gate i
   const why = pathsProblem(changed('AGENTS.md'));
   const gate = (id, command, output, isError = true) => [turn.call(id, 'Bash', { command }), turn.result(id, output, isError)];
   const actions = (...lines) => turnActions(lines.flat().join('\n'));
-  const compound = 'aidrian pr auto-merge 57; gh pr view 57';
-  assert.deepEqual(actions(turn.human('go'), gate('g1', compound, `${gateLine(57, why)}\ntitle:\tfix\n--\nauto-merge on for #57 at abc1234: squash`)), [],
+  const compound = 'aidrian pr auto-merge 57 --check; gh pr view 57';
+  assert.deepEqual(actions(turn.human('go'), gate('g1', compound, `${gateLine(57, why)}\ntitle:\tfix\n--\nauto-merge allowed for #57 at abc1234, this check merges nothing: squash`)), [],
     'a second verdict line from another command of the call');
   assert.deepEqual(actions(turn.human('go'), gate('g1', 'aidrian pr auto-merge 57; aidrian pr auto-merge 58', `Exit code 1\n${gateLine(57, why)}\n${gateLine(58, why)}`)),
     [{ kind: 'gate', pr: 57, path: 'AGENTS.md' }, { kind: 'gate', pr: 58, path: 'AGENTS.md' }], 'two gates, two verdicts');
@@ -481,8 +488,8 @@ test('turnActions counts a gate call only when it printed one verdict per gate i
     'a gate with no target and a second verdict line: which one it printed cannot be told');
 
   // A retry after a refusal: two gates on one pull request print two verdicts, in order, and the last one stands.
-  const pass = 'auto-merge on for #57 at abc1234: squash, delete the branch, keep the worktree';
-  const retry = 'aidrian pr auto-merge 57; aidrian pr auto-merge 57';
+  const pass = 'auto-merge allowed for #57 at abc1234, this check merges nothing: squash, delete the branch, keep the worktree';
+  const retry = 'aidrian pr auto-merge 57 --check; aidrian pr auto-merge 57 --check';
   assert.deepEqual(actions(turn.human('go'), gate('g1', retry, `${gateLine(57, why)}\n${pass}`)),
     [{ kind: 'gate', pr: 57, path: 'AGENTS.md' }, { kind: 'gate', pr: 57, path: null }], 'refused, then passed');
   assert.deepEqual(actions(turn.human('go'), gate('g1', retry, `${pass}\n${gateLine(57, why)}`)),

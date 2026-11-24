@@ -353,8 +353,8 @@ test('the Stop hook sends a turn back once when a gate refusal on a path is miss
   assert.match(stop(chained, DONE).stderr, SENT, 'the first gate of an && chain refused, so the second never ran');
   const implicit = [human, bash('aidrian pr auto-merge && aidrian pr auto-merge 402', `Exit code 1\nauto-merge off for #401: ${GATE_WHY}`)];
   assert.match(stop(implicit, DONE).stderr, SENT, 'the same, with the first gate on the current branch`s pull request');
-  const pass = 'auto-merge on for #401 at abc1234: squash, delete the branch, keep the worktree';
-  const retry = (output) => [human, bash('aidrian pr auto-merge 401; aidrian pr auto-merge 401', output)];
+  const pass = 'auto-merge allowed for #401 at abc1234, this check merges nothing: squash, delete the branch, keep the worktree';
+  const retry = (output) => [human, bash('aidrian pr auto-merge 401 --check; aidrian pr auto-merge 401 --check', output)];
   assert.deepEqual(stop(retry(`auto-merge off for #401: ${GATE_WHY}\n${pass}`), 'Merged.'), QUIET, 'a retry that refused, then passed');
   assert.match(stop(retry(`${pass}\nauto-merge off for #401: ${GATE_WHY}`), DONE).stderr, SENT, 'a retry that passed, then refused');
   const denied = bash('gh pr merge 401 --squash', 'merge-guard: the merge is refused', true);

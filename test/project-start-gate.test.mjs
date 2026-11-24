@@ -16,7 +16,7 @@ import { ownIssue, runDriver } from '../plugins/aidrian/lib/project-run-guard.mj
 
 import { CLAIM_AGE, claimStart, MARKER_CAP, noteStarted, readFrom, readStarted } from '../plugins/aidrian/lib/handoff-markers.mjs';
 import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
-import { CEILINGS, HOST_FILE_REASON, HOST_FILE_RESIDUAL, ISSUE_ATTEMPTS, PROJECT_PARALLEL, PROJECT_STARTS, PROJECT_STARTS_PER_DAY, policyFilesAt, projectPrompt, reviewedProblem, teamPolicy } from '../plugins/aidrian/lib/project-run-gate.mjs';
+import { CEILINGS, HOST_FILE_REASON, HOST_FILE_RESIDUAL, ISSUE_ATTEMPTS, POLICY_FILES_LINE, PROJECT_PARALLEL, PROJECT_STARTS, PROJECT_STARTS_PER_DAY, policyFilesAt, projectPrompt, reviewedProblem, teamPolicy } from '../plugins/aidrian/lib/project-run-gate.mjs';
 import { pushCheckoutProblem } from '../plugins/aidrian/lib/issue-push-checkout.mjs';
 import { recordHumanSignoff } from '../plugins/aidrian/lib/review/merge-trust.mjs';
 import { DROP_FILE } from '../plugins/aidrian/lib/project-result.mjs';
@@ -68,6 +68,14 @@ test('a low or medium finding in a host file is a stated residual by its id alon
   assert.ok(bullet.includes(HOST_FILE_RESIDUAL), 'the skill states the same route');
   assert.match(bullet, /never writes a host file, whatever `github\.autoMerge\.includeGuardedPaths` says/u);
   assert.match(bullet, /A finding outside host files keeps its route\./u);
+  // github.autoMerge.includePolicyFiles on: the session may write those files and fixes a finding in one, as the skill says.
+  const opened = projectPrompt({ ...given, includePolicyFiles: true });
+  assert.ok(opened.includes(POLICY_FILES_LINE), opened);
+  assert.doesNotMatch(projectPrompt(given), /includePolicyFiles/u, 'off: no line');
+  assert.match(POLICY_FILES_LINE, /^The team's `github\.autoMerge\.includePolicyFiles` is on: this session may write host instruction files/u);
+  assert.match(POLICY_FILES_LINE, /never as a stated residual\. The host settings, skills, agents, commands, hooks, and MCP servers, and the forge's workflow files, stay refused/u);
+  assert.match(bullet, /^\*\*A finding in a host file\.\*\* Unless the first message says the team's `github\.autoMerge\.includePolicyFiles` is on, this session never writes a host file/u);
+  assert.match(bullet, /When the first message says `github\.autoMerge\.includePolicyFiles` is on, this session may write .* and fixes a finding in one as any other, never as a stated residual/u);
 });
 
 test('the driver starts the issue next lists in a fresh clone cut from the base tip, under the host sandbox, held to a floor and a tagged mark, and the ledger records it', (t) => {
@@ -160,7 +168,7 @@ test('start refuses a run the base branch has not switched on, by its local ref 
 test('the team policy is the lowest of the local ref, the forge, and the ceilings', (t) => {
   const fx = runFixture(t, { projectRun: { allow: true, maxStarts: 900, issueHours: 24 }, forgeConfig: { version: 1, projectRun: { allow: true, maxStarts: 50, issueHours: 30 } } });
   const policy = teamPolicy(fx.project, { host: 'github.com', owner: 'acme', name: 'widgets' }, fx.forge);
-  assert.deepEqual(policy, { maxParallel: 1, maxStarts: 50, issueHours: 6, solo: false, unverifiedHosts: false, workflowSecretsAccepted: false, forgeProtectionAccepted: false, outsideSandbox: [], mcpServers: {}, registries: [], localBinding: false, recordedDecisions: false, fullAuto: false, reviewer: 'chatgpt-codex-connector[bot]', includeGuardedPaths: false }, 'issueHours 30 fails its check on the forge and reads as the default 6, the lowest of 24, 6, and the ceiling');
+  assert.deepEqual(policy, { maxParallel: 1, maxStarts: 50, issueHours: 6, solo: false, unverifiedHosts: false, workflowSecretsAccepted: false, forgeProtectionAccepted: false, outsideSandbox: [], mcpServers: {}, registries: [], localBinding: false, recordedDecisions: false, fullAuto: false, reviewer: 'chatgpt-codex-connector[bot]', includeGuardedPaths: false, includePolicyFiles: false }, 'issueHours 30 fails its check on the forge and reads as the default 6, the lowest of 24, 6, and the ceiling');
   const ceiling = runFixture(t, { projectRun: { allow: true, maxStarts: 1000 }, forgeConfig: { version: 1, projectRun: { allow: true, maxStarts: 1000 } } });
   assert.equal(teamPolicy(ceiling.project, { host: 'github.com', owner: 'acme', name: 'widgets' }, ceiling.forge).maxStarts, 1000);
 });
@@ -903,8 +911,8 @@ test('reviewedProblem holds the branch\'s own host files to the merge bar', (t) 
   const head = 'a'.repeat(40);
   const parent = 'b'.repeat(40);
   const repository = { host: 'github.com', owner: 'acme', name: 'widgets' };
-  const ask = (trail, { pr = 12, includeGuardedPaths = false, changed = ['.aidrian/knowledge/docs.json'], reviewer = BOT, policyFiles = [] } = {}) => reviewedProblem({
-    project: fx.project, repository, facade: { reviewTrail: () => trail }, policy: { reviewer, includeGuardedPaths }, policyFiles, main: 'main', branch: 'feat/eng-1-export', pr, head, changed, env: fx.env,
+  const ask = (trail, { pr = 12, includeGuardedPaths = false, includePolicyFiles = false, changed = ['.aidrian/knowledge/docs.json'], reviewer = BOT, policyFiles = [] } = {}) => reviewedProblem({
+    project: fx.project, repository, facade: { reviewTrail: () => trail }, policy: { reviewer, includeGuardedPaths, includePolicyFiles }, policyFiles, main: 'main', branch: 'feat/eng-1-export', pr, head, changed, env: fx.env,
   });
   const unsigned = /flow harness-config needs the Human's sign-off on head aaaaaaa/u;
   assert.match(ask(trailOf(head)), unsigned, 'the bot alone is not enough');
@@ -921,6 +929,10 @@ test('reviewedProblem holds the branch\'s own host files to the merge bar', (t) 
   assert.match(ask(trailOf(head), { includeGuardedPaths: true, changed: ['.aidrian/config.json', 'CLAUDE.md'] }), unsigned, 'a policy file needs the Human');
   assert.match(ask(trailOf(head), { includeGuardedPaths: true, changed: ['harness/config.json'], policyFiles: ['.aidrian.json', 'harness/config.json'] }), unsigned, 'a config the pointer file relocates is a policy file');
   assert.equal(ask(trailOf(head), { includeGuardedPaths: true, changed: ['harness/config.json'] }), null, 'one the policy was not read from is not');
+  // With includePolicyFiles too, the bot alone passes a policy file, as the run's sessions may write one; alone it lifts nothing.
+  assert.equal(ask(trailOf(head), { includeGuardedPaths: true, includePolicyFiles: true, changed: ['.aidrian/config.json', 'CLAUDE.md'] }), null);
+  assert.match(ask(trailOf(head), { includePolicyFiles: true, changed: ['.aidrian/config.json'] }), unsigned, 'without includeGuardedPaths');
+  assert.match(ask(trailOf(head, { on: null }), { includeGuardedPaths: true, includePolicyFiles: true, changed: ['.aidrian/config.json'] }), /has not passed head aaaaaaa/u, 'the bot still');
   // The Human's sign-off on exactly the head, read from the sign-off store.
   recordHumanSignoff({ repo: 'acme/widgets', pr: 12, flow: 'harness-config', head: parent, by: 'Adrian', env: fx.env });
   assert.match(ask(trailOf(head), { changed: ['.aidrian/config.json'] }), unsigned, 'a sign-off on another head');
@@ -928,11 +940,12 @@ test('reviewedProblem holds the branch\'s own host files to the merge bar', (t) 
   assert.equal(ask(trailOf(head), { changed: ['.aidrian/config.json'] }), null);
 });
 
-test('the team\'s reviewer is the one both reads name, and includeGuardedPaths is on only when both set it', (t) => {
-  const same = runFixture(t, { config: { github: { reviewer: BOT, autoMerge: { includeGuardedPaths: true } } } });
-  assert.deepEqual(['reviewer', 'includeGuardedPaths'].map((name) => teamPolicy(same.project, { host: 'github.com', owner: 'acme', name: 'widgets' }, same.forge)[name]), [BOT, true]);
-  const differ = runFixture(t, { config: { github: { reviewer: BOT, autoMerge: { includeGuardedPaths: true } } }, forgeConfig: { version: 1, projectRun: { allow: true, unverifiedHosts: true }, github: { reviewer: 'another-bot' } } });
-  assert.deepEqual(['reviewer', 'includeGuardedPaths'].map((name) => teamPolicy(differ.project, { host: 'github.com', owner: 'acme', name: 'widgets' }, differ.forge)[name]), [null, false]);
+test('the team\'s reviewer is the one both reads name, and includeGuardedPaths and includePolicyFiles are on only when both set them', (t) => {
+  const keys = ['reviewer', 'includeGuardedPaths', 'includePolicyFiles'];
+  const same = runFixture(t, { config: { github: { reviewer: BOT, autoMerge: { includeGuardedPaths: true, includePolicyFiles: true } } } });
+  assert.deepEqual(keys.map((name) => teamPolicy(same.project, { host: 'github.com', owner: 'acme', name: 'widgets' }, same.forge)[name]), [BOT, true, true]);
+  const differ = runFixture(t, { config: { github: { reviewer: BOT, autoMerge: { includeGuardedPaths: true, includePolicyFiles: true } } }, forgeConfig: { version: 1, projectRun: { allow: true, unverifiedHosts: true }, github: { reviewer: 'another-bot', autoMerge: { includePolicyFiles: true } } } });
+  assert.deepEqual(keys.map((name) => teamPolicy(differ.project, { host: 'github.com', owner: 'acme', name: 'widgets' }, differ.forge)[name]), [null, false, false], 'both set includePolicyFiles, but the forge not includeGuardedPaths');
 });
 
 // A head the base tip already holds changed nothing itself: a protected change made only on the base moves no branch.

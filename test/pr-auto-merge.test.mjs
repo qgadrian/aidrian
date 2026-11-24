@@ -937,6 +937,32 @@ test('includeGuardedPaths true on the default branch and the base lets a guarded
   assert.match(pathsProblem({ files: [], changedFiles: 0 }, null, { includeGuardedPaths: true }) ?? '', /git could not give/u);
   assert.equal(pathsProblem({ files: [{ path: 'AGENTS.md', changeType: 'MODIFIED' }], changedFiles: 1 }, '', { includeGuardedPaths: true }), null);
   assert.match(pathsProblem({ files: [{ path: 'AGENTS.md', changeType: 'MODIFIED' }], changedFiles: 1 }) ?? '', /instructs AI sessions/u, 'off by default');
+
+  // github.autoMerge.includePolicyFiles on both branches, with includeGuardedPaths, lets each policy file through too.
+  const policies = { ...LIFTED, includePolicyFiles: true };
+  const open = branches(policies, policies);
+  for (const file of ['.aidrian/config.json', '.aidrian.json', 'apps/web/.aidrian/config.json', '.aidrian.local.json', '.aidrian']) {
+    assert.deepEqual(reasonOf(t, r, onStack(open, 'AGENTS.md', file)), [0, null], `includePolicyFiles: ${file}`);
+  }
+  const read = { files: pointing('main', 'tools/policy', policies), view: { files: [{ path: 'tools/policy/config.json', changeType: 'MODIFIED' }], changedFiles: 1 } };
+  assert.deepEqual(reasonOf(t, r, read), [0, null], 'a file the gate reads its policy from');
+  // On one branch only, or without includeGuardedPaths, it lifts nothing: the pull request that sets it is refused.
+  for (const [name, files, line] of [
+    ['the default branch only', branches(policies, LIFTED), policyLine('.aidrian/config.json')],
+    ['the base only', branches(LIFTED, policies), policyLine('.aidrian/config.json')],
+    ['includeGuardedPaths off', branches({ ...TEAM, includePolicyFiles: true }, { ...TEAM, includePolicyFiles: true }), `auto-merge off for #7: it changes ".aidrian/config.json", which instructs AI sessions, or decides CI's verdict or auto-merge`],
+  ]) {
+    const result = run(t, r, ['7'], onStack(files, '.aidrian/config.json'));
+    assert.deepEqual([result.code, result.out[0]], [1, line], name);
+  }
+  assert.deepEqual(reasonOf(t, r, { files: { 'acme/notes@main:.aidrian/config.json': configText(LIFTED) }, view: { files: [{ path: '.aidrian/config.json', changeType: 'MODIFIED' }] } }), [1, 'paths'], 'the pull request that turns it on, into a default branch without it');
+  // Every other refusal of the paths check stays.
+  assert.deepEqual(reasonOf(t, r, onStack(open, { path: '.aidrian/config.json', changeType: 'RENAMED' })), [1, 'paths'], 'a rename');
+  const lifted = { includeGuardedPaths: true, includePolicyFiles: true };
+  assert.equal(pathsProblem({ files: [{ path: 'apps/web/.aidrian/config.json', changeType: 'MODIFIED' }], changedFiles: 1 }, 'apps/web/', lifted), null);
+  assert.match(pathsProblem({ files: [{ path: '.aidrian/config.json', changeType: 'MODIFIED' }], changedFiles: 1 }, 'apps/web/', lifted) ?? '', /outside this project's folder/u);
+  assert.match(pathsProblem({ files: [{ path: 'notes.md', changeType: 'MODIFIED' }], changedFiles: 2 }, '', lifted) ?? '', /gh listed 1 of its 2/u);
+  assert.match(pathsProblem({ files: [{ path: '.aidrian/config.json', changeType: 'MODIFIED' }], changedFiles: 1 }, '', { includePolicyFiles: true }) ?? '', /instructs AI sessions/u, 'alone');
 });
 
 test('includeGuardedPaths false, missing, or true on only one branch keeps a guarded path off (paths), with today\'s message', (t) => {

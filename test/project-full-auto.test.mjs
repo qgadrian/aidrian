@@ -136,6 +136,10 @@ test('the full-auto lines name the human sign-off flows and drop each setting th
     'a pull', 'the sign-off', 'a floor-class', 'a halt,', 'a run', 'decisions.mode is', 'decisions.unattended.safeDefaults is', 'github.autoMerge.includeGuardedPaths is',
   ]);
   assert.match(parking.join('\n'), /signoff "human"\): none;/u);
+  // With github.autoMerge.includePolicyFiles on, a policy file's pull request still waits for the harness-config sign-off.
+  assert.match(parking[1], /never merges by itself; the Human merges it$/u, 'off');
+  const policy = fullAutoLines({ base, policy: { fullAuto: true, includeGuardedPaths: true, includePolicyFiles: true }, projectKey: 'p', count: () => ({ count: 0 }) });
+  assert.match(policy[1], /merges by itself only once the Human signed off its harness-config flow on its head .*includePolicyFiles is on$/u);
 });
 
 test('the floor-class line reads the decision switch and counts this machine\'s grants, printing no grant and writing nothing', (t) => {

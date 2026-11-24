@@ -18,7 +18,8 @@
 //      them, as the default branch commits its indexes (startDocs), which must be readable, unless both branches commit
 //      `github.autoMerge.includeGuardedPaths` true, which lifts those refusals alone, never for a policy
 //      file (POLICY_PATHS). None, with the key on or off, is one of the files the gate reads its policy from,
-//      including a folder the pointer file names (branchPolicies' policyFiles). `gh pr view` lists at most 100 files,
+//      including a folder the pointer file names (branchPolicies' policyFiles), unless both branches also commit
+//      `github.autoMerge.includePolicyFiles` true, which lifts those two refusals too (includesPolicyFiles). `gh pr view` lists at most 100 files,
 //      so a longer pull request's list is read whole from the forge's paged list (wholeFiles), at the head the view gave.
 //   4. local: the main checkout's local file turns it on (project.localAutoMerge), or sets nothing under the default
 //      branch's `github.autoMerge.default` "on".
@@ -328,6 +329,13 @@ export const soloOn = ({ policy, basePolicy }) => policy.solo === true && basePo
 export const includesGuardedPaths = ({ policy, basePolicy }) =>
   policy.github.autoMerge.includeGuardedPaths === true && basePolicy.github.autoMerge.includeGuardedPaths === true;
 
+// Whether the team lets a policy file through the paths gate too: true only when includesGuardedPaths is, and the default
+// branch and the base both commit `github.autoMerge.includePolicyFiles` true, read as `allow` is. The gate reads its
+// policy from those two branches as GitHub holds them, never from the head, so the pull request that sets the key, or
+// lowers any other policy, is still judged under the old one.
+export const includesPolicyFiles = (policies) => includesGuardedPaths(policies)
+  && policies.policy.github.autoMerge.includePolicyFiles === true && policies.basePolicy.github.autoMerge.includePolicyFiles === true;
+
 // GitHub's REST file statuses as the GraphQL change types `gh pr view` gives and pathsProblem reads. `unchanged`, a file
 // listed with no change to its content, reads as MODIFIED, so its path still meets every guard.
 const REST_CHANGE_TYPES = Object.freeze({
@@ -382,8 +390,9 @@ export function wholeFiles(forge, pr) {
 // startDocs read it: a doc or index file of it is guarded too, and an unreadable answer is off, as no list would be
 // whole. `pluginRepository` is whether the project is the plugin's own repository, whose release script is guarded too
 // (PLUGIN_REPOSITORY_PATHS). `includeGuardedPaths` lifts only the guarded-path refusals, these included, the team having
-// accepted that risk on both branches, and never for a policy file (POLICY_PATHS).
-export function pathsProblem({ files, changedFiles }, prefix = '', { includeGuardedPaths = false, policyFiles = [], startDocs = { docs: [], folder: null }, pluginRepository = false } = {}) {
+// accepted that risk on both branches, and never for a policy file (POLICY_PATHS), unless `includePolicyFiles` is on as
+// well (includesPolicyFiles): then neither a policy file nor one of `policyFiles` is refused. Alone it lifts nothing.
+export function pathsProblem({ files, changedFiles }, prefix = '', { includeGuardedPaths = false, includePolicyFiles = false, policyFiles = [], startDocs = { docs: [], folder: null }, pluginRepository = false } = {}) {
   if (prefix === null) return 'git could not give the project\'s folder in the repository';
   if (files.length !== changedFiles) return `gh listed ${files.length} of its ${changedFiles} changed files`;
   const hidden = files.find(({ changeType }) => changeType === 'RENAMED' || !changeType);
@@ -394,6 +403,7 @@ export function pathsProblem({ files, changedFiles }, prefix = '', { includeGuar
   const policyRead = files.find(({ path }) => read.has(path.toLowerCase()));
   const readLine = policyRead && `it changes ${JSON.stringify(policyRead.path)}, a file the gate reads its policy from`;
   if (includeGuardedPaths) {
+    if (includePolicyFiles) return null;
     const policy = files.find(({ path }) => POLICY_PATHS.test(path));
     if (policy) return `it changes ${JSON.stringify(policy.path)}, a policy file of aidrian, which includeGuardedPaths never lets through`;
     return readLine || null;
@@ -625,6 +635,7 @@ export function gateVerdict(argv, project, { forge = forgeFor(project.root), ses
   let main;
   let policy;
   let includeGuarded = false;
+  let includePolicy = false;
   let policyFiles = [];
   let policies;
   try {
@@ -632,6 +643,7 @@ export function gateVerdict(argv, project, { forge = forgeFor(project.root), ses
     ({ main, policy, policyFiles } = policies);
     refusing = refusingBranches(policies, pr.base, 'autoMerge');
     includeGuarded = includesGuardedPaths(policies);
+    includePolicy = includesPolicyFiles(policies);
     team = { ...policy.github.autoMerge, allow: refusing.length === 0 };
   } catch (error) {
     return fail(error.message);
@@ -662,7 +674,7 @@ export function gateVerdict(argv, project, { forge = forgeFor(project.root), ses
     else {
       listed = prefix === null ? pr : wholeFiles(forge, pr);
       if (prefix !== null && typeof listed !== 'string') loaded = startDocs(forge, pr, main, policies.configFile, prefix);
-      const paths = typeof listed === 'string' ? listed : pathsProblem(listed, prefix, { includeGuardedPaths: includeGuarded, policyFiles, startDocs: loaded ?? undefined, pluginRepository });
+      const paths = typeof listed === 'string' ? listed : pathsProblem(listed, prefix, { includeGuardedPaths: includeGuarded, includePolicyFiles: includePolicy, policyFiles, startDocs: loaded ?? undefined, pluginRepository });
       if (paths) [effective, reason, why] = [false, 'paths', paths];
     }
   }

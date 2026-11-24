@@ -72,7 +72,18 @@ function checkoutWarnings(project, config) {
   // A machine opted in under a ceiling the team keeps closed merges nothing: a warning, since the local file is valid.
   if (project.localAutoMerge === 'on' && !config.github.autoMerge.allow) warnings.push('auto-merge is on locally but the team does not allow it');
   if (project.localUnattendedWaiver === 'on' && !config.github.unattendedWaiver.allow) warnings.push('unattended waiver is on locally but the team does not allow it');
+  warnings.push(...policyFilesWarnings(config));
   return warnings;
+}
+
+// The warning while `github.autoMerge.includePolicyFiles` is on in this checkout's config: a session may then change the
+// policy that reviews and merges its own pull request. The gate reads the key from GitHub, so this only names the risk.
+function policyFilesWarnings({ github: { autoMerge } }) {
+  if (autoMerge.includePolicyFiles !== true) return [];
+  const counts = autoMerge.includeGuardedPaths === true
+    ? 'once both the default branch and the base commit it'
+    : 'but it counts for nothing while github.autoMerge.includeGuardedPaths is off';
+  return [`github.autoMerge.includePolicyFiles is on, ${counts}: a session may change and auto-merge a policy file such as config.json, the policy that reviews and merges its pull requests, and the next pull request runs under that change`];
 }
 
 export const commands = {

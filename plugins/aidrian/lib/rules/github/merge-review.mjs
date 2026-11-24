@@ -72,7 +72,7 @@ import { forgeFor, isTrustedCommenter, repoIdentity } from '../../forges/index.m
 import { knownPrefix } from '../../git.mjs';
 import { stateFolders } from '../../handoff-guard.mjs';
 // A cycle (pr-auto-merge.mjs imports this file), benign while neither uses the other's exports as it loads.
-import { branchPolicies, changesRequested, includesGuardedPaths, pathsProblem, refusingBranches, startDocs, trailDocs, trailPaths, trailPolicies } from '../../pr-auto-merge.mjs';
+import { branchPolicies, changesRequested, includesGuardedPaths, includesPolicyFiles, pathsProblem, refusingBranches, startDocs, trailDocs, trailPaths, trailPolicies } from '../../pr-auto-merge.mjs';
 import { computeVerdict } from '../../pr-checks.mjs';
 import { findProject, mayFollowTeamDefault } from '../../project.mjs';
 import { closingTextsProblem, mergeClosingContext } from '../../closing-words.mjs';
@@ -747,7 +747,7 @@ export function markProjects(mark) {
 // What a merge no Human asks for needs of the team's policy, as `aidrian pr auto-merge` asks it, from the review trail
 // `trail` and the policies read with it, or null: the team's auto-merge on both branches, the machine's switch on in the
 // main checkout `home`, the default branch's required checks named, every changed file through the paths check (with
-// `includeGuardedPaths` and the policy files), the pull request the gh user's own, no comment or review by an outsider,
+// `includeGuardedPaths`, `includePolicyFiles`, and the policy files), the pull request the gh user's own, no comment or review by an outsider,
 // no changes requested, not a draft, and every check of exactly the head finished and passed (pr-checks.mjs
 // computeVerdict), so gh merges it at once rather than leave it to auto-merge or a queue.
 export function policyProblem({ trail, head, policies, base, prefix, docs, home }) {
@@ -759,7 +759,7 @@ export function policyProblem({ trail, head, policies, base, prefix, docs, home 
   if (!resolveAutoMerge({ autoMerge: team }, local).effective) return `this machine has not opted in to auto-merge (github.autoMerge in ${home.paths.local})`;
   const github = policies.policy.github;
   if (!github.requiredChecks.length) return 'the default branch names no required checks (github.requiredChecks), so a check that has not registered would read as passed';
-  const paths = pathsProblem({ files: trail.files ?? [], changedFiles: trail.filesTotal ?? -1 }, prefix, { includeGuardedPaths: includesGuardedPaths(policies), policyFiles: policies.policyFiles, startDocs: docs });
+  const paths = pathsProblem({ files: trail.files ?? [], changedFiles: trail.filesTotal ?? -1 }, prefix, { includeGuardedPaths: includesGuardedPaths(policies), includePolicyFiles: includesPolicyFiles(policies), policyFiles: policies.policyFiles, startDocs: docs });
   if (paths) return paths;
   if (typeof trail.author !== 'string' || typeof trail.viewer !== 'string' || trail.author.toLowerCase() !== trail.viewer.toLowerCase()) return `it is ${trail.author ?? 'nobody'}'s pull request, not ${trail.viewer ?? 'the gh user'}'s`;
   if (trail.commentsComplete !== true || trail.reviewsComplete !== true) return `the forge gave only part of its ${trail.commentsComplete !== true ? 'comments' : 'reviews'}, so who commented cannot be told`;

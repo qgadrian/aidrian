@@ -673,6 +673,24 @@ test('a pull request that changes .aidrian/config.json, where projectRun widens 
   assert.equal(existsSync(signoffFolder()), false, 'nothing reached the store');
 });
 
+test('includePolicyFiles with includeGuardedPaths on both branches lets a .aidrian/config.json change pass paths, and an unattended merge still needs the harness-config sign-off', (t) => {
+  const config = configOf({ github: { ...CHECKS, autoMerge: { ...TEAM, includeGuardedPaths: true, includePolicyFiles: true } }, projectRun: { allow: true } });
+  const r = repo(t, config);
+  r.record(forged());
+  const file = '.aidrian/config.json';
+  const trail = trailOf(r.text, changing(file));
+  assert.deepEqual([autoMerge(t, r, { files: [file], unattended: false, trail }).code], [0], 'attended: every check passes');
+  const unattended = autoMerge(t, r, { files: [file], trail });
+  assert.deepEqual([unattended.code, unattended.result.reason, unattended.result.trust, unattended.result.flow], [1, 'trust', 'signoff', 'harness-config'], 'past paths, the trust check stays');
+  assert.match(merge(r, MERGE, { trail }) ?? '', /flow harness-config needs the Human's sign-off on head abcdef1 \(it changes the review config\)/u, 'the guard');
+  recordHumanSignoff({ repo: 'acme/notes', pr: 7, flow: 'harness-config', head: HEAD, by: 'Adrian' });
+  assert.equal(autoMerge(t, r, { files: [file], trail }).code, 0, 'the Human signed off: it merges');
+  assert.equal(merge(r, MERGE, { trail }), null);
+  // The key alone, with includeGuardedPaths off, lifts nothing.
+  const alone = JSON.stringify(configOf({ github: { ...CHECKS, autoMerge: { ...TEAM, includePolicyFiles: true } }, projectRun: { allow: true } }));
+  assert.match(merge({ ...r, text: alone }, MERGE, { trail: trailOf(alone, changing(file)) }) ?? '', /which instructs AI sessions/u, 'the guard, the key alone');
+});
+
 test('`aidrian project init` marks its session the run`s driver, held as one no Human attends for the runs folder, the marks, and the sign-off store, until the run`s recorded end', async (t) => {
   const fx = runFixture(t);
   const seen = { env: fx.env, home: fx.home };

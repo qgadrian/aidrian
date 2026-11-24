@@ -90,7 +90,7 @@ export const SCHEMA = {
     },
     publicText: { patterns: 'patterns' },
     reviewGate: { enabled: 'boolean', checklist: 'textOrNull' },
-    autoMerge: { allow: 'boolean', default: 'onOff', strategy: 'mergeStrategy', deleteBranch: 'boolean', deleteWorktree: 'boolean', includeGuardedPaths: 'boolean', unreviewedPaths: 'globs' },
+    autoMerge: { allow: 'boolean', default: 'onOff', strategy: 'mergeStrategy', deleteBranch: 'boolean', deleteWorktree: 'boolean', includeGuardedPaths: 'boolean', includePolicyFiles: 'boolean', unreviewedPaths: 'globs' },
     unattendedWaiver: { allow: 'boolean' },
   },
   review: 'review',

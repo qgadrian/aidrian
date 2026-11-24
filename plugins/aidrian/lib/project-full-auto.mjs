@@ -14,7 +14,9 @@ export function fullAutoLines({ base, policy, projectKey, env = process.env, cou
   if (policy.problem || policy.fullAuto !== true) return [];
   const config = base.config ?? {};
   const human = [
-    'a pull request that changes a policy file, the config.json the gate reads, the pointer file, or the local switch file, never merges by itself; the Human merges it',
+    policy.includePolicyFiles === true
+      ? 'a pull request that changes a policy file, the config.json the gate reads, the pointer file, or the local switch file, merges by itself only once the Human signed off its harness-config flow on its head with `aidrian pr signoff`, since github.autoMerge.includePolicyFiles is on'
+      : 'a pull request that changes a policy file, the config.json the gate reads, the pointer file, or the local switch file, never merges by itself; the Human merges it',
     signoffLine(config),
     decisionLine({ policy, projectKey, env, count, safeDefaults: config.decisions?.unattended?.safeDefaults }),
     'a halt, such as a failed sandbox proof or a broken environment, waits for the Human: the driver names it in its final report, and the Human lifts it with `aidrian project resume <run>` in a session they attend',

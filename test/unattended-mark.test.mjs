@@ -146,6 +146,10 @@ test('a marked session is held from a folder outside its project, and in another
   });
   const refused = [
     ['claude -p "go on"', /starts or resumes a session of Claude Code outside the handoff gate/u],
+    // A word that names a property every object has, before the start, reads as any other program.
+    ['constructor x; claude -p hi', /starts or resumes a session of Claude Code outside the handoff gate/u],
+    ['npx constructor; claude -p hi', /starts or resumes a session of Claude Code outside the handoff gate/u],
+    ['toString; npx __proto__ x; codex exec hi', /starts or resumes a session of Codex outside the handoff gate/u],
     ['XDG_STATE_HOME=/tmp/elsewhere aidrian handoff continue b.md', /with XDG_STATE_HOME set or unset by the command itself/u],
     ['env -u XDG_STATE_HOME aidrian handoff continue b.md', /with XDG_STATE_HOME set or unset by the command itself/u],
     [`echo '{"handoff":{"background":"on"}}' > ${dir}/.aidrian.local.json`, /sets handoff\.background in \.aidrian\.local\.json/u],

@@ -181,6 +181,14 @@ test('its packages run as its program, Claude Code\'s too, and a package runner 
     assert.deepEqual([read.program, read.args], expected, `${program} ${words.join(' ')}`);
   }
   assert.deepEqual(unwrapped('npx', [null, 'run'], (each) => each), { program: 'npx', args: [null, 'run'] }, 'a package built at run time stays the runner');
+  // A word that names a property every object has is no runner, no package of another name, and no mapped tool.
+  for (const name of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf']) {
+    assert.deepEqual(unwrapped(name, ['x']), { program: name, args: ['x'] }, `the program ${name}`);
+    assert.deepEqual(unwrapped('npx', [name, 'x']), { program: name, args: ['x'] }, `the package ${name}`);
+    assert.equal(opencode.nativeToolName(name), name, `the tool ${name}`);
+    assert.equal(opencode.rawToolName(name), name, `the raw tool ${name}`);
+    assert.equal(codex.rawToolName(name), name, `Codex's raw tool ${name}`);
+  }
 });
 
 test('its logins and service state: OpenCode\'s data, state, and config folders, and Codex\'s auth.json, under the XDG folders and their defaults', () => {

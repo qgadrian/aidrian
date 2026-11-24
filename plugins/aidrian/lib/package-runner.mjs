@@ -18,6 +18,9 @@ const RUNNERS = Object.freeze({
 // A package whose program has another name than its last part, as `npx @changesets/cli publish` runs `changeset`, and
 // each host's own packages (hosts/index.mjs packagePrograms), as `npx @anthropic-ai/claude-code` runs `claude`.
 const PACKAGE_PROGRAMS = Object.freeze({ '@changesets/cli': 'changeset', ...packagePrograms() });
+// The entry of `table` a word of a command names, by its own keys only: a word such as `constructor` or `__proto__`
+// names a property every object has, and a guard that read one would throw, which lets the whole call run.
+const own = (table, word) => (Object.hasOwn(table, word) ? table[word] : undefined);
 
 // The program a call to `program` with the arguments `args` runs and the arguments it gets, through a package runner:
 // { program, args }, or the call as it is when `program` is no runner, or the program it runs is not plain text. `word`
@@ -25,7 +28,7 @@ const PACKAGE_PROGRAMS = Object.freeze({ '@changesets/cli': 'changeset', ...pack
 export function unwrapped(program, args, word = (each) => each) {
   const words = args.map(word);
   const operands = words.filter((text) => text !== null && !text.startsWith('-'));
-  const runner = (RUNNERS[program] ?? []).find((each) => each.words.every((runnerWord, i) => operands[i] === runnerWord));
+  const runner = (own(RUNNERS, program) ?? []).find((each) => each.words.every((runnerWord, i) => operands[i] === runnerWord));
   if (!runner) return { program, args };
   const rest = [...args];
   for (const runnerWord of runner.words) rest.splice(rest.findIndex((each) => word(each) === runnerWord), 1);
@@ -34,5 +37,5 @@ export function unwrapped(program, args, word = (each) => each) {
   const named = at < rest.length ? word(rest[at]) : null;
   if (named === null) return { program, args };
   const spec = named.replace(/(?<=.)@[^@/]*$/u, '');
-  return { program: PACKAGE_PROGRAMS[spec] ?? path.basename(spec), args: rest.slice(at + 1) };
+  return { program: own(PACKAGE_PROGRAMS, spec) ?? path.basename(spec), args: rest.slice(at + 1) };
 }

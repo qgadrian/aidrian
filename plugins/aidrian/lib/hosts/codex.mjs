@@ -280,7 +280,7 @@ export default {
   },
   // What a tool reaches a hook's matcher as, before any mapping.
   rawToolName(standard) {
-    if (RAW_TOOLS[standard]) return RAW_TOOLS[standard];
+    if (Object.hasOwn(RAW_TOOLS, standard)) return RAW_TOOLS[standard];
     const match = STANDARD_APP_TOOL.exec(standard);
     return match ? `mcp__codex_apps__${match[1]}__${match[2]}` : standard;
   },

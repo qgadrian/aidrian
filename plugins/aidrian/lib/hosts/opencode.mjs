@@ -100,8 +100,8 @@ export default {
   // The bridge forwards no MCP tool call, so no MCP name is mapped yet.
   toolName: (name) => name,
   serverSpelling: (server) => server,
-  nativeToolName: (standard) => NATIVE_TOOLS[standard] ?? standard,
-  rawToolName: (standard) => RAW_TOOLS[standard] ?? standard,
+  nativeToolName: (standard) => (Object.hasOwn(NATIVE_TOOLS, standard) ? NATIVE_TOOLS[standard] : standard),
+  rawToolName: (standard) => (Object.hasOwn(RAW_TOOLS, standard) ? RAW_TOOLS[standard] : standard),
   toolResponse: responseObjects,
   // A shell call's result, `{ output: { output, exitCode }, content, metadata }`: the command's output is the text under
   // `output.output`. The bridge sends only a call that completed, so none is interrupted.

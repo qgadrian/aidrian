@@ -17,6 +17,8 @@ import { capProblem } from '../plugins/aidrian/lib/review/waiver.mjs';
 import { loadTable } from '../plugins/aidrian/lib/finding-disposition.mjs';
 import { offerLand, runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
 import { logPath } from '../plugins/aidrian/lib/dispatch-log.mjs';
+import { RECEIPT_MARKER } from '../plugins/aidrian/lib/review/request-text.mjs';
+import { ECHO_NOTE } from '../plugins/aidrian/lib/review/bot-echo.mjs';
 import { repo, clean, OPEN, unnamed, unverifiedNext, finding, scripted, found, holdsAll, holdComment, APPROVED_FLOWS } from './review-run-fixture.mjs';
 
 test('a docs-only change needs no review and posts nothing', async (t) => {
@@ -77,11 +79,16 @@ test('a stranger\'s summary comment supplies no record: the reviewer still runs,
 
 test('zero config: codex-local reviews once; a finding is fix_required until a new head comes back clean', async (t) => {
   const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  // The review bot's receipt from an earlier head, and a finding about its stock footer, not the change (#674).
+  r.comments.push({ id: 100, user: { login: 'chatgpt-codex-connector[bot]' }, body: `${RECEIPT_MARKER}\n\nCodex Review: Didn't find any major issues.\n\nTry commenting "@codex address that feedback".` });
+  const footer = { title: 'The receipt asks for edits', body: 'It asks readers to post `@codex address that feedback`.', severity: 'low' };
   const seen = [];
-  const exec = async (reviewer, input) => (seen.push([reviewer.name, input.context]), seen.length === 1 ? { status: 'done', findings: [finding], verdicts: [], dropped: [] } : clean());
+  const exec = async (reviewer, input) => (seen.push([reviewer.name, input.context]), seen.length === 1 ? { status: 'done', findings: [finding, footer], verdicts: [], dropped: [] } : clean());
   const first = await r.step({ exec });
   assert.equal(first.status, 'fix_required');
-  assert.deepEqual(first.open.map((each) => [each.pass, each.open]), [['engine:codex-local', 1]]);
+  assert.deepEqual(first.open.map((each) => [each.pass, each.open]), [['engine:codex-local', 1]], 'the finding on the bot\'s own receipt is dropped');
+  assert.deepEqual(first.open[0].dropped, [ECHO_NOTE]);
+  r.comments.splice(r.comments.findIndex((c) => c.id === 100), 1);
   assert.equal((await r.step({ exec })).status, 'fix_required', 'calling again on the same head re-runs nothing');
   assert.equal(seen.length, 1);
   r.write('src/app.js', 'export const app = 3;\n');

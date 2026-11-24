@@ -18,6 +18,7 @@ import { captureKeys } from './visual.mjs';
 import { inBaseWorktree } from './base-worktree.mjs';
 import { captureAndAttach, closingRange, dispatchFor, listedFor, passInput, planPasses } from './dispatch.mjs';
 import { refusedAtHead } from './in-force.mjs';
+import { dropBotEchoes } from './bot-echo.mjs';
 
 export const MAX_ATTEMPTS = 3;
 
@@ -212,11 +213,14 @@ export async function runStages(s) {
         const outcomes = execs.some((pass) => !map[pass.reviewer].builtIn) ? await inBaseWorktree(root, baseTip, run) : await run(root);
         for (const [pass, outcome, seconds] of outcomes) {
           if (outcome.status !== 'done') continue;
+          // A finding about the review bot's own receipt or status card, not the change, is dropped with a note
+          // (bot-echo.mjs): the reviewer read the pull request's conversation for itself.
+          const echoes = dropBotEchoes(outcome.findings, { comments: s.comments, reviewer: config.github.reviewer, changes: s.changes });
           // From review round N, the disposition table makes a low finding a residual: it is recorded accepted, blocks
           // nothing, and `residuals` names it for the pull request body. cleanOutput (reviewers.mjs) already limits a
           // reviewer's output to the schema's keys; this strip is the step's own rule for any exec outcome, so the three
           // this rule sets are dropped first: a printed `state: 'fixed'` closes nothing.
-          const list = outcome.findings.map(({ state: _state, disposition: _disposition, accepted_by: _acceptedBy, ...finding }) => {
+          const list = echoes.findings.map(({ state: _state, disposition: _disposition, accepted_by: _acceptedBy, ...finding }) => {
             const late = lateRoundResidual({ severity: finding.severity, source: 'bot', round: state.rounds.length }, dispositionTable);
             return late ? { ...finding, disposition: late.disposition, state: 'accepted', accepted_by: 'late-round' } : finding;
           });
@@ -232,7 +236,8 @@ export async function runStages(s) {
           recordFindings(state, pass.id, {
             head, reviewer: pass.reviewer, seconds, files: Array.isArray(pass.files) ? [...pass.files].sort() : null, findings: list.length + ruled.length, open: list.filter(blocks).length, list, verdicts: outcome.verdicts,
             ...(ruled.length ? { ruled } : {}), ...(carried.length ? { carried } : {}),
-            ...(pass.role ? { contracts: outcome.contracts ?? [], cross_notes: outcome.cross_notes ?? [] } : {}), dropped: outcome.dropped,
+            ...(pass.role ? { contracts: outcome.contracts ?? [], cross_notes: outcome.cross_notes ?? [] } : {}),
+            dropped: echoes.notes.length ? [...(Array.isArray(outcome.dropped) ? outcome.dropped : []), ...echoes.notes] : outcome.dropped,
           }, { mint: state.floored === true, securityPass: state.planNote?.passes?.[pass.id]?.security === true, paths: s.paths.at(head), listed: listed.get(pass.id), plan: planPasses(plan), stage: stage.name, reviewer: pass.reviewer, range: closingRange(root, s.base) });
           recorded = true;
         }

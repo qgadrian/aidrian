@@ -175,7 +175,7 @@ function nextStep(decision, { view, branch, method, catchUp = false }) {
 // The one way an issue's session merges the base `base` into its branch `branch`, on which its clone already is, its
 // own commits kept, once HEAD holds the branch as the forge has it: a conflict inside a host file stops before any merge, which would write the branch's lines over the
 // base copy, and the push guard lets the host files through only as git merged them (issue-push-checkout.mjs).
-const mergeBaseRoute = (base, branch) => `run \`git fetch origin ${base} ${branch}\`, and when it fails, merge nothing and run this stop-action again later; \`git merge-base --is-ancestor origin/${branch} HEAD\`: when it fails, `
+const mergeBaseRoute = (base, branch) => `run \`git fetch origin ${base} ${branch}\`, and when it fails, run it again in this turn, up to three times in all; when it still fails, merge nothing and record the result pr_open with a stop that names the failed fetch, never asking this command again for it; \`git merge-base --is-ancestor origin/${branch} HEAD\`: when it fails, `
   + `HEAD does not hold the branch as the forge has it, so merge nothing and record the result pr_open with a stop that says ${branch} diverged from origin/${branch}; `
   + `then \`git merge-tree --write-tree --name-only HEAD origin/${base}\` lists the files that would conflict: when one is a host config or instruction file, `
   + 'record the result pr_open with that file\'s path in its stop, and merge nothing; '

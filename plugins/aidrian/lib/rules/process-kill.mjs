@@ -278,7 +278,7 @@ function unwrapPrefixes({ program, args }) {
       return { program: '', args: [], nested };
     } else if (program === 'rtk') {
       if (args[0]?.text === 'proxy') start = 1;
-    } else if (program in PREFIX_VALUE_OPTIONS) {
+    } else if (Object.hasOwn(PREFIX_VALUE_OPTIONS, program)) {
       start = afterPrefixOptions(program, args, nested);
       if (program === 'timeout') start += 1;
     } else {

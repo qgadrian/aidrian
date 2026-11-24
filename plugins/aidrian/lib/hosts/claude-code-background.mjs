@@ -339,7 +339,9 @@ function ownMode({ session, list, env, readMode, cwd = ownFolder(list, session) 
 // must hold, each an absolute path of plain text that resolves; `sandbox.domains` the forge's network hosts;
 // `sandbox.main` the main checkout, which the session may not read but its git folder `sandbox.mainGit`, and in which
 // neither the clone nor a granted folder may lie; `sandbox.tokens` the forge's token variables, the one credential kept
-// (secretVars); `sandbox.guarded` the folders no sandboxed command writes, such as the sign-off store. Any miss runs no `claude --bg`. No agent is
+// (secretVars); `sandbox.guarded` the folders no sandboxed command writes, such as the sign-off store; `sandbox.hostFiles`,
+// { paths, globs }, the other hosts' files from the clone's root whose writes the sandbox denies too; `sandbox.hostStores`
+// the hosts' logins and service state, absolute, whose reads it denies beside npm's global config. Any miss runs no `claude --bg`. No agent is
 // passed, so the session runs as the host's main agent and no agent's own permission mode can stand in for the one
 // passed; the driver's effort is passed on. `home` and `platform` are the user's home folder and the operating system
 // the settings name.
@@ -367,7 +369,7 @@ export function startProject({ session, cwd, runs, prompt, name, effort, efforts
     return { problem: `the attempt's clone or a folder the gate grants the session lies in the main checkout ${box.main}, which a confined session may not read; set state.dir to a folder outside it` };
   }
   const user = home ?? homedir();
-  const boxed = sandboxSettings({ ...box, work, temp: tempFolders(), home: user, config: configFolder(env, user), platform, secrets: secretVars(env, box.tokens), stores: npmGlobalConfigs(env) });
+  const boxed = sandboxSettings({ ...box, work, temp: tempFolders(), home: user, config: configFolder(env, user), platform, secrets: secretVars(env, box.tokens), stores: [...new Set([...npmGlobalConfigs(env), ...box.hostStores])] });
   // The start's claim, the one variable the settings set (`claimVars`, from lib/project-token.mjs): it marks this session,
   // and no other opened in the clone, to the SessionStart hook that hands it the forge token. It is no secret.
   const claimed = claimVars && typeof claimVars === 'object' && Object.values(claimVars).every((value) => typeof value === 'string');
@@ -416,7 +418,19 @@ function sandboxInputs(sandbox) {
   // Folders no sandboxed command may write, which need not exist yet: each an absolute path of plain text, kept as given.
   const guarded = sandbox.guarded ?? [];
   if (!Array.isArray(guarded) || !guarded.every(plain)) return { problem: 'a folder the gate guards from the session is not an absolute path of plain text' };
-  return { git: own, grants: granted, domains: [...domains], main: optional.main ?? null, mainGit: optional.mainGit ?? null, tokens, guarded: [...guarded], localBinding: sandbox.localBinding === true };
+  // The other hosts' files, from the clone's root, which need not exist: absent, none; else two lists of relative paths
+  // of plain text, none with a `..` part, so no entry denies or names a path outside the clone.
+  const hostFiles = sandbox.hostFiles ?? { paths: [], globs: [] };
+  const relative = (each) => typeof each === 'string' && each !== '' && !path.isAbsolute(each) && !CONTROL.test(each) && !each.split(/[\\/]/u).includes('..');
+  const lists = [hostFiles?.paths, hostFiles?.globs];
+  if (!lists.every((list) => Array.isArray(list) && list.every(relative))) return { problem: 'a host file the gate denies the session is not a relative path of plain text inside its clone' };
+  // The hosts' logins and service state, which need not exist: absent, none; else absolute paths of plain text with no
+  // `..` part, so each names the file or folder it is.
+  const hostStores = sandbox.hostStores ?? [];
+  if (!Array.isArray(hostStores) || !hostStores.every((each) => plain(each) && !each.split(/[\\/]/u).includes('..'))) {
+    return { problem: 'a host\'s login or service state the gate hides from the session is not an absolute path of plain text' };
+  }
+  return { git: own, grants: granted, domains: [...domains], main: optional.main ?? null, mainGit: optional.mainGit ?? null, tokens, guarded: [...guarded], localBinding: sandbox.localBinding === true, hostFiles: { paths: [...hostFiles.paths], globs: [...hostFiles.globs] }, hostStores: [...hostStores] };
 }
 
 // The temporary folders a sandboxed command may write, by their real paths: /tmp and the host's own.

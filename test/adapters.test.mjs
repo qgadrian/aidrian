@@ -1,6 +1,7 @@
 // The conformance suite of lib/hosts/ and lib/trackers/: it iterates the registries, so a new adapter is checked by
 // adding it, and a fixture adapter that is never shipped proves a new host or tracker needs nothing in shared code.
-// A shipped host also needs its recorded payloads in test/fixtures/hosts/<id>/tracker.json.
+// A shipped host whose hooks reach the tracker guard also needs its recorded payloads in test/fixtures/hosts/<id>/tracker.json;
+// a bridge host delivers only the hooks its routes name (bridgeRoutes).
 
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
@@ -9,6 +10,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpath
 import os, { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 
 import { nameMatches } from '../plugins/aidrian/lib/agent-gates.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
@@ -34,6 +36,62 @@ const recorded = (host) => JSON.parse(readFileSync(path.join(ROOT, 'test/fixture
 const DELIVERIES = new Set(['hooks-json', 'installer', 'bridge']);
 const script = (event, name) => HOOKS[event].find((group) => group.hooks.some(({ command }) => command.includes(name)));
 const fires = (matcher, name) => matcher === '*' || new RegExp(`^(?:${matcher})$`, 'u').test(name);
+
+// The routes a bridge host's plugin runs, the ROUTES its plugins/aidrian/<id>/routes.mjs exports: each { on, event, tool,
+// standard, script, timeoutMs }. Null for a host that reads hooks.json as it is, and for a bridge host with no such file,
+// which routeTableProblems fails.
+async function bridgeRoutes(host) {
+  if (host.delivery !== 'bridge') return null;
+  const file = path.join(ROOT, 'plugins/aidrian', host.id, 'routes.mjs');
+  return existsSync(file) ? (await import(pathToFileURL(file).href)).ROUTES : null;
+}
+const ROUTES = new Map(await Promise.all([...HOSTS, fakeHost].map(async (host) => [host.id, await bridgeRoutes(host)])));
+
+// Whether the hook script `name` runs on `host`: every hook does on a hooks-json host, and on a bridge host the ones a route names.
+const delivers = (host, name) => host.delivery === 'hooks-json' || (ROUTES.get(host.id) ?? []).some((route) => route.script === name);
+
+// The hooks.json entry that runs `name` under `event`, as { group, entry }, or null.
+function hookEntry(event, name) {
+  const runs = ({ command }) => command.includes(`/scripts/${name}"`);
+  const group = HOOKS[event]?.find((each) => each.hooks.some(runs));
+  return group ? { group, entry: group.hooks.find(runs) } : null;
+}
+
+// What a bridge host's route table lacks: the routes.mjs file, a ROUTES list, or a row in it. A bridge that routes no
+// hook runs nothing on its host, so it is no delivery.
+function routeTableProblems(routes) {
+  if (routes === null || routes === undefined) return ['it has no routes.mjs, or the file exports no ROUTES'];
+  if (!Array.isArray(routes)) return ['its ROUTES is not a list'];
+  return routes.length > 0 ? [] : ['its ROUTES is empty'];
+}
+
+// What a bridge's routes break of hooks.json: each route's script is listed under its event, that entry's matcher fires
+// on its standard tool, its timeout is the entry's, and its tool is the host's raw name of that standard tool.
+// Until the bridge handles a blocking route, turning exit 2 into a throw with stderr first, a row may only run after a
+// call: `execute.after`, under PostToolUse.
+function routeProblems(host, routes) {
+  return routes.flatMap((route) => {
+    if (route.on !== 'execute.after' || route.event !== 'PostToolUse') return [`${route.script} runs on ${route.on} under ${route.event}, and the bridge runs no blocking route`];
+    const listed = hookEntry(route.event, route.script);
+    if (!listed) return [`${route.script} is not listed under ${route.event}`];
+    const { group, entry } = listed;
+    return [
+      ...(fires(group.matcher ?? '*', route.standard) ? [] : [`${route.event} ${route.script} does not fire on ${route.standard}`]),
+      ...(entry.timeout * 1000 === route.timeoutMs ? [] : [`${route.script} waits ${route.timeoutMs} ms, hooks.json ${entry.timeout} s`]),
+      ...(host.rawToolName(route.standard) === route.tool ? [] : [`${route.tool} is not ${host.id}'s name of ${route.standard}`]),
+    ];
+  });
+}
+
+// Why a host that delivers no tracker hook fails to say so: its tracker guard must be verified `none`, with the routes
+// left unguarded named, so no host skips the recorded tracker payloads in silence.
+function unguardedTrackerProblems(host) {
+  const guard = host.capabilities?.trackerGuard ?? {};
+  return [
+    ...(guard.verified === 'none' ? [] : [`its tracker guard is verified ${guard.verified}, not none`]),
+    ...((guard.unguardedRoutes ?? []).length > 0 ? [] : ['it names no unguarded route']),
+  ];
+}
 
 // What a host's raw names fail to fire. A hooks-json host's matchers run on the raw name, before any mapping reaches a hook, so a
 // name that misses one means that hook never runs and the guard fails open with no word.
@@ -87,7 +145,7 @@ for (const host of [...HOSTS, fakeHost]) {
 
   test(`host ${host.id} says every shape its file edit tools take`, () => {
     for (const tool of host.fileEditTools) {
-      const edit = host.fileEdit(tool, { file_path: 'a.md', path: 'a.md', content: 'x', body: 'x', new_string: 'x', old_string: 'y', command: '*** Begin Patch\n*** Add File: a.md\n+x\n*** End Patch\n' });
+      const edit = host.fileEdit(tool, { file_path: 'a.md', path: 'a.md', content: 'x', body: 'x', new_string: 'x', old_string: 'y', newString: 'x', oldString: 'y', command: '*** Begin Patch\n*** Add File: a.md\n+x\n*** End Patch\n', patchText: '*** Begin Patch\n*** Add File: a.md\n+x\n*** End Patch\n' });
       assert.ok(SHAPES.has(edit.shape), `${tool}: ${edit.shape}`);
       assert.ok(Array.isArray(edit.targets) && edit.targets.includes('a.md'), `${tool} targets`);
     }
@@ -126,7 +184,7 @@ test('a process no adapter claims reads a shell call`s response through every ad
   }
 });
 
-for (const host of HOSTS) {
+for (const host of HOSTS.filter((each) => delivers(each, 'hook-tracker-pre.mjs'))) {
   test(`host ${host.id} has recorded payloads, which say whether they are live`, () => {
     const file = path.join(ROOT, 'test/fixtures/hosts', host.id, 'tracker.json');
     assert.ok(existsSync(file), file);
@@ -147,12 +205,32 @@ for (const host of HOSTS) {
     assert.equal(readTrackerValue(post.tool_response, 'url', host), workspace);
     assert.equal(readTrackerValue(post.tool_response, 'url'), workspace, 'with the host unknown too');
   });
+}
 
+for (const host of HOSTS.filter((each) => !delivers(each, 'hook-tracker-pre.mjs'))) {
+  test(`host ${host.id} delivers no tracker hook, and says its tracker writes pass unguarded`, () => {
+    assert.deepEqual(unguardedTrackerProblems(host), []);
+  });
+}
+
+test('a host that delivers no tracker hook fails unless its guard is verified none, with a route it names', () => {
+  const opencode = HOSTS.find((host) => host.id === 'opencode');
+  const guard = opencode.capabilities.trackerGuard;
+  const as = (trackerGuard) => ({ ...opencode, capabilities: { ...opencode.capabilities, trackerGuard } });
+  assert.deepEqual(unguardedTrackerProblems(as(guard)), []);
+  assert.deepEqual(unguardedTrackerProblems(as({ ...guard, verified: 'source' })), ['its tracker guard is verified source, not none']);
+  assert.deepEqual(unguardedTrackerProblems(as({ ...guard, unguardedRoutes: [] })), ['it names no unguarded route']);
+  assert.equal(unguardedTrackerProblems(as(undefined)).length, 2);
+});
+
+for (const host of HOSTS.filter((each) => each.delivery === 'hooks-json')) {
   test(`host ${host.id}'s file edit tools reach the write hook`, () => {
     const matcher = HOOKS.PreToolUse.find((group) => group.hooks.some(({ command }) => command.includes('hook-write.mjs'))).matcher;
     for (const tool of host.fileEditTools) assert.ok(matcher.split('|').includes(tool), tool);
   });
+}
 
+for (const host of HOSTS) {
   test(`host ${host.id}'s project folders keep auto-merge off`, () => {
     for (const folder of Object.values(host.projectFolders)) assert.ok(GUARDED_PATHS.test(`${folder}/x.md`), folder);
   });
@@ -162,12 +240,53 @@ for (const host of HOSTS) {
   });
 }
 
-for (const host of [...HOSTS, fakeHost]) {
+for (const host of [...HOSTS, fakeHost].filter((each) => each.delivery === 'hooks-json')) {
   test(`host ${host.id}'s raw names fire each hooks.json matcher, as it reads hooks.json as it is`, () => {
     assert.equal(host.delivery, 'hooks-json');
     assert.deepEqual(matcherProblems(host), []);
   });
 }
+
+for (const host of HOSTS.filter((each) => each.delivery === 'bridge')) {
+  test(`host ${host.id}'s bridge routes each hook as hooks.json lists it`, () => {
+    const routes = ROUTES.get(host.id);
+    assert.deepEqual(routeTableProblems(routes), []);
+    assert.deepEqual(routeProblems(host, routes), []);
+  });
+}
+
+test('a bridge host with no routes.mjs, or with an empty ROUTES, fails the route table check', () => {
+  assert.deepEqual(routeTableProblems(null), ['it has no routes.mjs, or the file exports no ROUTES']);
+  assert.deepEqual(routeTableProblems(undefined), ['it has no routes.mjs, or the file exports no ROUTES']);
+  assert.deepEqual(routeTableProblems({}), ['its ROUTES is not a list']);
+  assert.deepEqual(routeTableProblems([]), ['its ROUTES is empty']);
+  assert.deepEqual(routeTableProblems(ROUTES.get('opencode')), []);
+});
+
+test('a bridge route that leaves hooks.json is told apart: its event, matcher, timeout, and tool name are each checked', () => {
+  const opencode = HOSTS.find((host) => host.id === 'opencode');
+  const route = { on: 'execute.after', event: 'PostToolUse', tool: 'shell', standard: 'Bash', script: 'hook-bash-post.mjs', timeoutMs: 5000 };
+  assert.deepEqual(routeProblems(opencode, [route]), []);
+  assert.deepEqual(routeProblems(opencode, [{ ...route, event: 'PreToolUse' }]), ['hook-bash-post.mjs runs on execute.after under PreToolUse, and the bridge runs no blocking route']);
+  assert.deepEqual(routeProblems(opencode, [{ ...route, on: 'execute.before', event: 'PreToolUse', script: 'hook-bash.mjs' }]), ['hook-bash.mjs runs on execute.before under PreToolUse, and the bridge runs no blocking route']);
+  assert.deepEqual(routeProblems(opencode, [{ ...route, on: 'execute.before' }]), ['hook-bash-post.mjs runs on execute.before under PostToolUse, and the bridge runs no blocking route']);
+  assert.deepEqual(routeProblems(opencode, [{ ...route, script: 'hook-bash.mjs' }]), ['hook-bash.mjs is not listed under PostToolUse']);
+  assert.deepEqual(routeProblems(opencode, [{ ...route, standard: 'Edit', tool: 'edit' }]), ['PostToolUse hook-bash-post.mjs does not fire on Edit']);
+  assert.deepEqual(routeProblems(opencode, [{ ...route, timeoutMs: 4000 }]), ['hook-bash-post.mjs waits 4000 ms, hooks.json 5 s']);
+  assert.deepEqual(routeProblems(opencode, [{ ...route, tool: 'bash' }]), ['bash is not opencode\'s name of Bash']);
+});
+
+test('which hooks a host delivers: every one on a hooks-json host, and on a bridge host only those a route names', () => {
+  for (const host of [...HOSTS, fakeHost].filter((each) => each.delivery === 'hooks-json')) {
+    assert.equal(ROUTES.get(host.id), null, host.id);
+    assert.equal(delivers(host, 'hook-tracker-pre.mjs'), true, host.id);
+  }
+  const opencode = HOSTS.find((host) => host.id === 'opencode');
+  const named = ROUTES.get('opencode').map((route) => route.script);
+  assert.equal(delivers(opencode, 'hook-tracker-pre.mjs'), named.includes('hook-tracker-pre.mjs'));
+  assert.equal(delivers(opencode, 'hook-bash-post.mjs'), true, 'the session ledger runs on OpenCode');
+  assert.equal(delivers(opencode, 'hook-nothing.mjs'), false);
+});
 
 for (const host of HOSTS) {
   test(`host ${host.id} declares the handoff continue routes it can do, each with its step, and its host process for clear`, () => {
@@ -233,7 +352,7 @@ test('an unknown host is reported as unknown, on what no adapter claims', () => 
 });
 
 test('an unknown host still normalises what a known one sends, so a detection cannot fail open', () => {
-  for (const host of HOSTS) {
+  for (const host of HOSTS.filter((each) => delivers(each, 'hook-tracker-pre.mjs'))) {
     const { pre, standard } = recorded(host);
     assert.equal(UNKNOWN_HOST.hookInput(pre).tool_name, standard.write);
   }
@@ -361,9 +480,9 @@ test('a tracker whose calls name their workspace judges each call, with no sessi
 test('the page on adding a host says what the adapter does not cover, and names every delivery case and file', () => {
   const text = readFileSync(path.join(ROOT, 'docs/providers/adding-a-host.md'), 'utf8');
   for (const delivery of DELIVERIES) assert.ok(text.includes(`\`${delivery}\``), delivery);
-  for (const name of ['plugins/aidrian/hooks/hooks.json', 'scripts/version.mjs', 'test/hosts.test.mjs', 'lib/agent-models.mjs', 'What the fixtures do not prove']) assert.ok(text.includes(name), name);
+  for (const name of ['plugins/aidrian/hooks/hooks.json', 'scripts/version.mjs', 'test/hosts.test.mjs', 'lib/agent-models.mjs', 'What the fixtures do not prove', 'plugins/aidrian/<id>/routes.mjs', 'plugins/aidrian/<id>/bridge.mjs']) assert.ok(text.includes(name), name);
   assert.doesNotMatch(text, /hookEvents/u);
-  for (const field of ['serverSpelling', 'nativeToolName', 'rawToolName', 'delivery', 'workspaceInput', 'unguardedRoutes', 'capabilities.pushPermission']) assert.ok(text.includes(`\`${field}`), field);
+  for (const field of ['serverSpelling', 'nativeToolName', 'rawToolName', 'delivery', 'workspaceInput', 'unguardedRoutes', 'capabilities.pushPermission', 'payloadMark', 'nestedGlobs', 'packages', 'credentialStores']) assert.ok(text.includes(`\`${field}`), field);
 });
 
 test('a value the file sets for what an adapter fills stays as written', () => {
@@ -402,6 +521,45 @@ test('a host that declares a route it cannot guard makes it visible, and so does
   assert.deepEqual(trackerWarnings({ ...tracker, enabled: false }, { env: {}, hosts: [fakeHost] }), [], 'silent while the guard is off');
 });
 
+test('a host\'s unguarded routes are told only where that host is set up, so another host\'s check stays quiet', (t) => {
+  const tracker = { enabled: true, readTools: [], writeTools: ['mcp__x__save_*'], team: { key: 'A', values: ['A'], createFields: ['team'], keyFields: ['id'] } };
+  const opencode = HOSTS.find((host) => host.id === 'opencode');
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-opencode-setup-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const config = path.join(root, 'config');
+  const project = path.join(root, 'project');
+  mkdirSync(config);
+  mkdirSync(project);
+  const route = /on OpenCode, a write through any MCP tool passes unchecked: the bridge forwards no MCP tool call to a hook in this version/u;
+  const told = (env, ask = {}) => trackerWarnings(tracker, { env: { OPENCODE_CONFIG_DIR: config, ...env }, hosts: [opencode], root: project, ...ask });
+  const there = told({ OPENCODE: '1', OPENCODE_SESSION_ID: 'ses_x' });
+  assert.ok(there.some((line) => route.test(line)), 'the check runs under OpenCode');
+  assert.ok(there.some((line) => /nobody has verified the guard on OpenCode/u.test(line)));
+  assert.deepEqual(told({ CLAUDECODE: '1' }), [], 'it runs elsewhere, and no OpenCode config names this plugin');
+  writeFileSync(path.join(config, 'opencode.json'), JSON.stringify({ plugins: ['oh-my-opencode@latest'] }));
+  assert.deepEqual(told({ CLAUDECODE: '1' }), [], 'a config that names another plugin');
+  writeFileSync(path.join(project, 'opencode.jsonc'), '{ "plugins": [ "github:acme/aidrian#main::path:plugins/aidrian", ], }');
+  assert.ok(told({ CLAUDECODE: '1' }).some((line) => route.test(line)), 'the project\'s config names this plugin, whichever shell runs the check');
+  assert.deepEqual(told({ CLAUDECODE: '1' }, { root: undefined }), [], 'and no project root was given');
+  writeFileSync(path.join(config, 'opencode.json'), '{ "plugins": [ "aidrian" ] }');
+  assert.ok(told({ CODEX_THREAD_ID: 't' }, { root: undefined }).some((line) => route.test(line)), 'the global config names this plugin');
+  writeFileSync(path.join(config, 'opencode.json'), '{ "plugins": [ "aidrian" ');
+  assert.deepEqual(told({ CLAUDECODE: '1' }, { root: undefined }), [], 'a config it cannot parse counts as none, and throws nothing');
+  const trusting = (answer) => ({ ...opencode, capabilities: { ...opencode.capabilities, setUp: () => false, trackerGuard: { ...opencode.capabilities.trackerGuard, hookTrust: () => answer, trustStep: 'trust it', offStep: 'turn it on' } } });
+  assert.ok(trackerWarnings(tracker, { env: {}, hosts: [trusting('trusted')] }).some((line) => route.test(line)), 'its hook trust finds it set up here');
+  assert.deepEqual(trackerWarnings(tracker, { env: {}, hosts: [trusting('absent')] }), [], 'its hook trust finds it absent');
+  const throwing = { ...opencode, capabilities: { ...opencode.capabilities, setUp: () => { throw new Error('x'); } } };
+  assert.deepEqual(trackerWarnings(tracker, { env: {}, hosts: [throwing] }), [], 'a probe that throws counts as not set up');
+});
+
+test('no two hosts claim one file tool name, so a file edit or read is read by its own host\'s adapter', () => {
+  for (const field of ['fileEditTools', 'fileReadTools']) {
+    const owners = new Map();
+    for (const host of HOSTS) for (const name of host[field] ?? []) owners.set(name, [...(owners.get(name) ?? []), host.id]);
+    assert.deepEqual([...owners].filter(([, ids]) => ids.length > 1), [], field);
+  }
+});
+
 test('the check warns of a known connection the lists leave out on a host set up here, with what to do, whatever the tracker', () => {
   const adapter = fakeTracker;
   const here = { ...fakeHost, id: 'codex', name: 'A Host', detect: () => false, rawToolName: (standard) => standard, capabilities: { trackerGuard: { unguardedRoutes: [], hookTrust: () => 'trusted' } } };
@@ -418,7 +576,7 @@ test('the check warns of a known connection the lists leave out on a host set up
 
 // The recorded payloads through the real hooks: what the conformance above cannot see is the order of the two hooks,
 // and that a refusal reaches the host as exit 2 with its reason on stderr.
-for (const host of HOSTS) {
+for (const host of HOSTS.filter((each) => delivers(each, 'hook-tracker-pre.mjs'))) {
   test(`host ${host.id}: a recorded read then write run through the real tracker hooks`, (t) => {
     const { env, post, pre, workspace, native } = recorded(host);
     const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-adapters-')));
@@ -482,6 +640,18 @@ test('a Claude Code PowerShell call is never read as Bash: its command is opaque
 // The writer of a session's links.jsonl is the ledger's PostToolUse Bash hook, on every host (docs/providers/adding-a-host.md
 // Session links): each host's recorded payload of a shell call, its command an `aidrian worktree new`, files the row under
 // the payload's session id. A host added without the fixture fails here.
+// `fixture.post.tool_response` with `printed` where the host holds a shell call's output: under the fixture's
+// `output_path`, its keys into the response, when it names one; else the whole response when that is the output as one
+// string, else its stdout.
+function outputIn(fixture, printed) {
+  const response = fixture.post.tool_response;
+  if (!Array.isArray(fixture.output_path)) return typeof response === 'string' ? printed : { ...response, stdout: printed };
+  const copy = structuredClone(response);
+  const keys = fixture.output_path;
+  keys.slice(0, -1).reduce((each, key) => each[key], copy)[keys.at(-1)] = printed;
+  return copy;
+}
+
 test('each host`s PostToolUse Bash payload of aidrian worktree new files a links row under the payload`s session', { skip: process.platform === 'win32' }, () => {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-links-hosts-')));
   const state = path.join(root, 'state');
@@ -498,10 +668,9 @@ test('each host`s PostToolUse Bash payload of aidrian worktree new files a links
       const file = path.resolve(import.meta.dirname, 'fixtures/hosts', host.id, 'bash-post.json');
       assert.ok(existsSync(file), `${host.id} has no bash-post.json fixture`);
       const fixture = JSON.parse(readFileSync(file, 'utf8'));
-      // The result `aidrian worktree new` prints, in the place the host's response holds the call's output: the whole
-      // response when it is the output as one string, else its stdout.
+      // The result `aidrian worktree new` prints, in the place the host's response holds the call's output (outputIn).
       const printed = `${JSON.stringify({ status: 'created', worktree_path: path.join(root, 'tree'), branch: 'feat/linked' })}\n`;
-      const response = typeof fixture.post.tool_response === 'string' ? printed : { ...fixture.post.tool_response, stdout: printed };
+      const response = outputIn(fixture, printed);
       const input = { ...fixture.post, cwd: dir, tool_input: { ...fixture.post.tool_input, command: 'aidrian worktree new feat/linked' }, tool_response: response };
       const ran = spawnSync(process.execPath, [hook], { input: JSON.stringify(input), encoding: 'utf8', env: { ...env, ...fixture.env, CLAUDECODE: fixture.env?.CLAUDECODE ?? '' } });
       assert.deepEqual([ran.status, ran.stdout, ran.stderr], [0, '', ''], host.id);

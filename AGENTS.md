@@ -1,6 +1,7 @@
 # aidrian harness
 
-This repository ships the `aidrian` plugin for Claude Code and Codex, and runs that plugin on itself.
+This repository ships the `aidrian` plugin for Claude Code and Codex, with the session ledger on OpenCode,
+and runs that plugin on itself.
 
 Optimise for the people and AI sessions in projects that install aidrian: sessions that finish work correctly
 with little babysitting, and rules a project can adopt without friction.

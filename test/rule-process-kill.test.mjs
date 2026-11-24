@@ -352,6 +352,14 @@ test('allows unclassifiable dynamic invocations (fail-open)', () => {
   allow('pgrep -f eslint | xargs $KILL');
 });
 
+test('a word that names an inherited property, as `constructor`, is a plain program, and a kill after it is still denied', () => {
+  for (const command of ['constructor x; pkill -f node', '__proto__ a && pkill node', 'hasOwnProperty; killall node', 'toString x | pkill -f eslint']) {
+    let decision;
+    assert.doesNotThrow(() => { decision = decideForCommand(command, ENV).decision; }, command);
+    assert.equal(decision, 'deny', command);
+  }
+});
+
 test('allows empty and non-string commands', () => {
   allow('');
 });

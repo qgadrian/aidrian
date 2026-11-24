@@ -90,6 +90,10 @@ test('a subagent may not change a file that sets the gates, with any write tool 
       + ' the same result with another tool; tell the product owner what the task needs.',
   );
   assert.match(verdict(dir, subagent(dir, 'Bash', { command: 'rm -rf .aidrian' })), /^aidrian: Bash is blocked .* it changes \.aidrian\/config\.json,/);
+  // A move into the existing config folder by its name is the move onto the file it makes there.
+  const into = verdict(dir, subagent(dir, 'Bash', { command: 'mv /tmp/x/config.json .aidrian' }));
+  assert.match(into ?? '', /^aidrian: Bash is blocked .* it changes \.aidrian\/config\.json,/);
+  assert.equal(into, verdict(dir, subagent(dir, 'Bash', { command: 'mv /tmp/x/config.json .aidrian/config.json' })));
 });
 
 test('a subagent may still read those files and write anything else, and the main session may change them', async (t) => {
@@ -608,7 +612,7 @@ test('a main session the background route started, and a subagent, may not start
     for (const command of starts) {
       const result = await run(session, command);
       assert.equal(result.status, 2, `${session}: ${command}`);
-      assert.match(result.stderr, /session outside the handoff gate, which holds every session it starts to a chain floor, and a session starts another only through `aidrian handoff continue`, and the background handoff route started this session, with no Human/u, command);
+      assert.match(result.stderr, /starts or resumes a session of (?:Claude Code|Codex) outside the handoff gate, which holds every session it starts to a chain floor, and a session starts another only through `aidrian handoff continue`, and the background handoff route started this session, with no Human/u, command);
     }
     for (const command of allowed) assert.equal((await run(session, command)).status, 0, `${session}: ${command}`);
   }
@@ -616,8 +620,8 @@ test('a main session the background route started, and a subagent, may not start
     assert.equal((await run('plain-session', command)).status, 0, `an attended session may: ${command}`);
     assert.equal((await run('plain-session', command, { agent: true })).status, 2, `a subagent may not: ${command}`);
   }
-  assert.match((await run('plain-session', 'claude -p x', { agent: true })).stderr, /starts or resumes a Claude Code session outside the handoff gate/u);
-  assert.match((await run('plain-session', 'codex exec x', { agent: true })).stderr, /starts or resumes a Codex session outside the handoff gate/u);
+  assert.match((await run('plain-session', 'claude -p x', { agent: true })).stderr, /starts or resumes a session of Claude Code outside the handoff gate/u);
+  assert.match((await run('plain-session', 'codex exec x', { agent: true })).stderr, /starts or resumes a session of Codex outside the handoff gate/u);
 });
 
 test('a main session the background route started, and a subagent, may not run the gate with a variable of their own that moves it', async (t) => {

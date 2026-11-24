@@ -26,8 +26,9 @@ import { foldCase, isWithin } from './fs.mjs';
 import { gitConfigFiles, gitFolders, repositoryCheckouts, runGit, underGit, withGitFacts } from './git.mjs';
 import { GLOB_WORD, globStarts, sameFile } from './glob-links.mjs';
 import { globReaches, modeTargets, sessionWorktrees, startedFolder, stateFolders } from './handoff-guard.mjs';
-import { fileEditOf, nestedProtected, opaqueShellCommand, protectedPaths, transcriptFolders } from './hosts/index.mjs';
+import { fileEditOf, instructionNames, nestedGlobs, nestedPathspecs, nestedProtected, opaqueShellCommand, protectedFile, protectedPaths, transcriptFolders } from './hosts/index.mjs';
 import { issueForgeDenial } from './issue-forge-guard.mjs';
+import { worktreesDir } from './project.mjs';
 import { isDraftName } from './review/drafts.mjs';
 import { ownIssue, ownsHandoff } from './project-run-guard.mjs';
 import { canonical } from './rules/main-checkout.mjs';
@@ -122,7 +123,8 @@ const refuser = (list) => (file, what, folder = false, allows = null, always = f
 //     the mark's main checkout, and `worktreeCommon` its git common folder; never the call's folder. Every other checkout
 //     of the repository nested in it keeps its `.git` pointer and host files refused (nestedRefused). `nested` holds the attempt's
 //     clone, { root, work, common, links }, `common` the git folder the start cloned it with. `temp`: the temporary
-//     folders, this process's and /tmp by default. `states`: every state folder of `project`, where only `specific`
+//     folders, this process's and /tmp by default, where every file passes but a host file some host loads from any
+//     depth (placeOf, TEMP_HOST). `states`: every state folder of `project`, where only `specific`
 //     and `reviews` pass, even inside a temporary folder, as a state folder under /tmp is. `checkouts`: every checkout of
 //     the mark's repository, where a temporary folder passes nothing either, so a checkout under /tmp keeps its own rules;
 //     with checkouts git cannot list, no temporary folder passes. A main checkout that is no git repository has none.
@@ -225,7 +227,7 @@ function ownPlaces(places, { mark, project, config, base, own, home, temp, sessi
   const from = repo ? startFolder(mark, places.issueHeld, () => startedFolder(project, config, session, stateOptions(base, home))) : null;
   const start = from ? gitFolders(from, gitBudget()) : null;
   if (places.issueHeld) places.issue = ownIssue(project, config, mark, stateOptions(base, home));
-  if (start && real(start.common) === real(repo.common) && startTop(start, from) && nestedRefused(refuse, checkouts, start.top)) {
+  if (start && real(start.common) === real(repo.common) && startTop(start, from) && nestedRefused(refuse, checkouts, start.top, [worktreesDir(project, { config })])) {
     places.worktree = real(start.top);
     places.worktreeCommon = real(start.common);
     gitRefused(refuse, start);
@@ -251,7 +253,7 @@ function ownPlaces(places, { mark, project, config, base, own, home, temp, sessi
     refuse(path.join(attempt, 'work', '.git'), 'the attempt clone\'s pointer to its git folder');
   }
   const states = stateWork(places, { project, config, base, home }, refuse);
-  if (repo) madePlaces(places, { repo, checkouts, recorded: () => sessionWorktrees(states, session, [...project.checkouts, ...(checkouts ?? [])], config.session.handoff.maxChain) }, refuse);
+  if (repo) madePlaces(places, { repo, checkouts, folders: [worktreesDir(project, { config })], recorded: () => sessionWorktrees(states, session, [...project.checkouts, ...(checkouts ?? [])], config.session.handoff.maxChain) }, refuse);
   places.temp = unknown || (repo && !checkouts) ? [] : (temp ?? [tmpdir(), '/tmp']).filter(absolute).map(real);
 }
 
@@ -265,11 +267,12 @@ function ownPlaces(places, { mark, project, config, base, own, home, temp, sessi
 // old path all grant nothing. None lies in a state folder, in a host folder of a checkout of the repository, as a
 // worktrees folder set to `.claude/skills` would place it, or in a dot entry of the home folder outside the main checkout,
 // since config.json, which the session may edit, names the folder the command makes it in. A project run's issue session
-// stays confined to its attempt and gets none. Each candidate costs one git call per hook call, only for this session's
-// records. Accepted residuals: a checkout git is slow to read spends the guards' budget; and a record is told by its path
+// stays confined to its attempt and gets none. The configured worktrees folder (`folders`) is held in a made worktree
+// as in the start worktree, only when it lies strictly inside it (nestedRefused). Each candidate costs one git call per
+// hook call, only for this session's records. Accepted residuals: a checkout git is slow to read spends the guards' budget; and a record is told by its path
 // alone, so one a session forged by running the plugin's code, which no guard sees, grants another linked worktree of the
 // same repository.
-function madePlaces(places, { repo, checkouts, recorded }, refuse) {
+function madePlaces(places, { repo, checkouts, folders, recorded }, refuse) {
   if (places.issueHeld || !checkouts) return;
   const main = real(repo.top);
   const hosts = places.checkouts.flatMap((top) => protectedPaths().map((each) => real(path.join(top, each))));
@@ -281,7 +284,7 @@ function madePlaces(places, { repo, checkouts, recorded }, refuse) {
     if (places.states.some((state) => isWithin(state, top)) || hosts.some((host) => isWithin(host, top)) || dotted(top)) continue;
     const made = gitFolders(each, gitBudget());
     if (!made || real(made.common) !== real(repo.common) || !startTop(made, each) || real(made.top) !== top) continue;
-    if (!nestedRefused(refuse, checkouts, each)) continue;
+    if (!nestedRefused(refuse, checkouts, each, folders)) continue;
     places.made.push(top);
     gitRefused(refuse, made);
     hostRefused(refuse, each);
@@ -305,17 +308,28 @@ const startTop = (start, from) => real(start.gitDir) !== real(start.common) || r
 // The other checkouts of the repository, `checkouts` (git.mjs repositoryCheckouts), that lie inside the session's worktree `top`, as
 // task worktrees under the main checkout's `.claude/worktrees/` do for a session started there: each one's `.git`
 // pointer is refused, whole folders that hold it included (`always`), and so are its host files, which a later session
-// there loads (hostRefused). Whether git could list the checkouts: a worktree whose nested checkouts cannot be told is
-// none of the session's.
+// there loads (hostRefused), and the root host files of each folder strictly between `top` and it, such as
+// `.claude/worktrees/` and `.claude/`: a host that reads the folders above a session's start folder loads them into every
+// session started in that checkout, and a worktrees folder is git-ignored, so no review sees them. Each of `folders`
+// inside `top`, the configured worktrees folder (project.mjs worktreesDir), is held as a nested checkout is, less the
+// `.git` entry, whether or not a checkout is in it yet. Each folder is listed once however many checkouts it holds, and
+// a nested checkout or held folder is never listed again as a folder between. Whether git could list the checkouts: a
+// worktree whose nested checkouts cannot be told is none of the session's.
 const NESTED_POINTER = 'a nested checkout\'s pointer to its git folder, which only git writes';
-function nestedRefused(refuse, checkouts, top) {
+function nestedRefused(refuse, checkouts, top, folders = []) {
   if (!checkouts) return false;
   const own = real(top);
-  for (const each of checkouts) {
-    const at = real(each);
-    if (at === own || !isWithin(own, at)) continue;
-    refuse(path.join(each, '.git'), NESTED_POINTER, false, null, true);
+  const inside = (each) => real(each) !== own && isWithin(own, real(each));
+  const nested = checkouts.filter(inside);
+  for (const each of nested) refuse(path.join(each, '.git'), NESTED_POINTER, false, null, true);
+  const roots = new Map([...nested, ...folders.filter(inside)].map((each) => [real(each), each]));
+  const seen = new Set(roots.keys());
+  for (const [at, each] of roots) {
     hostRefused(refuse, each);
+    for (let folder = path.dirname(at); folder !== own && isWithin(own, folder) && !seen.has(folder); folder = path.dirname(folder)) {
+      seen.add(folder);
+      hostRefused(refuse, folder);
+    }
   }
   return true;
 }
@@ -328,10 +342,10 @@ function workflowRefused(refuse, top) {
 }
 
 // The host files of the checkout at `top` every host protects (hosts/index.mjs protectedPaths): the settings, skills,
-// agents, commands, hooks, scheduled work, and MCP servers a later session there loads. A `.json` name is a file; any
-// other is a folder, refused with all it holds.
+// agents, commands, hooks, scheduled work, and MCP servers a later session there loads. A `.json` or `.jsonc` name is a
+// file (hosts/index.mjs protectedFile), also met through a hard link to it; any other is a folder, refused with all it holds.
 function hostRefused(refuse, top) {
-  for (const each of protectedPaths()) refuse(path.join(top, each), 'a host file a later session in that checkout loads, such as its settings, skills, agents, hooks, or MCP servers', !each.endsWith('.json'));
+  for (const each of protectedPaths()) refuse(path.join(top, each), 'a host file a later session in that checkout loads, such as its settings, skills, agents, hooks, or MCP servers', !protectedFile(each));
 }
 
 // What a confined session never writes at any depth of its clone (hosts/index.mjs nestedProtected): a host file it
@@ -375,9 +389,9 @@ function nestedLinkHit(target, nested) {
   return null;
 }
 
-// The pathspecs of the index entries that can be a host file a host loads from any depth: a `.claude` entry, anything
-// below one, and a SKILL.md, in any case.
-const INDEX_LINKS = Object.freeze([':(glob,icase)**/.claude', ':(glob,icase)**/.claude/**', ':(glob,icase)**/SKILL.md']);
+// The pathspecs of the index entries that can be a host file a host loads from any depth, in any case: a `.claude`
+// entry, anything below one, and a SKILL.md, then each glob the other hosts declare (hosts/index.mjs nestedGlobs).
+const INDEX_LINKS = Object.freeze([':(glob,icase)**/.claude', ':(glob,icase)**/.claude/**', ':(glob,icase)**/SKILL.md', ...nestedPathspecs()]);
 // The most output that listing may print.
 const INDEX_BUFFER = 64 * 1024 * 1024;
 
@@ -393,12 +407,19 @@ function indexLinks(work) {
   }
   const listed = runGit(['ls-files', '--stage', '-z', '--', ...INDEX_LINKS], work, { ...gitBudget(), maxBuffer: INDEX_BUFFER });
   if (listed.status !== 0) return null;
+  return hostFileLinks(listed.stdout).map((parts) => ({ at: real(path.join(work, ...parts)), parts }));
+}
+
+// The parts of each link (mode 120000) of `listing`, the output of `git ls-files --stage -z`, whose path is a host file
+// some host loads from any depth (nestedProtected): read by the write guard here and by a confined start
+// (project-start.mjs indexLinkProblem), so both judge a clone's index links alike.
+export function hostFileLinks(listing) {
   const links = [];
-  for (const entry of listed.stdout.split('\0')) {
+  for (const entry of listing.split('\0')) {
     const tab = entry.indexOf('\t');
     if (tab < 0 || !entry.startsWith('120000 ')) continue;
     const parts = entry.slice(tab + 1).split('/');
-    if (nestedProtected(parts)) links.push({ at: real(path.join(work, ...parts)), parts });
+    if (nestedProtected(parts)) links.push(parts);
   }
   return links;
 }
@@ -437,14 +458,28 @@ function partPattern(part) {
 
 // Whether a glob, by its folder `prefix` and its later parts `rest`, may reach a NESTED entry of one of the clones
 // `nested`: it lies in one and a later part may name a `.claude` folder, a glob whose own text starts with a dot or is a
-// class or a brace, since a shell's `*` skips dot names, or its last part may name a SKILL.md.
+// class or a brace, since a shell's `*` skips dot names, or its last part may name a SKILL.md; or, by the names the
+// other hosts' nested globs spell out (NESTED_NAMES), a later part may name one of their folders, or its last part one
+// of their files, a dot name only by such a glob.
 function nestedGlob(prefix, rest, nested) {
   if (!nested.some(({ root }) => isWithin(root, prefix) || isWithin(prefix, root))) return false;
   if (nestedHit(prefix, nested)) return true;
-  const may = (part, name) => (GLOB_WORD.test(part) ? /^[.[{]/u.test(part) && partPattern(part).test(name) : part.toLowerCase() === name);
+  const may = (part, name) => (GLOB_WORD.test(part) ? (!name.startsWith('.') || /^[.[{]/u.test(part)) && partPattern(part).test(name) : part.toLowerCase() === name);
   const last = rest.at(-1) ?? '';
-  return rest.some((part) => may(part, '.claude')) || (GLOB_WORD.test(last) ? partPattern(last).test('skill.md') : last.toLowerCase() === 'skill.md');
+  if (rest.some((part) => may(part, '.claude') || NESTED_NAMES.folders.some((name) => may(part, name)))) return true;
+  return may(last, 'skill.md') || NESTED_NAMES.files.some((name) => may(last, name));
 }
+
+// The names, in lower case, the hosts' nested globs spell out (hosts/index.mjs nestedGlobs): `folders`, a plain part
+// another part follows, as `.x` in `**/.x/**`, and `files`, a glob's plain last part, as `x.json` in `**/x.json`.
+const NESTED_NAMES = (() => {
+  const plain = (part) => part !== '' && !GLOB_WORD.test(part);
+  const parts = nestedGlobs().map((glob) => glob.split('/').map((part) => part.toLowerCase()));
+  return Object.freeze({
+    folders: [...new Set(parts.flatMap((each) => each.slice(0, -1).filter(plain)))],
+    files: [...new Set(parts.map((each) => each.at(-1)).filter(plain))],
+  });
+})();
 
 // The places of a session a pending mark, or a mark that cannot be read, holds (unattendedPlaces): the shared git
 // config and hooks of the mark's main checkout and of the call's folder, and, as places among the home folder's dot
@@ -568,7 +603,10 @@ function refusedHit(target, spelled, entries, { own, holds }) {
 // come first, then the session's places, its own worktree before the home folder's dot entries, so a repository there
 // still writes itself; a target that would pass meets the git config files git names (`later`) too. A temporary folder
 // passes nothing inside a state folder (`states`), whose own places alone pass there, so a state folder under /tmp keeps
-// its handoff briefs, quorum ledgers, and other sessions' files from the session.
+// its handoff briefs, quorum ledgers, and other sessions' files from the session. Elsewhere in it, a host file some host
+// loads from any depth is refused (TEMP_HOST), judged as a confined clone is (nestedHit), with each temporary folder
+// that holds the target as a root, and so is an instruction file a host loads from every folder above a session
+// (instructionHit).
 function placeOf(target, spelled, places, { holds = true } = {}) {
   const own = [...places.specific, places.worktree, ...(places.made ?? []), ...places.temp].includes(target);
   const hit = refusedHit(target, spelled, places.refused, { own, holds }) ?? nestedHit(target, places.nested ?? [], spelled);
@@ -585,8 +623,28 @@ function placeOf(target, spelled, places, { holds = true } = {}) {
   // Accepted residual: a checkout here only keeps the temporary folder from passing a path inside it; it is no refused
   // entry, so a removal of a temporary folder above it, such as `rm -rf /tmp/work` over a sibling worktree in it, passes.
   const held = [...(places.states ?? []), ...(places.checkouts ?? [])].some((dir) => isWithin(dir, target));
-  if (!held && places.temp.some((dir) => isWithin(dir, target))) return passes();
+  const temp = held ? [] : places.temp.filter((dir) => isWithin(dir, target));
+  // `links: []`: a temporary folder has no git index whose links nestedLinkHit would list.
+  if (temp.length) return nestedHit(target, temp.map((root) => ({ root, links: [] })), spelled) || instructionHit(target, spelled, temp) ? { refused: TEMP_HOST } : passes();
   return { outside: true };
+}
+
+// A host file some host loads from any depth (hosts/index.mjs nestedProtected), in a temporary folder: a host that reads
+// the folders above the one a session starts in loads it into every session started below that folder. No glob rule
+// holds it there: a glob reaches only a host folder already there, and `rm -rf /tmp/work/*` would refuse.
+const TEMP_HOST = { what: 'a host file a session started below that temporary folder loads, such as a .claude folder\'s skills or settings, a SKILL.md, or a CLAUDE.md or AGENTS.md' };
+
+// Whether the real, case-folded path `target`, spelled `spelled`, below one of the temporary folders `roots`, is an
+// instruction file a host loads from the folder a session starts in and from every folder above it (hosts/index.mjs
+// instructionNames), such as a CLAUDE.md or an AGENTS.md: its last parts, by the real path from the root or as spelled,
+// so a link by either name counts, name one in any case. A review's exec reviewer starts in a base checkout under the
+// temporary folder (review/base-worktree.mjs), so one planted above it loads into that reviewer.
+function instructionHit(target, spelled, roots) {
+  const names = instructionNames().files.map((name) => name.toLowerCase().split('/'));
+  const ends = (parts) => names.some((name) => name.length <= parts.length && name.every((part, at) => parts[parts.length - name.length + at] === part));
+  const spelledParts = typeof spelled === 'string' ? path.normalize(spelled).split(path.sep).filter(Boolean).map((part) => part.toLowerCase()) : [];
+  return roots.some((root) => target !== root && isWithin(root, target) && ends(path.relative(root, target).split(path.sep).map((part) => part.toLowerCase())))
+    || ends(spelledParts);
 }
 
 // A `.git` entry at any depth of the place `top` the real, case-folded path `target` lies in, the session's worktree,

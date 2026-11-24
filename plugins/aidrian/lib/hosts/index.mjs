@@ -6,9 +6,12 @@ import path from 'node:path';
 
 import claudeCode from './claude-code.mjs';
 import codex from './codex.mjs';
+import opencode from './opencode.mjs';
 
-// Detection order: Codex first, because a Codex started from a Claude Code shell inherits that shell's variables.
-export const HOSTS = Object.freeze([codex, claudeCode]);
+// Detection order (detectHost): Codex first, because a Codex started from a Claude Code shell inherits that shell's
+// variables; OpenCode last, because its environment rule is the weakest: any process started from an OpenCode shell
+// inherits OPENCODE=1 and OPENCODE_SESSION_ID, so that rule answers only when no other host's whole detection does.
+export const HOSTS = Object.freeze([codex, claudeCode, opencode]);
 
 // A process no adapter claims. Never reported as one of the hosts: its name says it is unknown, and its AI has no brand.
 // Payloads and responses pass through every adapter, so a host detection cannot fail open on what a known host sends.
@@ -41,9 +44,15 @@ export const UNKNOWN_HOST = Object.freeze({
   capabilities: Object.freeze({ pushPermission: () => ({ answer: 'unknown' }) }),
 });
 
-// The host of this process, from its environment and, in a hook, its payload.
+// The host of this process, from its environment and, in a hook, its payload, in two passes. First, the host whose mark
+// the payload carries (an adapter's optional `payloadMark`), in HOSTS order, before any environment is read: a hook's
+// payload is written by its host alone, so a hook a bridge runs is that host's whatever variables its process
+// inherited. Then each host's whole `detect`, in HOSTS order. A host that declares no mark, as a test's own host does,
+// is read by its `detect` alone.
 export const detectHost = ({ env = process.env, input = {} } = {}, hosts = HOSTS) =>
-  hosts.find((host) => host.detect({ env, input })) ?? UNKNOWN_HOST;
+  hosts.find((host) => host.payloadMark?.(input) === true)
+  ?? hosts.find((host) => host.detect({ env, input }))
+  ?? UNKNOWN_HOST;
 
 // The session and agent a command runs under, from its environment, each null when the host does not tell.
 export function sessionIdentity(env = process.env) {
@@ -213,13 +222,52 @@ export function mainCheckoutPaths(hosts = HOSTS) {
 export const configCommands = (hosts = HOSTS) => hosts.map((host) => host.configCommands)
   .filter((each) => Array.isArray(each?.programs) && Array.isArray(each.subcommands));
 
+// Every host's own programs, as `claude` and `opencode`: those that start its sessions (`sessionStart`) and those whose
+// subcommands write its config (`configCommands`), which a package runner's call may name anywhere (package-runner.mjs).
+export const hostPrograms = (hosts = HOSTS) => [...new Set(hosts.flatMap((host) => [...(host.sessionStart?.programs ?? []), ...(host.configCommands?.programs ?? [])]))];
+
+// The npm packages that install a host's program, as { package: program }, from each adapter's optional `packages`: a
+// package runner's call of one runs that program (package-runner.mjs), whatever the package's last part is named.
+export const packagePrograms = (hosts = HOSTS) => Object.fromEntries(hosts.flatMap((host) => Object.entries(host.packages ?? {})));
+
+// The files and folders where the hosts keep their own logins and the state of their services, for the user whose home
+// is `home` under `env`, which Claude Code's confined sandbox denies reading and its sandbox proof tries; Codex's sandbox
+// takes no such list (docs/providers/codex.md, its residuals). From each adapter's optional `credentialStores({ env,
+// home })`: their union, each an absolute path of plain text.
+export const credentialStores = ({ env = process.env, home } = {}, hosts = HOSTS) => [...new Set(hosts.flatMap((host) => host.credentialStores?.({ env, home }) ?? []))]
+  .filter((each) => typeof each === 'string' && path.isAbsolute(each) && !CONTROL.test(each));
+
+// The local services the hosts run that start a session no guard holds, each { name, ports, stores }: from each
+// adapter's optional `localService` ({ ports }, its fixed ports), with `stores` its own credentialStores, which hold the
+// service's password, for the user whose home is `home` under `env`.
+export const localServices = ({ env = process.env, home } = {}, hosts = HOSTS) => hosts
+  .filter((host) => Array.isArray(host.localService?.ports))
+  .map((host) => ({ name: host.name, ports: host.localService.ports, stores: credentialStores({ env, home }, [host]) }));
+
 // The host files of a checkout no session no Human attends writes, from its root, as every host declares them
-// (`protectedPaths`): their union, so a session of one host cannot plant what another loads.
+// (`protectedPaths`): their union, so a session of one host cannot plant what another loads. The write guard refuses
+// them at the root of the session's worktree, of each checkout nested in it, of each folder between the two, and of its
+// attempt's clone (lib/unattended-write.mjs hostRefused).
 export const protectedPaths = (hosts = HOSTS) => [...new Set(hosts.flatMap((host) => host.protectedPaths ?? []))];
 
-// Whether the path whose parts from a confined attempt's clone root are `segments` is a host file some host loads from
-// any depth (`nestedProtected`), which no session no Human attends writes there.
+// Whether the path whose parts from a confined attempt's clone root, or from a temporary folder, are `segments` is a
+// host file some host loads from any depth (`nestedProtected`), which no session no Human attends writes there.
 export const nestedProtected = (segments, hosts = HOSTS) => hosts.some((host) => typeof host.nestedProtected === 'function' && host.nestedProtected(segments) === true);
+
+// The globs, from a confined clone's root, of the host files the hosts load from any depth (an adapter's optional
+// `nestedGlobs`): their union, in the `**` form git and a sandbox both read.
+export const nestedGlobs = (hosts = HOSTS) => [...new Set(hosts.flatMap((host) => host.nestedGlobs ?? []))];
+// The same globs as git pathspecs, in any case: git's glob magic matches a `**/` glob at the root too.
+export const nestedPathspecs = (hosts = HOSTS) => nestedGlobs(hosts).map((glob) => `:(glob,icase)${glob}`);
+
+// Whether a protected name is a file: one ending .json or .jsonc. Any other is a folder.
+export const protectedFile = (name) => /\.jsonc?$/u.test(name);
+
+// The placeholders of the root host files the hosts other than `host` protect: a folder, or a file holding `{}`. The
+// starting host's own protected paths are left out, not only its own placeholders, since it may leave one out on purpose.
+export const otherPlaceholders = (host, hosts = HOSTS) => protectedPaths(hosts)
+  .filter((each) => !(host?.protectedPaths ?? []).includes(each))
+  .map((each) => (protectedFile(each) ? { path: each, text: '{}\n' } : { path: each, folder: true }));
 
 // The handoff continue routes `host` can do, of CONTINUE_ROUTES in lib/config-schema.mjs; none for a host that names none.
 export const continueRoutes = (host) => host.capabilities.handoffContinue?.routes ?? [];

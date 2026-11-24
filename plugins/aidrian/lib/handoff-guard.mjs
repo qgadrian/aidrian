@@ -31,7 +31,8 @@ import { changesGitTarget } from './git-push.mjs';
 import { globLinksTo, globStarts, linkWalk } from './glob-links.mjs';
 import { baseBranchConfig } from './handoff-continue.mjs';
 import { ARMING_FILE, madeWorktrees, openStore, SESSION_ID, startedFolders, startedInBackground, storePath } from './handoff-markers.mjs';
-import { DETECT_VARS, HOSTS, IDENTITY_VARS, mainCheckoutPaths, opaqueShellCommand } from './hosts/index.mjs';
+import { DETECT_VARS, HOSTS, IDENTITY_VARS, localServices, mainCheckoutPaths, opaqueShellCommand } from './hosts/index.mjs';
+import { readings } from './package-runner.mjs';
 import { defaultStateDir, findProject, projectCheckouts, stateDir, stateRoot } from './project.mjs';
 import { GIT_VARS } from './review/env.mjs';
 import { DECISION_STORE_FOLDER, decisionStoreFolders } from './project-decision-store.mjs';
@@ -342,8 +343,10 @@ const programWord = (programs) => new RegExp(String.raw`(?<![\w.-])(?:${programs
 // to no chain floor, so the hooks would not know it as unattended, and it would start with whatever the command gives it.
 // Each host adapter declares its own command (`sessionStart`), and every host's counts whatever host runs the session.
 // A command a shell runs that the lexer cannot read, or a command in a shell it cannot read, counts when it names such a
-// program as a word. A known limit of the shared lexer, as in handoffContinueDenial: a program that runs its arguments
-// as a command, such as `xargs claude` or `npx`, and a command word built from a variable, are not read.
+// program as a word. A package runner, as `npx`, `pnpm dlx`, or `bunx`, is read as the program it runs, by a host's own
+// package name too (an adapter's `packages`). A known limit of the shared lexer, as in handoffContinueDenial: another
+// program that runs its arguments as a command, such as `xargs claude`, a runner's command-string option, as `npx -c`
+// or `--call` and `npm exec -c`, the runner forms `bun x` and `pnpx`, and a command word built from a variable, are not read.
 export function hostSessionStartDenial(input, { names: { human } }, { unattended = () => false } = {}) {
   const opaque = opaqueShellCommand(input);
   const command = opaque ?? (bashCall(input) ? input.tool_input?.command : null);
@@ -351,14 +354,49 @@ export function hostSessionStartDenial(input, { names: { human } }, { unattended
   const hosts = starters();
   // The host whose program `text`, which no lexer read, names as a word.
   const namedIn = (text) => hosts.find((each) => programWord(each.sessionStart.programs).test(text));
-  const read = ({ invocation, unread }) => (unread !== undefined ? namedIn(unread) : null)
-    ?? (invocation.dynamic ? null : hosts.find((each) => each.sessionStart.programs.includes(programName(invocation.program)) && each.sessionStart.starts(invocation.args)));
+  // Through a package runner, each program it may run (package-runner.mjs readings), as `npx @anthropic-ai/claude-code -p` runs claude.
+  const starts = (invocation) => readings(programName(invocation.program), invocation.args, (token) => (token.dynamic ? null : token.text))
+    .map(({ program, args }) => hosts.find((each) => each.sessionStart.programs.includes(programName(program)) && each.sessionStart.starts(args)))
+    .find(Boolean);
+  const read = ({ invocation, unread }) => (unread !== undefined ? namedIn(unread) : null) ?? (invocation.dynamic ? null : starts(invocation));
   const host = opaque !== null ? opaqueTexts(opaque).map(namedIn).find(Boolean) : walkCommands(command, null).map(read).find(Boolean);
   const subagent = isSubagent(input);
   if (!host || (!subagent && !unattended())) return null;
   const who = subagent ? 'only the main session hands off, through `aidrian handoff continue`' : `a session starts another only through \`aidrian handoff continue\`, ${UNATTENDED}`;
-  const why = `it starts or resumes a ${host.name} session outside the handoff gate, which holds every session it starts to a chain floor, and ${who}`;
-  return { match: `starts a ${host.name} session`, reason: projectRuleReason(input, why, human, 'to start or resume that session') };
+  const why = `it starts or resumes a session of ${host.name} outside the handoff gate, which holds every session it starts to a chain floor, and ${who}`;
+  return { match: `starts a session of ${host.name}`, reason: projectRuleReason(input, why, human, 'to start or resume that session') };
+}
+
+// Why the call in `input` may not run because it reaches a host's local service that starts a session no guard holds,
+// as an adapter's `localService` declares one, or null: { match, reason }. It holds for a session `unattended()` says no
+// Human attends, asked last, only for a shell command whose text, unquoted, with each `$NAME` and `${NAME}` that `env`
+// gives an absolute path and each leading `~` expanded, and each absolute path normalized, so `/./` and `//` change
+// nothing, names one of the service's credential stores, which hold its
+// password, or one of its ports after a host, as `127.0.0.1:<port>` (hosts/index.mjs localServices): the hook's
+// `unattended()` reads the state folders, which runs git, so every other shell command runs none for this guard. Read as
+// text, so a command in any shell or interpreter counts; a path or port the command builds at run time does not (the
+// residuals in docs/hooks.md, Agent gates).
+export function hostServiceDenial(input, { names: { human } }, { unattended = () => false, env = process.env, home = env.HOME || homedir() } = {}) {
+  const command = opaqueShellCommand(input) ?? (bashCall(input) ? input.tool_input?.command : null);
+  if (typeof command !== 'string') return null;
+  // The value of the variable `name`, by `env`'s own text entries only: a name such as `constructor` reads a function
+  // every object has, and a guard that passed one to path.isAbsolute would throw, which lets the whole call run.
+  const variable = (name) => (Object.hasOwn(env, name) && typeof env[name] === 'string' ? env[name] : '');
+  const text = unquoted(command)
+    .replace(/\$\{(\w+)\}|\$(\w+)/gu, (whole, braced, bare) => (path.isAbsolute(variable(braced ?? bare)) ? variable(braced ?? bare) : whole))
+    .replace(/(^|[\s=:(])~(?=\/|\s|$)/gu, (_, before) => `${before}${home}`)
+    .replace(/(?<![\w.~-])\/[^\s'"`;|&<>(){}]*/gu, (word) => path.normalize(word));
+  const escape = (each) => each.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  for (const service of localServices({ env, home })) {
+    const store = service.stores.find((each) => new RegExp(`(?<![\\w.-])${escape(each)}(?![\\w.-])`, 'iu').test(text));
+    const port = service.ports.find((each) => new RegExp(String.raw`[\w\]]:${each}(?!\d)`, 'u').test(text));
+    if (store === undefined && port === undefined) continue;
+    if (!unattended()) return null;
+    const named = store === undefined ? `its port ${port}` : `its credential store ${store}`;
+    const why = `it names ${named}: ${service.name}'s local service starts a session no guard holds for any caller with the password its state folder keeps, ${UNATTENDED}`;
+    return { match: `reaches the local service of ${service.name}`, reason: projectRuleReason(input, why, human, 'to reach that service') };
+  }
+  return null;
 }
 
 // The `git remote` actions that point a remote at another repository, or move the ref of its default branch.

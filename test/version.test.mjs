@@ -12,6 +12,7 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 const COPIED = [
   'plugins/aidrian/.claude-plugin/plugin.json',
   'plugins/aidrian/plugin.json',
+  'plugins/aidrian/package.json',
   'package.json',
   'package-lock.json',
   '.claude-plugin/marketplace.json',
@@ -104,6 +105,7 @@ test('this repository writes one version, in these places', () => {
   assert.deepEqual(locations.map(({ where }) => where), [
     'plugins/aidrian/.claude-plugin/plugin.json: version',
     'plugins/aidrian/plugin.json: version',
+    'plugins/aidrian/package.json: version',
     'package.json: version',
     'package-lock.json: version',
     'package-lock.json: packages."".version',
@@ -117,13 +119,13 @@ test('npm run bump writes the new version everywhere and changes nothing else', 
   const minor = run(dir, 'minor');
   assert.equal(minor.status, 0, minor.stderr);
   assert.match(minor.stdout, /^version 1\.4\.2 -> 1\.5\.0 in:\n {2}plugins\/aidrian\/\.claude-plugin\/plugin\.json: version\n/);
-  assert.deepEqual(versions(dir), Array(5).fill('1.5.0'));
+  assert.deepEqual(versions(dir), Array(6).fill('1.5.0'));
   for (const file of COPIED) {
     const after = readFileSync(path.join(dir, file), 'utf8');
     assert.equal(after, before[file].replaceAll('"version": "1.4.2"', '"version": "1.5.0"'), file);
   }
   assert.equal(run(dir).status, 0);
-  assert.deepEqual(versions(dir), Array(5).fill('1.5.1'), 'patch by default');
+  assert.deepEqual(versions(dir), Array(6).fill('1.5.1'), 'patch by default');
 });
 
 test('a marketplace entry that sets a version is one more place to bump', (t) => {
@@ -134,7 +136,7 @@ test('a marketplace entry that sets a version is one more place to bump', (t) =>
   writeFileSync(file, `${JSON.stringify(market, null, 2)}\n`);
   assert.equal(run(dir, 'patch').status, 0);
   assert.equal(JSON.parse(readFileSync(file, 'utf8')).plugins[0].version, '1.4.3');
-  assert.deepEqual(versions(dir), Array(6).fill('1.4.3'));
+  assert.deepEqual(versions(dir), Array(7).fill('1.4.3'));
 });
 
 test('bump and --check refuse files that disagree, and bump then changes nothing', (t) => {
@@ -147,7 +149,7 @@ test('bump and --check refuse files that disagree, and bump then changes nothing
     assert.match(result.stderr, /^(?:aidrian: )?the version is not the same everywhere; .* \(main's, when you resolve a merge\):\n/, args[0]);
     assert.match(result.stderr, /\n {2}plugins\/aidrian\/plugin\.json: version: "1\.4\.3"\n/, args[0]);
   }
-  assert.deepEqual(versions(dir), ['1.4.2', '1.4.3', '1.4.2', '1.4.2', '1.4.2']);
+  assert.deepEqual(versions(dir), ['1.4.2', '1.4.3', '1.4.2', '1.4.2', '1.4.2', '1.4.2']);
 });
 
 test('an unknown argument fails without changing any file', (t) => {
@@ -157,14 +159,14 @@ test('an unknown argument fails without changing any file', (t) => {
     assert.equal(result.status, 1, args.join(' '));
     assert.match(result.stderr, /^usage: node scripts\/version\.mjs \[patch\|minor\|major\] \| --check \| lint-title .*\nunknown argument: /);
   }
-  assert.deepEqual(versions(dir), Array(5).fill('1.4.2'));
+  assert.deepEqual(versions(dir), Array(6).fill('1.4.2'));
 });
 
 test('--check skips the comparison without origin/main, and on main', (t) => {
   const { dir, git } = fixture(t);
   git('switch', '-q', 'main');
   setVersion('1.4.3', dir);
-  assert.match(run(dir, '--check').stdout, /^ok: aidrian version 1\.4\.3 in all 5 places; branch check skipped: on main\n$/);
+  assert.match(run(dir, '--check').stdout, /^ok: aidrian version 1\.4\.3 in all 6 places; branch check skipped: on main\n$/);
   git('update-ref', '-d', 'refs/remotes/origin/main');
   git('switch', '-q', 'feature');
   const result = run(dir, '--check');
@@ -178,7 +180,7 @@ test('--check passes a plugin change that keeps the version, even after main rel
   write(dir, 'plugins/aidrian/skills/new/SKILL.md', '# New\n');
   const untracked = run(dir, '--check');
   assert.equal(untracked.status, 0, untracked.stderr);
-  assert.match(untracked.stdout, /^ok: aidrian version 1\.4\.2 in all 5 places; the branch keeps the version of its merge base with origin\/main\n$/);
+  assert.match(untracked.stdout, /^ok: aidrian version 1\.4\.2 in all 6 places; the branch keeps the version of its merge base with origin\/main\n$/);
   commit('change the plugin');
   // Main released while the branch was open.
   git('switch', '-q', 'main');
@@ -191,7 +193,7 @@ test('--check passes a plugin change that keeps the version, even after main rel
   git('merge', '-q', '--no-edit', 'main');
   const merged = run(dir, '--check');
   assert.equal(merged.status, 0, merged.stderr);
-  assert.match(merged.stdout, /^ok: aidrian version 1\.5\.0 in all 5 places/);
+  assert.match(merged.stdout, /^ok: aidrian version 1\.5\.0 in all 6 places/);
 });
 
 test('--check fails a branch that changes the version, untracked, staged, or committed', (t) => {
@@ -215,6 +217,36 @@ test('--check fails a branch that changes the version, untracked, staged, or com
   assert.equal(run(dir, '--check').status, 0, 'setting it back passes');
 });
 
+test('--check reads a version file new on the branch as no change, and holds it like the others once main has it', (t) => {
+  const OPENCODE = 'plugins/aidrian/package.json';
+  const { dir, git, commit } = fixture(t);
+  const manifest = readFileSync(path.join(dir, OPENCODE), 'utf8');
+  // Main before the file existed: the branch adds it, at the version the other files hold.
+  git('switch', '-q', 'main');
+  git('rm', '-q', OPENCODE);
+  commit('no OpenCode package yet');
+  git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  git('switch', '-q', '-C', 'feature');
+  write(dir, OPENCODE, manifest);
+  const untracked = run(dir, '--check');
+  assert.equal(untracked.status, 0, untracked.stderr);
+  assert.match(untracked.stdout, /^ok: aidrian version 1\.4\.2 in all 6 places; the branch keeps the version of its merge base with origin\/main\n/);
+  commit('feat(opencode): add the package');
+  assert.equal(run(dir, '--check').status, 0, 'committed');
+  // A new file that disagrees with the others still fails.
+  write(dir, OPENCODE, manifest.replace('"1.4.2"', '"1.4.3"'));
+  const disagrees = run(dir, '--check');
+  assert.equal(disagrees.status, 1);
+  assert.match(disagrees.stderr, /the version is not the same everywhere; .*\n {2}plugins\/aidrian\/package\.json: version: "1\.4\.3"\n/s);
+  // Once main has the file, changing every place on the branch is a version change.
+  write(dir, OPENCODE, manifest);
+  git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  setVersion('1.5.0', dir);
+  const changed = run(dir, '--check');
+  assert.equal(changed.status, 1);
+  assert.match(changed.stderr, /\n {2}plugins\/aidrian\/package\.json: version: "1\.4\.2" -> "1\.5\.0"\n/);
+});
+
 test('--check fails a branch that adds a version to a marketplace entry', (t) => {
   const { dir } = fixture(t);
   const file = path.join(dir, '.agents/plugins/marketplace.json');
@@ -232,7 +264,7 @@ test('lint-title passes a Conventional Commit title and fails any other', (t) =>
   assert.equal(bad.status, 1);
   assert.match(bad.stderr, /^the pull request title "Update the review skill" is not a Conventional Commit subject/);
   assert.equal(run(dir, 'lint-title').status, 1, 'the title is required');
-  assert.deepEqual(versions(dir), Array(5).fill('1.4.2'));
+  assert.deepEqual(versions(dir), Array(6).fill('1.4.2'));
 });
 
 // The fixture's main, tagged v1.4.2 as the release workflow would have, and checked out.
@@ -251,7 +283,7 @@ test('release changes nothing when no commit since the tag changes the plugin', 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, '');
   assert.equal(result.stderr, 'aidrian: no commit since v1.4.2 changes plugins/aidrian/: nothing to release\n');
-  assert.deepEqual(versions(dir), Array(5).fill('1.4.2'));
+  assert.deepEqual(versions(dir), Array(6).fill('1.4.2'));
 });
 
 test('release picks the level from the plugin commits since the tag, and prints a result line', (t) => {
@@ -264,7 +296,7 @@ test('release picks the level from the plugin commits since the tag, and prints 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, 'aidrian=1.4.3 v1.4.3 v1.4.2\n');
   assert.equal(result.stderr, 'aidrian 1.4.2 -> 1.4.3, for 1 plugin commit(s):\n  fix(demo): a fix (#20)\n');
-  assert.deepEqual(versions(dir), Array(5).fill('1.4.3'));
+  assert.deepEqual(versions(dir), Array(6).fill('1.4.3'));
   commit('chore(release): aidrian v1.4.3');
   git('tag', 'v1.4.3');
   write(dir, 'plugins/aidrian/skills/new/SKILL.md', '# New\n');
@@ -274,7 +306,7 @@ test('release picks the level from the plugin commits since the tag, and prints 
   result = run(dir, 'release');
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, 'aidrian=1.5.0 v1.5.0 v1.4.3\n');
-  assert.deepEqual(versions(dir), Array(5).fill('1.5.0'));
+  assert.deepEqual(versions(dir), Array(6).fill('1.5.0'));
 });
 
 test('release --level overrides the subjects, and releases with no plugin commit', (t) => {
@@ -283,7 +315,7 @@ test('release --level overrides the subjects, and releases with no plugin commit
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, 'aidrian=2.0.0 v2.0.0 v1.4.2\n');
   assert.equal(result.stderr, 'aidrian 1.4.2 -> 2.0.0, for --level major:\n');
-  assert.deepEqual(versions(dir), Array(5).fill('2.0.0'));
+  assert.deepEqual(versions(dir), Array(6).fill('2.0.0'));
   for (const args of [['--level'], ['--level', 'huge'], ['major']]) {
     const bad = run(dir, 'release', ...args);
     assert.equal(bad.status, 1, args.join(' '));
@@ -296,6 +328,55 @@ test('release skips its own commits when it counts', (t) => {
   write(dir, SKILL, '# Demo, changed\n');
   commit('chore(release)!: not a real release subject');
   assert.match(run(dir, 'release').stderr, /^aidrian: no commit since v1\.4\.2/);
+});
+
+test('release raises a version file new since the latest tag with the others, when main released before its squash merge', (t) => {
+  const OPENCODE = 'plugins/aidrian/package.json';
+  const { dir, git, commit } = released(t);
+  const manifest = readFileSync(path.join(dir, OPENCODE), 'utf8');
+  // Main releases 1.4.3 with no package.json; a squash merge then adds it at 1.4.2, the version of the branch's last merge of main.
+  setVersion('1.4.3', dir);
+  rmSync(path.join(dir, OPENCODE));
+  commit('chore(release): aidrian v1.4.3');
+  git('tag', 'v1.4.3');
+  write(dir, OPENCODE, manifest);
+  commit('fix(opencode): add the package');
+  const result = run(dir, 'release');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'aidrian=1.4.4 v1.4.4 v1.4.3\n');
+  assert.deepEqual(versions(dir), Array(6).fill('1.4.4'));
+  const done = run(dir, 'commit-and-tag', 'aidrian');
+  assert.equal(done.status, 0, done.stderr);
+  assert.ok(git('show', '--name-only', '--format=', 'HEAD').split('\n').includes(OPENCODE), 'the release commit carries the new file');
+  assert.deepEqual(tagsAt(git, 'HEAD'), ['v1.4.4']);
+  // A branch is still held to agreement: the same lagging file fails --check there.
+  git('switch', '-q', '-c', 'lagging');
+  write(dir, OPENCODE, manifest);
+  assert.match(run(dir, '--check').stderr, /the version is not the same everywhere/);
+});
+
+test('release still holds every version file the latest tag has: one that disagrees or is gone fails with no file changed', (t) => {
+  const { dir, commit } = released(t);
+  write(dir, SKILL, '# Demo, fixed\n');
+  commit('fix(demo): a fix');
+  const manifest = path.join(dir, 'plugins/aidrian/plugin.json');
+  const kept = readFileSync(manifest, 'utf8');
+  writeFileSync(manifest, kept.replace('"1.4.2"', '"1.4.9"'));
+  const snapshot = () => COPIED.filter((file) => existsSync(path.join(dir, file))).map((file) => readFileSync(path.join(dir, file), 'utf8'));
+  let before = snapshot();
+  let result = run(dir, 'release');
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /^aidrian: the version is not the same everywhere; .*\n {2}plugins\/aidrian\/plugin\.json: version: "1\.4\.9"\n/s);
+  assert.deepEqual(snapshot(), before, 'no file changed');
+  writeFileSync(manifest, kept);
+  rmSync(path.join(dir, 'package-lock.json'));
+  before = snapshot();
+  result = run(dir, 'release');
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /cannot read package-lock\.json/);
+  assert.deepEqual(snapshot(), before, 'no file changed');
 });
 
 test('release refuses a first release after a later plugin commit, and fails when the latest tag is not the version in the files', (t) => {
@@ -312,7 +393,7 @@ test('release refuses a first release after a later plugin commit, and fails whe
   result = run(dir, 'release');
   assert.equal(result.status, 1);
   assert.match(result.stderr, /^aidrian: the latest tag reachable from HEAD is v1\.3\.0, but the files hold 1\.4\.2\. Tag the commit that set 1\.4\.2 as v1\.4\.2/);
-  assert.deepEqual(versions(dir), Array(5).fill('1.4.2'));
+  assert.deepEqual(versions(dir), Array(6).fill('1.4.2'));
 });
 
 const CLAUDE_MOD = 'plugins/aidrian-claude-mod/.claude-plugin/plugin.json';
@@ -330,12 +411,12 @@ function withClaudeMod(t, { version = '0.1.0', tag = true } = {}) {
   return repo;
 }
 
-test('the PLUGINS table keeps aidrian on v* tags and its four files, and the tag patterns never cross', (t) => {
+test('the PLUGINS table keeps aidrian on v* tags and its five files, and the tag patterns never cross', (t) => {
   assert.deepEqual(PLUGINS.map(({ name, dir, prefix }) => [name, dir, prefix]), [
     ['aidrian', 'plugins/aidrian', 'v'],
     ['aidrian-mod', 'plugins/aidrian-claude-mod', 'aidrian-mod-v'],
   ]);
-  assert.deepEqual(PLUGINS[0].files.map(([file]) => file), ['plugins/aidrian/.claude-plugin/plugin.json', 'plugins/aidrian/plugin.json', 'package.json', 'package-lock.json']);
+  assert.deepEqual(PLUGINS[0].files.map(([file]) => file), ['plugins/aidrian/.claude-plugin/plugin.json', 'plugins/aidrian/plugin.json', 'plugins/aidrian/package.json', 'package.json', 'package-lock.json']);
   const { dir, git, commit } = withClaudeMod(t);
   git('tag', 'v0.65.0');
   const [aidrian, claudeMod] = PLUGINS.map(tagPattern);
@@ -389,7 +470,7 @@ test('a marketplace entry counts for the plugin its name matches, and a versione
   market.plugins[1].version = '0.1.0';
   writeFileSync(file, `${JSON.stringify(market, null, 2)}\n`);
   assert.deepEqual(versionLocations(dir, PLUGINS[1]).map(({ where }) => where), [`${CLAUDE_MOD}: version`, '.claude-plugin/marketplace.json: plugins.1.version']);
-  assert.deepEqual(versions(dir), Array(5).fill('1.4.2'), "the Claude mod's entry is not aidrian's");
+  assert.deepEqual(versions(dir), Array(6).fill('1.4.2'), "the Claude mod's entry is not aidrian's");
   market.plugins.push({ name: 'stranger', source: './plugins/stranger', version: '1.0.0' });
   writeFileSync(file, `${JSON.stringify(market, null, 2)}\n`);
   const result = run(dir, '--check');
@@ -410,7 +491,7 @@ test('release raises each plugin from its own tag, and commit-and-tag makes one 
   const done = run(dir, 'commit-and-tag', 'aidrian', 'aidrian-mod');
   assert.equal(done.status, 0, done.stderr);
   assert.equal(git('log', '-1', '--format=%s'), 'chore(release): aidrian v1.5.0, aidrian-mod v0.1.1\n');
-  assert.deepEqual(git('show', '--name-only', '--format=', 'HEAD').split('\n').filter(Boolean).sort(), [CLAUDE_MOD, 'package-lock.json', 'package.json', 'plugins/aidrian/.claude-plugin/plugin.json', 'plugins/aidrian/plugin.json'].sort());
+  assert.deepEqual(git('show', '--name-only', '--format=', 'HEAD').split('\n').filter(Boolean).sort(), [CLAUDE_MOD, 'package-lock.json', 'package.json', 'plugins/aidrian/.claude-plugin/plugin.json', 'plugins/aidrian/package.json', 'plugins/aidrian/plugin.json'].sort());
   assert.deepEqual(tagsAt(git, 'HEAD'), ['aidrian-mod-v0.1.1', 'v1.5.0']);
   assert.equal(git('cat-file', '-t', 'v1.5.0'), 'tag\n', 'annotated');
   assert.equal(status(git), '');
@@ -495,7 +576,7 @@ test('release is all or nothing: an unreachable or disagreeing tag fails with no
   assert.equal(result.status, 1);
   assert.match(result.stderr, /^aidrian-mod: the latest tag reachable from HEAD is aidrian-mod-v0\.0\.9, but the files hold 0\.1\.0/);
   assert.equal(result.stdout, '');
-  assert.deepEqual(versions(dir), Array(5).fill('1.4.2'), "aidrian's waiting fix wrote nothing");
+  assert.deepEqual(versions(dir), Array(6).fill('1.4.2'), "aidrian's waiting fix wrote nothing");
   assert.equal(status(git), '');
 });
 
@@ -543,7 +624,7 @@ test("a missing tag fails with the tag-by-hand message in a shallow clone, and w
   assert.equal(result.status, 1, result.stdout);
   assert.match(result.stderr, /^aidrian-mod: no aidrian-mod-v\[0-9\]\* tag is reachable from HEAD, and the commit that added .* holds 0\.0\.0, not 0\.1\.0, so there is nothing to count commits from\. Tag the commit that set 0\.1\.0 once/);
   assert.equal(result.stdout, '');
-  assert.deepEqual(versions(dir), Array(5).fill('1.4.2'), "aidrian's waiting fix wrote nothing");
+  assert.deepEqual(versions(dir), Array(6).fill('1.4.2'), "aidrian's waiting fix wrote nothing");
 });
 
 test('commit-and-tag refuses a stray change, an unknown name, and a repeated one, with no commit and no tag', (t) => {
@@ -578,7 +659,7 @@ test('release --expect fails before writing unless its result lines are those, a
     const bad = run(dir, 'release', '--level', 'auto', '--expect', expect);
     assert.equal(bad.status, 1, JSON.stringify(expect));
     assert.equal(bad.stdout, '');
-    assert.deepEqual(versions(dir), Array(5).fill('1.4.2'), `${JSON.stringify(expect)} wrote nothing`);
+    assert.deepEqual(versions(dir), Array(6).fill('1.4.2'), `${JSON.stringify(expect)} wrote nothing`);
   }
   const good = run(dir, 'release', '--level', '', '--expect', 'aidrian=1.4.3 v1.4.3 v1.4.2');
   assert.equal(good.status, 0, good.stderr);

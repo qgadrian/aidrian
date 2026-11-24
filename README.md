@@ -2,7 +2,7 @@
 
 ###### what is this (disclaimer)
 
-* Claude Code and Codex plugin (for now)
+* Claude Code and Codex plugin, with the session ledger on OpenCode (for now)
 * A team of agents, skills, and safety hooks
 * Very opinionated, it might be extended or not
 * Very opinionated, deterministic behavior preferred ("less AI" for some things)
@@ -40,7 +40,8 @@
 ## Prerequisites
 
 - Node 22 or later, and git.
-- Claude Code, Codex CLI, or both.
+- Claude Code, Codex CLI, or both. OpenCode 2.0 or later runs the session ledger alone, with no guard, and its hook
+  scripts need Node 22 on its service's PATH ([Running aidrian](docs/providers/opencode.md#running-aidrian)).
 - The GitHub CLI, signed in with `gh auth login`. The `aidrian pr`, `aidrian report`, and `aidrian worktree` commands,
   and the `pr-*` skills, call `gh`.
 - Optional: a review bot. The default is `chatgpt-codex-connector[bot]`, the Codex GitHub connector, which reviews pull requests.
@@ -80,6 +81,18 @@ The last two lines install the agents from the newest installed version.
 Then open Codex and trust the plugin's hooks in `/hooks`.
 Installing from a private fork or mirror: [Codex](docs/providers/codex.md#private-fork-or-mirror).
 
+### OpenCode
+
+On OpenCode 2.0 and later the plugin keeps the session ledger only, and no aidrian guard holds an OpenCode session.
+Run this in a terminal:
+
+```sh
+opencode plugin add 'github:qgadrian/aidrian#main::path:plugins/aidrian'
+```
+
+The hooks need Node 22 on the PATH of OpenCode's background service. Pinning a release, a project entry, and what
+runs there: [OpenCode](docs/providers/opencode.md).
+
 ### In CI
 
 CI needs no plugin. Give the job Node 22 or later, and pin a tag or commit instead of the default branch:
@@ -90,7 +103,8 @@ git clone --depth 1 --branch <tag> https://github.com/qgadrian/aidrian.git /tmp/
 /tmp/aidrian-harness/plugins/aidrian/bin/aidrian lint
 ```
 
-Updates, install errors, and installing from a checkout: [Claude Code](docs/providers/claude-code.md), [Codex](docs/providers/codex.md).
+Updates, install errors, and installing from a checkout: [Claude Code](docs/providers/claude-code.md), [Codex](docs/providers/codex.md),
+[OpenCode](docs/providers/opencode.md).
 
 ## Quick start
 
@@ -104,7 +118,8 @@ export PATH="$plugin/bin:$PATH"
 ```
 
 If that fails, run the commands from the plugin folder instead: [Running aidrian](docs/providers/claude-code.md#running-aidrian).
-For Codex, see [Running aidrian](docs/providers/codex.md#running-aidrian).
+For Codex, see [Running aidrian](docs/providers/codex.md#running-aidrian); the OpenCode bridge puts it on the PATH of a
+local shell, by the 2.4.0 source ([Running aidrian](docs/providers/opencode.md#running-aidrian), [Limits](docs/providers/opencode.md#limits)).
 
 1. Set up the project folder and index the existing docs:
 
@@ -226,6 +241,7 @@ Codex names an agent `aidrian-<agent>`; ask for a skill by name.
 | [Adopting in a project](docs/adopting.md) | Finish setting up a project. |
 | [Claude Code](docs/providers/claude-code.md) | Update the plugin and see how Claude Code runs it. |
 | [Codex](docs/providers/codex.md) | Update the plugin and see how Codex runs it. |
+| [OpenCode](docs/providers/opencode.md) | Install the session ledger on OpenCode, and see what does not run there. |
 | [Claude mod](docs/claude-mod.md) | Install the band, pane, and notifications, or the status line fallback. |
 | [Agents and skills](docs/agents-and-skills.md) | Find the agent or skill for a job. |
 | [Agents](docs/agent-sources.md) | See how the agent sources are written and built. |

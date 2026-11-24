@@ -116,8 +116,8 @@ const DOMAINS = ['github.com', 'api.github.com'];
 
 // The fixture as a Codex driver session sees it: CODEX_THREAD_ID names the driver, CODEX_HOME holds `codexConfig`, and
 // HOME is the fixture's. `projectRun` is the base branch's.
-function codexRun(t, { projectRun = { allow: true, unverifiedHosts: true }, forgeConfig, config = {}, mode = { event: 'thread', hook: true }, project = {} } = {}) {
-  const fx = runFixture(t, { projectRun, forgeConfig, config: project });
+function codexRun(t, { projectRun = { allow: true, unverifiedHosts: true }, forgeConfig, config = {}, mode = { event: 'thread', hook: true }, project = {}, files, links } = {}) {
+  const fx = runFixture(t, { projectRun, forgeConfig, config: project, files, links });
   const codexHome = path.join(fx.root, 'codex-home');
   mkdirSync(codexHome);
   writeFileSync(path.join(codexHome, 'config.toml'), codexConfig(config));
@@ -466,6 +466,11 @@ test('start on Codex works in a fresh clone with exactly its granted folders, ho
   assert.equal(fx.git('-C', work, 'remote', 'get-url', 'origin').trim(), 'https://github.com/acme/widgets.git');
   assert.equal(resolvedPath(fx.git('-C', work, 'rev-parse', '--path-format=absolute', '--git-common-dir').trim()), git);
   assert.equal(statSync(drop).mode & 0o777, 0o700);
+  // Codex's confined start declares no placeholders, so its clone gets none, not even another host's.
+  for (const each of ['.opencode', 'opencode.json', 'opencode.jsonc', '.claude', '.mcp.json']) assert.equal(existsSync(path.join(work, each)), false, each);
+  assert.equal(codex.capabilities.projectStart.placeholders, undefined);
+  assert.doesNotMatch(existsSync(path.join(git, 'info', 'exclude')) ? readFileSync(path.join(git, 'info', 'exclude'), 'utf8') : '', /aidrian: the placeholders/u);
+  assert.equal(fx.git('-C', work, 'status', '--porcelain', '--untracked-files=all'), '');
   assert.equal(fx.git('worktree', 'list').trim().split('\n').length, 1, 'no worktree of the main checkout');
   const [, , start] = fx.rows();
   assert.deepEqual([start.event, start.outcome, start.child, start.drop], ['start', 'started', THREAD, path.join(fx.attempt(), 'drop')]);
@@ -473,6 +478,18 @@ test('start on Codex works in a fresh clone with exactly its granted folders, ho
   assert.deepEqual(readUnattendedMark(THREAD, { env: fx.env, home: fx.home }), { root: fx.dir, cwd: path.join(fx.attempt(), 'work'), project: 'launch', issue: 'ENG-1' }, 'the mark names the attempt\'s work folder it starts in');
   assert.equal(statSync(path.dirname(fx.log())).mode & 0o777, 0o700);
   assert.deepEqual(fx.cmd(['wait', 'launch', '--max-wait', '0']).out, ['running ENG-1']);
+});
+
+// Codex makes no placeholders, so only the index check (project-start.mjs indexLinkProblem) refuses a link at a host file
+// OpenCode loads; its `**/` pathspecs match the clone's root too, so a root link is refused as a nested one is.
+test('start on Codex refuses a clone whose base tracks opencode.json or .opencode as a link at its root, and no codex starts', (t) => {
+  for (const [name, target] of [['opencode.json', 'shared/keep.md'], ['.opencode', 'shared'], ['opencode.jsonc', 'shared/keep.md']]) {
+    const fx = codexRun(t, { files: { 'shared/keep.md': 'x\n' }, links: { [name]: target } });
+    const result = fx.cmd(['start', 'launch', 'ENG-1']);
+    assert.equal(result.exitCode, 1, name);
+    assert.match([...result.out, ...result.err].join('\n'), new RegExp(`holds ${name.replaceAll('.', '\\.')}, a link, where a host loads its files from any depth.*replace the link with the folder`, 'u'), name);
+    assert.equal(fx.fake.call(), null, `${name}: no codex process started`);
+  }
 });
 
 test('start on Codex allows through its network proxy exactly the forge\'s hosts and the registries both reads list, and passes corepack the npm registry', (t) => {

@@ -13,7 +13,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
-import { baseReader, continueStoreWriteDenial, mainCheckoutWriteDenial, projectRunWriteDenial, stateFolders } from '../plugins/aidrian/lib/handoff-guard.mjs';
+import { baseReader, continueStoreWriteDenial, hostServiceDenial, hostSessionStartDenial, mainCheckoutWriteDenial, projectRunWriteDenial, stateFolders } from '../plugins/aidrian/lib/handoff-guard.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { activeRuns, appendToRun, runsFolder } from '../plugins/aidrian/lib/project-run.mjs';
 import { ownAttemptFolder, projectRunActive } from '../plugins/aidrian/lib/project-run-guard.mjs';
@@ -120,6 +120,80 @@ test('a confined session writes its running attempt\'s folders in the runs folde
   for (const file of [path.join(runsFolder(fx.state), 'launch', 'ledger.jsonl'), path.join(attempt, 'other.txt'), path.join(attempts, 'ENG-1.2', 'work', 'x.txt'), path.join(runsFolder(fx.state), 'launch', 'logs', 'ENG-1.1.jsonl')]) {
     assert.match(ask(file)?.reason ?? '', /the folder of the project runs/u, file);
   }
+});
+
+// The session start guard as a subagent (`agent`) or a main session no Human attends (`unattended`) meets `command`.
+const startAsk = (command, { agent = 'agent-1', unattended = () => false } = {}) => hostSessionStartDenial(
+  bash(command, { session_id: OTHER, cwd: '/x', ...(agent ? { agent_id: agent } : {}) }), { names: { human: 'the Human' } }, { unattended },
+);
+const OPENCODE_STARTS = ['opencode', 'opencode run x', 'opencode serve', 'opencode mini', 'opencode ./src', 'opencode mcp frob', 'opencode service start',
+  'opencode auth list', 'opencode --standalone', '/opt/homebrew/bin/opencode run x', 'bash -c "opencode run x"', 'opencode $SUB',
+  // A command that talks to the background service, which OpenCode discovers or starts, and one that may restart it.
+  'opencode models', 'opencode session list', 'opencode mcp list', 'opencode upgrade',
+  // Through a package runner, by its packages' names.
+  'npx @opencode/cli run x', 'npx -y @opencode/cli@2.4.0 run x', 'pnpm dlx @opencode/cli run x', 'bunx opencode-ai serve', 'npx opencode-ai', 'npm exec opencode-ai run x',
+  // Past a runner's global option that takes the next word, before the runner's own word.
+  'npm --workspace web exec opencode run x', 'npm -w web exec opencode run x', 'npm --prefix /tmp/p exec opencode run x', 'npm -C /tmp/p x opencode run x',
+  'npx --prefix /tmp/p opencode run x', 'pnpm --dir web dlx @opencode/cli run x', 'pnpm -C web exec opencode run x', 'pnpm --filter web exec opencode run x', 'pnpm -F web exec opencode run x'];
+
+test('a subagent, and a session the background route started, may not start an OpenCode session, and may run what starts none', () => {
+  for (const command of OPENCODE_STARTS) {
+    assert.match(startAsk(command)?.reason ?? '', /starts or resumes a session of OpenCode outside the handoff gate/u, command);
+    assert.match(startAsk(command, { agent: null, unattended: () => true })?.reason ?? '', /outside the handoff gate/u, `unattended: ${command}`);
+    assert.equal(startAsk(command, { agent: null }), null, `an attended main session may: ${command}`);
+  }
+  for (const command of ['opencode --version', 'opencode -h', 'opencode mcp add x', 'opencode service stop', 'opencode debug paths', 'echo opencode', 'npx @opencode/cli --version', 'npx prettier .', 'npx prettier --check .',
+    'npm -w opencode exec prettier .', 'pnpm --dir opencode exec prettier .', 'pnpm -C x run opencode']) {
+    assert.equal(startAsk(command), null, command);
+  }
+  // Claude Code's package too.
+  assert.match(startAsk('npx @anthropic-ai/claude-code -p x')?.reason ?? '', /starts or resumes a session of Claude Code outside the handoff gate/u);
+});
+
+test('a package runner is read as the host program it names past any of its options, and a host program named later counts too', () => {
+  for (const [command, host] of [['npm --cache /d exec claude -p hi', 'Claude Code'], ['npm exec --cache /d claude -p hi', 'Claude Code'],
+    ['npx --cache /d @anthropic-ai/claude-code -p hi', 'Claude Code'], ['pnpm --dir x dlx opencode-ai run x', 'OpenCode'], ['npm --loglevel=silent --cache /d x codex exec hi', 'Codex'],
+    // The one false reading: a host's program named as a later argument of another program.
+    ['npx prettier claude', 'Claude Code']]) {
+    const why = new RegExp(`starts or resumes a session of ${host} outside the handoff gate`, 'u');
+    assert.match(startAsk(command)?.reason ?? '', why, command);
+    assert.match(startAsk(command, { agent: null, unattended: () => true })?.reason ?? '', why, `unattended: ${command}`);
+  }
+  for (const command of ['npm --cache /d exec prettier .', 'npm --cache /d install', 'pnpm --dir x install opencode-plugin']) assert.equal(startAsk(command), null, command);
+});
+
+test('a session no Human attends may not read OpenCode\'s service password or reach its background service, by any spelling, and other ports pass', () => {
+  const env = { HOME: '/home/user', XDG_STATE_HOME: '/xs', NUM: 7 };
+  const ask = (command, unattended = () => true) => hostServiceDenial(bash(command, { session_id: OTHER, cwd: '/x' }), { names: { human: 'the Human' } }, { unattended, env, home: '/home/user' });
+  const refused = [
+    'cat ~/.local/state/opencode/service.json', 'cat $HOME/.local/state/opencode/service.json', 'cat "${HOME}"/.local/state/opencode/service.json',
+    'cat /home/user/.local/state/opencode/service.json', 'jq -r .password $XDG_STATE_HOME/opencode/service.json', 'cat /XS/OpenCode/service.json',
+    'python3 -c "print(open(\'/xs/opencode/service.json\').read())"', 'ls ~/.config/opencode', 'cat ~/.local/share/opencode/auth.json',
+    'curl -u opencode:pw http://127.0.0.1:49374/api/session', 'curl localhost:49374/api/info', 'curl \'http://[::1]:49374/api/info\'',
+    // A path the shell reads the same, with a `.` part, a doubled slash, or a `..` part.
+    'cat ~/.local/state/./opencode/service.json', 'cat ~/.local/state//opencode/service.json', 'cat /xs/x/../opencode/service.json',
+    'cat $XDG_STATE_HOME/./opencode/service.json', 'ls ~/.config//opencode/',
+    // A variable that names a property every object has, or a value that is no text, expands to nothing.
+    'echo $constructor ${toString} $__proto__ $NUM; cat ~/.local/state/opencode/service.json',
+  ];
+  for (const command of refused) {
+    assert.match(ask(command)?.reason ?? '', /local service starts a session no guard holds/u, command);
+    assert.equal(ask(command, () => false), null, `an attended session may: ${command}`);
+  }
+  for (const command of ['curl http://localhost:3000', 'curl 127.0.0.1:493740', 'cat ~/.local/state/opencode-old/x', 'cat notes.md', 'ls ~/.local/state']) {
+    assert.equal(ask(command), null, command);
+  }
+});
+
+test('the service guard asks whether a Human attends only for a command that names the service, since the hook\'s answer runs git', () => {
+  const env = { HOME: '/home/user', XDG_STATE_HOME: '/xs' };
+  let asked = 0;
+  const unattended = () => (asked += 1) > 0;
+  const ask = (command) => hostServiceDenial(bash(command, { session_id: OTHER, cwd: '/x' }), { names: { human: 'the Human' } }, { unattended, env, home: '/home/user' });
+  for (const command of ['git status', 'npm test', 'curl http://localhost:3000', 'cat notes.md']) assert.equal(ask(command), null, command);
+  assert.equal(asked, 0, 'no command that names neither a store nor a port asks');
+  assert.match(ask('curl localhost:49374/api/info')?.reason ?? '', /local service starts a session no guard holds/u);
+  assert.equal(asked, 1, 'a command that names the port asks once');
 });
 
 test('a live unattended mark that names the project is a run under way', (t) => {

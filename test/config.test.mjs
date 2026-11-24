@@ -1116,7 +1116,7 @@ for (const [name, value, shown] of versionCases) {
 }
 
 test('models: .aidrian.local.json wins over config.json one field at a time, and a bad value keeps the one below it', (t) => {
-  assert.deepEqual(DEFAULTS.models, { claude: { agents: {} }, codex: { agents: {} } });
+  assert.deepEqual(DEFAULTS.models, { claude: { agents: {} }, codex: { agents: {} }, opencode: { agents: {} } });
   const team = project(t, {
     version: 1,
     models: {
@@ -1134,6 +1134,7 @@ test('models: .aidrian.local.json wins over config.json one field at a time, and
   assert.deepEqual(config.models, {
     claude: { agents: { 'planning-agent': { model: 'opus', effort: 'max' }, explorer: { model: 'haiku' }, integrator: { effort: 'low' } } },
     codex: { agents: { 'planning-agent': { model: 'gpt-5.5', effort: 'medium' } } },
+    opencode: { agents: {} },
   });
   assert.throws(() => { config.models.claude.agents.explorer.model = 'opus'; }, TypeError);
 });

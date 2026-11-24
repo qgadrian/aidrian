@@ -585,11 +585,13 @@ test('the reviews report`s calls: the merged list and its search string, +1 reac
   forge.mergedChanges(2, { sinceMs: Date.parse('2026-10-22T12:00:00.500Z') });
   assert.deepEqual(forge.reactions('acme/notes', 2, '+1'), [{ content: '+1' }, { content: '+1' }]);
   assert.deepEqual(forge.compare('acme/notes', 'c1', 'c2'), { status: 'ahead' });
+  forge.compare('acme/notes', 'main', 'c2', { host: 'ghe.example.com' });
   assert.deepEqual(args(), [
     ['pr', 'list', '--state', 'merged', '--limit', '20', '--json', 'number,reviews'],
     ['pr', 'list', '--state', 'merged', '--limit', '2', '--search', 'merged:>=2026-10-22T12:00:00+00:00', '--json', 'number,reviews'],
     ['api', '--paginate', '--slurp', 'repos/acme/notes/issues/2/reactions?content=%2B1'],
     ['api', 'repos/acme/notes/compare/c1...c2'],
+    ['api', '--hostname', 'ghe.example.com', 'repos/acme/notes/compare/main...c2'],
   ]);
 });
 

@@ -763,7 +763,7 @@ export function policyProblem({ trail, head, policies, base, prefix, docs, home,
   if (!github.requiredChecks.length) return 'the default branch names no required checks (github.requiredChecks), so a check that has not registered would read as passed';
   const paths = pathsProblem({ files: trail.files ?? [], changedFiles: trail.filesTotal ?? -1 }, prefix, { includeGuardedPaths: includesGuardedPaths(policies), includePolicyFiles: includesPolicyFiles(policies), policyFiles: policies.policyFiles, startDocs: docs });
   if (paths) return paths;
-  const headPolicy = headPolicyProblem(reads, { repo, host, head }, policies, trail.files ?? [], prefix);
+  const headPolicy = headPolicyProblem(reads, { repo, host, head, base: base ?? policies.main }, policies, trail.files ?? [], prefix);
   if (headPolicy) return headPolicy;
   if (typeof trail.author !== 'string' || typeof trail.viewer !== 'string' || trail.author.toLowerCase() !== trail.viewer.toLowerCase()) return `it is ${trail.author ?? 'nobody'}'s pull request, not ${trail.viewer ?? 'the gh user'}'s`;
   if (trail.commentsComplete !== true || trail.reviewsComplete !== true) return `the forge gave only part of its ${trail.commentsComplete !== true ? 'comments' : 'reviews'}, so who commented cannot be told`;

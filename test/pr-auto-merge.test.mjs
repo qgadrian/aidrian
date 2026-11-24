@@ -87,7 +87,7 @@ function headTree(modes) {
 const notStubbed = () => {
   throw Object.assign(new Error('Command failed: gh api'), { stderr: 'gh: Not Found (HTTP 404)\n' });
 };
-function fakeForge({ files = { 'acme/notes@main:.aidrian/config.json': configText(TEAM) }, view = {}, user = 'Adrian', defaultBranch = 'main', comments = {}, restFiles = notStubbed, pullHead = HEAD, modes = {}, tree = null } = {}) {
+function fakeForge({ files = { 'acme/notes@main:.aidrian/config.json': configText(TEAM) }, view = {}, user = 'Adrian', defaultBranch = 'main', comments = {}, restFiles = notStubbed, pullHead = HEAD, modes = {}, tree = null, compare = { behind_by: 0 } } = {}) {
   const calls = [];
   const list = (method, key) => (repo, n, { host } = {}) => {
     calls.push([method, repo, n, host]);
@@ -115,6 +115,10 @@ function fakeForge({ files = { 'acme/notes@main:.aidrian/config.json': configTex
       if (typeof files[key] === 'function') return files[key]();
       if (Array.isArray(files[key])) return files[key].map((name) => ({ type: 'file', name, path: `${file}/${name}` }));
       return { type: 'file', encoding: 'base64', content: Buffer.from(files[key]).toString('base64') };
+    },
+    compare: (repo, base, head, { host } = {}) => {
+      calls.push(['compare', repo, base, head, host]);
+      return typeof compare === 'function' ? compare() : compare;
     },
     tree: (repo, sha, { host } = {}) => {
       calls.push(['tree', repo, sha, host]);
@@ -942,7 +946,7 @@ test('includeGuardedPaths true on the default branch and the base lets a guarded
   const policies = { ...LIFTED, includePolicyFiles: true };
   // The head's own config, read at its SHA, keeps the default branch's check lists and state folder.
   const open = { ...branches(policies, policies), [`acme/notes@${HEAD}:.aidrian/config.json`]: configText(policies) };
-  for (const file of ['.aidrian/config.json', '.aidrian.json', 'apps/web/.aidrian/config.json', '.aidrian.local.json', '.aidrian']) {
+  for (const file of ['.aidrian/config.json', 'apps/web/.aidrian/config.json', '.aidrian.local.json', '.aidrian', 'apps/web/.aidrian.json']) {
     assert.deepEqual(reasonOf(t, r, onStack(open, 'AGENTS.md', file)), [0, null], `includePolicyFiles: ${file}`);
   }
   const read = { files: { ...pointing('main', 'tools/policy', policies), ...pointing(HEAD, 'tools/policy', policies) }, view: { files: [{ path: 'tools/policy/config.json', changeType: 'MODIFIED' }], changedFiles: 1 } };
@@ -976,6 +980,19 @@ test('includeGuardedPaths true on the default branch and the base lets a guarded
   assert.deepEqual(reasonOf(t, r, headed(visual)), [0, null], 'a head that changes only review.visual');
   assert.match(run(t, r, ['7'], headed('{ not json')).out[0], /its config at head abcdef1 cannot be read whole/u, 'a head config that does not parse');
   assert.match(run(t, r, ['7'], onStack(branches(policies, policies), '.aidrian/config.json')).out[0], /head abcdef1 has no config/u, 'a head with no config');
+  // The head must hold the base's tip, so its config is the merged one; a compare that fails refuses.
+  const behind = run(t, r, ['7'], { ...headed(configText(policies)), compare: { behind_by: 2 } });
+  assert.deepEqual([behind.code, behind.out[0]], [1, 'auto-merge off for #7: head abcdef1 is behind its base feat/stack by 2 commits, so the merged config is not the one checked; merge the base first']);
+  const unread = run(t, r, ['7'], { ...headed(configText(policies)), compare: () => { throw new Error('gh: Not Found (HTTP 404)'); } });
+  assert.match(unread.out[0], /head abcdef1 cannot be compared with its base on the forge, so the merged config is not the one checked/u);
+  assert.ok(run(t, r, ['7'], headed(configText(policies))).calls.some((call) => call[0] === 'compare' && call[2] === 'feat/stack' && call[3] === HEAD), 'base...head');
+  // A pointer file the pull request changes, a config the head moves, and a malformed pointer at the head refuse.
+  const pointed = run(t, r, ['7'], onStack({ ...branches(policies, policies), [`acme/notes@${HEAD}:.aidrian/config.json`]: configText(policies) }, '.aidrian/config.json', '.aidrian.json'));
+  assert.match(pointed.out[0], /it changes "\.aidrian\.json", the pointer file that locates the config/u);
+  const relocated = { ...branches(policies, policies), ...pointing(HEAD, 'tools/policy', policies) };
+  assert.match(run(t, r, ['7'], onStack(relocated, '.aidrian/config.json')).out[0], /its config at head abcdef1 is "tools\/policy\/config\.json", not "\.aidrian\/config\.json"/u, 'a pointer the base changed underneath');
+  const malformed = { ...branches(policies, policies), [`acme/notes@${HEAD}:.aidrian.json`]: '{ "dir": ', [`acme/notes@${HEAD}:.aidrian/config.json`]: configText(policies) };
+  assert.match(run(t, r, ['7'], onStack(malformed, '.aidrian/config.json')).out[0], /cannot be read whole \(\.aidrian\.json: invalid JSON/u, 'a malformed pointer with a valid fallback config');
   assert.equal(headPolicyProblem(null, { repo: 'acme/notes', head: HEAD }, { policy: JSON.parse(configText(LIFTED)), basePolicy: JSON.parse(configText(LIFTED)), policyFiles: [] }, [{ path: '.aidrian/config.json' }]), null, 'no lift, no read');
 });
 

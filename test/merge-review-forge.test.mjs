@@ -98,7 +98,7 @@ const forged = (flows = []) => (state) => {
 
 // The forge facade `aidrian pr auto-merge` reads through, holding `config` on the default branch and `trail` as the
 // review trail. `files` are the pull request's changed paths; `head` is the config the head commit holds, `config` by default.
-function cliForge(config, { trail = trailOf(config), files = ['src/app.js'], head = config } = {}) {
+function cliForge(config, { trail = trailOf(config), files = ['src/app.js'], head = config, compare = { behind_by: 0 } } = {}) {
   const calls = [];
   const changed = files.map((each) => ({ path: each, changeType: 'MODIFIED' }));
   const forge = {
@@ -109,6 +109,7 @@ function cliForge(config, { trail = trailOf(config), files = ['src/app.js'], hea
       if (file !== '.aidrian/config.json') throw Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)\n' });
       return { type: 'file', encoding: 'base64', content: Buffer.from(ref === HEAD ? head : config).toString('base64') };
     },
+    compare: () => compare,
     viewer: () => 'adrian',
     conversationComments: () => [],
     reviews: () => [],
@@ -134,8 +135,9 @@ function autoMerge(t, r, { unattended = true, ...options } = {}) {
 // The forge the merge guard's trust reads go through, as budgetedForge's `make`: `trail` as the review trail, and
 // `config` for the REST reads a pointer to another folder needs, and `head` the config the head commit holds. Each
 // call is kept in `calls`.
-const guardForge = (config, trail, calls = [], head = config) => () => ({
+const guardForge = (config, trail, calls = [], head = config, compare = { behind_by: 0 }) => () => ({
   repository: () => (calls.push(['repository']), { default_branch: 'main' }),
+  compare: (repoName, base, sha) => (calls.push(['compare', base, sha]), compare),
   contents: (repoName, file, ref) => {
     calls.push(['contents', file]);
     if (file !== '.aidrian/config.json') throw Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)\n' });
@@ -147,8 +149,8 @@ const guardForge = (config, trail, calls = [], head = config) => () => ({
   },
 });
 const viewer = () => ({ number: 7, headRefOid: HEAD });
-const merge = (r, command, { mark = { root: r.dir }, trail = trailOf(r.text), calls = [], input = { session_id: 'unattended-1' }, cwd = r.dir, head = r.text } = {}) =>
-  check(command, { cwd, env: {}, input, viewPr: viewer, unattendedMark: () => mark, trustForge: guardForge(r.text, trail, calls, head) });
+const merge = (r, command, { mark = { root: r.dir }, trail = trailOf(r.text), calls = [], input = { session_id: 'unattended-1' }, cwd = r.dir, head = r.text, compare } = {}) =>
+  check(command, { cwd, env: {}, input, viewPr: viewer, unattendedMark: () => mark, trustForge: guardForge(r.text, trail, calls, head, compare) });
 const mcp = (r, toolInput, { mark = { root: r.dir }, trail = trailOf(r.text), cwd = r.dir } = {}) =>
   checkMcp(toolInput, { cwd, input: { session_id: 'unattended-1' }, viewPr: viewer, unattendedMark: () => mark, trustForge: guardForge(r.text, trail) });
 const MERGE = `gh pr merge 7 --squash --match-head-commit ${HEAD}`;
@@ -708,6 +710,12 @@ test('includePolicyFiles with includeGuardedPaths on both branches lets a .aidri
   const visual = JSON.stringify({ ...config, review: { visual: { platform: 'web', targets: [{ files: ['src/**'], routes: ['/'] }], viewports: [390] } } });
   assert.equal(autoMerge(t, r, { files: [file], trail, head: visual }).code, 0, 'the gate, only review.visual');
   assert.equal(merge(r, MERGE, { trail, head: visual }), null, 'the guard, only review.visual');
+  // A head behind its base is off in both: its config is not the one the merge leaves.
+  const stale = autoMerge(t, r, { files: [file], trail, compare: { behind_by: 1 } });
+  assert.match(stale.result.why, /head abcdef1 is behind its base main by 1 commit, so the merged config is not the one checked; merge the base first/u);
+  const calls = [];
+  assert.match(merge(r, MERGE, { trail, compare: { behind_by: 1 }, calls }) ?? '', /is behind its base main by 1 commit/u, 'the guard');
+  assert.ok(calls.some((call) => call[0] === 'compare' && call[1] === 'main' && call[2] === HEAD), 'the guard compares main...head');
   // The key alone, with includeGuardedPaths off, lifts nothing.
   const alone = JSON.stringify(configOf({ github: { ...CHECKS, autoMerge: { ...TEAM, includePolicyFiles: true } }, projectRun: { allow: true } }));
   assert.match(merge({ ...r, text: alone }, MERGE, { trail: trailOf(alone, changing(file)) }) ?? '', /which instructs AI sessions/u, 'the guard, the key alone');

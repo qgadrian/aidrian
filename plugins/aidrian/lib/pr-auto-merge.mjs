@@ -89,7 +89,7 @@ import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
 import { knownPrefix } from './git.mjs';
 import { indexedAlways } from './knowledge.mjs';
 import { noneNeededProblem, RELEASE_SCRIPT, startLoadProblem, startUnreadable } from './pr-auto-merge-docs.mjs';
-import { configPathIn, GUARDED_PATHS, isPluginRepository, isPolicyPath, knowledgeIn, mayFollowTeamDefault, PLUGIN_REPOSITORY_PATHS, POLICY_PATHS, trailPaths } from './project.mjs';
+import { configPathIn, GUARDED_PATHS, isPluginRepository, isPolicyPath, knowledgeIn, strictConfigPathIn, mayFollowTeamDefault, PLUGIN_REPOSITORY_PATHS, POLICY_PATHS, trailPaths } from './project.mjs';
 import { hostOf } from './remotes.mjs';
 import { prNumber, repoName } from './review-gate.mjs';
 import { isFindingId } from './review/findings.mjs';
@@ -337,25 +337,45 @@ export const includesGuardedPaths = ({ policy, basePolicy }) =>
 export const includesPolicyFiles = (policies) => includesGuardedPaths(policies)
   && policies.policy.github.autoMerge.includePolicyFiles === true && policies.basePolicy.github.autoMerge.includePolicyFiles === true;
 
-// Why a change the includePolicyFiles lift lets through the paths check may not merge, or null: the head's own config,
-// read from the forge at exactly the head commit `pr.head`, as branchConfig reads a branch's (its pointer file, then the
-// config.json that locates), must keep the default branch's github.requiredChecks, conditionalChecks, and
-// ignoreCancelledChecks as sets, and its state.dir. The checks row compares only the checkout the gate runs in, which may
-// be the unchanged base, so without this a pull request could drop the checks or move the review record that judge the
-// merge after its own. Read only while the lift counts (includesPolicyFiles) and a changed file in `files` ({ path },
-// from the top of the repository) is a policy file (isPolicyPath, with `policies.policyFiles`). A head with no config, a
-// config that does not parse or has an error, or a read that fails refuses. `pr` is { repo, host, head }, and `policies`
-// branchPolicies' answer. Both the gate (gateVerdict) and the merge guard (merge-review.mjs policyProblem) ask it.
+// Why a change the includePolicyFiles lift lets through the paths check may not merge, or null. The policy that judges
+// the merges after this one is the config the merge leaves, so, in this order, each failing closed:
+//   - the pull request changes no pointer file (`.aidrian.json` at the project root, in any case), which would move the
+//     config the gate reads;
+//   - its head holds the base's tip now: the forge's compare of the base branch `pr.base` with the head, through the same
+//     facade, is behind by none, so the head's config is the one the merge leaves (a read that fails refuses);
+//   - the head's own config, read from the forge at exactly the head commit `pr.head` as branchConfig reads a branch's,
+//     its pointer by strictConfigPathIn, so a malformed one never falls back to the default folder, sits at the path the
+//     default branch's does (`policies.configFile`), parses with no error, and keeps the default branch's
+//     github.requiredChecks, conditionalChecks, and ignoreCancelledChecks as sets, and its state.dir.
+// The checks row compares only the checkout the gate runs in, which may be the unchanged base, so without this a pull
+// request could drop the checks or move the review record that judge the merge after its own. Read only while the lift
+// counts (includesPolicyFiles) and a changed file in `files` ({ path }, from the top of the repository) is a policy file
+// (isPolicyPath, with `policies.policyFiles`). `pr` is { repo, host, head, base }, and `policies` branchPolicies' answer.
+// Both the gate (gateVerdict) and the merge guard (merge-review.mjs policyProblem) ask it.
 export function headPolicyProblem(forge, pr, policies, files, prefix = '') {
   if (!includesPolicyFiles(policies) || !files.some(({ path }) => isPolicyPath(path, policies.policyFiles))) return null;
   const at = String(pr.head).slice(0, 7);
+  const pointer = `${prefix}.aidrian.json`.toLowerCase();
+  const moved = files.find(({ path }) => path.toLowerCase() === pointer);
+  if (moved) return `it changes ${JSON.stringify(moved.path)}, the pointer file that locates the config, which includePolicyFiles never lets a pull request change by itself`;
+  const behind = (() => {
+    try {
+      const compared = forge.compare(pr.repo, pr.base, pr.head, { host: pr.host });
+      return Number.isInteger(compared?.behind_by) ? compared.behind_by : null;
+    } catch {
+      return null;
+    }
+  })();
+  if (behind !== 0) return `head ${at} ${behind === null ? 'cannot be compared with its base on the forge' : `is behind its base ${pr.base} by ${behind} ${behind === 1 ? 'commit' : 'commits'}`}, so the merged config is not the one checked; merge the base first`;
+  const seen = [];
   let config;
   try {
-    config = branchConfig(forge, pr, `head ${at}`, prefix, { ref: pr.head, parse: (text, file) => (text === null ? null : strictConfigFromText(text, file, () => true)) });
+    config = branchConfig(forge, pr, `head ${at}`, prefix, { ref: pr.head, seen, locate: strictConfigPathIn, parse: (text, file) => (text === null ? null : strictConfigFromText(text, file, () => true)) });
   } catch (error) {
     return `it changes a policy file, and its config at head ${at} cannot be read whole (${String(error.message).split('\n')[0]})`;
   }
   if (config === null) return `it changes a policy file, and head ${at} has no config, so the checks that judge the next merge cannot be told`;
+  if (seen.at(-1)?.toLowerCase() !== String(policies.configFile).toLowerCase()) return `its config at head ${at} is ${JSON.stringify(seen.at(-1))}, not ${JSON.stringify(policies.configFile)} where ${pr.repo} ${policies.main} keeps it, which includePolicyFiles never lets a pull request move by itself`;
   const { github: policy, state } = policies.policy;
   const same = (a, b) => new Set(a).size === new Set(b).size && a.every((each) => b.includes(each));
   const differing = CHECK_LISTS.filter((key) => !same(policy[key], config.github[key]));

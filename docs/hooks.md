@@ -863,8 +863,8 @@ What it cannot read runs, by the Human's decision, and is out of its sight:
 - A GitHub MCP server installed under a name that holds no "github", such as a plugin `gh` with a server `gh`, or a connector
   Codex suffixes with a hash: the merge guard and the review gate share this gap
   ([A GitHub MCP server from a plugin](providers/claude-code.md#a-github-mcp-server-from-a-plugin)).
-- An `AIDRIAN_ALLOW_UNHELD_READY` entry in a host's settings `env` reaches every later session, as it does for every override;
-  a follow-up covers them all.
+- An `AIDRIAN_ALLOW_UNHELD_READY` entry the Human puts in a host's settings `env` reaches every later session, as it does
+  for every override; a session's own write of one is refused ([Agent gates](#agent-gates)).
 - `origin/HEAD` names the default branch for the call `status` skips: a session that rewrites it, on a pull request stacked
   on its own branch, chooses both branches whose config is read.
 - An off read from stale or rewritten git refs: [The commands](config.md#the-commands) names both limits, which the hold
@@ -1096,6 +1096,15 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   the files or a folder that holds it, as `printf x | tee out/alias*` does when `out/alias` links to config.json.
 - A call without `agent_id` is the main session's, which may still change them.
 - A block is [recorded](#recorded-blocks) as `config-guard`, with the file it changes as its reason.
+- With or without gates, no session, attended or not, nor any subagent, may write an [override](#overrides) into a
+  host settings file whose `env` reaches every later session's hooks: a Write, Edit, or apply_patch whose input names
+  `AIDRIAN_ALLOW_`, a JSON escape such as `\u0041` read as its letter, or a Bash command that names it and writes that
+  file, by its path or by a name an interpreter's code gives. The host adapter names the files
+  (`capabilities.envSettings`): on Claude Code, `.claude/settings.json` and `.claude/settings.local.json` of each
+  checkout of the project, and the user's `settings.json` in its config folder, outside a project too; Codex and
+  OpenCode name none. An edit that only removes one is refused as well: the Human sets and lifts overrides, in their
+  own shell. The block is recorded as `config-guard`. Its known limits, as the command text alone shows: a name built at
+  run time, and a copy or move of a file that already holds one.
 - With or without gates, a subagent may not target `.aidrian.local.json` with a Write, Edit, or apply_patch that changes a machine switch,
   or a Bash command that names `autoMerge`, `unattendedWaiver`, or `reviewApprovals`, whether it names the file, a glob
   that matches it, such as `.aidrian.local.js*`, or a glob that passes a link to it already on disk, such as `tee out/alias*`:
@@ -2485,6 +2494,8 @@ A project whose CI cannot run the suite leaves `testing.pushFirstMinutes` at 0, 
 An override is for a human, and agents must never set one, `AIDRIAN_ALLOW_UNHELD_READY` of the [ready hold](#ready-hold) included.
 A Bash rule's override is read by the hook, which runs in the session's environment,
 so the Human sets it in their own shell before they start the session.
+The agent gate hook refuses a session's write of an `AIDRIAN_ALLOW_*` name into a host settings file whose `env`
+reaches later sessions ([Agent gates](#agent-gates)), which would turn a guard off for each of them unseen.
 
 `AIDRIAN_ALLOW_MAIN_COMMIT=1` is different: git runs the [commit guard](#commit-guard) inside the commit, so it reads the
 commit's own environment. The Human puts it in front of one command in their own terminal,

@@ -543,7 +543,7 @@ function mergeState(status) {
 function mergeLine(merge, status, result, host, command) {
   const checks = `\`aidrian pr checks ${result.pr} -R ${repoArg(result, host)}\` exits 0`;
   const run = command ? `then runs \`${command}\``
-    : `picks a merge strategy, since the team sets none, then runs \`gh pr merge ${result.pr} --repo ${repoArg(result, host)} --match-head-commit ${result.head}\` with its flag`;
+    : `picks a merge strategy, since the team sets none, then runs \`gh pr merge ${result.pr} --repo ${repoArg(result, host)} --match-head-commit ${result.head}${result.deleteBranch ? ' --delete-branch' : ''}\` with its flag`;
   return {
     merged: `merged: GitHub merged it at ${status.mergedAt ?? 'a time it does not give'}`,
     queued: 'merge queued: GitHub\'s merge queue holds it, and merges it once the queue\'s checks pass',
@@ -697,9 +697,9 @@ export function gateVerdict(argv, project, { forge = forgeFor(project.root), ses
       // The body at the head, read once and only for a waiver above low the head's review re-weighed: the gate holds only
       // the waivers it still lists.
       let accepted = null;
-      const accepts = (entry) => {
+      const accepts = (entry, raised) => {
         accepted ??= bodyAt(forge, pr, policy.github.pullRequest?.residuals?.section);
-        return accepted(entry);
+        return accepted(entry, raised);
       };
       let problem;
       try {

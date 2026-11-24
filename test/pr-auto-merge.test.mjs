@@ -226,6 +226,8 @@ test('aidrian pr auto-merge: a gate that allows a merge nothing ran exits 4, nam
   const unset = { 'acme/notes@main:.aidrian/config.json': configText({ ...TEAM, strategy: null, deleteBranch: false }) };
   const keep = runCommand(t, r, ['7'], OPEN, { files: unset });
   assert.match(keep.out[0], new RegExp(`picks a merge strategy, since the team sets none, then runs \`gh pr merge 7 --repo github\\.com/acme/notes --match-head-commit ${HEAD}\` with its flag$`, 'u'));
+  const unsetDeleting = runCommand(t, r, ['7'], OPEN, { files: { 'acme/notes@main:.aidrian/config.json': configText({ ...TEAM, strategy: null }) } });
+  assert.match(unsetDeleting.out[0], new RegExp(`then runs \`gh pr merge 7 --repo github\\.com/acme/notes --match-head-commit ${HEAD} --delete-branch\` with its flag$`, 'u'), 'no strategy set: the branch flag the team asks for stays');
   assert.doesNotMatch(keep.out[0], /[<>|]/u, 'nothing a shell reads as a redirect or a pipe');
   assert.equal(json(runCommand(t, r, ['7', '--json'], OPEN, { files: unset })).command, null, 'no strategy set: no command to run as it is');
 });
@@ -276,6 +278,7 @@ test('review: a waiver above low the body dropped, which the review of the head 
   r.record((state) => {
     finished(state);
     state.passes = { 'engine:codex-local': { head: HEAD, list: [], carried: [ended] } };
+    state.index = { 'R1-1': { id: 'R1-1', title: 'Preserve citations', file: 'src/a.js', severity: 'medium', state: 'accepted', pass: 'engine:codex-local' } };
   });
   const body = (lines) => `## Summary\n\nx\n\n## Accepted residuals\n\n${lines.map((line) => `- ${line}`).join('\n')}\n`;
   const at = (text, head = HEAD) => ({ pullHead: () => ({ head: { sha: head }, body: text }) });

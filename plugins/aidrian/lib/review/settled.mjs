@@ -186,32 +186,44 @@ const listedFixed = (fixed, each) => (isFindingId(each.ruled_id)
 
 // The waiver above low that holds auto-merge, or null: the first any pass record holds, on any head, ended or standing, but
 // an ended one only until a listing holds its title and file as fixed. With `head` and `accepts`, as the auto-merge gate
-// reads it (#623 stayed held after its fix): a finding the body no longer accepts, by `accepts(entry)` (bodyAccepts),
-// that a pass record of exactly `head` carries as ended no longer holds, on any record. That pass ran on the head after the
-// residual left the pass input, and was given the finding to weigh again with nothing that settles it (endedContext);
-// the gate reads it only under a finished review of that head with nothing owed. A waiver the body still lists holds,
-// whatever kept it from the pass input, such as the residual limit or an author the step reads as outside. Without
-// them, as a judge's verdict at the round cap reads it, an ended waiver holds until a listing. `accepts` runs only for
-// such a finding, so a caller may read the body lazily, and its throw goes to the caller.
+// reads it (#623 stayed held after its fix): a finding the body no longer accepts, by `accepts(entry, raised)`
+// (bodyAccepts), no longer holds, on any record, once the pass that raised it, as the finding index names it, ran on
+// exactly `head` over the finding's file and carries it as ended. That pass was given the finding to weigh again with
+// nothing that settles it (endedContext), and the gate reads it only under a finished review of that head with nothing
+// owed. Another pass, such as a slice over other files or one of another lens, proves nothing of it, and nor does a slice
+// result reused from an earlier head. A waiver the body still lists holds, whatever kept it from the pass input, such as
+// the residual limit or an author the step reads as outside. Without them, as a judge's verdict at the round cap reads it,
+// an ended waiver holds until a listing. `accepts` runs only for such a finding, so a caller may read the body lazily,
+// and its throw goes to the caller.
 export function heldWaiver(state, { head = null, accepts = null } = {}) {
   const fixed = fixedListings(state);
   const current = currentIds(state);
+  const index = isObject(state?.index) ? state.index : {};
+  const raisedBy = (each) => [each.ruled_id, each.id].filter(isFindingId).flatMap((id) => [index[id], index[current(id)]]).map((entry) => entry?.pass).filter((pass) => typeof pass === 'string');
+  const covers = (result, each) => result.files == null || (Array.isArray(result.files) && result.files.includes(trim(each.file)));
   const reweighed = head === null || typeof accepts !== 'function' ? []
-    : Object.values(state?.passes ?? {}).filter((result) => result?.head === head).flatMap(onRecord).filter((each) => each?.ended && waiverAboveLow(each));
-  const dropped = (each) => reweighed.some((other) => sameWaiver(other, each, current)) && !accepts(each);
+    : Object.entries(state?.passes ?? {}).filter(([, result]) => isObject(result) && result.head === head)
+      .flatMap(([id, result]) => onRecord(result).filter((each) => each?.ended && waiverAboveLow(each) && raisedBy(each).includes(id) && covers(result, each)));
+  const raised = () => [...everyEntry(state).filter(waiverAboveLow).map((each) => ({ title: waiverTitle(each), file: trim(each.file) })),
+    ...Object.values(index).filter(isObject).map((entry) => ({ title: trim(entry.title), file: trim(entry.file) }))].filter((each) => each.title);
+  const dropped = (each) => reweighed.some((other) => sameWaiver(other, each, current)) && !accepts(each, raised());
   return everyEntry(state).find((each) => waiverAboveLow(each) && !(each.ended && listedFixed(fixed, each)) && !dropped(each)) ?? null;
 }
 
-// Whether the pull request body `body` still accepts the waiver `entry` under `section` (decisions.mjs residualItems), every
-// item read, past MAX_RESIDUALS too: an item whose text, cut as residualTexts cuts it, is the waiver's residual, or one
-// that opens with the finding's title and a colon, as a residual names a raised finding (namedBy). A body that is no
-// string accepts nothing.
+// Whether the pull request body `body` still accepts the waiver `entry` under `section` (decisions.mjs residualItems),
+// every item read, past MAX_RESIDUALS too: an item whose text, cut as residualTexts cuts it, is the waiver's residual, or
+// one that names its finding by namedBy's rules over `raised`, the record's raised findings ({ title, file }): the
+// finding's title, a colon, and a reason, the longest title winning, and a title raised in several files naming only the
+// files whose path it holds. A body that is no string accepts nothing.
 export function bodyAccepts(body, section) {
   const items = (typeof body === 'string' ? residualItems(body, section ?? undefined) ?? [] : []).map((item) => trim(trim(item?.text).replace(LIST_ITEM, ''))).filter(Boolean);
-  return (entry) => {
+  return (entry, raised = []) => {
     const residual = trim(entry?.residual);
     const title = waiverTitle(entry);
-    return items.some((text) => (residual !== '' && text.slice(0, MAX_RESIDUAL_CHARS) === residual) || (title !== '' && text.startsWith(`${title}:`)));
+    const file = trim(entry?.file);
+    const candidates = [...raised, { title, file }].filter((each) => each.title);
+    return items.some((text) => (residual !== '' && text.slice(0, MAX_RESIDUAL_CHARS) === residual)
+      || namedBy(text, candidates).some((each) => each.title === title && each.file === file));
   };
 }
 

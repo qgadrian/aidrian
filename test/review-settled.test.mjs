@@ -1416,7 +1416,9 @@ test('the auto-merge gate judges only the waivers the body still accepts: one th
   // As #623's record held it: the body dropped the residual, so the pass that reviewed the head carries it ended.
   const ended = { id: 'R5-11', mint: 'eb765f86', title: 'Preserve citations', already_ruled: 'Preserve citations', from: 'residual', severity: 'medium', settled_severity: 'medium', residual: RESIDUAL_TEXT, ended: true, file: 'src/a.js', line: 3, ruled_id: 'R1-1' };
   const { ended: _ended, ...standing } = ended;
-  const record = (passes) => ({ ...emptyState(7, 'o/r'), passes, outcome: { status: 'received', head: HEAD, at: '2026-11-24T11:31:20.832Z' } });
+  // The finding index names the pass that raised each finding: the release reads the ended copy on that pass only.
+  const index = { 'R1-1': { id: 'R1-1', title: 'Preserve citations', file: 'src/a.js', severity: 'medium', state: 'accepted', pass: 'engine:codex-local' } };
+  const record = (passes, more = {}) => ({ ...emptyState(7, 'o/r'), index: { ...index, ...more }, passes, outcome: { status: 'received', head: HEAD, at: '2026-11-24T11:31:20.832Z' } });
   const bodyWith = (lines) => `## Summary\n\nx\n\n## Accepted residuals\n\n${lines.map((line) => `- ${line}`).join('\n')}\n`;
   const dropped = { accepts: bodyAccepts(bodyWith(['Another: reason']), undefined) };
   const gate = (state, reads = dropped) => reviewProblem(state, HEAD, {}, reads);
@@ -1439,6 +1441,22 @@ test('the auto-merge gate judges only the waivers the body still accepts: one th
   assert.match(gate(notReweighed) ?? '', /no listing holds it fixed/u, 'ended on another head only: no review of this head weighed it');
   const another = record({ 'engine:codex-local': { head: HEAD, list: [], carried: [{ ...ended, ruled_id: 'R1-2', id: 'R5-12' }] }, 'agent:code-reviewer': { head: OLDER, list: [], ruled: [standing] } });
   assert.ok(gate(another), 'the head ended another finding, not this one');
+  // Only the pass that raised it, over its file, on this head: never a slice over other files, nor a slice result reused
+  // from an earlier head while a slice for an unrelated file ran on this one.
+  const slices = record({ 'engine:codex-local#2': { head: HEAD, list: [], files: ['src/b.js'], carried: [ended] }, 'engine:codex-local': { head: OLDER, list: [], files: ['src/a.js'], ruled: [standing] } });
+  assert.ok(gate(slices), 'another slice ran on the head, and the one that raised it was reused from an earlier head');
+  const narrowed = record({ 'engine:codex-local': { head: HEAD, list: [], files: ['src/b.js'], carried: [ended] } });
+  assert.ok(gate(narrowed), 'the raising pass ran over other files on this head');
+  const covering = record({ 'engine:codex-local': { head: HEAD, list: [], files: ['src/a.js', 'src/b.js'], carried: [ended] } });
+  assert.equal(gate(covering), null, 'it ran over the finding\'s file');
+  assert.ok(gate(record({ 'engine:codex-local': { head: HEAD, list: [], carried: [ended] } }, { 'R1-1': { ...index['R1-1'], pass: 'agent:docs-reviewer' } })), 'another pass raised it');
+  assert.ok(gate({ ...onHead, index: {} }), 'no index entry names who raised it');
+  // namedBy's rules: a title raised in two files is named only in the file whose path the line holds.
+  const twin = { 'R1-9': { id: 'R1-9', title: 'Preserve citations', file: 'src/z.js', severity: 'medium', state: 'accepted', pass: 'engine:codex-local' } };
+  const keepsOther = { accepts: bodyAccepts(bodyWith(['Preserve citations: src/z.js keeps it, for a reason']), undefined) };
+  assert.equal(gate(record({ 'engine:codex-local': { head: HEAD, list: [], carried: [ended] } }, twin), keepsOther), null, 'a line for the other file keeps this one dropped');
+  assert.ok(gate(record({ 'engine:codex-local': { head: HEAD, list: [], carried: [ended] } }, twin), { accepts: bodyAccepts(bodyWith(['Preserve citations: src/a.js keeps it, for a reason']), undefined) }), 'a line holding this file\'s path still lists it');
+  assert.equal(gate(onHead, { accepts: bodyAccepts(bodyWith(['Preserve citations:']), undefined) }), null, 'a title with no reason names nothing');
   let reads = 0;
   assert.equal(reviewProblem(stillOffered, HEAD, {}, { accepts: () => { reads += 1; return false; } }) !== null, true);
   assert.equal(reads, 0, 'the body is read only for a waiver the head\'s pass ended');

@@ -206,15 +206,32 @@ export function heldWaiver(state, { head = null, accepts = null } = {}) {
   const reweighed = head === null || typeof accepts !== 'function' ? []
     : Object.entries(state?.passes ?? {}).filter(([, result]) => isObject(result) && result.head === head)
       .flatMap(([id, result]) => onRecord(result).filter((each) => each?.ended && waiverAboveLow(each) && raisedBy(each).includes(id) && covers(result, each)));
-  const dropped = (each) => reweighed.some((other) => sameWaiver(other, each, current)) && !accepts(each, raisedOf(state));
+  // The raised findings a body line may name: the review pass's own, and every waived finding the record no longer holds
+  // there, such as a round that kept no findings, all at once, so two lost findings of one title resolve by path together.
+  let candidates = null;
+  const raised = () => {
+    if (candidates) return candidates;
+    const known = raisedOf(state);
+    const seen = new Set(known.map(where));
+    candidates = [...known];
+    for (const each of everyEntry(state).filter(waiverAboveLow)) {
+      const own = { title: waiverTitle(each), file: trim(each.file) };
+      if (own.title && own.file && !seen.has(where(own))) {
+        seen.add(where(own));
+        candidates.push(own);
+      }
+    }
+    return candidates;
+  };
+  const dropped = (each) => reweighed.some((other) => sameWaiver(other, each, current)) && !accepts(each, raised());
   return everyEntry(state).find((each) => waiverAboveLow(each) && !(each.ended && listedFixed(fixed, each)) && !dropped(each)) ?? null;
 }
 
 // Whether the pull request body `body` still accepts the waiver `entry` under `section` (decisions.mjs residualItems),
 // every item read, past MAX_RESIDUALS too: an item whose text, cut as residualTexts cuts it, is the waiver's residual, or
 // one that names its finding, title and file, as the review pass reads a residual: namedBy over `raised`, the record's
-// raised findings as raisedOf gives them, with the waiver's own finding added when the record no longer holds it, such
-// as a round that kept no findings, so a lost entry never ends a hold. A body that is no string lists nothing.
+// raised findings as heldWaiver gathers them, with the waiver's own finding added when `raised` lacks it, so a lost entry
+// never ends a hold. A body that is no string lists nothing.
 export function bodyAccepts(body, section) {
   const items = (typeof body === 'string' ? residualItems(body, section ?? undefined) ?? [] : []).map((item) => trim(trim(item?.text).replace(LIST_ITEM, ''))).filter(Boolean);
   return (entry, raised = []) => {

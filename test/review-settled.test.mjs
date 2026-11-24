@@ -1473,6 +1473,11 @@ test('the auto-merge gate judges only the waivers the body still accepts: one th
   const lost = record({ 'engine:codex-local': { head: HEAD, list: [], carried: [ended] } }, {}, [{ head: OLDER, findings: null }]);
   assert.ok(gate(lost, { accepts: bodyAccepts(bodyWith(['Preserve citations: a reworded reason']), undefined) }), 'a round that kept no findings loses no hold: the waiver names its own finding');
   assert.equal(gate(lost), null, 'and a body that dropped it still lets it go');
+  // Two lost findings of one title in two files: a line resolves by path over both together, as the review pass would.
+  const second = { ...ended, id: 'R5-12', ruled_id: 'R1-9', file: 'src/z.js', residual: 'Preserve citations: the other file' };
+  const bothLost = record({ 'engine:codex-local': { head: HEAD, list: [], carried: [ended, second] } }, { 'R1-9': { ...index['R1-1'], id: 'R1-9', file: 'src/z.js' } }, [{ head: OLDER, findings: null }]);
+  assert.match(gate(bothLost, { accepts: bodyAccepts(bodyWith(['Preserve citations: src/z.js, reworded']), undefined) }) ?? '', /the other file/u, 'a line for the second file holds the second alone');
+  assert.equal(gate(bothLost, { accepts: bodyAccepts(bodyWith(['Preserve citations: reworded, with no path']), undefined) }), null, 'a line with no path names neither');
   let reads = 0;
   assert.equal(reviewProblem(stillOffered, HEAD, {}, { accepts: () => { reads += 1; return false; } }) !== null, true);
   assert.equal(reads, 0, 'the body is read only for a waiver the head\'s pass ended');

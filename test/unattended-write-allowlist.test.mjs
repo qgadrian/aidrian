@@ -1021,8 +1021,12 @@ test('the start record scan checks the guards\' deadline on each file it reads',
   recordStart(fx, { cwd: fx.worktree });
   const store = openStore(fx.state, { checkouts: fx.project.checkouts, maxChain: fx.config.session.handoff.maxChain });
   assert.deepEqual(startedFolders(store, SESSION), [fx.worktree]);
-  // startedFolders checks the deadline only on each file of the store it reads, so a spent budget meets it there.
+  // startedFolders checks the deadline on each entry of the store it reads, so a spent budget meets it there.
   assert.throws(() => withinDeadline(performance.now() - 1, () => startedFolders(store, SESSION)), PastDeadline);
+  // And before the store is listed at all: an empty store meets a spent budget too.
+  const empty = openStore(mkdtempSync(path.join(fx.root, 'empty-state-')), { checkouts: fx.project.checkouts, maxChain: fx.config.session.handoff.maxChain });
+  assert.deepEqual(startedFolders(empty, SESSION), []);
+  assert.throws(() => withinDeadline(performance.now() - 1, () => startedFolders(empty, SESSION)), PastDeadline);
   // And the places read through it give the deadline's refusal, never a worktree.
   assert.throws(() => withinDeadline(performance.now() - 1, () => unattendedPlaces({ cwd: fx.worktree, mark: { root: fx.dir }, project: fx.project, config: fx.config, env: fx.env, home: fx.home, temp: [fx.temp], session: SESSION })), PastDeadline);
 });
@@ -1665,4 +1669,20 @@ test('a Write or an Edit through a link and a `..` that lands outside the places
   mkdirSync(path.join(fx.worktree, 'b'));
   symlinkSync(path.join(fx.worktree, 'b'), path.join(fx.worktree, 'a', 'in'));
   assert.equal(ask(write(`${fx.worktree}/a/in/../y.txt`)), null, 'a link that stays in the worktree');
+});
+
+// A folder that holds a checkout of the repository git lists, wherever it lies, is refused to a removal or move: the
+// checkout and its `.git` pointer would go with it.
+test('removing or moving a temporary folder above a sibling worktree is refused, and removing a plain folder passes', (t) => {
+  const fx = fixture(t);
+  const work = path.join(fx.temp, 'work');
+  mkdirSync(work);
+  gitIn(fx.dir)('worktree', 'add', '-q', '-b', 'feat/sib', path.join(work, 'sib'));
+  mkdirSync(path.join(fx.temp, 'other'));
+  mkdirSync(path.join(fx.worktree, 'node_modules', 'x'), { recursive: true });
+  const ask = fx.steady();
+  for (const command of [`rm -rf ${work}`, `mv ${work} ${fx.temp}/moved`, `rm -rf ${fx.temp}/work/`]) {
+    assert.match(ask(bash(command))?.reason ?? '', /a folder that holds a checkout of the repository/u, command);
+  }
+  for (const command of [`rm -rf ${fx.temp}/other`, 'rm -rf node_modules', `touch ${work}/note.txt`]) assert.equal(ask(bash(command)), null, command);
 });

@@ -598,6 +598,8 @@ function refusedHit(target, spelled, entries, { own, holds }) {
   return null;
 }
 
+const HELD_CHECKOUT = 'a folder that holds a checkout of the repository, whose removal or move takes that checkout and its pointer to its git folder along';
+
 // What a write to the real, case-folded path `target`, spelled `spelled`, meets among `places`: { refused } naming the
 // entry, { outside: true } when it lies in no place the session may write, or null when it passes. The refused entries
 // come first, then the session's places, its own worktree before the home folder's dot entries, so a repository there
@@ -611,6 +613,9 @@ function placeOf(target, spelled, places, { holds = true } = {}) {
   const own = [...places.specific, places.worktree, ...(places.made ?? []), ...places.temp].includes(target);
   const hit = refusedHit(target, spelled, places.refused, { own, holds }) ?? nestedHit(target, places.nested ?? [], spelled);
   if (hit) return { refused: hit };
+  // A folder that holds a checkout of the repository git lists, wherever it lies, as a temporary folder above a sibling
+  // worktree: removing or moving it takes the checkout and its `.git` pointer along.
+  if (holds && (places.checkouts ?? []).some((top) => top !== target && isWithin(target, top))) return { refused: { what: HELD_CHECKOUT, spelled } };
   const passes = () => {
     const late = refusedHit(target, spelled, places.later(), { own, holds });
     return late ? { refused: late } : null;
@@ -620,8 +625,6 @@ function placeOf(target, spelled, places, { holds = true } = {}) {
   const below = isWithin(places.home, target) ? path.relative(places.home, target).split(path.sep)[0] : '';
   if (below.startsWith('.')) return { refused: { what: HOME_DOT_ENTRY, spelled, scratch: true } };
   if (places.limited) return passes();
-  // Accepted residual: a checkout here only keeps the temporary folder from passing a path inside it; it is no refused
-  // entry, so a removal of a temporary folder above it, such as `rm -rf /tmp/work` over a sibling worktree in it, passes.
   const held = [...(places.states ?? []), ...(places.checkouts ?? [])].some((dir) => isWithin(dir, target));
   const temp = held ? [] : places.temp.filter((dir) => isWithin(dir, target));
   // `links: []`: a temporary folder has no git index whose links nestedLinkHit would list.

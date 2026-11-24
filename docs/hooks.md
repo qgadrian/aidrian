@@ -1472,8 +1472,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   the real path's parts and by the path as written, so a `.git` that is a link counts, by a glob part that may name
   `.git` (`.g*`), and, for a session its own mark holds, by a `.git` named in a folder no path gives; the pointer of each
   checkout of the repository nested in the worktree is refused too when a write, a delete, a move, or a glob reaches a
-  folder that holds it, the worktree itself included, as `rm -rf .claude/worktrees` does; a glob is judged from its
-  folder as written. A removal, move, or glob that reaches the `.git` of a standalone repository nested in a place, which
+  folder that holds it, the worktree itself included, as `rm -rf .claude/worktrees` does; so is a write, a delete, or a
+  move of any folder that holds a checkout git lists for the repository, wherever it lies, as `rm -rf /tmp/work` over a
+  sibling worktree in it; a glob is judged from its folder as written. A removal, move, or glob that reaches the `.git` of a standalone repository nested in a place, which
   no git listing names, without naming `.git` itself, such as `rm -rf vendor`, is not refused; `~/.gitconfig`, the `git` folder of `$XDG_CONFIG_HOME`
   and of `~/.config`, and the global and system git config files git itself names (`git var GIT_CONFIG_GLOBAL` and
   `GIT_CONFIG_SYSTEM`, such as a package manager's `etc/gitconfig`, asked only for a write that would otherwise pass);

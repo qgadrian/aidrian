@@ -870,7 +870,7 @@ aidrian session snapshot [--session ID] [--transcript PATH] [--ticket-prefixes A
 | `ticket` | Deprecated: the first entry of `tickets`, the same `{ key, source }` object, or null when `tickets` is `[]` or null, and never in `errors`. Kept only for an `aidrian-mod` older than the one that reads `tickets`, which reads this key alone; removed 30 days after the `aidrian-mod` release that reads `tickets` ships, or at the next major version of `aidrian` or `aidrian-mod`, whichever comes first. |
 | `links` | `{ branch, worktree, source }` or null: the worktree the session created with `aidrian worktree new`, while git still lists it, `source` `own`, else the one an earlier session created, `inherited` ([The worktree](#the-worktree)). |
 | `errors` | The names of the sections that failed, never their error text. |
-<!-- aidrian:decision id=snapshot-legacy-ticket status=unconfirmed class=product-behaviour domain=product date=2026-11-20 pr=439 -->
+<!-- aidrian:decision id=snapshot-legacy-ticket status=confirmed class=product-behaviour domain=product date=2026-11-20 pr=439 -->
 <!-- aidrian:decision-new id=snapshot-legacy-ticket text="| `ticket` | Deprecated: the first entry of `tickets`, the same `{ key, source }` object, or null when `tickets` is `[]` or null, and never in `errors`. Kept only for an `aidrian-mod` older than the one that reads `tickets`, which reads this key alone; removed 30 days after the `aidrian-mod` release that reads `tickets` ships, or at the next major version of `aidrian` or `aidrian-mod`, whichever comes first. |" -->
 
 Each section fails open: one that fails is null, or keeps what it read, as `worktrees` and `tickets` do, with its name

@@ -161,9 +161,10 @@ function agentReading({ severity, likelihood, affects, cost, cites }, round) {
 // A pass result `aidrian pr attest` recorded with its findings one by one, read again at review round `round`: the
 // round the step opens for the result's head, which an attestation made before that step could not know. Each
 // finding's disposition and the result's open count follow the table at that round. Whether it changed anything:
-// a result whose open count its list does not give, such as counts attested over a kept list, is left as it is.
+// only a result whose last attestation gave the list (`itemized`, record.mjs) is read again; counts attested over a
+// kept list stand.
 export function rereadAt(result, round) {
-  if (!isObject(result) || !Array.isArray(result.list) || result.list.filter(blocks).length !== result.open) return false;
+  if (!isObject(result) || result.itemized !== true || !Array.isArray(result.list)) return false;
   let changed = false;
   for (const finding of result.list) {
     if (!isObject(finding) || typeof finding.severity !== 'string') continue;

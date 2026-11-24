@@ -77,7 +77,7 @@ function writePass(project, { pr, repo, pass, head, reviewer, findings, fixed, a
   const before = state.passes[pass];
   const note = isObject(state.dispatched?.[pass]) ? state.dispatched[pass] : null;
   const files = note?.files ?? null;
-  const result = { head, reviewer, files, findings, open: findings - fixed - accepted, verdicts, ...report, list: itemized?.list ?? (before?.head === head ? before.list : null), ...(before?.ruled ? { ruled: before.ruled } : {}), ...(before?.carried ? { carried: before.carried } : {}) };
+  const result = { head, reviewer, files, findings, open: findings - fixed - accepted, verdicts, ...report, list: itemized?.list ?? (before?.head === head ? before.list : null), ...(itemized ? { itemized: true } : {}), ...(before?.ruled ? { ruled: before.ruled } : {}), ...(before?.carried ? { carried: before.carried } : {}) };
   // Ids come from the one function that writes them (findings.mjs recordFindings). Attest mints one only into a record a
   // step has floored, for a pass that step dispatched: elsewhere a finding keeps the id of its match in the pass's prior
   // list, and the rest wait for the next step. A returned id counts only among the ids the dispatch note says the pass's

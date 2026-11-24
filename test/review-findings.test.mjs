@@ -61,14 +61,14 @@ test('parseFindings: from the late round on, an agent\'s low finding is a residu
   assert.deepEqual(parseFindings(raw).list.map((each) => each.disposition), ['fix_now', 'fix_now', 'fix_now', 'fix_now', 'needs_axis', 'needs_axis'], 'no round: early');
 });
 
-test('rereadAt: a result read again at a late round follows the table there, unless its open count is not its list\'s', () => {
+test('rereadAt: a result read again at a late round follows the table there, unless counts were attested over a kept list', () => {
   const N = loadTable().lateRoundFrom;
   const list = () => [{ title: 'Late nit', file: 'a.js', severity: 'low', likelihood: 'routine', affects: 'users', cost: 'trivial', state: 'accepted', disposition: 'fix_now' }];
-  const listed = { list: list(), open: 1 };
+  const listed = { list: list(), open: 1, itemized: true };
   assert.deepEqual([rereadAt(listed, N), listed.list[0].disposition, listed.open], [true, 'accepted_residual', 0]);
   assert.deepEqual([rereadAt(listed, N), listed.open], [false, 0], 'nothing changes a second time');
-  const counted = { list: list(), open: 3 };
-  assert.deepEqual([rereadAt(counted, N), counted.list[0].disposition, counted.open], [false, 'fix_now', 3], 'counts attested over a kept list stand');
+  const counted = { list: list(), open: 1 };
+  assert.deepEqual([rereadAt(counted, N), counted.list[0].disposition, counted.open], [false, 'fix_now', 1], 'counts attested over a kept list stand, even when they give the same open count');
   assert.equal(rereadAt({ list: null, open: 2 }, N), false, 'a counts-only result is left as it is');
 });
 

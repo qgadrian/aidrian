@@ -9,9 +9,10 @@
 // session that writes meets, and which would read as a problem in the counts. That one leaves a marker instead, and
 // hook-session-end.mjs records it when the session ends with no read recorded. With the tracker off it stops as soon as it
 // has read the config.
-// The run rule runs under the agent gate hook's time budget (lib/deadline.mjs guardBudget), from the hook's start: past
-// it, a session with a mark, a pending hold, or a driver mark is refused every MCP call whose name does not say it reads,
-// and an attended one runs, as the agent gate hook answers a call its guards cannot finish in time.
+// The run rule runs under the agent gate hook's time budget (lib/deadline.mjs guardBudget), from the hook's start, the
+// held one for a session with a mark, a pending hold, or a driver mark: past it, such a session is refused every MCP
+// call whose name does not say it reads, and an attended one runs, as the agent gate hook answers a call its guards
+// cannot finish in time.
 // A session id that cannot name a file can hold no record, and neither can a record folder that cannot be written, so no
 // read could clear the rule that asks for one: that rule is skipped and the others run. A record from the write's server is
 // still judged, and one from another server is skipped with the rule. A record file that is not a record reads as no read,
@@ -72,7 +73,7 @@ function runDenial(input, project, config, start) {
   const human = config?.names?.human ?? 'the Human';
   let writer = null;
   try {
-    return withinDeadline(start + guardBudget(process.env), () => {
+    return withinDeadline(start + guardBudget(process.env, { held: heldSession(input.session_id) }), () => {
       writer = runWriter({ session: input.session_id, env: process.env });
       if (!writer) return runWriteRefusal({ writer, tool, rawTool: input.raw_tool_name, input: input.tool_input, tracker: config?.tracker ?? null, writeTools: listed, human });
       const read = writer.project ? baseReader(writer.project)() : { why: 'the main checkout its mark names is no project' };

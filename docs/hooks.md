@@ -328,7 +328,11 @@ What each rule matches:
   `"$(command -v aidrian)" pr signoff`) and a call only text names: `xargs`, `parallel`, `npx`, an interpreter's code,
   or a variable or alias whose words hold `aidrian … pr signoff`, as the product-feedback rule reads its own (its
   `textDenial`). A `--check` in such text is no dry run. A command that only handles text, such as `echo`, `grep`, or
-  `git commit -m`, still runs. A subagent and a session no Human attends are refused these shapes outside a project too.
+  `git commit -m`, still runs. A refusal for a sign-off named only in an interpreter's code or input opens with the
+  route for text that only quotes the command, as a handoff brief or a body for the Human does: write the file with
+  the file tool, which the rule does not read, and go on. The sign-off's own refusal follows, for text meant to record
+  one. A background session that rewrote its brief through a Python heredoc was refused three times in one run, told
+  only to stop, then split the command's words to get past the rule. Text piped into a shell keeps the refusal alone. A subagent and a session no Human attends are refused these shapes outside a project too.
   When the session holds answers and none approves the call, the deny names the nearest miss: a word the shell builds,
   no question naming `<owner>/<name>#<PR>`, the head, or the `<flow>/<invariant>` written as one word, an answer that
   is not "Approve", or a checkout whose remotes need `--repo`. A subagent is told to return `status: needs_input` with
@@ -1517,7 +1521,7 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   | --- | --- | --- |
   | Literal targets of redirections and writing programs | placed by path | placed by the path the tool names |
   | A target built from a variable or a substitution | expanded where it can be, else judged by its names and the whole command | none: a file tool names a literal path |
-  | Code an interpreter runs, such as `python3 -c` | judged by the paths and names in its text | none |
+  | Code an interpreter runs, such as `python3 -c` | judged by the paths and names in its code, input, and words; a refusal for a path there that the guard places among the refused entries says so and names the file tool, for text that only goes in a file, while a refused name, such as `.gitconfig`, gets the plain refusal | none: the text a file tool writes names no target |
   | Links a command makes, and a program's own config | judged by what they point at or change | none |
   | Text written into a review manifest | the command must not name a `reviewer` key | the text must not give it one |
   | Where the host's sandbox stands | outside the guard: a confined session's Bash also runs in the host's sandbox | the file tools run outside the sandbox, held by this hook alone |
@@ -1692,11 +1696,15 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   each case, of a subagent, of a session the background route started, or of a session a project run's driver mark
   holds, is refused, since the guards resolve no more. In the gates, every `Bash` and `Bash(<prefix>)` deny blocks
   such a call, and the gates are asked before any guard ([config](config.md#agents)).
-- The guards run under a time budget: 2.5 seconds from the hook's start, well inside the host's 5 second hook timeout,
-  past which the host runs the call with no guard. They check it as they read targets, words, folders, and links; past it,
-  a call of a subagent, of a main session the background handoff route started, or of a main session a project run's
-  driver mark holds, its run's first driver included, is refused, as the guards could not finish reading the command
-  in time, and an attended main session's runs, as the guards allow it anyway.
+- The guards run under a time budget from the hook's start, inside the hook's 10 second timeout in `hooks.json`, past
+  which the host runs the call with no guard. They check it as they read targets, words, folders, and links. A call of a
+  subagent, of a main session an unattended mark holds, or of a main session a project run's driver mark holds, its
+  run's first driver included, has 7.5 seconds, and past them is refused, as the guards could not finish reading the
+  command in time. An attended main session's call has 2.5 seconds, and past them runs, as the guards allow it anyway,
+  so it waits no longer. The guards read a call in about 100 ms on a quiet machine; on a loaded one, small Edits and
+  Writes of held sessions took them about three seconds, past the 2.5 seconds held calls once had, and a planning agent
+  refused eight times in one run stopped with its plan half written. A session the background route started before
+  the marks, which only its chain floor holds, keeps the 2.5 seconds, since that floor is read only when a guard refuses.
   The time depends on the machine's load, so that refusal gives one ordered recovery: retry the same call by itself, up
   to three times, then run a shell call as shorter commands where a split keeps what it does, and only then stop and
   report it to the Human.

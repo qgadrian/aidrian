@@ -1,15 +1,17 @@
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test, { after } from 'node:test';
 
 import { gateDenial } from '../plugins/aidrian/lib/agent-gates.mjs';
+import { callBudget } from '../plugins/aidrian/scripts/hook-agent-gates.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { configWriteDenial, WRITE_TARGETS } from '../plugins/aidrian/lib/config-guard.mjs';
+import { GUARD_BUDGET_MS, HELD_BUDGET_MS } from '../plugins/aidrian/lib/deadline.mjs';
 import { foldCase, globParts } from '../plugins/aidrian/lib/fs.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 import { isolate } from '../plugins/aidrian/lib/review/env.mjs';
@@ -22,9 +24,23 @@ after(() => rmSync(process.env.XDG_STATE_HOME, { recursive: true, force: true })
 
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-agent-gates.mjs');
 const GATED = { version: 1, agents: { explorer: { deny: ['WebFetch'] } } };
-// The host stops a hook at 5 seconds and runs the call with no guard; these calls must answer well before.
-const HOST_TIMEOUT = 5000;
+// The host stops a hook at the timeout hooks.json gives it and runs the call with no guard; these calls must answer
+// well before.
+const HOOKS = JSON.parse(readFileSync(path.resolve(import.meta.dirname, '../plugins/aidrian/hooks/hooks.json'), 'utf8')).hooks;
+const timeoutOf = (script) => Object.values(HOOKS).flat().flatMap((entry) => entry.hooks).find((hook) => hook.command.includes(`/scripts/${script}`)).timeout * 1000;
+const HOST_TIMEOUT = timeoutOf('hook-agent-gates.mjs');
 const WELL_INSIDE = 4000;
+// A subagent's call has the held budget, 7.5 seconds, which a call the guards cannot finish runs to before its refusal.
+// The tests of how the guards bound their work lower it to the short one, so a call cut at the deadline is told, inside
+// WELL_INSIDE, from one whose work never stops; the held budget's own room is checked against hooks.json below.
+const SHORT = { ...process.env, AIDRIAN_GUARD_BUDGET_MS: String(GUARD_BUDGET_MS) };
+// A preload that moves the hook's clock `ms` ahead, as a loaded machine's slow start and slow reads do, so its guards
+// start that late into their budget without the test waiting for it.
+function late(dir, ms) {
+  const file = path.join(path.dirname(dir), `late-${ms}.mjs`);
+  writeFileSync(file, `const now = performance.now.bind(performance);\nperformance.now = () => now() + ${ms};\n`);
+  return { ...process.env, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import ${pathToFileURL(file).href}`.trim() };
+}
 
 // A project with `config` and the local file, in a folder named `webapp` as a checkout often is.
 function project(t, config = GATED) {
@@ -57,7 +73,7 @@ test('a chain of 1900 links in 20 words answers well inside the host timeout, fo
   symlinkSync('.', path.join(dir, 'l'));
   const words = Array.from({ length: 20 }, (_, i) => path.join(...Array(1900).fill('l'), `w${i}`));
   for (const [tool, command] of [['Bash', `rm ${words.join(' ')}`], ['PowerShell', `Remove-Item ${words.join(' ')}`]]) {
-    inTime(run(subagent(dir, tool, command)), tool);
+    inTime(run(subagent(dir, tool, command), SHORT), tool);
   }
 });
 
@@ -67,7 +83,7 @@ test('globs in 255 letter cases of a folder of 3000 links answer well inside the
   for (let i = 0; i < 3000; i += 1) symlinkSync(`/nonexistent/${i}`, path.join(dir, 'links', `l${i}`));
   const cased = (i) => Array.from('links', (c, j) => ((i >> j) & 1 ? c.toUpperCase() : c)).join('');
   const globs = Array.from({ length: 255 }, (_, i) => `${cased(i % 32)}${'/.'.repeat(Math.floor(i / 32))}/x*`);
-  inTime(run(subagent(dir, 'PowerShell', `Remove-Item ${globs.join(' ')}`)), 'PowerShell');
+  inTime(run(subagent(dir, 'PowerShell', `Remove-Item ${globs.join(' ')}`), SHORT), 'PowerShell');
 });
 
 test('60 Bash(prefix) patterns read a 120 KB command once, so the gates answer in time', (t) => {
@@ -142,17 +158,68 @@ test('a guard past its time budget refuses a subagent\'s call and lets the main 
   assert.equal(run(subagent(dir, 'Bash', 'echo x > src/app.js'), { ...process.env, AIDRIAN_GUARD_BUDGET_MS: '600000' }).status, 0);
 });
 
-test('AIDRIAN_GUARD_BUDGET_MS above the hook\'s own budget cannot raise it: a call still reading past 2.5 seconds is refused', (t) => {
+test('AIDRIAN_GUARD_BUDGET_MS above the hook\'s own budget cannot raise it: a call still reading past that budget is refused', (t) => {
   const dir = project(t);
-  // A preload that holds the hook for 2.7 seconds before its guards start, so they run past the hook's 2.5 second budget.
-  const slow = path.join(path.dirname(dir), 'slow.mjs');
-  writeFileSync(slow, 'const end = performance.now() + 2700;\nwhile (performance.now() < end);\n');
-  const env = { ...process.env, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import ${pathToFileURL(slow).href}`.trim() };
-  for (const raised of ['99999', '4000']) {
+  // A subagent's guards start 200 ms past the held budget, the hook's own for such a call.
+  const env = late(dir, HELD_BUDGET_MS + 200);
+  for (const raised of ['99999', String(HELD_BUDGET_MS + 100)]) {
     const refused = run(subagent(dir, 'Bash', 'echo x > src/app.js'), { ...env, AIDRIAN_GUARD_BUDGET_MS: raised });
     assert.equal(refused.signal, null, `${raised}: stopped after ${Math.round(refused.took)} ms`);
     assert.equal(refused.status, 2, `${raised}: ${refused.stderr}`);
     assert.match(refused.stderr, /the guards could not finish reading this command in time/u, raised);
+  }
+});
+
+// A loaded machine slows every hook it starts: on one day a planning agent's small Edits of its plan, and a project
+// run's Write of its pull request body and its findings file, each took the guards about three seconds, past the
+// 2.5 second budget then, and were refused, retried, and refused again, eight times in one run, until the planning
+// agent gave up with its plan half written. The guards read those calls in about 100 ms on a quiet machine.
+test('a call the guards start three seconds late, as on a loaded machine, still runs for a subagent', (t) => {
+  const dir = project(t);
+  const env = late(dir, 3000);
+  for (const input of [subagent(dir, 'Bash', 'echo x > src/app.js'), { ...subagent(dir, 'Edit', ''), tool_input: { file_path: path.join(dir, 'src', 'app.js'), old_string: 'a', new_string: 'b' } }]) {
+    const result = run(input, env);
+    assert.equal(result.status, 0, `${input.tool_name}: ${result.stderr}`);
+  }
+  // Past the held budget, the same calls are refused: the held budget is what let them run.
+  const past = late(dir, HELD_BUDGET_MS + 200);
+  assert.equal(run(subagent(dir, 'Bash', 'echo x > src/app.js'), past).status, 2);
+});
+
+// The budget the hook gives each call, as it reads its session: an attended main session's call, which runs past its
+// budget anyway, keeps the short one, so it waits no longer; a call the deadline refuses gets the held one.
+test('an attended main session\'s call gets the short budget, and a subagent\'s, a marked session\'s, or a driver\'s the held one', () => {
+  const quiet = {};
+  const attended = { session_id: 's1', tool_name: 'Bash', tool_input: { command: 'true' } };
+  assert.equal(callBudget(attended, {}, 100, quiet), 100 + GUARD_BUDGET_MS);
+  assert.equal(callBudget({ ...attended, agent_id: '' }, {}, 0, quiet), GUARD_BUDGET_MS, 'an empty agent id is the main session');
+  assert.equal(callBudget({ ...attended, agent_id: 'a1' }, {}, 100, quiet), 100 + HELD_BUDGET_MS);
+  assert.equal(callBudget(attended, { mark: { root: '/x' } }, 0, quiet), HELD_BUDGET_MS);
+  assert.equal(callBudget(attended, { driven: { run: 'r' } }, 0, quiet), HELD_BUDGET_MS);
+  // The variable lowers both.
+  assert.equal(callBudget({ ...attended, agent_id: 'a1' }, {}, 0, { AIDRIAN_GUARD_BUDGET_MS: '600' }), 600);
+});
+
+// The hook itself: an attended main session's `aidrian project record`, which the guards refuse when they finish, runs
+// once they start past the short budget, as a call whose guards ran out of time does, even short of the held one.
+test('the hook gives an attended main session\'s call the short budget: a refusal only finished guards give is not given past it', (t) => {
+  const dir = project(t);
+  const attended = main(subagent(dir, 'Bash', 'aidrian project record r1 x'));
+  const finished = run(attended);
+  assert.equal(finished.status, 2, 'the guards refuse it when they finish');
+  assert.match(finished.stderr, /the hooks hold no rule for `aidrian project record`/u);
+  assert.equal(run(attended, late(dir, GUARD_BUDGET_MS + 200)).status, 0, 'past the short budget, short of the held one');
+  // A subagent's same call, under its held budget, is still read whole, and refused by the guard, not the deadline.
+  const held = run(subagent(dir, 'Bash', 'aidrian project record r1 x'), late(dir, GUARD_BUDGET_MS + 200));
+  assert.equal(held.status, 2);
+  assert.match(held.stderr, /the hooks hold no rule for `aidrian project record`/u);
+  assert.doesNotMatch(held.stderr, /could not finish reading this command in time/u);
+});
+
+// Each hook that runs under the guards' budget answers before the host stops it, with room to record a refusal.
+test('the guards\' held budget ends at least 2.5 seconds before the timeout hooks.json gives each hook that runs under it', () => {
+  for (const script of ['hook-agent-gates.mjs', 'hook-tracker-pre.mjs']) {
+    assert.ok(timeoutOf(script) - HELD_BUDGET_MS >= 2500, `${script}: ${timeoutOf(script)} ms timeout, ${HELD_BUDGET_MS} ms budget`);
   }
 });
 
@@ -291,7 +358,7 @@ test('a glob over a folder of many long names answers in time, and a write the g
   for (let i = 0; i < 20000; i += 1) symlinkSync(`/nonexistent/${i}`, path.join(big, `${String(i).padStart(5, '0')}${'a'.repeat(234)}b`));
   const glob = `${big}/*${'a'.repeat(120)}c*b`;
   for (const [tool, command] of [['Bash', `printf x | tee ${glob}`], ['PowerShell', `Remove-Item ${glob}`]]) {
-    inTime(run(subagent(dir, tool, command)), tool);
+    inTime(run(subagent(dir, tool, command), SHORT), tool);
   }
   for (const [command, reason] of [
     [`printf '{"github":{"autoMerge":"on"}}' > .aidrian.local.json; rm -f ${glob}`, /it sets github\.autoMerge in \.aidrian\.local\.json/u],

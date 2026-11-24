@@ -1607,3 +1607,41 @@ test('a refused write to a home dot folder, or to a path built at run time besid
   // The temporary folder it names passes.
   assert.equal(fx.ask(bash(`node --test > ${fx.temp}/changed.log 2>&1`)), null);
 });
+
+// A script an interpreter runs may write any path its text names, so one that names a home dot path is refused, even
+// when the path is only text the script puts in a file. A background session rewriting its handoff brief with a Python
+// heredoc, whose text quoted a plugin path for the Human, was refused twice, was told only where scratch files go, and
+// then built the path at run time to get past the rule. The refusal says the path was read from an interpreter's code,
+// input, or words, and names the file tool, which writes only the file it names, whatever its text says.
+test('a script whose text names a home dot path is refused with the file tool as the route, and the file tool writes that text', (t) => {
+  const fx = fixture(t);
+  const handoffs = path.join(fx.state, 'handoffs');
+  mkdirSync(handoffs, { recursive: true });
+  const brief = path.join(handoffs, 'brief.md');
+  const quoted = path.join(fx.home, '.claude', 'plugins', 'cache', 'aidrian', '0.86.2', 'bin', 'aidrian');
+  const command = `python3 -I - ${brief} > ${handoffs}/brief.tmp <<'EOF'\nimport sys\nt=open(sys.argv[1]).read()\nt=t.replace("old", "run ${quoted} report")\nsys.stdout.write(t)\nEOF\nmv ${handoffs}/brief.tmp ${brief}`;
+  // An interpreter's code, its input, and its other words, such as a destination its script takes from `sys.argv`, all
+  // say where the path was read; the route is for text that only goes in a file.
+  for (const input of [bash(command), bash(`python3 -c 'print("${quoted}")' > ${handoffs}/brief.tmp`), bash(`python3 - ${quoted} <<'EOF'\nimport sys\nopen(sys.argv[1], 'w').write('x')\nEOF`)]) {
+    const reason = fx.ask(input)?.reason ?? '';
+    assert.match(reason, /a dot file or folder of the user's home folder/u, input.tool_input.command);
+    assert.match(reason, /names .* in an interpreter's code, input, or words, which may write it/u, reason);
+    assert.match(reason, /when that text only goes in a file, write the file with the file tool instead, which writes only the file it names/u, reason);
+  }
+  // A write the shell itself makes to a home dot path keeps its own refusal: the path is no text of a script.
+  const direct = fx.ask(bash(`echo x > ${quoted}`))?.reason ?? '';
+  assert.match(direct, /a dot file or folder of the user's home folder/u);
+  assert.doesNotMatch(direct, /in an interpreter's code/u);
+  // So does a target the guard reads by its name, in a folder no path gives: it is no interpreter's text.
+  const unplaced = fx.ask(bash(`cd "$X" && echo x > a/${quoted}`))?.reason ?? '';
+  assert.match(unplaced, /a dot file or folder of the user's home folder/u, unplaced);
+  assert.doesNotMatch(unplaced, /in an interpreter's code/u);
+  // A whole line read for want of an interpreter's code holds the shell's own words, such as that target: the refusal
+  // says the call writes the path.
+  const line = fx.ask(bash(`printf 'print(1)' | python3 - && cd "$X" && echo x > a/${quoted}`))?.reason ?? '';
+  assert.match(line, /a dot file or folder of the user's home folder/u, line);
+  assert.doesNotMatch(line, /in an interpreter's code/u);
+  // The route it names: the file tool writes the brief, whatever path its text quotes.
+  assert.equal(fx.ask(write(brief, { tool_input: { file_path: brief, content: `Run ${quoted} report --since 24h.\n` } })), null);
+  assert.equal(fx.ask({ tool_name: 'Edit', tool_input: { file_path: brief, old_string: 'old', new_string: `run ${quoted} report` } }), null);
+});

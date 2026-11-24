@@ -19,7 +19,7 @@
 // The repository is approvalTarget's: `--repo <owner>/<name>` when the command names one of this checkout's remotes, else
 // the one repository the checkout's remotes name. A checkout whose remotes name several needs the `--repo`.
 
-import { aidrianArgs, walkCommands } from '../shell-lex.mjs';
+import { aidrianArgs, interpreterOf, walkCommands } from '../shell-lex.mjs';
 import { findProject } from '../project.mjs';
 import { givenRepo, namesChange, originRepo, remoteRepos, repoName } from '../remotes.mjs';
 import { droveRun } from '../run-driver.mjs';
@@ -228,8 +228,27 @@ export function check(command, { cwd = process.cwd(), input = {}, unattendedMark
   // The shapes the word pass cannot read but the text names: xargs, parallel, npx, an interpreter, a variable or an
   // alias whose words hold the call (product-feedback-answer.mjs textDenial). No `--check` there is a dry run: only a
   // sign-off the word pass read can be one. Who may never sign off is refused wherever the command runs (refuse).
-  return textDenial(entries, judged, true, namesSignoff) ? refuse() : null;
+  if (!textDenial(entries, judged, true, namesSignoff)) return null;
+  return scriptNames(entries, judged) ? textReason(refuse()) : refuse();
 }
+
+// Whether an interpreter's code or input, among the entries the word pass did not read, names a sign-off: text a script
+// may run or only quote, as xargs or npx, which run their words, never do.
+const scriptNames = (entries, judged) => entries.some((entry) => !judged.has(entry) && interpreterOf(entry.invocation.program)
+  && namesSignoff([...entry.segment.map((token) => token.text), ...entry.inputs].join(' ')));
+
+// How a refusal opens when the rule found the sign-off only in text it cannot read as commands: a background session
+// that rewrote its handoff brief with a Python heredoc, whose text quoted the command for the Human, was told only to
+// stop and report, retried, and then split the words to get past the rule. Its first instruction is the one for text
+// that only quotes the command, which goes in a file the file tool writes, as this rule does not read it; the
+// sign-off's own refusal follows, for text meant to record one.
+export const TEXT_ROUTE =
+  'Blocked: this call names `aidrian pr signoff` only in text this rule cannot read as commands, an interpreter\'s code or input, such as a script in a heredoc, which may run it. ' +
+  'When that text only quotes the command, as a brief or a body for the Human does, it records no sign-off: write the file with the file tool instead, which this rule does not read, and go on; never split or respell the command to get past this rule.';
+
+// The refusal `denied` for a sign-off named only in such text: TEXT_ROUTE, then `denied` for text meant to record one.
+// Text piped into a shell is a command the shell runs, and keeps the sign-off's refusal alone.
+export const textReason = (denied) => (denied ? `${TEXT_ROUTE} When the text is meant to record a sign-off, it is refused: ${denied.replace(/^Blocked: /u, '')}` : denied);
 
 // Whether one command's words name a sign-off call: aidrian, then `pr signoff`.
 const namesSignoff = (text) => /\baidrian\b[\s\S]*\bpr\s+signoff\b/u.test(text);

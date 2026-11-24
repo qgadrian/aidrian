@@ -76,7 +76,7 @@ export function expand(text, env, command) {
   const sets = (name) => new RegExp(String.raw`(?<![\w$])${name}\+?=|\b(?:export|unset|declare|typeset|local|readonly|read)\b[^;&|\n]*\b${name}\b`, 'u').test(command);
   const value = (name) => (EXPANDED.includes(name) && absolute(env[name]) && !sets(name) ? env[name] : null);
   const out = text.replace(/\$\{(\w+)\}|\$(\w+)/gu, (whole, braced, bare) => value(braced ?? bare) ?? whole);
-  return /^~(?=\/|$)/u.test(out) && value('HOME') ? path.join(value('HOME'), out.slice(1)) : out;
+  return /^~(?=\/|$)/u.test(out) && value('HOME') ? `${value('HOME')}${out.slice(1)}` : out;
 }
 
 // What the Bash call `command`, run in `cwd`, writes that writeTargets leaves out, read once:

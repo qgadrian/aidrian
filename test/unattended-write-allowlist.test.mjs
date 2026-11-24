@@ -1666,6 +1666,8 @@ test('a Write or an Edit through a link and a `..` that lands outside the places
     assert.match(ask(input)?.reason ?? '', /outside the places a session no Human attends may write/u, JSON.stringify(input));
   }
   assert.equal(ask(write(path.join(fx.worktree, 'a', 'x.txt'))), null, 'the same file named without the link');
+  // A glob whose folder climbs out of the link, and a home path through a link in the home folder.
+  assert.match(ask(bash(`rm -f ${fx.worktree}/a/out/../*.txt`))?.reason ?? '', /outside the places/u, 'a glob');
   // A removal and a mode change through the same spelling, which the shell's own readers give.
   for (const command of [`rm -rf ${fx.worktree}/a/out/../gone`, `chmod 600 ${fx.worktree}/a/out/../gone`]) {
     assert.match(ask(bash(command))?.reason ?? '', /outside the places/u, command);

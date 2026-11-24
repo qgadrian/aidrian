@@ -369,7 +369,7 @@ export const OPAQUE_WORDS = 512;
 export const WRITE_TARGETS = 1024;
 
 // A word as such a shell reads a leading `~`: `~` and `~/x` (`~\x`, its backslash read as a `/`) are in the home folder.
-const fromHome = (word) => (word === '~' || word.startsWith('~/') ? path.join(homedir(), word.slice(1)) : word);
+const fromHome = (word) => (word === '~' || word.startsWith('~/') ? `${homedir()}${word.slice(1)}` : word);
 
 const isSubagent = (input) => typeof input.agent_id === 'string' && input.agent_id !== '';
 

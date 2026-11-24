@@ -153,6 +153,8 @@ function gitStateChanges(command, state, depth = 0, inherited = []) {
     const inner = depth < SUBSTITUTION_DEPTH_LIMIT ? inlineShellCommand(invocation) : null;
     const where = inner === null ? null : stateIn(now, invocation.chdir);
     if (where) found.push(...gitStateChanges(inner, where, depth + 1, [...env, ...assignments]));
+    // The assignments in force are copied only for a git call, which reads them.
+    if (!call && invocation.program !== 'git') continue;
     const scope = [...env, ...assignments];
     if (now.strict) {
       found.push(...strictChanges(invocation, call, now.strict, scope));

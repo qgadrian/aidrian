@@ -679,6 +679,13 @@ function placed(spelled, places, options) {
   return placeOf(real(spelled), spelled, places, options);
 }
 
+// What a spelled path meets folded as text or, when that passes, where the system lands (fs.mjs systemPath).
+function placedEither(spelled, places, options) {
+  const met = placed(spelled, places, options);
+  const system = met?.refused ? null : systemPath(spelled);
+  return system && system !== path.resolve(spelled) ? placed(system, places, options) ?? met : met;
+}
+
 // The text a file edit tool writes to each file it names, { file, texts }, for the manifest check.
 function editedTexts(input) {
   const edit = fileEditOf(input);
@@ -901,8 +908,8 @@ function builtDenial(text, target, found, say) {
   if (found.limited) return null;
   const deny = (what) => say.deny('unattended write to a path built at run time', `it ${say.verb} \`${target.slice(0, 80)}\`, a path built at run time, in a command that names ${what}, and no Human attends this session; write to a literal path instead${say.scratch()}`);
   for (const [word] of text.matchAll(PATH_IN_TEXT)) {
-    const spelled = word.startsWith('~') ? path.join(found.home, word.slice(1)) : word;
-    const met = placed(spelled, found, { holds: false });
+    const spelled = word.startsWith('~') ? `${found.home}${word.slice(1)}` : word;
+    const met = placedEither(spelled, found, { holds: false });
     if (met?.refused) return deny(`${spelled.slice(0, 120)}, ${met.refused.what}`);
   }
   if (REFUSED_NAME.test(text) || HOME_DOT.test(text)) return deny('a shell startup file, a git config, or a dot entry of the home folder');
@@ -992,8 +999,8 @@ function nameDenial(texts, found, say) {
     if (REFUSED_NAME.test(text) || HOME_DOT.test(text)) return say.deny('unattended write to a refused name', `it ${say.verb} a file named in \`${text.slice(0, 80)}\`, which names a shell startup file, a git config, or a dot entry of the home folder, and no Human attends this session`);
     if (!found.limited && GIT_WORD.test(text)) return say.deny('unattended write to a refused name', `it ${say.verb} a file named in \`${text.slice(0, 80)}\`, which names a \`.git\` entry, ${GIT_ENTRY}, and no Human attends this session`);
     for (const [word] of text.matchAll(PATH_IN_TEXT)) {
-      const spelled = word.startsWith('~') ? path.join(found.home, word.slice(1)) : word;
-      const met = placed(spelled, found, { holds: false });
+      const spelled = word.startsWith('~') ? `${found.home}${word.slice(1)}` : word;
+      const met = placedEither(spelled, found, { holds: false });
       if (met?.refused) return code ? say.named(met.refused, spelled) : say.refused(met.refused, spelled);
     }
   }

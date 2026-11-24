@@ -970,8 +970,9 @@ main checkout's top folder, or of a folder above it, as `rm -rf <main>` or `rm -
 from a linked worktree of the same repository as well.
 A target built from a variable is read from a bare assignment or `export` earlier on the same line, and else from the
 hook's environment, which the session's shell starts with, so `S=/tmp/x; echo x > "$S/a"` and `"$TMPDIR/a"` are judged
-where they lead. An assignment made in a subshell or a substitution ends with it, and a shell the line starts, as
-`bash -c '…'`, sees only what its own invocation sets, since whether a variable was exported is not followed. One that still holds a `$` or a backtick, such as `cat > "$S/x"` with `S` set in no way the rule
+where they lead. An assignment made in a subshell or a substitution ends with it. In a shell the line starts, as
+`bash -c '…'`, no variable is read, since its environment, exports, `env -i`, and `env -u` included, is not followed:
+a target built from one there fails closed. One that still holds a `$` or a backtick, such as `cat > "$S/x"` with `S` set in no way the rule
 reads, a loop's variable, or `$(…)`, is blocked while the shell may be in the main checkout, unless the literal path
 before its first `$` is an absolute folder outside it, as `/tmp/$x` is: it may name a tracked file. `$PWD` and
 `$OLDPWD` are the shell's own, and never read from the hook's environment.
@@ -1384,8 +1385,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   mark holds, read by the hook payload's session id, and every subagent of it, writes only the places below. A path a
   file tool or a command names is judged both folded as text and where the system lands, where a `..` after a link
   climbs from the link's target, and refused when either is: `<worktree>/a/out/../x`, with `out` a link outside the
-  places, lands outside. Accepted residual: a glob, and a target the guard expands from `~` or a variable, is judged
-  folded as text alone. It writes only:
+  places, lands outside. A glob's folder, and a path the guard expands from `~` or a variable, are read the same way.
+  It writes only:
   - its own worktree: the checkout of the folder its mark says the gate started it in, when that checkout shares its git
     folder with the main checkout the mark names: a linked worktree from any folder inside it, such as a package of a
     monorepo, and the main checkout only from its own top, so a removed worktree's folder left as a plain one inside the

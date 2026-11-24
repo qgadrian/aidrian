@@ -10,7 +10,7 @@ import { lstatSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { checkDeadline } from './deadline.mjs';
-import { foldCase, globParts, isWithin, partsReach } from './fs.mjs';
+import { foldCase, globParts, isWithin, joinSpelled, partsReach, systemPath } from './fs.mjs';
 import { canonical } from './rules/main-checkout.mjs';
 
 // A path part a shell expands as a glob.
@@ -31,16 +31,19 @@ const walks = new WeakMap();
 
 // Each spelling of a glob `{ text, dirs }`, as a guard reads it from a command, as { start, rest }: `start` is the
 // folder of its parts before the first that holds a wildcard, and `rest` its parts from there on, each a glob or a plain
-// name. A relative glob is spelled from each of `dirs`; one with no wildcard part has none.
+// name. A relative glob is spelled from each of `dirs`; one with no wildcard part has none. The folder is where the
+// system lands for its parts as spelled (fs.mjs systemPath), where a `..` after a link climbs from the link's target,
+// or folded as text when no part of it is there; a `..` from the wildcard on stays in `rest`.
 export function globStarts({ text, dirs = [] }) {
-  const spelled = path.isAbsolute(text) ? [text] : dirs.map((dir) => path.join(dir, text));
+  const spelled = path.isAbsolute(text) ? [text] : dirs.map((dir) => joinSpelled(dir, text));
   return spelled.flatMap((each) => {
-    const parts = path.resolve(each).split(path.sep);
+    const parts = each.split(path.sep);
     const at = parts.findIndex((part) => GLOB_WORD.test(part));
     if (at <= 0) return [];
     // The root splits to an empty part, or a drive's name, that needs its separator back.
     const head = parts.slice(0, at).join(path.sep);
-    return [{ start: at === 1 ? `${head}${path.sep}` : head, rest: parts.slice(at) }];
+    const folder = at === 1 ? `${head}${path.sep}` : head;
+    return [{ start: systemPath(folder) ?? path.resolve(folder), rest: parts.slice(at).filter((part) => part !== '' && part !== '.') }];
   });
 }
 

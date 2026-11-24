@@ -54,8 +54,10 @@ const SHELL_OWN = new Set(['PWD', 'OLDPWD']);
 function expansionDenial(command, cwd, env) {
   for (const write of bashWrites(command, cwd, { followCd: true, shells: true, expansions: true })) {
     if (!write.expansion) continue;
+    // In a shell the line starts, no variable is read (bash-writes.mjs, `vars` false).
     const vars = write.vars ?? new Map();
     const value = (name) => {
+      if (vars === false) return null;
       if (vars.has(name)) return vars.get(name).dynamic ? null : vars.get(name).text;
       return SHELL_OWN.has(name) || typeof env[name] !== 'string' ? null : env[name];
     };

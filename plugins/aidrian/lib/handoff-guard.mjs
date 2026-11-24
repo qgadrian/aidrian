@@ -791,13 +791,13 @@ const escapedNames = (names) => names.map((name) => name.replace(/[.*+?^${}()|[\
 const BARE_SESSION_FILES = SESSION_FILES.filter((name) => name !== 'usage.json');
 // A path that starts with a placeholder part in angle brackets, such as `<state>/sessions/<session id>/prs.jsonl` in
 // the text of a plan an interpreter's code writes: prose that says where a file lives, never a file a command opens,
-// since it is relative to a folder named for the placeholder itself. It starts after a space, a quote, or the start of
-// the text, and runs to a space or a quote, which a path in code ends at; each placeholder is a word, spaces and `-`
-// included. A path that starts anywhere else, such as an absolute one through a folder whose real name has brackets,
+// since it is relative to a folder named for the placeholder itself. It starts after a space, a quote, an opening
+// parenthesis or bracket, as in a Markdown link, or the start of the text, and runs to a space, a quote, or a closing
+// parenthesis or bracket; each placeholder is a word, spaces and `-` included. A path that starts anywhere else, such as an absolute one through a folder whose real name has brackets,
 // keeps its text, and so does one with a `..` part: a folder of the placeholder's literal name could be made, and `..`
 // would leave it for a real one.
 const PLACEHOLDER = String.raw`<[\w -]{1,64}>`;
-const PLACEHOLDER_PATH = new RegExp(String.raw`(?<![^\s'"\x60])${PLACEHOLDER}(?:[^\s'"\x60<>]|${PLACEHOLDER})*`, 'gu');
+const PLACEHOLDER_PATH = new RegExp(String.raw`(?<![^\s'"\x60(\[])${PLACEHOLDER}(?:[^\s'"\x60<>()\[\]]|${PLACEHOLDER})*`, 'gu');
 const UP = /(?:^|[\\/])\.\.(?:[\\/]|$)/u;
 export const withoutPlaceholderPaths = (text) => text.replace(PLACEHOLDER_PATH, (found) => (UP.test(found) ? found : ' '));
 export const SESSION_FILE_NAME = new RegExp(String.raw`(?<![\w.-])sessions[\\/]+[^\\/]+[\\/]+(?:${escapedNames(SESSION_FILES)})(?![\w.-])|(?<![\w.-])(?:${escapedNames(BARE_SESSION_FILES)})(?![\w.-])`, 'iu');

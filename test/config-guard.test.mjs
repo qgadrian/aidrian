@@ -1459,6 +1459,8 @@ test('a subagent, and a session the background route started, may not write in t
     // Interpreter code that writes a plan whose text names a session file by a placeholder path: prose, not a write there.
     ['Bash', { command: "python3 - <<'EOF'\np='plan.md'\nnew='''a row lands in `<state>/sessions/<session id>/prs.jsonl`'''\nopen(p,'w').write(new)\nEOF" }],
     ['Bash', { command: "node -e \"require('fs').writeFileSync('plan.md', 'see <state>/sessions/<id>/checks.jsonl')\"" }],
+    // In a Markdown link's destination, and in parentheses.
+    ['Bash', { command: "python3 - <<'EOF'\nopen('plan.md','w').write('''the [ledger](<state>/sessions/<id>/prs.jsonl), (or <state>/sessions/<id>/links.jsonl)''')\nEOF" }],
     // Heredoc data written to another file is no write to the paths it quotes.
     ['Bash', { command: `cat > ${path.join(dir, 'plan.md')} <<'EOF'\nThe hook appends to ${own}/prs.jsonl.\nEOF` }],
   ];

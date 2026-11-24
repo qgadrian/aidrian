@@ -20,7 +20,7 @@ import { viewForge, viewPrAt } from '../plugins/aidrian/lib/rules/github/merge-r
 // Every name the facade gives its callers.
 const FACADE = [
   'id', 'cwd', 'isTrustedCommenter', 'hosts', 'changeRef', 'changesState', 'changeUrl', 'pullUrl',
-  'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'branchHead', 'contents', 'tree', 'visibility', 'viewer', 'authToken', 'tokenCanPush', 'tokenReads',
+  'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'branchHead', 'hasCommit', 'contents', 'tree', 'visibility', 'viewer', 'authToken', 'tokenCanPush', 'tokenReads',
   'conversationComments', 'comment', 'issue', 'postComment', 'editComment', 'deleteComment', 'reactions',
   'pull', 'mergeStatus', 'diff', 'nodeChange', 'changeEdits', 'reviewTrail', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',
   'postReview', 'reviewComment', 'deleteReviewComment', 'findingThreads', 'replyToReviewComment', 'resolveThread', 'unresolveThread',
@@ -1670,4 +1670,18 @@ test('reviewThreads, changeEdits, and reviewsWithComments send the owner and nam
     assert.throws(() => forge.reviewsWithComments('acme/notes', bad), /must be a positive whole number/u, String(bad));
   }
   assert.equal(args().length, 3, 'no gh call for a number that fails');
+});
+
+test('hasCommit: the git database read of one commit, false only when GitHub answers it has none', () => {
+  const sha = 'a'.repeat(40);
+  const { forge, args } = recorded(() => JSON.stringify({ sha }));
+  assert.equal(forge.hasCommit('acme/widgets', sha, { host: 'ghe.example.com' }), true);
+  assert.deepEqual(args(), [['api', '--hostname', 'ghe.example.com', `repos/acme/widgets/git/commits/${sha}`]]);
+  const failing = (text) => recorded(() => {
+    throw Object.assign(new Error(text), { stderr: text });
+  }).forge;
+  assert.equal(failing('gh: Not Found (HTTP 404)').hasCommit('acme/widgets', sha), false);
+  assert.equal(failing('gh: No commit found for SHA (HTTP 422)').hasCommit('acme/widgets', sha), false);
+  assert.throws(() => failing('gh: Bad Gateway (HTTP 502)').hasCommit('acme/widgets', sha), /HTTP 502/u, 'an outage is no answer');
+  assert.throws(() => forge.hasCommit('acme/widgets', 'HEAD'), /a commit is a full hex id/u, 'no call for a ref that is not a commit id');
 });

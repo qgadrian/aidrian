@@ -1025,6 +1025,7 @@ test('a write through a variable is judged where it leads, and blocked from the 
   }
   // A name `env -i` keeps keeps the value the invocation gave it.
   assert.equal(at(`S=/tmp/x sudo --preserve-env=S bash -c 'echo x > "$S/a"'`), null, 'kept as given');
+  assert.match(at(`PWD=/tmp/x sudo --preserve-env=PWD bash -c 'echo x > "$PWD/src/app.js"'`) ?? '', /a path built from a variable/u, 'the shell sets PWD itself');
   assert.match(at(`S=/tmp/x sudo -i bash -c 'echo x > "$S/a"'`) ?? '', /a path built from a variable/u, 'dropped by the reset');
   // What its invocation sets literally is read there, from the main checkout and from a linked worktree alike.
   assert.match(at(`S=/tmp/x; S=${repo} bash -c 'echo x > "$S/src/app.js"'`) ?? '', /a tracked file/u);

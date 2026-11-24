@@ -1174,10 +1174,12 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   `credentialStores`, which hold the service's password (`hostServiceDenial` in `lib/handoff-guard.mjs`): for OpenCode,
   its folders under the data, state, and config folders, such as the `service.json` of `~/.local/state/opencode`, and
   `127.0.0.1:49374`, `localhost:49374`, or `[::1]:49374`. The command's text is read unquoted, with each `$NAME` or
-  `${NAME}` the hook's environment gives an absolute path and each leading `~` expanded, so a path in an interpreter's
-  code counts too; the refusal says the host's "local service starts a session no guard holds". A path or port built
-  at run time, a relative path from a folder above, a port given apart from its host, as `nc localhost 49374`, or a port
-  `service set` moved is not read ([OpenCode limits](providers/opencode.md#limits)).
+  `${NAME}` the hook's environment gives an absolute path and each leading `~` expanded, and each absolute path
+  normalized, so `~/.local/state/./opencode` and `~/.local/state//opencode` count, as does a path in an interpreter's
+  code; the refusal says the host's "local service starts a session no guard holds". A path or port built at run time,
+  a relative path from a folder above, a port given apart from its host, as `nc localhost 49374` or a Python
+  `('127.0.0.1', 49374)` tuple, a port `service set` moved, or a read of a store by the file tools, as Read, Grep, or
+  Glob in a session no sandbox confines, is not read ([OpenCode limits](providers/opencode.md#limits)).
 - With or without gates or a project, the same two may not repoint a git remote or gh's default repository, nor
   change how git reads them: `git remote add`, `set-url`, or `rename`; a `git config` write of a `remote.*`,
   `include.path`, `includeIf.*`, `url.*`, or `alias.*` key, or any `--edit`, `--rename-section`, or `--remove-section`;

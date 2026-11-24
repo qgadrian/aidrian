@@ -416,11 +416,13 @@ Never start OpenCode below the temporary folder: what any program wrote there lo
   Claude Code's confined sandbox denies that read; Codex's sandbox does not ([Codex residuals](codex.md#project-start)).
   A Claude Code or Codex session no Human attends, confined or not, such as a background handoff session, may not run
   a shell command that names one of OpenCode's credential stores, by its path, `~`, `$HOME`, `$XDG_STATE_HOME`, or any
-  variable the hook's environment gives, or the service's port after a host, as `127.0.0.1:49374`, `localhost:49374`,
-  or `[::1]:49374` (the adapter's `localService`, [Agent gates](../hooks.md#agent-gates)). What stays open: a path
-  or port the command builds at run time or reads from a file, a relative path from a folder above the store, a glob,
-  a port given apart from its host, as `nc localhost 49374`, a host or port `service set` moved, and a program that
-  reads the store or reaches the port by itself, with the reach of a program's own write.
+  variable the hook's environment gives, with `/./` and `//` normalized, or the service's port after a host, as
+  `127.0.0.1:49374`, `localhost:49374`, or `[::1]:49374` (the adapter's `localService`,
+  [Agent gates](../hooks.md#agent-gates)). What stays open: a path or port the command builds at run time or reads
+  from a file, a relative path from a folder above the store, a glob, a host and port given to a program as separate
+  values, as `nc localhost 49374` or a Python `('127.0.0.1', 49374)` tuple, a host or port `service set` moved, a read
+  of a store by the file tools, as Read, Grep, or Glob, in a session no sandbox confines, and a program that reads the
+  store or reaches the port by itself, with the reach of a program's own write.
 - Not checked on a live OpenCode, since no model turn ran: a shell call's payload, and with it the Verified column's
   fixture only; whether the shell hook's environment holds `PATH`; whether a shell command gets
   `OPENCODE_SESSION_ID`; whether a subagent's session carries `parentID`; the `edit` tool's path field; and that the

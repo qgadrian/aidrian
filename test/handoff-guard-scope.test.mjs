@@ -154,6 +154,9 @@ test('a session no Human attends may not read OpenCode\'s service password or re
     'cat /home/user/.local/state/opencode/service.json', 'jq -r .password $XDG_STATE_HOME/opencode/service.json', 'cat /XS/OpenCode/service.json',
     'python3 -c "print(open(\'/xs/opencode/service.json\').read())"', 'ls ~/.config/opencode', 'cat ~/.local/share/opencode/auth.json',
     'curl -u opencode:pw http://127.0.0.1:49374/api/session', 'curl localhost:49374/api/info', 'curl \'http://[::1]:49374/api/info\'',
+    // A path the shell reads the same, with a `.` part, a doubled slash, or a `..` part.
+    'cat ~/.local/state/./opencode/service.json', 'cat ~/.local/state//opencode/service.json', 'cat /xs/x/../opencode/service.json',
+    'cat $XDG_STATE_HOME/./opencode/service.json', 'ls ~/.config//opencode/',
   ];
   for (const command of refused) {
     assert.match(ask(command)?.reason ?? '', /local service starts a session no guard holds/u, command);

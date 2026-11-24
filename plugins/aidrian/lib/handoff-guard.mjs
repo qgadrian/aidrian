@@ -368,7 +368,8 @@ export function hostSessionStartDenial(input, { names: { human } }, { unattended
 // Why the call in `input` may not run because it reaches a host's local service that starts a session no guard holds,
 // as an adapter's `localService` declares one, or null: { match, reason }. It holds for a session `unattended()` says no
 // Human attends, asked last, only for a shell command whose text, unquoted, with each `$NAME` and `${NAME}` that `env`
-// gives an absolute path and each leading `~` expanded, names one of the service's credential stores, which hold its
+// gives an absolute path and each leading `~` expanded, and each absolute path normalized, so `/./` and `//` change
+// nothing, names one of the service's credential stores, which hold its
 // password, or one of its ports after a host, as `127.0.0.1:<port>` (hosts/index.mjs localServices): the hook's
 // `unattended()` reads the state folders, which runs git, so every other shell command runs none for this guard. Read as
 // text, so a command in any shell or interpreter counts; a path or port the command builds at run time does not (the
@@ -378,7 +379,8 @@ export function hostServiceDenial(input, { names: { human } }, { unattended = ()
   if (typeof command !== 'string') return null;
   const text = unquoted(command)
     .replace(/\$\{(\w+)\}|\$(\w+)/gu, (whole, braced, bare) => (path.isAbsolute(env[braced ?? bare] ?? '') ? env[braced ?? bare] : whole))
-    .replace(/(^|[\s=:(])~(?=\/|\s|$)/gu, (_, before) => `${before}${home}`);
+    .replace(/(^|[\s=:(])~(?=\/|\s|$)/gu, (_, before) => `${before}${home}`)
+    .replace(/(?<![\w.~-])\/[^\s'"`;|&<>(){}]*/gu, (word) => path.normalize(word));
   const escape = (each) => each.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
   for (const service of localServices({ env, home })) {
     const store = service.stores.find((each) => new RegExp(`(?<![\\w.-])${escape(each)}(?![\\w.-])`, 'iu').test(text));

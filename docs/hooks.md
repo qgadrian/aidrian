@@ -460,10 +460,13 @@ What each rule matches:
 - Main checkout: `>`, `>>`, `tee`, `sed -i`, `perl -i`, `ruby -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`,
   `touch`, `mkdir`, and `rsync` (sources too under `--remove-source-files`); a branch switch or `git add -A` there;
   a `cp`, `ln`, `install`, `mv`, `git mv`, or `rsync` into a folder also writes the file it makes there,
-  `<folder>/<source's last part>`, when the text shows a folder (`-t`, two or more sources, a closing slash, `.`, `..`,
-  or `ln` with one operand) or the destination is a folder on the disk, so the config guard judges it the same way;
-  `rsync` does so for each local source with no closing slash, since one with it copies its contents, whatever the
-  destination is, since rsync never renames a folder source (so `rsync pkg/x.md new.md` also names `new.md/x.md`);
+  `<folder>/<source's last part>`, or the source's relative path under `rsync -R` and `cp --parents`, when the text shows
+  a folder (`-t`, `--parents`, two or more sources, a closing slash, `.`, `..`, or `ln` with one operand) or the
+  destination is a folder on the disk, so the config guard judges it the same way;
+  `rsync` does so for each source with no closing slash, or every source under `-R`, since one with it copies its
+  contents, a source spelled `host:path` by its path part, since an `-e` shim can make it local, and a `/./` marker by
+  the path with and without the part before it, as GNU rsync and openrsync differ, whatever the destination is, since
+  rsync never renames a folder source (so `rsync pkg/x.md new.md` also names `new.md/x.md`);
   and there `git commit`, `commit-tree`, `cherry-pick`, `revert`, `rebase`, `am` (all but `--abort` and `--quit`),
   `merge` and `pull` but a `--ff-only` toward the default branch's upstream, and a `git reset` of anything but named
   files ([Main checkout](#main-checkout)).

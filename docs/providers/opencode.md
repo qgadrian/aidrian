@@ -254,8 +254,9 @@ adapter lists and
 Claude Code's `.claude` folder's skills, agents, commands, hooks, workflows, and settings, and any `SKILL.md`. An
 OpenCode session started anywhere below such a folder would load it with no sandbox. The refusal says it is "a host
 file a session started below that temporary folder loads". A copy, move, or link is judged by the path it names and by
-the name it makes inside a destination folder, not by what a copied or moved folder holds: `mv stage .opencode`,
-`cp pkg/opencode.json <tmp>/x/`, and `ln -s` that names a host file as the link or as its target are refused. Other
+the name it makes inside a destination folder, the source's relative path under `rsync -R` and `cp --parents`, not by
+what a copied or moved folder holds: `mv stage .opencode`, `cp pkg/opencode.json <tmp>/x/`,
+`rsync -aR p/.opencode/plugins/x.js <tmp>/w/`, and `ln -s` that names a host file as the link or as its target are refused. Other
 files there pass, as before, and a state folder or a checkout inside a temporary folder keeps its own rules.
 
 **At any depth of a confined clone.** Any path with a `.opencode` or `.agents` part, and any `opencode.json` or

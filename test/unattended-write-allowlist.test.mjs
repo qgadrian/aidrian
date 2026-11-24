@@ -861,12 +861,16 @@ test('a copy, move, or link into a folder is judged by the name it makes there, 
     [`rsync -a ${wt}/pkg/.claude ${wt}/`, later], [`rsync -a ${wt}/pkg/.opencode $TMPDIR/x/`, temp], [`rsync -a ${wt}/pkg/opencode.json ${x}/`, temp],
     // rsync never renames a folder source: a destination not there yet gets it inside.
     [`rsync -a ${wt}/pkg/.opencode ${path.join(fx.temp, 'new')}`, temp],
+    // rsync -R and cp --parents make the source's relative path there; a remote-spelled source lands by its last part.
+    [`rsync -aR .claude/settings.json ${wt}/`, later], [`cp --parents .claude/settings.json ${wt}/`, later],
+    ['rsync -aR p/.opencode/plugins/x.js $TMPDIR/w/', temp], [`rsync -a -e ./sh x:/abs/.opencode ${path.join(fx.temp, 'w')}/`, temp],
   ];
   for (const [command, reason] of refused) assert.match(fx.ask(bash(command))?.reason ?? '', reason, command);
   // One operand: the link is made in the shell's folder, by the name of what it links to.
   assert.match(fx.ask(bash(`ln -s ${wt}/pkg/.opencode`), { cwd: x })?.reason ?? '', temp, 'ln with one operand');
   for (const command of [`cp notes.md ${x}/`, 'cp x .', 'mv a.txt b.txt', `mv ${wt}/pkg/.opencode ${path.join(fx.temp, 'y')}`,
-    `rsync -a notes.md ${x}/`, `rsync -a pkg/ ${path.join(fx.temp, 'w')}/`, `rsync -a pkg/notes.md ${path.join(fx.temp, 'new.md')}`]) {
+    `rsync -a notes.md ${x}/`, `rsync -a pkg/ ${path.join(fx.temp, 'w')}/`, `rsync -a pkg/notes.md ${path.join(fx.temp, 'new.md')}`,
+    `rsync -aR --no-R p/.opencode/plugins/x.js ${x}/`]) {
     assert.equal(fx.ask(bash(command)), null, command);
   }
   // The review manifest's rename keeps its verdict, with the manifest there and without it.

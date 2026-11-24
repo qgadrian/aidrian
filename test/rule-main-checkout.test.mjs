@@ -331,7 +331,20 @@ test('a copy, move, or link into a folder names the file it makes there: by the 
   assert.deepEqual(at('rsync -a a d/'), ['d', 'd/a']);
   assert.deepEqual(at('rsync -a a b d'), ['d', 'd/a', 'd/b'], 'two or more sources');
   assert.deepEqual(at('rsync -a pkg/ d/'), ['d'], 'a closing slash on the source: its contents, the stated residual');
-  assert.deepEqual(at('rsync -a host:/x/y d/'), ['d'], 'a remote source');
+  assert.deepEqual(at('rsync -a host:/x/y d/'), ['d', 'd/y'], 'a remote source lands by its path part, local through an -e shim');
+  assert.deepEqual(at('rsync -a -e ./sh x:/abs/.opencode d/'), ['d', 'd/.opencode']);
+  assert.deepEqual(at('rsync -a host:/x/y/ d/'), ['d'], 'a remote source with a closing slash: its contents');
+  // rsync -R and cp --parents keep the source's relative path below the destination, without a leading `/` or `./`.
+  assert.deepEqual(at('rsync -aR .claude/settings.json d/'), ['d', 'd/.claude/settings.json'], 'rsync -R');
+  assert.deepEqual(at('rsync -a --relative ./p/.opencode/plugins/x.js d/'), ['d', 'd/p/.opencode/plugins/x.js'], '--relative');
+  assert.deepEqual(at('rsync -aR /abs/x d/'), ['d', 'd/abs/x'], 'an absolute source');
+  assert.deepEqual(at('rsync -aR pkg/ d/'), ['d', 'd/pkg'], 'a closing slash still makes the kept path');
+  assert.deepEqual(at('rsync -aR host:/x/y d/'), ['d', 'd/x/y'], 'a remote source');
+  // GNU rsync starts the kept path after a `/./` marker; openrsync keeps it whole: both names are judged.
+  assert.deepEqual(at('rsync -aR /abs/./a/b d/'), ['d', 'd/abs/a/b', 'd/a/b'], 'a /./ marker');
+  assert.deepEqual(at('rsync -aR --no-R pkg/x d/'), ['d', 'd/x'], '--no-R turns it off');
+  assert.deepEqual(at('cp --parents .claude/settings.json d'), ['d', 'd/.claude/settings.json'], 'cp --parents, whose destination is a folder');
+  assert.deepEqual(at('cp --pa ./src/./a d/'), ['d', 'd/src/a'], 'cp keeps no /./ marker');
   assert.deepEqual(at('rsync -a a host:/x/'), [], 'a remote destination');
   // As today: no folder by the text, and none on the disk.
   assert.deepEqual(at('cp a b'), ['b']);

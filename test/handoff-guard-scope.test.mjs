@@ -131,7 +131,7 @@ const OPENCODE_STARTS = ['opencode', 'opencode run x', 'opencode serve', 'openco
   // A command that talks to the background service, which OpenCode discovers or starts, and one that may restart it.
   'opencode models', 'opencode session list', 'opencode mcp list', 'opencode upgrade',
   // A help flag past a `--`, or beside a word the shell expands, is no help read; `-v` past the first word is no version read.
-  'opencode run -- --help', 'opencode run $PROMPT --help', 'opencode serve -v',
+  'opencode run -- --help', 'opencode run $PROMPT --help', 'opencode run {--,x} --help', 'opencode serve -v',
   // Through a package runner, by its packages' names.
   'npx @opencode/cli run x', 'npx -y @opencode/cli@2.4.0 run x', 'pnpm dlx @opencode/cli run x', 'bunx opencode-ai serve', 'npx opencode-ai', 'npm exec opencode-ai run x',
   // Past a runner's global option that takes the next word, before the runner's own word.

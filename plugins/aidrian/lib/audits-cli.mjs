@@ -195,12 +195,12 @@ function importReport({ values, rest: [name], dir }) {
 // The end of a plain import: the command that writes the sidecar, ready to edit. With a replaced report, its findings
 // first, each led by its title, then the key the flags take: a key appears here only because the command needs it.
 function nextStep(report, replaced) {
-  if (!replaced.length) return `Next: once the Human approves the draft, write it:\n  aidrian audits import ${report} --write`;
+  if (!replaced.length) return `Next: once the Human approves the draft, write it:\n  aidrian audits import ${shellQuote(report)} --write`;
   return [
     'Next: sort the earlier run\'s findings with the Human, then write the sidecar. Each finding, with the key the flags take:',
     ...replaced.map(({ id, title }) => `  - "${title}": key ${id}`),
     'Move the key of each finding a finding of this run covers to --carried-forward, and keep the rest in --not-rechecked:',
-    `  aidrian audits import ${report} --not-rechecked ${replaced.map(({ id }) => id).join(',')} --carried-forward '' --write`,
+    `  aidrian audits import ${shellQuote(report)} --not-rechecked ${shellQuote(replaced.map(({ id }) => id).join(','))} --carried-forward '' --write`,
   ].join('\n');
 }
 

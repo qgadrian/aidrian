@@ -430,7 +430,7 @@ test('aidrian audits: list, import after review, pending, and record every decis
     '  - "the second language names the drop-in three ways": key F2',
     '  - "the second language mixes formal and informal address": key F3',
     'Move the key of each finding a finding of this run covers to --carried-forward, and keep the rest in --not-rechecked:',
-    `  aidrian audits import ${NEW} --not-rechecked F1,F2,F3 --carried-forward '' --write`,
+    `  aidrian audits import '${NEW}' --not-rechecked 'F1,F2,F3' --carried-forward '' --write`,
   ].map((line) => line.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')).join('\n') + '\n$', 'u'), 'the plain import ends with the next step, each finding led by its title');
   noIds(result.stderr);
   const jsonWarnings = JSON.parse((await run('import', NEW, '--json')).stdout).warnings.join('\n');
@@ -738,20 +738,22 @@ test('record takes the audit_key pending prints, so a walk and the run it replac
 });
 
 
-test('the record command pending prints keeps a report name with a space, a quote, and $(...) as one shell argument', async (t) => {
+test('the import and record commands audits prints keep a report name with a space, a quote, and $(...) as one shell argument', async (t) => {
   const { audits, run } = project(t);
   const odd = "it's a $(touch x) walk-2026-05-02.md";
   copyFileSync(path.join(audits, OLD), path.join(audits, odd));
   rmSync(path.join(audits, OLD));
   rmSync(path.join(audits, NEW));
+  // POSIX single quotes, each embedded quote closed, escaped, and reopened: no word splits, and nothing expands.
+  const quoted = (text) => `'${text.replaceAll("'", "'\\''")}'`;
+  assert.ok((await run('import', odd)).stderr.includes(`  aidrian audits import ${quoted(odd)} --write`), 'the draft\'s next step');
   const imported = await run('import', odd, '--write');
   assert.equal(imported.status, 0, imported.stderr + imported.stdout);
   const [item] = JSON.parse((await run('pending', odd, '--json')).stdout).groups.flatMap((g) => g.items);
   assert.equal(item.audit_key, `${odd}#${item.id}`);
-  // POSIX single quotes, each embedded quote closed, escaped, and reopened: no word splits, and nothing expands.
-  const quoted = (text) => `'${text.replaceAll("'", "'\\''")}'`;
   assert.equal(item.record, `aidrian audits record ${quoted(odd)} ${quoted(item.audit_key)}`);
 });
+
 test('pending marks a line of an older report that names a task by its number, and leaves the stored line as it is', async (t) => {
   const { audits, run } = project(t);
   const report = 'front-desk-2026-06-02.md';

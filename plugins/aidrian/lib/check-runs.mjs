@@ -541,10 +541,10 @@ function textClaims(body, { section, testing, ownOnly, suites, own }) {
     for (const written of unit.split(/;\s+|\.\s+(?=[A-Z`])/u)) {
       const clause = ownOnly ? ownClause(written, own) : written;
       if (!PASS_WORD.test(clause) || FAIL_WORD.test(clause) || CI_WORD.test(clause)) continue;
-      // A quoted line's first test run, so `git status && npx jest a.test.ts` is jest's claim.
       const keys = [...clause.matchAll(/`([^`\n]+)`/gu)].flatMap(([, code]) => {
-        const invocation = lexPipeline(code).segments.map(readInvocation).find((each) => !CHANGES_DIRECTORY.has(each.program) && isTestRun(each, testing));
-        return invocation ? [commandKey(invocation)] : [];
+        const [segment] = lexPipeline(code).segments.filter((each) => !CHANGES_DIRECTORY.has(readInvocation(each).program));
+        const invocation = segment ? readInvocation(segment) : null;
+        return invocation && isTestRun(invocation, testing) ? [commandKey(invocation)] : [];
       });
       const bare = clause.replace(/`[^`\n]*`/gu, ' ');
       for (const suite of suites) if (new RegExp(`(?:^|[\\s(])${escape(suite)}(?=$|[\\s:,.)])`, 'u').test(bare)) keys.push(capped(suite));

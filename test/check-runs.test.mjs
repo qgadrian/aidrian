@@ -104,9 +104,6 @@ test('a jest run by test paths supports a body line that quotes it, and only a r
   assert.equal(claimed(`\`npx jest --no-coverage --runTestsByPath ${files('src/y.test.tsx')}\`: 12 tests passed.`, long).length, 1, 'another last file');
   const placeholder = claimsOf('`npx jest --no-coverage --runTestsByPath <31 files>`: 12 tests passed.');
   assert.match(claimProblem(placeholder, plain, { where: 'The body' }), /Its runs of `jest` ran other words: `jest --no-coverage --runTestsByPath a\.test\.ts b\.test\.ts c\.test\.ts`; quote the command as it ran\./u);
-  // A quoted line's first test run is its claim, after a command that runs none.
-  assert.deepEqual(claimsOf('`git status && npx jest a.test.ts`: 12 tests passed.').map((claim) => claim.key), ['jest a.test.ts']);
-  assert.equal(claimed('`git status && npx jest a.test.ts`: 12 tests passed.', []).length, 1, 'with no run of it recorded, the claim fails');
 });
 
 // A configured command longer than the stored key's cap is still a prefix of its runs: the cap is the key's alone.

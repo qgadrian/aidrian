@@ -2207,7 +2207,7 @@ Two checks read it:
 
 - The [pull request body rule](#bash-rules) reads the `## Tests run` section outside fenced code, one list item or
   paragraph at a time with its wrapped lines joined, split at `;` and sentence ends. A clause that names a test command,
-  in backticks (a quoted line's first test run) or, for a `testing.fullSuite` command, as plain words, and says it passed (a pass word, a check mark, or
+  in backticks or, for a `testing.fullSuite` command, as plain words, and says it passed (a pass word, a check mark, or
   "N/N"), needs a row of that command that passed with more than 0 passes, at the tree of HEAD in the folder gh runs in,
   or of the commit the clause names, such as "at 056c3c2", and with each pass count the clause states. An id of digits
   alone, as about one abbreviated id in 27 is, names a commit only after "at" or "commit", and only when git knows that

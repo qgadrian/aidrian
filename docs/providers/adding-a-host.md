@@ -159,12 +159,14 @@ host's `shellOutput`: a host whose adapter gives none records no worktree.
 
 Two records, two writers. The PostToolUse hook writes the snapshot link in `links.jsonl`, the row this section
 describes. `aidrian worktree new` itself writes a different record, the continuation-store record that worktree grants
-read, under the session id its shell's environment names. Why the hook writes the link: a host's adapter must make
-that environment id the hook's in a subagent's shell too, or the grant record and the link would name different sessions. Codex gives a shell
-call `CODEX_THREAD_ID`, the thread's own id, which differs in a subagent's thread, and `CODEX_SESSION_ID`, the root
-session's id its hooks carry as `session_id` ([Codex](codex.md#session-ids)): its adapter reads the second, and a host
-whose shell names only a thread's own id would send a subagent's row where no snapshot of the session reads. The hook
-files the row where the pull request ledger files its own, on Claude Code, Codex, and OpenCode alike.
+read, under the session id its shell's environment names. The hook files the link under the payload's `session_id`
+whatever the shell names, where the pull request ledger files its own, on Claude Code, Codex, and OpenCode alike, so
+the link never depends on the shell's id. The grant record does: a host's adapter must make the shell's id the hook
+payload's `session_id` in a subagent's shell too, or the record lands under an id the worktree grant hook never looks
+up, and the subagent's worktree gets no grant. Codex gives a shell call `CODEX_THREAD_ID`, the thread's own id, which
+differs in a subagent's thread, and `CODEX_SESSION_ID`, the root session's id its hooks carry as `session_id`
+([Codex](codex.md#session-ids)): its adapter reads the second. A host whose shell names only a thread's own id would
+file a subagent's grant record under that thread, where the grant hook does not read.
 
 ### What else a new host has to check by hand
 

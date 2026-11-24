@@ -350,7 +350,7 @@ test('a chain whose second session cannot be stopped is named by that session, o
   assert.deepEqual(settled.cmd(['wait', 'launch', '--max-wait', '0'], { now: past, spawn: failing(settled) }).out, [`lingered ENG-1 attempt 1: a session of it, ${NEXT.id}, ran on after its issue settled and could not be stopped; \`claude stop ${NEXT.id}\` stops it`, 'lingering ENG-1 attempt 1']);
 });
 
-test('wait holds --max-wait as a hard bound under slow reads, and still returns at once on a settle', (t) => {
+test('wait holds --max-wait as best effort under slow reads: it starts no read the slowest so far would not fit, and returns at once on a settle', (t) => {
   const fx = started(t);
   // A clock that moves only when the wait pauses or the host's listing answers, which takes 20 seconds a call.
   const start = Date.now();
@@ -385,6 +385,32 @@ test('wait holds --max-wait as a hard bound under slow reads, and still returns 
   const settled = fx.cmd(['wait', 'launch', '--max-wait', '150'], { now: from, clock: () => clock, spawn: slow, pause });
   assert.deepEqual(settled.out.filter((line) => !line.startsWith('lingering ')), ['result ENG-1 failed -> open']);
   assert.deepEqual(pauses, [], 'no pause: it returned on its first read');
+});
+
+test('wait counts its setup against --max-wait: a slow policy read leaves no room for a second read', (t) => {
+  const fx = started(t);
+  // The forge's policy read, before the first read, takes 130 seconds; each call to the host's listing takes 20.
+  const start = Date.now();
+  let clock = start;
+  const order = [];
+  const forge = {
+    ...fx.forge,
+    contents: (...args) => {
+      if (!order.includes('policy')) clock += 130_000;
+      order.push('policy');
+      return fx.forge.contents(...args);
+    },
+  };
+  const slow = (...args) => {
+    clock += 20_000;
+    order.push('listing');
+    return fx.claude.run(...args);
+  };
+  const pauses = [];
+  const waited = fx.cmd(['wait', 'launch', '--max-wait', '150'], { now: start, clock: () => clock, spawn: slow, forge, pause: (ms) => pauses.push(ms) });
+  assert.deepEqual(waited.out, ['running ENG-1']);
+  assert.equal(order[0], 'policy', 'the policy read is the setup, before any listing');
+  assert.deepEqual(pauses, [], 'no pause and no second read: the 130 s of setup and a 20 s read leave none');
 });
 
 test('wait returns as soon as a result arrives while it waits', (t) => {

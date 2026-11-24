@@ -1039,10 +1039,15 @@ function startLines({ result, state, run, key, attempt, session, base, proof, pr
 // branch while the run's sessions run, or one the forge cannot answer now, through an outage or a rate limit, refuses no
 // wait: it settles under settlePolicy, with a first `note policy:` line for a refusal or `note outage:` for a read the
 // forge cannot answer now, so the driver's halt wait still stops overdue sessions, takes in results, and reaches `idle`. Only `start` exits 75 on a read the forge cannot answer now.
-// `--max-wait` bounds its own run time: after the first read, which always runs, a read starts only when the slowest
-// read so far and WAIT_MARGIN fit in the time left, else it returns the last read's lines, `running KEY` among them.
+// `--max-wait` counts from the start of the call, its setup included, and holds as best effort: after the first read,
+// which always runs, wait starts no read the slowest read so far and WAIT_MARGIN would not fit in the time left, and
+// returns the last read's lines, `running KEY` among them; one read slower than every earlier one can still overrun.
 // `pause` is a test's stand-in for the wait between reads.
 export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = process.env, home, now = Date.now(), forge = null, spawn, pause = pauseSync, clock = Date.now }) {
+  // `now` dates the first read exactly, so a pause it writes ends where its own `now` says; `clock` moves later reads
+  // on, so a deadline is never measured against another clock. Read here, before any setup, so the setup counts.
+  const offset = now - clock();
+  const time = () => clock() + offset;
   const refuse = (why) => ({ exitCode: 1, out: [], err: [`aidrian project wait: ${why}`] });
   const { session } = sessionIdentity(env);
   const marked = typeof session === 'string' && SESSION_ID.test(session) ? markProblem(session, { env, home }) : null;
@@ -1062,10 +1067,6 @@ export function waitRun({ project, config, run, maxWait = WAIT_DEFAULT, env = pr
   }
   markCustodian(session, opened.found, run, state, env);
   const before = new Map(opened.found.states);
-  // `now` dates the first read exactly, so a pause it writes ends where its own `now` says; `clock` moves later reads
-  // on, so a deadline is never measured against another clock.
-  const offset = now - clock();
-  const time = () => clock() + offset;
   const until = now + Math.min(Math.max(0, maxWait), WAIT_CEILING) * 1000;
   // The slowest read so far, in ms, and the answer of the last read, which a read that would not fit returns.
   let slowest = 0;

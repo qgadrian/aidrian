@@ -118,12 +118,6 @@ test('the recorded-decision store is written by no subagent, unattended session,
   assert.ok(folders.includes(path.join(fx.home, '.local/state/aidrian/recorded-decisions')), 'the home folder\'s own too');
   const works = stateWorkFolders(fx.state, { env: fx.env, home: fx.home });
   assert.ok(works.folders, works.problem);
-  // A state.dir puts both stores in the state folder (storeRoot): the runs-folder guard holds them there too.
-  for (const name of ['recorded-decisions', 'signoffs']) {
-    const call = { cwd: fx.dir, session_id: DRIVER, tool_name: 'Write', tool_input: { file_path: path.join(fx.state, name, 'proj', 'ENG-1.json'), content: '{}' } };
-    assert.match(projectRunWriteDenial(call, fx.project, fx.config, () => fx.state, { unattended: () => true, home: fx.home })?.reason ?? '', /a store of the Human's sign-offs or recorded decisions that only a session the Human attends writes/u, name);
-    assert.equal(projectRunWriteDenial(call, fx.project, fx.config, () => fx.state, { unattended: () => false, home: fx.home }), null, `${name}: an attended main session`);
-  }
 });
 
 test('a dynamic subcommand word after project is refused to every session', (t) => {

@@ -36,7 +36,6 @@ import { branchPolicies } from './pr-auto-merge.mjs';
 import { mayFollowTeamDefault, projectId } from './project.mjs';
 import { recordedDecision } from './project-decision.mjs';
 import { readRecordedDecision } from './project-decision-store.mjs';
-import { storeRoot } from './review/signoff-store.mjs';
 import { recordedTexts } from './project-issue-text.mjs';
 import { activeRuns, nextLines, pinnedRepository, planRun, readRun, readSnapshotInput, refNames, resumedIssues, resumedLine, resumedProblems, runPlace, runsFolder, SERIAL, teamsNote } from './project-run.mjs';
 import { openPullHead } from './project-result.mjs';
@@ -443,9 +442,7 @@ export function snapshotCheck({ project, config, file, session = null, env = pro
   const startable = new Set(plan.order.filter((key) => !plan.done.includes(key)));
   // The issues that may still start: ready now, or once their blockers are done; never a canceled or skipped one.
   const mayStart = new Set([...plan.ready, ...plan.blocked.filter(({ reason }) => reason === 'waiting').map(({ key }) => key)]);
-  // The store root of the run's state folder, as start reads it: never the environment read again (storeRoot).
-  const root = place.state ? storeRoot(place.state, Boolean(config.state.dir)) : null;
-  const decisions = decisionChecks({ policy, base, mayStart, texts: kept.texts, project, env, root, placeProblem: place.problem });
+  const decisions = decisionChecks({ policy, base, mayStart, texts: kept.texts, project, env });
   blockers.push(...decisions.blockers);
   if (!trackerReachable(base)) {
     blockers.push(...read.snapshot.issues.filter((issue) => startable.has(issue.key) && !kept.texts[issue.key])
@@ -464,21 +461,15 @@ export function snapshotCheck({ project, config, file, session = null, env = pro
 // any other void, a store that cannot be trusted included, is a note, and the run goes on without the grant; one that
 // stands is a note naming its heading. A policy that cannot be read, while the base branch's config `base`
 // (baseBranchConfig) turns the switch on and the store holds a decision of one of `mayStart`, is a blocker: whether it
-// stands cannot be told. The switch is asked first, as start asks it: with it off, no store is opened. The store is read
-// under `root`, the store root of the run's state folder (review/signoff-store.mjs storeRoot); with none, as when the
-// state folder cannot be placed (`placeProblem`), the switch on is a blocker. `read` is the store's reader, a test's
-// stand-in.
-export function decisionChecks({ policy, base, mayStart, texts, project, env, root, placeProblem = null, read = readRecordedDecision }) {
+// stands cannot be told. The switch is asked first, as start asks it: with it off, no store is opened. `read` is the
+// store's reader, a test's stand-in.
+export function decisionChecks({ policy, base, mayStart, texts, project, env, read = readRecordedDecision }) {
   const blockers = [];
   const notes = [];
   const on = policy.problem ? base.config?.projectRun?.recordedDecisions === true : policy.recordedDecisions === true;
   if (!on) return { blockers, notes };
-  if (!root) {
-    blockers.push(`blocker recorded-decision: the run's state folder cannot be placed (${placeProblem ?? 'no folder'}), so the recorded decisions cannot be read`);
-    return { blockers, notes };
-  }
   const projectKey = projectId(project);
-  const stored = [...mayStart].sort().map((key) => ({ key, ...read({ projectKey, key, env, root }) })).filter((each) => each.problem || each.entry);
+  const stored = [...mayStart].sort().map((key) => ({ key, ...read({ projectKey, key, env }) })).filter((each) => each.problem || each.entry);
   if (policy.problem) {
     if (stored.length) blockers.push(`blocker recorded-decision: the team's policy cannot be read (${policy.problem}), so whether the decisions recorded for ${stored.map(({ key }) => key).join(', ')} stand cannot be told; check again once it can`);
     return { blockers, notes };

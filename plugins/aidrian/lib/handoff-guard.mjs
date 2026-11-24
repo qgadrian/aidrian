@@ -1122,13 +1122,9 @@ export function projectRunWriteDenial(input, project, { names: { human }, state:
   if (!dir && !targets.some(near) && !linksTo(root) && !movesState(base)) return null;
   for (const folder of folders(state)) {
     const runs = real(path.join(folder, RUNS_FOLDER));
-    // A state.dir puts the sign-off and recorded-decision stores in the state folder itself (signoff-store.mjs storeRoot).
-    const stores = [SIGNOFF_FOLDER, DECISION_STORE_FOLDER].map((name) => real(path.join(folder, name)));
-    const reached = [runs, ...stores].find((each) => reaches({ files: files.map(real), known, placed, linksTo }, each, [real(folder)], roots));
-    if (!reached) continue;
+    if (!reaches({ files: files.map(real), known, placed, linksTo }, runs, [real(folder)], roots)) continue;
     if (!held()) return null;
     const verb = opaque ? 'may change' : 'changes';
-    if (reached !== runs) return { match: `${verb} a store of the Human's word`, reason: projectRuleReason(input, `it ${verb} ${reached}, a store of the Human's sign-offs or recorded decisions that only a session the Human attends writes`, human) };
     return { match: `${verb} the project runs`, reason: why(verb, runs) };
   }
   return base().failed && held() && holdsState(project, state, home) ? unreadableBase(input, human) : null;

@@ -61,7 +61,7 @@ export function waiverMayRun({ project, config, state, pr, head, policies, repo,
   if (bot) return { why: `a verdict never stands in for the review bot, and ${bot}` };
   const cap = capProblem(state, head);
   if (cap) return { why: cap };
-  const owes = owedSignoffs({ state, head, trail: trail(), policies, prefix, repo, pr, project });
+  const owes = owedSignoffs({ state, head, trail: trail(), policies, prefix, repo, pr });
   // A sign-off the Human owes is merge trust's `signoff` half, so a caller can report it as merge trust does.
   if (owes) return { why: owes.why, kind: 'signoff', unsigned: owes.unsigned };
   const budget = budgetProblem({ project, config, run, pr });

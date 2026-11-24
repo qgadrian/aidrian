@@ -91,7 +91,7 @@ import { hostOf } from './remotes.mjs';
 import { prNumber, repoName } from './review-gate.mjs';
 import { isFindingId } from './review/findings.mjs';
 import { detectHost, sessionIdentity } from './hosts/index.mjs';
-import { trustVerdict } from './review/merge-trust.mjs';
+import { readHumanSignoffs, trustVerdict } from './review/merge-trust.mjs';
 import { closingContextOf, closingTextsProblem, markOnce } from './closing-words.mjs';
 import { driverHold } from './run-driver.mjs';
 import { readUnattendedMark } from './unattended-mark.mjs';
@@ -100,7 +100,6 @@ import { owed } from './review/state.mjs';
 import { waiverKind } from './review/waiver.mjs';
 import { runOf, waivedReview } from './review/waiver-stand.mjs';
 import { recordFor, scoped } from './rules/github/merge-review.mjs';
-import { storeSignoffs } from './store-root.mjs';
 
 // Whether no Human attends `session`: its unattended mark, a pending or unreadable one included, or its driver mark.
 const heldSession = (session, options = {}) => (readUnattendedMark(session, options) ?? driverHold(session, options)) !== null;
@@ -625,7 +624,7 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root), se
         }
         const verdict = trustVerdict({
           trail, head: pr.head, reviewer: policy.github.reviewer, files: listed.files, complete: true, configs: [policy, policies.basePolicy],
-          prefix, policyFiles, state, signoffs: storeSignoffs(project, { repo: pr.repo, pr: pr.number, trusted: policy }),
+          prefix, policyFiles, state, signoffs: readHumanSignoffs({ repo: pr.repo, pr: pr.number }),
         });
         if (verdict) [effective, reason, why, trust] = [false, 'trust', verdict.why, verdict.kind];
         if (verdict?.kind === 'signoff') signoff = { flow: verdict.flow, signoffClass: signoffClassOf(policy, verdict.unsigned ?? [verdict.flow]) };

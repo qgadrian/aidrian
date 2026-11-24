@@ -173,11 +173,10 @@ function pushAccess({ cap, forge, repository, env, home, guarded, main, platform
 
 // The folders no session no Human attends may be let write, as real paths: the main checkout's git folder, the state
 // root, the mark folders, the sign-off store's (review/merge-trust.mjs), the recorded-decision store's
-// (project-decision-store.mjs), each also under `state`, where a state.dir puts them (storeRoot), and the runs folder of
-// `state`.
+// (project-decision-store.mjs), and the runs folder of `state`.
 export function guardedFolders({ main, state, env, home }) {
   const common = gateGit(['rev-parse', '--path-format=absolute', '--git-common-dir'], main, { timeout: 30_000 });
-  const folders = [common.status === 0 ? common.stdout.trim() : path.join(main, '.git'), stateRoot(env), ...markFolders({ env, home }), ...signoffFolders({ env, home, root: state }), ...decisionStoreFolders({ env, home, root: state }), runsFolder(state)];
+  const folders = [common.status === 0 ? common.stdout.trim() : path.join(main, '.git'), stateRoot(env), ...markFolders({ env, home }), ...signoffFolders({ env, home }), ...decisionStoreFolders({ env, home }), runsFolder(state)];
   return [...new Set(folders.map((each) => resolvedPath(each) ?? path.resolve(each)))];
 }
 
@@ -229,7 +228,7 @@ export const attemptFolder = (state, run, key, attempt) => path.join(runFolder(s
 export function stateWorkFolders(state, { env, home }) {
   const base = resolvedPath(state);
   if (!base) return { problem: `the state folder ${state} cannot be resolved` };
-  const guarded = [runsFolder(state), path.join(state, 'handoffs'), path.join(state, 'decisions'), ...markFolders({ env, home }), ...signoffFolders({ env, home, root: state }), ...decisionStoreFolders({ env, home, root: state })].map((each) => resolvedPath(each) ?? path.resolve(each));
+  const guarded = [runsFolder(state), path.join(state, 'handoffs'), path.join(state, 'decisions'), ...markFolders({ env, home }), ...signoffFolders({ env, home }), ...decisionStoreFolders({ env, home })].map((each) => resolvedPath(each) ?? path.resolve(each));
   const folders = [];
   for (const name of WORK_FOLDERS) {
     const dir = path.join(base, name);

@@ -184,10 +184,9 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
   driver's `driver.<session id>.json` ([hooks.md](hooks.md#agent-gates)) and `issue-reads/<session id>/`, the issue texts
   a tracker read answered a session, which a [project run](config.md#project-run) keeps, swept after a day, `hook-counts/`,
   the hooks' counts folder, which holds their block counts and markers, such as the
-  [session-length reminder](handoff.md#the-reminder)'s, `signoffs/`, the
+  [session-length reminder](handoff.md#the-reminder)'s, and `signoffs/`, the
   [sign-off store](review.md#merge-trust), `<owner>/<name>/<PR>.json`, owner-only, which only `aidrian pr signoff` in a
-  session the Human attends writes, and `recorded-decisions/`, the [recorded-decision store](config.md#recorded-decisions),
-  both in the state folder instead when `state.dir` places it,
+  session the Human attends writes,
   and `handoff-terminals/`, the record a shell reads to open the session a handoff replaced its own with, owner-only, valid
   60 seconds, deleted when the shell reads it, and `follows-<shell pid>`, the session the shell's terminal shows,
   by its id or the hex of the name it was opened by, deleted when that program exits

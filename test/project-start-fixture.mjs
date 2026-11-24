@@ -319,7 +319,7 @@ export const decidedEntry = (description = DECIDED.description, heading = DECIDE
 // at init, marked cut off at its cap when `cut`.
 export function decidedFixture(t, { entry = decidedEntry(), on = true, description = DECIDED.description, cut = false, projectRun = { allow: true, unverifiedHosts: true }, ...options } = {}) {
   const fx = runFixture(t, { ...options, projectRun: { ...projectRun, recordedDecisions: on } });
-  if (entry) recordDecision({ projectKey: projectId(fx.project), key: 'ENG-1', heading: entry.heading, sha256: entry.sha256, env: fx.env, root: fx.state });
+  if (entry) recordDecision({ projectKey: projectId(fx.project), key: 'ENG-1', heading: entry.heading, sha256: entry.sha256, env: fx.env });
   writeIssueTexts(runFolder(fx.state, 'launch'), { 'ENG-1': { title: 'Export', description, criteria: '', labels: [], ...(cut ? { descriptionCut: true } : {}) } });
   return fx;
 }

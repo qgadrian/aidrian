@@ -389,8 +389,9 @@ Never start OpenCode below the temporary folder: what any program wrote there lo
   nor the tracker guard. Each blocks a call, and no live OpenCode tool payload or agent identity has been recorded.
   Where OpenCode is set up, `aidrian check` warns that no merge guard, Bash rule, or write guard holds an OpenCode
   session, so a session there works only in a task worktree and never merges. OpenCode is set up when its global
-  config, the file `OPENCODE_CONFIG` names, or a config in the project's root or a folder above it, up to `/`,
-  names this plugin ([the probe](adding-a-host.md#the-adapters-fields)).
+  config, the file `OPENCODE_CONFIG` names, or a config in the project's root or a folder above it names this plugin
+  ([the probe](adding-a-host.md#the-adapters-fields)). The probe reads at most 64 folders, the root among them, while
+  OpenCode reads up to `/`, so a config deeper above than that loads in OpenCode with no warning from `aidrian check`.
 - No unattended mark and no rule holds an OpenCode session, so `aidrian pr auto-merge` run there reads the session as
   one a Human attends, and `gh pr merge` runs unchecked.
 - The rules on OpenCode's files and commands (`.opencode`, `.agents`, `opencode.json`, `opencode.jsonc`, and

@@ -896,6 +896,8 @@ test('a copy, move, or link into a folder is judged by the name it makes there, 
     ['cp stage/opencode.json .', later], ['cp stage/.mcp.json .', later], ['cp -R stage/.agents .', later], ['git mv pkg/.claude .', later],
     // rsync makes the same names, a destination from a variable the hook expands included.
     [`rsync -a ${wt}/pkg/.claude ${wt}/`, later], [`rsync -a ${wt}/pkg/.opencode $TMPDIR/x/`, temp], [`rsync -a ${wt}/pkg/opencode.json ${x}/`, temp],
+    // A `..` right after the variable is not folded into it before the hook expands it.
+    [`cp ${wt}/pkg/opencode.json $TMPDIR/../${path.basename(fx.temp)}/x/`, temp], [`rsync -a ${wt}/pkg/.opencode $TMPDIR/../${path.basename(fx.temp)}/x/`, temp],
     // rsync never renames a folder source: a destination not there yet gets it inside.
     [`rsync -a ${wt}/pkg/.opencode ${path.join(fx.temp, 'new')}`, temp],
     // rsync -R and cp --parents make the source's relative path there; a remote-spelled source lands by its last part.

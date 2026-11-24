@@ -224,8 +224,12 @@ function joinedNames(sources, into, certain, name = path.basename) {
   return sources
     .map((source) => name(source.text))
     .filter((each) => each !== '' && !NO_NAME.test(each))
-    .map((each) => ({ text: path.join(into.text, each), dynamic: into.dynamic, literal: into.literal, joined: { into, certain } }));
+    .map((each) => ({ text: joinedText(into, each), dynamic: into.dynamic, literal: into.literal, joined: { into, certain } }));
 }
+
+// The text of `name` inside the destination token `into`. A destination built from a variable is joined as written, not
+// normalized, so `$TMPDIR/../t/x` keeps its variable for the reader to expand; path.join would fold it to `t/x`.
+const joinedText = (into, name) => (into.dynamic ? `${into.text.replace(/\/+$/u, '')}/${name}` : path.join(into.text, name));
 
 // The backup an in-place edit with `suffix` writes for `file`, as each interpreter does it (checked by running both):
 // perl puts the file, as written, in place of each `*` (`-i'old/*'` on `src/f` writes `old/src/f`) and otherwise

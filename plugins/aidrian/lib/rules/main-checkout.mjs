@@ -43,7 +43,8 @@ export function check(command, { cwd = process.cwd(), env = process.env } = {}) 
 
 // A variable's name in a target: `$NAME` or `${NAME}`.
 const VARIABLE = /\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))/gu;
-// The variables the shell sets for itself, whatever it was given or assigned: never read.
+// The variables the shell sets for itself when it starts, whatever it was given: read only from an assignment the line
+// runs.
 const SHELL_OWN = new Set(['PWD', 'OLDPWD']);
 
 // A write whose target is built from a variable, from a shell that may be in a guarded main checkout: the deny reason,
@@ -57,10 +58,9 @@ function expansionDenial(command, cwd, env) {
     // In a shell the line starts, only what its invocation sets is read (bash-writes.mjs `ownOnly`).
     const { set = new Map(), ownOnly = false } = write.vars ?? {};
     const value = (name) => {
-      // The shell sets these itself, whatever it was given or assigned.
-      if (SHELL_OWN.has(name)) return null;
+      // An assignment the shell runs on the line counts; what it starts with, the shell's own for these, does not.
       if (set.has(name)) return set.get(name).dynamic ? null : set.get(name).text;
-      return ownOnly || typeof env[name] !== 'string' ? null : env[name];
+      return ownOnly || SHELL_OWN.has(name) || typeof env[name] !== 'string' ? null : env[name];
     };
     const text = write.text.replace(VARIABLE, (whole, braced, bare) => value(braced ?? bare) ?? whole);
     // After a directory change, the shell is where the rule's own walk says (afterChanges), a worktree's trusted `cd`

@@ -117,6 +117,8 @@ export function bashWrites(command, cwd, { followCd = false, shells = false, res
 // The variables a shell the line starts gets from its invocation, its `environment` changes applied in order: a literal
 // value is read; an unset, and a value that may expand, are read as unknown; and `env -i` drops every earlier one but
 // the names it keeps, which keep a value the invocation gave them, and are unknown otherwise.
+// PWD and OLDPWD are the shell's own at its start, whatever it is given (SHELL_OWN).
+const SHELL_OWN = new Set(['PWD', 'OLDPWD']);
 function childVars(environment = []) {
   const vars = new Map();
   const unknown = { text: '', dynamic: true };
@@ -128,6 +130,7 @@ function childVars(environment = []) {
     } else if (typeof change.value?.text === 'string') vars.set(change.name, { text: change.value.text, dynamic: change.value.dynamic === true });
     else vars.set(change.name, unknown);
   }
+  for (const name of SHELL_OWN) if (vars.has(name)) vars.set(name, unknown);
   return vars;
 }
 

@@ -975,7 +975,8 @@ where they lead. An assignment made in a subshell or a substitution ends with it
 a target built from one there fails closed. One that still holds a `$` or a backtick, such as `cat > "$S/x"` with `S` set in no way the rule
 reads, a loop's variable, or `$(…)`, is blocked while the shell may be in the main checkout, unless the literal path
 before its first `$` is an absolute folder outside it, as `/tmp/$x` is: it may name a tracked file. `$PWD` and
-`$OLDPWD` are the shell's own, and never read, from the hook's environment, the line, or a wrapper's kept names.
+`$OLDPWD` are the shell's own at its start: they are read only from an assignment the line runs, never from the hook's
+environment or from what a shell the line starts is given.
 A file edit whose payload names no file the host's adapter can read, such as a Write with no path or a patch it cannot
 parse, is blocked from the main checkout too, since the rule cannot tell it writes no tracked file.
 
@@ -1391,7 +1392,8 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   refused first, whatever the folder is: the system takes that `..` from where a link there leads, and the guard's
   readers fold it as text, so it names the path without `..` instead. A target that starts with `..` climbs from the
   call's own folder, which the host names as the system resolves it, and is placed as usual. In an interpreter's code,
-  where a quote may end a path anywhere, any `/..` counts, `../../x` included. It writes only:
+  where a quote may end a path anywhere, any `/..` that ends at a slash, a quote, a space, or punctuation counts,
+  `../../x` included, and `a/..draft` does not. It writes only:
   - its own worktree: the checkout of the folder its mark says the gate started it in, when that checkout shares its git
     folder with the main checkout the mark names: a linked worktree from any folder inside it, such as a package of a
     monorepo, and the main checkout only from its own top, so a removed worktree's folder left as a plain one inside the

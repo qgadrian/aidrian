@@ -1666,6 +1666,10 @@ test('a Write or an Edit through a link and a `..` that lands outside the places
     assert.match(ask(input)?.reason ?? '', /outside the places a session no Human attends may write/u, JSON.stringify(input));
   }
   assert.equal(ask(write(path.join(fx.worktree, 'a', 'x.txt'))), null, 'the same file named without the link');
+  // A removal and a mode change through the same spelling, which the shell's own readers give.
+  for (const command of [`rm -rf ${fx.worktree}/a/out/../gone`, `chmod 600 ${fx.worktree}/a/out/../gone`]) {
+    assert.match(ask(bash(command))?.reason ?? '', /outside the places/u, command);
+  }
   mkdirSync(path.join(fx.worktree, 'b'));
   symlinkSync(path.join(fx.worktree, 'b'), path.join(fx.worktree, 'a', 'in'));
   assert.equal(ask(write(`${fx.worktree}/a/in/../y.txt`)), null, 'a link that stays in the worktree');

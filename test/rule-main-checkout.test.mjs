@@ -933,9 +933,13 @@ test('a write through a link and a `..` that lands in the main checkout is denie
   assert.equal(edit(`${path.join(repo, 'wt/task')}/src/../src/app.js`, repo, 'Write'), null);
 });
 
-test('on a disk that folds case, a target spelled in another case than git\'s root is still judged in the main checkout', { skip: process.platform !== 'darwin' && 'only a disk that folds case spells one folder two ways' }, (t) => {
+test('on a disk that folds case, a target spelled in another case than git\'s root is still judged in the main checkout', (t) => {
   const { repo } = fixture(t);
   const upper = path.join(path.dirname(repo), path.basename(repo).toUpperCase(), 'SRC', 'app.js');
+  if (!existsSync(upper)) {
+    t.skip('only a disk that folds case spells one folder two ways');
+    return;
+  }
   assert.match(edit(upper, repo, 'Write') ?? '', /^Blocked: this writes 'src\/app\.js'/u, upper);
 });
 
@@ -956,6 +960,9 @@ test('a return trip into the main checkout after a cd into a worktree is denied,
     `cd ${wt} && GIT_DIR=${repo}/.git git commit -m x`,
     `cd ${wt} && git --git-dir=${repo}/.git commit -m x`,
     `cd ${wt} && git --work-tree=${repo} --git-dir=${repo}/.git checkout -b x`,
+    // After an untrusted cd, a later literal cd back into the main checkout is still followed.
+    `cd ${wt} && cd /tmp && cd ${repo} && git commit -m x`,
+    `cd "$S" && cd ${repo} && git switch -c x`,
   ]) assert.match(at(command) ?? '', /^Blocked/u, command);
   for (const command of [`cd ${wt} && echo x > src/app.js`, `cd ${wt} && git switch -c x`, `(cd ${wt} && echo x > src/app.js)`, `cd ${wt} && cd /tmp && git init`]) {
     assert.equal(at(command), null, command);
@@ -1006,6 +1013,11 @@ test('a write through a variable is judged where it leads, and blocked from the 
   assert.match(at('cd "$S" && echo x > "$S/a.txt"') ?? '', /a path built from a variable/u, 'pinned as allowed before: the variable may name the main checkout');
   assert.match(at('for f in a b; do echo x > "$f"; done') ?? '', /a path built from a variable/u);
   assert.match(at('t=$(mktemp); echo x > "$t"') ?? '', /a path built from a variable/u, 'a value from a substitution is not read');
+  // A resolved removal of the main checkout, and an assignment a subshell or a substitution made, which ends with it.
+  assert.match(at(`R=${repo}; rm -rf "$R"`) ?? '', /which holds the main checkout/u);
+  assert.equal(at(`S=/tmp/x; (S=${repo}); echo x > "$S/src/app.js"`), null, 'the outer S is the line\'s own');
+  assert.match(at(`S=${repo}; (S=/tmp/x); echo x > "$S/src/app.js"`) ?? '', /a tracked file/u, 'a subshell\'s assignment ends with it');
+  assert.match(at(`S=${repo}; x=$(S=/tmp/x); echo x > "$S/src/app.js"`) ?? '', /a tracked file/u, 'so does a substitution\'s');
   for (const command of ['S=/tmp/x; echo x > "$S/a"', 'echo x > "$TMPDIR/a"', 'echo x > "/tmp/$name.txt"', `cd ${path.join(repo, 'wt/task')} && echo x > "$f"`]) {
     assert.equal(at(command, { ...ENV, TMPDIR: tmpdir() }), null, command);
   }

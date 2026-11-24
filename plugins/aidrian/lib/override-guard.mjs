@@ -8,11 +8,9 @@
 // text names no override passes: like every guard of the command text it stops accidents, not someone set on getting
 // around it, so a name built at run time, and a copy or move of a file that already holds one, pass.
 
-import path from 'node:path';
-
 import { projectRuleReason } from './agent-gates.mjs';
 import { writeTargets } from './config-guard.mjs';
-import { foldCase } from './fs.mjs';
+import { foldCase, joinSpelled, systemPath } from './fs.mjs';
 import { envSettingsFiles } from './hosts/index.mjs';
 import { canonical } from './rules/main-checkout.mjs';
 
@@ -41,7 +39,9 @@ export function overrideSettingsDenial(input, project, { names: { human } }, { e
   const files = new Map(settings.map((file) => [real(file), file]));
   const { files: targets, names } = writeTargets(input);
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
-  const hit = [...targets, ...names.map((name) => path.resolve(cwd, name))].map((each) => files.get(real(each))).find(Boolean);
+  // Each target folded as text and where the system lands (fs.mjs systemPath), as the other write guards read it.
+  const spellings = (each) => [each, systemPath(each)].filter(Boolean);
+  const hit = [...targets, ...names.map((name) => joinSpelled(cwd, name))].flatMap(spellings).map((each) => files.get(real(each))).find(Boolean);
   if (!hit) return null;
   const why = `it writes an AIDRIAN_ALLOW_* override into ${hit}, whose env reaches every later session's hooks and turns a guard off for each of them unseen; an override is ${human}'s alone, set in their own shell before a session starts`;
   return { match: `override in ${hit}`, reason: projectRuleReason(input, why, human, 'whether to set the override in their own shell') };

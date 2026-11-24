@@ -67,7 +67,8 @@ function expansionDenial(command, cwd, env) {
     let dirs = write.dirs.length ? write.dirs : [cwd];
     if (walk) dirs = walk.at;
     if (!/[$`]/u.test(text)) {
-      const denial = decide(dirs.map((dir) => joinSpelled(dir, text)), cwd, false, 'this command writes');
+      const files = dirs.map((dir) => joinSpelled(dir, text));
+      const denial = decide(files, cwd, false, 'this command writes') ?? (REMOVERS.has(write.program) ? holdsMainDenial(files, cwd, 'this command removes or moves') : null);
       if (denial) return denial;
       continue;
     }

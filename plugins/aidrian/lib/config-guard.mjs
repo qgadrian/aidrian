@@ -325,7 +325,7 @@ function readTargets(input) {
     const words = opaqueWords(opaque);
     const read = words.slice(0, OPAQUE_WORDS).map(fromHome);
     return {
-      files: read.filter((word) => !GLOB_WORD.test(word)).map((word) => path.resolve(cwd, word)),
+      files: read.filter((word) => !GLOB_WORD.test(word)).map((word) => joinSpelled(cwd, word)),
       names: words,
       globs: read.filter((word) => GLOB_WORD.test(word)).map((text) => ({ text, dirs: path.isAbsolute(text) ? [] : [cwd], unsure: false, opaque: true })),
     };

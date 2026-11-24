@@ -29,13 +29,15 @@ function assignmentsOf(segment, invocation, call = null) {
 // folder the shell may be in (directory-change.mjs moveShell). `shell` is moveShell's state.
 const SKIPPED = Object.freeze({ skipped: true });
 
-// The state after the directory change `invocation`. Untrusted stays so for the rest of the line.
+// The state after the directory change `invocation`. Untrusted stays so for the rest of the line, and each later change
+// still moves the folders it is judged at, so a literal `cd` back into the main checkout is judged there.
 function stateAfterCd(state, invocation) {
-  if (!state.folders) return state;
-  const shell = state.shell ?? shellAt(state.folders);
+  if (state.skipped) return state;
+  const at = state.folders ?? state.strict.from;
+  const shell = state.shell ?? shellAt(at);
   if (!shell) return SKIPPED;
-  const moved = moveShell({ ...shell, at: state.folders }, cdChange(invocation, state.folders));
-  if (moved.untrusted) return { strict: { cd: moved.untrusted, from: moved.at } };
+  const moved = moveShell({ ...shell, at }, cdChange(invocation, at));
+  if (moved.untrusted) return { strict: { cd: moved.untrusted, from: moved.at }, shell: moved };
   return { folders: moved.at, shell: moved };
 }
 
@@ -45,7 +47,7 @@ function stateIn(state, chdir) {
   if (chdir.dynamic) return null;
   if (state.folders) return { ...state, folders: state.folders.map((dir) => path.resolve(dir, chdir.text)) };
   if (path.isAbsolute(chdir.text)) return { folders: [chdir.text] };
-  return { strict: { ...state.strict, from: state.strict.from.map((dir) => path.resolve(dir, chdir.text)) } };
+  return { ...state, strict: { ...state.strict, from: state.strict.from.map((dir) => path.resolve(dir, chdir.text)) } };
 }
 
 // git subcommands that change nothing, and the read forms of others, which run after an untrusted `cd`. Every other
@@ -113,18 +115,20 @@ function gitStateChanges(command, state, depth = 0, inherited = []) {
     segments.forEach((segment, i) => {
       const invocation = readInvocation(segment);
       const { opens, closes } = subshells(segment);
-      for (let n = 0; n < opens; n += 1) outer.push(here);
-      // A directory change moves the shell as in the main pass, and a subshell's no further than its end.
+      for (let n = 0; n < opens; n += 1) outer.push([here, lineEnv.length]);
+      // A directory change moves the shell as in the main pass, and a subshell's, and its assignments, no further than
+      // its end.
       const change = directoryChange(invocation);
       if (change) here = stateAfterCd(here, change);
       const inside = here;
-      for (let n = 0; n < closes && outer.length; n += 1) here = outer.pop();
-      if (inside.skipped) return;
       const own = assignmentsOf(segment, invocation);
       if (invocation.program === 'export' || (own.length && !invocation.program)) lineEnv.push(...own);
+      const inEnv = [...lineEnv];
+      for (let n = 0; n < closes && outer.length; n += 1) [here, lineEnv.length] = outer.pop();
+      if (inside.skipped) return;
       if (!inputs[i].length || !readsShellInput(invocation)) return;
       const where = stateIn(inside, invocation.chdir);
-      if (where) for (const body of inputs[i]) found.push(...gitStateChanges(body, where, depth + 1, [...lineEnv, ...own]));
+      if (where) for (const body of inputs[i]) found.push(...gitStateChanges(body, where, depth + 1, [...inEnv, ...own]));
     });
   }
   let now = state;
@@ -132,9 +136,9 @@ function gitStateChanges(command, state, depth = 0, inherited = []) {
   let closing = 0;
   for (const { segment, substitutions } of lexSteps(command)) {
     // A subshell that ended with the step before moves the shell back to where it was before the subshell began.
-    for (; closing > 0 && outer.length; closing -= 1) now = outer.pop();
+    for (; closing > 0 && outer.length; closing -= 1) [now, env.length] = outer.pop();
     const { opens, closes } = subshells(segment);
-    for (let n = 0; n < opens; n += 1) outer.push(now);
+    for (let n = 0; n < opens; n += 1) outer.push([now, env.length]);
     closing = closes;
     if (!now.skipped && depth < SUBSTITUTION_DEPTH_LIMIT) for (const body of substitutions) found.push(...gitStateChanges(body, now, depth + 1, env));
     const invocation = readInvocation(segment);

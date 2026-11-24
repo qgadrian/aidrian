@@ -326,6 +326,12 @@ test('a forge read of the rules or the secrets that fails at a start retries it,
     assert.deepEqual(fx.claude.starts(), [], failing);
     assert.ok(!fx.rows().some((row) => row.event === 'start'), `${failing}: no start row`);
   }
+  // A blocker the forge confirmed halts though another read failed, so a read that keeps failing never hides it.
+  const both = runFixture(t);
+  both.forge.holds = () => ({ refs: { branch: 'main', protected: false, why: 'it has no branch protection', tags: [] }, secrets: new Error('gh: Server Error (HTTP 502)') });
+  const halted = both.cmd(['start', 'launch', 'ENG-1']);
+  assert.match(halted.out.find((line) => line.startsWith('halt ')) ?? '', /branch-protection: no rule on the forge holds/u, JSON.stringify(halted));
+  assert.deepEqual(both.claude.starts(), []);
 });
 
 test('the team\'s acceptance on the default branch lets a start past the rules or the secrets it accepts, and no other', (t) => {

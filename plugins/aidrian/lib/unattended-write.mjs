@@ -22,7 +22,7 @@ import { bashCall, writeTargets } from './config-guard.mjs';
 import { checkDeadline, PastDeadline, remainingMs } from './deadline.mjs';
 import { isManifestPath } from './finding-disposition.mjs';
 import { forgeWorkflowFolders } from './forges/index.mjs';
-import { foldCase, isWithin, systemPath } from './fs.mjs';
+import { foldCase, isWithin, joinSpelled, systemPath } from './fs.mjs';
 import { gitConfigFiles, gitFolders, repositoryCheckouts, runGit, underGit, withGitFacts } from './git.mjs';
 import { GLOB_WORD, globStarts, sameFile } from './glob-links.mjs';
 import { globReaches, modeTargets, sessionWorktrees, startedFolder, stateFolders } from './handoff-guard.mjs';
@@ -781,12 +781,12 @@ export function unattendedWriteDenial(input, { names: { human } }, { mark = null
   if (!found) return say.unknown();
   say.hold(found);
   const unplaced = modes.filter(({ text, folder }) => folder === null && !path.isAbsolute(text));
-  const placedModes = modes.filter((each) => !unplaced.includes(each)).map(({ text, folder }) => path.resolve(folder ?? '/', text));
+  const placedModes = modes.filter((each) => !unplaced.includes(each)).map(({ text, folder }) => joinSpelled(folder ?? '/', text));
   const removed = (shell?.removed ?? []).filter(({ text, folder }) => folder !== null || path.isAbsolute(text));
   const texts = [...names, ...unplaced.map(({ text }) => text), ...globs.filter((each) => each.unsure || each.opaque).map(({ text }) => text),
     ...(shell?.removed ?? []).filter((each) => !removed.includes(each)).map(({ text }) => text)];
   const made = madeFolders(files, shell);
-  return pathDenial([...files.filter((each) => !madeOnly(each, made, found)), ...placedModes, ...removed.map(({ text, folder }) => path.resolve(folder ?? '/', text))], found, say)
+  return pathDenial([...files.filter((each) => !madeOnly(each, made, found)), ...placedModes, ...removed.map(({ text, folder }) => joinSpelled(folder ?? '/', text))], found, say)
     ?? shellDenial(shell, found, say, texts)
     ?? globDenial(globs.filter((each) => !each.unsure), found, say)
     ?? manifestDenial(input, shell, found, say)
@@ -886,7 +886,7 @@ function dynamicDenial(shell, found, say, texts) {
     if (/[$`]/u.test(text)) denial = unexpandedDenial(text, folder, found, say, texts);
     else if (folder === null && !path.isAbsolute(text)) texts.push(text);
     else if (GLOB_WORD.test(text)) denial = globDenial([{ text: path.resolve(folder ?? '/', text), dirs: [], unsure: false }], found, say);
-    else denial = pathDenial([path.resolve(folder ?? '/', text)], found, say);
+    else denial = pathDenial([joinSpelled(folder ?? '/', text)], found, say);
     if (denial) return denial;
   }
   return null;

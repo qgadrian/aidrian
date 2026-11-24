@@ -2,7 +2,7 @@
 // host settings file whose env reaches every later session's hooks; the Human sets one in their own shell.
 import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
@@ -52,6 +52,10 @@ test('a write, an edit, a patch, or a shell write that puts an override in a hos
     assert.match(denial.reason, /writes an AIDRIAN_ALLOW_\* override into \S+settings(?:\.local)?\.json, whose env reaches every later session's hooks/u);
     assert.match(denial.reason, /set in their own shell before a session starts/u);
   }
+  // Where the system lands: `lnk/..` climbs from the link's target, the .claude folder, while the text folds above it.
+  mkdirSync(path.join(dir, '.claude', 'sub'));
+  symlinkSync(path.join(dir, '.claude', 'sub'), path.join(dir, 'lnk'));
+  assert.ok(ask('Write', { file_path: `${dir}/lnk/../settings.json`, content: ENV }), 'a link and a ..');
   // Outside a project, the user's own settings still count.
   assert.ok(ask('Write', { file_path: path.join(config, 'settings.json'), content: ENV }, { project: null, cwd: tmpdir() }));
 });

@@ -107,9 +107,9 @@ function secretsLines({ facade, named, reads, permissions, policy, check, failed
 }
 
 // Why a start may not launch an issue's session, by what the forge holds it to (holdLines), read with `token`, the one
-// the start hands the session, or with the forge CLI's own login on a host that hands none: { retry } when a read failed,
-// which may pass later, { halt } when a rule or a secret does not hold, or the forge cannot say, which no person answers
-// at a start, or null. Each line is the preflight's own reason.
+// the start hands the session, or with the forge CLI's own login on a host that hands none: { halt } when a rule or a
+// secret does not hold, or the forge cannot say, which no person answers at a start, whatever else failed; else { retry }
+// when a read failed, which may pass later; or null. Each line is the preflight's own reason.
 export function holdsProblem({ facade, repository, policy, token = null }) {
   const problems = [];
   const unread = [];
@@ -119,7 +119,8 @@ export function holdsProblem({ facade, repository, policy, token = null }) {
     check: (name, problem) => problem && problems.push(`${name}: ${problem}`),
     failed: (name, why) => unread.push(`${name}: ${why}`),
   });
-  if (unread.length) return { retry: [...new Set(unread)].join('; ') };
+  // A blocker the forge confirmed halts whatever else it could not answer, so a read that keeps failing never hides it.
   const open = [...problems, ...asks.map((line) => line.replace(/^ask /u, ''))];
-  return open.length ? { halt: `the forge does not hold the issue sessions as a run needs, and a start has no person to answer it: ${open.join('; ')}` } : null;
+  if (open.length) return { halt: `the forge does not hold the issue sessions as a run needs, and a start has no person to answer it: ${open.join('; ')}` };
+  return unread.length ? { retry: [...new Set(unread)].join('; ') } : null;
 }

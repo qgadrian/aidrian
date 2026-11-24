@@ -1975,14 +1975,15 @@ one action. The `why` is cleaned and capped as a result's `stop` is, and a forge
 
 | Stop | Action | Cap |
 | --- | --- | --- |
-| Merged on the forge | `done`: record the result `merged` | |
+| Merged on the forge, as the result command records `merged`: into the default branch, after the attempt's start | `done`: record the result `merged` | |
+| Merged on the forge, where the result command refuses `merged`: into another branch, or at or before the attempt's start | `park`: record the result `parked`, with one decision of class `other` on whether the merge counts as the issue's work, whose first and recommended option is to leave the issue parked; the line names the result command's reason | |
 | Closed; a base other than the default branch; a reason `team`, `local`, `checks`, `paths`, `author`, `outsider`, or `closes`; a `review` that is changes requested; a reason it does not know; a draft | `park`: record the result `pr_open` with the line as its stop | |
 | `trust` with `signoff` | `park`: record the result `parked`, with one decision for the Human's sign-off, whose first and recommended option is to leave the pull request unmerged; of class `security` when any unsigned flow is a security one (an id that holds the word `security`, or a `require` that names `agent:security-engineer`), and `product` otherwise | |
 | A conflict with the base | `merge_base`: the session fetches the base and its branch, and stays on its own branch, its commits kept; a fetch that fails is run again in the same turn, up to three times in all, and one that still fails merges nothing and records `pr_open` naming the failed fetch, with no second `stop-action`, so no second base update is spent; when `git merge-base --is-ancestor origin/<branch> HEAD` fails, it records `pr_open` naming the divergence and merges nothing; when `git merge-tree --write-tree --name-only` names a host config or instruction file that would conflict, or git refuses the merge over one, it records `pr_open` with that file's path in its stop and merges nothing; else it merges the base into HEAD with a merge commit, resolves it, and pushes with a full refspec, never with force | 2 base updates per issue, with the next row |
 | Behind the base | `update_branch`: the forge merges the base in, or rebases under the `rebase` strategy where the branch's rules allow a push that is no fast-forward | the same 2 |
 | GitHub still computing it, a head that moved while read, or pending checks | `wait` | 3 per head |
 | The bot asked already for this head and not passed yet | `wait`: `aidrian pr await-review <n>`, with no second request | the same 3 per head |
-| A forge read, its checks' read included, or auto-merge that failed (`aidrian pr auto-merge` exit 3), or a forge action it refused | `wait` 60, then 300, then 900 seconds; a wait past 150 seconds is taken in foreground waits of at most 150 seconds each, since the host moves a longer call to the background | 3 per attempt, apart from the waits above |
+| A forge read, its checks' read and a merged pull request's check included, or auto-merge that failed (`aidrian pr auto-merge` exit 3), or a forge action it refused | `wait` 60, then 300, then 900 seconds; a wait past 150 seconds is taken in foreground waits of at most 150 seconds each, since the host moves a longer call to the background | 3 per attempt, apart from the waits above |
 | `review` on a head a base update made | `review_round`: one review round of that head | 1 per head |
 | `trust` with `bot` | `request_bot`: `aidrian pr await-review <n> --request` | 1 per head |
 | Auto-merge on, failing checks that are each a first run of the head, on the issue's branch, in the pinned repository, as the forge reads each Actions run | `rerun_checks`: the forge starts their failed jobs again | 1 per head |
@@ -2000,7 +2001,10 @@ a link or waiting on a FIFO, and must be a regular file of this user with one li
 row the command did not write, parks.
 With `--catch-up`, which the first message of a later or resumed attempt asks for before any other work, it reads only the pull request:
 `park` when it targets another branch than the default, as above.
-A merged or closed pull request gets exactly the answer the command gives without `--catch-up`: `done`, or a `park`.
+A merged or closed pull request gets exactly the answer the command gives without `--catch-up`: `done`, `wait`, or a `park`.
+A merged pull request is `done` only when the result command's own check (`mergeProblem`) would record it `merged`.
+While that check cannot be read, it gives `wait`, then this command again, under the retry cap above.
+Every `park` of a pull request the forge shows merged, such as a spent cap, records `parked` on the one decision, as a refused merge does.
 On a conflict it gives `merge_base`, and `wait` while the forge works it out, under the caps above; otherwise `none`.
 It reads no auto-merge answer, so a draft that conflicts gets `merge_base`, whose line then says to go on with the checks and the review on the new head.
 `stop-action` exits 1 when it refuses, such as for another session or a pull
